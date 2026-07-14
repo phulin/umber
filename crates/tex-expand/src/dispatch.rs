@@ -6,9 +6,9 @@ use tex_state::token::{OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, InputOpenState};
 
 use crate::{
-    Dispatch, DriverExpandNext, EngineMode, ExpandError, ExpandNext, ExpandableOpcode,
-    ExpansionContext, ExpansionReplayKind, NoInputExpandNext, args, conditionals::*, primitives::*,
-    scan_dimen, scan_helpers::*, scan_int, values::*,
+    Dispatch, DriverExpansionMode, EngineMode, ExpandError, ExpandableOpcode, ExpansionContext,
+    ExpansionMode, ExpansionReplayKind, RestrictedExpansionMode, args, conditionals::*,
+    primitives::*, scan_dimen, scan_helpers::*, scan_int, values::*,
 };
 
 /// Dispatches one token/meaning pair.
@@ -58,7 +58,7 @@ const fn page_mark_key(mark: PageMark) -> u8 {
 }
 
 macro_rules! dispatch_match {
-    ($token:ident, $call_origin:ident, $input:ident, $stores:ident, $context:ident, $meaning:ident, $invert:expr, $expander:expr, $input_arm:block) => {{
+    ($token:ident, $call_origin:ident, $input:ident, $stores:ident, $context:ident, $meaning:ident, $invert:expr, $mode:expr, $input_arm:block) => {{
         let token = $token;
         let call_origin = $call_origin;
         let call_context = TracedTokenWord::pack(token, call_origin);
@@ -66,7 +66,7 @@ macro_rules! dispatch_match {
         let stores = &mut *$stores;
         let expansion = &mut *$context;
         let meaning = $meaning;
-        let mut expander = $expander;
+        let mode = &mut *$mode;
         match meaning {
             Meaning::Macro { definition, .. } => {
                 let macro_meaning = stores.macro_definition(definition);
@@ -92,7 +92,7 @@ macro_rules! dispatch_match {
                 })
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::ExpandAfter) => {
-                expand_after(input, stores, expansion, &mut expander, call_context)?;
+                expand_after(input, stores, expansion, mode, call_context)?;
                 Ok(Dispatch::Continue)
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand) => {
@@ -156,10 +156,10 @@ macro_rules! dispatch_match {
                 ))
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Number) => {
-                let scanned = scan_int::scan_int_with_expander_and_context(
+                let scanned = scan_int::scan_int_with_mode_and_context(
                     input,
                     stores, expansion,
-                    &mut expander,
+                    mode,
                     call_context,
                 )?;
                 Ok(push_rendered_text(
@@ -170,10 +170,10 @@ macro_rules! dispatch_match {
                 ))
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::RomanNumeral) => {
-                let scanned = scan_int::scan_int_with_expander_and_context(
+                let scanned = scan_int::scan_int_with_mode_and_context(
                     input,
                     stores, expansion,
-                    &mut expander,
+                    mode,
                     call_context,
                 )?;
                 Ok(push_rendered_text(
@@ -207,16 +207,16 @@ macro_rules! dispatch_match {
                 ))
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::The) => {
-                expand_the_with_expander_and_context(
+                expand_the_with_mode_and_context(
                     input,
                     stores, expansion,
-                    &mut expander,
+                    mode,
                     call_context,
                 )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Unexpanded) => {
                 let raw = crate::scan::scan_general_text_with_expanded_open(
-                    input, stores, expansion, &mut expander, call_context,
+                    input, stores, expansion, mode, call_context,
                 ).map_err(
                     |error| match error {
                         crate::scan::ScanToksError::Lex(error) => ExpandError::Lex(error),
@@ -237,7 +237,7 @@ macro_rules! dispatch_match {
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Detokenize) => {
                 let raw = crate::scan::scan_general_text_with_expanded_open(
-                    input, stores, expansion, &mut expander, call_context,
+                    input, stores, expansion, mode, call_context,
                 ).map_err(
                     |error| match error {
                         crate::scan::ScanToksError::Lex(error) => ExpandError::Lex(error),
@@ -278,11 +278,11 @@ macro_rules! dispatch_match {
                         context: target,
                     });
                 }
-                expander.dispatch_inverted_raw_token(target, input, stores, expansion)
+                mode.dispatch_inverted_raw_token(target, input, stores, expansion)
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Scantokens) => {
                 let raw = crate::scan::scan_general_text_with_expanded_open(
-                    input, stores, expansion, &mut expander, call_context,
+                    input, stores, expansion, mode, call_context,
                 )?;
                 let mut text = String::new();
                 for &token in stores.tokens(raw.token_list()) {
@@ -329,7 +329,7 @@ macro_rules! dispatch_match {
                 let font = scan_font_selector(
                     input,
                     stores, expansion,
-                    &mut expander,
+                    mode,
                     call_context,
                 )?;
                 crate::record_dependency!(expansion, crate::ReadDependency::Font {
@@ -369,10 +369,10 @@ macro_rules! dispatch_match {
                 | ExpandablePrimitive::SplitBotMarks),
             ) => {
                 let mark = page_mark_for_primitive(primitive);
-                let scanned = scan_int::scan_int_with_expander_and_context(
+                let scanned = scan_int::scan_int_with_mode_and_context(
                     input,
                     stores, expansion,
-                    &mut expander,
+                    mode,
                     call_context,
                 )?;
                 let class = if (0..=32_767).contains(&scanned.value()) {
@@ -420,13 +420,13 @@ macro_rules! dispatch_match {
                 let left = scan_condition_x_token(
                     input,
                     stores, expansion,
-                    &mut expander,
+                    mode,
                     call_context,
                 )?;
                 let right = scan_condition_x_token(
                     input,
                     stores, expansion,
-                    &mut expander,
+                    mode,
                     call_context,
                 )?;
                 complete_if_evaluation(
@@ -441,13 +441,13 @@ macro_rules! dispatch_match {
                 let left = scan_condition_x_token(
                     input,
                     stores, expansion,
-                    &mut expander,
+                    mode,
                     call_context,
                 )?;
                 let right = scan_condition_x_token(
                     input,
                     stores, expansion,
-                    &mut expander,
+                    mode,
                     call_context,
                 )?;
                 complete_if_evaluation(
@@ -488,23 +488,23 @@ macro_rules! dispatch_match {
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfNum) => {
                 let frame_token = begin_if_evaluation(input, call_context, ConditionMetadata::new(3, $invert));
-                let left = scan_int::scan_int_with_expander_and_context(
+                let left = scan_int::scan_int_with_mode_and_context(
                     input,
                     stores, expansion,
-                    &mut expander,
+                    mode,
                     call_context,
                 )?
                 .value();
-                let relation = scan_conditional_relation_with_expander_and_context(
+                let relation = scan_conditional_relation_with_mode_and_context(
                     input,
                     stores, expansion,
-                    &mut expander,
+                    mode,
                     call_context,
                 )?;
-                let right = scan_int::scan_int_with_expander_and_context(
+                let right = scan_int::scan_int_with_mode_and_context(
                     input,
                     stores, expansion,
-                    &mut expander,
+                    mode,
                     call_context,
                 )?
                 .value();
@@ -517,24 +517,24 @@ macro_rules! dispatch_match {
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfDim) => {
                 let frame_token = begin_if_evaluation(input, call_context, ConditionMetadata::new(4, $invert));
-                let left = scan_dimen::scan_dimen_with_expander_and_context(
+                let left = scan_dimen::scan_dimen_with_mode_and_context(
                     input,
                     stores, expansion,
-                    &mut expander,
+                    mode,
                     scan_dimen::ScanDimenOptions::STANDARD,
                     call_context,
                 )?
                 .value();
-                let relation = scan_conditional_relation_with_expander_and_context(
+                let relation = scan_conditional_relation_with_mode_and_context(
                     input,
                     stores, expansion,
-                    &mut expander,
+                    mode,
                     call_context,
                 )?;
-                let right = scan_dimen::scan_dimen_with_expander_and_context(
+                let right = scan_dimen::scan_dimen_with_mode_and_context(
                     input,
                     stores, expansion,
-                    &mut expander,
+                    mode,
                     scan_dimen::ScanDimenOptions::STANDARD,
                     call_context,
                 )?
@@ -548,10 +548,10 @@ macro_rules! dispatch_match {
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfOdd) => {
                 let frame_token = begin_if_evaluation(input, call_context, ConditionMetadata::new(5, $invert));
-                let value = scan_int::scan_int_with_expander_and_context(
+                let value = scan_int::scan_int_with_mode_and_context(
                     input,
                     stores, expansion,
-                    &mut expander,
+                    mode,
                     call_context,
                 )?
                 .value();
@@ -564,10 +564,10 @@ macro_rules! dispatch_match {
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfCase) => {
                 let frame_token = begin_ifcase_evaluation(input, call_context, ConditionMetadata::new(17, false));
-                let selected_case = scan_int::scan_int_with_expander_and_context(
+                let selected_case = scan_int::scan_int_with_mode_and_context(
                     input,
                     stores, expansion,
-                    &mut expander,
+                    mode,
                     call_context,
                 )?
                 .value();
@@ -622,10 +622,10 @@ macro_rules! dispatch_match {
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfVoid) => {
                 let frame_token = begin_if_evaluation(input, call_context, ConditionMetadata::new(10, $invert));
-                let index = scan_register_index_with_expander_and_context(
+                let index = scan_register_index_with_mode_and_context(
                     input,
                     stores, expansion,
-                    &mut expander,
+                    mode,
                     call_context,
                 )?;
                 crate::record_dependency!(expansion, crate::ReadDependency::Cell {
@@ -641,10 +641,10 @@ macro_rules! dispatch_match {
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfHBox) => {
                 let frame_token = begin_if_evaluation(input, call_context, ConditionMetadata::new(11, $invert));
-                let index = scan_register_index_with_expander_and_context(
+                let index = scan_register_index_with_mode_and_context(
                     input,
                     stores, expansion,
-                    &mut expander,
+                    mode,
                     call_context,
                 )?;
                 crate::record_dependency!(expansion, crate::ReadDependency::Cell {
@@ -660,10 +660,10 @@ macro_rules! dispatch_match {
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfVBox) => {
                 let frame_token = begin_if_evaluation(input, call_context, ConditionMetadata::new(12, $invert));
-                let index = scan_register_index_with_expander_and_context(
+                let index = scan_register_index_with_mode_and_context(
                     input,
                     stores, expansion,
-                    &mut expander,
+                    mode,
                     call_context,
                 )?;
                 crate::record_dependency!(expansion, crate::ReadDependency::Cell {
@@ -679,10 +679,10 @@ macro_rules! dispatch_match {
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfEof) => {
                 let frame_token = begin_if_evaluation(input, call_context, ConditionMetadata::new(14, $invert));
-                let stream = scan_stream_number_with_expander_and_context(
+                let stream = scan_stream_number_with_mode_and_context(
                     input,
                     stores, expansion,
-                    &mut expander,
+                    mode,
                     call_context,
                 )?;
                 crate::record_dependency!(expansion, crate::ReadDependency::InputStream(stream));
@@ -748,13 +748,13 @@ macro_rules! dispatch_match {
                 let font = scan_font_selector(
                     input,
                     stores, expansion,
-                    &mut expander,
+                    mode,
                     call_context,
                 )?;
-                let code = scan_int::scan_int_with_expander_and_context(
+                let code = scan_int::scan_int_with_mode_and_context(
                     input,
                     stores, expansion,
-                    &mut expander,
+                    mode,
                     call_context,
                 )?
                 .value();
@@ -827,6 +827,79 @@ macro_rules! dispatch_match {
     }};
 }
 
+type InputOpenOperation<S, St> = fn(
+    &mut InputStack<S>,
+    &mut St,
+    &mut ExpansionContext<'_, S>,
+    TracedTokenWord,
+) -> Result<Dispatch, ExpandError>;
+
+fn execute_input_primitive<S, St>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    expansion: &mut ExpansionContext<'_, S>,
+    context: TracedTokenWord,
+) -> Result<Dispatch, ExpandError>
+where
+    S: InputSource,
+    St: ExpansionState + InputOpenState,
+{
+    let name = scan_input_name(input, stores, expansion, context)?;
+    let transfer_endinput = input.take_current_source_end_after_current_line();
+    let source = expansion
+        .open_input(&mut stores.input_open_context(), &name)
+        .map_err(|message| ExpandError::InputOpen {
+            name: name.clone(),
+            message,
+            context,
+        })?;
+    input.push_source(source);
+    if transfer_endinput {
+        input.end_current_source_after_current_line();
+    }
+    Ok(Dispatch::Continue)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn dispatch_core<S, St>(
+    token: Token,
+    call_origin: OriginId,
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    expansion: &mut ExpansionContext<'_, S>,
+    meaning: Meaning,
+    mode: &mut dyn ExpansionMode<S, St>,
+    invert: bool,
+    input_open: Option<InputOpenOperation<S, St>>,
+) -> Result<Dispatch, ExpandError>
+where
+    S: InputSource,
+    St: ExpansionState,
+{
+    dispatch_match!(
+        token,
+        call_origin,
+        input,
+        stores,
+        expansion,
+        meaning,
+        invert,
+        mode,
+        {
+            let context = TracedTokenWord::pack(token, call_origin);
+            if let Some(open_input) = input_open {
+                open_input(input, stores, expansion, context)
+            } else {
+                Err(ExpandError::InputOpen {
+                    name: "\\input".to_owned(),
+                    message: "\\input requires input-open authority".to_owned(),
+                    context,
+                })
+            }
+        }
+    )
+}
+
 pub fn dispatch_with_context<S>(
     token: Token,
     call_origin: OriginId,
@@ -838,32 +911,16 @@ pub fn dispatch_with_context<S>(
 where
     S: InputSource,
 {
-    dispatch_match!(
+    dispatch_core(
         token,
         call_origin,
         input,
         stores,
         expansion,
         meaning,
+        &mut DriverExpansionMode,
         false,
-        DriverExpandNext,
-        {
-            let context = TracedTokenWord::pack(token, call_origin);
-            let name = scan_input_name(input, stores, expansion, context)?;
-            let transfer_endinput = input.take_current_source_end_after_current_line();
-            let source = expansion
-                .open_input(&mut stores.input_open_context(), &name)
-                .map_err(|message| ExpandError::InputOpen {
-                    name: name.clone(),
-                    message,
-                    context,
-                })?;
-            input.push_source(source);
-            if transfer_endinput {
-                input.end_current_source_after_current_line();
-            }
-            Ok(Dispatch::Continue)
-        }
+        Some(execute_input_primitive::<S, _>),
     )
 }
 
@@ -878,16 +935,16 @@ pub(crate) fn dispatch_with_context_inverted<S>(
 where
     S: InputSource,
 {
-    dispatch_match!(
+    dispatch_core(
         token,
         call_origin,
         input,
         stores,
         expansion,
         meaning,
+        &mut DriverExpansionMode,
         true,
-        DriverExpandNext,
-        { unreachable!("boolean conditionals cannot open input") }
+        None,
     )
 }
 
@@ -902,23 +959,16 @@ pub(crate) fn dispatch_without_input_open<S>(
 where
     S: InputSource,
 {
-    dispatch_match!(
+    dispatch_core(
         token,
         call_origin,
         input,
         stores,
         expansion,
         meaning,
+        &mut RestrictedExpansionMode,
         false,
-        NoInputExpandNext,
-        {
-            let context = TracedTokenWord::pack(token, call_origin);
-            Err(ExpandError::InputOpen {
-                name: "\\input".to_owned(),
-                message: "\\input requires input-open authority".to_owned(),
-                context,
-            })
-        }
+        None,
     )
 }
 
@@ -933,16 +983,16 @@ pub(crate) fn dispatch_without_input_open_inverted<S>(
 where
     S: InputSource,
 {
-    dispatch_match!(
+    dispatch_core(
         token,
         call_origin,
         input,
         stores,
         expansion,
         meaning,
+        &mut RestrictedExpansionMode,
         true,
-        NoInputExpandNext,
-        { unreachable!("boolean conditionals cannot open input") }
+        None,
     )
 }
 

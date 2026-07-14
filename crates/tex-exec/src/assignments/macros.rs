@@ -140,11 +140,11 @@ where
 {
     reject_macro_prefixes(prefixes)?;
     skip_optional_equals_x(input, stores, execution)?;
-    let value = scan_int::scan_int_with_expander_and_context(
+    let value = scan_int::scan_int_with_mode_and_context(
         input,
         stores,
         execution,
-        &mut DriverExpandNext,
+        &mut DriverExpansionMode,
         context,
     )
     .map_err(ExpandError::from)?

@@ -1044,8 +1044,9 @@ The type system is the write barrier's bodyguard. The rules:
   omits input-file reads, input-open context construction, and Env/register/
   code-table/group/snapshot/font-assignment setters. Only the top-level
   expansion/dispatch path carries the additional `InputOpenState` authority
-  needed to construct `InputOpenContext`; scanner recursion uses the narrow
-  `ExpandNext` capability instead of receiving input-open authority directly.
+  needed to construct `InputOpenContext`; scanner recursion uses the narrow,
+  erased `ExpansionMode` capability instead of receiving input-open authority
+  directly.
   The concrete expansion context holds an object-safe `InputResolver`. Only
   top-level `\input` dispatch invokes it, passing the separate `InputReadState`
   capability through `InputOpenContext`, which exposes only content-addressed

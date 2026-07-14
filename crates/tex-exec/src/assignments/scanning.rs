@@ -133,11 +133,11 @@ pub(super) fn scan_register_index_with_context<S>(
 where
     S: InputSource,
 {
-    let scanned = scan_int::scan_int_with_expander_and_context(
+    let scanned = scan_int::scan_int_with_mode_and_context(
         input,
         stores,
         execution,
-        &mut DriverExpandNext,
+        &mut DriverExpansionMode,
         context,
     )
     .map_err(ExpandError::from)?;
@@ -166,11 +166,11 @@ pub(crate) fn scan_i32<S>(
 where
     S: InputSource,
 {
-    let scanned = scan_int::scan_int_with_expander_and_context(
+    let scanned = scan_int::scan_int_with_mode_and_context(
         input,
         stores,
         execution,
-        &mut DriverExpandNext,
+        &mut DriverExpansionMode,
         context,
     )
     .map_err(ExpandError::from)?;
@@ -206,11 +206,11 @@ pub(crate) fn scan_scaled<S>(
 where
     S: InputSource,
 {
-    let scanned = scan_dimen::scan_dimen_with_expander_and_context(
+    let scanned = scan_dimen::scan_dimen_with_mode_and_context(
         input,
         stores,
         execution,
-        &mut DriverExpandNext,
+        &mut DriverExpansionMode,
         scan_dimen::ScanDimenOptions::STANDARD,
         context,
     )
@@ -229,11 +229,11 @@ pub(crate) fn scan_glue_id<S>(
 where
     S: InputSource,
 {
-    let scanned = scan_glue::scan_glue_with_expander_and_context(
+    let scanned = scan_glue::scan_glue_with_mode_and_context(
         input,
         stores,
         execution,
-        &mut DriverExpandNext,
+        &mut DriverExpansionMode,
         mu,
         context,
     )

@@ -16,8 +16,8 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, PrepareMagDiagnostic};
 
 use crate::{
-    ExpandError, ExpandNext, ExpansionContext, NoInputExpandNext, ReadBank, ReadDependency,
-    ReadFontField, scan_helpers, scan_int, semantic_token,
+    ExpandError, ExpansionContext, ExpansionMode, ReadBank, ReadDependency, ReadFontField,
+    RestrictedExpansionMode, scan_helpers, scan_int, semantic_token,
 };
 use scan_helpers::ExpandedKeywordMatch;
 
@@ -373,29 +373,28 @@ pub fn scan_dimen_with_options_and_context<S>(
 where
     S: InputSource,
 {
-    scan_dimen_with_expander_and_context(
+    scan_dimen_with_mode_and_context(
         input,
         stores,
         expansion,
-        &mut NoInputExpandNext,
+        &mut RestrictedExpansionMode,
         options,
         context,
     )
 }
 
 /// Scans a TeX `<dimen>` using a caller-supplied recursive expansion capability.
-pub fn scan_dimen_with_expander_and_context<S, St, E>(
+pub fn scan_dimen_with_mode_and_context<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
     options: ScanDimenOptions,
     context: TracedTokenWord,
 ) -> Result<ScannedDimen, ScanDimenError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
     // Physical, true, and recovery-unit paths all consult the prepared job
     // magnification. Recording the key once per dimension scan keeps the
@@ -407,7 +406,7 @@ where
             index: 0,
         }
     );
-    let (negative, token) = scan_signs(input, stores, expansion, expander)?;
+    let (negative, token) = scan_signs(input, stores, expansion, mode)?;
     let Some(token) = token else {
         return Ok(ScannedDimen::with_diagnostic(
             Scaled::from_raw(0),
@@ -416,26 +415,24 @@ where
         ));
     };
 
-    let scanned =
-        scan_unsigned_after_first_token(input, stores, expansion, expander, token, options)?;
-    consume_optional_space(input, stores, expansion, expander)?;
+    let scanned = scan_unsigned_after_first_token(input, stores, expansion, mode, token, options)?;
+    consume_optional_space(input, stores, expansion, mode)?;
     Ok(apply_sign(scanned, negative))
 }
 
-fn scan_signs<S, St, E>(
+fn scan_signs<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
 ) -> Result<(bool, Option<TracedTokenWord>), ScanDimenError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
     let mut negative = false;
     loop {
-        let Some(token) = next_x(input, stores, expansion, expander)? else {
+        let Some(token) = next_x(input, stores, expansion, mode)? else {
             return Ok((negative, None));
         };
         if is_space(token) {
@@ -452,33 +449,31 @@ where
     }
 }
 
-fn next_x<S, St, E>(
+fn next_x<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
 ) -> Result<Option<TracedTokenWord>, ScanDimenError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
-    Ok(expander.next_expanded_token(input, stores, expansion)?)
+    Ok(mode.next_expanded_token(input, stores, expansion)?)
 }
 
-pub(crate) fn scan_dim_expr<S, St, E>(
+pub(crate) fn scan_dim_expr<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
     context: TracedTokenWord,
 ) -> Result<ScannedDimen, ScanDimenError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
-    let (value, bad) = parse_dim_expr(input, stores, expansion, expander, false)?;
+    let (value, bad) = parse_dim_expr(input, stores, expansion, mode, false)?;
     if bad || value.abs() > i64::from(Scaled::MAX_DIMEN.raw()) {
         Ok(ScannedDimen::with_diagnostic(
             Scaled::from_raw(0),
@@ -490,21 +485,20 @@ where
     }
 }
 
-fn parse_dim_expr<S, St, E>(
+fn parse_dim_expr<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
     parenthesized: bool,
 ) -> Result<(i64, bool), ScanDimenError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
-    let (mut value, mut bad) = parse_dim_term(input, stores, expansion, expander)?;
+    let (mut value, mut bad) = parse_dim_term(input, stores, expansion, mode)?;
     loop {
-        let Some(token) = expr_next(input, stores, expansion, expander)? else {
+        let Some(token) = expr_next(input, stores, expansion, mode)? else {
             break;
         };
         let subtract = if expr_is(token, '+') {
@@ -521,7 +515,7 @@ where
             }
             break;
         };
-        let (rhs, rhs_bad) = parse_dim_term(input, stores, expansion, expander)?;
+        let (rhs, rhs_bad) = parse_dim_term(input, stores, expansion, mode)?;
         bad |= rhs_bad;
         let result = if subtract {
             value.checked_sub(rhs)
@@ -539,29 +533,28 @@ where
     Ok((value, bad))
 }
 
-fn parse_dim_term<S, St, E>(
+fn parse_dim_term<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
 ) -> Result<(i64, bool), ScanDimenError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
-    let (mut value, mut bad) = parse_dim_factor(input, stores, expansion, expander)?;
+    let (mut value, mut bad) = parse_dim_factor(input, stores, expansion, mode)?;
     loop {
-        let Some(operator) = expr_next(input, stores, expansion, expander)? else {
+        let Some(operator) = expr_next(input, stores, expansion, mode)? else {
             break;
         };
         if expr_is(operator, '*') {
-            let (numerator, numerator_bad) = parse_expr_int(input, stores, expansion, expander)?;
+            let (numerator, numerator_bad) = parse_expr_int(input, stores, expansion, mode)?;
             bad |= numerator_bad;
-            let following = expr_next(input, stores, expansion, expander)?;
+            let following = expr_next(input, stores, expansion, mode)?;
             if following.is_some_and(|token| expr_is(token, '/')) {
                 let (denominator, denominator_bad) =
-                    parse_expr_int(input, stores, expansion, expander)?;
+                    parse_expr_int(input, stores, expansion, mode)?;
                 bad |= denominator_bad;
                 match scan_int::rounded_fraction(value, numerator, denominator) {
                     Some(next) if next.abs() <= i64::from(Scaled::MAX_DIMEN.raw()) => value = next,
@@ -583,8 +576,7 @@ where
                 }
             }
         } else if expr_is(operator, '/') {
-            let (denominator, denominator_bad) =
-                parse_expr_int(input, stores, expansion, expander)?;
+            let (denominator, denominator_bad) = parse_expr_int(input, stores, expansion, mode)?;
             bad |= denominator_bad;
             match scan_int::rounded_quotient(value, denominator) {
                 Some(next) => value = next,
@@ -601,29 +593,28 @@ where
     Ok((value, bad))
 }
 
-fn parse_dim_factor<S, St, E>(
+fn parse_dim_factor<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
 ) -> Result<(i64, bool), ScanDimenError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
-    let Some(token) = expr_next(input, stores, expansion, expander)? else {
+    let Some(token) = expr_next(input, stores, expansion, mode)? else {
         return Ok((0, true));
     };
     if expr_is(token, '(') {
-        return parse_dim_expr(input, stores, expansion, expander, true);
+        return parse_dim_expr(input, stores, expansion, mode, true);
     }
     unread_token(input, stores, token);
-    let scanned = scan_dimen_with_expander_and_context(
+    let scanned = scan_dimen_with_mode_and_context(
         input,
         stores,
         expansion,
-        expander,
+        mode,
         ScanDimenOptions::STANDARD,
         token,
     )?;
@@ -633,44 +624,41 @@ where
     ))
 }
 
-fn parse_expr_int<S, St, E>(
+fn parse_expr_int<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
 ) -> Result<(i64, bool), ScanDimenError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
-    let Some(token) = expr_next(input, stores, expansion, expander)? else {
+    let Some(token) = expr_next(input, stores, expansion, mode)? else {
         return Ok((0, true));
     };
     if expr_is(token, '(') {
         return Ok(scan_int::parse_num_expression(
-            input, stores, expansion, expander, true,
+            input, stores, expansion, mode, true,
         )?);
     }
     unread_token(input, stores, token);
-    let scanned =
-        scan_int::scan_int_with_expander_and_context(input, stores, expansion, expander, token)?;
+    let scanned = scan_int::scan_int_with_mode_and_context(input, stores, expansion, mode, token)?;
     Ok((i64::from(scanned.value()), scanned.diagnostic().is_some()))
 }
 
-fn expr_next<S, St, E>(
+fn expr_next<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
 ) -> Result<Option<TracedTokenWord>, ScanDimenError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
     loop {
-        let token = next_x(input, stores, expansion, expander)?;
+        let token = next_x(input, stores, expansion, mode)?;
         if token.is_none_or(|token| !is_space(token)) {
             return Ok(token);
         }
@@ -681,18 +669,17 @@ fn expr_is(token: TracedTokenWord, wanted: char) -> bool {
     matches!(semantic_token(token), Token::Char { ch, cat: Catcode::Other } if ch == wanted)
 }
 
-fn scan_unsigned_after_first_token<S, St, E>(
+fn scan_unsigned_after_first_token<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
     token: TracedTokenWord,
     options: ScanDimenOptions,
 ) -> Result<ScannedDimen, ScanDimenError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
     match semantic_token(token) {
         Token::Char {
@@ -703,21 +690,21 @@ where
                 input,
                 stores,
                 expansion,
-                expander,
+                mode,
                 digit_value(ch).expect("digit"),
             )?;
-            scan_decimal_tail(input, stores, expansion, expander, integer, options)
+            scan_decimal_tail(input, stores, expansion, mode, integer, options)
         }
         Token::Char {
             ch: '.' | ',',
             cat: Catcode::Other,
-        } => scan_fraction_and_unit(input, stores, expansion, expander, 0, options),
+        } => scan_fraction_and_unit(input, stores, expansion, mode, 0, options),
         Token::Char {
             ch: '\'' | '"' | '`',
             cat: Catcode::Other,
-        } => scan_integer_constant_with_unit(input, stores, expansion, expander, token, options),
+        } => scan_integer_constant_with_unit(input, stores, expansion, mode, token, options),
         Token::Cs(symbol) => scan_internal_or_numeric_dimension(
-            input, stores, expansion, expander, token, symbol, options,
+            input, stores, expansion, mode, token, symbol, options,
         ),
         _ => {
             unread_token(input, stores, token);
@@ -728,21 +715,20 @@ where
     }
 }
 
-fn scan_decimal_integer<S, St, E>(
+fn scan_decimal_integer<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
     first_digit: i32,
 ) -> Result<i32, ScanDimenError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
     let mut value = first_digit;
     loop {
-        let Some(token) = next_x(input, stores, expansion, expander)? else {
+        let Some(token) = next_x(input, stores, expansion, mode)? else {
             break;
         };
         let Some(digit) = decimal_digit(token) else {
@@ -757,30 +743,29 @@ where
     Ok(value)
 }
 
-fn scan_decimal_tail<S, St, E>(
+fn scan_decimal_tail<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
     integer: i32,
     options: ScanDimenOptions,
 ) -> Result<ScannedDimen, ScanDimenError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
-    let Some(token) = next_x(input, stores, expansion, expander)? else {
+    let Some(token) = next_x(input, stores, expansion, mode)? else {
         let origin = input.current_input_origin(stores);
         return coerce_or_recover_missing_unit(integer, options, stores, origin);
     };
 
     if is_decimal_point(token) {
-        return scan_fraction_and_unit(input, stores, expansion, expander, integer, options);
+        return scan_fraction_and_unit(input, stores, expansion, mode, integer, options);
     }
 
     unread_token(input, stores, token);
-    match scan_unit(input, stores, expansion, expander, options)? {
+    match scan_unit(input, stores, expansion, mode, options)? {
         UnitScan::Scanned(unit) => convert_scanned_unit(stores, integer, 0, unit),
         UnitScan::Rejected(_) if options.coerce_integer_to_sp => {
             convert_decimal(integer, 0, PhysicalUnit::Sp, false, stores.mag())
@@ -789,21 +774,20 @@ where
     }
 }
 
-fn scan_fraction_and_unit<S, St, E>(
+fn scan_fraction_and_unit<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
     integer: i32,
     options: ScanDimenOptions,
 ) -> Result<ScannedDimen, ScanDimenError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
-    let fraction = scan_fraction(input, stores, expansion, expander)?;
-    match scan_unit(input, stores, expansion, expander, options)? {
+    let fraction = scan_fraction(input, stores, expansion, mode)?;
+    match scan_unit(input, stores, expansion, mode, options)? {
         UnitScan::Scanned(unit) => convert_scanned_unit(stores, integer, fraction, unit),
         UnitScan::Rejected(origin) => {
             recover_missing_unit(integer, fraction, options, stores, origin)
@@ -811,20 +795,19 @@ where
     }
 }
 
-fn scan_fraction<S, St, E>(
+fn scan_fraction<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
 ) -> Result<i32, ScanDimenError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
     let mut digits = Vec::new();
     loop {
-        let Some(token) = next_x(input, stores, expansion, expander)? else {
+        let Some(token) = next_x(input, stores, expansion, mode)? else {
             break;
         };
         let Some(digit) = decimal_digit(token) else {
@@ -839,11 +822,11 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn scan_internal_or_numeric_dimension<S, St, E>(
+fn scan_internal_or_numeric_dimension<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
     token: TracedTokenWord,
     symbol: Symbol,
     options: ScanDimenOptions,
@@ -851,20 +834,19 @@ fn scan_internal_or_numeric_dimension<S, St, E>(
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
     let meaning = stores.meaning(symbol);
     expansion.record_meaning(symbol, meaning);
     crate::values::record_meaning_value_dependency(expansion, meaning);
     match meaning {
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::DimExpr) => {
-            return scan_dim_expr(input, stores, expansion, expander, token);
+            return scan_dim_expr(input, stores, expansion, mode, token);
         }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::GlueStretch | UnexpandablePrimitive::GlueShrink),
         ) => {
-            let scanned = crate::scan_glue::scan_glue_with_expander_and_context(
-                input, stores, expansion, expander, false, token,
+            let scanned = crate::scan_glue::scan_glue_with_mode_and_context(
+                input, stores, expansion, mode, false, token,
             )
             .map_err(|error| ScanDimenError::Expand(error.into()))?;
             let spec = stores.glue(scanned.id());
@@ -877,26 +859,26 @@ where
             ));
         }
         Meaning::DimenRegister(index) => {
-            consume_optional_space(input, stores, expansion, expander)?;
+            consume_optional_space(input, stores, expansion, mode)?;
             return Ok(ScannedDimen::new(stores.dimen(index)));
         }
         Meaning::DimenParam(index) => {
-            consume_optional_space(input, stores, expansion, expander)?;
+            consume_optional_space(input, stores, expansion, mode)?;
             return Ok(ScannedDimen::new(
                 stores.dimen_param(tex_state::env::banks::DimenParam::new(index)),
             ));
         }
         Meaning::SkipRegister(index) => {
-            consume_optional_space(input, stores, expansion, expander)?;
+            consume_optional_space(input, stores, expansion, mode)?;
             return Ok(ScannedDimen::new(stores.glue(stores.skip(index)).width));
         }
         Meaning::GlueParam(index) => {
-            consume_optional_space(input, stores, expansion, expander)?;
+            consume_optional_space(input, stores, expansion, mode)?;
             let glue = stores.glue_param(GlueParam::new(index));
             return Ok(ScannedDimen::new(stores.glue(glue).width));
         }
         Meaning::MuskipRegister(index) => {
-            consume_optional_space(input, stores, expansion, expander)?;
+            consume_optional_space(input, stores, expansion, mode)?;
             let width = stores.glue(stores.muskip(index)).width;
             return Ok(if options.require_mu_unit {
                 ScannedDimen::new(width)
@@ -909,7 +891,7 @@ where
             });
         }
         Meaning::MuGlueParam(index) => {
-            consume_optional_space(input, stores, expansion, expander)?;
+            consume_optional_space(input, stores, expansion, mode)?;
             let glue = stores.glue_param(GlueParam::new(index));
             let width = stores.glue(glue).width;
             return Ok(if options.require_mu_unit {
@@ -923,11 +905,11 @@ where
             });
         }
         Meaning::PageDimension(dimension) => {
-            consume_optional_space(input, stores, expansion, expander)?;
+            consume_optional_space(input, stores, expansion, mode)?;
             return Ok(ScannedDimen::new(stores.page_dimension(dimension)));
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
-            let index = scan_register_index(input, stores, expansion, expander, token)?;
+            let index = scan_register_index(input, stores, expansion, mode, token)?;
             crate::record_dependency!(
                 expansion,
                 ReadDependency::Cell {
@@ -935,11 +917,11 @@ where
                     index: u32::from(index),
                 }
             );
-            consume_optional_space(input, stores, expansion, expander)?;
+            consume_optional_space(input, stores, expansion, mode)?;
             return Ok(ScannedDimen::new(stores.dimen(index)));
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) => {
-            let index = scan_register_index(input, stores, expansion, expander, token)?;
+            let index = scan_register_index(input, stores, expansion, mode, token)?;
             crate::record_dependency!(
                 expansion,
                 ReadDependency::Cell {
@@ -947,11 +929,11 @@ where
                     index: u32::from(index),
                 }
             );
-            consume_optional_space(input, stores, expansion, expander)?;
+            consume_optional_space(input, stores, expansion, mode)?;
             return Ok(ScannedDimen::new(stores.glue(stores.skip(index)).width));
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
-            let index = scan_register_index(input, stores, expansion, expander, token)?;
+            let index = scan_register_index(input, stores, expansion, mode, token)?;
             crate::record_dependency!(
                 expansion,
                 ReadDependency::Cell {
@@ -959,7 +941,7 @@ where
                     index: u32::from(index),
                 }
             );
-            consume_optional_space(input, stores, expansion, expander)?;
+            consume_optional_space(input, stores, expansion, mode)?;
             let width = stores.glue(stores.muskip(index)).width;
             return Ok(if options.require_mu_unit {
                 ScannedDimen::new(width)
@@ -976,8 +958,8 @@ where
             | UnexpandablePrimitive::Ht
             | UnexpandablePrimitive::Dp),
         ) => {
-            let index = scan_register_index(input, stores, expansion, expander, token)?;
-            consume_optional_space(input, stores, expansion, expander)?;
+            let index = scan_register_index(input, stores, expansion, mode, token)?;
+            consume_optional_space(input, stores, expansion, mode)?;
             let dimension = match primitive {
                 UnexpandablePrimitive::Wd => BoxDimension::Width,
                 UnexpandablePrimitive::Ht => BoxDimension::Height,
@@ -991,15 +973,15 @@ where
             ));
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PrevDepth) => {
-            consume_optional_space(input, stores, expansion, expander)?;
+            consume_optional_space(input, stores, expansion, mode)?;
             return Ok(ScannedDimen::new(expansion.engine.prev_depth));
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastKern) => {
-            consume_optional_space(input, stores, expansion, expander)?;
+            consume_optional_space(input, stores, expansion, mode)?;
             return Ok(ScannedDimen::new(expansion.engine.last_kern));
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastSkip) => {
-            consume_optional_space(input, stores, expansion, expander)?;
+            consume_optional_space(input, stores, expansion, mode)?;
             return Ok(ScannedDimen::new(expansion.engine.last_skip.width));
         }
         Meaning::UnexpandablePrimitive(
@@ -1009,9 +991,9 @@ where
             | UnexpandablePrimitive::FontCharIc),
         ) => {
             let value = crate::values::scan_font_char_dimension(
-                input, stores, expansion, expander, token, primitive,
+                input, stores, expansion, mode, token, primitive,
             )?;
-            consume_optional_space(input, stores, expansion, expander)?;
+            consume_optional_space(input, stores, expansion, mode)?;
             return Ok(ScannedDimen::new(value));
         }
         Meaning::UnexpandablePrimitive(
@@ -1020,7 +1002,7 @@ where
             | UnexpandablePrimitive::ParShapeDimen),
         ) => {
             let value = crate::values::scan_parshape_dimension(
-                input, stores, expansion, expander, token, primitive,
+                input, stores, expansion, mode, token, primitive,
             )?;
             return Ok(ScannedDimen::new(value));
         }
@@ -1028,14 +1010,13 @@ where
     }
 
     if stores.resolve(symbol) == "dimen" {
-        let index = scan_register_index(input, stores, expansion, expander, token)?;
-        consume_optional_space(input, stores, expansion, expander)?;
+        let index = scan_register_index(input, stores, expansion, mode, token)?;
+        consume_optional_space(input, stores, expansion, mode)?;
         return Ok(ScannedDimen::new(stores.dimen(index)));
     }
 
     unread_token(input, stores, token);
-    let scanned =
-        scan_int::scan_int_with_expander_and_context(input, stores, expansion, expander, token)?;
+    let scanned = scan_int::scan_int_with_mode_and_context(input, stores, expansion, mode, token)?;
     if scanned.diagnostic() == Some(scan_int::IntegerDiagnostic::NumberTooBig) {
         return Ok(ScannedDimen::with_diagnostic(
             Scaled::MAX_DIMEN,
@@ -1045,7 +1026,7 @@ where
     }
 
     let integer = scanned.value();
-    let unit = match scan_unit(input, stores, expansion, expander, options)? {
+    let unit = match scan_unit(input, stores, expansion, mode, options)? {
         UnitScan::Scanned(unit) => unit,
         UnitScan::Rejected(_) if options.coerce_integer_to_sp => {
             return convert_decimal(integer, 0, PhysicalUnit::Sp, false, stores.mag()).map(
@@ -1065,22 +1046,20 @@ where
     })
 }
 
-fn scan_integer_constant_with_unit<S, St, E>(
+fn scan_integer_constant_with_unit<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
     token: TracedTokenWord,
     options: ScanDimenOptions,
 ) -> Result<ScannedDimen, ScanDimenError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
     unread_token(input, stores, token);
-    let scanned =
-        scan_int::scan_int_with_expander_and_context(input, stores, expansion, expander, token)?;
+    let scanned = scan_int::scan_int_with_mode_and_context(input, stores, expansion, mode, token)?;
     if scanned.diagnostic() == Some(scan_int::IntegerDiagnostic::NumberTooBig) {
         return Ok(ScannedDimen::with_diagnostic(
             Scaled::MAX_DIMEN,
@@ -1088,7 +1067,7 @@ where
             scanned.diagnostic_origin().unwrap_or(token.origin()),
         ));
     }
-    let unit = match scan_unit(input, stores, expansion, expander, options)? {
+    let unit = match scan_unit(input, stores, expansion, mode, options)? {
         UnitScan::Scanned(unit) => unit,
         UnitScan::Rejected(_) if options.coerce_integer_to_sp => {
             return convert_decimal(scanned.value(), 0, PhysicalUnit::Sp, false, stores.mag()).map(
@@ -1110,20 +1089,19 @@ where
     })
 }
 
-fn scan_register_index<S, St, E>(
+fn scan_register_index<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
     context: TracedTokenWord,
 ) -> Result<u16, ScanDimenError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
     let scanned =
-        scan_int::scan_int_with_expander_and_context(input, stores, expansion, expander, context)?;
+        scan_int::scan_int_with_mode_and_context(input, stores, expansion, mode, context)?;
     let value = scanned.value();
     let maximum = crate::scan_helpers::maximum_register_index(stores);
     if !(0..=i32::from(maximum)).contains(&value) {
@@ -1133,20 +1111,19 @@ where
     Ok(value as u16)
 }
 
-fn scan_unit<S, St, E>(
+fn scan_unit<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
     options: ScanDimenOptions,
 ) -> Result<UnitScan, ScanDimenError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
-    skip_spaces(input, stores, expansion, expander)?;
-    let first = match next_x(input, stores, expansion, expander)? {
+    skip_spaces(input, stores, expansion, mode)?;
+    let first = match next_x(input, stores, expansion, mode)? {
         Some(token) => token,
         None => return Ok(UnitScan::Rejected(input.current_input_origin(stores))),
     };
@@ -1166,11 +1143,11 @@ where
             }
             Meaning::PageDimension(dimension) => Some(stores.page_dimension(dimension)),
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
-                let index = scan_register_index(input, stores, expansion, expander, first)?;
+                let index = scan_register_index(input, stores, expansion, mode, first)?;
                 Some(stores.dimen(index))
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) => {
-                let index = scan_register_index(input, stores, expansion, expander, first)?;
+                let index = scan_register_index(input, stores, expansion, mode, first)?;
                 Some(stores.glue(stores.skip(index)).width)
             }
             Meaning::MuskipRegister(index) => Some(stores.glue(stores.muskip(index)).width),
@@ -1178,7 +1155,7 @@ where
                 Some(stores.glue(stores.glue_param(GlueParam::new(index))).width)
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
-                let index = scan_register_index(input, stores, expansion, expander, first)?;
+                let index = scan_register_index(input, stores, expansion, mode, first)?;
                 Some(stores.glue(stores.muskip(index)).width)
             }
             Meaning::UnexpandablePrimitive(
@@ -1186,7 +1163,7 @@ where
                 | UnexpandablePrimitive::Ht
                 | UnexpandablePrimitive::Dp),
             ) => {
-                let index = scan_register_index(input, stores, expansion, expander, first)?;
+                let index = scan_register_index(input, stores, expansion, mode, first)?;
                 let dimension = match primitive {
                     UnexpandablePrimitive::Wd => BoxDimension::Width,
                     UnexpandablePrimitive::Ht => BoxDimension::Height,
@@ -1215,7 +1192,7 @@ where
                 | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count)
         ) {
             let integer =
-                scan_int::scan_internal_integer(input, stores, expansion, expander, first, symbol)?;
+                scan_int::scan_internal_integer(input, stores, expansion, mode, first, symbol)?;
             return Ok(UnitScan::Scanned(ScannedUnit::Internal(Scaled::from_raw(
                 integer.value(),
             ))));
@@ -1223,10 +1200,10 @@ where
     }
 
     if options.allow_infinite_units {
-        match keyword_matches(input, stores, expansion, expander, first, "fil")? {
+        match keyword_matches(input, stores, expansion, mode, first, "fil")? {
             ExpandedKeywordMatch::Matched => {
                 let mut order = Order::Fil;
-                while keyword(input, stores, expansion, expander, "l")? {
+                while keyword(input, stores, expansion, mode, "l")? {
                     if order != Order::Filll {
                         order = match order {
                             Order::Normal => Order::Fil,
@@ -1246,7 +1223,7 @@ where
     }
 
     if options.require_mu_unit {
-        match keyword_matches(input, stores, expansion, expander, first, "mu")? {
+        match keyword_matches(input, stores, expansion, mode, first, "mu")? {
             ExpandedKeywordMatch::Matched => {
                 return Ok(UnitScan::Scanned(physical_unit(PhysicalUnit::Pt)));
             }
@@ -1259,13 +1236,13 @@ where
         return Ok(UnitScan::Rejected(first.origin()));
     }
 
-    match keyword_matches(input, stores, expansion, expander, first, "true")? {
+    match keyword_matches(input, stores, expansion, mode, first, "true")? {
         ExpandedKeywordMatch::Matched => {
-            skip_spaces(input, stores, expansion, expander)?;
-            let Some(token) = next_x(input, stores, expansion, expander)? else {
+            skip_spaces(input, stores, expansion, mode)?;
+            let Some(token) = next_x(input, stores, expansion, mode)? else {
                 return Ok(UnitScan::Rejected(input.current_input_origin(stores)));
             };
-            return scan_unit_keyword(input, stores, expansion, expander, token, true);
+            return scan_unit_keyword(input, stores, expansion, mode, token, true);
         }
         ExpandedKeywordMatch::PartialMismatch => {
             return Ok(UnitScan::Rejected(first.origin()));
@@ -1273,23 +1250,22 @@ where
         ExpandedKeywordMatch::FirstTokenMismatch => {}
     }
 
-    scan_unit_keyword(input, stores, expansion, expander, first, false)
+    scan_unit_keyword(input, stores, expansion, mode, first, false)
 }
 
-fn scan_unit_keyword<S, St, E>(
+fn scan_unit_keyword<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
     first: TracedTokenWord,
     true_unit: bool,
 ) -> Result<UnitScan, ScanDimenError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
-    let Some(second) = next_x(input, stores, expansion, expander)? else {
+    let Some(second) = next_x(input, stores, expansion, mode)? else {
         unread_token(input, stores, first);
         return Ok(UnitScan::Rejected(first.origin()));
     };
@@ -1353,44 +1329,42 @@ where
     }
 }
 
-fn keyword_matches<S, St, E>(
+fn keyword_matches<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
     first: TracedTokenWord,
     keyword: &str,
 ) -> Result<ExpandedKeywordMatch, ScanDimenError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
     Ok(
-        scan_helpers::scan_keyword_after_first_with_expander_and_context(
-            input, stores, expansion, expander, first, keyword,
+        scan_helpers::scan_keyword_after_first_with_mode_and_context(
+            input, stores, expansion, mode, first, keyword,
         )?,
     )
 }
 
-fn keyword<S, St, E>(
+fn keyword<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
     keyword: &str,
 ) -> Result<bool, ScanDimenError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
-    skip_spaces(input, stores, expansion, expander)?;
-    let Some(first) = next_x(input, stores, expansion, expander)? else {
+    skip_spaces(input, stores, expansion, mode)?;
+    let Some(first) = next_x(input, stores, expansion, mode)? else {
         return Ok(false);
     };
-    match scan_helpers::scan_keyword_after_first_with_expander_and_context(
-        input, stores, expansion, expander, first, keyword,
+    match scan_helpers::scan_keyword_after_first_with_mode_and_context(
+        input, stores, expansion, mode, first, keyword,
     )? {
         ExpandedKeywordMatch::Matched => Ok(true),
         ExpandedKeywordMatch::FirstTokenMismatch => {
@@ -1613,18 +1587,17 @@ fn apply_sign(scanned: ScannedDimen, negative: bool) -> ScannedDimen {
     }
 }
 
-fn consume_optional_space<S, St, E>(
+fn consume_optional_space<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
 ) -> Result<(), ScanDimenError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
-    let Some(token) = next_x(input, stores, expansion, expander)? else {
+    let Some(token) = next_x(input, stores, expansion, mode)? else {
         return Ok(());
     };
     if !is_space(token) {
@@ -1633,19 +1606,18 @@ where
     Ok(())
 }
 
-fn skip_spaces<S, St, E>(
+fn skip_spaces<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
 ) -> Result<(), ScanDimenError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
     loop {
-        let Some(token) = next_x(input, stores, expansion, expander)? else {
+        let Some(token) = next_x(input, stores, expansion, mode)? else {
             return Ok(());
         };
         if !is_space(token) {

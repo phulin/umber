@@ -9,8 +9,9 @@ use tex_state::provenance::InsertedOriginKind;
 use tex_state::token::{OriginId, Token, TracedTokenWord};
 
 use crate::{
-    Dispatch, ExpandError, ExpandNext, ExpandableOpcode, ExpansionContext, NoInputExpandNext,
-    expandable_symbol, push_inserted_token, scan_helpers, scan_int, semantic_token,
+    Dispatch, ExpandError, ExpandableOpcode, ExpansionContext, ExpansionMode,
+    RestrictedExpansionMode, expandable_symbol, push_inserted_token, scan_helpers, scan_int,
+    semantic_token,
 };
 
 #[derive(Clone, Copy)]
@@ -543,24 +544,23 @@ fn skipped_conditional_control<S>(
     }
 }
 
-pub(crate) fn scan_condition_x_token<S, St, E>(
+pub(crate) fn scan_condition_x_token<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
     context: TracedTokenWord,
 ) -> Result<Token, ExpandError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
-    let token = expander
-        .next_expanded_token(input, stores, expansion)?
-        .ok_or(ExpandError::MissingTokenAfterPrimitive {
+    let token = mode.next_expanded_token(input, stores, expansion)?.ok_or(
+        ExpandError::MissingTokenAfterPrimitive {
             opcode: ExpandableOpcode::If,
             context,
-        })?;
+        },
+    )?;
     Ok(semantic_token(token))
 }
 
@@ -607,30 +607,28 @@ pub(crate) fn scan_conditional_relation<S>(
 where
     S: InputSource,
 {
-    scan_conditional_relation_with_expander_and_context(
+    scan_conditional_relation_with_mode_and_context(
         input,
         stores,
         expansion,
-        &mut NoInputExpandNext,
+        &mut RestrictedExpansionMode,
         context,
     )
 }
 
-pub(crate) fn scan_conditional_relation_with_expander_and_context<S, St, E>(
+pub(crate) fn scan_conditional_relation_with_mode_and_context<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
     context: TracedTokenWord,
 ) -> Result<ConditionalRelation, ExpandError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
-    let Some(token) = scan_helpers::next_non_space_x_token_with_expander_and_context(
-        input, stores, expansion, expander,
-    )?
+    let Some(token) =
+        scan_helpers::next_non_space_x_token_with_mode_and_context(input, stores, expansion, mode)?
     else {
         return Err(ExpandError::MissingTokenAfterPrimitive {
             opcode: ExpandableOpcode::If,
@@ -697,30 +695,28 @@ pub(crate) fn scan_stream_number<S>(
 where
     S: InputSource,
 {
-    scan_stream_number_with_expander_and_context(
+    scan_stream_number_with_mode_and_context(
         input,
         stores,
         expansion,
-        &mut NoInputExpandNext,
+        &mut RestrictedExpansionMode,
         context,
     )
 }
 
-pub(crate) fn scan_stream_number_with_expander_and_context<S, St, E>(
+pub(crate) fn scan_stream_number_with_mode_and_context<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
     context: TracedTokenWord,
 ) -> Result<u8, ExpandError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
     let value =
-        scan_int::scan_int_with_expander_and_context(input, stores, expansion, expander, context)?
-            .value();
+        scan_int::scan_int_with_mode_and_context(input, stores, expansion, mode, context)?.value();
     Ok(value.clamp(0, 15) as u8)
 }
 

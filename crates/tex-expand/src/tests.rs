@@ -237,11 +237,11 @@ fn invalid_conditional_relation_assumes_equal_and_replays_offending_token() {
     let mut input = InputStack::new(MemoryInput::new("!"));
     let ifnum = stores.intern("ifnum");
     let context = TracedTokenWord::pack(Token::Cs(ifnum.symbol()), OriginId::UNKNOWN);
-    let relation = crate::conditionals::scan_conditional_relation_with_expander_and_context(
+    let relation = crate::conditionals::scan_conditional_relation_with_mode_and_context(
         &mut input,
         &mut stores,
         &mut ExpansionContext::new("texput"),
-        &mut crate::NoInputExpandNext,
+        &mut crate::RestrictedExpansionMode,
         context,
     )
     .expect("relation scanner should insert equality");

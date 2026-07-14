@@ -9,17 +9,16 @@ use crate::{
     get_x_token_without_input_open, push_inserted_token, scan_helpers,
 };
 
-pub(crate) fn expand_after<S, St, E>(
+pub(crate) fn expand_after<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn crate::ExpansionMode<S, St>,
     context: TracedTokenWord,
 ) -> Result<(), ExpandError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: crate::ExpandNext<S, St>,
 {
     let Some(saved) = crate::get_token(input, stores)? else {
         return Err(ExpandError::MissingTokenAfterPrimitive {
@@ -33,7 +32,7 @@ where
             context,
         });
     };
-    expander.dispatch_raw_token_after(saved, target, input, stores, expansion)
+    mode.dispatch_raw_token_after(saved, target, input, stores, expansion)
 }
 
 pub(crate) fn scan_csname<S>(

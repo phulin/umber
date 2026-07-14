@@ -4,7 +4,7 @@ use tex_expand::scan::{
     scan_general_text_expanded_with_driver, scan_toks, scan_toks_expanded_with_driver,
 };
 use tex_expand::{
-    DriverExpandNext, ExpandError, get_x_token_with_context, scan_dimen, scan_glue, scan_int,
+    DriverExpansionMode, ExpandError, get_x_token_with_context, scan_dimen, scan_glue, scan_int,
     scan_optional_keyword_with_context,
 };
 use tex_lex::{InputSource, InputStack, LexError, TokenListReplayKind};

@@ -1,4 +1,4 @@
-use tex_expand::{DriverExpandNext, ExpandError, get_x_token_with_context, scan_dimen};
+use tex_expand::{DriverExpansionMode, ExpandError, get_x_token_with_context, scan_dimen};
 use tex_lex::{InputSource, InputStack};
 use tex_state::math::{
     FractionThickness, LimitType, MathChoice, MathField, MathFraction, MathNoad, NoadClass,
@@ -668,11 +668,11 @@ pub(super) fn scan_mu_dimen<S>(
 where
     S: InputSource,
 {
-    let scanned = scan_dimen::scan_dimen_with_expander_and_context(
+    let scanned = scan_dimen::scan_dimen_with_mode_and_context(
         input,
         stores,
         execution,
-        &mut DriverExpandNext,
+        &mut DriverExpansionMode,
         scan_dimen::ScanDimenOptions::STANDARD.requiring_mu_unit(),
         context,
     )

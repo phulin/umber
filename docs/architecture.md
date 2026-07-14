@@ -436,13 +436,18 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   cannot construct input-read authority; the top-level expansion/dispatch path
   additionally carries `InputOpenState` only so `\input` can create an
   `InputOpenContext`. Scanner and helper recursion does not receive that
-  authority directly. Instead recursive traced expanded-token reads go through the
-  narrow `ExpandNext` capability; the top-level driver supplies a
-  `DriverExpandNext` implementation that can re-enter dispatch with `\input`
-  authority, while ordinary helper-only paths use a no-input implementation.
+  authority directly. Instead recursive traced expanded-token reads go through
+  an erased `ExpansionMode` capability; the top-level driver supplies
+  `DriverExpansionMode`, which can re-enter dispatch with `\input` authority,
+  while ordinary helper-only paths use `RestrictedExpansionMode`. The mode is
+  dynamically selected once at scanner boundaries, so it does not specialize
+  the integer, dimension, glue, conditional, and value-scanner pipelines.
+  Both modes enter one dispatch core; ordinary values select inversion and the
+  optional localized `\input` operation instead of compiling four dispatch
+  bodies.
   Dimension, glue, condition-token, register-index, and `\the` operand scans
   therefore expose both no-input helper entry points and explicit
-  expander/driver-aware entry points for production callers that already own
+  mode-aware entry points for production callers that already own
   input-read authority.
   File reads for `\input` live behind the separate `InputReadState`
   capability; the concrete `ExpansionContext` holds an object-safe
@@ -562,8 +567,8 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   factoring, and the implementation follows it behaviorally: expansion
   routines receive `ExpansionState` for reads and for sanctioned immutable
   content/interner operations only; recursive expanded-token reads from
-  scanners are mediated by `ExpandNext`, so scanner signatures never expose
-  file-open authority. Expanded-token entry points also carry the separate
+  scanners are mediated by an erased `ExpansionMode`, so scanner signatures
+  never expose file-open authority. Expanded-token entry points also carry the separate
   `InputOpenState` authority needed for `\input` dispatch. Because
   `ExpansionState` omits input-open construction and barriered assignment
   methods such as meaning, register, code-table, group, and font setters, "the

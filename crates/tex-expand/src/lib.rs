@@ -805,7 +805,12 @@ impl<'a, S> ExpansionContext<'a, S> {
     }
 }
 
-pub trait ExpandNext<S, St: ExpansionState> {
+/// Erased policy for recursive expansion from scanner code.
+///
+/// Driver mode may execute `\input`; restricted mode preserves the
+/// [`ExpansionState`]-only helper boundary. Scanner functions take this as a
+/// trait object so the policy does not become a monomorphization axis.
+pub trait ExpansionMode<S, St: ExpansionState> {
     fn next_expanded_token(
         &mut self,
         input: &mut InputStack<S>,
@@ -854,9 +859,9 @@ pub trait ExpandNext<S, St: ExpansionState> {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-pub struct NoInputExpandNext;
+pub struct RestrictedExpansionMode;
 
-impl<S, St> ExpandNext<S, St> for NoInputExpandNext
+impl<S, St> ExpansionMode<S, St> for RestrictedExpansionMode
 where
     S: InputSource,
     St: ExpansionState,
@@ -904,9 +909,9 @@ where
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-pub struct DriverExpandNext;
+pub struct DriverExpansionMode;
 
-impl<S, St> ExpandNext<S, St> for DriverExpandNext
+impl<S, St> ExpansionMode<S, St> for DriverExpansionMode
 where
     S: InputSource,
     St: ExpansionState + InputOpenState,

@@ -12,8 +12,8 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::scan_dimen::{self, DimensionDiagnostic, ScanDimenError, ScanDimenOptions};
 use crate::{
-    ExpandError, ExpandNext, ExpansionContext, NoInputExpandNext, ReadBank, ReadDependency,
-    scan_helpers, scan_int, semantic_token,
+    ExpandError, ExpansionContext, ExpansionMode, ReadBank, ReadDependency,
+    RestrictedExpansionMode, scan_helpers, scan_int, semantic_token,
 };
 
 /// A successfully scanned glue specification.
@@ -176,30 +176,29 @@ pub fn scan_glue_with_context<S>(
 where
     S: InputSource,
 {
-    scan_glue_with_expander_and_context(
+    scan_glue_with_mode_and_context(
         input,
         stores,
         expansion,
-        &mut NoInputExpandNext,
+        &mut RestrictedExpansionMode,
         mu,
         context,
     )
 }
 
-pub fn scan_glue_with_expander_and_context<S, St, E>(
+pub fn scan_glue_with_mode_and_context<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
     mu: bool,
     context: TracedTokenWord,
 ) -> Result<ScannedGlue, ScanGlueError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
-    let (negative, first) = scan_signs(input, stores, expansion, expander)?;
+    let (negative, first) = scan_signs(input, stores, expansion, mode)?;
     let Some(first) = first else {
         return Err(ScanGlueError::MissingNumber { context });
     };
@@ -210,7 +209,7 @@ where
         crate::values::record_meaning_value_dependency(expansion, meaning);
         match meaning {
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::GlueExpr) if !mu => {
-                let scanned = scan_glue_expr(input, stores, expansion, expander, false, first)?;
+                let scanned = scan_glue_expr(input, stores, expansion, mode, false, first)?;
                 return Ok(intern_spec_with_diagnostics(
                     stores,
                     signed_spec(stores.glue(scanned.id()), negative),
@@ -219,7 +218,7 @@ where
                 ));
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::MuExpr) if mu => {
-                let scanned = scan_glue_expr(input, stores, expansion, expander, true, first)?;
+                let scanned = scan_glue_expr(input, stores, expansion, mode, true, first)?;
                 return Ok(intern_spec_with_diagnostics(
                     stores,
                     signed_spec(stores.glue(scanned.id()), negative),
@@ -228,9 +227,8 @@ where
                 ));
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::GlueToMu) if mu => {
-                let scanned = scan_glue_with_expander_and_context(
-                    input, stores, expansion, expander, false, first,
-                )?;
+                let scanned =
+                    scan_glue_with_mode_and_context(input, stores, expansion, mode, false, first)?;
                 return Ok(intern_spec_with_diagnostics(
                     stores,
                     signed_spec(stores.glue(scanned.id()), negative),
@@ -239,9 +237,8 @@ where
                 ));
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::MuToGlue) if !mu => {
-                let scanned = scan_glue_with_expander_and_context(
-                    input, stores, expansion, expander, true, first,
-                )?;
+                let scanned =
+                    scan_glue_with_mode_and_context(input, stores, expansion, mode, true, first)?;
                 return Ok(intern_spec_with_diagnostics(
                     stores,
                     signed_spec(stores.glue(scanned.id()), negative),
@@ -250,29 +247,29 @@ where
                 ));
             }
             Meaning::SkipRegister(index) if !mu => {
-                consume_optional_space(input, stores, expansion, expander)?;
+                consume_optional_space(input, stores, expansion, mode)?;
                 let spec = stores.glue(stores.skip(index));
                 return Ok(intern_spec(stores, signed_spec(spec, negative)));
             }
             Meaning::MuskipRegister(index) if mu => {
-                consume_optional_space(input, stores, expansion, expander)?;
+                consume_optional_space(input, stores, expansion, mode)?;
                 let spec = stores.glue(stores.muskip(index));
                 return Ok(intern_spec(stores, signed_spec(spec, negative)));
             }
             Meaning::GlueParam(index) if !mu => {
-                consume_optional_space(input, stores, expansion, expander)?;
+                consume_optional_space(input, stores, expansion, mode)?;
                 let spec =
                     stores.glue(stores.glue_param(tex_state::env::banks::GlueParam::new(index)));
                 return Ok(intern_spec(stores, signed_spec(spec, negative)));
             }
             Meaning::MuGlueParam(index) if mu => {
-                consume_optional_space(input, stores, expansion, expander)?;
+                consume_optional_space(input, stores, expansion, mode)?;
                 let spec =
                     stores.glue(stores.glue_param(tex_state::env::banks::GlueParam::new(index)));
                 return Ok(intern_spec(stores, signed_spec(spec, negative)));
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) if !mu => {
-                let index = scan_register_index(input, stores, expansion, expander, first)?;
+                let index = scan_register_index(input, stores, expansion, mode, first)?;
                 crate::record_dependency!(
                     expansion,
                     ReadDependency::Cell {
@@ -280,12 +277,12 @@ where
                         index: u32::from(index),
                     }
                 );
-                consume_optional_space(input, stores, expansion, expander)?;
+                consume_optional_space(input, stores, expansion, mode)?;
                 let spec = stores.glue(stores.skip(index));
                 return Ok(intern_spec(stores, signed_spec(spec, negative)));
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) if mu => {
-                let index = scan_register_index(input, stores, expansion, expander, first)?;
+                let index = scan_register_index(input, stores, expansion, mode, first)?;
                 crate::record_dependency!(
                     expansion,
                     ReadDependency::Cell {
@@ -293,12 +290,12 @@ where
                         index: u32::from(index),
                     }
                 );
-                consume_optional_space(input, stores, expansion, expander)?;
+                consume_optional_space(input, stores, expansion, mode)?;
                 let spec = stores.glue(stores.muskip(index));
                 return Ok(intern_spec(stores, signed_spec(spec, negative)));
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastSkip) if !mu => {
-                consume_optional_space(input, stores, expansion, expander)?;
+                consume_optional_space(input, stores, expansion, mode)?;
                 return Ok(intern_spec(
                     stores,
                     signed_spec(expansion.engine.last_skip, negative),
@@ -307,7 +304,7 @@ where
             _ => {
                 let name = stores.resolve(symbol);
                 if (!mu && name == "skip") || (mu && name == "muskip") {
-                    let index = scan_register_index(input, stores, expansion, expander, first)?;
+                    let index = scan_register_index(input, stores, expansion, mode, first)?;
                     crate::record_dependency!(
                         expansion,
                         ReadDependency::Cell {
@@ -315,7 +312,7 @@ where
                             index: u32::from(index),
                         }
                     );
-                    consume_optional_space(input, stores, expansion, expander)?;
+                    consume_optional_space(input, stores, expansion, mode)?;
                     let id = if mu {
                         stores.muskip(index)
                     } else {
@@ -329,11 +326,11 @@ where
     }
 
     unread_token(input, stores, first);
-    let width = scan_dimen::scan_dimen_with_expander_and_context(
+    let width = scan_dimen::scan_dimen_with_mode_and_context(
         input,
         stores,
         expansion,
-        expander,
+        mode,
         dimen_options(mu),
         context,
     )?;
@@ -351,12 +348,12 @@ where
         spec.width = -spec.width;
     }
 
-    if scan_keyword(input, stores, expansion, expander, "plus")? {
-        let stretch = scan_dimen::scan_dimen_with_expander_and_context(
+    if scan_keyword(input, stores, expansion, mode, "plus")? {
+        let stretch = scan_dimen::scan_dimen_with_mode_and_context(
             input,
             stores,
             expansion,
-            expander,
+            mode,
             dimen_options(mu).with_infinite_units(),
             context,
         )?;
@@ -364,12 +361,12 @@ where
         spec.stretch = stretch.value();
         spec.stretch_order = stretch.order();
     }
-    if scan_keyword(input, stores, expansion, expander, "minus")? {
-        let shrink = scan_dimen::scan_dimen_with_expander_and_context(
+    if scan_keyword(input, stores, expansion, mode, "minus")? {
+        let shrink = scan_dimen::scan_dimen_with_mode_and_context(
             input,
             stores,
             expansion,
-            expander,
+            mode,
             dimen_options(mu).with_infinite_units(),
             context,
         )?;
@@ -433,20 +430,19 @@ fn signed_spec(mut spec: GlueSpec, negative: bool) -> GlueSpec {
     spec
 }
 
-pub(crate) fn scan_glue_expr<S, St, E>(
+pub(crate) fn scan_glue_expr<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
     mu: bool,
     context: TracedTokenWord,
 ) -> Result<ScannedGlue, ScanGlueError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
-    let (spec, bad) = parse_glue_expr(input, stores, expansion, expander, mu, false)?;
+    let (spec, bad) = parse_glue_expr(input, stores, expansion, mode, mu, false)?;
     if bad {
         Ok(intern_spec_with_diagnostics(
             stores,
@@ -477,22 +473,21 @@ where
     }
 }
 
-fn parse_glue_expr<S, St, E>(
+fn parse_glue_expr<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
     mu: bool,
     paren: bool,
 ) -> Result<(GlueSpec, bool), ScanGlueError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
-    let (mut spec, mut bad) = parse_glue_term(input, stores, expansion, expander, mu)?;
+    let (mut spec, mut bad) = parse_glue_term(input, stores, expansion, mode, mu)?;
     loop {
-        let Some(token) = expr_next(input, stores, expansion, expander)? else {
+        let Some(token) = expr_next(input, stores, expansion, mode)? else {
             break;
         };
         let subtract = if is_other_char(token, '+') {
@@ -510,7 +505,7 @@ where
             break;
         };
         normalize_glue_orders(&mut spec);
-        let (rhs, rhs_bad) = parse_glue_term(input, stores, expansion, expander, mu)?;
+        let (rhs, rhs_bad) = parse_glue_term(input, stores, expansion, mode, mu)?;
         bad |= rhs_bad;
         match add_glue(spec, rhs, subtract) {
             Some(next) => spec = next,
@@ -523,30 +518,29 @@ where
     Ok((spec, bad))
 }
 
-fn parse_glue_term<S, St, E>(
+fn parse_glue_term<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
     mu: bool,
 ) -> Result<(GlueSpec, bool), ScanGlueError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
-    let (mut spec, mut bad) = parse_glue_factor(input, stores, expansion, expander, mu)?;
+    let (mut spec, mut bad) = parse_glue_factor(input, stores, expansion, mode, mu)?;
     loop {
-        let Some(op) = expr_next(input, stores, expansion, expander)? else {
+        let Some(op) = expr_next(input, stores, expansion, mode)? else {
             break;
         };
         if is_other_char(op, '*') {
             normalize_glue_orders(&mut spec);
-            let (n, nbad) = parse_int_factor(input, stores, expansion, expander)?;
+            let (n, nbad) = parse_int_factor(input, stores, expansion, mode)?;
             bad |= nbad;
-            let next = expr_next(input, stores, expansion, expander)?;
+            let next = expr_next(input, stores, expansion, mode)?;
             if next.is_some_and(|t| is_other_char(t, '/')) {
-                let (d, dbad) = parse_int_factor(input, stores, expansion, expander)?;
+                let (d, dbad) = parse_int_factor(input, stores, expansion, mode)?;
                 bad |= dbad;
                 match scale_glue(spec, n, d) {
                     Some(v) => spec = v,
@@ -569,7 +563,7 @@ where
             }
         } else if is_other_char(op, '/') {
             normalize_glue_orders(&mut spec);
-            let (d, dbad) = parse_int_factor(input, stores, expansion, expander)?;
+            let (d, dbad) = parse_int_factor(input, stores, expansion, mode)?;
             bad |= dbad;
             match scale_glue(spec, 1, d) {
                 Some(v) => spec = v,
@@ -586,71 +580,66 @@ where
     Ok((spec, bad))
 }
 
-fn parse_glue_factor<S, St, E>(
+fn parse_glue_factor<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
     mu: bool,
 ) -> Result<(GlueSpec, bool), ScanGlueError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
-    let Some(token) = expr_next(input, stores, expansion, expander)? else {
+    let Some(token) = expr_next(input, stores, expansion, mode)? else {
         return Ok((GlueSpec::ZERO, true));
     };
     if is_other_char(token, '(') {
-        return parse_glue_expr(input, stores, expansion, expander, mu, true);
+        return parse_glue_expr(input, stores, expansion, mode, mu, true);
     }
     unread_token(input, stores, token);
-    let scanned =
-        scan_glue_with_expander_and_context(input, stores, expansion, expander, mu, token)?;
+    let scanned = scan_glue_with_mode_and_context(input, stores, expansion, mode, mu, token)?;
     Ok((
         stores.glue(scanned.id()),
         scanned.diagnostics().next().is_some(),
     ))
 }
 
-fn parse_int_factor<S, St, E>(
+fn parse_int_factor<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
 ) -> Result<(i64, bool), ScanGlueError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
-    let Some(token) = expr_next(input, stores, expansion, expander)? else {
+    let Some(token) = expr_next(input, stores, expansion, mode)? else {
         return Ok((0, true));
     };
     if is_other_char(token, '(') {
         return Ok(scan_int::parse_num_expression(
-            input, stores, expansion, expander, true,
+            input, stores, expansion, mode, true,
         )?);
     }
     unread_token(input, stores, token);
-    let scanned =
-        scan_int::scan_int_with_expander_and_context(input, stores, expansion, expander, token)?;
+    let scanned = scan_int::scan_int_with_mode_and_context(input, stores, expansion, mode, token)?;
     Ok((i64::from(scanned.value()), scanned.diagnostic().is_some()))
 }
 
-fn expr_next<S, St, E>(
+fn expr_next<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
 ) -> Result<Option<TracedTokenWord>, ScanGlueError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
     loop {
-        let token = next_x(input, stores, expansion, expander)?;
+        let token = next_x(input, stores, expansion, mode)?;
         if token.is_none_or(|t| !is_space(t)) {
             return Ok(token);
         }
@@ -721,20 +710,19 @@ fn order_rank(order: Order) -> u8 {
     }
 }
 
-fn scan_signs<S, St, E>(
+fn scan_signs<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
 ) -> Result<(bool, Option<TracedTokenWord>), ScanGlueError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
     let mut negative = false;
     loop {
-        let Some(token) = next_x(input, stores, expansion, expander)? else {
+        let Some(token) = next_x(input, stores, expansion, mode)? else {
             return Ok((negative, None));
         };
         if is_space(token) {
@@ -751,35 +739,32 @@ where
     }
 }
 
-fn next_x<S, St, E>(
+fn next_x<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
 ) -> Result<Option<TracedTokenWord>, ScanGlueError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
-    Ok(expander.next_expanded_token(input, stores, expansion)?)
+    Ok(mode.next_expanded_token(input, stores, expansion)?)
 }
 
-fn scan_register_index<S, St, E>(
+fn scan_register_index<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
     context: TracedTokenWord,
 ) -> Result<u16, ScanGlueError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
-    let scanned = crate::scan_int::scan_int_with_expander_and_context(
-        input, stores, expansion, expander, context,
-    )?;
+    let scanned =
+        crate::scan_int::scan_int_with_mode_and_context(input, stores, expansion, mode, context)?;
     let value = scanned.value();
     let maximum = crate::scan_helpers::maximum_register_index(stores);
     if !(0..=i32::from(maximum)).contains(&value) {
@@ -789,37 +774,33 @@ where
     Ok(value as u16)
 }
 
-fn scan_keyword<S, St, E>(
+fn scan_keyword<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
     keyword: &str,
 ) -> Result<bool, ScanGlueError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
-    Ok(
-        scan_helpers::scan_optional_keyword_with_expander_and_context(
-            input, stores, expansion, expander, keyword,
-        )?,
-    )
+    Ok(scan_helpers::scan_optional_keyword_with_mode_and_context(
+        input, stores, expansion, mode, keyword,
+    )?)
 }
 
-fn consume_optional_space<S, St, E>(
+fn consume_optional_space<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
 ) -> Result<(), ScanGlueError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
-    let Some(token) = next_x(input, stores, expansion, expander)? else {
+    let Some(token) = next_x(input, stores, expansion, mode)? else {
         return Ok(());
     };
     if !is_space(token) {

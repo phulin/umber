@@ -19,8 +19,8 @@ use tex_state::token_store::TokenListBuilder;
 use tex_state::{ExpansionState, InputReadState, TracedTokenList};
 
 use crate::{
-    DriverExpandNext, ExpandError, ExpandNext, ExpandableOpcode, ExpansionContext,
-    NoInputExpandNext,
+    DriverExpansionMode, ExpandError, ExpandableOpcode, ExpansionContext, ExpansionMode,
+    RestrictedExpansionMode,
 };
 
 /// Result of scanning a macro definition without assigning it.
@@ -230,7 +230,7 @@ where
         meaning.replacement_text(),
         scanned.provenance().replacement_origins(),
         expansion,
-        &mut NoInputExpandNext,
+        &mut RestrictedExpansionMode,
     )?;
     Ok(ScannedMacro {
         meaning: MacroMeaning::new(
@@ -445,7 +445,7 @@ where
         raw_text.token_list(),
         raw_text.origin_list(),
         expansion,
-        &mut DriverExpandNext,
+        &mut DriverExpansionMode,
     )?
     .token_list())
 }
@@ -466,20 +466,25 @@ where
     S: InputSource,
     St: ExpansionState + tex_state::InputOpenState,
 {
-    scan_general_text_with_expanded_open(input, stores, expansion, &mut DriverExpandNext, context)
+    scan_general_text_with_expanded_open(
+        input,
+        stores,
+        expansion,
+        &mut DriverExpansionMode,
+        context,
+    )
 }
 
-fn expand_replacement_text<S, St, E>(
+fn expand_replacement_text<S, St>(
     stores: &mut St,
     replacement_text: TokenListId,
     replacement_origins: OriginListId,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<ReplacementSource<S>, St>,
 ) -> Result<TracedTokenList, ScanToksError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<ReplacementSource<S>, St>,
 {
     let mut input = InputStack::new(ReplacementSource::<S>::empty());
     input.push_token_list_with_origins(
@@ -551,12 +556,8 @@ where
             // step on its target, then returns control to the protected-aware
             // replacement scanner. Calling `get_x_token` here would continue
             // through the saved protected macro and expand it incorrectly.
-            let dispatch = expander.dispatch_raw_token(
-                traced,
-                &mut input,
-                stores,
-                &mut replacement_expansion,
-            )?;
+            let dispatch =
+                mode.dispatch_raw_token(traced, &mut input, stores, &mut replacement_expansion)?;
             crate::push_dispatch_result(&mut input, stores, dispatch);
             continue;
         }
@@ -566,19 +567,15 @@ where
             // iteration can copy its inert character runs directly; any
             // parameter, cs/active site, or semantic edge naturally re-enters
             // the existing interpreter below.
-            let dispatch = expander.dispatch_raw_token(
-                traced,
-                &mut input,
-                stores,
-                &mut replacement_expansion,
-            )?;
+            let dispatch =
+                mode.dispatch_raw_token(traced, &mut input, stores, &mut replacement_expansion)?;
             crate::push_dispatch_result(&mut input, stores, dispatch);
             continue;
         }
 
         unread_token(&mut input, stores, traced);
         if let Some(expanded) =
-            expander.next_expanded_token(&mut input, stores, &mut replacement_expansion)?
+            mode.next_expanded_token(&mut input, stores, &mut replacement_expansion)?
         {
             builder.push(crate::semantic_token(expanded));
             origins.push(expanded.origin());
@@ -896,20 +893,19 @@ where
 
 /// Scans e-TeX general text after expanding only while looking for its
 /// compulsory opening brace; the balanced contents themselves remain raw.
-pub(crate) fn scan_general_text_with_expanded_open<S, St, E>(
+pub(crate) fn scan_general_text_with_expanded_open<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
     context: TracedTokenWord,
 ) -> Result<TracedTokenList, ScanToksError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
     let open = loop {
-        let token = expander
+        let token = mode
             .next_expanded_token(input, stores, expansion)?
             .ok_or(ScanToksError::EndOfInputInReplacementText { context })?;
         if !matches!(

@@ -4,7 +4,7 @@ use tex_state::env::banks::IntParam;
 use tex_state::token::{Catcode, Token, TracedTokenWord};
 
 use crate::{
-    ExpandError, ExpandNext, ExpansionContext, NoInputExpandNext, scan_int, semantic_token,
+    ExpandError, ExpansionContext, ExpansionMode, RestrictedExpansionMode, scan_int, semantic_token,
 };
 
 pub(crate) fn next_non_space_x_token_with_context<S>(
@@ -15,27 +15,26 @@ pub(crate) fn next_non_space_x_token_with_context<S>(
 where
     S: InputSource,
 {
-    next_non_space_x_token_with_expander_and_context(
+    next_non_space_x_token_with_mode_and_context(
         input,
         stores,
         expansion,
-        &mut NoInputExpandNext,
+        &mut RestrictedExpansionMode,
     )
 }
 
-pub(crate) fn next_non_space_x_token_with_expander_and_context<S, St, E>(
+pub(crate) fn next_non_space_x_token_with_mode_and_context<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
 ) -> Result<Option<TracedTokenWord>, ExpandError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
     loop {
-        let Some(token) = expander.next_expanded_token(input, stores, expansion)? else {
+        let Some(token) = mode.next_expanded_token(input, stores, expansion)? else {
             return Ok(None);
         };
         if !matches!(
@@ -60,29 +59,28 @@ pub(crate) fn scan_register_index<S>(
 where
     S: InputSource,
 {
-    scan_register_index_with_expander_and_context(
+    scan_register_index_with_mode_and_context(
         input,
         stores,
         expansion,
-        &mut NoInputExpandNext,
+        &mut RestrictedExpansionMode,
         context,
     )
 }
 
-pub(crate) fn scan_register_index_with_expander_and_context<S, St, E>(
+pub(crate) fn scan_register_index_with_mode_and_context<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
     context: tex_state::token::TracedTokenWord,
 ) -> Result<u16, ExpandError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
     let scanned =
-        scan_int::scan_int_with_expander_and_context(input, stores, expansion, expander, context)?;
+        scan_int::scan_int_with_mode_and_context(input, stores, expansion, mode, context)?;
     let value = scanned.value();
     let maximum = maximum_register_index(stores);
     if !(0..=i32::from(maximum)).contains(&value) {
@@ -116,34 +114,32 @@ pub fn scan_optional_keyword_with_context<S>(
 where
     S: InputSource,
 {
-    scan_optional_keyword_with_expander_and_context(
+    scan_optional_keyword_with_mode_and_context(
         input,
         stores,
         expansion,
-        &mut NoInputExpandNext,
+        &mut RestrictedExpansionMode,
         keyword,
     )
 }
 
-pub fn scan_optional_keyword_with_expander_and_context<S, St, E>(
+pub fn scan_optional_keyword_with_mode_and_context<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
     keyword: &str,
 ) -> Result<bool, ExpandError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
-    let Some(first) =
-        next_non_space_x_token_with_expander_and_context(input, stores, expansion, expander)?
+    let Some(first) = next_non_space_x_token_with_mode_and_context(input, stores, expansion, mode)?
     else {
         return Ok(false);
     };
-    match scan_keyword_after_first_with_expander_and_context(
-        input, stores, expansion, expander, first, keyword,
+    match scan_keyword_after_first_with_mode_and_context(
+        input, stores, expansion, mode, first, keyword,
     )? {
         ExpandedKeywordMatch::Matched => Ok(true),
         ExpandedKeywordMatch::FirstTokenMismatch => {
@@ -165,28 +161,27 @@ pub fn scan_keyword_after_first_with_context<S>(
 where
     S: InputSource,
 {
-    scan_keyword_after_first_with_expander_and_context(
+    scan_keyword_after_first_with_mode_and_context(
         input,
         stores,
         expansion,
-        &mut NoInputExpandNext,
+        &mut RestrictedExpansionMode,
         first,
         keyword,
     )
 }
 
-pub fn scan_keyword_after_first_with_expander_and_context<S, St, E>(
+pub fn scan_keyword_after_first_with_mode_and_context<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     expansion: &mut ExpansionContext<'_, S>,
-    expander: &mut E,
+    mode: &mut dyn ExpansionMode<S, St>,
     first: TracedTokenWord,
     keyword: &str,
 ) -> Result<ExpandedKeywordMatch, ExpandError>
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<S, St>,
 {
     if keyword.is_empty() {
         return Ok(ExpandedKeywordMatch::Matched);
@@ -200,7 +195,7 @@ where
     }
 
     for &expected in &keyword.as_bytes()[1..] {
-        let Some(token) = expander.next_expanded_token(input, stores, expansion)? else {
+        let Some(token) = mode.next_expanded_token(input, stores, expansion)? else {
             unread_tokens(input, stores, consumed);
             return Ok(ExpandedKeywordMatch::PartialMismatch);
         };
