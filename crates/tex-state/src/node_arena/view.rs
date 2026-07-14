@@ -16,7 +16,7 @@ pub enum NodeRef<'a> {
     Lig {
         font: crate::ids::FontId,
         ch: char,
-        orig: (char, char),
+        orig: &'a [char],
     },
     Kern {
         amount: Scaled,
@@ -79,7 +79,7 @@ impl NodeRef<'_> {
             Self::Lig { font, ch, orig } => Node::Lig {
                 font: *font,
                 ch: *ch,
-                orig: *orig,
+                orig: orig.to_vec(),
             },
             Self::Kern { amount, kind } => Node::Kern {
                 amount: *amount,
@@ -388,14 +388,9 @@ impl NodeStorage {
                 ch: char::from_u32((payload & 0x1f_ffff) as u32).expect("invalid stored scalar"),
             },
             1 => NodeRef::Lig {
-                font: crate::ids::FontId::new((payload >> 24) as u32),
-                ch: char::from_u32((payload & 0xff) as u32).expect("stored TFM byte is scalar"),
-                orig: (
-                    char::from_u32(((payload >> 8) & 0xff) as u32)
-                        .expect("stored TFM byte is scalar"),
-                    char::from_u32(((payload >> 16) & 0xff) as u32)
-                        .expect("stored TFM byte is scalar"),
-                ),
+                font: self.ligatures[side].0,
+                ch: self.ligatures[side].1,
+                orig: &self.ligatures[side].2,
             },
             2 => NodeRef::Kern {
                 amount: Scaled::from_raw(payload as u32 as i32),

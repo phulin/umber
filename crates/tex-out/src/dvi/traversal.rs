@@ -582,11 +582,10 @@ impl<W: std::io::Write> DviWriter<W> {
                 PageNode::Lig {
                     font_id,
                     ch,
-                    left,
-                    right,
+                    source,
                     width,
                 } => {
-                    self.trace_glyph(*font_id, &[*left, *right])?;
+                    self.trace_glyph(*font_id, source)?;
                     self.synch_h()?;
                     self.synch_v()?;
                     self.change_font(*font_id)?;

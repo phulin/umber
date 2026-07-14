@@ -18,7 +18,7 @@ pub enum Node {
     Lig {
         font: FontId,
         ch: char,
-        orig: (char, char),
+        orig: Vec<char>,
     },
     Kern {
         amount: Scaled,

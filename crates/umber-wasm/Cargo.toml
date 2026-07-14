@@ -20,6 +20,7 @@ getrandom = { version = "0.3", features = ["wasm_js"] }
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
+wasm-bindgen-futures = "0.4"
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = ["-Oz"]

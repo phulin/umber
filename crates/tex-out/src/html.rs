@@ -9,7 +9,8 @@ use sha2::{Digest, Sha256};
 use tex_arith::Scaled;
 
 use crate::positioned::{
-    BoxKind, PositionedError, PositionedEvent, PositionedPage, TextUnit, lower_page,
+    BoxKind, PositionedError, PositionedEvent, PositionedLimits, PositionedPage, TextUnit,
+    lower_page_with_limits,
 };
 use crate::{ContentHash, FontResource, PageArtifact};
 
@@ -72,6 +73,9 @@ pub struct HtmlOptions {
     pub max_asset_bytes: usize,
     pub max_total_asset_bytes: usize,
     pub max_special_bytes: usize,
+    pub max_positioned_events: usize,
+    pub max_positioned_depth: usize,
+    pub max_text_run_units: usize,
 }
 
 impl Default for HtmlOptions {
@@ -85,6 +89,9 @@ impl Default for HtmlOptions {
             max_asset_bytes: 64 * 1024 * 1024,
             max_total_asset_bytes: 256 * 1024 * 1024,
             max_special_bytes: 4 * 1024,
+            max_positioned_events: 1_000_000,
+            max_positioned_depth: 4_096,
+            max_text_run_units: 16_384,
         }
     }
 }
@@ -114,6 +121,7 @@ pub enum HtmlError {
     FontKeyMismatch { font: String },
     InvalidEncodingLength { font: String, count: usize },
     MissingTextMapping { font: String, code: u8 },
+    MissingFontGlyph { font: String, code: u8, ch: char },
     UnsafeTextMapping { font: String, code: u8 },
     EmptyFontAsset { font: String },
     CorruptFontAsset { font: String },
@@ -158,6 +166,12 @@ impl std::fmt::Display for HtmlError {
             }
             Self::MissingTextMapping { font, code } => {
                 write!(f, "web font {font} has no text mapping for code {code}")
+            }
+            Self::MissingFontGlyph { font, code, ch } => {
+                write!(
+                    f,
+                    "web font {font} has no glyph for code {code} mapping {ch:?}"
+                )
             }
             Self::UnsafeTextMapping { font, code } => {
                 write!(f, "web font {font} code {code} maps to unsafe HTML text")
@@ -242,7 +256,16 @@ pub fn write_html<R: HtmlFontResolver>(
                 count: pages.len(),
                 limit: u32::MAX as usize,
             })?;
-            let positioned = lower_page(page, page_index).map_err(HtmlError::from)?;
+            let positioned = lower_page_with_limits(
+                page,
+                page_index,
+                PositionedLimits {
+                    max_events: options.max_positioned_events,
+                    max_depth: options.max_positioned_depth,
+                    max_run_units: options.max_text_run_units,
+                },
+            )
+            .map_err(HtmlError::from)?;
             crate::dvi::coordinates::compare_page(page, &positioned).map_err(HtmlError::from)?;
             Ok::<PositionedPage, HtmlError>(positioned)
         })
@@ -258,7 +281,29 @@ pub fn write_positioned_html<R: HtmlFontResolver>(
     if pages.is_empty() {
         return Err(HtmlError::NoPages);
     }
+    if pages.len() > options.max_pages {
+        return Err(HtmlError::TooManyPages {
+            count: pages.len(),
+            limit: options.max_pages,
+        });
+    }
     validate_options(options)?;
+    for page in pages {
+        if page.events.len() > options.max_positioned_events {
+            return Err(HtmlError::Positioned(PositionedError::TooManyEvents {
+                limit: options.max_positioned_events,
+            }));
+        }
+        for event in &page.events {
+            if let PositionedEvent::TextRun(run) = event
+                && run.units.len() > options.max_text_run_units
+            {
+                return Err(HtmlError::Positioned(PositionedError::TextRunTooLong {
+                    limit: options.max_text_run_units,
+                }));
+            }
+        }
+    }
     let mut resolved = BTreeMap::<HtmlFontKey, ResolvedFont>::new();
     for page in pages {
         for font in &page.fonts {
@@ -283,17 +328,13 @@ pub fn write_positioned_html<R: HtmlFontResolver>(
     html.push_str("\"><head><meta charset=\"utf-8\"><meta name=\"generator\" content=\"umber-html/1\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; font-src data: 'self'; style-src 'unsafe-inline'; img-src data:\"><title>");
     escape_text(&options.title, &mut html);
     html.push_str("</title><style>\n");
-    write_font_css(&mut html, &resolved, options);
+    check_html_size(&html, options)?;
+    write_font_css(&mut html, &resolved, options)?;
     html.push_str(BASE_CSS);
     html.push_str("</style></head><body>\n<main class=\"umber-document\">\n");
     for page in pages {
         write_page(&mut html, page, &resolved, options)?;
-        if html.len() > options.max_html_bytes {
-            return Err(HtmlError::HtmlTooLarge {
-                bytes: html.len(),
-                limit: options.max_html_bytes,
-            });
-        }
+        check_html_size(&html, options)?;
     }
     html.push_str("</main></body></html>\n");
     if html.len() > options.max_html_bytes {
@@ -344,6 +385,11 @@ fn validate_font(
             font: font.name.clone(),
         });
     }
+    if !web.woff2.starts_with(b"wOF2") {
+        return Err(HtmlError::CorruptFontAsset {
+            font: font.name.clone(),
+        });
+    }
     if web.woff2.len() > options.max_asset_bytes {
         return Err(HtmlError::AssetTooLarge {
             bytes: web.woff2.len(),
@@ -367,6 +413,40 @@ fn validate_font(
             font: font.name.clone(),
         });
     }
+    let declared_size = web
+        .woff2
+        .get(16..20)
+        .and_then(|bytes| <[u8; 4]>::try_from(bytes).ok())
+        .map(u32::from_be_bytes)
+        .and_then(|size| usize::try_from(size).ok())
+        .ok_or_else(|| HtmlError::CorruptFontAsset {
+            font: font.name.clone(),
+        })?;
+    if declared_size > options.max_asset_bytes {
+        return Err(HtmlError::AssetTooLarge {
+            bytes: declared_size,
+            limit: options.max_asset_bytes,
+        });
+    }
+    let sfnt = woff2_patched::convert_woff2_to_ttf(&mut web.woff2.as_slice()).map_err(|_| {
+        HtmlError::CorruptFontAsset {
+            font: font.name.clone(),
+        }
+    })?;
+    let face = ttf_parser::Face::parse(&sfnt, 0).map_err(|_| HtmlError::CorruptFontAsset {
+        font: font.name.clone(),
+    })?;
+    for (code, mapping) in web.encoding.iter().enumerate() {
+        for ch in mapping.iter().flat_map(|mapping| mapping.chars()) {
+            if face.glyph_index(ch).is_none() {
+                return Err(HtmlError::MissingFontGlyph {
+                    font: font.name.clone(),
+                    code: code as u8,
+                    ch,
+                });
+            }
+        }
+    }
     let digest_hex = hex(&digest);
     let family = format!("umber-font-{}", &digest_hex[..24]);
     Ok(ResolvedFont {
@@ -380,9 +460,6 @@ fn build_assets(
     resolved: &BTreeMap<HtmlFontKey, ResolvedFont>,
     options: &HtmlOptions,
 ) -> Result<Vec<HtmlAsset>, HtmlError> {
-    if matches!(options.asset_mode, AssetMode::Embedded) {
-        return Ok(Vec::new());
-    }
     let mut by_digest = BTreeMap::<String, HtmlAsset>::new();
     let mut total = 0usize;
     for font in resolved.values() {
@@ -396,15 +473,17 @@ fn build_assets(
                 limit: options.max_total_asset_bytes,
             });
         }
-        by_digest.insert(
-            font.digest_hex.clone(),
-            HtmlAsset {
-                path: format!("sha256-{}.woff2", font.digest_hex),
-                bytes: font.web.woff2.clone(),
-                sha256: font.web.sha256,
-                provenance: font.web.provenance.clone(),
-            },
-        );
+        if matches!(options.asset_mode, AssetMode::Manifest { .. }) {
+            by_digest.insert(
+                font.digest_hex.clone(),
+                HtmlAsset {
+                    path: format!("sha256-{}.woff2", font.digest_hex),
+                    bytes: font.web.woff2.clone(),
+                    sha256: font.web.sha256,
+                    provenance: font.web.provenance.clone(),
+                },
+            );
+        }
     }
     Ok(by_digest.into_values().collect())
 }
@@ -413,13 +492,20 @@ fn write_font_css(
     out: &mut String,
     fonts: &BTreeMap<HtmlFontKey, ResolvedFont>,
     options: &HtmlOptions,
-) {
+) -> Result<(), HtmlError> {
     for font in fonts.values() {
         out.push_str("@font-face{font-family:'");
         out.push_str(&font.family);
         out.push_str("';src:url('");
         match &options.asset_mode {
             AssetMode::Embedded => {
+                let encoded = font.web.woff2.len().saturating_add(2) / 3 * 4;
+                if out.len().saturating_add(encoded) > options.max_html_bytes {
+                    return Err(HtmlError::HtmlTooLarge {
+                        bytes: out.len().saturating_add(encoded),
+                        limit: options.max_html_bytes,
+                    });
+                }
                 out.push_str("data:font/woff2;base64,");
                 base64(&font.web.woff2, out);
             }
@@ -434,7 +520,9 @@ fn write_font_css(
             }
         }
         out.push_str("') format('woff2');font-display:block;font-style:normal;font-weight:400}\n");
+        check_html_size(out, options)?;
     }
+    Ok(())
 }
 
 fn write_page(
@@ -506,7 +594,12 @@ fn write_page(
                         font_id: event.font_id,
                     },
                 )?;
-                let text = map_text(event.units.as_slice(), font)?;
+                let text_budget = options
+                    .max_html_bytes
+                    .saturating_sub(out.len())
+                    .saturating_sub(accessible.len())
+                    / 6;
+                let text = map_text(event.units.as_slice(), font, text_budget)?;
                 accessible.push_str(&text);
                 out.push_str("<svg class=\"umber-run\" aria-hidden=\"true\" data-umber-event=\"");
                 out.push_str(&ordinal.to_string());
@@ -585,11 +678,28 @@ fn write_page(
                 out.push_str("\"></span>\n");
             }
         }
+        check_html_size(out, options)?;
+    }
+    if !special_state.colors.is_empty() || special_state.link.is_some() {
+        return Err(HtmlError::InvalidSpecial {
+            message: "unclosed color or link scope at page end".to_owned(),
+        });
     }
     out.push_str("<div class=\"umber-a11y\">");
     escape_text(&accessible, out);
     out.push_str("</div></section>\n");
     Ok(())
+}
+
+fn check_html_size(out: &str, options: &HtmlOptions) -> Result<(), HtmlError> {
+    if out.len() > options.max_html_bytes {
+        Err(HtmlError::HtmlTooLarge {
+            bytes: out.len(),
+            limit: options.max_html_bytes,
+        })
+    } else {
+        Ok(())
+    }
 }
 
 #[derive(Default)]
@@ -719,11 +829,23 @@ fn safe_identifier(id: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
 }
 
-fn map_text(units: &[TextUnit], font: &ResolvedFont) -> Result<String, HtmlError> {
+fn map_text(
+    units: &[TextUnit],
+    font: &ResolvedFont,
+    max_bytes: usize,
+) -> Result<String, HtmlError> {
     let mut text = String::new();
     for unit in units {
         match unit {
-            TextUnit::Space => text.push(' '),
+            TextUnit::Space => {
+                if text.len() >= max_bytes {
+                    return Err(HtmlError::HtmlTooLarge {
+                        bytes: text.len().saturating_add(1),
+                        limit: max_bytes,
+                    });
+                }
+                text.push(' ');
+            }
             TextUnit::Code(code) => {
                 let mapping = font.web.encoding[usize::from(*code)].as_ref().ok_or(
                     HtmlError::MissingTextMapping {
@@ -740,6 +862,12 @@ fn map_text(units: &[TextUnit], font: &ResolvedFont) -> Result<String, HtmlError
                         code: *code,
                     });
                 }
+                if text.len().saturating_add(mapping.len()) > max_bytes {
+                    return Err(HtmlError::HtmlTooLarge {
+                        bytes: text.len().saturating_add(mapping.len()),
+                        limit: max_bytes,
+                    });
+                }
                 text.push_str(mapping);
             }
         }
@@ -748,6 +876,18 @@ fn map_text(units: &[TextUnit], font: &ResolvedFont) -> Result<String, HtmlError
 }
 
 fn validate_options(options: &HtmlOptions) -> Result<(), HtmlError> {
+    if options.title.len().saturating_mul(6) > options.max_html_bytes
+        || options.language.len().saturating_mul(6) > options.max_html_bytes
+    {
+        return Err(HtmlError::HtmlTooLarge {
+            bytes: options
+                .title
+                .len()
+                .max(options.language.len())
+                .saturating_mul(6),
+            limit: options.max_html_bytes,
+        });
+    }
     if options.language.is_empty()
         || !options
             .language

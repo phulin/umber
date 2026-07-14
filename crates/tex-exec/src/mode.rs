@@ -147,8 +147,8 @@ impl ModeList {
         self.pending_hchars = Some(PendingHRun::new(font, ch, self.nodes.len()));
     }
 
-    pub(crate) const fn pending_hchars(&self) -> Option<PendingHRun> {
-        self.pending_hchars
+    pub(crate) fn pending_hchars(&self) -> Option<PendingHRun> {
+        self.pending_hchars.clone()
     }
 
     pub(crate) fn set_pending_hchars(&mut self, pending: PendingHRun) {
@@ -501,7 +501,7 @@ pub struct PendingHChar {
 }
 
 /// Streaming state for the unresolved tail of one horizontal character run.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PendingHRun {
     pub(crate) first: PendingHChar,
     pub(crate) current: PendingHRunChar,
@@ -509,7 +509,7 @@ pub(crate) struct PendingHRun {
 }
 
 impl PendingHRun {
-    pub(crate) const fn new(font: FontId, ch: char, node_start: usize) -> Self {
+    pub(crate) fn new(font: FontId, ch: char, node_start: usize) -> Self {
         Self {
             first: PendingHChar { font, ch },
             current: PendingHRunChar::new(font, ch),
@@ -519,22 +519,20 @@ impl PendingHRun {
 }
 
 /// Current glyph and original-character range carried through ligature folding.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PendingHRunChar {
     pub(crate) font: FontId,
     pub(crate) ch: char,
-    pub(crate) orig_first: char,
-    pub(crate) orig_last: char,
+    pub(crate) orig: Vec<char>,
     pub(crate) ligature_present: bool,
 }
 
 impl PendingHRunChar {
-    pub(crate) const fn new(font: FontId, ch: char) -> Self {
+    pub(crate) fn new(font: FontId, ch: char) -> Self {
         Self {
             font,
             ch,
-            orig_first: ch,
-            orig_last: ch,
+            orig: vec![ch],
             ligature_present: false,
         }
     }
@@ -723,7 +721,7 @@ fn hash_mode_list(list: &ModeList, projection: &mut EngineBoundaryHasher<'_>) {
         None => projection.bool(false),
     }
     projection.i32(list.prev_graf);
-    match list.pending_hchars {
+    match &list.pending_hchars {
         Some(pending) => {
             projection.bool(true);
             projection.font(pending.first.font);
@@ -731,8 +729,10 @@ fn hash_mode_list(list: &ModeList, projection: &mut EngineBoundaryHasher<'_>) {
             projection.usize(pending.node_start);
             projection.font(pending.current.font);
             projection.u32(pending.current.ch as u32);
-            projection.u32(pending.current.orig_first as u32);
-            projection.u32(pending.current.orig_last as u32);
+            projection.usize(pending.current.orig.len());
+            for ch in &pending.current.orig {
+                projection.u32(*ch as u32);
+            }
             projection.bool(pending.current.ligature_present);
         }
         None => projection.bool(false),

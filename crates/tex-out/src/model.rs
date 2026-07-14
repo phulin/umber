@@ -129,6 +129,7 @@ pub enum ArtifactValidationError {
     MissingFont { font_id: u32 },
     MissingEffect { effect_index: u32 },
     CharacterOutOfRange { ch: u32 },
+    InvalidLigatureSourceLength { count: usize },
     InvalidTokenScalar { ch: u32 },
     InvalidStream { stream: u8 },
 }
@@ -185,8 +186,8 @@ pub enum PageNode {
     Lig {
         font_id: u32,
         ch: u32,
-        left: u32,
-        right: u32,
+        /// Complete source-code provenance consumed to form this glyph.
+        source: Vec<u32>,
         width: Scaled,
     },
     Kern {
@@ -428,13 +429,18 @@ fn validate_artifact(
             PageNode::Lig {
                 font_id,
                 ch,
-                left,
-                right,
+                source,
                 ..
             } => {
                 validate_font_and_char(&font_ids, *font_id, *ch)?;
-                validate_character(*left)?;
-                validate_character(*right)?;
+                if source.is_empty() || source.len() > 63 {
+                    return Err(ArtifactValidationError::InvalidLigatureSourceLength {
+                        count: source.len(),
+                    });
+                }
+                for source in source {
+                    validate_character(*source)?;
+                }
             }
             PageNode::HList(box_node) | PageNode::VList(box_node) => {
                 push_nodes(&mut stack, &box_node.children, depth + 1);

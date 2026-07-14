@@ -602,40 +602,47 @@ impl VirtualCompileSession {
                 column: None,
             })
         })?;
-        let html = if self.html {
-            let mut resolver = SessionFontResolver {
-                fonts: &self.html_fonts,
-            };
-            Some(
-                crate::html_from_committed_artifacts(
-                    &run.committed_artifacts,
-                    &mut resolver,
-                    &tex_out::html::HtmlOptions::default(),
-                )
-                .map_err(|error| CompileError::Html(error.to_string()))?,
-            )
-        } else {
-            None
-        };
         let mut output = collect_final_memory_output_from_plans(
             &mut stores,
             &run.dvi_pages,
             self.limits.output_bytes,
         )
         .map_err(map_output_error)?;
+        let existing = output
+            .terminal
+            .len()
+            .saturating_add(output.log.len())
+            .saturating_add(output.dvi.len())
+            .saturating_add(
+                output
+                    .files
+                    .iter()
+                    .map(|file| file.bytes.len())
+                    .sum::<usize>(),
+            );
+        let remaining = self.limits.output_bytes.saturating_sub(existing);
+        let html = if self.html {
+            let mut resolver = SessionFontResolver {
+                fonts: &self.html_fonts,
+            };
+            let html_options = tex_out::html::HtmlOptions {
+                max_html_bytes: remaining,
+                max_total_asset_bytes: remaining,
+                max_asset_bytes: remaining,
+                ..tex_out::html::HtmlOptions::default()
+            };
+            Some(
+                crate::html_from_committed_artifacts(
+                    &run.committed_artifacts,
+                    &mut resolver,
+                    &html_options,
+                )
+                .map_err(|error| CompileError::Html(error.to_string()))?,
+            )
+        } else {
+            None
+        };
         if let Some(html) = html {
-            let existing = output
-                .terminal
-                .len()
-                .saturating_add(output.log.len())
-                .saturating_add(output.dvi.len())
-                .saturating_add(
-                    output
-                        .files
-                        .iter()
-                        .map(|file| file.bytes.len())
-                        .sum::<usize>(),
-                );
             let attempted = existing.saturating_add(html.html.len()).saturating_add(
                 html.assets
                     .iter()

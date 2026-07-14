@@ -1,6 +1,6 @@
 # Coordinate-Identical HTML Output
 
-Status: implementation contract for artifact schema 11 and HTML schema 1.
+Status: implementation contract for artifact schema 12 and HTML schema 1.
 
 HTML is a downstream view of committed `PageArtifact` values. It is not a page
 builder and never observes `Universe`, node handles, or mutable font state. DVI
@@ -52,13 +52,13 @@ CSS. Browser projection tests compare `getBoundingClientRect()` against the
 same rational after browser quantization and never accumulate a previous
 element's rectangle.
 
-The supported matrix is zoom 100%, 125%, and 200% at device-pixel ratios 1 and
-2 in the repository's pinned CI browser builds. The initial validated builds
-are Chromium 149 and Firefox 152. A major-version change requires rerunning the
-projection self-tests and updating this paragraph. Layout comparisons tolerate
-only the containing engine's observed layout-unit quantization (1/64 CSS px in
-Chromium 149 and 1/60 CSS px in Firefox 152), plus conversion to device pixels;
-screenshots are diagnostic only.
+The supported matrix is zoom 100%, 125%, and 200% in pinned Chromium 149 and
+Firefox 152, with device-pixel ratios 1 and 2 exercised in Chromium. Firefox
+exercises every zoom at the CI host DPR; DPR does not alter CSS-pixel geometry.
+The package test installs serializer-generated HTML, waits for its embedded
+faces, rejects fallback for every emitted character, and measures page,
+negative-rule, run-anchor, and baseline metadata. Comparisons tolerate 1/30
+CSS px after scaling; screenshots are diagnostic only.
 
 ## Text grouping and shaping
 
@@ -82,9 +82,9 @@ used to move another event. `white-space: pre`, `text-wrap: nowrap`, fixed
 positioned containers, and zero layout participation preserve TeX's line set.
 
 Character codes are retained in `source_codes`; `text` is obtained from an
-explicit encoding map supplied with the web font. A ligature node contributes
-its retained `left` and `right` source codes, not a guessed Unicode expansion
-of the ligature glyph. Discretionary replacement nodes are already the shipped
+explicit encoding map supplied with the web font. Artifact schema 12 records
+the complete source sequence for a ligature, including every character in
+`ffi` and `ffl`, instead of retaining only its endpoints. Discretionary replacement nodes are already the shipped
 choice and are traversed as such. Math uses its actual font/code mapping and
 splits at math boundaries. Mixed text/rules, shifted boxes, manual boxes, and
 direction changes therefore retain exact anchors without pretending that a
@@ -111,14 +111,20 @@ A `FontResource` from the artifact is only TeX metric identity. A downstream
 
 Bindings are keyed by the complete TeX identity, not by basename. Duplicate,
 missing, corrupt, unlicensed, or incomplete bindings are typed failures.
+Before serialization, the driver bounds and fully decodes each WOFF2, parses
+its SFNT tables, and requires a cmap glyph for every scalar in every declared
+code mapping; a matching caller-supplied digest alone is not accepted.
 Embedded mode writes WOFF2 as a canonical base64 data URL. Manifest mode writes
 content-addressed asset names and a sorted manifest; it never derives a URL
 from TeX input. Deterministic subsetting is allowed only when the subsetter,
 version, glyph closure, tables, and output hash are pinned. Schema 1 embeds
 whole supplied faces to keep native and WASM bytes identical.
 
-Computer Modern support uses explicitly provisioned, redistributable WOFF2
-faces and the canonical OT1/OML/OMS/OMX maps selected by the driver bundle.
+The initial WASM convenience bundle provisions a redistributable CM Unicode
+Roman face and an explicit OT1-like text map. Math fonts and other encodings
+must currently be supplied as exact resolver bindings; absent mappings fail
+serialization instead of falling back. A future bundle can add pinned
+OML/OMS/OMX faces and maps without changing engine state or the artifact.
 The repository does not silently convert a host TeX installation or infer an
 encoding from a font name. Native callers may load a verified bundle from a
 configured path; WASM callers provide the same content-addressed bundle through
@@ -199,12 +205,15 @@ rule, and baseline-probe rectangles only; they never inspect glyph children or
 use screenshot thresholds.
 
 The hermetic gate covers all 61 committed `dvi`, `page`, `math`, `align`, and
-`leaders` documents. The repository's Firefox wasm-bindgen gate and optimized
-Chrome package fixture check the SVG baseline and rule projection; the Chrome
-fixture additionally proves that enabled kerning/ligatures change the measured
-run width without changing the baseline. Story, Gentle, TRIP, and e-TRIP remain
-conditional on the external inputs installed by
-`scripts/setup-conformance-tests.sh`, matching the existing DVI gate policy.
+`leaders` documents. The Firefox wasm-bindgen gate and optimized Chrome package
+fixture both compile and install generated HTML before checking its page,
+negative-rule, run-anchor, and baseline projection at the supported zoom
+policy; Chrome also exercises DPR 1 and 2 and verifies the embedded face and
+mapped glyph coverage. Story, Gentle, TRIP, and e-TRIP remain conditional on
+the external inputs installed by `scripts/setup-conformance-tests.sh`. When
+present, their in-process runs lower every committed artifact through the
+positioned HTML stream and compare it with the DVI coordinate oracle before
+the existing byte-level DVI comparison.
 
 ## Packaging and operational budgets
 

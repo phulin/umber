@@ -46,6 +46,7 @@ pub(crate) struct NodeArenaMark {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) struct StorageMark {
     pub(super) words: u32,
+    pub(super) ligatures: u32,
     pub(super) boxes: u32,
     pub(super) unsets: u32,
     pub(super) rules: u32,
@@ -63,6 +64,7 @@ pub(super) struct StorageMark {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) struct SidecarNeeds {
+    pub(super) ligatures: u32,
     pub(super) boxes: u32,
     pub(super) unsets: u32,
     pub(super) rules: u32,
@@ -81,6 +83,7 @@ pub(super) struct SidecarNeeds {
 impl SidecarNeeds {
     fn count(&mut self, node: &Node) {
         let target = match node {
+            Node::Lig { .. } => Some(&mut self.ligatures),
             Node::HList(_) | Node::VList(_) => Some(&mut self.boxes),
             Node::Unset(_) => Some(&mut self.unsets),
             Node::Rule { .. } => Some(&mut self.rules),
@@ -97,7 +100,6 @@ impl SidecarNeeds {
             Node::MathList(_) => Some(&mut self.math_lists),
             Node::Adjust(_) => Some(&mut self.adjusts),
             Node::Char { .. }
-            | Node::Lig { .. }
             | Node::Kern { .. }
             | Node::Glue { leader: None, .. }
             | Node::Penalty(_)
@@ -112,8 +114,9 @@ impl SidecarNeeds {
         }
     }
 
-    pub(super) fn as_array(self) -> [u32; 13] {
+    pub(super) fn as_array(self) -> [u32; 14] {
         [
+            self.ligatures,
             self.boxes,
             self.unsets,
             self.rules,
@@ -135,6 +138,7 @@ impl SidecarNeeds {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct NodeStorage {
     pub(super) words: Vec<NodeWord>,
+    pub(super) ligatures: Vec<(crate::ids::FontId, char, Vec<char>)>,
     pub(super) boxes: BoxTable,
     pub(super) unsets: UnsetTable,
     pub(super) rules: Vec<(Option<Scaled>, Option<Scaled>, Option<Scaled>)>,
@@ -167,6 +171,7 @@ impl NodeStorage {
     pub(super) fn mark(&self) -> StorageMark {
         StorageMark {
             words: checked_len(self.words.len(), "node arena exceeds u32 entries"),
+            ligatures: checked_len(self.ligatures.len(), "ligature sidecar exceeds u32 entries"),
             boxes: checked_len(self.boxes.len(), "box sidecar exceeds u32 entries"),
             unsets: checked_len(self.unsets.len(), "unset sidecar exceeds u32 entries"),
             rules: checked_len(self.rules.len(), "rule sidecar exceeds u32 entries"),
@@ -192,6 +197,7 @@ impl NodeStorage {
     pub(super) fn truncate(&mut self, mark: StorageMark) {
         // Validate the entire tuple before mutating any stream.
         assert!(mark.words as usize <= self.words.len());
+        assert!(mark.ligatures as usize <= self.ligatures.len());
         assert!(mark.boxes as usize <= self.boxes.len());
         assert!(mark.unsets as usize <= self.unsets.len());
         assert!(mark.rules as usize <= self.rules.len());
@@ -206,6 +212,7 @@ impl NodeStorage {
         assert!(mark.math_lists as usize <= self.math_lists.len());
         assert!(mark.adjusts as usize <= self.adjusts.len());
         self.words.truncate(mark.words as usize);
+        self.ligatures.truncate(mark.ligatures as usize);
         self.boxes.truncate(mark.boxes as usize);
         self.unsets.truncate(mark.unsets as usize);
         self.rules.truncate(mark.rules as usize);
@@ -268,9 +275,10 @@ impl NodeStorage {
         (start, len)
     }
 
-    pub(super) fn sidecar_lengths(&self) -> [u32; 13] {
+    pub(super) fn sidecar_lengths(&self) -> [u32; 14] {
         let m = self.mark();
         [
+            m.ligatures,
             m.boxes,
             m.unsets,
             m.rules,
@@ -288,6 +296,7 @@ impl NodeStorage {
     }
 
     pub(super) fn reserve_sidecars(&mut self, needs: SidecarNeeds) {
+        self.ligatures.reserve(needs.ligatures as usize);
         self.boxes.reserve(needs.boxes as usize);
         self.unsets.reserve(needs.unsets as usize);
         self.rules.reserve(needs.rules as usize);
@@ -307,18 +316,7 @@ impl NodeStorage {
         match node {
             Node::Char { font, ch } => NodeWord::new(0, (*ch as u64) | ((font.raw() as u64) << 21)),
             Node::Lig { font, ch, orig } => {
-                // The complete input slice was domain-checked before any
-                // storage mutation, so these narrowing conversions are exact.
-                let ch = *ch as u8;
-                let left = orig.0 as u8;
-                let right = orig.1 as u8;
-                NodeWord::new(
-                    1,
-                    ch as u64
-                        | ((left as u64) << 8)
-                        | ((right as u64) << 16)
-                        | ((font.raw() as u64) << 24),
-                )
+                push_sidecar(1, &mut self.ligatures, (*font, *ch, orig.clone()))
             }
             Node::Kern { amount, kind } => NodeWord::new(
                 2,
@@ -437,12 +435,10 @@ fn preflight_encoding(node: &Node) {
             (*ch as u32) <= u8::MAX as u32,
             "ligature glyph exceeds TFM byte domain"
         );
+        assert!(!orig.is_empty(), "ligature source must not be empty");
+        assert!(orig.len() <= 63, "ligature source exceeds TeX word limit");
         assert!(
-            (orig.0 as u32) <= u8::MAX as u32,
-            "ligature original exceeds TFM byte domain"
-        );
-        assert!(
-            (orig.1 as u32) <= u8::MAX as u32,
+            orig.iter().all(|ch| (*ch as u32) <= u8::MAX as u32),
             "ligature original exceeds TFM byte domain"
         );
     }

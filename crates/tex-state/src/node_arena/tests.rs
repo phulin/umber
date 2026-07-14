@@ -225,7 +225,7 @@ fn every_inline_kind_uses_only_one_word_and_no_sidecar() {
         Node::Lig {
             font: FontId::testing_new(7),
             ch: '\u{ff}',
-            orig: ('\0', '\u{fe}'),
+            orig: vec!['\0', '\u{fe}'],
         },
         Node::Kern {
             amount: Scaled::from_raw(i32::MIN),
@@ -268,7 +268,7 @@ fn byte_char_runs_stop_at_fonts_unicode_ligatures_and_other_nodes() {
         Node::Lig {
             font: f2,
             ch: 'd',
-            orig: ('c', 'd'),
+            orig: vec!['c', 'd'],
         },
         Node::Kern {
             amount: scaled(1),
@@ -504,7 +504,7 @@ fn late_invalid_ligature_leaves_complete_arena_state_unchanged() {
             Node::Lig {
                 font: FontId::testing_new(2),
                 ch: 'c',
-                orig: ('b', '\u{100}'),
+                orig: vec!['b', '\u{100}'],
             },
         ]);
     }));
@@ -534,7 +534,7 @@ fn builder_late_invalid_ligature_does_not_publish_valid_prefix_or_sidecar() {
         builder.push(Node::Lig {
             font: FontId::testing_new(0),
             ch,
-            orig,
+            orig: vec![orig.0, orig.1],
         });
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

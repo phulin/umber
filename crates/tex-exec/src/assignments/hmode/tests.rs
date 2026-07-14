@@ -248,9 +248,9 @@ fn hyphenation_inside_ff_ligature_preserves_the_unbroken_ligature() {
         stores.nodes(disc.2).testing_decoded(),
         [Node::Lig {
             ch: '\u{b}',
-            orig: ('f', 'f'),
+            orig,
             ..
-        }]
+        }] if orig == &['f', 'f']
     ));
     assert!(
         matches!(
@@ -271,23 +271,22 @@ fn composite_rechar_keeps_ligature_provenance_when_emitted() {
     let current = PendingHRunChar {
         font: tex_state::ids::FontId::testing_new(7),
         ch: 'A',
-        orig_first: 'B',
-        orig_last: 'B',
+        orig: vec!['B'],
         ligature_present: true,
     };
 
     assert!(matches!(
-        rechar_node(current),
+        rechar_node(current.clone()),
         Node::Lig {
             font,
             ch: 'A',
-            orig: ('B', 'B'),
-        } if font == current.font
+            orig,
+        } if font == current.font && orig == ['B']
     ));
 }
 
 #[test]
-fn same_glyph_replacement_keeps_ligature_provenance() {
+fn arbitrary_chained_ligature_keeps_complete_source_provenance() {
     use tex_fonts::metrics::CharTag;
     use tex_fonts::{CharMetrics, FontMetrics, LigKernInstruction, LigatureCommand, LoadedFont};
 
@@ -335,24 +334,17 @@ fn same_glyph_replacement_keeps_ligature_provenance() {
     let pending = [
         PendingHChar { font, ch: 'A' },
         PendingHChar { font, ch: 'A' },
+        PendingHChar { font, ch: 'A' },
     ];
 
     assert!(matches!(
         reconstitute(&mut stores, &pending, true, false).as_slice(),
         [Node::Lig {
             ch: 'A',
-            orig: ('A', 'A'),
+            orig,
             ..
-        }]
+        }] if orig == &['A', 'A', 'A']
     ));
-}
-
-#[test]
-fn repeated_character_ligature_recovers_both_original_characters() {
-    assert_eq!(
-        super::super::hyphenation::ligature_original_chars('A', ('B', 'B')),
-        ['B', 'B']
-    );
 }
 
 #[test]
@@ -380,9 +372,35 @@ fn char_primitive_continues_the_pending_ligature_run() {
     assert!(matches!(
         stores.nodes(hbox.children).testing_decoded(),
         [Node::Lig {
-            orig: ('f', 'f'),
+            orig,
             ..
-        }]
+        }] if orig == &['f', 'f']
+    ));
+}
+
+#[test]
+fn chained_ligature_retains_every_source_character() {
+    const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+    let mut stores = Universe::with_world(tex_state::World::memory());
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    stores
+        .world_mut()
+        .set_memory_file("cmr10.tfm", CMR10.to_vec())
+        .expect("seed cmr10");
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\f=cmr10 \\relax \\f \\setbox0=\\hbox{ffi}",
+    ));
+    crate::Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("ligature run should execute");
+    let root = stores.box_reg(0).expect("box0");
+    let Some(tex_state::node_arena::NodeRef::HList(hbox)) = stores.nodes(root).first() else {
+        panic!("box0 should contain an hbox");
+    };
+    assert!(matches!(
+        stores.nodes(hbox.children).testing_decoded(),
+        [Node::Lig { orig, .. }] if orig == &['f', 'f', 'i']
     ));
 }
 
@@ -397,7 +415,7 @@ fn hyphenation_does_not_partially_consume_a_boundary_ligature() {
         Node::Lig {
             font,
             ch: 'B',
-            orig: ('C', '/'),
+            orig: vec!['C', '/'],
         },
     ];
 

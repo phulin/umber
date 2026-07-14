@@ -1233,9 +1233,10 @@ Responsibility: page artifacts → bytes on disk. Strictly downstream.
   artifact bytes before asking `World` to store them.
 - Box shifts retain TeX.web's `shift_amount` representation across live state,
   format images, committed artifacts, and drivers: positive is down in an
-  hlist and right in a vlist. Format-image version 5 carries version-2 content
+  hlist and right in a vlist. Format-image version 6 adds complete ligature
+  source provenance; version 5 introduced version-2 content
   identities; version 4 established the current shift representation. Artifact
-  version 11 and format version 5 reject older ambiguous encodings or identity
+  version 12 and format version 6 reject older ambiguous encodings or identity
   schemes rather than guessing context or silently changing semantic hashes.
 - The artifact record captures the effective job magnification, banner,
   `\hoffset`, and `\voffset` at shipout, so DVI generation does not reach back

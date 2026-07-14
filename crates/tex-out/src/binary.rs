@@ -466,19 +466,24 @@ impl<'a> V10NodeListWriter<'a> {
         &mut self,
         font_id: u32,
         ch: u32,
-        left: u32,
-        right: u32,
+        source: impl ExactSizeIterator<Item = u32>,
         width: Scaled,
     ) -> Result<(), SerializeError> {
         self.begin_node()?;
-        let mut bytes = [0; 21];
+        let count = source.len();
+        if count == 0 || count > 63 {
+            return Err(SerializeError::LengthOverflow);
+        }
+        let mut bytes = [0; 17];
         bytes[0] = wire::node::LIG;
         bytes[1..5].copy_from_slice(&font_id.to_le_bytes());
         bytes[5..9].copy_from_slice(&ch.to_le_bytes());
-        bytes[9..13].copy_from_slice(&left.to_le_bytes());
-        bytes[13..17].copy_from_slice(&right.to_le_bytes());
-        bytes[17..21].copy_from_slice(&width.raw().to_le_bytes());
+        bytes[9..13].copy_from_slice(&width.raw().to_le_bytes());
+        bytes[13..17].copy_from_slice(&(count as u32).to_le_bytes());
         self.writer.raw(&bytes);
+        for code in source {
+            self.writer.u32(code);
+        }
         Ok(())
     }
 
@@ -980,13 +985,21 @@ impl<'r, 'a> V10NodeListReader<'r, 'a> {
             wire::node::LIG => {
                 let font_id = self.reader.u32()?;
                 let ch = self.reader.u32()?;
-                let left = self.reader.u32()?;
-                let right = self.reader.u32()?;
                 let width = self.reader.scaled()?;
+                let count = self.reader.u32()? as usize;
+                if count == 0 || count > 63 {
+                    return Err(ParseError::Validation(
+                        crate::ArtifactValidationError::InvalidLigatureSourceLength { count },
+                    ));
+                }
                 if self.validate {
                     validate_streamed_char(self.font_ids, font_id, ch)?;
-                    validate_streamed_scalar(left)?;
-                    validate_streamed_scalar(right)?;
+                }
+                for _ in 0..count {
+                    let source = self.reader.u32()?;
+                    if self.validate {
+                        validate_streamed_scalar(source)?;
+                    }
                 }
                 V10StreamNode::Char { font_id, ch, width }
             }
@@ -1419,18 +1432,19 @@ impl Writer {
             PageNode::Lig {
                 font_id,
                 ch,
-                left,
-                right,
+                source,
                 width,
             } => {
-                let mut bytes = [0; 21];
+                let mut bytes = [0; 17];
                 bytes[0] = wire::node::LIG;
                 bytes[1..5].copy_from_slice(&font_id.to_le_bytes());
                 bytes[5..9].copy_from_slice(&ch.to_le_bytes());
-                bytes[9..13].copy_from_slice(&left.to_le_bytes());
-                bytes[13..17].copy_from_slice(&right.to_le_bytes());
-                bytes[17..21].copy_from_slice(&width.raw().to_le_bytes());
+                bytes[9..13].copy_from_slice(&width.raw().to_le_bytes());
+                bytes[13..17].copy_from_slice(&(source.len() as u32).to_le_bytes());
                 self.raw(&bytes);
+                for code in source {
+                    self.u32(*code);
+                }
             }
             PageNode::Kern { amount, kind } => {
                 let mut bytes = [0; 6];
@@ -2016,9 +2030,18 @@ impl Reader<'_> {
             wire::node::LIG => Ok(ParsedNode::Complete(PageNode::Lig {
                 font_id: self.u32()?,
                 ch: self.u32()?,
-                left: self.u32()?,
-                right: self.u32()?,
                 width: self.scaled()?,
+                source: {
+                    let count = self.u32()? as usize;
+                    if count == 0 || count > 63 {
+                        return Err(ParseError::Validation(
+                            crate::ArtifactValidationError::InvalidLigatureSourceLength { count },
+                        ));
+                    }
+                    (0..count)
+                        .map(|_| self.u32())
+                        .collect::<Result<Vec<_>, _>>()?
+                },
             })),
             wire::node::KERN => Ok(ParsedNode::Complete(PageNode::Kern {
                 amount: self.scaled()?,

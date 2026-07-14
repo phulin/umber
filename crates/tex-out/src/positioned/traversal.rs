@@ -97,16 +97,16 @@ impl Lowerer<'_> {
                 }
                 PageNode::Lig {
                     font_id,
-                    left,
-                    right,
+                    source,
                     width,
                     ..
                 } => {
                     if run.font_id.is_some_and(|current| current != *font_id) {
                         run.flush(self)?;
                     }
-                    run.character(*font_id, *left, self.cur_h, base_line, self.limits)?;
-                    run.character(*font_id, *right, self.cur_h, base_line, self.limits)?;
+                    for code in source {
+                        run.character(*font_id, *code, self.cur_h, base_line, self.limits)?;
+                    }
                     self.cur_h = add(self.cur_h, *width)?;
                 }
                 PageNode::Kern { amount, kind } => {

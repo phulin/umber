@@ -93,7 +93,7 @@ async function integration() {
 		[
 			"html.tex",
 			encode(
-				"\\font\\tenrm=cmr10\\relax\\shipout\\hbox{\\tenrm AV office}\\end",
+				"\\font\\tenrm=cmr10\\relax\\shipout\\hbox{\\kern-2pt\\vrule width3pt height4pt depth1pt\\tenrm AV office}\\end",
 			),
 		],
 	]);
@@ -107,6 +107,11 @@ async function integration() {
 			htmlFirst.html.every((byte, index) => byte === htmlSecond.html[index]),
 		"worker HTML bytes were not deterministic",
 	);
+	const generatedGeometry = await installAndMeasureGeneratedHtml(
+		htmlFirst.html,
+	);
+	globalThis.__umberGeneratedGeometry = (zoom = 1) =>
+		measureGeneratedHtml(zoom);
 
 	const plain = await compileInWorker(
 		{ mainPath: "main.tex" },
@@ -171,8 +176,6 @@ async function integration() {
 		})(),
 		"traversal manifest was accepted",
 	);
-	const geometry = await htmlGeometryContract();
-
 	return {
 		dviBytes: first.dvi.byteLength,
 		auxBytes: auxiliary.bytes.byteLength,
@@ -180,65 +183,108 @@ async function integration() {
 		maximumActive: cold.maximumActive,
 		plainDviBytes: plain.dvi.byteLength,
 		htmlBytes: htmlFirst.html.byteLength,
-		geometry,
+		geometry: generatedGeometry,
 	};
 }
 
-async function htmlGeometryContract() {
-	const style = document.createElement("style");
-	style.textContent = `
-		@font-face{font-family:'umber-contract-cm';src:url('/package/assets/cmu-serif-500-roman.woff2') format('woff2');font-display:block}
-		#geometry-page{position:relative;width:400px;height:240px;contain:strict}
-		.contract-run{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;font:32px 'umber-contract-cm';font-kerning:normal;font-variant-ligatures:common-ligatures}
-		#geometry-rule{position:absolute;left:31.125px;top:88.375px;width:47.625px;height:3.25px}
-	`;
-	document.head.append(style);
-	await document.fonts.load("32px umber-contract-cm", "AV office");
-	assert(
-		document.fonts.check("32px umber-contract-cm", "AV office"),
-		"pinned CM web font did not load",
+async function installAndMeasureGeneratedHtml(bytes) {
+	const iframe = document.createElement("iframe");
+	iframe.id = "generated-html-fixture";
+	iframe.style.cssText = "border:0;width:900px;height:500px";
+	document.body.append(iframe);
+	const loaded = new Promise((resolve) =>
+		iframe.addEventListener("load", resolve, { once: true }),
 	);
-	const page = document.createElement("div");
-	page.id = "geometry-page";
-	page.innerHTML = `
-		<svg class="contract-run"><rect id="geometry-baseline" x="17.375px" y="73.625px" width="1" height="1" fill="transparent"></rect><text id="geometry-run" x="17.375px" y="73.625px">AV office</text></svg>
-		<svg class="contract-run" style="font-kerning:none;font-variant-ligatures:none"><rect id="geometry-baseline-unshaped" x="17.375px" y="123.625px" width="1" height="1" fill="transparent"></rect><text id="geometry-run-unshaped" x="17.375px" y="123.625px">AV office</text></svg>
-		<div id="geometry-negative" style="position:absolute;left:-2.375px;top:-1.625px;width:1px;height:1px"></div>
-		<div id="geometry-rule"></div>`;
-	document.body.append(page);
+	iframe.srcdoc = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+	await loaded;
+	await iframe.contentDocument.fonts.ready;
+	assert(
+		iframe.contentDocument.fonts.status === "loaded",
+		"generated fonts did not settle",
+	);
+	for (const run of iframe.contentDocument.querySelectorAll(
+		".umber-run-text",
+	)) {
+		const style = iframe.contentWindow.getComputedStyle(run.parentElement);
+		assert(
+			iframe.contentDocument.fonts.check(
+				`${style.fontSize} ${style.fontFamily}`,
+				run.textContent,
+			),
+			"generated run font did not load or cover its text",
+		);
+		assert(
+			fontCovers(iframe.contentDocument, style, run.textContent),
+			"generated face lacks a mapped glyph and would fall back",
+		);
+	}
+	return measureGeneratedHtml(1);
+}
+
+function fontCovers(doc, style, text) {
+	const context = doc.createElement("canvas").getContext("2d");
+	for (const character of new Set(text)) {
+		context.font = `${style.fontSize} ${style.fontFamily}, monospace`;
+		const mono = context.measureText(character).width;
+		context.font = `${style.fontSize} ${style.fontFamily}, serif`;
+		const serif = context.measureText(character).width;
+		if (Math.abs(mono - serif) > 0.01) return false;
+	}
+	return true;
+}
+
+function measureGeneratedHtml(zoom) {
+	const iframe = document.querySelector("#generated-html-fixture");
+	const doc = iframe.contentDocument;
+	const page = doc.querySelector(".umber-page");
+	page.style.zoom = String(zoom);
 	const pageRect = page.getBoundingClientRect();
-	const run = page.querySelector("#geometry-run");
-	const plain = page.querySelector("#geometry-run-unshaped");
-	const baseline = page
-		.querySelector("#geometry-baseline")
-		.getBoundingClientRect();
-	const plainBaseline = page
-		.querySelector("#geometry-baseline-unshaped")
-		.getBoundingClientRect();
-	const rule = page.querySelector("#geometry-rule").getBoundingClientRect();
-	const negative = page
-		.querySelector("#geometry-negative")
-		.getBoundingClientRect();
-	const tolerance = 1 / 60 + 1e-6;
+	const mag = Number(page.dataset.umberMag);
+	const px = (raw) => (Number(raw) * mag * 48) / (65536 * 5 * 7227);
+	const tolerance = 1 / 30 + 1e-6;
 	const close = (actual, expected, label) =>
 		assert(
 			Math.abs(actual - expected) <= tolerance,
-			`${label}: ${actual} != ${expected}`,
+			`${label} at zoom ${zoom}: ${actual} != ${expected}`,
 		);
-	close(baseline.left, pageRect.left + 17.375, "run anchor");
-	close(baseline.top, pageRect.top + 73.625, "run baseline");
-	close(plainBaseline.top, pageRect.top + 123.625, "unshaped baseline");
-	close(rule.left, pageRect.left + 31.125, "rule left");
-	close(rule.top, pageRect.top + 88.375, "rule top");
-	close(rule.width, 47.625, "rule width");
-	close(rule.height, 3.25, "rule height");
-	close(negative.left, pageRect.left - 2.375, "negative x");
-	close(negative.top, pageRect.top - 1.625, "negative y");
+	close(pageRect.width, px(page.dataset.umberWidthSp) * zoom, "page width");
+	close(pageRect.height, px(page.dataset.umberHeightSp) * zoom, "page height");
+	const rule = page.querySelector(".umber-rule");
+	assert(rule, "generated HTML has no rule event");
+	const ruleRect = rule.getBoundingClientRect();
+	close(
+		ruleRect.left - pageRect.left,
+		px(rule.dataset.umberXSp) * zoom,
+		"rule x",
+	);
+	close(
+		ruleRect.top - pageRect.top,
+		px(rule.dataset.umberYSp) * zoom,
+		"rule y",
+	);
+	close(ruleRect.width, px(rule.dataset.umberWidthSp) * zoom, "rule width");
+	close(ruleRect.height, px(rule.dataset.umberHeightSp) * zoom, "rule height");
+	assert(
+		Number(rule.dataset.umberXSp) < 0,
+		"negative generated coordinate was not exercised",
+	);
+	const run = page.querySelector(".umber-run");
+	const baseline = run.querySelector(".umber-baseline").getBoundingClientRect();
+	close(
+		baseline.left - pageRect.left,
+		px(run.dataset.umberXSp) * zoom,
+		"run x",
+	);
+	close(
+		baseline.top - pageRect.top,
+		px(run.dataset.umberBaselineSp) * zoom,
+		"baseline",
+	);
 	return {
 		fontLoaded: true,
-		shapedWidth: run.getBoundingClientRect().width,
-		unshapedWidth: plain.getBoundingClientRect().width,
-		baseline: baseline.top - pageRect.top,
+		zoom,
+		dpr: devicePixelRatio,
+		ruleX: ruleRect.left - pageRect.left,
 	};
 }
 

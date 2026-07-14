@@ -195,8 +195,24 @@ try {
 			return evaluated.result.value;
 		});
 		assert(result.ok, result.error);
+		const geometryMatrix = [];
+		for (const deviceScaleFactor of [1, 2]) {
+			await cdp.call("Emulation.setDeviceMetricsOverride", {
+				width: 1280,
+				height: 900,
+				deviceScaleFactor,
+				mobile: false,
+			});
+			for (const zoom of [1, 1.25, 2]) {
+				const measured = await cdp.call("Runtime.evaluate", {
+					expression: `globalThis.__umberGeneratedGeometry(${zoom})`,
+					returnByValue: true,
+				});
+				geometryMatrix.push(measured.result.value);
+			}
+		}
 		process.stdout.write(
-			`browser integration passed ${JSON.stringify(result.value)}\n`,
+			`browser integration passed ${JSON.stringify({ ...result.value, geometryMatrix })}\n`,
 		);
 	} finally {
 		cdp.close();

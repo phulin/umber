@@ -40,8 +40,7 @@ fn text_runs_keep_exact_anchor_and_baseline_but_not_glyph_positions() {
                     PageNode::Lig {
                         font_id: 1,
                         ch: 11,
-                        left: b'f' as u32,
-                        right: b'i' as u32,
+                        source: vec![b'f' as u32, b'f' as u32, b'i' as u32],
                         width: sp(30),
                     },
                     PageNode::Glue {
@@ -90,6 +89,7 @@ fn text_runs_keep_exact_anchor_and_baseline_but_not_glyph_positions() {
         runs[0].units,
         vec![
             TextUnit::Code(b'A'),
+            TextUnit::Code(b'f'),
             TextUnit::Code(b'f'),
             TextUnit::Code(b'i'),
             TextUnit::Space,

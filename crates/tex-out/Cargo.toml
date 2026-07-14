@@ -7,6 +7,8 @@ edition.workspace = true
 tex-arith = { path = "../tex-arith" }
 tex-content = { path = "../tex-content" }
 sha2.workspace = true
+ttf-parser = "0.25.1"
+woff2-patched = "0.4.0"
 
 [lints]
 workspace = true

@@ -29,11 +29,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - uses: browser-actions/setup-firefox@v1
+        with:
+          firefox-version: "152.0"
+      - uses: browser-actions/setup-chrome@v2
+        with:
+          chrome-version: "149"
       - name: Install wasm-pack
         run: cargo install wasm-pack --version 0.14.0 --locked
       - name: Native quality gate
         run: scripts/check-and-test.sh
       - name: Test optimized package in Firefox and Chrome
-        env:
-          CHROME: /usr/bin/google-chrome
-        run: scripts/check-wasm.sh
+        run: CHROME="$(command -v chrome)" scripts/check-wasm.sh

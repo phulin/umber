@@ -2,9 +2,11 @@
 
 use js_sys::{Array, Object, Reflect, Uint8Array};
 use umber_wasm::{
-    CompilerSession, JsFileRequestKey, JsSessionOptions, format_schema_version, package_version,
+    CompilerSession, JsFileRequestKey, JsHtmlFontInput, JsSessionOptions, content_hash,
+    format_schema_version, package_version,
 };
 use wasm_bindgen::{JsCast, JsValue};
+use wasm_bindgen_futures::JsFuture;
 use wasm_bindgen_test::*;
 
 wasm_bindgen_test_configure!(run_in_browser);
@@ -81,29 +83,116 @@ fn complete_output_uses_strings_and_uint8arrays() {
 }
 
 #[wasm_bindgen_test]
-fn svg_text_baseline_and_rule_projection_use_absolute_page_coordinates() {
-    let passed = js_sys::eval(
-        r#"(() => {
-          const host = document.createElement('div');
-          host.style.cssText = 'position:relative;width:200px;height:150px';
-          host.innerHTML = '<svg style="position:absolute;left:0;top:0;width:0;height:0;overflow:visible"><rect id="umber-test-baseline" x="17.375px" y="73.625px" width="1" height="1" fill="transparent"></rect><text x="17.375px" y="73.625px">AV office</text></svg><div id="umber-test-rule" style="position:absolute;left:31.125px;top:88.375px;width:47.625px;height:3.25px"></div>';
-          document.body.append(host);
-          const page = host.getBoundingClientRect();
-          const baseline = host.querySelector('#umber-test-baseline').getBoundingClientRect();
-          const rule = host.querySelector('#umber-test-rule').getBoundingClientRect();
-          const close = (a, b) => Math.abs(a - b) <= 1 / 60 + 1e-6;
-          const ok = close(baseline.left - page.left, 17.375)
-            && close(baseline.top - page.top, 73.625)
-            && close(rule.left - page.left, 31.125)
-            && close(rule.top - page.top, 88.375)
-            && close(rule.width, 47.625)
-            && close(rule.height, 3.25);
-          host.remove();
-          return ok;
-        })()"#,
-    )
-    .expect("evaluate geometry contract");
+async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
+    let options = options("main.tex");
+    set(&options, "html", Object::new().as_ref());
+    let mut session =
+        CompilerSession::new(options.unchecked_ref::<JsSessionOptions>()).expect("HTML session");
+    let tfm = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+    session
+        .add_user_file("cmr10.tfm", &bytes(tfm))
+        .expect("add TFM");
+    session
+        .add_html_font(test_html_font(tfm).unchecked_ref::<JsHtmlFontInput>())
+        .expect("add HTML font");
+    session
+        .add_user_file(
+            "main.tex",
+            &bytes(b"\\font\\tenrm=cmr10\\relax\\shipout\\hbox{\\kern-2pt\\vrule width3pt height4pt depth1pt\\tenrm AV office}\\end"),
+        )
+        .expect("add source");
+    let complete = session.compile_attempt().expect("HTML compile");
+    let output = field(complete.as_ref(), "output");
+    let html = field(&output, "html");
+    assert!(html.is_instance_of::<Uint8Array>());
+    let function = js_sys::Function::new_with_args(
+        "bytes",
+        r#"
+          const iframe = document.createElement('iframe');
+          iframe.style.cssText = 'border:0;width:900px;height:500px';
+          return new Promise((resolve, reject) => {
+            iframe.addEventListener('load', () => {
+              try {
+                const doc = iframe.contentDocument;
+                const page = doc.querySelector('.umber-page');
+                const mag = Number(page.dataset.umberMag);
+                const px = raw => Number(raw) * mag * 48 / (65536 * 5 * 7227);
+                const close = (a, b) => Math.abs(a - b) <= 1 / 30 + 1e-6;
+                let ok = doc.documentElement.outerHTML.includes('umber-html/1');
+                for (const zoom of [1, 1.25, 2]) {
+                  page.style.zoom = String(zoom);
+                  const pageRect = page.getBoundingClientRect();
+                  const rule = page.querySelector('.umber-rule');
+                  const ruleRect = rule.getBoundingClientRect();
+                  const run = page.querySelector('.umber-run');
+                  const baseline = run.querySelector('.umber-baseline').getBoundingClientRect();
+                  ok = ok && Number(rule.dataset.umberXSp) < 0
+                    && close(pageRect.width, px(page.dataset.umberWidthSp) * zoom)
+                    && close(ruleRect.left - pageRect.left, px(rule.dataset.umberXSp) * zoom)
+                    && close(ruleRect.top - pageRect.top, px(rule.dataset.umberYSp) * zoom)
+                    && close(ruleRect.width, px(rule.dataset.umberWidthSp) * zoom)
+                    && close(ruleRect.height, px(rule.dataset.umberHeightSp) * zoom)
+                    && close(baseline.left - pageRect.left, px(run.dataset.umberXSp) * zoom)
+                    && close(baseline.top - pageRect.top, px(run.dataset.umberBaselineSp) * zoom);
+                }
+                iframe.remove();
+                resolve(ok);
+              } catch (error) {
+                reject(error);
+              }
+            }, {once:true});
+            iframe.srcdoc = new TextDecoder('utf-8', {fatal:true}).decode(bytes);
+            document.body.append(iframe);
+          });
+        "#,
+    );
+    let promise = function
+        .call1(&JsValue::NULL, &html)
+        .expect("start generated HTML measurement")
+        .dyn_into::<js_sys::Promise>()
+        .expect("measurement promise");
+    let passed = JsFuture::from(promise)
+        .await
+        .expect("measure generated HTML");
     assert_eq!(passed.as_bool(), Some(true));
+}
+
+fn test_html_font(tfm: &[u8]) -> Object {
+    let font = Object::new();
+    set(&font, "name", &JsValue::from_str("cmr10"));
+    set(
+        &font,
+        "tfmContentHash",
+        &JsValue::from_str(&content_hash(&bytes(tfm))),
+    );
+    set(
+        &font,
+        "woff2",
+        bytes(include_bytes!("../assets/cmu-serif-500-roman.woff2")).as_ref(),
+    );
+    set(
+        &font,
+        "sha256",
+        &JsValue::from_str("1b875e541dc5c517cd11d244710d8639addbe91a0bb1ba55e7c4593225c7a970"),
+    );
+    let encoding = Array::new_with_length(256);
+    for code in 0..256 {
+        encoding.set(code, JsValue::NULL);
+    }
+    for code in 32..=126 {
+        encoding.set(
+            code,
+            JsValue::from_str(&(char::from_u32(code).unwrap()).to_string()),
+        );
+    }
+    set(&font, "encoding", encoding.as_ref());
+    set(
+        &font,
+        "provenance",
+        &JsValue::from_str("test CM Unicode fixture"),
+    );
+    set(&font, "embeddable", &JsValue::TRUE);
+    font
 }
 
 #[wasm_bindgen_test]
@@ -141,7 +230,7 @@ fn errors_are_typed_and_invalid_boundary_values_throw() {
 #[wasm_bindgen_test]
 fn committed_plain_format_loads_and_rejects_incompatible_bytes() {
     assert_eq!(package_version(), env!("CARGO_PKG_VERSION"));
-    assert_eq!(format_schema_version(), 5);
+    assert_eq!(format_schema_version(), 6);
     let format = include_bytes!("../assets/plain.fmt");
     let mut plain = session_with_format("main.tex", format);
     plain

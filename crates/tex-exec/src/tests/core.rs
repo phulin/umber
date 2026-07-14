@@ -1395,9 +1395,9 @@ fn literal_groups_break_ligature_runs_and_preserve_natural_width() {
         stores.nodes(ligated_box.children).testing_decoded().first(),
         Some(Node::Lig {
             ch: '\u{c}',
-            orig: ('f', 'i'),
+            orig,
             ..
-        })
+        }) if orig == &['f', 'i']
     ));
     assert!(matches!(
         stores.nodes(grouped_box.children).testing_decoded(),

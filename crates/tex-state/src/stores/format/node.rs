@@ -26,7 +26,7 @@ pub(super) enum FormatNode {
     Lig {
         font: u32,
         ch: char,
-        orig: (char, char),
+        orig: Vec<char>,
     },
     Kern {
         amount: Scaled,

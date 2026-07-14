@@ -165,6 +165,14 @@ fn run_file_in_process(
     let run = EngineSession::new(&mut input, &mut stores, resolvers.context())
         .execute()
         .map_err(|error| error.format_with_provenance(&stores))?;
+    for (index, committed) in run.committed_artifacts.iter().enumerate() {
+        let page = tex_out::PageArtifact::from_bytes(committed.bytes())
+            .map_err(|error| format!("decode page {} for HTML: {error}", index + 1))?;
+        let positioned = tex_out::positioned::lower_page(&page, (index + 1) as u32)
+            .map_err(|error| format!("lower page {} for HTML: {error}", index + 1))?;
+        tex_out::dvi::coordinates::compare_page(&page, &positioned)
+            .map_err(|error| format!("validate page {} HTML coordinates: {error}", index + 1))?;
+    }
     let dvi = if run.artifacts.is_empty() {
         None
     } else {

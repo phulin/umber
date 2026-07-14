@@ -71,7 +71,7 @@ fn owned_and_borrowed_semantic_hash_paths_match_every_node_variant() {
         Node::Lig {
             font: NULL_FONT,
             ch: 'f',
-            orig: ('f', 'i'),
+            orig: vec!['f', 'i'],
         },
         Node::Kern {
             amount: Scaled::from_raw(-6),

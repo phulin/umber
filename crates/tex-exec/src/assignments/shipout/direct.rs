@@ -262,8 +262,7 @@ fn emit_index(
             output.lig(
                 font_id,
                 u32::from(code),
-                orig.0 as u32,
-                orig.1 as u32,
+                orig.iter().map(|source| *source as u32),
                 width,
             )?;
             if let Some(dvi) = dvi.as_deref_mut() {

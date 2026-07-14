@@ -735,8 +735,10 @@ impl Stores {
                 hasher.tag(1);
                 self.hash_font(font, hasher);
                 hasher.u32(ch as u32);
-                hasher.u32(orig.0 as u32);
-                hasher.u32(orig.1 as u32);
+                hasher.usize(orig.len());
+                for source in orig {
+                    hasher.u32(*source as u32);
+                }
             }
             NodeRef::Kern { amount, kind } => {
                 hasher.tag(2);
@@ -887,8 +889,10 @@ impl Stores {
                 hasher.tag(1);
                 self.hash_font(font, hasher);
                 hasher.u32(ch as u32);
-                hasher.u32(orig.0 as u32);
-                hasher.u32(orig.1 as u32);
+                hasher.usize(orig.len());
+                for source in orig {
+                    hasher.u32(source as u32);
+                }
             }
             Node::Kern { amount, kind } => {
                 hasher.tag(2);

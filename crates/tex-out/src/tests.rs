@@ -51,8 +51,7 @@ fn streamed_fixed_width_leaves_are_byte_identical_to_owned_encoding() {
         PageNode::Lig {
             font_id: 1,
             ch: 'f' as u32,
-            left: 'f' as u32,
-            right: 'i' as u32,
+            source: vec!['f' as u32, 'i' as u32],
             width: Scaled::from_raw(84),
         },
         PageNode::Kern {
@@ -147,12 +146,12 @@ fn rejects_unknown_version() {
 #[test]
 fn rejects_pre_content_identity_v2_artifact_version() {
     let mut bytes = sample_artifact().to_bytes().expect("artifact serializes");
-    assert_eq!(bytes[4], 11);
-    bytes[4] = 10;
+    assert_eq!(bytes[4], 12);
+    bytes[4] = 11;
 
     assert_eq!(
         PageArtifact::from_bytes(&bytes),
-        Err(ParseError::UnsupportedVersion(10))
+        Err(ParseError::UnsupportedVersion(11))
     );
 }
 
@@ -205,7 +204,7 @@ fn codec_rejects_limits_with_structured_errors() {
 fn tiny_input_cannot_request_a_large_collection_allocation() {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(b"UMPG");
-    bytes.push(11);
+    bytes.push(12);
     bytes.extend_from_slice(&1000_i32.to_le_bytes());
     bytes.extend_from_slice(&0_u32.to_le_bytes());
     bytes.extend_from_slice(&0_i32.to_le_bytes());
@@ -234,7 +233,7 @@ fn adversarial_nesting_hits_depth_limit_without_recursive_decode() {
     let depth = ArtifactCodecLimits::default().max_depth + 100;
     let mut bytes = Vec::new();
     bytes.extend_from_slice(b"UMPG");
-    bytes.push(11);
+    bytes.push(12);
     bytes.extend_from_slice(&1000_i32.to_le_bytes());
     bytes.extend_from_slice(&0_u32.to_le_bytes());
     bytes.extend_from_slice(&0_i32.to_le_bytes());

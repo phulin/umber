@@ -147,9 +147,10 @@ pub fn peak_node_storage_measurement() -> Option<NodeStorageObservation> {
 
 impl NodeStorage {
     #[cfg(feature = "profiling-stats")]
-    pub(super) fn capacity_signature(&self) -> [usize; 31] {
+    pub(super) fn capacity_signature(&self) -> [usize; 32] {
         [
             self.words.capacity(),
+            self.ligatures.capacity(),
             self.boxes.rows.capacity(),
             self.unsets.kind.capacity(),
             self.unsets.width.capacity(),
@@ -206,6 +207,7 @@ impl NodeStorage {
             }};
         }
         add!(self.words);
+        add!(self.ligatures);
         add!(self.boxes.rows);
         add!(self.unsets.kind);
         add!(self.unsets.width);
@@ -236,6 +238,10 @@ impl NodeStorage {
         add!(self.choices);
         add!(self.math_lists);
         add!(self.adjusts);
+        for (_, _, source) in &self.ligatures {
+            logical += (source.len() * core::mem::size_of::<char>()) as u64;
+            retained += (source.capacity() * core::mem::size_of::<char>()) as u64;
+        }
         for whatsit in &self.whatsits {
             match whatsit {
                 crate::node::Whatsit::OpenOut { path, .. } => {
@@ -266,6 +272,7 @@ impl NodeStorage {
             };
         }
         column!("words", &self.words);
+        column!("ligatures", &self.ligatures);
         column!("boxes.rows", &self.boxes.rows);
         column!("unsets.kind", &self.unsets.kind);
         column!("unsets.width", &self.unsets.width);
@@ -302,6 +309,17 @@ impl NodeStorage {
         column!("choices", &self.choices);
         column!("math_lists", &self.math_lists);
         column!("adjusts", &self.adjusts);
+        out.push(NodeMemoryColumn::byte_payload(
+            format!("{prefix}.ligatures.owned_sources"),
+            self.ligatures
+                .iter()
+                .map(|(_, _, source)| source.len() * core::mem::size_of::<char>())
+                .sum(),
+            self.ligatures
+                .iter()
+                .map(|(_, _, source)| source.capacity() * core::mem::size_of::<char>())
+                .sum(),
+        ));
 
         let mut string_len = 0;
         let mut string_capacity = 0;

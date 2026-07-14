@@ -86,8 +86,7 @@ pub(super) fn materialize_node_list(
                 Some(PageNode::Lig {
                     font_id: font_resource_id(stores, font, emission),
                     ch: u32::from(code),
-                    left: orig.0 as u32,
-                    right: orig.1 as u32,
+                    source: orig.iter().map(|source| *source as u32).collect(),
                     width,
                 })
             }

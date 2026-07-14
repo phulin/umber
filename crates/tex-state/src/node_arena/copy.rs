@@ -109,7 +109,8 @@ impl NodeStorage {
         for &word in source_words {
             let side = word.payload() as usize;
             let copied = match word.tag() {
-                0..=8 | 23 => word,
+                0 | 2..=8 | 23 => word,
+                1 => copy_vec_row(1, &mut self.ligatures, &source.storage.ligatures, side),
                 9 | 10 => {
                     let row = self.boxes.copy_row(&source.storage.boxes, side);
                     pending.push(ChildPatch::Box {
@@ -273,7 +274,8 @@ fn leader_child(payload: &crate::node::LeaderPayload) -> Option<NodeListId> {
 
 fn count_sidecar(tag: u8, needs: &mut SidecarNeeds) {
     let target = match tag {
-        0..=8 | 23 => None,
+        0 | 2..=8 | 23 => None,
+        1 => Some(&mut needs.ligatures),
         9 | 10 => Some(&mut needs.boxes),
         11 => Some(&mut needs.unsets),
         12 => Some(&mut needs.rules),

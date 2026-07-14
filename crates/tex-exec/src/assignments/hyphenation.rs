@@ -173,7 +173,7 @@ fn hyphenate_after_glue(
                 ch,
                 orig,
             } if *node_font == font => {
-                let chars = ligature_original_chars(*ch, *orig);
+                let chars = orig.clone();
                 if word.len().saturating_add(chars.len()) > 63 {
                     break;
                 }
@@ -245,14 +245,9 @@ fn first_word_char(
         Node::Char { font, ch } => {
             normalized_hyphen_code(stores, language, *ch).map(|lower| (*font, *ch, lower))
         }
-        Node::Lig { font, ch, orig } => {
-            ligature_original_chars(*ch, *orig)
-                .first()
-                .and_then(|&first| {
-                    normalized_hyphen_code(stores, language, first)
-                        .map(|lower| (*font, first, lower))
-                })
-        }
+        Node::Lig { font, orig, .. } => orig.first().and_then(|&first| {
+            normalized_hyphen_code(stores, language, first).map(|lower| (*font, first, lower))
+        }),
         _ => None,
     }
 }
@@ -500,7 +495,7 @@ fn discretionary_through_node(
 fn node_original_len(node: &Node) -> usize {
     match node {
         Node::Char { .. } => 1,
-        Node::Lig { ch, orig, .. } => ligature_original_chars(*ch, *orig).len(),
+        Node::Lig { orig, .. } => orig.len(),
         Node::Kern { .. } => 0,
         _ => 0,
     }
@@ -531,17 +526,6 @@ fn usable_hyphen_char(stores: &Universe, font: tex_state::ids::FontId) -> Option
     stores
         .font_char_exists(font, code)
         .then(|| char::from(code))
-}
-
-pub(super) fn ligature_original_chars(ch: char, orig: (char, char)) -> Vec<char> {
-    match ch as u32 {
-        0o13 => vec!['f', 'f'],
-        0o14 => vec!['f', 'i'],
-        0o15 => vec!['f', 'l'],
-        0o16 => vec!['f', 'f', 'i'],
-        0o17 => vec!['f', 'f', 'l'],
-        _ => vec![orig.0, orig.1],
-    }
 }
 
 #[derive(Clone, Copy)]

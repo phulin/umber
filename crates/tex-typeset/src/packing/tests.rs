@@ -102,7 +102,7 @@ fn compact_char_runs_differentially_match_scalar_mixed_lists_and_overflow() {
                 1 => nodes.push(Node::Lig {
                     font,
                     ch: char::from(code),
-                    orig: ('a', 'b'),
+                    orig: vec!['a', 'b'],
                 }),
                 2 => nodes.push(Node::Kern {
                     amount: sp(seed as i32),
