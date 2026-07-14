@@ -137,6 +137,27 @@ fn current_page_tree_projection_is_lazy_and_shared() {
     assert_eq!(page.current_page.testing_cached_projection_count(), 4);
 }
 
+#[test]
+fn checkpoint_identity_keys_do_not_pin_mutable_page_buffers() {
+    let mut page = PageBuilderState::default();
+    for value in 0..3 {
+        page.push_current_page(kern(value));
+    }
+    let tail_data = page.current_page.tail.as_ptr();
+    assert_eq!(Arc::strong_count(&page.current_page.tail), 1);
+    assert_eq!(Arc::strong_count(&page.current_page.forest), 1);
+
+    let _cursor = page.state_hash_cursor();
+    let mut cache = PageHashCache::default();
+    let _ = hash_page(&page, &mut cache);
+    assert_eq!(Arc::strong_count(&page.current_page.tail), 1);
+    assert_eq!(Arc::strong_count(&page.current_page.forest), 1);
+
+    page.push_current_page(kern(3));
+    assert_eq!(page.current_page.tail.as_ptr(), tail_data);
+    assert_eq!(Arc::strong_count(&page.current_page.tail), 1);
+}
+
 fn assert_projection_count_follows_live_page(page: &PageBuilderState) {
     let full_leaves = page.current_page.len() / 64;
     assert!(page.current_page.testing_cached_projection_count() <= full_leaves * 2);
