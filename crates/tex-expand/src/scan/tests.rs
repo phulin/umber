@@ -388,7 +388,10 @@ fn scans_trailing_hash_brace_parameter_text() {
         params,
         vec![Token::param(1), char_token('{', Catcode::BeginGroup)]
     );
-    assert_eq!(replacement, vec![Token::param(1)]);
+    assert_eq!(
+        replacement,
+        vec![Token::param(1), char_token('{', Catcode::BeginGroup)]
+    );
 }
 
 #[test]

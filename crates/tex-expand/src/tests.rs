@@ -794,6 +794,26 @@ fn expanded_preserves_protected_macros_during_its_own_expansion() {
 }
 
 #[test]
+fn expanded_can_return_a_noexpanded_dynamically_named_control_sequence() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    crate::install_latex_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\expanded{\\expandafter\\noexpand\\csname generated:name\\endcsname}",
+    ));
+
+    let token = crate::get_x_or_protected_with_context(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut ExpansionContext::new("texput"),
+    )
+    .expect("expanded csname")
+    .expect("generated control sequence");
+    let generated = stores.symbol("generated:name").expect("interned csname");
+    assert_eq!(crate::semantic_token(token), Token::Cs(generated.symbol()));
+}
+
+#[test]
 fn unexpanded_expands_while_scanning_for_the_opening_brace() {
     let mut stores = Universe::new();
     install_expandable_primitives(&mut stores);

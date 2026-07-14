@@ -28,6 +28,11 @@ pub struct ScannedMacro {
     provenance: MacroDefinitionProvenance,
 }
 
+struct ScannedParameterText {
+    text: TracedTokenList,
+    hash_brace: Option<TracedTokenWord>,
+}
+
 impl ScannedMacro {
     #[must_use]
     pub const fn meaning(self) -> MacroMeaning {
@@ -193,15 +198,16 @@ pub fn scan_toks(
 ) -> Result<ScannedMacro, ScanToksError> {
     let parameter_text = scan_parameter_text(input, stores, context)?;
     let replacement_text = scan_replacement_text(input, stores, context)?;
+    let replacement_text = append_hash_brace(stores, replacement_text, parameter_text.hash_brace);
     Ok(ScannedMacro {
         meaning: MacroMeaning::new(
             flags,
-            parameter_text.token_list(),
+            parameter_text.text.token_list(),
             replacement_text.token_list(),
         ),
         provenance: MacroDefinitionProvenance::new(
             tex_state::token::OriginId::UNKNOWN,
-            parameter_text.origin_list(),
+            parameter_text.text.origin_list(),
             replacement_text.origin_list(),
         ),
     })
@@ -251,15 +257,16 @@ where
     let parameter_text = scan_parameter_text(input, stores, context)?;
     let replacement_text =
         scan_expanded_replacement_with_driver(input, stores, context, expansion)?;
+    let replacement_text = append_hash_brace(stores, replacement_text, parameter_text.hash_brace);
     Ok(ScannedMacro {
         meaning: MacroMeaning::new(
             flags,
-            parameter_text.token_list(),
+            parameter_text.text.token_list(),
             replacement_text.token_list(),
         ),
         provenance: MacroDefinitionProvenance::new(
             tex_state::token::OriginId::UNKNOWN,
-            parameter_text.origin_list(),
+            parameter_text.text.origin_list(),
             replacement_text.origin_list(),
         ),
     })
@@ -623,6 +630,23 @@ fn finish_traced_list(
     TracedTokenList::new(token_list, origin_list)
 }
 
+fn append_hash_brace(
+    stores: &mut tex_state::ExpansionContext<'_>,
+    text: TracedTokenList,
+    hash_brace: Option<TracedTokenWord>,
+) -> TracedTokenList {
+    let Some(hash_brace) = hash_brace else {
+        return text;
+    };
+    let mut builder = stores.token_list_builder();
+    builder.extend_from_slice(stores.tokens(text.token_list()));
+    builder.push(traced_semantic_token(hash_brace));
+    let mut origins = stores.origin_list_builder();
+    origins.extend_from_slice(stores.origin_list(text.origin_list()));
+    origins.push(hash_brace.origin());
+    finish_traced_list(stores, &mut builder, &mut origins)
+}
+
 fn traced_semantic_token(token: TracedTokenWord) -> Token {
     token
         .token()
@@ -633,7 +657,7 @@ fn scan_parameter_text(
     input: &mut InputStack,
     stores: &mut tex_state::ExpansionContext<'_>,
     context: TracedTokenWord,
-) -> Result<TracedTokenList, ScanToksError> {
+) -> Result<ScannedParameterText, ScanToksError> {
     let mut builder = stores.token_list_builder();
     let mut origins = stores.origin_list_builder();
     let mut next_parameter = 1;
@@ -648,7 +672,10 @@ fn scan_parameter_text(
             // TeX.web §336 backs up a forbidden outer control sequence and
             // inserts a right brace while `scanner_status=defining`.
             unread_token(input, stores, traced);
-            return Ok(finish_traced_list(stores, &mut builder, &mut origins));
+            return Ok(ScannedParameterText {
+                text: finish_traced_list(stores, &mut builder, &mut origins),
+                hash_brace: None,
+            });
         }
 
         if pending_parameter {
@@ -691,7 +718,10 @@ fn scan_parameter_text(
                     ..
                 } => {
                     push_scanned_token(&mut builder, &mut origins, traced, token);
-                    return Ok(finish_traced_list(stores, &mut builder, &mut origins));
+                    return Ok(ScannedParameterText {
+                        text: finish_traced_list(stores, &mut builder, &mut origins),
+                        hash_brace: Some(traced),
+                    });
                 }
                 _ => {
                     return Err(ScanToksError::InvalidParameterTokenInParameterText {
@@ -706,7 +736,12 @@ fn scan_parameter_text(
             Token::Char {
                 cat: Catcode::BeginGroup,
                 ..
-            } => return Ok(finish_traced_list(stores, &mut builder, &mut origins)),
+            } => {
+                return Ok(ScannedParameterText {
+                    text: finish_traced_list(stores, &mut builder, &mut origins),
+                    hash_brace: None,
+                });
+            }
             Token::Char {
                 cat: Catcode::Parameter,
                 ..

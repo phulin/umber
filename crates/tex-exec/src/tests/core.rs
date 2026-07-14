@@ -60,6 +60,24 @@ fn latex_token_loop_preserves_an_enclosing_conditional_frame() {
 }
 
 #[test]
+fn trailing_hash_brace_is_appended_to_the_macro_replacement() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let source = r"\def\grab#1#{\message{ARG=[\detokenize{#1}]}}\grab #1 {closed}\end";
+    let mut input = InputStack::new(MemoryInput::new(source));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("trailing hash-brace macro executes");
+
+    let output = terminal_effect_text(&stores);
+    assert!(output.contains("ARG=[#1 ]"), "{output}");
+    assert!(!output.contains("Too many }'s"), "{output}");
+}
+
+#[test]
 fn nest_push_pop_and_summary_cover_all_modes() {
     let mut nest = ModeNest::new();
     for mode in [
