@@ -69,8 +69,8 @@ fn split_vbox_register(
         return Ok(None);
     };
 
-    let children = stores.clone_node_list_to_epoch(source_box.children);
-    let mut split_nodes = stores.nodes(children).to_vec();
+    stores.pin_survivor(source);
+    let mut split_nodes = stores.nodes(source_box.children).to_vec();
     let split =
         vert_break(stores, &split_nodes, height, split_max_depth).map_err(vertical_break_error)?;
     normalize_split_infinite_shrink(stores, &mut split_nodes, &split.infinite_shrink_glue);

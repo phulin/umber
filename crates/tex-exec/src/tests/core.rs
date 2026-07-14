@@ -2935,14 +2935,19 @@ fn split_insertion_reports_and_normalizes_infinite_shrink_content() {
 fn vsplit_reports_and_normalizes_infinite_shrink_glue() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\setbox0=\\vbox{\\hrule height10pt\\vskip0pt minus 1fil\\hrule height10pt}\
-         \\setbox1=\\vsplit0 to 30pt",
+    let mut setup = InputStack::new(MemoryInput::new(
+        "\\setbox0=\\vbox{\\hrule height10pt\\vskip0pt minus 1fil\\hrule height10pt}",
     ));
+    Executor::new()
+        .run(&mut setup, &mut stores)
+        .expect("vsplit source builds");
+    let before = stores.testing_epoch_clone_counts();
+    let mut input = InputStack::new(MemoryInput::new("\\setbox1=\\vsplit0 to 30pt"));
 
     Executor::new()
         .run(&mut input, &mut stores)
         .expect("\\vsplit executes");
+    assert_eq!(stores.testing_epoch_clone_counts(), before);
 
     let log = terminal_effect_text(&stores);
     assert!(log.contains("! Infinite glue shrinkage found in box being split."));

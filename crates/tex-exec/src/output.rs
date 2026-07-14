@@ -321,8 +321,8 @@ fn insertion_box_nodes(stores: &mut Universe, class: u16) -> Result<Vec<Node>, E
     };
     match node {
         Node::VList(box_node) => {
-            let children = stores.clone_node_list_to_epoch(box_node.children);
-            Ok(stores.nodes(children).to_vec())
+            stores.pin_survivor(list);
+            Ok(stores.nodes(box_node.children).to_vec())
         }
         Node::HList(_) => Err(ExecError::UnsupportedShipoutNode {
             node: "hbox insertion box",
