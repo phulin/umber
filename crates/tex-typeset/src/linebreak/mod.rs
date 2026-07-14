@@ -127,7 +127,7 @@ fn hanging_applies(line_no: usize, hang_after: i32) -> bool {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BreakDecision {
     pub position: usize,
     pub penalty: i32,
@@ -255,20 +255,27 @@ enum Fitness {
     VeryLoose = 3,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 struct Candidate {
+    serial: usize,
     position: usize,
     width_position: usize,
     start_width: Widths,
     penalty: i32,
     line: usize,
     fitness: Fitness,
-    demerits: i32,
     path_demerits: i32,
+    passive: Option<usize>,
     previous: Option<usize>,
     hyphenated: bool,
     line_shortfall: Scaled,
     line_glue: Scaled,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PassiveRoute {
+    decision: BreakDecision,
+    previous: Option<usize>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -293,21 +300,23 @@ fn run_pass<S: TypesetState>(
 ) -> Option<BreakPlan> {
     let mut background = Widths::from_glue(params.left_skip);
     background.add_assign(Widths::from_glue(params.right_skip));
-    let mut candidates = vec![Candidate {
+    let mut active = vec![Candidate {
+        serial: 0,
         position: 0,
         width_position: 0,
         start_width: Widths::zero(),
         penalty: 0,
         line: 0,
         fitness: Fitness::Decent,
-        demerits: 0,
         path_demerits: 0,
+        passive: None,
         previous: None,
         hyphenated: false,
         line_shortfall: Scaled::from_raw(0),
         line_glue: Scaled::from_raw(0),
     }];
-    let mut active = vec![0usize];
+    let mut passive = Vec::new();
+    let mut next_serial = 1;
     let last_line_fit = LastLineFit::new(params, background);
     let easy_line = tex_easy_line(params);
 
@@ -316,14 +325,13 @@ fn run_pass<S: TypesetState>(
         let mut survivor_count = 0;
         let forced = bp.penalty <= EJECT_PENALTY;
         for active_index in 0..prior_active_len {
-            let active_id = active[active_index];
-            let active_candidate = &candidates[active_id];
+            let active_candidate = active[active_index];
             // Material discarded after the active break can extend beyond a
             // later syntactic breakpoint (for example, through consecutive
             // penalties). Such a breakpoint is no longer reachable from this
             // active node and must not create a backwards break chain.
             if active_candidate.width_position > bp.width_position {
-                active[survivor_count] = active_id;
+                active[survivor_count] = active_candidate;
                 survivor_count += 1;
                 continue;
             }
@@ -343,7 +351,7 @@ fn run_pass<S: TypesetState>(
             let terminal = forced && bp.position >= nodes.len();
             let normal_b = line_badness(widths, target, Scaled::from_raw(0));
             let fitted = terminal
-                .then(|| last_line_fit.badness(active_candidate, widths, target))
+                .then(|| last_line_fit.badness(&active_candidate, widths, target))
                 .flatten();
             let (b, fitness) = fitted
                 .map(|(bad, fitness, _)| (bad, fitness))
@@ -368,7 +376,7 @@ fn run_pass<S: TypesetState>(
                 } else {
                     compute_demerits(
                         params,
-                        active_candidate,
+                        &active_candidate,
                         badness,
                         bp.penalty,
                         fitness,
@@ -376,17 +384,17 @@ fn run_pass<S: TypesetState>(
                         terminal,
                     )
                 };
-                let id = candidates.len();
-                candidates.push(Candidate {
+                let candidate = Candidate {
+                    serial: next_serial,
                     position: bp.position,
                     width_position: bp.next_position,
                     start_width: bp.next_width,
                     penalty: bp.penalty,
                     line: active_candidate.line + 1,
                     fitness,
-                    demerits: dem,
                     path_demerits: dem,
-                    previous: Some(active_id),
+                    passive: None,
+                    previous: active_candidate.passive,
                     hyphenated: bp.hyphenated,
                     line_shortfall: if terminal && fitted.is_none() {
                         Scaled::from_raw(0)
@@ -397,52 +405,60 @@ fn run_pass<S: TypesetState>(
                         || candidate_line_glue(widths, target, b),
                         |(_, _, adjustment)| adjustment,
                     ),
-                });
-                record_best_route(&mut active, prior_active_len, &candidates, id);
+                };
+                next_serial += 1;
+                record_best_route(&mut active, prior_active_len, candidate);
             }
             if !deactivates {
-                active[survivor_count] = active_id;
+                active[survivor_count] = active_candidate;
                 survivor_count += 1;
             }
         }
         let winner_count = active.len() - prior_active_len;
+        for candidate in &mut active[prior_active_len..] {
+            let passive_id = passive.len();
+            passive.push(PassiveRoute {
+                decision: BreakDecision {
+                    position: candidate.position.min(nodes.len()),
+                    penalty: candidate.penalty,
+                    hyphenated: candidate.hyphenated,
+                },
+                previous: candidate.previous,
+            });
+            candidate.passive = Some(passive_id);
+        }
         active.copy_within(
             prior_active_len..prior_active_len + winner_count,
             survivor_count,
         );
         active.truncate(survivor_count + winner_count);
-        sort_active_candidates(&mut active, &candidates, params, easy_line);
+        sort_active_candidates(&mut active, params, easy_line);
     }
 
-    let chosen = choose_final(&candidates, &active, params.looseness)?;
-    let best = *active.iter().min_by_key(|&&id| candidates[id].demerits)?;
-    let actual_looseness = candidates[chosen].line as i32 - candidates[best].line as i32;
+    let chosen = choose_final(&active, params.looseness)?;
+    let best = active
+        .iter()
+        .min_by_key(|candidate| candidate.path_demerits)?;
+    let actual_looseness = active[chosen].line as i32 - best.line as i32;
     if !final_pass && actual_looseness != params.looseness {
         return None;
     }
-    Some(reconstruct(nodes, &candidates, chosen, last_line_fit))
+    Some(reconstruct(active[chosen], &passive, last_line_fit))
 }
 
-fn record_best_route(
-    active: &mut Vec<usize>,
-    winner_start: usize,
-    candidates: &[Candidate],
-    candidate_id: usize,
-) {
-    let candidate = &candidates[candidate_id];
-    if let Some(slot) = active[winner_start..].iter().position(|&current_id| {
-        let current = &candidates[current_id];
-        current.line == candidate.line && current.fitness == candidate.fitness
-    }) {
+fn record_best_route(active: &mut Vec<Candidate>, winner_start: usize, candidate: Candidate) {
+    if let Some(slot) = active[winner_start..]
+        .iter()
+        .position(|current| current.line == candidate.line && current.fitness == candidate.fitness)
+    {
         let slot = winner_start + slot;
-        let current = active[slot];
-        if candidate.path_demerits <= candidates[current].path_demerits {
+        if candidate.path_demerits <= active[slot].path_demerits {
             // TeX82 uses `d <= minimal_demerits[fit_class]`, so an equal
             // later route replaces the earlier route in its first-visit slot.
-            active[slot] = candidate_id;
+            active[slot] = candidate;
         }
     } else {
-        active.push(candidate_id);
+        active.push(candidate);
     }
 }
 
@@ -460,20 +476,13 @@ fn tex_easy_line(params: &LineBreakParams) -> usize {
     }
 }
 
-fn sort_active_candidates(
-    active: &mut [usize],
-    candidates: &[Candidate],
-    params: &LineBreakParams,
-    easy_line: usize,
-) {
+fn sort_active_candidates(active: &mut [Candidate], params: &LineBreakParams, easy_line: usize) {
     // TeX normally keeps active nodes ordered by line number and inserts a
     // new break before existing nodes in the same class. Beyond `easy_line`,
     // all equal-width lines form one deferred class and new breaks instead
     // accumulate in source order. The visit order is observable because an
     // equal demerit replaces the route recorded earlier in `try_break`.
-    active.sort_unstable_by(|&left_id, &right_id| {
-        let left = &candidates[left_id];
-        let right = &candidates[right_id];
+    active.sort_unstable_by(|left, right| {
         left.line
             .cmp(&right.line)
             .then_with(|| {
@@ -487,11 +496,11 @@ fn sort_active_candidates(
                     right.position.cmp(&left.position)
                 }
             })
-            // Candidate ids encode insertion/visit order. This makes the
+            // Candidate serials encode insertion/visit order. This makes the
             // comparator total while preserving stable-sort behavior for
             // routes with the same TeX active-list key, without allocating a
             // temporary merge buffer at every breakpoint.
-            .then_with(|| left_id.cmp(&right_id))
+            .then_with(|| left.serial.cmp(&right.serial))
     });
 }
 
@@ -874,35 +883,37 @@ fn incompatible(left: Fitness, right: Fitness) -> bool {
     (left as i32 - right as i32).abs() > 1
 }
 
-fn choose_final(candidates: &[Candidate], finals: &[usize], looseness: i32) -> Option<usize> {
-    let first = *finals.iter().min_by_key(|&&id| candidates[id].demerits)?;
-    let target = candidates[first].line as i32 + looseness;
+fn choose_final(finals: &[Candidate], looseness: i32) -> Option<usize> {
+    let first = finals
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, candidate)| candidate.path_demerits)?
+        .0;
+    let target = finals[first].line as i32 + looseness;
     finals
         .iter()
-        .copied()
-        .min_by_key(|&id| {
-            let diff = (candidates[id].line as i32 - target).abs();
-            (diff, candidates[id].demerits)
+        .enumerate()
+        .min_by_key(|(_, candidate)| {
+            let diff = (candidate.line as i32 - target).abs();
+            (diff, candidate.path_demerits)
         })
+        .map(|(id, _)| id)
         .or(Some(first))
 }
 
 fn reconstruct(
-    nodes: &[Node],
-    candidates: &[Candidate],
-    mut id: usize,
+    chosen: Candidate,
+    passive: &[PassiveRoute],
     last_line_fit: LastLineFit,
 ) -> BreakPlan {
     let mut breaks = Vec::new();
-    let demerits = candidates[id].demerits.min(AWFUL_BAD);
-    let last_line_fill = last_line_fit.adjusted_fill(&candidates[id]);
-    while let Some(prev) = candidates[id].previous {
-        breaks.push(BreakDecision {
-            position: candidates[id].position.min(nodes.len()),
-            penalty: candidates[id].penalty,
-            hyphenated: candidates[id].hyphenated,
-        });
-        id = prev;
+    let demerits = chosen.path_demerits.min(AWFUL_BAD);
+    let last_line_fill = last_line_fit.adjusted_fill(&chosen);
+    let mut id = chosen.passive;
+    while let Some(passive_id) = id {
+        let route = passive[passive_id];
+        breaks.push(route.decision);
+        id = route.previous;
     }
     breaks.reverse();
     BreakPlan {

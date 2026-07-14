@@ -833,10 +833,14 @@ makes box-level memoization (M4) sound.
   byte range. Legal breakpoints, demerits, fitness classes,
   `\looseness`, and line-penalty parameters are copied into plain structs at
   entry; the kernel never touches `Env`, `World`, or `&mut Universe`
-  mid-algorithm. The decision pass keeps prefix width totals and
-  breakpoint-local width adjustments so glue break widths and discretionary
-  pre/replace widths are accounted for at the breakpoint rather than by
-  ad hoc line slicing. The immutable line-breaking snapshot also carries the
+  mid-algorithm. The decision pass scans the prepared list once in source
+  order and presents legal breakpoints directly to its active frontier; it
+  does not materialize paragraph-wide prefix-width or breakpoint tables.
+  Each live route carries its cumulative starting widths, while completed
+  history is reduced to compact passive break decisions and backpointers.
+  Breakpoint-local width adjustments account for glue breaks and
+  discretionary pre/replace widths without ad hoc line slicing. The
+  immutable line-breaking snapshot also carries the
   `\leftskip` and `\rightskip` specs so their complete natural, stretch, and
   shrink widths participate in TeX82's background width for every candidate
   line before post-line-break surgery materializes the named glue nodes.
@@ -858,7 +862,11 @@ makes box-level memoization (M4) sound.
   accept only TeX's permitted terminating nodes. As in TeX82, a word with no
   legal hyphenation point keeps its existing character, ligature, and kern
   nodes byte-for-byte instead of being reconstituted.
-  Post-line-break produces line node vectors with named
+  The search result is a break plan independent of paragraph ownership.
+  Execution moves whichever owned list won (original or hyphenated) into
+  post-line-break, which in turn moves retained nodes into line vectors rather
+  than cloning the paragraph at either boundary. Post-line-break produces
+  line node vectors with named
   `\leftskip`/`\rightskip` glue, per-line width/indent dimensions selected
   from `\parshape` first and otherwise TeX's `\hangindent`/`\hangafter`
   rules, and interline penalty decisions. The current `\parshape` payload is

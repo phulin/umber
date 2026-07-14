@@ -299,20 +299,21 @@ fn line_break_includes_left_and_right_skip_in_background_widths() {
 #[test]
 fn equal_demerits_prefer_later_route_in_same_line_and_fitness_class() {
     let candidate = |position, fitness| Candidate {
+        serial: position,
         position,
         width_position: position,
         start_width: Widths::zero(),
         penalty: 0,
         line: 2,
         fitness,
-        demerits: 221,
         path_demerits: 221,
+        passive: None,
         previous: Some(0),
         hyphenated: false,
         line_shortfall: sp(0),
         line_glue: sp(0),
     };
-    let candidates = vec![
+    let candidates = [
         candidate(0, Fitness::Decent),
         candidate(4, Fitness::Decent),
         candidate(6, Fitness::Decent),
@@ -320,11 +321,17 @@ fn equal_demerits_prefer_later_route_in_same_line_and_fitness_class() {
     ];
     let mut active = Vec::new();
 
-    record_best_route(&mut active, 0, &candidates, 1);
-    record_best_route(&mut active, 0, &candidates, 2);
-    record_best_route(&mut active, 0, &candidates, 3);
+    record_best_route(&mut active, 0, candidates[1]);
+    record_best_route(&mut active, 0, candidates[2]);
+    record_best_route(&mut active, 0, candidates[3]);
 
-    assert_eq!(active, vec![2, 3]);
+    assert_eq!(
+        active
+            .iter()
+            .map(|candidate| candidate.position)
+            .collect::<Vec<_>>(),
+        vec![6, 6]
+    );
 }
 
 #[test]
@@ -393,26 +400,33 @@ fn active_list_order_matches_tex_for_equal_demerit_discretionary_routes() {
 #[test]
 fn easy_line_active_nodes_accumulate_in_source_order() {
     let candidate = |position| Candidate {
+        serial: position,
         position,
         width_position: position,
         start_width: Widths::zero(),
         penalty: 0,
         line: 9,
         fitness: Fitness::Decent,
-        demerits: 0,
         path_demerits: 0,
+        passive: None,
         previous: None,
         hyphenated: false,
         line_shortfall: sp(0),
         line_glue: sp(0),
     };
-    let candidates = vec![candidate(0), candidate(14), candidate(15)];
+    let candidates = [candidate(0), candidate(14), candidate(15)];
     let p = params(100);
-    let mut active = vec![2, 1];
+    let mut active = vec![candidates[2], candidates[1]];
 
-    sort_active_candidates(&mut active, &candidates, &p, tex_easy_line(&p));
+    sort_active_candidates(&mut active, &p, tex_easy_line(&p));
 
-    assert_eq!(active, vec![1, 2]);
+    assert_eq!(
+        active
+            .iter()
+            .map(|candidate| candidate.position)
+            .collect::<Vec<_>>(),
+        vec![14, 15]
+    );
 }
 
 #[test]
@@ -949,14 +963,15 @@ fn final_hyphen_demerits_rank_terminal_routes_before_candidate_pruning() {
     let mut params = params(100);
     params.final_hyphen_demerits = 5_000;
     let active = |path_demerits, hyphenated| Candidate {
+        serial: 0,
         position: 0,
         width_position: 0,
         start_width: Widths::zero(),
         penalty: 0,
         line: 9,
         fitness: Fitness::Decent,
-        demerits: path_demerits,
         path_demerits,
+        passive: None,
         previous: None,
         hyphenated,
         line_shortfall: sp(0),
