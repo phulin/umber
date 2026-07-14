@@ -8,10 +8,12 @@
 /// with full-key collision fallback. Version 6 frames the six code tables as
 /// independent canonical projections so unchanged persistent roots can be
 /// reused. Version 7 frames mutable page-tail nodes independently so
-/// checkpoint-local caches can reuse an unchanged prefix. Hashes are
+/// checkpoint-local caches can reuse an unchanged prefix. Version 8 replaces
+/// the per-field full avalanche with a faster ordered streaming recurrence and
+/// retains the same strong final avalanche. Hashes are
 /// comparable only when both this version and the named-boundary schedule
 /// match.
-pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 7;
+pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 8;
 
 pub mod cell;
 pub mod code_tables;

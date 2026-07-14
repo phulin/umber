@@ -125,6 +125,17 @@ worse under the paired evidence. Treat those residual entries as attribution,
 not independent optimization budgets: moving work between their inline frames
 does not by itself demonstrate a faster checkpoint path.
 
+The corrected 263,424-byte workload exposed a larger shared cost below those
+components: `StateHasher` previously ran a complete two-multiply SplitMix64
+avalanche for every canonical scalar and then finalized with another avalanche.
+Checkpoint hash schema version 8 replaces the per-field avalanche with a
+target-independent ordered one-multiply recurrence while retaining SplitMix64
+as the finalizer. A corrected 200-run checkpoint profile reduced publication
+from 3.46% to 2.71% and mean time from 96.846 to 92.641 ms/run. Conditioned
+`BOOB` plus `BOOBOBBO` five times confirmed 93.607 to 89.704 ms/run with
+checkpoints (4.17%) and 89.847 to 86.762 ms/run without checkpoints (3.43%);
+wall-clock deltas were 4.35% and 3.74%, respectively.
+
 ## Node-sidecar allocation evidence
 
 After content identity v2 removed the earlier hash hotspot, caller

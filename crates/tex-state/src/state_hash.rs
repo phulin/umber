@@ -11,6 +11,10 @@
 //! see `docs/core_state.md` §9.
 
 const MIX_INCREMENT: u64 = 0x9e37_79b9_7f4a_7c15;
+// Schema-v8 streaming constants. The odd multiplier keeps the recurrence
+// invertible for each framed word; `finish` supplies the full avalanche once.
+const STREAM_MULTIPLIER: u64 = 0x9e37_79b1_85eb_ca87;
+const STREAM_INCREMENT: u64 = 0x632b_e59b_d9b4_e019;
 const INITIAL_STATE: u64 = 0x6a09_e667_f3bc_c909;
 
 /// Initial checkpoint hash before any semantic slice is combined.
@@ -213,7 +217,12 @@ impl StateHasher {
     }
 
     fn mix(&mut self, value: u64) {
-        self.state = splitmix64(self.state ^ value.wrapping_add(MIX_INCREMENT));
+        self.state ^= value.wrapping_add(MIX_INCREMENT);
+        self.state = self
+            .state
+            .rotate_left(27)
+            .wrapping_mul(STREAM_MULTIPLIER)
+            .wrapping_add(STREAM_INCREMENT);
     }
 }
 

@@ -955,7 +955,7 @@ pub struct Snapshot {
   a validated conservative root position. Active normalized input state and
   included-file content identities remain semantic.
 
-  **Checkpoint hash schema version 5** frames the semantic slice as ordered,
+  **Checkpoint hash schema version 8** frames the semantic slice as ordered,
   domain-separated component projections. Store journal cells, code tables,
   hyphenation, prepared magnification, font selection, World effects and shell
   escapes, stream buffers, input, interaction mode, page subroots, and the mode
@@ -970,7 +970,7 @@ pub struct Snapshot {
   Version 3 replaced recursive frozen node-list traversal with the versioned
   `NodeSemanticId` at every child-list boundary; page projections still visit
   their bounded outer nodes. Clearing the cache recomputes the identical
-  version-5 hash. Version 4 also encodes deterministic RNG state directly as
+  version-8 hash. Version 4 also encodes deterministic RNG state directly as
   four numeric words instead of depending on diagnostic `Debug` formatting.
   Version 5 orders changed cells by a cached canonical key fingerprint and
   falls back to the complete semantic key on collisions, avoiding repeated
@@ -993,6 +993,14 @@ pub struct Snapshot {
   `node-stats`
   builds report calls, semantic visits, and elapsed nanoseconds for every hash
   component so optimization decisions can be tied to measured traversal.
+
+  Version 6 splits the six code tables into independently reusable persistent
+  projections, and version 7 frames mutable page-tail nodes independently so
+  an unchanged prefix keeps its lazy fragment. Version 8 keeps every canonical
+  field boundary and domain but uses an ordered one-multiply streaming
+  recurrence per field, followed by the existing SplitMix64 final avalanche.
+  This remains target-independent; platform-selected hardware hashers are not
+  used for persisted convergence identities.
 
 Derived queries (these fall out; do not build separate instrumentation):
 
