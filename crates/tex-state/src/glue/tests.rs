@@ -1,8 +1,8 @@
 use super::{GlueSpec, GlueStore, GlueStoreMark, Order};
 use crate::ids::GlueId;
 use crate::scaled::Scaled;
+use ahash::AHashMap;
 use proptest::prelude::*;
-use std::collections::HashMap;
 
 #[test]
 fn zero_is_canonical_and_preinterned() {
@@ -116,7 +116,7 @@ proptest! {
     ) {
         let mut store = GlueStore::new();
         let mut model: Vec<GlueSpec> = vec![GlueSpec::ZERO];
-        let mut model_index: HashMap<GlueSpec, usize> = HashMap::from([(GlueSpec::ZERO, 0)]);
+        let mut model_index: AHashMap<GlueSpec, usize> = AHashMap::from([(GlueSpec::ZERO, 0)]);
         let mut marks: Vec<(GlueStoreMark, usize)> = vec![(store.watermark(), model.len())];
 
         for op in ops {
@@ -153,7 +153,7 @@ proptest! {
 
 fn model_id(
     model: &mut Vec<GlueSpec>,
-    index: &mut HashMap<GlueSpec, usize>,
+    index: &mut AHashMap<GlueSpec, usize>,
     spec: GlueSpec,
 ) -> usize {
     if let Some(&id) = index.get(&spec) {
@@ -165,7 +165,7 @@ fn model_id(
     id
 }
 
-fn rebuild_model_index(model: &[GlueSpec]) -> HashMap<GlueSpec, usize> {
+fn rebuild_model_index(model: &[GlueSpec]) -> AHashMap<GlueSpec, usize> {
     model
         .iter()
         .copied()

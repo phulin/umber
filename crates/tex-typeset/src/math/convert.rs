@@ -1,3 +1,4 @@
+use ahash::{AHashMap, AHashSet};
 use tex_arith::x_over_n;
 use tex_fonts::CharMetrics;
 use tex_state::ids::{FontId, NodeListId};
@@ -57,8 +58,8 @@ fn build_math_layout(
         style,
         mu: math_unit(params, style),
         layout: MathLayoutBuilder::new(),
-        converted: HashMap::new(),
-        source_lists: HashMap::new(),
+        converted: AHashMap::new(),
+        source_lists: AHashMap::new(),
     };
     prepare_nested_mlists(&mut ctx, input, style);
     let root = convert_mlist_uncached(&mut ctx, input, style, penalties);
@@ -358,8 +359,8 @@ fn prepare_nested_mlists<S: MathTypesetState>(
     root_style: Style,
 ) {
     let root = (root, root_style);
-    let mut visiting = HashSet::new();
-    let mut completed = HashSet::new();
+    let mut visiting = AHashSet::new();
+    let mut completed = AHashSet::new();
     let mut stack = vec![(root, false)];
     let mut postorder = Vec::new();
     while let Some((list, expanded)) = stack.pop() {
@@ -398,7 +399,7 @@ fn nested_mlist_requests(
         field: &MathField,
         style: Style,
         out: &mut Vec<(NodeListId, Style)>,
-        seen: &mut HashSet<(NodeListId, Style)>,
+        seen: &mut AHashSet<(NodeListId, Style)>,
     ) {
         if let MathField::SubMlist(list) = field {
             let request = (*list, style);
@@ -412,7 +413,7 @@ fn nested_mlist_requests(
     let mut style = starting_style;
     let mut markers = view.marker_styles.into_iter();
     let mut out = Vec::new();
-    let mut seen = HashSet::new();
+    let mut seen = AHashSet::new();
     for node in view.nodes {
         match node {
             Node::MathStyle(_) => {
@@ -733,7 +734,7 @@ pub(crate) fn source_list(
     }
 
     let mut stack = vec![(list, false)];
-    let mut visiting = HashSet::new();
+    let mut visiting = AHashSet::new();
     while let Some((current, expanded)) = stack.pop() {
         if ctx.source_lists.contains_key(&current) {
             continue;
@@ -877,8 +878,8 @@ pub(crate) struct Context<'a, S> {
     pub(crate) style: Style,
     pub(crate) mu: Scaled,
     pub(crate) layout: MathLayoutBuilder,
-    pub(crate) converted: HashMap<(NodeListId, Style), FrozenHList>,
-    pub(crate) source_lists: HashMap<NodeListId, FrozenHList>,
+    pub(crate) converted: AHashMap<(NodeListId, Style), FrozenHList>,
+    pub(crate) source_lists: AHashMap<NodeListId, FrozenHList>,
 }
 
 impl<S> Context<'_, S> {
@@ -887,4 +888,3 @@ impl<S> Context<'_, S> {
         self.mu = math_unit(self.params, style);
     }
 }
-use std::collections::{HashMap, HashSet};

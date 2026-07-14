@@ -4,7 +4,8 @@
 //! physical input lines before the semantic lexer state machine assigns
 //! catcodes and produces tokens.
 
-use std::collections::{HashMap, VecDeque};
+use ahash::AHashMap;
+use std::collections::VecDeque;
 use std::fmt;
 use std::ops::{Index, IndexMut};
 use std::sync::Arc;
@@ -455,7 +456,7 @@ struct MacroLiteralSpan {
 }
 
 type LiteralSpanBounds = (usize, usize);
-type LiteralSpanCache = HashMap<(TokenListId, LiteralSpanPolicy), Arc<[LiteralSpanBounds]>>;
+type LiteralSpanCache = AHashMap<(TokenListId, LiteralSpanPolicy), Arc<[LiteralSpanBounds]>>;
 
 const MEANING_SITE_CACHE_LEN: usize = 64;
 const LITERAL_SPAN_CACHE_MAX_ENTRIES: usize = 4096;
@@ -906,7 +907,7 @@ impl<S> InputStack<S> {
             next_replay_marker: 0,
             next_condition_token: 0,
             alignment_inputs: Vec::new(),
-            literal_span_cache: HashMap::new(),
+            literal_span_cache: AHashMap::new(),
             meaning_site_cache: Box::new([None; MEANING_SITE_CACHE_LEN]),
             last_expansion_site: None,
             #[cfg(feature = "expansion-stats")]
@@ -1042,7 +1043,7 @@ impl<S> InputStack<S> {
                         .expect("condition frame token overflowed")
                 }),
             alignment_inputs: Vec::new(),
-            literal_span_cache: HashMap::new(),
+            literal_span_cache: AHashMap::new(),
             meaning_site_cache: Box::new([None; MEANING_SITE_CACHE_LEN]),
             last_expansion_site: None,
             #[cfg(feature = "expansion-stats")]

@@ -1,8 +1,8 @@
 use super::replay_common::{Oracle, TestCell};
 use crate as tex_state;
+use ahash::AHashMap;
 use proptest::prelude::*;
 use proptest::test_runner::Config;
-use std::collections::HashMap;
 use std::env;
 use std::time::Instant;
 use tex_state::env::banks::GlueParam;
@@ -623,18 +623,18 @@ fn cell_universe() -> Vec<TestCell> {
 
 #[derive(Clone, Debug)]
 struct BoxOracle {
-    scopes: Vec<HashMap<u16, Option<TreeList>>>,
+    scopes: Vec<AHashMap<u16, Option<TreeList>>>,
 }
 
 impl BoxOracle {
     fn new() -> Self {
         Self {
-            scopes: vec![HashMap::new()],
+            scopes: vec![AHashMap::new()],
         }
     }
 
     fn enter_group(&mut self) {
-        self.scopes.push(HashMap::new());
+        self.scopes.push(AHashMap::new());
     }
 
     fn leave_group(&mut self) {
@@ -693,13 +693,13 @@ impl BoxOracle {
 }
 
 struct TreeCache {
-    lists: HashMap<NodeListId, TreeList>,
+    lists: AHashMap<NodeListId, TreeList>,
 }
 
 impl TreeCache {
     fn new() -> Self {
         Self {
-            lists: HashMap::new(),
+            lists: AHashMap::new(),
         }
     }
 

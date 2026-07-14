@@ -1,6 +1,6 @@
 use super::*;
 use crate::executor::NoopExecHooks;
-use std::collections::HashMap;
+use ahash::AHashMap;
 use tex_expand::{EngineMode, ExpansionHooks, NoopRecorder};
 use tex_lex::{InputStack, MemoryInput, WorldInput};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};

@@ -11,7 +11,7 @@ use crate::input::{SourceId, TokenListReplayKind};
 use crate::source_map::{SourceMapStats, SourceSpan};
 use crate::token::{OriginId, Token, TracedTokenWord};
 use crate::world::InputRecordId;
-use std::collections::HashMap;
+use ahash::AHashMap;
 use std::mem;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -606,7 +606,7 @@ pub(crate) struct ProvenanceStore {
     list_identities: IdentityAllocator,
     record_identities: IdentityAllocator,
     record_keys: Vec<u32>,
-    record_lookup: HashMap<u32, crate::identity::HandleIdentity>,
+    record_lookup: AHashMap<u32, crate::identity::HandleIdentity>,
 }
 
 impl Clone for ProvenanceStore {
@@ -634,7 +634,7 @@ impl ProvenanceStore {
             list_identities: IdentityAllocator::new(1),
             record_identities: IdentityAllocator::new(0),
             record_keys: Vec::new(),
-            record_lookup: HashMap::new(),
+            record_lookup: AHashMap::new(),
         }
     }
 

@@ -7,7 +7,7 @@ use crate::ids::{ArenaRef, NodeListId, SurvivorRootId};
 #[cfg(debug_assertions)]
 use crate::node::Node;
 use crate::node_arena::{ChildPatch, NodeArena, NodeList, NodeSemanticId, NodeStorage};
-use std::collections::HashMap;
+use ahash::AHashMap;
 use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
 #[cfg(feature = "node-stats")]
@@ -99,11 +99,11 @@ pub struct SurvivorArena {
     // Storage slots are local and may be cloned, while packed root keys are
     // process-unique so sibling forks cannot alias one another's new roots.
     slots: Vec<Option<SurvivorRoot>>,
-    root_slots: HashMap<SurvivorRootId, usize>,
+    root_slots: AHashMap<SurvivorRootId, usize>,
     // Node storage is independent of identity and can safely be recycled.
     recycled: Vec<NodeStorage>,
     recycled_buffer_uses: usize,
-    promotion_remap: HashMap<NodeListId, NodeListId>,
+    promotion_remap: AHashMap<NodeListId, NodeListId>,
     promotion_pending: Vec<ChildPatch>,
 }
 
@@ -127,10 +127,10 @@ impl SurvivorArena {
     pub(crate) fn new() -> Self {
         Self {
             slots: Vec::new(),
-            root_slots: HashMap::new(),
+            root_slots: AHashMap::new(),
             recycled: Vec::new(),
             recycled_buffer_uses: 0,
-            promotion_remap: HashMap::new(),
+            promotion_remap: AHashMap::new(),
             promotion_pending: Vec::new(),
         }
     }
@@ -452,7 +452,7 @@ struct PromotionResult {
     storage: NodeStorage,
     promoted: NodeListId,
     semantic_spans: Vec<SurvivorSemanticSpan>,
-    remapped: HashMap<NodeListId, NodeListId>,
+    remapped: AHashMap<NodeListId, NodeListId>,
     pending: Vec<ChildPatch>,
     #[cfg(feature = "node-stats")]
     peak_scratch_logical: usize,
@@ -466,7 +466,7 @@ fn copy_list_iterative(
     survivor: &SurvivorArena,
     storage: NodeStorage,
     root: SurvivorRootId,
-    remapped: HashMap<NodeListId, NodeListId>,
+    remapped: AHashMap<NodeListId, NodeListId>,
     pending: Vec<ChildPatch>,
 ) -> PromotionResult {
     let mut copy = PromotionCopy::new(epoch, survivor, storage, root, remapped, pending);
@@ -504,7 +504,7 @@ struct PromotionCopy<'a> {
     survivor: &'a SurvivorArena,
     storage: NodeStorage,
     root: SurvivorRootId,
-    remapped: HashMap<NodeListId, NodeListId>,
+    remapped: AHashMap<NodeListId, NodeListId>,
     pending: Vec<ChildPatch>,
     semantic_spans: Vec<SurvivorSemanticSpan>,
     #[cfg(feature = "node-stats")]
@@ -519,7 +519,7 @@ impl<'a> PromotionCopy<'a> {
         survivor: &'a SurvivorArena,
         storage: NodeStorage,
         root: SurvivorRootId,
-        remapped: HashMap<NodeListId, NodeListId>,
+        remapped: AHashMap<NodeListId, NodeListId>,
         pending: Vec<ChildPatch>,
     ) -> Self {
         debug_assert!(storage.is_empty(), "recycled survivor buffer must be empty");

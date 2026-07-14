@@ -12,6 +12,7 @@ tex-lex = { path = "../tex-lex" }
 tex-state = { path = "../tex-state" }
 
 [dev-dependencies]
+ahash.workspace = true
 test-support = { path = "../test-support" }
 
 [lints]

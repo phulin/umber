@@ -30,9 +30,9 @@ use crate::math::{MATH_FAMILY_COUNT, MathFontSize};
 use crate::meaning::Meaning;
 use crate::scaled::Scaled;
 use crate::token::Token;
-use std::collections::BTreeMap;
 #[cfg(feature = "shadow")]
-use std::collections::HashMap;
+use ahash::AHashMap;
+use std::collections::BTreeMap;
 
 const SEGMENT_BITS: u32 = 16;
 const SEGMENT_LEN: usize = 1 << SEGMENT_BITS;
@@ -166,7 +166,7 @@ pub struct Env {
     group_depth: u32,
     epoch: Epoch,
     #[cfg(feature = "shadow")]
-    shadow: HashMap<CellId, u64>,
+    shadow: AHashMap<CellId, u64>,
 }
 
 impl Env {
@@ -204,7 +204,7 @@ impl Env {
             group_depth: 0,
             epoch: Epoch::START,
             #[cfg(feature = "shadow")]
-            shadow: HashMap::new(),
+            shadow: AHashMap::new(),
         }
     }
 
@@ -787,7 +787,7 @@ pub(crate) fn barrier(
     cell_slot: &mut u64,
     stamp_slot: &mut Epoch,
     journal: &mut Journal,
-    #[cfg(feature = "shadow")] shadow: &mut HashMap<CellId, u64>,
+    #[cfg(feature = "shadow")] shadow: &mut AHashMap<CellId, u64>,
     epoch: Epoch,
     cell_id: CellId,
     new_word: u64,
@@ -815,7 +815,7 @@ pub(crate) fn barrier(
 }
 
 #[cfg(feature = "shadow")]
-pub(crate) fn shadow_set(shadow: &mut HashMap<CellId, u64>, cell: CellId, word: u64) {
+pub(crate) fn shadow_set(shadow: &mut AHashMap<CellId, u64>, cell: CellId, word: u64) {
     if word == 0 {
         shadow.remove(&cell);
     } else {
@@ -910,7 +910,7 @@ fn pack_current_font(symbol: Option<Symbol>, font: FontId) -> u64 {
 fn set_font_bank_word(
     map: &mut BTreeMap<u32, WordStamp>,
     journal: &mut Journal,
-    #[cfg(feature = "shadow")] shadow: &mut HashMap<CellId, u64>,
+    #[cfg(feature = "shadow")] shadow: &mut AHashMap<CellId, u64>,
     epoch: Epoch,
     bank: BankTag,
     index: u32,

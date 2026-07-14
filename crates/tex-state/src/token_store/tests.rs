@@ -2,8 +2,8 @@ use super::{TokenListBuilder, TokenSemanticId, TokenStore, TokenStoreMark};
 use crate::ids::TokenListId;
 use crate::interner::Symbol;
 use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
+use ahash::AHashMap;
 use proptest::prelude::*;
-use std::collections::HashMap;
 
 #[test]
 fn semantic_identity_is_one_word_per_token_list() {
@@ -229,7 +229,7 @@ proptest! {
     ) {
         let mut store = TokenStore::new();
         let mut model: Vec<Vec<Token>> = vec![Vec::new()];
-        let mut model_index: HashMap<Vec<Token>, usize> = HashMap::from([(Vec::new(), 0)]);
+        let mut model_index: AHashMap<Vec<Token>, usize> = AHashMap::from([(Vec::new(), 0)]);
         let mut marks: Vec<(TokenStoreMark, usize)> = vec![(store.watermark(), model.len())];
 
         for op in ops {
@@ -276,7 +276,7 @@ proptest! {
 
 fn model_id(
     model: &mut Vec<Vec<Token>>,
-    index: &mut HashMap<Vec<Token>, usize>,
+    index: &mut AHashMap<Vec<Token>, usize>,
     tokens: &[Token],
 ) -> usize {
     if let Some(&id) = index.get(tokens) {
@@ -289,7 +289,7 @@ fn model_id(
     id
 }
 
-fn rebuild_model_index(model: &[Vec<Token>]) -> HashMap<Vec<Token>, usize> {
+fn rebuild_model_index(model: &[Vec<Token>]) -> AHashMap<Vec<Token>, usize> {
     model
         .iter()
         .cloned()

@@ -121,7 +121,7 @@ impl Env {
     #[cfg(any(test, feature = "testing", feature = "shadow"))]
     #[must_use]
     pub fn testing_state_hash(&self) -> u64 {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        let mut hasher = ahash::AHasher::default();
         self.for_each_semantic_non_default_word(|cell, word| {
             cell.hash(&mut hasher);
             word.hash(&mut hasher);

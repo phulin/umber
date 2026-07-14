@@ -15,6 +15,7 @@ tex-state = { path = "../tex-state" }
 tex-typeset = { path = "../tex-typeset" }
 
 [dev-dependencies]
+ahash.workspace = true
 tex-state = { path = "../tex-state", features = ["testing"] }
 
 test-support = { path = "../test-support" }

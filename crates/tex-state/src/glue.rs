@@ -6,8 +6,7 @@
 use crate::identity::{IdentityAllocator, IdentityMark};
 use crate::ids::GlueId;
 use crate::scaled::Scaled;
-use std::collections::HashMap;
-use std::collections::hash_map::DefaultHasher;
+use ahash::{AHashMap, AHasher};
 use std::hash::{Hash, Hasher};
 
 /// The infinity order attached to stretch or shrink components.
@@ -54,7 +53,7 @@ pub(crate) struct GlueStoreMark {
 #[derive(Debug)]
 pub struct GlueStore {
     specs: Vec<GlueSpec>,
-    index: HashMap<u64, Vec<GlueId>>,
+    index: AHashMap<u64, Vec<GlueId>>,
     index_dirty: bool,
     identities: IdentityAllocator,
 }
@@ -76,7 +75,7 @@ impl GlueStore {
     pub(crate) fn new() -> Self {
         let mut store = Self {
             specs: vec![GlueSpec::ZERO],
-            index: HashMap::new(),
+            index: AHashMap::new(),
             index_dirty: false,
             identities: IdentityAllocator::new(1),
         };
@@ -173,7 +172,7 @@ impl GlueStore {
     #[cfg(any(test, feature = "testing", feature = "shadow"))]
     #[must_use]
     pub(crate) fn testing_state_hash(&self) -> u64 {
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = AHasher::default();
         self.specs.hash(&mut hasher);
         hasher.finish()
     }
@@ -194,8 +193,7 @@ impl GlueStore {
 }
 
 fn content_hash(spec: &GlueSpec) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    // PERF: revisit hasher (fastpaths epic).
+    let mut hasher = AHasher::default();
     spec.hash(&mut hasher);
     hasher.finish()
 }

@@ -2,7 +2,7 @@ use crate::{
     EngineMode, ExpandableOpcode, ExpansionHooks, NoopExpansionHooks, NoopRecorder, ReadRecorder,
     dispatch, dispatch_expandable_opcode, dispatch_with_hooks, install_expandable_primitives,
 };
-use std::collections::HashMap;
+use ahash::AHashMap;
 use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::interner::Symbol;
@@ -3371,22 +3371,22 @@ fn conditional_primitives(stores: &mut Universe) -> (Symbol, Symbol, Symbol, Sym
 
 struct MemoryHooks {
     job_name: String,
-    sources: HashMap<String, String>,
+    sources: AHashMap<String, String>,
     opened: Vec<String>,
     mode: EngineMode,
     inner: bool,
-    eof: HashMap<u8, bool>,
+    eof: AHashMap<u8, bool>,
 }
 
 impl MemoryHooks {
     fn new(job_name: &str) -> Self {
         Self {
             job_name: job_name.to_owned(),
-            sources: HashMap::new(),
+            sources: AHashMap::new(),
             opened: Vec::new(),
             mode: EngineMode::Vertical,
             inner: false,
-            eof: HashMap::new(),
+            eof: AHashMap::new(),
         }
     }
 

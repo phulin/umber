@@ -1,6 +1,6 @@
 #![allow(clippy::disallowed_methods)] // Host-side manifest parser reads repository files.
 
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 use std::fs;
@@ -160,7 +160,7 @@ impl ManifestBuilder {
                 "manifest does not contain any doc entries",
             ));
         }
-        let mut names = HashSet::new();
+        let mut names = BTreeSet::new();
         for file in &self.support {
             if !names.insert(file.name.as_str()) {
                 return Err(ManifestError::new(
@@ -210,7 +210,7 @@ impl ManifestBuilder {
 struct SupportBuilder {
     name: String,
     start_line: usize,
-    seen: HashSet<&'static str>,
+    seen: BTreeSet<&'static str>,
     url: Option<String>,
     sha256: Option<String>,
     license: Option<String>,
@@ -223,7 +223,7 @@ impl SupportBuilder {
         Self {
             name,
             start_line,
-            seen: HashSet::new(),
+            seen: BTreeSet::new(),
             url: None,
             sha256: None,
             license: None,
@@ -282,7 +282,7 @@ impl SupportBuilder {
 struct DocumentBuilder {
     name: String,
     start_line: usize,
-    seen: HashSet<&'static str>,
+    seen: BTreeSet<&'static str>,
     url: Option<String>,
     sha256: Option<String>,
     license: Option<String>,
@@ -297,7 +297,7 @@ impl DocumentBuilder {
         Self {
             name,
             start_line,
-            seen: HashSet::new(),
+            seen: BTreeSet::new(),
             url: None,
             sha256: None,
             license: None,

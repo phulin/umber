@@ -6,8 +6,7 @@
 
 use crate::identity::{HandleIdentity, IdentityAllocator, IdentityMark};
 use crate::state_hash::StateHasher;
-use std::collections::HashMap;
-use std::collections::hash_map::DefaultHasher;
+use ahash::{AHashMap, AHasher};
 use std::hash::{Hash, Hasher};
 use std::sync::{OnceLock, RwLock};
 
@@ -133,8 +132,8 @@ pub struct Interner {
     kinds: Vec<ControlSequenceKind>,
     semantic_atoms: Vec<u64>,
     symbols: Vec<Symbol>,
-    symbol_slots: HashMap<Symbol, u32>,
-    index: HashMap<u64, Vec<SymbolId>>,
+    symbol_slots: AHashMap<Symbol, u32>,
+    index: AHashMap<u64, Vec<SymbolId>>,
     index_dirty: bool,
     identities: IdentityAllocator,
 }
@@ -165,8 +164,8 @@ impl Interner {
             kinds: Vec::new(),
             semantic_atoms: Vec::new(),
             symbols: Vec::new(),
-            symbol_slots: HashMap::new(),
-            index: HashMap::new(),
+            symbol_slots: AHashMap::new(),
+            index: AHashMap::new(),
             index_dirty: false,
             identities: IdentityAllocator::new(0),
         }
@@ -405,7 +404,7 @@ fn semantic_atom(kind: ControlSequenceKind, name: &str) -> u64 {
 
 #[derive(Debug, Default)]
 struct GlobalSymbols {
-    names: HashMap<u64, Vec<GlobalSymbolEntry>>,
+    names: AHashMap<u64, Vec<GlobalSymbolEntry>>,
     len: u32,
 }
 
@@ -466,8 +465,7 @@ fn symbol_for_global_len(len: u32) -> Result<Symbol, InternerError> {
 }
 
 fn content_hash(kind: ControlSequenceKind, name: &str) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    // PERF: revisit hasher (fastpaths epic).
+    let mut hasher = AHasher::default();
     kind.hash(&mut hasher);
     name.hash(&mut hasher);
     hasher.finish()

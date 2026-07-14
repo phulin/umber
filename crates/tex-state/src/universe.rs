@@ -57,7 +57,6 @@ use crate::world::{
     ShellEscapeRecord, StreamBufState, StreamSlot, World, WorldError, WorldSnapshot,
     WorldStateHashCursor, install_job_clock_params,
 };
-use std::hash::BuildHasher;
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -478,7 +477,7 @@ impl UniverseOwner {
 }
 
 fn random_owner_nonce() -> u64 {
-    let state = std::collections::hash_map::RandomState::new();
+    let state = ahash::RandomState::new();
     state.hash_one(0x756e_6976_6572_7365_u64)
 }
 
@@ -2869,7 +2868,7 @@ impl Universe {
     #[cfg(any(test, feature = "testing", feature = "shadow"))]
     #[must_use]
     pub fn testing_state_hash(&self) -> u64 {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        let mut hasher = ahash::AHasher::default();
         self.stores.testing_state_hash().hash(&mut hasher);
         self.world.testing_state_hash().hash(&mut hasher);
         self.input_summary.hash(&mut hasher);

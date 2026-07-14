@@ -11,7 +11,6 @@
 //! live identities through the aggregate store facade.
 
 use core::num::{NonZeroU32, NonZeroU64};
-use std::hash::BuildHasher;
 
 const BUILTIN_NAMESPACE: NonZeroU64 = NonZeroU64::MIN;
 const FIRST_GENERATION: NonZeroU32 = NonZeroU32::MIN;
@@ -251,7 +250,7 @@ impl IdentityAllocator {
 
 fn fresh_namespace() -> NonZeroU64 {
     loop {
-        let state = std::collections::hash_map::RandomState::new();
+        let state = ahash::RandomState::new();
         let raw = state.hash_one(0x6964_656e_7469_7479_u64);
         if let Some(namespace) = NonZeroU64::new(raw)
             && namespace.get() > RESERVED_NAMESPACE_MAX

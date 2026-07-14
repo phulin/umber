@@ -1265,10 +1265,10 @@ impl World {
     #[cfg(any(test, feature = "testing", feature = "shadow"))]
     #[must_use]
     pub(crate) fn testing_state_hash(&self) -> u64 {
-        use std::collections::hash_map::DefaultHasher;
+        use ahash::AHasher;
         use std::hash::{Hash, Hasher};
 
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = AHasher::default();
         self.effect_base.hash(&mut hasher);
         self.effects.hash(&mut hasher);
         self.stream_bufs.hash(&mut hasher);

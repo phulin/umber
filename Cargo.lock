@@ -642,6 +642,7 @@ dependencies = [
 name = "tex-arith"
 version = "0.1.0"
 dependencies = [
+ "ahash",
  "bincode",
  "serde",
 ]
@@ -654,6 +655,7 @@ version = "0.1.0"
 name = "tex-exec"
 version = "0.1.0"
 dependencies = [
+ "ahash",
  "test-support",
  "tex-expand",
  "tex-fonts",
@@ -667,6 +669,7 @@ dependencies = [
 name = "tex-expand"
 version = "0.1.0"
 dependencies = [
+ "ahash",
  "test-support",
  "tex-lex",
  "tex-state",
@@ -684,6 +687,7 @@ dependencies = [
 name = "tex-lex"
 version = "0.1.0"
 dependencies = [
+ "ahash",
  "tempfile",
  "tex-state",
 ]
@@ -716,6 +720,7 @@ dependencies = [
 name = "tex-typeset"
 version = "0.1.0"
 dependencies = [
+ "ahash",
  "tex-arith",
  "tex-fonts",
  "tex-state",

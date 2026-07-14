@@ -81,13 +81,13 @@ impl ExpansionHooks<MemoryInput> for EdefInputHooks {
 }
 
 pub(super) struct MemoryInputHooks {
-    sources: HashMap<String, String>,
+    sources: AHashMap<String, String>,
 }
 
 impl MemoryInputHooks {
     pub(super) fn new() -> Self {
         Self {
-            sources: HashMap::new(),
+            sources: AHashMap::new(),
         }
     }
 

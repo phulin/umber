@@ -1,5 +1,5 @@
 use crate as tex_state;
-use std::collections::HashMap;
+use ahash::AHashMap;
 use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
@@ -174,18 +174,18 @@ impl TestCell {
 
 #[derive(Debug)]
 pub(crate) struct Oracle {
-    scopes: Vec<HashMap<TestCell, u64>>,
+    scopes: Vec<AHashMap<TestCell, u64>>,
 }
 
 impl Oracle {
     pub(crate) fn new() -> Self {
-        let mut root = HashMap::new();
+        let mut root = AHashMap::new();
         root.insert(TestCell::IntParam(IntParam::TOLERANCE.raw()), 10_000);
         Self { scopes: vec![root] }
     }
 
     pub(crate) fn enter_group(&mut self) {
-        self.scopes.push(HashMap::new());
+        self.scopes.push(AHashMap::new());
     }
 
     pub(crate) fn leave_group(&mut self) {
@@ -228,7 +228,7 @@ impl Oracle {
     }
 }
 
-fn set_word(scope: &mut HashMap<TestCell, u64>, cell: TestCell, word: u64) {
+fn set_word(scope: &mut AHashMap<TestCell, u64>, cell: TestCell, word: u64) {
     scope.insert(cell, word);
 }
 

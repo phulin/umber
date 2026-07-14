@@ -169,7 +169,7 @@ fn canonical_glue_set_ratio_round_trips_with_identical_hash() {
     );
 
     let hash = |value: GlueSetRatio| {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        let mut hasher = ahash::AHasher::default();
         value.hash(&mut hasher);
         hasher.finish()
     };

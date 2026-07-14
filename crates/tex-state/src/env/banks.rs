@@ -6,9 +6,9 @@ use crate::epoch::Epoch;
 use crate::ids::{FontId, GlueId, TokenListId};
 use crate::journal::{Journal, JournalPos};
 use crate::scaled::Scaled;
-use core::marker::PhantomData;
 #[cfg(feature = "shadow")]
-use std::collections::HashMap;
+use ahash::AHashMap;
+use core::marker::PhantomData;
 
 /// Number of dense classical register slots per bank.
 pub const DENSE_REGISTER_COUNT: usize = 256;
@@ -371,7 +371,7 @@ pub(crate) trait BankCodec {
 pub(crate) struct BankSetContext<'a> {
     pub(crate) journal: &'a mut Journal,
     #[cfg(feature = "shadow")]
-    pub(crate) shadow: &'a mut HashMap<CellId, u64>,
+    pub(crate) shadow: &'a mut AHashMap<CellId, u64>,
     pub(crate) epoch: Epoch,
     pub(crate) bank: BankTag,
     pub(crate) global: bool,

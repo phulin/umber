@@ -197,9 +197,9 @@ fn testing_hash_is_independent_of_sparse_update_order() {
     right.set_catcode('λ', Catcode::Active);
     right.set_catcode('🦀', Catcode::Letter);
 
-    let mut left_hash = std::collections::hash_map::DefaultHasher::new();
+    let mut left_hash = ahash::AHasher::default();
     left.testing_hash_content(&mut left_hash);
-    let mut right_hash = std::collections::hash_map::DefaultHasher::new();
+    let mut right_hash = ahash::AHasher::default();
     right.testing_hash_content(&mut right_hash);
 
     assert_eq!(left.generations(), right.generations());

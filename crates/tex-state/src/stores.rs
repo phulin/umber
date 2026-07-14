@@ -44,7 +44,6 @@ use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::token_store::{
     TokenListBuilder, TokenSemanticId, TokenSemanticIdBuilder, TokenStore, TokenStoreMark,
 };
-use std::hash::BuildHasher;
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
 use std::hash::{Hash, Hasher};
 use std::mem;
@@ -130,7 +129,7 @@ impl StoreOwner {
 }
 
 fn random_owner_nonce() -> u64 {
-    let state = std::collections::hash_map::RandomState::new();
+    let state = ahash::RandomState::new();
     state.hash_one(0x7374_6f72_6573_u64)
 }
 
@@ -1763,7 +1762,7 @@ impl Stores {
     #[cfg(any(test, feature = "testing", feature = "shadow"))]
     #[must_use]
     pub fn testing_state_hash(&self) -> u64 {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        let mut hasher = ahash::AHasher::default();
         self.testing_hash_env_by_content(&mut hasher);
         self.interner.len().hash(&mut hasher);
         for raw in 0..self.interner.len() {

@@ -1,7 +1,7 @@
 use super::{Env, cell_key, checked_aftergroup_start, u32_len};
 use crate::journal::{BoxUndoRec, Entry, JournalPos, Marker, UndoRec};
 use crate::token::Token;
-use std::collections::{HashMap, HashSet};
+use ahash::{AHashMap, AHashSet};
 
 /// TeX group boundary kind tracked on state-layer group markers.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -355,10 +355,10 @@ impl Env {
     ) {
         let mut globals = Vec::new();
         let mut box_globals = Vec::new();
-        let mut globally_reassigned = HashSet::new();
-        let mut globally_reassigned_boxes = HashSet::new();
-        let mut first_old = HashMap::new();
-        let mut first_box_old = HashMap::new();
+        let mut globally_reassigned = AHashSet::new();
+        let mut globally_reassigned_boxes = AHashSet::new();
+        let mut first_old = AHashMap::new();
+        let mut first_box_old = AHashMap::new();
 
         for index in marker_index + 1..group_end {
             if let Entry::Undo(rec) = self.journal.entry(index) {
@@ -399,7 +399,7 @@ impl Env {
 
         self.journal.truncate_to(JournalPos::from_raw(marker_index));
         self.journal.truncate_box_undos(box_undo_len);
-        let mut refiled_globals = HashSet::new();
+        let mut refiled_globals = AHashSet::new();
         for rec in globals.into_iter().rev() {
             self.restore_raw(rec.cell(), rec.new_value());
             let key = cell_key(rec.cell());
@@ -411,7 +411,7 @@ impl Env {
             self.journal
                 .push_undo(UndoRec::new(rec.cell(), old, rec.new_value()));
         }
-        let mut refiled_box_globals = HashSet::new();
+        let mut refiled_box_globals = AHashSet::new();
         for rec in box_globals.into_iter().rev() {
             self.boxes.restore(rec.index(), rec.new_value());
             let old = if refiled_box_globals.insert(rec.index()) {

@@ -8,7 +8,7 @@ use crate::journal::{Entry, UndoRec};
 use crate::meaning::Meaning;
 use crate::scaled::Scaled;
 use crate::token::{Catcode, Token};
-use std::collections::HashMap;
+use ahash::AHashMap;
 
 #[test]
 fn default_get_before_any_set_is_undefined() {
@@ -842,18 +842,18 @@ fn undo(bank: BankTag, index: u32, old: u64, new: u64) -> Entry {
 
 #[derive(Debug)]
 struct Oracle {
-    scopes: Vec<HashMap<u16, i32>>,
+    scopes: Vec<AHashMap<u16, i32>>,
 }
 
 impl Oracle {
     fn new() -> Self {
         Self {
-            scopes: vec![HashMap::new()],
+            scopes: vec![AHashMap::new()],
         }
     }
 
     fn enter_group(&mut self) {
-        self.scopes.push(HashMap::new());
+        self.scopes.push(AHashMap::new());
     }
 
     fn leave_group(&mut self) {
