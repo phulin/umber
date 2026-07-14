@@ -318,6 +318,8 @@ pub enum GenerationForkError {
     PrefixBeyondForkAnchor,
     UnrelatedFork,
     InvalidMappedAnchor,
+    RootRevisionMismatch,
+    ChangedRootInterval,
 }
 
 impl std::fmt::Display for GenerationForkError {
@@ -328,6 +330,8 @@ impl std::fmt::Display for GenerationForkError {
             Self::PrefixBeyondForkAnchor => "checkpoint is after the fork anchor",
             Self::UnrelatedFork => "target substrate was not forked from the source generation",
             Self::InvalidMappedAnchor => "mapped editor anchor is outside a UTF-8 boundary",
+            Self::RootRevisionMismatch => "checkpoint root revision does not match the source",
+            Self::ChangedRootInterval => "mapped root interval is not byte-identical",
         })
     }
 }
@@ -500,9 +504,13 @@ impl GenerationSubstrate {
     /// Freezes one completed mutable timeline as an accepted generation.
     #[must_use]
     pub fn new(universe: Universe) -> Self {
-        let charged_bytes = std::mem::size_of::<Universe>().saturating_add(
-            universe.input_summary.len() * std::mem::size_of::<InputFrameSummary>(),
-        );
+        let charged_bytes = universe
+            .stores
+            .generation_retained_bytes()
+            .saturating_add(std::mem::size_of::<Universe>())
+            .saturating_add(
+                universe.input_summary.len() * std::mem::size_of::<InputFrameSummary>(),
+            );
         Self {
             universe,
             charged_bytes,
@@ -526,6 +534,11 @@ impl GenerationSubstrate {
         checkpoint: &Snapshot,
     ) -> Result<(), GenerationForkError> {
         self.universe.validate_retained_snapshot(checkpoint)
+    }
+
+    #[must_use]
+    pub fn root_content_hash(&self, summary: &InputSummary) -> Option<ContentHash> {
+        self.universe.stores.root_generated_content_hash(summary)
     }
 
     /// Clones this frozen generation once and atomically rolls the clone back
@@ -561,6 +574,15 @@ impl GenerationSubstrate {
             return Err(GenerationForkError::PrefixBeyondForkAnchor);
         }
         Ok(self.universe.retarget_inherited_snapshot(checkpoint))
+    }
+
+    /// Consumes the accepted generation, installs the session-owned ordered
+    /// effect history, materializes it exactly once, and returns the sealed World.
+    pub fn export_detached_effects(self, effects: Vec<EffectRecord>) -> Result<World, WorldError> {
+        let mut universe = self.universe;
+        universe.world.replace_retained_effects(effects)?;
+        universe.export_retained_effects()?;
+        Ok(universe.world)
     }
 }
 
@@ -1426,6 +1448,11 @@ impl Universe {
             .ok_or(SourceMapError::UnknownSource)?;
         self.set_input_summary(rebound.clone());
         Ok((rebound, source_id))
+    }
+
+    #[must_use]
+    pub fn root_editor_content_hash(&self, summary: &InputSummary) -> Option<ContentHash> {
+        self.stores.root_generated_content_hash(summary)
     }
 
     /// Records the current lexer-owned input stack state for the next snapshot.

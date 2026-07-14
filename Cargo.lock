@@ -783,7 +783,9 @@ name = "tex-incr"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "tempfile",
  "tex-exec",
+ "tex-expand",
  "tex-lex",
  "tex-out",
  "tex-state",

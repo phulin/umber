@@ -5,7 +5,6 @@
 
 mod arena;
 mod copy;
-#[cfg(feature = "profiling-stats")]
 mod measurement;
 mod mutation;
 mod semantic;

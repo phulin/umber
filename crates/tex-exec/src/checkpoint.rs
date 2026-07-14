@@ -37,6 +37,7 @@ pub struct EngineCheckpoint {
     modes: ModeNestSummary,
     state_hash: u64,
     root_anchor: usize,
+    root_content_hash: Option<tex_state::ContentHash>,
     effect_prefix: usize,
     artifact_prefix: usize,
 }
@@ -87,15 +88,51 @@ impl EngineCheckpoint {
     pub fn rehome_converged_root(
         &self,
         substrate: &GenerationSubstrate,
-        source: &str,
+        old_source: &str,
+        new_source: &str,
         mapped_anchor: usize,
     ) -> Result<Self, GenerationForkError> {
         substrate.validate_checkpoint_snapshot(&self.universe)?;
-        if mapped_anchor > source.len() || !source.is_char_boundary(mapped_anchor) {
+        if self.root_content_hash != Some(tex_state::ContentHash::from_bytes(old_source.as_bytes()))
+        {
+            return Err(GenerationForkError::RootRevisionMismatch);
+        }
+        if mapped_anchor > new_source.len() || !new_source.is_char_boundary(mapped_anchor) {
             return Err(GenerationForkError::InvalidMappedAnchor);
+        }
+        if self.root_anchor > old_source.len()
+            || old_source.as_bytes()[self.root_anchor..] != new_source.as_bytes()[mapped_anchor..]
+        {
+            return Err(GenerationForkError::ChangedRootInterval);
         }
         let mut checkpoint = self.clone();
         checkpoint.root_anchor = mapped_anchor;
+        checkpoint.root_content_hash =
+            Some(tex_state::ContentHash::from_bytes(new_source.as_bytes()));
+        Ok(checkpoint)
+    }
+
+    pub fn rehome_unchanged_prefix(
+        &self,
+        substrate: &GenerationSubstrate,
+        old_source: &str,
+        new_source: &str,
+    ) -> Result<Self, GenerationForkError> {
+        substrate.validate_checkpoint_snapshot(&self.universe)?;
+        if self.root_content_hash != Some(tex_state::ContentHash::from_bytes(old_source.as_bytes()))
+        {
+            return Err(GenerationForkError::RootRevisionMismatch);
+        }
+        if self.root_anchor > old_source.len()
+            || self.root_anchor > new_source.len()
+            || old_source.as_bytes()[..self.root_anchor]
+                != new_source.as_bytes()[..self.root_anchor]
+        {
+            return Err(GenerationForkError::ChangedRootInterval);
+        }
+        let mut checkpoint = self.clone();
+        checkpoint.root_content_hash =
+            Some(tex_state::ContentHash::from_bytes(new_source.as_bytes()));
         Ok(checkpoint)
     }
 
@@ -105,9 +142,24 @@ impl EngineCheckpoint {
         &self,
         target: &GenerationSubstrate,
         source: &GenerationSubstrate,
+        old_source: &str,
+        new_source: &str,
     ) -> Result<Self, GenerationForkError> {
+        if self.root_content_hash != Some(tex_state::ContentHash::from_bytes(old_source.as_bytes()))
+        {
+            return Err(GenerationForkError::RootRevisionMismatch);
+        }
+        if self.root_anchor > old_source.len()
+            || self.root_anchor > new_source.len()
+            || old_source.as_bytes()[..self.root_anchor]
+                != new_source.as_bytes()[..self.root_anchor]
+        {
+            return Err(GenerationForkError::ChangedRootInterval);
+        }
         let mut checkpoint = self.clone();
         checkpoint.universe = target.retarget_prefix_from(source, &self.universe)?;
+        checkpoint.root_content_hash =
+            Some(tex_state::ContentHash::from_bytes(new_source.as_bytes()));
         Ok(checkpoint)
     }
 }
@@ -189,8 +241,9 @@ impl<'a, C: CheckpointSink> EngineSession<'a, C> {
         };
         let effect_prefix = usize::try_from(universe.world().effect_pos().raw())
             .expect("effect log position must fit in memory address space");
-        let artifact_prefix = universe.world().artifact_commits().len();
+        let artifact_prefix = universe.world().artifact_pos();
         let root_anchor = input_summary.conservative_root_position();
+        let root_content_hash = universe.root_editor_content_hash(&input_summary);
         let universe = universe.snapshot();
         let state_hash = combine_mode_hash(universe.state_hash(), mode_hash);
         self.sink.checkpoint(EngineCheckpoint {
@@ -201,6 +254,7 @@ impl<'a, C: CheckpointSink> EngineSession<'a, C> {
             modes,
             state_hash,
             root_anchor,
+            root_content_hash,
             effect_prefix,
             artifact_prefix,
         });
@@ -222,6 +276,8 @@ pub enum EngineRestoreError<E> {
 #[derive(Debug)]
 pub enum EditorRestoreError {
     Fork(GenerationForkError),
+    RootRevisionMismatch,
+    ChangedRootPrefix,
     RootRebind(SourceMapError),
     IncludedInputUnavailable(SourceId),
     Mode(ExecError),
@@ -231,6 +287,12 @@ impl fmt::Display for EditorRestoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Fork(error) => write!(f, "could not fork retained generation: {error}"),
+            Self::RootRevisionMismatch => {
+                f.write_str("checkpoint root revision does not match the accepted source")
+            }
+            Self::ChangedRootPrefix => {
+                f.write_str("edited source changed bytes before the restart anchor")
+            }
             Self::RootRebind(error) => write!(f, "could not rebind editor root: {error}"),
             Self::IncludedInputUnavailable(source) => write!(
                 f,
@@ -288,8 +350,21 @@ impl crate::Executor {
         universe: &mut Universe,
         substrate: &GenerationSubstrate,
         checkpoint: &EngineCheckpoint,
+        old_source: &str,
         source: &str,
     ) -> Result<Duration, EditorRestoreError> {
+        if checkpoint.root_content_hash
+            != Some(tex_state::ContentHash::from_bytes(old_source.as_bytes()))
+        {
+            return Err(EditorRestoreError::RootRevisionMismatch);
+        }
+        if checkpoint.root_anchor > old_source.len()
+            || checkpoint.root_anchor > source.len()
+            || old_source.as_bytes()[..checkpoint.root_anchor]
+                != source.as_bytes()[..checkpoint.root_anchor]
+        {
+            return Err(EditorRestoreError::ChangedRootPrefix);
+        }
         let fork_started = Instant::now();
         let mut restored_universe = substrate
             .fork_at(&checkpoint.universe)

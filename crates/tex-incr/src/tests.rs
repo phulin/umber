@@ -3,14 +3,8 @@ use super::*;
 fn template() -> Universe {
     let mut universe = Universe::with_world(tex_state::World::memory());
     tex_exec::install_unexpandable_primitives(&mut universe);
-    tex_expand_for_tests(&mut universe);
+    tex_expand::install_expandable_primitives(&mut universe);
     universe
-}
-
-fn tex_expand_for_tests(universe: &mut Universe) {
-    // tex-incr intentionally does not own primitive installation policy. The
-    // compact synthetic corpus below needs only stomach primitives.
-    let _ = universe;
 }
 
 fn source(label: &str) -> String {
@@ -297,4 +291,84 @@ fn stale_revision_and_hash_are_actionable_errors() {
         )
         .expect_err("stale edit rejected");
     assert!(matches!(error, SessionError::StaleRevision { .. }));
+}
+
+#[test]
+fn record_rehome_rejects_a_changed_suffix_and_stale_root_revision() {
+    let original = source("a");
+    let mut session = Session::start(
+        template(),
+        "authority",
+        RevisionId::new(1),
+        original.clone(),
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold run");
+    let substrate = session.substrate.as_ref().expect("accepted substrate");
+    let job_start = session.history.first().expect("job start").checkpoint();
+
+    assert_eq!(
+        job_start
+            .rehome_converged_root(substrate, &original, "changed", 0)
+            .expect_err("changed adopted interval is rejected"),
+        GenerationForkError::ChangedRootInterval
+    );
+    assert_eq!(
+        job_start
+            .rehome_unchanged_prefix(substrate, "stale revision", &original)
+            .expect_err("stale root revision is rejected"),
+        GenerationForkError::RootRevisionMismatch
+    );
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // Deliberately mutates a real dependency between revisions.
+fn changed_included_input_rejects_checkpoint_reuse() {
+    let directory = tempfile::tempdir().expect("temporary input directory");
+    let included = directory.path().join("included.tex");
+    std::fs::write(&included, b"\\count0=1\n").expect("seed include");
+    let root = format!("\\input {} \\end", included.display());
+    let mut universe = Universe::with_world(tex_state::World::real_with_artifact_dir(
+        directory.path().join("artifacts"),
+    ));
+    tex_exec::install_unexpandable_primitives(&mut universe);
+    tex_expand::install_expandable_primitives(&mut universe);
+    let mut session = Session::start(
+        universe,
+        "include",
+        RevisionId::new(1),
+        root.clone(),
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold include run");
+    std::fs::write(&included, b"\\count0=2\n").expect("change include");
+    let error = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(root.as_bytes()),
+                range: 0..0,
+                replacement: String::new(),
+            },
+        )
+        .expect_err("changed include rejects retained reuse");
+    assert!(matches!(error, SessionError::World(_)));
+}
+
+#[test]
+fn finalize_materializes_session_effects_once_and_consumes_session() {
+    let text = "\\message{retained hello}\\end";
+    let mut session = Session::start(template(), "finalize", RevisionId::new(1), text, usize::MAX)
+        .expect("session starts");
+    let output = session.cold().expect("cold run");
+    assert!(!output.effects.is_empty());
+    let world = session.finalize().expect("session finalizes once");
+    assert!(
+        std::str::from_utf8(world.memory_terminal_output().expect("terminal output"))
+            .expect("UTF-8 output")
+            .contains("retained hello")
+    );
 }

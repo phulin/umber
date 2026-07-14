@@ -282,6 +282,23 @@ impl NodeArena {
         (logical, retained)
     }
 
+    pub(crate) fn retained_payload_bytes(&self) -> usize {
+        let (_, capacity, element_bytes) = self.identities.measurement_shape();
+        self.storage
+            .retained_payload_bytes()
+            .saturating_add(capacity.saturating_mul(element_bytes))
+            .saturating_add(
+                self.spans
+                    .capacity()
+                    .saturating_mul(core::mem::size_of::<EpochSpan>()),
+            )
+            .saturating_add(
+                self.semantic_ids
+                    .capacity()
+                    .saturating_mul(core::mem::size_of::<NodeSemanticId>()),
+            )
+    }
+
     #[cfg(feature = "profiling-stats")]
     fn record_peak(&self) {
         super::measurement::record_peak_observation(self.measurement_payload_bytes(), || {

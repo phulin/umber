@@ -622,8 +622,9 @@ pub struct World {
     input_contents: BTreeMap<ContentHash, Arc<[u8]>>,
     terminal_inputs: Vec<String>,
     shell_escapes: Vec<ShellEscapeRecord>,
-    artifact_commits: Vec<ContentHash>,
-    committed_artifacts: Vec<CommittedArtifact>,
+    artifact_base: usize,
+    artifact_commits: Arc<Vec<ContentHash>>,
+    committed_artifacts: Arc<Vec<CommittedArtifact>>,
     verified_artifacts: BTreeSet<ContentHash>,
     effect_commit_poison: Option<WorldError>,
     commit_mode: WorldCommitMode,
@@ -656,6 +657,7 @@ impl Clone for World {
             input_contents: self.input_contents.clone(),
             terminal_inputs: self.terminal_inputs.clone(),
             shell_escapes: self.shell_escapes.clone(),
+            artifact_base: self.artifact_base,
             artifact_commits: self.artifact_commits.clone(),
             committed_artifacts: self.committed_artifacts.clone(),
             verified_artifacts: self.verified_artifacts.clone(),
@@ -683,6 +685,7 @@ impl PartialEq for World {
             && self.input_contents == other.input_contents
             && self.terminal_inputs == other.terminal_inputs
             && self.shell_escapes == other.shell_escapes
+            && self.artifact_base == other.artifact_base
             && self.artifact_commits == other.artifact_commits
             && self.committed_artifacts == other.committed_artifacts
             && self.effect_commit_poison == other.effect_commit_poison
@@ -738,8 +741,9 @@ impl World {
             input_contents: BTreeMap::new(),
             terminal_inputs: Vec::new(),
             shell_escapes: Vec::new(),
-            artifact_commits: Vec::new(),
-            committed_artifacts: Vec::new(),
+            artifact_base: 0,
+            artifact_commits: Arc::new(Vec::new()),
+            committed_artifacts: Arc::new(Vec::new()),
             verified_artifacts: BTreeSet::new(),
             effect_commit_poison: None,
             commit_mode: WorldCommitMode::Eager,
@@ -1175,7 +1179,13 @@ impl World {
     /// so these entries are never rolled back or included in semantic hashes.
     #[must_use]
     pub fn artifact_commits(&self) -> &[ContentHash] {
-        &self.artifact_commits
+        self.artifact_commits.as_slice()
+    }
+
+    /// Absolute artifact prefix position including the detached inherited prefix.
+    #[must_use]
+    pub fn artifact_pos(&self) -> usize {
+        self.artifact_base + self.artifact_commits.len()
     }
 
     /// Returns the in-process commit receipts aligned with
@@ -1186,13 +1196,12 @@ impl World {
     /// [`Self::read_artifact`] in a later process.
     #[must_use]
     pub fn committed_artifacts(&self) -> &[CommittedArtifact] {
-        &self.committed_artifacts
+        self.committed_artifacts.as_slice()
     }
 
     pub(crate) fn record_artifact_commit(&mut self, hash: ContentHash, bytes: Vec<u8>) {
-        self.artifact_commits.push(hash);
-        self.committed_artifacts
-            .push(CommittedArtifact::new(hash, bytes));
+        Arc::make_mut(&mut self.artifact_commits).push(hash);
+        Arc::make_mut(&mut self.committed_artifacts).push(CommittedArtifact::new(hash, bytes));
     }
 
     pub fn open_out(&mut self, slot: StreamSlot, path: impl Into<PathBuf>) {
@@ -1339,6 +1348,41 @@ impl World {
         &self.inputs
     }
 
+    /// Verifies that every pinned included/font input still names the same
+    /// host bytes before a retained checkpoint is reused.
+    pub fn validate_recorded_inputs(&self) -> Result<(), WorldError> {
+        for record in &self.inputs {
+            let current = match &self.backend {
+                WorldBackend::Real { .. } => std::fs::read(record.path()).map_err(|error| {
+                    WorldError::new(
+                        "validate retained input",
+                        Some(record.path().to_owned()),
+                        error.to_string(),
+                    )
+                })?,
+                WorldBackend::Memory(memory) => memory
+                    .files
+                    .get(record.path())
+                    .map(|bytes| bytes.to_vec())
+                    .ok_or_else(|| {
+                        WorldError::new(
+                            "validate retained input",
+                            Some(record.path().to_owned()),
+                            "input is no longer available",
+                        )
+                    })?,
+            };
+            if ContentHash::from_bytes(&current) != record.hash() {
+                return Err(WorldError::new(
+                    "validate retained input",
+                    Some(record.path().to_owned()),
+                    "input content changed since the accepted checkpoint",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Returns a recorded input only when `id` is live in this World timeline.
     #[must_use]
     pub fn input_record(&self, id: InputRecordId) -> Option<&InputRecord> {
@@ -1410,6 +1454,23 @@ impl World {
             return Err(error);
         }
         self.commit_mode = WorldCommitMode::Exported;
+        Ok(())
+    }
+
+    pub(crate) fn replace_retained_effects(
+        &mut self,
+        effects: Vec<EffectRecord>,
+    ) -> Result<(), WorldError> {
+        if self.commit_mode != WorldCommitMode::Retained {
+            return Err(WorldError::new(
+                "replace retained effects",
+                None,
+                "world is not a rollback-capable retained session",
+            ));
+        }
+        self.effect_base = EffectPos::default();
+        self.effects = Arc::new(effects);
+        self.effect_commit_poison = None;
         Ok(())
     }
 
@@ -1596,21 +1657,24 @@ impl World {
             input_len: self.inputs.len(),
             input_identities: self.input_identities.watermark(),
             shell_escape_len: self.shell_escapes.len(),
-            artifact_commit_len: self.artifact_commits.len(),
+            artifact_commit_len: self.artifact_pos(),
             commit_mode: self.commit_mode,
         }
     }
 
     pub(crate) fn assert_snapshot_retained(&self, snapshot: &WorldSnapshot) {
         assert!(
-            self.effect_pos_is_retained(snapshot.effect_pos),
-            "World snapshot effect position has already been committed and dropped"
+            self.effect_pos_is_retained(snapshot.effect_pos)
+                && (self.artifact_base..=self.artifact_pos())
+                    .contains(&snapshot.artifact_commit_len),
+            "World snapshot output position has already been committed and dropped"
         );
     }
 
     #[must_use]
     pub(crate) fn snapshot_is_retained(&self, snapshot: &WorldSnapshot) -> bool {
         self.effect_pos_is_retained(snapshot.effect_pos)
+            && (self.artifact_base..=self.artifact_pos()).contains(&snapshot.artifact_commit_len)
     }
 
     pub(crate) fn rollback(&mut self, snapshot: &WorldSnapshot) {
@@ -1626,9 +1690,12 @@ impl World {
         self.inputs.truncate(snapshot.input_len);
         self.shell_escapes.truncate(snapshot.shell_escape_len);
         if snapshot.commit_mode == WorldCommitMode::Retained {
-            self.artifact_commits.truncate(snapshot.artifact_commit_len);
-            self.committed_artifacts
-                .truncate(snapshot.artifact_commit_len);
+            let retained = snapshot
+                .artifact_commit_len
+                .checked_sub(self.artifact_base)
+                .expect("World artifact snapshot precedes retained base");
+            Arc::make_mut(&mut self.artifact_commits).truncate(retained);
+            Arc::make_mut(&mut self.committed_artifacts).truncate(retained);
         }
         self.commit_mode = snapshot.commit_mode;
     }
@@ -1650,9 +1717,9 @@ impl World {
         self.inputs.truncate(snapshot.input_len);
         self.shell_escapes.truncate(snapshot.shell_escape_len);
         if snapshot.commit_mode == WorldCommitMode::Retained {
-            self.artifact_commits.truncate(snapshot.artifact_commit_len);
-            self.committed_artifacts
-                .truncate(snapshot.artifact_commit_len);
+            self.artifact_base = snapshot.artifact_commit_len;
+            self.artifact_commits = Arc::new(Vec::new());
+            self.committed_artifacts = Arc::new(Vec::new());
         }
         self.commit_mode = snapshot.commit_mode;
     }

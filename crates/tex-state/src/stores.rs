@@ -1024,6 +1024,20 @@ impl Stores {
         }
     }
 
+    pub(crate) fn root_generated_content_hash(
+        &self,
+        summary: &crate::input::InputSummary,
+    ) -> Option<crate::world::ContentHash> {
+        let source_id = summary.frames().iter().find_map(|frame| match frame {
+            crate::input::InputFrameSummary::Source { source_id, .. } => Some(*source_id),
+            crate::input::InputFrameSummary::TokenList { .. }
+            | crate::input::InputFrameSummary::Condition { .. } => None,
+        })?;
+        let region = self.source_region(source_id)?;
+        self.generated_source(region.backing)
+            .map(GeneratedSource::hash)
+    }
+
     fn assert_origin_list_len_matches(&self, token_list: TokenListId, origin_list: OriginListId) {
         if origin_list == OriginListId::EMPTY {
             return;
@@ -1810,6 +1824,25 @@ impl Stores {
             self.env
                 .journal_entries_since(snapshot.env_snapshot.journal_pos()),
         )
+    }
+
+    pub(crate) fn generation_retained_bytes(&self) -> usize {
+        let serialized = self.encode_format().map_or(0, |format| format.len());
+        let provenance = self.provenance_stats().retained_bytes();
+        let nodes = self
+            .nodes
+            .retained_payload_bytes()
+            .saturating_add(self.survivors.retained_payload_bytes())
+            .saturating_add(
+                self.survivor_pins
+                    .capacity()
+                    .saturating_mul(mem::size_of::<NodeListId>()),
+            );
+        std::mem::size_of::<Self>()
+            .saturating_add(serialized)
+            .saturating_add(self.env.journal_retained_bytes())
+            .saturating_add(provenance)
+            .saturating_add(nodes)
     }
 
     /// Verifies the shadow mirror against real environment storage.

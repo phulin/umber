@@ -137,6 +137,17 @@ impl Journal {
         Self::default()
     }
 
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.entries
+            .capacity()
+            .saturating_mul(std::mem::size_of::<Entry>())
+            .saturating_add(
+                self.box_undos
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<BoxUndoRec>()),
+            )
+    }
+
     /// Appends an undo+redo record.
     pub(crate) fn push_undo(&mut self, rec: UndoRec) -> JournalPos {
         let pos = self.pos();

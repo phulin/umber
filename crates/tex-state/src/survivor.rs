@@ -122,6 +122,38 @@ struct SurvivorSemanticSpan {
 }
 
 impl SurvivorArena {
+    pub(crate) fn retained_payload_bytes(&self) -> usize {
+        let root_storage = self
+            .slots
+            .iter()
+            .flatten()
+            .map(|root| {
+                root.storage.retained_payload_bytes().saturating_add(
+                    root.semantic_spans
+                        .capacity()
+                        .saturating_mul(core::mem::size_of::<SurvivorSemanticSpan>()),
+                )
+            })
+            .sum::<usize>();
+        let recycled = self
+            .recycled
+            .iter()
+            .map(NodeStorage::retained_payload_bytes)
+            .sum::<usize>();
+        root_storage
+            .saturating_add(recycled)
+            .saturating_add(
+                self.slots
+                    .capacity()
+                    .saturating_mul(core::mem::size_of::<Option<SurvivorRoot>>()),
+            )
+            .saturating_add(
+                self.root_slots
+                    .capacity()
+                    .saturating_mul(core::mem::size_of::<(SurvivorRootId, usize)>()),
+            )
+    }
+
     /// Creates an empty survivor arena.
     #[must_use]
     pub(crate) fn new() -> Self {

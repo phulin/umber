@@ -5,12 +5,14 @@ edition.workspace = true
 
 [dependencies]
 tex-exec = { path = "../tex-exec" }
+tex-expand = { path = "../tex-expand" }
 tex-lex = { path = "../tex-lex" }
 tex-out = { path = "../tex-out" }
 tex-state = { path = "../tex-state" }
 
 [dev-dependencies]
 proptest.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

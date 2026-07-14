@@ -1,5 +1,7 @@
 use super::storage::NodeStorage;
+#[cfg(feature = "profiling-stats")]
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(feature = "profiling-stats")]
 use std::sync::{Mutex, OnceLock};
 
 /// One allocator-backed compact-node column in a diagnostic memory report.
@@ -184,12 +186,10 @@ impl NodeStorage {
         ]
     }
 
-    #[cfg(feature = "profiling-stats")]
-    pub(super) fn retained_payload_bytes(&self) -> usize {
+    pub(crate) fn retained_payload_bytes(&self) -> usize {
         usize::try_from(self.payload_bytes().1).expect("node storage retained bytes exceed usize")
     }
 
-    #[cfg(feature = "profiling-stats")]
     pub(super) fn payload_bytes(&self) -> (u64, u64) {
         fn bytes<T>(values: &Vec<T>) -> (u64, u64) {
             (

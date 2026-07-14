@@ -882,6 +882,46 @@ fn generation_fork_detaches_the_accepted_effect_prefix() {
 }
 
 #[test]
+fn generation_fork_detaches_the_accepted_artifact_prefix() {
+    let mut universe = Universe::new();
+    universe.begin_retained_session().expect("retained session");
+    let first = universe.begin_shipout();
+    let effect_pos = first.world().effect_pos();
+    first
+        .commit(
+            crate::VerifiedArtifact::new(b"accepted page".to_vec()),
+            effect_pos,
+        )
+        .expect("accepted shipout");
+    let selected = universe.snapshot();
+    let selected_pos = universe.world().artifact_pos();
+    let substrate = universe.freeze_generation();
+
+    let mut fork = substrate
+        .fork_at(&selected)
+        .expect("retained fork succeeds");
+    assert_eq!(fork.world().artifact_pos(), selected_pos);
+    assert!(fork.world().committed_artifacts().is_empty());
+    let scratch = fork.begin_shipout();
+    let effect_pos = scratch.world().effect_pos();
+    scratch
+        .commit(
+            crate::VerifiedArtifact::new(b"scratch page".to_vec()),
+            effect_pos,
+        )
+        .expect("scratch shipout");
+    assert_eq!(fork.world().artifact_pos(), selected_pos + 1);
+    assert!(matches!(
+        fork.world().committed_artifacts(),
+        [artifact] if artifact.bytes() == b"scratch page"
+    ));
+    assert!(matches!(
+        substrate.world().committed_artifacts(),
+        [artifact] if artifact.bytes() == b"accepted page"
+    ));
+}
+
+#[test]
 fn promoted_fork_retargets_only_the_bit_identical_prefix() {
     let mut universe = Universe::new();
     let prefix = universe.snapshot();

@@ -4,17 +4,19 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use tex_exec::{
     CheckpointSink, EditorRestoreError, EngineBoundary, EngineCheckpoint, ExecutionContext,
     ExecutionStats, Executor,
 };
-use tex_lex::{InputStack, MemoryInput};
+use tex_expand::InputResolver;
+use tex_lex::{InputSource, InputStack, MemoryInput, WorldInput};
 use tex_out::dvi::{DviError, DviPagePlan, DviStreamWriter};
 use tex_state::{
-    CommittedArtifact, ContentHash, EffectRecord, GenerationForkError, GenerationSubstrate,
-    Universe, WorldError,
+    CommittedArtifact, ContentHash, EffectRecord, FileContent, GenerationForkError,
+    GenerationSubstrate, InputReadState, Universe, WorldError,
 };
 
 /// Monotonic identity of an immutable editor buffer.
@@ -199,6 +201,16 @@ impl Session {
         self.accept_cold(run)
     }
 
+    /// Consumes the rollback-capable session and materializes its accepted
+    /// effect history once. Further edits require constructing a new Session.
+    pub fn finalize(mut self) -> Result<tex_state::World, SessionError> {
+        let substrate = self
+            .substrate
+            .take()
+            .ok_or(SessionError::MissingAcceptedSubstrate)?;
+        Ok(substrate.export_detached_effects(self.effects)?)
+    }
+
     #[allow(clippy::disallowed_methods)] // Session telemetry; no TeX state observes it.
     pub fn advance(
         &mut self,
@@ -219,10 +231,12 @@ impl Session {
             .substrate
             .as_ref()
             .ok_or(SessionError::MissingAcceptedSubstrate)?;
+        substrate.world().validate_recorded_inputs()?;
         let advance = execute_advance(
             &self.template,
             substrate,
             &self.job_name,
+            &old_source,
             &next,
             &old_history,
             &old_pages,
@@ -252,11 +266,23 @@ impl Session {
                     .last()
                     .expect("convergence requires a new matching record")
                     .artifact_prefix;
-                let mut artifacts = advance.artifacts[..new_prefix].to_vec();
+                let restart_artifact_prefix = old_history[restart_index].artifact_prefix;
+                let scratch_artifact_count = new_prefix.saturating_sub(restart_artifact_prefix);
+                let mut artifacts = old_artifacts[..restart_artifact_prefix].to_vec();
+                artifacts.extend_from_slice(&advance.artifacts[..scratch_artifact_count]);
                 artifacts.extend_from_slice(&old_artifacts[old_prefix..]);
                 let mut pages = advance.pages_through_stop;
                 pages.extend_from_slice(&old_pages[old_prefix..]);
-                let mut history = old_history[..=restart_index].to_vec();
+                let mut history = Vec::with_capacity(
+                    restart_index + 1 + old_history.len().saturating_sub(old_index),
+                );
+                for mut record in old_history[..=restart_index].iter().cloned() {
+                    record.checkpoint =
+                        record
+                            .checkpoint
+                            .rehome_unchanged_prefix(substrate, &old_source, &next)?;
+                    history.push(record);
+                }
                 for mut record in old_history[old_index..].iter().cloned() {
                     let mapped_position = map
                         .map(record.key.position)
@@ -264,6 +290,7 @@ impl Session {
                     record.key.position = mapped_position;
                     record.checkpoint = record.checkpoint.rehome_converged_root(
                         substrate,
+                        &old_source,
                         &next,
                         mapped_position,
                     )?;
@@ -281,8 +308,7 @@ impl Session {
                         restart_boundary: old_history.get(restart_index).map(BoundaryRecord::key),
                         convergence_boundary,
                         pages_reused: old_artifacts.len().saturating_sub(old_prefix),
-                        pages_retyped: new_prefix
-                            .saturating_sub(old_history[restart_index].artifact_prefix),
+                        pages_retyped: scratch_artifact_count,
                         restart_fork_latency,
                         reexecution_latency,
                         ..ReuseMetrics::default()
@@ -293,15 +319,20 @@ impl Session {
                 let mut history = Vec::with_capacity(restart_index + 1 + advance.new_records.len());
                 for record in &old_history[..=restart_index] {
                     let mut record = record.clone();
-                    record.checkpoint = record.checkpoint.retarget_prefix(&target, substrate)?;
+                    record.checkpoint = record.checkpoint.retarget_prefix(
+                        &target,
+                        substrate,
+                        &old_source,
+                        &next,
+                    )?;
                     record.revision = next_revision;
                     history.push(record);
                 }
                 history.extend(advance.new_records);
-                let pages_retyped = advance
-                    .artifacts
-                    .len()
-                    .saturating_sub(old_history[restart_index].artifact_prefix);
+                let pages_retyped = advance.artifacts.len();
+                let mut artifacts =
+                    old_artifacts[..old_history[restart_index].artifact_prefix].to_vec();
+                artifacts.extend(advance.artifacts);
                 (
                     {
                         let mut effects =
@@ -309,7 +340,7 @@ impl Session {
                         effects.extend(advance.effects);
                         effects
                     },
-                    advance.artifacts,
+                    artifacts,
                     advance.pages_through_stop,
                     history,
                     Some(target),
@@ -446,7 +477,10 @@ fn execute_revision(
     let mut input = InputStack::new(MemoryInput::new(source));
     let mut executor = Executor::new();
     let mut sink = HistorySink::default();
-    let mut context = ExecutionContext::new(job_name);
+    let mut input_resolver = DirectInputResolver;
+    let mut font_resolver = DirectFontResolver;
+    let mut context =
+        ExecutionContext::with_resolvers(job_name, &mut input_resolver, &mut font_resolver);
     let ExecutionStats { dvi_pages, .. } = executor.run_with_context_and_checkpoints(
         &mut input,
         &mut universe,
@@ -585,6 +619,7 @@ fn execute_advance(
     template: &Universe,
     substrate: &GenerationSubstrate,
     job_name: &str,
+    old_source: &str,
     source: &str,
     old_history: &[BoundaryRecord],
     old_pages: &[DviPagePlan],
@@ -600,10 +635,14 @@ fn execute_advance(
         &mut scratch,
         substrate,
         anchor.checkpoint(),
+        old_source,
         source,
     )?;
     let mut sink = ResumeSink::new(old_history, restart, map);
-    let mut context = ExecutionContext::new(job_name);
+    let mut input_resolver = DirectInputResolver;
+    let mut font_resolver = DirectFontResolver;
+    let mut context =
+        ExecutionContext::with_resolvers(job_name, &mut input_resolver, &mut font_resolver);
     let reexecution_started = Instant::now();
     let ExecutionStats { dvi_pages, .. } = executor.resume_with_context_and_checkpoints(
         &mut input,
@@ -639,6 +678,38 @@ fn select_restart(history: &[BoundaryRecord], old: &str, new: &str, edit: &Edit)
                     == new.as_bytes().get(..record.key.position)
         })
         .map_or(0, |(index, _)| index)
+}
+
+struct DirectInputResolver;
+
+impl InputResolver for DirectInputResolver {
+    fn open_input(
+        &mut self,
+        input: &mut dyn InputReadState,
+        name: &str,
+        _request_index: u64,
+    ) -> Result<Box<dyn InputSource>, String> {
+        input
+            .read_input_file(Path::new(name))
+            .map(WorldInput::from_content)
+            .map(|source| Box::new(source) as Box<dyn InputSource>)
+            .map_err(|error| error.to_string())
+    }
+}
+
+struct DirectFontResolver;
+
+impl tex_exec::FontResolver for DirectFontResolver {
+    fn open_font(
+        &mut self,
+        input: &mut dyn InputReadState,
+        path: &Path,
+        _request_index: u64,
+    ) -> Result<FileContent, String> {
+        input
+            .read_input_file(path)
+            .map_err(|error| error.to_string())
+    }
 }
 
 #[derive(Clone, Debug)]

@@ -236,6 +236,10 @@ impl Env {
         self.journal.pos()
     }
 
+    pub(crate) fn journal_retained_bytes(&self) -> usize {
+        self.journal.retained_bytes()
+    }
+
     #[must_use]
     pub(crate) const fn group_depth(&self) -> u32 {
         self.group_depth
