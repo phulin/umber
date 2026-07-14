@@ -1421,35 +1421,44 @@ where
 {
     #[cfg(test)]
     BACK_INPUT_CALLS.with(|calls| calls.set(calls.get() + 1));
-    let traced = tokens.into_iter().collect::<Vec<_>>();
-    if traced.is_empty() {
+    let mut traced = tokens.into_iter();
+    let Some(first) = traced.next() else {
         return;
-    }
-    for &token in &traced {
-        input.back_input_alignment_token(token);
-    }
-    if traced.len() == 1 {
+    };
+    input.back_input_alignment_token(first);
+    let Some(second) = traced.next() else {
         if let Some((list, _, index)) = input.current_token_list_frame()
             && index > 0
-            && stores.tokens(list).get(index - 1).copied() == Some(semantic_token(traced[0]))
+            && stores.tokens(list).get(index - 1).copied() == Some(semantic_token(first))
             && input.rewind_current_token_list_frame()
         {
             return;
         }
-        if input.push_current_source_pending(traced[0]) {
+        if input.push_current_source_pending(first) {
             return;
         }
-    }
-    let semantic = traced
-        .iter()
-        .copied()
-        .map(semantic_token)
-        .collect::<Vec<_>>();
-    let token_list = stores.intern_token_list(&semantic);
+        let token_list = stores.intern_token_list(&[semantic_token(first)]);
+        let mut origins = stores.origin_list_builder();
+        origins.push(first.origin());
+        let origin_list = stores.finish_origin_list(&mut origins);
+        input.push_token_list_with_origins(token_list, origin_list, TokenListReplayKind::Inserted);
+        return;
+    };
+
+    input.back_input_alignment_token(second);
+    let (lower, _) = traced.size_hint();
+    let mut semantic = Vec::with_capacity(lower.saturating_add(2));
+    semantic.extend([semantic_token(first), semantic_token(second)]);
     let mut origins = stores.origin_list_builder();
+    origins.reserve(lower.saturating_add(2));
+    origins.push(first.origin());
+    origins.push(second.origin());
     for token in traced {
+        input.back_input_alignment_token(token);
+        semantic.push(semantic_token(token));
         origins.push(token.origin());
     }
+    let token_list = stores.intern_token_list(&semantic);
     let origin_list = stores.finish_origin_list(&mut origins);
     input.push_token_list_with_origins(token_list, origin_list, TokenListReplayKind::Inserted);
 }
