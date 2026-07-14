@@ -161,6 +161,25 @@ fn kernel_metrics_api_exposes_chars_lig_kerns_boundaries_and_recipes() {
 }
 
 #[test]
+fn direct_lig_kern_lookup_matches_the_diagnostic_iterator() {
+    for fixture in [CMR10, CMMI10, CMSY10, CMEX10, CMTT10] {
+        let font = parse(fixture);
+        let metrics = font.font_metrics();
+        let chars = (0_u8..=u8::MAX)
+            .map(LigKernChar::Char)
+            .chain(std::iter::once(LigKernChar::Boundary));
+        for left in chars.clone() {
+            for right in chars.clone() {
+                let iterated = metrics
+                    .lig_kern_iter(left, right)
+                    .find_map(|step| step.matches_right.then_some(step.command).flatten());
+                assert_eq!(metrics.lig_kern_command(left, right), iterated);
+            }
+        }
+    }
+}
+
+#[test]
 fn malformed_files_return_specific_errors() {
     assert!(matches!(
         TfmFont::parse(&[0, 1, 2]),

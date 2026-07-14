@@ -484,8 +484,24 @@ impl FontMetrics {
         left: LigKernChar,
         right: LigKernChar,
     ) -> Option<LigKernCommand> {
-        self.lig_kern_iter(left, right)
-            .find_map(|step| step.matches_right.then_some(step.command).flatten())
+        let mut index = self.lig_kern_start(left)?;
+        let right_char = match right {
+            LigKernChar::Char(code) => code,
+            LigKernChar::Boundary => self.right_boundary_char?,
+        };
+        loop {
+            let instruction = self.lig_kern_program.get(usize::from(index))?;
+            if instruction.next_char == right_char
+                && let Some(command) = instruction.command
+            {
+                return Some(command);
+            }
+            if instruction.skip_byte >= 128 {
+                return None;
+            }
+            let target = usize::from(index) + usize::from(instruction.skip_byte) + 1;
+            index = u16::try_from(target).ok()?;
+        }
     }
 
     #[must_use]
