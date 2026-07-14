@@ -2529,14 +2529,35 @@ impl Universe {
     }
 
     pub fn set_box_dimension(&mut self, index: u16, dimension: BoxDimension, value: Scaled) {
+        self.set_box_dimension_impl(index, dimension, value, false);
+    }
+
+    pub fn set_box_dimension_global(&mut self, index: u16, dimension: BoxDimension, value: Scaled) {
+        self.set_box_dimension_impl(index, dimension, value, true);
+    }
+
+    fn set_box_dimension_impl(
+        &mut self,
+        index: u16,
+        dimension: BoxDimension,
+        value: Scaled,
+        global: bool,
+    ) {
         let Some(id) = self.box_reg(index) else {
             return;
         };
-        let epoch_id = self.clone_node_list_to_epoch(id);
-        let mut nodes = self.nodes(epoch_id).to_vec();
-        set_box_dimension_in_nodes(&mut nodes, dimension, value);
-        let rewritten = self.freeze_node_list(&nodes);
-        self.set_box_reg(index, rewritten);
+        let Some(mut node) = self.nodes(id).first().map(|node| node.to_owned()) else {
+            return;
+        };
+        if !set_box_dimension_in_node(&mut node, dimension, value) {
+            return;
+        }
+        let rewritten = self.freeze_node_list(&[node]);
+        if global {
+            self.set_box_reg_global(index, rewritten);
+        } else {
+            self.set_box_reg(index, rewritten);
+        }
     }
 
     pub fn clone_node_list_to_epoch(&mut self, id: NodeListId) -> NodeListId {
@@ -3007,16 +3028,17 @@ fn box_dimension_from_nodes(nodes: NodeList<'_>, dimension: BoxDimension) -> Opt
     })
 }
 
-fn set_box_dimension_in_nodes(nodes: &mut [Node], dimension: BoxDimension, value: Scaled) {
-    let box_node = match nodes {
-        [Node::HList(box_node)] | [Node::VList(box_node)] => box_node,
-        _ => return,
+fn set_box_dimension_in_node(node: &mut Node, dimension: BoxDimension, value: Scaled) -> bool {
+    let box_node = match node {
+        Node::HList(box_node) | Node::VList(box_node) => box_node,
+        _ => return false,
     };
     match dimension {
         BoxDimension::Width => box_node.width = value,
         BoxDimension::Height => box_node.height = value,
         BoxDimension::Depth => box_node.depth = value,
     }
+    true
 }
 
 impl ExpansionState for Universe {

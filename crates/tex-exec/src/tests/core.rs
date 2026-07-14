@@ -1405,13 +1405,17 @@ fn box_dimension_writes_are_readable_by_the() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     install_expandable(&mut stores, "the", ExpandablePrimitive::The);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\setbox0=\\hbox{}\\wd0=12pt\\edef\\x{\\the\\wd0}",
-    ));
+    let mut setup = InputStack::new(MemoryInput::new("\\setbox0=\\hbox{}"));
+    Executor::new()
+        .run(&mut setup, &mut stores)
+        .expect("box setup executes");
+    let before = stores.testing_epoch_clone_counts();
+    let mut input = InputStack::new(MemoryInput::new("\\wd0=12pt\\edef\\x{\\the\\wd0}"));
 
     Executor::new()
         .run(&mut input, &mut stores)
         .expect("box dimension assignment executes");
+    assert_eq!(stores.testing_epoch_clone_counts(), before);
 
     assert_eq!(
         stores

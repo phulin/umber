@@ -159,13 +159,7 @@ where
     let value = scan_scaled(input, stores, hooks, context)?;
     let dimension = box_dimension(primitive)?;
     if global {
-        if let Some(id) = stores.box_reg(index) {
-            let epoch_id = stores.clone_node_list_to_epoch(id);
-            let mut nodes = stores.nodes(epoch_id).to_vec();
-            rewrite_box_dimension(&mut nodes, dimension, value);
-            let rewritten = stores.freeze_node_list(&nodes);
-            stores.set_box_reg_global(index, rewritten);
-        }
+        stores.set_box_dimension_global(index, dimension, value);
     } else {
         stores.set_box_dimension(index, dimension, value);
     }
@@ -648,18 +642,6 @@ fn apply_shift(
         .checked_add(delta)
         .ok_or(ExecError::ArithmeticOverflow)?;
     Ok(())
-}
-
-fn rewrite_box_dimension(nodes: &mut [Node], dimension: BoxDimension, value: Scaled) {
-    let box_node = match nodes {
-        [Node::HList(box_node)] | [Node::VList(box_node)] => box_node,
-        _ => return,
-    };
-    match dimension {
-        BoxDimension::Width => box_node.width = value,
-        BoxDimension::Height => box_node.height = value,
-        BoxDimension::Depth => box_node.depth = value,
-    }
 }
 
 fn box_dimension(primitive: UnexpandablePrimitive) -> Result<BoxDimension, ExecError> {
