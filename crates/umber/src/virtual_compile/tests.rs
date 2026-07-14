@@ -5,6 +5,8 @@ use tex_state::{Universe, World};
 use super::*;
 
 const CMR10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+const CMSY10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmsy10.tfm");
+const CMEX10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmex10.tfm");
 
 fn session(main: &str) -> VirtualCompileSession {
     let mut session = VirtualCompileSession::new(SessionOptions::default()).expect("session");
@@ -57,6 +59,36 @@ fn cmu_response(request: FontRequest) -> ResolvedFont {
         declared_program_identity: None,
         provenance: Some("CMU Serif under the SIL OFL".to_owned()),
     }
+}
+
+fn rendered_text_address(html: &str, code: u8) -> (u32, u32) {
+    let marker = format!("data-umber-codes=\"0x{code:02x}");
+    let codes = html.find(&marker).expect("text run");
+    let page_prefix = "data-umber-page=\"";
+    let page_start = html[..codes]
+        .rfind(page_prefix)
+        .map(|start| start + page_prefix.len())
+        .expect("page id");
+    let page_end = html[page_start..]
+        .find('"')
+        .map(|end| page_start + end)
+        .expect("page id end");
+    let event_prefix = "data-umber-event=\"";
+    let event_start = html[..codes]
+        .rfind(event_prefix)
+        .map(|start| start + event_prefix.len())
+        .expect("text event id");
+    let event_end = html[event_start..]
+        .find('"')
+        .map(|end| event_start + end)
+        .expect("event id end");
+    let page = html[page_start..page_end]
+        .parse::<u32>()
+        .expect("numeric page id");
+    let event = html[event_start..event_end]
+        .parse::<u32>()
+        .expect("numeric event id");
+    (page, event)
 }
 
 #[test]
@@ -426,6 +458,161 @@ fn requested_html_and_dvi_share_one_committed_compile() {
     assert!(html.contains("data-umber-baseline-sp"));
     assert!(html.contains(">A</text>"));
     assert!(output.html_assets.is_empty());
+
+    let (page, event) = rendered_text_address(&html, b'A');
+    let location = session
+        .rendered_source_location(page, event, Some(0))
+        .expect("source query")
+        .expect("mapped source");
+    let source = b"\\font\\tenrm=cmr10\\relax \\tenrm \\shipout\\hbox{A}\\end";
+    let start = source.iter().position(|byte| *byte == b'A').expect("A");
+    assert_eq!(location.revision, RevisionId::new(1));
+    assert_eq!(location.path, "/job/main.tex");
+    assert_eq!(location.start as usize, start);
+    assert_eq!(location.end as usize, start + 1);
+    assert_eq!((location.line, location.column), (1, start as u32 + 1));
+    assert!(
+        session
+            .rendered_source_location(0, event, Some(0))
+            .expect("invalid page query")
+            .is_none()
+    );
+    assert!(
+        session
+            .rendered_source_location(page, event, Some(u32::MAX))
+            .expect("invalid unit query")
+            .is_none()
+    );
+
+    session
+        .apply_patch(SourcePatch {
+            next_revision: RevisionId::new(2),
+            base_revision: RevisionId::new(1),
+            expected_hash: session.content_hash().expect("accepted hash"),
+            range: start..start + 1,
+            replacement: "B".to_owned(),
+        })
+        .expect("glyph patch");
+    assert!(
+        session
+            .rendered_source_location(1, event, Some(0))
+            .expect("query while patch pending")
+            .is_none()
+    );
+    let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+        panic!("patched HTML compile should complete");
+    };
+    let html = String::from_utf8(output.html.expect("patched HTML output")).expect("HTML UTF-8");
+    let (page, event) = rendered_text_address(&html, b'B');
+    let location = session
+        .rendered_source_location(page, event, Some(0))
+        .expect("patched source query")
+        .expect("patched source mapping");
+    assert_eq!(location.revision, RevisionId::new(2));
+    assert_eq!(location.path, "/job/main.tex");
+    assert_eq!(
+        (location.start as usize, location.end as usize),
+        (start, start + 1)
+    );
+}
+
+#[test]
+fn rendered_source_location_survives_paragraph_line_breaking() {
+    let source = b"\\font\\tenrm=cmr10\\relax \\hsize=12pt \\parindent=0pt \\tenrm A B\\par\\end";
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        html: true,
+        ..SessionOptions::default()
+    })
+    .expect("HTML session");
+    session
+        .add_user_file("cmr10.tfm", CMR10.to_vec())
+        .expect("TFM");
+    session
+        .add_user_file("main.tex", source.to_vec())
+        .expect("main source");
+    let fonts = resources(session.compile_attempt())
+        .into_iter()
+        .filter_map(|request| match request {
+            ResourceRequest::Font(request) => Some(request),
+            ResourceRequest::File(_) => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(!fonts.is_empty(), "font requests");
+    for font in fonts {
+        provide_cmu_font(&mut session, font);
+    }
+
+    let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+        panic!("line-broken HTML compile should complete");
+    };
+    let html = String::from_utf8(output.html.expect("HTML output")).expect("HTML UTF-8");
+    assert!(html.matches("class=\"umber-run\"").count() >= 2);
+    let (page, event) = rendered_text_address(&html, b'B');
+    let location = session
+        .rendered_source_location(page, event, Some(0))
+        .expect("source query")
+        .expect("mapped source");
+    let start = source.iter().position(|byte| *byte == b'B').expect("B");
+    assert_eq!(location.revision, RevisionId::new(1));
+    assert_eq!(location.path, "/job/main.tex");
+    assert_eq!(
+        (location.start as usize, location.end as usize),
+        (start, start + 1)
+    );
+}
+
+#[test]
+fn rendered_source_location_survives_math_layout() {
+    let source = b"\\font\\tenrm=cmr10 \\font\\sy=cmsy10 \\font\\ex=cmex10 \\textfont0=\\tenrm \\textfont2=\\sy \\scriptfont2=\\sy \\scriptscriptfont2=\\sy \\textfont3=\\ex \\scriptfont3=\\ex \\scriptscriptfont3=\\ex \\mathcode`A=\"0041 \\shipout\\hbox{$A$}\\end";
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        html: true,
+        ..SessionOptions::default()
+    })
+    .expect("HTML session");
+    session
+        .add_user_file("cmr10.tfm", CMR10.to_vec())
+        .expect("TFM");
+    session
+        .add_user_file("cmsy10.tfm", CMSY10.to_vec())
+        .expect("symbol TFM");
+    session
+        .add_user_file("cmex10.tfm", CMEX10.to_vec())
+        .expect("extension TFM");
+    session
+        .add_user_file("main.tex", source.to_vec())
+        .expect("main source");
+    let fonts = resources(session.compile_attempt())
+        .into_iter()
+        .filter_map(|request| match request {
+            ResourceRequest::Font(request) => Some(request),
+            ResourceRequest::File(_) => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(!fonts.is_empty(), "font requests");
+    for font in fonts {
+        provide_cmu_font(&mut session, font);
+    }
+
+    let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+        panic!("math HTML compile should complete");
+    };
+    let html = String::from_utf8(output.html.expect("HTML output")).expect("HTML UTF-8");
+    let (page, event) = rendered_text_address(&html, b'A');
+    let location = session
+        .rendered_source_location(page, event, Some(0))
+        .expect("source query")
+        .expect("mapped source");
+    let start = source
+        .windows(3)
+        .position(|bytes| bytes == b"$A$")
+        .map(|start| start + 1)
+        .expect("math A");
+    assert_eq!(location.revision, RevisionId::new(1));
+    assert_eq!(location.path, "/job/main.tex");
+    assert_eq!(
+        (location.start as usize, location.end as usize),
+        (start, start + 1)
+    );
 }
 
 #[test]

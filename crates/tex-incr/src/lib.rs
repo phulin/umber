@@ -16,6 +16,7 @@ use tex_exec::{
 use tex_expand::InputResolver;
 use tex_lex::{InputSource, InputStack, MemoryInput, WorldInput};
 use tex_out::dvi::{DviError, DviPagePlan, DviStreamWriter};
+use tex_out::positioned::PositionedEvent;
 use tex_state::{
     CommittedArtifact, ContentHash, EffectRecord, GenerationForkError, GenerationSubstrate,
     InputReadState, Universe, WorldError,
@@ -143,6 +144,7 @@ impl AcceptedOutput {
 pub struct Session {
     template: Universe,
     job_name: String,
+    source_path: String,
     revision: RevisionId,
     source: String,
     content_hash: ContentHash,
@@ -163,10 +165,29 @@ impl Session {
         source: impl Into<String>,
         checkpoint_budget: usize,
     ) -> Result<Self, SessionError> {
+        Self::start_with_source_path(
+            template,
+            job_name,
+            "<editor>",
+            revision,
+            source,
+            checkpoint_budget,
+        )
+    }
+
+    pub fn start_with_source_path(
+        template: Universe,
+        job_name: impl Into<String>,
+        source_path: impl Into<String>,
+        revision: RevisionId,
+        source: impl Into<String>,
+        checkpoint_budget: usize,
+    ) -> Result<Self, SessionError> {
         let source = source.into();
         Ok(Self {
             template,
             job_name: job_name.into(),
+            source_path: source_path.into(),
             revision,
             content_hash: ContentHash::from_bytes(source.as_bytes()),
             source,
@@ -239,6 +260,48 @@ impl Session {
             .as_ref()
             .ok_or(SessionError::MissingAcceptedSubstrate)?;
         Ok(substrate.materialize_detached_outputs(self.effects.clone(), self.artifacts.clone())?)
+    }
+
+    /// Resolves one rendered HTML event/unit against the accepted revision.
+    pub fn rendered_source_location(
+        &self,
+        page: u32,
+        event: u32,
+        unit: Option<u32>,
+    ) -> Result<Option<tex_state::ResolvedSourceLocation>, SessionError> {
+        let Some(page_index) = page.checked_sub(1).map(|page| page as usize) else {
+            return Ok(None);
+        };
+        let Some(artifact) = self.artifacts.get(page_index) else {
+            return Ok(None);
+        };
+        let page_artifact = tex_out::PageArtifact::from_bytes(artifact.bytes())
+            .map_err(|error| SessionError::RenderSource(error.to_string()))?;
+        let positioned = tex_out::positioned::lower_page(&page_artifact, page)
+            .map_err(|error| SessionError::RenderSource(error.to_string()))?;
+        let Some(PositionedEvent::TextRun(run)) = positioned.events.get(event as usize) else {
+            return Ok(None);
+        };
+        let source = match unit {
+            Some(unit) => run.sources.get(unit as usize).copied().flatten(),
+            None => run.sources.iter().flatten().copied().next(),
+        };
+        let Some(source) = source else {
+            return Ok(None);
+        };
+        let Some(origin) = artifact
+            .render_origins()
+            .get(source.node_ordinal as usize)
+            .and_then(|origins| origins.get(source.source_index as usize))
+            .copied()
+        else {
+            return Ok(None);
+        };
+        let substrate = self
+            .substrate
+            .as_ref()
+            .ok_or(SessionError::MissingAcceptedSubstrate)?;
+        Ok(substrate.resolve_origin_with_generated_path(origin, &self.source_path))
     }
 
     /// Consumes the rollback-capable session and materializes its accepted
@@ -893,7 +956,12 @@ fn output_bytes(effects: &[EffectRecord], artifacts: &[CommittedArtifact]) -> us
         .saturating_add(
             artifacts
                 .iter()
-                .map(|artifact| artifact.bytes().len())
+                .map(|artifact| {
+                    artifact
+                        .bytes()
+                        .len()
+                        .saturating_add(artifact.render_provenance_bytes())
+                })
                 .sum::<usize>(),
         )
 }
@@ -912,6 +980,7 @@ pub enum SessionError {
     World(WorldError),
     Restore(EditorRestoreError),
     Fork(GenerationForkError),
+    RenderSource(String),
 }
 
 impl fmt::Display for SessionError {
@@ -933,6 +1002,7 @@ impl fmt::Display for SessionError {
             Self::World(error) => write!(f, "incremental world failed: {error}"),
             Self::Restore(error) => write!(f, "incremental restart failed: {error}"),
             Self::Fork(error) => write!(f, "incremental generation retarget failed: {error}"),
+            Self::RenderSource(error) => write!(f, "rendered source query failed: {error}"),
         }
     }
 }

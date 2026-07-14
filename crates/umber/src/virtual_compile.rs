@@ -256,6 +256,17 @@ pub struct CompileDiagnostic {
     pub column: Option<usize>,
 }
 
+/// One rendered text unit resolved against the accepted editor revision.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RenderedSourceLocation {
+    pub revision: tex_incr::RevisionId,
+    pub path: String,
+    pub start: u64,
+    pub end: u64,
+    pub line: u32,
+    pub column: u32,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CompileAttemptResult {
     NeedResources(NeedResources),
@@ -588,6 +599,35 @@ impl VirtualCompileSession {
         })
     }
 
+    /// Resolves one HTML page/event/unit against the currently accepted output.
+    pub fn rendered_source_location(
+        &self,
+        page: u32,
+        event: u32,
+        unit: Option<u32>,
+    ) -> Result<Option<RenderedSourceLocation>, CompileError> {
+        if self.accepted_output.is_none() {
+            return Ok(None);
+        }
+        let Some(session) = self.incremental.as_ref() else {
+            return Ok(None);
+        };
+        let revision = session.revision();
+        session
+            .rendered_source_location(page, event, unit)
+            .map(|location| {
+                location.map(|location| RenderedSourceLocation {
+                    revision,
+                    path: location.path,
+                    start: location.start,
+                    end: location.end,
+                    line: location.line,
+                    column: location.column,
+                })
+            })
+            .map_err(|error| CompileError::Incremental(error.to_string()))
+    }
+
     #[must_use]
     pub const fn reuse_metrics(&self) -> Option<tex_incr::ReuseMetrics> {
         self.last_reuse
@@ -834,9 +874,10 @@ impl VirtualCompileSession {
                 .set_memory_file(self.main_path.as_path(), source.as_bytes().to_vec())
                 .map_err(|error| CompileError::World(error.to_string()))?;
             self.incremental = Some(
-                tex_incr::Session::start(
+                tex_incr::Session::start_with_source_path(
                     template,
                     &self.job_name,
+                    self.main_path.as_str(),
                     tex_incr::RevisionId::new(1),
                     source,
                     self.limits.cached_file_bytes,

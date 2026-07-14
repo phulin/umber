@@ -120,6 +120,15 @@ export interface Diagnostic {
   column?: number;
 }
 
+export interface RenderedSourceLocation {
+  revision: number;
+  path: string;
+  start: number;
+  end: number;
+  line: number;
+  column: number;
+}
+
 export type AttemptResult =
   | { kind: "need-resources"; required: ResourceRequest[]; prefetchHints: ResourceRequest[] }
   | { kind: "complete"; output: CompileOutput }
@@ -145,6 +154,9 @@ extern "C" {
 
     #[wasm_bindgen(typescript_type = "ResourceResponse")]
     pub type JsResourceResponse;
+
+    #[wasm_bindgen(typescript_type = "RenderedSourceLocation")]
+    pub type JsRenderedSourceLocation;
 }
 
 #[wasm_bindgen]
@@ -269,6 +281,21 @@ impl CompilerSession {
     #[wasm_bindgen(getter, js_name = contentHash)]
     pub fn accepted_content_hash(&self) -> Result<Option<String>, JsValue> {
         Ok(self.session_ref()?.content_hash().map(|hash| hash.hex()))
+    }
+
+    /// Resolves a rendered HTML event and optional text-unit index lazily.
+    #[wasm_bindgen(js_name = renderedSourceLocation)]
+    pub fn rendered_source_location(
+        &self,
+        page: u32,
+        event: u32,
+        unit: Option<u32>,
+    ) -> Result<Option<JsRenderedSourceLocation>, JsValue> {
+        self.session_ref()?
+            .rendered_source_location(page, event, unit)
+            .map_err(boundary_error)?
+            .map(result::rendered_source_location)
+            .transpose()
     }
 
     #[wasm_bindgen(getter, js_name = reuseMetrics)]

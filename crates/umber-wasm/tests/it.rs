@@ -92,11 +92,9 @@ async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
     session
         .add_user_file("cmr10.tfm", &bytes(tfm))
         .expect("add TFM");
+    let source = b"\\font\\tenrm=cmr10\\relax\\shipout\\hbox{\\kern-2pt\\vrule width3pt height4pt depth1pt\\tenrm AV office}\\end";
     session
-        .add_user_file(
-            "main.tex",
-            &bytes(b"\\font\\tenrm=cmr10\\relax\\shipout\\hbox{\\kern-2pt\\vrule width3pt height4pt depth1pt\\tenrm AV office}\\end"),
-        )
+        .add_user_file("main.tex", &bytes(source))
         .expect("add source");
     let missing = session.advance().expect("font request");
     assert_eq!(string_field(missing.as_ref(), "kind"), "need-resources");
@@ -127,6 +125,32 @@ async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
     let output = field(complete.as_ref(), "output");
     let html = field(&output, "html");
     assert!(html.is_instance_of::<Uint8Array>());
+    let html_text = String::from_utf8(Uint8Array::new(&html).to_vec()).expect("HTML UTF-8");
+    let event = rendered_text_event(&html_text, b'A');
+    let location = session
+        .rendered_source_location(1, event, Some(0))
+        .expect("source query")
+        .expect("mapped source");
+    assert!(
+        session
+            .rendered_source_location(1, event, Some(2))
+            .expect("space query")
+            .is_none()
+    );
+    let source_start = source
+        .windows(2)
+        .position(|window| window == b"AV")
+        .expect("rendered A");
+    assert_eq!(field(location.as_ref(), "revision").as_f64(), Some(1.0));
+    assert_eq!(string_field(location.as_ref(), "path"), "/job/main.tex");
+    assert_eq!(
+        field(location.as_ref(), "start").as_f64(),
+        Some(source_start as f64)
+    );
+    assert_eq!(
+        field(location.as_ref(), "end").as_f64(),
+        Some((source_start + 1) as f64)
+    );
     let function = js_sys::Function::new_with_args(
         "bytes",
         r#"
@@ -352,6 +376,23 @@ fn field(object: &JsValue, name: &str) -> JsValue {
 
 fn string_field(object: &JsValue, name: &str) -> String {
     field(object, name).as_string().expect("string field")
+}
+
+fn rendered_text_event(html: &str, code: u8) -> u32 {
+    let marker = format!("data-umber-codes=\"0x{code:02x}");
+    let codes = html.find(&marker).expect("text run");
+    let event_prefix = "data-umber-event=\"";
+    let event_start = html[..codes]
+        .rfind(event_prefix)
+        .map(|start| start + event_prefix.len())
+        .expect("text event id");
+    let event_end = html[event_start..]
+        .find('"')
+        .map(|end| event_start + end)
+        .expect("event id end");
+    html[event_start..event_end]
+        .parse::<u32>()
+        .expect("numeric event id")
 }
 
 fn set(object: &Object, name: &str, value: &JsValue) {

@@ -5,6 +5,7 @@ use umber::{
 use wasm_bindgen::{JsCast, JsValue};
 
 use crate::JsAttemptResult;
+use crate::JsRenderedSourceLocation;
 
 pub(crate) fn attempt_result(result: CompileAttemptResult) -> Result<JsAttemptResult, JsValue> {
     let object = Object::new();
@@ -209,6 +210,31 @@ pub(crate) fn retention_metrics(
         &usize_value(metrics.protected_overage_bytes),
     )?;
     Ok(object.into())
+}
+
+pub(crate) fn rendered_source_location(
+    location: umber::RenderedSourceLocation,
+) -> Result<JsRenderedSourceLocation, JsValue> {
+    let object = Object::new();
+    set(
+        &object,
+        "revision",
+        &JsValue::from_f64(location.revision.raw() as f64),
+    )?;
+    set(&object, "path", &JsValue::from_str(&location.path))?;
+    set(&object, "start", &JsValue::from_f64(location.start as f64))?;
+    set(&object, "end", &JsValue::from_f64(location.end as f64))?;
+    set(
+        &object,
+        "line",
+        &JsValue::from_f64(f64::from(location.line)),
+    )?;
+    set(
+        &object,
+        "column",
+        &JsValue::from_f64(f64::from(location.column)),
+    )?;
+    Ok(object.unchecked_into())
 }
 
 fn usize_value(value: usize) -> JsValue {

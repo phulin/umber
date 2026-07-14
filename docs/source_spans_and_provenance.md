@@ -331,7 +331,17 @@ diagnostic:
 - Joining also requires ordered endpoints in the same source region. If any
   proof or liveness check fails, the diagnostic keeps separate locations
   rather than inventing a contiguous range.
-- Execution nodes retain origins only where later diagnostics consume them.
+- Character and math-character nodes retain one compact origin id and ligature
+  nodes retain one per consumed source character. These diagnostic-only
+  columns survive ligaturing, hyphenation, math layout, packing, and line
+  breaking so an accepted compile session can answer a lazy rendered-source
+  query. Synthetic characters use a
+  related source origin where one is well-defined and otherwise degrade to
+  `OriginId::UNKNOWN`.
+- Character origins are excluded from node semantic identity, state hashes,
+  format images, artifact bytes, and artifact content identity. Shipout may
+  retain an in-process artifact-node sidecar for an explicit diagnostic
+  consumer, and retained-output accounting must include that memory.
 
 Errors use a structured payload conceptually equivalent to:
 

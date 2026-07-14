@@ -245,6 +245,10 @@ measured exception: current consumers decode, copy, and patch complete
 `BoxNode` values, so their sidecar is one row-packed vector. That avoids nine
 independent growth streams and keeps a complete box decode contiguous.
 
+- origins: one four-byte diagnostic origin aligned with every word (unknown
+  for non-character rows), plus one origin per consumed source character in a
+  ligature row; these values are copied and rolled back with their storage but
+  are excluded from logical equality and semantic identity;
 - boxes: one row-packed width, height, depth, shift, display, glue-set,
   glue sign/order, and children record;
 - unsets: kind, dimensions, span count, stretch/order, shrink/order, children;
@@ -713,7 +717,7 @@ end-to-end regression ceiling.
 | --- | --- |
 | Layout | compile-time 16-byte handle and 8-byte node-word assertions; every tag; reserved tags rejected; signed extrema; Unicode scalar validation; TFM ligature bounds |
 | Handle identity | epoch generation/namespace/slot validation; equal and covering reuse; retained prefix; fork ancestry; survivor inherited roots plus sibling-key separation; survivor zero/maxima; start+len overflow; empty lists; max root; optional box-register null; raw constructors inaccessible downstream |
-| Sidecars | every kind; zero/max indexes; leader glue; owned whatsit payloads; no word published without a row; column lengths agree |
+| Sidecars | every kind; zero/max indexes; character/ligature origin alignment; leader glue; owned whatsit payloads; no word published without a row; column lengths agree |
 | Bottom-up graph | epoch children, mixed survivor children, shared spans, deep graphs, cycles/forward references rejected |
 | Rollback | atomic identity/storage mark; truncate all columns; arbitrary rollback/reappend never revives stale ids; retained capacities distinguished from live bytes; shipout release |
 | Survivors | promotion, process-unique root folding, sibling-fork foreign lookup rejection, deterministic key exhaustion, refcounts, journal-held owners, group exit, root non-reuse, buffer recycling, nested boxes/math/leader payloads |

@@ -94,6 +94,27 @@ rollback. After rollback, logical growth is zero and retained capacity remains
 155,808 bytes for reuse; a second run reuses that capacity. Source bytes remain
 shared and are never included in those figures.
 
+### Rendered-source retention follow-up
+
+On 2026-07-14, rendered-source queries added a four-byte `OriginId` column
+aligned with compact node words and one additional four-byte origin per source
+character consumed by a ligature. Non-character rows contain the unknown id,
+which keeps copying, truncation, promotion, and same-font character runs as
+contiguous column operations rather than introducing a pointer-bearing map.
+The owned `Node` layout remains 88 bytes. Origins are excluded from owned and
+borrowed node equality, semantic hashes, format images, artifact bytes, and
+artifact content identity.
+
+Shipout retains a separate origin sidecar only for accepted in-process page
+artifacts. Its logical payload is four bytes per renderable source character;
+retention metrics additionally charge the outer `Arc` address table. The
+source resolver and page positioning work run only when the host makes an
+explicit query. `scripts/check-snapshot-budgets.sh` continued to meet every
+snapshot and retained-allocation budget after this change, and the affected
+native, Firefox WASM, and optimized Chrome suites remained green. The existing
+source-token throughput matrix is unchanged because token delivery and
+provenance-arena allocation are unchanged.
+
 ## Resolver and capacity decision
 
 Cold diagnostic rendering is 45.508-45.670 us. Repeated rendering over the same

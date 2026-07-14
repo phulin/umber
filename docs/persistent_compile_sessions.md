@@ -76,6 +76,41 @@ stores, consume checkpoints, or prevent later patches.
 `dispose()` releases resources, accepted history, and output. No session
 method succeeds after disposal.
 
+## Rendered-source queries
+
+HTML output identifies each page and positioned event with `data-umber-page`
+and `data-umber-event`. A text event also exposes its source character codes,
+so a browser can translate a pointer hit into an optional text-unit index.
+The native and WASM sessions expose the same lazy query:
+
+```text
+rendered_source_location(page, event, unit?)
+    -> { revision, path, start, end, line, column } | none
+```
+
+Pages are numbered from one and events and units from zero. Omitting `unit`
+selects the first source-backed unit in the text event, which is sufficient
+for coarse run-level navigation. A precise SVG text hit can supply the glyph
+or character unit. Invalid page/event/unit values and synthetic output return
+`none`; they are not compile errors. While a patch is pending, no query is
+served, so a returned location always names the same accepted revision as the
+rendered HTML.
+
+The engine does not serialize an eager source map into HTML or page artifact
+bytes. Text and math characters plus ligature nodes retain compact
+diagnostic-only origin ids through ligaturing, hyphenation, math layout,
+packing, and line breaking. Shipout attaches
+an in-process origin sidecar aligned with artifact-node preorder, while the
+positioned-page lowering records which node and original character produced
+each text unit. On a click, the session parses and positions only the selected
+page, follows that address into the sidecar, and resolves the opaque origin
+against the accepted source substrate. Paths, byte ranges, lines, and columns
+are therefore computed only on demand.
+
+Origin columns and artifact sidecars are excluded from semantic node hashes,
+artifact bytes, and artifact content identity. Reused committed pages retain
+their matching sidecars, and retention metrics charge the sidecar memory.
+
 ## Correctness and tests
 
 For each accepted revision, DVI and other observable outputs must be identical
