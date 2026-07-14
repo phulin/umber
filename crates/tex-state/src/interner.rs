@@ -9,7 +9,6 @@ use crate::state_hash::StateHasher;
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::str;
 use std::sync::{OnceLock, RwLock};
 
 static GLOBAL_SYMBOLS: OnceLock<RwLock<GlobalSymbols>> = OnceLock::new();
@@ -129,7 +128,7 @@ pub(crate) struct InternerMark {
 /// Interned UTF-8 string arena.
 #[derive(Debug)]
 pub struct Interner {
-    arena: Vec<u8>,
+    arena: String,
     spans: Vec<(u32, u32)>,
     kinds: Vec<ControlSequenceKind>,
     semantic_atoms: Vec<u64>,
@@ -161,7 +160,7 @@ impl Interner {
     #[must_use]
     pub(crate) fn new() -> Self {
         Self {
-            arena: Vec::new(),
+            arena: String::new(),
             spans: Vec::new(),
             kinds: Vec::new(),
             semantic_atoms: Vec::new(),
@@ -215,7 +214,7 @@ impl Interner {
         let symbol = SymbolId::from_identity(identity, stored);
         debug_assert_eq!(identity.slot() as usize, self.spans.len());
 
-        self.arena.extend_from_slice(name.as_bytes());
+        self.arena.push_str(name);
         self.spans.push((start, len));
         self.kinds.push(kind);
         self.semantic_atoms.push(semantic_atom(kind, name));
@@ -265,10 +264,7 @@ impl Interner {
         let end = start + len as usize;
         assert!(end <= self.arena.len(), "symbol span exceeds arena");
 
-        match str::from_utf8(&self.arena[start..end]) {
-            Ok(name) => name,
-            Err(_) => panic!("interner arena contains invalid UTF-8"),
-        }
+        &self.arena[start..end]
     }
 
     /// Returns the TeX control-sequence namespace of a live symbol.
