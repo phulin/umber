@@ -69,6 +69,10 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
   `scripts/regen-fixtures.sh`.
 - Run `scripts/check-snapshot-budgets.sh` in the explicit performance tier;
   snapshot allocation and latency gates do not run under ordinary cargo tests.
+- Compile expansion and node instrumentation only through the unified
+  `profiling-stats` feature with `--profile profiling`; ordinary builds must
+  retain zero-cost disabled instrumentation. The CLI reports collected data
+  only when `umber run --profiling-stats` is also passed.
 
 ## Beads Issue Tracker
 

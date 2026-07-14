@@ -20,6 +20,37 @@ fn exits_successfully() {
     assert!(status.success());
 }
 
+#[cfg(feature = "profiling-stats")]
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary file and command execution.
+fn profiling_stats_are_reported_only_when_requested() {
+    let temp_dir = tempfile::tempdir().expect("create profiling stats temp dir");
+    let source = temp_dir.path().join("stats.tex");
+    fs::write(&source, "\\end\n").expect("write profiling stats fixture");
+
+    let quiet = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .arg("run")
+        .arg(&source)
+        .output()
+        .expect("run instrumented umber without reporting");
+    assert!(quiet.status.success());
+    assert!(quiet.stderr.is_empty());
+
+    let reported = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .arg("run")
+        .arg("--profiling-stats")
+        .arg(&source)
+        .output()
+        .expect("run instrumented umber with reporting");
+    assert!(reported.status.success());
+    let stderr = String::from_utf8(reported.stderr).expect("stderr is utf-8");
+    assert!(stderr.contains("EXPANSION_STATS "));
+    assert!(stderr.contains("NODE_MEMORY_TOTAL "));
+    assert!(stderr.contains("ALLOC_NODE_APPEND "));
+}
+
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side fixture discovery and expected-output reads.
 fn lex_dump_prints_stable_token_format_for_corpus() {

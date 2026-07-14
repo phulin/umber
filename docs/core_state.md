@@ -394,7 +394,7 @@ cells[i] = new
   or hash framing is a token semantic-identity scheme migration.
 - The retained identity column costs exactly one 64-bit word per token-list
   slot (including the canonical empty slot), plus ordinary `Vec` spare
-  capacity. `node-stats` reports identity-column capacity growth separately
+  capacity. `profiling-stats` reports identity-column capacity growth separately
   from token-arena growth. Builders retain no hash state, and bulk, traced,
   builder, cold, restored, and forked paths all converge through the same
   freeze-time identity operation.
@@ -990,7 +990,7 @@ pub struct Snapshot {
   are excluded from snapshot identity and semantic state; retaining one with
   an immutable tree across rollback can affect only recomputation cost. A run
   that never publishes checkpoints leaves every cell empty. Feature-gated
-  `node-stats`
+  `profiling-stats`
   builds report calls, semantic visits, and elapsed nanoseconds for every hash
   component so optimization decisions can be tied to measured traversal.
 

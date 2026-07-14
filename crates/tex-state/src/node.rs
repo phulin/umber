@@ -69,7 +69,7 @@ pub enum Node {
     Adjust(NodeListId),
 }
 
-#[cfg(feature = "node-stats")]
+#[cfg(feature = "profiling-stats")]
 mod stats {
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -146,13 +146,13 @@ mod stats {
 /// Returns the process-local node-append histogram used by measurement builds.
 ///
 /// These relaxed counters are diagnostic-only and are not engine state.
-#[cfg(feature = "node-stats")]
+#[cfg(feature = "profiling-stats")]
 #[must_use]
 pub fn node_append_histogram() -> Vec<(&'static str, u64)> {
     stats::snapshot()
 }
 
-#[cfg(feature = "node-stats")]
+#[cfg(feature = "profiling-stats")]
 pub(crate) fn record_node_append(node: &Node) {
     stats::record(node);
 }

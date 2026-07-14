@@ -222,9 +222,9 @@ impl NodeStorage {
     }
 
     pub(crate) fn append(&mut self, nodes: &[Node]) -> (u32, u32) {
-        #[cfg(feature = "node-stats")]
+        #[cfg(feature = "profiling-stats")]
         let capacity_before = self.capacity_signature();
-        #[cfg(feature = "node-stats")]
+        #[cfg(feature = "profiling-stats")]
         let retained_before = self.retained_payload_bytes();
         let start = checked_len(self.words.len(), "node arena exceeds u32 entries");
         let len = checked_len(nodes.len(), "node list exceeds u32 entries");
@@ -248,7 +248,7 @@ impl NodeStorage {
             let word = self.encode(node);
             self.words.push(word);
         }
-        #[cfg(feature = "node-stats")]
+        #[cfg(feature = "profiling-stats")]
         {
             let capacity_after = self.capacity_signature();
             let growth_events = capacity_before

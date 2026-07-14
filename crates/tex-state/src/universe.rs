@@ -764,11 +764,11 @@ impl Universe {
             hasher: StateHasher::new(domain),
             visits: 0,
         };
-        #[cfg(feature = "node-stats")]
+        #[cfg(feature = "profiling-stats")]
         let started = std::time::Instant::now();
         build(&mut projection);
         let fingerprint = projection.hasher.finish();
-        #[cfg(feature = "node-stats")]
+        #[cfg(feature = "profiling-stats")]
         crate::measurement::record_state_hash_component(
             StateHashComponent::Mode,
             projection.visits,
@@ -2881,7 +2881,7 @@ impl Universe {
 
     /// Computes allocator-payload accounting for all compact node storage.
     /// The returned diagnostic value is not semantic engine state.
-    #[cfg(feature = "node-stats")]
+    #[cfg(feature = "profiling-stats")]
     #[must_use]
     pub fn node_memory_columns(&self) -> Vec<crate::node_arena::NodeMemoryColumn> {
         self.stores.node_memory_columns()

@@ -7,9 +7,10 @@ hotspots:
 scripts/profile-gentle.sh
 ```
 
-The script builds `gentle-profile` with release optimizations and full debug
-information, records 50 measured executions with Samply, and writes the
-profile to `target/profiles/gentle.json.gz`. Samply also writes its
+The script builds `gentle-profile` with release optimizations, full debug
+information, and the compile-time `profiling-stats` instrumentation, records
+50 measured executions with Samply, and writes the profile to
+`target/profiles/gentle.json.gz`. Samply also writes its
 presymbolication sidecar next to the profile when supported. Override the run
 counts and output path with:
 
@@ -24,7 +25,8 @@ Extra arguments are forwarded to the runner. Run the optimized workload
 without Samply when checking timing or setup:
 
 ```bash
-cargo run --profile profiling -p umber --bin gentle-profile -- \
+cargo run --profile profiling -p umber --bin gentle-profile \
+  --features profiling-stats -- \
   --iterations 10 --warmups 1
 ```
 

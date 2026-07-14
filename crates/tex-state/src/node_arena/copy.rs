@@ -86,9 +86,9 @@ impl NodeStorage {
         source: NodeList<'_>,
         pending: &mut Vec<ChildPatch>,
     ) -> (u32, u32) {
-        #[cfg(feature = "node-stats")]
+        #[cfg(feature = "profiling-stats")]
         let capacity_before = self.capacity_signature();
-        #[cfg(feature = "node-stats")]
+        #[cfg(feature = "profiling-stats")]
         let retained_before = self.retained_payload_bytes();
 
         let start = checked_len(self.words.len(), "node arena exceeds u32 entries");
@@ -223,7 +223,7 @@ impl NodeStorage {
             self.words.push(copied);
         }
 
-        #[cfg(feature = "node-stats")]
+        #[cfg(feature = "profiling-stats")]
         {
             let capacity_after = self.capacity_signature();
             let growth_events = capacity_before

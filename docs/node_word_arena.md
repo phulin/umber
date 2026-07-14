@@ -55,8 +55,9 @@ bytes. Section 10.1 remeasures the adopted compact arena after that change;
 the histogram and conservative model below remain the original decision
 baseline.
 
-The measurement build used `cargo build --release -p umber --features
-node-stats` at commit `217878e1`. Relaxed process-local counters at
+The measurement build used the profiling instrumentation now invoked as
+`cargo build --profile profiling -p umber --features profiling-stats` at
+commit `217878e1`. Relaxed process-local counters at
 `NodeArena::append` add no `NodeArena` or `Universe` fields and are absent from
 normal snapshots, rollback, replay, and hashes. Each node-producing
 `benchmarks/plain-tex` input ran in a fresh process with committed Computer
@@ -532,7 +533,7 @@ tables cost a fixed 1,024 bytes per loaded font and are included in RSS.
 ### 10.1 Actual arena and survivor accounting
 
 The follow-up audit measures canonical storage rather than inferring it from
-process RSS. `node-stats` computes an on-demand report over the actual epoch
+process RSS. `profiling-stats` computes an on-demand report over the actual epoch
 storage, its dense generation-tag and span tables, every live survivor root,
 and every cleared recycled buffer. Each vector reports logical length and
 allocator capacity in elements and bytes. Owned whatsit strings and byte

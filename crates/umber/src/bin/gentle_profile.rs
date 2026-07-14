@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use tex_exec::{CheckpointSink, EngineCheckpoint};
 use tex_expand::ExpansionHooks;
-#[cfg(feature = "expansion-stats")]
+#[cfg(feature = "profiling-stats")]
 use tex_lex::ExpansionStats;
 use tex_lex::{InputStack, WorldInput};
 use tex_state::{FileContent, InputReadState, JobClock, Universe, World};
@@ -126,7 +126,7 @@ struct RunOutput {
     pages: usize,
     checkpoints: usize,
     checkpoint_hash: u64,
-    #[cfg(feature = "expansion-stats")]
+    #[cfg(feature = "profiling-stats")]
     expansion_stats: ExpansionStats,
 }
 
@@ -284,7 +284,7 @@ fn execute_once(template: &World, capture_checkpoints: bool) -> Result<RunOutput
         pages: run.artifacts.len(),
         checkpoints: checkpoints.count,
         checkpoint_hash: checkpoints.hash,
-        #[cfg(feature = "expansion-stats")]
+        #[cfg(feature = "profiling-stats")]
         expansion_stats: input.expansion_stats(),
     })
 }
@@ -301,7 +301,7 @@ fn print_summary(options: &Options, output: &RunOutput, elapsed: Duration) {
         output.dvi.len(),
         output.checkpoints
     );
-    #[cfg(feature = "expansion-stats")]
+    #[cfg(feature = "profiling-stats")]
     println!(
         "gentle-profile expansion: token_frame_steps={} provenance_resolutions={} character_tokens={} character_fraction={:.6} meaning_lookups={} meaning_cache_hits={} meaning_cache_misses={} literal_spans={} literal_tokens={} mean_literal_run={:.6} segmentation_cache_hits={} segmentation_cache_misses={} builder_appends={}",
         output.expansion_stats.token_frame_steps,
@@ -318,7 +318,7 @@ fn print_summary(options: &Options, output: &RunOutput, elapsed: Duration) {
         output.expansion_stats.segmentation_cache_misses,
         output.expansion_stats.builder_appends,
     );
-    #[cfg(feature = "expansion-stats")]
+    #[cfg(feature = "profiling-stats")]
     println!(
         "gentle-profile expansion timers (ns): frame_step={} frame_step_samples={} provenance={} provenance_samples={} classification_meaning={} classification_meaning_samples={} builder_append={} builder_append_samples={} attributed_total={}",
         output.expansion_stats.frame_step_nanos,

@@ -26,7 +26,7 @@ pub(crate) const INITIAL_STATE_HASH: u64 = INITIAL_STATE;
 /// profiling can attribute both traversal and elapsed time without changing
 /// the canonical projection bytes.
 #[derive(Clone, Copy, Debug)]
-#[cfg_attr(not(feature = "node-stats"), allow(dead_code))]
+#[cfg_attr(not(feature = "profiling-stats"), allow(dead_code))]
 pub(crate) enum StateHashComponent {
     Journal,
     CodeTables,
@@ -49,10 +49,10 @@ pub(crate) enum StateHashComponent {
 }
 
 impl StateHashComponent {
-    #[cfg_attr(not(feature = "node-stats"), allow(dead_code))]
+    #[cfg_attr(not(feature = "profiling-stats"), allow(dead_code))]
     pub(crate) const COUNT: usize = 18;
 
-    #[cfg_attr(not(feature = "node-stats"), allow(dead_code))]
+    #[cfg_attr(not(feature = "profiling-stats"), allow(dead_code))]
     pub(crate) const fn index(self) -> usize {
         self as usize
     }
@@ -132,16 +132,16 @@ impl StateHashFragment {
         component: StateHashComponent,
         build: impl FnOnce(&mut StateHasher) -> usize,
     ) -> Self {
-        #[cfg(feature = "node-stats")]
+        #[cfg(feature = "profiling-stats")]
         let started = std::time::Instant::now();
         let mut hasher = StateHasher::new(domain);
         let visits = build(&mut hasher);
         let fragment = Self {
             fingerprint: hasher.finish(),
         };
-        #[cfg(feature = "node-stats")]
+        #[cfg(feature = "profiling-stats")]
         crate::measurement::record_state_hash_component(component, visits, started.elapsed());
-        #[cfg(not(feature = "node-stats"))]
+        #[cfg(not(feature = "profiling-stats"))]
         let _ = (component, visits);
         fragment
     }

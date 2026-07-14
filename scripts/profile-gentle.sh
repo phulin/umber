@@ -17,8 +17,8 @@ if ! command -v samply >/dev/null 2>&1; then
 fi
 
 mkdir -p "$(dirname "$output")"
-printf '%s\n' 'Building optimized Gentle runner with full debug information' >&2
-cargo build --profile profiling -p umber --bin gentle-profile
+printf '%s\n' 'Building instrumented Gentle runner with full debug information' >&2
+cargo build --profile profiling -p umber --bin gentle-profile --features profiling-stats
 
 runner="$target_dir/profiling/gentle-profile"
 printf 'Recording %s measured Gentle runs to %s\n' "$iterations" "$output" >&2

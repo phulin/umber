@@ -209,7 +209,7 @@ impl IdentityAllocator {
         }
     }
 
-    #[cfg(feature = "node-stats")]
+    #[cfg(feature = "profiling-stats")]
     pub(crate) fn measurement_shape(&self) -> (usize, usize, usize) {
         (
             self.slots.len(),

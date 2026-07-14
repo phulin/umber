@@ -5,7 +5,7 @@ use super::{
 };
 use tex_state::env::banks::IntParam;
 use tex_state::ids::{OriginListId, TokenListId};
-#[cfg(feature = "expansion-stats")]
+#[cfg(feature = "profiling-stats")]
 use tex_state::meaning::Meaning;
 use tex_state::provenance::{InsertedOriginKind, OriginRecord};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
@@ -1294,7 +1294,7 @@ fn macro_literal_span_deopts_for_any_active_alignment_scanner() {
     );
 }
 
-#[cfg(feature = "expansion-stats")]
+#[cfg(feature = "profiling-stats")]
 #[test]
 fn expansion_stats_measure_literal_runs_and_segmentation_reuse() {
     let mut stores = Universe::new();
@@ -1338,7 +1338,7 @@ fn expansion_stats_measure_literal_runs_and_segmentation_reuse() {
     assert_eq!(stats.builder_append_timer_samples, 2);
 }
 
-#[cfg(feature = "expansion-stats")]
+#[cfg(feature = "profiling-stats")]
 #[test]
 fn macro_site_meaning_cache_is_guarded_across_writes_groups_and_rollback() {
     let mut stores = Universe::new();

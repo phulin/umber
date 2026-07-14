@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-expansion-stats = ["tex-expand/expansion-stats", "tex-lex/expansion-stats"]
+profiling-stats = ["tex-expand/profiling-stats", "tex-lex/profiling-stats"]
 
 [dependencies]
 tex-expand = { path = "../tex-expand" }

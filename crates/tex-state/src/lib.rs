@@ -30,7 +30,7 @@ pub(crate) mod journal;
 pub mod macro_store;
 pub mod math;
 pub mod meaning;
-#[cfg(feature = "node-stats")]
+#[cfg(feature = "profiling-stats")]
 pub mod measurement;
 pub mod node;
 pub mod node_arena;

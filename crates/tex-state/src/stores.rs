@@ -26,7 +26,7 @@ use crate::macro_store::{MacroDefinitionProvenance, MacroMeaning, MacroStore, Ma
 use crate::math::MathFontSize;
 use crate::meaning::Meaning;
 use crate::node::Node;
-#[cfg(feature = "node-stats")]
+#[cfg(feature = "profiling-stats")]
 use crate::node_arena::NodeMemoryColumn;
 use crate::node_arena::{NodeArena, NodeArenaMark, NodeList, NodeListBuilder};
 use crate::provenance::{
@@ -665,7 +665,7 @@ impl Stores {
                 .expect("validated traced token became invalid during semantic hashing")
         }));
 
-        #[cfg(feature = "node-stats")]
+        #[cfg(feature = "profiling-stats")]
         crate::measurement::record_traced_list_finish(traced.len(), 0, 0);
         let token_list = self
             .tokens
@@ -2054,7 +2054,7 @@ impl Stores {
         self.survivors.testing_root_slot_count()
     }
 
-    #[cfg(feature = "node-stats")]
+    #[cfg(feature = "profiling-stats")]
     pub(crate) fn node_memory_columns(&self) -> Vec<NodeMemoryColumn> {
         let mut columns = self.nodes.memory_columns();
         columns.extend(self.survivors.memory_columns());

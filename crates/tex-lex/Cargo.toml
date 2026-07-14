@@ -4,7 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-expansion-stats = []
+# Compile-time instrumentation for dedicated profiling builds.
+profiling-stats = []
 
 [dependencies]
 ahash.workspace = true

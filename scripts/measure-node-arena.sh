@@ -8,14 +8,14 @@ target_dir="${CARGO_TARGET_DIR:-$repo_root/target}"
 if [[ "$target_dir" != /* ]]; then
   target_dir="$repo_root/$target_dir"
 fi
-umber_bin="$target_dir/release/umber"
+umber_bin="$target_dir/profiling/umber"
 runs="${MEASURE_RUNS:-5}"
 inputs=(paragraph-wide.tex pages.tex math.tex math-nested.tex)
 
 if [[ "${MEASURE_CLEAN:-0}" == 1 ]]; then
   cargo clean -p umber
 fi
-cargo build --release -p umber --features node-stats
+cargo build --profile profiling -p umber --features profiling-stats
 
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/umber-node-arena.XXXXXX")"
 trap 'rm -rf "$work_dir"' EXIT
@@ -30,7 +30,7 @@ for input in "${inputs[@]}"; do
     cp "$tfm_dir"/*.tfm "$run_dir/"
     (
       cd "$run_dir"
-      /usr/bin/time -l "$umber_bin" run --dvi output.dvi "$input" \
+      /usr/bin/time -l "$umber_bin" run --profiling-stats --dvi output.dvi "$input" \
         >stdout 2>measurement
     )
     artifact_hash="$(shasum -a 256 "$run_dir/output.dvi" | awk '{print $1}')"

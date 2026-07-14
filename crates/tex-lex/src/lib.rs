@@ -9,7 +9,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::ops::{Index, IndexMut};
 use std::sync::Arc;
-#[cfg(feature = "expansion-stats")]
+#[cfg(feature = "profiling-stats")]
 use std::time::{Duration, Instant};
 
 use tex_state::env::banks::TokParam;
@@ -636,7 +636,7 @@ pub enum LiteralSpanPolicy {
 /// Feature-gated attribution counters and wall-clock timers for token-list
 /// expansion delivery.
 ///
-/// With `expansion-stats` disabled the input stack contains no counter field
+/// With `profiling-stats` disabled the input stack contains no counter field
 /// and all snapshots returned by [`InputStack::expansion_stats`] are zero.
 /// Timer totals are diagnostic: their very small scopes include clock-reading
 /// overhead and do not partition all expansion work or the whole engine run.
@@ -663,12 +663,12 @@ pub struct ExpansionStats {
     pub builder_append_timer_samples: u64,
 }
 
-#[cfg(feature = "expansion-stats")]
+#[cfg(feature = "profiling-stats")]
 fn duration_nanos_saturating(duration: Duration) -> u64 {
     u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
 }
 
-#[cfg(feature = "expansion-stats")]
+#[cfg(feature = "profiling-stats")]
 fn add_elapsed(total: &mut u64, started: Instant) {
     *total = total.saturating_add(duration_nanos_saturating(started.elapsed()));
 }
@@ -817,7 +817,7 @@ pub struct InputStack<S> {
     /// Direct-mapped, generation-guarded meanings for macro-body cs sites.
     meaning_site_cache: Box<[Option<MeaningSiteCacheEntry>; MEANING_SITE_CACHE_LEN]>,
     last_expansion_site: Option<(TokenListId, usize)>,
-    #[cfg(feature = "expansion-stats")]
+    #[cfg(feature = "profiling-stats")]
     expansion_stats: ExpansionStats,
     active_macro_invocation: OriginId,
     recently_popped_invocation: Option<OriginId>,
@@ -938,7 +938,7 @@ impl<S> InputStack<S> {
             literal_span_cache: AHashMap::new(),
             meaning_site_cache: Box::new([None; MEANING_SITE_CACHE_LEN]),
             last_expansion_site: None,
-            #[cfg(feature = "expansion-stats")]
+            #[cfg(feature = "profiling-stats")]
             expansion_stats: ExpansionStats::default(),
             active_macro_invocation: OriginId::UNKNOWN,
             recently_popped_invocation: None,
@@ -1074,7 +1074,7 @@ impl<S> InputStack<S> {
             literal_span_cache: AHashMap::new(),
             meaning_site_cache: Box::new([None; MEANING_SITE_CACHE_LEN]),
             last_expansion_site: None,
-            #[cfg(feature = "expansion-stats")]
+            #[cfg(feature = "profiling-stats")]
             expansion_stats: ExpansionStats::default(),
             active_macro_invocation,
             recently_popped_invocation: None,
@@ -1182,11 +1182,11 @@ impl<S> InputStack<S> {
     /// Returns a point-in-time copy of feature-gated expansion counters.
     #[must_use]
     pub fn expansion_stats(&self) -> ExpansionStats {
-        #[cfg(feature = "expansion-stats")]
+        #[cfg(feature = "profiling-stats")]
         {
             self.expansion_stats
         }
-        #[cfg(not(feature = "expansion-stats"))]
+        #[cfg(not(feature = "profiling-stats"))]
         {
             ExpansionStats::default()
         }
@@ -1195,7 +1195,7 @@ impl<S> InputStack<S> {
     /// Records a semantic meaning lookup performed by the expansion layer.
     #[inline(always)]
     pub fn record_expansion_meaning_lookup(&mut self) {
-        #[cfg(feature = "expansion-stats")]
+        #[cfg(feature = "profiling-stats")]
         {
             self.expansion_stats.meaning_lookups += 1;
         }
@@ -1209,10 +1209,10 @@ impl<S> InputStack<S> {
         stores: &impl ExpansionState,
         symbol: Symbol,
     ) -> Meaning {
-        #[cfg(feature = "expansion-stats")]
+        #[cfg(feature = "profiling-stats")]
         let started = Instant::now();
         let meaning = self.resolve_expansion_meaning_inner(stores, symbol);
-        #[cfg(feature = "expansion-stats")]
+        #[cfg(feature = "profiling-stats")]
         {
             add_elapsed(
                 &mut self.expansion_stats.classification_meaning_nanos,
@@ -1244,13 +1244,13 @@ impl<S> InputStack<S> {
             && entry.symbol == symbol
             && entry.guard == guard
         {
-            #[cfg(feature = "expansion-stats")]
+            #[cfg(feature = "profiling-stats")]
             {
                 self.expansion_stats.meaning_cache_hits += 1;
             }
             return entry.meaning;
         }
-        #[cfg(feature = "expansion-stats")]
+        #[cfg(feature = "profiling-stats")]
         {
             self.expansion_stats.meaning_cache_misses += 1;
         }
@@ -1510,7 +1510,7 @@ impl<S> InputStack<S> {
         let Some(span) = self.take_macro_literal_span(stores, policy) else {
             return 0;
         };
-        #[cfg(feature = "expansion-stats")]
+        #[cfg(feature = "profiling-stats")]
         let started = Instant::now();
         let stored = stores.tokens(span.token_list);
         tokens_out.extend_from_slice(&stored[span.start..span.end]);
@@ -1523,7 +1523,7 @@ impl<S> InputStack<S> {
         } else {
             origins_out.extend_repeated(OriginId::UNKNOWN, span.end - span.start);
         }
-        #[cfg(feature = "expansion-stats")]
+        #[cfg(feature = "profiling-stats")]
         {
             add_elapsed(&mut self.expansion_stats.builder_append_nanos, started);
             self.expansion_stats.builder_append_timer_samples += 1;
@@ -1548,11 +1548,11 @@ impl<S> InputStack<S> {
         else {
             return 0;
         };
-        #[cfg(feature = "expansion-stats")]
+        #[cfg(feature = "profiling-stats")]
         let started = Instant::now();
         let stored = stores.tokens(span.token_list);
         tokens_out.extend_from_slice(&stored[span.start..span.end]);
-        #[cfg(feature = "expansion-stats")]
+        #[cfg(feature = "profiling-stats")]
         {
             add_elapsed(&mut self.expansion_stats.builder_append_nanos, started);
             self.expansion_stats.builder_append_timer_samples += 1;
@@ -1682,7 +1682,7 @@ impl<S> InputStack<S> {
     ) -> usize {
         let key = (token_list, policy);
         let cache_hit = self.literal_span_cache.contains_key(&key);
-        #[cfg(feature = "expansion-stats")]
+        #[cfg(feature = "profiling-stats")]
         if cache_hit {
             self.expansion_stats.segmentation_cache_hits += 1;
         } else {
@@ -1723,7 +1723,7 @@ impl<S> InputStack<S> {
 
     #[inline(always)]
     fn record_literal_span(&mut self, len: usize, builder_append: bool) {
-        #[cfg(feature = "expansion-stats")]
+        #[cfg(feature = "profiling-stats")]
         {
             self.expansion_stats.literal_spans += 1;
             self.expansion_stats.literal_tokens += len as u64;
@@ -1731,7 +1731,7 @@ impl<S> InputStack<S> {
                 self.expansion_stats.builder_appends += len as u64;
             }
         }
-        #[cfg(not(feature = "expansion-stats"))]
+        #[cfg(not(feature = "profiling-stats"))]
         let _ = (len, builder_append);
     }
 
@@ -2302,7 +2302,7 @@ where
                     match next_traced_token_from_token_list_frame(
                         token_list,
                         stores,
-                        #[cfg(feature = "expansion-stats")]
+                        #[cfg(feature = "profiling-stats")]
                         None,
                     ) {
                         Some(TracedTokenReplay::PushArgument(argument)) => {
@@ -2461,7 +2461,7 @@ where
                     {
                         self.last_expansion_site = Some((token_list.token_list, token_list.index));
                     }
-                    #[cfg(feature = "expansion-stats")]
+                    #[cfg(feature = "profiling-stats")]
                     if let Some(token) = stores.tokens(token_list.token_list).get(token_list.index)
                     {
                         self.expansion_stats.token_frame_steps += 1;
@@ -2480,7 +2480,7 @@ where
                     match next_traced_token_from_token_list_frame(
                         token_list,
                         stores,
-                        #[cfg(feature = "expansion-stats")]
+                        #[cfg(feature = "profiling-stats")]
                         Some(&mut self.expansion_stats),
                     ) {
                         Some(TracedTokenReplay::PushArgument(argument)) => {
@@ -2874,13 +2874,13 @@ fn next_token_from_token_list_frame(
 fn next_traced_token_from_token_list_frame(
     frame: &mut TokenListInputFrame,
     stores: &mut impl ExpansionState,
-    #[cfg(feature = "expansion-stats")] mut stats: Option<&mut ExpansionStats>,
+    #[cfg(feature = "profiling-stats")] mut stats: Option<&mut ExpansionStats>,
 ) -> Option<TracedTokenReplay> {
-    #[cfg(feature = "expansion-stats")]
+    #[cfg(feature = "profiling-stats")]
     let frame_started = Instant::now();
     let tokens = stores.tokens(frame.token_list);
     let Some(token) = tokens.get(frame.index).copied() else {
-        #[cfg(feature = "expansion-stats")]
+        #[cfg(feature = "profiling-stats")]
         if let Some(stats) = stats {
             add_elapsed(&mut stats.frame_step_nanos, frame_started);
             stats.frame_step_timer_samples += 1;
@@ -2893,7 +2893,7 @@ fn next_traced_token_from_token_list_frame(
         && let Token::Param(slot) = token
         && let Some(argument) = frame.macro_arguments.get_traced(slot)
     {
-        #[cfg(feature = "expansion-stats")]
+        #[cfg(feature = "profiling-stats")]
         if let Some(stats) = stats {
             add_elapsed(&mut stats.frame_step_nanos, frame_started);
             stats.frame_step_timer_samples += 1;
@@ -2901,15 +2901,15 @@ fn next_traced_token_from_token_list_frame(
         return Some(TracedTokenReplay::PushArgument(argument));
     }
 
-    #[cfg(feature = "expansion-stats")]
+    #[cfg(feature = "profiling-stats")]
     if let Some(stats) = stats.as_deref_mut() {
         add_elapsed(&mut stats.frame_step_nanos, frame_started);
         stats.frame_step_timer_samples += 1;
     }
-    #[cfg(feature = "expansion-stats")]
+    #[cfg(feature = "profiling-stats")]
     let provenance_started = Instant::now();
     let origin = replay_origin(frame, stores, token);
-    #[cfg(feature = "expansion-stats")]
+    #[cfg(feature = "profiling-stats")]
     if let Some(stats) = stats {
         add_elapsed(&mut stats.provenance_nanos, provenance_started);
         stats.provenance_timer_samples += 1;

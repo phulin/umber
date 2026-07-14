@@ -100,8 +100,8 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
             ));
         }
     };
-    #[cfg(feature = "expansion-stats")]
-    {
+    #[cfg(feature = "profiling-stats")]
+    if opts.profiling_stats {
         let stats = input.expansion_stats();
         eprintln!(
             "EXPANSION_STATS token_frame_steps={} provenance_resolutions={} character_tokens={} character_fraction={:.6} meaning_lookups={} meaning_cache_hits={} meaning_cache_misses={} literal_spans={} literal_tokens={} mean_literal_run={:.6} segmentation_cache_hits={} segmentation_cache_misses={} builder_appends={}",
@@ -132,12 +132,14 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
             stats.attributed_nanos(),
         );
     }
-    #[cfg(feature = "node-stats")]
-    for (kind, count) in tex_state::node::node_append_histogram() {
-        eprintln!("NODE_HISTOGRAM {kind} {count}");
+    #[cfg(feature = "profiling-stats")]
+    if opts.profiling_stats {
+        for (kind, count) in tex_state::node::node_append_histogram() {
+            eprintln!("NODE_HISTOGRAM {kind} {count}");
+        }
     }
-    #[cfg(feature = "node-stats")]
-    {
+    #[cfg(feature = "profiling-stats")]
+    if opts.profiling_stats {
         let columns = stores.node_memory_columns();
         for column in &columns {
             eprintln!(
@@ -269,6 +271,8 @@ struct RunCliOptions {
     format: Option<PathBuf>,
     format_out: Option<PathBuf>,
     etex: bool,
+    #[cfg(feature = "profiling-stats")]
+    profiling_stats: bool,
 }
 
 impl RunCliOptions {
@@ -279,6 +283,8 @@ impl RunCliOptions {
         let mut format = None;
         let mut format_out = None;
         let mut etex = false;
+        #[cfg(feature = "profiling-stats")]
+        let mut profiling_stats = false;
         let mut args = args.peekable();
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -287,6 +293,10 @@ impl RunCliOptions {
                 }
                 "--etex" => {
                     etex = true;
+                }
+                #[cfg(feature = "profiling-stats")]
+                "--profiling-stats" => {
+                    profiling_stats = true;
                 }
                 "--dvi" => {
                     if dvi.is_some() {
@@ -347,6 +357,8 @@ impl RunCliOptions {
             format,
             format_out,
             etex,
+            #[cfg(feature = "profiling-stats")]
+            profiling_stats,
         })
     }
 }

@@ -748,7 +748,7 @@ fn replace_store_format_payload(bytes: &mut Vec<u8>, payload: Vec<u8>) {
     refresh_format_checksum(bytes);
 }
 
-#[cfg(feature = "node-stats")]
+#[cfg(feature = "profiling-stats")]
 #[test]
 fn node_memory_measurement_is_nonsemantic_and_covers_recycled_storage() {
     let mut universe = Universe::new();

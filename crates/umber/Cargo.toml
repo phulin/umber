@@ -10,8 +10,12 @@ path = "src/bin/gentle_profile.rs"
 [features]
 default = []
 shadow = ["tex-state/shadow"]
-node-stats = ["tex-state/node-stats"]
-expansion-stats = ["tex-exec/expansion-stats", "tex-expand/expansion-stats", "tex-lex/expansion-stats"]
+profiling-stats = [
+    "tex-exec/profiling-stats",
+    "tex-expand/profiling-stats",
+    "tex-lex/profiling-stats",
+    "tex-state/profiling-stats",
+]
 
 [dependencies]
 tex-exec = { path = "../tex-exec" }
