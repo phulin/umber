@@ -21,6 +21,7 @@ Use this crate for font-domain parsing and metric representation that does not r
 - `Cargo.toml`: crate manifest, dependencies, and package metadata for `tex-fonts`.
 - `src/lib.rs`: public module wiring and re-exports for font metric and TFM APIs.
 - `src/metrics.rs`: immutable loaded-font records and backend-neutral metric query types.
+- `src/opentype/`: validated OpenType resource contracts, canonical identities, bounded SFNT/WOFF2 decoding, and immutable metric/cmap/table projections.
 - `src/tests.rs`: crate-internal test module declarations for TFM parsing and cross-checks.
 - `src/tests/metrics_validation.rs`: Detached metric capacity/reference validation and runtime lig/kern cursor boundary tests.
 - `src/tests/tfm_parse.rs`: unit tests and helpers for parsing fixtures, metrics conversion, and malformed TFM validation.

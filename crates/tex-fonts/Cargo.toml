@@ -4,8 +4,11 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+sha2.workspace = true
 serde.workspace = true
 tex-arith = { path = "../tex-arith" }
+ttf-parser = "0.25.1"
+woff2-patched = "0.4.0"
 
 [lints]
 workspace = true

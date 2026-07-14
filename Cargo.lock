@@ -775,7 +775,10 @@ name = "tex-fonts"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "sha2",
  "tex-arith",
+ "ttf-parser",
+ "woff2-patched",
 ]
 
 [[package]]

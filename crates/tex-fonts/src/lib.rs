@@ -1,6 +1,7 @@
 //! Font metric parsing and immutable font data.
 
 pub mod metrics;
+pub mod opentype;
 pub mod tfm;
 
 pub use metrics::{
@@ -8,6 +9,13 @@ pub use metrics::{
     FontContentHash, FontMetrics, FontMetricsValidationError, LigKernChar, LigKernCommand,
     LigKernInstruction, LigKernIter, LigKernStep as MetricLigKernStep, LigatureCommand, LoadedFont,
     MAX_LIG_KERN_PROGRAM_LEN,
+};
+pub use opentype::{
+    AcceptedFontContainers, CharacterMap, FeatureSetting, FontContainer, FontFeaturePolicy,
+    FontInstanceIdentity, FontLimits, FontMetadata, FontObjectIdentity, FontParseError,
+    FontProgramIdentity, FontPurposes, FontRequest, FontRequestKey, FontSelectionError,
+    FontWireError, OpenTypeFont, OpenTypeMetrics, OpenTypeTag, ResolvedFont, ShapingTables,
+    VariationCoordinate, VariationSelection, WritingDirection,
 };
 pub use tfm::{
     CharacterTag, ExtensibleRecipe, FontParameter, FontParameterKind, FontParameters, Header,
