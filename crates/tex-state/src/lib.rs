@@ -7,9 +7,11 @@
 /// words. Version 5 orders changed cells by a cached canonical key fingerprint
 /// with full-key collision fallback. Version 6 frames the six code tables as
 /// independent canonical projections so unchanged persistent roots can be
-/// reused. Hashes are comparable only when both this version and the
-/// named-boundary schedule match.
-pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 6;
+/// reused. Version 7 frames mutable page-tail nodes independently so
+/// checkpoint-local caches can reuse an unchanged prefix. Hashes are
+/// comparable only when both this version and the named-boundary schedule
+/// match.
+pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 7;
 
 pub mod cell;
 pub mod code_tables;

@@ -18,13 +18,20 @@ const PAGE_CURRENT_DOMAIN: u64 = 0x7061_6765_5f63_7572;
 const PAGE_DISCARDS_DOMAIN: u64 = 0x7061_6765_5f64_6973;
 const SPLIT_DISCARDS_DOMAIN: u64 = 0x7370_6c69_745f_6469;
 const PAGE_NODE_CHUNK_DOMAIN: u64 = 0x7061_6765_5f63_686b;
+const PAGE_NODE_ITEM_DOMAIN: u64 = 0x7061_6765_5f69_746d;
+
+#[derive(Clone, Debug, Default)]
+struct PageTailHashCache {
+    nodes: Vec<Node>,
+    fragments: Vec<StateHashFragment>,
+}
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct PageHashCache {
     insertions: Option<CachedProjection<Arc<Vec<PageInsertion>>>>,
     mark_classes: Option<CachedProjection<Arc<BTreeMap<u16, MarkClassState>>>>,
     contribution: Option<CachedProjection<Arc<VecDeque<Node>>>>,
-    current_page_tail: Option<CachedProjection<Weak<Vec<Node>>>>,
+    current_page_tail: PageTailHashCache,
     page_discards: Option<CachedProjection<Arc<Vec<Node>>>>,
     split_discards: Option<CachedProjection<Arc<Vec<Node>>>>,
 }
@@ -353,13 +360,7 @@ fn project_page_nodes(
     nodes: &PageNodeSequence,
     hash_nodes: &mut impl FnMut(&[Node], &mut StateHasher) -> usize,
 ) -> StateHashFragment {
-    let tail = project_weak_arc(
-        &mut cache.current_page_tail,
-        &nodes.tail,
-        PAGE_NODE_CHUNK_DOMAIN,
-        StateHashComponent::PageCurrent,
-        |projection| hash_nodes(&nodes.tail, projection),
-    );
+    let tail = project_page_tail(&mut cache.current_page_tail, &nodes.tail, hash_nodes);
     StateHashFragment::from_measured_builder(
         PAGE_CURRENT_DOMAIN,
         StateHashComponent::PageCurrent,
@@ -375,21 +376,39 @@ fn project_page_nodes(
     )
 }
 
-fn project_weak_arc<T>(
-    cached: &mut Option<CachedProjection<Weak<T>>>,
-    root: &Arc<T>,
-    domain: u64,
-    component: StateHashComponent,
-    build: impl FnOnce(&mut StateHasher) -> usize,
+fn project_page_tail(
+    cache: &mut PageTailHashCache,
+    nodes: &[Node],
+    hash_nodes: &mut impl FnMut(&[Node], &mut StateHasher) -> usize,
 ) -> StateHashFragment {
-    if let Some(fragment) = cached.as_ref().and_then(|cached| {
-        cached.fragment_if(|cached_root| std::ptr::eq(cached_root.as_ptr(), Arc::as_ptr(root)))
-    }) {
-        return fragment;
+    let shared_prefix = cache
+        .nodes
+        .iter()
+        .zip(nodes)
+        .take_while(|(cached, current)| cached == current)
+        .count();
+    cache.nodes.truncate(shared_prefix);
+    cache.fragments.truncate(shared_prefix);
+    for node in &nodes[shared_prefix..] {
+        let fragment = StateHashFragment::from_measured_builder_counted(
+            PAGE_NODE_ITEM_DOMAIN,
+            StateHashComponent::PageCurrent,
+            |projection| hash_nodes(std::slice::from_ref(node), projection),
+        );
+        cache.nodes.push(node.clone());
+        cache.fragments.push(fragment);
     }
-    let fragment = StateHashFragment::from_measured_builder_counted(domain, component, build);
-    *cached = Some(CachedProjection::new(Arc::downgrade(root), fragment));
-    fragment
+    StateHashFragment::from_measured_builder(
+        PAGE_NODE_CHUNK_DOMAIN,
+        StateHashComponent::PageCurrent,
+        0,
+        |projection| {
+            projection.usize(cache.fragments.len());
+            for fragment in &cache.fragments {
+                fragment.apply(projection);
+            }
+        },
+    )
 }
 
 fn hash_optional_usize(value: Option<usize>, hasher: &mut StateHasher) {
