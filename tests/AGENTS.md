@@ -162,38 +162,34 @@ corpus while still checking committed edge fixtures.
 
 Long-running document corpus parity uses the line-oriented
 `tests/corpus-manifest.txt` file for external TeX documents that are fetched
-rather than committed. Populate or
-verify that corpus with:
+rather than committed. Acquire and verify the corpus, the required TeX Live
+support files, and all local end-to-end DVI oracles with:
 
 ```bash
-scripts/parity.sh
-scripts/parity.sh --offline
+scripts/setup-conformance-tests.sh
 ```
 
-The acquisition step builds `tools/corpus-sync`, writes exact fetched support
+Setup builds `tools/corpus-sync`, writes exact fetched support
 inputs and documents to gitignored `third_party/corpus/`, verifies the manifest
 SHA-256 values, and fails clearly on cached or fetched hash drift. Manifest
 entries use `key value` lines. Support entries record provenance and licensing;
 document entries additionally select a `format_source` and record the reference
 DVI SHA-256 after the same banner-only normalization used by `tools/refexec`.
-`scripts/parity.sh` pins `SOURCE_DATE_EPOCH=1783604160` and
-`FORCE_SOURCE_DATE=1` by default before running Umber because external
-documents may write date primitives into the DVI body. Fixture regeneration
-uses the same clock for reference TeX.
+Fixture regeneration pins `SOURCE_DATE_EPOCH=1783604160` and
+`FORCE_SOURCE_DATE=1` so reference TeX and Umber observe the same clock when
+external documents write date primitives into the DVI body. After setup, the
+Cargo conformance tests consume only local files and require no network access.
 
 Run the fixture-backed end-to-end DVI conformance tests explicitly with:
 
 ```bash
 cargo test -p umber --test it e2e_conformance_story -- --nocapture
 cargo test -p umber --test it e2e_conformance_gentle -- --nocapture
-scripts/parity.sh e2e
-scripts/parity.sh e2e --offline
-scripts/parity.sh e2e --doc story.tex
+cargo test -p umber --test it e2e_conformance_trip -- --nocapture
+cargo test -p umber --test it e2e_conformance_etrip -- --nocapture
 ```
 
-The e2e mode first performs the same acquisition verification, then selects
-the `e2e_conformance_story` and `e2e_conformance_gentle` Cargo integration
-tests. For each document the shared Rust harness stages the selected real
+For each Story and Gentle test, the shared Rust harness stages the selected real
 `format_source`, document, `third_party/hyphen/hyphen.tex`, and all TFM files
 loaded by Plain. Cargo tests run only Umber and compare its final output with
 the local oracle. Live reference TeX is used only by
@@ -204,9 +200,10 @@ Reference drift, Umber failures, and byte mismatches
 write automatic triage bundles under `target/conformance-triage/<doc-name>/`
 containing byte context, page-limited dvitype-style disassemblies and diff,
 tracing-output logs, and a summary naming the divergent page and opcode when
-available. `scripts/parity.sh self-test` runs the Rust harness's synthetic fast bundle check
-that intentionally changes one DVI movement opcode and verifies the summary
-pinpoints page/opcode; it does not run the external corpus.
+available. The `cargo test -p parity-harness self_test_bundle_pinpoints_page_and_opcode`
+command runs the Rust harness's synthetic fast bundle check; it intentionally
+changes one DVI movement opcode and verifies the summary pinpoints the page and
+opcode without using the external corpus.
 
 The official Knuth TeX82 TRIP and e-TeX V2 e-TRIP conformance materials are
 pinned separately in `tests/trip-manifest.txt`. They are fetched into

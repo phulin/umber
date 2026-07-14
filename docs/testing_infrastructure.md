@@ -84,29 +84,27 @@ SHA-256, license determination, and redistributability flag. Runnable documents
 also select a format source and pin the reference DVI SHA-256 after DVI preamble
 banner normalization.
 
-`scripts/parity.sh` runs `tools/corpus-sync` first to fetch or verify those
-inputs under gitignored `third_party/corpus/`. Cached hash matches are a no-op,
-including in `--offline` mode. The script pins `SOURCE_DATE_EPOCH=1783604160`
-and `FORCE_SOURCE_DATE=1` by default before running reference TeX so
-date-sensitive documents have stable DVI body bytes.
+`scripts/setup-conformance-tests.sh` builds `tools/corpus-sync` to fetch or
+verify those inputs under gitignored `third_party/corpus/`, then acquires the
+remaining local support files and generates all four end-to-end DVI oracles.
+Cached hash matches are a no-op. Fixture regeneration pins
+`SOURCE_DATE_EPOCH=1783604160` and `FORCE_SOURCE_DATE=1` so date-sensitive
+documents have stable DVI body bytes. Once setup completes, the conformance
+tests consume only local files and require no network access.
 
 Full external-document DVI parity is exposed as local-oracle-backed Cargo
-integration tests, with a script retained for acquisition and selection:
+integration tests:
 
 ```bash
 cargo test -p umber --test it e2e_conformance_story -- --nocapture
 cargo test -p umber --test it e2e_conformance_gentle -- --nocapture
-scripts/parity.sh e2e
-scripts/parity.sh e2e --offline
 ```
 
 Populate the external inputs and all Story, Gentle, TRIP, and e-TRIP DVI oracles with
 `scripts/setup-conformance-tests.sh`. The generated `.expected.dvi` files are
 gitignored licensing-sensitive derivatives and are not repository fixtures.
 
-This mode verifies acquisition, then selects `e2e_conformance_story` and
-`e2e_conformance_gentle` in Umber's single integration-test binary. The shared
-`parity-harness` library stages inputs, calls the Cargo test's in-process Umber
+The shared `parity-harness` library stages inputs, calls the Cargo test's in-process Umber
 runner, and byte-compares its normalized DVI with the local `tests/corpus/e2e`
 oracle. Each document names a manifest-pinned
 `format_source`; the harness stages that source, the document, hyphenation
@@ -122,8 +120,9 @@ On fixture-hash drift, Umber failure, or mismatch, the harness writes a triage
 bundle under `target/conformance-triage/<doc-name>/` with byte context,
 page-limited dvitype-style disassemblies, a unified diff, tracing logs, and a
 summary naming the divergent page and opcode when recoverable from DVI
-backpointers. `scripts/parity.sh self-test` exercises the bundle writer with
-synthetic DVI. `scripts/regen-fixtures.sh --case e2e/story` and `--case
+backpointers. The `cargo test -p parity-harness self_test_bundle_pinpoints_page_and_opcode`
+command exercises the bundle writer with synthetic DVI.
+`scripts/regen-fixtures.sh --case e2e/story` and `--case
 e2e/gentle` verify the manifest-pinned normalized reference hash before
 rewriting either fixture.
 

@@ -118,7 +118,7 @@ pub fn run_named_external_document(
     let source_path = repo_root.join("third_party/corpus").join(document);
     if !source_path.is_file() {
         bail!(
-            "missing external conformance input {}; run scripts/parity.sh fetch first",
+            "missing external conformance input {}; run scripts/setup-conformance-tests.sh first",
             source_path.display()
         );
     }

@@ -298,9 +298,9 @@ regen_e2e_case() {
   case "$case" in
     story|gentle)
       [[ -f "${repo_root}/third_party/corpus/${case}.tex" ]] || \
-        die "missing third_party/corpus/${case}.tex; run scripts/parity.sh fetch"
+        die "missing third_party/corpus/${case}.tex; run scripts/setup-conformance-tests.sh"
       [[ -f "${repo_root}/third_party/corpus/plain.tex" ]] || \
-        die "missing third_party/corpus/plain.tex; run scripts/parity.sh fetch"
+        die "missing third_party/corpus/plain.tex; run scripts/setup-conformance-tests.sh"
       [[ -f "${repo_root}/third_party/hyphen/hyphen.tex" ]] || \
         die "missing third_party/hyphen/hyphen.tex; run scripts/fetch-hyphen-corpus.sh"
       build_parity_harness_once
