@@ -297,7 +297,7 @@ where
             continue;
         }
         let source_depth = input.source_depth();
-        let prepared = crate::next_prepared_expansion_token(input, stores)?
+        let prepared = crate::next_prepared_expansion_token(input, stores, expansion)?
             .ok_or(ScanToksError::EndOfInputInReplacementText { context })?;
         let raw = prepared.traced_token();
         if input.source_depth() < source_depth {
@@ -315,7 +315,7 @@ where
         if !prepared.suppress_expansion()
             && let Some(symbol) = crate::expandable_symbol(stores, raw)
         {
-            let meaning = input.resolve_expansion_meaning(stores, symbol);
+            let meaning = expansion.resolve_meaning(input, stores, symbol);
             if matches!(meaning, Meaning::Macro { flags, .. } if !flags.contains(MeaningFlags::PROTECTED))
             {
                 expansion.record_meaning(symbol, meaning);
@@ -501,6 +501,7 @@ fn expand_replacement_text(
             let Some(read) = input.next_traced_expansion_token(stores)? else {
                 break;
             };
+            expansion.observe_read(read);
             let token = read.token();
             let traced = read.traced_token();
             if read.suppress_expansion() {
@@ -514,7 +515,7 @@ fn expand_replacement_text(
                 origins.push(read.origin());
                 continue;
             };
-            let meaning = input.resolve_expansion_meaning(stores, symbol);
+            let meaning = expansion.resolve_meaning(input, stores, symbol);
             if matches!(meaning, Meaning::Macro { flags, .. } if flags.contains(MeaningFlags::PROTECTED))
             {
                 builder.push(token);

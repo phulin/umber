@@ -86,6 +86,13 @@ Local/global writes, rollback, owner isolation, and both group-exit paths have
 focused invalidation coverage; debug cache hits also compare against the live
 aggregate meaning.
 
+After moving the cache and current replay-site state from `tex-lex::InputStack`
+to the persistent `tex_expand::ExpansionContext`, a corrected 200-iteration
+run retained 40,925 hits and 36,650 misses, completed at 118.061 ms/run on the
+capture machine, and again produced 97 pages and 263,424 bytes. The lexer now
+delivers only semantic-free macro replay-site metadata; a compile-fail boundary
+test prevents `InputStack` from regaining meaning resolution.
+
 The conditioned `BOOB` plus five `BOOBOBBO` paired comparison was noisy but
 flat: refined versus conservative raw means were 134.191 and 134.350 ms/run,
 medians were 118.299 and 117.795 ms/run, and means after excluding the two

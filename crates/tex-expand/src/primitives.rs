@@ -18,13 +18,13 @@ pub(crate) fn expand_after(
 ) -> Result<(), ExpandError>
 where
 {
-    let Some(saved) = crate::get_token(input, stores)? else {
+    let Some(saved) = crate::get_token_with_context(input, stores, expansion)? else {
         return Err(ExpandError::MissingTokenAfterPrimitive {
             opcode: ExpandableOpcode::ExpandAfter,
             context,
         });
     };
-    let Some(target) = crate::get_token(input, stores)? else {
+    let Some(target) = crate::get_token_with_context(input, stores, expansion)? else {
         return Err(ExpandError::MissingTokenAfterPrimitive {
             opcode: ExpandableOpcode::ExpandAfter,
             context,
@@ -45,6 +45,7 @@ pub(crate) fn scan_csname(
         let Some(read) = input.next_traced_expansion_token(stores)? else {
             return Err(ExpandError::MissingEndCsName { context });
         };
+        expansion.observe_read(read);
         let token = read.token();
         let traced = read.traced_token();
 

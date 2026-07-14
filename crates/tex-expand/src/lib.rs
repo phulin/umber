@@ -7,9 +7,12 @@
 #![forbid(unsafe_code)]
 
 use std::fmt;
+#[cfg(feature = "profiling-stats")]
+use std::time::Instant;
 
 use tex_lex::{
-    InputSource, InputStack, LexError, MacroArguments, TokenListReplayKind, TracedExpansionToken,
+    InputSource, InputStack, LexError, MacroArguments, MacroReplaySite, TokenListReplayKind,
+    TracedExpansionToken,
 };
 use tex_state::glue::GlueSpec;
 use tex_state::interner::Symbol;
@@ -17,7 +20,17 @@ use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::provenance::{DiagnosticSite, InsertedOriginKind, SynthesizedOriginKind};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
-use tex_state::{ExpansionState, InputReadState, Universe};
+use tex_state::{ExpansionState, InputReadState, MeaningCacheGuard, Universe};
+
+const MEANING_SITE_CACHE_LEN: usize = 64;
+
+#[derive(Clone, Copy, Debug)]
+struct MeaningSiteCacheEntry {
+    site: MacroReplaySite,
+    symbol: Symbol,
+    guard: MeaningCacheGuard,
+    meaning: Meaning,
+}
 
 macro_rules! record_dependency {
     ($expansion:expr, $dependency:expr) => {
@@ -726,6 +739,8 @@ pub struct ExpansionContext<'a> {
     input_resolver: Option<&'a mut dyn InputResolver>,
     pub(crate) recorder: Option<&'a mut dyn ReadRecorder>,
     resolution_index: u64,
+    meaning_site_cache: Box<[Option<MeaningSiteCacheEntry>; MEANING_SITE_CACHE_LEN]>,
+    last_macro_replay_site: Option<MacroReplaySite>,
 }
 
 impl<'a> ExpansionContext<'a> {
@@ -737,6 +752,8 @@ impl<'a> ExpansionContext<'a> {
             input_resolver: None,
             recorder: None,
             resolution_index: 0,
+            meaning_site_cache: Box::new([None; MEANING_SITE_CACHE_LEN]),
+            last_macro_replay_site: None,
         }
     }
 
@@ -751,6 +768,8 @@ impl<'a> ExpansionContext<'a> {
             input_resolver: Some(input_resolver),
             recorder: None,
             resolution_index: 0,
+            meaning_site_cache: Box::new([None; MEANING_SITE_CACHE_LEN]),
+            last_macro_replay_site: None,
         }
     }
 
@@ -759,6 +778,73 @@ impl<'a> ExpansionContext<'a> {
     pub fn recording(mut self, recorder: &'a mut dyn ReadRecorder) -> Self {
         self.recorder = Some(recorder);
         self
+    }
+
+    #[inline(always)]
+    fn observe_read(&mut self, read: TracedExpansionToken) {
+        self.last_macro_replay_site = read.macro_replay_site();
+    }
+
+    #[inline(always)]
+    fn resolve_meaning(
+        &mut self,
+        input: &mut InputStack,
+        stores: &impl ExpansionState,
+        symbol: Symbol,
+    ) -> Meaning {
+        #[cfg(feature = "profiling-stats")]
+        let started = Instant::now();
+        let meaning = self.resolve_meaning_inner(input, stores, symbol);
+        #[cfg(feature = "profiling-stats")]
+        input.record_expansion_meaning_resolution_nanos(
+            u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+        );
+        meaning
+    }
+
+    fn resolve_meaning_inner(
+        &mut self,
+        input: &mut InputStack,
+        stores: &impl ExpansionState,
+        symbol: Symbol,
+    ) -> Meaning {
+        let Some(site) = self.last_macro_replay_site else {
+            input.record_expansion_meaning_lookup();
+            return stores.meaning(symbol);
+        };
+        let Some(guard) = stores.meaning_cache_guard() else {
+            input.record_expansion_meaning_lookup();
+            return stores.meaning(symbol);
+        };
+        let slot = ((site.token_list().raw() as usize).wrapping_mul(0x9e37_79b1)
+            ^ site.token_index())
+            & (MEANING_SITE_CACHE_LEN - 1);
+        if let Some(entry) = self.meaning_site_cache[slot]
+            && entry.site == site
+            && entry.symbol == symbol
+            && entry.guard == guard
+        {
+            #[cfg(debug_assertions)]
+            {
+                let live_meaning = stores.meaning(symbol);
+                debug_assert_eq!(
+                    entry.meaning, live_meaning,
+                    "meaning-site cache hit disagrees with aggregate state"
+                );
+            }
+            input.record_expansion_meaning_cache_hit();
+            return entry.meaning;
+        }
+        input.record_expansion_meaning_cache_miss();
+        input.record_expansion_meaning_lookup();
+        let meaning = stores.meaning(symbol);
+        self.meaning_site_cache[slot] = Some(MeaningSiteCacheEntry {
+            site,
+            symbol,
+            guard,
+            meaning,
+        });
+        meaning
     }
 
     /// Creates a context for a nested in-memory expansion while preserving
@@ -774,6 +860,8 @@ impl<'a> ExpansionContext<'a> {
             input_resolver: None,
             recorder: self.recorder.take(),
             resolution_index: 0,
+            meaning_site_cache: Box::new([None; MEANING_SITE_CACHE_LEN]),
+            last_macro_replay_site: None,
         };
         let output = operation(&mut nested);
         self.recorder = nested.recorder.take();
@@ -883,7 +971,7 @@ impl ExpansionMode for RestrictedExpansionMode {
         let Some(symbol) = expandable_symbol(stores, token) else {
             return Ok(Dispatch::Deliver(token));
         };
-        let meaning = input.resolve_expansion_meaning(stores, symbol);
+        let meaning = expansion.resolve_meaning(input, stores, symbol);
         expansion.record_meaning(symbol, meaning);
         dispatch::dispatch_without_input_open_inverted(
             semantic_token(token),
@@ -919,7 +1007,7 @@ impl ExpansionMode for DriverExpansionMode {
         let Some(symbol) = expandable_symbol(stores, token) else {
             return Ok(Dispatch::Deliver(token));
         };
-        let meaning = input.resolve_expansion_meaning(stores, symbol);
+        let meaning = expansion.resolve_meaning(input, stores, symbol);
         expansion.record_meaning(symbol, meaning);
         dispatch::dispatch_with_context(
             semantic_token(token),
@@ -941,7 +1029,7 @@ impl ExpansionMode for DriverExpansionMode {
         let Some(symbol) = expandable_symbol(stores, token) else {
             return Ok(Dispatch::Deliver(token));
         };
-        let meaning = input.resolve_expansion_meaning(stores, symbol);
+        let meaning = expansion.resolve_meaning(input, stores, symbol);
         expansion.record_meaning(symbol, meaning);
         dispatch::dispatch_with_context_inverted(
             semantic_token(token),
@@ -1082,6 +1170,7 @@ fn get_x_token_with_context_inner(
             };
             (read, false)
         };
+        expansion.observe_read(read);
         let token = read.token();
         let traced = read.traced_token();
 
@@ -1109,7 +1198,7 @@ fn get_x_token_with_context_inner(
             }
         };
 
-        let meaning = input.resolve_expansion_meaning(stores, symbol);
+        let meaning = expansion.resolve_meaning(input, stores, symbol);
         expansion.record_meaning(symbol, meaning);
         if protect_macros
             && matches!(meaning, Meaning::Macro { flags, .. } if flags.contains(MeaningFlags::PROTECTED))
@@ -1158,11 +1247,13 @@ fn get_x_token_with_context_inner(
 pub(crate) fn next_prepared_expansion_token(
     input: &mut InputStack,
     stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
 ) -> Result<Option<PreparedExpansionToken>, tex_lex::LexError> {
     loop {
         let Some(read) = input.next_traced_expansion_token(stores)? else {
             return Ok(None);
         };
+        expansion.observe_read(read);
         let traced = read.traced_token();
         let intercepted = if read.suppress_expansion() {
             intercept_suppressed_alignment_token(input, stores, traced)
@@ -1423,6 +1514,15 @@ pub fn get_token(
     Ok(next_semantic_raw_token(input, stores)?)
 }
 
+pub(crate) fn get_token_with_context(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+) -> Result<Option<TracedTokenWord>, ExpandError> {
+    Ok(next_prepared_expansion_token(input, stores, expansion)?
+        .map(PreparedExpansionToken::traced_token))
+}
+
 /// Implements TeX82's `get_preamble_token` operation after `\span`: fetch
 /// one raw token, expand that token once when it is expandable, then fetch
 /// one raw token from the resulting input. Unlike `get_x_token`, this does
@@ -1432,13 +1532,13 @@ pub fn expand_once_then_get_token_with_context(
     stores: &mut tex_state::ExpansionContext<'_>,
     expansion: &mut ExpansionContext<'_>,
 ) -> Result<Option<TracedTokenWord>, ExpandError> {
-    let Some(target) = get_token(input, stores)? else {
+    let Some(target) = get_token_with_context(input, stores, expansion)? else {
         return Ok(None);
     };
     let Some(symbol) = expandable_symbol(stores, target) else {
         return Ok(Some(target));
     };
-    let meaning = input.resolve_expansion_meaning(stores, symbol);
+    let meaning = expansion.resolve_meaning(input, stores, symbol);
     expansion.record_meaning(symbol, meaning);
     let dispatch = dispatch_with_context(
         semantic_token(target),
@@ -1464,6 +1564,7 @@ pub(crate) fn get_x_token_without_input_open(
             Err(tex_lex::LexError::InvalidCharacter { .. }) => continue,
             Err(error) => return Err(error.into()),
         };
+        expansion.observe_read(read);
         let token = read.token();
         let traced = read.traced_token();
 
@@ -1484,7 +1585,7 @@ pub(crate) fn get_x_token_without_input_open(
             }
         };
 
-        let meaning = input.resolve_expansion_meaning(stores, symbol);
+        let meaning = expansion.resolve_meaning(input, stores, symbol);
         expansion.record_meaning(symbol, meaning);
 
         let dispatched = dispatch::dispatch_without_input_open(
@@ -1536,7 +1637,7 @@ pub(crate) fn dispatch_one_raw_token_with_context(
         None => return Ok(Dispatch::Deliver(token)),
     };
 
-    let meaning = input.resolve_expansion_meaning(stores, symbol);
+    let meaning = expansion.resolve_meaning(input, stores, symbol);
     expansion.record_meaning(symbol, meaning);
     dispatch::dispatch_without_input_open(
         semantic,

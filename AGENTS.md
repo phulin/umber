@@ -85,7 +85,6 @@ bd ready                # Find available work
 bd show <id>            # View issue details
 bd update <id> --claim  # Claim work
 bd close <id>           # Complete work
-bd prime                # Refresh Beads context
 ```
 
 ### Rules

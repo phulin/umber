@@ -4,7 +4,7 @@ Read the repository-level `AGENTS.md` before editing here. This crate owns TeX's
 
 ## Crate Role
 
-`tex-lex` turns physical input lines or frozen token lists into TeX tokens under the active catcode table. It owns the non-generic `InputStack`, object-safe `InputSource`, in-memory and world-backed source adapters, TeX line normalization, source-frame lexer state, token-list replay frames, conditional frames used while skipping input, and resumable summaries for input-stack state. Source frames erase their source payload and dispatch dynamically only when refilling a physical line; token-list and macro replay stay ordinary frames.
+`tex-lex` turns physical input lines or frozen token lists into TeX tokens under the active catcode table. It owns the non-generic `InputStack`, object-safe `InputSource`, in-memory and world-backed source adapters, TeX line normalization, source-frame lexer state, token-list replay frames, conditional frames used while skipping input, and resumable summaries for input-stack state. Source frames erase their source payload and dispatch dynamically only when refilling a physical line; token-list and macro replay stay ordinary frames. Macro-body delivery may attach a semantic-free replay site `(TokenListId, index)` to a delivered token, but interpretation and caching of that site belong to `tex-expand`.
 
 Use this crate for source-local mechanics: reading normalized logical lines, applying catcodes, delivering raw tokens, replaying token lists, and preserving enough input-stack state for snapshots/replay. Durable file identity and actual file reads belong to `World`; expansion semantics belong to `tex-expand`.
 
@@ -12,6 +12,7 @@ Use this crate for source-local mechanics: reading normalized logical lines, app
 
 - Do not open files directly; accept an `InputSource` or content supplied by `World`.
 - Do not evaluate meanings or expand macros here; token semantics begin in `tex-expand` and `tex-exec`.
+- Do not retain expansion-semantic site or meaning-cache state on `InputStack`; expose only delivery-local replay metadata.
 - Do not mutate raw substores or reach around the aggregate state APIs for catcodes or input summaries.
 - Keep lexer state resumable when adding fields to source, token-list, or condition frames.
 

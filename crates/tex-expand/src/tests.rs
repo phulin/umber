@@ -3,6 +3,8 @@ use crate::{
     dispatch_expandable_opcode, dispatch_with_context, install_expandable_primitives,
 };
 use ahash::AHashMap;
+#[cfg(feature = "profiling-stats")]
+use tex_lex::MacroArguments;
 use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::interner::Symbol;
@@ -17,6 +19,102 @@ use tex_state::provenance::{
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, InputReadState, Universe};
+
+#[cfg(feature = "profiling-stats")]
+#[test]
+fn macro_site_meaning_cache_is_expansion_owned_and_guarded() {
+    let mut stores = Universe::new();
+    let symbol = stores.intern("cached");
+    stores.set_meaning(symbol, Meaning::Relax);
+    let baseline = stores.snapshot();
+    let body = stores.intern_token_list(&[Token::Cs(symbol.symbol())]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_macro_body(body, MacroArguments::new());
+    let mut expansion = ExpansionContext::new("texput");
+
+    let read = input
+        .next_traced_expansion_token(&mut stores)
+        .expect("macro replay")
+        .expect("control sequence");
+    expansion.observe_read(read);
+    assert_eq!(read.token(), Token::Cs(symbol.symbol()));
+    assert_eq!(
+        expansion.resolve_meaning(&mut input, &stores, symbol.symbol()),
+        Meaning::Relax
+    );
+
+    stores.enter_group();
+    stores.set_count(0, 42);
+    let _ = stores.leave_group();
+    assert_eq!(
+        expansion.resolve_meaning(&mut input, &stores, symbol.symbol()),
+        Meaning::Relax,
+        "a non-meaning group must retain the guarded cache entry"
+    );
+    assert_eq!(
+        expansion.resolve_meaning(&mut input, &stores, symbol.symbol()),
+        Meaning::Relax
+    );
+
+    stores.enter_group();
+    stores.set_meaning(symbol, Meaning::Undefined);
+    assert_eq!(
+        expansion.resolve_meaning(&mut input, &stores, symbol.symbol()),
+        Meaning::Undefined
+    );
+    let _ = stores.leave_group();
+    assert_eq!(
+        expansion.resolve_meaning(&mut input, &stores, symbol.symbol()),
+        Meaning::Relax
+    );
+
+    stores.enter_group();
+    stores.set_meaning_global(symbol, Meaning::Undefined);
+    assert_eq!(
+        expansion.resolve_meaning(&mut input, &stores, symbol.symbol()),
+        Meaning::Undefined
+    );
+    let _ = stores.leave_group();
+    assert_eq!(
+        expansion.resolve_meaning(&mut input, &stores, symbol.symbol()),
+        Meaning::Undefined
+    );
+
+    stores.enter_group_with_kind(tex_state::GroupKind::Simple);
+    stores.set_meaning(symbol, Meaning::Relax);
+    assert_eq!(
+        expansion.resolve_meaning(&mut input, &stores, symbol.symbol()),
+        Meaning::Relax
+    );
+    stores
+        .leave_group_with_kind(tex_state::GroupKind::Simple)
+        .expect("matching typed group");
+    assert_eq!(
+        expansion.resolve_meaning(&mut input, &stores, symbol.symbol()),
+        Meaning::Undefined
+    );
+
+    stores.set_meaning(symbol, Meaning::Relax);
+    stores.rollback(&baseline);
+    assert_eq!(
+        expansion.resolve_meaning(&mut input, &stores, symbol.symbol()),
+        Meaning::Relax
+    );
+
+    let fork = stores.clone();
+    assert_eq!(
+        expansion.resolve_meaning(&mut input, &fork, symbol.symbol()),
+        Meaning::Relax
+    );
+
+    let stats = input.expansion_stats();
+    assert_eq!(stats.meaning_cache_hits, 2);
+    assert_eq!(stats.meaning_cache_misses, 9);
+    assert_eq!(stats.meaning_lookups, 9);
+    assert_eq!(stats.frame_step_timer_samples, 1);
+    assert_eq!(stats.provenance_timer_samples, 1);
+    assert_eq!(stats.classification_meaning_timer_samples, 11);
+}
 
 #[test]
 fn get_x_token_converts_frozen_end_template_without_losing_origin() {
@@ -146,6 +244,7 @@ fn collect_protected_expansion(
             let Some(first) = crate::next_prepared_expansion_token(
                 &mut input,
                 &mut tex_state::ExpansionContext::new(&mut stores),
+                &mut context,
             )
             .expect("prepared get_next") else {
                 break;

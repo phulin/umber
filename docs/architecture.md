@@ -431,6 +431,14 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   recording boundary, and dependency values are constructed only inside the
   enabled branch. This avoids specializing the entire expansion and scanner
   pipeline for every recorder type.
+- **Expansion-session ownership**: `tex_expand::ExpansionContext` owns the
+  discardable direct-mapped meaning-site cache and the last macro replay site
+  observed by the gullet. `tex-lex` attaches only a semantic-free
+  `(TokenListId, token index)` value to direct macro-body deliveries; it does
+  not retain expansion-site state or import/evaluate `Meaning`. Cache entries
+  remain guarded by aggregate owner identity and meaning generation, and
+  nested effect-free expansion receives a fresh cache while preserving the
+  enclosing session recorder.
 - **Status:** the implemented `tex-expand` scaffold exposes that loop over
   the non-generic `tex-lex::InputStack` and one concrete restricted
   `tex_state::ExpansionContext`, not broad `&mut Universe` and not a generic

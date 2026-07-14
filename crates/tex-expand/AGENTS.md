@@ -6,6 +6,8 @@ Read the repository-level `AGENTS.md` before editing here. This crate owns TeX's
 
 `tex-expand` implements the `get_x_token`-style expansion loop over the non-generic `tex-lex::InputStack`. Production and tests pass the same concrete `tex_state::ExpansionContext` facade over `Universe`, so scanner code is statically dispatched without specializing for multiple state implementations. It expands primitives and macros, manages conditional skipping, replays frozen token lists through the lexer stack, and provides shared scanners for integers, dimensions, glue, token lists, and expansion-derived textual values.
 
+The persistent `tex_expand::ExpansionContext` owns session-local semantic acceleration, including macro replay-site tracking and the generation-guarded meaning cache. `tex-lex` supplies only delivery-local replay metadata and never evaluates a meaning.
+
 Use this crate for behavior that is defined before stomach execution sees an unexpandable token. Expansion receives engine enquiries and job identity as plain context data and invokes an object-safe input resolver only for `\input`; font resolution belongs to the executor. The crate should not open files or perform host effects itself.
 
 ## Boundaries
@@ -37,7 +39,8 @@ Use this crate for behavior that is defined before stomach execution sees an une
 - `src/scan_int/tests.rs`: unit tests for integer scanner behavior.
 - `src/tests.rs`: crate-level tests for expansion dispatch and public expansion behavior.
 - `src/values.rs`: rendering and expansion of value-producing primitives such as `\the`, `\meaning`, and token text.
-- `tests/capability_boundaries.rs`: Compile-fail integration test enforcing scanner helper capability boundaries.
+- `tests/capability_boundaries.rs`: compile-fail integration tests enforcing scanner helper and lexer/expansion ownership boundaries.
+- `tests/ui/lexer_meaning_resolution_forbidden.rs`: compile-fail fixture proving `tex-lex::InputStack` cannot resolve meanings.
 - `tests/ui/scanner_helper_input_open_forbidden.rs`: compile-fail fixture proving scanner helpers cannot require input-opening capabilities.
 
 ## Validation

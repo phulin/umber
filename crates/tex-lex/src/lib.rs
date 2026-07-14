@@ -14,8 +14,6 @@ use std::time::{Duration, Instant};
 
 use tex_state::env::banks::TokParam;
 use tex_state::ids::{OriginListId, TokenListId};
-use tex_state::interner::Symbol;
-use tex_state::meaning::Meaning;
 use tex_state::provenance::OriginListBuilder;
 use tex_state::provenance::{
     DiagnosticSite, InsertedOriginKind, RelatedLocation, SyntheticOriginKind,
@@ -23,7 +21,7 @@ use tex_state::provenance::{
 use tex_state::source_map::{RegisteredSource, SourceDescriptor};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::token_store::TokenListBuilder;
-use tex_state::{ExpansionState, FileContent, InputRecordId, MeaningCacheGuard, WorldError};
+use tex_state::{ExpansionState, FileContent, InputRecordId, WorldError};
 
 pub use tex_state::{
     ConditionFrameSummary, ConditionFrameToken, ConditionKind, ConditionLimb, InputFrameSummary,
@@ -463,17 +461,7 @@ struct MacroLiteralSpan {
 type LiteralSpanBounds = (usize, usize);
 type LiteralSpanCache = AHashMap<(TokenListId, LiteralSpanPolicy), Arc<[LiteralSpanBounds]>>;
 
-const MEANING_SITE_CACHE_LEN: usize = 64;
 const LITERAL_SPAN_CACHE_MAX_ENTRIES: usize = 4096;
-
-#[derive(Clone, Copy, Debug)]
-struct MeaningSiteCacheEntry {
-    token_list: TokenListId,
-    token_index: usize,
-    symbol: Symbol,
-    guard: MeaningCacheGuard,
-    meaning: Meaning,
-}
 
 /// Identifies one live token-list replay frame independently of its content.
 ///
@@ -768,19 +756,50 @@ pub struct TracedExpansionToken {
     token: Token,
     origin: OriginId,
     suppress_expansion: bool,
+    macro_replay_site: Option<MacroReplaySite>,
+}
+
+/// Lexical location of a token delivered directly from immutable macro-body
+/// replay. Meaning interpretation and caching belong to `tex-expand`; this
+/// value carries only replay identity and position.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct MacroReplaySite {
+    token_list: TokenListId,
+    token_index: usize,
+}
+
+impl MacroReplaySite {
+    #[must_use]
+    pub const fn token_list(self) -> TokenListId {
+        self.token_list
+    }
+
+    #[must_use]
+    pub const fn token_index(self) -> usize {
+        self.token_index
+    }
 }
 
 impl TracedExpansionToken {
     #[must_use]
     pub fn new(token: TracedTokenWord, suppress_expansion: bool) -> Self {
-        Self::from_decoded(DecodedTracedToken::from_word(token), suppress_expansion)
+        Self::from_decoded(
+            DecodedTracedToken::from_word(token),
+            suppress_expansion,
+            None,
+        )
     }
 
-    fn from_decoded(token: DecodedTracedToken, suppress_expansion: bool) -> Self {
+    fn from_decoded(
+        token: DecodedTracedToken,
+        suppress_expansion: bool,
+        macro_replay_site: Option<MacroReplaySite>,
+    ) -> Self {
         Self {
             token: token.token,
             origin: token.origin,
             suppress_expansion,
+            macro_replay_site,
         }
     }
 
@@ -803,6 +822,11 @@ impl TracedExpansionToken {
     pub const fn suppress_expansion(self) -> bool {
         self.suppress_expansion
     }
+
+    #[must_use]
+    pub const fn macro_replay_site(self) -> Option<MacroReplaySite> {
+        self.macro_replay_site
+    }
 }
 
 /// TeX input stack for source frames and frozen token-list replay.
@@ -819,9 +843,6 @@ pub struct InputStack {
     alignment_inputs: Vec<AlignmentInput>,
     /// Derived, discardable segmentation of immutable macro token lists.
     literal_span_cache: LiteralSpanCache,
-    /// Direct-mapped, generation-guarded meanings for macro-body cs sites.
-    meaning_site_cache: Box<[Option<MeaningSiteCacheEntry>; MEANING_SITE_CACHE_LEN]>,
-    last_expansion_site: Option<(TokenListId, usize)>,
     #[cfg(feature = "profiling-stats")]
     expansion_stats: ExpansionStats,
     active_macro_invocation: OriginId,
@@ -898,8 +919,6 @@ impl InputStack {
             next_condition_token: 0,
             alignment_inputs: Vec::new(),
             literal_span_cache: AHashMap::new(),
-            meaning_site_cache: Box::new([None; MEANING_SITE_CACHE_LEN]),
-            last_expansion_site: None,
             #[cfg(feature = "profiling-stats")]
             expansion_stats: ExpansionStats::default(),
             active_macro_invocation: OriginId::UNKNOWN,
@@ -1093,8 +1112,6 @@ impl InputStack {
                 }),
             alignment_inputs: Vec::new(),
             literal_span_cache: AHashMap::new(),
-            meaning_site_cache: Box::new([None; MEANING_SITE_CACHE_LEN]),
-            last_expansion_site: None,
             #[cfg(feature = "profiling-stats")]
             expansion_stats: ExpansionStats::default(),
             active_macro_invocation,
@@ -1222,77 +1239,34 @@ impl InputStack {
         }
     }
 
-    /// Resolves a meaning, reusing a macro-body cs-site value only while the
-    /// aggregate state generation still proves it current.
     #[inline(always)]
-    pub fn resolve_expansion_meaning(
-        &mut self,
-        stores: &impl ExpansionState,
-        symbol: Symbol,
-    ) -> Meaning {
-        #[cfg(feature = "profiling-stats")]
-        let started = Instant::now();
-        let meaning = self.resolve_expansion_meaning_inner(stores, symbol);
+    pub fn record_expansion_meaning_cache_hit(&mut self) {
         #[cfg(feature = "profiling-stats")]
         {
-            add_elapsed(
-                &mut self.expansion_stats.classification_meaning_nanos,
-                started,
-            );
-            self.expansion_stats.classification_meaning_timer_samples += 1;
+            self.expansion_stats.meaning_cache_hits += 1;
         }
-        meaning
     }
 
-    fn resolve_expansion_meaning_inner(
-        &mut self,
-        stores: &impl ExpansionState,
-        symbol: Symbol,
-    ) -> Meaning {
-        let Some((token_list, token_index)) = self.last_expansion_site else {
-            self.record_expansion_meaning_lookup();
-            return stores.meaning(symbol);
-        };
-        let Some(guard) = stores.meaning_cache_guard() else {
-            self.record_expansion_meaning_lookup();
-            return stores.meaning(symbol);
-        };
-        let slot = ((token_list.raw() as usize).wrapping_mul(0x9e37_79b1) ^ token_index)
-            & (MEANING_SITE_CACHE_LEN - 1);
-        if let Some(entry) = self.meaning_site_cache[slot]
-            && entry.token_list == token_list
-            && entry.token_index == token_index
-            && entry.symbol == symbol
-            && entry.guard == guard
-        {
-            #[cfg(debug_assertions)]
-            {
-                let live_meaning = stores.meaning(symbol);
-                debug_assert_eq!(
-                    entry.meaning, live_meaning,
-                    "meaning-site cache hit disagrees with aggregate state"
-                );
-            }
-            #[cfg(feature = "profiling-stats")]
-            {
-                self.expansion_stats.meaning_cache_hits += 1;
-            }
-            return entry.meaning;
-        }
+    #[inline(always)]
+    pub fn record_expansion_meaning_cache_miss(&mut self) {
         #[cfg(feature = "profiling-stats")]
         {
             self.expansion_stats.meaning_cache_misses += 1;
         }
-        self.record_expansion_meaning_lookup();
-        let meaning = stores.meaning(symbol);
-        self.meaning_site_cache[slot] = Some(MeaningSiteCacheEntry {
-            token_list,
-            token_index,
-            symbol,
-            guard,
-            meaning,
-        });
-        meaning
+    }
+
+    #[inline(always)]
+    pub fn record_expansion_meaning_resolution_nanos(&mut self, elapsed: u64) {
+        #[cfg(feature = "profiling-stats")]
+        {
+            self.expansion_stats.classification_meaning_nanos = self
+                .expansion_stats
+                .classification_meaning_nanos
+                .saturating_add(elapsed);
+            self.expansion_stats.classification_meaning_timer_samples += 1;
+        }
+        #[cfg(not(feature = "profiling-stats"))]
+        let _ = elapsed;
     }
 
     #[must_use]
@@ -2463,14 +2437,14 @@ impl InputStack {
         stores: &mut impl ExpansionState,
     ) -> Result<Option<TracedExpansionToken>, LexError> {
         self.recently_popped_invocation = None;
-        self.last_expansion_site = None;
         loop {
             let Some(frame_index) = self.current_token_frame_index() else {
                 return Ok(None);
             };
             match &mut self.frames[frame_index] {
                 InputFrame::TokenList(token_list) => {
-                    if token_list.replay_kind == TokenListReplayKind::MacroBody
+                    let macro_replay_site = (token_list.replay_kind
+                        == TokenListReplayKind::MacroBody
                         && matches!(
                             stores.tokens(token_list.token_list).get(token_list.index),
                             Some(
@@ -2480,10 +2454,11 @@ impl InputStack {
                                         ..
                                     }
                             )
-                        )
-                    {
-                        self.last_expansion_site = Some((token_list.token_list, token_list.index));
-                    }
+                        ))
+                    .then_some(MacroReplaySite {
+                        token_list: token_list.token_list,
+                        token_index: token_list.index,
+                    });
                     #[cfg(feature = "profiling-stats")]
                     if let Some(token) = stores.tokens(token_list.token_list).get(token_list.index)
                     {
@@ -2520,10 +2495,18 @@ impl InputStack {
                             continue;
                         }
                         Some(TracedTokenReplay::Deliver(token)) => {
-                            return Ok(Some(TracedExpansionToken::from_decoded(token, false)));
+                            return Ok(Some(TracedExpansionToken::from_decoded(
+                                token,
+                                false,
+                                macro_replay_site,
+                            )));
                         }
                         Some(TracedTokenReplay::DeliverNoExpand(token)) => {
-                            return Ok(Some(TracedExpansionToken::from_decoded(token, true)));
+                            return Ok(Some(TracedExpansionToken::from_decoded(
+                                token,
+                                true,
+                                macro_replay_site,
+                            )));
                         }
                         None => {
                             let removed = self.remove_frame(frame_index);
@@ -2597,7 +2580,7 @@ impl InputStack {
                     else {
                         continue;
                     };
-                    return Ok(Some(TracedExpansionToken::from_decoded(token, false)));
+                    return Ok(Some(TracedExpansionToken::from_decoded(token, false, None)));
                 }
                 InputFrame::Condition { .. } => {
                     unreachable!("current_token_frame_index skips conditions")

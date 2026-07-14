@@ -5,8 +5,6 @@ use super::{
 };
 use tex_state::env::banks::IntParam;
 use tex_state::ids::{OriginListId, TokenListId};
-#[cfg(feature = "profiling-stats")]
-use tex_state::meaning::Meaning;
 use tex_state::provenance::{InsertedOriginKind, OriginRecord};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, ProvenanceResolver, TracedTokenList, Universe};
@@ -1336,108 +1334,6 @@ fn expansion_stats_measure_literal_runs_and_segmentation_reuse() {
     assert_eq!(stats.segmentation_cache_hits, 1);
     assert_eq!(stats.builder_appends, 6);
     assert_eq!(stats.builder_append_timer_samples, 2);
-}
-
-#[cfg(feature = "profiling-stats")]
-#[test]
-fn macro_site_meaning_cache_is_guarded_across_writes_groups_and_rollback() {
-    let mut stores = Universe::new();
-    let symbol = stores.intern("cached");
-    stores.set_meaning(symbol, Meaning::Relax);
-    let baseline = stores.snapshot();
-    let body = stores.intern_token_list(&[Token::Cs(symbol.symbol())]);
-    let mut input = InputStack::new(MemoryInput::new(""));
-    input.push_macro_body(body, MacroArguments::new());
-
-    let token = input
-        .next_traced_expansion_token(&mut stores)
-        .expect("macro replay")
-        .expect("control sequence");
-    assert_eq!(token.token(), Token::Cs(symbol.symbol()));
-    assert_eq!(
-        input.resolve_expansion_meaning(&stores, symbol.symbol()),
-        Meaning::Relax
-    );
-
-    stores.enter_group();
-    stores.set_count(0, 42);
-    let _ = stores.leave_group();
-    assert_eq!(
-        input.resolve_expansion_meaning(&stores, symbol.symbol()),
-        Meaning::Relax,
-        "a non-meaning group must retain the guarded cache entry"
-    );
-    assert_eq!(
-        input.resolve_expansion_meaning(&stores, symbol.symbol()),
-        Meaning::Relax
-    );
-
-    stores.enter_group();
-    stores.set_meaning(symbol, Meaning::Undefined);
-    assert_eq!(
-        input.resolve_expansion_meaning(&stores, symbol.symbol()),
-        Meaning::Undefined
-    );
-    let _ = stores.leave_group();
-    assert_eq!(
-        input.resolve_expansion_meaning(&stores, symbol.symbol()),
-        Meaning::Relax
-    );
-
-    stores.enter_group();
-    stores.set_meaning_global(symbol, Meaning::Undefined);
-    assert_eq!(
-        input.resolve_expansion_meaning(&stores, symbol.symbol()),
-        Meaning::Undefined
-    );
-    let _ = stores.leave_group();
-    assert_eq!(
-        input.resolve_expansion_meaning(&stores, symbol.symbol()),
-        Meaning::Undefined
-    );
-
-    stores.enter_group_with_kind(tex_state::GroupKind::Simple);
-    stores.set_meaning(symbol, Meaning::Relax);
-    assert_eq!(
-        input.resolve_expansion_meaning(&stores, symbol.symbol()),
-        Meaning::Relax
-    );
-    stores
-        .leave_group_with_kind(tex_state::GroupKind::Simple)
-        .expect("matching typed group");
-    assert_eq!(
-        input.resolve_expansion_meaning(&stores, symbol.symbol()),
-        Meaning::Undefined
-    );
-
-    stores.set_meaning(symbol, Meaning::Relax);
-    stores.rollback(&baseline);
-    assert_eq!(
-        input.resolve_expansion_meaning(&stores, symbol.symbol()),
-        Meaning::Relax
-    );
-
-    let fork = stores.clone();
-    assert_eq!(
-        input.resolve_expansion_meaning(&fork, symbol.symbol()),
-        Meaning::Relax
-    );
-
-    let stats = input.expansion_stats();
-    assert_eq!(stats.meaning_cache_hits, 2);
-    assert_eq!(stats.meaning_cache_misses, 9);
-    assert_eq!(stats.meaning_lookups, 9);
-    assert_eq!(stats.frame_step_timer_samples, 1);
-    assert_eq!(stats.provenance_timer_samples, 1);
-    assert_eq!(stats.classification_meaning_timer_samples, 11);
-    assert_eq!(
-        stats.attributed_nanos(),
-        stats
-            .frame_step_nanos
-            .saturating_add(stats.provenance_nanos)
-            .saturating_add(stats.classification_meaning_nanos)
-            .saturating_add(stats.builder_append_nanos)
-    );
 }
 
 #[test]
