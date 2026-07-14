@@ -79,6 +79,7 @@ pub(crate) struct StoreSnapshot {
     glue_mark: GlueStoreMark,
     font_mark: FontStoreMark,
     node_mark: NodeArenaMark,
+    survivor_pin_mark: usize,
     code_tables_snapshot: CodeTablesSnapshot,
     hyphenation: Arc<HyphenationTable>,
     prepared_mag: Option<i32>,
@@ -97,6 +98,7 @@ impl StoreSnapshot {
 pub(crate) struct ShipoutNodeMark {
     owner: SnapshotOwner,
     node_mark: NodeArenaMark,
+    survivor_pin_mark: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -147,6 +149,7 @@ pub struct Stores {
     fonts: FontStore,
     nodes: NodeArena,
     survivors: SurvivorArena,
+    survivor_pins: Vec<NodeListId>,
     code_tables: CodeTables,
     hyphenation: Arc<HyphenationTable>,
     prepared_mag: Option<i32>,
@@ -201,6 +204,7 @@ impl Clone for Stores {
             fonts: self.fonts.clone(),
             nodes: self.nodes.clone(),
             survivors: self.survivors.clone(),
+            survivor_pins: self.survivor_pins.clone(),
             code_tables: self.code_tables.clone(),
             hyphenation: self.hyphenation.clone(),
             prepared_mag: self.prepared_mag,
@@ -239,6 +243,7 @@ impl Stores {
             fonts: FontStore::new(),
             nodes: NodeArena::new(),
             survivors: SurvivorArena::new(),
+            survivor_pins: Vec::new(),
             code_tables: CodeTables::new(),
             hyphenation: Arc::new(HyphenationTable::new()),
             prepared_mag: None,
@@ -1369,6 +1374,14 @@ impl Stores {
         self.nodes.get(id, &self.survivors)
     }
 
+    /// Keeps a survivor root alive until its enclosing allocation scope ends.
+    #[allow(dead_code)] // Wired into register-read paths in the next phase.
+    pub fn pin_survivor(&mut self, id: NodeListId) {
+        self.assert_live_node_list(id);
+        self.survivors.inc_ref(id);
+        self.survivor_pins.push(id);
+    }
+
     /// Enters a TeX group.
     pub fn enter_group(&mut self) {
         self.code_tables.enter_group();
@@ -1687,6 +1700,7 @@ impl Stores {
             glue_mark: self.glue.watermark(),
             font_mark: self.fonts.watermark(),
             node_mark: self.nodes.watermark(),
+            survivor_pin_mark: self.survivor_pins.len(),
             code_tables_snapshot: self.code_tables.checkpoint(),
             hyphenation: self.hyphenation.clone(),
             prepared_mag: self.prepared_mag,
@@ -1700,6 +1714,7 @@ impl Stores {
         ShipoutNodeMark {
             owner: self.owner.snapshot_owner(),
             node_mark: self.nodes.watermark(),
+            survivor_pin_mark: self.survivor_pins.len(),
         }
     }
 
@@ -1710,12 +1725,18 @@ impl Stores {
             self.owner.snapshot_owner(),
             "shipout node mark belongs to a different Stores instance"
         );
+        assert!(
+            mark.survivor_pin_mark <= self.survivor_pins.len(),
+            "shipout node mark is invalidated by an enclosing survivor-pin release"
+        );
+        self.release_survivor_pins_to(mark.survivor_pin_mark);
         self.nodes.truncate_to(mark.node_mark);
     }
 
     /// Rolls all stores back to `snapshot` as one atomic tuple.
     pub(crate) fn rollback(&mut self, snapshot: &StoreSnapshot) {
         self.assert_valid_snapshot(snapshot);
+        self.release_survivor_pins_to(snapshot.survivor_pin_mark);
         self.account_rollback_box_refs(snapshot.env_snapshot);
         self.env.rollback_to(snapshot.env_snapshot);
         self.interner.truncate_to(snapshot.interner_mark);
@@ -1872,6 +1893,20 @@ impl Stores {
             snapshot.env_snapshot.journal_pos() <= self.env.current_journal_pos(),
             "Stores snapshots are invalidated by journal truncation before their checkpoint position"
         );
+        assert!(
+            snapshot.survivor_pin_mark <= self.survivor_pins.len(),
+            "Stores snapshots are invalidated by an enclosing survivor-pin release"
+        );
+    }
+
+    fn release_survivor_pins_to(&mut self, mark: usize) {
+        while self.survivor_pins.len() > mark {
+            let id = self
+                .survivor_pins
+                .pop()
+                .expect("survivor pin length was checked");
+            self.survivors.dec_ref(id);
+        }
     }
 
     #[cfg(any(test, feature = "testing", feature = "shadow"))]
@@ -1990,6 +2025,13 @@ impl Stores {
     #[must_use]
     pub fn testing_survivor_refcount(&self, id: NodeListId) -> u32 {
         self.survivors.testing_refcount(id)
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    #[allow(dead_code)] // Exposed through Universe when the retention budget lands.
+    #[must_use]
+    pub fn testing_survivor_pin_count(&self) -> usize {
+        self.survivor_pins.len()
     }
 
     #[cfg(any(test, feature = "testing"))]

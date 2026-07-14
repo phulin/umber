@@ -1442,6 +1442,99 @@ fn survivor_fork_keeps_inherited_roots_and_separates_new_roots() {
 }
 
 #[test]
+fn survivor_pin_survives_register_clear_and_group_exit() {
+    let mut stores = Stores::new();
+
+    let cleared = one_char(&mut stores, 'c');
+    stores.set_box_reg(0, cleared);
+    let cleared = stores.box_reg(0).expect("box should be stored");
+    stores.pin_survivor(cleared);
+    stores.clear_box_reg_same_level(0);
+    assert_eq!(stores.box_reg(0), None);
+    // The undo record and the pin both retain the cleared value.
+    assert_eq!(stores.testing_survivor_refcount(cleared), 2);
+
+    stores.enter_group();
+    let grouped = one_char(&mut stores, 'g');
+    stores.set_box_reg(1, grouped);
+    let grouped = stores.box_reg(1).expect("group-local box should be stored");
+    stores.pin_survivor(grouped);
+    assert_eq!(stores.leave_group(), Vec::<Token>::new());
+    assert_eq!(stores.box_reg(1), None);
+    assert_eq!(stores.testing_survivor_refcount(grouped), 1);
+    assert_eq!(stores.testing_survivor_pin_count(), 2);
+}
+
+#[test]
+fn checkpoint_rollback_releases_only_new_survivor_pins() {
+    let mut stores = Stores::new();
+    let before = one_char(&mut stores, 'b');
+    stores.set_box_reg(0, before);
+    let before = stores.box_reg(0).expect("box should be stored");
+    stores.pin_survivor(before);
+    let snapshot = stores.checkpoint();
+
+    let after = one_char(&mut stores, 'a');
+    stores.set_box_reg(1, after);
+    let after = stores.box_reg(1).expect("box should be stored");
+    stores.pin_survivor(after);
+    assert_eq!(stores.testing_survivor_pin_count(), 2);
+
+    stores.rollback(&snapshot);
+    assert_eq!(stores.testing_survivor_pin_count(), 1);
+    assert_eq!(stores.testing_survivor_refcount(before), 2);
+    assert!(!stores.survivors.contains(after));
+}
+
+#[test]
+fn shipout_release_drops_only_shipout_scoped_survivor_pins() {
+    let mut stores = Stores::new();
+    let before = one_char(&mut stores, 'b');
+    stores.set_box_reg(0, before);
+    let before = stores.box_reg(0).expect("box should be stored");
+    stores.pin_survivor(before);
+    let mark = stores.shipout_node_mark();
+
+    let during = one_char(&mut stores, 'd');
+    stores.set_box_reg(1, during);
+    let during = stores.box_reg(1).expect("box should be stored");
+    stores.pin_survivor(during);
+    stores.release_shipout_nodes(mark);
+
+    assert_eq!(stores.testing_survivor_pin_count(), 1);
+    assert_eq!(stores.testing_survivor_refcount(before), 2);
+    assert_eq!(stores.testing_survivor_refcount(during), 1);
+}
+
+#[test]
+fn survivor_pin_marks_follow_interleaved_snapshot_and_shipout_ordering() {
+    let mut stores = Stores::new();
+    let root = one_char(&mut stores, 'x');
+    stores.set_box_reg(0, root);
+    let root = stores.box_reg(0).expect("box should be stored");
+
+    let snapshot = stores.checkpoint();
+    stores.pin_survivor(root);
+    let shipout = stores.shipout_node_mark();
+    stores.pin_survivor(root);
+    stores.release_shipout_nodes(shipout);
+    assert_eq!(stores.testing_survivor_pin_count(), 1);
+    stores.rollback(&snapshot);
+    assert_eq!(stores.testing_survivor_pin_count(), 0);
+    assert_eq!(stores.testing_survivor_refcount(root), 1);
+
+    let shipout = stores.shipout_node_mark();
+    stores.pin_survivor(root);
+    let snapshot = stores.checkpoint();
+    stores.pin_survivor(root);
+    stores.rollback(&snapshot);
+    assert_eq!(stores.testing_survivor_pin_count(), 1);
+    stores.release_shipout_nodes(shipout);
+    assert_eq!(stores.testing_survivor_pin_count(), 0);
+    assert_eq!(stores.testing_survivor_refcount(root), 1);
+}
+
+#[test]
 fn released_survivor_key_stays_stale_when_its_storage_is_recycled() {
     let mut stores = Stores::new();
     let old_epoch = one_char(&mut stores, 'o');
