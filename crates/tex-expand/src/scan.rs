@@ -279,12 +279,20 @@ where
     let mut pending_parameter = false;
 
     loop {
-        if input.append_macro_literal_span(
-            stores,
-            &mut builder,
-            &mut origins,
-            LiteralSpanPolicy::ExpandedReplacement,
-        ) > 0
+        // Literal spans are safe only while the scanner has no interpretation
+        // pending from a previously delivered token. In particular, a
+        // parameter character can arrive per-token at the end of one replay
+        // segment while its digit arrives from a macro-argument span. The
+        // digit must still be interpreted as Param(n), not copied literally.
+        // `brace_level` needs no separate gate: begin/end-group tokens are
+        // excluded by ExpandedReplacement's lexical span policy.
+        if !pending_parameter
+            && input.append_macro_literal_span(
+                stores,
+                &mut builder,
+                &mut origins,
+                LiteralSpanPolicy::ExpandedReplacement,
+            ) > 0
         {
             continue;
         }

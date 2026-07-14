@@ -1,6 +1,7 @@
-use super::{scan_toks, scan_toks_expanded, scan_toks_expanded_with_driver};
+use super::{ScanToksError, scan_toks, scan_toks_expanded, scan_toks_expanded_with_driver};
 use tex_lex::{InputStack, MemoryInput};
 use tex_state::Universe;
+use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::MeaningFlags;
 use tex_state::provenance::OriginRecord;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
@@ -26,6 +27,16 @@ fn scan(input: &str) -> (Universe, Vec<Token>, Vec<Token>) {
 
 fn char_token(ch: char, cat: Catcode) -> Token {
     Token::Char { ch, cat }
+}
+
+fn install_passthrough_macro(stores: &mut Universe, name: &str) {
+    let parameter = stores.intern_token_list(&[Token::param(1)]);
+    let replacement = stores.intern_token_list(&[Token::param(1)]);
+    let symbol = stores.intern(name);
+    stores.set_macro_meaning(
+        symbol,
+        MacroMeaning::new(MeaningFlags::EMPTY, parameter, replacement),
+    );
 }
 
 #[test]
@@ -227,6 +238,82 @@ fn ordinary_expanded_replacement_avoids_back_input() {
 
     assert_eq!(stores.tokens(scanned.replacement_text()).len(), 26);
     assert_eq!(crate::back_input_call_count(), 0);
+}
+
+#[test]
+fn expanded_definition_interprets_parameter_references_from_macro_argument_replay() {
+    let mut stores = Universe::new();
+    install_passthrough_macro(&mut stores, "passthrough");
+    let mut input = InputStack::new(MemoryInput::new(
+        "#1#2#3#4#5#6#7#8#9{\\passthrough{#1#2#3#4#5#6#7#8#9}}",
+    ));
+    let context =
+        TracedTokenWord::pack(Token::Cs(stores.intern("xdef").symbol()), OriginId::UNKNOWN);
+
+    let scanned = scan_toks_expanded_with_driver(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        MeaningFlags::EMPTY,
+        context,
+        &mut ExpansionContext::new("texput"),
+    )
+    .expect("macro-argument replay should retain parameter semantics");
+
+    assert_eq!(
+        stores.tokens(scanned.replacement_text()),
+        &(1_u8..=9).map(Token::param).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn expanded_definition_interprets_doubled_parameter_from_macro_argument_replay() {
+    let mut stores = Universe::new();
+    install_passthrough_macro(&mut stores, "passthrough");
+    let mut input = InputStack::new(MemoryInput::new("{\\passthrough{##}}"));
+    let context =
+        TracedTokenWord::pack(Token::Cs(stores.intern("xdef").symbol()), OriginId::UNKNOWN);
+
+    let scanned = scan_toks_expanded_with_driver(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        MeaningFlags::EMPTY,
+        context,
+        &mut ExpansionContext::new("texput"),
+    )
+    .expect("doubled parameter should survive macro-argument replay");
+
+    assert_eq!(
+        stores.tokens(scanned.replacement_text()),
+        &[char_token('#', Catcode::Parameter)]
+    );
+}
+
+#[test]
+fn expanded_definition_rejects_invalid_parameter_from_macro_argument_replay() {
+    let mut stores = Universe::new();
+    install_passthrough_macro(&mut stores, "passthrough");
+    let mut input = InputStack::new(MemoryInput::new("{\\passthrough{#x}}"));
+    let context =
+        TracedTokenWord::pack(Token::Cs(stores.intern("xdef").symbol()), OriginId::UNKNOWN);
+
+    let error = scan_toks_expanded_with_driver(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        MeaningFlags::EMPTY,
+        context,
+        &mut ExpansionContext::new("texput"),
+    )
+    .expect_err("invalid parameter follower must not be swallowed by a literal span");
+
+    let ScanToksError::InvalidParameterTokenInReplacementText { context } = error else {
+        panic!("unexpected error: {error}");
+    };
+    assert_eq!(
+        context.token(),
+        Some(char_token('x', Catcode::Letter)),
+        "the diagnostic must retain the offending replayed token"
+    );
+    assert_ne!(context.origin(), OriginId::UNKNOWN);
 }
 
 #[test]
