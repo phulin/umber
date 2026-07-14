@@ -257,7 +257,7 @@ fn successful_pretolerance_does_not_allocate_hyphenation_nodes() {
     };
     let nodes_before = stores.testing_epoch_node_count();
 
-    let _ = crate::assignments::test_break_hlist(&mut stores, &nodes, params);
+    let _ = crate::assignments::test_break_hlist(&mut stores, nodes, params);
 
     assert_eq!(stores.testing_epoch_node_count(), nodes_before);
 }

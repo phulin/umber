@@ -7,7 +7,7 @@ use tex_typeset::PackSpec;
 use tex_typeset::linebreak::{
     LineBreakParams, LineBreakResult, LineDimensions, LineShape, LineShapeEntry,
     ParagraphShape as TypesetParagraphShape, PostLineBreakParams, line_break_hyphenated,
-    post_line_break, try_line_break_without_hyphenation,
+    post_line_break_owned, try_line_break_without_hyphenation,
 };
 
 use super::boxes::hpack_with_overfull_rule;
@@ -233,7 +233,7 @@ fn break_current_paragraph(
     let level = nest.pop()?;
     let hlist = crate::math::finish_math_lists(stores, level.list().nodes(), true);
     let line_params = line_break_params(stores, &params);
-    let mut decisions = break_hlist(stores, &hlist, line_params);
+    let mut decisions = break_hlist(stores, hlist, line_params);
     if let Some(spec) = decisions.last_line_fill {
         let spec = stores.intern_glue(spec);
         if let Some(Node::Glue { spec: par_fill, .. }) =
@@ -259,7 +259,8 @@ fn break_current_paragraph(
     );
     let mut line_count = 0i32;
     let mut last_line = None;
-    for mut broken in post_line_break(stores, &decisions.nodes, &decisions.breaks, post_params) {
+    for mut broken in post_line_break_owned(stores, decisions.nodes, &decisions.breaks, post_params)
+    {
         line_count += 1;
         let migrated = extract_migrating_material(stores, &mut broken.nodes);
         let list = stores.freeze_node_list(&broken.nodes);
@@ -287,14 +288,14 @@ fn break_current_paragraph(
 
 pub(crate) fn break_hlist(
     stores: &mut Universe,
-    hlist: &[Node],
+    hlist: Vec<Node>,
     line_params: LineBreakParams,
 ) -> LineBreakResult {
-    if let Some(first) = try_line_break_without_hyphenation(stores, hlist, &line_params) {
-        first
+    if let Some(first) = try_line_break_without_hyphenation(stores, &hlist, &line_params) {
+        first.with_nodes(hlist)
     } else {
-        let hyphenated = super::hyphenation::hyphenated_hlist(stores, hlist);
-        line_break_hyphenated(stores, &hyphenated, &line_params)
+        let hyphenated = super::hyphenation::hyphenated_hlist(stores, &hlist);
+        line_break_hyphenated(stores, &hyphenated, &line_params).with_nodes(hyphenated)
     }
 }
 

@@ -142,6 +142,18 @@ pub struct LineBreakResult {
     pub last_line_fill: Option<GlueSpec>,
 }
 
+/// The result of choosing line breaks, independent of paragraph ownership.
+///
+/// Keeping the plan separate lets execution move the selected original or
+/// hyphenated node list into post-line-breaking instead of cloning it while
+/// reconstructing the winning route.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BreakPlan {
+    pub breaks: Vec<BreakDecision>,
+    pub demerits: i32,
+    pub last_line_fill: Option<GlueSpec>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct BrokenLine {
     pub nodes: Vec<Node>,
@@ -173,12 +185,23 @@ where
     S: TypesetState,
     H: HyphenationHook<S>,
 {
-    if let Some(result) = try_line_break_without_hyphenation(state, nodes, &params) {
-        return result;
+    if let Some(plan) = try_line_break_without_hyphenation(state, nodes, &params) {
+        return plan.with_nodes(nodes.to_vec());
     }
 
     let hyphenated = hyphenation.hyphenate(nodes);
-    line_break_hyphenated(state, &hyphenated, &params)
+    line_break_hyphenated(state, &hyphenated, &params).with_nodes(hyphenated)
+}
+
+impl BreakPlan {
+    pub fn with_nodes(self, nodes: Vec<Node>) -> LineBreakResult {
+        LineBreakResult {
+            breaks: self.breaks,
+            demerits: self.demerits,
+            nodes,
+            last_line_fill: self.last_line_fill,
+        }
+    }
 }
 
 /// Tries TeX82's pretolerance pass without requesting automatic hyphenation.
@@ -189,7 +212,7 @@ pub fn try_line_break_without_hyphenation<S: TypesetState>(
     state: &S,
     nodes: &[Node],
     params: &LineBreakParams,
-) -> Option<LineBreakResult> {
+) -> Option<BreakPlan> {
     (params.pretolerance >= 0)
         .then(|| run_pass(state, nodes, params, params.pretolerance, false, false))
         .flatten()
@@ -200,7 +223,7 @@ pub fn line_break_hyphenated<S: TypesetState>(
     state: &S,
     nodes: &[Node],
     params: &LineBreakParams,
-) -> LineBreakResult {
+) -> BreakPlan {
     let second = run_pass(
         state,
         nodes,
@@ -220,7 +243,7 @@ pub fn line_break_hyphenated<S: TypesetState>(
 mod post;
 mod widths;
 
-pub use post::post_line_break;
+pub use post::{post_line_break, post_line_break_owned};
 
 use widths::{PrefixWidths, Widths, line_badness, line_widths_view};
 
@@ -317,16 +340,15 @@ fn run_pass<S: TypesetState>(
     tolerance: i32,
     emergency: bool,
     final_pass: bool,
-) -> Option<LineBreakResult> {
+) -> Option<BreakPlan> {
     let prefix = PrefixWidths::new(state, nodes);
     let mut background = Widths::from_glue(params.left_skip);
     background.add_assign(Widths::from_glue(params.right_skip));
     let breakpoints = legal_breakpoints(state, nodes, params);
     if breakpoints.is_empty() {
-        return Some(LineBreakResult {
+        return Some(BreakPlan {
             breaks: Vec::new(),
             demerits: 0,
-            nodes: nodes.to_vec(),
             last_line_fill: None,
         });
     }
@@ -838,7 +860,7 @@ fn reconstruct(
     candidates: &[Candidate],
     mut id: usize,
     last_line_fit: LastLineFit,
-) -> LineBreakResult {
+) -> BreakPlan {
     let mut breaks = Vec::new();
     let demerits = candidates[id].demerits.min(AWFUL_BAD);
     let last_line_fill = last_line_fit.adjusted_fill(&candidates[id]);
@@ -851,10 +873,9 @@ fn reconstruct(
         id = prev;
     }
     breaks.reverse();
-    LineBreakResult {
+    BreakPlan {
         breaks,
         demerits,
-        nodes: nodes.to_vec(),
         last_line_fill,
     }
 }

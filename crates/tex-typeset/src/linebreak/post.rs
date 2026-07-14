@@ -11,8 +11,23 @@ pub fn post_line_break<S: TypesetState>(
     breaks: &[BreakDecision],
     params: PostLineBreakParams,
 ) -> Vec<BrokenLine> {
+    post_line_break_owned(state, nodes.to_vec(), breaks, params)
+}
+
+/// Materializes broken lines by moving nodes out of an owned paragraph.
+///
+/// The borrowed convenience entry point above remains useful to pure callers,
+/// while execution can use this path to avoid cloning the entire paragraph a
+/// second time after line breaking.
+pub fn post_line_break_owned<S: TypesetState>(
+    state: &S,
+    nodes: Vec<Node>,
+    breaks: &[BreakDecision],
+    params: PostLineBreakParams,
+) -> Vec<BrokenLine> {
     let mut lines = Vec::new();
-    let mut start = 0usize;
+    let node_count = nodes.len();
+    let mut nodes = nodes.into_iter().enumerate().peekable();
     let mut pending_post = Vec::new();
     for (line_no, decision) in breaks.iter().enumerate() {
         let mut line = Vec::new();
@@ -25,8 +40,16 @@ pub fn post_line_break<S: TypesetState>(
             });
         }
         line.append(&mut pending_post);
-        let post = push_line_segment(state, nodes, start, decision, params.empty_list, &mut line);
-        pending_post = post;
+        let end = decision.position.min(node_count);
+        pending_post = push_owned_line_segment(
+            state,
+            &mut nodes,
+            end,
+            node_count,
+            decision,
+            params.empty_list,
+            &mut line,
+        );
         line.push(Node::Glue {
             spec: params.right_skip,
             kind: GlueKind::RightSkip,
@@ -40,33 +63,35 @@ pub fn post_line_break<S: TypesetState>(
             hyphenated: decision.hyphenated,
             dimensions,
         });
-        start = next_start(nodes, decision.position);
+        while matches!(nodes.peek(), Some((_, node)) if is_discardable(node)) {
+            let _ = nodes.next();
+        }
     }
     lines
 }
 
-fn push_line_segment<S: TypesetState>(
+fn push_owned_line_segment<S: TypesetState>(
     state: &S,
-    nodes: &[Node],
-    start: usize,
+    nodes: &mut std::iter::Peekable<impl Iterator<Item = (usize, Node)>>,
+    end: usize,
+    node_count: usize,
     decision: &BreakDecision,
     empty_list: tex_state::ids::NodeListId,
     out: &mut Vec<Node>,
 ) -> Vec<Node> {
-    let end = decision.position.min(nodes.len());
     let mut post = Vec::new();
-    for (offset, node) in nodes[start..end].iter().enumerate() {
-        let absolute = start + offset;
+    while matches!(nodes.peek(), Some((index, _)) if *index < end) {
+        let (absolute, node) = nodes.next().expect("peeked paragraph node exists");
         match node {
             Node::Disc {
                 pre,
                 post: post_list,
                 ..
             } if decision.hyphenated && absolute + 1 == end => {
-                out.extend(state.nodes(*pre).into_iter().map(|node| node.to_owned()));
+                out.extend(state.nodes(pre).into_iter().map(|node| node.to_owned()));
                 post.extend(
                     state
-                        .nodes(*post_list)
+                        .nodes(post_list)
                         .into_iter()
                         .map(|node| node.to_owned()),
                 );
@@ -77,38 +102,22 @@ fn push_line_segment<S: TypesetState>(
                 post,
                 replace,
             } => {
-                // TeX's discretionary replacement nodes follow the disc in
-                // the horizontal list. Once line breaking has materialized
-                // them, the retained disc has a zero replacement count.
                 out.push(Node::Disc {
-                    kind: *kind,
-                    pre: *pre,
-                    post: *post,
+                    kind,
+                    pre,
+                    post,
                     replace: empty_list,
                 });
-                out.extend(
-                    state
-                        .nodes(*replace)
-                        .into_iter()
-                        .map(|node| node.to_owned()),
-                );
+                out.extend(state.nodes(replace).into_iter().map(|node| node.to_owned()));
             }
-            Node::Glue { .. } if absolute + 1 == end && end < nodes.len() => {}
-            Node::MathOff(_) if absolute + 1 == end && end < nodes.len() => {
+            Node::Glue { .. } if absolute + 1 == end && end < node_count => {}
+            Node::MathOff(_) if absolute + 1 == end && end < node_count => {
                 out.push(Node::MathOff(tex_state::scaled::Scaled::from_raw(0)));
             }
-            _ => out.push(node.clone()),
+            node => out.push(node),
         }
     }
     post
-}
-
-fn next_start(nodes: &[Node], position: usize) -> usize {
-    let mut start = position.min(nodes.len());
-    while start < nodes.len() && is_discardable(&nodes[start]) {
-        start += 1;
-    }
-    start
 }
 
 pub(super) fn line_penalty_after(
