@@ -211,6 +211,7 @@ fn page(root: PageNode) -> crate::PageArtifact {
             tfm_checksum: 0,
             design_size: sp(655_360),
             at_size: sp(655_360),
+            opentype: None,
         }],
         counts: [0; 10],
         root,

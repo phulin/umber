@@ -15,8 +15,8 @@ use tex_expand::InputResolver;
 use tex_lex::{InputSource, InputStack, MemoryInput, WorldInput};
 use tex_out::dvi::{DviError, DviPagePlan, DviStreamWriter};
 use tex_state::{
-    CommittedArtifact, ContentHash, EffectRecord, FileContent, GenerationForkError,
-    GenerationSubstrate, InputReadState, Universe, WorldError,
+    CommittedArtifact, ContentHash, EffectRecord, GenerationForkError, GenerationSubstrate,
+    InputReadState, Universe, WorldError,
 };
 
 /// Monotonic identity of an immutable editor buffer.
@@ -705,9 +705,13 @@ impl tex_exec::FontResolver for DirectFontResolver {
         input: &mut dyn InputReadState,
         path: &Path,
         _request_index: u64,
-    ) -> Result<FileContent, String> {
+    ) -> Result<tex_exec::FontSource, String> {
         input
             .read_input_file(path)
+            .map(|metrics| tex_exec::FontSource {
+                metrics,
+                opentype: None,
+            })
             .map_err(|error| error.to_string())
     }
 }

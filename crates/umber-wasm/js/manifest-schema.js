@@ -45,6 +45,7 @@ export function validateManifest(value) {
 	}
 
 	const files = Object.create(null);
+	const fonts = Object.create(null);
 	const formats = Object.create(null);
 	const hashLengths = new Map();
 	const pathObjects = new Map();
@@ -73,6 +74,27 @@ export function validateManifest(value) {
 			...entry,
 			dependencies: Object.freeze([...dependencies]),
 		});
+	}
+	const manifestFonts = value.fonts ?? {};
+	if (!isRecord(manifestFonts)) {
+		throw invalidManifest("fonts must be an object");
+	}
+	for (const [logicalName, entry] of Object.entries(manifestFonts)) {
+		if (
+			logicalName.length === 0 ||
+			[...logicalName].some((character) => /\p{Cc}/u.test(character)) ||
+			!isRecord(entry)
+		) {
+			throw invalidManifest(`invalid font entry for ${logicalName}`);
+		}
+		validateObjectEntry(entry, `font ${logicalName}`, hashLengths);
+		if (
+			entry.container !== "woff2" ||
+			(entry.provenance !== undefined && typeof entry.provenance !== "string")
+		) {
+			throw invalidManifest(`invalid font metadata for ${logicalName}`);
+		}
+		fonts[logicalName] = Object.freeze({ ...entry });
 	}
 
 	const manifestFormats = value.formats ?? {};
@@ -114,6 +136,7 @@ export function validateManifest(value) {
 		distribution: value.distribution,
 		objectsBaseUrl,
 		files: Object.freeze(files),
+		fonts: Object.freeze(fonts),
 		formats: Object.freeze(formats),
 	});
 }

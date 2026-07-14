@@ -747,6 +747,7 @@ fn font_resource(font_id: u32, name: &str) -> FontResource {
         tfm_checksum: 0x1234_5678,
         design_size: sp(655_360),
         at_size: sp(655_360),
+        opentype: None,
     }
 }
 

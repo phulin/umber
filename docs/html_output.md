@@ -1,6 +1,6 @@
 # Coordinate-Identical HTML Output
 
-Status: implementation contract for artifact schema 12 and HTML schema 1.
+Status: implementation contract for artifact schema 13 and HTML schema 1.
 
 HTML is a downstream view of committed `PageArtifact` values. It is not a page
 builder and never observes `Universe`, node handles, or mutable font state. DVI
@@ -100,8 +100,12 @@ bidirectional reconstruction is outside this schema.
 
 ## Font and asset contract
 
-A `FontResource` from the artifact is only TeX metric identity. A downstream
-`HtmlFontResolver` must bind it to exactly one `WebFont` containing:
+Artifact schema 13 records the selected OpenType program, transport-object,
+and instance identities beside the classic TeX metric identity. A downstream
+`HtmlFontResolver` is only an asset-access adapter: host-neutral sessions bind
+it to the already validated and retained resource rather than performing a
+second acquisition. Legacy native TFM-only artifacts may still use an explicit
+driver binding during migration. The resulting `WebFont` contains:
 
 - the TeX font name, TFM content hash/checksum, design and selected sizes;
 - WOFF2 bytes and their SHA-256 content identity;
@@ -109,8 +113,10 @@ A `FontResource` from the artifact is only TeX metric identity. A downstream
 - a redistribution/provenance string and an affirmative embed license; and
 - fixed OpenType feature and variation settings.
 
-Bindings are keyed by the complete TeX identity, not by basename. Duplicate,
-missing, corrupt, unlicensed, or incomplete bindings are typed failures.
+Bindings are keyed by the complete TeX and OpenType identities, not by
+basename. Duplicate, missing, corrupt, unlicensed, or incomplete bindings are
+typed failures. The content-derived CSS family uses program identity, while
+manifest paths use exact object identity.
 Before serialization, the driver bounds and fully decodes each WOFF2, parses
 its SFNT tables, and requires a cmap glyph for every scalar in every declared
 code mapping; a matching caller-supplied digest alone is not accepted.
@@ -128,8 +134,9 @@ OML/OMS/OMX faces and maps without changing engine state or the artifact.
 The repository does not silently convert a host TeX installation or infer an
 encoding from a font name. Native callers may load a verified bundle from a
 configured path; WASM callers provide the same content-addressed bundle through
-the session cache. Font delivery remains driver input and never enters engine
-state or artifact identity.
+the session cache. Client distribution policy remains outside engine state,
+while validated selection identities enter the immutable loaded-font record
+and committed artifact at `\font` load and shipout respectively.
 
 ## Page, accessibility, and printing
 

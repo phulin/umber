@@ -810,6 +810,7 @@ dependencies = [
  "sha2",
  "tex-arith",
  "tex-content",
+ "tex-fonts",
  "ttf-parser",
  "woff2-patched",
 ]

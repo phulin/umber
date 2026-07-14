@@ -1,4 +1,5 @@
 import type { PersistentObjectCache } from "./persistent-cache.js";
+import type { ResourceRequest, ResourceResponse } from "./umber_wasm.js";
 
 export type FileKind = "tex" | "tfm";
 
@@ -50,6 +51,14 @@ export interface ManifestFormat {
 	sourceDateEpoch: number;
 }
 
+export interface ManifestFont {
+	object: string;
+	sha256: string;
+	bytes: number;
+	container: "woff2";
+	provenance?: string;
+}
+
 export interface FormatCompatibility {
 	engineVersion?: string;
 	formatSchema?: number;
@@ -60,6 +69,7 @@ export interface TexLiveManifest {
 	distribution: string;
 	objectsBaseUrl: string;
 	files: Readonly<Record<string, ManifestFile>>;
+	fonts?: Readonly<Record<string, ManifestFont>>;
 	formats?: Readonly<Record<string, ManifestFormat>>;
 }
 
@@ -77,9 +87,9 @@ export class HttpManifestResolver {
 	);
 	readonly manifest: TexLiveManifest;
 	resolve(
-		requests: readonly FileRequest[],
+		requests: readonly ResourceRequest[],
 		options?: AbortSignal | { signal?: AbortSignal },
-	): Promise<readonly ResolvedDownload[]>;
+	): Promise<readonly (ResolvedDownload | ResourceResponse)[]>;
 	resolveFormat(
 		name: string,
 		compatibility?: FormatCompatibility,

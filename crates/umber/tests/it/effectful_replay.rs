@@ -356,7 +356,7 @@ impl FontResolver for RejectingFontResolver {
         _input: &mut dyn tex_state::InputReadState,
         path: &std::path::Path,
         _request_index: u64,
-    ) -> Result<tex_state::FileContent, String> {
+    ) -> Result<tex_exec::FontSource, String> {
         Err(format!("unexpected font request {}", path.display()))
     }
 }

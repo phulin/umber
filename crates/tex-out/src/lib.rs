@@ -45,7 +45,7 @@ pub use binary::{
 pub use model::{
     ArtifactValidationError, ArtifactValidationLimits, BoxNode, DEFAULT_BANNER, DiscKind,
     EffectSink, FontResource, GlueKind, GlueOrder, GlueSetRatio, GlueSign, GlueSpec, JobInfo,
-    KernKind, LeaderPayload, PageArtifact, PageArtifactBuilder, PageEffect, PageNode, PageToken,
-    TokenCatcode, UnvalidatedPageArtifact,
+    KernKind, LeaderPayload, OpenTypeFontResource, PageArtifact, PageArtifactBuilder, PageEffect,
+    PageNode, PageToken, TokenCatcode, UnvalidatedPageArtifact,
 };
 pub use tex_content::{ContentDomain, ContentHash, ContentIdentity};

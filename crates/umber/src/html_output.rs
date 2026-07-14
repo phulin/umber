@@ -166,6 +166,7 @@ mod tests {
             tfm_checksum: 0,
             design_size: Scaled::from_raw(1),
             at_size: Scaled::from_raw(1),
+            opentype: None,
         };
         let web = DirectoryHtmlFontResolver::new(root, &mut world)
             .resolve(&font)

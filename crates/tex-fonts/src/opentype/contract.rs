@@ -297,6 +297,11 @@ pub struct FontInstanceIdentity([u8; 32]);
 
 impl FontInstanceIdentity {
     #[must_use]
+    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    #[must_use]
     pub fn new(
         program: FontProgramIdentity,
         face_index: u32,

@@ -6,7 +6,7 @@ use parity_harness::{compare_dvi_files, run_named_fixture_document};
 use tex_exec::{ExecutionContext, FontResolver};
 use tex_expand::InputResolver;
 use tex_lex::{InputStack, WorldInput};
-use tex_state::{FileContent, InputReadState, JobClock, Universe, World};
+use tex_state::{InputReadState, JobClock, Universe, World};
 
 use umber::{EngineSession, dvi_from_page_plans, prepare_etex_run_stores, prepare_run_stores};
 
@@ -71,13 +71,17 @@ impl FontResolver for InProcessFontResolver {
         input: &mut dyn InputReadState,
         path: &Path,
         _request_index: u64,
-    ) -> Result<FileContent, String> {
+    ) -> Result<tex_exec::FontSource, String> {
         let mut path = path.to_owned();
         if path.extension().is_none() {
             path.set_extension("tfm");
         }
         input
             .read_input_file(&self.base_dir.join(path))
+            .map(|metrics| tex_exec::FontSource {
+                metrics,
+                opentype: None,
+            })
             .map_err(|error| error.to_string())
     }
 }

@@ -38,12 +38,24 @@ function formatEntry(bytes) {
 	};
 }
 
+function fontEntry(bytes) {
+	const sha256 = digest(bytes);
+	return {
+		object: `sha256-${sha256}`,
+		sha256,
+		bytes: bytes.byteLength,
+		container: "woff2",
+		provenance: "fixture license",
+	};
+}
+
 function fixture() {
 	const bytes = {
 		plain: new TextEncoder().encode("plain"),
 		cmr: new TextEncoder().encode("cmr"),
 		alias: new TextEncoder().encode("plain"),
 		badHint: new TextEncoder().encode("hint"),
+		font: new Uint8Array([0x77, 0x4f, 0x46, 0x32]),
 		format: new Uint8Array([0, 1, 0, 2]),
 	};
 	const files = {
@@ -61,6 +73,7 @@ function fixture() {
 			distribution: "texlive-fixture",
 			objectsBaseUrl: "https://cdn.example.test/objects/",
 			files,
+			fonts: { cmr10: fontEntry(bytes.font) },
 			formats: { plain: formatEntry(bytes.format) },
 		},
 		bytes,
@@ -99,15 +112,19 @@ test("fetches concurrently, deduplicates hashes, and binds every lookup key", as
 		crypto: webcrypto,
 		concurrency: 2,
 	});
-	const downloads = await resolver.resolve([
-		{ kind: "tex", name: "plain.tex" },
-		{ kind: "tex", name: "alias.tex" },
-		{ kind: "tfm", name: "cmr10.tfm" },
-		{ kind: "tex", name: "plain.tex" },
-	]);
+	const downloads = await resolver.resolve(
+		[
+			{ kind: "tex", name: "plain.tex" },
+			{ kind: "tex", name: "alias.tex" },
+			{ kind: "tfm", name: "cmr10.tfm" },
+			{ kind: "tex", name: "plain.tex" },
+		],
+		{ signal: undefined, prefetchHints: [] },
+	);
 
 	assert.equal(maximum, 2);
 	assert.equal(calls.length, 2, "plain and alias share one content hash");
+	assert.ok(calls.every(({ options }) => options.signal === undefined));
 	assert.deepEqual(
 		downloads.map(({ request }) => request),
 		[
@@ -117,6 +134,37 @@ test("fetches concurrently, deduplicates hashes, and binds every lookup key", as
 		],
 	);
 	assert.equal(downloads[0].bytes, downloads[1].bytes);
+});
+
+test("resolves an explicit application-manifest font binding", async () => {
+	const { manifest, bytes } = fixture();
+	const resolver = new HttpManifestResolver(manifest, {
+		async fetch() {
+			return response(bytes.font);
+		},
+		crypto: webcrypto,
+	});
+	const request = {
+		type: "font",
+		logicalName: "cmr10",
+		faceIndex: 0,
+		variations: [],
+		features: [
+			{ tag: "kern", enabled: true },
+			{ tag: "liga", enabled: true },
+		],
+		acceptedContainers: ["woff2"],
+		purposes: ["layout", "html"],
+	};
+
+	const [resolved] = await resolver.resolve([request]);
+
+	assert.deepEqual(resolved.bytes, bytes.font);
+	assert.equal(resolved.type, "font");
+	assert.equal(resolved.logicalName, "cmr10");
+	assert.equal(resolved.container, "woff2");
+	assert.equal(resolved.objectSha256, digest(bytes.font));
+	assert.equal(resolved.provenance, "fixture license");
 });
 
 test("downloads a compatible named format through the verified object cache", async () => {

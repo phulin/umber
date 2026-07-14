@@ -621,6 +621,12 @@ fn font_resource_id(stores: &Universe, font: FontId, emission: &mut EmissionStat
         tfm_checksum: loaded.checksum(),
         design_size: loaded.design_size(),
         at_size: loaded.size(),
+        opentype: loaded.opentype().map(|font| tex_out::OpenTypeFontResource {
+            program_identity: font.program_identity,
+            object_identity: font.object_identity,
+            instance_identity: font.instance_identity,
+            container: font.container,
+        }),
     });
     emission.font_slots[slot] = Some(id);
     id

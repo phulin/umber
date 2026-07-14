@@ -118,12 +118,18 @@ impl crate::FontResolver for WorldFontResolver {
         input: &mut dyn tex_state::InputReadState,
         path: &std::path::Path,
         _request_index: u64,
-    ) -> Result<tex_state::FileContent, String> {
+    ) -> Result<crate::FontSource, String> {
         let path = self
             .root
             .as_ref()
             .map_or_else(|| path.to_owned(), |root| root.join(path));
-        input.read_input_file(&path).map_err(|err| err.to_string())
+        input
+            .read_input_file(&path)
+            .map(|metrics| crate::FontSource {
+                metrics,
+                opentype: None,
+            })
+            .map_err(|err| err.to_string())
     }
 }
 

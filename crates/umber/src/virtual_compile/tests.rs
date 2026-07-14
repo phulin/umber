@@ -383,7 +383,6 @@ fn invalid_mixed_batch_publishes_nothing() {
 
 #[test]
 fn requested_html_and_dvi_share_one_committed_compile() {
-    use sha2::{Digest, Sha256};
     let mut session = VirtualCompileSession::new(SessionOptions {
         html: true,
         ..SessionOptions::default()
@@ -395,20 +394,6 @@ fn requested_html_and_dvi_share_one_committed_compile() {
             b"\\font\\tenrm=cmr10\\relax \\tenrm \\shipout\\hbox{A}\\end".to_vec(),
         )
         .expect("main source");
-    let woff2 = include_bytes!("../../../umber-wasm/assets/cmu-serif-500-roman.woff2").to_vec();
-    let mut encoding = vec![None; 256];
-    encoding[usize::from(b'A')] = Some("A".to_owned());
-    session
-        .add_html_font(SessionWebFont {
-            name: "cmr10".to_owned(),
-            tfm_content_hash_hex: tex_state::ContentHash::from_bytes(CMR10).hex(),
-            sha256: Sha256::digest(&woff2).into(),
-            woff2,
-            encoding,
-            provenance: "test embedding license".to_owned(),
-            embeddable: true,
-        })
-        .expect("HTML font");
     let missing = resources(session.compile_attempt());
     let file = missing
         .iter()

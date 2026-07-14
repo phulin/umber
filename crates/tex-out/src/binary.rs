@@ -7,7 +7,8 @@ use std::fmt;
 use tex_arith::Scaled;
 
 const MAGIC: &[u8; 4] = b"UMPG";
-const VERSION: u8 = 12;
+const VERSION: u8 = 13;
+const LEGACY_VERSION: u8 = 12;
 
 mod wire {
     pub mod node {
@@ -225,14 +226,14 @@ pub(crate) fn from_bytes(
     };
     reader.expect_magic()?;
     let version = reader.u8()?;
-    if version != VERSION {
+    if version != VERSION && version != LEGACY_VERSION {
         return Err(ParseError::UnsupportedVersion(version));
     }
     let mag = reader.i32()?;
     let banner = reader.str()?;
     let h_offset = reader.scaled()?;
     let v_offset = reader.scaled()?;
-    let fonts = reader.fonts()?;
+    let fonts = reader.fonts(version)?;
     let mut counts = [0; 10];
     for value in &mut counts {
         *value = reader.i32()?;
@@ -1330,6 +1331,16 @@ impl Writer {
             self.u32(font.tfm_checksum);
             self.scaled(font.design_size);
             self.scaled(font.at_size);
+            match &font.opentype {
+                Some(opentype) => {
+                    self.u8(1);
+                    self.raw(&opentype.program_identity.bytes());
+                    self.raw(&opentype.object_identity.bytes());
+                    self.raw(&opentype.instance_identity.bytes());
+                    self.u8(opentype.container as u8);
+                }
+                None => self.u8(0),
+            }
         }
     }
 
@@ -1635,7 +1646,7 @@ impl Reader<'_> {
     fn header(&mut self) -> Result<(crate::JobInfo, Vec<FontResource>, [i32; 10]), ParseError> {
         self.expect_magic()?;
         let version = self.u8()?;
-        if version != VERSION {
+        if version != VERSION && version != LEGACY_VERSION {
             return Err(ParseError::UnsupportedVersion(version));
         }
         let job = crate::JobInfo {
@@ -1644,7 +1655,7 @@ impl Reader<'_> {
             h_offset: self.scaled()?,
             v_offset: self.scaled()?,
         };
-        let fonts = self.fonts()?;
+        let fonts = self.fonts(version)?;
         let mut counts = [0; 10];
         for value in &mut counts {
             *value = self.i32()?;
@@ -1777,20 +1788,72 @@ impl Reader<'_> {
         }
     }
 
-    fn fonts(&mut self) -> Result<Vec<FontResource>, ParseError> {
-        let len = self.collection_len(52)?;
+    fn fonts(&mut self, version: u8) -> Result<Vec<FontResource>, ParseError> {
+        let len = self.collection_len(if version >= VERSION { 53 } else { 52 })?;
         let mut fonts = Vec::with_capacity(len);
         for _ in 0..len {
+            let font_id = self.u32()?;
+            let name = self.str()?;
+            let tfm_content_hash = self.hash()?;
+            let tfm_checksum = self.u32()?;
+            let design_size = self.scaled()?;
+            let at_size = self.scaled()?;
+            let opentype = if version >= VERSION {
+                match self.u8()? {
+                    0 => None,
+                    1 => {
+                        let program_identity =
+                            tex_fonts::FontProgramIdentity::from_bytes(self.identity()?);
+                        let object_identity =
+                            tex_fonts::FontObjectIdentity::from_bytes(self.identity()?);
+                        let instance_identity =
+                            tex_fonts::FontInstanceIdentity::from_bytes(self.identity()?);
+                        let container = match self.u8()? {
+                            1 => tex_fonts::FontContainer::OpenType,
+                            2 => tex_fonts::FontContainer::TrueType,
+                            3 => tex_fonts::FontContainer::Collection,
+                            4 => tex_fonts::FontContainer::Woff2,
+                            tag => {
+                                return Err(ParseError::InvalidTag {
+                                    kind: "font container",
+                                    tag,
+                                });
+                            }
+                        };
+                        Some(crate::OpenTypeFontResource {
+                            program_identity,
+                            object_identity,
+                            instance_identity,
+                            container,
+                        })
+                    }
+                    tag => {
+                        return Err(ParseError::InvalidTag {
+                            kind: "optional OpenType font",
+                            tag,
+                        });
+                    }
+                }
+            } else {
+                None
+            };
             fonts.push(FontResource {
-                font_id: self.u32()?,
-                name: self.str()?,
-                tfm_content_hash: self.hash()?,
-                tfm_checksum: self.u32()?,
-                design_size: self.scaled()?,
-                at_size: self.scaled()?,
+                font_id,
+                name,
+                tfm_content_hash,
+                tfm_checksum,
+                design_size,
+                at_size,
+                opentype,
             });
         }
         Ok(fonts)
+    }
+
+    fn identity(&mut self) -> Result<[u8; 32], ParseError> {
+        self.take(32)?
+            .try_into()
+            .map_err(|_| ParseError::UnexpectedEof)
     }
 
     fn effects(&mut self) -> Result<Vec<PageEffect>, ParseError> {

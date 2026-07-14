@@ -124,8 +124,11 @@ export async function compile(options, userFiles, resolver, signal, bindings) {
 						validated.type === "file"
 							? providedPaths.get(validated.virtualPath)
 							: undefined;
-					if (validated.type === "file" && previousPath !== undefined &&
-						!equalBytes(previousPath, validated.bytes)) {
+					if (
+						validated.type === "file" &&
+						previousPath !== undefined &&
+						!equalBytes(previousPath, validated.bytes)
+					) {
 						throw new CompileFacadeError(
 							"conflicting-download",
 							`${validated.virtualPath} resolved to conflicting bytes`,
@@ -258,15 +261,30 @@ function validateResourceResponse(download, limits) {
 	}
 	if (response.type === "font") {
 		if (response.container !== "woff2") {
-			throw new CompileFacadeError("invalid-resolver", "WASM fonts must use WOFF2");
+			throw new CompileFacadeError(
+				"invalid-resolver",
+				"WASM fonts must use WOFF2",
+			);
 		}
 		for (const field of ["objectSha256", "programIdentity"]) {
-			if (response[field] !== undefined && !/^[0-9a-f]{64}$/.test(response[field])) {
-				throw new CompileFacadeError("invalid-resolver", `${field} must be 64 lowercase hex digits`);
+			if (
+				response[field] !== undefined &&
+				!/^[0-9a-f]{64}$/.test(response[field])
+			) {
+				throw new CompileFacadeError(
+					"invalid-resolver",
+					`${field} must be 64 lowercase hex digits`,
+				);
 			}
 		}
-		if (response.provenance !== undefined && typeof response.provenance !== "string") {
-			throw new CompileFacadeError("invalid-resolver", "font provenance must be a string");
+		if (
+			response.provenance !== undefined &&
+			typeof response.provenance !== "string"
+		) {
+			throw new CompileFacadeError(
+				"invalid-resolver",
+				"font provenance must be a string",
+			);
 		}
 	}
 	return response;
@@ -275,7 +293,12 @@ function validateResourceResponse(download, limits) {
 function normalizeResourceResponse(response) {
 	if (response.type === "file" || response.type === "font") return response;
 	if (response.request !== undefined) {
-		return { type: "file", ...response.request, virtualPath: response.virtualPath, bytes: response.bytes };
+		return {
+			type: "file",
+			...response.request,
+			virtualPath: response.virtualPath,
+			bytes: response.bytes,
+		};
 	}
 	return response;
 }
@@ -290,10 +313,17 @@ function resourceKey(request) {
 			!Array.isArray(request.variations) ||
 			!Array.isArray(request.features)
 		) {
-			throw new CompileFacadeError("invalid-resolver", "invalid font request key");
+			throw new CompileFacadeError(
+				"invalid-resolver",
+				"invalid font request key",
+			);
 		}
-		const variations = request.variations.map(({ tag, value }) => `${tag}:${value}`).join(",");
-		const features = request.features.map(({ tag, enabled }) => `${tag}:${enabled}`).join(",");
+		const variations = request.variations
+			.map(({ tag, value }) => `${tag}:${value}`)
+			.join(",");
+		const features = request.features
+			.map(({ tag, enabled }) => `${tag}:${enabled}`)
+			.join(",");
 		return `font:${request.logicalName}:${request.faceIndex}:${variations}:${features}`;
 	}
 	if (
@@ -312,12 +342,15 @@ function resourceKey(request) {
 }
 
 function equalResourceResponse(left, right) {
-	if (left.type !== right.type || !equalBytes(left.bytes, right.bytes)) return false;
+	if (left.type !== right.type || !equalBytes(left.bytes, right.bytes))
+		return false;
 	if (left.type === "file") return left.virtualPath === right.virtualPath;
-	return left.container === right.container &&
+	return (
+		left.container === right.container &&
 		left.objectSha256 === right.objectSha256 &&
 		left.programIdentity === right.programIdentity &&
-		left.provenance === right.provenance;
+		left.provenance === right.provenance
+	);
 }
 
 function validateResolver(resolver) {

@@ -18,7 +18,7 @@ pub(super) fn execute_font_definition(
     let font_name = scan_font_file_name(input, stores, execution)?;
     let size_spec = scan_font_size_spec(input, stores, execution, context)?;
     let path = tfm_path(&font_name);
-    let content = match execution.open_font(&mut stores.input_open_context(), &path) {
+    let source = match execution.open_font(&mut stores.input_open_context(), &path) {
         Ok(content) => content,
         Err(_) => {
             // TeX.web `new_font` leaves the newly defined selector at
@@ -41,6 +41,7 @@ pub(super) fn execute_font_definition(
             return Ok(());
         }
     };
+    let content = source.metrics;
     let tfm = tex_fonts::TfmFont::parse_with_size(content.bytes(), size_spec)?;
     let parameters = tfm
         .parameters
@@ -48,7 +49,7 @@ pub(super) fn execute_font_definition(
         .iter()
         .map(|parameter| parameter.value)
         .collect();
-    let loaded = LoadedFont::new(
+    let mut loaded = LoadedFont::new(
         font_display_name(&font_name),
         content.path().to_owned(),
         content.hash().bytes(),
@@ -58,6 +59,9 @@ pub(super) fn execute_font_definition(
         parameters,
         tfm.font_metrics(),
     );
+    if let Some(selection) = source.opentype {
+        loaded = loaded.with_opentype(selection);
+    }
     let id = stores.try_intern_font_with_identifier(loaded, target)?;
     let meaning = Meaning::Font(id);
     if apply_globaldefs(prefixes.global, stores) {

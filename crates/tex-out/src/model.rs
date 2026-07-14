@@ -173,6 +173,15 @@ pub struct FontResource {
     pub tfm_checksum: u32,
     pub design_size: Scaled,
     pub at_size: Scaled,
+    pub opentype: Option<OpenTypeFontResource>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OpenTypeFontResource {
+    pub program_identity: tex_fonts::FontProgramIdentity,
+    pub object_identity: tex_fonts::FontObjectIdentity,
+    pub instance_identity: tex_fonts::FontInstanceIdentity,
+    pub container: tex_fonts::FontContainer,
 }
 
 /// A driver-facing shipped node.

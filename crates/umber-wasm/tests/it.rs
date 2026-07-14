@@ -2,8 +2,7 @@
 
 use js_sys::{Array, Object, Reflect, Uint8Array};
 use umber_wasm::{
-    CompilerSession, JsFileRequestKey, JsHtmlFontInput, JsSessionOptions, content_hash,
-    format_schema_version, package_version,
+    CompilerSession, JsFileRequestKey, JsSessionOptions, format_schema_version, package_version,
 };
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
@@ -93,15 +92,33 @@ async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
         .add_user_file("cmr10.tfm", &bytes(tfm))
         .expect("add TFM");
     session
-        .add_html_font(test_html_font(tfm).unchecked_ref::<JsHtmlFontInput>())
-        .expect("add HTML font");
-    session
         .add_user_file(
             "main.tex",
             &bytes(b"\\font\\tenrm=cmr10\\relax\\shipout\\hbox{\\kern-2pt\\vrule width3pt height4pt depth1pt\\tenrm AV office}\\end"),
         )
         .expect("add source");
-    let complete = session.compile_attempt().expect("HTML compile");
+    let missing = session.advance().expect("font request");
+    assert_eq!(string_field(missing.as_ref(), "kind"), "need-resources");
+    let required = Array::from(&field(missing.as_ref(), "required"));
+    assert_eq!(required.length(), 1);
+    let request: Object = required.get(0).unchecked_into();
+    let response = Object::assign(&Object::new(), &request);
+    set(&response, "container", &JsValue::from_str("woff2"));
+    set(
+        &response,
+        "bytes",
+        bytes(include_bytes!("../assets/cmu-serif-500-roman.woff2")).as_ref(),
+    );
+    set(
+        &response,
+        "provenance",
+        &JsValue::from_str("test CM Unicode fixture under the SIL OFL"),
+    );
+    let responses = Array::of1(&response);
+    session
+        .provide_resources(&responses)
+        .expect("provide retained WOFF2 once");
+    let complete = session.advance().expect("HTML compile");
     if string_field(complete.as_ref(), "kind") != "complete" {
         let diagnostic = field(complete.as_ref(), "diagnostic");
         panic!("{}", string_field(&diagnostic, "message"));
@@ -159,44 +176,6 @@ async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
         .await
         .expect("measure generated HTML");
     assert_eq!(passed.as_bool(), Some(true));
-}
-
-fn test_html_font(tfm: &[u8]) -> Object {
-    let font = Object::new();
-    set(&font, "name", &JsValue::from_str("cmr10"));
-    set(
-        &font,
-        "tfmContentHash",
-        &JsValue::from_str(&content_hash(&bytes(tfm))),
-    );
-    set(
-        &font,
-        "woff2",
-        bytes(include_bytes!("../assets/cmu-serif-500-roman.woff2")).as_ref(),
-    );
-    set(
-        &font,
-        "sha256",
-        &JsValue::from_str("1b875e541dc5c517cd11d244710d8639addbe91a0bb1ba55e7c4593225c7a970"),
-    );
-    let encoding = Array::new_with_length(256);
-    for code in 0..256 {
-        encoding.set(code, JsValue::NULL);
-    }
-    for code in 32..=126 {
-        encoding.set(
-            code,
-            JsValue::from_str(&(char::from_u32(code).unwrap()).to_string()),
-        );
-    }
-    set(&font, "encoding", encoding.as_ref());
-    set(
-        &font,
-        "provenance",
-        &JsValue::from_str("test CM Unicode fixture"),
-    );
-    set(&font, "embeddable", &JsValue::TRUE);
-    font
 }
 
 #[wasm_bindgen_test]

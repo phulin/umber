@@ -1,5 +1,9 @@
 //! Immutable loaded font records and backend-neutral metric queries.
 
+use crate::opentype::{
+    FontContainer, FontFeaturePolicy, FontInstanceIdentity, FontObjectIdentity,
+    FontProgramIdentity, VariationSelection, WritingDirection,
+};
 use std::path::PathBuf;
 use tex_arith::Scaled;
 
@@ -27,6 +31,27 @@ pub struct LoadedFont {
     size: Scaled,
     parameters: Vec<Scaled>,
     metrics: FontMetrics,
+    opentype: Option<OpenTypeFontSelection>,
+}
+
+/// OpenType program selected alongside classic TeX metrics for artifact/output reuse.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct OpenTypeProgramSelection {
+    pub program_identity: FontProgramIdentity,
+    pub object_identity: FontObjectIdentity,
+    pub container: FontContainer,
+    pub face_index: u32,
+    pub variation: VariationSelection,
+    pub features: FontFeaturePolicy,
+    pub direction: WritingDirection,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct OpenTypeFontSelection {
+    pub program_identity: FontProgramIdentity,
+    pub object_identity: FontObjectIdentity,
+    pub instance_identity: FontInstanceIdentity,
+    pub container: FontContainer,
 }
 
 impl LoadedFont {
@@ -55,7 +80,31 @@ impl LoadedFont {
             size,
             parameters,
             metrics,
+            opentype: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_opentype(mut self, selection: OpenTypeProgramSelection) -> Self {
+        self.opentype = Some(OpenTypeFontSelection {
+            program_identity: selection.program_identity,
+            object_identity: selection.object_identity,
+            instance_identity: FontInstanceIdentity::new(
+                selection.program_identity,
+                selection.face_index,
+                self.size.raw(),
+                &selection.variation,
+                &selection.features,
+                selection.direction,
+            ),
+            container: selection.container,
+        });
+        self
+    }
+
+    #[must_use]
+    pub const fn opentype(&self) -> Option<&OpenTypeFontSelection> {
+        self.opentype.as_ref()
     }
 
     #[must_use]

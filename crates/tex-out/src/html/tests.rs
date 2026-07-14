@@ -7,12 +7,37 @@ use crate::{
 };
 
 use super::{
-    HtmlError, HtmlFontKey, HtmlFontResolver, HtmlOptions, WebFont, write_html,
+    AssetMode, HtmlError, HtmlFontKey, HtmlFontResolver, HtmlOptions, WebFont, write_html,
     write_positioned_html,
 };
 
 fn sp(raw: i32) -> Scaled {
     Scaled::from_raw(raw)
+}
+
+#[test]
+fn manifest_reuses_one_retained_object_and_program_derived_family() {
+    let mut page = page();
+    let bytes = include_bytes!("../../../umber-wasm/assets/cmu-serif-500-roman.woff2");
+    page.testing_mut().fonts[0].opentype = Some(crate::OpenTypeFontResource {
+        program_identity: tex_fonts::FontProgramIdentity::from_bytes([9; 32]),
+        object_identity: tex_fonts::FontObjectIdentity::for_bytes(bytes),
+        instance_identity: tex_fonts::FontInstanceIdentity::from_bytes([8; 32]),
+        container: tex_fonts::FontContainer::Woff2,
+    });
+    let options = HtmlOptions {
+        asset_mode: AssetMode::Manifest {
+            relative_directory: "fonts".to_owned(),
+        },
+        ..HtmlOptions::default()
+    };
+    let mut resolver = Resolver { missing_b: false };
+    let output = write_html(&[page.clone(), page], &mut resolver, &options).expect("manifest HTML");
+    assert_eq!(output.assets.len(), 1);
+    assert!(output.assets[0].path.starts_with("sha256-"));
+    let html = String::from_utf8(output.html).expect("UTF-8 HTML");
+    assert!(html.contains("umber-font-090909090909090909090909"));
+    assert!(html.contains("fonts/sha256-"));
 }
 
 struct Resolver {
@@ -254,6 +279,7 @@ fn page() -> crate::PageArtifact {
         tfm_checksum: 123,
         design_size: sp(655_360),
         at_size: sp(655_360),
+        opentype: None,
     };
     UnvalidatedPageArtifact {
         job: JobInfo {

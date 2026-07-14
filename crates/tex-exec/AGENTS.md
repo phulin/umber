@@ -22,7 +22,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/assignments/arithmetic.rs`: checked arithmetic helpers for `\advance`, `\multiply`, and `\divide`.
 - `src/assignments/admissibility.rs`: authoritative assignment-family and math-mode pass-through metadata.
 - `src/assignments/boxes/`: box-making, `\setbox`, leader payload/glue scanning, `\vsplit`, packing scans, and box list contribution; `mod.rs` holds command-facing handlers while `leaders.rs`, `packaging.rs`, and `vsplit.rs` hold focused helpers.
-- `src/assignments/fonts.rs`: `\font` scanning and driver-resolved TFM loading, plus font parameter, hyphenchar, and skewchar assignment behavior.
+- `src/assignments/fonts.rs`: `\font` scanning and driver-resolved TFM/OpenType selection loading, plus font parameter, hyphenchar, and skewchar assignment behavior.
 - `src/assignments/hmode.rs`: horizontal-mode character, glue, kern, discretionary, and ligature handling.
 - `src/assignments/hmode/tests.rs`: focused text-accent scanner recovery and traced-token replay tests.
 - `src/assignments/hyphenation.rs`: `\patterns`, `\hyphenation`, and `\showhyphens` execution support.
@@ -45,7 +45,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/diagnostics.rs`: diagnostic primitives such as `\show`, `\showthe`, `\showbox`, and message writing.
 - `src/dispatch.rs`: main-control token dispatch, group exits, token replay, and execution statistics.
 - `src/error.rs`: execution error enum, conversions, and display text.
-- `src/executor.rs`: `Executor` run loop, concrete execution context, localized font resolver, and expansion snapshot synchronization.
+- `src/executor.rs`: `Executor` run loop, concrete execution context, localized font resolver and atomic `FontSource` handoff, and expansion snapshot synchronization.
 - `src/lib.rs`: public crate surface and module wiring for the TeX execution engine.
 - `src/math/`: math-mode stomach front-end that builds frozen mlists, noads, fractions, choices, styles, and mu nodes; split into dispatch, display packaging, lowering, scanner, and support modules.
 - `src/math/scan/tests.rs`: focused math scanner coverage for numeric delimiter bounds and traced-token recovery.

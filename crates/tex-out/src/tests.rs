@@ -1,8 +1,8 @@
 use crate::{
     ArtifactCodecLimits, ArtifactValidationError, ArtifactValidationLimits, BoxNode,
     CodecLimitKind, ContentHash, DiscKind, EffectSink, FontResource, GlueKind, GlueOrder,
-    GlueSetRatio, GlueSign, GlueSpec, JobInfo, KernKind, LeaderPayload, PageArtifact, PageEffect,
-    PageNode, PageToken, ParseError, SerializeError, TokenCatcode,
+    GlueSetRatio, GlueSign, GlueSpec, JobInfo, KernKind, LeaderPayload, OpenTypeFontResource,
+    PageArtifact, PageEffect, PageNode, PageToken, ParseError, SerializeError, TokenCatcode,
 };
 use tex_arith::Scaled;
 
@@ -146,7 +146,7 @@ fn rejects_unknown_version() {
 #[test]
 fn rejects_pre_content_identity_v2_artifact_version() {
     let mut bytes = sample_artifact().to_bytes().expect("artifact serializes");
-    assert_eq!(bytes[4], 12);
+    assert_eq!(bytes[4], 13);
     bytes[4] = 11;
 
     assert_eq!(
@@ -503,6 +503,12 @@ fn sample_artifact() -> PageArtifact {
             tfm_checksum: 0x1234_5678,
             design_size: Scaled::from_raw(655_360),
             at_size: Scaled::from_raw(655_360),
+            opentype: Some(OpenTypeFontResource {
+                program_identity: tex_fonts::FontProgramIdentity::from_bytes([1; 32]),
+                object_identity: tex_fonts::FontObjectIdentity::from_bytes([2; 32]),
+                instance_identity: tex_fonts::FontInstanceIdentity::from_bytes([3; 32]),
+                container: tex_fonts::FontContainer::Woff2,
+            }),
         }],
         counts: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
         root: PageNode::VList(BoxNode {

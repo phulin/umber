@@ -808,6 +808,8 @@ impl VirtualCompileSession {
         let html = if self.html {
             let mut resolver = SessionFontResolver {
                 fonts: &self.html_fonts,
+                resolved: &self.resolved_fonts,
+                responses: &self.font_responses,
             };
             let html_options = tex_out::html::HtmlOptions {
                 max_html_bytes: remaining,
@@ -885,10 +887,75 @@ fn resource_sort_key(request: &ResourceRequest) -> (u8, String) {
 
 struct SessionFontResolver<'a> {
     fonts: &'a BTreeMap<(String, String), SessionWebFont>,
+    resolved: &'a BTreeMap<FontRequestKey, OpenTypeFont>,
+    responses: &'a BTreeMap<FontRequestKey, FontResponseFingerprint>,
 }
 
 impl HtmlFontResolver for SessionFontResolver<'_> {
     fn resolve(&mut self, font: &tex_out::FontResource) -> Result<WebFont, String> {
+        if let Some(binding) = &font.opentype {
+            let (key, supplied) = self
+                .resolved
+                .iter()
+                .find(|(key, supplied)| {
+                    key.logical_name() == font.name
+                        && supplied.identity == binding.program_identity
+                        && supplied.object_identity == binding.object_identity
+                })
+                .ok_or_else(|| {
+                    format!(
+                        "retained OpenType resource for artifact font {} is unavailable or mismatched",
+                        font.name
+                    )
+                })?;
+            if binding.container != tex_fonts::FontContainer::Woff2
+                || supplied.container != tex_fonts::FontContainer::Woff2
+            {
+                return Err(format!(
+                    "HTML reuse for retained {:?} font {} is not supported",
+                    supplied.container, font.name
+                ));
+            }
+            let expected_instance = tex_fonts::FontInstanceIdentity::new(
+                supplied.identity,
+                key.face_index,
+                font.at_size.raw(),
+                &key.variation,
+                &key.feature_policy,
+                tex_fonts::WritingDirection::LeftToRight,
+            );
+            if binding.instance_identity != expected_instance {
+                return Err(format!(
+                    "artifact font instance identity for {} does not match the retained selection",
+                    font.name
+                ));
+            }
+            let response = self.responses.get(key).ok_or_else(|| {
+                format!(
+                    "retained response metadata for {} is unavailable",
+                    font.name
+                )
+            })?;
+            let provenance = response.provenance.clone().ok_or_else(|| {
+                format!("retained font {} has no embedding provenance", font.name)
+            })?;
+            let mut encoding = vec![None; 256];
+            for (code, mapped) in encoding.iter_mut().enumerate() {
+                if let Some(scalar) = char::from_u32(code as u32)
+                    && supplied.cmap.glyph(scalar).is_some()
+                {
+                    *mapped = Some(scalar.to_string());
+                }
+            }
+            return Ok(WebFont {
+                key: HtmlFontKey::from(font),
+                woff2: supplied.transport_bytes.to_vec(),
+                sha256: supplied.object_identity.bytes(),
+                encoding,
+                provenance,
+                embeddable: true,
+            });
+        }
         let lookup = (font.name.clone(), font.tfm_content_hash.hex());
         let supplied = self.fonts.get(&lookup).ok_or_else(|| {
             format!(

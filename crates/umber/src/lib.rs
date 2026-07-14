@@ -209,8 +209,13 @@ impl FontResolver for FileFontResolver {
         input: &mut dyn tex_state::InputReadState,
         path: &Path,
         _request_index: u64,
-    ) -> Result<tex_state::FileContent, String> {
-        self.0.read(input, path)
+    ) -> Result<tex_exec::FontSource, String> {
+        self.0
+            .read(input, path)
+            .map(|metrics| tex_exec::FontSource {
+                metrics,
+                opentype: None,
+            })
     }
 }
 
@@ -756,9 +761,13 @@ impl FontResolver for DirectFontResolver {
         input: &mut dyn tex_state::InputReadState,
         path: &Path,
         _request_index: u64,
-    ) -> Result<tex_state::FileContent, String> {
+    ) -> Result<tex_exec::FontSource, String> {
         input
             .read_input_file(path)
+            .map(|metrics| tex_exec::FontSource {
+                metrics,
+                opentype: None,
+            })
             .map_err(|error| error.to_string())
     }
 }

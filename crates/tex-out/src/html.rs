@@ -413,6 +413,14 @@ fn validate_font(
             font: font.name.clone(),
         });
     }
+    if let Some(opentype) = &font.opentype
+        && (opentype.container != tex_fonts::FontContainer::Woff2
+            || opentype.object_identity.bytes() != digest)
+    {
+        return Err(HtmlError::CorruptFontAsset {
+            font: font.name.clone(),
+        });
+    }
     let declared_size = web
         .woff2
         .get(16..20)
@@ -448,7 +456,12 @@ fn validate_font(
         }
     }
     let digest_hex = hex(&digest);
-    let family = format!("umber-font-{}", &digest_hex[..24]);
+    let family_identity = font
+        .opentype
+        .as_ref()
+        .map_or(digest, |font| font.program_identity.bytes());
+    let family_hex = hex(&family_identity);
+    let family = format!("umber-font-{}", &family_hex[..24]);
     Ok(ResolvedFont {
         web,
         digest_hex,

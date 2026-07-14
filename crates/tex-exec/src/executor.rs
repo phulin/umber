@@ -23,7 +23,13 @@ pub trait FontResolver {
         input: &mut dyn InputReadState,
         path: &Path,
         request_index: u64,
-    ) -> Result<FileContent, String>;
+    ) -> Result<FontSource, String>;
+}
+
+/// Font inputs selected atomically by the host before TFM-dependent layout.
+pub struct FontSource {
+    pub metrics: FileContent,
+    pub opentype: Option<tex_fonts::OpenTypeProgramSelection>,
 }
 
 /// Concrete execution-session context shared by stomach operations.
@@ -68,12 +74,16 @@ impl<'a> ExecutionContext<'a> {
         &mut self,
         input: &mut dyn InputReadState,
         path: &Path,
-    ) -> Result<FileContent, String> {
+    ) -> Result<FontSource, String> {
         let request_index = self.expansion.next_resolution_index();
         match self.font_resolver.as_deref_mut() {
             Some(resolver) => resolver.open_font(input, path, request_index),
             None => input
                 .read_input_file(path)
+                .map(|metrics| FontSource {
+                    metrics,
+                    opentype: None,
+                })
                 .map_err(|error| error.to_string()),
         }
     }

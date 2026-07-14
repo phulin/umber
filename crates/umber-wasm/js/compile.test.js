@@ -105,7 +105,12 @@ test("drives file and font resources through one client-owned resolver API", asy
 		],
 		acceptedContainers: ["woff2"],
 	};
-	const hint = { type: "file", kind: "tex", name: "next.tex", originalName: "next" };
+	const hint = {
+		type: "file",
+		kind: "tex",
+		name: "next.tex",
+		originalName: "next",
+	};
 	const wasm = bindings([
 		{ kind: "need-resources", required: [font], prefetchHints: [hint] },
 		{ kind: "complete", output: output() },
@@ -350,7 +355,12 @@ test("enforces attempt, file, and byte ceilings outside custom resolvers", async
 				kind: "need-resources",
 				required: [
 					{ type: "file", kind: "tex", name: "a.tex", originalName: "a" },
-					{ type: "file", kind: "tex", name: "path/a.tex", originalName: "path/a" },
+					{
+						type: "file",
+						kind: "tex",
+						name: "path/a.tex",
+						originalName: "path/a",
+					},
 				],
 				prefetchHints: [],
 			},

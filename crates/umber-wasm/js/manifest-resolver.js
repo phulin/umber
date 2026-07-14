@@ -100,7 +100,9 @@ export class HttpManifestResolver {
 	}
 
 	async resolve(requests, options) {
-		const signal = options?.signal ?? options;
+		const signal = Object.hasOwn(options ?? {}, "signal")
+			? options.signal
+			: options;
 		throwIfAborted(signal);
 		const jobs = collectJobs(this.manifest, requests);
 		validateJobBudget(jobs, this.maxFiles, this.maxBytes);
@@ -113,11 +115,22 @@ export class HttpManifestResolver {
 				try {
 					const bytes = await this.#object(group[0].entry, signal);
 					for (const job of group) {
-						results.set(job.key, {
-							request: decodeKey(job.key),
-							virtualPath: job.entry.virtualPath,
-							bytes,
-						});
+						results.set(
+							job.key,
+							job.type === "font"
+								? {
+										...job.request,
+										container: job.entry.container,
+										bytes,
+										objectSha256: job.entry.sha256,
+										provenance: job.entry.provenance,
+									}
+								: {
+										request: decodeKey(job.key),
+										virtualPath: job.entry.virtualPath,
+										bytes,
+									},
+						);
 					}
 				} catch (error) {
 					const requested = group.find((job) => job.requested);
@@ -283,6 +296,20 @@ function collectJobs(manifest, requests) {
 	const requested = [];
 	const seen = new Set();
 	for (const request of requests) {
+		if (request?.type === "font") {
+			const key = fontRequestKey(request);
+			if (seen.has(key)) continue;
+			const entry = manifest.fonts[request.logicalName];
+			if (entry === undefined) {
+				throw new ManifestResolverError(
+					"missing-key",
+					`manifest has no font entry for ${request.logicalName}`,
+				);
+			}
+			seen.add(key);
+			requested.push({ key, entry, request, requested: true, type: "font" });
+			continue;
+		}
 		const key = encodeRequest(request);
 		if (seen.has(key)) continue;
 		const entry = manifest.files[key];
@@ -293,7 +320,7 @@ function collectJobs(manifest, requests) {
 			);
 		}
 		seen.add(key);
-		requested.push({ key, entry, requested: true });
+		requested.push({ key, entry, requested: true, type: "file" });
 	}
 	const hints = [];
 	for (let cursor = 0; cursor < requested.length + hints.length; cursor += 1) {
@@ -301,13 +328,32 @@ function collectJobs(manifest, requests) {
 			cursor < requested.length
 				? requested[cursor]
 				: hints[cursor - requested.length];
-		for (const key of parent.entry.dependencies) {
+		for (const key of parent.entry.dependencies ?? []) {
 			if (seen.has(key)) continue;
 			seen.add(key);
-			hints.push({ key, entry: manifest.files[key], requested: false });
+			hints.push({
+				key,
+				entry: manifest.files[key],
+				requested: false,
+				type: "file",
+			});
 		}
 	}
 	return [...requested, ...hints];
+}
+
+function fontRequestKey(request) {
+	if (
+		typeof request.logicalName !== "string" ||
+		request.logicalName.length === 0 ||
+		!Number.isSafeInteger(request.faceIndex) ||
+		request.faceIndex < 0 ||
+		!Array.isArray(request.variations) ||
+		!Array.isArray(request.features)
+	) {
+		throw new ManifestResolverError("invalid-request", "invalid font request");
+	}
+	return `font:${request.logicalName}:${request.faceIndex}:${JSON.stringify(request.variations)}:${JSON.stringify(request.features)}`;
 }
 
 function groupByObject(jobs) {

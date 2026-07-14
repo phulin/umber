@@ -187,7 +187,7 @@ impl FontResolver for VirtualFontResolver<'_> {
         input: &mut dyn InputReadState,
         path: &Path,
         request_index: u64,
-    ) -> Result<FileContent, String> {
+    ) -> Result<tex_exec::FontSource, String> {
         let Some(name) = path.to_str() else {
             let failure = CompileError::InvalidRequestedPath {
                 name: path.display().to_string(),
@@ -208,14 +208,25 @@ impl FontResolver for VirtualFontResolver<'_> {
             FontFeaturePolicy::default(),
         )
         .map_err(|error| error.to_string())?;
-        if !self.resolved_fonts.contains_key(&key) {
+        let Some(font) = self.resolved_fonts.get(&key) else {
             self.font_misses.entry(key.clone()).or_insert(FontRequest {
                 key,
                 accepted_containers: self.accepted_font_containers,
                 purposes: FontPurposes::LAYOUT_AND_HTML,
             });
             return Err(format!("OpenType font {logical_name} is not cached"));
-        }
-        tfm
+        };
+        tfm.map(|metrics| tex_exec::FontSource {
+            metrics,
+            opentype: Some(tex_fonts::OpenTypeProgramSelection {
+                program_identity: font.identity,
+                object_identity: font.object_identity,
+                container: font.container,
+                face_index: key.face_index,
+                variation: key.variation,
+                features: key.feature_policy,
+                direction: tex_fonts::WritingDirection::LeftToRight,
+            }),
+        })
     }
 }
