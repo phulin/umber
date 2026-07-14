@@ -1064,6 +1064,44 @@ fn etex_middle_stays_inside_left_right_and_has_its_own_noad_kind() {
 }
 
 #[test]
+fn etex_display_records_and_resumes_the_interrupted_text_direction() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"\TeXXeTstate=1
+          \everydisplay{\message{PD=\the\predisplaydirection}}
+          \noindent\beginR abc$$x$$def\endR",
+    ));
+    let mut executor = Executor::new();
+
+    executor
+        .run(&mut input, &mut stores)
+        .expect("directed display executes");
+
+    assert!(terminal_effect_text(&stores).contains("PD=-1"));
+    let directions: Vec<_> = executor
+        .nest()
+        .current_list()
+        .nodes()
+        .iter()
+        .filter_map(|node| match node {
+            Node::Direction(direction) => Some(*direction),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        directions,
+        [
+            tex_state::node::Direction::BeginR,
+            tex_state::node::Direction::EndR,
+        ]
+    );
+}
+
+#[test]
 fn doubled_math_shift_in_internal_vertical_mode_is_a_display() {
     // tex.web §§1090, 1092, and 1138: `new_graf` enters ordinary horizontal
     // mode even from an internal vlist, so doubled `$` opens display math and

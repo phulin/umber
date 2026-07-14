@@ -1,6 +1,6 @@
 use tex_lex::{InputSource, InputStack, TokenListReplayKind};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
-use tex_state::node::{BoxNode, GlueKind, Node};
+use tex_state::node::{BoxNode, Direction, GlueKind, Node};
 use tex_state::scaled::Scaled;
 use tex_state::{ParagraphShapeLine, PenaltyArrayKind, Universe};
 use tex_typeset::PackSpec;
@@ -159,6 +159,7 @@ pub(crate) fn end_paragraph(nest: &mut ModeNest, stores: &mut Universe) -> Resul
 
 pub(crate) struct ParagraphBreakResult {
     pub(crate) last_line: Option<BoxNode>,
+    pub(crate) active_directions: Vec<Direction>,
 }
 
 pub(crate) fn interrupt_paragraph_for_display(
@@ -168,7 +169,10 @@ pub(crate) fn interrupt_paragraph_for_display(
     flush_pending_hchars(nest, stores)?;
     if nest.current_list().is_empty() {
         let _ = nest.pop()?;
-        return Ok(ParagraphBreakResult { last_line: None });
+        return Ok(ParagraphBreakResult {
+            last_line: None,
+            active_directions: Vec::new(),
+        });
     }
     let final_widow_penalty = stores.int_param(IntParam::DISPLAY_WIDOW_PENALTY);
     let final_widow_penalties = stores.penalty_array(PenaltyArrayKind::DisplayWidow);
@@ -222,6 +226,7 @@ fn break_current_paragraph(
     reset_paragraph: bool,
 ) -> Result<ParagraphBreakResult, ExecError> {
     flush_pending_hchars(nest, stores)?;
+    let active_directions = active_text_directions(nest.current_list().nodes());
     let params = snapshot_paragraph_params(nest, stores);
     remove_final_glue(nest.current_list_mut());
     nest.current_list_mut().push(Node::Penalty(10_000));
@@ -288,7 +293,29 @@ fn break_current_paragraph(
         reset_after_par(nest, stores);
     }
     build_page_if_outer_vertical(nest, stores)?;
-    Ok(ParagraphBreakResult { last_line })
+    Ok(ParagraphBreakResult {
+        last_line,
+        active_directions,
+    })
+}
+
+fn active_text_directions(nodes: &[Node]) -> Vec<Direction> {
+    let mut active = Vec::new();
+    for node in nodes {
+        match node {
+            Node::Direction(direction @ (Direction::BeginL | Direction::BeginR)) => {
+                active.push(*direction);
+            }
+            Node::Direction(Direction::EndL) if active.last() == Some(&Direction::BeginL) => {
+                let _ = active.pop();
+            }
+            Node::Direction(Direction::EndR) if active.last() == Some(&Direction::BeginR) => {
+                let _ = active.pop();
+            }
+            _ => {}
+        }
+    }
+    active
 }
 
 pub(crate) fn break_hlist(

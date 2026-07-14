@@ -105,7 +105,8 @@ struct WorkNoad {
 
 #[derive(Clone, Debug)]
 struct WorkDelimiter {
-    class: NoadClass,
+    left_class: NoadClass,
+    right_class: NoadClass,
     delimiter: u32,
 }
 
@@ -218,18 +219,28 @@ fn first_pass<S: MathTypesetState>(
                         | NoadKind::MiddleDelimiter { .. }
                 ) =>
             {
-                let (class, delimiter) = match noad.kind {
-                    NoadKind::LeftDelimiter { delimiter } => (NoadClass::Open, delimiter),
-                    NoadKind::RightDelimiter { delimiter } => (NoadClass::Close, delimiter),
-                    NoadKind::MiddleDelimiter { delimiter } => (NoadClass::Rel, delimiter),
+                let (left_class, right_class, delimiter) = match noad.kind {
+                    NoadKind::LeftDelimiter { delimiter } => {
+                        (NoadClass::Open, NoadClass::Open, delimiter)
+                    }
+                    NoadKind::RightDelimiter { delimiter } => {
+                        (NoadClass::Close, NoadClass::Close, delimiter)
+                    }
+                    NoadKind::MiddleDelimiter { delimiter } => {
+                        (NoadClass::Close, NoadClass::Open, delimiter)
+                    }
                     _ => unreachable!("guard restricts delimiter noads"),
                 };
-                if matches!(class, NoadClass::Close) {
+                if matches!(left_class, NoadClass::Close) {
                     // AppG rule 6
                     convert_final_bin_to_ord(out);
                 }
-                r_type = Some(class);
-                out.push(WorkItem::Delimiter(WorkDelimiter { class, delimiter }));
+                r_type = Some(right_class);
+                out.push(WorkItem::Delimiter(WorkDelimiter {
+                    left_class,
+                    right_class,
+                    delimiter,
+                }));
             }
             Node::MathNoad(noad) => {
                 let mut class = noad_class(noad);
@@ -585,10 +596,11 @@ fn second_pass<S: MathTypesetState>(
                 previous = Some(noad.class);
             }
             WorkItem::Delimiter(delimiter) => {
-                let class = delimiter.class;
+                let right_class = delimiter.right_class;
                 // AppG rule 19
                 if let Some(left) = previous
-                    && let spacing = spacing::inter_noad_spacing(left, delimiter.class, ctx.style)
+                    && let spacing =
+                        spacing::inter_noad_spacing(left, delimiter.left_class, ctx.style)
                     && let Some(spec) = spacing::spacing_glue(spacing, ctx.params, ctx.mu)
                 {
                     output.push(MathNode::Glue {
@@ -602,7 +614,7 @@ fn second_pass<S: MathTypesetState>(
                 let delimiter =
                     delimiters::var_delimiter(ctx, delimiter.delimiter, base_style.size(), target);
                 output.push(boxed_node(delimiter));
-                previous = Some(class);
+                previous = Some(right_class);
             }
         }
     }

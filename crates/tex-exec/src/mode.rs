@@ -548,8 +548,10 @@ pub struct IncompleteFraction {
     pub right_delimiter: Option<u32>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct DisplayInterrupt;
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisplayInterrupt {
+    pub active_directions: Vec<tex_state::node::Direction>,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DisplayEqNo {
@@ -687,7 +689,21 @@ fn hash_mode_list(list: &ModeList, projection: &mut EngineBoundaryHasher<'_>) {
         }
         None => projection.bool(false),
     }
-    projection.bool(list.display_interrupt.is_some());
+    match &list.display_interrupt {
+        Some(interrupt) => {
+            projection.bool(true);
+            projection.usize(interrupt.active_directions.len());
+            for direction in &interrupt.active_directions {
+                projection.u8(match direction {
+                    tex_state::node::Direction::BeginL => 0,
+                    tex_state::node::Direction::BeginR => 1,
+                    tex_state::node::Direction::EndL => 2,
+                    tex_state::node::Direction::EndR => 3,
+                });
+            }
+        }
+        None => projection.bool(false),
+    }
     match list.display_eq_no {
         Some(eq_no) => {
             projection.bool(true);

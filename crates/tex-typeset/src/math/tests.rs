@@ -625,6 +625,55 @@ fn left_right_delimiters_size_to_enclosed_list() {
 }
 
 #[test]
+fn middle_delimiter_uses_common_extent_and_boundary_spacing() {
+    let mut universe = setup_universe();
+    let tall_box = universe.freeze_node_list(&[Node::Rule {
+        width: Some(sc(4)),
+        height: Some(sc(40)),
+        depth: Some(sc(10)),
+    }]);
+    let delimiter = delimiter_code(1, b'(', 1, b'|');
+    let input = universe.freeze_node_list(&[
+        Node::MathNoad(MathNoad::new(
+            NoadKind::LeftDelimiter { delimiter },
+            MathField::Empty,
+        )),
+        Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            MathField::SubBox(tall_box),
+        )),
+        Node::MathNoad(MathNoad::new(
+            NoadKind::MiddleDelimiter { delimiter },
+            MathField::Empty,
+        )),
+        Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            MathField::SubBox(tall_box),
+        )),
+        Node::MathNoad(MathNoad::new(
+            NoadKind::RightDelimiter { delimiter },
+            MathField::Empty,
+        )),
+    ]);
+    let params = MathParams::read(&universe);
+
+    let hlist = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+    let nodes = root_nodes(&hlist);
+
+    assert_eq!(
+        nodes.len(),
+        5,
+        "middle boundaries must not add relation glue"
+    );
+    for index in [0, 2, 4] {
+        let MathNode::VList(delimiter) = nodes[index] else {
+            panic!("expected extensible delimiter at index {index}");
+        };
+        assert!(list_nodes(&hlist, delimiter.list).len() > 3);
+    }
+}
+
+#[test]
 fn ordinary_sub_box_nucleus_is_not_repacked() {
     let mut universe = setup_universe();
     let children = universe.freeze_node_list(&[]);

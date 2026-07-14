@@ -1080,6 +1080,66 @@ fn post_line_break_keeps_migrating_nodes_for_execution_layer() {
 }
 
 #[test]
+fn post_line_break_closes_and_resumes_open_tex_xet_segments() {
+    use tex_state::node::Direction;
+
+    let mut universe = Universe::new();
+    let zero = universe.intern_glue(GlueSpec::ZERO);
+    let empty = universe.freeze_node_list(&[]);
+    let nodes = vec![
+        Node::Direction(Direction::BeginR),
+        rule(1),
+        rule(2),
+        rule(3),
+        Node::Direction(Direction::EndR),
+        Node::Penalty(10_000),
+    ];
+    let breaks = vec![
+        BreakDecision {
+            position: 3,
+            penalty: 0,
+            hyphenated: false,
+        },
+        BreakDecision {
+            position: 6,
+            penalty: 10_000,
+            hyphenated: false,
+        },
+    ];
+    let lines = post_line_break(
+        &universe,
+        &nodes,
+        &breaks,
+        PostLineBreakParams {
+            empty_list: empty,
+            left_skip: zero,
+            right_skip: zero,
+            interline_penalty: 0,
+            club_penalty: 0,
+            widow_penalty: 0,
+            broken_penalty: 0,
+            prev_graf: 0,
+            interline_penalties: Vec::new(),
+            club_penalties: Vec::new(),
+            widow_penalties: Vec::new(),
+            shape: LineShape::natural(sp(100)),
+        },
+    );
+
+    let directions = |line: &BrokenLine| {
+        line.nodes
+            .iter()
+            .filter_map(|node| match node {
+                Node::Direction(direction) => Some(*direction),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(directions(&lines[0]), [Direction::BeginR, Direction::EndR]);
+    assert_eq!(directions(&lines[1]), [Direction::BeginR, Direction::EndR]);
+}
+
+#[test]
 fn post_line_break_clears_materialized_unbroken_discretionary_replacement() {
     let mut universe = Universe::new();
     let zero = universe.intern_glue(GlueSpec::ZERO);

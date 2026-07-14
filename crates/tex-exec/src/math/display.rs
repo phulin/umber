@@ -296,6 +296,7 @@ pub(super) fn resume_after_display_alignment<S>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
+    active_directions: Vec<tex_state::node::Direction>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
@@ -322,6 +323,8 @@ where
         Some(traced) => {
             nest.push(Mode::Horizontal);
             nest.current_list_mut().set_space_factor(1000);
+            nest.current_list_mut()
+                .append(active_directions.iter().copied().map(Node::Direction));
             crate::insert_traced_tokens(input, stores, [traced]);
         }
         None => {}
@@ -379,6 +382,7 @@ pub(super) fn resume_after_display<S>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
+    active_directions: Vec<tex_state::node::Direction>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
@@ -387,6 +391,8 @@ where
     nest.set_enclosing_vertical_prev_graf(prev_graf);
     nest.push(Mode::Horizontal);
     nest.current_list_mut().set_space_factor(1000);
+    nest.current_list_mut()
+        .append(active_directions.iter().copied().map(Node::Direction));
     match input.next_traced_token(stores)? {
         Some(traced)
             if matches!(

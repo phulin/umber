@@ -3,7 +3,7 @@
 use tex_expand::{ExpansionHooks, ReadRecorder, get_x_token_with_recorder_and_hooks};
 use tex_lex::{InputSource, InputStack};
 use tex_state::Universe;
-use tex_state::env::banks::{DimenParam, TokParam};
+use tex_state::env::banks::{DimenParam, IntParam, TokParam};
 use tex_state::glue::GlueSpec;
 use tex_state::math::{MathField, MathFontSize, MathListNode, NoadClass, NoadKind};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
@@ -123,15 +123,28 @@ where
             .map_or(Scaled::from_raw(-Scaled::MAX_DIMEN.raw()), |line| {
                 pre_display_size(stores, line)
             });
-        Some((pre_display_size, dimensions.width, dimensions.indent))
+        Some((
+            pre_display_size,
+            dimensions.width,
+            dimensions.indent,
+            paragraph.active_directions,
+        ))
     } else {
         None
     };
     stores.enter_group_with_kind(tex_state::GroupKind::MathShift);
-    if let Some((pre_display_size, display_width, display_indent)) = interrupt {
-        stores.set_dimen_param(DimenParam::PRE_DISPLAY_SIZE, pre_display_size);
-        stores.set_dimen_param(DimenParam::DISPLAY_WIDTH, display_width);
-        stores.set_dimen_param(DimenParam::DISPLAY_INDENT, display_indent);
+    if let Some((pre_display_size, display_width, display_indent, active_directions)) = &interrupt {
+        stores.set_dimen_param(DimenParam::PRE_DISPLAY_SIZE, *pre_display_size);
+        stores.set_dimen_param(DimenParam::DISPLAY_WIDTH, *display_width);
+        stores.set_dimen_param(DimenParam::DISPLAY_INDENT, *display_indent);
+        stores.set_int_param(
+            IntParam::PRE_DISPLAY_DIRECTION,
+            match active_directions.last() {
+                Some(tex_state::node::Direction::BeginL) => 1,
+                Some(tex_state::node::Direction::BeginR) => -1,
+                _ => 0,
+            },
+        );
     }
     // tex.web `push_math(math_shift_group)` locally defines `\fam=-1` before
     // `\everymath`/`\everydisplay`, so variable-family mathcodes retain their
@@ -142,9 +155,9 @@ where
     } else {
         Mode::Math
     });
-    if interrupt.is_some() {
+    if let Some((_, _, _, active_directions)) = interrupt {
         nest.current_list_mut()
-            .set_display_interrupt(DisplayInterrupt);
+            .set_display_interrupt(DisplayInterrupt { active_directions });
     }
     let every = stores.tok_param(if display {
         TokParam::EVERY_DISPLAY
@@ -325,7 +338,7 @@ where
     }
     let mut level = nest.pop()?;
     if display {
-        let _interrupt = level.list_mut().take_display_interrupt().ok_or(
+        let interrupt = level.list_mut().take_display_interrupt().ok_or(
             ExecError::UnimplementedTypesetting {
                 mode: Mode::DisplayMath,
                 token: Token::Cs(stores.intern("display").symbol()),
@@ -337,7 +350,7 @@ where
         if stores.innermost_group_kind() == Some(tex_state::GroupKind::MathShift) {
             leave_group_with_origin(input, stores, tex_state::GroupKind::MathShift, origin)?;
         }
-        resume_after_display(nest, input, stores)?;
+        resume_after_display(nest, input, stores, interrupt.active_directions)?;
     } else {
         let insert_penalties = nest.current_mode() == Mode::Horizontal;
         let nodes =
@@ -400,7 +413,7 @@ where
     leave_group_with_origin(input, stores, tex_state::GroupKind::MathShift, origin)?;
 
     let mut display_level = nest.pop()?;
-    let _interrupt = display_level.list_mut().take_display_interrupt().ok_or(
+    let interrupt = display_level.list_mut().take_display_interrupt().ok_or(
         ExecError::UnimplementedTypesetting {
             mode: Mode::DisplayMath,
             token: Token::Cs(stores.intern("display").symbol()),
@@ -412,7 +425,7 @@ where
     if stores.innermost_group_kind() == Some(tex_state::GroupKind::MathShift) {
         leave_group_with_origin(input, stores, tex_state::GroupKind::MathShift, origin)?;
     }
-    resume_after_display(nest, input, stores)?;
+    resume_after_display(nest, input, stores, interrupt.active_directions)?;
     Ok(DispatchAction::Continue)
 }
 
@@ -876,7 +889,7 @@ where
         let _ = nest.current_list_mut().take_display_eq_no();
     }
     let mut level = nest.pop()?;
-    let _interrupt =
+    let interrupt =
         level
             .list_mut()
             .take_display_interrupt()
@@ -897,7 +910,7 @@ where
         tex_state::GroupKind::MathShift,
         closing_origin,
     )?;
-    resume_after_display_alignment(nest, input, stores)
+    resume_after_display_alignment(nest, input, stores, interrupt.active_directions)
 }
 
 fn finish_display_alignment_assignments<S, R, H>(

@@ -1182,6 +1182,48 @@ fn shipout_converts_deferred_math_lists_before_artifact_lowering() {
 }
 
 #[test]
+fn etex_shipout_reorders_nested_tex_xet_segments_into_visual_order() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"\font\f=cmr10 \relax \f\TeXXeTstate=1
+          \shipout\hbox{A\beginR BC\beginL DE\endL FG\endR H}\end",
+    ));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("nested TeX--XeT shipout succeeds");
+    let bytes = stores
+        .world()
+        .read_artifact(stats.shipped_artifacts[0])
+        .expect("read artifact")
+        .expect("artifact stored");
+    let artifact = PageArtifact::from_bytes(&bytes).expect("artifact parses");
+    let PageNode::HList(box_node) = &artifact.root else {
+        panic!("shipout root should be an hlist");
+    };
+    fn append_visual_text(nodes: &[PageNode], text: &mut String) {
+        for node in nodes {
+            match node {
+                PageNode::Char { ch, .. } | PageNode::Lig { ch, .. } => {
+                    text.push(char::from_u32(*ch).expect("stored character is valid"));
+                }
+                PageNode::HList(box_node) | PageNode::VList(box_node) => {
+                    append_visual_text(&box_node.children, text);
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut visual_text = String::new();
+    append_visual_text(&box_node.children, &mut visual_text);
+
+    assert_eq!(visual_text, "AGFDECBH", "{artifact:#?}");
+}
+
+#[test]
 fn inline_math_restores_normal_space_for_dvi_movement_reuse() {
     let mut stores = stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);

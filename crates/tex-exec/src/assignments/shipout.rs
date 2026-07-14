@@ -234,7 +234,7 @@ enum FrozenShipoutNode {
     Whatsit(Whatsit),
     MathOn(tex_state::scaled::Scaled),
     MathOff(tex_state::scaled::Scaled),
-    Direction,
+    Direction(tex_state::node::Direction),
     MathList(tex_state::math::MathListNode),
     UnsupportedMath,
     Adjust(NodeListId),
@@ -280,7 +280,7 @@ impl FrozenShipoutNode {
             NodeRef::Whatsit(v) => Self::Whatsit(v.clone()),
             NodeRef::MathOn(v) => Self::MathOn(v),
             NodeRef::MathOff(v) => Self::MathOff(v),
-            NodeRef::Direction(_) => Self::Direction,
+            NodeRef::Direction(direction) => Self::Direction(direction),
             NodeRef::MathList(v) => Self::MathList(v),
             NodeRef::Adjust(v) => Self::Adjust(v),
             NodeRef::MathNoad(_)
@@ -404,6 +404,27 @@ where
         dvi: &mut DviPagePlanBuilder,
     ) -> Result<(), ExecError> {
         let len = self.stores.nodes(list).len();
+        if self
+            .stores
+            .nodes(list)
+            .into_iter()
+            .any(|node| matches!(node, NodeRef::Direction(_)))
+        {
+            let frozen = (0..len)
+                .map(|index| {
+                    FrozenShipoutNode::from_ref(
+                        self.stores
+                            .nodes(list)
+                            .get(index)
+                            .expect("frozen node index is live"),
+                    )
+                })
+                .collect();
+            for node in reorder_direction_segments(frozen) {
+                self.encode_frozen_root_node(node, encoder, dvi)?;
+            }
+            return Ok(());
+        }
         for index in 0..len {
             let node = FrozenShipoutNode::from_ref(
                 self.stores
@@ -411,22 +432,32 @@ where
                     .get(index)
                     .expect("frozen node index is live"),
             );
-            if let FrozenShipoutNode::MathList(list) = node {
-                let math_nodes = crate::math::finish_math_list_node(self.stores, list, false);
-                for node in self.lower_nodes(math_nodes)? {
-                    encoder
-                        .push_node(&node)
-                        .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))?;
-                    dvi.push_node(&node, &self.fonts, &self.effects)
-                        .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))?;
-                }
-            } else if let Some(node) = self.lower_frozen_node(node)? {
+            self.encode_frozen_root_node(node, encoder, dvi)?;
+        }
+        Ok(())
+    }
+
+    fn encode_frozen_root_node(
+        &mut self,
+        node: FrozenShipoutNode,
+        encoder: &mut V10ArtifactBuilder,
+        dvi: &mut DviPagePlanBuilder,
+    ) -> Result<(), ExecError> {
+        if let FrozenShipoutNode::MathList(list) = node {
+            let math_nodes = crate::math::finish_math_list_node(self.stores, list, false);
+            for node in self.lower_nodes(math_nodes)? {
                 encoder
                     .push_node(&node)
                     .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))?;
                 dvi.push_node(&node, &self.fonts, &self.effects)
                     .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))?;
             }
+        } else if let Some(node) = self.lower_frozen_node(node)? {
+            encoder
+                .push_node(&node)
+                .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))?;
+            dvi.push_node(&node, &self.fonts, &self.effects)
+                .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))?;
         }
         Ok(())
     }
@@ -468,14 +499,18 @@ where
 
     fn lower_node_list(&mut self, list: NodeListId) -> Result<Vec<PageNode>, ExecError> {
         let len = self.stores.nodes(list).len();
-        let mut lowered = Vec::with_capacity(len);
+        let mut frozen = Vec::with_capacity(len);
         for index in 0..len {
-            let node = FrozenShipoutNode::from_ref(
+            frozen.push(FrozenShipoutNode::from_ref(
                 self.stores
                     .nodes(list)
                     .get(index)
                     .expect("frozen node index is live"),
-            );
+            ));
+        }
+        let frozen = reorder_direction_segments(frozen);
+        let mut lowered = Vec::with_capacity(frozen.len());
+        for node in frozen {
             if let FrozenShipoutNode::MathList(list) = node {
                 let math_nodes = crate::math::finish_math_list_node(self.stores, list, false);
                 lowered.extend(self.lower_nodes(math_nodes)?);
@@ -551,7 +586,7 @@ where
             FrozenShipoutNode::Whatsit(v) => return self.lower_whatsit(v),
             FrozenShipoutNode::MathOn(v) => PageNode::MathOn(v),
             FrozenShipoutNode::MathOff(v) => PageNode::MathOff(v),
-            FrozenShipoutNode::Direction => return Ok(None),
+            FrozenShipoutNode::Direction(_) => return Ok(None),
             FrozenShipoutNode::Adjust(v) => PageNode::Adjust(self.lower_node_list(v)?),
             FrozenShipoutNode::UnsupportedMath | FrozenShipoutNode::MathList(_) => {
                 return Err(ExecError::UnsupportedShipoutNode { node: "math" });
@@ -753,6 +788,76 @@ fn lower_sink(sink: PrintSink) -> EffectSink {
         PrintSink::TerminalAndLog => EffectSink::TerminalAndLog,
         PrintSink::Stream(slot) => EffectSink::Stream(slot.raw()),
     }
+}
+
+/// Resolves e-TeX TeX--XeT direction boundaries into visual node order.
+///
+/// Direction nodes disappear from the detached page artifact because e-TeX
+/// writes ordinary DVI and explicitly reverses right-to-left segments. A
+/// nested segment remains atomic while its enclosing segment is reversed.
+fn reorder_direction_segments(nodes: Vec<FrozenShipoutNode>) -> Vec<FrozenShipoutNode> {
+    struct Segment {
+        right_to_left: bool,
+        chunks: Vec<Vec<FrozenShipoutNode>>,
+    }
+
+    fn append(target: &mut Vec<FrozenShipoutNode>, stack: &mut [Segment], node: FrozenShipoutNode) {
+        if let Some(segment) = stack.last_mut() {
+            segment.chunks.push(vec![node]);
+        } else {
+            target.push(node);
+        }
+    }
+
+    fn finish(target: &mut Vec<FrozenShipoutNode>, stack: &mut Vec<Segment>) {
+        let Some(mut segment) = stack.pop() else {
+            return;
+        };
+        if segment.right_to_left {
+            segment.chunks.reverse();
+        }
+        let nodes = segment.chunks.into_iter().flatten().collect::<Vec<_>>();
+        if let Some(parent) = stack.last_mut() {
+            parent.chunks.push(nodes);
+        } else {
+            target.extend(nodes);
+        }
+    }
+
+    let mut reordered = Vec::with_capacity(nodes.len());
+    let mut stack = Vec::<Segment>::new();
+    for node in nodes {
+        match node {
+            FrozenShipoutNode::Direction(tex_state::node::Direction::BeginL) => {
+                stack.push(Segment {
+                    right_to_left: false,
+                    chunks: Vec::new(),
+                });
+            }
+            FrozenShipoutNode::Direction(tex_state::node::Direction::BeginR) => {
+                stack.push(Segment {
+                    right_to_left: true,
+                    chunks: Vec::new(),
+                });
+            }
+            FrozenShipoutNode::Direction(tex_state::node::Direction::EndL)
+                if stack.last().is_some_and(|segment| !segment.right_to_left) =>
+            {
+                finish(&mut reordered, &mut stack);
+            }
+            FrozenShipoutNode::Direction(tex_state::node::Direction::EndR)
+                if stack.last().is_some_and(|segment| segment.right_to_left) =>
+            {
+                finish(&mut reordered, &mut stack);
+            }
+            FrozenShipoutNode::Direction(_) => {}
+            node => append(&mut reordered, &mut stack, node),
+        }
+    }
+    while !stack.is_empty() {
+        finish(&mut reordered, &mut stack);
+    }
+    reordered
 }
 
 fn lower_glue(spec: tex_state::glue::GlueSpec) -> PageGlueSpec {

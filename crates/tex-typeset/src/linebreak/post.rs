@@ -1,5 +1,5 @@
 use tex_state::glue::GlueSpec;
-use tex_state::node::{GlueKind, KernKind, Node};
+use tex_state::node::{Direction, GlueKind, KernKind, Node};
 
 use crate::TypesetState;
 
@@ -25,6 +25,7 @@ pub struct LineMaterializer {
     breaks: Vec<BreakDecision>,
     line_no: usize,
     pending_post: Vec<Node>,
+    active_directions: Vec<Direction>,
     params: PostLineBreakParams,
 }
 
@@ -38,6 +39,7 @@ impl LineMaterializer {
             breaks,
             line_no: 0,
             pending_post: Vec::new(),
+            active_directions: Vec::new(),
             params,
         }
     }
@@ -65,6 +67,8 @@ impl LineMaterializer {
                 leader: None,
             });
         }
+        line.extend(self.active_directions.iter().copied().map(Node::Direction));
+        let directional_start = line.len();
         line.append(&mut self.pending_post);
         self.pending_post = push_owned_line_segment(
             state,
@@ -74,6 +78,14 @@ impl LineMaterializer {
             &decision,
             self.params.empty_list,
             &mut line,
+        );
+        update_active_directions(&line[directional_start..], &mut self.active_directions);
+        line.extend(
+            self.active_directions
+                .iter()
+                .rev()
+                .copied()
+                .map(|direction| Node::Direction(matching_end(direction))),
         );
         line.push(Node::Glue {
             spec: self.params.right_skip,
@@ -97,6 +109,31 @@ impl LineMaterializer {
             hyphenated: decision.hyphenated,
             dimensions,
         })
+    }
+}
+
+fn update_active_directions(nodes: &[Node], active: &mut Vec<Direction>) {
+    for node in nodes {
+        match node {
+            Node::Direction(direction @ (Direction::BeginL | Direction::BeginR)) => {
+                active.push(*direction);
+            }
+            Node::Direction(Direction::EndL) if active.last() == Some(&Direction::BeginL) => {
+                let _ = active.pop();
+            }
+            Node::Direction(Direction::EndR) if active.last() == Some(&Direction::BeginR) => {
+                let _ = active.pop();
+            }
+            _ => {}
+        }
+    }
+}
+
+const fn matching_end(direction: Direction) -> Direction {
+    match direction {
+        Direction::BeginL => Direction::EndL,
+        Direction::BeginR => Direction::EndR,
+        Direction::EndL | Direction::EndR => direction,
     }
 }
 

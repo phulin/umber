@@ -9,9 +9,11 @@ manual](https://tex.org.uk/systems/doc/etex/etex_man.pdf), with the [short
 reference manual](https://mirror.gutenberg-asso.fr/tex.loria.fr/moteurs/etex_ref.html)
 as its introductory companion.
 The official `etex.ch` change file supplies implementation-level algorithms
-where the manual does not specify them. Focused tests must cite the relevant
-manual section and compare observable behavior with e-TeX/pdfTeX. The final
-gate is the official e-TRIP suite, not implementation similarity.
+where the manual does not specify them. Focused tests cite the relevant manual
+section and compare observable behavior with e-TeX/pdfTeX. Per the 2026-07-14
+project scope decision, the repository's focused tests and existing in-process
+two-phase e-TRIP DVI fixture are the conformance gates; a separate official
+text-artifact harness is not planned.
 
 Status values are **done**, **partial**, and **missing**. A family is done only
 after its focused parity fixtures and compatibility-mode visibility checks
@@ -66,9 +68,9 @@ the checkpointed interaction state. `\showtokens` displays the manual-defined
 decomposition of unexpanded balanced text. `\showgroups` and `\showifs` walk
 the live checkpointed group and conditional stacks. `\tracingassigns`,
 `\tracinggroups`, `\tracingifs`, and `\tracingnesting`
-are installed as group-scoped integer parameters, but their trace emission is
-**missing**. The remaining work is observable diagnostic behavior rather than
-primitive registration or assignment scanning.
+are implemented as group-scoped integer parameters. Exact diagnostic trace
+text parity for those four parameters is explicitly deferred; it is not part
+of the primitive-completeness gate.
 
 ## Marks, lists, paragraph extensions, and math (manual sections 3.4, 3.7)
 
@@ -93,24 +95,27 @@ contract and the official e-TRIP workload:
   `\savinghyphcodes` snapshots per-language lowercase mappings for later
   pattern and exception use.
 
-TeX--XeT directions and `\middle` are implemented with focused tests but remain
-outside this completed state-family audit. The two-phase e-TRIP DVI gate passes,
-but the dedicated direction/math task still owns focused DVI fixtures for
-nested directions, boxed direction nodes, display direction, equation-number
-placement, and `\left...\middle...\right` layout.
+TeX--XeT directions and `\middle` are implemented. Direction nodes survive box
+packing and snapshots, nested right-to-left and left-to-right segments are
+resolved into ordinary DVI visual order at shipout, open direction segments
+are closed and resumed across broken paragraph lines, and display interruption
+sets `\predisplaydirection` before resuming the active segments. Display math
+and equation numbers remain left-to-right as required by manual section 4.1.
+`\middle` shares the enclosing `\left...\right` delimiter extent and uses a
+right-boundary class on its left and a left-boundary class on its right, so it
+does not accidentally acquire relation glue.
 
 ## Conformance gates
 
-The in-process two-phase `e2e_conformance_etrip` test currently passes exact
-DVI comparison against the locally generated pdfTeX/e-TeX oracle after the
-documented preamble-comment normalization. This completes the current e-TRIP
-DVI fixture gate; it does not complete the official textual-artifact gate.
+The optional in-process two-phase `e2e_conformance_etrip` test passes exact DVI
+comparison against the locally generated pdfTeX/e-TeX oracle when its external
+inputs are installed. The always-available focused tests cover every primitive
+family and the compatibility-mode visibility boundary.
 
 - Compatibility mode: every extension control sequence remains undefined and
   unused extended mode retains TeX82 Story/Gentle/TRIP behavior.
 - Focused corpus: exact expansion, diagnostics, state, node-list, and DVI
   parity for every family above. Fixture regeneration uses only
   `scripts/regen-fixtures.sh`.
-- Official e-TRIP remaining work: exact parity-mode log, terminal-photo,
-  DVItype, and output-file comparison from pinned inputs; deliberate text and
-  DVI perturbations must fail actionably.
+- Diagnostic trace wording for `\tracingassigns`, `\tracinggroups`,
+  `\tracingifs`, and `\tracingnesting` is deferred by scope.
