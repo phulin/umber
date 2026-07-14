@@ -30,6 +30,34 @@ pub(super) struct PageTailNode {
     pub(super) projection: OnceLock<StateHashFragment>,
 }
 
+impl PageNodeSequence {
+    pub(super) fn retained_bytes(&self) -> usize {
+        fn tree_bytes(tree: &PageNodeTree) -> usize {
+            match tree {
+                PageNodeTree::Leaf { nodes, .. } => std::mem::size_of::<PageNodeTree>()
+                    .saturating_add(nodes.capacity().saturating_mul(std::mem::size_of::<Node>())),
+                PageNodeTree::Branch { left, right, .. } => std::mem::size_of::<PageNodeTree>()
+                    .saturating_add(tree_bytes(left))
+                    .saturating_add(tree_bytes(right)),
+            }
+        }
+        self.forest
+            .capacity()
+            .saturating_mul(std::mem::size_of::<Arc<PageNodeTree>>())
+            .saturating_add(
+                self.forest
+                    .iter()
+                    .map(|tree| tree_bytes(tree))
+                    .sum::<usize>(),
+            )
+            .saturating_add(
+                self.tail
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<PageTailNode>()),
+            )
+    }
+}
+
 #[derive(Debug)]
 pub(super) enum PageNodeTree {
     Leaf {

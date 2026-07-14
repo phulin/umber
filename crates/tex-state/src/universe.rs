@@ -53,9 +53,9 @@ use crate::stores::{
 use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::token_store::TokenListBuilder;
 use crate::world::{
-    ContentHash, EffectPos, EffectRecord, JobClock, PrintSink, ShellEscapePolicy,
-    ShellEscapeRecord, StreamBufState, StreamSlot, World, WorldCommitMode, WorldError,
-    WorldSnapshot, WorldStateHashCursor, install_job_clock_params,
+    CommittedArtifact, ContentHash, EffectPos, EffectRecord, JobClock, PrintSink,
+    ShellEscapePolicy, ShellEscapeRecord, StreamBufState, StreamSlot, World, WorldCommitMode,
+    WorldError, WorldSnapshot, WorldStateHashCursor, install_job_clock_params,
 };
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
 use std::hash::{Hash, Hasher};
@@ -508,9 +508,9 @@ impl GenerationSubstrate {
             .stores
             .generation_retained_bytes()
             .saturating_add(std::mem::size_of::<Universe>())
-            .saturating_add(
-                universe.input_summary.len() * std::mem::size_of::<InputFrameSummary>(),
-            );
+            .saturating_add(universe.input_summary.retained_bytes())
+            .saturating_add(universe.page.retained_bytes())
+            .saturating_add(universe.world.generation_retained_bytes());
         Self {
             universe,
             charged_bytes,
@@ -578,9 +578,15 @@ impl GenerationSubstrate {
 
     /// Consumes the accepted generation, installs the session-owned ordered
     /// effect history, materializes it exactly once, and returns the sealed World.
-    pub fn export_detached_effects(self, effects: Vec<EffectRecord>) -> Result<World, WorldError> {
+    pub fn export_detached_outputs(
+        self,
+        effects: Vec<EffectRecord>,
+        artifacts: Vec<CommittedArtifact>,
+    ) -> Result<World, WorldError> {
         let mut universe = self.universe;
-        universe.world.replace_retained_effects(effects)?;
+        universe
+            .world
+            .replace_retained_outputs(effects, artifacts)?;
         universe.export_retained_effects()?;
         Ok(universe.world)
     }

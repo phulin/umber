@@ -367,6 +367,36 @@ impl Default for PageBuilderState {
 }
 
 impl PageBuilderState {
+    pub(crate) fn retained_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            .saturating_add(
+                self.contribution
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<Node>()),
+            )
+            .saturating_add(self.current_page.retained_bytes())
+            .saturating_add(
+                self.page_discards
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<Node>()),
+            )
+            .saturating_add(
+                self.split_discards
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<Node>()),
+            )
+            .saturating_add(
+                self.insertions
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<PageInsertion>()),
+            )
+            .saturating_add(
+                self.mark_classes
+                    .len()
+                    .saturating_mul(std::mem::size_of::<(u16, MarkClassState)>()),
+            )
+    }
+
     pub(crate) fn is_format_empty(&self) -> bool {
         let mut state = self.clone();
         state.clear_page_discards();

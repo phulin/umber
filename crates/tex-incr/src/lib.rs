@@ -208,7 +208,7 @@ impl Session {
             .substrate
             .take()
             .ok_or(SessionError::MissingAcceptedSubstrate)?;
-        Ok(substrate.export_detached_effects(self.effects)?)
+        Ok(substrate.export_detached_outputs(self.effects, self.artifacts)?)
     }
 
     #[allow(clippy::disallowed_methods)] // Session telemetry; no TeX state observes it.

@@ -854,6 +854,25 @@ fn frozen_generation_forks_once_at_an_owner_exact_snapshot() {
 }
 
 #[test]
+fn generation_charge_covers_source_backing_and_releases_it_with_the_substrate() {
+    let empty_charge = Universe::new().freeze_generation().charged_bytes();
+    let bytes: Arc<[u8]> = Arc::from(vec![b'x'; 16 * 1024]);
+    let mut universe = Universe::new();
+    universe
+        .register_source(
+            SourceId::new(0),
+            SourceDescriptor::generated(Arc::clone(&bytes)),
+        )
+        .expect("generated source registration");
+    let substrate = universe.freeze_generation();
+
+    assert!(substrate.charged_bytes() >= empty_charge + bytes.len());
+    assert!(Arc::strong_count(&bytes) > 1);
+    drop(substrate);
+    assert_eq!(Arc::strong_count(&bytes), 1);
+}
+
+#[test]
 fn generation_fork_detaches_the_accepted_effect_prefix() {
     let mut universe = Universe::new();
     universe.begin_retained_session().expect("retained session");

@@ -314,6 +314,32 @@ pub struct StreamBufState {
 }
 
 impl StreamBufState {
+    fn retained_bytes(&self) -> usize {
+        let read_paths = self
+            .read_streams
+            .iter()
+            .flatten()
+            .map(|target| target.path.as_os_str().len())
+            .sum::<usize>();
+        let write_paths = self
+            .write_streams
+            .iter()
+            .flatten()
+            .map(|target| target.path.as_os_str().len())
+            .sum::<usize>();
+        std::mem::size_of::<Self>()
+            .saturating_add(read_paths)
+            .saturating_add(write_paths)
+            .saturating_add(
+                self.partial_lines
+                    .iter()
+                    .map(String::capacity)
+                    .sum::<usize>(),
+            )
+            .saturating_add(self.log_partial_line.capacity())
+            .saturating_add(self.terminal_partial_line.capacity())
+    }
+
     #[must_use]
     pub fn read_stream_path(&self, slot: StreamSlot) -> Option<&Path> {
         self.read_streams[slot.index()]
@@ -696,6 +722,76 @@ impl PartialEq for World {
 impl Eq for World {}
 
 impl World {
+    pub(crate) fn generation_retained_bytes(&self) -> usize {
+        let backend = match &self.backend {
+            WorldBackend::Real { artifact_dir } => artifact_dir.as_os_str().len(),
+            WorldBackend::Memory(memory) => memory
+                .files
+                .iter()
+                .map(|(path, bytes)| path.as_os_str().len().saturating_add(bytes.len()))
+                .sum::<usize>()
+                .saturating_add(
+                    memory
+                        .outputs
+                        .iter()
+                        .map(|(path, bytes)| {
+                            path.as_os_str().len().saturating_add(bytes.capacity())
+                        })
+                        .sum::<usize>(),
+                )
+                .saturating_add(memory.terminal_output.capacity())
+                .saturating_add(memory.log_output.capacity()),
+        };
+        let inputs = self
+            .inputs
+            .capacity()
+            .saturating_mul(std::mem::size_of::<InputRecord>())
+            .saturating_add(
+                self.inputs
+                    .iter()
+                    .map(|record| record.path.as_os_str().len())
+                    .sum::<usize>(),
+            );
+        let input_contents = self
+            .input_contents
+            .len()
+            .saturating_mul(std::mem::size_of::<(ContentHash, Arc<[u8]>)>())
+            .saturating_add(
+                self.input_contents
+                    .values()
+                    .map(|bytes| bytes.len())
+                    .sum::<usize>(),
+            );
+        std::mem::size_of::<Self>()
+            .saturating_add(backend)
+            .saturating_add(self.stream_bufs.retained_bytes())
+            .saturating_add(inputs)
+            .saturating_add(input_contents)
+            .saturating_add(
+                self.terminal_inputs
+                    .iter()
+                    .map(String::capacity)
+                    .sum::<usize>(),
+            )
+            .saturating_add(
+                self.shell_escapes
+                    .iter()
+                    .map(|record| record.command.capacity())
+                    .sum::<usize>(),
+            )
+            .saturating_add(
+                self.execution_trace
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<ExecutionTraceEvent>()),
+            )
+            .saturating_add(
+                self.execution_trace
+                    .iter()
+                    .map(|event| event.message.capacity())
+                    .sum::<usize>(),
+            )
+    }
+
     /// Creates a deterministic in-memory world for tests and hermetic runs.
     #[must_use]
     pub fn memory() -> Self {
@@ -1457,13 +1553,14 @@ impl World {
         Ok(())
     }
 
-    pub(crate) fn replace_retained_effects(
+    pub(crate) fn replace_retained_outputs(
         &mut self,
         effects: Vec<EffectRecord>,
+        artifacts: Vec<CommittedArtifact>,
     ) -> Result<(), WorldError> {
         if self.commit_mode != WorldCommitMode::Retained {
             return Err(WorldError::new(
-                "replace retained effects",
+                "replace retained outputs",
                 None,
                 "world is not a rollback-capable retained session",
             ));
@@ -1471,6 +1568,19 @@ impl World {
         self.effect_base = EffectPos::default();
         self.effects = Arc::new(effects);
         self.effect_commit_poison = None;
+        for artifact in &artifacts {
+            let stored = self.store_artifact(artifact.bytes())?;
+            if stored != artifact.hash() {
+                return Err(WorldError::new(
+                    "replace retained outputs",
+                    None,
+                    "accepted artifact identity does not match its bytes",
+                ));
+            }
+        }
+        self.artifact_base = 0;
+        self.artifact_commits = Arc::new(artifacts.iter().map(CommittedArtifact::hash).collect());
+        self.committed_artifacts = Arc::new(artifacts);
         Ok(())
     }
 

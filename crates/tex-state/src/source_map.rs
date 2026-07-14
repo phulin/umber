@@ -491,6 +491,11 @@ impl SourceMap {
                     .sum::<usize>(),
             retained_bytes: self.regions.capacity() * std::mem::size_of::<SourceRegion>()
                 + self.generated.capacity() * std::mem::size_of::<GeneratedSource>()
+                + self
+                    .generated
+                    .iter()
+                    .map(GeneratedSource::len)
+                    .sum::<usize>()
                 + self.line_starts.capacity() * std::mem::size_of::<Arc<[usize]>>()
                 + self
                     .line_starts

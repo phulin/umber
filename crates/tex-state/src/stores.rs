@@ -1829,6 +1829,7 @@ impl Stores {
     pub(crate) fn generation_retained_bytes(&self) -> usize {
         let serialized = self.encode_format().map_or(0, |format| format.len());
         let provenance = self.provenance_stats().retained_bytes();
+        let source_map = self.source_map.stats().retained_bytes;
         let nodes = self
             .nodes
             .retained_payload_bytes()
@@ -1842,6 +1843,7 @@ impl Stores {
             .saturating_add(serialized)
             .saturating_add(self.env.journal_retained_bytes())
             .saturating_add(provenance)
+            .saturating_add(source_map)
             .saturating_add(nodes)
     }
 

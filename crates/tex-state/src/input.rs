@@ -408,6 +408,16 @@ impl Hash for InputSummary {
 }
 
 impl InputSummary {
+    pub(crate) fn retained_bytes(&self) -> usize {
+        std::mem::size_of::<InputSemanticState>().saturating_add(
+            self.semantic_root
+                .0
+                .frames
+                .capacity()
+                .saturating_mul(std::mem::size_of::<InputFrameSummary>()),
+        )
+    }
+
     pub(crate) fn semantic_root(&self) -> InputSemanticRoot {
         self.semantic_root.clone()
     }

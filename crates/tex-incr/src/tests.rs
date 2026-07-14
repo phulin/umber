@@ -422,3 +422,41 @@ fn finalize_materializes_session_effects_once_and_consumes_session() {
             .contains("retained hello")
     );
 }
+
+#[test]
+fn finalize_installs_spliced_accepted_artifacts() {
+    let original = source("a");
+    let replacement = source("longer");
+    let mut session = Session::start(
+        template(),
+        "finalize-artifacts",
+        RevisionId::new(1),
+        original.clone(),
+        usize::MAX,
+    )
+    .expect("session starts");
+    let old = session.cold().expect("cold run");
+    let mut alternate = Session::start(
+        template(),
+        "alternate-artifacts",
+        RevisionId::new(1),
+        replacement,
+        usize::MAX,
+    )
+    .expect("alternate session");
+    let expected = alternate.cold().expect("alternate run").artifacts;
+    assert_ne!(expected[0].hash(), old.artifacts[0].hash());
+    // Model the accepted detached sequence after a splice while deliberately
+    // retaining the old frozen substrate.
+    session.artifacts = expected.clone();
+    let world = session.finalize().expect("session finalizes");
+    assert_eq!(world.committed_artifacts(), expected);
+    for artifact in expected {
+        assert_eq!(
+            world
+                .read_artifact(artifact.hash())
+                .expect("accepted artifact is published"),
+            Some(artifact.bytes().to_vec())
+        );
+    }
+}
