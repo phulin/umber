@@ -212,6 +212,8 @@ pub enum ExpandablePrimitive {
     IfDefined,
     IfCsName,
     IfFontChar,
+    /// pdfTeX's message-style balanced-text expansion primitive.
+    Expanded,
 }
 
 impl ExpandablePrimitive {
@@ -271,6 +273,7 @@ impl ExpandablePrimitive {
             Self::BotMarks => 50,
             Self::SplitFirstMarks => 51,
             Self::SplitBotMarks => 52,
+            Self::Expanded => 53,
         }
     }
 
@@ -330,6 +333,7 @@ impl ExpandablePrimitive {
             50 => Some(Self::BotMarks),
             51 => Some(Self::SplitFirstMarks),
             52 => Some(Self::SplitBotMarks),
+            53 => Some(Self::Expanded),
             _ => None,
         }
     }

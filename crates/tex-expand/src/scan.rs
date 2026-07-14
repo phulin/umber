@@ -446,6 +446,24 @@ where
     .token_list())
 }
 
+pub(crate) fn scan_general_text_expanded_with_expanded_open(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
+    context: TracedTokenWord,
+) -> Result<TracedTokenList, ScanToksError> {
+    let raw_text = scan_general_text_with_expanded_open(input, stores, expansion, mode, context)?;
+    expand_replacement_text(
+        input,
+        stores,
+        raw_text.token_list(),
+        raw_text.origin_list(),
+        expansion,
+        mode,
+    )
+}
+
 /// Scans e-TeX general text while expanding only the tokens that precede its
 /// compulsory opening brace.
 ///

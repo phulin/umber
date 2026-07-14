@@ -211,6 +211,30 @@ macro_rules! dispatch_match {
                     call_context,
                 )
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Expanded) => {
+                let expanded = crate::scan::scan_general_text_expanded_with_expanded_open(
+                    input,
+                    stores,
+                    expansion,
+                    mode,
+                    call_context,
+                )
+                .map_err(|error| match error {
+                    crate::scan::ScanToksError::Lex(error) => ExpandError::Lex(error),
+                    crate::scan::ScanToksError::Expand(error) => error,
+                    _ => ExpandError::MissingTokenAfterPrimitive {
+                        opcode: ExpandableOpcode::Expanded,
+                        context: call_context,
+                    },
+                })?;
+                Ok(Dispatch::Push {
+                    replay_kind: ExpansionReplayKind::Inserted,
+                    token_list: expanded.token_list(),
+                    origin_list: expanded.origin_list(),
+                    macro_arguments: MacroArguments::new(),
+                    macro_invocation: OriginId::UNKNOWN,
+                })
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Unexpanded) => {
                 let raw = crate::scan::scan_general_text_with_expanded_open(
                     input, stores, expansion, mode, call_context,
@@ -1011,6 +1035,7 @@ pub fn dispatch_expandable_opcode(opcode: ExpandableOpcode) -> Result<(), Expand
         | ExpandableOpcode::RomanNumeral
         | ExpandableOpcode::Meaning
         | ExpandableOpcode::The
+        | ExpandableOpcode::Expanded
         | ExpandableOpcode::Unexpanded
         | ExpandableOpcode::Detokenize
         | ExpandableOpcode::Unless

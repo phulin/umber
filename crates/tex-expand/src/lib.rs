@@ -229,6 +229,16 @@ pub fn install_etex_expandable_primitives(stores: &mut Universe) {
     }
 }
 
+/// Installs expandable primitives required by the supported LaTeX engine
+/// contract but not provided by e-TeX V2 itself.
+pub fn install_latex_expandable_primitives(stores: &mut Universe) {
+    let symbol = stores.intern("expanded");
+    stores.set_meaning(
+        symbol,
+        Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::Expanded),
+    );
+}
+
 /// Records state reads performed by expansion.
 ///
 /// Recorder implementations are erased behind [`ExpansionContext`]. Ordinary
@@ -400,6 +410,7 @@ pub enum ExpandableOpcode {
     RomanNumeral,
     Meaning,
     The,
+    Expanded,
     Unexpanded,
     Detokenize,
     Unless,

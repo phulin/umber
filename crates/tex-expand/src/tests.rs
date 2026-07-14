@@ -649,6 +649,95 @@ fn unexpanded_delivers_general_text_without_expanding_macros() {
 }
 
 #[test]
+fn expanded_is_installed_only_in_the_latex_extension_layer() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    crate::install_etex_expandable_primitives(&mut stores);
+    let expanded = stores.intern("expanded");
+    assert_eq!(stores.meaning(expanded), Meaning::Undefined);
+
+    crate::install_latex_expandable_primitives(&mut stores);
+    assert_eq!(
+        stores.meaning(expanded),
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::Expanded)
+    );
+}
+
+#[test]
+fn expanded_performs_message_style_balanced_text_expansion() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    crate::install_etex_expandable_primitives(&mut stores);
+    crate::install_latex_expandable_primitives(&mut stores);
+    let macro_cs = stores.intern("m");
+    let empty = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[char_token('X')]);
+    stores.set_macro_meaning(
+        macro_cs,
+        MacroMeaning::new(MeaningFlags::EMPTY, empty, body),
+    );
+    let mut input = InputStack::new(MemoryInput::new("\\expanded{a \\m{b}#}%"));
+
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "a X{b}#"
+    );
+}
+
+#[test]
+fn expanded_expands_while_scanning_for_the_opening_brace() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    crate::install_latex_expandable_primitives(&mut stores);
+    let a = stores.intern("a");
+    let replacement = stores.intern_token_list(&[char_token('X')]);
+    let parameters = stores.intern_token_list(&[]);
+    stores.set_macro_meaning(
+        a,
+        MacroMeaning::new(MeaningFlags::EMPTY, parameters, replacement),
+    );
+    let mut input = InputStack::new(MemoryInput::new("\\expanded\\expandafter{\\a Y}"));
+
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "XY "
+    );
+}
+
+#[test]
+fn expanded_preserves_protected_macros_during_its_own_expansion() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    crate::install_latex_expandable_primitives(&mut stores);
+    let protected = stores.intern("protectedmacro");
+    let empty = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[char_token('X')]);
+    stores.set_macro_meaning(
+        protected,
+        MacroMeaning::new(MeaningFlags::PROTECTED, empty, body),
+    );
+    let mut input = InputStack::new(MemoryInput::new("\\expanded{\\protectedmacro}"));
+
+    let expanded = crate::get_x_or_protected_with_context(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut ExpansionContext::new("texput"),
+    )
+    .expect("protected-aware expansion")
+    .expect("expanded result");
+    assert_eq!(
+        crate::semantic_token(expanded),
+        Token::Cs(protected.symbol())
+    );
+}
+
+#[test]
 fn unexpanded_expands_while_scanning_for_the_opening_brace() {
     let mut stores = Universe::new();
     install_expandable_primitives(&mut stores);
