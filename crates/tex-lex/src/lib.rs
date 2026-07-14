@@ -595,9 +595,31 @@ enum TokenReplay {
 }
 
 enum TracedTokenReplay {
-    Deliver(TracedTokenWord),
-    DeliverNoExpand(TracedTokenWord),
+    Deliver(DecodedTracedToken),
+    DeliverNoExpand(DecodedTracedToken),
     PushArgument(TracedTokenList),
+}
+
+/// A validated token and origin kept decoded while crossing lexer hot paths.
+/// Compact words remain the storage and snapshot representation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DecodedTracedToken {
+    token: Token,
+    origin: OriginId,
+}
+
+impl DecodedTracedToken {
+    const fn new(token: Token, origin: OriginId) -> Self {
+        Self { token, origin }
+    }
+
+    fn from_word(word: TracedTokenWord) -> Self {
+        Self::new(decode_traced_token(word), word.origin())
+    }
+
+    fn packed(self) -> TracedTokenWord {
+        TracedTokenWord::pack(self.token, self.origin)
+    }
 }
 
 /// Which immutable macro-replay characters a direct span consumer accepts.
@@ -738,32 +760,38 @@ impl ExpansionToken {
 /// A traced token read from the input stack with expansion-control metadata.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TracedExpansionToken {
-    token: TracedTokenWord,
+    token: Token,
+    origin: OriginId,
     suppress_expansion: bool,
 }
 
 impl TracedExpansionToken {
     #[must_use]
-    pub const fn new(token: TracedTokenWord, suppress_expansion: bool) -> Self {
+    pub fn new(token: TracedTokenWord, suppress_expansion: bool) -> Self {
+        Self::from_decoded(DecodedTracedToken::from_word(token), suppress_expansion)
+    }
+
+    fn from_decoded(token: DecodedTracedToken, suppress_expansion: bool) -> Self {
         Self {
-            token,
+            token: token.token,
+            origin: token.origin,
             suppress_expansion,
         }
     }
 
     #[must_use]
-    pub const fn traced_token(self) -> TracedTokenWord {
+    pub fn traced_token(self) -> TracedTokenWord {
+        TracedTokenWord::pack(self.token, self.origin)
+    }
+
+    #[must_use]
+    pub const fn token(self) -> Token {
         self.token
     }
 
     #[must_use]
-    pub fn token(self) -> Token {
-        decode_traced_token(self.token)
-    }
-
-    #[must_use]
     pub const fn origin(self) -> OriginId {
-        self.token.origin()
+        self.origin
     }
 
     #[must_use]
@@ -2294,7 +2322,7 @@ where
                             TracedTokenReplay::Deliver(token)
                             | TracedTokenReplay::DeliverNoExpand(token),
                         ) => {
-                            return Ok(Some(token));
+                            return Ok(Some(token.packed()));
                         }
                         None => {
                             let removed = self.remove_frame(frame_index);
@@ -2368,7 +2396,7 @@ where
                     else {
                         continue;
                     };
-                    return Ok(Some(token));
+                    return Ok(Some(token.packed()));
                 }
                 InputFrame::Condition { .. } => {
                     unreachable!("current_token_frame_index skips conditions")
@@ -2469,10 +2497,10 @@ where
                             continue;
                         }
                         Some(TracedTokenReplay::Deliver(token)) => {
-                            return Ok(Some(TracedExpansionToken::new(token, false)));
+                            return Ok(Some(TracedExpansionToken::from_decoded(token, false)));
                         }
                         Some(TracedTokenReplay::DeliverNoExpand(token)) => {
-                            return Ok(Some(TracedExpansionToken::new(token, true)));
+                            return Ok(Some(TracedExpansionToken::from_decoded(token, true)));
                         }
                         None => {
                             let removed = self.remove_frame(frame_index);
@@ -2546,7 +2574,7 @@ where
                     else {
                         continue;
                     };
-                    return Ok(Some(TracedExpansionToken::new(token, false)));
+                    return Ok(Some(TracedExpansionToken::from_decoded(token, false)));
                 }
                 InputFrame::Condition { .. } => {
                     unreachable!("current_token_frame_index skips conditions")
@@ -2886,7 +2914,7 @@ fn next_traced_token_from_token_list_frame(
         add_elapsed(&mut stats.provenance_nanos, provenance_started);
         stats.provenance_timer_samples += 1;
     }
-    let token = TracedTokenWord::pack(token, origin);
+    let token = DecodedTracedToken::new(token, origin);
     if frame.replay_kind == TokenListReplayKind::NoExpand {
         return Some(TracedTokenReplay::DeliverNoExpand(token));
     }
@@ -3072,14 +3100,14 @@ fn traced_source_token(
     token: Token,
     start: LexSourceContext,
     end: LexSourceContext,
-) -> TracedTokenWord {
+) -> DecodedTracedToken {
     let origin = match registration
         .and_then(|source| source.span(start.byte_offset, end.byte_offset).ok())
     {
         Some(span) => stores.source_span_origin(span),
         None => stores.source_range_origin(start.source_id, start.byte_offset, end.byte_offset),
     };
-    TracedTokenWord::pack(token, origin)
+    DecodedTracedToken::new(token, origin)
 }
 
 #[inline(always)]
@@ -3090,7 +3118,7 @@ fn traced_ordinary_source_token(
     start: LexSourceContext,
     end: LexSourceContext,
     scalar: char,
-) -> TracedTokenWord {
+) -> DecodedTracedToken {
     let backed_one_scalar =
         end.byte_offset.checked_sub(start.byte_offset) == u64::try_from(scalar.len_utf8()).ok();
     let origin = if backed_one_scalar {
@@ -3104,7 +3132,7 @@ fn traced_ordinary_source_token(
     } else {
         stores.source_range_origin(start.source_id, start.byte_offset, end.byte_offset)
     };
-    TracedTokenWord::pack(token, origin)
+    DecodedTracedToken::new(token, origin)
 }
 
 fn allocate_source_origin(
@@ -3123,9 +3151,9 @@ fn traced_inserted_token(
     kind: InsertedOriginKind,
     token: Token,
     parent: OriginId,
-) -> TracedTokenWord {
+) -> DecodedTracedToken {
     let origin = stores.inserted_origin(kind, token, parent);
-    TracedTokenWord::pack(token, origin)
+    DecodedTracedToken::new(token, origin)
 }
 
 fn decode_traced_token(token: TracedTokenWord) -> Token {
@@ -3138,7 +3166,7 @@ fn next_token_from_line<S>(
     source: &mut SourceInputFrame<S>,
     stores: &mut impl ExpansionState,
     unicode_superscript_notation: bool,
-) -> Result<Option<TracedTokenWord>, LexError> {
+) -> Result<Option<DecodedTracedToken>, LexError> {
     let start = source_coordinate(source);
     let ch = read_expanded_char(source, stores, unicode_superscript_notation);
     let cat = stores.catcode(ch);
@@ -3320,7 +3348,7 @@ fn scan_control_sequence<S>(
     stores: &mut impl ExpansionState,
     unicode_superscript_notation: bool,
     start: LexSourceContext,
-) -> TracedTokenWord {
+) -> DecodedTracedToken {
     if source.frame.byte_offset >= source.frame.line.len() {
         source.frame.state = LexerState::SkippingBlanks;
         let token = Token::Cs(stores.intern("").symbol());

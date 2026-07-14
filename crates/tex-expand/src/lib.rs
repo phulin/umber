@@ -1089,7 +1089,7 @@ pub(crate) struct PreparedExpansionToken(TracedExpansionToken);
 
 impl PreparedExpansionToken {
     #[must_use]
-    pub(crate) const fn traced_token(self) -> TracedTokenWord {
+    pub(crate) fn traced_token(self) -> TracedTokenWord {
         self.0.traced_token()
     }
 
@@ -1174,7 +1174,7 @@ where
             return Ok(Some(traced));
         }
 
-        let symbol = match expandable_symbol(stores, traced) {
+        let symbol = match expandable_symbol_for_token(stores, token) {
             Some(symbol) => symbol,
             None => {
                 if !alignment_prepared && intercept_alignment_token(input, stores, traced) {
@@ -1657,7 +1657,11 @@ pub(crate) fn expandable_symbol(
     stores: &mut impl ExpansionState,
     token: TracedTokenWord,
 ) -> Option<Symbol> {
-    match semantic_token(token) {
+    expandable_symbol_for_token(stores, semantic_token(token))
+}
+
+fn expandable_symbol_for_token(stores: &mut impl ExpansionState, token: Token) -> Option<Symbol> {
+    match token {
         Token::Cs(symbol) => Some(symbol),
         Token::Char {
             ch,
