@@ -480,6 +480,12 @@ impl From<tex_fonts::ParseError> for ExecError {
     }
 }
 
+impl From<tex_out::SerializeError> for ExecError {
+    fn from(error: tex_out::SerializeError) -> Self {
+        Self::InvalidShipoutArtifact(error.to_string())
+    }
+}
+
 impl From<FontParameterError> for ExecError {
     fn from(value: FontParameterError) -> Self {
         Self::FontParameter(value)

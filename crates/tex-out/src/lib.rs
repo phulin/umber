@@ -38,6 +38,7 @@ mod tests;
 
 pub use binary::{
     ArtifactCodecLimits, CodecLimitKind, ParseError, SerializeError, V10ArtifactBuilder,
+    V10DiscWriter, V10NodeListWriter, V10TokenWriter,
 };
 pub use model::{
     ArtifactValidationError, ArtifactValidationLimits, BoxNode, DEFAULT_BANNER, DiscKind,

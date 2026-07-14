@@ -31,7 +31,11 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/assignments/paragraph.rs`: paragraph start/end, parshape, line breaking, indentation, and prevdepth logic.
 - `src/assignments/primitives.rs`: registration table for unexpandable primitive meanings.
 - `src/assignments/scanning.rs`: assignment classification and operand scanners for variables and definitions.
-- `src/assignments/shipout.rs`: `\shipout` lowering from state nodes into `tex-out` page artifacts.
+- `src/assignments/shipout.rs`: `\shipout` transaction, commit, and publication orchestration.
+- `src/assignments/shipout/direct.rs`: fused fresh-page artifact and DVI emission over compact state node lists.
+- `src/assignments/shipout/direct/normalize.rs`: mutable pre-emission normalization for effects, math substitutions, and direction permutations.
+- `src/assignments/shipout/direct/materialize.rs`: localized owned-node replay support for repeated DVI leader payloads.
+- `src/assignments/shipout/direct/lower.rs`: state-to-artifact scalar and enum lowering helpers.
 - `src/assignments/tokens.rs`: prefix validation, globaldefs policy, optional equals, and token-list assignment helpers.
 - `src/assignments/variables.rs`: register, parameter, font variable, and stream assignment routing.
 - `src/assignments/variables/streams.rs`: `\openin`, `\read`, `\openout`, `\write`, and stream whatsit execution.

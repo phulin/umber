@@ -12,7 +12,7 @@ Use this crate for stable, driver-facing artifact structures and serialization c
 
 - `AGENTS.md`: Crate-local guidance, boundaries, validation expectations, and this file map.
 - `Cargo.toml`: Crate manifest declaring shared arithmetic and content-identity dependencies.
-- `src/binary.rs`: Versioned compact binary writer/reader, root-child streaming encoder/decoder, and parse error types.
+- `src/binary.rs`: Versioned compact binary writer/reader, nested list and token streaming encoders/decoders, and parse error types.
 - `src/dvi.rs`: Slice-compatible and incremental output-sink DVI APIs, one-page writer state, errors, and submodule wiring.
 - `src/bin/texout-dvitype.rs`: Small host-side DVI disassembly binary for parity triage.
 - `src/dvi/disasm.rs`: Bounded backpointer-graph validator and single-pass retained DVI command index/disassembler.
@@ -24,9 +24,9 @@ Use this crate for stable, driver-facing artifact structures and serialization c
 - `src/dvi/leaders.rs`: TeX.web hlist/vlist leader repetition loops for aligned, centered, expanded, rule, and degenerate leader cases.
 - `src/dvi/movement.rs`: TeX.web-style DVI `movement()` lookback stack and w/x/y/z command optimization.
 - `src/dvi/opcodes.rs`: Private DVI opcode and file unit constants shared by the writer modules and tests.
-- `src/dvi/plan.rs`: Owned precompiled page bodies, streaming compilation, first-use font-definition relocations, and final plan assembly.
+- `src/dvi/plan.rs`: Owned precompiled page bodies, scalar-event and v10-stream compilation, first-use font-definition relocations, and final plan assembly.
 - `src/dvi/tests.rs`: Byte-level DVI writer tests for file structure, traversal, movement optimization, rules, fonts, glue, and specials.
-- `src/dvi/traversal.rs`: TeX.web-style committed page traversal, hlist/vlist output, rules, specials, and movement synchronization.
+- `src/dvi/traversal.rs`: TeX.web-style owned traversal plus the explicit-frame direct-emission state machine for boxes, rules, specials, glue, and movement synchronization.
 - `src/lib.rs`: Crate documentation, module wiring, tests module registration, and public re-exports.
 - `src/model.rs`: Detached page artifact, font resource, node, glue, kern, and output effect data model.
 - `src/tests.rs`: Round-trip, deterministic byte/hash, and binary rejection tests for artifact serialization.

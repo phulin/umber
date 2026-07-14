@@ -1,6 +1,6 @@
 use tex_arith::Scaled;
 
-use crate::{BoxNode, PageArtifact, PageEffect, PageNode, binary::V10PageDecoder};
+use crate::{BoxNode, PageEffect, PageNode};
 
 use super::{
     DviError, DviWriter,
@@ -20,16 +20,32 @@ use super::{
 // positive rightward.  Thus hlist recursion subtracts shift and vlist
 // recursion adds it.
 
-pub(super) enum RootStreamState {
+/// Explicit traversal state for direct page emission.
+///
+/// Unlike `RootStreamState`, this stack represents every live box.  Fresh
+/// shipout can therefore feed scalar nodes straight from the engine arena
+/// without constructing `PageNode` children or recursively entering the DVI
+/// walker.
+pub(super) struct DirectStreamState {
+    frames: Vec<DirectFrame>,
+}
+
+struct DirectFrame {
+    fields: BoxNode,
+    save_loc: usize,
+    axis: DirectAxis,
+    continuation: DirectContinuation,
+}
+
+#[derive(Clone, Copy)]
+enum DirectAxis {
     H {
-        save_loc: usize,
         base_line: Scaled,
         left_edge: Scaled,
         cur_g: Scaled,
         cur_glue: Scaled,
     },
     V {
-        save_loc: usize,
         left_edge: Scaled,
         top_edge: Scaled,
         cur_g: Scaled,
@@ -37,104 +53,367 @@ pub(super) enum RootStreamState {
     },
 }
 
+#[derive(Clone, Copy)]
+enum DirectContinuation {
+    Root,
+    H {
+        save_h: Scaled,
+        save_v: Scaled,
+        edge: Scaled,
+        base_line: Scaled,
+        width: Scaled,
+    },
+    V {
+        save_h: Scaled,
+        save_v: Scaled,
+        left_edge: Scaled,
+        depth: Scaled,
+    },
+}
+
 impl<W: std::io::Write> DviWriter<W> {
-    pub(super) fn begin_root_stream(
+    pub(super) fn begin_direct_stream(
         &mut self,
         h_offset: Scaled,
         v_offset: Scaled,
         root: &BoxNode,
         vertical: bool,
-    ) -> Result<RootStreamState, DviError> {
+    ) -> Result<DirectStreamState, DviError> {
         self.cur_h = h_offset;
         self.cur_v = root
             .height
             .checked_add(v_offset)
             .ok_or(DviError::PositionOverflow)?;
+        let mut state = DirectStreamState { frames: Vec::new() };
+        self.enter_direct_frame(&mut state, root, vertical, DirectContinuation::Root)?;
+        Ok(state)
+    }
+
+    fn enter_direct_frame(
+        &mut self,
+        state: &mut DirectStreamState,
+        fields: &BoxNode,
+        vertical: bool,
+        continuation: DirectContinuation,
+    ) -> Result<(), DviError> {
         self.enter_box();
         if self.cur_s > 0 {
             self.u8(PUSH);
         }
         let save_loc = self.bytes.len();
-        if vertical {
+        let axis = if vertical {
             let left_edge = self.cur_h;
-            self.cur_v = sub_scaled(self.cur_v, root.height)?;
-            Ok(RootStreamState::V {
-                save_loc,
+            self.cur_v = sub_scaled(self.cur_v, fields.height)?;
+            DirectAxis::V {
                 left_edge,
                 top_edge: self.cur_v,
                 cur_g: Scaled::from_raw(0),
                 cur_glue: Scaled::from_raw(0),
-            })
+            }
         } else {
-            Ok(RootStreamState::H {
-                save_loc,
+            DirectAxis::H {
                 base_line: self.cur_v,
                 left_edge: self.cur_h,
                 cur_g: Scaled::from_raw(0),
                 cur_glue: Scaled::from_raw(0),
-            })
-        }
+            }
+        };
+        state.frames.push(DirectFrame {
+            fields: fields.clone(),
+            save_loc,
+            axis,
+            continuation,
+        });
+        Ok(())
     }
 
-    pub(super) fn push_root_stream_child(
+    pub(super) fn direct_begin_box(
         &mut self,
-        effects: &[PageEffect],
-        root: &BoxNode,
-        state: &mut RootStreamState,
-        child: &PageNode,
-    ) -> Result<(), DviError> {
-        match state {
-            RootStreamState::H {
+        state: &mut DirectStreamState,
+        fields: &BoxNode,
+        vertical: bool,
+        empty: bool,
+    ) -> Result<bool, DviError> {
+        let parent = state.frames.last().expect("direct stream has a root frame");
+        if empty {
+            match parent.axis {
+                DirectAxis::H { .. } => self.cur_h = add_scaled(self.cur_h, fields.width)?,
+                DirectAxis::V { .. } => {
+                    self.cur_v = add_scaled(add_scaled(self.cur_v, fields.height)?, fields.depth)?;
+                }
+            }
+            return Ok(false);
+        }
+
+        let continuation = match parent.axis {
+            DirectAxis::H { base_line, .. } => {
+                let continuation = DirectContinuation::H {
+                    save_h: self.dvi_h,
+                    save_v: self.dvi_v,
+                    edge: self.cur_h,
+                    base_line,
+                    width: fields.width,
+                };
+                self.cur_v = add_scaled(base_line, fields.shift)?;
+                continuation
+            }
+            DirectAxis::V { left_edge, .. } => {
+                self.cur_v = add_scaled(self.cur_v, fields.height)?;
+                self.synch_v()?;
+                let continuation = DirectContinuation::V {
+                    save_h: self.dvi_h,
+                    save_v: self.dvi_v,
+                    left_edge,
+                    depth: fields.depth,
+                };
+                self.cur_h = add_scaled(left_edge, fields.shift)?;
+                continuation
+            }
+        };
+        self.enter_direct_frame(state, fields, vertical, continuation)?;
+        Ok(true)
+    }
+
+    pub(super) fn direct_end_box(&mut self, state: &mut DirectStreamState) -> Result<(), DviError> {
+        let frame = state.frames.pop().expect("direct stream box is balanced");
+        self.prune_movements(frame.save_loc);
+        if self.cur_s > 0 {
+            self.dvi_pop(frame.save_loc);
+        }
+        self.cur_s -= 1;
+        match frame.continuation {
+            DirectContinuation::Root => {}
+            DirectContinuation::H {
+                save_h,
+                save_v,
+                edge,
                 base_line,
+                width,
+            } => {
+                self.dvi_h = save_h;
+                self.dvi_v = save_v;
+                self.cur_h = add_scaled(edge, width)?;
+                self.cur_v = base_line;
+            }
+            DirectContinuation::V {
+                save_h,
+                save_v,
                 left_edge,
+                depth,
+            } => {
+                self.dvi_h = save_h;
+                self.dvi_v = save_v;
+                self.cur_v = add_scaled(save_v, depth)?;
+                self.cur_h = left_edge;
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn finish_direct_stream(
+        &mut self,
+        mut state: DirectStreamState,
+    ) -> Result<(), DviError> {
+        if state.frames.len() != 1 {
+            return Err(DviError::Artifact {
+                message: "unbalanced direct page box events".to_owned(),
+            });
+        }
+        self.direct_end_box(&mut state)
+    }
+
+    pub(super) fn direct_char(
+        &mut self,
+        state: &mut DirectStreamState,
+        font_id: u32,
+        ch: u32,
+        width: Scaled,
+    ) -> Result<(), DviError> {
+        let frame = state.frames.last().expect("direct stream has a root frame");
+        if let DirectAxis::H { base_line, .. } = frame.axis {
+            self.synch_h()?;
+            self.synch_v()?;
+            self.change_font(font_id)?;
+            self.set_char(ch)?;
+            self.cur_h = add_scaled(self.cur_h, width)?;
+            self.dvi_h = self.cur_h;
+            self.cur_v = base_line;
+        }
+        Ok(())
+    }
+
+    pub(super) fn direct_kern(
+        &mut self,
+        state: &DirectStreamState,
+        amount: Scaled,
+    ) -> Result<(), DviError> {
+        match state
+            .frames
+            .last()
+            .expect("direct stream has a root frame")
+            .axis
+        {
+            DirectAxis::H { .. } => self.cur_h = add_scaled(self.cur_h, amount)?,
+            DirectAxis::V { .. } => self.cur_v = add_scaled(self.cur_v, amount)?,
+        }
+        Ok(())
+    }
+
+    pub(super) fn direct_math(
+        &mut self,
+        state: &DirectStreamState,
+        amount: Scaled,
+    ) -> Result<(), DviError> {
+        if matches!(
+            state
+                .frames
+                .last()
+                .expect("direct stream has a root frame")
+                .axis,
+            DirectAxis::H { .. }
+        ) {
+            self.cur_h = add_scaled(self.cur_h, amount)?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn direct_rule(
+        &mut self,
+        state: &DirectStreamState,
+        width: Option<Scaled>,
+        height: Option<Scaled>,
+        depth: Option<Scaled>,
+    ) -> Result<(), DviError> {
+        let frame = state.frames.last().expect("direct stream has a root frame");
+        match frame.axis {
+            DirectAxis::H { base_line, .. } => {
+                let rule_ht = height.unwrap_or(frame.fields.height);
+                let rule_dp = depth.unwrap_or(frame.fields.depth);
+                let rule_wd = width.unwrap_or(Scaled::from_raw(0));
+                self.output_rule_in_hlist(rule_ht, rule_dp, rule_wd, base_line)?;
+                self.cur_h = add_scaled(self.cur_h, rule_wd)?;
+                self.cur_v = base_line;
+            }
+            DirectAxis::V { .. } => {
+                let rule_ht = add_scaled(
+                    height.unwrap_or(Scaled::from_raw(0)),
+                    depth.unwrap_or(Scaled::from_raw(0)),
+                )?;
+                self.output_rule_in_vlist(rule_ht, width.unwrap_or(frame.fields.width))?;
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn direct_glue(
+        &mut self,
+        state: &mut DirectStreamState,
+        spec: crate::GlueSpec,
+    ) -> Result<(), DviError> {
+        let frame = state
+            .frames
+            .last_mut()
+            .expect("direct stream has a root frame");
+        match &mut frame.axis {
+            DirectAxis::H {
+                base_line,
                 cur_g,
                 cur_glue,
                 ..
             } => {
+                let width = adjusted_glue_width(
+                    spec,
+                    frame.fields.glue_sign,
+                    frame.fields.glue_order,
+                    frame.fields.glue_set,
+                    cur_glue,
+                    cur_g,
+                )?;
+                self.cur_h = add_scaled(self.cur_h, width)?;
+                self.cur_v = *base_line;
+            }
+            DirectAxis::V {
+                cur_g, cur_glue, ..
+            } => {
+                let height = adjusted_glue_width(
+                    spec,
+                    frame.fields.glue_sign,
+                    frame.fields.glue_order,
+                    frame.fields.glue_set,
+                    cur_glue,
+                    cur_g,
+                )?;
+                self.cur_v = add_scaled(self.cur_v, height)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn direct_owned_leader(
+        &mut self,
+        state: &mut DirectStreamState,
+        effects: &[PageEffect],
+        node: &PageNode,
+    ) -> Result<(), DviError> {
+        let frame = state
+            .frames
+            .last_mut()
+            .expect("direct stream has a root frame");
+        match &mut frame.axis {
+            DirectAxis::H {
+                base_line,
+                left_edge,
+                cur_g,
+                cur_glue,
+            } => {
                 self.output_hlist_child(
-                    effects, root, child, *base_line, *left_edge, cur_g, cur_glue,
+                    effects,
+                    &frame.fields,
+                    node,
+                    *base_line,
+                    *left_edge,
+                    cur_g,
+                    cur_glue,
                 )?;
                 self.cur_v = *base_line;
             }
-            RootStreamState::V {
+            DirectAxis::V {
                 left_edge,
                 top_edge,
                 cur_g,
                 cur_glue,
-                ..
-            } => self
-                .output_vlist_child(effects, root, child, *left_edge, *top_edge, cur_g, cur_glue)?,
+            } => {
+                self.output_vlist_child(
+                    effects,
+                    &frame.fields,
+                    node,
+                    *left_edge,
+                    *top_edge,
+                    cur_g,
+                    cur_glue,
+                )?;
+            }
         }
         Ok(())
     }
 
-    pub(super) fn finish_root_stream(&mut self, state: RootStreamState) -> Result<(), DviError> {
-        let save_loc = match state {
-            RootStreamState::H { save_loc, .. } | RootStreamState::V { save_loc, .. } => save_loc,
-        };
-        self.prune_movements(save_loc);
-        if self.cur_s > 0 {
-            self.dvi_pop(save_loc);
-        }
-        self.cur_s -= 1;
-        Ok(())
-    }
-
-    pub(super) fn ship_streamed_box(
+    pub(super) fn direct_whatsit(
         &mut self,
-        page: &PageArtifact,
-        root: &BoxNode,
-        vertical: bool,
-        decoder: &mut V10PageDecoder<'_>,
+        state: &DirectStreamState,
+        effects: &[PageEffect],
+        effect_index: u32,
     ) -> Result<(), DviError> {
-        let mut state =
-            self.begin_root_stream(page.job.h_offset, page.job.v_offset, root, vertical)?;
-        while let Some(child) = decoder.next_child()? {
-            self.push_root_stream_child(&page.effects, root, &mut state, &child)?;
+        self.out_what(effects, effect_index)?;
+        if let DirectAxis::H { base_line, .. } = state
+            .frames
+            .last()
+            .expect("direct stream has a root frame")
+            .axis
+        {
+            self.cur_v = base_line;
         }
-        self.finish_root_stream(state)
+        Ok(())
     }
-
     #[allow(clippy::too_many_arguments)] // Explicit TeX hlist traversal registers.
     fn output_hlist_child(
         &mut self,
