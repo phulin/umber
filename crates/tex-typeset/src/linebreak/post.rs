@@ -25,12 +25,18 @@ pub fn post_line_break_owned<S: TypesetState>(
     breaks: &[BreakDecision],
     params: PostLineBreakParams,
 ) -> Vec<BrokenLine> {
-    let mut lines = Vec::new();
+    let mut lines = Vec::with_capacity(breaks.len());
     let node_count = nodes.len();
     let mut nodes = nodes.into_iter().enumerate().peekable();
     let mut pending_post = Vec::new();
     for (line_no, decision) in breaks.iter().enumerate() {
-        let mut line = Vec::new();
+        let end = decision.position.min(node_count);
+        let start = nodes.peek().map_or(end, |(index, _)| *index);
+        let mut line = Vec::with_capacity(
+            end.saturating_sub(start)
+                .saturating_add(pending_post.len())
+                .saturating_add(2),
+        );
         let dimensions = params.shape.dimensions(line_no + 1);
         if state.glue(params.left_skip) != GlueSpec::ZERO {
             line.push(Node::Glue {
@@ -40,7 +46,6 @@ pub fn post_line_break_owned<S: TypesetState>(
             });
         }
         line.append(&mut pending_post);
-        let end = decision.position.min(node_count);
         pending_post = push_owned_line_segment(
             state,
             &mut nodes,
