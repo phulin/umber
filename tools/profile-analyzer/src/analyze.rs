@@ -38,6 +38,8 @@ pub struct Report {
     pub self_time: Vec<Entry>,
     pub inclusive_time: Vec<Entry>,
     pub immediate_callees: Vec<Entry>,
+    pub immediate_callers: Vec<Entry>,
+    pub application_callers: Vec<Entry>,
     pub runtime_by_library: Vec<Entry>,
     pub runtime_callers: Vec<Entry>,
 }
@@ -96,6 +98,8 @@ pub(crate) fn analyze(
     let mut self_counts = BTreeMap::new();
     let mut inclusive_counts = BTreeMap::new();
     let mut immediate_counts = BTreeMap::new();
+    let mut caller_counts = BTreeMap::new();
+    let mut application_caller_counts = BTreeMap::new();
     let mut runtime_libraries = BTreeMap::new();
     let mut runtime_callers = BTreeMap::new();
     let mut selected_weight = 0.0;
@@ -120,6 +124,19 @@ pub(crate) fn analyze(
                 .or_else(|| selected.last());
             if let Some(immediate) = immediate {
                 *immediate_counts.entry(immediate.clone()).or_insert(0.0) += sample.weight;
+            }
+            if let Some(caller) = sample.frames.get(limit) {
+                *caller_counts.entry(caller.clone()).or_insert(0.0) += sample.weight;
+            }
+            if let Some(caller) = sample
+                .frames
+                .iter()
+                .skip(limit)
+                .find(|frame| frame.library == app && !is_runtime_function(&frame.function))
+            {
+                *application_caller_counts
+                    .entry(caller.clone())
+                    .or_insert(0.0) += sample.weight;
             }
         }
         if let Some(leaf) = selected.first()
@@ -152,6 +169,13 @@ pub(crate) fn analyze(
         self_time: entries(self_counts, selected_weight, total_weight, options.top),
         inclusive_time: entries(inclusive_counts, selected_weight, total_weight, options.top),
         immediate_callees: entries(immediate_counts, selected_weight, total_weight, options.top),
+        immediate_callers: entries(caller_counts, selected_weight, total_weight, options.top),
+        application_callers: entries(
+            application_caller_counts,
+            selected_weight,
+            total_weight,
+            options.top,
+        ),
         runtime_by_library: library_entries(
             runtime_libraries,
             selected_weight,
@@ -345,6 +369,12 @@ fn is_runtime_library(library: &str) -> bool {
         || library.starts_with("libsystem_")
 }
 
+fn is_runtime_function(function: &str) -> bool {
+    ["alloc::", "core::", "std::", "__rustc::"]
+        .iter()
+        .any(|prefix| function.starts_with(prefix))
+}
+
 fn subtree_limit(sample: &Sample, subtree: Option<&str>) -> Option<usize> {
     match subtree {
         None => Some(sample.frames.len()),
@@ -480,6 +510,10 @@ mod tests {
         assert_eq!(subtree.weight, 5.0, "recursive frame counted once");
         assert_eq!(report.runtime_callers[0].function, "subtree");
         assert_eq!(report.runtime_callers[0].weight, 3.0);
+        assert_eq!(report.immediate_callers[0].function, "root");
+        assert_eq!(report.immediate_callers[0].weight, 5.0);
+        assert_eq!(report.application_callers[0].function, "root");
+        assert_eq!(report.application_callers[0].weight, 5.0);
     }
 
     #[test]

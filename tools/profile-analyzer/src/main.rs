@@ -109,6 +109,8 @@ fn print_text(profile: &std::path::Path, symbols: Option<&std::path::Path>, repo
     print_entries("Inclusive time", &report.inclusive_time);
     if report.subtree.is_some() {
         print_entries("Immediate callees", &report.immediate_callees);
+        print_entries("Immediate callers", &report.immediate_callers);
+        print_entries("Nearest application callers", &report.application_callers);
     }
     print_entries("Runtime self by library", &report.runtime_by_library);
     print_entries(
