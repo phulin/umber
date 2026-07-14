@@ -9,18 +9,18 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\badness` - Reports the badness of the glue setting in the last box made. Implemented as a read-only internal integer backed by execution-side packing records.
 - [x] `\box` - Appends a box register's contents and clears that register.
 - [x] `\boxmaxdepth` - Sets the maximum depth allowed when building vertical boxes. Implemented as an assignable dimension parameter consumed by `tex-typeset` vertical packing.
-- [x] `\cleaders` - Builds centered leaders across glue. Payload parsing and glue-node storage are implemented; DVI repetition is tracked in the leaders output issue.
+- [x] `\cleaders` - Builds centered leaders across glue, including centered DVI repetition of box and rule payloads.
 - [x] `\copy` - Appends a copy of a box register without clearing it.
 - [x] `\dp` - Reads or assigns the depth of a box register.
-- [x] `\everyhbox` - Token list inserted at the start of every `\hbox`. Implemented as an assignable token list parameter; insertion at box start is not yet wired and is tracked in the conformance epic.
-- [x] `\everyvbox` - Token list inserted at the start of every `\vbox`. Implemented as an assignable token list parameter; insertion at box start is not yet wired and is tracked in the conformance epic.
+- [x] `\everyhbox` - Token list inserted at the start of every `\hbox`. Implemented as an assignable token list parameter; insertion at box start is not yet wired and is tracked by `umber2-8uup`.
+- [x] `\everyvbox` - Token list inserted at the start of every `\vbox`. Implemented as an assignable token list parameter; insertion at box start is not yet wired and is tracked by `umber2-8uup`.
 - [x] `\hbadness` - Threshold above which underfull or loose hboxes are reported. Implemented as an assignable integer parameter consumed by `tex-typeset` horizontal packing diagnostics.
 - [x] `\hbox` - Builds a horizontal box.
 - [x] `\hfuzz` - Tolerance before overfull hboxes are reported. Implemented as an assignable dimension parameter consumed by `tex-typeset` horizontal packing diagnostics.
 - [x] `\hrule` - Adds a horizontal rule in vertical mode with TeX's running-width/default-thickness rule dimensions and resets `\prevdepth` to the ignore sentinel.
 - [x] `\ht` - Reads or assigns the height of a box register.
 - [x] `\lastbox` - Removes and returns the last box from the current list when allowed.
-- [x] `\leaders` - Repeats a box or rule across glue. Payload parsing and glue-node storage are implemented; DVI repetition is tracked in the leaders output issue.
+- [x] `\leaders` - Repeats a box or rule across glue with TeX82-aligned DVI placement.
 - [x] `\overfullrule` - Width of the diagnostic rule added to overfull boxes. Implemented as an assignable dimension parameter; overfull hboxes get the diagnostic rule appended during packing.
 - [x] `\prevdepth` - Depth of the previous box on the current vertical list. Implemented as a per-mode-list field; `\nointerlineskip` sets TeX's ignore sentinel.
 - [x] `\setbox` - Assigns a box register from an `\hbox`, `\vbox`, or `\vtop`.
@@ -34,7 +34,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\vrule` - Adds a vertical rule in horizontal mode.
 - [x] `\vtop` - Builds a vertical box aligned by its first item.
 - [x] `\wd` - Reads or assigns the width of a box register.
-- [x] `\xleaders` - Builds expanded leaders across glue. Payload parsing and glue-node storage are implemented; DVI repetition is tracked in the leaders output issue.
+- [x] `\xleaders` - Builds expanded leaders across glue, including expanded DVI repetition of box and rule payloads.
 
 ## Characters And Case
 
@@ -57,16 +57,16 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 
 ## Diagnostics And Interaction
 
-- [ ] `\batchmode` - Suppresses terminal interaction and most terminal output.
+- [x] `\batchmode` - Selects batch interaction mode in checkpointed engine state. Full TeX82 terminal/error routing remains part of the parity diagnostics work.
 - [x] `\errhelp` - Token list shown as help for a following `\errmessage`. Implemented as an assignable token list parameter; help display is tracked with the conformance error-format pass.
 - [x] `\errmessage` - Issues an error with expanded message text through World's terminal/log effect sink; interactive help/context remains World/interaction work.
 - [x] `\errorcontextlines` - Number of context lines shown for errors. Implemented as an assignable integer parameter; error-context display is tracked with the conformance error-format pass.
-- [ ] `\errorstopmode` - Restores interactive stopping on errors.
+- [x] `\errorstopmode` - Selects error-stop interaction mode in checkpointed engine state. Interactive prompting remains deliberately outside the batch-first driver.
 - [x] `\meaning` - Expands to a textual description of a token's meaning. Macro text is supported; unsupported raw meanings use a placeholder.
 - [x] `\message` - Writes expanded message text through World's terminal/log effect sink with pdfTeX-style message separation and wrapping for the covered subset.
-- [ ] `\nonstopmode` - Continues past errors without stopping for input.
+- [x] `\nonstopmode` - Selects nonstop interaction mode in checkpointed engine state; stream reads and executor recovery consult the same state.
 - [x] `\pausing` - Prompts after input lines when positive. Implemented as an assignable integer parameter; prompting is intentionally not implemented in the batch-first engine.
-- [ ] `\scrollmode` - Scrolls past errors while still showing diagnostics.
+- [x] `\scrollmode` - Selects scroll interaction mode in checkpointed engine state. Exact TeX82 diagnostic routing remains part of the parity diagnostics work.
 - [x] `\show` - Displays the meaning of the next token through World's terminal/log effect sink for implemented meaning classes.
 - [x] `\showbox` - Writes a box register's contents to the log.
 - [x] `\showboxbreadth` - Maximum number of list items shown per level. Implemented as an assignable integer parameter; the `\showbox` emitter is tracked separately.
@@ -154,7 +154,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\deadcycles` - Number of output routine calls since the last `\shipout`; read/write page-builder counter.
 - [x] `\dump` - Ends the job through TeX's ordinary final-cleanup path, but emits one warning and does not write a format file; this deliberate divergence is recorded in `docs/divergences.md`.
 - [x] `\end` - Ends the job with TeX's final cleanup, flushing remaining page material through the output routine before exiting the batch loop.
-- [x] `\everyjob` - Token list inserted at the start of every job. Implemented as an assignable token list parameter; job-start insertion is tracked with plain.tex bring-up in the conformance epic.
+- [x] `\everyjob` - Token list inserted at the start of every job. Implemented as an assignable token list parameter; job-start insertion is not yet wired and is tracked by `umber2-8uup`.
 - [x] `\jobname` - Expands to the driver-provided job name as rendered character tokens.
 - [x] `\mag` - Magnification ratio, scaled by 1000; implemented as an assignable integer parameter used by true-unit scanning.
 - [x] `\maxdeadcycles` - Maximum allowed output routine cycles without shipout; consumed by the output-routine loop guard.
@@ -200,7 +200,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\afterassignment` - Saves a token in snapshot-covered state and inserts it after the next completed assignment, including box assignments.
 - [x] `\aftergroup` - Saves a token on the current state-layer group marker and replays saved tokens FIFO when that group exits.
 - [x] `\begingroup` - Starts an explicit semi-simple group through the state journal marker API.
-- [x] `\csname` - Builds a control sequence from expanded character tokens and assigns `\relax` to newly-created undefined names through the explicit expansion interning capability. Re-expanding a `\csname` result that is a macro is tracked in umber2-sfc.26.
+- [x] `\csname` - Builds a control sequence from expanded character tokens, assigns `\relax` to newly-created undefined names through the explicit expansion interning capability, and re-expands macro results on command demand.
 - [x] `\def` - Defines a macro without expanding replacement text.
 - [x] `\edef` - Defines a macro after expanding replacement text.
 - [x] `\endcsname` - Terminates a `\csname` name scan.
@@ -321,7 +321,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\doublehyphendemerits` - Demerits for consecutive hyphenated lines; consumed by the paragraph line breaker.
 - [x] `\emergencystretch` - Extra stretch used during the final paragraph line-breaking pass.
 - [x] `\everypar` - Token list inserted at the start of each paragraph and replayed through the input stack.
-- [x] `\finalhyphendemerits` - Captured for paragraph breaking; full penultimate-line parity is tracked with the remaining line-break parity follow-up.
+- [x] `\finalhyphendemerits` - Applied when the penultimate and final lines are both hyphenated, including route ranking before candidate pruning.
 - [x] `\hangafter` - Line number where hanging indentation changes. Captured at `\par` and reset after paragraph completion.
 - [x] `\hangindent` - Hanging indentation amount for paragraphs. Captured at `\par` and reset after paragraph completion.
 - [x] `\hsize` - Line width for normal paragraph building; captured at `\par` and used to hpack each broken line.

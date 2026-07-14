@@ -66,7 +66,9 @@ the checkpointed interaction state. `\showtokens` displays the manual-defined
 decomposition of unexpanded balanced text. `\showgroups` and `\showifs` walk
 the live checkpointed group and conditional stacks. `\tracingassigns`,
 `\tracinggroups`, `\tracingifs`, and `\tracingnesting`
-are **missing**.
+are installed as group-scoped integer parameters, but their trace emission is
+**missing**. The remaining work is observable diagnostic behavior rather than
+primitive registration or assignment scanning.
 
 ## Marks, lists, paragraph extensions, and math (manual sections 3.4, 3.7)
 
@@ -92,15 +94,23 @@ contract and the official e-TRIP workload:
   pattern and exception use.
 
 TeX--XeT directions and `\middle` are implemented with focused tests but remain
-outside this completed state-family audit. Their final status belongs with the
-direction and math conformance work rather than `umber2-wvo.4`.
+outside this completed state-family audit. The two-phase e-TRIP DVI gate passes,
+but the dedicated direction/math task still owns focused DVI fixtures for
+nested directions, boxed direction nodes, display direction, equation-number
+placement, and `\left...\middle...\right` layout.
 
 ## Conformance gates
+
+The in-process two-phase `e2e_conformance_etrip` test currently passes exact
+DVI comparison against the locally generated pdfTeX/e-TeX oracle after the
+documented preamble-comment normalization. This completes the current e-TRIP
+DVI fixture gate; it does not complete the official textual-artifact gate.
 
 - Compatibility mode: every extension control sequence remains undefined and
   unused extended mode retains TeX82 Story/Gentle/TRIP behavior.
 - Focused corpus: exact expansion, diagnostics, state, node-list, and DVI
   parity for every family above. Fixture regeneration uses only
   `scripts/regen-fixtures.sh`.
-- Official e-TRIP: pinned inputs and exact parity-mode log/photo/output plus
-  DVI/DVItype comparison; deliberate text and DVI perturbations must fail.
+- Official e-TRIP remaining work: exact parity-mode log, terminal-photo,
+  DVItype, and output-file comparison from pinned inputs; deliberate text and
+  DVI perturbations must fail actionably.
