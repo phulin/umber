@@ -2475,12 +2475,12 @@ impl Universe {
         self.stores.pin_survivor(id);
     }
 
-    /// Transfers compatible box children into the current epoch, then clears
-    /// the register with same-level TeX assignment semantics.
+    /// Pins compatible box children, then clears the register with same-level
+    /// TeX assignment semantics.
     ///
     /// Compatibility is checked before mutation, and the children are cloned
     /// while the survivor-backed register owner is still live. The outer
-    /// one-node box wrapper is deliberately not copied.
+    /// one-node box wrapper is deliberately not retained by the consumer.
     pub fn take_unbox_children_same_level(
         &mut self,
         index: u16,
@@ -2500,7 +2500,7 @@ impl Universe {
             }
             _ => return TakeUnboxResult::Incompatible,
         };
-        let children = self.clone_node_list_to_epoch(children);
+        self.stores.pin_survivor(value);
         let taken = self.stores.take_box_reg_same_level(index);
         debug_assert_eq!(taken, Some(value));
         TakeUnboxResult::Children(children)

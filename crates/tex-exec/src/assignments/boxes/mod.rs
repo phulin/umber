@@ -219,7 +219,9 @@ where
                         report_incompatible_unbox(stores);
                         return Ok(());
                     }
-                    TakeUnboxResult::Children(children) => Some(UnboxSource::OwnedEpoch(children)),
+                    TakeUnboxResult::Children(children) => {
+                        Some(UnboxSource::PinnedSurvivor(children))
+                    }
                 }
             } else {
                 let id = stores.box_reg(index);
@@ -577,7 +579,7 @@ fn extract_box_migrations(stores: &mut Universe, node: &mut Node) -> Vec<Node> {
 }
 
 enum UnboxSource {
-    OwnedEpoch(tex_state::ids::NodeListId),
+    PinnedSurvivor(tex_state::ids::NodeListId),
     Shared(tex_state::ids::NodeListId),
 }
 
@@ -590,8 +592,11 @@ fn append_unboxed(
         return Ok(());
     };
     let children = match source {
-        UnboxSource::OwnedEpoch(children) => children,
-        UnboxSource::Shared(children) => stores.clone_node_list_to_epoch(children),
+        UnboxSource::PinnedSurvivor(children) => children,
+        UnboxSource::Shared(children) => {
+            stores.pin_survivor(children);
+            children
+        }
     };
     flush_pending_hchars(nest, stores)?;
     for node in stores.nodes(children).to_vec() {

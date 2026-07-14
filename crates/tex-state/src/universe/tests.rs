@@ -2435,18 +2435,19 @@ fn destructive_unbox_transfers_only_children_before_same_level_clear() {
     };
 
     assert!(universe.box_reg(0).is_none());
-    assert!(matches!(children.arena(), ArenaRef::Epoch));
+    let ArenaRef::Survivor(root) = children.arena() else {
+        panic!("unboxed children should remain survivor-backed")
+    };
     let Some(crate::node_arena::NodeRef::HList(nested)) = universe.nodes(children).first() else {
         panic!("nested hbox should survive the transfer")
     };
-    assert!(matches!(nested.children.arena(), ArenaRef::Epoch));
+    assert_eq!(nested.children.arena(), ArenaRef::Survivor(root));
     assert!(matches!(
         universe.nodes(nested.children).first(),
         Some(crate::node_arena::NodeRef::Char { ch: 'x', .. })
     ));
     let after = universe.testing_epoch_clone_counts();
-    assert_eq!(after.0 - before.0, 1, "one survivor transfer");
-    assert_eq!(after.1 - before.1, 0, "no epoch self-clone");
+    assert_eq!(after, before, "survivor transfer performs no epoch clone");
 
     let _ = universe.leave_group();
     assert_eq!(universe.box_reg(0), Some(baseline));

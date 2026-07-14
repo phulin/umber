@@ -1471,7 +1471,7 @@ fn uncopy_primitives_unbox_without_clearing_registers() {
 }
 
 #[test]
-fn destructive_unbox_clones_nested_children_once_without_epoch_self_clone() {
+fn destructive_unbox_shares_nested_survivor_children_without_epoch_clone() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let mut setup = InputStack::new(MemoryInput::new(
@@ -1490,8 +1490,7 @@ fn destructive_unbox_clones_nested_children_once_without_epoch_self_clone() {
         .expect("destructive nested unboxes execute");
 
     let after = stores.testing_epoch_clone_counts();
-    assert_eq!(after.0 - before.0, 2, "one transfer per destructive unbox");
-    assert_eq!(after.1 - before.1, 0, "append performs no epoch self-clone");
+    assert_eq!(after, before, "unbox appends perform no epoch clones");
     assert!(stores.box_reg(0).is_none());
     assert!(stores.box_reg(1).is_none());
     assert!(stores.box_reg(2).is_some());
