@@ -1,5 +1,7 @@
 use js_sys::{Array, Object, Reflect, Uint8Array};
-use umber::{CompileAttemptResult, CompileDiagnostic, CompileError, MemoryRunOutput};
+use umber::{
+    CompileAttemptResult, CompileDiagnostic, CompileError, MemoryRunOutput, ResourceRequest,
+};
 use wasm_bindgen::{JsCast, JsValue};
 
 use crate::JsAttemptResult;
@@ -7,25 +9,12 @@ use crate::JsAttemptResult;
 pub(crate) fn attempt_result(result: CompileAttemptResult) -> Result<JsAttemptResult, JsValue> {
     let object = Object::new();
     match result {
-        CompileAttemptResult::NeedFiles(requests) => {
-            set(&object, "kind", &JsValue::from_str("need-files"))?;
-            let files = Array::new();
-            for request in requests {
-                let file = Object::new();
-                let kind = match request.key().kind() {
-                    umber::FileKind::TexInput => "tex",
-                    umber::FileKind::Tfm => "tfm",
-                };
-                set(&file, "kind", &JsValue::from_str(kind))?;
-                set(&file, "name", &JsValue::from_str(request.key().name()))?;
-                set(
-                    &file,
-                    "originalName",
-                    &JsValue::from_str(request.original_name()),
-                )?;
-                files.push(&file);
-            }
-            set(&object, "files", &files)?;
+        CompileAttemptResult::NeedResources(resources) => {
+            set(&object, "kind", &JsValue::from_str("need-resources"))?;
+            let required = resource_requests(resources.required)?;
+            set(&object, "required", &required)?;
+            let hints = resource_requests(resources.prefetch_hints)?;
+            set(&object, "prefetchHints", &hints)?;
         }
         CompileAttemptResult::Complete(output) => {
             set(&object, "kind", &JsValue::from_str("complete"))?;
@@ -37,6 +26,76 @@ pub(crate) fn attempt_result(result: CompileAttemptResult) -> Result<JsAttemptRe
         }
     }
     Ok(object.unchecked_into())
+}
+
+fn resource_requests(requests: Vec<ResourceRequest>) -> Result<Array, JsValue> {
+    let result = Array::new();
+    for request in requests {
+        let object = Object::new();
+        match request {
+            ResourceRequest::File(request) => {
+                set(&object, "type", &JsValue::from_str("file"))?;
+                let kind = match request.key().kind() {
+                    umber::FileKind::TexInput => "tex",
+                    umber::FileKind::Tfm => "tfm",
+                };
+                set(&object, "kind", &JsValue::from_str(kind))?;
+                set(&object, "name", &JsValue::from_str(request.key().name()))?;
+                set(
+                    &object,
+                    "originalName",
+                    &JsValue::from_str(request.original_name()),
+                )?;
+            }
+            ResourceRequest::Font(request) => {
+                set(&object, "type", &JsValue::from_str("font"))?;
+                set(
+                    &object,
+                    "logicalName",
+                    &JsValue::from_str(request.key.logical_name()),
+                )?;
+                set(
+                    &object,
+                    "faceIndex",
+                    &JsValue::from_f64(f64::from(request.key.face_index)),
+                )?;
+                let variations = Array::new();
+                for coordinate in request.key.variation.coordinates() {
+                    let value = Object::new();
+                    set(
+                        &value,
+                        "tag",
+                        &JsValue::from_str(&coordinate.tag.to_string()),
+                    )?;
+                    set(
+                        &value,
+                        "value",
+                        &JsValue::from_f64(f64::from(coordinate.value)),
+                    )?;
+                    variations.push(&value);
+                }
+                set(&object, "variations", &variations)?;
+                let features = Array::new();
+                for setting in request.key.feature_policy.settings() {
+                    let value = Object::new();
+                    set(&value, "tag", &JsValue::from_str(&setting.tag.to_string()))?;
+                    set(&value, "enabled", &JsValue::from_bool(setting.enabled))?;
+                    features.push(&value);
+                }
+                set(&object, "features", &features)?;
+                let accepted = Array::new();
+                if request
+                    .accepted_containers
+                    .contains(umber::FontContainer::Woff2)
+                {
+                    accepted.push(&JsValue::from_str("woff2"));
+                }
+                set(&object, "acceptedContainers", &accepted)?;
+            }
+        }
+        result.push(&object);
+    }
+    Ok(result)
 }
 
 fn compile_output(output: MemoryRunOutput) -> Result<JsValue, JsValue> {

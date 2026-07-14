@@ -28,10 +28,15 @@ pub use memory_output::{
     MemoryOutputCollectionError, MemoryOutputFile, MemoryRunOutput, collect_final_memory_output,
     collect_final_memory_output_from_commits, collect_final_memory_output_from_plans,
 };
+pub use tex_fonts::{
+    AcceptedFontContainers, FeatureSetting, FontContainer, FontFeaturePolicy, FontObjectIdentity,
+    FontProgramIdentity, FontPurposes, FontRequest, FontRequestKey, OpenTypeTag, ResolvedFont,
+    VariationCoordinate, VariationSelection,
+};
 pub use virtual_compile::{
     CompileAttemptResult, CompileDiagnostic, CompileError, FileKind, FileRequest, FileRequestKey,
-    SessionLimits, SessionOptions, SessionWebFont, VirtualCompileSession, VirtualPath,
-    VirtualPathError,
+    NeedResources, ResolvedFile, ResourceRequest, ResourceResponse, SessionLimits, SessionOptions,
+    SessionWebFont, VirtualCompileSession, VirtualPath, VirtualPathError,
 };
 
 /// The only checkpoint policy supported by composed engine sessions.

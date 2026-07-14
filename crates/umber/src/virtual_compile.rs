@@ -3,6 +3,9 @@ use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
 
+use tex_fonts::{
+    AcceptedFontContainers, FontLimits, FontRequest, FontRequestKey, OpenTypeFont, ResolvedFont,
+};
 use tex_lex::{InputStack, WorldInput};
 use tex_out::html::{HtmlFontKey, HtmlFontResolver, WebFont};
 use tex_state::{JobClock, Universe, World};
@@ -79,6 +82,31 @@ impl FileRequestKey {
 pub struct FileRequest {
     key: FileRequestKey,
     original_name: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedFile {
+    pub request: FileRequestKey,
+    pub virtual_path: String,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ResourceRequest {
+    File(FileRequest),
+    Font(FontRequest),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ResourceResponse {
+    File(ResolvedFile),
+    Font(ResolvedFont),
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct NeedResources {
+    pub required: Vec<ResourceRequest>,
+    pub prefetch_hints: Vec<ResourceRequest>,
 }
 
 impl FileRequest {
@@ -184,6 +212,8 @@ pub struct SessionOptions {
     pub limits: SessionLimits,
     /// Request embedded standalone HTML in addition to DVI.
     pub html: bool,
+    /// Font containers the host can provide. Browser sessions use WOFF2.
+    pub accepted_font_containers: AcceptedFontContainers,
 }
 
 impl Default for SessionOptions {
@@ -195,6 +225,7 @@ impl Default for SessionOptions {
             clock: JobClock::DEFAULT,
             limits: SessionLimits::default(),
             html: false,
+            accepted_font_containers: AcceptedFontContainers::WASM,
         }
     }
 }
@@ -221,7 +252,7 @@ pub struct CompileDiagnostic {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CompileAttemptResult {
-    NeedFiles(Vec<FileRequest>),
+    NeedResources(NeedResources),
     Complete(MemoryRunOutput),
     Error(CompileError),
 }
@@ -253,6 +284,8 @@ pub enum CompileError {
     },
     NoProgress,
     ConflictingResolvedBinding(String),
+    UnexpectedResourceResponse(String),
+    Font(String),
     DistributionPathCollision(String),
     Format(String),
     Diagnostic(CompileDiagnostic),
@@ -298,6 +331,10 @@ impl fmt::Display for CompileError {
                     "resolved request {name} was rebound to different content"
                 )
             }
+            Self::UnexpectedResourceResponse(name) => {
+                write!(f, "resource response {name} was not requested")
+            }
+            Self::Font(message) => write!(f, "font resource rejected: {message}"),
             Self::DistributionPathCollision(path) => {
                 write!(
                     f,
@@ -316,9 +353,24 @@ impl fmt::Display for CompileError {
 impl std::error::Error for CompileError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct ResolvedFile {
+struct CachedFile {
     virtual_path: VirtualPath,
     bytes: Arc<[u8]>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FontResponseFingerprint {
+    container: tex_fonts::FontContainer,
+    object: tex_fonts::FontObjectIdentity,
+    declared_object: Option<tex_fonts::FontObjectIdentity>,
+    declared_program: Option<tex_fonts::FontProgramIdentity>,
+    provenance: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum ResourceRequestKey {
+    File(FileRequestKey),
+    Font(FontRequestKey),
 }
 
 pub struct VirtualCompileSession {
@@ -329,11 +381,15 @@ pub struct VirtualCompileSession {
     limits: SessionLimits,
     user_files: BTreeMap<VirtualPath, Vec<u8>>,
     user_bytes: usize,
-    resolved_files: BTreeMap<FileRequestKey, ResolvedFile>,
+    resolved_files: BTreeMap<FileRequestKey, CachedFile>,
     resolved_paths: BTreeMap<VirtualPath, Arc<[u8]>>,
     cached_bytes: usize,
     attempts: u32,
-    awaiting: Option<BTreeSet<FileRequestKey>>,
+    awaiting: Option<BTreeSet<ResourceRequestKey>>,
+    font_requests: BTreeMap<FontRequestKey, FontRequest>,
+    resolved_fonts: BTreeMap<FontRequestKey, OpenTypeFont>,
+    font_responses: BTreeMap<FontRequestKey, FontResponseFingerprint>,
+    accepted_font_containers: AcceptedFontContainers,
     html: bool,
     html_fonts: BTreeMap<(String, String), SessionWebFont>,
     html_font_bytes: usize,
@@ -371,6 +427,10 @@ impl VirtualCompileSession {
             cached_bytes: 0,
             attempts: 0,
             awaiting: None,
+            font_requests: BTreeMap::new(),
+            resolved_fonts: BTreeMap::new(),
+            font_responses: BTreeMap::new(),
+            accepted_font_containers: options.accepted_font_containers,
             html: options.html,
             html_fonts: BTreeMap::new(),
             html_font_bytes: 0,
@@ -463,6 +523,95 @@ impl VirtualCompileSession {
         virtual_path: &str,
         bytes: Vec<u8>,
     ) -> Result<(), CompileError> {
+        self.provide_file_inner(request, virtual_path, bytes)
+    }
+
+    pub fn provide_resources(
+        &mut self,
+        responses: Vec<ResourceResponse>,
+    ) -> Result<(), CompileError> {
+        let mut staged_files = self.resolved_files.clone();
+        let mut staged_paths = self.resolved_paths.clone();
+        let mut staged_fonts = self.resolved_fonts.clone();
+        let mut staged_font_responses = self.font_responses.clone();
+        let original_files = std::mem::replace(&mut self.resolved_files, staged_files);
+        let original_paths = std::mem::replace(&mut self.resolved_paths, staged_paths);
+        let original_fonts = std::mem::replace(&mut self.resolved_fonts, staged_fonts);
+        let original_font_responses =
+            std::mem::replace(&mut self.font_responses, staged_font_responses);
+        let original_cached_bytes = self.cached_bytes;
+        let result = responses
+            .into_iter()
+            .try_for_each(|response| match response {
+                ResourceResponse::File(file) => {
+                    self.provide_file_inner(file.request, &file.virtual_path, file.bytes)
+                }
+                ResourceResponse::Font(font) => self.provide_resolved_font(font),
+            });
+        if result.is_err() {
+            staged_files = std::mem::replace(&mut self.resolved_files, original_files);
+            staged_paths = std::mem::replace(&mut self.resolved_paths, original_paths);
+            staged_fonts = std::mem::replace(&mut self.resolved_fonts, original_fonts);
+            staged_font_responses =
+                std::mem::replace(&mut self.font_responses, original_font_responses);
+            drop((
+                staged_files,
+                staged_paths,
+                staged_fonts,
+                staged_font_responses,
+            ));
+            self.cached_bytes = original_cached_bytes;
+        }
+        result
+    }
+
+    pub fn provide_resolved_font(&mut self, response: ResolvedFont) -> Result<(), CompileError> {
+        let key = response.request.clone();
+        let request = self.font_requests.get(&key).ok_or_else(|| {
+            CompileError::UnexpectedResourceResponse(key.logical_name().to_owned())
+        })?;
+        let fingerprint = FontResponseFingerprint {
+            container: response.container,
+            object: tex_fonts::FontObjectIdentity::for_bytes(&response.bytes),
+            declared_object: response.declared_object_sha256,
+            declared_program: response.declared_program_identity,
+            provenance: response.provenance.clone(),
+        };
+        if let Some(existing) = self.font_responses.get(&key) {
+            if existing == &fingerprint {
+                return Ok(());
+            }
+            return Err(CompileError::ConflictingResolvedBinding(
+                key.logical_name().to_owned(),
+            ));
+        }
+        let font = OpenTypeFont::parse(request, response, FontLimits::default())
+            .map_err(|error| CompileError::Font(error.to_string()))?;
+        let attempted = self
+            .cached_bytes
+            .checked_add(font.transport_bytes.len())
+            .ok_or(CompileError::LimitExceeded {
+                resource: "cached resource bytes",
+                limit: self.limits.cached_file_bytes,
+                attempted: usize::MAX,
+            })?;
+        check_limit(
+            "cached resource bytes",
+            attempted,
+            self.limits.cached_file_bytes,
+        )?;
+        self.resolved_fonts.insert(key.clone(), font);
+        self.font_responses.insert(key, fingerprint);
+        self.cached_bytes = attempted;
+        Ok(())
+    }
+
+    fn provide_file_inner(
+        &mut self,
+        request: FileRequestKey,
+        virtual_path: &str,
+        bytes: Vec<u8>,
+    ) -> Result<(), CompileError> {
         let virtual_path = VirtualPath::distribution(virtual_path).map_err(|error| {
             CompileError::InvalidVirtualPath {
                 path: virtual_path.to_owned(),
@@ -522,7 +671,7 @@ impl VirtualCompileSession {
             .insert(virtual_path.clone(), Arc::clone(&shared_bytes));
         self.resolved_files.insert(
             request,
-            ResolvedFile {
+            CachedFile {
                 virtual_path,
                 bytes: shared_bytes,
             },
@@ -538,9 +687,12 @@ impl VirtualCompileSession {
             });
         }
         if let Some(awaiting) = &self.awaiting {
-            let progressed = awaiting.iter().any(|key| {
-                self.resolved_files.contains_key(key)
-                    || self.user_files.contains_key(&user_path_for_key(key))
+            let progressed = awaiting.iter().any(|key| match key {
+                ResourceRequestKey::File(key) => {
+                    self.resolved_files.contains_key(key)
+                        || self.user_files.contains_key(&user_path_for_key(key))
+                }
+                ResourceRequestKey::Font(key) => self.resolved_fonts.contains_key(key),
             });
             if !progressed {
                 return CompileAttemptResult::Error(CompileError::NoProgress);
@@ -581,15 +733,47 @@ impl VirtualCompileSession {
             .read_file(self.main_path.as_path())
             .map_err(|_| CompileError::MissingMainFile(self.main_path.to_string()))?;
         let mut input = InputStack::new(WorldInput::from_content(main));
-        let mut resolvers = VirtualRunResolvers::new(&self.user_files, &self.resolved_files);
+        let mut resolvers = VirtualRunResolvers::new(
+            &self.user_files,
+            &self.resolved_files,
+            &self.resolved_fonts,
+            self.accepted_font_containers,
+        );
         let execution =
             EngineSession::new(&mut input, &mut stores, resolvers.context(&self.job_name))
                 .execute();
-        let (misses, fatal) = resolvers.finish();
+        let (file_misses, font_misses, fatal) = resolvers.finish();
 
-        if !misses.is_empty() {
-            self.awaiting = Some(misses.iter().map(|request| request.key.clone()).collect());
-            return Ok(CompileAttemptResult::NeedFiles(misses));
+        if !file_misses.is_empty() || !font_misses.is_empty() {
+            for request in &font_misses {
+                self.font_requests
+                    .entry(request.key.clone())
+                    .or_insert_with(|| request.clone());
+            }
+            let mut required = file_misses
+                .into_iter()
+                .map(ResourceRequest::File)
+                .chain(font_misses.into_iter().map(ResourceRequest::Font))
+                .collect::<Vec<_>>();
+            required.sort_by_key(resource_sort_key);
+            required.dedup();
+            self.awaiting = Some(
+                required
+                    .iter()
+                    .map(|request| match request {
+                        ResourceRequest::File(request) => {
+                            ResourceRequestKey::File(request.key.clone())
+                        }
+                        ResourceRequest::Font(request) => {
+                            ResourceRequestKey::Font(request.key.clone())
+                        }
+                    })
+                    .collect(),
+            );
+            return Ok(CompileAttemptResult::NeedResources(NeedResources {
+                required,
+                prefetch_hints: Vec::new(),
+            }));
         }
         if let Some(fatal) = fatal {
             return Err(fatal);
@@ -666,6 +850,9 @@ impl VirtualCompileSession {
     pub fn clear_distribution_cache(&mut self) {
         self.resolved_files.clear();
         self.resolved_paths.clear();
+        self.resolved_fonts.clear();
+        self.font_responses.clear();
+        self.font_requests.clear();
         self.cached_bytes = 0;
         self.awaiting = None;
     }
@@ -683,6 +870,16 @@ impl VirtualCompileSession {
     #[must_use]
     pub const fn cached_file_bytes(&self) -> usize {
         self.cached_bytes
+    }
+}
+
+fn resource_sort_key(request: &ResourceRequest) -> (u8, String) {
+    match request {
+        ResourceRequest::File(request) => (
+            0,
+            format!("{:?}:{}", request.key.kind(), request.key.name()),
+        ),
+        ResourceRequest::Font(request) => (1, request.key.logical_name().to_owned()),
     }
 }
 

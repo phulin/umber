@@ -1,3 +1,4 @@
+use crate::FontContainer;
 use tex_state::{Universe, World};
 
 use super::*;
@@ -14,8 +15,46 @@ fn session(main: &str) -> VirtualCompileSession {
 
 fn requests(result: CompileAttemptResult) -> Vec<FileRequest> {
     match result {
-        CompileAttemptResult::NeedFiles(requests) => requests,
+        CompileAttemptResult::NeedResources(resources) => resources
+            .required
+            .into_iter()
+            .filter_map(|request| match request {
+                ResourceRequest::File(request) => Some(request),
+                ResourceRequest::Font(_) => None,
+            })
+            .collect(),
         other => panic!("expected missing files, got {other:#?}"),
+    }
+}
+
+fn resources(result: CompileAttemptResult) -> Vec<ResourceRequest> {
+    match result {
+        CompileAttemptResult::NeedResources(resources) => resources.required,
+        other => panic!("expected missing resources, got {other:#?}"),
+    }
+}
+
+fn provide_cmu_font(session: &mut VirtualCompileSession, request: FontRequest) {
+    session
+        .provide_resolved_font(ResolvedFont {
+            request: request.key,
+            container: FontContainer::Woff2,
+            bytes: include_bytes!("../../../umber-wasm/assets/cmu-serif-500-roman.woff2").to_vec(),
+            declared_object_sha256: None,
+            declared_program_identity: None,
+            provenance: Some("CMU Serif under the SIL OFL".to_owned()),
+        })
+        .expect("provide OpenType font");
+}
+
+fn cmu_response(request: FontRequest) -> ResolvedFont {
+    ResolvedFont {
+        request: request.key,
+        container: FontContainer::Woff2,
+        bytes: include_bytes!("../../../umber-wasm/assets/cmu-serif-500-roman.woff2").to_vec(),
+        declared_object_sha256: None,
+        declared_program_identity: None,
+        provenance: Some("CMU Serif under the SIL OFL".to_owned()),
     }
 }
 
@@ -92,9 +131,9 @@ fn multiple_tfm_misses_and_later_input_are_batched_in_order() {
     assert_eq!(
         keys,
         vec![
+            (FileKind::TexInput, "later.tex"),
             (FileKind::Tfm, "one.tfm"),
             (FileKind::Tfm, "two.tfm"),
-            (FileKind::TexInput, "later.tex"),
         ]
     );
 }
@@ -221,20 +260,125 @@ fn format_rejection_and_job_clock_are_deterministic() {
 #[test]
 fn valid_tfm_produces_a_nonempty_dvi() {
     let mut session = session("\\font\\tenrm=cmr10\\relax \\tenrm \\shipout\\hbox{A}\\end");
-    let missing = requests(session.compile_attempt());
-    assert_eq!(missing.len(), 1);
+    let missing = resources(session.compile_attempt());
+    assert_eq!(missing.len(), 2);
+    let file = missing
+        .iter()
+        .find_map(|request| match request {
+            ResourceRequest::File(request) => Some(request.clone()),
+            ResourceRequest::Font(_) => None,
+        })
+        .expect("TFM request");
+    let font = missing
+        .iter()
+        .find_map(|request| match request {
+            ResourceRequest::Font(request) => Some(request.clone()),
+            ResourceRequest::File(_) => None,
+        })
+        .expect("font request");
     session
         .provide_resolved_file(
-            missing[0].key().clone(),
+            file.key().clone(),
             "/texlive/fonts/tfm/public/cm/cmr10.tfm",
             CMR10.to_vec(),
         )
         .expect("provide tfm");
+    provide_cmu_font(&mut session, font);
     let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
         panic!("compile should complete");
     };
     assert!(!output.dvi.is_empty());
     assert_eq!(&output.dvi[..2], &[247, 2]);
+}
+
+#[test]
+fn font_batches_accept_partial_unordered_responses_and_reject_conflicts() {
+    let mut session = session("\\font\\tenrm=cmr10\\relax \\tenrm \\shipout\\hbox{A}\\end");
+    let missing = resources(session.compile_attempt());
+    let file = missing
+        .iter()
+        .find_map(|request| match request {
+            ResourceRequest::File(request) => Some(request.clone()),
+            ResourceRequest::Font(_) => None,
+        })
+        .expect("TFM request");
+    let font = missing
+        .iter()
+        .find_map(|request| match request {
+            ResourceRequest::Font(request) => Some(request.clone()),
+            ResourceRequest::File(_) => None,
+        })
+        .expect("font request");
+
+    let response = cmu_response(font.clone());
+    session
+        .provide_resources(vec![ResourceResponse::Font(response.clone())])
+        .expect("unordered partial font response");
+    session
+        .provide_resources(vec![ResourceResponse::Font(response.clone())])
+        .expect("identical duplicate");
+    let mut conflict = response;
+    conflict.provenance = Some("different metadata".to_owned());
+    assert!(matches!(
+        session.provide_resources(vec![ResourceResponse::Font(conflict)]),
+        Err(CompileError::ConflictingResolvedBinding(_))
+    ));
+
+    let remaining = resources(session.compile_attempt());
+    assert_eq!(remaining, vec![ResourceRequest::File(file.clone())]);
+    session
+        .provide_resources(vec![ResourceResponse::File(ResolvedFile {
+            request: file.key().clone(),
+            virtual_path: "/texlive/fonts/tfm/public/cm/cmr10.tfm".to_owned(),
+            bytes: CMR10.to_vec(),
+        })])
+        .expect("TFM response");
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+}
+
+#[test]
+fn invalid_mixed_batch_publishes_nothing() {
+    let mut session = session("\\font\\tenrm=cmr10\\relax \\end");
+    let missing = resources(session.compile_attempt());
+    let file = missing
+        .iter()
+        .find_map(|request| match request {
+            ResourceRequest::File(request) => Some(request.clone()),
+            ResourceRequest::Font(_) => None,
+        })
+        .expect("TFM request");
+    let font = missing
+        .iter()
+        .find_map(|request| match request {
+            ResourceRequest::Font(request) => Some(request.clone()),
+            ResourceRequest::File(_) => None,
+        })
+        .expect("font request");
+    let invalid_font = ResolvedFont {
+        request: font.key,
+        container: FontContainer::Woff2,
+        bytes: b"wOF2".to_vec(),
+        declared_object_sha256: None,
+        declared_program_identity: None,
+        provenance: None,
+    };
+    assert!(
+        session
+            .provide_resources(vec![
+                ResourceResponse::File(ResolvedFile {
+                    request: file.key().clone(),
+                    virtual_path: "/texlive/fonts/tfm/public/cm/cmr10.tfm".to_owned(),
+                    bytes: CMR10.to_vec(),
+                }),
+                ResourceResponse::Font(invalid_font),
+            ])
+            .is_err()
+    );
+    assert_eq!(session.resolved_file_count(), 0);
+    assert_eq!(session.cached_file_bytes(), 0);
 }
 
 #[test]
@@ -265,14 +409,29 @@ fn requested_html_and_dvi_share_one_committed_compile() {
             embeddable: true,
         })
         .expect("HTML font");
-    let missing = requests(session.compile_attempt());
+    let missing = resources(session.compile_attempt());
+    let file = missing
+        .iter()
+        .find_map(|request| match request {
+            ResourceRequest::File(request) => Some(request.clone()),
+            ResourceRequest::Font(_) => None,
+        })
+        .expect("TFM request");
+    let font = missing
+        .iter()
+        .find_map(|request| match request {
+            ResourceRequest::Font(request) => Some(request.clone()),
+            ResourceRequest::File(_) => None,
+        })
+        .expect("font request");
     session
         .provide_resolved_file(
-            missing[0].key().clone(),
+            file.key().clone(),
             "/texlive/fonts/tfm/public/cm/cmr10.tfm",
             CMR10.to_vec(),
         )
         .expect("TFM");
+    provide_cmu_font(&mut session, font);
     let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
         panic!("HTML compile should complete");
     };

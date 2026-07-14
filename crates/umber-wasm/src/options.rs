@@ -1,5 +1,9 @@
 use js_sys::{Array, Reflect, Uint8Array};
-use umber::{FileKind, FileRequestKey, SessionLimits, SessionOptions, SessionWebFont};
+use umber::{
+    FeatureSetting, FileKind, FileRequestKey, FontContainer, FontFeaturePolicy, FontObjectIdentity,
+    FontProgramIdentity, FontRequestKey, OpenTypeTag, ResolvedFile, ResolvedFont, ResourceResponse,
+    SessionLimits, SessionOptions, SessionWebFont, VariationCoordinate, VariationSelection,
+};
 use wasm_bindgen::{JsCast, JsValue};
 
 use crate::js_error;
@@ -66,6 +70,94 @@ pub(crate) fn parse_request_key(value: &JsValue) -> Result<FileRequestKey, JsVal
         _ => return Err(js_error("file request kind must be 'tex' or 'tfm'")),
     };
     FileRequestKey::new(kind, &required_string(value, "name")?).map_err(crate::boundary_error)
+}
+
+pub(crate) fn parse_resource_responses(value: &JsValue) -> Result<Vec<ResourceResponse>, JsValue> {
+    if !Array::is_array(value) {
+        return Err(js_error("resource responses must be an array"));
+    }
+    Array::from(value)
+        .iter()
+        .map(|response| {
+            require_object(&response, "resource response")?;
+            match required_string(&response, "type")?.as_str() {
+                "file" => Ok(ResourceResponse::File(ResolvedFile {
+                    request: parse_request_key(&response)?,
+                    virtual_path: required_string(&response, "virtualPath")?,
+                    bytes: required_bytes(&response, "bytes")?,
+                })),
+                "font" => Ok(ResourceResponse::Font(parse_resolved_font(&response)?)),
+                _ => Err(js_error("resource response type must be 'file' or 'font'")),
+            }
+        })
+        .collect()
+}
+
+fn parse_resolved_font(value: &JsValue) -> Result<ResolvedFont, JsValue> {
+    let request = parse_font_request_key(value)?;
+    let container = match required_string(value, "container")?.as_str() {
+        "woff2" => FontContainer::Woff2,
+        _ => return Err(js_error("WASM font container must be 'woff2'")),
+    };
+    Ok(ResolvedFont {
+        request,
+        container,
+        bytes: required_bytes(value, "bytes")?,
+        declared_object_sha256: optional_string(value, "objectSha256")?
+            .map(|digest| parse_digest(&digest).map(FontObjectIdentity::from_bytes))
+            .transpose()?,
+        declared_program_identity: optional_string(value, "programIdentity")?
+            .map(|digest| parse_digest(&digest).map(FontProgramIdentity::from_bytes))
+            .transpose()?,
+        provenance: optional_string(value, "provenance")?,
+    })
+}
+
+fn parse_font_request_key(value: &JsValue) -> Result<FontRequestKey, JsValue> {
+    let variation = parse_array(value, "variations")?
+        .into_iter()
+        .map(|coordinate| {
+            Ok(VariationCoordinate {
+                tag: parse_tag(&required_string(&coordinate, "tag")?)?,
+                value: signed_integer::<i32>(&coordinate, "value")?,
+            })
+        })
+        .collect::<Result<Vec<_>, JsValue>>()?;
+    let features = parse_array(value, "features")?
+        .into_iter()
+        .map(|feature| {
+            Ok(FeatureSetting {
+                tag: parse_tag(&required_string(&feature, "tag")?)?,
+                enabled: required_bool(&feature, "enabled")?,
+            })
+        })
+        .collect::<Result<Vec<_>, JsValue>>()?;
+    FontRequestKey::new(
+        required_string(value, "logicalName")?,
+        integer::<u32>(value, "faceIndex")?,
+        VariationSelection::new(variation).map_err(crate::boundary_error)?,
+        FontFeaturePolicy::new(features).map_err(crate::boundary_error)?,
+    )
+    .map_err(crate::boundary_error)
+}
+
+fn parse_array(object: &JsValue, name: &str) -> Result<Vec<JsValue>, JsValue> {
+    let value = field(object, name)?;
+    if !Array::is_array(&value) {
+        return Err(js_error(&format!("{name} must be an array")));
+    }
+    Ok(Array::from(&value).iter().collect())
+}
+
+fn parse_tag(value: &str) -> Result<OpenTypeTag, JsValue> {
+    let bytes: [u8; 4] = value
+        .as_bytes()
+        .try_into()
+        .map_err(|_| js_error("OpenType tags must contain exactly four ASCII bytes"))?;
+    if !bytes.iter().all(u8::is_ascii) {
+        return Err(js_error("OpenType tags must be ASCII"));
+    }
+    Ok(OpenTypeTag::new(bytes))
 }
 
 fn parse_limits(value: &JsValue) -> Result<SessionLimits, JsValue> {
@@ -173,6 +265,20 @@ where
         return Err(js_error(&format!("{name} is out of range")));
     }
     T::try_from(number as u64).map_err(|_| js_error(&format!("{name} is out of range")))
+}
+
+fn signed_integer<T>(object: &JsValue, name: &str) -> Result<T, JsValue>
+where
+    T: TryFrom<i64>,
+{
+    let number = field(object, name)?
+        .as_f64()
+        .filter(|number| number.is_finite() && number.fract() == 0.0)
+        .ok_or_else(|| js_error(&format!("{name} must be an integer")))?;
+    if number < i64::MIN as f64 || number > i64::MAX as f64 {
+        return Err(js_error(&format!("{name} is out of range")));
+    }
+    T::try_from(number as i64).map_err(|_| js_error(&format!("{name} is out of range")))
 }
 
 fn has_value(object: &JsValue, name: &str) -> Result<bool, JsValue> {

@@ -3,20 +3,24 @@ use std::path::Path;
 
 use tex_exec::{ExecutionContext, FontResolver};
 use tex_expand::InputResolver;
+use tex_fonts::{
+    AcceptedFontContainers, FontFeaturePolicy, FontPurposes, FontRequest, FontRequestKey,
+    OpenTypeFont, VariationSelection,
+};
 use tex_lex::WorldInput;
 use tex_state::{FileContent, InputReadState};
 
 use super::path::RequestedFile;
-use super::{CompileError, FileKind, FileRequest, FileRequestKey, ResolvedFile, VirtualPath};
+use super::{CachedFile, CompileError, FileKind, FileRequest, FileRequestKey, VirtualPath};
 
 pub(super) struct VirtualRunResolvers<'a> {
     input: VirtualFileResolver<'a>,
-    font: VirtualFileResolver<'a>,
+    font: VirtualFontResolver<'a>,
 }
 
 struct VirtualFileResolver<'a> {
     user_files: &'a BTreeMap<VirtualPath, Vec<u8>>,
-    resolved_files: &'a BTreeMap<FileRequestKey, ResolvedFile>,
+    resolved_files: &'a BTreeMap<FileRequestKey, CachedFile>,
     misses: Vec<(u64, FileRequest)>,
     seen: BTreeSet<FileRequestKey>,
     fatal: Option<CompileError>,
@@ -25,11 +29,18 @@ struct VirtualFileResolver<'a> {
 impl<'a> VirtualRunResolvers<'a> {
     pub(super) fn new(
         user_files: &'a BTreeMap<VirtualPath, Vec<u8>>,
-        resolved_files: &'a BTreeMap<FileRequestKey, ResolvedFile>,
+        resolved_files: &'a BTreeMap<FileRequestKey, CachedFile>,
+        resolved_fonts: &'a BTreeMap<FontRequestKey, OpenTypeFont>,
+        accepted_font_containers: AcceptedFontContainers,
     ) -> Self {
         Self {
             input: VirtualFileResolver::new(user_files, resolved_files),
-            font: VirtualFileResolver::new(user_files, resolved_files),
+            font: VirtualFontResolver::new(
+                user_files,
+                resolved_files,
+                resolved_fonts,
+                accepted_font_containers,
+            ),
         }
     }
 
@@ -37,13 +48,14 @@ impl<'a> VirtualRunResolvers<'a> {
         ExecutionContext::with_resolvers(job_name, &mut self.input, &mut self.font)
     }
 
-    pub(super) fn finish(self) -> (Vec<FileRequest>, Option<CompileError>) {
+    pub(super) fn finish(self) -> (Vec<FileRequest>, Vec<FontRequest>, Option<CompileError>) {
         let mut misses = self.input.misses;
-        misses.extend(self.font.misses);
+        misses.extend(self.font.files.misses);
         misses.sort_by_key(|(request_index, _)| *request_index);
         (
             misses.into_iter().map(|(_, request)| request).collect(),
-            self.input.fatal.or(self.font.fatal),
+            self.font.font_misses.into_values().collect(),
+            self.input.fatal.or(self.font.files.fatal),
         )
     }
 }
@@ -51,7 +63,7 @@ impl<'a> VirtualRunResolvers<'a> {
 impl<'a> VirtualFileResolver<'a> {
     fn new(
         user_files: &'a BTreeMap<VirtualPath, Vec<u8>>,
-        resolved_files: &'a BTreeMap<FileRequestKey, ResolvedFile>,
+        resolved_files: &'a BTreeMap<FileRequestKey, CachedFile>,
     ) -> Self {
         Self {
             user_files,
@@ -146,7 +158,30 @@ impl InputResolver for VirtualFileResolver<'_> {
     }
 }
 
-impl FontResolver for VirtualFileResolver<'_> {
+struct VirtualFontResolver<'a> {
+    files: VirtualFileResolver<'a>,
+    resolved_fonts: &'a BTreeMap<FontRequestKey, OpenTypeFont>,
+    accepted_font_containers: AcceptedFontContainers,
+    font_misses: BTreeMap<FontRequestKey, FontRequest>,
+}
+
+impl<'a> VirtualFontResolver<'a> {
+    fn new(
+        user_files: &'a BTreeMap<VirtualPath, Vec<u8>>,
+        resolved_files: &'a BTreeMap<FileRequestKey, CachedFile>,
+        resolved_fonts: &'a BTreeMap<FontRequestKey, OpenTypeFont>,
+        accepted_font_containers: AcceptedFontContainers,
+    ) -> Self {
+        Self {
+            files: VirtualFileResolver::new(user_files, resolved_files),
+            resolved_fonts,
+            accepted_font_containers,
+            font_misses: BTreeMap::new(),
+        }
+    }
+}
+
+impl FontResolver for VirtualFontResolver<'_> {
     fn open_font(
         &mut self,
         input: &mut dyn InputReadState,
@@ -158,9 +193,29 @@ impl FontResolver for VirtualFileResolver<'_> {
                 name: path.display().to_string(),
                 message: "font path is not UTF-8".to_owned(),
             };
-            self.record_fatal(failure.clone());
+            self.files.record_fatal(failure.clone());
             return Err(failure.to_string());
         };
-        self.open(input, FileKind::Tfm, name, request_index)
+        let tfm = self.files.open(input, FileKind::Tfm, name, request_index);
+        let logical_name = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or(name);
+        let key = FontRequestKey::new(
+            logical_name,
+            0,
+            VariationSelection::default(),
+            FontFeaturePolicy::default(),
+        )
+        .map_err(|error| error.to_string())?;
+        if !self.resolved_fonts.contains_key(&key) {
+            self.font_misses.entry(key.clone()).or_insert(FontRequest {
+                key,
+                accepted_containers: self.accepted_font_containers,
+                purposes: FontPurposes::LAYOUT_AND_HTML,
+            });
+            return Err(format!("OpenType font {logical_name} is not cached"));
+        }
+        tfm
     }
 }

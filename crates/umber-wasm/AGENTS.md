@@ -13,9 +13,9 @@ the manifest's validated content-addressed object name.
 
 ## Directory map
 
-- `src/lib.rs`: exported `CompilerSession` and TypeScript surface.
-- `src/options.rs`: strict conversion of JavaScript options and request keys.
-- `src/result.rs`: binary-safe conversion of native attempts to discriminated JS results.
+- `src/lib.rs`: exported `CompilerSession`, low-level `advance`/`provideResources` boundary, and TypeScript surface.
+- `src/options.rs`: strict conversion of JavaScript options, typed resource responses, and request keys.
+- `src/result.rs`: binary-safe conversion of native typed resource batches and completed attempts to discriminated JS results.
 - `tests/it.rs`: wasm-bindgen boundary and lifecycle tests.
 - `assets/plain-source.lock`: exact TeX Live 2025 Plain, hyphenation, and TFM source identities.
 - `assets/plain.fmt`: reproducible Umber-native Plain format image.

@@ -3,8 +3,8 @@
 mod options;
 mod result;
 
-use js_sys::Uint8Array;
-use options::{parse_options, parse_request_key};
+use js_sys::{Array, Uint8Array};
+use options::{parse_options, parse_request_key, parse_resource_responses};
 use result::attempt_result;
 use umber::VirtualCompileSession;
 use wasm_bindgen::prelude::*;
@@ -19,8 +19,33 @@ export interface FileRequestKey {
 }
 
 export interface FileRequest extends FileRequestKey {
+  type: "file";
   originalName: string;
 }
+
+export interface FontRequestKey {
+  logicalName: string;
+  faceIndex: number;
+  variations: Array<{ tag: string; value: number }>;
+  features: Array<{ tag: string; enabled: boolean }>;
+}
+
+export interface FontRequest extends FontRequestKey {
+  type: "font";
+  acceptedContainers: Array<"woff2">;
+}
+
+export type ResourceRequest = FileRequest | FontRequest;
+export type ResourceResponse =
+  | (FileRequestKey & { type: "file"; virtualPath: string; bytes: Uint8Array })
+  | (FontRequestKey & {
+      type: "font";
+      container: "woff2";
+      bytes: Uint8Array;
+      objectSha256?: string;
+      programIdentity?: string;
+      provenance?: string;
+    });
 
 export interface SessionLimits {
   attempts: number;
@@ -73,7 +98,7 @@ export interface Diagnostic {
 }
 
 export type AttemptResult =
-  | { kind: "need-files"; files: FileRequest[] }
+  | { kind: "need-resources"; required: ResourceRequest[]; prefetchHints: ResourceRequest[] }
   | { kind: "complete"; output: CompileOutput }
   | { kind: "error"; diagnostic: Diagnostic };
 "#;
@@ -91,6 +116,9 @@ extern "C" {
 
     #[wasm_bindgen(typescript_type = "AttemptResult")]
     pub type JsAttemptResult;
+
+    #[wasm_bindgen(typescript_type = "ResourceResponse")]
+    pub type JsResourceResponse;
 }
 
 #[wasm_bindgen]
@@ -150,6 +178,14 @@ impl CompilerSession {
         let request = parse_request_key(request.as_ref())?;
         self.session_mut()?
             .provide_resolved_file(request, virtualPath, bytes.to_vec())
+            .map_err(boundary_error)
+    }
+
+    #[wasm_bindgen(js_name = provideResources)]
+    pub fn provide_resources(&mut self, responses: &Array) -> Result<(), JsValue> {
+        let responses = parse_resource_responses(responses.as_ref())?;
+        self.session_mut()?
+            .provide_resources(responses)
             .map_err(boundary_error)
     }
 

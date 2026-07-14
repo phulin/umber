@@ -884,6 +884,7 @@ dependencies = [
  "tex-arith",
  "tex-exec",
  "tex-expand",
+ "tex-fonts",
  "tex-incr",
  "tex-lex",
  "tex-out",
