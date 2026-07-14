@@ -28,21 +28,27 @@ fn paragraph_shape_is_grouped_checkpointed_and_format_stable() {
         width: Scaled::from_raw(90),
     }];
     let mut universe = Universe::new();
+    assert_eq!(universe.paragraph_shape_len(), 0);
     universe.set_paragraph_shape(&outer, false);
+    assert_eq!(universe.paragraph_shape_len(), outer.len());
     let snapshot = universe.snapshot();
 
     universe.enter_group();
     universe.set_paragraph_shape(&inner, false);
+    assert_eq!(universe.paragraph_shape_len(), inner.len());
     assert_eq!(universe.paragraph_shape(), inner);
     let _ = universe.leave_group();
+    assert_eq!(universe.paragraph_shape_len(), outer.len());
     assert_eq!(universe.paragraph_shape(), outer);
 
     universe.set_paragraph_shape(&inner, false);
     universe.rollback(&snapshot);
+    assert_eq!(universe.paragraph_shape_len(), outer.len());
     assert_eq!(universe.paragraph_shape(), outer);
 
     let format = universe.dump_format().expect("paragraph shape format");
     let loaded = Universe::from_format(World::default(), &format).expect("load paragraph shape");
+    assert_eq!(loaded.paragraph_shape_len(), outer.len());
     assert_eq!(loaded.paragraph_shape(), outer);
 }
 

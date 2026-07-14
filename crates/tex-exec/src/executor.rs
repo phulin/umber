@@ -596,7 +596,7 @@ fn engine_state_snapshot(nest: &ModeNest, stores: &Universe) -> EngineStateSnaps
         space_factor: list.space_factor(),
         prev_depth: list.prev_depth().unwrap_or(IGNORE_DEPTH),
         prev_graf: nest.enclosing_vertical_prev_graf(),
-        par_shape_len: stores.paragraph_shape().len().min(i32::MAX as usize) as i32,
+        par_shape_len: stores.paragraph_shape_len().min(i32::MAX as usize) as i32,
         ..EngineStateSnapshot::default()
     };
     if is_outer_vertical(nest) {

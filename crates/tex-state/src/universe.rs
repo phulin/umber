@@ -2755,6 +2755,19 @@ impl Universe {
             .collect()
     }
 
+    /// Returns the number of lines in the current barriered `\parshape`
+    /// without materializing its decoded line pairs.
+    #[must_use]
+    pub fn paragraph_shape_len(&self) -> usize {
+        let tokens = self.tokens(self.tok_param(TokParam::PAR_SHAPE_INTERNAL));
+        assert_eq!(
+            tokens.len() % 8,
+            0,
+            "internal parshape payload is truncated"
+        );
+        tokens.len() / 8
+    }
+
     /// Returns one current `\parshape` component, repeating the final line
     /// for positive indexes beyond the explicitly assigned shape.
     #[must_use]
