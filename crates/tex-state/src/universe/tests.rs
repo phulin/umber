@@ -2334,7 +2334,7 @@ fn promote_survivor_wrapped_box(universe: &mut Universe) -> NodeListId {
 }
 
 #[test]
-fn grouped_box_take_copies_nested_survivor_children_before_coalesced_release() {
+fn grouped_box_take_pins_nested_survivor_children_before_coalesced_release() {
     let mut universe = Universe::new();
     let leader_children = universe.freeze_node_list(&[Node::Char {
         font: NULL_FONT,
@@ -2360,11 +2360,14 @@ fn grouped_box_take_copies_nested_survivor_children_before_coalesced_release() {
 
     universe.enter_group();
     universe.set_box_reg(0, value);
+    let before = universe.testing_epoch_clone_counts();
     let taken = universe
         .take_box_reg_same_level(0)
         .expect("local box should move out of the register");
 
-    assert!(matches!(taken.arena(), ArenaRef::Epoch));
+    let ArenaRef::Survivor(root) = taken.arena() else {
+        panic!("taken value should remain survivor-backed")
+    };
     let Some(crate::node_arena::NodeRef::Glue {
         leader: Some(LeaderPayload::HList(leader)),
         ..
@@ -2372,7 +2375,7 @@ fn grouped_box_take_copies_nested_survivor_children_before_coalesced_release() {
     else {
         panic!("taken value should preserve its leader box");
     };
-    assert!(matches!(leader.children.arena(), ArenaRef::Epoch));
+    assert_eq!(leader.children.arena(), ArenaRef::Survivor(root));
     assert_eq!(
         universe.nodes(leader.children),
         &[Node::Char {
@@ -2381,6 +2384,8 @@ fn grouped_box_take_copies_nested_survivor_children_before_coalesced_release() {
         }]
     );
     let _ = universe.leave_group();
+    assert_eq!(universe.testing_epoch_clone_counts(), before);
+    assert_eq!(universe.testing_survivor_pin_count(), 1);
 }
 
 #[test]

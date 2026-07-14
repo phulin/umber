@@ -31,10 +31,9 @@ pub(super) enum ScannedBoxValue {
 }
 
 impl ScannedBoxValue {
-    pub(super) fn into_epoch_node(self, stores: &mut Universe) -> Node {
+    pub(super) fn into_node(self) -> Node {
         match self {
-            Self::Fresh(node) => node,
-            Self::Shared(node) => stores.clone_node_to_epoch(node),
+            Self::Fresh(node) | Self::Shared(node) => node,
         }
     }
 }
@@ -50,7 +49,7 @@ where
     H: ExpansionHooks<S>,
 {
     scan_box_value(None, input, stores, hooks, context)?
-        .map(|value| value.into_epoch_node(stores))
+        .map(ScannedBoxValue::into_node)
         .ok_or(ExecError::MissingToken { context: "box" })
 }
 
@@ -90,6 +89,13 @@ where
             } else {
                 stores.box_reg(index)
             };
+            if !matches!(
+                stores.meaning(symbol),
+                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box)
+            ) && let Some(id) = id
+            {
+                stores.pin_survivor(id);
+            }
             Ok(first_box_node(stores, id).map(ScannedBoxValue::Shared))
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VSplit) => {

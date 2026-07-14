@@ -1375,7 +1375,6 @@ impl Stores {
     }
 
     /// Keeps a survivor root alive until its enclosing allocation scope ends.
-    #[allow(dead_code)] // Wired into register-read paths in the next phase.
     pub fn pin_survivor(&mut self, id: NodeListId) {
         self.assert_live_node_list(id);
         self.survivors.inc_ref(id);

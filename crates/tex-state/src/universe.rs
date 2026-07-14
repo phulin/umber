@@ -2453,21 +2453,26 @@ impl Universe {
     }
 
     pub fn take_box_reg(&mut self, index: u16) -> Option<NodeListId> {
-        let value = self
-            .stores
-            .box_reg(index)
-            .map(|value| self.clone_node_list_to_epoch(value));
+        let value = self.stores.box_reg(index);
+        if let Some(value) = value {
+            self.stores.pin_survivor(value);
+        }
         let _ = self.stores.take_box_reg(index);
         value
     }
 
     pub fn take_box_reg_same_level(&mut self, index: u16) -> Option<NodeListId> {
-        let value = self
-            .stores
-            .box_reg(index)
-            .map(|value| self.clone_node_list_to_epoch(value));
+        let value = self.stores.box_reg(index);
+        if let Some(value) = value {
+            self.stores.pin_survivor(value);
+        }
         let _ = self.stores.take_box_reg_same_level(index);
         value
+    }
+
+    /// Keeps a survivor root alive after a non-destructive register read.
+    pub fn pin_survivor(&mut self, id: NodeListId) {
+        self.stores.pin_survivor(id);
     }
 
     /// Transfers compatible box children into the current epoch, then clears
@@ -2944,6 +2949,12 @@ impl Universe {
     #[must_use]
     pub fn testing_epoch_clone_counts(&self) -> (u64, u64) {
         self.stores.testing_epoch_clone_counts()
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub fn testing_survivor_pin_count(&self) -> usize {
+        self.stores.testing_survivor_pin_count()
     }
 
     /// Computes allocator-payload accounting for all compact node storage.

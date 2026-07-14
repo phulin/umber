@@ -89,7 +89,12 @@ where
             } else {
                 stores.box_reg(index)
             };
-            first_box_node(stores, id).map(|node| stores.clone_node_to_epoch(node))
+            if primitive == UnexpandablePrimitive::Copy
+                && let Some(id) = id
+            {
+                stores.pin_survivor(id);
+            }
+            first_box_node(stores, id)
         }
         UnexpandablePrimitive::Raise | UnexpandablePrimitive::Lower => {
             let amount = scan_scaled(input, stores, hooks, context)?;
@@ -126,7 +131,6 @@ where
             Some(list)
         }
         Ok(Some(ScannedBoxValue::Shared(node))) => {
-            let node = construction.clone_node_to_epoch(node);
             let list = construction.freeze_node_list(&[node]);
             Some(list)
         }
@@ -188,6 +192,11 @@ where
             } else {
                 stores.box_reg(index)
             };
+            if primitive == UnexpandablePrimitive::Copy
+                && let Some(id) = id
+            {
+                stores.pin_survivor(id);
+            }
             append_box_register(nest, stores, id)?;
         }
         UnexpandablePrimitive::UnHBox
@@ -518,7 +527,6 @@ fn append_box_register(
     id: Option<tex_state::ids::NodeListId>,
 ) -> Result<(), ExecError> {
     if let Some(node) = first_box_node(stores, id) {
-        let node = stores.clone_node_to_epoch(node);
         append_box_node_to_current_list(nest, stores, node)?;
     }
     Ok(())

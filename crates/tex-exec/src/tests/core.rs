@@ -1499,6 +1499,22 @@ fn destructive_unbox_clones_nested_children_once_without_epoch_self_clone() {
 }
 
 #[test]
+fn grouped_copy_keeps_survivor_children_without_epoch_clone() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let before = stores.testing_epoch_clone_counts();
+    let mut input = InputStack::new(MemoryInput::new("{\\setbox0\\hbox{X}\\copy0}"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("grouped box copy executes after its register owner exits");
+
+    assert_eq!(stores.box_reg(0), None);
+    assert_eq!(stores.testing_epoch_clone_counts(), before);
+    assert_eq!(stores.testing_survivor_pin_count(), 1);
+}
+
+#[test]
 fn incompatible_unbox_commands_preserve_registers_and_replay_state() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

@@ -51,9 +51,16 @@ where
             } else {
                 stores.box_reg(index)
             };
+            if matches!(
+                stores.meaning(symbol),
+                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Copy)
+            ) && let Some(id) = id
+            {
+                stores.pin_survivor(id);
+            }
             first_box_node(stores, id)
                 .ok_or(ExecError::MissingLeaderPayload { context: traced })
-                .and_then(|node| leader_payload_from_node(stores.clone_node_to_epoch(node), traced))
+                .and_then(|node| leader_payload_from_node(node, traced))
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VSplit) => {
             scan_vsplit_node(input, stores, hooks, traced)?
