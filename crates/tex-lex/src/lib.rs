@@ -2913,12 +2913,14 @@ fn replay_origin(
     let Some(origins) = stores.origin_list_if_live(frame.origin_list) else {
         return OriginId::UNKNOWN;
     };
-    let token_len = stores.tokens(frame.token_list).len();
-    assert_eq!(
-        origins.len(),
-        token_len,
-        "token-list replay origin-list length does not match token-list length"
-    );
+    if frame.index == 1 {
+        let token_len = stores.tokens(frame.token_list).len();
+        assert_eq!(
+            origins.len(),
+            token_len,
+            "token-list replay origin-list length does not match token-list length"
+        );
+    }
     origins[frame.index - 1]
 }
 

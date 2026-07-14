@@ -764,8 +764,19 @@ impl ProvenanceStore {
 
     /// Reads a live origin-list span.
     #[must_use]
+    #[cfg(test)]
     pub(crate) fn list(&self, id: OriginListId) -> &[OriginId] {
         assert!(self.contains_list(id), "origin list id is not live");
+        self.list_span(id)
+    }
+
+    /// Resolves a stored origin-list id and reads its live span.
+    #[must_use]
+    pub(crate) fn resolve_list(&self, id: OriginListId) -> Option<&[OriginId]> {
+        self.resolve_stored_list(id).map(|id| self.list_span(id))
+    }
+
+    fn list_span(&self, id: OriginListId) -> &[OriginId] {
         let index = id.raw() as usize;
         assert!(index < self.spans.len(), "origin list id is not live");
         let (start, len) = self.spans[index];

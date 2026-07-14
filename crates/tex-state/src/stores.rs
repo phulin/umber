@@ -906,19 +906,15 @@ impl Stores {
     /// Reads a live origin-list span.
     #[must_use]
     pub fn origin_list(&self, id: OriginListId) -> &[OriginId] {
-        let id = self
-            .provenance
-            .resolve_stored_list(id)
-            .expect("origin list id is not live in this Universe timeline");
-        self.provenance.list(id)
+        self.provenance
+            .resolve_list(id)
+            .expect("origin list id is not live in this Universe timeline")
     }
 
     /// Reads an origin-list span if it is still live on this timeline.
     #[must_use]
     pub fn origin_list_if_live(&self, id: OriginListId) -> Option<&[OriginId]> {
-        self.provenance
-            .resolve_stored_list(id)
-            .map(|id| self.provenance.list(id))
+        self.provenance.resolve_list(id)
     }
 
     /// Returns live provenance arena length counters.
