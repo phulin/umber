@@ -94,8 +94,9 @@ The browser policy is `font-kerning: normal`, `font-variant-ligatures:
 common-ligatures`, `font-synthesis: none`, and `font-optical-sizing: none`.
 The resolved face name is content-derived and is the only member of the CSS
 font-family list. A load failure is fatal in parity mode; platform fallback is
-never named. Bidirectional inference is disabled: each run has an explicit
-`dir` and `unicode-bidi: isolate`.
+never named. Artifact text is already in shipped visual order, so schema 1
+forces LTR visual ordering with `unicode-bidi: isolate-override`; semantic
+bidirectional reconstruction is outside this schema.
 
 ## Font and asset contract
 
