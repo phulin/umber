@@ -1322,6 +1322,14 @@ Responsibility: turn the state layer's bookkeeping into speed. This crate
 is the *driver* for editor sessions and warm rebuilds; batch mode is the
 degenerate case (run once, commit every page, never look back).
 
+The named-boundary session, retained logical effects, generation substrates,
+and restart mechanics are specified in `incremental_v1.md`. General reuse
+after a semantic edit is specified in `incremental_memoization.md`: it uses
+stable input identities plus constrained read validation and ordered
+state/effect replay at input, expansion, paragraph, page, output, and shipout
+boundaries. The folded checkpoint `state_hash` remains an identical-history
+check and is not the primary changed-document convergence mechanism.
+
 - **Convergence-based reuse** (`core_state.md` §9): on edit, roll back to
   the latest retained named boundary before the edit point, re-execute, and
   compare `state_hash` only at the same named-boundary schedule; on match,

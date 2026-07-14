@@ -24,6 +24,11 @@ change.
 retention, edit mapping, pruning, and schedule-relative convergence contract
 for the first incremental engine.
 
+`incremental_memoization.md` supersedes folded-hash convergence as the general
+incremental strategy and specifies stable input identity, constrained read
+validation, semantic mutation/effect replay, layered memoization boundaries,
+hierarchical trace reuse, retention, measurement, and rollout.
+
 `retained_group_roots.md` specifies the proposed persistent/COW environment
 history needed for durable paragraph checkpoints inside ordinary open groups,
 including store ownership, reclamation, hashing, rollout, and validation.

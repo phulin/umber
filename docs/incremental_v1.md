@@ -1,5 +1,13 @@
 # Incremental engine v1 — named-boundary session design
 
+> **Status:** this document remains authoritative for restartable named
+> checkpoints, retained editor-session effects/artifacts, edit mapping,
+> generation substrates, and pruning. Its folded `state_hash` convergence is
+> an identical-history optimization (no-op, comment-only, and other
+> semantically identical edits), not a general way to rejoin after changed
+> typeset content. General changed-document reuse is specified in
+> [`incremental_memoization.md`](incremental_memoization.md).
+
 This document fixes the v1 contract for an editor session that re-executes an
 edited document from a retained checkpoint, detects convergence, and reuses the
 unchanged suffix. It refines the incremental-engine overview in
