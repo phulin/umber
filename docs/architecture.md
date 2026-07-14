@@ -1312,6 +1312,12 @@ degenerate case (run once, commit every page, never look back).
   Every published checkpoint is restartable. If an edit falls inside an
   alignment, box, scanner, inline formula, or output routine, the session
   selects the preceding published boundary and replays the whole construct.
+  When convergence adopts an old suffix, every adopted checkpoint is eagerly
+  rehomed onto the new accepted root-buffer revision through an engine-owned
+  validated transformation. Accepted history therefore has no revision-map
+  chains and remains directly restartable by the next edit. After a splice the
+  session exposes detached accepted output and checkpoint history, not a
+  fictional job-end live executor state.
 - **Memoization** begins at pure kernel boundaries, especially paragraph line
   breaking keyed by immutable hlist content plus captured parameters. Generic
   interpreter read-set memoization remains deferred until a measured consumer

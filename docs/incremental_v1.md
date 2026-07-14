@@ -112,12 +112,18 @@ outermost transaction commits more than one artifact through recursive output
 work, the single boundary records the entire newly committed prefix; artifact
 count changes are not themselves additional schedule entries.
 
-Unlike paragraph boundaries, an outermost shipout may complete while TeX
-groups remain open. The session-state implementation must retain that full
-group lineage before such a checkpoint is published. If the state layer cannot
-prove the lineage retainable, the executor must suppress the checkpoint while
-preserving the logical shipout and its artifact ordering. It must never publish
-a checkpoint that a later group exit invalidates.
+An outermost shipout may complete while TeX groups remain open, but v1 does not
+publish a checkpoint in that case. Like `OuterParagraphEnd`,
+`ShipoutComplete` is eligible only at execution-group depth zero. The logical
+shipout and its artifact ordering are unchanged when publication is
+suppressed. This explicit restriction keeps v1 on the current destructive
+group-journal substrate: no v1 checkpoint can later be invalidated by group
+exit.
+
+The retained-lineage capability in `retained_group_roots.md` may later expand
+both paragraph and shipout eligibility. That rollout must be expressed as an
+aggregate state-layer capability and tested before `tex-exec` loosens the
+depth-zero rule; executor-side inspection of group shape is not sufficient.
 
 When one outer dispatch makes both a shipout and an outer paragraph eligible,
 the order is `ShipoutComplete` followed by `OuterParagraphEnd`. This is the
@@ -134,7 +140,7 @@ BoundaryRecord {
     boundary kind,
     boundary occurrence key,
     conservative root-input position,
-    root-buffer revision and content hash,
+    accepted root-buffer revision and content hash,
     restartable EngineCheckpoint,
     ordered committed-artifact prefix position,
     schedule-relative state_hash,
@@ -155,6 +161,34 @@ record and substitutes that frame while restoring every other checkpoint root
 unchanged. The substitution and restore commit atomically. This narrow
 revision-rebind capability cannot alter included-source or token-list frames
 and does not expose input-summary mutation to `tex-incr`.
+
+There are exactly two authorities for changing the root revision named by a
+checkpoint:
+
+1. **Pre-edit restart rebind.** The session may rebind a selected checkpoint
+   from the accepted revision to the in-progress revision only after proving
+   that the root prefix through its conservative anchor is byte-identical.
+2. **Post-convergence suffix rehome.** Once a new boundary has matched an old
+   boundary under the convergence rules below, the engine may rehome old
+   suffix checkpoints onto the in-progress revision. The match proves equal
+   semantic state at the splice point, and the edit map proves that root input
+   from that point through the adopted suffix is unchanged. Rehoming maps each
+   conservative anchor and occurrence key, substitutes only the root editor
+   record and its mapped physical offsets, and preserves the checkpoint's
+   boundary kind, semantic state, included-source records, and `state_hash`.
+
+Both operations are engine-owned transformations of an already valid
+checkpoint, not caller construction of a checkpoint. They validate every
+mapped physical-line anchor and prepare all reopened input and mode state
+before committing the aggregate root switch. Failure leaves the source
+checkpoint and live engine unchanged.
+
+Suffix rehoming is eager when a revision is accepted. Every record in accepted
+history therefore names that accepted revision directly; the session never
+keeps a chain of revision maps and never asks a later edit to restore a
+checkpoint rooted in an older accepted buffer. Rehoming may share unchanged
+checkpoint storage internally, but its public ownership unit has current
+revision metadata and a root frame that reopens the current editor record.
 
 The artifact prefix position is session metadata, not TeX semantic state and
 not part of `state_hash`. It identifies exactly which artifacts precede the
@@ -260,8 +294,10 @@ Old boundary positions at or after the end of the edited range are mapped to
 the new revision by the edit's byte delta. Positions inside the replaced range
 have no mapping and cannot be convergence candidates. The complete-physical-
 line rule is reapplied in the new revision; if the mapped point is not the same
-conservative line-end anchor, it is not a schedule match. Multiple edits are
-composed in revision order with the same rules.
+conservative line-end anchor, it is not a schedule match. Multiple edits
+supplied in one `advance` are composed in order before restart. Across accepted
+revisions, mappings are collapsed by eager suffix rehoming; accepted history
+never incurs mapping work proportional to session age.
 
 The root revision id and whole-buffer content hash are validation and mapping
 metadata, not inputs to semantic convergence. The aggregate revision-rebind
@@ -282,9 +318,29 @@ generation and the older generation is dropped. Failed or cancelled execution
 drops only the in-progress branch.
 
 Within an accepted generation, records are ordered by schedule and never
-mutated in place. `JobStart` is always retained. The host supplies a checkpoint
-memory budget; when retention exceeds it, the session evicts restart roots in
-this deterministic order:
+mutated in place. Rehoming creates a new accepted record wrapper rather than
+mutating an old generation's record. `JobStart` is always retained.
+
+The host supplies a soft checkpoint-root memory budget. The aggregate state
+layer reports opaque retention units and their charged bytes; `tex-incr` never
+walks stores or estimates their contents. A unit is charged once when the
+session first pins it, even if several checkpoints or both live generations
+share it, and is uncharged when the last session pin is released. Charges
+include checkpoint records, input/mode summaries, journal and group-history
+blocks, retained effects, and content/node/store blocks kept alive as restart
+roots. Allocation ids, sharing counts, and charged sizes are runtime retention
+metadata and never enter semantic hashes.
+
+Detached artifacts and the effect/output metadata required to export the
+accepted revision are not checkpoint-root retention: they remain necessary
+even if every optional restart point is evicted and are accounted by the
+session's separate output-retention total. The session reports both totals.
+`JobStart` and the newest boundary are protected, so the checkpoint-root total
+may exceed the requested budget; the reported overage makes the budget
+explicitly soft rather than silently discarding the only useful roots.
+
+When charged checkpoint-root retention exceeds the budget, the session evicts
+restart roots in this deterministic order:
 
 1. oldest `OuterParagraphEnd` records first;
 2. oldest non-final `ShipoutComplete` records next; and
@@ -327,14 +383,25 @@ risk; parity tests remain the correctness oracle.
 
 The first matching candidate wins. For a no-op edit this is the first eligible
 named boundary emitted after the selected restart anchor. On a match the
-session stops re-execution, keeps the new records through the match, adopts the
-old records and artifact ids strictly after the matching record, and adopts the
-old completed revision's detached effect/output suffix. The live executor at
-the match need not pretend it ran to job end: the accepted session state is its
-ordered named-checkpoint history plus completed output metadata, and the next
-edit always restores one of those named checkpoints. The resulting artifact
-sequence and deferred effect sequence must equal a cold run. No unnamed
-terminal continuation is captured or resumed.
+session stops re-execution, keeps the new records through the match, eagerly
+rehomes the old records strictly after the match onto the new accepted
+revision, and adopts the corresponding artifact ids and detached effect/output
+suffix. Rehoming is permitted only when the edit map proves the root interval
+from the matching anchor through each adopted anchor unchanged; otherwise that
+record and everything after it are not adopted and execution continues.
+
+The executor stopped at the matching boundary and must not pretend it ran to
+job end. After a splice, `Session` exposes only accepted history, detached
+artifacts/effects, revision metadata, and reuse measurements. It does not
+expose a readable "final" `Universe`, input stack, mode nest, or executor.
+Export/finalization consumes detached accepted output, never live executor
+state. A later `advance` first restores one accepted named checkpoint into the
+private executor and then resumes execution. This state-machine boundary makes
+the accepted session coherent without capturing an unnamed terminal
+continuation.
+
+The resulting artifact sequence and deferred effect sequence must equal a cold
+run. No unnamed terminal continuation is captured or resumed.
 
 If schedule keys or hashes never match, execution continues to normal job end
 and replaces the old revision. There is no fixed “pages retyped” correctness
@@ -348,14 +415,17 @@ Implementation is not complete until tests prove all of the following:
 - the exact boundary order, including a paragraph-triggered shipout;
 - no publication from scanners, alignments, boxes, math, output routines, or
   nested shipouts;
-- group-depth-zero paragraph eligibility and retained-lineage enforcement for
-  any grouped shipout checkpoint;
+- group-depth-zero eligibility for both paragraph and shipout checkpoints;
 - rollback across logical shipout restores effects, streams, artifacts, nodes,
   input, modes, groups, and semantic state atomically;
 - pruning releases exactly the roots no remaining checkpoint reaches;
 - stale editor revisions and changed included files cannot reuse old roots;
+- adopted suffix records are eagerly rehomed, survive a second edit, and never
+  accumulate revision-map chains;
 - no-op edits converge at the first eligible candidate;
-- schedule changes cause only missed reuse; and
+- schedule changes cause only missed reuse;
+- checkpoint-root and output-retention accounting charge shared roots once,
+  report protected-root overage, and return to baseline after eviction; and
 - incremental artifacts, deferred effects, and final DVI bytes equal a cold
   run across the committed fast corpus and the 1,000-edit scripted fuzz tier.
 

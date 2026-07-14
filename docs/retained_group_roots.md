@@ -2,23 +2,25 @@
 
 ## Status and scope
 
-This document specifies a state-layer extension that lets a named
-`OuterParagraphEnd` engine checkpoint remain restorable after live execution
-leaves the ordinary TeX group that enclosed the paragraph. It refines the
-checkpoint contract in `core_state.md` §9; it does not change the rule that
-only the outer executor may publish an `EngineCheckpoint`.
+This document specifies a state-layer extension that lets named
+`OuterParagraphEnd` and outermost `ShipoutComplete` engine checkpoints remain
+restorable after live execution leaves the ordinary TeX group that enclosed
+the boundary. It refines the checkpoint contract in `core_state.md` §9; it
+does not change the rule that only the outer executor may publish an
+`EngineCheckpoint`.
 
-The feature covers a paragraph that has returned control to outer main control
-but happens to have one or more ordinary groups open. This is common for prose
-inside LaTeX-style environments. It does **not** make execution inside a
-`\vbox`, insertion, alignment, scanner, math builder, output routine, or nested
-shipout restartable. Those contexts require explicit resumable builder or
-continuation state and remain separate work.
+The feature covers an eligible paragraph or outermost shipout that has returned
+control to outer main control but happens to have one or more ordinary groups
+open. Grouped paragraphs are common for prose inside LaTeX-style environments.
+It does **not** make execution inside a `\vbox`, insertion, alignment, scanner,
+math builder, output routine, or nested shipout restartable. Those contexts
+require explicit resumable builder or continuation state and remain separate
+work.
 
-Before retained roots are enabled, paragraph checkpoint publication must reject
-nonzero execution group depth. The current mode transition alone is not a
-sufficient eligibility check: it can publish a snapshot whose enclosing group
-later exits and invalidates it.
+Before retained roots are enabled, paragraph and shipout checkpoint publication
+must reject nonzero execution group depth. A mode transition or completed
+shipout alone is not a sufficient eligibility check: it can publish a snapshot
+whose enclosing group later exits and invalidates it.
 
 ## Current mechanism and failure
 
@@ -313,9 +315,10 @@ Implementation must proceed conservatively:
    survivor ownership; add deterministic eviction and reclamation.
 4. **Make restore branch-aware.** Restore retained roots atomically through
    `Stores` and `Universe`, including hash cursors and failure rollback.
-5. **Enable grouped paragraph boundaries.** Replace the depth-zero condition
-   with an explicit `Stores`/`Universe` capability proving the full active group
-   lineage is retained and contains no unsupported execution context.
+5. **Enable grouped named boundaries.** Replace the depth-zero condition for
+   paragraph and outermost shipout checkpoints with an explicit
+   `Stores`/`Universe` capability proving the full active group lineage is
+   retained and contains no unsupported execution context.
 6. **Measure and tune.** Add anchors or COW bank pages only if branch-switch and
    retained-memory measurements justify them.
 

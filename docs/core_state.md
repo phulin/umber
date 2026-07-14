@@ -812,18 +812,18 @@ pub struct Snapshot {
 - **Boundary eligibility**: v1 publishes paragraph checkpoints only after an
   unrestricted outer paragraph has been fully packaged, page building and any
   resulting output cycle have completed, the outer main-control loop owns
-  control again, and the snapshot's group lineage will remain retained.
-  Because the current journal invalidates a snapshot when its enclosing group
-  exits, v1 must either restrict published paragraph checkpoints to group
-  depth zero or first implement a session-retained group root. It must not
-  promise that every `\par` is restartable while silently publishing invalid
-  snapshots.
+  control again, and execution-group depth is zero. An outermost completed
+  shipout likewise publishes a v1 checkpoint only at group depth zero. Because
+  the current journal invalidates a snapshot when its enclosing group exits,
+  v1 suppresses both boundary kinds inside open groups. It must not promise
+  that every `\par` or outer shipout is restartable while silently publishing
+  invalid snapshots.
 
 - **Retained group roots**: the planned retained-lineage extension is specified
-  in `retained_group_roots.md`. Until that design is implemented, paragraph
-  checkpoint publication must remain restricted to group depth zero; a mode
-  transition by itself does not prove that the resulting checkpoint will remain
-  restorable after group exit.
+  in `retained_group_roots.md`. Until that design is implemented, paragraph and
+  shipout checkpoint publication must remain restricted to group depth zero; a
+  mode transition or completed shipout by itself does not prove that the
+  resulting checkpoint will remain restorable after group exit.
 - **Input restoration**: `InputSummary` carries the lexer-owned source-frame
   state required after a source is reopened: original physical line start,
   content-end and terminator ranges, the current normalized UTF-8 line and its
@@ -889,11 +889,11 @@ pub struct Snapshot {
   that occurs inside a scanner, alignment, box builder, or output routine is
   still committed and reported as an artifact, but it does not publish an
   engine checkpoint. The outer executor may publish one `ShipoutComplete`
-  boundary only after all recursive work has unwound. Editor/incremental worlds
-  must choose retained history or delayed materialization before claiming that
-  this boundary can roll back across the commit. The v1 choice—retained logical
-  commit with deferred host materialization—is specified in
-  `incremental_v1.md`.
+  boundary only after all recursive work has unwound and, in v1,
+  execution-group depth is zero. Editor/incremental worlds must choose retained
+  history or delayed materialization before claiming that this boundary can
+  roll back across the commit. The v1 choice—retained logical commit with
+  deferred host materialization—is specified in `incremental_v1.md`.
 - **Convergence detection**: after re-executing from an edit, compare
   `state_hash` at each checkpoint with the prior run's hash at the same
   input position; on match, splice the old suffix and stop. `state_hash`
