@@ -2,7 +2,8 @@ use js_sys::{Array, Reflect, Uint8Array};
 use umber::{
     FeatureSetting, FileKind, FileRequestKey, FontContainer, FontFeaturePolicy, FontObjectIdentity,
     FontProgramIdentity, FontRequestKey, OpenTypeTag, ResolvedFile, ResolvedFont, ResourceResponse,
-    SessionLimits, SessionOptions, SessionWebFont, VariationCoordinate, VariationSelection,
+    SessionLimits, SessionOptions, SessionWebFont, SourcePatch, VariationCoordinate,
+    VariationSelection,
 };
 use wasm_bindgen::{JsCast, JsValue};
 
@@ -60,6 +61,44 @@ pub(crate) fn parse_html_font(value: &JsValue) -> Result<SessionWebFont, JsValue
         provenance: required_string(value, "provenance")?,
         embeddable: required_bool(value, "embeddable")?,
     })
+}
+
+pub(crate) fn parse_source_patch(value: &JsValue) -> Result<SourcePatch, JsValue> {
+    require_object(value, "source patch")?;
+    let start = integer::<usize>(value, "start")?;
+    let end = integer::<usize>(value, "end")?;
+    if start > end {
+        return Err(js_error("source patch start must not exceed end"));
+    }
+    Ok(SourcePatch {
+        next_revision: umber::RevisionId::new(u64::from(integer::<u32>(value, "nextRevision")?)),
+        base_revision: umber::RevisionId::new(u64::from(integer::<u32>(value, "baseRevision")?)),
+        expected_hash: parse_content_hash(&required_string(value, "expectedHash")?)?,
+        range: start..end,
+        replacement: required_string(value, "replacement")?,
+    })
+}
+
+fn parse_content_hash(value: &str) -> Result<tex_state::ContentHash, JsValue> {
+    if value.len() != 64 {
+        return Err(js_error(
+            "expectedHash must contain 64 lowercase hex digits",
+        ));
+    }
+    let mut bytes = [0_u8; 32];
+    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
+        let digit = |byte: u8| match byte {
+            b'0'..=b'9' => Some(byte - b'0'),
+            b'a'..=b'f' => Some(byte - b'a' + 10),
+            _ => None,
+        };
+        let high = digit(pair[0])
+            .ok_or_else(|| js_error("expectedHash must contain 64 lowercase hex digits"))?;
+        let low = digit(pair[1])
+            .ok_or_else(|| js_error("expectedHash must contain 64 lowercase hex digits"))?;
+        bytes[index] = (high << 4) | low;
+    }
+    Ok(tex_state::ContentHash::new(bytes))
 }
 
 pub(crate) fn parse_request_key(value: &JsValue) -> Result<FileRequestKey, JsValue> {

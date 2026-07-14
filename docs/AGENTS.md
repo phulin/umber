@@ -24,6 +24,10 @@ change.
 retention, edit mapping, pruning, and schedule-relative convergence contract
 for the first incremental engine.
 
+`persistent_compile_sessions.md` defines the unified native/WASM compile
+session lifecycle that composes typed resource retries with revision-checked
+root-buffer patches and retained incremental execution.
+
 `incremental_memoization.md` supersedes folded-hash convergence as the general
 incremental strategy and specifies stable input identity, constrained read
 validation, semantic mutation/effect replay, layered memoization boundaries,

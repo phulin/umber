@@ -66,6 +66,29 @@ export interface SessionOptions {
   html?: { fonts: HtmlFontInput[] };
 }
 
+export interface SourcePatch {
+  nextRevision: number;
+  baseRevision: number;
+  expectedHash: string;
+  start: number;
+  end: number;
+  replacement: string;
+}
+
+export interface ReuseMetrics {
+  pagesReused: number;
+  pagesRetyped: number;
+  restartForkMicroseconds: number;
+  reexecutionMicroseconds: number;
+  spliceMicroseconds: number;
+}
+
+export interface RetentionMetrics {
+  checkpointRootBytes: number;
+  outputBytes: number;
+  protectedOverageBytes: number;
+}
+
 export interface HtmlFontInput {
   name: string;
   tfmContentHash: string;
@@ -113,6 +136,9 @@ extern "C" {
 
     #[wasm_bindgen(typescript_type = "HtmlFontInput")]
     pub type JsHtmlFontInput;
+
+    #[wasm_bindgen(typescript_type = "SourcePatch")]
+    pub type JsSourcePatch;
 
     #[wasm_bindgen(typescript_type = "AttemptResult")]
     pub type JsAttemptResult;
@@ -200,10 +226,19 @@ impl CompilerSession {
         attempt_result(result)
     }
 
+    #[wasm_bindgen(js_name = applyPatch)]
+    pub fn apply_patch(&mut self, patch: &JsSourcePatch) -> Result<(), JsValue> {
+        let patch = options::parse_source_patch(patch.as_ref())?;
+        self.session_mut()?
+            .apply_patch(patch)
+            .map_err(boundary_error)
+    }
+
     #[wasm_bindgen(js_name = clearDistributionCache)]
     pub fn clear_distribution_cache(&mut self) -> Result<(), JsValue> {
-        self.session_mut()?.clear_distribution_cache();
-        Ok(())
+        self.session_mut()?
+            .clear_distribution_cache()
+            .map_err(boundary_error)
     }
 
     pub fn dispose(&mut self) {
@@ -218,6 +253,32 @@ impl CompilerSession {
     #[wasm_bindgen(getter)]
     pub fn attempts(&self) -> Result<u32, JsValue> {
         Ok(self.session_ref()?.attempts())
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn revision(&self) -> Result<Option<u32>, JsValue> {
+        self.session_ref()?
+            .revision()
+            .map(|revision| {
+                u32::try_from(revision.raw())
+                    .map_err(|_| js_error("accepted revision exceeds the WASM revision range"))
+            })
+            .transpose()
+    }
+
+    #[wasm_bindgen(getter, js_name = contentHash)]
+    pub fn accepted_content_hash(&self) -> Result<Option<String>, JsValue> {
+        Ok(self.session_ref()?.content_hash().map(|hash| hash.hex()))
+    }
+
+    #[wasm_bindgen(getter, js_name = reuseMetrics)]
+    pub fn reuse_metrics(&self) -> Result<JsValue, JsValue> {
+        result::reuse_metrics(self.session_ref()?.reuse_metrics())
+    }
+
+    #[wasm_bindgen(getter, js_name = retentionMetrics)]
+    pub fn retention_metrics(&self) -> Result<JsValue, JsValue> {
+        result::retention_metrics(self.session_ref()?.retention_metrics())
     }
 
     #[wasm_bindgen(getter, js_name = resolvedFileCount)]

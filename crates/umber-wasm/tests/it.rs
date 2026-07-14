@@ -2,7 +2,8 @@
 
 use js_sys::{Array, Object, Reflect, Uint8Array};
 use umber_wasm::{
-    CompilerSession, JsFileRequestKey, JsSessionOptions, format_schema_version, package_version,
+    CompilerSession, JsFileRequestKey, JsSessionOptions, JsSourcePatch, format_schema_version,
+    package_version,
 };
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
@@ -250,6 +251,40 @@ fn explicit_disposal_releases_session_and_rejects_later_calls() {
     assert!(session.attempts().is_err());
 }
 
+#[wasm_bindgen_test]
+fn persistent_session_applies_revision_checked_patches() {
+    let source = b"\\shipout\\vbox{\\hrule height 1pt}\\end";
+    let mut session = session("main.tex");
+    session
+        .add_user_file("main.tex", &bytes(source))
+        .expect("source");
+    let initial = session.advance().expect("initial revision");
+    assert_eq!(string_field(initial.as_ref(), "kind"), "complete");
+    assert_eq!(session.revision().expect("revision"), Some(1));
+    let hash = session
+        .accepted_content_hash()
+        .expect("hash getter")
+        .expect("accepted hash");
+    let start = source
+        .windows(3)
+        .position(|window| window == b"1pt")
+        .expect("height");
+    let patch = source_patch(2, 1, &hash, start, start + 1, "2");
+    session
+        .apply_patch(patch.unchecked_ref::<JsSourcePatch>())
+        .expect("patch");
+    let edited = session.advance().expect("edited revision");
+    assert_eq!(string_field(edited.as_ref(), "kind"), "complete");
+    assert_eq!(session.revision().expect("revision"), Some(2));
+
+    let stale = source_patch(3, 1, &hash, start, start + 1, "3");
+    assert!(
+        session
+            .apply_patch(stale.unchecked_ref::<JsSourcePatch>())
+            .is_err()
+    );
+}
+
 fn session(main_path: &str) -> CompilerSession {
     let options = options(main_path);
     CompilerSession::new(options.unchecked_ref::<JsSessionOptions>()).expect("construct session")
@@ -279,6 +314,32 @@ fn options(main_path: &str) -> Object {
     let options = Object::new();
     set(&options, "mainPath", &JsValue::from_str(main_path));
     options
+}
+
+fn source_patch(
+    next_revision: u32,
+    base_revision: u32,
+    expected_hash: &str,
+    start: usize,
+    end: usize,
+    replacement: &str,
+) -> Object {
+    let patch = Object::new();
+    set(
+        &patch,
+        "nextRevision",
+        &JsValue::from_f64(f64::from(next_revision)),
+    );
+    set(
+        &patch,
+        "baseRevision",
+        &JsValue::from_f64(f64::from(base_revision)),
+    );
+    set(&patch, "expectedHash", &JsValue::from_str(expected_hash));
+    set(&patch, "start", &JsValue::from_f64(start as f64));
+    set(&patch, "end", &JsValue::from_f64(end as f64));
+    set(&patch, "replacement", &JsValue::from_str(replacement));
+    patch
 }
 
 fn bytes(value: &[u8]) -> Uint8Array {

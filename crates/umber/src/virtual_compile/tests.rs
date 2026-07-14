@@ -1,4 +1,5 @@
 use crate::FontContainer;
+use tex_incr::RevisionId;
 use tex_state::{Universe, World};
 
 use super::*;
@@ -564,8 +565,96 @@ fn cache_clear_keeps_user_files_and_drops_bindings() {
     session
         .provide_resolved_file(key, "/texlive/remote.tex", b"done".to_vec())
         .expect("provide");
-    session.clear_distribution_cache();
+    session.clear_distribution_cache().expect("clear cache");
     assert_eq!(session.resolved_file_count(), 0);
     assert_eq!(session.cached_file_bytes(), 0);
     assert_eq!(requests(session.compile_attempt()).len(), 1);
+}
+
+#[test]
+fn persistent_session_accepts_multiple_revision_checked_patches() {
+    let original = "\\shipout\\vbox{\\hrule height 1pt}\\end";
+    let mut session = session(original);
+    let CompileAttemptResult::Complete(first) = session.compile_attempt() else {
+        panic!("initial revision should complete");
+    };
+    assert_eq!(session.revision(), Some(RevisionId::new(1)));
+
+    let first_hash = session.content_hash().expect("accepted hash");
+    let one = original.find("1pt").expect("height");
+    session
+        .apply_patch(SourcePatch {
+            next_revision: RevisionId::new(2),
+            base_revision: RevisionId::new(1),
+            expected_hash: first_hash,
+            range: one..one + 1,
+            replacement: "2".to_owned(),
+        })
+        .expect("first patch");
+    let CompileAttemptResult::Complete(second) = session.compile_attempt() else {
+        panic!("second revision should complete");
+    };
+    assert_ne!(first.dvi, second.dvi);
+    assert_eq!(session.revision(), Some(RevisionId::new(2)));
+
+    let second_hash = session.content_hash().expect("second hash");
+    session
+        .apply_patch(SourcePatch {
+            next_revision: RevisionId::new(3),
+            base_revision: RevisionId::new(2),
+            expected_hash: second_hash,
+            range: one..one + 1,
+            replacement: "3".to_owned(),
+        })
+        .expect("second patch");
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+    assert_eq!(session.revision(), Some(RevisionId::new(3)));
+
+    let stale = session.apply_patch(SourcePatch {
+        next_revision: RevisionId::new(4),
+        base_revision: RevisionId::new(2),
+        expected_hash: second_hash,
+        range: one..one + 1,
+        replacement: "4".to_owned(),
+    });
+    assert!(
+        matches!(stale, Err(CompileError::Incremental(message)) if message.contains("stale revision"))
+    );
+}
+
+#[test]
+fn patch_can_request_and_pin_a_new_resource_before_acceptance() {
+    let original = "\\shipout\\hbox{}\\end";
+    let mut session = session(original);
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+    let insert = original.find("\\end").expect("end");
+    session
+        .apply_patch(SourcePatch {
+            next_revision: RevisionId::new(2),
+            base_revision: RevisionId::new(1),
+            expected_hash: session.content_hash().expect("hash"),
+            range: insert..insert,
+            replacement: "\\input added ".to_owned(),
+        })
+        .expect("patch");
+    let requested = requests(session.compile_attempt());
+    assert_eq!(requested.len(), 1);
+    session
+        .provide_resolved_file(
+            requested[0].key().clone(),
+            "/texlive/added.tex",
+            b"% supplied after patch\n".to_vec(),
+        )
+        .expect("resource");
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+    assert_eq!(session.revision(), Some(RevisionId::new(2)));
 }

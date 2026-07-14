@@ -165,6 +165,52 @@ fn typed_array(bytes: &[u8]) -> JsValue {
     Uint8Array::from(bytes).into()
 }
 
+pub(crate) fn reuse_metrics(metrics: Option<umber::ReuseMetrics>) -> Result<JsValue, JsValue> {
+    let Some(metrics) = metrics else {
+        return Ok(JsValue::UNDEFINED);
+    };
+    let object = Object::new();
+    set(&object, "pagesReused", &usize_value(metrics.pages_reused))?;
+    set(&object, "pagesRetyped", &usize_value(metrics.pages_retyped))?;
+    set(
+        &object,
+        "restartForkMicroseconds",
+        &JsValue::from_f64(metrics.restart_fork_latency.as_micros() as f64),
+    )?;
+    set(
+        &object,
+        "reexecutionMicroseconds",
+        &JsValue::from_f64(metrics.reexecution_latency.as_micros() as f64),
+    )?;
+    set(
+        &object,
+        "spliceMicroseconds",
+        &JsValue::from_f64(metrics.splice_latency.as_micros() as f64),
+    )?;
+    Ok(object.into())
+}
+
+pub(crate) fn retention_metrics(
+    metrics: Option<umber::RetentionMetrics>,
+) -> Result<JsValue, JsValue> {
+    let Some(metrics) = metrics else {
+        return Ok(JsValue::UNDEFINED);
+    };
+    let object = Object::new();
+    set(
+        &object,
+        "checkpointRootBytes",
+        &usize_value(metrics.checkpoint_root_bytes),
+    )?;
+    set(&object, "outputBytes", &usize_value(metrics.output_bytes))?;
+    set(
+        &object,
+        "protectedOverageBytes",
+        &usize_value(metrics.protected_overage_bytes),
+    )?;
+    Ok(object.into())
+}
+
 fn usize_value(value: usize) -> JsValue {
     JsValue::from_f64(value as f64)
 }

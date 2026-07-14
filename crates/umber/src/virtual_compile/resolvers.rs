@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use tex_exec::{ExecutionContext, FontResolver};
+use tex_exec::FontResolver;
 use tex_expand::InputResolver;
 use tex_fonts::{
     AcceptedFontContainers, FontFeaturePolicy, FontPurposes, FontRequest, FontRequestKey,
@@ -44,8 +44,8 @@ impl<'a> VirtualRunResolvers<'a> {
         }
     }
 
-    pub(super) fn context(&mut self, job_name: &'a str) -> ExecutionContext<'_> {
-        ExecutionContext::with_resolvers(job_name, &mut self.input, &mut self.font)
+    pub(super) fn resolvers(&mut self) -> (&mut dyn InputResolver, &mut dyn FontResolver) {
+        (&mut self.input, &mut self.font)
     }
 
     pub(super) fn finish(self) -> (Vec<FileRequest>, Vec<FontRequest>, Option<CompileError>) {

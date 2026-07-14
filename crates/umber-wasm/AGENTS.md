@@ -13,7 +13,7 @@ the manifest's validated content-addressed object name.
 
 ## Directory map
 
-- `src/lib.rs`: exported `CompilerSession`, low-level `advance`/`provideResources` boundary, and TypeScript surface.
+- `src/lib.rs`: exported persistent `CompilerSession`, low-level `advance`/`provideResources`/`applyPatch` boundary, revision metrics, and TypeScript surface.
 - `src/options.rs`: strict conversion of JavaScript options, typed resource responses, and request keys.
 - `src/result.rs`: binary-safe conversion of native typed resource batches and completed attempts to discriminated JS results.
 - `tests/it.rs`: wasm-bindgen boundary and lifecycle tests.

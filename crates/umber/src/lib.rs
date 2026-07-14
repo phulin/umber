@@ -33,10 +33,12 @@ pub use tex_fonts::{
     FontProgramIdentity, FontPurposes, FontRequest, FontRequestKey, OpenTypeTag, ResolvedFont,
     VariationCoordinate, VariationSelection,
 };
+pub use tex_incr::RevisionId;
+pub use tex_incr::{RetentionMetrics, ReuseMetrics};
 pub use virtual_compile::{
     CompileAttemptResult, CompileDiagnostic, CompileError, FileKind, FileRequest, FileRequestKey,
     NeedResources, ResolvedFile, ResourceRequest, ResourceResponse, SessionLimits, SessionOptions,
-    SessionWebFont, VirtualCompileSession, VirtualPath, VirtualPathError,
+    SessionWebFont, SourcePatch, VirtualCompileSession, VirtualPath, VirtualPathError,
 };
 
 /// The only checkpoint policy supported by composed engine sessions.

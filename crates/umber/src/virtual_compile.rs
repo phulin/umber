@@ -6,14 +6,10 @@ use std::sync::Arc;
 use tex_fonts::{
     AcceptedFontContainers, FontLimits, FontRequest, FontRequestKey, OpenTypeFont, ResolvedFont,
 };
-use tex_lex::{InputStack, WorldInput};
 use tex_out::html::{HtmlFontKey, HtmlFontResolver, WebFont};
-use tex_state::{JobClock, Universe, World};
+use tex_state::{ContentHash, JobClock, Universe, World};
 
-use crate::{
-    EngineSession, MemoryOutputCollectionError, MemoryRunOutput,
-    collect_final_memory_output_from_plans, prepare_run_stores,
-};
+use crate::{MemoryOutputFile, MemoryRunOutput, prepare_run_stores};
 
 mod path;
 mod resolvers;
@@ -242,6 +238,16 @@ pub struct SessionWebFont {
     pub embeddable: bool,
 }
 
+/// One atomic root-buffer replacement for a persistent compile session.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourcePatch {
+    pub next_revision: tex_incr::RevisionId,
+    pub base_revision: tex_incr::RevisionId,
+    pub expected_hash: ContentHash,
+    pub range: std::ops::Range<usize>,
+    pub replacement: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompileDiagnostic {
     pub message: String,
@@ -292,6 +298,9 @@ pub enum CompileError {
     World(String),
     Output(String),
     Html(String),
+    Incremental(String),
+    SessionAlreadyStarted,
+    PatchAlreadyPending,
 }
 
 impl fmt::Display for CompileError {
@@ -343,9 +352,14 @@ impl fmt::Display for CompileError {
             }
             Self::Format(message) => write!(f, "format image rejected: {message}"),
             Self::Diagnostic(diagnostic) => f.write_str(&diagnostic.message),
-            Self::World(message) | Self::Output(message) | Self::Html(message) => {
-                f.write_str(message)
+            Self::World(message)
+            | Self::Output(message)
+            | Self::Html(message)
+            | Self::Incremental(message) => f.write_str(message),
+            Self::SessionAlreadyStarted => {
+                f.write_str("user files cannot change after the first revision is accepted")
             }
+            Self::PatchAlreadyPending => f.write_str("a source patch is already pending"),
         }
     }
 }
@@ -393,6 +407,11 @@ pub struct VirtualCompileSession {
     html: bool,
     html_fonts: BTreeMap<(String, String), SessionWebFont>,
     html_font_bytes: usize,
+    incremental: Option<tex_incr::Session>,
+    accepted_output: Option<MemoryRunOutput>,
+    pending_patch: Option<(tex_incr::RevisionId, tex_incr::Edit)>,
+    last_reuse: Option<tex_incr::ReuseMetrics>,
+    last_retention: Option<tex_incr::RetentionMetrics>,
 }
 
 impl VirtualCompileSession {
@@ -434,6 +453,11 @@ impl VirtualCompileSession {
             html: options.html,
             html_fonts: BTreeMap::new(),
             html_font_bytes: 0,
+            incremental: None,
+            accepted_output: None,
+            pending_patch: None,
+            last_reuse: None,
+            last_retention: None,
         })
     }
 
@@ -482,6 +506,9 @@ impl VirtualCompileSession {
     }
 
     pub fn add_user_file(&mut self, path: &str, bytes: Vec<u8>) -> Result<(), CompileError> {
+        if self.accepted_output.is_some() {
+            return Err(CompileError::SessionAlreadyStarted);
+        }
         let path = VirtualPath::user(path).map_err(|error| CompileError::InvalidVirtualPath {
             path: path.to_owned(),
             message: error.to_string(),
@@ -512,9 +539,63 @@ impl VirtualCompileSession {
             attempted,
             self.limits.user_source_bytes,
         )?;
-        self.user_files.insert(path, bytes);
+        self.user_files.insert(path.clone(), bytes.clone());
         self.user_bytes = attempted;
+        if let Some(session) = &mut self.incremental {
+            session
+                .register_input_file(path.as_path(), bytes)
+                .map_err(|error| CompileError::Incremental(error.to_string()))?;
+        }
         Ok(())
+    }
+
+    pub fn apply_patch(&mut self, patch: SourcePatch) -> Result<(), CompileError> {
+        if self.pending_patch.is_some() {
+            return Err(CompileError::PatchAlreadyPending);
+        }
+        let session = self.incremental.as_ref().ok_or_else(|| {
+            CompileError::Incremental("the initial revision has not been accepted".to_owned())
+        })?;
+        let edit = tex_incr::Edit {
+            base_revision: patch.base_revision,
+            expected_hash: patch.expected_hash,
+            range: patch.range,
+            replacement: patch.replacement,
+        };
+        session
+            .validate_edit(patch.next_revision, &edit)
+            .map_err(|error| CompileError::Incremental(error.to_string()))?;
+        self.pending_patch = Some((patch.next_revision, edit));
+        self.awaiting = None;
+        self.accepted_output = None;
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn revision(&self) -> Option<tex_incr::RevisionId> {
+        self.incremental
+            .as_ref()
+            .filter(|_| self.accepted_output.is_some() || self.pending_patch.is_some())
+            .map(tex_incr::Session::revision)
+    }
+
+    #[must_use]
+    pub fn content_hash(&self) -> Option<ContentHash> {
+        self.revision().and_then(|_| {
+            self.incremental
+                .as_ref()
+                .map(tex_incr::Session::content_hash)
+        })
+    }
+
+    #[must_use]
+    pub const fn reuse_metrics(&self) -> Option<tex_incr::ReuseMetrics> {
+        self.last_reuse
+    }
+
+    #[must_use]
+    pub const fn retention_metrics(&self) -> Option<tex_incr::RetentionMetrics> {
+        self.last_retention
     }
 
     pub fn provide_resolved_file(
@@ -672,15 +753,25 @@ impl VirtualCompileSession {
         self.resolved_files.insert(
             request,
             CachedFile {
-                virtual_path,
-                bytes: shared_bytes,
+                virtual_path: virtual_path.clone(),
+                bytes: Arc::clone(&shared_bytes),
             },
         );
         self.cached_bytes = attempted;
+        if let Some(session) = &mut self.incremental {
+            session
+                .register_input_file(virtual_path.as_path(), shared_bytes.to_vec())
+                .map_err(|error| CompileError::Incremental(error.to_string()))?;
+        }
         Ok(())
     }
 
     pub fn compile_attempt(&mut self) -> CompileAttemptResult {
+        if self.pending_patch.is_none()
+            && let Some(output) = &self.accepted_output
+        {
+            return CompileAttemptResult::Complete(output.clone());
+        }
         if self.attempts >= self.limits.attempts {
             return CompileAttemptResult::Error(CompileError::AttemptLimit {
                 limit: self.limits.attempts,
@@ -708,40 +799,70 @@ impl VirtualCompileSession {
     }
 
     fn run_attempt(&mut self) -> Result<CompileAttemptResult, CompileError> {
-        let mut world = World::memory_with_clock(self.clock);
-        for (path, bytes) in &self.user_files {
-            world
-                .set_memory_file(path.as_path(), bytes.clone())
+        if self.incremental.is_none() {
+            let source = self
+                .user_files
+                .get(&self.main_path)
+                .ok_or_else(|| CompileError::MissingMainFile(self.main_path.to_string()))?;
+            let source = String::from_utf8(source.clone()).map_err(|_| {
+                CompileError::Incremental("the editable main file must be valid UTF-8".to_owned())
+            })?;
+            let mut world = World::memory_with_clock(self.clock);
+            for (path, bytes) in &self.user_files {
+                world
+                    .set_memory_file(path.as_path(), bytes.clone())
+                    .map_err(|error| CompileError::World(error.to_string()))?;
+            }
+            for resolved in self.resolved_files.values() {
+                world
+                    .set_memory_file(resolved.virtual_path.as_path(), resolved.bytes.to_vec())
+                    .map_err(|error| CompileError::World(error.to_string()))?;
+            }
+            let mut template = if let Some(format) = &self.format {
+                Universe::from_format(world, format)
+                    .map_err(|error| CompileError::Format(error.to_string()))?
+            } else {
+                let mut template = Universe::with_world(world);
+                prepare_run_stores(&mut template);
+                template
+            };
+            // The root is supplied through the editor input, not reopened as
+            // an included file. Keeping the registered copy is harmless and
+            // preserves absolute self-input behavior.
+            template
+                .world_mut()
+                .set_memory_file(self.main_path.as_path(), source.as_bytes().to_vec())
                 .map_err(|error| CompileError::World(error.to_string()))?;
-        }
-        for resolved in self.resolved_files.values() {
-            world
-                .set_memory_file(resolved.virtual_path.as_path(), resolved.bytes.to_vec())
-                .map_err(|error| CompileError::World(error.to_string()))?;
+            self.incremental = Some(
+                tex_incr::Session::start(
+                    template,
+                    &self.job_name,
+                    tex_incr::RevisionId::new(1),
+                    source,
+                    self.limits.cached_file_bytes,
+                )
+                .map_err(|error| CompileError::Incremental(error.to_string()))?,
+            );
         }
 
-        let mut stores = if let Some(format) = &self.format {
-            Universe::from_format(world, format)
-                .map_err(|error| CompileError::Format(error.to_string()))?
-        } else {
-            let mut stores = Universe::with_world(world);
-            prepare_run_stores(&mut stores);
-            stores
-        };
-        let main = stores
-            .world_mut()
-            .read_file(self.main_path.as_path())
-            .map_err(|_| CompileError::MissingMainFile(self.main_path.to_string()))?;
-        let mut input = InputStack::new(WorldInput::from_content(main));
         let mut resolvers = VirtualRunResolvers::new(
             &self.user_files,
             &self.resolved_files,
             &self.resolved_fonts,
             self.accepted_font_containers,
         );
-        let execution =
-            EngineSession::new(&mut input, &mut stores, resolvers.context(&self.job_name))
-                .execute();
+        let (input_resolver, font_resolver) = resolvers.resolvers();
+        let execution = if let Some((next_revision, edit)) = &self.pending_patch {
+            self.incremental
+                .as_mut()
+                .expect("incremental session was initialized")
+                .advance_with_resolvers(*next_revision, edit.clone(), input_resolver, font_resolver)
+        } else {
+            self.incremental
+                .as_mut()
+                .expect("incremental session was initialized")
+                .cold_with_resolvers(input_resolver, font_resolver)
+        };
         let (file_misses, font_misses, fatal) = resolvers.finish();
 
         if !file_misses.is_empty() || !font_misses.is_empty() {
@@ -778,20 +899,51 @@ impl VirtualCompileSession {
         if let Some(fatal) = fatal {
             return Err(fatal);
         }
-        let run = execution.map_err(|error| {
+        let accepted = execution.map_err(|error| {
             CompileError::Diagnostic(CompileDiagnostic {
-                message: error.format_with_provenance(&stores),
+                message: error.to_string(),
                 file: None,
                 line: None,
                 column: None,
             })
         })?;
-        let mut output = collect_final_memory_output_from_plans(
-            &mut stores,
-            &run.dvi_pages,
-            self.limits.output_bytes,
-        )
-        .map_err(map_output_error)?;
+        let world = self
+            .incremental
+            .as_ref()
+            .expect("accepted incremental session exists")
+            .materialize_accepted_world()
+            .map_err(|error| CompileError::Output(error.to_string()))?;
+        let terminal = world
+            .memory_terminal_output()
+            .ok_or_else(|| CompileError::Output("accepted output is not memory-backed".to_owned()))?
+            .to_vec();
+        let log = world
+            .memory_log_output()
+            .ok_or_else(|| CompileError::Output("accepted output is not memory-backed".to_owned()))?
+            .to_vec();
+        let files = world
+            .memory_outputs()
+            .ok_or_else(|| CompileError::Output("accepted output is not memory-backed".to_owned()))?
+            .map(|file| MemoryOutputFile {
+                path: file.path().to_owned(),
+                bytes: file.bytes().to_vec(),
+            })
+            .collect::<Vec<_>>();
+        let dvi = if accepted.dvi_pages.is_empty() {
+            Vec::new()
+        } else {
+            accepted
+                .dvi_bytes()
+                .map_err(|error| CompileError::Output(error.to_string()))?
+        };
+        let mut output = MemoryRunOutput {
+            terminal,
+            log,
+            dvi,
+            html: None,
+            html_assets: Vec::new(),
+            files,
+        };
         let existing = output
             .terminal
             .len()
@@ -819,7 +971,7 @@ impl VirtualCompileSession {
             };
             Some(
                 crate::html_from_committed_artifacts(
-                    &run.committed_artifacts,
+                    &accepted.artifacts,
                     &mut resolver,
                     &html_options,
                 )
@@ -846,10 +998,26 @@ impl VirtualCompileSession {
                 })
                 .collect();
         }
+        check_limit("returned output bytes", existing, self.limits.output_bytes)?;
+        self.pending_patch = None;
+        self.last_reuse = Some(accepted.reuse);
+        self.last_retention = Some(accepted.retention);
+        self.accepted_output = Some(output.clone());
         Ok(CompileAttemptResult::Complete(output))
     }
 
-    pub fn clear_distribution_cache(&mut self) {
+    pub fn clear_distribution_cache(&mut self) -> Result<(), CompileError> {
+        if let Some(session) = &self.incremental {
+            let latest = session.source().as_bytes().to_vec();
+            let replaced = self
+                .user_files
+                .insert(self.main_path.clone(), latest.clone())
+                .map_or(0, |bytes| bytes.len());
+            self.user_bytes = self
+                .user_bytes
+                .saturating_sub(replaced)
+                .saturating_add(latest.len());
+        }
         self.resolved_files.clear();
         self.resolved_paths.clear();
         self.resolved_fonts.clear();
@@ -857,6 +1025,12 @@ impl VirtualCompileSession {
         self.font_requests.clear();
         self.cached_bytes = 0;
         self.awaiting = None;
+        self.incremental = None;
+        self.accepted_output = None;
+        self.pending_patch = None;
+        self.last_reuse = None;
+        self.last_retention = None;
+        Ok(())
     }
 
     #[must_use]
@@ -983,20 +1157,6 @@ fn check_limit(resource: &'static str, attempted: usize, limit: usize) -> Result
         });
     }
     Ok(())
-}
-
-fn map_output_error(error: MemoryOutputCollectionError) -> CompileError {
-    match error {
-        MemoryOutputCollectionError::OutputLimitExceeded {
-            limit,
-            required_at_least,
-        } => CompileError::LimitExceeded {
-            resource: "returned output bytes",
-            limit,
-            attempted: required_at_least,
-        },
-        error => CompileError::Output(error.to_string()),
-    }
 }
 
 #[cfg(test)]
