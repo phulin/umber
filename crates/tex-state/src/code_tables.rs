@@ -101,6 +101,20 @@ impl PartialEq for CodeTablesSemanticCursor {
 
 impl Eq for CodeTablesSemanticCursor {}
 
+impl CodeTablesSemanticCursor {
+    pub(crate) fn shares_table_root(&self, other: &Self, table: usize) -> bool {
+        match table {
+            0 => Arc::ptr_eq(&self.catcodes, &other.catcodes),
+            1 => Arc::ptr_eq(&self.lccodes, &other.lccodes),
+            2 => Arc::ptr_eq(&self.uccodes, &other.uccodes),
+            3 => Arc::ptr_eq(&self.sfcodes, &other.sfcodes),
+            4 => Arc::ptr_eq(&self.mathcodes, &other.mathcodes),
+            5 => Arc::ptr_eq(&self.delcodes, &other.delcodes),
+            _ => panic!("code-table index out of range"),
+        }
+    }
+}
+
 /// Structurally shared code-table roots saved at TeX group boundaries.
 #[derive(Clone, Debug)]
 struct CodeTableRoots {
@@ -458,6 +472,30 @@ impl CodeTables {
             }
         }
     }
+
+    pub(crate) fn for_each_non_default_catcode(&self, visit: impl FnMut(char, Catcode)) {
+        self.catcodes.for_each_non_default(visit);
+    }
+
+    pub(crate) fn for_each_non_default_lccode(&self, visit: impl FnMut(char, LcCode)) {
+        self.lccodes.for_each_non_default(visit);
+    }
+
+    pub(crate) fn for_each_non_default_uccode(&self, visit: impl FnMut(char, UcCode)) {
+        self.uccodes.for_each_non_default(visit);
+    }
+
+    pub(crate) fn for_each_non_default_sfcode(&self, visit: impl FnMut(char, SfCode)) {
+        self.sfcodes.for_each_non_default(visit);
+    }
+
+    pub(crate) fn for_each_non_default_mathcode(&self, visit: impl FnMut(char, MathCode)) {
+        self.mathcodes.for_each_non_default(visit);
+    }
+
+    pub(crate) fn for_each_non_default_delcode(&self, visit: impl FnMut(char, DelCode)) {
+        self.delcodes.for_each_non_default(visit);
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -589,6 +627,24 @@ where
                         })
                 })
             })
+    }
+
+    fn for_each_non_default(&self, mut visit: impl FnMut(char, T)) {
+        for page_index in self.allocated_page_indices() {
+            let page = self
+                .root
+                .page(page_index)
+                .expect("allocated page iterator must yield live pages");
+            let start = page_index as u32 * PAGE_LEN as u32;
+            for (offset, &value) in page.values.iter().enumerate() {
+                let code = start + offset as u32;
+                if value != D::default_for(code)
+                    && let Some(ch) = char::from_u32(code)
+                {
+                    visit(ch, value);
+                }
+            }
+        }
     }
 
     fn write_value(root: &mut Arc<Root<T>>, page_index: usize, offset: usize, value: T) {

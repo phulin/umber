@@ -38,7 +38,7 @@ const FONT_DIMEN_MASK: u32 = (1 << FONT_DIMEN_BITS) - 1;
 #[derive(Debug, Default)]
 pub(super) struct SemanticHashCache {
     cells: AHashMap<CellId, CachedCellHash>,
-    code_tables: Option<CachedProjection<crate::code_tables::CodeTablesSemanticCursor>>,
+    code_tables: [Option<CachedProjection<crate::code_tables::CodeTablesSemanticCursor>>; 6],
     hyphenation: Option<CachedProjection<HyphenationSemanticCursor>>,
     last_loaded_font: Option<CachedProjection<FontSelectionCursor>>,
     first_old: Vec<(CellId, usize, u64)>,
@@ -65,7 +65,7 @@ impl Clone for SemanticHashCache {
 impl SemanticHashCache {
     pub(super) fn clear(&mut self) {
         self.cells.clear();
-        self.code_tables = None;
+        self.code_tables = core::array::from_fn(|_| None);
         self.hyphenation = None;
         self.last_loaded_font = None;
         self.first_old.clear();
@@ -109,6 +109,29 @@ fn cached_projection<K: Clone + Eq>(
         return cached.fragment;
     }
     let fragment = StateHashFragment::from_measured_builder_counted(domain, component, build);
+    *cached = Some(CachedProjection {
+        key: key.clone(),
+        fragment,
+    });
+    fragment
+}
+
+fn cached_code_table_projection(
+    cached: &mut Option<CachedProjection<crate::code_tables::CodeTablesSemanticCursor>>,
+    key: &crate::code_tables::CodeTablesSemanticCursor,
+    table: usize,
+    build: impl FnOnce(&mut StateHasher) -> usize,
+) -> StateHashFragment {
+    if let Some(cached) = cached
+        && cached.key.shares_table_root(key, table)
+    {
+        return cached.fragment;
+    }
+    let fragment = StateHashFragment::from_measured_builder_counted(
+        CODE_TABLES_DOMAIN ^ table as u64,
+        StateHashComponent::CodeTables,
+        build,
+    );
     *cached = Some(CachedProjection {
         key: key.clone(),
         fragment,
@@ -266,13 +289,14 @@ impl Stores {
             |projection| self.hash_journal_changed_cells(start, end, &mut cache, projection),
         );
         let end_cursor = self.state_hash_cursor_from_snapshot(end);
-        let code_tables = cached_projection(
-            &mut cache.code_tables,
-            &end_cursor.code_tables,
-            CODE_TABLES_DOMAIN,
-            StateHashComponent::CodeTables,
-            |projection| self.hash_code_tables(projection),
-        );
+        let code_tables: [StateHashFragment; 6] = core::array::from_fn(|table| {
+            cached_code_table_projection(
+                &mut cache.code_tables[table],
+                &end_cursor.code_tables,
+                table,
+                |projection| self.hash_code_table(table, projection),
+            )
+        });
         #[cfg(test)]
         let rehash_hyphenation = cache
             .hyphenation
@@ -308,7 +332,9 @@ impl Stores {
         self.semantic_hash_cache = cache;
         let mut hasher = StateHasher::new(STORE_SLICE_DOMAIN);
         journal.apply(&mut hasher);
-        code_tables.apply(&mut hasher);
+        for fragment in code_tables {
+            fragment.apply(&mut hasher);
+        }
         hyphenation.apply(&mut hasher);
         prepared_mag.apply(&mut hasher);
         last_loaded_font.apply(&mut hasher);
@@ -1163,19 +1189,31 @@ impl Stores {
         }
     }
 
-    fn hash_code_tables(&self, hasher: &mut StateHasher) -> usize {
-        hasher.tag(0x20);
+    fn hash_code_table(&self, table: usize, hasher: &mut StateHasher) -> usize {
+        hasher.tag(0x20 + table as u8);
         let mut visits = 0;
-        self.code_tables.for_each_non_default(|ch, values| {
-            visits += 1;
-            hasher.u32(ch as u32);
-            hasher.u8(values.catcode as u8);
-            hasher.u32(values.lccode);
-            hasher.u32(values.uccode);
-            hasher.u16(values.sfcode);
-            hasher.u32(values.mathcode);
-            hasher.i32(values.delcode);
-        });
+        macro_rules! hash_values {
+            ($method:ident, $hash:ident) => {{
+                self.code_tables.$method(|ch, value| {
+                    visits += 1;
+                    hasher.u32(ch as u32);
+                    hasher.$hash(value);
+                });
+            }};
+        }
+        match table {
+            0 => self.code_tables.for_each_non_default_catcode(|ch, value| {
+                visits += 1;
+                hasher.u32(ch as u32);
+                hasher.u8(value as u8);
+            }),
+            1 => hash_values!(for_each_non_default_lccode, u32),
+            2 => hash_values!(for_each_non_default_uccode, u32),
+            3 => hash_values!(for_each_non_default_sfcode, u16),
+            4 => hash_values!(for_each_non_default_mathcode, u32),
+            5 => hash_values!(for_each_non_default_delcode, i32),
+            _ => panic!("code-table index out of range"),
+        }
         visits
     }
 
