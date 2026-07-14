@@ -710,7 +710,7 @@ impl Default for Universe {
 
 impl Universe {
     const FORMAT_MAGIC: [u8; 8] = *b"UMBRFMT\0";
-    pub const FORMAT_SCHEMA_VERSION: u32 = 4;
+    pub const FORMAT_SCHEMA_VERSION: u32 = 5;
 
     /// Creates an isolated TeX state timeline.
     #[must_use]

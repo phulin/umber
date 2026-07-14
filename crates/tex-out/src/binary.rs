@@ -7,7 +7,7 @@ use std::fmt;
 use tex_arith::Scaled;
 
 const MAGIC: &[u8; 4] = b"UMPG";
-const VERSION: u8 = 10;
+const VERSION: u8 = 11;
 
 mod wire {
     pub mod node {

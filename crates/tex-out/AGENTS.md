@@ -24,7 +24,7 @@ Use this crate for stable, driver-facing artifact structures and serialization c
 - `src/dvi/leaders.rs`: TeX.web hlist/vlist leader repetition loops for aligned, centered, expanded, rule, and degenerate leader cases.
 - `src/dvi/movement.rs`: TeX.web-style DVI `movement()` lookback stack and w/x/y/z command optimization.
 - `src/dvi/opcodes.rs`: Private DVI opcode and file unit constants shared by the writer modules and tests.
-- `src/dvi/plan.rs`: Owned precompiled page bodies, streaming v10 compilation, first-use font-definition relocations, and final plan assembly.
+- `src/dvi/plan.rs`: Owned precompiled page bodies, streaming compilation, first-use font-definition relocations, and final plan assembly.
 - `src/dvi/tests.rs`: Byte-level DVI writer tests for file structure, traversal, movement optimization, rules, fonts, glue, and specials.
 - `src/dvi/traversal.rs`: TeX.web-style committed page traversal, hlist/vlist output, rules, specials, and movement synchronization.
 - `src/lib.rs`: Crate documentation, module wiring, tests module registration, and public re-exports.

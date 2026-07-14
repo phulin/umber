@@ -1080,10 +1080,11 @@ Responsibility: accumulate the main vertical list, fire `\output`, commit.
   continue to resolve the id through the verified artifact store. The receipt
   is never visible before both artifact storage and effect commit succeed.
 - `tex-content` owns the fixed 32-byte content identity shared by `tex-state`
-  and `tex-out`. New identities include an immutable scheme version and a
-  domain tag, so identical input and artifact bytes do not alias. Artifact
-  reads verify the requested identity before decoding; the pre-v1 undomained
-  hash is accepted only through the explicit legacy-read policy.
+  and `tex-out`. New identities use the portable block-wise version-2 scheme
+  and include a domain tag, so identical input and artifact bytes do not alias.
+  Artifact reads verify the requested identity before decoding; domain-aware
+  version-1 and pre-v1 undomained hashes are accepted only through the explicit
+  legacy-read policy.
 - **Status:** the implemented stomach shipout path consumes the same box
   syntax as TeX's
   box primitives (`\shipout\hbox{...}`, `\shipout\boxN`, `\shipout\copyN`),
@@ -1211,7 +1212,7 @@ Responsibility: page artifacts → bytes on disk. Strictly downstream.
 - Drivers consume committed page artifacts only — they can run
   out-of-process, in parallel with typesetting of later pages, or not at
   all (editor preview may rasterize page artifacts directly).
-- `tex-out` owns the page artifact model and version-10 binary reader/writer.
+- `tex-out` owns the page artifact model and version-11 binary reader/writer.
   Exact glue-set numerator and denominator fields cross this commit boundary
   and participate in deterministic semantic hashing. `GlueSetRatio` performs
   checked canonical reconstruction at every serde boundary, and the artifact
@@ -1223,9 +1224,10 @@ Responsibility: page artifacts → bytes on disk. Strictly downstream.
   artifact bytes before asking `World` to store them.
 - Box shifts retain TeX.web's `shift_amount` representation across live state,
   format images, committed artifacts, and drivers: positive is down in an
-  hlist and right in a vlist. Format-image version 4 and artifact version 10
-  reject older inverse-hlist-shift encodings rather than guessing context or
-  silently changing semantic hashes.
+  hlist and right in a vlist. Format-image version 5 carries version-2 content
+  identities; version 4 established the current shift representation. Artifact
+  version 11 and format version 5 reject older ambiguous encodings or identity
+  schemes rather than guessing context or silently changing semantic hashes.
 - The artifact record captures the effective job magnification, banner,
   `\hoffset`, and `\voffset` at shipout, so DVI generation does not reach back
   into live state. The offsets are read through `Universe` at the commit
