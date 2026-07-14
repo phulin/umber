@@ -35,7 +35,7 @@ const FONT_DIMEN_MASK: u32 = (1 << FONT_DIMEN_BITS) - 1;
 /// This is an accelerator, not rollback state. [`Stores::rollback`] clears it
 /// so the next slice reconstructs any needed baseline from journal `old`
 /// words. Keeping it out of [`StoreSnapshot`] preserves O(1) snapshots.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(super) struct SemanticHashCache {
     cells: AHashMap<CellId, CachedCellHash>,
     code_tables: [Option<CachedProjection<crate::code_tables::CodeTablesSemanticCursor>>; 6],
@@ -45,6 +45,31 @@ pub(super) struct SemanticHashCache {
     changed_cells: Vec<(u64, CellId)>,
     #[cfg(test)]
     hyphenation_hash_calls: usize,
+}
+
+impl Default for SemanticHashCache {
+    fn default() -> Self {
+        // Cell ids are trusted dense engine keys, and canonical output is
+        // sorted independently of this map. Fixed AHash keys avoid asking the
+        // OS for fresh randomness whenever state_hash_slice temporarily moves
+        // this discardable cache out with mem::take.
+        let cell_hasher = ahash::RandomState::with_seeds(
+            0x6365_6c6c_5f68_6173,
+            0x685f_6361_6368_655f,
+            0x756d_6265_725f_7631,
+            0x7374_6174_655f_6964,
+        );
+        Self {
+            cells: AHashMap::with_hasher(cell_hasher),
+            code_tables: core::array::from_fn(|_| None),
+            hyphenation: None,
+            last_loaded_font: None,
+            first_old: Vec::new(),
+            changed_cells: Vec::new(),
+            #[cfg(test)]
+            hyphenation_hash_calls: 0,
+        }
+    }
 }
 
 impl Clone for SemanticHashCache {
