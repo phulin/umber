@@ -1,7 +1,7 @@
 use super::{
-    InsertedOrigin, InsertedOriginKind, MacroInvocationOrigin, OriginRecord, ProvenanceStore,
-    SourceOrigin, SynthesizedOrigin, SynthesizedOriginKind, SyntheticOrigin, SyntheticOriginKind,
-    packed_origin_successor,
+    InsertedOrigin, InsertedOriginKind, MacroInvocationOrigin, OriginKeyRuns, OriginRecord,
+    ProvenanceStore, SourceOrigin, SynthesizedOrigin, SynthesizedOriginKind, SyntheticOrigin,
+    SyntheticOriginKind, packed_origin_successor,
 };
 use crate::Universe;
 use crate::ids::OriginListId;
@@ -28,6 +28,33 @@ fn packed_arena_origin_namespace_includes_its_last_payload() {
     assert_eq!(packed_origin_successor(0x7fff_fffe), Some(0x7fff_ffff));
     assert_eq!(packed_origin_successor(0x7fff_ffff), Some(0x8000_0000));
     assert_eq!(packed_origin_successor(0x8000_0000), None);
+}
+
+#[test]
+fn origin_key_runs_map_gaps_and_truncate_partial_runs() {
+    let mut keys = OriginKeyRuns::default();
+    keys.append(10, 0);
+    keys.append(11, 1);
+    keys.append(15, 2);
+    keys.append(16, 3);
+
+    assert_eq!(keys.slot(10), Some(0));
+    assert_eq!(keys.slot(11), Some(1));
+    assert_eq!(keys.slot(12), None);
+    assert_eq!(keys.slot(15), Some(2));
+    assert_eq!(keys.slot(16), Some(3));
+
+    keys.truncate(3);
+    assert_eq!(keys.slot(15), Some(2));
+    assert_eq!(keys.slot(16), None);
+    keys.append(20, 3);
+    assert_eq!(keys.slot(20), Some(3));
+
+    keys.truncate(1);
+    assert_eq!(keys.slot(10), Some(0));
+    assert_eq!(keys.slot(11), None);
+    assert_eq!(keys.slot(15), None);
+    assert_eq!(keys.slot(20), None);
 }
 
 #[test]

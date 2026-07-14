@@ -11,7 +11,6 @@ use crate::input::{SourceId, TokenListReplayKind};
 use crate::source_map::{SourceMapStats, SourceSpan};
 use crate::token::{OriginId, Token, TracedTokenWord};
 use crate::world::InputRecordId;
-use ahash::AHashMap;
 use std::mem;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -24,7 +23,6 @@ pub(crate) struct ProvenanceStoreMark {
     spans: u32,
     origins: u32,
     list_identities: IdentityMark,
-    record_identities: IdentityMark,
 }
 
 /// Live provenance arena size counters.
@@ -597,6 +595,97 @@ pub enum OriginRecord {
     Synthetic(SyntheticOrigin),
 }
 
+/// One consecutive process-global origin-key range mapped onto consecutive
+/// dense record slots.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct OriginKeyRun {
+    first_key: u32,
+    first_slot: u32,
+    len: u32,
+}
+
+impl OriginKeyRun {
+    fn end_key(self) -> u32 {
+        self.first_key
+            .checked_add(self.len)
+            .expect("origin key run exceeds u32")
+    }
+
+    fn end_slot(self) -> u32 {
+        self.first_slot
+            .checked_add(self.len)
+            .expect("origin key run exceeds record slots")
+    }
+
+    fn slot(self, key: u32) -> Option<u32> {
+        let offset = key.checked_sub(self.first_key)?;
+        (offset < self.len).then(|| self.first_slot + offset)
+    }
+}
+
+/// Sparse affine index for the globally unique keys present in one timeline.
+/// A normal unbranched timeline occupies one run regardless of record count.
+#[derive(Clone, Debug, Default)]
+struct OriginKeyRuns {
+    runs: Vec<OriginKeyRun>,
+}
+
+impl OriginKeyRuns {
+    fn append(&mut self, key: u32, slot: u32) {
+        let Some(last) = self.runs.last_mut() else {
+            assert_eq!(slot, 0, "first provenance record slot must be zero");
+            self.runs.push(OriginKeyRun {
+                first_key: key,
+                first_slot: slot,
+                len: 1,
+            });
+            return;
+        };
+        assert_eq!(
+            slot,
+            last.end_slot(),
+            "provenance records must occupy consecutive slots"
+        );
+        assert!(
+            key >= last.end_key(),
+            "process-global provenance keys must increase"
+        );
+        if key == last.end_key() {
+            last.len = last.len.checked_add(1).expect("origin key run overflow");
+        } else {
+            self.runs.push(OriginKeyRun {
+                first_key: key,
+                first_slot: slot,
+                len: 1,
+            });
+        }
+    }
+
+    fn slot(&self, key: u32) -> Option<u32> {
+        if let Some(slot) = self.runs.last().and_then(|run| run.slot(key)) {
+            return Some(slot);
+        }
+        let index = self
+            .runs
+            .partition_point(|run| run.first_key <= key)
+            .checked_sub(1)?;
+        self.runs[index].slot(key)
+    }
+
+    fn truncate(&mut self, records: u32) {
+        let keep = self.runs.partition_point(|run| run.first_slot < records);
+        self.runs.truncate(keep);
+        if let Some(last) = self.runs.last_mut() {
+            last.len = records
+                .checked_sub(last.first_slot)
+                .expect("retained origin run starts beyond record mark");
+            debug_assert!(last.len > 0);
+        } else {
+            debug_assert_eq!(records, 0);
+        }
+    }
+}
+
 /// Append-only origin-record and origin-list arenas.
 #[derive(Debug)]
 pub(crate) struct ProvenanceStore {
@@ -604,9 +693,7 @@ pub(crate) struct ProvenanceStore {
     spans: Vec<(u32, u32)>,
     origins: Vec<OriginId>,
     list_identities: IdentityAllocator,
-    record_identities: IdentityAllocator,
-    record_keys: Vec<u32>,
-    record_lookup: AHashMap<u32, crate::identity::HandleIdentity>,
+    record_keys: OriginKeyRuns,
 }
 
 impl Clone for ProvenanceStore {
@@ -616,9 +703,7 @@ impl Clone for ProvenanceStore {
             spans: self.spans.clone(),
             origins: self.origins.clone(),
             list_identities: self.list_identities.fork(),
-            record_identities: self.record_identities.fork(),
             record_keys: self.record_keys.clone(),
-            record_lookup: self.record_lookup.clone(),
         }
     }
 }
@@ -632,9 +717,7 @@ impl ProvenanceStore {
             spans: vec![(0, 0)],
             origins: Vec::new(),
             list_identities: IdentityAllocator::new(1),
-            record_identities: IdentityAllocator::new(0),
-            record_keys: Vec::new(),
-            record_lookup: AHashMap::new(),
+            record_keys: OriginKeyRuns::default(),
         }
     }
 
@@ -655,14 +738,10 @@ impl ProvenanceStore {
         let Some(key) = next_packed_arena_origin() else {
             return OriginId::UNKNOWN;
         };
-        let identity = match self.record_identities.allocate() {
-            Ok(identity) => identity,
-            Err(_) => return OriginId::UNKNOWN,
-        };
-        debug_assert_eq!(identity.slot() as usize, self.records.len());
+        let slot = u32::try_from(self.records.len())
+            .expect("global origin key capacity bounds provenance record slots");
         self.records.push(record);
-        self.record_keys.push(key);
-        self.record_lookup.insert(key, identity);
+        self.record_keys.append(key, slot);
         OriginId::arena(key).expect("global packed provenance key is representable")
     }
 
@@ -750,15 +829,7 @@ impl ProvenanceStore {
         let crate::token::OriginEncoding::Arena(index) = id.decode() else {
             panic!("direct source origin has no provenance arena record");
         };
-        let identity = *self
-            .record_lookup
-            .get(&index)
-            .expect("origin id is not live");
-        assert!(
-            self.record_identities.contains(identity),
-            "origin id is not live"
-        );
-        let index = identity.slot() as usize;
+        let index = self.record_keys.slot(index).expect("origin id is not live") as usize;
         self.records[index]
     }
 
@@ -791,10 +862,7 @@ impl ProvenanceStore {
     pub(crate) fn contains_origin(&self, id: OriginId) -> bool {
         match id.decode() {
             crate::token::OriginEncoding::Unknown => true,
-            crate::token::OriginEncoding::Arena(index) => self
-                .record_lookup
-                .get(&index)
-                .is_some_and(|identity| self.record_identities.contains(*identity)),
+            crate::token::OriginEncoding::Arena(index) => self.record_keys.slot(index).is_some(),
             crate::token::OriginEncoding::DirectSource(_) => false,
         }
     }
@@ -841,7 +909,6 @@ impl ProvenanceStore {
             origins: u32_len(self.origins.len())
                 .expect("provenance origin arena exceeded representable mark"),
             list_identities: self.list_identities.watermark(),
-            record_identities: self.record_identities.watermark(),
         }
     }
 
@@ -873,12 +940,7 @@ impl ProvenanceStore {
         self.list_identities
             .rollback(mark.list_identities)
             .expect("provenance mark is not an ancestor");
-        self.record_identities
-            .rollback(mark.record_identities)
-            .expect("provenance record mark is not an ancestor");
-        for key in self.record_keys.drain(records..) {
-            self.record_lookup.remove(&key);
-        }
+        self.record_keys.truncate(mark.records);
         self.records.truncate(records);
         self.spans.truncate(spans);
         self.origins.truncate(origins);
