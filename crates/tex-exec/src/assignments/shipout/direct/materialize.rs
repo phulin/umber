@@ -73,7 +73,7 @@ pub(super) fn materialize_node_list(
             .get(index)
             .expect("leader replay index is live");
         let node = match node {
-            NodeRef::Char { font, ch } => {
+            NodeRef::Char { font, ch, .. } => {
                 let (code, width) = glyph(stores, font, ch)?;
                 Some(PageNode::Char {
                     font_id: font_resource_id(stores, font, emission),
@@ -81,7 +81,7 @@ pub(super) fn materialize_node_list(
                     width,
                 })
             }
-            NodeRef::Lig { font, ch, orig } => {
+            NodeRef::Lig { font, ch, orig, .. } => {
                 let (code, width) = glyph(stores, font, ch)?;
                 Some(PageNode::Lig {
                     font_id: font_resource_id(stores, font, emission),

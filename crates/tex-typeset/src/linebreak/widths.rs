@@ -112,7 +112,7 @@ pub(super) fn line_widths_view<S: TypesetState>(
 pub(super) fn node_width<S: TypesetState>(state: &S, node: &Node) -> Widths {
     let mut widths = Widths::zero();
     match node {
-        Node::Char { font, ch } | Node::Lig { font, ch, .. } => {
+        Node::Char { font, ch, .. } | Node::Lig { font, ch, .. } => {
             if let Ok(code) = u8::try_from(*ch as u32)
                 && let Some(metrics) = state.font_char_metrics(*font, code)
             {
@@ -160,7 +160,7 @@ pub(super) fn node_width<S: TypesetState>(state: &S, node: &Node) -> Widths {
 fn node_width_ref<S: TypesetState>(state: &S, node: NodeRef<'_>) -> Widths {
     let mut widths = Widths::zero();
     match node {
-        NodeRef::Char { font, ch } | NodeRef::Lig { font, ch, .. } => {
+        NodeRef::Char { font, ch, .. } | NodeRef::Lig { font, ch, .. } => {
             if let Ok(code) = u8::try_from(ch as u32)
                 && let Some(metrics) = state.font_char_metrics(font, code)
             {

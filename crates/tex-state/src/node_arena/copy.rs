@@ -104,9 +104,10 @@ impl NodeStorage {
             preflight_capacity(have, add, "node sidecar exceeds u32 entries");
         }
         self.words.reserve(source_words.len());
+        self.origins.reserve(source_words.len());
         self.reserve_sidecars(needs);
 
-        for &word in source_words {
+        for (offset, &word) in source_words.iter().enumerate() {
             let side = word.payload() as usize;
             let copied = match word.tag() {
                 0 | 2..=8 | 23 => word,
@@ -222,6 +223,8 @@ impl NodeStorage {
                 _ => panic!("reserved node-word tag"),
             };
             self.words.push(copied);
+            self.origins
+                .push(source.storage.origins[source.start + offset]);
         }
 
         #[cfg(feature = "profiling-stats")]

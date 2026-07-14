@@ -124,9 +124,12 @@ impl<'a> LoweredMathSink<'a> {
                     });
                     tasks.push(Task::Span(boxed.list, 0));
                 }
-                MathNode::Char { font, ch, .. } => scratch.push(Node::Char {
+                MathNode::Char {
+                    font, ch, origin, ..
+                } => scratch.push(Node::Char {
                     font: *font,
                     ch: *ch,
+                    origin: *origin,
                 }),
                 MathNode::Kern { amount, kind } => scratch.push(Node::Kern {
                     amount: *amount,

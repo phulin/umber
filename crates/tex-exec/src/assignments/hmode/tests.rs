@@ -178,7 +178,11 @@ fn unrestricted_reconstitution_inserts_null_disc_after_font_hyphen() {
     stores.set_font_hyphen_char(font, i32::from(b'-'), false);
     let pending: Vec<_> = "in-line"
         .chars()
-        .map(|ch| PendingHChar { font, ch })
+        .map(|ch| PendingHChar {
+            font,
+            ch,
+            origin: tex_state::token::OriginId::UNKNOWN,
+        })
         .collect();
 
     let unrestricted = reconstitute(&mut stores, &pending, false, true);
@@ -228,7 +232,11 @@ fn hyphenation_inside_ff_ligature_preserves_the_unbroken_ligature() {
     stores.set_font_hyphen_char(font, i32::from(b'-'), false);
     let nodes: Vec<_> = "difference"
         .chars()
-        .map(|ch| Node::Char { font, ch })
+        .map(|ch| Node::Char {
+            font,
+            ch,
+            origin: tex_state::token::OriginId::UNKNOWN,
+        })
         .collect();
 
     let hyphenated = super::super::hyphenation::test_hyphenated_word(&mut stores, &nodes);
@@ -270,6 +278,7 @@ fn composite_rechar_keeps_ligature_provenance_when_emitted() {
         font: tex_state::ids::FontId::testing_new(7),
         ch: 'A',
         orig: vec!['B'],
+        origins: vec![tex_state::token::OriginId::UNKNOWN],
         ligature_present: true,
     };
 
@@ -279,6 +288,7 @@ fn composite_rechar_keeps_ligature_provenance_when_emitted() {
             font,
             ch: 'A',
             orig,
+            ..
         } if font == current.font && orig == ['B']
     ));
 }
@@ -330,9 +340,21 @@ fn arbitrary_chained_ligature_keeps_complete_source_provenance() {
         metrics,
     ));
     let pending = [
-        PendingHChar { font, ch: 'A' },
-        PendingHChar { font, ch: 'A' },
-        PendingHChar { font, ch: 'A' },
+        PendingHChar {
+            font,
+            ch: 'A',
+            origin: tex_state::token::OriginId::UNKNOWN,
+        },
+        PendingHChar {
+            font,
+            ch: 'A',
+            origin: tex_state::token::OriginId::UNKNOWN,
+        },
+        PendingHChar {
+            font,
+            ch: 'A',
+            origin: tex_state::token::OriginId::UNKNOWN,
+        },
     ];
 
     assert!(matches!(
@@ -409,11 +431,16 @@ fn hyphenation_does_not_partially_consume_a_boundary_ligature() {
     stores.set_lccode('C', 'c' as u32);
     stores.set_lccode('/', 0);
     let nodes = [
-        Node::Char { font, ch: 'C' },
+        Node::Char {
+            font,
+            ch: 'C',
+            origin: tex_state::token::OriginId::UNKNOWN,
+        },
         Node::Lig {
             font,
             ch: 'B',
             orig: vec!['C', '/'],
+            origins: vec![tex_state::token::OriginId::UNKNOWN; 2],
         },
     ];
 
@@ -445,7 +472,11 @@ fn hyphenation_keeps_scanning_across_font_kerns() {
     stores.set_font_hyphen_char(font, i32::from(b'-'), false);
     let pending: Vec<_> = "availability"
         .chars()
-        .map(|ch| PendingHChar { font, ch })
+        .map(|ch| PendingHChar {
+            font,
+            ch,
+            origin: tex_state::token::OriginId::UNKNOWN,
+        })
         .collect();
     let nodes = reconstitute(&mut stores, &pending, false, false);
     assert!(
@@ -486,10 +517,26 @@ fn hyphenation_preserves_the_font_kern_after_a_reconstituted_word() {
     stores.set_font_hyphen_char(font, i32::from(b'-'), false);
     let trailing = Scaled::from_raw(-54_614);
     let nodes = [
-        Node::Char { font, ch: 'a' },
-        Node::Char { font, ch: 'b' },
-        Node::Char { font, ch: 'c' },
-        Node::Char { font, ch: 'd' },
+        Node::Char {
+            font,
+            ch: 'a',
+            origin: tex_state::token::OriginId::UNKNOWN,
+        },
+        Node::Char {
+            font,
+            ch: 'b',
+            origin: tex_state::token::OriginId::UNKNOWN,
+        },
+        Node::Char {
+            font,
+            ch: 'c',
+            origin: tex_state::token::OriginId::UNKNOWN,
+        },
+        Node::Char {
+            font,
+            ch: 'd',
+            origin: tex_state::token::OriginId::UNKNOWN,
+        },
         Node::Kern {
             amount: trailing,
             kind: KernKind::Font,
@@ -513,7 +560,11 @@ fn hyphenation_does_not_repeat_a_left_boundary_kern() {
             amount: Scaled::from_raw(-65537),
             kind: KernKind::Font,
         },
-        Node::Char { font, ch: 'A' },
+        Node::Char {
+            font,
+            ch: 'A',
+            origin: tex_state::token::OriginId::UNKNOWN,
+        },
     ];
 
     let hyphenated = super::super::hyphenation::test_hyphenated_word(&mut stores, &nodes);
@@ -551,7 +602,11 @@ fn discretionary_absorbs_font_kern_across_hyphenated_line_boundary() {
     stores.set_font_hyphen_char(font, i32::from(b'-'), false);
     let pending: Vec<_> = "sentence"
         .chars()
-        .map(|ch| PendingHChar { font, ch })
+        .map(|ch| PendingHChar {
+            font,
+            ch,
+            origin: tex_state::token::OriginId::UNKNOWN,
+        })
         .collect();
     let nodes = reconstitute(&mut stores, &pending, false, false);
 

@@ -2036,7 +2036,7 @@ impl Stores {
     ) {
         std::mem::discriminant(node).hash(hasher);
         match node {
-            Node::Char { font, ch } => {
+            Node::Char { font, ch, .. } => {
                 font.raw().hash(hasher);
                 ch.hash(hasher);
             }

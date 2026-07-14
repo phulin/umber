@@ -1099,6 +1099,7 @@ fn math_char(ch: char) -> MathChar {
     MathChar {
         family: 0,
         character: ch,
+        origin: tex_state::token::OriginId::UNKNOWN,
     }
 }
 

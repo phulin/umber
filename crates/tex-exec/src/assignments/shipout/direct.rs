@@ -16,7 +16,7 @@ use tex_state::node::{
     KernKind as StateKernKind, LeaderPayload as StateLeaderPayload, Node, Sign, Whatsit,
 };
 use tex_state::node_arena::NodeRef;
-use tex_state::token::{Catcode, Token};
+use tex_state::token::{Catcode, OriginId, Token};
 use tex_state::{EffectRecord, PrintSink, Universe, VerifiedArtifact};
 
 use crate::ExecError;
@@ -76,6 +76,8 @@ pub(super) fn stage_shipout(
     let mut emission = EmissionState {
         fonts: Vec::new(),
         font_slots: Vec::new(),
+        // The artifact root is a synthetic box header preceding its children.
+        render_origins: vec![Vec::new()],
         anchor: u32::try_from(overlay.pending_effect_count)
             .map_err(|_| ExecError::ArithmeticOverflow)?,
     };
@@ -105,7 +107,8 @@ pub(super) fn stage_shipout(
     stores.set_input_summary(input_summary);
     let effect_pos = stores.world().effect_pos();
     Ok(StagedShipout {
-        artifact: VerifiedArtifact::new(artifact_bytes),
+        artifact: VerifiedArtifact::new(artifact_bytes)
+            .with_render_origins(emission.render_origins),
         dvi_plan,
         effect_pos,
     })
@@ -127,6 +130,13 @@ struct EmissionState {
     fonts: Vec<FontResource>,
     font_slots: Vec<Option<u32>>,
     anchor: u32,
+    render_origins: Vec<Vec<OriginId>>,
+}
+
+impl EmissionState {
+    fn node(&mut self, origins: impl IntoIterator<Item = OriginId>) {
+        self.render_origins.push(origins.into_iter().collect());
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -196,13 +206,14 @@ fn emit_char_run(
     if let Some(dvi) = dvi.as_deref_mut() {
         dvi.add_fonts(&emission.fonts).map_err(invalid_artifact)?;
     }
-    for code in run.codes() {
+    for (code, origin) in run.codes().zip(run.origins()) {
         if characters[usize::from(code)].is_none() {
             return Err(ExecError::UnsupportedShipoutNode {
                 node: "missing character metrics",
             });
         }
         let width = widths[usize::from(code)];
+        emission.node([origin]);
         output.char(font_id, u32::from(code), width)?;
         if let Some(dvi) = dvi.as_deref_mut() {
             dvi.char(font_id, u32::from(code), width)
@@ -241,9 +252,10 @@ fn emit_index(
         .get(index)
         .expect("emission index belongs to the frozen list");
     match node {
-        NodeRef::Char { font, ch } => {
+        NodeRef::Char { font, ch, origin } => {
             let (code, width) = glyph(stores, font, ch)?;
             let font_id = font_resource_id(stores, font, emission);
+            emission.node([origin]);
             output.char(font_id, u32::from(code), width)?;
             if let Some(dvi) = dvi.as_deref_mut() {
                 dvi.add_fonts(&emission.fonts).map_err(invalid_artifact)?;
@@ -251,9 +263,15 @@ fn emit_index(
                     .map_err(invalid_artifact)?;
             }
         }
-        NodeRef::Lig { font, ch, orig } => {
+        NodeRef::Lig {
+            font,
+            ch,
+            orig,
+            origins,
+        } => {
             let (code, width) = glyph(stores, font, ch)?;
             let font_id = font_resource_id(stores, font, emission);
+            emission.node(origins.iter().copied());
             output.lig(
                 font_id,
                 u32::from(code),
@@ -267,6 +285,7 @@ fn emit_index(
             }
         }
         NodeRef::Kern { amount, kind } => {
+            emission.node([]);
             output.kern(amount, lower_kern_kind(kind))?;
             if let Some(dvi) = dvi.as_deref_mut() {
                 dvi.kern(amount).map_err(invalid_artifact)?;
@@ -280,12 +299,16 @@ fn emit_index(
                 stores, overlay, output, dvi, emission, spec, kind, leader, depth,
             )?;
         }
-        NodeRef::Penalty(value) => output.penalty(value)?,
+        NodeRef::Penalty(value) => {
+            emission.node([]);
+            output.penalty(value)?;
+        }
         NodeRef::Rule {
             width,
             height,
             depth,
         } => {
+            emission.node([]);
             output.rule(width, height, depth)?;
             if let Some(dvi) = dvi.as_deref_mut() {
                 dvi.rule(width, height, depth).map_err(invalid_artifact)?;
@@ -315,77 +338,87 @@ fn emit_index(
             pre,
             post,
             replace,
-        } => output.disc(lower_disc_kind(kind), |disc| {
-            disc.pre(|nodes| {
-                emit_node_list(
-                    stores,
-                    overlay,
-                    pre,
-                    nodes,
-                    None,
-                    emission,
-                    suppress_deferred_streams,
-                    depth + 1,
-                )
+        } => {
+            emission.node([]);
+            output.disc(lower_disc_kind(kind), |disc| {
+                disc.pre(|nodes| {
+                    emit_node_list(
+                        stores,
+                        overlay,
+                        pre,
+                        nodes,
+                        None,
+                        emission,
+                        suppress_deferred_streams,
+                        depth + 1,
+                    )
+                })?;
+                disc.post(|nodes| {
+                    emit_node_list(
+                        stores,
+                        overlay,
+                        post,
+                        nodes,
+                        None,
+                        emission,
+                        suppress_deferred_streams,
+                        depth + 1,
+                    )
+                })?;
+                disc.replace(|nodes| {
+                    emit_node_list(
+                        stores,
+                        overlay,
+                        replace,
+                        nodes,
+                        None,
+                        emission,
+                        suppress_deferred_streams,
+                        depth + 1,
+                    )
+                })
             })?;
-            disc.post(|nodes| {
-                emit_node_list(
-                    stores,
-                    overlay,
-                    post,
-                    nodes,
-                    None,
-                    emission,
-                    suppress_deferred_streams,
-                    depth + 1,
-                )
-            })?;
-            disc.replace(|nodes| {
-                emit_node_list(
-                    stores,
-                    overlay,
-                    replace,
-                    nodes,
-                    None,
-                    emission,
-                    suppress_deferred_streams,
-                    depth + 1,
-                )
-            })
-        })?,
-        NodeRef::Mark { class, tokens } => output.mark_stream(class, |tokens_out| {
-            for token in stores.tokens(tokens) {
-                match *token {
-                    Token::Char { ch, cat } => {
-                        tokens_out.char(ch as u32, lower_token_catcode(cat))?;
-                    }
-                    Token::Cs(symbol) => {
-                        tokens_out.control_sequence(stores.resolve(symbol))?;
-                    }
-                    Token::Param(slot) => tokens_out.param(slot)?,
-                    Token::Frozen(_) => {
-                        unreachable!("alignment sentinel escaped into shipout tokens")
+        }
+        NodeRef::Mark { class, tokens } => {
+            emission.node([]);
+            output.mark_stream(class, |tokens_out| {
+                for token in stores.tokens(tokens) {
+                    match *token {
+                        Token::Char { ch, cat } => {
+                            tokens_out.char(ch as u32, lower_token_catcode(cat))?;
+                        }
+                        Token::Cs(symbol) => {
+                            tokens_out.control_sequence(stores.resolve(symbol))?;
+                        }
+                        Token::Param(slot) => tokens_out.param(slot)?,
+                        Token::Frozen(_) => {
+                            unreachable!("alignment sentinel escaped into shipout tokens")
+                        }
                     }
                 }
-            }
-            Ok::<(), ExecError>(())
-        })?,
-        NodeRef::Ins { class, content, .. } => output.insert(class, |nodes| {
-            emit_node_list(
-                stores,
-                overlay,
-                content,
-                nodes,
-                None,
-                emission,
-                suppress_deferred_streams,
-                depth + 1,
-            )
-        })?,
+                Ok::<(), ExecError>(())
+            })?;
+        }
+        NodeRef::Ins { class, content, .. } => {
+            emission.node([]);
+            output.insert(class, |nodes| {
+                emit_node_list(
+                    stores,
+                    overlay,
+                    content,
+                    nodes,
+                    None,
+                    emission,
+                    suppress_deferred_streams,
+                    depth + 1,
+                )
+            })?;
+        }
         NodeRef::Whatsit(whatsit) => {
             if let Some(effect_index) =
                 anchor_for_whatsit(whatsit, suppress_deferred_streams, &mut emission.anchor)?
             {
+                emission.node([]);
                 output.whatsit_anchor(effect_index)?;
                 if let Some(dvi) = dvi.as_deref_mut() {
                     dvi.whatsit(effect_index, &overlay.effects)
@@ -394,30 +427,35 @@ fn emit_index(
             }
         }
         NodeRef::MathOn(width) => {
+            emission.node([]);
             output.math_on(width)?;
             if let Some(dvi) = dvi.as_deref_mut() {
                 dvi.math(width).map_err(invalid_artifact)?;
             }
         }
         NodeRef::MathOff(width) => {
+            emission.node([]);
             output.math_off(width)?;
             if let Some(dvi) = dvi {
                 dvi.math(width).map_err(invalid_artifact)?;
             }
         }
         NodeRef::Direction(_) => {}
-        NodeRef::Adjust(content) => output.adjust(|nodes| {
-            emit_node_list(
-                stores,
-                overlay,
-                content,
-                nodes,
-                None,
-                emission,
-                suppress_deferred_streams,
-                depth + 1,
-            )
-        })?,
+        NodeRef::Adjust(content) => {
+            emission.node([]);
+            output.adjust(|nodes| {
+                emit_node_list(
+                    stores,
+                    overlay,
+                    content,
+                    nodes,
+                    None,
+                    emission,
+                    suppress_deferred_streams,
+                    depth + 1,
+                )
+            })?;
+        }
         NodeRef::MathList(_) => unreachable!("phase A records every math-list substitution"),
         NodeRef::MathNoad(_)
         | NodeRef::FractionNoad(_)
@@ -456,6 +494,7 @@ fn emit_box(
     } else {
         false
     };
+    emission.node([]);
     output.box_node(vertical, &fields, |nodes| {
         emit_node_list(
             stores,
@@ -490,6 +529,7 @@ fn emit_glue(
 ) -> Result<(), ExecError> {
     match leader {
         None => {
+            emission.node([]);
             output.glue(spec, kind)?;
             if let Some(dvi) = dvi.as_deref_mut() {
                 dvi.glue(spec).map_err(invalid_artifact)?;
@@ -500,6 +540,7 @@ fn emit_glue(
             height,
             depth,
         }) => {
+            emission.node([]);
             output.glue_rule_leader(spec, kind, width, height, depth)?;
             if let Some(dvi) = dvi.as_deref_mut() {
                 let node = PageNode::Glue {
@@ -534,6 +575,7 @@ fn emit_glue(
             } else {
                 None
             };
+            emission.node([]);
             output.glue_box_leader(spec, kind, vertical, &fields, |nodes| {
                 emit_node_list(
                     stores,

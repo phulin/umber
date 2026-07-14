@@ -3,7 +3,7 @@ use tex_state::Universe;
 use tex_state::env::banks::IntParam;
 use tex_state::math::{MathChar, MathField, MathNoad, NoadClass, NoadKind};
 use tex_state::node::Node;
-use tex_state::token::Token;
+use tex_state::token::{OriginId, Token};
 
 use crate::{ExecError, ModeNest, push_tokens};
 
@@ -15,13 +15,14 @@ pub(crate) fn append_mathcode_char(
     input: &mut InputStack,
     stores: &mut Universe,
     ch: char,
+    origin: OriginId,
 ) -> Result<(), ExecError> {
     let value = stores.mathcode(ch);
     if value == 0x8000 {
         redispatch_active_char(input, stores, ch);
         return Ok(());
     }
-    let (class, math_char) = math_char_from_mathcode(ch, value, stores)?;
+    let (class, math_char) = math_char_from_mathcode(ch, value, stores, origin)?;
     append_noad(
         nest,
         NoadKind::Normal(class),
@@ -34,8 +35,9 @@ pub(crate) fn append_math_char_code(
     nest: &mut ModeNest,
     stores: &Universe,
     code: u32,
+    origin: OriginId,
 ) -> Result<(), ExecError> {
-    let (class, math_char) = math_char_from_math_char_code(code, stores)?;
+    let (class, math_char) = math_char_from_math_char_code(code, stores, origin)?;
     append_noad(
         nest,
         NoadKind::Normal(class),
@@ -47,6 +49,7 @@ pub(crate) fn append_math_char_code(
 fn math_char_from_math_char_code(
     code: u32,
     stores: &Universe,
+    origin: OriginId,
 ) -> Result<(NoadClass, MathChar), ExecError> {
     if code > 0x7fff {
         return Err(ExecError::InvalidCode {
@@ -57,17 +60,22 @@ fn math_char_from_math_char_code(
     let class = ((code >> 12) & 0x7) as u8;
     let family = ((code >> 8) & 0xf) as u8;
     let ch = char::from_u32(code & 0xff).unwrap_or('\0');
-    Ok(resolve_math_class_family(class, family, ch, stores))
+    Ok(resolve_math_class_family(class, family, ch, stores, origin))
 }
 
-pub(crate) fn math_char_from_code(code: u32, stores: &Universe) -> Result<MathChar, ExecError> {
-    Ok(math_char_from_math_char_code(code, stores)?.1)
+pub(crate) fn math_char_from_code(
+    code: u32,
+    stores: &Universe,
+    origin: OriginId,
+) -> Result<MathChar, ExecError> {
+    Ok(math_char_from_math_char_code(code, stores, origin)?.1)
 }
 
 pub(crate) fn math_char_from_mathcode(
     original: char,
     code: u32,
     stores: &Universe,
+    origin: OriginId,
 ) -> Result<(NoadClass, MathChar), ExecError> {
     if code > 0x7fff {
         return Ok((
@@ -75,13 +83,14 @@ pub(crate) fn math_char_from_mathcode(
             MathChar {
                 family: 0,
                 character: original,
+                origin,
             },
         ));
     }
     let class = ((code >> 12) & 0x7) as u8;
     let family = ((code >> 8) & 0xf) as u8;
     let ch = char::from_u32(code & 0xff).unwrap_or(original);
-    Ok(resolve_math_class_family(class, family, ch, stores))
+    Ok(resolve_math_class_family(class, family, ch, stores, origin))
 }
 
 fn resolve_math_class_family(
@@ -89,6 +98,7 @@ fn resolve_math_class_family(
     code_family: u8,
     ch: char,
     stores: &Universe,
+    origin: OriginId,
 ) -> (NoadClass, MathChar) {
     let mut family = code_family;
     let class = match class {
@@ -113,6 +123,7 @@ fn resolve_math_class_family(
         MathChar {
             family,
             character: ch,
+            origin,
         },
     )
 }

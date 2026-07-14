@@ -208,6 +208,7 @@ pub(super) fn make_math_accent(
             ch: char::from(accent_code),
             metrics: accent_metrics,
         },
+        accent.origin,
     );
     accent_box.shift = add(
         skew,

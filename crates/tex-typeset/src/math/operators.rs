@@ -122,7 +122,7 @@ fn operator_nucleus(
                 return ctx.layout.hpack(ctx.layout.empty());
             };
             *delta = fetched.metrics.italic_correction;
-            let mut boxed = char_box(ctx, fetched);
+            let mut boxed = char_box(ctx, fetched, ch.origin);
             if !matches!(effective_limits, LimitType::Limits)
                 && !matches!(noad.subscript, MathField::Empty)
             {
@@ -268,17 +268,6 @@ fn set_current_nucleus(nodes: &mut [Node], index: usize, field: MathField) {
 fn apply_math_ligature(nodes: &mut Vec<Node>, index: usize, ligature: LigatureCommand) -> bool {
     let replacement = char::from(ligature.replacement);
     let restart = ligature.pass_over == 0;
-    let replacement_field = |family| {
-        let ch = MathChar {
-            family,
-            character: replacement,
-        };
-        if restart {
-            MathField::MathChar(ch)
-        } else {
-            MathField::MathTextChar(ch)
-        }
-    };
     let Some(Node::MathNoad(current)) = nodes.get(index).cloned() else {
         return false;
     };
@@ -287,6 +276,18 @@ fn apply_math_ligature(nodes: &mut Vec<Node>, index: usize, ligature: LigatureCo
         _ => None,
     }) else {
         return false;
+    };
+    let replacement_field = |family| {
+        let ch = MathChar {
+            family,
+            character: replacement,
+            origin: current_char.origin,
+        };
+        if restart {
+            MathField::MathChar(ch)
+        } else {
+            MathField::MathTextChar(ch)
+        }
     };
 
     match (ligature.delete_current, ligature.delete_next) {
@@ -313,6 +314,7 @@ fn apply_math_ligature(nodes: &mut Vec<Node>, index: usize, ligature: LigatureCo
             next.nucleus = MathField::MathChar(MathChar {
                 family: current_char.family,
                 character: replacement,
+                origin: current_char.origin,
             });
             if restart {
                 set_current_nucleus(nodes, index, MathField::MathChar(current_char));
@@ -325,11 +327,13 @@ fn apply_math_ligature(nodes: &mut Vec<Node>, index: usize, ligature: LigatureCo
                     MathField::MathChar(MathChar {
                         family: current_char.family,
                         character: replacement,
+                        origin: current_char.origin,
                     })
                 } else {
                     MathField::MathTextChar(MathChar {
                         family: current_char.family,
                         character: replacement,
+                        origin: current_char.origin,
                     })
                 },
             );

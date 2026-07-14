@@ -6,6 +6,7 @@ use crate::ids::{GlueId, NodeListId};
 use crate::math::MathStyle;
 use crate::node::{DiscKind, GlueKind, KernKind, Node};
 use crate::scaled::Scaled;
+use crate::token::OriginId;
 
 const TAG_SHIFT: u32 = 59;
 const PAYLOAD_MASK: u64 = (1_u64 << TAG_SHIFT) - 1;
@@ -138,7 +139,9 @@ impl SidecarNeeds {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct NodeStorage {
     pub(super) words: Vec<NodeWord>,
-    pub(super) ligatures: Vec<(crate::ids::FontId, char, Vec<char>)>,
+    /// Diagnostic-only provenance aligned one-for-one with `words`.
+    pub(super) origins: Vec<OriginId>,
+    pub(super) ligatures: Vec<(crate::ids::FontId, char, Vec<char>, Vec<OriginId>)>,
     pub(super) boxes: BoxTable,
     pub(super) unsets: UnsetTable,
     pub(super) rules: Vec<(Option<Scaled>, Option<Scaled>, Option<Scaled>)>,
@@ -197,6 +200,7 @@ impl NodeStorage {
     pub(super) fn truncate(&mut self, mark: StorageMark) {
         // Validate the entire tuple before mutating any stream.
         assert!(mark.words as usize <= self.words.len());
+        assert!(mark.words as usize <= self.origins.len());
         assert!(mark.ligatures as usize <= self.ligatures.len());
         assert!(mark.boxes as usize <= self.boxes.len());
         assert!(mark.unsets as usize <= self.unsets.len());
@@ -212,6 +216,7 @@ impl NodeStorage {
         assert!(mark.math_lists as usize <= self.math_lists.len());
         assert!(mark.adjusts as usize <= self.adjusts.len());
         self.words.truncate(mark.words as usize);
+        self.origins.truncate(mark.words as usize);
         self.ligatures.truncate(mark.ligatures as usize);
         self.boxes.truncate(mark.boxes as usize);
         self.unsets.truncate(mark.unsets as usize);
@@ -250,10 +255,16 @@ impl NodeStorage {
             preflight_capacity(have, add, "node sidecar exceeds u32 entries");
         }
         self.words.reserve(nodes.len());
+        self.origins.reserve(nodes.len());
         self.reserve_sidecars(needs);
         for node in nodes {
             let word = self.encode(node);
             self.words.push(word);
+            self.origins.push(match node {
+                Node::Char { origin, .. } => *origin,
+                Node::Lig { origins, .. } => origins.first().copied().unwrap_or(OriginId::UNKNOWN),
+                _ => OriginId::UNKNOWN,
+            });
         }
         #[cfg(feature = "profiling-stats")]
         {
@@ -314,14 +325,25 @@ impl NodeStorage {
 
     fn encode(&mut self, node: &Node) -> NodeWord {
         match node {
-            Node::Char { font, ch } => NodeWord::new(0, (*ch as u64) | ((font.raw() as u64) << 21)),
-            Node::Lig { font, ch, orig } => {
+            Node::Char { font, ch, .. } => {
+                NodeWord::new(0, (*ch as u64) | ((font.raw() as u64) << 21))
+            }
+            Node::Lig {
+                font,
+                ch,
+                orig,
+                origins,
+            } => {
                 // Character nodes store only the dense font slot in their packed
                 // word. Canonicalize ligature sidecars the same way so a live
                 // epoch-bearing handle and a packed character handle cannot look
                 // like two distinct resources with the same public font id.
                 let font = crate::ids::FontId::new(font.raw());
-                push_sidecar(1, &mut self.ligatures, (font, *ch, orig.clone()))
+                push_sidecar(
+                    1,
+                    &mut self.ligatures,
+                    (font, *ch, orig.clone(), origins.clone()),
+                )
             }
             Node::Kern { amount, kind } => NodeWord::new(
                 2,
@@ -435,13 +457,21 @@ fn push_sidecar<T>(tag: u8, table: &mut Vec<T>, value: T) -> NodeWord {
     NodeWord::sidecar(tag, i)
 }
 fn preflight_encoding(node: &Node) {
-    if let Node::Lig { ch, orig, .. } = node {
+    if let Node::Lig {
+        ch, orig, origins, ..
+    } = node
+    {
         assert!(
             (*ch as u32) <= u8::MAX as u32,
             "ligature glyph exceeds TFM byte domain"
         );
         assert!(!orig.is_empty(), "ligature source must not be empty");
         assert!(orig.len() <= 63, "ligature source exceeds TeX word limit");
+        assert_eq!(
+            orig.len(),
+            origins.len(),
+            "ligature source/provenance length mismatch"
+        );
         assert!(
             orig.iter().all(|ch| (*ch as u32) <= u8::MAX as u32),
             "ligature original exceeds TFM byte domain"

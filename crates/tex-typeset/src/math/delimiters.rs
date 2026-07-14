@@ -326,5 +326,6 @@ fn char_box_for(
             ch: char::from(code),
             metrics,
         },
+        tex_state::token::OriginId::UNKNOWN,
     ))
 }

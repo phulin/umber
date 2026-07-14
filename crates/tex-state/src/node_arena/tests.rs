@@ -44,6 +44,7 @@ fn nested_lists_build_bottom_up_and_read_back() {
     inner.push(Node::Char {
         font: FontId::testing_new(1),
         ch: 'x',
+        origin: crate::token::OriginId::UNKNOWN,
     });
     let inner_id = inner.finish(&mut arena);
 
@@ -79,7 +80,8 @@ fn nested_lists_build_bottom_up_and_read_back() {
         arena.get(inner_id, &survivors),
         &[Node::Char {
             font: FontId::testing_new(1),
-            ch: 'x'
+            ch: 'x',
+            origin: crate::token::OriginId::UNKNOWN,
         }]
     );
     let Some(NodeRef::HList(middle_box)) = arena.get(middle_id, &survivors).first() else {
@@ -133,6 +135,7 @@ fn watermark_truncation_drops_exactly_the_suffix() {
         Some(NodeRef::Char {
             font: FontId::testing_new(1),
             ch: 'c',
+            origin: crate::token::OriginId::UNKNOWN,
         })
     );
 }
@@ -221,11 +224,13 @@ fn every_inline_kind_uses_only_one_word_and_no_sidecar() {
         Node::Char {
             font: FontId::testing_new(u32::MAX),
             ch: '\u{10ffff}',
+            origin: crate::token::OriginId::UNKNOWN,
         },
         Node::Lig {
             font: FontId::testing_new(7),
             ch: '\u{ff}',
             orig: vec!['\0', '\u{fe}'],
+            origins: vec![crate::token::OriginId::UNKNOWN; 2],
         },
         Node::Kern {
             amount: Scaled::from_raw(i32::MIN),
@@ -260,11 +265,13 @@ fn ligature_and_character_fonts_share_the_same_dense_identity() {
         Node::Char {
             font: tagged,
             ch: 'A',
+            origin: crate::token::OriginId::UNKNOWN,
         },
         Node::Lig {
             font: tagged,
             ch: 'B',
             orig: vec!['A', 'A'],
+            origins: vec![crate::token::OriginId::UNKNOWN; 2],
         },
     ]);
     let nodes = arena.get_epoch(list).into_iter().collect::<Vec<_>>();
@@ -282,21 +289,36 @@ fn byte_char_runs_stop_at_fonts_unicode_ligatures_and_other_nodes() {
     let f1 = FontId::testing_new(1);
     let f2 = FontId::testing_new(2);
     let id = arena.append(&[
-        Node::Char { font: f1, ch: 'a' },
+        Node::Char {
+            font: f1,
+            ch: 'a',
+            origin: crate::token::OriginId::UNKNOWN,
+        },
         Node::Char {
             font: f1,
             ch: '\u{ff}',
+            origin: crate::token::OriginId::UNKNOWN,
         },
-        Node::Char { font: f2, ch: 'b' },
+        Node::Char {
+            font: f2,
+            ch: 'b',
+            origin: crate::token::OriginId::UNKNOWN,
+        },
         Node::Char {
             font: f2,
             ch: '\u{100}',
+            origin: crate::token::OriginId::UNKNOWN,
         },
-        Node::Char { font: f2, ch: 'c' },
+        Node::Char {
+            font: f2,
+            ch: 'c',
+            origin: crate::token::OriginId::UNKNOWN,
+        },
         Node::Lig {
             font: f2,
             ch: 'd',
             orig: vec!['c', 'd'],
+            origins: vec![crate::token::OriginId::UNKNOWN; 2],
         },
         Node::Kern {
             amount: scaled(1),
@@ -509,6 +531,7 @@ fn late_invalid_ligature_leaves_complete_arena_state_unchanged() {
         Node::Char {
             font: FontId::testing_new(1),
             ch: 'a',
+            origin: crate::token::OriginId::UNKNOWN,
         },
         Node::Rule {
             width: Some(scaled(1)),
@@ -527,12 +550,14 @@ fn late_invalid_ligature_leaves_complete_arena_state_unchanged() {
             Node::Char {
                 font: FontId::testing_new(2),
                 ch: 'b',
+                origin: crate::token::OriginId::UNKNOWN,
             },
             Node::Adjust(baseline),
             Node::Lig {
                 font: FontId::testing_new(2),
                 ch: 'c',
                 orig: vec!['b', '\u{100}'],
+                origins: vec![crate::token::OriginId::UNKNOWN; 2],
             },
         ]);
     }));
@@ -563,6 +588,7 @@ fn builder_late_invalid_ligature_does_not_publish_valid_prefix_or_sidecar() {
             font: FontId::testing_new(0),
             ch,
             orig: vec![orig.0, orig.1],
+            origins: vec![crate::token::OriginId::UNKNOWN; 2],
         });
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -581,6 +607,7 @@ fn one_char(arena: &mut NodeArena, ch: char) -> NodeListId {
     builder.push(Node::Char {
         font: FontId::testing_new(1),
         ch,
+        origin: crate::token::OriginId::UNKNOWN,
     });
     builder.finish(arena)
 }

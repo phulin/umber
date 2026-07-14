@@ -58,7 +58,7 @@ pub use page::{
     AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_PENALTY, PageBreak, PageContents, PageDimension,
     PageFireUp, PageInteger,
 };
-pub use provenance_resolver::ProvenanceResolver;
+pub use provenance_resolver::{ProvenanceResolver, ResolvedSourceLocation};
 pub use stores::{FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnostic};
 pub use universe::{
     BoxBuildTransaction, BoxDimension, EngineBoundaryHasher, ExpansionContext, ExpansionState,

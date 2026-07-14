@@ -434,8 +434,9 @@ impl ShipoutTransaction<'_> {
             self.stores.release_shipout_nodes(node_mark);
             self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
             self.page.set_integer(PageInteger::DeadCycles, 0);
+            let (bytes, render_origins) = artifact.into_parts();
             self.world
-                .record_artifact_commit(hash, artifact.into_bytes());
+                .record_artifact_commit(hash, bytes, render_origins);
             self.rollback = None;
             self.finished = true;
             return Ok(hash);
@@ -452,8 +453,9 @@ impl ShipoutTransaction<'_> {
         self.stores.release_shipout_nodes(node_mark);
         self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
         self.page.set_integer(PageInteger::DeadCycles, 0);
+        let (bytes, render_origins) = artifact.into_parts();
         self.world
-            .record_artifact_commit(hash, artifact.into_bytes());
+            .record_artifact_commit(hash, bytes, render_origins);
         self.rollback = None;
         self.finished = true;
         Ok(hash)
@@ -526,6 +528,17 @@ impl GenerationSubstrate {
     #[must_use]
     pub const fn world(&self) -> &World {
         self.universe.world()
+    }
+
+    /// Resolves one diagnostic origin retained by this accepted generation.
+    #[must_use]
+    pub fn resolve_origin_with_generated_path(
+        &self,
+        origin: crate::token::OriginId,
+        generated_path: &str,
+    ) -> Option<crate::ResolvedSourceLocation> {
+        crate::ProvenanceResolver::new(&self.universe)
+            .resolve_origin_with_generated_path(origin, generated_path)
     }
 
     #[doc(hidden)]

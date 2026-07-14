@@ -21,15 +21,16 @@ use crate::{DispatchAction, ExecError, Mode, ModeNest, push_traced_tokens};
 
 pub(crate) fn try_append_character(
     nest: &mut ModeNest,
-    token: Token,
+    traced: TracedTokenWord,
     stores: &mut Universe,
 ) -> Result<bool, ExecError> {
+    let token = tex_expand::semantic_token(traced);
     match (nest.current_mode(), token) {
         (Mode::RestrictedHorizontal | Mode::Horizontal, Token::Char { ch, cat }) => {
             if cat == Catcode::Space {
                 append_space(nest, stores)?;
             } else {
-                append_hchar(nest, stores, ch);
+                append_hchar(nest, stores, ch, traced.origin());
             }
             Ok(true)
         }
@@ -42,15 +43,16 @@ pub(crate) fn append_given_char(
     input: &mut InputStack,
     stores: &mut Universe,
     ch: char,
+    origin: OriginId,
 ) -> Result<(), ExecError> {
     match nest.current_mode() {
         Mode::RestrictedHorizontal | Mode::Horizontal => {
-            append_hchar(nest, stores, ch);
+            append_hchar(nest, stores, ch, origin);
             Ok(())
         }
         Mode::Vertical | Mode::InternalVertical => {
             ensure_horizontal_for_character(nest, input, stores)?;
-            append_hchar(nest, stores, ch);
+            append_hchar(nest, stores, ch, origin);
             Ok(())
         }
         mode => Err(ExecError::UnimplementedTypesetting {
@@ -106,7 +108,7 @@ pub(super) fn execute_hmode_material(
                 context: "\\char",
                 value,
             })?;
-            append_given_char(nest, input, stores, ch)?;
+            append_given_char(nest, input, stores, ch, context.origin())?;
         }
         UnexpandablePrimitive::HFil
         | UnexpandablePrimitive::HFill
@@ -173,7 +175,11 @@ pub(super) fn execute_hmode_material(
                 .ok()
                 .map(char::from)
                 .unwrap_or('-');
-            let pre = stores.freeze_node_list(&[Node::Char { font, ch: hyphen }]);
+            let pre = stores.freeze_node_list(&[Node::Char {
+                font,
+                ch: hyphen,
+                origin: context.origin(),
+            }]);
             let empty = stores.freeze_node_list(&[]);
             nest.current_list_mut().push(Node::Disc {
                 kind: DiscKind::ExplicitHyphen,
@@ -395,7 +401,7 @@ fn append_control_space(
     Ok(())
 }
 
-fn append_hchar(nest: &mut ModeNest, stores: &mut Universe, ch: char) {
+fn append_hchar(nest: &mut ModeNest, stores: &mut Universe, ch: char, origin: OriginId) {
     if nest.current_mode() == Mode::Horizontal {
         let language = u8::try_from(stores.int_param(IntParam::LANGUAGE)).unwrap_or(0);
         if language != nest.current_list().hyphen_language() {
@@ -417,19 +423,26 @@ fn append_hchar(nest: &mut ModeNest, stores: &mut Universe, ch: char) {
     if let Ok(code) = u8::try_from(ch as u32)
         && stores.font_char_exists(font, code)
     {
-        append_pending_hchar(nest, stores, font, ch);
+        append_pending_hchar(nest, stores, font, ch, origin);
         update_space_factor(nest, stores, ch);
         return;
     }
     report_missing_character(stores, font, ch);
 }
 
-fn append_pending_hchar(nest: &mut ModeNest, stores: &mut Universe, font: FontId, ch: char) {
+fn append_pending_hchar(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    font: FontId,
+    ch: char,
+    origin: OriginId,
+) {
     let Some(mut pending) = nest.current_list().pending_hchars() else {
-        nest.current_list_mut().begin_pending_hchars(font, ch);
+        nest.current_list_mut()
+            .begin_pending_hchars(font, ch, origin);
         return;
     };
-    let next = PendingHRunChar::new(font, ch);
+    let next = PendingHRunChar::new(font, ch, origin);
     let emitted = match reconstitution_step(stores, pending.current, next.clone()) {
         ReconstitutionStep::Merge(merged) => {
             pending.current = merged;
@@ -467,9 +480,9 @@ pub(crate) fn reconstitute(
     if !no_left_boundary && let Some(node) = boundary_command_node(stores, first, true) {
         out.push(node);
     }
-    let mut current = PendingHRunChar::new(first.font, first.ch);
+    let mut current = PendingHRunChar::new(first.font, first.ch, first.origin);
     for entry in entries {
-        let next = PendingHRunChar::new(entry.font, entry.ch);
+        let next = PendingHRunChar::new(entry.font, entry.ch, entry.origin);
         match reconstitution_step(stores, current, next.clone()) {
             ReconstitutionStep::Merge(merged) => current = merged,
             ReconstitutionStep::Emit {
@@ -529,10 +542,13 @@ fn reconstitution_step(
             LigKernCommand::Ligature(lig) if lig.delete_next => {
                 let mut orig = current.orig;
                 orig.extend(next.orig);
+                let mut origins = current.origins;
+                origins.extend(next.origins);
                 ReconstitutionStep::Merge(PendingHRunChar {
                     font: current.font,
                     ch: char::from(lig.replacement),
                     orig,
+                    origins,
                     ligature_present: true,
                 })
             }
@@ -554,11 +570,17 @@ fn rechar_node(current: PendingHRunChar) -> Node {
             font: current.font,
             ch: current.ch,
             orig: current.orig,
+            origins: current.origins,
         }
     } else {
         Node::Char {
             font: current.font,
             ch: current.ch,
+            origin: current
+                .origins
+                .first()
+                .copied()
+                .unwrap_or(OriginId::UNKNOWN),
         }
     }
 }
@@ -603,6 +625,7 @@ fn boundary_command_node(
             font: current.font,
             ch: char::from(lig.replacement),
             orig: vec![current.ch],
+            origins: vec![current.origin],
         }),
     }
 }
@@ -728,6 +751,7 @@ fn execute_accent(
         nest.current_list_mut().push(Node::Char {
             font: accent_font,
             ch: char::from(accent),
+            origin: context.origin(),
         });
         return Ok(());
     };
@@ -737,6 +761,7 @@ fn execute_accent(
         nest.current_list_mut().push(Node::Char {
             font: accent_font,
             ch: char::from(accent),
+            origin: context.origin(),
         });
         nest.current_list_mut().set_space_factor(1000);
         return Ok(());
@@ -759,6 +784,7 @@ fn execute_accent(
     let accent_node = Node::Char {
         font: accent_font,
         ch: char::from(accent),
+        origin: context.origin(),
     };
     if base_metrics.height == accent_x_height {
         nest.current_list_mut().push(accent_node);
@@ -778,6 +804,7 @@ fn execute_accent(
     nest.current_list_mut().push(Node::Char {
         font: base_font,
         ch: char::from(base),
+        origin: context.origin(),
     });
     nest.current_list_mut().set_space_factor(1000);
     Ok(())
@@ -962,7 +989,7 @@ fn append_italic_correction(nest: &mut ModeNest, stores: &mut Universe) -> Resul
 
 fn last_font_char(nodes: &[Node]) -> Option<(tex_state::ids::FontId, char)> {
     match nodes.last()? {
-        Node::Char { font, ch } | Node::Lig { font, ch, .. } => Some((*font, *ch)),
+        Node::Char { font, ch, .. } | Node::Lig { font, ch, .. } => Some((*font, *ch)),
         _ => None,
     }
 }

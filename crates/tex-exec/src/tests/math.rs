@@ -193,7 +193,11 @@ fn invalid_superscript_command_inserts_a_group_around_following_material() {
             tex_state::node_arena::NodeRef::MathNoad(noad)
                 if matches!(
                     noad.nucleus,
-                    MathField::MathChar(tex_state::math::MathChar { family: 1, character: 'M' })
+                    MathField::MathChar(tex_state::math::MathChar {
+                        family: 1,
+                        character: 'M',
+                        ..
+                    })
                 )
         )
     });

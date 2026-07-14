@@ -57,7 +57,7 @@ pub(super) fn scan_math_field(
                 redispatch_active_char(input, stores, ch);
                 scan_math_field(nest, input, stores, execution)
             } else {
-                let (_, math_char) = math_char_from_mathcode(ch, value, stores)?;
+                let (_, math_char) = math_char_from_mathcode(ch, value, stores, traced.origin())?;
                 Ok(MathField::MathChar(math_char))
             }
         }
@@ -66,12 +66,14 @@ pub(super) fn scan_math_field(
         }
         Token::Cs(symbol) => match stores.meaning(symbol) {
             Meaning::CharGiven(ch) => {
-                let (_, math_char) = math_char_from_mathcode(ch, stores.mathcode(ch), stores)?;
+                let (_, math_char) =
+                    math_char_from_mathcode(ch, stores.mathcode(ch), stores, traced.origin())?;
                 Ok(MathField::MathChar(math_char))
             }
             Meaning::MathCharGiven(value) => Ok(MathField::MathChar(math_char_from_code(
                 u32::from(value),
                 stores,
+                traced.origin(),
             )?)),
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char) => {
                 let context = TracedTokenWord::pack(Token::Cs(symbol.symbol()), OriginId::UNKNOWN);
@@ -83,7 +85,8 @@ pub(super) fn scan_math_field(
                             context: "\\char",
                             value,
                         })?;
-                let (_, math_char) = math_char_from_mathcode(ch, stores.mathcode(ch), stores)?;
+                let (_, math_char) =
+                    math_char_from_mathcode(ch, stores.mathcode(ch), stores, traced.origin())?;
                 Ok(MathField::MathChar(math_char))
             }
             Meaning::UnexpandablePrimitive(

@@ -79,7 +79,11 @@ fn paragraph_hyphenation_honors_uchyph_for_uppercase_start() {
     let font = stores.current_font();
     let word: Vec<_> = "Aba"
         .chars()
-        .map(|ch| tex_state::node::Node::Char { font, ch })
+        .map(|ch| tex_state::node::Node::Char {
+            font,
+            ch,
+            origin: tex_state::token::OriginId::UNKNOWN,
+        })
         .collect();
 
     stores.set_int_param(IntParam::UC_HYPH, 0);
@@ -114,7 +118,11 @@ fn paragraph_hyphenation_requires_an_in_range_hyphen_and_omits_a_missing_glyph()
     let font = stores.current_font();
     let word: Vec<_> = "aba"
         .chars()
-        .map(|ch| tex_state::node::Node::Char { font, ch })
+        .map(|ch| tex_state::node::Node::Char {
+            font,
+            ch,
+            origin: tex_state::token::OriginId::UNKNOWN,
+        })
         .collect();
 
     stores.set_font_hyphen_char(font, -1, false);
@@ -159,8 +167,16 @@ fn paragraph_hyphenation_preserves_existing_chars_when_no_break_is_found() {
         .expect("font setup executes");
     let font = stores.current_font();
     let word = vec![
-        tex_state::node::Node::Char { font, ch: 'f' },
-        tex_state::node::Node::Char { font, ch: 'f' },
+        tex_state::node::Node::Char {
+            font,
+            ch: 'f',
+            origin: tex_state::token::OriginId::UNKNOWN,
+        },
+        tex_state::node::Node::Char {
+            font,
+            ch: 'f',
+            origin: tex_state::token::OriginId::UNKNOWN,
+        },
     ];
 
     let unchanged = crate::assignments::test_hyphenated_hlist(&mut stores, &word);
@@ -191,8 +207,16 @@ fn paragraph_hyphenation_stops_at_a_font_change() {
         kind: GlueKind::Normal,
         leader: None,
     }];
-    nodes.extend("abcd".chars().map(|ch| Node::Char { font: first, ch }));
-    nodes.extend("efgh".chars().map(|ch| Node::Char { font: second, ch }));
+    nodes.extend("abcd".chars().map(|ch| Node::Char {
+        font: first,
+        ch,
+        origin: tex_state::token::OriginId::UNKNOWN,
+    }));
+    nodes.extend("efgh".chars().map(|ch| Node::Char {
+        font: second,
+        ch,
+        origin: tex_state::token::OriginId::UNKNOWN,
+    }));
     nodes.push(Node::Glue {
         spec: glue,
         kind: GlueKind::Normal,
@@ -224,14 +248,22 @@ fn successful_pretolerance_does_not_allocate_hyphenation_nodes() {
     stores.set_font_hyphen_char(font, i32::from(b'-'), false);
     let par_fill = stores.glue_param(GlueParam::PAR_FILL_SKIP);
     let mut nodes = vec![
-        Node::Char { font, ch: 'x' },
+        Node::Char {
+            font,
+            ch: 'x',
+            origin: tex_state::token::OriginId::UNKNOWN,
+        },
         Node::Glue {
             spec: stores.glue_param(GlueParam::SPACE_SKIP),
             kind: GlueKind::Normal,
             leader: None,
         },
     ];
-    nodes.extend("abcdefgh".chars().map(|ch| Node::Char { font, ch }));
+    nodes.extend("abcdefgh".chars().map(|ch| Node::Char {
+        font,
+        ch,
+        origin: tex_state::token::OriginId::UNKNOWN,
+    }));
     nodes.push(Node::Penalty(10_000));
     nodes.push(Node::Glue {
         spec: par_fill,

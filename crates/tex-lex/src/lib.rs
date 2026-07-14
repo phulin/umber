@@ -1571,15 +1571,12 @@ impl InputStack {
 
     /// Appends the next maximal ordinary horizontal-text span.
     ///
-    /// Execution does not retain character origins in nodes, but this still
-    /// refuses degraded argument frames whose ordinary replay would allocate
-    /// inserted provenance records. Skipping those allocations would perturb
-    /// later provenance identities even if the glyph nodes themselves do not
-    /// store origins.
+    /// Tokens and their existing origins are copied side by side so execution
+    /// can retain source provenance without giving up the batched path.
     pub fn append_macro_text_span(
         &mut self,
         stores: &impl ExpansionState,
-        tokens_out: &mut Vec<Token>,
+        tokens_out: &mut Vec<TracedTokenWord>,
     ) -> usize {
         let Some(span) = self.take_macro_literal_span(stores, LiteralSpanPolicy::HorizontalText)
         else {
@@ -1588,7 +1585,15 @@ impl InputStack {
         #[cfg(feature = "profiling-stats")]
         let started = Instant::now();
         let stored = stores.tokens(span.token_list);
-        tokens_out.extend_from_slice(&stored[span.start..span.end]);
+        let origins = (span.origin_list != OriginListId::EMPTY)
+            .then(|| stores.origin_list_if_live(span.origin_list))
+            .flatten();
+        for (offset, &token) in stored[span.start..span.end].iter().enumerate() {
+            let origin = origins
+                .and_then(|origins| origins.get(span.start + offset).copied())
+                .unwrap_or(OriginId::UNKNOWN);
+            tokens_out.push(TracedTokenWord::pack(token, origin));
+        }
         #[cfg(feature = "profiling-stats")]
         {
             add_elapsed(&mut self.expansion_stats.builder_append_nanos, started);
@@ -1608,7 +1613,7 @@ impl InputStack {
     pub fn append_source_text_span(
         &mut self,
         stores: &mut impl ExpansionState,
-        tokens_out: &mut Vec<Token>,
+        tokens_out: &mut Vec<TracedTokenWord>,
     ) -> usize {
         if self.has_active_alignment() {
             return 0;
@@ -1651,13 +1656,10 @@ impl InputStack {
             else {
                 break;
             };
-            if registration
-                .direct_origin(physical_start, physical_end)
-                .is_none()
-            {
+            let Some(origin) = registration.direct_origin(physical_start, physical_end) else {
                 break;
-            }
-            tokens_out.push(Token::Char { ch, cat });
+            };
+            tokens_out.push(TracedTokenWord::pack(Token::Char { ch, cat }, origin));
             byte_offset = next;
             column += 1;
         }

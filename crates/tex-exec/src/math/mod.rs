@@ -252,7 +252,7 @@ pub(crate) fn dispatch_math_token_with_context(
             Ok(DispatchAction::Continue)
         }
         Token::Char { ch, .. } => {
-            append_mathcode_char(nest, input, stores, ch)?;
+            append_mathcode_char(nest, input, stores, ch, traced.origin())?;
             Ok(DispatchAction::Continue)
         }
         Token::Cs(symbol) => dispatch_math_control(nest, traced, symbol, input, stores, execution),
@@ -484,11 +484,11 @@ fn dispatch_math_control(
             origin,
         }),
         Meaning::CharGiven(ch) => {
-            append_mathcode_char(nest, input, stores, ch)?;
+            append_mathcode_char(nest, input, stores, ch, origin)?;
             Ok(DispatchAction::Continue)
         }
         Meaning::MathCharGiven(value) => {
-            append_math_char_code(nest, stores, u32::from(value))?;
+            append_math_char_code(nest, stores, u32::from(value), origin)?;
             Ok(DispatchAction::Continue)
         }
         Meaning::CharToken { ch, cat } => dispatch_math_token_with_context(
@@ -588,7 +588,7 @@ fn dispatch_math_primitive(
         }
         UnexpandablePrimitive::MathChar => {
             let code = scan_math_char_code(input, stores, execution, traced)?;
-            append_math_char_code(nest, stores, code)?;
+            append_math_char_code(nest, stores, code, traced.origin())?;
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::Char => {
@@ -599,14 +599,14 @@ fn dispatch_math_primitive(
                     context: "\\char",
                     value,
                 })?;
-            append_mathcode_char(nest, input, stores, ch)?;
+            append_mathcode_char(nest, input, stores, ch, traced.origin())?;
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::Delimiter => {
             let delimiter = scan_delimiter_code(input, stores, execution, traced)?;
             // TeX82 treats a standalone \delimiter as the math character in
             // the high 15 bits; the low 12 bits only name its large variant.
-            append_math_char_code(nest, stores, delimiter >> 12)?;
+            append_math_char_code(nest, stores, delimiter >> 12, traced.origin())?;
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::MathOrd
@@ -665,6 +665,7 @@ fn dispatch_math_primitive(
             let accent = math_char_from_code(
                 scan_math_char_code(input, stores, execution, traced)?,
                 stores,
+                traced.origin(),
             )?;
             let field = scan_math_field(nest, input, stores, execution)?;
             append_noad(nest, NoadKind::Accent { accent }, field);

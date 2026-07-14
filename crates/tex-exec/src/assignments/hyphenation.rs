@@ -3,7 +3,7 @@ use tex_state::Universe;
 use tex_state::env::banks::IntParam;
 use tex_state::hyphenation::{ExceptionSpec, PatternSpec};
 use tex_state::node::{DiscKind, KernKind, Node};
-use tex_state::token::{Catcode, Token};
+use tex_state::token::{Catcode, OriginId, Token};
 
 use super::*;
 use crate::ExecError;
@@ -150,6 +150,7 @@ fn hyphenate_after_glue(
             Node::Char {
                 font: node_font,
                 ch,
+                origin,
             } if *node_font == font && word.len() < 63 => {
                 let Some(lower) = normalized_hyphen_code(stores, language, *ch) else {
                     break;
@@ -158,6 +159,7 @@ fn hyphenate_after_glue(
                     font,
                     ch: *ch,
                     lower,
+                    origin: *origin,
                 });
                 word_nodes.push(node.clone());
                 index += 1;
@@ -166,6 +168,7 @@ fn hyphenate_after_glue(
                 font: node_font,
                 ch,
                 orig,
+                origins,
             } if *node_font == font => {
                 let chars = orig.clone();
                 if word.len().saturating_add(chars.len()) > 63 {
@@ -178,8 +181,13 @@ fn hyphenate_after_glue(
                 else {
                     break;
                 };
-                for (ch, lower) in normalized {
-                    word.push(WordChar { font, ch, lower });
+                for ((ch, lower), origin) in normalized.into_iter().zip(origins.iter().copied()) {
+                    word.push(WordChar {
+                        font,
+                        ch,
+                        lower,
+                        origin,
+                    });
                 }
                 word_nodes.push(node.clone());
                 index += 1;
@@ -236,7 +244,7 @@ fn first_word_char(
     node: &Node,
 ) -> Option<(tex_state::ids::FontId, char, char)> {
     match node {
-        Node::Char { font, ch } => {
+        Node::Char { font, ch, .. } => {
             normalized_hyphen_code(stores, language, *ch).map(|lower| (*font, *ch, lower))
         }
         Node::Lig { font, orig, .. } => orig.first().and_then(|&first| {
@@ -470,7 +478,11 @@ fn discretionary_through_node(
         .map(WordChar::pending)
         .collect();
     if let Some(ch) = usable_hyphen_char(stores, font) {
-        pre_pending.push(PendingHChar { font, ch });
+        pre_pending.push(PendingHChar {
+            font,
+            ch,
+            origin: word[position - 1].origin,
+        });
     }
     let pre = super::hmode::reconstitute(stores, &pre_pending, true, false);
     let post_pending: Vec<_> = word[position..end].iter().map(WordChar::pending).collect();
@@ -503,7 +515,11 @@ fn discretionary_hyphen(
 ) -> Node {
     let empty = stores.freeze_node_list(&[]);
     let pre = usable_hyphen_char(stores, font).map_or(empty, |ch| {
-        stores.freeze_node_list(&[Node::Char { font, ch }])
+        stores.freeze_node_list(&[Node::Char {
+            font,
+            ch,
+            origin: OriginId::UNKNOWN,
+        }])
     });
     let replace = replacement.as_ref().map_or(empty, |node| {
         stores.freeze_node_list(std::slice::from_ref(node))
@@ -528,6 +544,7 @@ struct WordChar {
     font: tex_state::ids::FontId,
     ch: char,
     lower: char,
+    origin: OriginId,
 }
 
 impl WordChar {
@@ -535,6 +552,7 @@ impl WordChar {
         PendingHChar {
             font: self.font,
             ch: self.ch,
+            origin: self.origin,
         }
     }
 }

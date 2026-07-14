@@ -2,6 +2,8 @@
 
 use crate::ids::NodeListId;
 use crate::scaled::Scaled;
+use crate::token::OriginId;
+use std::hash::{Hash, Hasher};
 
 /// Number of classic TeX math families.
 pub const MATH_FAMILY_COUNT: u8 = 16;
@@ -35,10 +37,28 @@ pub enum MathStyle {
 }
 
 /// A decoded math character field.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize)]
 pub struct MathChar {
     pub family: u8,
     pub character: char,
+    /// Diagnostic-only source provenance; excluded from TeX semantics.
+    #[serde(skip, default)]
+    pub origin: OriginId,
+}
+
+impl PartialEq for MathChar {
+    fn eq(&self, other: &Self) -> bool {
+        self.family == other.family && self.character == other.character
+    }
+}
+
+impl Eq for MathChar {}
+
+impl Hash for MathChar {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.family.hash(state);
+        self.character.hash(state);
+    }
 }
 
 /// A noad field as described by tex.web.

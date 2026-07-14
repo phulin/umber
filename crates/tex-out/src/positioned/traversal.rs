@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use tex_arith::Scaled;
 
 use crate::dvi::glue::adjusted_glue_width;
@@ -5,7 +6,7 @@ use crate::{BoxNode, GlueKind, KernKind, LeaderPayload, PageArtifact, PageEffect
 
 use super::{
     BoxKind, PositionedBox, PositionedError, PositionedEvent, PositionedLimits, PositionedPage,
-    PositionedRule, PositionedSpecial, PositionedTextRun, TextUnit,
+    PositionedRule, PositionedSourceRef, PositionedSpecial, PositionedTextRun, TextUnit,
 };
 
 const LEADER_ROUNDING_COMPENSATION: Scaled = Scaled::from_raw(10);
@@ -32,6 +33,7 @@ pub(super) fn lower(
         limits,
         cur_h: page.job.h_offset,
         cur_v: add(root.height, page.job.v_offset)?,
+        node_ordinals: index_nodes(&page.root),
     };
     match kind {
         BoxKind::Horizontal => out.hlist(root, 1)?,
@@ -54,9 +56,14 @@ struct Lowerer<'a> {
     limits: PositionedLimits,
     cur_h: Scaled,
     cur_v: Scaled,
+    node_ordinals: BTreeMap<usize, u32>,
 }
 
 impl Lowerer<'_> {
+    fn node_ordinal(&self, node: &PageNode) -> u32 {
+        self.node_ordinals[&(node as *const PageNode as usize)]
+    }
+
     fn push(&mut self, event: PositionedEvent) -> Result<(), PositionedError> {
         if self.events.len() >= self.limits.max_events {
             return Err(PositionedError::TooManyEvents {
@@ -87,12 +94,23 @@ impl Lowerer<'_> {
         let mut run = RunBuilder::default();
 
         for child in &this_box.children {
+            let node_ordinal = self.node_ordinal(child);
             match child {
                 PageNode::Char { font_id, ch, width } => {
                     if run.font_id.is_some_and(|current| current != *font_id) {
                         run.flush(self)?;
                     }
-                    run.character(*font_id, *ch, self.cur_h, base_line, self.limits)?;
+                    run.character(
+                        *font_id,
+                        *ch,
+                        PositionedSourceRef {
+                            node_ordinal,
+                            source_index: 0,
+                        },
+                        self.cur_h,
+                        base_line,
+                        self.limits,
+                    )?;
                     self.cur_h = add(self.cur_h, *width)?;
                 }
                 PageNode::Lig {
@@ -104,8 +122,22 @@ impl Lowerer<'_> {
                     if run.font_id.is_some_and(|current| current != *font_id) {
                         run.flush(self)?;
                     }
-                    for code in source {
-                        run.character(*font_id, *code, self.cur_h, base_line, self.limits)?;
+                    for (source_index, code) in source.iter().enumerate() {
+                        run.character(
+                            *font_id,
+                            *code,
+                            PositionedSourceRef {
+                                node_ordinal,
+                                source_index: u16::try_from(source_index).map_err(|_| {
+                                    PositionedError::TextRunTooLong {
+                                        limit: self.limits.max_run_units,
+                                    }
+                                })?,
+                            },
+                            self.cur_h,
+                            base_line,
+                            self.limits,
+                        )?;
                     }
                     self.cur_h = add(self.cur_h, *width)?;
                 }
@@ -442,6 +474,7 @@ struct RunBuilder {
     x: Option<Scaled>,
     baseline: Option<Scaled>,
     units: Vec<TextUnit>,
+    sources: Vec<Option<PositionedSourceRef>>,
     pending_space: bool,
 }
 
@@ -450,6 +483,7 @@ impl RunBuilder {
         &mut self,
         font_id: u32,
         ch: u32,
+        source: PositionedSourceRef,
         x: Scaled,
         baseline: Scaled,
         limits: PositionedLimits,
@@ -462,15 +496,16 @@ impl RunBuilder {
             self.baseline = Some(baseline);
         }
         if self.pending_space && !self.units.is_empty() {
-            self.add_unit(TextUnit::Space, limits)?;
+            self.add_unit(TextUnit::Space, None, limits)?;
         }
         self.pending_space = false;
-        self.add_unit(TextUnit::Code(code), limits)
+        self.add_unit(TextUnit::Code(code), Some(source), limits)
     }
 
     fn add_unit(
         &mut self,
         unit: TextUnit,
+        source: Option<PositionedSourceRef>,
         limits: PositionedLimits,
     ) -> Result<(), PositionedError> {
         if self.units.len() >= limits.max_run_units {
@@ -479,6 +514,7 @@ impl RunBuilder {
             });
         }
         self.units.push(unit);
+        self.sources.push(source);
         Ok(())
     }
 
@@ -493,16 +529,51 @@ impl RunBuilder {
             (self.font_id.take(), self.x.take(), self.baseline.take())
         {
             let units = std::mem::take(&mut self.units);
+            let sources = std::mem::take(&mut self.sources);
             self.pending_space = false;
             lowerer.push(PositionedEvent::TextRun(PositionedTextRun {
                 x,
                 baseline,
                 font_id,
                 units,
+                sources,
             }))?;
         }
         Ok(())
     }
+}
+
+fn index_nodes(root: &PageNode) -> BTreeMap<usize, u32> {
+    let mut result = BTreeMap::new();
+    let mut stack = vec![root];
+    let mut ordinal = 0_u32;
+    while let Some(node) = stack.pop() {
+        result.insert(node as *const PageNode as usize, ordinal);
+        ordinal = ordinal
+            .checked_add(1)
+            .expect("validated artifact node count fits u32");
+        match node {
+            PageNode::HList(node) | PageNode::VList(node) => {
+                stack.extend(node.children.iter().rev());
+            }
+            PageNode::Glue {
+                leader: Some(LeaderPayload::HList(node) | LeaderPayload::VList(node)),
+                ..
+            } => stack.extend(node.children.iter().rev()),
+            PageNode::Disc {
+                pre, post, replace, ..
+            } => {
+                stack.extend(replace.iter().rev());
+                stack.extend(post.iter().rev());
+                stack.extend(pre.iter().rev());
+            }
+            PageNode::Insert { content, .. } | PageNode::Adjust(content) => {
+                stack.extend(content.iter().rev());
+            }
+            _ => {}
+        }
+    }
+    result
 }
 
 fn glue_width(

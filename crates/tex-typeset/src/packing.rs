@@ -363,7 +363,7 @@ fn measure_hlist(state: &impl TypesetState, nodes: NodeList<'_>) -> Measurement 
         }
         let node = nodes.get(index).expect("index is within node list");
         match node {
-            NodeRef::Char { font, ch } | NodeRef::Lig { font, ch, .. } => {
+            NodeRef::Char { font, ch, .. } | NodeRef::Lig { font, ch, .. } => {
                 if let Ok(code) = u8::try_from(ch as u32)
                     && let Some(metrics) = state.font_char_metrics(font, code)
                 {
@@ -436,7 +436,7 @@ fn measure_hlist_nodes(state: &impl TypesetState, nodes: &[Node]) -> Measurement
     let mut meas = Measurement::ZERO;
     for node in nodes {
         match node {
-            Node::Char { font, ch } | Node::Lig { font, ch, .. } => {
+            Node::Char { font, ch, .. } | Node::Lig { font, ch, .. } => {
                 if let Ok(code) = u8::try_from(*ch as u32)
                     && let Some(metrics) = state.font_char_metrics(*font, code)
                 {

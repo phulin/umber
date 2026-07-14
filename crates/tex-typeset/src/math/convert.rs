@@ -640,7 +640,7 @@ pub(crate) fn clean_box(
         MathField::Empty => ctx.layout.hpack(ctx.layout.empty()),
         MathField::MathChar(ch) | MathField::MathTextChar(ch) => {
             if let Some(fetched) = fetch(ctx.state, *ch, style) {
-                char_box(ctx, fetched)
+                char_box(ctx, fetched, ch.origin)
             } else {
                 ctx.layout.hpack(ctx.layout.empty())
             }
@@ -684,6 +684,7 @@ pub(crate) fn make_character_nucleus<S: MathTypesetState>(
         font: fetched.font,
         ch: fetched.ch,
         metrics: fetched.metrics,
+        origin: ch.origin,
     };
     if matches!(subscript, MathField::Empty) && delta.raw() != 0 {
         let kern = MathNode::Kern {
@@ -700,12 +701,14 @@ pub(crate) fn make_character_nucleus<S: MathTypesetState>(
 pub(crate) fn char_box(
     ctx: &mut Context<'_, impl MathTypesetState>,
     fetched: FetchedChar,
+    origin: tex_state::token::OriginId,
 ) -> MathBox {
     // AppG rule 17
     let list = ctx.layout.hlist([MathNode::Char {
         font: fetched.font,
         ch: fetched.ch,
         metrics: fetched.metrics,
+        origin,
     }]);
     MathBox {
         width: add(fetched.metrics.width, fetched.metrics.italic_correction),
@@ -787,13 +790,14 @@ pub(crate) fn source_list(
 
 pub(crate) fn source_node(ctx: &mut Context<'_, impl MathTypesetState>, node: &Node) -> MathNode {
     match node {
-        Node::Char { font, ch } => {
+        Node::Char { font, ch, origin } => {
             let code = u8::try_from(u32::from(*ch)).ok();
             if let Some(metrics) = code.and_then(|code| ctx.state.font_char_metrics(*font, code)) {
                 MathNode::Char {
                     font: *font,
                     ch: *ch,
                     metrics,
+                    origin: *origin,
                 }
             } else {
                 MathNode::Opaque(Box::new(node.clone()))

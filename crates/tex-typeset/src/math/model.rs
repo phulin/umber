@@ -119,6 +119,7 @@ pub enum MathNode {
         font: FontId,
         ch: char,
         metrics: CharMetrics,
+        origin: tex_state::token::OriginId,
     },
     Kern {
         amount: Scaled,

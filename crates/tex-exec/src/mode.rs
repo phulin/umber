@@ -7,6 +7,7 @@ use tex_state::ids::TokenListId;
 use tex_state::math::FractionThickness;
 use tex_state::node::Node;
 use tex_state::scaled::Scaled;
+use tex_state::token::OriginId;
 use tex_state::{EngineBoundaryHasher, Universe};
 
 use crate::ExecError;
@@ -142,9 +143,9 @@ impl ModeList {
         }
     }
 
-    pub(crate) fn begin_pending_hchars(&mut self, font: FontId, ch: char) {
+    pub(crate) fn begin_pending_hchars(&mut self, font: FontId, ch: char, origin: OriginId) {
         debug_assert!(self.pending_hchars.is_none());
-        self.pending_hchars = Some(PendingHRun::new(font, ch, self.nodes.len()));
+        self.pending_hchars = Some(PendingHRun::new(font, ch, origin, self.nodes.len()));
     }
 
     pub(crate) fn pending_hchars(&self) -> Option<PendingHRun> {
@@ -498,6 +499,7 @@ impl AlignState {
 pub struct PendingHChar {
     pub font: FontId,
     pub ch: char,
+    pub origin: OriginId,
 }
 
 /// Streaming state for the unresolved tail of one horizontal character run.
@@ -509,10 +511,10 @@ pub(crate) struct PendingHRun {
 }
 
 impl PendingHRun {
-    pub(crate) fn new(font: FontId, ch: char, node_start: usize) -> Self {
+    pub(crate) fn new(font: FontId, ch: char, origin: OriginId, node_start: usize) -> Self {
         Self {
-            first: PendingHChar { font, ch },
-            current: PendingHRunChar::new(font, ch),
+            first: PendingHChar { font, ch, origin },
+            current: PendingHRunChar::new(font, ch, origin),
             node_start,
         }
     }
@@ -524,15 +526,17 @@ pub(crate) struct PendingHRunChar {
     pub(crate) font: FontId,
     pub(crate) ch: char,
     pub(crate) orig: Vec<char>,
+    pub(crate) origins: Vec<OriginId>,
     pub(crate) ligature_present: bool,
 }
 
 impl PendingHRunChar {
-    pub(crate) fn new(font: FontId, ch: char) -> Self {
+    pub(crate) fn new(font: FontId, ch: char, origin: OriginId) -> Self {
         Self {
             font,
             ch,
             orig: vec![ch],
+            origins: vec![origin],
             ligature_present: false,
         }
     }

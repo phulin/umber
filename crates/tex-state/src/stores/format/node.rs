@@ -182,11 +182,11 @@ pub(super) struct FormatMathListNode {
 impl FormatNode {
     pub(super) fn capture(stores: &Stores, node: Node, roots: &mut SurvivorRoots) -> Self {
         match node {
-            Node::Char { font, ch } => Self::Char {
+            Node::Char { font, ch, .. } => Self::Char {
                 font: font.raw(),
                 ch,
             },
-            Node::Lig { font, ch, orig } => Self::Lig {
+            Node::Lig { font, ch, orig, .. } => Self::Lig {
                 font: font.raw(),
                 ch,
                 orig,
@@ -265,10 +265,12 @@ impl FormatNode {
             Self::Char { font, ch } => Node::Char {
                 font: font_id(stores, font)?,
                 ch,
+                origin: crate::token::OriginId::UNKNOWN,
             },
             Self::Lig { font, ch, orig } => Node::Lig {
                 font: font_id(stores, font)?,
                 ch,
+                origins: vec![crate::token::OriginId::UNKNOWN; orig.len()],
                 orig,
             },
             Self::Kern { amount, kind } => Node::Kern { amount, kind },

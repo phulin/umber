@@ -5,18 +5,21 @@ use crate::node::{
     BoxNode, Direction, DiscKind, GlueKind, KernKind, Node, UnsetNode, UnsetNodeFields,
 };
 use crate::scaled::Scaled;
+use crate::token::OriginId;
 
 /// A zero-allocation logical view of one compact arena node.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum NodeRef<'a> {
     Char {
         font: crate::ids::FontId,
         ch: char,
+        origin: OriginId,
     },
     Lig {
         font: crate::ids::FontId,
         ch: char,
         orig: &'a [char],
+        origins: &'a [OriginId],
     },
     Kern {
         amount: Scaled,
@@ -67,19 +70,60 @@ pub enum NodeRef<'a> {
     Adjust(NodeListId),
 }
 
+impl PartialEq for NodeRef<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::Char {
+                    font: left_font,
+                    ch: left_ch,
+                    ..
+                },
+                Self::Char {
+                    font: right_font,
+                    ch: right_ch,
+                    ..
+                },
+            ) => left_font == right_font && left_ch == right_ch,
+            (
+                Self::Lig {
+                    font: left_font,
+                    ch: left_ch,
+                    orig: left_orig,
+                    ..
+                },
+                Self::Lig {
+                    font: right_font,
+                    ch: right_ch,
+                    orig: right_orig,
+                    ..
+                },
+            ) => left_font == right_font && left_ch == right_ch && left_orig == right_orig,
+            _ => self.to_owned() == other.to_owned(),
+        }
+    }
+}
+
 impl NodeRef<'_> {
     /// Materializes an owned node for builder/list-surgery output, never for storage.
     #[must_use]
     pub fn to_owned(&self) -> Node {
         match self {
-            Self::Char { font, ch } => Node::Char {
+            Self::Char { font, ch, origin } => Node::Char {
                 font: *font,
                 ch: *ch,
+                origin: *origin,
             },
-            Self::Lig { font, ch, orig } => Node::Lig {
+            Self::Lig {
+                font,
+                ch,
+                orig,
+                origins,
+            } => Node::Lig {
                 font: *font,
                 ch: *ch,
                 orig: orig.to_vec(),
+                origins: origins.to_vec(),
             },
             Self::Kern { amount, kind } => Node::Kern {
                 amount: *amount,
@@ -245,6 +289,7 @@ impl<'a> NodeList<'a> {
         }
         Some(CharRun {
             words: &self.storage.words[self.start + index..end],
+            origins: &self.storage.origins[self.start + index..end],
             font,
         })
     }
@@ -315,6 +360,7 @@ impl Iterator for CharCodes<'_> {
 #[derive(Clone, Copy, Debug)]
 pub struct CharRun<'a> {
     words: &'a [NodeWord],
+    origins: &'a [OriginId],
     font: crate::ids::FontId,
 }
 
@@ -333,6 +379,9 @@ impl<'a> CharRun<'a> {
     }
     pub fn codes(self) -> impl ExactSizeIterator<Item = u8> + 'a {
         self.words.iter().map(|word| word.payload() as u8)
+    }
+    pub fn origins(self) -> impl ExactSizeIterator<Item = OriginId> + 'a {
+        self.origins.iter().copied()
     }
 }
 
@@ -386,11 +435,13 @@ impl NodeStorage {
             0 => NodeRef::Char {
                 font: crate::ids::FontId::new((payload >> 21) as u32),
                 ch: char::from_u32((payload & 0x1f_ffff) as u32).expect("invalid stored scalar"),
+                origin: self.origins[index],
             },
             1 => NodeRef::Lig {
                 font: self.ligatures[side].0,
                 ch: self.ligatures[side].1,
                 orig: &self.ligatures[side].2,
+                origins: &self.ligatures[side].3,
             },
             2 => NodeRef::Kern {
                 amount: Scaled::from_raw(payload as u32 as i32),

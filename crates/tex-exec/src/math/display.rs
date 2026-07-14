@@ -478,7 +478,7 @@ fn pre_display_node_width(
     node: tex_state::node_arena::NodeRef<'_>,
 ) -> (Scaled, bool, bool) {
     match node {
-        tex_state::node_arena::NodeRef::Char { font, ch }
+        tex_state::node_arena::NodeRef::Char { font, ch, .. }
         | tex_state::node_arena::NodeRef::Lig { font, ch, .. } => {
             let width = u8::try_from(ch as u32)
                 .ok()

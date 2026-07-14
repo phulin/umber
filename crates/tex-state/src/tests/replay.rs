@@ -343,6 +343,7 @@ fn build_nodes(
         Node::Char {
             font: FontId::testing_new(0),
             ch: seed.ch,
+            origin: crate::token::OriginId::UNKNOWN,
         },
         Node::Kern {
             amount: Scaled::from_raw(seed.amount),
@@ -729,7 +730,7 @@ impl TreeCache {
             .nodes(id)
             .iter()
             .map(|node| match node {
-                crate::node_arena::NodeRef::Char { font, ch } => TreeNode::Char {
+                crate::node_arena::NodeRef::Char { font, ch, .. } => TreeNode::Char {
                     font: font.raw(),
                     ch,
                 },

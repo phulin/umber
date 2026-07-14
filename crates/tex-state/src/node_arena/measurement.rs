@@ -149,9 +149,10 @@ pub fn peak_node_storage_measurement() -> Option<NodeStorageObservation> {
 
 impl NodeStorage {
     #[cfg(feature = "profiling-stats")]
-    pub(super) fn capacity_signature(&self) -> [usize; 32] {
+    pub(super) fn capacity_signature(&self) -> [usize; 33] {
         [
             self.words.capacity(),
+            self.origins.capacity(),
             self.ligatures.capacity(),
             self.boxes.rows.capacity(),
             self.unsets.kind.capacity(),
@@ -207,6 +208,7 @@ impl NodeStorage {
             }};
         }
         add!(self.words);
+        add!(self.origins);
         add!(self.ligatures);
         add!(self.boxes.rows);
         add!(self.unsets.kind);
@@ -238,9 +240,12 @@ impl NodeStorage {
         add!(self.choices);
         add!(self.math_lists);
         add!(self.adjusts);
-        for (_, _, source) in &self.ligatures {
+        for (_, _, source, origins) in &self.ligatures {
             logical += (source.len() * core::mem::size_of::<char>()) as u64;
             retained += (source.capacity() * core::mem::size_of::<char>()) as u64;
+            logical += (origins.len() * core::mem::size_of::<crate::token::OriginId>()) as u64;
+            retained +=
+                (origins.capacity() * core::mem::size_of::<crate::token::OriginId>()) as u64;
         }
         for whatsit in &self.whatsits {
             match whatsit {
@@ -272,6 +277,7 @@ impl NodeStorage {
             };
         }
         column!("words", &self.words);
+        column!("origins", &self.origins);
         column!("ligatures", &self.ligatures);
         column!("boxes.rows", &self.boxes.rows);
         column!("unsets.kind", &self.unsets.kind);
@@ -313,11 +319,11 @@ impl NodeStorage {
             format!("{prefix}.ligatures.owned_sources"),
             self.ligatures
                 .iter()
-                .map(|(_, _, source)| source.len() * core::mem::size_of::<char>())
+                .map(|(_, _, source, _)| source.len() * core::mem::size_of::<char>())
                 .sum(),
             self.ligatures
                 .iter()
-                .map(|(_, _, source)| source.capacity() * core::mem::size_of::<char>())
+                .map(|(_, _, source, _)| source.capacity() * core::mem::size_of::<char>())
                 .sum(),
         ));
 

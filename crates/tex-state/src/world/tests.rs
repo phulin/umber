@@ -38,6 +38,22 @@ fn content_hash_is_stable_for_same_bytes() {
 }
 
 #[test]
+fn artifact_identity_excludes_render_provenance() {
+    let bytes = b"page artifact".to_vec();
+    let hash = ContentHash::for_domain(ContentDomain::Artifact, &bytes);
+    let first = CommittedArtifact::new(hash, bytes.clone(), vec![vec![OriginId::from_raw(1)]]);
+    let second = CommittedArtifact::new(
+        hash,
+        bytes,
+        vec![vec![OriginId::from_raw(2), OriginId::from_raw(3)]],
+    );
+
+    assert_eq!(first, second);
+    assert_ne!(first.render_origins(), second.render_origins());
+    assert!(second.render_provenance_bytes() > first.render_provenance_bytes());
+}
+
+#[test]
 fn memory_world_reads_and_records_hashes() {
     let mut world = World::memory();
     world

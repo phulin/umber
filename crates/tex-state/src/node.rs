@@ -6,19 +6,24 @@ use crate::ids::{FontId, GlueId, NodeListId, TokenListId};
 use crate::math::MathField;
 use crate::math::{MathChoice, MathFraction, MathListNode, MathNoad, MathStyle};
 use crate::scaled::{GlueSetRatio, Scaled};
+use crate::token::OriginId;
 use crate::world::{PrintSink, StreamSlot};
 
 /// A frozen TeX node.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum Node {
     Char {
         font: FontId,
         ch: char,
+        /// Diagnostic-only source provenance; excluded from semantic identity.
+        origin: OriginId,
     },
     Lig {
         font: FontId,
         ch: char,
         orig: Vec<char>,
+        /// One origin per original character consumed by the ligature.
+        origins: Vec<OriginId>,
     },
     Kern {
         amount: Scaled,
@@ -67,6 +72,148 @@ pub enum Node {
     MathList(MathListNode),
     Nonscript,
     Adjust(NodeListId),
+}
+
+impl PartialEq for Node {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::Char {
+                    font: left_font,
+                    ch: left_ch,
+                    ..
+                },
+                Self::Char {
+                    font: right_font,
+                    ch: right_ch,
+                    ..
+                },
+            ) => left_font == right_font && left_ch == right_ch,
+            (
+                Self::Lig {
+                    font: left_font,
+                    ch: left_ch,
+                    orig: left_orig,
+                    ..
+                },
+                Self::Lig {
+                    font: right_font,
+                    ch: right_ch,
+                    orig: right_orig,
+                    ..
+                },
+            ) => left_font == right_font && left_ch == right_ch && left_orig == right_orig,
+            (
+                Self::Kern {
+                    amount: left_amount,
+                    kind: left_kind,
+                },
+                Self::Kern {
+                    amount: right_amount,
+                    kind: right_kind,
+                },
+            ) => left_amount == right_amount && left_kind == right_kind,
+            (
+                Self::Glue {
+                    spec: left_spec,
+                    kind: left_kind,
+                    leader: left_leader,
+                },
+                Self::Glue {
+                    spec: right_spec,
+                    kind: right_kind,
+                    leader: right_leader,
+                },
+            ) => left_spec == right_spec && left_kind == right_kind && left_leader == right_leader,
+            (Self::Penalty(left), Self::Penalty(right)) => left == right,
+            (
+                Self::Rule {
+                    width: left_width,
+                    height: left_height,
+                    depth: left_depth,
+                },
+                Self::Rule {
+                    width: right_width,
+                    height: right_height,
+                    depth: right_depth,
+                },
+            ) => {
+                left_width == right_width
+                    && left_height == right_height
+                    && left_depth == right_depth
+            }
+            (Self::HList(left), Self::HList(right)) | (Self::VList(left), Self::VList(right)) => {
+                left == right
+            }
+            (Self::Unset(left), Self::Unset(right)) => left == right,
+            (
+                Self::Disc {
+                    kind: left_kind,
+                    pre: left_pre,
+                    post: left_post,
+                    replace: left_replace,
+                },
+                Self::Disc {
+                    kind: right_kind,
+                    pre: right_pre,
+                    post: right_post,
+                    replace: right_replace,
+                },
+            ) => {
+                left_kind == right_kind
+                    && left_pre == right_pre
+                    && left_post == right_post
+                    && left_replace == right_replace
+            }
+            (
+                Self::Mark {
+                    class: left_class,
+                    tokens: left_tokens,
+                },
+                Self::Mark {
+                    class: right_class,
+                    tokens: right_tokens,
+                },
+            ) => left_class == right_class && left_tokens == right_tokens,
+            (
+                Self::Ins {
+                    class: left_class,
+                    size: left_size,
+                    split_top_skip: left_split_top_skip,
+                    split_max_depth: left_split_max_depth,
+                    floating_penalty: left_floating_penalty,
+                    content: left_content,
+                },
+                Self::Ins {
+                    class: right_class,
+                    size: right_size,
+                    split_top_skip: right_split_top_skip,
+                    split_max_depth: right_split_max_depth,
+                    floating_penalty: right_floating_penalty,
+                    content: right_content,
+                },
+            ) => {
+                left_class == right_class
+                    && left_size == right_size
+                    && left_split_top_skip == right_split_top_skip
+                    && left_split_max_depth == right_split_max_depth
+                    && left_floating_penalty == right_floating_penalty
+                    && left_content == right_content
+            }
+            (Self::Whatsit(left), Self::Whatsit(right)) => left == right,
+            (Self::MathOn(left), Self::MathOn(right))
+            | (Self::MathOff(left), Self::MathOff(right)) => left == right,
+            (Self::Direction(left), Self::Direction(right)) => left == right,
+            (Self::MathNoad(left), Self::MathNoad(right)) => left == right,
+            (Self::FractionNoad(left), Self::FractionNoad(right)) => left == right,
+            (Self::MathStyle(left), Self::MathStyle(right)) => left == right,
+            (Self::MathChoice(left), Self::MathChoice(right)) => left == right,
+            (Self::MathList(left), Self::MathList(right)) => left == right,
+            (Self::Nonscript, Self::Nonscript) => true,
+            (Self::Adjust(left), Self::Adjust(right)) => left == right,
+            _ => false,
+        }
+    }
 }
 
 #[cfg(feature = "profiling-stats")]

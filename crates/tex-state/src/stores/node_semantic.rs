@@ -47,12 +47,12 @@ impl Stores {
 
     pub(super) fn hash_node_semantic_identity(&self, node: &Node, hasher: &mut StateHasher) {
         match node {
-            Node::Char { font, ch } => {
+            Node::Char { font, ch, .. } => {
                 hasher.tag(0);
                 self.hash_font_semantic(*font, hasher);
                 hasher.u32(*ch as u32);
             }
-            Node::Lig { font, ch, orig } => {
+            Node::Lig { font, ch, orig, .. } => {
                 hasher.tag(1);
                 self.hash_font_semantic(*font, hasher);
                 hasher.u32(*ch as u32);

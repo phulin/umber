@@ -67,11 +67,13 @@ fn owned_and_borrowed_semantic_hash_paths_match_every_node_variant() {
         Node::Char {
             font: NULL_FONT,
             ch: 'x',
+            origin: crate::token::OriginId::UNKNOWN,
         },
         Node::Lig {
             font: NULL_FONT,
             ch: 'f',
             orig: vec!['f', 'i'],
+            origins: vec![crate::token::OriginId::UNKNOWN; 2],
         },
         Node::Kern {
             amount: Scaled::from_raw(-6),
@@ -233,6 +235,7 @@ fn frozen_font_semantics_prohibit_late_naming_and_rollback_unseals() {
     let list = stores.freeze_node_list(&[Node::Char {
         font: NULL_FONT,
         ch: 'x',
+        origin: crate::token::OriginId::UNKNOWN,
     }]);
     let semantic_id = stores.node_semantic_id(list);
     let late = stores.intern("late-font-name");
@@ -302,6 +305,65 @@ fn node_semantic_ids_exclude_token_provenance() {
     assert_eq!(
         stores.node_semantic_id(first),
         stores.node_semantic_id(second)
+    );
+}
+
+#[test]
+fn character_origins_are_retained_but_excluded_from_node_semantics() {
+    let mut stores = Stores::new();
+    let first_origin = stores.synthetic_origin(SyntheticOriginKind::Test);
+    let second_origin = stores.synthetic_origin(SyntheticOriginKind::Engine);
+    let first = stores.freeze_node_list(&[Node::Char {
+        font: NULL_FONT,
+        ch: 'x',
+        origin: first_origin,
+    }]);
+    let second = stores.freeze_node_list(&[Node::Char {
+        font: NULL_FONT,
+        ch: 'x',
+        origin: second_origin,
+    }]);
+
+    assert_eq!(
+        stores.node_semantic_id(first),
+        stores.node_semantic_id(second)
+    );
+    let Some(crate::node_arena::NodeRef::Char {
+        origin: retained_first,
+        ..
+    }) = stores.nodes(first).first()
+    else {
+        panic!("first character")
+    };
+    let Some(crate::node_arena::NodeRef::Char {
+        origin: retained_second,
+        ..
+    }) = stores.nodes(second).first()
+    else {
+        panic!("second character")
+    };
+    assert_eq!(retained_first, first_origin);
+    assert_eq!(retained_second, second_origin);
+
+    let first_math = stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::Normal(NoadClass::Ord),
+        MathField::MathChar(crate::math::MathChar {
+            family: 1,
+            character: 'x',
+            origin: first_origin,
+        }),
+    ))]);
+    let second_math = stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::Normal(NoadClass::Ord),
+        MathField::MathChar(crate::math::MathChar {
+            family: 1,
+            character: 'x',
+            origin: second_origin,
+        }),
+    ))]);
+    assert_eq!(
+        stores.node_semantic_id(first_math),
+        stores.node_semantic_id(second_math)
     );
 }
 
@@ -1023,13 +1085,15 @@ fn node_list_builder_finishes_through_stores_boundary() {
     builder.push(Node::Char {
         font: NULL_FONT,
         ch: 'x',
+        origin: crate::token::OriginId::UNKNOWN,
     });
     let reused = stores.finish_node_list(&mut builder);
     assert_eq!(
         stores.nodes(reused),
         &[Node::Char {
             font: NULL_FONT,
-            ch: 'x'
+            ch: 'x',
+            origin: crate::token::OriginId::UNKNOWN,
         }]
     );
 }
@@ -1783,7 +1847,8 @@ fn same_value_local_box_assignment_preserves_live_register_owner() {
         stores.nodes(survivor),
         &[Node::Char {
             font: NULL_FONT,
-            ch: 'a'
+            ch: 'a',
+            origin: crate::token::OriginId::UNKNOWN,
         }]
     );
 }
@@ -1860,7 +1925,8 @@ fn promoted_nested_box_remaps_children_to_same_survivor_root() {
         stores.nodes(middle_box.children),
         &[Node::Char {
             font: NULL_FONT,
-            ch: 'x'
+            ch: 'x',
+            origin: crate::token::OriginId::UNKNOWN,
         }]
     );
 }
@@ -1907,7 +1973,8 @@ fn promotion_canonicalizes_shared_survivor_children_into_new_root() {
         stores.nodes(first.children),
         &[Node::Char {
             font: NULL_FONT,
-            ch: 'x'
+            ch: 'x',
+            origin: crate::token::OriginId::UNKNOWN,
         }]
     );
 }
@@ -2000,7 +2067,8 @@ fn promotion_patches_every_child_bearing_compact_row() {
                 stores.nodes(child),
                 &[Node::Char {
                     font: NULL_FONT,
-                    ch: 'c'
+                    ch: 'c',
+                    origin: crate::token::OriginId::UNKNOWN,
                 }]
             );
             child_count += 1;
@@ -2135,7 +2203,8 @@ fn promotion_handles_pathologically_deep_box_nesting() {
         stores.nodes(promoted),
         &[Node::Char {
             font: NULL_FONT,
-            ch: 'x'
+            ch: 'x',
+            origin: crate::token::OriginId::UNKNOWN,
         }]
     );
 }
@@ -2154,6 +2223,7 @@ fn one_char(stores: &mut Stores, ch: char) -> NodeListId {
     stores.freeze_node_list(&[Node::Char {
         font: NULL_FONT,
         ch,
+        origin: crate::token::OriginId::UNKNOWN,
     }])
 }
 

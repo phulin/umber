@@ -73,6 +73,15 @@ pub struct PositionedTextRun {
     pub baseline: Scaled,
     pub font_id: u32,
     pub units: Vec<TextUnit>,
+    /// Artifact-node addresses aligned with `units`; spaces have no source.
+    pub sources: Vec<Option<PositionedSourceRef>>,
+}
+
+/// Stable address of one source character within the current page artifact.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PositionedSourceRef {
+    pub node_ordinal: u32,
+    pub source_index: u16,
 }
 
 /// Browser-shapeable source content. Codes are interpreted only by the

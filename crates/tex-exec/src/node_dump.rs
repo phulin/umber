@@ -154,7 +154,7 @@ fn dump_node(
         Node::Penalty(value) => {
             let _ = writeln!(out, "\\penalty {value}");
         }
-        Node::Char { font, ch } => {
+        Node::Char { font, ch, .. } => {
             let _ = writeln!(out, "{} {}", dump_font(stores, *font), dump_char(*ch));
         }
         Node::Lig { font, ch, .. } => {

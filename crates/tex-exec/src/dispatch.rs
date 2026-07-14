@@ -155,7 +155,7 @@ pub(crate) fn dispatch_delivered_token_with_context(
             Ok(DispatchAction::Continue)
         }
         Meaning::CharGiven(ch) => {
-            assignments::append_given_char(nest, input, stores, ch)?;
+            assignments::append_given_char(nest, input, stores, ch, origin)?;
             Ok(DispatchAction::Continue)
         }
         Meaning::CharToken { ch, cat } => dispatch_character_token(
@@ -280,7 +280,7 @@ fn dispatch_character_token(
             cat: Catcode::Space,
             ..
         } => {
-            let _ = assignments::try_append_character(nest, token, stores)?;
+            let _ = assignments::try_append_character(nest, traced, stores)?;
             Ok(DispatchAction::Continue)
         }
         Token::Char {
@@ -299,10 +299,10 @@ fn dispatch_character_token(
                 start_paragraph_before_replaying_character(nest, traced, input, stores)?;
                 return Ok(DispatchAction::Continue);
             }
-            if assignments::try_append_character(nest, token, stores)? {
+            if assignments::try_append_character(nest, traced, stores)? {
                 return Ok(DispatchAction::Continue);
             }
-            assignments::append_given_char(nest, input, stores, ch)?;
+            assignments::append_given_char(nest, input, stores, ch, origin)?;
             Ok(DispatchAction::Continue)
         }
         Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => {

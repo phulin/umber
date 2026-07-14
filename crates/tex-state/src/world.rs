@@ -9,6 +9,7 @@
 use crate::env::banks::IntParam;
 use crate::identity::{HandleIdentity, IdentityAllocator, IdentityMark};
 use crate::ids::TokenListId;
+use crate::token::OriginId;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fmt;
@@ -41,27 +42,40 @@ pub enum WorldCommitMode {
 /// code can consume these bytes without rereading and reverifying the
 /// content-addressed store.  The content id remains the authoritative durable
 /// reference for replay and out-of-process drivers.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct CommittedArtifact {
     hash: ContentHash,
     bytes: Arc<[u8]>,
+    render_origins: Arc<[Arc<[OriginId]>]>,
 }
 
 /// Artifact bytes paired with their already-computed content identity.
 ///
 /// Construction hashes the bytes exactly once. Private fields keep identity
 /// and payload inseparable across the shipout commit boundary.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct VerifiedArtifact {
     hash: ContentHash,
     bytes: Vec<u8>,
+    render_origins: Vec<Vec<OriginId>>,
 }
 
 impl VerifiedArtifact {
     #[must_use]
     pub fn new(bytes: Vec<u8>) -> Self {
         let hash = ContentHash::for_domain(ContentDomain::Artifact, &bytes);
-        Self { hash, bytes }
+        Self {
+            hash,
+            bytes,
+            render_origins: Vec::new(),
+        }
+    }
+
+    /// Attaches diagnostic-only origins in artifact-node preorder.
+    #[must_use]
+    pub fn with_render_origins(mut self, render_origins: Vec<Vec<OriginId>>) -> Self {
+        self.render_origins = render_origins;
+        self
     }
 
     #[must_use]
@@ -74,10 +88,18 @@ impl VerifiedArtifact {
         &self.bytes
     }
 
-    pub(crate) fn into_bytes(self) -> Vec<u8> {
-        self.bytes
+    pub(crate) fn into_parts(self) -> (Vec<u8>, Vec<Vec<OriginId>>) {
+        (self.bytes, self.render_origins)
     }
 }
+
+impl PartialEq for VerifiedArtifact {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash == other.hash && self.bytes == other.bytes
+    }
+}
+
+impl Eq for VerifiedArtifact {}
 
 impl CommittedArtifact {
     #[must_use]
@@ -90,13 +112,50 @@ impl CommittedArtifact {
         &self.bytes
     }
 
-    fn new(hash: ContentHash, bytes: Vec<u8>) -> Self {
+    /// Diagnostic-only origins aligned with artifact nodes in preorder.
+    #[must_use]
+    pub fn render_origins(&self) -> &[Arc<[OriginId]>] {
+        &self.render_origins
+    }
+
+    /// Retained bytes used by the diagnostic-only provenance sidecar.
+    #[must_use]
+    pub fn render_provenance_bytes(&self) -> usize {
+        self.render_origins
+            .len()
+            .saturating_mul(std::mem::size_of::<Arc<[OriginId]>>())
+            .saturating_add(
+                self.render_origins
+                    .iter()
+                    .map(|origins| {
+                        origins
+                            .len()
+                            .saturating_mul(std::mem::size_of::<OriginId>())
+                    })
+                    .sum::<usize>(),
+            )
+    }
+
+    fn new(hash: ContentHash, bytes: Vec<u8>, render_origins: Vec<Vec<OriginId>>) -> Self {
         Self {
             hash,
             bytes: bytes.into(),
+            render_origins: render_origins
+                .into_iter()
+                .map(Arc::<[OriginId]>::from)
+                .collect::<Vec<_>>()
+                .into(),
         }
     }
 }
+
+impl PartialEq for CommittedArtifact {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash == other.hash && self.bytes == other.bytes
+    }
+}
+
+impl Eq for CommittedArtifact {}
 
 /// Bytes returned from a content-addressed `World` read.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1295,9 +1354,18 @@ impl World {
         self.committed_artifacts.as_slice()
     }
 
-    pub(crate) fn record_artifact_commit(&mut self, hash: ContentHash, bytes: Vec<u8>) {
+    pub(crate) fn record_artifact_commit(
+        &mut self,
+        hash: ContentHash,
+        bytes: Vec<u8>,
+        render_origins: Vec<Vec<OriginId>>,
+    ) {
         Arc::make_mut(&mut self.artifact_commits).push(hash);
-        Arc::make_mut(&mut self.committed_artifacts).push(CommittedArtifact::new(hash, bytes));
+        Arc::make_mut(&mut self.committed_artifacts).push(CommittedArtifact::new(
+            hash,
+            bytes,
+            render_origins,
+        ));
     }
 
     pub fn open_out(&mut self, slot: StreamSlot, path: impl Into<PathBuf>) {
@@ -1594,7 +1662,12 @@ impl World {
         let artifacts = self
             .committed_artifacts
             .iter()
-            .map(|artifact| artifact.bytes.len())
+            .map(|artifact| {
+                artifact
+                    .bytes
+                    .len()
+                    .saturating_add(artifact.render_provenance_bytes())
+            })
             .sum::<usize>();
         effects.saturating_add(artifacts)
     }

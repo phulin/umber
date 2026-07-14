@@ -49,7 +49,7 @@ fn scalar_hlist(state: &impl TypesetState, nodes: NodeList<'_>) -> Measurement {
     let mut out = Measurement::ZERO;
     for node in nodes {
         match node {
-            NodeRef::Char { font, ch } | NodeRef::Lig { font, ch, .. } => {
+            NodeRef::Char { font, ch, .. } | NodeRef::Lig { font, ch, .. } => {
                 if let Ok(code) = u8::try_from(ch as u32)
                     && let Some(metric) = state.font_char_metrics(font, code)
                 {
@@ -98,11 +98,13 @@ fn compact_char_runs_differentially_match_scalar_mixed_lists_and_overflow() {
                 0 => nodes.push(Node::Char {
                     font,
                     ch: '\u{100}',
+                    origin: tex_state::token::OriginId::UNKNOWN,
                 }),
                 1 => nodes.push(Node::Lig {
                     font,
                     ch: char::from(code),
                     orig: vec!['a', 'b'],
+                    origins: vec![tex_state::token::OriginId::UNKNOWN; 2],
                 }),
                 2 => nodes.push(Node::Kern {
                     amount: sp(seed as i32),
@@ -117,6 +119,7 @@ fn compact_char_runs_differentially_match_scalar_mixed_lists_and_overflow() {
                 _ => nodes.push(Node::Char {
                     font,
                     ch: char::from(code),
+                    origin: tex_state::token::OriginId::UNKNOWN,
                 }),
             }
         }

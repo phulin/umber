@@ -762,7 +762,7 @@ fn source_text_span_preserves_utf8_cursor_and_catcode_seams() {
 
     let mut text = Vec::new();
     assert_eq!(input.append_source_text_span(&mut stores, &mut text), 1);
-    assert_eq!(text, [char_token('é', Catcode::Other)]);
+    assert_eq!(text[0].token(), Some(char_token('é', Catcode::Other)));
     assert_eq!(
         input.current_source_frame().expect("live frame").column(),
         2
@@ -777,7 +777,10 @@ fn source_text_span_preserves_utf8_cursor_and_catcode_seams() {
 
     stores.set_catcode('b', Catcode::Other);
     assert_eq!(input.append_source_text_span(&mut stores, &mut text), 1);
-    assert_eq!(text.last(), Some(&char_token('b', Catcode::Other)));
+    assert_eq!(
+        text.last().and_then(|word| word.token()),
+        Some(char_token('b', Catcode::Other))
+    );
     assert_eq!(
         input.current_source_frame().expect("live frame").offset(),
         5
@@ -806,7 +809,7 @@ fn source_text_span_deopts_for_superscript_notation_and_alignment() {
     assert_eq!(input.append_source_text_span(&mut stores, &mut text), 0);
     input.finish_alignment();
     assert_eq!(input.append_source_text_span(&mut stores, &mut text), 1);
-    assert_eq!(text, [char_token('b', Catcode::Letter)]);
+    assert_eq!(text[0].token(), Some(char_token('b', Catcode::Letter)));
 }
 
 #[test]
@@ -854,7 +857,7 @@ fn source_text_span_deopts_for_pending_delivery_and_source_transition() {
         Some(pending)
     );
     assert_eq!(input.append_source_text_span(&mut stores, &mut text), 1);
-    assert_eq!(text, [char_token('b', Catcode::Letter)]);
+    assert_eq!(text[0].token(), Some(char_token('b', Catcode::Letter)));
 
     let mut transition = InputStack::new(MemoryInput::new("ab"));
     transition
@@ -871,7 +874,7 @@ fn source_text_span_deopts_for_pending_delivery_and_source_transition() {
         transition.append_source_text_span(&mut stores, &mut text),
         1
     );
-    assert_eq!(text, [char_token('d', Catcode::Letter)]);
+    assert_eq!(text[0].token(), Some(char_token('d', Catcode::Letter)));
     assert_eq!(
         transition.append_source_text_span(&mut stores, &mut text),
         0

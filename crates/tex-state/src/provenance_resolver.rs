@@ -25,6 +25,16 @@ pub struct ProvenanceResolver<'a> {
     trace_depth: usize,
 }
 
+/// Owned source range safe to return beyond the live provenance store.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedSourceLocation {
+    pub path: String,
+    pub start: u64,
+    pub end: u64,
+    pub line: u32,
+    pub column: u32,
+}
+
 impl<'a> ProvenanceResolver<'a> {
     /// Creates a resolver with the default bounded macro trace depth.
     #[must_use]
@@ -42,6 +52,41 @@ impl<'a> ProvenanceResolver<'a> {
             universe,
             trace_depth,
         }
+    }
+
+    /// Resolves one live origin to an owned physical source range.
+    #[must_use]
+    pub fn resolve_origin(&self, origin: OriginId) -> Option<ResolvedSourceLocation> {
+        self.resolve_origin_with_generated_path(origin, "<generated>")
+    }
+
+    /// Resolves one live origin while naming anonymous generated backing.
+    #[must_use]
+    pub fn resolve_origin_with_generated_path(
+        &self,
+        origin: OriginId,
+        generated_path: &str,
+    ) -> Option<ResolvedSourceLocation> {
+        let resolved = self.resolve_to_source(origin)?;
+        let display = self.source_display(resolved.source);
+        let region = self.universe.source_region(resolved.source.source())?;
+        let path = match region.backing {
+            SourceBacking::World(record) => self
+                .universe
+                .world()
+                .input_record(record)?
+                .path()
+                .to_string_lossy()
+                .into_owned(),
+            SourceBacking::Generated(_) => generated_path.to_owned(),
+        };
+        Some(ResolvedSourceLocation {
+            path,
+            start: resolved.source.byte_offset(),
+            end: resolved.hi,
+            line: display.line_number,
+            column: display.column,
+        })
     }
 
     /// Renders a complete diagnostic message with optional primary origin.

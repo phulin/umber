@@ -726,12 +726,12 @@ impl Stores {
         stack: &mut Vec<NodeFrame>,
     ) {
         match node {
-            NodeRef::Char { font, ch } => {
+            NodeRef::Char { font, ch, .. } => {
                 hasher.tag(0);
                 self.hash_font(font, hasher);
                 hasher.u32(ch as u32);
             }
-            NodeRef::Lig { font, ch, orig } => {
+            NodeRef::Lig { font, ch, orig, .. } => {
                 hasher.tag(1);
                 self.hash_font(font, hasher);
                 hasher.u32(ch as u32);
@@ -880,12 +880,12 @@ impl Stores {
     #[cfg(test)]
     fn hash_node(&self, node: Node, hasher: &mut StateHasher, stack: &mut Vec<NodeFrame>) {
         match node {
-            Node::Char { font, ch } => {
+            Node::Char { font, ch, .. } => {
                 hasher.tag(0);
                 self.hash_font(font, hasher);
                 hasher.u32(ch as u32);
             }
-            Node::Lig { font, ch, orig } => {
+            Node::Lig { font, ch, orig, .. } => {
                 hasher.tag(1);
                 self.hash_font(font, hasher);
                 hasher.u32(ch as u32);

@@ -2445,6 +2445,7 @@ fn rollback_rebuilds_incremental_hash_baselines_after_node_span_reuse() {
     let first_list = reused.freeze_node_list(&[Node::Char {
         font: NULL_FONT,
         ch: 'x',
+        origin: crate::token::OriginId::UNKNOWN,
     }]);
     reused.set_box_reg(0, first_list);
     let first_hash = reused.snapshot().state_hash();
@@ -2453,6 +2454,7 @@ fn rollback_rebuilds_incremental_hash_baselines_after_node_span_reuse() {
     let second_list = reused.freeze_node_list(&[Node::Char {
         font: NULL_FONT,
         ch: 'y',
+        origin: crate::token::OriginId::UNKNOWN,
     }]);
     assert_ne!(
         first_list, second_list,
@@ -2466,6 +2468,7 @@ fn rollback_rebuilds_incremental_hash_baselines_after_node_span_reuse() {
     let fresh_list = fresh.freeze_node_list(&[Node::Char {
         font: NULL_FONT,
         ch: 'y',
+        origin: crate::token::OriginId::UNKNOWN,
     }]);
     fresh.set_box_reg(0, fresh_list);
     let fresh_hash = fresh.snapshot().state_hash();
@@ -2480,6 +2483,7 @@ fn mixed_arena_box_promotion_replays_with_resolvable_equal_hashes() {
     let child = universe.freeze_node_list(&[Node::Char {
         font: NULL_FONT,
         ch: 'x',
+        origin: crate::token::OriginId::UNKNOWN,
     }]);
     universe.set_box_reg(0, child);
     let base = universe.snapshot();
@@ -2521,6 +2525,7 @@ fn grouped_box_take_pins_nested_survivor_children_before_coalesced_release() {
     let leader_children = universe.freeze_node_list(&[Node::Char {
         font: NULL_FONT,
         ch: 'x',
+        origin: crate::token::OriginId::UNKNOWN,
     }]);
     let leader = BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(10),
@@ -2562,7 +2567,8 @@ fn grouped_box_take_pins_nested_survivor_children_before_coalesced_release() {
         universe.nodes(leader.children),
         &[Node::Char {
             font: NULL_FONT,
-            ch: 'x'
+            ch: 'x',
+            origin: crate::token::OriginId::UNKNOWN,
         }]
     );
     let _ = universe.leave_group();
@@ -2576,6 +2582,7 @@ fn destructive_unbox_transfers_only_children_before_same_level_clear() {
     let baseline = universe.freeze_node_list(&[Node::Char {
         font: NULL_FONT,
         ch: 'b',
+        origin: crate::token::OriginId::UNKNOWN,
     }]);
     universe.set_box_reg(0, baseline);
     let baseline = universe.box_reg(0).expect("baseline box");
@@ -2584,6 +2591,7 @@ fn destructive_unbox_transfers_only_children_before_same_level_clear() {
     let leaf = universe.freeze_node_list(&[Node::Char {
         font: NULL_FONT,
         ch: 'x',
+        origin: crate::token::OriginId::UNKNOWN,
     }]);
     let nested = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(10),
@@ -2679,7 +2687,8 @@ fn assert_promoted_wrapper_is_resolvable(universe: &Universe, wrapper: NodeListI
         universe.nodes(box_node.children),
         &[Node::Char {
             font: NULL_FONT,
-            ch: 'x'
+            ch: 'x',
+            origin: crate::token::OriginId::UNKNOWN,
         }]
     );
 }
@@ -2690,6 +2699,7 @@ fn snapshot_state_hash_walks_deep_node_lists_iteratively() {
     let mut current = universe.freeze_node_list(&[Node::Char {
         font: NULL_FONT,
         ch: 'x',
+        origin: crate::token::OriginId::UNKNOWN,
     }]);
 
     for _ in 0..5000 {
@@ -2760,11 +2770,13 @@ fn snapshot_state_hash_depends_on_live_box_content_not_overwritten_construction_
     let direct_final = direct.freeze_node_list(&[Node::Char {
         font: NULL_FONT,
         ch: 'x',
+        origin: crate::token::OriginId::UNKNOWN,
     }]);
     direct.set_box_reg(0, direct_final);
     let overwritten_final = overwritten.freeze_node_list(&[Node::Char {
         font: NULL_FONT,
         ch: 'x',
+        origin: crate::token::OriginId::UNKNOWN,
     }]);
     overwritten.set_box_reg(0, overwritten_final);
 
@@ -2780,6 +2792,7 @@ fn finished_box_assignment_reclaims_only_its_epoch_construction_suffix() {
     let older = universe.freeze_node_list(&[Node::Char {
         font: NULL_FONT,
         ch: 'a',
+        origin: crate::token::OriginId::UNKNOWN,
     }]);
     let mut transaction = universe.begin_box_build();
     let children = transaction.freeze_node_list(&[Node::Kern {
@@ -2806,7 +2819,8 @@ fn finished_box_assignment_reclaims_only_its_epoch_construction_suffix() {
         universe.nodes(older).first(),
         Some(crate::node_arena::NodeRef::Char {
             font: NULL_FONT,
-            ch: 'a'
+            ch: 'a',
+            origin: crate::token::OriginId::UNKNOWN,
         })
     );
     let stored = universe.box_reg(0).expect("box assignment should be live");
@@ -2830,6 +2844,7 @@ fn cancelled_box_build_reclaims_its_epoch_construction_suffix() {
         let _discarded = transaction.freeze_node_list(&[Node::Char {
             font: NULL_FONT,
             ch: 'x',
+            origin: crate::token::OriginId::UNKNOWN,
         }]);
     }
 
