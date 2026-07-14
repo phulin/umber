@@ -254,10 +254,7 @@ fn direction_permutation(stores: &Universe, list: NodeListId) -> Option<Vec<usiz
     }
 
     let nodes = stores.nodes(list);
-    if !nodes
-        .into_iter()
-        .any(|node| matches!(node, NodeRef::Direction(_)))
-    {
+    if !nodes.contains_direction() {
         return None;
     }
     let mut reordered = Vec::with_capacity(nodes.len());

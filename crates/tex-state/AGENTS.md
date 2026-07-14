@@ -57,7 +57,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/node_arena/semantic.rs`: Versioned, allocation-independent semantic identity for immutable node-list aggregates.
 - `src/node_arena/storage.rs`: Canonical node words, sidecar coordination, encoding, aggregate watermarks, and rollback.
 - `src/node_arena/tables.rs`: Typed structure-of-arrays sidecar tables for boxes, unsets, insertions, and noads.
-- `src/node_arena/view.rs`: Zero-allocation node references, list spans, character runs, and iterators.
+- `src/node_arena/view.rs`: Zero-allocation node references, list spans, raw tag predicates, character runs, and iterators.
 - `src/node_arena/tests.rs`: Unit tests for node-list allocation, lookup, rollback, and arena liveness.
 - `src/page.rs`: Snapshot-owned page-builder state, page dimensions/integers, contribution/current-page queues, and fire-up records.
 - `src/page/sequence.rs`: Canonical persistent binary-forest sequence for growing current-page nodes.

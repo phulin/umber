@@ -6,8 +6,8 @@ use crate::math::{
     NoadClass, NoadKind,
 };
 use crate::node::{
-    BoxNode, BoxNodeFields, DiscKind, GlueKind, KernKind, LeaderPayload, Node, Sign, UnsetKind,
-    UnsetNode, UnsetNodeFields, Whatsit,
+    BoxNode, BoxNodeFields, Direction, DiscKind, GlueKind, KernKind, LeaderPayload, Node, Sign,
+    UnsetKind, UnsetNode, UnsetNodeFields, Whatsit,
 };
 use crate::scaled::{GlueSetRatio, Scaled};
 use proptest::prelude::*;
@@ -296,6 +296,20 @@ fn byte_char_runs_stop_at_fonts_unicode_ligatures_and_other_nodes() {
     );
     assert!(list.char_run(5).is_none());
     assert!(list.char_run(list.len()).is_none());
+}
+
+#[test]
+fn direction_predicate_scans_compact_tags_without_decoding_nodes() {
+    let mut arena = NodeArena::new();
+    let plain = arena.append(&[Node::Penalty(1), Node::MathOn(scaled(2))]);
+    let directed = arena.append(&[
+        Node::Penalty(1),
+        Node::Direction(Direction::BeginR),
+        Node::Penalty(2),
+    ]);
+
+    assert!(!arena.get_epoch(plain).contains_direction());
+    assert!(arena.get_epoch(directed).contains_direction());
 }
 
 #[test]

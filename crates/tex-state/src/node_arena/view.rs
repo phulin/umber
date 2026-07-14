@@ -205,6 +205,16 @@ impl<'a> NodeList<'a> {
             end: self.end,
         }
     }
+    /// Reports whether this list contains a TeX--XeT direction marker without
+    /// decoding the node sidecars. Shipout uses this cheap tag scan to avoid a
+    /// second decoded traversal for the overwhelmingly common direction-free
+    /// list.
+    #[must_use]
+    pub fn contains_direction(self) -> bool {
+        self.storage.words[self.start..self.end]
+            .iter()
+            .any(|word| word.tag() == 23)
+    }
     /// Returns the maximal same-font run of inline byte-character words at
     /// `index`. Ligatures and every non-character word deliberately terminate
     /// a run so callers retain their ordinary semantic handling.
