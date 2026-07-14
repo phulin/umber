@@ -1,12 +1,10 @@
 use super::support::*;
 use super::*;
 use test_support::{corpus_root, read_fixture};
-use tex_expand::ReadRecorder;
 use tex_out::dvi::write_dvi;
 use tex_out::{
     DiscKind as PageDiscKind, EffectSink, PageArtifact, PageEffect, PageNode, PageToken,
 };
-use tex_state::interner::Symbol;
 use tex_state::scaled::Scaled;
 
 #[test]
@@ -918,7 +916,7 @@ fn shipout_write_expansion_uses_active_read_recorder() {
     let mut input = InputStack::new(MemoryInput::new(
         "\\count0=5 \\shipout\\hbox{\\write16{\\the\\count0}}\\end",
     ));
-    let mut recorder = SawTheRecorder::default();
+    let mut recorder = TestRecorder::default();
     let mut hooks = NoopExecHooks;
 
     Executor::new()
@@ -926,7 +924,9 @@ fn shipout_write_expansion_uses_active_read_recorder() {
         .expect("shipout succeeds");
 
     assert!(
-        recorder.saw_the,
+        recorder
+            .meanings
+            .contains(&Meaning::ExpandablePrimitive(ExpandablePrimitive::The)),
         "shipout-time deferred write expansion should use the active recorder"
     );
 }
@@ -1382,19 +1382,6 @@ fn shipout_lowers_supported_whatsit_adjacent_nodes_without_reordering_effects() 
         dvi_special_payloads(&dvi),
         vec![b"before".to_vec(), b"after".to_vec()]
     );
-}
-
-#[derive(Default)]
-struct SawTheRecorder {
-    saw_the: bool,
-}
-
-impl ReadRecorder for SawTheRecorder {
-    fn record_meaning(&mut self, _symbol: Symbol, meaning: Meaning) {
-        if meaning == Meaning::ExpandablePrimitive(ExpandablePrimitive::The) {
-            self.saw_the = true;
-        }
-    }
 }
 
 #[allow(clippy::disallowed_methods)] // host-side committed fixture source read.

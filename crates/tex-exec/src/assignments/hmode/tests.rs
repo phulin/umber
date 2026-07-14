@@ -1,10 +1,10 @@
 use super::*;
 use crate::executor::NoopExecHooks;
 use crate::mode::PendingHChar;
-use tex_expand::{NoopRecorder, ReadRecorder};
+use crate::tests::support::TestRecorder;
+use tex_expand::NoopRecorder;
 use tex_lex::MemoryInput;
 use tex_state::hyphenation::ExceptionSpec;
-use tex_state::interner::Symbol;
 use tex_state::node::Node;
 use tex_state::provenance::SyntheticOriginKind;
 use tex_state::token::TracedTokenWord;
@@ -53,22 +53,13 @@ fn non_character_accent_lookahead_replays_the_original_traced_token() {
     assert_eq!(replayed, closing_group);
 }
 
-#[derive(Default)]
-struct CountingRecorder(usize);
-
-impl ReadRecorder for CountingRecorder {
-    fn record_meaning(&mut self, _symbol: Symbol, _meaning: Meaning) {
-        self.0 += 1;
-    }
-}
-
 #[test]
 fn accent_lookahead_runs_assignments_and_accepts_char_num() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\count0=7 \\char65"));
-    let mut recorder = CountingRecorder::default();
+    let mut recorder = TestRecorder::default();
 
     let base = scan_accent_base(
         &mut ModeNest::new(),
@@ -88,7 +79,10 @@ fn accent_lookahead_runs_assignments_and_accepts_char_num() {
 
     assert_eq!(base, Some(b'A'));
     assert_eq!(stores.count(0), 7);
-    assert!(recorder.0 >= 2, "lookahead meanings should be recorded");
+    assert!(
+        recorder.meanings.len() >= 2,
+        "lookahead meanings should be recorded"
+    );
 }
 
 #[test]

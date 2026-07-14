@@ -2,28 +2,6 @@ use super::support::*;
 use super::*;
 use tex_state::scaled::Scaled;
 
-struct RedirectedFontHooks;
-
-impl ExpansionHooks<MemoryInput> for RedirectedFontHooks {
-    fn open_input<C: tex_state::InputReadState>(
-        &mut self,
-        _input: &mut C,
-        name: &str,
-    ) -> Result<MemoryInput, String> {
-        Err(format!("unexpected input {name}"))
-    }
-
-    fn open_font<C: tex_state::InputReadState>(
-        &mut self,
-        input: &mut C,
-        path: &std::path::Path,
-    ) -> Result<tex_state::FileContent, String> {
-        input
-            .read_input_file(&std::path::Path::new("/fonts").join(path))
-            .map_err(|err| err.to_string())
-    }
-}
-
 #[test]
 fn font_definition_loads_tfm_via_world_and_reuses_identity() {
     let mut stores = stores_with_fonts();
@@ -115,7 +93,7 @@ fn font_definition_uses_driver_font_resolution_and_records_resolved_path() {
             &mut input,
             &mut stores,
             &mut recorder,
-            &mut RedirectedFontHooks,
+            &mut TestHooks::new().with_font_root("/fonts"),
         )
         .expect("font definition resolves through driver hook");
 

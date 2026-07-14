@@ -743,7 +743,7 @@ fn edef_expansion_uses_active_input_hooks() {
     install_expandable(&mut stores, "input", ExpandablePrimitive::Input);
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
     let mut input = InputStack::new(MemoryInput::new("\\edef\\e{\\input{inc}}"));
-    let mut hooks = EdefInputHooks;
+    let mut hooks = TestHooks::new().with_source("inc", "OK");
 
     Executor::new()
         .run_with_recorder_and_hooks(&mut input, &mut stores, &mut NoopRecorder, &mut hooks)
@@ -775,7 +775,7 @@ fn input_expands_while_scanning_assignment_values() {
     let mut input = InputStack::new(MemoryInput::new(
         "\\dimen0=\\input{dim}\\skip0=\\input{glue}\\end",
     ));
-    let mut hooks = MemoryInputHooks::new()
+    let mut hooks = TestHooks::new()
         .with_source("dim", "12pt")
         .with_source("glue", "3pt plus 2pt");
 
@@ -807,7 +807,7 @@ fn input_expands_while_scanning_conditional_operands() {
          \\ifnum 1 \\input{relation} 2\\count2=1\\fi\
          \\ifeof\\input{stream}\\count3=1\\fi\\end",
     ));
-    let mut hooks = MemoryInputHooks::new()
+    let mut hooks = TestHooks::new()
         .with_source("left", "1pt")
         .with_source("right", "2pt")
         .with_source("a", "a")
@@ -834,7 +834,7 @@ fn input_expands_while_scanning_register_indices_and_the_operands() {
     let mut input = InputStack::new(MemoryInput::new(
         "\\count\\input{idx}=9\\edef\\e{\\the\\count\\input{idx}}\\end",
     ));
-    let mut hooks = MemoryInputHooks::new().with_source("idx", "5");
+    let mut hooks = TestHooks::new().with_source("idx", "5");
 
     Executor::new()
         .run_with_recorder_and_hooks(&mut input, &mut stores, &mut NoopRecorder, &mut hooks)

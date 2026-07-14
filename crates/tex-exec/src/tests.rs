@@ -19,4 +19,4 @@ mod groups;
 mod hyphenation;
 mod io;
 mod math;
-mod support;
+pub(crate) mod support;

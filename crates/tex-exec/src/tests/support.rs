@@ -1,4 +1,7 @@
 use super::*;
+use std::path::PathBuf;
+use tex_expand::ReadRecorder;
+use tex_state::interner::Symbol;
 
 pub(super) fn install_expandable(
     stores: &mut Universe,
@@ -64,40 +67,31 @@ pub(super) fn font_meaning(stores: &Universe, name: &str) -> tex_state::ids::Fon
     }
 }
 
-pub(super) struct EdefInputHooks;
-
-impl ExpansionHooks<MemoryInput> for EdefInputHooks {
-    fn open_input<C: tex_state::InputReadState>(
-        &mut self,
-        _input: &mut C,
-        name: &str,
-    ) -> Result<MemoryInput, String> {
-        if name == "inc" {
-            Ok(MemoryInput::new("OK"))
-        } else {
-            Err(format!("unexpected input {name}"))
-        }
-    }
-}
-
-pub(super) struct MemoryInputHooks {
+pub(crate) struct TestHooks {
     sources: AHashMap<String, String>,
+    font_root: Option<PathBuf>,
 }
 
-impl MemoryInputHooks {
-    pub(super) fn new() -> Self {
+impl TestHooks {
+    pub(crate) fn new() -> Self {
         Self {
             sources: AHashMap::new(),
+            font_root: None,
         }
     }
 
-    pub(super) fn with_source(mut self, name: &str, source: &str) -> Self {
+    pub(crate) fn with_source(mut self, name: &str, source: &str) -> Self {
         self.sources.insert(name.to_owned(), source.to_owned());
+        self
+    }
+
+    pub(crate) fn with_font_root(mut self, root: impl Into<PathBuf>) -> Self {
+        self.font_root = Some(root.into());
         self
     }
 }
 
-impl ExpansionHooks<MemoryInput> for MemoryInputHooks {
+impl ExpansionHooks<MemoryInput> for TestHooks {
     fn open_input<C: tex_state::InputReadState>(
         &mut self,
         _input: &mut C,
@@ -107,5 +101,28 @@ impl ExpansionHooks<MemoryInput> for MemoryInputHooks {
             .get(name)
             .map(|source| MemoryInput::new(source.clone()))
             .ok_or_else(|| format!("unexpected input {name}"))
+    }
+
+    fn open_font<C: tex_state::InputReadState>(
+        &mut self,
+        input: &mut C,
+        path: &std::path::Path,
+    ) -> Result<tex_state::FileContent, String> {
+        let path = self
+            .font_root
+            .as_ref()
+            .map_or_else(|| path.to_owned(), |root| root.join(path));
+        input.read_input_file(&path).map_err(|err| err.to_string())
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct TestRecorder {
+    pub(crate) meanings: Vec<Meaning>,
+}
+
+impl ReadRecorder for TestRecorder {
+    fn record_meaning(&mut self, _symbol: Symbol, meaning: Meaning) {
+        self.meanings.push(meaning);
     }
 }
