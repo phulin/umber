@@ -389,16 +389,46 @@ impl CodeTables {
     }
 
     pub(crate) fn for_each_non_default(&self, mut visit: impl FnMut(char, CodeTableValues)) {
-        let mut pages = self.catcodes.allocated_page_indices();
-        pages.extend(self.lccodes.allocated_page_indices());
-        pages.extend(self.uccodes.allocated_page_indices());
-        pages.extend(self.sfcodes.allocated_page_indices());
-        pages.extend(self.mathcodes.allocated_page_indices());
-        pages.extend(self.delcodes.allocated_page_indices());
-        pages.sort_unstable();
-        pages.dedup();
+        let mut catcodes = self.catcodes.allocated_page_indices().peekable();
+        let mut lccodes = self.lccodes.allocated_page_indices().peekable();
+        let mut uccodes = self.uccodes.allocated_page_indices().peekable();
+        let mut sfcodes = self.sfcodes.allocated_page_indices().peekable();
+        let mut mathcodes = self.mathcodes.allocated_page_indices().peekable();
+        let mut delcodes = self.delcodes.allocated_page_indices().peekable();
 
-        for page_index in pages {
+        loop {
+            let Some(page_index) = [
+                catcodes.peek().copied(),
+                lccodes.peek().copied(),
+                uccodes.peek().copied(),
+                sfcodes.peek().copied(),
+                mathcodes.peek().copied(),
+                delcodes.peek().copied(),
+            ]
+            .into_iter()
+            .flatten()
+            .min() else {
+                break;
+            };
+            if catcodes.peek() == Some(&page_index) {
+                catcodes.next();
+            }
+            if lccodes.peek() == Some(&page_index) {
+                lccodes.next();
+            }
+            if uccodes.peek() == Some(&page_index) {
+                uccodes.next();
+            }
+            if sfcodes.peek() == Some(&page_index) {
+                sfcodes.next();
+            }
+            if mathcodes.peek() == Some(&page_index) {
+                mathcodes.next();
+            }
+            if delcodes.peek() == Some(&page_index) {
+                delcodes.next();
+            }
+
             let start = (page_index * PAGE_LEN) as u32;
             for offset in 0..PAGE_LEN as u32 {
                 let code = start + offset;
@@ -542,7 +572,7 @@ where
             .map_or_else(|| D::default_for(ch as u32), |page| page.values[offset])
     }
 
-    fn allocated_page_indices(&self) -> Vec<usize> {
+    fn allocated_page_indices(&self) -> impl Iterator<Item = usize> + '_ {
         self.root
             .chunks
             .iter()
@@ -559,7 +589,6 @@ where
                         })
                 })
             })
-            .collect()
     }
 
     fn write_value(root: &mut Arc<Root<T>>, page_index: usize, offset: usize, value: T) {
