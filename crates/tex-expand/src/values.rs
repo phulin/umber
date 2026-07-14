@@ -886,18 +886,27 @@ pub(crate) fn string_tokens(stores: &impl ExpansionState, token: Token) -> Vec<T
     match token {
         Token::Char { ch, .. } => vec![rendered_char(ch)],
         Token::Cs(symbol) => {
-            let mut out = Vec::new();
             let name = stores.resolve(symbol);
-            match stores.control_sequence_kind(symbol) {
+            let escape = escapechar(stores);
+            let kind = stores.control_sequence_kind(symbol);
+            let capacity = match kind {
+                ControlSequenceKind::ActiveCharacter => name.chars().count(),
+                ControlSequenceKind::Named if name.is_empty() => {
+                    "csname".len() + "endcsname".len() + 2 * usize::from(escape.is_some())
+                }
+                ControlSequenceKind::Named => name.chars().count() + usize::from(escape.is_some()),
+            };
+            let mut out = Vec::with_capacity(capacity);
+            match kind {
                 ControlSequenceKind::ActiveCharacter => {
                     out.extend(name.chars().map(rendered_char));
                 }
                 ControlSequenceKind::Named if name.is_empty() => {
-                    append_escaped_text(stores, "csname", &mut out);
-                    append_escaped_text(stores, "endcsname", &mut out);
+                    append_escaped_text(escape, "csname", &mut out);
+                    append_escaped_text(escape, "endcsname", &mut out);
                 }
                 ControlSequenceKind::Named => {
-                    append_escaped_text(stores, name, &mut out);
+                    append_escaped_text(escape, name, &mut out);
                 }
             }
             out
@@ -907,8 +916,8 @@ pub(crate) fn string_tokens(stores: &impl ExpansionState, token: Token) -> Vec<T
     }
 }
 
-fn append_escaped_text(stores: &impl ExpansionState, value: &str, out: &mut Vec<Token>) {
-    if let Some(escape) = escapechar(stores) {
+fn append_escaped_text(escape: Option<char>, value: &str, out: &mut Vec<Token>) {
+    if let Some(escape) = escape {
         out.push(rendered_char(escape));
     }
     out.extend(value.chars().map(rendered_char));
