@@ -4,6 +4,7 @@ use crate::{BoxNode, PageEffect, PageNode};
 
 use super::{
     DviError, DviWriter,
+    coordinates::DviCoordinateEvent,
     glue::{add_scaled, adjusted_glue_width, sub_scaled},
     leaders,
     opcodes::{DOWN1, POP, PUSH, PUT_RULE, RIGHT1, SET_RULE, XXX1, XXX4},
@@ -556,6 +557,7 @@ impl<W: std::io::Write> DviWriter<W> {
     ) -> Result<(), DviError> {
         let g_order = this_box.glue_order;
         let g_sign = this_box.glue_sign;
+        self.trace_box(false, this_box)?;
         self.enter_box();
         if self.cur_s > 0 {
             self.u8(PUSH);
@@ -568,10 +570,23 @@ impl<W: std::io::Write> DviWriter<W> {
 
         for child in &this_box.children {
             match child {
-                PageNode::Char { font_id, ch, width }
-                | PageNode::Lig {
-                    font_id, ch, width, ..
+                PageNode::Char { font_id, ch, width } => {
+                    self.trace_glyph(*font_id, &[*ch])?;
+                    self.synch_h()?;
+                    self.synch_v()?;
+                    self.change_font(*font_id)?;
+                    self.set_char(*ch)?;
+                    self.cur_h = add_scaled(self.cur_h, *width)?;
+                    self.dvi_h = self.cur_h;
+                }
+                PageNode::Lig {
+                    font_id,
+                    ch,
+                    left,
+                    right,
+                    width,
                 } => {
+                    self.trace_glyph(*font_id, &[*left, *right])?;
                     self.synch_h()?;
                     self.synch_v()?;
                     self.change_font(*font_id)?;
@@ -649,6 +664,7 @@ impl<W: std::io::Write> DviWriter<W> {
     ) -> Result<(), DviError> {
         let g_order = this_box.glue_order;
         let g_sign = this_box.glue_sign;
+        self.trace_box(true, this_box)?;
         self.enter_box();
         if self.cur_s > 0 {
             self.u8(PUSH);
@@ -789,13 +805,21 @@ impl<W: std::io::Write> DviWriter<W> {
         rule_wd: Scaled,
         base_line: Scaled,
     ) -> Result<(), DviError> {
-        let rule_ht = add_scaled(rule_ht, rule_dp)?;
-        if rule_ht.raw() > 0 && rule_wd.raw() > 0 {
+        let total = add_scaled(rule_ht, rule_dp)?;
+        if total.raw() > 0 && rule_wd.raw() > 0 {
+            if let Some(trace) = &mut self.coordinate_trace {
+                trace.push(DviCoordinateEvent::Rule {
+                    x: self.cur_h,
+                    y: sub_scaled(base_line, rule_ht)?,
+                    width: rule_wd,
+                    height: total,
+                });
+            }
             self.synch_h()?;
             self.cur_v = add_scaled(base_line, rule_dp)?;
             self.synch_v()?;
             self.u8(SET_RULE);
-            self.scaled(rule_ht);
+            self.scaled(total);
             self.scaled(rule_wd);
             self.cur_v = base_line;
             self.dvi_h = add_scaled(self.dvi_h, rule_wd)?;
@@ -808,8 +832,17 @@ impl<W: std::io::Write> DviWriter<W> {
         rule_ht: Scaled,
         rule_wd: Scaled,
     ) -> Result<(), DviError> {
+        let top = self.cur_v;
         self.cur_v = add_scaled(self.cur_v, rule_ht)?;
         if rule_ht.raw() > 0 && rule_wd.raw() > 0 {
+            if let Some(trace) = &mut self.coordinate_trace {
+                trace.push(DviCoordinateEvent::Rule {
+                    x: self.cur_h,
+                    y: top,
+                    width: rule_wd,
+                    height: rule_ht,
+                });
+            }
             self.synch_h()?;
             self.synch_v()?;
             self.u8(PUT_RULE);
@@ -862,7 +895,46 @@ impl<W: std::io::Write> DviWriter<W> {
             .get(usize::try_from(effect_index).expect("u32 fits usize"))
             .ok_or(DviError::MissingEffect { effect_index })?;
         if let PageEffect::Special { payload, .. } = effect {
+            if let Some(trace) = &mut self.coordinate_trace {
+                trace.push(DviCoordinateEvent::Special {
+                    x: self.cur_h,
+                    y: self.cur_v,
+                    payload: payload.clone(),
+                });
+            }
             self.special_out(payload)?;
+        }
+        Ok(())
+    }
+
+    fn trace_box(&mut self, vertical: bool, node: &BoxNode) -> Result<(), DviError> {
+        if let Some(trace) = &mut self.coordinate_trace {
+            trace.push(DviCoordinateEvent::Box {
+                vertical,
+                x: self.cur_h,
+                y: sub_scaled(self.cur_v, node.height)?,
+                width: node.width,
+                height: add_scaled(node.height, node.depth)?,
+                baseline: self.cur_v,
+            });
+        }
+        Ok(())
+    }
+
+    fn trace_glyph(&mut self, font_id: u32, source_codes: &[u32]) -> Result<(), DviError> {
+        if let Some(trace) = &mut self.coordinate_trace {
+            let source_codes = source_codes
+                .iter()
+                .map(|code| {
+                    u8::try_from(*code).map_err(|_| DviError::CharacterOutOfRange { ch: *code })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            trace.push(DviCoordinateEvent::Glyph {
+                x: self.cur_h,
+                baseline: self.cur_v,
+                font_id,
+                source_codes,
+            });
         }
         Ok(())
     }

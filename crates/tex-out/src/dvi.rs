@@ -12,6 +12,7 @@ use crate::PageArtifact;
 #[cfg(test)]
 mod tests;
 
+pub mod coordinates;
 pub mod disasm;
 mod extent;
 mod fonts;
@@ -231,6 +232,7 @@ struct DviWriter<W: Write> {
     dvi_f: Option<u32>,
     cur_s: i32,
     font_definition_sites: Option<Vec<plan::FontDefinitionSite>>,
+    coordinate_trace: Option<Vec<coordinates::DviCoordinateEvent>>,
 }
 
 impl<W: Write> DviWriter<W> {
@@ -258,6 +260,7 @@ impl<W: Write> DviWriter<W> {
             dvi_f: None,
             cur_s: -1,
             font_definition_sites: None,
+            coordinate_trace: None,
         }
     }
 

@@ -165,7 +165,10 @@ export async function compile(options, userFiles, resolver, signal, bindings) {
 function addHtmlFonts(session, fonts) {
 	if (fonts === undefined) return;
 	if (!Array.isArray(fonts)) {
-		throw new CompileFacadeError("invalid-html-fonts", "html.fonts must be an array");
+		throw new CompileFacadeError(
+			"invalid-html-fonts",
+			"html.fonts must be an array",
+		);
 	}
 	for (const font of fonts) session.addHtmlFont(font);
 }

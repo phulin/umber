@@ -1,5 +1,7 @@
+import { loadComputerModernTextFont } from "/package/cm-fonts.js";
 import { compile } from "/package/compile.js";
 import { HttpManifestResolver } from "/package/manifest-resolver.js";
+import initWasm, { contentHash } from "/package/umber_wasm.js";
 import { compileInWorker } from "/package/worker-controller.js";
 
 const encode = (value) => new TextEncoder().encode(value);
@@ -73,6 +75,39 @@ async function integration() {
 	const warm = await fetch("/stats").then((response) => response.json());
 	assert(warm.objectRequests === 3, "warm IndexedDB run fetched an object");
 
+	await initWasm();
+	const cmr10 = new Uint8Array(
+		await fetch("/fixture-cmr10.tfm").then((response) =>
+			response.arrayBuffer(),
+		),
+	);
+	const htmlFont = await loadComputerModernTextFont(
+		"cmr10",
+		contentHash(cmr10),
+	);
+	const htmlOptions = {
+		mainPath: "html.tex",
+		html: { fonts: [htmlFont] },
+	};
+	const htmlFiles = new Map([
+		[
+			"html.tex",
+			encode(
+				"\\font\\tenrm=cmr10\\relax\\shipout\\hbox{\\tenrm AV office}\\end",
+			),
+		],
+	]);
+	const htmlFirst = await compileInWorker(htmlOptions, htmlFiles, resolver);
+	const htmlSecond = await compileInWorker(htmlOptions, htmlFiles, resolver);
+	assert(htmlFirst.html instanceof Uint8Array, "worker returned no HTML bytes");
+	assert(htmlFirst.dvi.byteLength > 0, "joint HTML compile returned no DVI");
+	assert(htmlFirst.htmlAssets.length === 0, "embedded HTML returned assets");
+	assert(
+		htmlFirst.html.length === htmlSecond.html.length &&
+			htmlFirst.html.every((byte, index) => byte === htmlSecond.html[index]),
+		"worker HTML bytes were not deterministic",
+	);
+
 	const plain = await compileInWorker(
 		{ mainPath: "main.tex" },
 		new Map([["main.tex", encode("Plain browser format.\\par\\bye")]]),
@@ -144,6 +179,7 @@ async function integration() {
 		coldObjects: cold.objectRequests,
 		maximumActive: cold.maximumActive,
 		plainDviBytes: plain.dvi.byteLength,
+		htmlBytes: htmlFirst.html.byteLength,
 		geometry,
 	};
 }
@@ -158,24 +194,37 @@ async function htmlGeometryContract() {
 	`;
 	document.head.append(style);
 	await document.fonts.load("32px umber-contract-cm", "AV office");
-	assert(document.fonts.check("32px umber-contract-cm", "AV office"), "pinned CM web font did not load");
+	assert(
+		document.fonts.check("32px umber-contract-cm", "AV office"),
+		"pinned CM web font did not load",
+	);
 	const page = document.createElement("div");
 	page.id = "geometry-page";
 	page.innerHTML = `
-		<svg class="contract-run"><rect id="geometry-baseline" x="17.375px" y="73.625px" width="0" height="0"></rect><text id="geometry-run" x="17.375px" y="73.625px">AV office</text></svg>
-		<svg class="contract-run" style="font-kerning:none;font-variant-ligatures:none"><rect id="geometry-baseline-unshaped" x="17.375px" y="123.625px" width="0" height="0"></rect><text id="geometry-run-unshaped" x="17.375px" y="123.625px">AV office</text></svg>
+		<svg class="contract-run"><rect id="geometry-baseline" x="17.375px" y="73.625px" width="1" height="1" fill="transparent"></rect><text id="geometry-run" x="17.375px" y="73.625px">AV office</text></svg>
+		<svg class="contract-run" style="font-kerning:none;font-variant-ligatures:none"><rect id="geometry-baseline-unshaped" x="17.375px" y="123.625px" width="1" height="1" fill="transparent"></rect><text id="geometry-run-unshaped" x="17.375px" y="123.625px">AV office</text></svg>
 		<div id="geometry-negative" style="position:absolute;left:-2.375px;top:-1.625px;width:1px;height:1px"></div>
 		<div id="geometry-rule"></div>`;
 	document.body.append(page);
 	const pageRect = page.getBoundingClientRect();
 	const run = page.querySelector("#geometry-run");
 	const plain = page.querySelector("#geometry-run-unshaped");
-	const baseline = page.querySelector("#geometry-baseline").getBoundingClientRect();
-	const plainBaseline = page.querySelector("#geometry-baseline-unshaped").getBoundingClientRect();
+	const baseline = page
+		.querySelector("#geometry-baseline")
+		.getBoundingClientRect();
+	const plainBaseline = page
+		.querySelector("#geometry-baseline-unshaped")
+		.getBoundingClientRect();
 	const rule = page.querySelector("#geometry-rule").getBoundingClientRect();
-	const negative = page.querySelector("#geometry-negative").getBoundingClientRect();
+	const negative = page
+		.querySelector("#geometry-negative")
+		.getBoundingClientRect();
 	const tolerance = 1 / 60 + 1e-6;
-	const close = (actual, expected, label) => assert(Math.abs(actual - expected) <= tolerance, `${label}: ${actual} != ${expected}`);
+	const close = (actual, expected, label) =>
+		assert(
+			Math.abs(actual - expected) <= tolerance,
+			`${label}: ${actual} != ${expected}`,
+		);
 	close(baseline.left, pageRect.left + 17.375, "run anchor");
 	close(baseline.top, pageRect.top + 73.625, "run baseline");
 	close(plainBaseline.top, pageRect.top + 123.625, "unshaped baseline");

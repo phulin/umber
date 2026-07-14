@@ -108,6 +108,12 @@ pub fn format_schema_version() -> u32 {
     tex_state::Universe::FORMAT_SCHEMA_VERSION
 }
 
+/// Returns Umber's exact content identity for bytes supplied across the JS boundary.
+#[wasm_bindgen(js_name = contentHash)]
+pub fn content_hash(bytes: &Uint8Array) -> String {
+    tex_state::ContentHash::from_bytes(&bytes.to_vec()).hex()
+}
+
 #[wasm_bindgen]
 impl CompilerSession {
     #[wasm_bindgen(constructor)]

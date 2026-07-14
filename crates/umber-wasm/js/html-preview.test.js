@@ -3,7 +3,8 @@ import test from "node:test";
 
 import { installHtmlPreview } from "./html-preview.js";
 
-const csp = "default-src 'none'; font-src data: 'self'; style-src 'unsafe-inline'; img-src data:";
+const csp =
+	"default-src 'none'; font-src data: 'self'; style-src 'unsafe-inline'; img-src data:";
 const canonical = `<!doctype html>\n<html lang="und"><head><meta name="generator" content="umber-html/1"><meta http-equiv="Content-Security-Policy" content="${csp}"></head><body></body></html>\n`;
 
 test("installs canonical output into a scriptless iframe", () => {
@@ -18,5 +19,10 @@ test("installs canonical output into a scriptless iframe", () => {
 test("rejects active or non-Umber markup", () => {
 	const iframe = { setAttribute() {} };
 	assert.throws(() => installHtmlPreview(iframe, "<script>alert(1)</script>"));
-	assert.throws(() => installHtmlPreview(iframe, canonical.replace("</body>", "<iframe></iframe></body>")));
+	assert.throws(() =>
+		installHtmlPreview(
+			iframe,
+			canonical.replace("</body>", "<iframe></iframe></body>"),
+		),
+	);
 });

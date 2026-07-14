@@ -86,7 +86,7 @@ fn svg_text_baseline_and_rule_projection_use_absolute_page_coordinates() {
         r#"(() => {
           const host = document.createElement('div');
           host.style.cssText = 'position:relative;width:200px;height:150px';
-          host.innerHTML = '<svg style="position:absolute;left:0;top:0;width:0;height:0;overflow:visible"><rect id="umber-test-baseline" x="17.375px" y="73.625px" width="0" height="0"></rect><text x="17.375px" y="73.625px">AV office</text></svg><div id="umber-test-rule" style="position:absolute;left:31.125px;top:88.375px;width:47.625px;height:3.25px"></div>';
+          host.innerHTML = '<svg style="position:absolute;left:0;top:0;width:0;height:0;overflow:visible"><rect id="umber-test-baseline" x="17.375px" y="73.625px" width="1" height="1" fill="transparent"></rect><text x="17.375px" y="73.625px">AV office</text></svg><div id="umber-test-rule" style="position:absolute;left:31.125px;top:88.375px;width:47.625px;height:3.25px"></div>';
           document.body.append(host);
           const page = host.getBoundingClientRect();
           const baseline = host.querySelector('#umber-test-baseline').getBoundingClientRect();
@@ -141,7 +141,7 @@ fn errors_are_typed_and_invalid_boundary_values_throw() {
 #[wasm_bindgen_test]
 fn committed_plain_format_loads_and_rejects_incompatible_bytes() {
     assert_eq!(package_version(), env!("CARGO_PKG_VERSION"));
-    assert_eq!(format_schema_version(), 4);
+    assert_eq!(format_schema_version(), 5);
     let format = include_bytes!("../assets/plain.fmt");
     let mut plain = session_with_format("main.tex", format);
     plain
@@ -159,8 +159,8 @@ fn committed_plain_format_loads_and_rejects_incompatible_bytes() {
     assert_format_error(native_tex, "not an Umber format file");
 
     let mut wrong_schema = format.to_vec();
-    wrong_schema[8..12].copy_from_slice(&5_u32.to_le_bytes());
-    assert_format_error(&wrong_schema, "unsupported Umber format version 5");
+    wrong_schema[8..12].copy_from_slice(&4_u32.to_le_bytes());
+    assert_format_error(&wrong_schema, "unsupported Umber format version 4");
 
     let mut corrupt = format.to_vec();
     let last = corrupt.last_mut().expect("format payload");

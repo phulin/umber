@@ -114,6 +114,9 @@ const server = http.createServer(async (request, response) => {
 				"application/json",
 			);
 		}
+		if (url.pathname === "/fixture-cmr10.tfm") {
+			return send(response, 200, cmr10, "application/octet-stream");
+		}
 		if (url.pathname.startsWith("/objects/")) {
 			const bytes = objectBytes.get(url.pathname.slice("/objects/".length));
 			if (bytes === undefined)

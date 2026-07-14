@@ -390,6 +390,55 @@ fn run_html_and_dvi_share_one_run_and_publish_deterministically() {
     assert!(html.contains("assets/"));
 }
 
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side focused corpus and temporary font bundles.
+fn focused_html_corpora_pass_the_dvi_coordinate_oracle() {
+    for area in ["dvi", "page", "math", "align", "leaders"] {
+        for case in corpus_cases(area) {
+            let setup = dvi::DviCaseSetup::new(area, case.name());
+            let font_dir = setup.run_dir().join("web-fonts");
+            fs::create_dir(&font_dir).expect("create web-font bundle");
+            for tfm in setup
+                .extra_inputs()
+                .iter()
+                .filter(|path| path.extension().is_some_and(|ext| ext == "tfm"))
+            {
+                let name = tfm
+                    .file_stem()
+                    .and_then(|name| name.to_str())
+                    .expect("TFM name is UTF-8");
+                install_test_web_font(&font_dir, tfm, name);
+            }
+            let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+                .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+                .current_dir(setup.run_dir())
+                .args([
+                    "run",
+                    setup.source_file_name(),
+                    "--dvi",
+                    "actual.dvi",
+                    "--html",
+                    "actual.html",
+                    "--html-font-dir",
+                    "web-fonts",
+                    "--html-assets",
+                    "assets",
+                ])
+                .output()
+                .expect("run focused HTML coordinate case");
+            assert!(
+                output.status.success(),
+                "HTML coordinate oracle failed for {area}/{}:\n{}",
+                case.name(),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let actual = fs::read(setup.actual_dvi_path()).expect("read DVI output");
+            let expected = read_binary_fixture(area, case.name(), "dvi");
+            dvi::assert_dvi_matches(&expected, &actual, &format!("{area}/{}", case.name()));
+        }
+    }
+}
+
 #[allow(clippy::disallowed_methods)] // host-side temporary web-font bundle.
 fn install_test_web_font(directory: &std::path::Path, tfm: &std::path::Path, name: &str) {
     let tfm = fs::read(tfm).expect("read TFM fixture");
@@ -413,7 +462,9 @@ fn install_test_web_font(directory: &std::path::Path, tfm: &std::path::Path, nam
     .expect("write license");
     let mapping = (0u16..=255)
         .map(|code| {
-            let mapped = if (32..=126).contains(&code) {
+            let mapped = if code == 45 {
+                "‐".to_owned()
+            } else if (32..=126).contains(&code) {
                 char::from_u32(u32::from(code)).expect("ASCII").to_string()
             } else {
                 char::from_u32(0xe000 + u32::from(code))

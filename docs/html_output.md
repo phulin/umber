@@ -24,6 +24,7 @@ Each ordered positioned event is one of:
 ```text
 PageStart { page, width_sp, height_sp, mag, counts[10] }
 TextRun   { id, x_sp, baseline_sp, font, source_codes, text }
+Box       { id, kind, x_sp, y_sp, width_sp, height_sp, baseline_sp }
 Rule      { id, x_sp, y_sp, width_sp, height_sp }
 Special   { id, x_sp, y_sp, class, inert_payload }
 PageEnd   { page }
@@ -127,10 +128,12 @@ state or artifact identity.
 
 Each page is an isolated fixed-size `section` with `position: relative`,
 `contain: strict`, and `overflow: hidden`. Events are absolute children in
-artifact traversal order. Text top is calculated from the exact baseline and
-selected font metrics; the baseline itself is retained in metadata and marked
-by a zero-size geometry probe for browser tests. Rules use exact projected
-rectangles. Printing uses the same fixed media size and no fit-to-page scaling.
+artifact traversal order. Each run is a zero-layout SVG whose `text` element
+receives the exact projected `x` and `y` baseline. The baseline is retained in
+metadata and marked by a transparent one-CSS-pixel SVG geometry probe; the
+probe is `aria-hidden`, does not paint, and works around Firefox returning no
+rectangle for zero-area SVG elements. Rules use exact projected rectangles.
+Printing uses the same fixed page boxes and does not reflow lines.
 
 Visible runs are selectable and carry `aria-hidden="true"`. A separate
 artifact-order accessibility layer contains escaped semantic text in normal
@@ -141,14 +144,15 @@ a coordinate claim.
 
 ## Specials and security
 
-Unknown and malformed specials are inert. Their bytes are retained only as
+Unknown specials are inert; malformed values in a recognized family are typed
+errors. Their bytes are retained only as
 bounded hexadecimal diagnostic metadata; they are never parsed as markup, CSS,
-script, or a URL. Schema 1 allowlists only:
+script, or a URL. Schema 1 interprets only specials whose artifact class is
+`html`, with these payloads:
 
 - `color push <named-or-rgb>` and `color pop`, with bounded nesting;
-- `html:dest <identifier>`;
-- `html:link <https-or-fragment>` and `html:endlink`; and
-- `html:meta <name>=<plain text>` for a fixed metadata-name set.
+- `dest <identifier>`; and
+- `link <https-or-fragment>` and `endlink`.
 
 All values are parsed into typed values and reserialized. Only `https` and
 same-document fragment links are accepted. There are no event-handler
@@ -166,7 +170,7 @@ and event identifiers derive from page/event ordinals, never addresses or hash
 map iteration. Repeated native and WASM runs over equal artifact and resource
 bytes must produce identical HTML and asset bytes.
 
-Default limits are 16,384 pages, 1,000,000 events, 65,536 fonts, 16,384 run
+Default limits are 16,384 pages, 1,000,000 events per page, 16,384 run
 codes, 4,096 nesting depth, 64 MiB per asset, 256 MiB total assets, 256 MiB
 HTML, 4 KiB per special, and 256 nested color/link scopes. Callers may lower
 them. Limits are checked before growth where possible and report the resource,
@@ -184,10 +188,37 @@ serialization.
 
 ## Conformance oracle
 
-The exact comparator reconstructs ordered events from HTML integer metadata
-and independently from DVI/page traversal. It rejects a one-sp change in page
+Every artifact-to-HTML conversion runs an exact comparator between the
+driver-neutral events and an independently instrumented canonical DVI
+traversal before serialization. It rejects a one-sp change in page
 origin, run anchor/baseline, rule edge, leader instance, event order, or special
 anchor. It explicitly accepts changed child glyph positions, advances,
 ligature selection, ink bounds, and run width. Browser tests inspect page,
 rule, and baseline-probe rectangles only; they never inspect glyph children or
 use screenshot thresholds.
+
+The hermetic gate covers all 61 committed `dvi`, `page`, `math`, `align`, and
+`leaders` documents. The repository's Firefox wasm-bindgen gate and optimized
+Chrome package fixture check the SVG baseline and rule projection; the Chrome
+fixture additionally proves that enabled kerning/ligatures change the measured
+run width without changing the baseline. Story, Gentle, TRIP, and e-TRIP remain
+conditional on the external inputs installed by
+`scripts/setup-conformance-tests.sh`, matching the existing DVI gate policy.
+
+## Packaging and operational budgets
+
+The packaged CM Unicode face is 222,840 bytes and is shared by content hash in
+manifest mode. The optimized browser fixture's one-page embedded-font result is
+299,553 HTML bytes; embedded mode intentionally pays base64 expansion per
+document, while manifest mode emits the face once. HTML/font inputs and outputs
+use `Uint8Array`, worker transfer lists, the 64 MiB one-file ceiling, 256 MiB
+cache ceiling, and 256 MiB aggregate output ceiling. The driver lowers one page
+at a time, but schema 1 retains positioned pages until deterministic
+serialization; the 256 MiB HTML limit is therefore also the practical
+peak-memory guard.
+
+The accessibility layer preserves artifact event order, escaped mapped text,
+document language, and page labels. It does not claim paragraph semantics,
+math accessibility, or perfect copy/paste reconstruction. High zoom, print,
+and longer browser-shaped runs may overflow or clip at the fixed TeX page edge;
+they never participate in layout or move another exact event.

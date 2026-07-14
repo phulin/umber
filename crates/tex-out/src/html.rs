@@ -108,6 +108,7 @@ pub enum HtmlError {
     NoPages,
     TooManyPages { count: usize, limit: usize },
     Positioned(PositionedError),
+    Coordinate(crate::dvi::coordinates::CoordinateError),
     MissingPageFont { page: u32, font_id: u32 },
     FontResolution { font: String, message: String },
     FontKeyMismatch { font: String },
@@ -136,6 +137,7 @@ impl std::fmt::Display for HtmlError {
                 write!(f, "HTML page count {count} exceeds limit {limit}")
             }
             Self::Positioned(error) => error.fmt(f),
+            Self::Coordinate(error) => error.fmt(f),
             Self::MissingPageFont { page, font_id } => {
                 write!(f, "HTML page {page} references missing font {font_id}")
             }
@@ -211,6 +213,12 @@ impl From<PositionedError> for HtmlError {
     }
 }
 
+impl From<crate::dvi::coordinates::CoordinateError> for HtmlError {
+    fn from(value: crate::dvi::coordinates::CoordinateError) -> Self {
+        Self::Coordinate(value)
+    }
+}
+
 pub fn write_html<R: HtmlFontResolver>(
     pages: &[PageArtifact],
     resolver: &mut R,
@@ -234,7 +242,9 @@ pub fn write_html<R: HtmlFontResolver>(
                 count: pages.len(),
                 limit: u32::MAX as usize,
             })?;
-            lower_page(page, page_index).map_err(HtmlError::from)
+            let positioned = lower_page(page, page_index).map_err(HtmlError::from)?;
+            crate::dvi::coordinates::compare_page(page, &positioned).map_err(HtmlError::from)?;
+            Ok::<PositionedPage, HtmlError>(positioned)
         })
         .collect::<Result<Vec<_>, _>>()?;
     write_positioned_html(&positioned, resolver, options)
@@ -305,6 +315,7 @@ const BASE_CSS: &str = concat!(
     ".umber-rule{position:absolute;background:currentColor}\n",
     ".umber-run{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;white-space:pre;unicode-bidi:isolate;font-kerning:normal;font-variant-ligatures:common-ligatures;font-synthesis:none;font-optical-sizing:none}\n",
     ".umber-run-text{white-space:pre}\n",
+    ".umber-baseline{fill:transparent;pointer-events:none}\n",
     ".umber-special{position:absolute;width:0;height:0;overflow:hidden;pointer-events:none}\n",
     ".umber-a11y{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}\n",
     "@media print{.umber-document{background:#fff}.umber-page{break-after:page;margin:0}}\n",
@@ -519,7 +530,7 @@ fn write_page(
                 css_px(out, event.x, page.mag);
                 out.push_str("\" y=\"");
                 css_px(out, event.baseline, page.mag);
-                out.push_str("\" width=\"0\" height=\"0\"></rect>");
+                out.push_str("\" width=\"1\" height=\"1\"></rect>");
                 if let Some(link) = &special_state.link {
                     out.push_str("<a href=\"");
                     escape_attr(link, out);

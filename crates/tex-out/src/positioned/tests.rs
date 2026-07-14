@@ -6,6 +6,7 @@ use crate::{
 };
 
 use super::{PositionedEvent, TextUnit, lower_page};
+use crate::dvi::coordinates::{CoordinateError, compare_page};
 
 fn sp(raw: i32) -> Scaled {
     Scaled::from_raw(raw)
@@ -133,6 +134,66 @@ fn rules_and_shifted_boxes_use_dvi_coordinates() {
         (rule.x, rule.y, rule.width, rule.height),
         (sp(0), sp(41), sp(30), sp(8))
     );
+}
+
+#[test]
+fn dvi_oracle_rejects_one_sp_anchor_drift_with_event_context() {
+    let page = page(PageNode::HList(box_node(
+        100,
+        40,
+        10,
+        vec![PageNode::Char {
+            font_id: 1,
+            ch: b'A' as u32,
+            width: sp(20),
+        }],
+    )));
+    let mut positioned = lower_page(&page, 7).expect("lower page");
+    compare_page(&page, &positioned).expect("exact DVI coordinates");
+    let run = positioned
+        .events
+        .iter_mut()
+        .find_map(|event| match event {
+            PositionedEvent::TextRun(run) => Some(run),
+            _ => None,
+        })
+        .expect("text run");
+    run.baseline = run.baseline.checked_add(sp(1)).expect("one sp");
+    let error = compare_page(&page, &positioned).expect_err("baseline drift must fail");
+    assert!(matches!(error, CoordinateError::Mismatch { page: 7, .. }));
+    assert!(error.to_string().contains("text anchor differs"));
+}
+
+#[test]
+fn dvi_oracle_ignores_within_run_glyph_advances_and_width() {
+    let page = page(PageNode::HList(box_node(
+        100,
+        40,
+        10,
+        vec![
+            PageNode::Char {
+                font_id: 1,
+                ch: b'A' as u32,
+                width: sp(20),
+            },
+            PageNode::Char {
+                font_id: 1,
+                ch: b'V' as u32,
+                width: sp(20),
+            },
+        ],
+    )));
+    let positioned = lower_page(&page, 8).expect("lower page");
+    let mut changed_advances = page.clone();
+    let PageNode::HList(root) = &mut changed_advances.testing_mut().root else {
+        unreachable!()
+    };
+    let PageNode::Char { width, .. } = &mut root.children[0] else {
+        unreachable!()
+    };
+    *width = sp(73);
+    compare_page(&changed_advances, &positioned)
+        .expect("interior browser-owned glyph positions are excluded");
 }
 
 fn page(root: PageNode) -> crate::PageArtifact {
