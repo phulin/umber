@@ -12,7 +12,7 @@ use crate::state_hash::StateHashComponent;
 pub struct NodeAppendMeasurement {
     pub calls: u64,
     pub words: u64,
-    pub sidecar_rows: [u64; 13],
+    pub sidecar_rows: [u64; 14],
     pub capacity_growth_events: u64,
     pub retained_payload_bytes_grown: u64,
 }
@@ -55,9 +55,25 @@ pub struct TokenStoreMeasurement {
     pub semantic_identity_capacity_bytes_grown: u64,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct MeaningCacheInvalidationMeasurement {
+    pub local_writes: u64,
+    pub global_writes: u64,
+    pub group_exits: u64,
+    pub rollbacks: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MeaningCacheInvalidation {
+    LocalWrite,
+    GlobalWrite,
+    GroupExit,
+    Rollback,
+}
+
 static NODE_APPEND_CALLS: AtomicU64 = AtomicU64::new(0);
 static NODE_APPEND_WORDS: AtomicU64 = AtomicU64::new(0);
-static NODE_APPEND_SIDECARS: [AtomicU64; 13] = [const { AtomicU64::new(0) }; 13];
+static NODE_APPEND_SIDECARS: [AtomicU64; 14] = [const { AtomicU64::new(0) }; 14];
 static NODE_APPEND_GROWTH_EVENTS: AtomicU64 = AtomicU64::new(0);
 static NODE_APPEND_GROWN_BYTES: AtomicU64 = AtomicU64::new(0);
 
@@ -87,10 +103,14 @@ static TOKEN_MISSES: AtomicU64 = AtomicU64::new(0);
 static TOKEN_REQUESTED: AtomicU64 = AtomicU64::new(0);
 static TOKEN_ARENA_GROWN_BYTES: AtomicU64 = AtomicU64::new(0);
 static TOKEN_SEMANTIC_ID_GROWN_BYTES: AtomicU64 = AtomicU64::new(0);
+static MEANING_LOCAL_WRITES: AtomicU64 = AtomicU64::new(0);
+static MEANING_GLOBAL_WRITES: AtomicU64 = AtomicU64::new(0);
+static MEANING_GROUP_EXITS: AtomicU64 = AtomicU64::new(0);
+static MEANING_ROLLBACKS: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) fn record_node_append(
     words: usize,
-    sidecars: [u32; 13],
+    sidecars: [u32; 14],
     capacity_growth_events: usize,
     retained_payload_bytes_grown: usize,
 ) {
@@ -168,6 +188,16 @@ pub(crate) fn record_token_intern(
     );
 }
 
+pub(crate) fn record_meaning_cache_invalidation(reason: MeaningCacheInvalidation) {
+    let counter = match reason {
+        MeaningCacheInvalidation::LocalWrite => &MEANING_LOCAL_WRITES,
+        MeaningCacheInvalidation::GlobalWrite => &MEANING_GLOBAL_WRITES,
+        MeaningCacheInvalidation::GroupExit => &MEANING_GROUP_EXITS,
+        MeaningCacheInvalidation::Rollback => &MEANING_ROLLBACKS,
+    };
+    counter.fetch_add(1, Ordering::Relaxed);
+}
+
 #[must_use]
 pub fn node_append_measurement() -> NodeAppendMeasurement {
     NodeAppendMeasurement {
@@ -178,6 +208,16 @@ pub fn node_append_measurement() -> NodeAppendMeasurement {
         }),
         capacity_growth_events: NODE_APPEND_GROWTH_EVENTS.load(Ordering::Relaxed),
         retained_payload_bytes_grown: NODE_APPEND_GROWN_BYTES.load(Ordering::Relaxed),
+    }
+}
+
+#[must_use]
+pub fn meaning_cache_invalidation_measurement() -> MeaningCacheInvalidationMeasurement {
+    MeaningCacheInvalidationMeasurement {
+        local_writes: MEANING_LOCAL_WRITES.load(Ordering::Relaxed),
+        global_writes: MEANING_GLOBAL_WRITES.load(Ordering::Relaxed),
+        group_exits: MEANING_GROUP_EXITS.load(Ordering::Relaxed),
+        rollbacks: MEANING_ROLLBACKS.load(Ordering::Relaxed),
     }
 }
 

@@ -1,4 +1,5 @@
 use super::{Env, cell_key, checked_aftergroup_start, u32_len};
+use crate::cell::BankTag;
 use crate::journal::{BoxUndoRec, Entry, JournalPos, Marker, UndoRec};
 use crate::token::Token;
 use ahash::AHashMap;
@@ -302,11 +303,20 @@ impl Env {
     /// Payloads are returned FIFO. Global assignments in the group survive by
     /// being compacted into the enclosing journal slice.
     #[must_use]
+    #[cfg(test)]
     pub(crate) fn leave_group(&mut self) -> Vec<Token> {
+        self.leave_group_unchecked().0
+    }
+
+    /// Leaves the innermost group and reports whether meaning cells were
+    /// restored or compacted while crossing the boundary.
+    #[must_use]
+    pub(crate) fn leave_group_observing_meanings(&mut self) -> (Vec<Token>, bool) {
         self.leave_group_unchecked()
     }
 
     /// Leaves the innermost TeX group if it matches the requested boundary kind.
+    #[cfg(test)]
     pub(crate) fn leave_group_with_kind(
         &mut self,
         expected: GroupKind,
@@ -317,10 +327,23 @@ impl Env {
         if actual != expected {
             return Err(GroupMismatch::new(expected, actual));
         }
+        Ok(self.leave_group_unchecked().0)
+    }
+
+    pub(crate) fn leave_group_with_kind_observing_meanings(
+        &mut self,
+        expected: GroupKind,
+    ) -> Result<(Vec<Token>, bool), GroupMismatch> {
+        let Some(actual) = self.innermost_group_kind() else {
+            return Err(GroupMismatch::new_no_group(expected));
+        };
+        if actual != expected {
+            return Err(GroupMismatch::new(expected, actual));
+        }
         Ok(self.leave_group_unchecked())
     }
 
-    fn leave_group_unchecked(&mut self) -> Vec<Token> {
+    fn leave_group_unchecked(&mut self) -> (Vec<Token>, bool) {
         let Some(boundary) = self.group_boundaries.pop() else {
             panic!("leave_group without matching group marker");
         };
@@ -339,11 +362,13 @@ impl Env {
                 Entry::Marker(_) => false,
             });
 
-        if has_globals {
-            self.leave_group_with_globals(marker_index, group_end, boundary.box_undo_len);
+        let meaning_changed = if has_globals {
+            self.leave_group_with_globals(marker_index, group_end, boundary.box_undo_len)
         } else {
+            let mut meaning_changed = false;
             for index in (marker_index + 1..group_end).rev() {
                 if let Entry::Undo(rec) = self.journal.entry(index) {
+                    meaning_changed |= rec.cell().bank() == BankTag::Meaning;
                     self.restore_raw(rec.cell(), rec.old());
                 } else if let Entry::BoxUndo(id) = self.journal.entry(index) {
                     let rec = self.journal.box_undo(id);
@@ -352,7 +377,8 @@ impl Env {
             }
             self.journal.truncate_to(marker_pos);
             self.journal.truncate_box_undos(boundary.box_undo_len);
-        }
+            meaning_changed
+        };
 
         let aftergroup_start = checked_aftergroup_start(aftergroup_start, self.aftergroup.len());
         let payloads = self.aftergroup.drain(aftergroup_start..).collect();
@@ -361,7 +387,7 @@ impl Env {
         // exit must start a fresh epoch or the enclosing undo slice can be
         // corrupted by a later write to the same restored cell.
         self.epoch.bump();
-        payloads
+        (payloads, meaning_changed)
     }
 
     fn leave_group_with_globals(
@@ -369,7 +395,7 @@ impl Env {
         marker_index: usize,
         group_end: usize,
         box_undo_len: u32,
-    ) {
+    ) -> bool {
         let mut globals = Vec::new();
         let mut box_globals = Vec::new();
         let mut cell_states = AHashMap::new();
@@ -388,6 +414,7 @@ impl Env {
             }
         }
 
+        let mut meaning_changed = false;
         for index in (marker_index + 1..group_end).rev() {
             match self.journal.entry(index) {
                 Entry::Undo(rec) if rec.cell().is_global() => {
@@ -402,6 +429,7 @@ impl Env {
                         .get(&cell_key(rec.cell()))
                         .expect("journal cell was indexed before group compaction");
                     if !state.has_later_global {
+                        meaning_changed |= rec.cell().bank() == BankTag::Meaning;
                         self.restore_raw(rec.cell(), rec.old());
                     }
                 }
@@ -432,6 +460,7 @@ impl Env {
         self.journal.truncate_to(JournalPos::from_raw(marker_index));
         self.journal.truncate_box_undos(box_undo_len);
         for rec in globals.into_iter().rev() {
+            meaning_changed |= rec.cell().bank() == BankTag::Meaning;
             self.restore_raw(rec.cell(), rec.new_value());
             let key = cell_key(rec.cell());
             let state = cell_states
@@ -460,6 +489,7 @@ impl Env {
             self.journal
                 .push_box_undo(BoxUndoRec::new(rec.index(), true, old, rec.new_value()));
         }
+        meaning_changed
     }
 
     /// Rolls back all environment state after `snapshot`.

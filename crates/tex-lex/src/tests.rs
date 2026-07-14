@@ -1358,6 +1358,15 @@ fn macro_site_meaning_cache_is_guarded_across_writes_groups_and_rollback() {
         input.resolve_expansion_meaning(&stores, symbol.symbol()),
         Meaning::Relax
     );
+
+    stores.enter_group();
+    stores.set_count(0, 42);
+    let _ = stores.leave_group();
+    assert_eq!(
+        input.resolve_expansion_meaning(&stores, symbol.symbol()),
+        Meaning::Relax,
+        "a non-meaning group must retain the guarded cache entry"
+    );
     assert_eq!(
         input.resolve_expansion_meaning(&stores, symbol.symbol()),
         Meaning::Relax
@@ -1375,7 +1384,33 @@ fn macro_site_meaning_cache_is_guarded_across_writes_groups_and_rollback() {
         Meaning::Relax
     );
 
-    stores.set_meaning(symbol, Meaning::Undefined);
+    stores.enter_group();
+    stores.set_meaning_global(symbol, Meaning::Undefined);
+    assert_eq!(
+        input.resolve_expansion_meaning(&stores, symbol.symbol()),
+        Meaning::Undefined
+    );
+    let _ = stores.leave_group();
+    assert_eq!(
+        input.resolve_expansion_meaning(&stores, symbol.symbol()),
+        Meaning::Undefined
+    );
+
+    stores.enter_group_with_kind(tex_state::GroupKind::Simple);
+    stores.set_meaning(symbol, Meaning::Relax);
+    assert_eq!(
+        input.resolve_expansion_meaning(&stores, symbol.symbol()),
+        Meaning::Relax
+    );
+    stores
+        .leave_group_with_kind(tex_state::GroupKind::Simple)
+        .expect("matching typed group");
+    assert_eq!(
+        input.resolve_expansion_meaning(&stores, symbol.symbol()),
+        Meaning::Undefined
+    );
+
+    stores.set_meaning(symbol, Meaning::Relax);
     stores.rollback(&baseline);
     assert_eq!(
         input.resolve_expansion_meaning(&stores, symbol.symbol()),
@@ -1389,12 +1424,12 @@ fn macro_site_meaning_cache_is_guarded_across_writes_groups_and_rollback() {
     );
 
     let stats = input.expansion_stats();
-    assert_eq!(stats.meaning_cache_hits, 1);
-    assert_eq!(stats.meaning_cache_misses, 5);
-    assert_eq!(stats.meaning_lookups, 5);
+    assert_eq!(stats.meaning_cache_hits, 2);
+    assert_eq!(stats.meaning_cache_misses, 9);
+    assert_eq!(stats.meaning_lookups, 9);
     assert_eq!(stats.frame_step_timer_samples, 1);
     assert_eq!(stats.provenance_timer_samples, 1);
-    assert_eq!(stats.classification_meaning_timer_samples, 6);
+    assert_eq!(stats.classification_meaning_timer_samples, 11);
     assert_eq!(
         stats.attributed_nanos(),
         stats

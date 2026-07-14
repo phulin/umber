@@ -283,6 +283,17 @@ fn print_summary(options: &Options, output: &RunOutput, elapsed: Duration) {
         output.expansion_stats.builder_append_timer_samples,
         output.expansion_stats.attributed_nanos(),
     );
+    #[cfg(feature = "profiling-stats")]
+    {
+        let invalidations = tex_state::measurement::meaning_cache_invalidation_measurement();
+        println!(
+            "gentle-profile meaning invalidations: local_writes={} global_writes={} group_exits={} rollbacks={}",
+            invalidations.local_writes,
+            invalidations.global_writes,
+            invalidations.group_exits,
+            invalidations.rollbacks,
+        );
+    }
 }
 
 fn next_value(args: &mut impl Iterator<Item = String>, option: &str) -> Result<String, String> {

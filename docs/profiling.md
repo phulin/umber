@@ -66,6 +66,35 @@ host-workflow measurement. This profiling runner deliberately removes its
 repeated staging, oracle reads, artifact writes, and temporary-directory
 cleanup so those operations do not obscure engine hotspots.
 
+## Expansion meaning-site cache evidence
+
+The expansion meaning-site cache is guarded by the owning `Stores` identity
+and a monotonic meaning-write generation. A 200-iteration corrected Gentle run
+after the expanded-replacement span fix produced 97 pages and 263,424 DVI
+bytes, with 20,240 cache hits and 57,307 misses at guarded macro-body sites
+(26.1% hits). Profiling-only invalidation counters over the warm-up plus 200
+measured runs recorded 448,431 local meaning writes, 21,507 global meaning
+writes, and 2,217,432 conservative group-exit invalidations.
+
+Returning one `meaning_changed` bit from Env group restoration to the owning
+`Stores` boundary lets empty and non-meaning groups retain valid entries while
+both group-exit paths still invalidate whenever their journal restores or
+compacts a meaning cell. The corrected 200-iteration rerun increased reuse to
+40,953 hits against 36,594 misses (52.8% hits) and reduced group-exit
+invalidations to 91,857, while retaining the same 97 pages and 263,424 bytes.
+Local/global writes, rollback, owner isolation, and both group-exit paths have
+focused invalidation coverage; debug cache hits also compare against the live
+aggregate meaning.
+
+The conditioned `BOOB` plus five `BOOBOBBO` paired comparison was noisy but
+flat: refined versus conservative raw means were 134.191 and 134.350 ms/run,
+medians were 118.299 and 117.795 ms/run, and means after excluding the two
+greater-than-200-ms host-contention outliers on each side were 119.857 and
+119.383 ms/run. The selective policy is retained because it removes needless
+invalidation through a small exact journal-owned signal, materially improves
+cache reuse, and shows no meaningful throughput regression; the cache itself
+remains justified by the corrected 52.8% guarded-site hit rate.
+
 ## Analyze a capture
 
 Use the repository analyzer for a repeatable text report instead of manually

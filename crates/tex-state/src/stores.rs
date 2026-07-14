@@ -154,6 +154,12 @@ pub struct Stores {
     last_loaded_font: FontId,
     /// Runtime-only guard for derived control-sequence meaning caches.
     /// This never rewinds across group restoration or snapshot rollback.
+    /// Live meanings can change only through the aggregate setters, a
+    /// group-exit path that reports meaning journal activity, or aggregate
+    /// rollback; each such boundary advances this generation. Format
+    /// reconstruction writes raw Env words only while
+    /// constructing a fresh Stores owner, and cloning likewise mints a fresh
+    /// owner identity, so neither can validate a cache owned by the source.
     meaning_generation: u64,
     semantic_hash_cache: state_hash::SemanticHashCache,
 }
@@ -431,6 +437,10 @@ impl Stores {
         self.assert_live_font_in_meaning(meaning);
         self.env.set_meaning_slot(symbol.raw(), meaning, false);
         self.bump_meaning_generation();
+        #[cfg(feature = "profiling-stats")]
+        crate::measurement::record_meaning_cache_invalidation(
+            crate::measurement::MeaningCacheInvalidation::LocalWrite,
+        );
     }
 
     /// Interns a control-sequence name and gives a previously undefined name
@@ -450,6 +460,10 @@ impl Stores {
         self.assert_live_font_in_meaning(meaning);
         self.env.set_meaning_slot(symbol.raw(), meaning, true);
         self.bump_meaning_generation();
+        #[cfg(feature = "profiling-stats")]
+        crate::measurement::record_meaning_cache_invalidation(
+            crate::measurement::MeaningCacheInvalidation::GlobalWrite,
+        );
     }
 
     /// Interns a frozen macro definition in the owned macro-definition store.
@@ -1398,11 +1412,15 @@ impl Stores {
     #[must_use]
     pub fn leave_group(&mut self) -> Vec<Token> {
         self.account_current_group_box_refs();
-        let payloads = self.env.leave_group();
+        let (payloads, meaning_changed) = self.env.leave_group_observing_meanings();
         self.code_tables.leave_group();
-        // A group may restore meanings through Env's journal. Conservatively
-        // invalidate even when this particular group changed only other banks.
-        self.bump_meaning_generation();
+        if meaning_changed {
+            self.bump_meaning_generation();
+            #[cfg(feature = "profiling-stats")]
+            crate::measurement::record_meaning_cache_invalidation(
+                crate::measurement::MeaningCacheInvalidation::GroupExit,
+            );
+        }
         payloads
     }
 
@@ -1418,9 +1436,17 @@ impl Stores {
             return Err(GroupMismatch::new(expected, actual));
         }
         self.account_current_group_box_refs();
-        let payloads = self.env.leave_group_with_kind(expected)?;
+        let (payloads, meaning_changed) = self
+            .env
+            .leave_group_with_kind_observing_meanings(expected)?;
         self.code_tables.leave_group();
-        self.bump_meaning_generation();
+        if meaning_changed {
+            self.bump_meaning_generation();
+            #[cfg(feature = "profiling-stats")]
+            crate::measurement::record_meaning_cache_invalidation(
+                crate::measurement::MeaningCacheInvalidation::GroupExit,
+            );
+        }
         Ok(payloads)
     }
 
@@ -1747,6 +1773,10 @@ impl Stores {
         self.prepared_mag = snapshot.prepared_mag;
         self.last_loaded_font = snapshot.last_loaded_font;
         self.bump_meaning_generation();
+        #[cfg(feature = "profiling-stats")]
+        crate::measurement::record_meaning_cache_invalidation(
+            crate::measurement::MeaningCacheInvalidation::Rollback,
+        );
         // The cache is derived from the checkpoint timeline rather than part
         // of semantic state. Rebuild baselines lazily from the restored
         // journal slice instead of adding it to the O(1) snapshot tuple.

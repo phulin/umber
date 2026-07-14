@@ -1265,6 +1265,14 @@ impl InputStack {
             && entry.symbol == symbol
             && entry.guard == guard
         {
+            #[cfg(debug_assertions)]
+            {
+                let live_meaning = stores.meaning(symbol);
+                debug_assert_eq!(
+                    entry.meaning, live_meaning,
+                    "meaning-site cache hit disagrees with aggregate state"
+                );
+            }
             #[cfg(feature = "profiling-stats")]
             {
                 self.expansion_stats.meaning_cache_hits += 1;
