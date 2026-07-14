@@ -90,3 +90,24 @@ ambiguous, and `--json` for machine-readable output.
 Compiler inlining can make broad entry-point frames such as `main` or `run`
 dominate a whole-profile inclusive ranking. Self time is unaffected; use a
 named subtree when comparing the internal costs of a subsystem.
+
+## Checkpoint optimization evidence
+
+Measure checkpoint changes with both a 200-iteration Samply capture and a
+thermally conditioned, interleaved wall-clock comparison. Use one warm-up and
+ten measured runs per invocation; condition with `BOOB`, then measure
+`BOOBOBBO` five times. Compare checkpoint-enabled binaries first and run the
+disabled control only for a candidate that improves enabled timing. This
+pairing is necessary because sub-percent Samply movements on thermally
+constrained machines have repeatedly failed to predict throughput.
+
+After the page forest and mutable tail gained structural lazy projections, a
+200-run Gentle capture placed the complete `EngineSession::publish` subtree at
+about 3.4% of whole-run samples. Its remaining work was fragmented across the
+journal (about 0.6%), current page (about 0.6%), input hashing (about 0.4%), and
+input summary construction and validation (about 0.4%). Experiments that
+removed a sampled clone/drop, recursively composed page-tail roots, fused input
+validation with projection, or changed canonical byte decoding were flat or
+worse under the paired evidence. Treat those residual entries as attribution,
+not independent optimization budgets: moving work between their inline frames
+does not by itself demonstrate a faster checkpoint path.
