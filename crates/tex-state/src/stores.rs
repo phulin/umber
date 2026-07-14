@@ -1015,8 +1015,9 @@ impl Stores {
     /// Reads a live frozen glue specification.
     #[must_use]
     pub fn glue(&self, id: GlueId) -> GlueSpec {
-        let id = self.resolve_stored_glue(id);
-        self.glue.get(id)
+        self.glue
+            .resolve_get(id)
+            .expect("stored glue slot is not live")
     }
 
     /// Interns a loaded immutable font and initializes its Env-side banks.

@@ -144,6 +144,14 @@ impl GlueStore {
             .map(GlueId::from_identity)
     }
 
+    /// Resolves a live or stored glue handle and reads its immutable value
+    /// with a single identity lookup.
+    #[must_use]
+    pub(crate) fn resolve_get(&self, id: GlueId) -> Option<GlueSpec> {
+        let id = self.resolve_stored(id)?;
+        self.specs.get(id.raw() as usize).copied()
+    }
+
     /// Takes a rollback watermark for aggregate snapshots.
     #[must_use]
     pub(crate) fn watermark(&self) -> GlueStoreMark {

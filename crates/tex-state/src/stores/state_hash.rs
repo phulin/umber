@@ -626,14 +626,16 @@ impl Stores {
     }
 
     fn hash_glue(&self, id: GlueId, hasher: &mut StateHasher) {
-        let id = self.resolve_stored_glue(id);
         let GlueSpec {
             width,
             stretch,
             stretch_order,
             shrink,
             shrink_order,
-        } = self.glue.get(id);
+        } = self
+            .glue
+            .resolve_get(id)
+            .expect("stored glue slot is not live");
         hasher.tag(0x60);
         hasher.i32(width.raw());
         hasher.i32(stretch.raw());
