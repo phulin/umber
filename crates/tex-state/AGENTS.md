@@ -90,7 +90,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/token_store/tests.rs`: Unit tests for token-list interning, builder reuse, lookup, and rollback.
 - `src/universe.rs`: Top-level TeX state timeline, snapshots, effect commits, and capability-specific context facades.
 - `src/universe/tests.rs`: Unit tests for `Universe` mutation, snapshots, contexts, effects, and boundary behavior.
-- `src/world.rs`: External-effect boundary for files, streams, clocks, randomness, shell policy, printing, and effect records.
+- `src/world.rs`: External-effect boundary for files, atomic downstream file-set publication, streams, clocks, randomness, shell policy, printing, and effect records.
 - `src/world/tests.rs`: Unit tests for world snapshots, file records, streams, printing, randomness, shell escape, and effect replay.
 - `tests/it.rs`: Integration test harness that includes capability-boundary and live-boundary test modules.
 - `tests/it/capability_boundaries.rs`: Compile-fail integration tests asserting restricted expansion and input capabilities fail to compile.

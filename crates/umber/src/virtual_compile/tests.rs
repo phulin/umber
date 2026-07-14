@@ -279,7 +279,7 @@ fn requested_html_and_dvi_share_one_committed_compile() {
     assert!(!output.dvi.is_empty());
     let html = String::from_utf8(output.html.expect("HTML output")).expect("HTML UTF-8");
     assert!(html.contains("data-umber-baseline-sp"));
-    assert!(html.contains(">A<i class=\"umber-baseline\""));
+    assert!(html.contains(">A</text>"));
     assert!(output.html_assets.is_empty());
 }
 

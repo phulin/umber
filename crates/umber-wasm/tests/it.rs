@@ -81,6 +81,32 @@ fn complete_output_uses_strings_and_uint8arrays() {
 }
 
 #[wasm_bindgen_test]
+fn svg_text_baseline_and_rule_projection_use_absolute_page_coordinates() {
+    let passed = js_sys::eval(
+        r#"(() => {
+          const host = document.createElement('div');
+          host.style.cssText = 'position:relative;width:200px;height:150px';
+          host.innerHTML = '<svg style="position:absolute;left:0;top:0;width:0;height:0;overflow:visible"><rect id="umber-test-baseline" x="17.375px" y="73.625px" width="0" height="0"></rect><text x="17.375px" y="73.625px">AV office</text></svg><div id="umber-test-rule" style="position:absolute;left:31.125px;top:88.375px;width:47.625px;height:3.25px"></div>';
+          document.body.append(host);
+          const page = host.getBoundingClientRect();
+          const baseline = host.querySelector('#umber-test-baseline').getBoundingClientRect();
+          const rule = host.querySelector('#umber-test-rule').getBoundingClientRect();
+          const close = (a, b) => Math.abs(a - b) <= 1 / 60 + 1e-6;
+          const ok = close(baseline.left - page.left, 17.375)
+            && close(baseline.top - page.top, 73.625)
+            && close(rule.left - page.left, 31.125)
+            && close(rule.top - page.top, 88.375)
+            && close(rule.width, 47.625)
+            && close(rule.height, 3.25);
+          host.remove();
+          return ok;
+        })()"#,
+    )
+    .expect("evaluate geometry contract");
+    assert_eq!(passed.as_bool(), Some(true));
+}
+
+#[wasm_bindgen_test]
 fn errors_are_typed_and_invalid_boundary_values_throw() {
     let mut missing_main = session("main.tex");
     let result = missing_main.compile_attempt().expect("error result");

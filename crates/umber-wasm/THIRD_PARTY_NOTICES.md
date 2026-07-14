@@ -14,3 +14,9 @@ The generated format is Umber-native and is not a TeX Live engine format. The
 source files themselves are not included in this package. This notice does not
 grant a license to Umber; the npm metadata reports `UNLICENSED` until the
 repository owner selects a project license.
+
+`assets/cmu-serif-500-roman.woff2` is Computer Modern Unicode 0.7.0,
+repackaged by `computer-modern@0.1.3`. It is distributed under the SIL Open
+Font License 1.1; the complete license is included as `assets/CMU-OFL.txt`.
+The pinned WOFF2 SHA-256 is
+`1b875e541dc5c517cd11d244710d8639addbe91a0bb1ba55e7c4593225c7a970`.

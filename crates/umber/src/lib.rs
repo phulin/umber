@@ -280,9 +280,12 @@ pub struct CommittedFinalization {
 
 impl CommittedFinalization {
     pub fn materialize(self, stores: &mut Universe) -> Result<(), FinalizationError> {
-        for file in self.files {
-            stores.world_mut().write_file(file.path, file.bytes)?;
-        }
+        stores.world_mut().publish_files(
+            self.files
+                .into_iter()
+                .map(|file| (file.path, file.bytes))
+                .collect(),
+        )?;
         Ok(())
     }
 }

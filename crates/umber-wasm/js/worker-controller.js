@@ -179,6 +179,46 @@ function prepareMessage(options, userFiles, resolver, wasmUrl) {
 		);
 	}
 	clonedOptions.limits = limits;
+	if (clonedOptions.html !== undefined) {
+		if (!clonedOptions.html || typeof clonedOptions.html !== "object") {
+			throw new WorkerCompileError("invalid-options", "html must be an object");
+		}
+		if (!Array.isArray(clonedOptions.html.fonts)) {
+			throw new WorkerCompileError(
+				"invalid-html-fonts",
+				"html.fonts must be an array",
+			);
+		}
+		let fontBytes = 0;
+		const fonts = clonedOptions.html.fonts.map((font, index) => {
+			if (!font || typeof font !== "object") {
+				throw new WorkerCompileError(
+					"invalid-html-fonts",
+					`html.fonts[${index}] must be an object`,
+				);
+			}
+			requireBytes(font.woff2, `html font ${index} woff2`);
+			if (font.woff2.byteLength > limits.oneFileBytes) {
+				throw workerLimitError(
+					"one HTML font bytes",
+					limits.oneFileBytes,
+					font.woff2.byteLength,
+				);
+			}
+			fontBytes += font.woff2.byteLength;
+			if (fontBytes > limits.cachedFileBytes) {
+				throw workerLimitError(
+					"HTML font bytes",
+					limits.cachedFileBytes,
+					fontBytes,
+				);
+			}
+			const woff2 = font.woff2.slice();
+			transfer.push(woff2.buffer);
+			return { ...font, encoding: font.encoding?.slice(), woff2 };
+		});
+		clonedOptions.html = { ...clonedOptions.html, fonts };
+	}
 	if (clonedOptions.format !== undefined) {
 		requireBytes(clonedOptions.format, "format");
 		if (clonedOptions.format.byteLength > limits.oneFileBytes) {

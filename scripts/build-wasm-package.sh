@@ -23,6 +23,9 @@ cp "$crate"/assets/plain.fmt \
   "$crate"/assets/plain-format.json \
   "$crate"/assets/plain-source.lock \
   "$temporary/package/assets/"
+cp "$crate"/assets/cmu-serif-500-roman.woff2 \
+  "$crate"/assets/CMU-OFL.txt \
+  "$temporary/package/assets/"
 cp "$crate"/examples/index.html "$crate"/examples/main.js "$temporary/package/examples/"
 
 rm -rf "$output"

@@ -183,6 +183,15 @@ test("preflights all worker input limits before copying or construction", async 
 			]),
 		},
 		{
+			name: "one HTML font",
+			options: {
+				mainPath: "main.tex",
+				html: { fonts: [{ woff2: new Uint8Array([1, 2]) }] },
+				limits: { oneFileBytes: 1 },
+			},
+			files: new Map(),
+		},
+		{
 			name: "user file count",
 			options: { mainPath: "main.tex", limits: { userFiles: 1 } },
 			files: new Map([
@@ -214,6 +223,37 @@ test("preflights all worker input limits before copying or construction", async 
 			);
 		});
 	}
+});
+
+test("worker copies and transfers HTML font assets without detaching caller bytes", async () => {
+	const Worker = fakeWorker();
+	const woff2 = new Uint8Array([119, 79, 70, 50]);
+	const promise = compileInWorker(
+		{
+			mainPath: "main.tex",
+			html: { fonts: [{ name: "cmr10", woff2, encoding: [] }] },
+		},
+		new Map(),
+		{ manifestUrl: "https://cdn.example.test/manifest.json" },
+		{ Worker },
+	);
+	const worker = Worker.instances[0];
+	assert.equal(worker.transfer.length, 1);
+	assert.notEqual(worker.message.options.html.fonts[0].woff2, woff2);
+	assert.equal(woff2.byteLength, 4);
+	worker.emit("message", {
+		data: {
+			kind: "complete",
+			output: {
+				terminal: "done",
+				log: new Uint8Array(),
+				dvi: new Uint8Array(),
+				htmlAssets: [],
+				files: [],
+			},
+		},
+	});
+	await promise;
 });
 
 test("rejects ambiguous inline and manifest-selected formats", async () => {

@@ -26,8 +26,17 @@
 			"types": "./persistent-cache.d.ts",
 			"import": "./persistent-cache.js"
 		},
+		"./html-preview": {
+			"types": "./html-preview.d.ts",
+			"import": "./html-preview.js"
+		},
+		"./cm-fonts": {
+			"types": "./cm-fonts.d.ts",
+			"import": "./cm-fonts.js"
+		},
 		"./plain.fmt": "./assets/plain.fmt",
-		"./plain-format.json": "./assets/plain-format.json"
+		"./plain-format.json": "./assets/plain-format.json",
+		"./cmu-serif.woff2": "./assets/cmu-serif-500-roman.woff2"
 	},
 	"files": [
 		"*.js",

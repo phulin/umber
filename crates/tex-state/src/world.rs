@@ -844,6 +844,83 @@ impl World {
         }
     }
 
+    /// Stages a set of complete downstream files before publishing any of them.
+    ///
+    /// Real files are written to unique siblings and then atomically renamed,
+    /// so readers never observe truncated contents. Parent directories are
+    /// created only after every path has been validated. Memory worlds publish
+    /// the complete set in one mutation pass.
+    pub fn publish_files(&mut self, files: Vec<(PathBuf, Vec<u8>)>) -> Result<(), WorldError> {
+        static NEXT_TEMP_OUTPUT: AtomicU64 = AtomicU64::new(0);
+        match &mut self.backend {
+            WorldBackend::Real { .. } => {
+                let mut staged = Vec::with_capacity(files.len());
+                for (path, bytes) in files {
+                    let parent = path
+                        .parent()
+                        .filter(|parent| !parent.as_os_str().is_empty());
+                    if let Some(parent) = parent {
+                        std::fs::create_dir_all(parent).map_err(|error| {
+                            WorldError::new(
+                                "create output directory",
+                                Some(parent.to_owned()),
+                                error.to_string(),
+                            )
+                        })?;
+                    }
+                    let file_name = path.file_name().ok_or_else(|| {
+                        WorldError::new(
+                            "stage file",
+                            Some(path.clone()),
+                            "output path has no file name",
+                        )
+                    })?;
+                    let nonce = NEXT_TEMP_OUTPUT.fetch_add(1, Ordering::Relaxed);
+                    let temporary = path.with_file_name(format!(
+                        ".{}.{}.{}.tmp",
+                        file_name.to_string_lossy(),
+                        std::process::id(),
+                        nonce
+                    ));
+                    let result = (|| {
+                        let mut file = OpenOptions::new()
+                            .write(true)
+                            .create_new(true)
+                            .open(&temporary)?;
+                        file.write_all(&bytes)
+                    })();
+                    if let Err(error) = result {
+                        let _ = std::fs::remove_file(&temporary);
+                        for (_, temporary) in &staged {
+                            let _ = std::fs::remove_file(temporary);
+                        }
+                        return Err(WorldError::new("stage file", Some(path), error.to_string()));
+                    }
+                    staged.push((path, temporary));
+                }
+                for (path, temporary) in &staged {
+                    if let Err(error) = std::fs::rename(temporary, path) {
+                        for (_, remaining) in &staged {
+                            let _ = std::fs::remove_file(remaining);
+                        }
+                        return Err(WorldError::new(
+                            "publish file",
+                            Some(path.clone()),
+                            error.to_string(),
+                        ));
+                    }
+                }
+                Ok(())
+            }
+            WorldBackend::Memory(memory) => {
+                for (path, bytes) in files {
+                    memory.files.insert(path, Arc::from(bytes));
+                }
+                Ok(())
+            }
+        }
+    }
+
     /// Opens an input stream slot by reading and pinning its content now.
     pub fn open_in(
         &mut self,

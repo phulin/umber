@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Umber HTML coordinate prototype</title>
+  <style>
+    @font-face{font-family:'umber-contract-cm';src:url('../assets/cmu-serif-500-roman.woff2') format('woff2');font-display:block}
+    #page{position:relative;width:400px;height:240px;contain:strict;overflow:hidden;background:white}
+    .run{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;font:32px 'umber-contract-cm';font-kerning:normal;font-variant-ligatures:common-ligatures}
+    #rule{position:absolute;left:31.125px;top:88.375px;width:47.625px;height:3.25px;background:black}
+  </style>
+</head>
+<body>
+  <main id="page">
+    <svg class="run"><rect id="shaped-baseline" x="17.375px" y="73.625px" width="0" height="0"></rect><text id="shaped" x="17.375px" y="73.625px">AV office</text></svg>
+    <svg class="run" style="font-kerning:none;font-variant-ligatures:none"><rect id="unshaped-baseline" x="17.375px" y="123.625px" width="0" height="0"></rect><text id="unshaped" x="17.375px" y="123.625px">AV office</text></svg>
+    <div id="negative" style="position:absolute;left:-2.375px;top:-1.625px;width:1px;height:1px"></div>
+    <div id="rule"></div>
+  </main>
+  <script>
+    document.fonts.ready.then(() => {
+      const page = document.querySelector('#page').getBoundingClientRect();
+      const shaped = document.querySelector('#shaped').getBoundingClientRect();
+      const unshaped = document.querySelector('#unshaped').getBoundingClientRect();
+      const start = document.querySelector('#shaped-baseline').getBoundingClientRect();
+      const rule = document.querySelector('#rule').getBoundingClientRect();
+      const negative = document.querySelector('#negative').getBoundingClientRect();
+      globalThis.__contract = {
+        fontLoaded: document.fonts.check('32px umber-contract-cm', 'AV office'),
+        anchor: start.left - page.left,
+        baseline: start.top - page.top,
+        shapedWidth: shaped.width,
+        unshapedWidth: unshaped.width,
+        rule: [rule.left - page.left, rule.top - page.top, rule.width, rule.height],
+        negative: [negative.left - page.left, negative.top - page.top],
+      };
+    });
+  </script>
+</body>
+</html>

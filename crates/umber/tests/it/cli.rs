@@ -1,5 +1,6 @@
 use std::{fs, process::Command};
 
+use sha2::{Digest, Sha256};
 use test_support::{
     CorpusCase, assert_matches_fixture, corpus_cases, dvi, normalize, read_binary_fixture,
 };
@@ -335,6 +336,99 @@ fn run_align_corpus_matches_committed_dvi() {
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn run_leaders_corpus_matches_committed_dvi() {
     assert_dvi_area_matches_committed_fixture("leaders");
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary bundle and command execution.
+fn run_html_and_dvi_share_one_run_and_publish_deterministically() {
+    let setup = dvi::DviCaseSetup::new("dvi", "boxes_rules");
+    let font_dir = setup.run_dir().join("web-fonts");
+    fs::create_dir(&font_dir).expect("create web-font bundle");
+    install_test_web_font(&font_dir, &setup.run_dir().join("cmr10.tfm"), "cmr10");
+
+    let invoke = |dvi: &str, html: &str, assets: &str| {
+        Command::new(env!("CARGO_BIN_EXE_umber"))
+            .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+            .current_dir(setup.run_dir())
+            .args([
+                "run",
+                setup.source_file_name(),
+                "--dvi",
+                dvi,
+                "--html",
+                html,
+                "--html-font-dir",
+                "web-fonts",
+                "--html-assets",
+                assets,
+            ])
+            .output()
+            .expect("run simultaneous DVI and HTML")
+    };
+    for (dvi, html, assets) in [
+        ("first.dvi", "first.html", "assets"),
+        ("second.dvi", "second.html", "assets"),
+    ] {
+        let output = invoke(dvi, html, assets);
+        assert!(
+            output.status.success(),
+            "simultaneous output failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let expected = read_binary_fixture("dvi", "boxes_rules", "dvi");
+    for name in ["first.dvi", "second.dvi"] {
+        let actual = fs::read(setup.run_dir().join(name)).expect("read DVI output");
+        dvi::assert_dvi_matches(&expected, &actual, name);
+    }
+    let first = fs::read(setup.run_dir().join("first.html")).expect("read first HTML");
+    let second = fs::read(setup.run_dir().join("second.html")).expect("read second HTML");
+    assert_eq!(first, second);
+    let html = String::from_utf8(first).expect("HTML is UTF-8");
+    assert!(html.contains("data-umber-baseline-sp="));
+    assert!(html.contains("assets/"));
+}
+
+#[allow(clippy::disallowed_methods)] // host-side temporary web-font bundle.
+fn install_test_web_font(directory: &std::path::Path, tfm: &std::path::Path, name: &str) {
+    let tfm = fs::read(tfm).expect("read TFM fixture");
+    let woff2 = include_bytes!("../../../umber-wasm/assets/cmu-serif-500-roman.woff2");
+    let woff_digest: [u8; 32] = Sha256::digest(woff2).into();
+    fs::write(directory.join(format!("{name}.woff2")), woff2).expect("write WOFF2");
+    fs::write(
+        directory.join(format!("{name}.woff2.sha256")),
+        hex(&woff_digest),
+    )
+    .expect("write WOFF2 digest");
+    fs::write(
+        directory.join(format!("{name}.tfm-hash")),
+        tex_out::ContentHash::from_bytes(&tfm).hex(),
+    )
+    .expect("write TFM identity");
+    fs::write(
+        directory.join(format!("{name}.license")),
+        "Computer Modern Unicode 0.7.0; SIL Open Font License 1.1",
+    )
+    .expect("write license");
+    let mapping = (0u16..=255)
+        .map(|code| {
+            let mapped = if (32..=126).contains(&code) {
+                char::from_u32(u32::from(code)).expect("ASCII").to_string()
+            } else {
+                char::from_u32(0xe000 + u32::from(code))
+                    .expect("private-use mapping")
+                    .to_string()
+            };
+            format!("{code:02x}\t{mapped}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(directory.join(format!("{name}.map")), mapping).expect("write encoding map");
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 #[test]

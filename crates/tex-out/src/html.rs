@@ -124,6 +124,8 @@ pub enum HtmlError {
     InvalidLanguage,
     SpecialTooLarge { bytes: usize, limit: usize },
     InconsistentFont { font: String },
+    InvalidSpecial { message: String },
+    SpecialNestingTooDeep { limit: usize },
 }
 
 impl std::fmt::Display for HtmlError {
@@ -192,6 +194,10 @@ impl std::fmt::Display for HtmlError {
             }
             Self::InconsistentFont { font } => {
                 write!(f, "HTML pages resolve font {font} inconsistently")
+            }
+            Self::InvalidSpecial { message } => write!(f, "invalid HTML special: {message}"),
+            Self::SpecialNestingTooDeep { limit } => {
+                write!(f, "HTML special nesting exceeds limit {limit}")
             }
         }
     }
@@ -297,9 +303,8 @@ const BASE_CSS: &str = concat!(
     ".umber-page{position:relative;contain:strict;overflow:hidden;background:#fff;margin:0 auto 1rem;isolation:isolate}\n",
     ".umber-box{position:absolute;pointer-events:none}\n",
     ".umber-rule{position:absolute;background:currentColor}\n",
-    ".umber-run{position:absolute;height:0;line-height:0;white-space:pre;text-wrap:nowrap;unicode-bidi:isolate;font-kerning:normal;font-variant-ligatures:common-ligatures;font-synthesis:none;font-optical-sizing:none}\n",
-    ".umber-run-text{line-height:normal;vertical-align:baseline}\n",
-    ".umber-baseline{display:inline-block;width:0;height:0;padding:0;margin:0;vertical-align:baseline}\n",
+    ".umber-run{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;white-space:pre;unicode-bidi:isolate;font-kerning:normal;font-variant-ligatures:common-ligatures;font-synthesis:none;font-optical-sizing:none}\n",
+    ".umber-run-text{white-space:pre}\n",
     ".umber-special{position:absolute;width:0;height:0;overflow:hidden;pointer-events:none}\n",
     ".umber-a11y{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}\n",
     "@media print{.umber-document{background:#fff}.umber-page{break-after:page;margin:0}}\n",
@@ -431,6 +436,7 @@ fn write_page(
     out.push_str(&page.page_index.to_string());
     out.push_str("\" data-umber-page=\"");
     out.push_str(&page.page_index.to_string());
+    out.push('"');
     attr_sp(out, "width", page.width);
     attr_sp(out, "height", page.height);
     out.push_str(" data-umber-mag=\"");
@@ -446,6 +452,7 @@ fn write_page(
         .map(|font| (font.font_id, font))
         .collect::<BTreeMap<_, _>>();
     let mut accessible = String::new();
+    let mut special_state = SpecialState::default();
     for (ordinal, event) in page.events.iter().enumerate() {
         match event {
             PositionedEvent::Box(event) => {
@@ -456,6 +463,7 @@ fn write_page(
                     BoxKind::Horizontal => "hbox",
                     BoxKind::Vertical => "vbox",
                 });
+                out.push('"');
                 geometry_attrs(out, event.x, event.y, event.width, event.height);
                 attr_sp(out, "baseline", event.baseline);
                 geometry_style(out, event.x, event.y, event.width, event.height, page.mag);
@@ -464,8 +472,13 @@ fn write_page(
             PositionedEvent::Rule(event) => {
                 out.push_str("<div class=\"umber-rule\" aria-hidden=\"true\" data-umber-event=\"");
                 out.push_str(&ordinal.to_string());
+                out.push('"');
                 geometry_attrs(out, event.x, event.y, event.width, event.height);
                 geometry_style(out, event.x, event.y, event.width, event.height, page.mag);
+                if let Some(color) = special_state.color() {
+                    out.push_str(";color:");
+                    out.push_str(color);
+                }
                 out.push_str("\"></div>\n");
             }
             PositionedEvent::TextRun(event) => {
@@ -484,25 +497,45 @@ fn write_page(
                 )?;
                 let text = map_text(event.units.as_slice(), font)?;
                 accessible.push_str(&text);
-                out.push_str("<span class=\"umber-run\" aria-hidden=\"true\" dir=\"ltr\" data-umber-event=\"");
+                out.push_str("<svg class=\"umber-run\" aria-hidden=\"true\" data-umber-event=\"");
                 out.push_str(&ordinal.to_string());
+                out.push('"');
                 attr_sp(out, "x", event.x);
                 attr_sp(out, "baseline", event.baseline);
                 out.push_str(" data-umber-font=\"");
                 out.push_str(&event.font_id.to_string());
                 out.push_str("\" data-umber-codes=\"");
                 write_codes(out, &event.units);
-                out.push_str("\" style=\"left:");
-                css_px(out, event.x, page.mag);
-                out.push_str(";top:");
-                css_px(out, event.baseline, page.mag);
-                out.push_str(";font-family:'");
+                out.push_str("\" style=\"font-family:'");
                 out.push_str(&font.family);
                 out.push_str("';font-size:");
                 css_px(out, Scaled::from_raw(font.web.key.at_size_raw), page.mag);
-                out.push_str("\"><span class=\"umber-run-text\">");
+                if let Some(color) = special_state.color() {
+                    out.push_str(";color:");
+                    out.push_str(color);
+                }
+                out.push_str("\">");
+                out.push_str("<rect class=\"umber-baseline\" x=\"");
+                css_px(out, event.x, page.mag);
+                out.push_str("\" y=\"");
+                css_px(out, event.baseline, page.mag);
+                out.push_str("\" width=\"0\" height=\"0\"></rect>");
+                if let Some(link) = &special_state.link {
+                    out.push_str("<a href=\"");
+                    escape_attr(link, out);
+                    out.push_str("\" rel=\"noreferrer noopener\">");
+                }
+                out.push_str("<text class=\"umber-run-text\" direction=\"ltr\" x=\"");
+                css_px(out, event.x, page.mag);
+                out.push_str("\" y=\"");
+                css_px(out, event.baseline, page.mag);
+                out.push_str("\">");
                 escape_text(&text, out);
-                out.push_str("<i class=\"umber-baseline\"></i></span></span>\n");
+                out.push_str("</text>");
+                if special_state.link.is_some() {
+                    out.push_str("</a>");
+                }
+                out.push_str("</svg>\n");
             }
             PositionedEvent::Special(event) => {
                 if event.payload.len() > options.max_special_bytes {
@@ -511,16 +544,29 @@ fn write_page(
                         limit: options.max_special_bytes,
                     });
                 }
+                let interpreted = interpret_special(event)?;
+                special_state.apply(&interpreted)?;
                 out.push_str(
                     "<span class=\"umber-special\" aria-hidden=\"true\" data-umber-event=\"",
                 );
                 out.push_str(&ordinal.to_string());
+                out.push('"');
                 attr_sp(out, "x", event.x);
                 attr_sp(out, "y", event.y);
                 out.push_str(" data-umber-special-class=\"");
                 escape_attr(&event.class, out);
                 out.push_str("\" data-umber-special-hex=\"");
                 out.push_str(&hex(&event.payload));
+                match &interpreted {
+                    InterpretedSpecial::Destination(id) => {
+                        out.push_str("\" id=\"");
+                        escape_attr(id, out);
+                    }
+                    InterpretedSpecial::Inert => {
+                        out.push_str("\" data-umber-special-policy=\"inert");
+                    }
+                    _ => out.push_str("\" data-umber-special-policy=\"applied"),
+                }
                 out.push_str("\" style=\"left:");
                 css_px(out, event.x, page.mag);
                 out.push_str(";top:");
@@ -533,6 +579,133 @@ fn write_page(
     escape_text(&accessible, out);
     out.push_str("</div></section>\n");
     Ok(())
+}
+
+#[derive(Default)]
+struct SpecialState {
+    colors: Vec<String>,
+    link: Option<String>,
+}
+
+impl SpecialState {
+    fn color(&self) -> Option<&str> {
+        self.colors.last().map(String::as_str)
+    }
+
+    fn apply(&mut self, special: &InterpretedSpecial) -> Result<(), HtmlError> {
+        const LIMIT: usize = 256;
+        match special {
+            InterpretedSpecial::ColorPush(color) => {
+                if self.colors.len() >= LIMIT {
+                    return Err(HtmlError::SpecialNestingTooDeep { limit: LIMIT });
+                }
+                self.colors.push(color.clone());
+            }
+            InterpretedSpecial::ColorPop => {
+                self.colors.pop().ok_or_else(|| HtmlError::InvalidSpecial {
+                    message: "color pop without push".to_owned(),
+                })?;
+            }
+            InterpretedSpecial::LinkStart(link) => {
+                if self.link.is_some() {
+                    return Err(HtmlError::InvalidSpecial {
+                        message: "nested links are not supported".to_owned(),
+                    });
+                }
+                self.link = Some(link.clone());
+            }
+            InterpretedSpecial::LinkEnd => {
+                self.link.take().ok_or_else(|| HtmlError::InvalidSpecial {
+                    message: "link end without start".to_owned(),
+                })?;
+            }
+            InterpretedSpecial::Destination(_) | InterpretedSpecial::Inert => {}
+        }
+        Ok(())
+    }
+}
+
+enum InterpretedSpecial {
+    ColorPush(String),
+    ColorPop,
+    LinkStart(String),
+    LinkEnd,
+    Destination(String),
+    Inert,
+}
+
+fn interpret_special(
+    event: &crate::positioned::PositionedSpecial,
+) -> Result<InterpretedSpecial, HtmlError> {
+    if event.class != "html" {
+        return Ok(InterpretedSpecial::Inert);
+    }
+    let payload = std::str::from_utf8(&event.payload).map_err(|_| HtmlError::InvalidSpecial {
+        message: "payload is not UTF-8".to_owned(),
+    })?;
+    if payload == "color pop" {
+        return Ok(InterpretedSpecial::ColorPop);
+    }
+    if let Some(color) = payload.strip_prefix("color push ") {
+        return canonical_color(color)
+            .map(InterpretedSpecial::ColorPush)
+            .ok_or_else(|| HtmlError::InvalidSpecial {
+                message: format!("unsupported color {color:?}"),
+            });
+    }
+    if payload == "endlink" {
+        return Ok(InterpretedSpecial::LinkEnd);
+    }
+    if let Some(link) = payload.strip_prefix("link ") {
+        if safe_link(link) {
+            return Ok(InterpretedSpecial::LinkStart(link.to_owned()));
+        }
+        return Err(HtmlError::InvalidSpecial {
+            message: format!("unsafe link {link:?}"),
+        });
+    }
+    if let Some(id) = payload.strip_prefix("dest ") {
+        if safe_identifier(id) {
+            return Ok(InterpretedSpecial::Destination(format!("umber-dest-{id}")));
+        }
+        return Err(HtmlError::InvalidSpecial {
+            message: format!("unsafe destination {id:?}"),
+        });
+    }
+    Ok(InterpretedSpecial::Inert)
+}
+
+fn canonical_color(color: &str) -> Option<String> {
+    match color {
+        "black" | "red" | "green" | "blue" | "cyan" | "magenta" | "yellow" | "gray" => {
+            Some(color.to_owned())
+        }
+        _ if color.len() == 7
+            && color.starts_with('#')
+            && color[1..]
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()) =>
+        {
+            Some(color.to_owned())
+        }
+        _ => None,
+    }
+}
+
+fn safe_link(link: &str) -> bool {
+    (link.starts_with('#') && safe_identifier(&link[1..]))
+        || (link.starts_with("https://")
+            && !link
+                .chars()
+                .any(|ch| ch.is_control() || matches!(ch, '"' | '\'' | '<' | '>' | '\\')))
+}
+
+fn safe_identifier(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
 }
 
 fn map_text(units: &[TextUnit], font: &ResolvedFont) -> Result<String, HtmlError> {

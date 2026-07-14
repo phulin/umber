@@ -75,6 +75,67 @@ fn unavailable_text_mapping_is_actionable() {
     );
 }
 
+#[test]
+fn allowlisted_color_link_and_destination_are_typed_and_escaped() {
+    let mut page = page();
+    page.testing_mut().effects = vec![
+        PageEffect::Special {
+            class: "html".to_owned(),
+            payload: b"color push red".to_vec(),
+        },
+        PageEffect::Special {
+            class: "html".to_owned(),
+            payload: b"link https://example.test/path?a=1&b=2".to_vec(),
+        },
+        PageEffect::Special {
+            class: "html".to_owned(),
+            payload: b"endlink".to_vec(),
+        },
+        PageEffect::Special {
+            class: "html".to_owned(),
+            payload: b"dest section.1".to_vec(),
+        },
+    ];
+    let PageNode::HList(root) = &mut page.testing_mut().root else {
+        unreachable!()
+    };
+    root.children = vec![
+        PageNode::WhatsitAnchor { effect_index: 0 },
+        PageNode::WhatsitAnchor { effect_index: 1 },
+        PageNode::Char {
+            font_id: 7,
+            ch: b'A' as u32,
+            width: sp(30),
+        },
+        PageNode::WhatsitAnchor { effect_index: 2 },
+        PageNode::WhatsitAnchor { effect_index: 3 },
+    ];
+    let mut resolver = Resolver { missing_b: false };
+    let output = write_html(&[page], &mut resolver, &HtmlOptions::default()).expect("special HTML");
+    let html = String::from_utf8(output.html).expect("UTF-8");
+    assert!(html.contains("<svg class=\"umber-run\""));
+    assert!(
+        html.contains(";color:red\"><rect class=\"umber-baseline\"")
+            && html.contains("<a href=\"https://example.test/path?a=1&amp;b=2\""),
+        "{html}"
+    );
+    assert!(html.contains("id=\"umber-dest-section.1\""));
+}
+
+#[test]
+fn dangerous_link_special_fails_without_markup_injection() {
+    let mut page = page();
+    page.testing_mut().effects[0] = PageEffect::Special {
+        class: "html".to_owned(),
+        payload: b"link javascript:alert(1)".to_vec(),
+    };
+    let mut resolver = Resolver { missing_b: false };
+    assert!(matches!(
+        write_html(&[page], &mut resolver, &HtmlOptions::default()),
+        Err(HtmlError::InvalidSpecial { .. })
+    ));
+}
+
 fn page() -> crate::PageArtifact {
     let font = FontResource {
         font_id: 7,
