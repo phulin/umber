@@ -48,6 +48,10 @@ pub struct MemoryRunOutput {
     pub terminal: Vec<u8>,
     pub log: Vec<u8>,
     pub dvi: Vec<u8>,
+    /// Standalone HTML requested by the host-neutral session.
+    pub html: Option<Vec<u8>>,
+    /// Content-addressed HTML assets. Embedded mode leaves this empty.
+    pub html_assets: Vec<MemoryOutputFile>,
     pub files: Vec<MemoryOutputFile>,
 }
 
@@ -117,6 +121,8 @@ where
         terminal: terminal.to_vec(),
         log: log.to_vec(),
         dvi,
+        html: None,
+        html_assets: Vec::new(),
         files,
     })
 }

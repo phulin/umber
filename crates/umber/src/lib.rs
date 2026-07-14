@@ -15,12 +15,14 @@ use tex_state::{
     WorldError,
 };
 
+mod html_output;
 mod input_search;
 mod memory_output;
 mod virtual_compile;
 
 pub const PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub use html_output::DirectoryHtmlFontResolver;
 pub use input_search::{TexFontSearchPath, TexInputSearchPath};
 pub use memory_output::{
     MemoryOutputCollectionError, MemoryOutputFile, MemoryRunOutput, collect_final_memory_output,
@@ -28,7 +30,8 @@ pub use memory_output::{
 };
 pub use virtual_compile::{
     CompileAttemptResult, CompileDiagnostic, CompileError, FileKind, FileRequest, FileRequestKey,
-    SessionLimits, SessionOptions, VirtualCompileSession, VirtualPath, VirtualPathError,
+    SessionLimits, SessionOptions, SessionWebFont, VirtualCompileSession, VirtualPath,
+    VirtualPathError,
 };
 
 /// The only checkpoint policy supported by composed engine sessions.
@@ -691,6 +694,40 @@ pub fn write_dvi_from_artifacts<W: std::io::Write>(
     Ok(writer.finish()?)
 }
 
+/// Writes standalone HTML directly from successful in-process shipout receipts.
+///
+/// Font acquisition is an explicit downstream capability and never reaches
+/// back into live engine state.
+pub fn html_from_committed_artifacts<R: tex_out::html::HtmlFontResolver>(
+    artifacts: &[CommittedArtifact],
+    resolver: &mut R,
+    options: &tex_out::html::HtmlOptions,
+) -> Result<tex_out::html::HtmlOutput, HtmlBuildError> {
+    let pages = artifacts
+        .iter()
+        .map(|artifact| tex_out::PageArtifact::from_bytes(artifact.bytes()))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(tex_out::html::write_html(&pages, resolver, options)?)
+}
+
+/// Replays durable artifacts through the HTML driver one page at a time.
+pub fn html_from_artifacts<R: tex_out::html::HtmlFontResolver>(
+    stores: &Universe,
+    artifacts: &[ContentHash],
+    resolver: &mut R,
+    options: &tex_out::html::HtmlOptions,
+) -> Result<tex_out::html::HtmlOutput, HtmlBuildError> {
+    let mut pages = Vec::with_capacity(artifacts.len());
+    for &hash in artifacts {
+        let bytes = stores
+            .world()
+            .read_artifact(hash)?
+            .ok_or(HtmlBuildError::MissingArtifact(hash))?;
+        pages.push(tex_out::PageArtifact::from_bytes(&bytes)?);
+    }
+    Ok(tex_out::html::write_html(&pages, resolver, options)?)
+}
+
 /// Runs in-memory TeX through the `umber run` executor setup.
 pub fn run_memory_with_stores(
     source: &str,
@@ -788,6 +825,47 @@ impl From<tex_out::ParseError> for DviBuildError {
 impl From<DviError> for DviBuildError {
     fn from(value: DviError) -> Self {
         Self::Dvi(value)
+    }
+}
+
+#[derive(Debug)]
+pub enum HtmlBuildError {
+    MissingArtifact(ContentHash),
+    World(WorldError),
+    Parse(tex_out::ParseError),
+    Html(tex_out::html::HtmlError),
+}
+
+impl std::fmt::Display for HtmlBuildError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingArtifact(hash) => {
+                write!(f, "shipped page artifact {} is missing", hash.hex())
+            }
+            Self::World(error) => error.fmt(f),
+            Self::Parse(error) => error.fmt(f),
+            Self::Html(error) => error.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for HtmlBuildError {}
+
+impl From<WorldError> for HtmlBuildError {
+    fn from(value: WorldError) -> Self {
+        Self::World(value)
+    }
+}
+
+impl From<tex_out::ParseError> for HtmlBuildError {
+    fn from(value: tex_out::ParseError) -> Self {
+        Self::Parse(value)
+    }
+}
+
+impl From<tex_out::html::HtmlError> for HtmlBuildError {
+    fn from(value: tex_out::html::HtmlError) -> Self {
+        Self::Html(value)
     }
 }
 

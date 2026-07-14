@@ -24,6 +24,7 @@ export interface CompilerBindings {
 		options: SessionOptions,
 	) => {
 		addUserFile(path: string, bytes: Uint8Array): void;
+		addHtmlFont(font: import("./umber_wasm.js").HtmlFontInput): void;
 		provideResolvedFile(
 			request: FileRequestKey,
 			virtualPath: string,

@@ -1273,6 +1273,13 @@ Responsibility: page artifacts → bytes on disk. Strictly downstream.
   without masking any other byte, length, or pointer discrepancy.
 - Because drivers see only committed artifacts, rollback never reaches
   them; there is nothing to undo downstream of the commit barrier.
+- The coordinate-identical HTML driver follows the same boundary. It lowers
+  committed artifacts into ordered exact-sp page, box, rule, special-anchor,
+  and browser-shapeable text-run events, then serializes fixed page and run
+  containers. Browser glyph advances and shaping remain intentionally outside
+  coordinate parity. Web fonts and code mappings are explicit downstream,
+  content-addressed resources; neither platform fallback nor live state is
+  available to the driver. See [Coordinate-Identical HTML Output](html_output.md).
 
 ## 11. Incremental engine (`tex-incr`)
 

@@ -38,6 +38,17 @@ export interface SessionOptions {
   format?: Uint8Array;
   clock?: { year: number; month: number; day: number; minutes: number };
   limits?: Partial<SessionLimits>;
+  html?: { fonts: HtmlFontInput[] };
+}
+
+export interface HtmlFontInput {
+  name: string;
+  tfmContentHash: string;
+  woff2: Uint8Array;
+  sha256: string;
+  encoding: Array<string | null>;
+  provenance: string;
+  embeddable: boolean;
 }
 
 export interface CompileOutputFile {
@@ -49,6 +60,8 @@ export interface CompileOutput {
   terminal: string;
   log: Uint8Array;
   dvi: Uint8Array;
+  html?: Uint8Array;
+  htmlAssets: CompileOutputFile[];
   files: CompileOutputFile[];
 }
 
@@ -72,6 +85,9 @@ extern "C" {
 
     #[wasm_bindgen(typescript_type = "FileRequestKey")]
     pub type JsFileRequestKey;
+
+    #[wasm_bindgen(typescript_type = "HtmlFontInput")]
+    pub type JsHtmlFontInput;
 
     #[wasm_bindgen(typescript_type = "AttemptResult")]
     pub type JsAttemptResult;
@@ -107,6 +123,14 @@ impl CompilerSession {
     pub fn add_user_file(&mut self, path: &str, bytes: &Uint8Array) -> Result<(), JsValue> {
         self.session_mut()?
             .add_user_file(path, bytes.to_vec())
+            .map_err(boundary_error)
+    }
+
+    #[wasm_bindgen(js_name = addHtmlFont)]
+    pub fn add_html_font(&mut self, font: &JsHtmlFontInput) -> Result<(), JsValue> {
+        let font = options::parse_html_font(font.as_ref())?;
+        self.session_mut()?
+            .add_html_font(font)
             .map_err(boundary_error)
     }
 

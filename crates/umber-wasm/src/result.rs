@@ -48,6 +48,21 @@ fn compile_output(output: MemoryRunOutput) -> Result<JsValue, JsValue> {
     )?;
     set(&object, "log", &typed_array(&output.log))?;
     set(&object, "dvi", &typed_array(&output.dvi))?;
+    if let Some(html) = output.html {
+        set(&object, "html", &typed_array(&html))?;
+    }
+    let html_assets = Array::new();
+    for asset in output.html_assets {
+        let file = Object::new();
+        set(
+            &file,
+            "path",
+            &JsValue::from_str(&asset.path.to_string_lossy()),
+        )?;
+        set(&file, "bytes", &typed_array(&asset.bytes))?;
+        html_assets.push(&file);
+    }
+    set(&object, "htmlAssets", &html_assets)?;
     let files = Array::new();
     for output_file in output.files {
         let file = Object::new();

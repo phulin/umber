@@ -39,6 +39,7 @@ export async function compile(options, userFiles, resolver, signal, bindings) {
 	let providedBytes = 0;
 	try {
 		addUserFiles(session, userFiles, limits);
+		addHtmlFonts(session, options?.html?.fonts);
 		for (let round = 0; round < limits.attempts; round += 1) {
 			throwIfAborted(signal);
 			const attempt = session.compileAttempt();
@@ -159,6 +160,14 @@ export async function compile(options, userFiles, resolver, signal, bindings) {
 	} finally {
 		session.dispose();
 	}
+}
+
+function addHtmlFonts(session, fonts) {
+	if (fonts === undefined) return;
+	if (!Array.isArray(fonts)) {
+		throw new CompileFacadeError("invalid-html-fonts", "html.fonts must be an array");
+	}
+	for (const font of fonts) session.addHtmlFont(font);
 }
 
 async function compilerClass(bindings) {

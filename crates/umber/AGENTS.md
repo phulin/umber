@@ -22,6 +22,7 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/expand_dump.rs`: implementation of the `expand-dump` CLI command through the shared engine session and dump primitive setup.
 - `src/input_search.rs`: deterministic driver-owned TeX input and TFM font path resolution through World-backed reads.
 - `src/input_search/tests.rs`: focused TeX input/font area ordering, extension, and input-record coverage.
+- `src/html_output.rs`: exact native web-font bundle resolver with TFM identity, WOFF2 digest, complete encoding-map, and embedding-license validation.
 - `src/lib.rs`: shared engine session, file resolvers, typed effect-before-driver finalization, run helpers, and one-artifact-at-a-time DVI construction.
 - `src/memory_output.rs`: exact committed terminal/log/DVI/aux collection for successful memory-backed runs with aggregate output limits.
 - `src/memory_output/tests.rs`: final-commit idempotence, output accounting, and memory-boundary tests.

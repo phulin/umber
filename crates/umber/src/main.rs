@@ -243,6 +243,36 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
         let dvi = umber::dvi_from_page_plans(&run.dvi_pages)?;
         driver_files.push(DriverFile::new(output.clone(), dvi));
     }
+    if let Some(output) = &opts.html {
+        let font_dir = opts
+            .html_font_dir
+            .as_ref()
+            .ok_or(CliError::Usage("--html requires --html-font-dir <path>"))?;
+        let mut resolver = umber::DirectoryHtmlFontResolver::new(font_dir, stores.world_mut());
+        let mut html_options = tex_out::html::HtmlOptions::default();
+        if let Some(asset_dir) = &opts.html_assets {
+            let relative_directory = asset_dir
+                .to_str()
+                .ok_or(CliError::Usage("--html-assets must be valid UTF-8"))?
+                .to_owned();
+            html_options.asset_mode = tex_out::html::AssetMode::Manifest { relative_directory };
+        }
+        let html = umber::html_from_committed_artifacts(
+            &run.committed_artifacts,
+            &mut resolver,
+            &html_options,
+        )?;
+        if let Some(asset_dir) = &opts.html_assets {
+            let base = output.parent().unwrap_or_else(|| std::path::Path::new("."));
+            for asset in html.assets {
+                driver_files.push(DriverFile::new(
+                    base.join(asset_dir).join(asset.path),
+                    asset.bytes,
+                ));
+            }
+        }
+        driver_files.push(DriverFile::new(output.clone(), html.html));
+    }
     if run.dumped_format {
         let output = opts
             .format_out
@@ -268,6 +298,9 @@ struct RunCliOptions {
     input: PathBuf,
     show_fixtures: bool,
     dvi: Option<PathBuf>,
+    html: Option<PathBuf>,
+    html_font_dir: Option<PathBuf>,
+    html_assets: Option<PathBuf>,
     format: Option<PathBuf>,
     format_out: Option<PathBuf>,
     etex: bool,
@@ -280,6 +313,9 @@ impl RunCliOptions {
         let mut input = None;
         let mut show_fixtures = false;
         let mut dvi = None;
+        let mut html = None;
+        let mut html_font_dir = None;
+        let mut html_assets = None;
         let mut format = None;
         let mut format_out = None;
         let mut etex = false;
@@ -306,6 +342,37 @@ impl RunCliOptions {
                         return Err(CliError::Usage("missing output path for --dvi"));
                     };
                     dvi = Some(PathBuf::from(path));
+                }
+                "--html" => {
+                    if html.is_some() {
+                        return Err(CliError::Usage(
+                            "run accepts at most one --html output path",
+                        ));
+                    }
+                    let Some(path) = args.next() else {
+                        return Err(CliError::Usage("missing output path for --html"));
+                    };
+                    html = Some(PathBuf::from(path));
+                }
+                "--html-font-dir" => {
+                    if html_font_dir.is_some() {
+                        return Err(CliError::Usage("run accepts at most one --html-font-dir"));
+                    }
+                    let Some(path) = args.next() else {
+                        return Err(CliError::Usage("missing path for --html-font-dir"));
+                    };
+                    html_font_dir = Some(PathBuf::from(path));
+                }
+                "--html-assets" => {
+                    if html_assets.is_some() {
+                        return Err(CliError::Usage(
+                            "run accepts at most one --html-assets directory",
+                        ));
+                    }
+                    let Some(path) = args.next() else {
+                        return Err(CliError::Usage("missing directory for --html-assets"));
+                    };
+                    html_assets = Some(PathBuf::from(path));
                 }
                 "--format" => {
                     if format.is_some() {
@@ -350,10 +417,28 @@ impl RunCliOptions {
                 "--dvi and --format-out must use different output paths",
             ));
         }
+        if html_assets.is_some() && html.is_none() {
+            return Err(CliError::Usage("--html-assets requires --html"));
+        }
+        if html_font_dir.is_some() && html.is_none() {
+            return Err(CliError::Usage("--html-font-dir requires --html"));
+        }
+        if dvi
+            .as_ref()
+            .zip(html.as_ref())
+            .is_some_and(|(dvi, html)| dvi == html)
+        {
+            return Err(CliError::Usage(
+                "--dvi and --html must use different output paths",
+            ));
+        }
         Ok(Self {
             input,
             show_fixtures,
             dvi,
+            html,
+            html_font_dir,
+            html_assets,
             format,
             format_out,
             etex,
@@ -383,6 +468,7 @@ enum CliError {
     Exec(tex_exec::ExecError),
     RenderedExec(String),
     Dvi(umber::DviBuildError),
+    Html(umber::HtmlBuildError),
     Format(FormatError),
     Finalization(umber::FinalizationError),
 }
@@ -397,6 +483,7 @@ impl std::fmt::Display for CliError {
             Self::Exec(err) => write!(f, "{err}"),
             Self::RenderedExec(text) => f.write_str(text),
             Self::Dvi(err) => write!(f, "{err}"),
+            Self::Html(err) => write!(f, "{err}"),
             Self::Format(err) => write!(f, "{err}"),
             Self::Finalization(err) => write!(f, "{err}"),
         }
@@ -426,6 +513,12 @@ impl From<tex_exec::ExecError> for CliError {
 impl From<umber::DviBuildError> for CliError {
     fn from(value: umber::DviBuildError) -> Self {
         Self::Dvi(value)
+    }
+}
+
+impl From<umber::HtmlBuildError> for CliError {
+    fn from(value: umber::HtmlBuildError) -> Self {
+        Self::Html(value)
     }
 }
 

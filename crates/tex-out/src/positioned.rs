@@ -1,0 +1,152 @@
+//! Driver-neutral exact page geometry derived from committed artifacts.
+//!
+//! Text events stop at browser-shapeable runs: their anchor and baseline are
+//! exact TeX coordinates, while glyph positions and run widths are absent.
+
+mod traversal;
+
+#[cfg(test)]
+mod tests;
+
+use tex_arith::Scaled;
+
+use crate::{FontResource, PageArtifact};
+
+/// Limits applied while lowering one committed page.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PositionedLimits {
+    pub max_events: usize,
+    pub max_depth: usize,
+    pub max_run_units: usize,
+}
+
+impl Default for PositionedLimits {
+    fn default() -> Self {
+        Self {
+            max_events: 1_000_000,
+            max_depth: 4_096,
+            max_run_units: 16_384,
+        }
+    }
+}
+
+/// A complete page of exact positioned events.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PositionedPage {
+    pub page_index: u32,
+    pub width: Scaled,
+    pub height: Scaled,
+    pub mag: i32,
+    pub counts: [i32; 10],
+    pub fonts: Vec<FontResource>,
+    pub events: Vec<PositionedEvent>,
+}
+
+/// Ordered page event. Event order remains significant at equal coordinates.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PositionedEvent {
+    Box(PositionedBox),
+    TextRun(PositionedTextRun),
+    Rule(PositionedRule),
+    Special(PositionedSpecial),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PositionedBox {
+    pub kind: BoxKind,
+    pub x: Scaled,
+    pub y: Scaled,
+    pub width: Scaled,
+    pub height: Scaled,
+    pub baseline: Scaled,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BoxKind {
+    Horizontal,
+    Vertical,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PositionedTextRun {
+    pub x: Scaled,
+    pub baseline: Scaled,
+    pub font_id: u32,
+    pub units: Vec<TextUnit>,
+}
+
+/// Browser-shapeable source content. Codes are interpreted only by the
+/// explicitly resolved web-font encoding; spaces arise from shipped glue.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TextUnit {
+    Code(u8),
+    Space,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PositionedRule {
+    pub x: Scaled,
+    pub y: Scaled,
+    pub width: Scaled,
+    pub height: Scaled,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PositionedSpecial {
+    pub x: Scaled,
+    pub y: Scaled,
+    pub class: String,
+    pub payload: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PositionedError {
+    PositionOverflow,
+    InvalidMagnification { mag: i32 },
+    MissingEffect { effect_index: u32 },
+    CharacterOutOfRange { ch: u32 },
+    TooManyEvents { limit: usize },
+    NestingTooDeep { limit: usize },
+    TextRunTooLong { limit: usize },
+}
+
+impl std::fmt::Display for PositionedError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PositionOverflow => f.write_str("positioned page arithmetic overflowed"),
+            Self::InvalidMagnification { mag } => {
+                write!(f, "HTML output requires positive magnification, got {mag}")
+            }
+            Self::MissingEffect { effect_index } => {
+                write!(f, "page node references missing effect {effect_index}")
+            }
+            Self::CharacterOutOfRange { ch } => {
+                write!(f, "browser text code {ch} is outside 0..=255")
+            }
+            Self::TooManyEvents { limit } => {
+                write!(f, "positioned page exceeds event limit {limit}")
+            }
+            Self::NestingTooDeep { limit } => {
+                write!(f, "positioned page exceeds nesting limit {limit}")
+            }
+            Self::TextRunTooLong { limit } => {
+                write!(f, "positioned text run exceeds unit limit {limit}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for PositionedError {}
+
+/// Lowers one validated committed page without consulting live engine state.
+pub fn lower_page(page: &PageArtifact, page_index: u32) -> Result<PositionedPage, PositionedError> {
+    lower_page_with_limits(page, page_index, PositionedLimits::default())
+}
+
+pub fn lower_page_with_limits(
+    page: &PageArtifact,
+    page_index: u32,
+    limits: PositionedLimits,
+) -> Result<PositionedPage, PositionedError> {
+    traversal::lower(page, page_index, limits)
+}

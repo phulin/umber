@@ -16,7 +16,7 @@ pub mod disasm;
 mod extent;
 mod fonts;
 mod framing;
-mod glue;
+pub(crate) mod glue;
 mod leaders;
 mod movement;
 mod opcodes;

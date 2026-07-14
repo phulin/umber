@@ -1,5 +1,5 @@
-use js_sys::{Reflect, Uint8Array};
-use umber::{FileKind, FileRequestKey, SessionLimits, SessionOptions};
+use js_sys::{Array, Reflect, Uint8Array};
+use umber::{FileKind, FileRequestKey, SessionLimits, SessionOptions, SessionWebFont};
 use wasm_bindgen::{JsCast, JsValue};
 
 use crate::js_error;
@@ -12,6 +12,7 @@ pub(crate) fn parse_options(value: &JsValue) -> Result<SessionOptions, JsValue> 
     };
     options.job_name = optional_string(value, "jobName")?;
     options.format = optional_bytes(value, "format")?;
+    options.html = !field(value, "html")?.is_undefined() && !field(value, "html")?.is_null();
     if let Some(clock) = optional_object(value, "clock")? {
         options.clock.year = integer::<i32>(&clock, "year")?;
         options.clock.month = integer::<i32>(&clock, "month")?;
@@ -22,6 +23,39 @@ pub(crate) fn parse_options(value: &JsValue) -> Result<SessionOptions, JsValue> 
         options.limits = parse_limits(&limits)?;
     }
     Ok(options)
+}
+
+pub(crate) fn parse_html_font(value: &JsValue) -> Result<SessionWebFont, JsValue> {
+    require_object(value, "HTML font")?;
+    let woff2 = required_bytes(value, "woff2")?;
+    let digest = parse_digest(&required_string(value, "sha256")?)?;
+    let encoding_value = field(value, "encoding")?;
+    if !Array::is_array(&encoding_value) {
+        return Err(js_error("HTML font encoding must be an array"));
+    }
+    let array = Array::from(&encoding_value);
+    if array.length() != 256 {
+        return Err(js_error("HTML font encoding must contain 256 entries"));
+    }
+    let mut encoding = Vec::with_capacity(256);
+    for value in array.iter() {
+        if value.is_null() || value.is_undefined() {
+            encoding.push(None);
+        } else {
+            encoding.push(Some(value.as_string().ok_or_else(|| {
+                js_error("HTML font encoding entries must be strings or null")
+            })?));
+        }
+    }
+    Ok(SessionWebFont {
+        name: required_string(value, "name")?,
+        tfm_content_hash_hex: required_string(value, "tfmContentHash")?,
+        woff2,
+        sha256: digest,
+        encoding,
+        provenance: required_string(value, "provenance")?,
+        embeddable: required_bool(value, "embeddable")?,
+    })
 }
 
 pub(crate) fn parse_request_key(value: &JsValue) -> Result<FileRequestKey, JsValue> {
@@ -86,6 +120,36 @@ fn optional_bytes(object: &JsValue, name: &str) -> Result<Option<Vec<u8>>, JsVal
         return Err(js_error(&format!("{name} must be a Uint8Array")));
     }
     Ok(Some(Uint8Array::new(&value).to_vec()))
+}
+
+fn required_bytes(object: &JsValue, name: &str) -> Result<Vec<u8>, JsValue> {
+    let value = field(object, name)?;
+    if !value.is_instance_of::<Uint8Array>() {
+        return Err(js_error(&format!("{name} must be a Uint8Array")));
+    }
+    Ok(Uint8Array::new(&value).to_vec())
+}
+
+fn required_bool(object: &JsValue, name: &str) -> Result<bool, JsValue> {
+    field(object, name)?
+        .as_bool()
+        .ok_or_else(|| js_error(&format!("{name} must be a boolean")))
+}
+
+fn parse_digest(value: &str) -> Result<[u8; 32], JsValue> {
+    if value.len() != 64 {
+        return Err(js_error("sha256 must contain 64 lowercase hex digits"));
+    }
+    let mut digest = [0u8; 32];
+    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
+        let nibble = |byte| match byte {
+            b'0'..=b'9' => Ok(byte - b'0'),
+            b'a'..=b'f' => Ok(byte - b'a' + 10),
+            _ => Err(js_error("sha256 must use lowercase hex")),
+        };
+        digest[index] = (nibble(pair[0])? << 4) | nibble(pair[1])?;
+    }
+    Ok(digest)
 }
 
 fn optional_object(object: &JsValue, name: &str) -> Result<Option<JsValue>, JsValue> {

@@ -40,6 +40,8 @@ export async function runCompileMessage(message, dependencies = {}) {
 
 export function outputTransfers(output) {
 	const transfers = [output.log.buffer, output.dvi.buffer];
+	if (output.html) transfers.push(output.html.buffer);
+	for (const file of output.htmlAssets ?? []) transfers.push(file.bytes.buffer);
 	for (const file of output.files) transfers.push(file.bytes.buffer);
 	return [...new Set(transfers)];
 }

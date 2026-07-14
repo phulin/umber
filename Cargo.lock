@@ -696,6 +696,7 @@ dependencies = [
 name = "tex-out"
 version = "0.1.0"
 dependencies = [
+ "sha2",
  "tex-arith",
  "tex-content",
 ]
@@ -738,8 +739,10 @@ version = "0.1.0"
 dependencies = [
  "parity-harness",
  "proptest",
+ "sha2",
  "tempfile",
  "test-support",
+ "tex-arith",
  "tex-exec",
  "tex-expand",
  "tex-lex",

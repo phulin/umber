@@ -238,6 +238,52 @@ fn valid_tfm_produces_a_nonempty_dvi() {
 }
 
 #[test]
+fn requested_html_and_dvi_share_one_committed_compile() {
+    use sha2::{Digest, Sha256};
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        html: true,
+        ..SessionOptions::default()
+    })
+    .expect("HTML session");
+    session
+        .add_user_file(
+            "main.tex",
+            b"\\font\\tenrm=cmr10\\relax \\tenrm \\shipout\\hbox{A}\\end".to_vec(),
+        )
+        .expect("main source");
+    let woff2 = b"deterministic wasm font".to_vec();
+    let mut encoding = vec![None; 256];
+    encoding[usize::from(b'A')] = Some("A".to_owned());
+    session
+        .add_html_font(SessionWebFont {
+            name: "cmr10".to_owned(),
+            tfm_content_hash_hex: tex_state::ContentHash::from_bytes(CMR10).hex(),
+            sha256: Sha256::digest(&woff2).into(),
+            woff2,
+            encoding,
+            provenance: "test embedding license".to_owned(),
+            embeddable: true,
+        })
+        .expect("HTML font");
+    let missing = requests(session.compile_attempt());
+    session
+        .provide_resolved_file(
+            missing[0].key().clone(),
+            "/texlive/fonts/tfm/public/cm/cmr10.tfm",
+            CMR10.to_vec(),
+        )
+        .expect("TFM");
+    let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+        panic!("HTML compile should complete");
+    };
+    assert!(!output.dvi.is_empty());
+    let html = String::from_utf8(output.html.expect("HTML output")).expect("HTML UTF-8");
+    assert!(html.contains("data-umber-baseline-sp"));
+    assert!(html.contains(">A<i class=\"umber-baseline\""));
+    assert!(output.html_assets.is_empty());
+}
+
+#[test]
 fn user_and_distribution_limits_fail_atomically() {
     let limits = SessionLimits {
         user_files: 1,

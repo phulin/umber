@@ -4,6 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use tex_lex::{InputStack, WorldInput};
+use tex_out::html::{HtmlFontKey, HtmlFontResolver, WebFont};
 use tex_state::{JobClock, Universe, World};
 
 use crate::{
@@ -181,6 +182,8 @@ pub struct SessionOptions {
     pub format: Option<Vec<u8>>,
     pub clock: JobClock,
     pub limits: SessionLimits,
+    /// Request embedded standalone HTML in addition to DVI.
+    pub html: bool,
 }
 
 impl Default for SessionOptions {
@@ -191,8 +194,21 @@ impl Default for SessionOptions {
             format: None,
             clock: JobClock::DEFAULT,
             limits: SessionLimits::default(),
+            html: false,
         }
     }
+}
+
+/// One explicitly provisioned web font for a host-neutral compile session.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SessionWebFont {
+    pub name: String,
+    pub tfm_content_hash_hex: String,
+    pub woff2: Vec<u8>,
+    pub sha256: [u8; 32],
+    pub encoding: Vec<Option<String>>,
+    pub provenance: String,
+    pub embeddable: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -242,6 +258,7 @@ pub enum CompileError {
     Diagnostic(CompileDiagnostic),
     World(String),
     Output(String),
+    Html(String),
 }
 
 impl fmt::Display for CompileError {
@@ -289,7 +306,9 @@ impl fmt::Display for CompileError {
             }
             Self::Format(message) => write!(f, "format image rejected: {message}"),
             Self::Diagnostic(diagnostic) => f.write_str(&diagnostic.message),
-            Self::World(message) | Self::Output(message) => f.write_str(message),
+            Self::World(message) | Self::Output(message) | Self::Html(message) => {
+                f.write_str(message)
+            }
         }
     }
 }
@@ -315,6 +334,9 @@ pub struct VirtualCompileSession {
     cached_bytes: usize,
     attempts: u32,
     awaiting: Option<BTreeSet<FileRequestKey>>,
+    html: bool,
+    html_fonts: BTreeMap<(String, String), SessionWebFont>,
+    html_font_bytes: usize,
 }
 
 impl VirtualCompileSession {
@@ -349,7 +371,54 @@ impl VirtualCompileSession {
             cached_bytes: 0,
             attempts: 0,
             awaiting: None,
+            html: options.html,
+            html_fonts: BTreeMap::new(),
+            html_font_bytes: 0,
         })
+    }
+
+    pub fn add_html_font(&mut self, font: SessionWebFont) -> Result<(), CompileError> {
+        check_limit(
+            "one HTML font bytes",
+            font.woff2.len(),
+            self.limits.one_file_bytes,
+        )?;
+        if font.encoding.len() != 256 {
+            return Err(CompileError::Html(format!(
+                "HTML font {} encoding has {} entries, expected 256",
+                font.name,
+                font.encoding.len()
+            )));
+        }
+        if font.tfm_content_hash_hex.len() != 64
+            || !font
+                .tfm_content_hash_hex
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
+            return Err(CompileError::Html(
+                "HTML font TFM identity must be 64 lowercase hex digits".to_owned(),
+            ));
+        }
+        let key = (font.name.clone(), font.tfm_content_hash_hex.clone());
+        let replaced = self.html_fonts.get(&key).map_or(0, |font| font.woff2.len());
+        let attempted = self
+            .html_font_bytes
+            .checked_sub(replaced)
+            .and_then(|bytes| bytes.checked_add(font.woff2.len()))
+            .ok_or(CompileError::LimitExceeded {
+                resource: "cached HTML font bytes",
+                limit: self.limits.cached_file_bytes,
+                attempted: usize::MAX,
+            })?;
+        check_limit(
+            "cached HTML font bytes",
+            attempted,
+            self.limits.cached_file_bytes,
+        )?;
+        self.html_fonts.insert(key, font);
+        self.html_font_bytes = attempted;
+        Ok(())
     }
 
     pub fn add_user_file(&mut self, path: &str, bytes: Vec<u8>) -> Result<(), CompileError> {
@@ -533,12 +602,57 @@ impl VirtualCompileSession {
                 column: None,
             })
         })?;
-        let output = collect_final_memory_output_from_plans(
+        let html = if self.html {
+            let mut resolver = SessionFontResolver {
+                fonts: &self.html_fonts,
+            };
+            Some(
+                crate::html_from_committed_artifacts(
+                    &run.committed_artifacts,
+                    &mut resolver,
+                    &tex_out::html::HtmlOptions::default(),
+                )
+                .map_err(|error| CompileError::Html(error.to_string()))?,
+            )
+        } else {
+            None
+        };
+        let mut output = collect_final_memory_output_from_plans(
             &mut stores,
             &run.dvi_pages,
             self.limits.output_bytes,
         )
         .map_err(map_output_error)?;
+        if let Some(html) = html {
+            let existing = output
+                .terminal
+                .len()
+                .saturating_add(output.log.len())
+                .saturating_add(output.dvi.len())
+                .saturating_add(
+                    output
+                        .files
+                        .iter()
+                        .map(|file| file.bytes.len())
+                        .sum::<usize>(),
+                );
+            let attempted = existing.saturating_add(html.html.len()).saturating_add(
+                html.assets
+                    .iter()
+                    .map(|asset| asset.bytes.len())
+                    .sum::<usize>(),
+            );
+            check_limit("returned output bytes", attempted, self.limits.output_bytes)?;
+            output.html = Some(html.html);
+            output.html_assets = html
+                .assets
+                .into_iter()
+                .map(|asset| crate::MemoryOutputFile {
+                    path: asset.path.into(),
+                    bytes: asset.bytes,
+                })
+                .collect();
+        }
         Ok(CompileAttemptResult::Complete(output))
     }
 
@@ -562,6 +676,30 @@ impl VirtualCompileSession {
     #[must_use]
     pub const fn cached_file_bytes(&self) -> usize {
         self.cached_bytes
+    }
+}
+
+struct SessionFontResolver<'a> {
+    fonts: &'a BTreeMap<(String, String), SessionWebFont>,
+}
+
+impl HtmlFontResolver for SessionFontResolver<'_> {
+    fn resolve(&mut self, font: &tex_out::FontResource) -> Result<WebFont, String> {
+        let lookup = (font.name.clone(), font.tfm_content_hash.hex());
+        let supplied = self.fonts.get(&lookup).ok_or_else(|| {
+            format!(
+                "no HTML font was supplied for {} with TFM identity {}",
+                font.name, lookup.1
+            )
+        })?;
+        Ok(WebFont {
+            key: HtmlFontKey::from(font),
+            woff2: supplied.woff2.clone(),
+            sha256: supplied.sha256,
+            encoding: supplied.encoding.clone(),
+            provenance: supplied.provenance.clone(),
+            embeddable: supplied.embeddable,
+        })
     }
 }
 

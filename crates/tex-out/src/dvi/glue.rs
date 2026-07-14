@@ -6,7 +6,7 @@ use super::DviError;
 
 const BILLION: i64 = 1_000_000_000;
 
-pub(super) fn adjusted_glue_width(
+pub(crate) fn adjusted_glue_width(
     spec: GlueSpec,
     g_sign: GlueSign,
     g_order: GlueOrder,
@@ -145,11 +145,11 @@ fn round_binary_product(significand: u128, exponent: i32) -> i64 {
     i64::try_from(rounded).expect("vetted glue fits i64")
 }
 
-pub(super) fn add_scaled(left: Scaled, right: Scaled) -> Result<Scaled, DviError> {
+pub(crate) fn add_scaled(left: Scaled, right: Scaled) -> Result<Scaled, DviError> {
     left.checked_add(right).ok_or(DviError::PositionOverflow)
 }
 
-pub(super) fn sub_scaled(left: Scaled, right: Scaled) -> Result<Scaled, DviError> {
+pub(crate) fn sub_scaled(left: Scaled, right: Scaled) -> Result<Scaled, DviError> {
     left.checked_sub(right).ok_or(DviError::PositionOverflow)
 }
 
