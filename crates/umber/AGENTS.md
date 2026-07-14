@@ -31,6 +31,7 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/virtual_compile/resolvers.rs`: World-backed input/font resolvers with ordered typed missing-file side state.
 - `src/virtual_compile/tests.rs`: native retry, path, precedence, limits, format, effect-isolation, font batching, and DVI coverage.
 - `src/main.rs`: `umber` binary entry point, CLI argument parsing, `lex-dump`/`expand-dump`/`run` dispatch, token formatting, and real-run file resolvers.
+- `src/watch.rs`: minimal polling incremental-edit demo, contiguous edit synthesis, DVI publication, and phase latency reporting.
 - `src/bin/gentle_profile.rs`: persistent optimized Gentle profiling runner that preloads the external corpus into a shared in-memory World and repeats fresh engine sessions without per-iteration host staging.
 - `tests/it.rs`: integration-test module root wiring CLI, replay identity, effectful replay, and end-to-end conformance suites.
 - `tests/it/cli.rs`: integration tests for CLI success, usage errors, corpus dump output, and committed diagnostic/DVI fixture parity.

@@ -10,10 +10,12 @@
 /// reused. Version 7 frames mutable page-tail nodes independently so
 /// checkpoint-local caches can reuse an unchanged prefix. Version 8 replaces
 /// the per-field full avalanche with a faster ordered streaming recurrence and
-/// retains the same strong final avalanche. Hashes are
+/// retains the same strong final avalanche. Version 9 makes absolute editor-root
+/// source coordinates revision-mapping metadata while retaining normalized-line
+/// cursor state in the semantic projection. Hashes are
 /// comparable only when both this version and the named-boundary schedule
 /// match.
-pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 8;
+pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 9;
 
 pub mod cell;
 pub mod code_tables;

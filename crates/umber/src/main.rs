@@ -9,6 +9,7 @@ use tex_state::{FormatError, Universe, World, WorldError};
 use umber::{DriverFile, EngineSession, FileSessionResolvers, PlannedFinalization};
 
 mod expand_dump;
+mod watch;
 
 fn main() -> ExitCode {
     match run() {
@@ -47,12 +48,13 @@ fn run() -> Result<(), CliError> {
             let opts = RunCliOptions::parse(args)?;
             run_tex(&opts)
         }
+        Some("watch") => watch::run(args).map_err(CliError::Watch),
         None => {
             println!("umber {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
         Some(_) => Err(CliError::Usage(
-            "expected: umber <lex-dump|expand-dump|run> <file.tex>",
+            "expected: umber <lex-dump|expand-dump|run|watch> <file.tex>",
         )),
     }
 }
@@ -475,6 +477,7 @@ enum CliError {
     Html(umber::HtmlBuildError),
     Format(FormatError),
     Finalization(umber::FinalizationError),
+    Watch(watch::WatchError),
 }
 
 impl std::fmt::Display for CliError {
@@ -490,6 +493,7 @@ impl std::fmt::Display for CliError {
             Self::Html(err) => write!(f, "{err}"),
             Self::Format(err) => write!(f, "{err}"),
             Self::Finalization(err) => write!(f, "{err}"),
+            Self::Watch(err) => write!(f, "{err}"),
         }
     }
 }

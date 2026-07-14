@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::time::{Duration, Instant};
 
 use tex_exec::{
     CheckpointSink, EditorRestoreError, EngineBoundary, EngineCheckpoint, ExecutionContext,
@@ -106,6 +107,9 @@ pub struct ReuseMetrics {
     pub convergence_boundary: Option<BoundaryKey>,
     pub pages_reused: usize,
     pub pages_retyped: usize,
+    pub restart_fork_latency: Duration,
+    pub reexecution_latency: Duration,
+    pub splice_latency: Duration,
 }
 
 /// Detached result of one accepted editor revision.
@@ -195,6 +199,7 @@ impl Session {
         self.accept_cold(run)
     }
 
+    #[allow(clippy::disallowed_methods)] // Session telemetry; no TeX state observes it.
     pub fn advance(
         &mut self,
         next_revision: RevisionId,
@@ -225,7 +230,10 @@ impl Session {
             &map,
         )?;
 
-        let (effects, artifacts, pages, mut history, accepted_substrate, reuse) =
+        let restart_fork_latency = advance.restart_fork_latency;
+        let reexecution_latency = advance.reexecution_latency;
+        let splice_started = Instant::now();
+        let (effects, artifacts, pages, mut history, accepted_substrate, mut reuse) =
             if let Some(old_index) = advance.convergence_old_index {
                 let old_effect_prefix = old_history[old_index].effect_prefix;
                 let new_effect_prefix = advance
@@ -249,13 +257,19 @@ impl Session {
                 let mut pages = advance.pages_through_stop;
                 pages.extend_from_slice(&old_pages[old_prefix..]);
                 let mut history = old_history[..=restart_index].to_vec();
-                history.extend(old_history[old_index..].iter().cloned().map(|mut record| {
-                    record.key.position = map
+                for mut record in old_history[old_index..].iter().cloned() {
+                    let mapped_position = map
                         .map(record.key.position)
                         .expect("adopted suffix anchors were validated as mappable");
+                    record.key.position = mapped_position;
+                    record.checkpoint = record.checkpoint.rehome_converged_root(
+                        substrate,
+                        &next,
+                        mapped_position,
+                    )?;
                     record.revision = next_revision;
-                    record
-                }));
+                    history.push(record);
+                }
                 let convergence_boundary = history.get(restart_index + 1).map(BoundaryRecord::key);
                 (
                     effects,
@@ -269,6 +283,9 @@ impl Session {
                         pages_reused: old_artifacts.len().saturating_sub(old_prefix),
                         pages_retyped: new_prefix
                             .saturating_sub(old_history[restart_index].artifact_prefix),
+                        restart_fork_latency,
+                        reexecution_latency,
+                        ..ReuseMetrics::default()
                     },
                 )
             } else {
@@ -301,9 +318,13 @@ impl Session {
                         convergence_boundary: None,
                         pages_reused: 0,
                         pages_retyped,
+                        restart_fork_latency,
+                        reexecution_latency,
+                        ..ReuseMetrics::default()
                     },
                 )
             };
+        reuse.splice_latency = splice_started.elapsed();
         for record in &mut history {
             record.revision = next_revision;
         }
@@ -453,6 +474,8 @@ struct AdvanceRun {
     artifacts: Vec<CommittedArtifact>,
     pages_through_stop: Vec<DviPagePlan>,
     convergence_old_index: Option<usize>,
+    restart_fork_latency: Duration,
+    reexecution_latency: Duration,
 }
 
 struct ResumeSink {
@@ -538,7 +561,7 @@ fn push_checkpoint(
     occurrences: &mut HashMap<(usize, EngineBoundary), u32>,
     checkpoint: EngineCheckpoint,
 ) {
-    let position = checkpoint.input_summary().conservative_root_position();
+    let position = checkpoint.root_anchor();
     let boundary = checkpoint.boundary();
     let ordinal = occurrences.entry((position, boundary)).or_default();
     let key = BoundaryKey {
@@ -557,6 +580,7 @@ fn push_checkpoint(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::disallowed_methods)] // Session telemetry; no TeX state observes it.
 fn execute_advance(
     template: &Universe,
     substrate: &GenerationSubstrate,
@@ -571,7 +595,7 @@ fn execute_advance(
     let mut scratch = template.clone();
     let mut input = InputStack::new(MemoryInput::new(String::new()));
     let mut executor = Executor::new();
-    executor.restore_editor_checkpoint(
+    let restart_fork_latency = executor.restore_editor_checkpoint(
         &mut input,
         &mut scratch,
         substrate,
@@ -580,12 +604,14 @@ fn execute_advance(
     )?;
     let mut sink = ResumeSink::new(old_history, restart, map);
     let mut context = ExecutionContext::new(job_name);
+    let reexecution_started = Instant::now();
     let ExecutionStats { dvi_pages, .. } = executor.resume_with_context_and_checkpoints(
         &mut input,
         &mut scratch,
         &mut context,
         &mut sink,
     )?;
+    let reexecution_latency = reexecution_started.elapsed();
     let effects = scratch.world().effect_records().to_vec();
     let artifacts = scratch.world().committed_artifacts().to_vec();
     let mut pages_through_stop = old_pages[..anchor.artifact_prefix].to_vec();
@@ -597,6 +623,8 @@ fn execute_advance(
         artifacts,
         pages_through_stop,
         convergence_old_index: sink.convergence_old_index,
+        restart_fork_latency,
+        reexecution_latency,
     })
 }
 

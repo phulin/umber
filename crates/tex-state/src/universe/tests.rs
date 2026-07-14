@@ -901,9 +901,23 @@ fn promoted_fork_retargets_only_the_bit_identical_prefix() {
     assert_eq!(restored.count(0), 0);
     assert_eq!(
         target
+            .fork_at(&prefix)
+            .expect_err("cross-substrate checkpoint rejected"),
+        GenerationForkError::ForeignSnapshot
+    );
+    assert_eq!(
+        target
             .retarget_prefix_from(&source, &after_anchor)
             .expect_err("post-anchor record rejected"),
         GenerationForkError::PrefixBeyondForkAnchor
+    );
+
+    let unrelated = Universe::new().freeze_generation();
+    assert_eq!(
+        unrelated
+            .retarget_prefix_from(&source, &prefix)
+            .expect_err("unrelated target rejected"),
+        GenerationForkError::UnrelatedFork
     );
 }
 

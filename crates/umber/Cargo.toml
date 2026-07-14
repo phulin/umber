@@ -21,6 +21,7 @@ profiling-stats = [
 tex-exec = { path = "../tex-exec" }
 tex-expand = { path = "../tex-expand" }
 tex-lex = { path = "../tex-lex" }
+tex-incr = { path = "../tex-incr" }
 tex-out = { path = "../tex-out" }
 sha2.workspace = true
 tex-state = { path = "../tex-state" }

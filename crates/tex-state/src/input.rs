@@ -534,6 +534,8 @@ impl InputSummary {
         &self,
         source_id: SourceId,
         registration: RegisteredSource,
+        bytes: &[u8],
+        mapped_position: usize,
     ) -> Option<Self> {
         let mut state = (*self.semantic_root.0).clone();
         let root = state.frames.iter_mut().find_map(|frame| match frame {
@@ -546,7 +548,32 @@ impl InputSummary {
         })?;
         *root.0 = source_id;
         *root.1 = None;
-        *root.2 = root.2.clone().with_registration(Some(registration));
+        *root.2 = if root.2.next_source_offset() == mapped_position {
+            root.2.clone().with_registration(Some(registration))
+        } else {
+            let line_number = bytes[..mapped_position]
+                .iter()
+                .filter(|byte| **byte == b'\n')
+                .count()
+                .saturating_add(1);
+            SourceFrameSummary::new_with_physical_metadata(
+                mapped_position,
+                mapped_position,
+                line_number,
+                0,
+                LexerState::NewLine,
+                "",
+                0,
+                mapped_position,
+                mapped_position,
+                mapped_position,
+                mapped_position,
+                None,
+                Vec::new(),
+                false,
+            )
+            .with_registration(Some(registration))
+        };
         Some(Self {
             semantic_root: InputSemanticRoot(Arc::new(state)),
             last_source_id: self.last_source_id,

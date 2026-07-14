@@ -20,6 +20,10 @@ fn source(label: &str) -> String {
     )
 }
 
+fn persistent_source(value: usize) -> String {
+    format!("\\shipout\\vbox{{\\hrule height 1pt width {value}pt}}\\count0={value}\\end")
+}
+
 #[test]
 fn cold_history_contains_only_named_restartable_boundaries() {
     let text = source("a");
@@ -67,34 +71,50 @@ fn no_op_revision_converges_at_first_eligible_boundary() {
 
 #[test]
 fn adopted_old_suffix_remains_restartable_on_the_next_edit() {
-    let text = source("a");
+    let body = source("a");
+    let original = format!("%a\n{body}");
+    let text = format!("%a much longer comment\n{body}");
     let mut session = Session::start(
         template(),
         "test",
         RevisionId::new(1),
-        text.clone(),
+        original.clone(),
         usize::MAX,
     )
     .expect("session starts");
-    let cold = session.cold().expect("cold execution succeeds");
-    for revision in 2..=3 {
-        let output = session
-            .advance(
-                RevisionId::new(revision),
-                Edit {
-                    base_revision: RevisionId::new(revision - 1),
-                    expected_hash: ContentHash::from_bytes(text.as_bytes()),
-                    range: 0..0,
-                    replacement: String::new(),
-                },
-            )
-            .expect("adopted history remains restartable");
-        assert!(output.reuse.convergence_boundary.is_some());
-        assert_eq!(
-            output.dvi_bytes().expect("incremental DVI"),
-            cold.dvi_bytes().expect("cold DVI")
-        );
-    }
+    session.cold().expect("cold execution succeeds");
+    let adopted = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(original.as_bytes()),
+                range: 2..2,
+                replacement: " much longer comment".to_owned(),
+            },
+        )
+        .expect("length-changing revision converges");
+    assert!(adopted.reuse.convergence_boundary.is_some());
+    let output = session
+        .advance(
+            RevisionId::new(3),
+            Edit {
+                base_revision: RevisionId::new(2),
+                expected_hash: ContentHash::from_bytes(text.as_bytes()),
+                range: 0..0,
+                replacement: String::new(),
+            },
+        )
+        .expect("mapped adopted history remains restartable");
+    assert!(output.reuse.convergence_boundary.is_some());
+
+    let mut cold = Session::start(template(), "test", RevisionId::new(3), text, usize::MAX)
+        .expect("cold session");
+    let cold = cold.cold().expect("cold execution");
+    assert_eq!(
+        output.dvi_bytes().expect("incremental DVI"),
+        cold.dvi_bytes().expect("cold DVI")
+    );
 }
 
 #[test]
@@ -139,9 +159,9 @@ fn edited_output_is_byte_identical_to_a_fresh_cold_session() {
 
 #[test]
 fn promoted_prefix_records_remain_restartable_on_the_next_edit() {
-    let first = source("a");
-    let second = source("longer");
-    let third = source("longest");
+    let first = persistent_source(1);
+    let second = persistent_source(2);
+    let third = persistent_source(3);
     let mut session = Session::start(
         template(),
         "test",
@@ -151,7 +171,7 @@ fn promoted_prefix_records_remain_restartable_on_the_next_edit() {
     )
     .expect("session starts");
     session.cold().expect("initial run");
-    session
+    let promoted = session
         .advance(
             RevisionId::new(2),
             Edit {
@@ -162,6 +182,7 @@ fn promoted_prefix_records_remain_restartable_on_the_next_edit() {
             },
         )
         .expect("first promotion succeeds");
+    assert_eq!(promoted.reuse.convergence_boundary, None);
     let incrementally_edited = session
         .advance(
             RevisionId::new(3),
@@ -181,6 +202,60 @@ fn promoted_prefix_records_remain_restartable_on_the_next_edit() {
         incrementally_edited.dvi_bytes().expect("incremental DVI"),
         cold.dvi_bytes().expect("cold DVI")
     );
+}
+
+#[test]
+fn fast_scripted_edit_sequence_matches_cold_every_revision() {
+    scripted_edit_sequence(32);
+}
+
+#[test]
+#[ignore = "explicit 1000-edit incremental fuzz tier"]
+fn thousand_edit_scripted_fuzz_matches_cold_every_revision() {
+    scripted_edit_sequence(1_000);
+}
+
+fn scripted_edit_sequence(edits: u64) {
+    let mut text = persistent_source(1);
+    let template = template();
+    let mut session = Session::start(
+        template.clone(),
+        "fuzz",
+        RevisionId::new(1),
+        text.clone(),
+        usize::MAX,
+    )
+    .expect("incremental session");
+    session.cold().expect("initial run");
+    let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
+    for step in 1..=edits {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        let next = persistent_source((seed % 97 + 1) as usize);
+        let revision = RevisionId::new(step + 1);
+        let incremental = session
+            .advance(
+                revision,
+                Edit {
+                    base_revision: RevisionId::new(step),
+                    expected_hash: ContentHash::from_bytes(text.as_bytes()),
+                    range: 0..text.len(),
+                    replacement: next.clone(),
+                },
+            )
+            .expect("scripted incremental edit");
+        let mut cold = Session::start(template.clone(), "fuzz", revision, next.clone(), usize::MAX)
+            .expect("cold session");
+        let cold = cold.cold().expect("cold execution");
+        assert_eq!(
+            incremental.dvi_bytes().expect("incremental DVI"),
+            cold.dvi_bytes().expect("cold DVI"),
+            "revision {} differs",
+            revision.raw()
+        );
+        text = next;
+    }
 }
 
 #[test]

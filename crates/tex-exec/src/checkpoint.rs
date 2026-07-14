@@ -1,5 +1,6 @@
 use std::fmt;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use tex_lex::{InputSource, InputStack, MemoryInput, WorldInput};
 use tex_state::source_map::SourceMapError;
@@ -12,8 +13,8 @@ use crate::{ExecError, ModeNest, ModeNestSummary};
 
 /// In-memory schema version for aggregate engine checkpoints.
 ///
-/// Version 2 names the component-framed state-hash schema explicitly.
-pub const ENGINE_CHECKPOINT_SCHEMA_VERSION: u32 = 2;
+/// Version 3 uses revision-independent absolute coordinates for the editor root.
+pub const ENGINE_CHECKPOINT_SCHEMA_VERSION: u32 = 3;
 
 /// A safe point at which the outer executor can publish restartable state.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -35,6 +36,7 @@ pub struct EngineCheckpoint {
     input: InputSummary,
     modes: ModeNestSummary,
     state_hash: u64,
+    root_anchor: usize,
     effect_prefix: usize,
     artifact_prefix: usize,
 }
@@ -73,6 +75,28 @@ impl EngineCheckpoint {
     #[must_use]
     pub const fn effect_prefix_len(&self) -> usize {
         self.effect_prefix
+    }
+
+    #[must_use]
+    pub const fn root_anchor(&self) -> usize {
+        self.root_anchor
+    }
+
+    /// Rehomes revision-relative root metadata after a validated convergence
+    /// match while adopting the owner-exact state snapshot by reference.
+    pub fn rehome_converged_root(
+        &self,
+        substrate: &GenerationSubstrate,
+        source: &str,
+        mapped_anchor: usize,
+    ) -> Result<Self, GenerationForkError> {
+        substrate.validate_checkpoint_snapshot(&self.universe)?;
+        if mapped_anchor > source.len() || !source.is_char_boundary(mapped_anchor) {
+            return Err(GenerationForkError::InvalidMappedAnchor);
+        }
+        let mut checkpoint = self.clone();
+        checkpoint.root_anchor = mapped_anchor;
+        Ok(checkpoint)
     }
 
     /// Retargets an inherited prefix checkpoint onto a promoted fork after
@@ -166,6 +190,7 @@ impl<'a, C: CheckpointSink> EngineSession<'a, C> {
         let effect_prefix = usize::try_from(universe.world().effect_pos().raw())
             .expect("effect log position must fit in memory address space");
         let artifact_prefix = universe.world().artifact_commits().len();
+        let root_anchor = input_summary.conservative_root_position();
         let universe = universe.snapshot();
         let state_hash = combine_mode_hash(universe.state_hash(), mode_hash);
         self.sink.checkpoint(EngineCheckpoint {
@@ -175,6 +200,7 @@ impl<'a, C: CheckpointSink> EngineSession<'a, C> {
             input: input_summary,
             modes,
             state_hash,
+            root_anchor,
             effect_prefix,
             artifact_prefix,
         });
@@ -255,6 +281,7 @@ impl crate::Executor {
     /// Restores a retained checkpoint while substituting only its root editor
     /// buffer. Preparation happens on a fork, so failure cannot partially
     /// mutate the live executor, input stack, or Universe.
+    #[allow(clippy::disallowed_methods)] // Diagnostic latency; no engine fact observes it.
     pub fn restore_editor_checkpoint(
         &mut self,
         input: &mut InputStack,
@@ -262,19 +289,25 @@ impl crate::Executor {
         substrate: &GenerationSubstrate,
         checkpoint: &EngineCheckpoint,
         source: &str,
-    ) -> Result<(), EditorRestoreError> {
+    ) -> Result<Duration, EditorRestoreError> {
+        let fork_started = Instant::now();
         let mut restored_universe = substrate
             .fork_at(&checkpoint.universe)
             .map_err(EditorRestoreError::Fork)?;
+        let fork_latency = fork_started.elapsed();
         let (summary, root_source) = restored_universe
-            .rebind_root_editor_input(&checkpoint.input, Arc::from(source.as_bytes()))
+            .rebind_root_editor_input(
+                &checkpoint.input,
+                Arc::from(source.as_bytes()),
+                checkpoint.root_anchor,
+            )
             .map_err(EditorRestoreError::RootRebind)?;
         let restored_modes =
             ModeNest::from_summary(checkpoint.modes.clone()).map_err(EditorRestoreError::Mode)?;
         let restored_input = InputStack::from_summary(&summary, |source_id, record, frame| {
             if source_id == root_source {
                 return Ok::<Box<dyn InputSource>, EditorRestoreError>(Box::new(
-                    MemoryInput::from_offset(source, frame.next_source_offset()),
+                    MemoryInput::from_offset(source, checkpoint.root_anchor),
                 ));
             }
             let Some(record) = record else {
@@ -292,7 +325,7 @@ impl crate::Executor {
         *universe = restored_universe;
         *input = restored_input;
         self.nest = restored_modes;
-        Ok(())
+        Ok(fork_latency)
     }
 }
 

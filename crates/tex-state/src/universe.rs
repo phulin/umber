@@ -317,6 +317,7 @@ pub enum GenerationForkError {
     InvalidatedSnapshot,
     PrefixBeyondForkAnchor,
     UnrelatedFork,
+    InvalidMappedAnchor,
 }
 
 impl std::fmt::Display for GenerationForkError {
@@ -326,6 +327,7 @@ impl std::fmt::Display for GenerationForkError {
             Self::InvalidatedSnapshot => "checkpoint roots are no longer retained",
             Self::PrefixBeyondForkAnchor => "checkpoint is after the fork anchor",
             Self::UnrelatedFork => "target substrate was not forked from the source generation",
+            Self::InvalidMappedAnchor => "mapped editor anchor is outside a UTF-8 boundary",
         })
     }
 }
@@ -516,6 +518,14 @@ impl GenerationSubstrate {
     #[must_use]
     pub const fn world(&self) -> &World {
         self.universe.world()
+    }
+
+    #[doc(hidden)]
+    pub fn validate_checkpoint_snapshot(
+        &self,
+        checkpoint: &Snapshot,
+    ) -> Result<(), GenerationForkError> {
+        self.universe.validate_retained_snapshot(checkpoint)
     }
 
     /// Clones this frozen generation once and atomically rolls the clone back
@@ -1397,14 +1407,22 @@ impl Universe {
         &mut self,
         summary: &InputSummary,
         bytes: Arc<[u8]>,
+        mapped_position: usize,
     ) -> Result<(InputSummary, SourceId), SourceMapError> {
+        if mapped_position > bytes.len()
+            || std::str::from_utf8(&bytes)
+                .ok()
+                .is_none_or(|source| !source.is_char_boundary(mapped_position))
+        {
+            return Err(SourceMapError::OffsetOutsideSource);
+        }
         let source_id = SourceId::new(summary.next_source_id());
         let registration = self.register_input_source(
             source_id,
-            SourceDescriptor::Generated(GeneratedSource::new(bytes)),
+            SourceDescriptor::Generated(GeneratedSource::new(bytes.clone())),
         )?;
         let rebound = summary
-            .rebind_root_generated(source_id, registration)
+            .rebind_root_generated(source_id, registration, &bytes, mapped_position)
             .ok_or(SourceMapError::UnknownSource)?;
         self.set_input_summary(rebound.clone());
         Ok((rebound, source_id))
@@ -4045,6 +4063,7 @@ fn hash_input_summary_fields(
 ) {
     hasher.bool(summary.unicode_superscript_notation());
     hasher.usize(summary.frames().len());
+    let mut root_source_seen = false;
     for frame in summary.frames() {
         match frame {
             InputFrameSummary::Source {
@@ -4053,6 +4072,40 @@ fn hash_input_summary_fields(
                 source,
             } => {
                 hasher.tag(0);
+                let is_root = !root_source_seen;
+                root_source_seen = true;
+                if is_root {
+                    // The editor root revision and its absolute physical
+                    // coordinates are mapping metadata.  Hash only the live
+                    // normalized-line state relative to that line's start so
+                    // equal suffix state can converge after a byte-length edit.
+                    hasher.bool(false);
+                    let base = source.buffer_offset();
+                    hasher.usize(source.next_source_offset().saturating_sub(base));
+                    hasher.usize(source.line_number());
+                    hasher.usize(source.column());
+                    hash_lexer_state(source.lexer_state(), hasher);
+                    hasher.str(source.normalized_line());
+                    hasher.usize(source.line_char_offset());
+                    hasher.usize(source.line_byte_offset());
+                    hasher.usize(source.physical_content_end().saturating_sub(base));
+                    hasher.usize(source.terminator_start().saturating_sub(base));
+                    hasher.usize(source.terminator_end().saturating_sub(base));
+                    hasher.usize(source.normalized_end_anchor().saturating_sub(base));
+                    match source.synthetic_endline_start() {
+                        Some(offset) => {
+                            hasher.bool(true);
+                            hasher.usize(offset);
+                        }
+                        None => hasher.bool(false),
+                    }
+                    hasher.usize(source.pending().len());
+                    for token in source.pending() {
+                        hash_traced_token_semantic(stores, *token, hasher);
+                    }
+                    hasher.bool(source.end_after_current_line());
+                    continue;
+                }
                 hash_input_record(world, *input_record, hasher);
                 hasher.usize(source.buffer_offset());
                 hasher.usize(source.next_source_offset());
