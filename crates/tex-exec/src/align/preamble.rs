@@ -1,5 +1,5 @@
 use tex_expand::expand_once_then_get_token_with_context;
-use tex_lex::{InputSource, InputStack};
+use tex_lex::InputStack;
 use tex_state::env::banks::GlueParam;
 use tex_state::ids::{GlueId, TokenListId};
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
@@ -11,16 +11,13 @@ use crate::assignments::{has_catcode_meaning, next_non_space_x, scan_scaled};
 use crate::mode::{AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec};
 use crate::{ExecError, assignments};
 
-pub(crate) fn scan_preamble<S>(
+pub(crate) fn scan_preamble(
     primitive: UnexpandablePrimitive,
     context: TracedTokenWord,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<AlignState, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<AlignState, ExecError> {
     let kind = alignment_kind(primitive)?;
     let pack_spec = scan_pack_spec(input, stores, execution, context)?;
     let opener = loop {
@@ -101,15 +98,12 @@ fn alignment_kind(primitive: UnexpandablePrimitive) -> Result<AlignmentKind, Exe
     }
 }
 
-fn scan_pack_spec<S>(
-    input: &mut InputStack<S>,
+fn scan_pack_spec(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
-) -> Result<AlignmentPackSpec, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<AlignmentPackSpec, ExecError> {
     if assignments::scan_optional_keyword_x(input, stores, execution, "to")? {
         Ok(AlignmentPackSpec::Exactly(scan_scaled(
             input, stores, execution, context,
@@ -123,14 +117,11 @@ where
     }
 }
 
-fn scan_u_template<S>(
-    scanner: &mut PreambleScanner<'_, '_, S>,
+fn scan_u_template(
+    scanner: &mut PreambleScanner<'_, '_>,
     column: usize,
     loop_start: &mut Option<usize>,
-) -> Result<TokenListId, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<TokenListId, ExecError> {
     let mut builder = scanner.stores.token_list_builder();
     let mut has_material = false;
     loop {
@@ -175,13 +166,10 @@ where
     }
 }
 
-fn scan_v_template<S>(
-    scanner: &mut PreambleScanner<'_, '_, S>,
+fn scan_v_template(
+    scanner: &mut PreambleScanner<'_, '_>,
     end_template: Token,
-) -> Result<(TokenListId, PreambleTerminator), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(TokenListId, PreambleTerminator), ExecError> {
     let mut builder = scanner.stores.token_list_builder();
     loop {
         let token = match scanner.next_token()? {
@@ -232,10 +220,10 @@ enum PreambleTerminator {
     Cr,
 }
 
-struct PreambleScanner<'a, 'ctx, S> {
-    input: &'a mut InputStack<S>,
+struct PreambleScanner<'a, 'ctx> {
+    input: &'a mut InputStack,
     stores: &'a mut Universe,
-    execution: &'a mut crate::ExecutionContext<'ctx, S>,
+    execution: &'a mut crate::ExecutionContext<'ctx>,
     lookahead: Option<PreambleToken>,
     current_tabskip: GlueId,
 }
@@ -247,14 +235,11 @@ enum PreambleToken {
     RecoveryCr,
 }
 
-impl<'a, 'ctx, S> PreambleScanner<'a, 'ctx, S>
-where
-    S: InputSource,
-{
+impl<'a, 'ctx> PreambleScanner<'a, 'ctx> {
     fn new(
-        input: &'a mut InputStack<S>,
+        input: &'a mut InputStack,
         stores: &'a mut Universe,
-        execution: &'a mut crate::ExecutionContext<'ctx, S>,
+        execution: &'a mut crate::ExecutionContext<'ctx>,
     ) -> Self {
         let current_tabskip = stores.glue_param(GlueParam::TAB_SKIP);
         Self {
@@ -318,15 +303,22 @@ where
     }
 
     fn next_raw(&mut self) -> Result<Option<PreambleToken>, ExecError> {
-        let Some(traced) = tex_expand::next_semantic_raw_token(self.input, self.stores)? else {
+        let Some(traced) = tex_expand::next_semantic_raw_token(
+            self.input,
+            &mut tex_state::ExpansionContext::new(self.stores),
+        )?
+        else {
             return Ok(None);
         };
         Ok(Some(self.recover_outer_or_token(traced)))
     }
 
     fn next_expanded(&mut self) -> Result<Option<PreambleToken>, ExecError> {
-        let Some(traced) =
-            expand_once_then_get_token_with_context(self.input, self.stores, self.execution)?
+        let Some(traced) = expand_once_then_get_token_with_context(
+            self.input,
+            &mut tex_state::ExpansionContext::new(self.stores),
+            self.execution,
+        )?
         else {
             return Ok(None);
         };

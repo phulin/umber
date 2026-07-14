@@ -11,7 +11,7 @@ mod support;
 mod template;
 mod widths;
 
-use tex_lex::{InputSource, InputStack};
+use tex_lex::InputStack;
 use tex_state::Universe;
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::token::TracedTokenWord;
@@ -20,17 +20,14 @@ use crate::{ExecError, ModeNest};
 
 pub(crate) use preamble::scan_preamble;
 
-pub(crate) fn execute_alignment<S>(
+pub(crate) fn execute_alignment(
     primitive: UnexpandablePrimitive,
     context: TracedTokenWord,
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     if stores.world().execution_tracing_enabled() {
         stores
             .world_mut()
@@ -61,16 +58,13 @@ where
     }
 }
 
-pub(crate) fn execute_display_halign<S>(
+pub(crate) fn execute_display_halign(
     context: TracedTokenWord,
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<Vec<tex_state::node::Node>, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<Vec<tex_state::node::Node>, ExecError> {
     if stores.world().execution_tracing_enabled() {
         stores
             .world_mut()

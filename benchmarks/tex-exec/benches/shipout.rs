@@ -21,7 +21,7 @@ fn shipout(c: &mut Criterion) {
     group.finish();
 }
 
-fn ordinary_shipout() -> (Universe, InputStack<MemoryInput>) {
+fn ordinary_shipout() -> (Universe, InputStack) {
     let mut stores = prepared_universe();
     let nodes = (0..NODE_COUNT)
         .map(|index| Node::Penalty(index as i32))
@@ -30,7 +30,7 @@ fn ordinary_shipout() -> (Universe, InputStack<MemoryInput>) {
     (stores, shipout_input())
 }
 
-fn deferred_math_shipout() -> (Universe, InputStack<MemoryInput>) {
+fn deferred_math_shipout() -> (Universe, InputStack) {
     let mut stores = prepared_universe();
     let content = stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
@@ -69,11 +69,11 @@ fn install_box(stores: &mut Universe, nodes: &[Node]) {
     stores.set_box_reg(0, root_list);
 }
 
-fn shipout_input() -> InputStack<MemoryInput> {
+fn shipout_input() -> InputStack {
     InputStack::new(MemoryInput::new("\\shipout\\box0\\end"))
 }
 
-fn run_shipout((mut stores, mut input): (Universe, InputStack<MemoryInput>)) {
+fn run_shipout((mut stores, mut input): (Universe, InputStack)) {
     let stats = Executor::new()
         .run(&mut input, &mut stores)
         .expect("benchmark shipout succeeds");

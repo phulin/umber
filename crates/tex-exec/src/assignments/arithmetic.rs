@@ -26,17 +26,14 @@ pub(super) enum GlueArithmeticRhs {
     Factor(i32),
 }
 
-pub(super) fn scan_glue_or_factor<S>(
+pub(super) fn scan_glue_or_factor(
     primitive: UnexpandablePrimitive,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     mu: bool,
     context: TracedTokenWord,
-) -> Result<GlueArithmeticRhs, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<GlueArithmeticRhs, ExecError> {
     match primitive {
         UnexpandablePrimitive::Advance => {
             let id = scan_glue_id(input, stores, execution, mu, context)?;

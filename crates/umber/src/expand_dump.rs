@@ -27,7 +27,7 @@ pub fn expand_dump(path: &str) -> Result<(), ExpandDumpError> {
     }
 }
 
-fn dump(session: &mut EngineSession<'_, '_, WorldInput>) -> Result<(), ExpandDumpError> {
+fn dump(session: &mut EngineSession<'_, '_>) -> Result<(), ExpandDumpError> {
     while let Some(token) = session.next_expanded_token()? {
         if session.try_execute_assignment(token)? {
             continue;

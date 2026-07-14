@@ -1,20 +1,17 @@
-use tex_lex::{InputSource, InputStack, TokenListReplayKind};
+use tex_lex::{InputStack, TokenListReplayKind};
 use tex_state::ids::TokenListId;
 use tex_state::{ExpansionState, Universe};
 
 use crate::{ExecError, ExecutionStats, ModeNest};
 
-pub(super) fn replay_template<S>(
+pub(super) fn replay_template(
     template: TokenListId,
     cell_v_template: TokenListId,
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     {
         // TeX82's end_token_list callback ends a u_template even when its
         // final token expands and pops the template below a macro frame. A
@@ -55,25 +52,22 @@ where
     }
 }
 
-pub(super) fn expand_spanned_column_template_at_span_time<S>(
+pub(super) fn expand_spanned_column_template_at_span_time(
     template: TokenListId,
     cell_v_template: TokenListId,
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     // Architecture §7 makes alignment the only impure kernel: span-time
     // template expansion is the single explicit gullet interleave while the
     // mutable alignment state on the mode nest is live.
     replay_template(template, cell_v_template, nest, input, stores, execution)
 }
 
-fn template_finished<S>(
-    input: &mut InputStack<S>,
+fn template_finished(
+    input: &mut InputStack,
     stores: &Universe,
     replay_marker: tex_lex::TokenListReplayMarker,
 ) -> bool {

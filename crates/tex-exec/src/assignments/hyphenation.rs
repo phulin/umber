@@ -1,4 +1,4 @@
-use tex_lex::{InputSource, InputStack};
+use tex_lex::InputStack;
 use tex_state::Universe;
 use tex_state::env::banks::IntParam;
 use tex_state::hyphenation::{ExceptionSpec, PatternSpec};
@@ -9,14 +9,11 @@ use super::*;
 use crate::ExecError;
 use crate::mode::PendingHChar;
 
-pub(super) fn execute_patterns<S>(
-    input: &mut InputStack<S>,
+pub(super) fn execute_patterns(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     let language = current_language(stores);
     for word in scan_hyphenation_words(input, stores, execution, "\\patterns")? {
         if let Some(pattern) = parse_pattern_word(stores, &word) {
@@ -35,14 +32,11 @@ where
     Ok(())
 }
 
-pub(super) fn execute_hyphenation<S>(
-    input: &mut InputStack<S>,
+pub(super) fn execute_hyphenation(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     let language = current_language(stores);
     for word in scan_hyphenation_words(input, stores, execution, "\\hyphenation")? {
         if let Some(exception) = parse_exception_word(stores, language, &word) {
@@ -284,18 +278,19 @@ fn permitted_word_terminator(nodes: &[Node], mut index: usize) -> bool {
     true
 }
 
-fn scan_hyphenation_words<S>(
-    input: &mut InputStack<S>,
+fn scan_hyphenation_words(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: &'static str,
-) -> Result<Vec<Vec<char>>, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<Vec<Vec<char>>, ExecError> {
     let open = loop {
-        let traced = get_x_token_with_context(input, stores, execution)?
-            .ok_or(ExecError::MissingToken { context })?;
+        let traced = get_x_token_with_context(
+            input,
+            &mut tex_state::ExpansionContext::new(stores),
+            execution,
+        )?
+        .ok_or(ExecError::MissingToken { context })?;
         let token = tex_expand::semantic_token(traced);
         if is_space(token) {
             continue;
@@ -313,7 +308,11 @@ where
     let mut words = Vec::new();
     let mut current = Vec::new();
     let mut depth = 1usize;
-    while let Some(traced) = get_x_token_with_context(input, stores, execution)? {
+    while let Some(traced) = get_x_token_with_context(
+        input,
+        &mut tex_state::ExpansionContext::new(stores),
+        execution,
+    )? {
         let token = tex_expand::semantic_token(traced);
         if is_begin_group(token) {
             depth += 1;

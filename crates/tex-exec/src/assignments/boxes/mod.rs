@@ -1,4 +1,4 @@
-use tex_lex::{InputSource, InputStack};
+use tex_lex::InputStack;
 use tex_state::glue::Order;
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{GlueKind, KernKind, Node};
@@ -27,18 +27,15 @@ pub(crate) use packaging::{hpack_owned_with_overfull_rule, hpack_with_overfull_r
 pub(crate) use packaging::{scan_box_group, scan_pack_spec};
 use vsplit::scan_vsplit_node;
 
-pub(super) fn execute_make_box<S>(
+pub(super) fn execute_make_box(
     primitive: UnexpandablePrimitive,
     context: TracedTokenWord,
     nest: &mut ModeNest,
     _global: bool,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     let node = if primitive == UnexpandablePrimitive::VSplit {
         scan_vsplit_node(input, stores, execution, context)?
     } else {
@@ -57,17 +54,14 @@ where
     Ok(())
 }
 
-pub(crate) fn scan_math_box<S>(
+pub(crate) fn scan_math_box(
     primitive: UnexpandablePrimitive,
     context: TracedTokenWord,
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<Option<Node>, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<Option<Node>, ExecError> {
     let node = match primitive {
         UnexpandablePrimitive::HBox | UnexpandablePrimitive::VBox | UnexpandablePrimitive::VTop => {
             Some(scan_box_node(
@@ -105,17 +99,14 @@ where
     Ok(node)
 }
 
-pub(super) fn execute_setbox<S>(
+pub(super) fn execute_setbox(
     global: bool,
     context: TracedTokenWord,
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     let index = scan_register_index(input, stores, execution, context)?;
     skip_optional_equals_x(input, stores, execution)?;
     let mut transaction = crate::transaction::ExecutionTransaction::begin(nest, stores);
@@ -138,17 +129,14 @@ where
     Ok(())
 }
 
-pub(super) fn execute_box_dimension_assignment<S>(
+pub(super) fn execute_box_dimension_assignment(
     primitive: UnexpandablePrimitive,
     global: bool,
     context: TracedTokenWord,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     let index = scan_register_index(input, stores, execution, context)?;
     skip_optional_equals_x(input, stores, execution)?;
     let value = scan_scaled(input, stores, execution, context)?;
@@ -161,17 +149,14 @@ where
     Ok(())
 }
 
-pub(super) fn execute_box_list_command<S>(
+pub(super) fn execute_box_list_command(
     primitive: UnexpandablePrimitive,
     context: TracedTokenWord,
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     match primitive {
         UnexpandablePrimitive::Box | UnexpandablePrimitive::Copy => {
             let index = scan_register_index(input, stores, execution, context)?;
@@ -276,17 +261,14 @@ where
     Ok(())
 }
 
-pub(super) fn execute_kern_or_skip<S>(
+pub(super) fn execute_kern_or_skip(
     primitive: UnexpandablePrimitive,
     context: TracedTokenWord,
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     match primitive {
         UnexpandablePrimitive::Kern => {
             let amount = scan_scaled(input, stores, execution, context)?;
@@ -326,17 +308,14 @@ where
     Ok(())
 }
 
-pub(super) fn execute_leaders<S>(
+pub(super) fn execute_leaders(
     primitive: UnexpandablePrimitive,
     context: TracedTokenWord,
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     let leader = scan_leader_payload(input, stores, execution, context)?;
     let spec = match scan_leader_glue(input, stores, execution, nest.current_mode(), context) {
         Ok(spec) => spec,
@@ -364,16 +343,13 @@ where
     Ok(())
 }
 
-pub(super) fn execute_hrule<S>(
+pub(super) fn execute_hrule(
     context: TracedTokenWord,
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     match nest.current_mode() {
         Mode::Vertical | Mode::InternalVertical => {}
         Mode::Horizontal => end_paragraph(nest, stores)?,
@@ -467,17 +443,14 @@ fn execute_delete_last_outer_vertical(
     Ok(())
 }
 
-fn execute_vertical_skip<S>(
+fn execute_vertical_skip(
     primitive: UnexpandablePrimitive,
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     if nest.current_mode() == Mode::Horizontal {
         end_paragraph(nest, stores)?;
     }

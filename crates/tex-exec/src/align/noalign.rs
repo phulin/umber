@@ -1,21 +1,18 @@
 use tex_expand::get_x_token_with_context;
-use tex_lex::{InputSource, InputStack};
+use tex_lex::InputStack;
 use tex_state::{ExpansionContext, PrintSink, Universe};
 
 use crate::assignments::{flush_pending_hchars, next_non_space_x};
 use crate::executor::sync_engine_state;
 use crate::{ExecError, ExecutionStats, ModeNest, leave_group, push_tokens};
 
-pub(super) fn execute_noalign<S>(
+pub(super) fn execute_noalign(
     _align_level: usize,
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     {
         let opener =
             next_non_space_x(input, stores, execution)?.ok_or(ExecError::MissingToken {
@@ -36,19 +33,16 @@ where
     }
 }
 
-fn scan_noalign_group<S>(
+fn scan_noalign_group(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     let mut stats = ExecutionStats::default();
     let mut brace_depth = 1usize;
     loop {
-        sync_engine_state::<S>(execution, nest, stores);
+        sync_engine_state(execution, nest, stores);
         let token = {
             let mut expansion = ExpansionContext::new(stores);
             get_x_token_with_context(input, &mut expansion, execution)?

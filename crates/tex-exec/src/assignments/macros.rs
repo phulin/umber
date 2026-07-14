@@ -1,12 +1,9 @@
 use super::*;
 
-pub(super) fn execute_aftergroup<S>(
-    input: &mut InputStack<S>,
+pub(super) fn execute_aftergroup(
+    input: &mut InputStack,
     stores: &mut Universe,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     let token = input.next_token(stores)?.ok_or(ExecError::MissingToken {
         context: "\\aftergroup",
     })?;
@@ -14,13 +11,10 @@ where
     Ok(())
 }
 
-pub(super) fn execute_afterassignment<S>(
-    input: &mut InputStack<S>,
+pub(super) fn execute_afterassignment(
+    input: &mut InputStack,
     stores: &mut Universe,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     let token = input.next_token(stores)?.ok_or(ExecError::MissingToken {
         context: "\\afterassignment",
     })?;
@@ -28,25 +22,19 @@ where
     Ok(())
 }
 
-pub(super) fn fire_afterassignment<S>(input: &mut InputStack<S>, stores: &mut Universe)
-where
-    S: InputSource,
-{
+pub(super) fn fire_afterassignment(input: &mut InputStack, stores: &mut Universe) {
     if let Some(token) = stores.take_afterassignment() {
         push_tokens(input, stores, [token]);
     }
 }
 
-pub(super) fn execute_def<S>(
+pub(super) fn execute_def(
     primitive: UnexpandablePrimitive,
     prefixes: Prefixes,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     let target = scan_traced_definition_target(input, stores, "macro definition")?;
     let expanded = matches!(
         primitive,
@@ -58,9 +46,20 @@ where
             UnexpandablePrimitive::Gdef | UnexpandablePrimitive::Xdef
         );
     let scanned = if expanded {
-        scan_toks_expanded_with_driver(input, stores, prefixes.flags, target.traced, execution)?
+        scan_toks_expanded_with_driver(
+            input,
+            &mut tex_state::ExpansionContext::new(stores),
+            prefixes.flags,
+            target.traced,
+            execution,
+        )?
     } else {
-        scan_toks(input, stores, prefixes.flags, target.traced)?
+        scan_toks(
+            input,
+            &mut tex_state::ExpansionContext::new(stores),
+            prefixes.flags,
+            target.traced,
+        )?
     }
     .with_definition_origin(target.origin);
     if apply_globaldefs(global, stores) {
@@ -79,14 +78,11 @@ where
     Ok(())
 }
 
-pub(super) fn execute_let<S>(
+pub(super) fn execute_let(
     prefixes: Prefixes,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     reject_macro_prefixes(prefixes)?;
     let target = scan_definition_target(input, stores, "\\let")?;
     let rhs = scan_optional_equals_one_space(input, stores)?;
@@ -99,25 +95,24 @@ where
     Ok(())
 }
 
-pub(super) fn execute_futurelet<S>(
+pub(super) fn execute_futurelet(
     prefixes: Prefixes,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     reject_macro_prefixes(prefixes)?;
     let target = scan_definition_target(input, stores, "\\futurelet")?;
     // TeX.web future_let uses get_token for both lookahead tokens. This is
     // observable inside alignments: fetching the second token can intercept a
     // cell delimiter and expose the v-template's frozen end marker instead.
-    let first = tex_expand::get_token(input, stores)?.ok_or(ExecError::MissingToken {
-        context: "\\futurelet lookahead",
-    })?;
-    let second = tex_expand::get_token(input, stores)?.ok_or(ExecError::MissingToken {
-        context: "\\futurelet lookahead",
-    })?;
+    let first = tex_expand::get_token(input, &mut tex_state::ExpansionContext::new(stores))?
+        .ok_or(ExecError::MissingToken {
+            context: "\\futurelet lookahead",
+        })?;
+    let second = tex_expand::get_token(input, &mut tex_state::ExpansionContext::new(stores))?
+        .ok_or(ExecError::MissingToken {
+            context: "\\futurelet lookahead",
+        })?;
     let meaning = token_meaning_for_let(second, stores)?;
     if apply_globaldefs(prefixes.global, stores) {
         stores.set_meaning_global(target, meaning);
@@ -128,21 +123,18 @@ where
     Ok(())
 }
 
-pub(super) fn execute_globaldefs<S>(
+pub(super) fn execute_globaldefs(
     prefixes: Prefixes,
     context: TracedTokenWord,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     reject_macro_prefixes(prefixes)?;
     skip_optional_equals_x(input, stores, execution)?;
     let value = scan_int::scan_int_with_mode_and_context(
         input,
-        stores,
+        &mut tex_state::ExpansionContext::new(stores),
         execution,
         &mut DriverExpansionMode,
         context,

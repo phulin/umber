@@ -33,7 +33,7 @@ impl<'a> VirtualRunResolvers<'a> {
         }
     }
 
-    pub(super) fn context(&mut self, job_name: &'a str) -> ExecutionContext<'_, WorldInput> {
+    pub(super) fn context(&mut self, job_name: &'a str) -> ExecutionContext<'_> {
         ExecutionContext::with_resolvers(job_name, &mut self.input, &mut self.font)
     }
 
@@ -133,15 +133,16 @@ impl<'a> VirtualFileResolver<'a> {
     }
 }
 
-impl InputResolver<WorldInput> for VirtualFileResolver<'_> {
+impl InputResolver for VirtualFileResolver<'_> {
     fn open_input(
         &mut self,
         input: &mut dyn InputReadState,
         name: &str,
         request_index: u64,
-    ) -> Result<WorldInput, String> {
+    ) -> Result<Box<dyn tex_lex::InputSource>, String> {
         self.open(input, FileKind::TexInput, name, request_index)
             .map(WorldInput::from_content)
+            .map(|source| Box::new(source) as Box<dyn tex_lex::InputSource>)
     }
 }
 

@@ -39,7 +39,7 @@ fn non_character_accent_lookahead_replays_the_original_traced_token() {
 
     assert_eq!(base, None);
     let summary = input.summary();
-    let mut resumed = InputStack::<MemoryInput>::from_summary(&summary, |_, _, _| {
+    let mut resumed = InputStack::from_summary(&summary, |_, _, _| {
         Ok::<_, core::convert::Infallible>(MemoryInput::new(""))
     })
     .expect("pushed-back token should be checkpoint-resumable");

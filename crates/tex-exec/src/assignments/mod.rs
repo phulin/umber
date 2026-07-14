@@ -7,7 +7,7 @@ use tex_expand::{
     DriverExpansionMode, ExpandError, get_x_token_with_context, scan_dimen, scan_glue, scan_int,
     scan_optional_keyword_with_context,
 };
-use tex_lex::{InputSource, InputStack, LexError, TokenListReplayKind};
+use tex_lex::{InputStack, LexError, TokenListReplayKind};
 use tex_state::code_tables::{DelCode, LcCode, MathCode, SfCode, UcCode};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
@@ -79,15 +79,12 @@ pub(crate) use tokens::{
 use variables::*;
 
 /// Executes a delivered token if it is an assignment/prefix primitive.
-pub fn try_execute_assignment<S>(
+pub fn try_execute_assignment(
     traced: TracedTokenWord,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<bool, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<bool, ExecError> {
     let token = tex_expand::semantic_token(traced);
     let Token::Cs(symbol) = token else {
         return Ok(false);
@@ -105,17 +102,14 @@ where
     }
 }
 
-pub(crate) fn execute_unexpandable_with_context<S>(
+pub(crate) fn execute_unexpandable_with_context(
     primitive: UnexpandablePrimitive,
     traced: TracedTokenWord,
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<DispatchAction, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<DispatchAction, ExecError> {
     let mut prefixes = Prefixes::default();
     let command = match accumulate_prefixes(
         PrefixedCommand::Primitive(primitive),
@@ -191,16 +185,18 @@ where
     Ok(outcome.action)
 }
 
-fn execute_immediate<S>(
-    input: &mut InputStack<S>,
+fn execute_immediate(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<CommandOutcome, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<CommandOutcome, ExecError> {
     let traced = loop {
-        let Some(traced) = get_x_token_with_context(input, stores, execution)? else {
+        let Some(traced) = get_x_token_with_context(
+            input,
+            &mut tex_state::ExpansionContext::new(stores),
+            execution,
+        )?
+        else {
             return Err(ExecError::MissingPrefixedCommand);
         };
         if !is_space(tex_expand::semantic_token(traced)) {
@@ -235,16 +231,13 @@ where
     }
 }
 
-pub(crate) fn execute_assignment_meaning<S>(
+pub(crate) fn execute_assignment_meaning(
     meaning: Meaning,
     traced: TracedTokenWord,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<DispatchAction, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<DispatchAction, ExecError> {
     let mut prefixes = Prefixes::default();
     let command = accumulate_prefixes(
         PrefixedCommand::Meaning(meaning),
@@ -327,23 +320,17 @@ impl CommandOutcome {
     }
 }
 
-fn head_for_vmode<S>(command: TracedTokenWord, input: &mut InputStack<S>, stores: &mut Universe)
-where
-    S: InputSource,
-{
+fn head_for_vmode(command: TracedTokenWord, input: &mut InputStack, stores: &mut Universe) {
     let par = Token::Cs(stores.intern("par").symbol());
     let origin = stores.inserted_origin(InsertedOriginKind::Paragraph, par, command.origin());
     push_traced_tokens(input, stores, [TracedTokenWord::pack(par, origin), command]);
 }
 
-fn off_save_alignment<S>(
+fn off_save_alignment(
     command: TracedTokenWord,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     // TeX.web's `off_save` chooses a recovery token that can actually close
     // the current group.  In particular, a semisimple group must be closed by
     // the inaccessible equivalent of `\endgroup`, not by a right brace.
@@ -396,17 +383,14 @@ where
     Ok(())
 }
 
-fn accumulate_prefixes<S>(
+fn accumulate_prefixes(
     mut command: PrefixedCommand,
     traced: TracedTokenWord,
     prefixes: &mut Prefixes,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<TracedPrefixedCommand, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<TracedPrefixedCommand, ExecError> {
     let mut token = tex_expand::semantic_token(traced);
     let mut origin = traced.origin();
     loop {
@@ -436,8 +420,12 @@ where
         }
 
         let traced = loop {
-            let traced = get_x_token_with_context(input, stores, execution)?
-                .ok_or(ExecError::MissingPrefixedCommand)?;
+            let traced = get_x_token_with_context(
+                input,
+                &mut tex_state::ExpansionContext::new(stores),
+                execution,
+            )?
+            .ok_or(ExecError::MissingPrefixedCommand)?;
             let token = tex_expand::semantic_token(traced);
             if is_space(token) {
                 continue;
@@ -477,17 +465,14 @@ where
     }
 }
 
-fn execute_prefixed_command<S>(
+fn execute_prefixed_command(
     command: TracedPrefixedCommand,
     mut prefixes: Prefixes,
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<CommandOutcome, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<CommandOutcome, ExecError> {
     let accepts_macro_flags = matches!(
         command.command,
         PrefixedCommand::Primitive(

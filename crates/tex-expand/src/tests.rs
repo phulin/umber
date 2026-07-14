@@ -16,7 +16,7 @@ use tex_state::provenance::{
 };
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
-use tex_state::{ExpansionState, InputOpenState, InputReadState, Universe};
+use tex_state::{ExpansionState, InputReadState, Universe};
 
 #[test]
 fn get_x_token_converts_frozen_end_template_without_losing_origin() {
@@ -27,9 +27,12 @@ fn get_x_token_converts_frozen_end_template_without_losing_origin() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list_with_origins(tokens, origins, TokenListReplayKind::Inserted);
 
-    let delivered = crate::get_x_token(&mut input, &mut stores)
-        .expect("frozen sentinel expansion")
-        .expect("frozen endv delivery");
+    let delivered = crate::get_x_token(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    )
+    .expect("frozen sentinel expansion")
+    .expect("frozen endv delivery");
 
     assert_eq!(crate::semantic_token(delivered), stores.frozen_endv_token());
     assert_eq!(delivered.origin(), origin);
@@ -62,7 +65,7 @@ fn preamble_span_operation_expands_exactly_one_token() {
 
     let delivered = crate::expand_once_then_get_token_with_context(
         &mut input,
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         &mut ExpansionContext::new("texput"),
     )
     .expect("one expansion should succeed")
@@ -82,37 +85,30 @@ impl ReadRecorder for CountingRecorder {
     }
 }
 
-fn get_x_token<S>(
-    input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
-) -> Result<Option<Token>, crate::ExpandError>
-where
-    S: tex_lex::InputSource,
-{
+fn get_x_token(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+) -> Result<Option<Token>, crate::ExpandError> {
     crate::get_x_token(input, stores).map(|token| token.map(crate::semantic_token))
 }
 
-fn get_x_token_recording<S>(
-    input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+fn get_x_token_recording(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
     recorder: &mut dyn ReadRecorder,
-) -> Result<Option<Token>, crate::ExpandError>
-where
-    S: tex_lex::InputSource,
-{
+) -> Result<Option<Token>, crate::ExpandError> {
     let mut expansion = ExpansionContext::new("texput").recording(recorder);
     crate::get_x_token_with_context(input, stores, &mut expansion)
         .map(|token| token.map(crate::semantic_token))
 }
 
-fn get_x_token_with_context<S>(
-    input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+fn get_x_token_with_context(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
     context: &mut MemoryResolverFixture,
 ) -> Result<Option<Token>, crate::ExpandError>
 where
-    S: tex_lex::InputSource,
-    MemoryResolver: crate::InputResolver<S>,
+    MemoryResolver: crate::InputResolver,
 {
     let mut context = context.expansion_context();
     crate::get_x_token_with_context(input, stores, &mut context)
@@ -147,21 +143,27 @@ fn collect_protected_expansion(
     let mut expanded = Vec::new();
     loop {
         let token = if prepared {
-            let Some(first) = crate::next_prepared_expansion_token(&mut input, &mut stores)
-                .expect("prepared get_next")
-            else {
+            let Some(first) = crate::next_prepared_expansion_token(
+                &mut input,
+                &mut tex_state::ExpansionContext::new(&mut stores),
+            )
+            .expect("prepared get_next") else {
                 break;
             };
             crate::get_x_or_protected_from_prepared_with_context(
                 first,
                 &mut input,
-                &mut stores,
+                &mut tex_state::ExpansionContext::new(&mut stores),
                 &mut context,
             )
             .expect("prepared x_token")
         } else {
-            crate::get_x_or_protected_with_context(&mut input, &mut stores, &mut context)
-                .expect("ordinary get_x_token")
+            crate::get_x_or_protected_with_context(
+                &mut input,
+                &mut tex_state::ExpansionContext::new(&mut stores),
+                &mut context,
+            )
+            .expect("ordinary get_x_token")
         };
         let Some(token) = token else {
             break;
@@ -194,7 +196,7 @@ fn dispatch_delivers_unexpandable_tokens() {
         dispatch(
             token,
             &mut InputStack::new(MemoryInput::new("")),
-            &mut stores,
+            &mut tex_state::ExpansionContext::new(&mut stores),
             Meaning::Relax,
         )
         .expect("dispatch should succeed"),
@@ -239,7 +241,7 @@ fn invalid_conditional_relation_assumes_equal_and_replays_offending_token() {
     let context = TracedTokenWord::pack(Token::Cs(ifnum.symbol()), OriginId::UNKNOWN);
     let relation = crate::conditionals::scan_conditional_relation_with_mode_and_context(
         &mut input,
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         &mut ExpansionContext::new("texput"),
         &mut crate::RestrictedExpansionMode,
         context,
@@ -248,7 +250,7 @@ fn invalid_conditional_relation_assumes_equal_and_replays_offending_token() {
 
     assert_eq!(relation, crate::conditionals::ConditionalRelation::Equal);
     let token = input
-        .next_traced_token(&mut stores)
+        .next_traced_token(&mut tex_state::ExpansionContext::new(&mut stores))
         .expect("read replayed token")
         .expect("replayed relation token");
     assert_eq!(crate::semantic_token(token), char_token('!'));
@@ -272,7 +274,11 @@ fn get_x_token_delivers_unexpandable_control_sequence() {
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
     assert_eq!(
-        get_x_token(&mut input, &mut stores).expect("expansion should succeed"),
+        get_x_token(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .expect("expansion should succeed"),
         Some(Token::Cs(relax.symbol()))
     );
 }
@@ -288,8 +294,11 @@ fn get_x_token_reports_undefined_control_sequence_and_forgets_it() {
         stores.intern_token_list(&[Token::Cs(undefined.symbol()), Token::Cs(after.symbol())]);
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
-    let err =
-        get_x_token(&mut input, &mut stores).expect_err("undefined control sequence is rejected");
+    let err = get_x_token(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    )
+    .expect_err("undefined control sequence is rejected");
     assert!(matches!(
         err,
         crate::ExpandError::UndefinedControlSequence { ref name, .. } if name == "missing"
@@ -297,7 +306,11 @@ fn get_x_token_reports_undefined_control_sequence_and_forgets_it() {
     let origin = err.primary_origin().expect("undefined control origin");
     assert_ne!(origin, OriginId::UNKNOWN);
     assert_eq!(
-        get_x_token(&mut input, &mut stores).expect("following token should still be readable"),
+        get_x_token(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .expect("following token should still be readable"),
         Some(Token::Cs(after.symbol()))
     );
 }
@@ -315,8 +328,11 @@ fn conditional_operand_scan_reports_undefined_control_sequence() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
-    let err =
-        get_x_token(&mut input, &mut stores).expect_err("undefined control sequence is rejected");
+    let err = get_x_token(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    )
+    .expect_err("undefined control sequence is rejected");
     assert!(matches!(
         err,
         crate::ExpandError::UndefinedControlSequence { ref name, .. } if name == "missing"
@@ -332,8 +348,11 @@ fn undefined_control_sequence_from_source_reports_source_origin() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new("\\missing"));
 
-    let err =
-        get_x_token(&mut input, &mut stores).expect_err("undefined control sequence is rejected");
+    let err = get_x_token(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    )
+    .expect_err("undefined control sequence is rejected");
 
     assert!(matches!(
         err,
@@ -351,14 +370,22 @@ fn get_x_token_pulls_from_source_frames_with_interner_access() {
     let mut input = InputStack::new(MemoryInput::new("x\\relax"));
 
     assert_eq!(
-        get_x_token(&mut input, &mut stores).expect("source expansion should succeed"),
+        get_x_token(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .expect("source expansion should succeed"),
         Some(Token::Char {
             ch: 'x',
             cat: Catcode::Letter,
         })
     );
     assert_eq!(
-        get_x_token(&mut input, &mut stores).expect("source expansion should succeed"),
+        get_x_token(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .expect("source expansion should succeed"),
         Some(Token::Cs(relax.symbol()))
     );
 }
@@ -404,7 +431,11 @@ fn get_x_token_pushes_macro_body_frame_and_continues() {
     );
 
     assert_eq!(
-        get_x_token(&mut input, &mut stores).expect("expansion should succeed"),
+        get_x_token(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .expect("expansion should succeed"),
         Some(Token::Char {
             ch: 'a',
             cat: Catcode::Letter,
@@ -433,7 +464,11 @@ fn get_x_token_pushes_macro_body_frame_and_continues() {
             )
     ));
     assert_eq!(
-        get_x_token(&mut input, &mut stores).expect("expansion should succeed"),
+        get_x_token(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .expect("expansion should succeed"),
         Some(Token::Char {
             ch: 'b',
             cat: Catcode::Letter,
@@ -454,7 +489,11 @@ fn get_x_token_expands_protected_macros_during_normal_execution() {
     let mut input = InputStack::new(MemoryInput::new("\\protectedmacro"));
 
     assert_eq!(
-        get_x_token(&mut input, &mut stores).expect("protected macro expansion"),
+        get_x_token(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .expect("protected macro expansion"),
         Some(char_token('x'))
     );
 }
@@ -475,7 +514,7 @@ fn get_x_or_protected_stops_before_protected_macro_expansion() {
 
     let delivered = crate::get_x_or_protected_with_context(
         &mut input,
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         &mut ExpansionContext::new("texput"),
     )
     .expect("protected-aware expansion")
@@ -501,7 +540,11 @@ fn unexpanded_delivers_general_text_without_expanding_macros() {
     let mut input = InputStack::new(MemoryInput::new("\\unexpanded{\\m}"));
 
     assert_eq!(
-        get_x_token(&mut input, &mut stores).expect("unexpanded expansion"),
+        get_x_token(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .expect("unexpanded expansion"),
         Some(Token::Cs(macro_cs.symbol()))
     );
 }
@@ -527,7 +570,13 @@ fn unexpanded_expands_while_scanning_for_the_opening_brace() {
     );
     let mut input = InputStack::new(MemoryInput::new("\\unexpanded\\expandafter{\\a Y}"));
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "XY ");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "XY "
+    );
 }
 
 #[test]
@@ -547,7 +596,13 @@ fn unexpanded_accepts_a_control_sequence_with_begin_group_meaning() {
     );
     let mut input = InputStack::new(MemoryInput::new("\\unexpanded\\bgroup X}"));
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "X ");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "X "
+    );
 }
 
 #[test]
@@ -556,7 +611,12 @@ fn detokenize_outputs_space_and_other_character_tokens() {
     crate::install_etex_expandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\detokenize{a \\word!}%"));
     let mut output = Vec::new();
-    while let Some(token) = get_x_token(&mut input, &mut stores).expect("detokenize expansion") {
+    while let Some(token) = get_x_token(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    )
+    .expect("detokenize expansion")
+    {
         output.push(token);
     }
 
@@ -593,11 +653,20 @@ fn unless_inverts_boolean_conditionals_but_not_ifcase() {
         "\\unless\\iftrue n\\else y\\fi\\unless\\iffalse y\\else n\\fi",
     ));
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "yy");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "yy"
+    );
 
     let mut invalid = InputStack::new(MemoryInput::new("\\unless\\ifcase0\\fi"));
     assert!(matches!(
-        crate::get_x_token(&mut invalid, &mut stores),
+        crate::get_x_token(
+            &mut invalid,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
         Err(crate::ExpandError::Captured { .. })
             | Err(crate::ExpandError::MissingTokenAfterPrimitive {
                 opcode: ExpandableOpcode::Unless,
@@ -621,11 +690,19 @@ fn scantokens_relexes_text_with_current_catcodes_and_superscript_notation() {
     let mut input = InputStack::new(MemoryInput::new("\\scantokens{@^^42}"));
 
     assert_eq!(
-        get_x_token(&mut input, &mut stores).expect("active character from pseudo-file"),
+        get_x_token(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .expect("active character from pseudo-file"),
         Some(char_token('A'))
     );
     assert_eq!(
-        get_x_token(&mut input, &mut stores).expect("superscript notation from pseudo-file"),
+        get_x_token(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .expect("superscript notation from pseudo-file"),
         Some(char_token('B'))
     );
 }
@@ -641,7 +718,13 @@ fn scantokens_splits_raw_newlinechar_into_pseudo_file_records() {
     stores.set_catcode('\n', Catcode::Other);
     let mut input = InputStack::new(MemoryInput::new("\\scantokens{A^^JB}%"));
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "A B ");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "A B "
+    );
 }
 
 #[test]
@@ -659,12 +742,19 @@ fn scantokens_input_summary_and_state_hash_resume_identically() {
     let mut input = InputStack::new(MemoryInput::new(OUTER));
 
     assert_eq!(
-        get_x_token(&mut input, &mut stores).expect("first pseudo-file token"),
+        get_x_token(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .expect("first pseudo-file token"),
         Some(char_token('A'))
     );
     let input_summary = input.summary();
     let state_snapshot = stores.snapshot();
-    let first_tail = next_expanded_chars(&mut input, &mut stores);
+    let first_tail = next_expanded_chars(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    );
     let first_hash = stores.snapshot().state_hash();
 
     stores.rollback(&state_snapshot);
@@ -676,14 +766,16 @@ fn scantokens_input_summary_and_state_hash_resume_identically() {
         };
         let remaining = &full[source.next_source_offset()..];
         Ok::<_, ()>(if source.is_scantokens() {
-            <MemoryInput as tex_lex::InputSource>::from_scantokens(remaining.to_owned())
-                .expect("memory input supports scantokens")
+            MemoryInput::scantokens(remaining.to_owned())
         } else {
             MemoryInput::new(remaining)
         })
     })
     .expect("live scantokens input summary restores");
-    let replay_tail = next_expanded_chars(&mut restored, &mut stores);
+    let replay_tail = next_expanded_chars(
+        &mut restored,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    );
 
     assert_eq!(replay_tail, first_tail);
     assert_eq!(stores.snapshot().state_hash(), first_hash);
@@ -697,7 +789,13 @@ fn tracingscantokens_records_virtual_file_boundaries() {
     stores.set_int_param(tex_state::env::banks::IntParam::TRACING_SCAN_TOKENS, 1);
     let mut input = InputStack::new(MemoryInput::new("\\scantokens{X}%"));
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "X ");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "X "
+    );
     let trace = stores
         .world()
         .effect_records()
@@ -722,35 +820,59 @@ fn everyeof_is_inserted_at_natural_virtual_eof_but_not_endinput() {
 
     let mut virtual_input = InputStack::new(MemoryInput::new("Z"));
     assert_eq!(
-        get_x_token(&mut virtual_input, &mut stores).expect("source token"),
+        get_x_token(
+            &mut virtual_input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .expect("source token"),
         Some(char_token('Z'))
     );
     assert_eq!(
-        get_x_token(&mut virtual_input, &mut stores).expect("source endline"),
+        get_x_token(
+            &mut virtual_input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .expect("source endline"),
         Some(Token::Char {
             ch: ' ',
             cat: Catcode::Space,
         })
     );
     assert_eq!(
-        get_x_token(&mut virtual_input, &mut stores).expect("everyeof token"),
+        get_x_token(
+            &mut virtual_input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .expect("everyeof token"),
         Some(char_token('E'))
     );
 
     let mut forced = InputStack::new(MemoryInput::new("\\endinput Z"));
     assert_eq!(
-        get_x_token(&mut forced, &mut stores).expect("endinput line token"),
+        get_x_token(
+            &mut forced,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .expect("endinput line token"),
         Some(char_token('Z'))
     );
     assert_eq!(
-        get_x_token(&mut forced, &mut stores).expect("forced source endline"),
+        get_x_token(
+            &mut forced,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .expect("forced source endline"),
         Some(Token::Char {
             ch: ' ',
             cat: Catcode::Space,
         })
     );
     assert_eq!(
-        get_x_token(&mut forced, &mut stores).expect("forced eof"),
+        get_x_token(
+            &mut forced,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .expect("forced eof"),
         None
     );
 }
@@ -765,25 +887,34 @@ fn everyeof_is_visible_to_raw_scanners_before_the_outer_source() {
 
     assert_eq!(
         crate::semantic_token(
-            crate::next_semantic_raw_token(&mut input, &mut stores)
-                .expect("nested token")
-                .expect("nested token present")
+            crate::next_semantic_raw_token(
+                &mut input,
+                &mut tex_state::ExpansionContext::new(&mut stores)
+            )
+            .expect("nested token")
+            .expect("nested token present")
         ),
         char_token('I')
     );
     assert_eq!(
         crate::semantic_token(
-            crate::next_semantic_raw_token(&mut input, &mut stores)
-                .expect("everyeof token")
-                .expect("everyeof token present")
+            crate::next_semantic_raw_token(
+                &mut input,
+                &mut tex_state::ExpansionContext::new(&mut stores)
+            )
+            .expect("everyeof token")
+            .expect("everyeof token present")
         ),
         char_token('E')
     );
     assert_eq!(
         crate::semantic_token(
-            crate::next_semantic_raw_token(&mut input, &mut stores)
-                .expect("outer token")
-                .expect("outer token present")
+            crate::next_semantic_raw_token(
+                &mut input,
+                &mut tex_state::ExpansionContext::new(&mut stores)
+            )
+            .expect("outer token")
+            .expect("outer token present")
         ),
         char_token('O')
     );
@@ -798,7 +929,13 @@ fn etex_version_and_revision_match_the_v2_reference() {
     crate::install_etex_expandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\the\\eTeXversion\\eTeXrevision%"));
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "2.6");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "2.6"
+    );
 }
 
 #[test]
@@ -814,7 +951,13 @@ fn current_group_enquiries_read_exact_state_markers() {
         "\\number\\currentgrouplevel,\\number\\currentgrouptype%",
     ));
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "2,14");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "2,14"
+    );
 }
 
 #[test]
@@ -829,7 +972,10 @@ fn current_if_enquiries_report_level_type_branch_and_unless_sign() {
     ));
 
     assert_eq!(
-        next_expanded_chars(&mut input, &mut stores),
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
         "1,15,1;1,-16,1;1,16,-1;"
     );
 }
@@ -849,7 +995,10 @@ fn current_if_enquiries_follow_manual_type_and_branch_codes() {
     ));
 
     assert_eq!(
-        next_expanded_chars(&mut input, &mut stores),
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
         "0,0,0;1,15,1;1,-15,-1"
     );
 }
@@ -871,7 +1020,13 @@ fn ifdefined_and_ifcsname_test_without_creating_missing_names() {
          \\unless\\ifcsname nevercreated\\endcsname T\\else F\\fi%",
     ));
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "TTTT");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "TTTT"
+    );
     assert!(stores.symbol("nevercreated").is_none());
 }
 
@@ -900,15 +1055,18 @@ fn expansion_error_captures_invocation_chain_before_macro_frame_pops() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list_with_origins(call, call_origins, TokenListReplayKind::Inserted);
 
-    let error = crate::get_x_token(&mut input, &mut stores)
-        .expect_err("undefined body token must diagnose");
+    let error = crate::get_x_token(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    )
+    .expect_err("undefined body token must diagnose");
     let site = error.diagnostic_site();
     assert_eq!(site.primary_origin(), Some(body_origin));
     let expansion_head = site.expansion_head().expect("macro expansion head");
 
     assert!(
         input
-            .next_traced_token(&mut stores)
+            .next_traced_token(&mut tex_state::ExpansionContext::new(&mut stores))
             .expect("frame pop")
             .is_none()
     );
@@ -942,9 +1100,12 @@ fn macro_replay_without_definition_provenance_degrades_to_unknown_origins() {
         TokenListReplayKind::Inserted,
     );
 
-    let expanded = crate::get_x_token(&mut input, &mut stores)
-        .expect("expansion should not fail without side-table provenance")
-        .expect("macro body token");
+    let expanded = crate::get_x_token(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    )
+    .expect("expansion should not fail without side-table provenance")
+    .expect("macro body token");
 
     assert_eq!(crate::semantic_token(expanded), body_token);
     assert_eq!(expanded.origin(), OriginId::UNKNOWN);
@@ -961,8 +1122,12 @@ fn recorder_observes_one_meaning_read_per_control_sequence_token() {
     let mut recorder = CountingRecorder::default();
 
     assert_eq!(
-        get_x_token_recording(&mut input, &mut stores, &mut recorder)
-            .expect("expansion should succeed"),
+        get_x_token_recording(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores),
+            &mut recorder
+        )
+        .expect("expansion should succeed"),
         Some(Token::Cs(relax.symbol()))
     );
     assert_eq!(recorder.reads, 1);
@@ -989,7 +1154,13 @@ fn expandafter_expands_second_token_then_replays_saved_token_first() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(input_list, TokenListReplayKind::Inserted);
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "axy");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "axy"
+    );
 }
 
 #[test]
@@ -1021,7 +1192,13 @@ fn expandafter_chains_match_tex_pushback_order() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(input_list, TokenListReplayKind::Inserted);
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "12");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "12"
+    );
 }
 
 #[test]
@@ -1044,11 +1221,19 @@ fn noexpand_suppresses_next_control_sequence_for_one_get_x_token() {
     input.push_token_list(input_list, TokenListReplayKind::Inserted);
 
     assert_eq!(
-        get_x_token(&mut input, &mut stores).expect("expansion should succeed"),
+        get_x_token(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .expect("expansion should succeed"),
         Some(Token::Cs(macro_cs.symbol()))
     );
     assert_eq!(
-        get_x_token(&mut input, &mut stores).expect("expansion should succeed"),
+        get_x_token(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .expect("expansion should succeed"),
         Some(char_token('x'))
     );
 }
@@ -1066,9 +1251,12 @@ fn noexpand_delivers_inserted_origin_for_suppressed_token() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list_with_origins(input_list, origins, TokenListReplayKind::Inserted);
 
-    let traced = crate::get_x_token(&mut input, &mut stores)
-        .expect("noexpand should succeed")
-        .expect("suppressed token should be delivered");
+    let traced = crate::get_x_token(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    )
+    .expect("noexpand should succeed")
+    .expect("suppressed token should be delivered");
 
     assert_eq!(traced.token(), Some(Token::Cs(relax.symbol())));
     assert_eq!(
@@ -1105,15 +1293,27 @@ fn expandafter_preserves_noexpand_for_later_frame_step() {
     input.push_token_list(input_list, TokenListReplayKind::Inserted);
 
     assert_eq!(
-        get_x_token(&mut input, &mut stores).expect("expansion should succeed"),
+        get_x_token(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .expect("expansion should succeed"),
         Some(char_token('a'))
     );
     assert_eq!(
-        get_x_token(&mut input, &mut stores).expect("expansion should succeed"),
+        get_x_token(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .expect("expansion should succeed"),
         Some(Token::Cs(macro_cs.symbol()))
     );
     assert_eq!(
-        get_x_token(&mut input, &mut stores).expect("expansion should succeed"),
+        get_x_token(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .expect("expansion should succeed"),
         Some(char_token('x'))
     );
 }
@@ -1134,9 +1334,12 @@ fn csname_interns_undefined_name_and_assigns_relax() {
 
     let created = stores.symbol("foo");
     assert!(created.is_none());
-    let token = get_x_token(&mut input, &mut stores)
-        .expect("csname expansion should succeed")
-        .expect("csname should emit a token");
+    let token = get_x_token(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    )
+    .expect("csname expansion should succeed")
+    .expect("csname should emit a token");
     let Token::Cs(created) = token else {
         panic!("expected control sequence, got {token:?}");
     };
@@ -1166,7 +1369,11 @@ fn csname_expands_name_pieces_before_interning() {
     input.push_token_list(input_list, TokenListReplayKind::Inserted);
 
     assert_eq!(
-        get_x_token(&mut input, &mut stores).expect("csname expansion should succeed"),
+        get_x_token(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .expect("csname expansion should succeed"),
         Some(Token::Cs(
             stores
                 .symbol("fbar")
@@ -1222,9 +1429,12 @@ fn csname_reexpands_a_macro_result_with_synthesized_provenance() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list_with_origins(input_list, origins, TokenListReplayKind::Inserted);
 
-    let delivered = crate::get_x_token(&mut input, &mut stores)
-        .expect("csname macro result should expand")
-        .expect("macro body should deliver its unexpandable token");
+    let delivered = crate::get_x_token(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    )
+    .expect("csname macro result should expand")
+    .expect("macro body should deliver its unexpandable token");
     assert_eq!(delivered.token(), Some(Token::Cs(let_cs.symbol())));
 
     let summary = input.summary();
@@ -1261,20 +1471,30 @@ fn csname_recovers_from_non_character_material_after_expansion() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(input_list, TokenListReplayKind::Inserted);
 
-    let Some(Token::Cs(empty)) =
-        get_x_token(&mut input, &mut stores).expect("csname recovery should succeed")
-    else {
+    let Some(Token::Cs(empty)) = get_x_token(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    )
+    .expect("csname recovery should succeed") else {
         panic!("expected recovered empty control sequence");
     };
     assert_eq!(stores.resolve(empty), "");
     assert_eq!(stores.meaning(empty), Meaning::Relax);
 
     assert_eq!(
-        get_x_token(&mut input, &mut stores).expect("pushed-back token should expand"),
+        get_x_token(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .expect("pushed-back token should expand"),
         Some(Token::Cs(relax.symbol()))
     );
     assert_eq!(
-        get_x_token(&mut input, &mut stores).expect("remaining endcsname should be delivered"),
+        get_x_token(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .expect("remaining endcsname should be delivered"),
         Some(Token::Cs(endcsname.symbol()))
     );
 }
@@ -1298,7 +1518,11 @@ fn csname_preserves_existing_meaning_for_ifx_relax_comparison() {
     input.push_token_list(input_list, TokenListReplayKind::Inserted);
 
     assert_eq!(
-        get_x_token(&mut input, &mut stores).expect("csname expansion should succeed"),
+        get_x_token(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .expect("csname expansion should succeed"),
         Some(Token::Cs(existing.symbol()))
     );
     assert_eq!(stores.meaning(existing), Meaning::CharGiven('K'));
@@ -1320,9 +1544,11 @@ fn csname_created_undefined_name_is_meaning_equal_to_relax() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(input_list, TokenListReplayKind::Inserted);
 
-    let Some(Token::Cs(created)) =
-        get_x_token(&mut input, &mut stores).expect("csname expansion should succeed")
-    else {
+    let Some(Token::Cs(created)) = get_x_token(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    )
+    .expect("csname expansion should succeed") else {
         panic!("expected created control sequence");
     };
 
@@ -1349,7 +1575,13 @@ fn macro_body_replay_substitutes_frozen_argument_lists() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(invocation, TokenListReplayKind::Inserted);
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "axyb");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "axyb"
+    );
 }
 
 #[test]
@@ -1381,7 +1613,7 @@ fn macro_argument_replay_delivers_call_site_argument_origins() {
     } = dispatch(
         Token::Cs(macro_cs.symbol()),
         &mut input,
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         meaning,
     )
     .expect("macro dispatch should succeed")
@@ -1396,7 +1628,7 @@ fn macro_argument_replay_delivers_call_site_argument_origins() {
     );
 
     let replayed = input
-        .next_traced_token(&mut stores)
+        .next_traced_token(&mut tex_state::ExpansionContext::new(&mut stores))
         .expect("replay should succeed")
         .expect("argument token should replay");
 
@@ -1435,7 +1667,7 @@ fn macro_body_delivery_does_not_write_provenance_per_token() {
         Token::Cs(macro_cs.symbol()),
         invocation_origin,
         &mut input,
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         &mut ExpansionContext::new("texput"),
         meaning,
     )
@@ -1452,7 +1684,10 @@ fn macro_body_delivery_does_not_write_provenance_per_token() {
     let after_dispatch = stores.provenance_stats();
 
     assert_eq!(
-        collect_expanded(&mut input, &mut stores),
+        collect_expanded(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
         body_tokens.to_vec()
     );
     let after_delivery = stores.provenance_stats();
@@ -1490,7 +1725,10 @@ fn generated_value_tokens_share_one_synthesized_origin_record() {
     let before = stores.provenance_stats();
 
     assert_eq!(
-        collect_expanded(&mut input_stack, &mut stores),
+        collect_expanded(
+            &mut input_stack,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
         vec![
             char_token('1'),
             char_token('2'),
@@ -1539,7 +1777,13 @@ fn nested_macro_calls_replay_arguments_from_outer_frozen_frame() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(invocation, TokenListReplayKind::Inserted);
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "[xy]");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "[xy]"
+    );
 }
 
 #[test]
@@ -1567,7 +1811,7 @@ fn identical_macro_bodies_keep_shared_body_identity_with_distinct_arguments() {
     let left_dispatch = dispatch(
         Token::Cs(left.symbol()),
         &mut left_input,
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         left_meaning,
     )
     .expect("left dispatch should succeed");
@@ -1592,7 +1836,7 @@ fn identical_macro_bodies_keep_shared_body_identity_with_distinct_arguments() {
     let right_dispatch = dispatch(
         Token::Cs(right.symbol()),
         &mut right_input,
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         right_meaning,
     )
     .expect("right dispatch should succeed");
@@ -1619,7 +1863,13 @@ fn identical_macro_bodies_keep_shared_body_identity_with_distinct_arguments() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(invocation, TokenListReplayKind::Inserted);
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "x!y!");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "x!y!"
+    );
 }
 
 #[test]
@@ -1640,7 +1890,10 @@ fn string_respects_escapechar_and_renders_other_catcodes() {
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
     assert_eq!(
-        collect_expanded(&mut input, &mut stores),
+        collect_expanded(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
         vec![
             Token::Char {
                 ch: '\\',
@@ -1676,7 +1929,13 @@ fn string_omits_invalid_escapechar() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "foo");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "foo"
+    );
 }
 
 #[test]
@@ -1761,7 +2020,13 @@ fn number_and_romannumeral_scan_expanded_integer_edge_cases() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "-19mmmm");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "-19mmmm"
+    );
 }
 
 #[test]
@@ -1811,7 +2076,10 @@ fn the_renders_assignable_registers_parameters_and_code_tables() {
     ));
 
     assert_eq!(
-        next_expanded_chars(&mut input, &mut stores),
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
         "42421.0pt plus 2.0fil3.0mu plus 4.0mu minus 5.0muhi11"
     );
 }
@@ -1830,9 +2098,13 @@ fn the_records_value_and_code_generation_dependencies_that_mutations_invalidate(
     stores.set_count(7, 41);
     let mut input = InputStack::new(MemoryInput::new("\\the\\value \\the\\catcode`x"));
     let mut reads = crate::ReadSetRecorder::default();
-    while get_x_token_recording(&mut input, &mut stores, &mut reads)
-        .expect("recorded expansion")
-        .is_some()
+    while get_x_token_recording(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut reads,
+    )
+    .expect("recorded expansion")
+    .is_some()
     {}
 
     let dependencies = reads.dependencies().collect::<Vec<_>>();
@@ -1881,7 +2153,11 @@ fn number_scanner_preserves_session_context_during_nested_expansion() {
     let mut context = MemoryResolverFixture::new("job").with_source("digs", "42");
 
     assert_eq!(
-        next_expanded_chars_with_context(&mut input, &mut stores, &mut context),
+        next_expanded_chars_with_context(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores),
+            &mut context
+        ),
         "42"
     );
     assert_eq!(context.resolver.opened, vec!["digs"]);
@@ -1903,7 +2179,10 @@ fn meaning_renders_macro_text_and_output_catcodes() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
-    let tokens = collect_expanded(&mut input, &mut stores);
+    let tokens = collect_expanded(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    );
     let text = tokens
         .iter()
         .map(|token| match token {
@@ -2009,7 +2288,10 @@ fn the_renders_supported_registers_and_token_registers() {
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
     assert_eq!(
-        next_expanded_chars(&mut input, &mut stores),
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
         "-421.00002ptA!"
     );
 }
@@ -2024,7 +2306,11 @@ fn rendered_output_is_frozen_and_rollback_removes_it() {
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
     assert_eq!(
-        get_x_token(&mut input, &mut stores).expect("number should expand"),
+        get_x_token(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .expect("number should expand"),
         Some(Token::Char {
             ch: '7',
             cat: Catcode::Other
@@ -2055,12 +2341,18 @@ fn number_output_tokens_share_synthesized_origin_from_primitive() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list_with_origins(list, origins, TokenListReplayKind::Inserted);
 
-    let first = crate::get_x_token(&mut input, &mut stores)
-        .expect("number should expand")
-        .expect("first digit should be delivered");
-    let second = crate::get_x_token(&mut input, &mut stores)
-        .expect("number should continue")
-        .expect("second digit should be delivered");
+    let first = crate::get_x_token(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    )
+    .expect("number should expand")
+    .expect("first digit should be delivered");
+    let second = crate::get_x_token(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    )
+    .expect("number should continue")
+    .expect("second digit should be delivered");
 
     assert_eq!(first.token(), Some(char_token('4')));
     assert_eq!(second.token(), Some(char_token('2')));
@@ -2083,7 +2375,11 @@ fn input_pushes_driver_source_and_returns_to_calling_source() {
     let mut context = MemoryResolverFixture::new("main").with_source("inc", "ab");
 
     assert_eq!(
-        next_expanded_chars_with_context(&mut input, &mut stores, &mut context),
+        next_expanded_chars_with_context(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores),
+            &mut context
+        ),
         "ab z "
     );
     assert_eq!(context.resolver.opened, vec!["inc"]);
@@ -2099,7 +2395,11 @@ fn endinput_finishes_current_line_then_pops_source() {
     let mut context = MemoryResolverFixture::new("main").with_source("inc", "a\\endinput b\nc");
 
     assert_eq!(
-        next_expanded_chars_with_context(&mut input, &mut stores, &mut context),
+        next_expanded_chars_with_context(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores),
+            &mut context
+        ),
         "ab z "
     );
 }
@@ -2111,7 +2411,11 @@ fn jobname_expands_from_driver_hook_as_rendered_tokens() {
     let mut input = InputStack::new(MemoryInput::new("\\jobname"));
     let mut context = MemoryResolverFixture::new("paper");
 
-    let tokens = collect_expanded_with_context(&mut input, &mut stores, &mut context);
+    let tokens = collect_expanded_with_context(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut context,
+    );
     let text = tokens
         .iter()
         .map(|token| match token {
@@ -2144,7 +2448,13 @@ fn fontname_renders_real_font_selector_name() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "nullfontz");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "nullfontz"
+    );
 }
 
 #[test]
@@ -2195,8 +2505,12 @@ fn the_fontdimen_accepts_current_font_with_exact_output_and_trace() {
     let mut recorder = SymbolRecorder::default();
     let mut expansion = ExpansionContext::new("texput").recording(&mut recorder);
     let mut output = Vec::new();
-    while let Some(token) = crate::get_x_token_with_context(&mut input, &mut stores, &mut expansion)
-        .expect("fontdimen expansion should succeed")
+    while let Some(token) = crate::get_x_token_with_context(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut expansion,
+    )
+    .expect("fontdimen expansion should succeed")
     {
         output.push(token);
     }
@@ -2269,8 +2583,11 @@ fn the_fontdimen_renders_zero_for_unavailable_parameter() {
     input.push_token_list_with_origins(tokens, origins, TokenListReplayKind::Inserted);
 
     let mut output = String::new();
-    while let Some(token) =
-        crate::get_x_token(&mut input, &mut stores).expect("unavailable fontdimen yields zero")
+    while let Some(token) = crate::get_x_token(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    )
+    .expect("unavailable fontdimen yields zero")
     {
         let Token::Char { ch, .. } = token.token().expect("rendered token") else {
             panic!("fontdimen should render characters");
@@ -2334,8 +2651,12 @@ fn the_math_family_fonts_expand_to_identifier_tokens_with_trace_and_reads() {
     let mut recorder = SymbolRecorder::default();
     let mut expansion = ExpansionContext::new("texput").recording(&mut recorder);
     let mut output = Vec::new();
-    while let Some(token) = crate::get_x_token_with_context(&mut input, &mut stores, &mut expansion)
-        .expect("math-family font identifiers should expand")
+    while let Some(token) = crate::get_x_token_with_context(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut expansion,
+    )
+    .expect("math-family font identifiers should expand")
     {
         output.push(token);
     }
@@ -2383,8 +2704,11 @@ fn the_math_family_font_substitutes_family_zero_for_out_of_range_number() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list_with_origins(tokens, origins, TokenListReplayKind::Inserted);
 
-    let error = crate::get_x_token(&mut input, &mut stores)
-        .expect_err("the substituted null font has no printable control sequence");
+    let error = crate::get_x_token(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    )
+    .expect_err("the substituted null font has no printable control sequence");
     assert!(matches!(
         error,
         crate::ExpandError::UnsupportedTheTarget { .. }
@@ -2425,7 +2749,13 @@ fn mark_family_primitives_expand_stored_page_marks() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "z");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "z"
+    );
 
     let top = stores.intern_token_list(&[char_token('T')]);
     let first = stores.intern_token_list(&[char_token('F')]);
@@ -2457,12 +2787,24 @@ fn mark_family_primitives_expand_stored_page_marks() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "TFBSs");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "TFBSs"
+    );
 
     let class_zero = stores.intern_token_list(&[char_token('Z')]);
     stores.set_page_mark(PageMark::Top, class_zero);
     let mut input = InputStack::new(MemoryInput::new(r"\topmarks-1"));
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "Z");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "Z"
+    );
     assert!(
         stores
             .world()
@@ -2483,7 +2825,13 @@ fn iffontchar_recovers_a_missing_font_identifier_as_nullfont() {
     crate::install_etex_expandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(r"\iffontchar\else\fi"));
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        ""
+    );
     assert!(stores.world().effect_records().iter().any(|record| {
         matches!(
             record,
@@ -2511,7 +2859,13 @@ fn etex_mark_class_primitives_scan_class_and_expand_its_marks() {
         r"\topmarks27\firstmarks27\botmarks27\splitfirstmarks27\splitbotmarks27",
     ));
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "TFBSs");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "TFBSs"
+    );
 }
 
 #[test]
@@ -2533,7 +2887,13 @@ fn iftrue_and_iffalse_select_expected_two_limb_branches() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "tt");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "tt"
+    );
 }
 
 #[test]
@@ -2545,7 +2905,13 @@ fn unless_inverts_boolean_conditionals_without_leaking_frames() {
         "\\unless\\iftrue f\\else t\\fi\\unless\\iffalse t\\else f\\fi%",
     ));
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "tt");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "tt"
+    );
     assert!(input.current_condition().is_none());
 }
 
@@ -2556,7 +2922,13 @@ fn unless_inverts_scanned_numeric_condition() {
     crate::install_etex_expandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\unless\\ifnum1<2 f\\else t\\fi%"));
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "t");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "t"
+    );
 }
 
 #[test]
@@ -2592,7 +2964,13 @@ fn if_expands_to_two_unexpandable_character_tokens_before_comparing_charcodes() 
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "y");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "y"
+    );
 }
 
 #[test]
@@ -2629,7 +3007,13 @@ fn ifcat_compares_category_codes_after_expansion() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "yy");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "yy"
+    );
 }
 
 #[test]
@@ -2682,7 +3066,13 @@ fn ifx_compares_macro_definitions_semantically_ignoring_origin_lists() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "yy");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "yy"
+    );
 }
 
 #[test]
@@ -2720,7 +3110,13 @@ fn ifx_uses_meaning_word_equality_for_non_macros_without_expansion() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "yy");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "yy"
+    );
 }
 
 #[test]
@@ -2766,7 +3162,13 @@ fn ifnum_and_ifdim_compare_scanned_values() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "yy");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "yy"
+    );
 }
 
 #[test]
@@ -2799,7 +3201,13 @@ fn ifdim_compares_named_skip_registers_by_width_only() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "y");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "y"
+    );
 }
 
 #[test]
@@ -2846,7 +3254,13 @@ fn ifdim_operand_nested_conditional_completes_exact_outer_frame() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "n");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "n"
+    );
     assert!(input.current_condition().is_none());
 }
 
@@ -2871,7 +3285,13 @@ fn conditional_operand_recovery_preserves_nested_and_outer_frame_identity() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "y");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "y"
+    );
     assert!(input.current_condition().is_none());
 }
 
@@ -2904,7 +3324,10 @@ fn ifnum_internal_operand_does_not_eagerly_expand_following_else() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
     assert_eq!(
-        collect_expanded(&mut input, &mut stores),
+        collect_expanded(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
         vec![char_token('y')]
     );
 }
@@ -2940,7 +3363,13 @@ fn ifodd_and_ifcase_select_expected_limb() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "yt");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "yt"
+    );
 }
 
 #[test]
@@ -2979,7 +3408,11 @@ fn mode_predicates_use_driver_hook() {
         .with_inner(true);
 
     assert_eq!(
-        next_expanded_chars_with_context(&mut input, &mut stores, &mut context),
+        next_expanded_chars_with_context(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores),
+            &mut context
+        ),
         "hvi"
     );
 }
@@ -3024,7 +3457,13 @@ fn box_predicates_read_box_register_state() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "vhbx");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "vhbx"
+    );
 }
 
 #[test]
@@ -3059,7 +3498,11 @@ fn ifeof_reads_world_stream_state_directly() {
     let mut context = MemoryResolverFixture::new("main");
 
     assert_eq!(
-        next_expanded_chars_with_context(&mut input, &mut stores, &mut context),
+        next_expanded_chars_with_context(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores),
+            &mut context
+        ),
         "oe"
     );
 
@@ -3074,7 +3517,13 @@ fn ifeof_reads_world_stream_state_directly() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "e");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "e"
+    );
 }
 
 #[test]
@@ -3096,7 +3545,13 @@ fn skipped_false_limb_tracks_nested_conditionals() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "t");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "t"
+    );
 }
 
 #[test]
@@ -3121,7 +3576,13 @@ fn skipped_false_limb_resolves_active_conditional_meanings() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "t");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "t"
+    );
 }
 
 #[test]
@@ -3152,7 +3613,13 @@ fn ifcase_selects_selected_limb_and_else_fallback() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "ze");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "ze"
+    );
 }
 
 #[test]
@@ -3169,7 +3636,7 @@ fn else_or_fi_report_extra_without_open_conditional() {
         input.push_token_list(list, TokenListReplayKind::Inserted);
 
         assert!(matches!(
-            get_x_token(&mut input, &mut stores),
+            get_x_token(&mut input, &mut tex_state::ExpansionContext::new(&mut stores)),
             Err(crate::ExpandError::ExtraConditionalControl { name: found, .. }) if found == expected
         ));
     }
@@ -3184,7 +3651,10 @@ fn skipped_conditional_reports_incomplete_if_at_eof() {
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
     assert!(matches!(
-        get_x_token(&mut input, &mut stores),
+        get_x_token(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
         Err(crate::ExpandError::IncompleteIf { .. })
     ));
 }
@@ -3208,7 +3678,11 @@ fn skipped_conditional_closes_and_replays_outer_macro_token() {
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
     assert_eq!(
-        get_x_token(&mut input, &mut stores).expect("outer token should be replayed"),
+        get_x_token(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .expect("outer token should be replayed"),
         Some(char_token('x'))
     );
     assert!(input.current_condition().is_none());
@@ -3222,12 +3696,18 @@ fn skipped_source_text_is_lexed_with_current_catcodes() {
     conditional_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("@iffalse@iftrue bad@fi@else good@fi"));
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "good");
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "good"
+    );
 }
 
 fn next_expanded_chars(
-    input: &mut InputStack<MemoryInput>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
 ) -> String {
     let mut out = String::new();
     while let Some(token) = get_x_token(input, stores).expect("expansion should succeed") {
@@ -3240,8 +3720,8 @@ fn next_expanded_chars(
 }
 
 fn collect_expanded(
-    input: &mut InputStack<MemoryInput>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
 ) -> Vec<Token> {
     let mut out = Vec::new();
     while let Some(token) = get_x_token(input, stores).expect("expansion should succeed") {
@@ -3251,8 +3731,8 @@ fn collect_expanded(
 }
 
 fn next_expanded_chars_with_context(
-    input: &mut InputStack<MemoryInput>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
     context: &mut MemoryResolverFixture,
 ) -> String {
     let mut out = String::new();
@@ -3268,8 +3748,8 @@ fn next_expanded_chars_with_context(
 }
 
 fn collect_expanded_with_context(
-    input: &mut InputStack<MemoryInput>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
     context: &mut MemoryResolverFixture,
 ) -> Vec<Token> {
     let mut out = Vec::new();
@@ -3399,9 +3879,9 @@ impl MemoryResolverFixture {
         self
     }
 
-    fn expansion_context<S>(&mut self) -> ExpansionContext<'_, S>
+    fn expansion_context(&mut self) -> ExpansionContext<'_>
     where
-        MemoryResolver: crate::InputResolver<S>,
+        MemoryResolver: crate::InputResolver,
     {
         let mut context = ExpansionContext::with_input_resolver(&self.job_name, &mut self.resolver);
         context.engine = self.engine;
@@ -3409,18 +3889,18 @@ impl MemoryResolverFixture {
     }
 }
 
-impl crate::InputResolver<MemoryInput> for MemoryResolver {
+impl crate::InputResolver for MemoryResolver {
     fn open_input(
         &mut self,
         _input: &mut dyn InputReadState,
         name: &str,
         _request_index: u64,
-    ) -> Result<MemoryInput, String> {
+    ) -> Result<Box<dyn tex_lex::InputSource>, String> {
         let source = self
             .sources
             .get(name)
             .ok_or_else(|| "missing memory source".to_owned())?;
         self.opened.push(name.to_owned());
-        Ok(MemoryInput::new(source.clone()))
+        Ok(Box::new(MemoryInput::new(source.clone())))
     }
 }

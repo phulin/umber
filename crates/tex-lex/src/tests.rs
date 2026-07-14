@@ -1815,7 +1815,7 @@ fn source_summary_restores_mid_world_input_from_recorded_content() {
     );
 }
 
-fn collect_tokens(lexer: &mut Lexer<MemoryInput>, stores: &mut impl ExpansionState) -> Vec<Token> {
+fn collect_tokens(lexer: &mut Lexer, stores: &mut impl ExpansionState) -> Vec<Token> {
     let mut tokens = Vec::new();
     while let Some(token) = lexer.next_token(stores).expect("lexing should succeed") {
         tokens.push(token);

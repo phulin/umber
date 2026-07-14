@@ -1,6 +1,6 @@
 use tex_expand::get_x_token_with_context;
 use tex_fonts::{LigKernChar, LigKernCommand};
-use tex_lex::{InputSource, InputStack};
+use tex_lex::InputStack;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::FontId;
@@ -37,15 +37,12 @@ pub(crate) fn try_append_character(
     }
 }
 
-pub(crate) fn append_given_char<S>(
+pub(crate) fn append_given_char(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
     ch: char,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     match nest.current_mode() {
         Mode::RestrictedHorizontal | Mode::Horizontal => {
             append_hchar(nest, stores, ch);
@@ -94,17 +91,14 @@ fn flush_pending_hchar_run(nest: &mut ModeNest, stores: &mut Universe, insert_hy
     list.push_reconstituted(boundary, rechar_node(pending.current), disc, None);
 }
 
-pub(super) fn execute_hmode_material<S>(
+pub(super) fn execute_hmode_material(
     context: TracedTokenWord,
     primitive: UnexpandablePrimitive,
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     match primitive {
         UnexpandablePrimitive::Char => {
             let value = scan_i32(input, stores, execution, context)?;
@@ -219,7 +213,12 @@ where
             } else {
                 0
             };
-            let tokens = scan_general_text_expanded_with_driver(input, stores, execution, context)?;
+            let tokens = scan_general_text_expanded_with_driver(
+                input,
+                &mut tex_state::ExpansionContext::new(stores),
+                execution,
+                context,
+            )?;
             append_vertical_contribution(nest, stores, Node::Mark { class, tokens });
         }
         UnexpandablePrimitive::VAdjust => execute_vadjust(nest, input, stores, execution)?,
@@ -229,16 +228,13 @@ where
     Ok(())
 }
 
-fn execute_insert<S>(
+fn execute_insert(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     flush_pending_hchars(nest, stores)?;
     let mut value = scan_i32(input, stores, execution, context)?;
     if !(0..=255).contains(&value) {
@@ -316,15 +312,12 @@ where
     Ok(())
 }
 
-fn execute_vadjust<S>(
+fn execute_vadjust(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     if !matches!(
         nest.current_mode(),
         Mode::Horizontal | Mode::RestrictedHorizontal | Mode::Math | Mode::DisplayMath
@@ -383,14 +376,11 @@ fn append_space(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecEr
     Ok(())
 }
 
-fn append_control_space<S>(
+fn append_control_space(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
         ensure_horizontal_for_character(nest, input, stores)?;
     }
@@ -715,16 +705,13 @@ fn report_missing_character(stores: &mut Universe, font: tex_state::ids::FontId,
         .write_text(PrintSink::TerminalAndLog, &text);
 }
 
-fn execute_accent<S>(
+fn execute_accent(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     flush_pending_hchars(nest, stores)?;
     let accent_value = scan_i32(input, stores, execution, context)?;
     let accent = u8::try_from(accent_value).map_err(|_| ExecError::InvalidCode {
@@ -796,18 +783,20 @@ where
     Ok(())
 }
 
-fn scan_accent_base<S>(
+fn scan_accent_base(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
-) -> Result<Option<u8>, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<Option<u8>, ExecError> {
     loop {
-        let Some(traced) = get_x_token_with_context(input, stores, execution)? else {
+        let Some(traced) = get_x_token_with_context(
+            input,
+            &mut tex_state::ExpansionContext::new(stores),
+            execution,
+        )?
+        else {
             return Ok(None);
         };
         let token = tex_expand::semantic_token(traced);
@@ -898,16 +887,13 @@ fn is_accent_assignment_meaning(meaning: Meaning) -> bool {
     )
 }
 
-pub(crate) fn scan_rule_node<S>(
-    input: &mut InputStack<S>,
+pub(crate) fn scan_rule_node(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     primitive: UnexpandablePrimitive,
     context: TracedTokenWord,
-) -> Result<Node, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<Node, ExecError> {
     let default_rule = Scaled::from_raw(26_214);
     let (mut width, mut height, mut depth) = if primitive == UnexpandablePrimitive::VRule {
         (Some(default_rule), None, None)
@@ -932,15 +918,12 @@ where
     })
 }
 
-fn scan_hlist_group<S>(
-    input: &mut InputStack<S>,
+fn scan_hlist_group(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: &'static str,
-) -> Result<tex_state::ids::NodeListId, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<tex_state::ids::NodeListId, ExecError> {
     let opener =
         next_non_space_x(input, stores, execution)?.ok_or(ExecError::MissingToken { context })?;
     if !is_begin_group(opener) {

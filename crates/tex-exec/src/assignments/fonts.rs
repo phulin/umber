@@ -5,16 +5,13 @@ use tex_state::InputOpenState;
 use tex_state::ids::FontId;
 use tex_state::scaled::FontSizeSpec;
 
-pub(super) fn execute_font_definition<S>(
+pub(super) fn execute_font_definition(
     prefixes: Prefixes,
     context: TracedTokenWord,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     reject_macro_prefixes(prefixes)?;
     let target = scan_definition_target(input, stores, "\\font")?;
     skip_optional_equals_x(input, stores, execution)?;
@@ -71,16 +68,13 @@ where
     Ok(())
 }
 
-pub(super) fn scan_font_variable_target<S>(
+pub(super) fn scan_font_variable_target(
     primitive: UnexpandablePrimitive,
     context: TracedTokenWord,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<Variable, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<Variable, ExecError> {
     match primitive {
         UnexpandablePrimitive::FontDimen => {
             let number = scan_i32(input, stores, execution, context)?;
@@ -102,17 +96,14 @@ where
     }
 }
 
-pub(super) fn execute_math_family_font_assignment<S>(
+pub(super) fn execute_math_family_font_assignment(
     primitive: UnexpandablePrimitive,
     prefixes: Prefixes,
     context: TracedTokenWord,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     reject_macro_prefixes(prefixes)?;
     let size = math_font_size_for_primitive(primitive);
     let family = scan_math_family(input, stores, execution, context)?;
@@ -127,15 +118,12 @@ where
     Ok(())
 }
 
-pub(super) fn scan_math_family<S>(
-    input: &mut InputStack<S>,
+pub(super) fn scan_math_family(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
-) -> Result<u8, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<u8, ExecError> {
     let family = scan_i32(input, stores, execution, context)?;
     if !(0..=15).contains(&family) {
         // TeX.web §435's `scan_four_bit_int` reports the bad value and
@@ -151,14 +139,11 @@ where
     Ok(family as u8)
 }
 
-pub(super) fn scan_font_selector<S>(
-    input: &mut InputStack<S>,
+pub(super) fn scan_font_selector(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<FontId, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<FontId, ExecError> {
     let traced =
         next_non_space_traced_x(input, stores, execution)?.ok_or(ExecError::MissingToken {
             context: "font selector",
@@ -206,15 +191,12 @@ fn math_font_size_for_primitive(primitive: UnexpandablePrimitive) -> MathFontSiz
     }
 }
 
-fn scan_font_size_spec<S>(
-    input: &mut InputStack<S>,
+fn scan_font_size_spec(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
-) -> Result<FontSizeSpec, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<FontSizeSpec, ExecError> {
     if scan_optional_keyword_x(input, stores, execution, "at")? {
         let requested = scan_scaled(input, stores, execution, context)?;
         let size = if requested.raw() > 0 && requested.raw() < 2048 * Scaled::UNITY {
@@ -251,20 +233,21 @@ where
     Ok(FontSizeSpec::Design)
 }
 
-fn scan_font_file_name<S>(
-    input: &mut InputStack<S>,
+fn scan_font_file_name(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<String, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<String, ExecError> {
     let mut name = String::new();
     let Some(first) = next_non_space_x(input, stores, execution)? else {
         return Err(ExecError::MissingToken { context: "\\font" });
     };
     append_font_name_token(&mut name, first)?;
-    while let Some(traced) = get_x_token_with_context(input, stores, execution)? {
+    while let Some(traced) = get_x_token_with_context(
+        input,
+        &mut tex_state::ExpansionContext::new(stores),
+        execution,
+    )? {
         match tex_expand::semantic_token(traced) {
             Token::Char {
                 cat: Catcode::Space,

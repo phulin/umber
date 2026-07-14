@@ -310,12 +310,20 @@ fn halign_head_for_vmode_replay_preserves_command_origin() {
             .expect("head_for_vmode dispatch"),
         DispatchAction::Continue
     );
-    let inserted = tex_expand::get_x_token_with_context(&mut input, &mut stores, &mut context)
-        .expect("inserted paragraph read")
-        .expect("inserted paragraph token");
-    let replayed = tex_expand::get_x_token_with_context(&mut input, &mut stores, &mut context)
-        .expect("halign replay read")
-        .expect("halign replay token");
+    let inserted = tex_expand::get_x_token_with_context(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut context,
+    )
+    .expect("inserted paragraph read")
+    .expect("inserted paragraph token");
+    let replayed = tex_expand::get_x_token_with_context(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut context,
+    )
+    .expect("halign replay read")
+    .expect("halign replay token");
 
     assert_eq!(
         tex_expand::semantic_token(inserted),
@@ -353,17 +361,25 @@ fn hrule_head_for_vmode_defers_rule_until_after_paragraph_dispatch() {
     );
     assert!(stores.page_contributions().is_empty());
 
-    let inserted = tex_expand::get_x_token_with_context(&mut input, &mut stores, &mut context)
-        .expect("inserted paragraph read")
-        .expect("inserted paragraph token");
+    let inserted = tex_expand::get_x_token_with_context(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut context,
+    )
+    .expect("inserted paragraph read")
+    .expect("inserted paragraph token");
     assert_eq!(
         tex_expand::semantic_token(inserted),
         Token::Cs(stores.intern("par").symbol())
     );
 
-    let replayed = tex_expand::get_x_token_with_context(&mut input, &mut stores, &mut context)
-        .expect("replayed hrule read")
-        .expect("replayed hrule token");
+    let replayed = tex_expand::get_x_token_with_context(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut context,
+    )
+    .expect("replayed hrule read")
+    .expect("replayed hrule token");
     assert_eq!(tex_expand::semantic_token(replayed), hrule);
     assert_eq!(replayed.origin(), command_origin);
 }
@@ -382,12 +398,20 @@ fn halign_in_restricted_horizontal_mode_retains_off_save_recovery() {
 
     dispatch_delivered_token(&mut nest, command, &mut input, &mut stores, &mut context)
         .expect("off_save should insert a closing group");
-    let inserted = tex_expand::get_x_token_with_context(&mut input, &mut stores, &mut context)
-        .expect("inserted group read")
-        .expect("inserted group token");
-    let replayed = tex_expand::get_x_token_with_context(&mut input, &mut stores, &mut context)
-        .expect("halign replay read")
-        .expect("halign replay token");
+    let inserted = tex_expand::get_x_token_with_context(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut context,
+    )
+    .expect("inserted group read")
+    .expect("inserted group token");
+    let replayed = tex_expand::get_x_token_with_context(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut context,
+    )
+    .expect("halign replay read")
+    .expect("halign replay token");
 
     assert_eq!(
         tex_expand::semantic_token(inserted),
@@ -837,11 +861,10 @@ fn mid_alignment_snapshot_rollback_restores_summary_and_unset_rows() {
     let (mut stores, state) = scan_halign_preamble("{#&#\\cr}");
     let seed =
         tex_state::InputSummary::new_with_resume_state(Vec::new(), None, None, None, 1, true);
-    let mut input =
-        InputStack::<MemoryInput>::from_summary(&seed, |_, _, _| -> Result<MemoryInput, ()> {
-            unreachable!("empty seed has no source to restore")
-        })
-        .expect("restore empty input stack");
+    let mut input = InputStack::from_summary(&seed, |_, _, _| -> Result<MemoryInput, ()> {
+        unreachable!("empty seed has no source to restore")
+    })
+    .expect("restore empty input stack");
     input.push_source(MemoryInput::new("b&c\\cr}"));
     let input_summary = input.publication_summary(&mut stores);
     let mut nest = ModeNest::new();

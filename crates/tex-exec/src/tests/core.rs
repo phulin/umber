@@ -216,7 +216,7 @@ fn virtualized_execution_trace_is_opt_in_and_semantically_neutral() {
 fn engine_snapshot_queries_are_backed_by_current_nest_level() {
     let mut executor = Executor::new();
     let stores = Universe::new();
-    let mut context = crate::ExecutionContext::<MemoryInput>::new("texput");
+    let mut context = crate::ExecutionContext::new("texput");
     crate::executor::sync_engine_state(&mut context, executor.nest(), &stores);
     assert_eq!(context.engine.mode, tex_expand::EngineMode::Vertical);
     assert!(!context.engine.is_inner_mode);

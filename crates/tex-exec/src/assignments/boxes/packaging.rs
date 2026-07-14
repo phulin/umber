@@ -1,5 +1,5 @@
 use tex_expand::get_x_token_with_context;
-use tex_lex::{InputSource, InputStack};
+use tex_lex::InputStack;
 use tex_state::ids::NodeListId;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::node::Node;
@@ -38,30 +38,24 @@ impl ScannedBoxValue {
     }
 }
 
-pub(in crate::assignments) fn scan_required_box_node<S>(
-    input: &mut InputStack<S>,
+pub(in crate::assignments) fn scan_required_box_node(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
-) -> Result<Node, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<Node, ExecError> {
     scan_box_value(None, input, stores, execution, context)?
         .map(ScannedBoxValue::into_node)
         .ok_or(ExecError::MissingToken { context: "box" })
 }
 
-pub(super) fn scan_box_value<S>(
+pub(super) fn scan_box_value(
     nest: Option<&mut ModeNest>,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
-) -> Result<Option<ScannedBoxValue>, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<Option<ScannedBoxValue>, ExecError> {
     let traced = next_non_space_traced_x(input, stores, execution)?
         .ok_or(ExecError::MissingTracedToken { context })?;
     let token = tex_expand::semantic_token(traced);
@@ -115,8 +109,8 @@ where
 /// TeX82's `scan_box` backs up a non-box command after reporting the error
 /// (tex.web §1076), leaving the destination box void while normal command
 /// processing resumes with the rejected token.
-fn recover_missing_box<S: InputSource>(
-    input: &mut InputStack<S>,
+fn recover_missing_box(
+    input: &mut InputStack,
     stores: &mut Universe,
     traced: TracedTokenWord,
 ) -> Result<Option<ScannedBoxValue>, ExecError> {
@@ -157,16 +151,13 @@ pub(super) fn take_last_box(
     }
 }
 
-pub(super) fn scan_box_node<S>(
+pub(super) fn scan_box_node(
     kind: BoxKind,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
-) -> Result<Node, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<Node, ExecError> {
     let spec = scan_pack_spec(input, stores, execution, context)?;
     let opener =
         next_non_space_traced_x(input, stores, execution)?.ok_or(ExecError::MissingToken {
@@ -283,21 +274,22 @@ pub(crate) fn hpack_owned_with_overfull_rule(
     plan.finish(children).node
 }
 
-pub(crate) fn scan_box_group<S>(
+pub(crate) fn scan_box_group(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     box_group_depth: u32,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     {
         loop {
-            crate::executor::sync_engine_state::<S>(execution, nest, stores);
+            crate::executor::sync_engine_state(execution, nest, stores);
             let token = {
-                match get_x_token_with_context(input, stores, execution) {
+                match get_x_token_with_context(
+                    input,
+                    &mut tex_state::ExpansionContext::new(stores),
+                    execution,
+                ) {
                     Ok(token) => token,
                     Err(tex_expand::ExpandError::UndefinedControlSequence { name, .. }) => {
                         stores.world_mut().write_text(
@@ -413,15 +405,12 @@ where
     }
 }
 
-pub(crate) fn scan_pack_spec<S>(
-    input: &mut InputStack<S>,
+pub(crate) fn scan_pack_spec(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
-) -> Result<PackSpec, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<PackSpec, ExecError> {
     if scan_optional_keyword_x(input, stores, execution, "to")? {
         Ok(PackSpec::Exactly(scan_scaled(
             input, stores, execution, context,

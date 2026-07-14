@@ -328,13 +328,13 @@ fn seed_world(world: &mut World) {
 #[derive(Clone, Copy, Debug)]
 struct FuzzInputResolver;
 
-impl InputResolver<MemoryInput> for FuzzInputResolver {
+impl InputResolver for FuzzInputResolver {
     fn open_input(
         &mut self,
         input: &mut dyn tex_state::InputReadState,
         name: &str,
         _request_index: u64,
-    ) -> Result<MemoryInput, String> {
+    ) -> Result<Box<dyn tex_lex::InputSource>, String> {
         let mut path = PathBuf::from(name);
         if path.extension().is_none() {
             path.set_extension("tex");
@@ -342,9 +342,9 @@ impl InputResolver<MemoryInput> for FuzzInputResolver {
         let content = input
             .read_input_file(&path)
             .map_err(|err| format!("{} ({err})", path.display()))?;
-        Ok(MemoryInput::new(
+        Ok(Box::new(MemoryInput::new(
             String::from_utf8_lossy(content.bytes()).into_owned(),
-        ))
+        )))
     }
 }
 

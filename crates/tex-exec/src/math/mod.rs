@@ -1,7 +1,7 @@
 //! Math-mode stomach front-end.
 
 use tex_expand::get_x_token_with_context;
-use tex_lex::{InputSource, InputStack};
+use tex_lex::InputStack;
 use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, IntParam, TokParam};
 use tex_state::glue::GlueSpec;
@@ -36,13 +36,11 @@ pub(crate) fn testing_start_eq_no(
     start_eq_no(nest, stores, primitive)
 }
 
-pub(crate) fn insert_dollar_sign<S>(
+pub(crate) fn insert_dollar_sign(
     traced: TracedTokenWord,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-) where
-    S: InputSource,
-{
+) {
     let origin = traced.origin();
     let math_shift_token = Token::Char {
         ch: '$',
@@ -74,15 +72,12 @@ pub(crate) fn testing_finish_current_math_list(
     finish_current_math_list(nest, stores)
 }
 
-pub(crate) fn enter_math<S>(
+pub(crate) fn enter_math(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<DispatchAction, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<DispatchAction, ExecError> {
     debug_assert!(!matches!(
         nest.current_mode(),
         Mode::Vertical | Mode::InternalVertical
@@ -165,20 +160,17 @@ where
     });
     let tokens = stores.tokens(every).to_vec();
     push_tokens(input, stores, tokens);
-    sync_engine_state::<S>(execution, nest, stores);
+    sync_engine_state(execution, nest, stores);
     Ok(DispatchAction::Continue)
 }
 
-pub(crate) fn dispatch_math_token_with_context<S>(
+pub(crate) fn dispatch_math_token_with_context(
     nest: &mut ModeNest,
     traced: TracedTokenWord,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<DispatchAction, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<DispatchAction, ExecError> {
     let token = tex_expand::semantic_token(traced);
     let origin = traced.origin();
     match token {
@@ -268,16 +260,13 @@ where
     }
 }
 
-fn finish_math<S>(
+fn finish_math(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     origin: OriginId,
-) -> Result<DispatchAction, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<DispatchAction, ExecError> {
     // `off_save` inserts the terminator required by an intervening group and
     // then retries the math shift (tex.web §1027). TRIP deliberately leaves
     // a `\begingroup` open before a later `$`.
@@ -303,7 +292,11 @@ where
     }
     let display = nest.current_mode() == Mode::DisplayMath;
     if display {
-        match get_x_token_with_context(input, stores, execution)? {
+        match get_x_token_with_context(
+            input,
+            &mut tex_state::ExpansionContext::new(stores),
+            execution,
+        )? {
             Some(traced)
                 if matches!(
                     tex_expand::semantic_token(traced),
@@ -355,17 +348,18 @@ where
     Ok(DispatchAction::Continue)
 }
 
-fn finish_equation_number<S>(
+fn finish_equation_number(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     origin: OriginId,
-) -> Result<DispatchAction, ExecError>
-where
-    S: InputSource,
-{
-    match get_x_token_with_context(input, stores, execution)? {
+) -> Result<DispatchAction, ExecError> {
+    match get_x_token_with_context(
+        input,
+        &mut tex_state::ExpansionContext::new(stores),
+        execution,
+    )? {
         Some(traced)
             if matches!(
                 tex_expand::semantic_token(traced),
@@ -471,17 +465,14 @@ pub(crate) fn testing_math_font_failure(stores: &Universe) -> Option<&'static st
     })
 }
 
-fn dispatch_math_control<S>(
+fn dispatch_math_control(
     nest: &mut ModeNest,
     traced: TracedTokenWord,
     symbol: tex_state::interner::Symbol,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<DispatchAction, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<DispatchAction, ExecError> {
     let token = tex_expand::semantic_token(traced);
     let origin = traced.origin();
     let meaning = stores.meaning(symbol);
@@ -547,17 +538,14 @@ where
     }
 }
 
-fn dispatch_math_primitive<S>(
+fn dispatch_math_primitive(
     primitive: UnexpandablePrimitive,
     traced: TracedTokenWord,
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<DispatchAction, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<DispatchAction, ExecError> {
     let token = tex_expand::semantic_token(traced);
     let origin = traced.origin();
     match primitive {
@@ -838,16 +826,13 @@ where
     }
 }
 
-fn finish_display_halign<S>(
+fn finish_display_halign(
     context: TracedTokenWord,
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     while stores.innermost_group_kind() == Some(tex_state::GroupKind::SemiSimple) {
         stores.world_mut().write_text(
             tex_state::PrintSink::TerminalAndLog,
@@ -892,16 +877,18 @@ where
     resume_after_display_alignment(nest, input, stores, interrupt.active_directions)
 }
 
-fn finish_display_alignment_assignments<S>(
-    input: &mut InputStack<S>,
+fn finish_display_alignment_assignments(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     loop {
-        let Some(first) = get_x_token_with_context(input, stores, execution)? else {
+        let Some(first) = get_x_token_with_context(
+            input,
+            &mut tex_state::ExpansionContext::new(stores),
+            execution,
+        )?
+        else {
             return Ok(());
         };
         if matches!(
@@ -934,7 +921,12 @@ where
                         | UnexpandablePrimitive::Protected
                 )
             ) {
-                let Some(next) = get_x_token_with_context(input, stores, execution)? else {
+                let Some(next) = get_x_token_with_context(
+                    input,
+                    &mut tex_state::ExpansionContext::new(stores),
+                    execution,
+                )?
+                else {
                     push_traced_tokens(input, stores, command);
                     return Ok(());
                 };
@@ -956,15 +948,17 @@ where
                 tex_state::PrintSink::TerminalAndLog,
                 "\n! Improper \\setbox.\nSorry, \\setbox is not allowed after \\halign in a display,\nor between \\accent and an accented character.\n",
             );
-            if let Some(next) = get_x_token_with_context(input, stores, execution)?
-                && !matches!(
-                    tex_expand::semantic_token(next),
-                    Token::Char {
-                        ch: '=',
-                        cat: Catcode::Other,
-                    }
-                )
-            {
+            if let Some(next) = get_x_token_with_context(
+                input,
+                &mut tex_state::ExpansionContext::new(stores),
+                execution,
+            )? && !matches!(
+                tex_expand::semantic_token(next),
+                Token::Char {
+                    ch: '=',
+                    cat: Catcode::Other,
+                }
+            ) {
                 push_traced_tokens(input, stores, [next]);
             }
             return Ok(());
@@ -981,14 +975,11 @@ where
     }
 }
 
-fn consume_display_alignment_closer<S>(
-    input: &mut InputStack<S>,
+fn consume_display_alignment_closer(
+    input: &mut InputStack,
     stores: &mut Universe,
     fallback_origin: OriginId,
-) -> Result<OriginId, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<OriginId, ExecError> {
     let closing_origin = match input.next_traced_token(stores)? {
         Some(traced)
             if matches!(

@@ -1,4 +1,4 @@
-use tex_lex::{InputSource, InputStack};
+use tex_lex::InputStack;
 use tex_state::env::banks::DimenParam;
 use tex_state::node::Node;
 use tex_state::token::TracedTokenWord;
@@ -16,28 +16,22 @@ mod direct;
 // compact-list traversal writes canonical artifact bytes and DVI plan bytes.
 // No detached node tree or per-list snapshot crosses that traversal.
 
-pub(super) fn execute_shipout<S>(
+pub(super) fn execute_shipout(
     context: TracedTokenWord,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<Option<PreparedDviPage>, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<Option<PreparedDviPage>, ExecError> {
     let node = scan_required_box_node(input, stores, execution, context)?;
     shipout_node(node, input, stores, execution)
 }
 
-pub(crate) fn shipout_node<S>(
+pub(crate) fn shipout_node(
     node: Node,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<Option<PreparedDviPage>, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<Option<PreparedDviPage>, ExecError> {
     if huge_shipout_box(&node, stores) {
         stores.world_mut().write_text(
             PrintSink::TerminalAndLog,

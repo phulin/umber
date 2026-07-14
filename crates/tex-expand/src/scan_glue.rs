@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use tex_lex::{InputSource, InputStack, LexError};
+use tex_lex::{InputStack, LexError};
 use tex_state::ExpansionState;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::GlueId;
@@ -132,14 +132,11 @@ impl From<scan_int::ScanIntError> for ScanGlueError {
     }
 }
 
-pub fn scan_glue<S>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+pub fn scan_glue(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
     context: TracedTokenWord,
-) -> Result<ScannedGlue, ScanGlueError>
-where
-    S: InputSource,
-{
+) -> Result<ScannedGlue, ScanGlueError> {
     scan_glue_with_context(
         input,
         stores,
@@ -149,14 +146,11 @@ where
     )
 }
 
-pub fn scan_muglue<S>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+pub fn scan_muglue(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
     context: TracedTokenWord,
-) -> Result<ScannedGlue, ScanGlueError>
-where
-    S: InputSource,
-{
+) -> Result<ScannedGlue, ScanGlueError> {
     scan_glue_with_context(
         input,
         stores,
@@ -166,16 +160,13 @@ where
     )
 }
 
-pub fn scan_glue_with_context<S>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
-    expansion: &mut ExpansionContext<'_, S>,
+pub fn scan_glue_with_context(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
     mu: bool,
     context: TracedTokenWord,
-) -> Result<ScannedGlue, ScanGlueError>
-where
-    S: InputSource,
-{
+) -> Result<ScannedGlue, ScanGlueError> {
     scan_glue_with_mode_and_context(
         input,
         stores,
@@ -186,17 +177,15 @@ where
     )
 }
 
-pub fn scan_glue_with_mode_and_context<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+pub fn scan_glue_with_mode_and_context(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     mu: bool,
     context: TracedTokenWord,
 ) -> Result<ScannedGlue, ScanGlueError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let (negative, first) = scan_signs(input, stores, expansion, mode)?;
     let Some(first) = first else {
@@ -391,12 +380,12 @@ fn dimen_options(mu: bool) -> ScanDimenOptions {
     }
 }
 
-fn intern_spec(stores: &mut impl ExpansionState, spec: GlueSpec) -> ScannedGlue {
+fn intern_spec(stores: &mut tex_state::ExpansionContext<'_>, spec: GlueSpec) -> ScannedGlue {
     intern_spec_with_diagnostics(stores, spec, [None; 8], [None; 8])
 }
 
 fn intern_spec_with_diagnostics(
-    stores: &mut impl ExpansionState,
+    stores: &mut tex_state::ExpansionContext<'_>,
     spec: GlueSpec,
     diagnostics: [Option<DimensionDiagnostic>; 8],
     diagnostic_origins: [Option<OriginId>; 8],
@@ -430,17 +419,15 @@ fn signed_spec(mut spec: GlueSpec, negative: bool) -> GlueSpec {
     spec
 }
 
-pub(crate) fn scan_glue_expr<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+pub(crate) fn scan_glue_expr(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     mu: bool,
     context: TracedTokenWord,
 ) -> Result<ScannedGlue, ScanGlueError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let (spec, bad) = parse_glue_expr(input, stores, expansion, mode, mu, false)?;
     if bad {
@@ -473,17 +460,15 @@ where
     }
 }
 
-fn parse_glue_expr<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn parse_glue_expr(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     mu: bool,
     paren: bool,
 ) -> Result<(GlueSpec, bool), ScanGlueError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let (mut spec, mut bad) = parse_glue_term(input, stores, expansion, mode, mu)?;
     loop {
@@ -518,16 +503,14 @@ where
     Ok((spec, bad))
 }
 
-fn parse_glue_term<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn parse_glue_term(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     mu: bool,
 ) -> Result<(GlueSpec, bool), ScanGlueError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let (mut spec, mut bad) = parse_glue_factor(input, stores, expansion, mode, mu)?;
     loop {
@@ -580,16 +563,14 @@ where
     Ok((spec, bad))
 }
 
-fn parse_glue_factor<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn parse_glue_factor(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     mu: bool,
 ) -> Result<(GlueSpec, bool), ScanGlueError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let Some(token) = expr_next(input, stores, expansion, mode)? else {
         return Ok((GlueSpec::ZERO, true));
@@ -605,15 +586,13 @@ where
     ))
 }
 
-fn parse_int_factor<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn parse_int_factor(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
 ) -> Result<(i64, bool), ScanGlueError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let Some(token) = expr_next(input, stores, expansion, mode)? else {
         return Ok((0, true));
@@ -628,15 +607,13 @@ where
     Ok((i64::from(scanned.value()), scanned.diagnostic().is_some()))
 }
 
-fn expr_next<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn expr_next(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
 ) -> Result<Option<TracedTokenWord>, ScanGlueError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     loop {
         let token = next_x(input, stores, expansion, mode)?;
@@ -710,15 +687,13 @@ fn order_rank(order: Order) -> u8 {
     }
 }
 
-fn scan_signs<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn scan_signs(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
 ) -> Result<(bool, Option<TracedTokenWord>), ScanGlueError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let mut negative = false;
     loop {
@@ -739,29 +714,25 @@ where
     }
 }
 
-fn next_x<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn next_x(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
 ) -> Result<Option<TracedTokenWord>, ScanGlueError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     Ok(mode.next_expanded_token(input, stores, expansion)?)
 }
 
-fn scan_register_index<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn scan_register_index(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     context: TracedTokenWord,
 ) -> Result<u16, ScanGlueError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let scanned =
         crate::scan_int::scan_int_with_mode_and_context(input, stores, expansion, mode, context)?;
@@ -774,31 +745,27 @@ where
     Ok(value as u16)
 }
 
-fn scan_keyword<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn scan_keyword(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     keyword: &str,
 ) -> Result<bool, ScanGlueError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     Ok(scan_helpers::scan_optional_keyword_with_mode_and_context(
         input, stores, expansion, mode, keyword,
     )?)
 }
 
-fn consume_optional_space<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn consume_optional_space(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
 ) -> Result<(), ScanGlueError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let Some(token) = next_x(input, stores, expansion, mode)? else {
         return Ok(());
@@ -809,19 +776,16 @@ where
     Ok(())
 }
 
-fn unread_token<S>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+fn unread_token(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
     token: TracedTokenWord,
-) where
-    S: InputSource,
-{
+) {
     unread_tokens(input, stores, [token]);
 }
 
-fn unread_tokens<S, I>(input: &mut InputStack<S>, stores: &mut impl ExpansionState, tokens: I)
+fn unread_tokens<I>(input: &mut InputStack, stores: &mut tex_state::ExpansionContext<'_>, tokens: I)
 where
-    S: InputSource,
     I: IntoIterator<Item = TracedTokenWord>,
 {
     crate::back_input(input, stores, tokens);

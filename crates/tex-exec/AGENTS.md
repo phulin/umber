@@ -6,7 +6,7 @@ Read the repository-level `AGENTS.md` before editing here. This crate owns TeX's
 
 `tex-exec` consumes fully expanded tokens from `tex-expand` and applies unexpandable TeX semantics to `tex-state::Universe`. It installs and dispatches unexpandable primitives, manages the mode nest, performs assignments and grouping-sensitive state changes, builds horizontal/vertical material, invokes pure typesetting kernels, lowers shipped pages into `tex-out` artifacts, and emits execution diagnostics through the state/world boundary.
 
-Use this crate when behavior mutates live engine state or depends on TeX's current mode. Keep assignment scanning thin: decode the primitive operand, scan the value through the shared expansion scanners, then write through the `Universe` facade.
+Use this crate when behavior mutates live engine state or depends on TeX's current mode. Keep assignment scanning thin: decode the primitive operand, create a short-lived `tex_state::ExpansionContext` over the owning `Universe`, scan the value through the shared expansion scanners, then write through the `Universe` facade.
 
 ## Boundaries
 

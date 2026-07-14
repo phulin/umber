@@ -1,4 +1,4 @@
-use tex_lex::{InputSource, InputStack};
+use tex_lex::InputStack;
 use tex_state::ExpansionState;
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::provenance::InsertedOriginKind;
@@ -9,16 +9,14 @@ use crate::{
     get_x_token_without_input_open, push_inserted_token, scan_helpers,
 };
 
-pub(crate) fn expand_after<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn crate::ExpansionMode<S, St>,
+pub(crate) fn expand_after(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn crate::ExpansionMode,
     context: TracedTokenWord,
 ) -> Result<(), ExpandError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let Some(saved) = crate::get_token(input, stores)? else {
         return Err(ExpandError::MissingTokenAfterPrimitive {
@@ -35,15 +33,12 @@ where
     mode.dispatch_raw_token_after(saved, target, input, stores, expansion)
 }
 
-pub(crate) fn scan_csname<S>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
-    expansion: &mut ExpansionContext<'_, S>,
+pub(crate) fn scan_csname(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
     context: TracedTokenWord,
-) -> Result<String, ExpandError>
-where
-    S: InputSource,
-{
+) -> Result<String, ExpandError> {
     let mut name = String::new();
 
     loop {
@@ -114,15 +109,12 @@ fn append_csname_token(name: &mut String, token: Token) -> CsNameAppend {
     }
 }
 
-pub(crate) fn scan_input_name<S>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
-    expansion: &mut ExpansionContext<'_, S>,
+pub(crate) fn scan_input_name(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
     context: TracedTokenWord,
-) -> Result<String, ExpandError>
-where
-    S: InputSource,
-{
+) -> Result<String, ExpandError> {
     let Some(first) = scan_helpers::next_non_space_x_token_with_context(input, stores, expansion)?
     else {
         return Err(ExpandError::MissingInputName { context });

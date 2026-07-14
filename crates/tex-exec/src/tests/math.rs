@@ -483,9 +483,12 @@ fn math_group_mismatch_reports_the_closing_token_origin() {
     let mut nest = ModeNest::new();
     nest.push(Mode::Math);
     let mut input = InputStack::new(MemoryInput::new("}"));
-    let token = tex_expand::get_x_token(&mut input, &mut stores)
-        .expect("right brace tokenizes")
-        .expect("right brace exists");
+    let token = tex_expand::get_x_token(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    )
+    .expect("right brace tokenizes")
+    .expect("right brace exists");
     let err = crate::dispatch::dispatch_delivered_token(
         &mut nest,
         token,
@@ -508,9 +511,12 @@ fn math_group_mismatch_reports_the_closing_token_origin() {
     let mut nest = ModeNest::new();
     nest.push(Mode::Math);
     let mut input = InputStack::new(MemoryInput::new(r"\endgroup"));
-    let token = tex_expand::get_x_token(&mut input, &mut stores)
-        .expect("endgroup tokenizes")
-        .expect("endgroup exists");
+    let token = tex_expand::get_x_token(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    )
+    .expect("endgroup tokenizes")
+    .expect("endgroup exists");
     let err = crate::dispatch::dispatch_delivered_token(
         &mut nest,
         token,
@@ -1438,16 +1444,24 @@ fn assert_replayed_math_error_is_source_backed(source: &str) {
     .expect("execution reaches the provenance sentinel");
     assert_eq!(exit, crate::executor::MainControlExit::Stopped);
 
-    let relax = tex_expand::get_x_token_with_context(&mut input, &mut stores, &mut context)
-        .expect("replayed relax tokenizes")
-        .expect("replayed relax exists");
+    let relax = tex_expand::get_x_token_with_context(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut context,
+    )
+    .expect("replayed relax tokenizes")
+    .expect("replayed relax exists");
     assert!(matches!(
         tex_expand::semantic_token(relax),
         Token::Cs(symbol) if matches!(stores.meaning(symbol), Meaning::Relax)
     ));
-    let sentinel = tex_expand::get_x_token_with_context(&mut input, &mut stores, &mut context)
-        .expect("suppressed expandable tokenizes")
-        .expect("suppressed expandable exists");
+    let sentinel = tex_expand::get_x_token_with_context(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut context,
+    )
+    .expect("suppressed expandable tokenizes")
+    .expect("suppressed expandable exists");
     let action = crate::dispatch::dispatch_delivered_token(
         executor.nest_mut(),
         sentinel,

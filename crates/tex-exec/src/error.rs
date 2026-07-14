@@ -413,7 +413,7 @@ impl ExecError {
         }
     }
 
-    pub(crate) fn capture<S: tex_lex::InputSource>(self, input: &tex_lex::InputStack<S>) -> Self {
+    pub(crate) fn capture(self, input: &tex_lex::InputStack) -> Self {
         if matches!(self, Self::Captured { .. }) {
             return self;
         }

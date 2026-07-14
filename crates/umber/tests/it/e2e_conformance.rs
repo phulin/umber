@@ -41,13 +41,13 @@ struct InProcessInputResolver {
     base_dir: PathBuf,
 }
 
-impl InputResolver<WorldInput> for InProcessInputResolver {
+impl InputResolver for InProcessInputResolver {
     fn open_input(
         &mut self,
         input: &mut dyn InputReadState,
         name: &str,
         _request_index: u64,
-    ) -> Result<WorldInput, String> {
+    ) -> Result<Box<dyn tex_lex::InputSource>, String> {
         let mut path = PathBuf::from(name);
         if path.extension().is_none() {
             path.set_extension("tex");
@@ -56,6 +56,7 @@ impl InputResolver<WorldInput> for InProcessInputResolver {
             .read_input_file(&self.base_dir.join(&path))
             .or_else(|_| input.read_input_file(&path))
             .map(WorldInput::from_content)
+            .map(|source| Box::new(source) as Box<dyn tex_lex::InputSource>)
             .map_err(|error| error.to_string())
     }
 }
@@ -103,7 +104,7 @@ impl InProcessResolvers {
         }
     }
 
-    fn context(&mut self) -> ExecutionContext<'_, WorldInput> {
+    fn context(&mut self) -> ExecutionContext<'_> {
         ExecutionContext::with_resolvers(&self.job_name, &mut self.input, &mut self.font)
     }
 }

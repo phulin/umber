@@ -1,5 +1,5 @@
 use tex_expand::{get_x_or_protected_with_context, get_x_token_with_context};
-use tex_lex::{InputSource, InputStack, TokenListReplayKind};
+use tex_lex::{InputStack, TokenListReplayKind};
 use tex_state::env::banks::TokParam;
 use tex_state::node::{GlueKind, Node};
 use tex_state::token::{Token, TracedTokenWord};
@@ -20,16 +20,13 @@ use crate::{
     DispatchAction, ExecError, ExecutionStats, Mode, ModeNest, leave_group, push_traced_tokens,
 };
 
-pub(crate) fn execute_alignment<S>(
+pub(crate) fn execute_alignment(
     state: AlignState,
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     {
         let alignment_kind = state.kind();
         let enclosing_prev_depth = nest.current_list().prev_depth();
@@ -88,16 +85,13 @@ pub(crate) fn append_finished_alignment(
     }
 }
 
-pub(super) fn execute_alignment_to_nodes<S>(
+pub(super) fn execute_alignment_to_nodes(
     state: AlignState,
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<Vec<Node>, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<Vec<Node>, ExecError> {
     {
         let alignment_kind = state.kind();
         let enclosing_prev_depth = nest.current_list().prev_depth();
@@ -146,23 +140,20 @@ fn finish_alignment_level(
     })
 }
 
-fn replay_everycr<S>(input: &mut InputStack<S>, stores: &Universe) {
+fn replay_everycr(input: &mut InputStack, stores: &Universe) {
     let everycr = stores.tok_param(TokParam::EVERY_CR);
     if !stores.tokens(everycr).is_empty() {
         input.push_token_list(everycr, TokenListReplayKind::EveryCr);
     }
 }
 
-fn align_peek<S>(
+fn align_peek(
     align_level: usize,
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<Option<TracedTokenWord>, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<Option<TracedTokenWord>, ExecError> {
     loop {
         set_align_brace_depth(nest, align_level, 1_000_000);
         input.set_alignment_state(1_000_000);
@@ -221,17 +212,14 @@ fn init_row(align_level: usize, nest: &mut ModeNest) -> Result<(), ExecError> {
     Ok(())
 }
 
-fn execute_row<S>(
+fn execute_row(
     align_level: usize,
     first_token: TracedTokenWord,
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<bool, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<bool, ExecError> {
     let mut start_token = Some(first_token);
     let mut column = 0usize;
     loop {
@@ -297,17 +285,14 @@ struct CellStart {
     first_token: Option<TracedTokenWord>,
 }
 
-fn execute_cell<S>(
+fn execute_cell(
     align_level: usize,
     start: CellStart,
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<CellResult, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<CellResult, ExecError> {
     let kind = align_kind(nest, align_level)?;
     nest.push(cell_mode(kind));
     if kind == AlignmentKind::VAlign {
@@ -404,14 +389,11 @@ where
     }
 }
 
-fn next_non_space_protected<S>(
-    input: &mut InputStack<S>,
+fn next_non_space_protected(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<Option<TracedTokenWord>, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<Option<TracedTokenWord>, ExecError> {
     loop {
         let token = {
             let mut expansion = ExpansionContext::new(stores);
@@ -473,19 +455,16 @@ enum CellTerminator {
     Span,
 }
 
-fn run_cell_body_until_terminator<S>(
+fn run_cell_body_until_terminator(
     _align_level: usize,
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<CellTerminator, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<CellTerminator, ExecError> {
     let mut stats = ExecutionStats::default();
     loop {
-        sync_engine_state::<S>(execution, nest, stores);
+        sync_engine_state(execution, nest, stores);
         let fetched = {
             let mut expansion = ExpansionContext::new(stores);
             get_x_token_with_context(input, &mut expansion, execution)
@@ -635,17 +614,14 @@ pub(super) enum TemplateStep {
     DeferredOuterRecovery,
 }
 
-pub(super) fn run_one_main_control_token<S>(
+pub(super) fn run_one_main_control_token(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     stats: &mut ExecutionStats,
-) -> Result<TemplateStep, ExecError>
-where
-    S: InputSource,
-{
-    sync_engine_state::<S>(execution, nest, stores);
+) -> Result<TemplateStep, ExecError> {
+    sync_engine_state(execution, nest, stores);
     let fetched = {
         let mut expansion = ExpansionContext::new(stores);
         get_x_token_with_context(input, &mut expansion, execution)
@@ -679,17 +655,14 @@ where
     Ok(TemplateStep::Continue)
 }
 
-pub(super) fn dispatch_and_drain<S>(
+pub(super) fn dispatch_and_drain(
     nest: &mut ModeNest,
     token: tex_state::token::TracedTokenWord,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     stats: &mut ExecutionStats,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     let action = match dispatch_delivered_token_with_context(nest, token, input, stores, execution)
     {
         Ok(action) => action,
@@ -758,13 +731,11 @@ fn is_alignment_par(stores: &Universe, token: Token) -> bool {
     )
 }
 
-fn recover_outer_alignment_token<S>(
+fn recover_outer_alignment_token(
     context: TracedTokenWord,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-) where
-    S: InputSource,
-{
+) {
     stores.world_mut().write_text(
         PrintSink::TerminalAndLog,
         "\n! Missing } inserted.\nI've inserted something that you may have forgotten.\n",

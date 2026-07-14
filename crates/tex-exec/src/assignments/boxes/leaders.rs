@@ -1,4 +1,4 @@
-use tex_lex::{InputSource, InputStack};
+use tex_lex::InputStack;
 use tex_state::Universe;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::GlueId;
@@ -15,15 +15,12 @@ use super::super::{
 use super::packaging::{first_box_node, kind_for_primitive, scan_box_node};
 use super::vsplit::scan_vsplit_node;
 
-pub(super) fn scan_leader_payload<S>(
-    input: &mut InputStack<S>,
+pub(super) fn scan_leader_payload(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
-) -> Result<LeaderPayload, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<LeaderPayload, ExecError> {
     let traced = next_non_space_traced_x(input, stores, execution)?
         .ok_or(ExecError::MissingLeaderPayload { context })?;
     let token = tex_expand::semantic_token(traced);
@@ -85,16 +82,13 @@ where
     }
 }
 
-pub(super) fn scan_leader_glue<S>(
-    input: &mut InputStack<S>,
+pub(super) fn scan_leader_glue(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     mode: Mode,
     context: TracedTokenWord,
-) -> Result<GlueId, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<GlueId, ExecError> {
     let traced = next_non_space_traced_x(input, stores, execution)?
         .ok_or(ExecError::LeadersNotFollowedByProperGlue { context })?;
     let token = tex_expand::semantic_token(traced);

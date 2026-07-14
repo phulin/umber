@@ -85,26 +85,26 @@ impl MemoryResolvers {
         self
     }
 
-    pub(crate) fn context(&mut self) -> crate::ExecutionContext<'_, MemoryInput> {
+    pub(crate) fn context(&mut self) -> crate::ExecutionContext<'_> {
         crate::ExecutionContext::with_resolvers("texput", &mut self.input, &mut self.font)
     }
 }
 
 struct WorldMemoryInputResolver;
 
-impl InputResolver<MemoryInput> for WorldMemoryInputResolver {
+impl InputResolver for WorldMemoryInputResolver {
     fn open_input(
         &mut self,
         input: &mut dyn tex_state::InputReadState,
         name: &str,
         _request_index: u64,
-    ) -> Result<MemoryInput, String> {
+    ) -> Result<Box<dyn tex_lex::InputSource>, String> {
         let content = input
             .read_input_file(Path::new(name))
             .map_err(|error| error.to_string())?;
-        Ok(MemoryInput::new(
+        Ok(Box::new(MemoryInput::new(
             String::from_utf8_lossy(content.bytes()).into_owned(),
-        ))
+        )))
     }
 }
 

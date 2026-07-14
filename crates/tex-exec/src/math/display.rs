@@ -1,4 +1,4 @@
-use tex_lex::{InputSource, InputStack};
+use tex_lex::InputStack;
 use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::glue::Order;
@@ -292,15 +292,12 @@ fn display_alignment_node(mut node: Node, display_indent: Scaled) -> Node {
     node
 }
 
-pub(super) fn resume_after_display_alignment<S>(
+pub(super) fn resume_after_display_alignment(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
     active_directions: Vec<tex_state::node::Direction>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     let prev_graf = nest.enclosing_vertical_prev_graf().saturating_add(3);
     nest.set_enclosing_vertical_prev_graf(prev_graf);
     let next = loop {
@@ -378,15 +375,12 @@ const fn tex_half(x: i32) -> i32 {
     }
 }
 
-pub(super) fn resume_after_display<S>(
+pub(super) fn resume_after_display(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
     active_directions: Vec<tex_state::node::Direction>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     let prev_graf = nest.enclosing_vertical_prev_graf().saturating_add(3);
     nest.set_enclosing_vertical_prev_graf(prev_graf);
     nest.push(Mode::Horizontal);

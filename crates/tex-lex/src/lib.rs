@@ -35,7 +35,7 @@ pub use tex_state::{
 ///
 /// The trait is local so M3's `World` can implement it without forcing the
 /// lexer to know where bytes came from.
-pub trait InputSource {
+pub trait InputSource: fmt::Debug {
     /// Reads the next physical line with its original backing-byte metadata.
     fn read_line(&mut self) -> Result<Option<PhysicalLine>, InputSourceError>;
 
@@ -53,14 +53,26 @@ pub trait InputSource {
     fn is_scantokens(&self) -> bool {
         false
     }
+}
 
-    /// Constructs the virtual input source required by e-TeX `\scantokens`.
-    /// Sources that cannot represent generated text may return `None`.
-    fn from_scantokens(_text: String) -> Option<Self>
-    where
-        Self: Sized,
-    {
-        None
+impl<T> InputSource for Box<T>
+where
+    T: InputSource + ?Sized,
+{
+    fn read_line(&mut self) -> Result<Option<PhysicalLine>, InputSourceError> {
+        (**self).read_line()
+    }
+
+    fn input_record(&self) -> Option<InputRecordId> {
+        (**self).input_record()
+    }
+
+    fn source_descriptor(&self) -> Option<SourceDescriptor> {
+        (**self).source_descriptor()
+    }
+
+    fn is_scantokens(&self) -> bool {
+        (**self).is_scantokens()
     }
 }
 
@@ -154,6 +166,14 @@ impl MemoryInput {
             scantokens: false,
         }
     }
+
+    /// Constructs the generated pseudo-file used by e-TeX `\scantokens`.
+    #[must_use]
+    pub fn scantokens(input: impl Into<String>) -> Self {
+        let mut source = Self::new(input);
+        source.scantokens = true;
+        source
+    }
 }
 
 impl InputSource for MemoryInput {
@@ -163,12 +183,6 @@ impl InputSource for MemoryInput {
 
     fn source_descriptor(&self) -> Option<SourceDescriptor> {
         Some(SourceDescriptor::generated(Arc::clone(&self.backing)))
-    }
-
-    fn from_scantokens(text: String) -> Option<Self> {
-        let mut source = Self::new(text);
-        source.scantokens = true;
-        Some(source)
     }
 
     fn is_scantokens(&self) -> bool {
@@ -283,12 +297,6 @@ impl InputSource for WorldInput {
         ))
     }
 
-    fn from_scantokens(text: String) -> Option<Self> {
-        let mut source = Self::generated(text);
-        source.scantokens = true;
-        Some(source)
-    }
-
     fn is_scantokens(&self) -> bool {
         self.scantokens
     }
@@ -400,10 +408,10 @@ impl SourceFrame {
 }
 
 #[derive(Debug)]
-struct SourceInputFrame<S> {
+struct SourceInputFrame {
     source_id: SourceId,
     input_record: Option<InputRecordId>,
-    lines: LineReader<S>,
+    lines: LineReader<Box<dyn InputSource>>,
     frame: SourceFrame,
     next_source_offset: usize,
     descriptor: Option<SourceDescriptor>,
@@ -412,11 +420,8 @@ struct SourceInputFrame<S> {
     scantokens: bool,
 }
 
-impl<S> SourceInputFrame<S> {
-    fn new(source_id: SourceId, source: S) -> Self
-    where
-        S: InputSource,
-    {
+impl SourceInputFrame {
+    fn new(source_id: SourceId, source: Box<dyn InputSource>) -> Self {
         let input_record = source.input_record();
         let descriptor = source.source_descriptor();
         let scantokens = source.is_scantokens();
@@ -478,8 +483,8 @@ struct MeaningSiteCacheEntry {
 pub struct TokenListReplayMarker(u64);
 
 #[derive(Debug)]
-enum InputFrame<S> {
-    Source(SourceInputFrame<S>),
+enum InputFrame {
+    Source(SourceInputFrame),
     TokenList(TokenListInputFrame),
     Condition {
         token: ConditionFrameToken,
@@ -488,30 +493,30 @@ enum InputFrame<S> {
 }
 
 #[derive(Debug)]
-struct StableFrames<S> {
-    slots: Vec<Option<InputFrame<S>>>,
+struct StableFrames {
+    slots: Vec<Option<InputFrame>>,
     active: usize,
 }
 
-impl<S> StableFrames<S> {
+impl StableFrames {
     fn new() -> Self {
         Self {
             slots: Vec::new(),
             active: 0,
         }
     }
-    fn from_vec(frames: Vec<InputFrame<S>>) -> Self {
+    fn from_vec(frames: Vec<InputFrame>) -> Self {
         let active = frames.len();
         Self {
             slots: frames.into_iter().map(Some).collect(),
             active,
         }
     }
-    fn push(&mut self, frame: InputFrame<S>) {
+    fn push(&mut self, frame: InputFrame) {
         self.slots.push(Some(frame));
         self.active += 1;
     }
-    fn remove(&mut self, index: usize) -> InputFrame<S> {
+    fn remove(&mut self, index: usize) -> InputFrame {
         self.active -= 1;
         let frame = self.slots[index].take().expect("input frame slot is live");
         while self.slots.last().is_some_and(Option::is_none) {
@@ -528,17 +533,17 @@ impl<S> StableFrames<S> {
     fn is_empty(&self) -> bool {
         self.active == 0
     }
-    fn iter(&self) -> impl DoubleEndedIterator<Item = &InputFrame<S>> {
+    fn iter(&self) -> impl DoubleEndedIterator<Item = &InputFrame> {
         self.slots.iter().filter_map(Option::as_ref)
     }
-    fn iter_mut(&mut self) -> impl DoubleEndedIterator<Item = &mut InputFrame<S>> {
+    fn iter_mut(&mut self) -> impl DoubleEndedIterator<Item = &mut InputFrame> {
         self.slots.iter_mut().filter_map(Option::as_mut)
     }
     #[cfg(test)]
-    fn last_mut(&mut self) -> Option<&mut InputFrame<S>> {
+    fn last_mut(&mut self) -> Option<&mut InputFrame> {
         self.slots.iter_mut().rev().find_map(Option::as_mut)
     }
-    fn iter_indexed(&self) -> impl DoubleEndedIterator<Item = (usize, &InputFrame<S>)> {
+    fn iter_indexed(&self) -> impl DoubleEndedIterator<Item = (usize, &InputFrame)> {
         self.slots
             .iter()
             .enumerate()
@@ -546,34 +551,34 @@ impl<S> StableFrames<S> {
     }
 }
 
-impl<S> Index<usize> for StableFrames<S> {
-    type Output = InputFrame<S>;
+impl Index<usize> for StableFrames {
+    type Output = InputFrame;
     fn index(&self, index: usize) -> &Self::Output {
         self.slots[index]
             .as_ref()
             .expect("input frame slot is live")
     }
 }
-impl<S> IndexMut<usize> for StableFrames<S> {
+impl IndexMut<usize> for StableFrames {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         self.slots[index]
             .as_mut()
             .expect("input frame slot is live")
     }
 }
-impl<'a, S> IntoIterator for &'a mut StableFrames<S> {
-    type Item = &'a mut InputFrame<S>;
+impl<'a> IntoIterator for &'a mut StableFrames {
+    type Item = &'a mut InputFrame;
     type IntoIter = std::iter::FilterMap<
-        std::slice::IterMut<'a, Option<InputFrame<S>>>,
-        fn(&'a mut Option<InputFrame<S>>) -> Option<&'a mut InputFrame<S>>,
+        std::slice::IterMut<'a, Option<InputFrame>>,
+        fn(&'a mut Option<InputFrame>) -> Option<&'a mut InputFrame>,
     >;
     fn into_iter(self) -> Self::IntoIter {
         self.slots.iter_mut().filter_map(Option::as_mut)
     }
 }
-impl<S> IntoIterator for StableFrames<S> {
-    type Item = InputFrame<S>;
-    type IntoIter = std::iter::Flatten<std::vec::IntoIter<Option<InputFrame<S>>>>;
+impl IntoIterator for StableFrames {
+    type Item = InputFrame;
+    type IntoIter = std::iter::Flatten<std::vec::IntoIter<Option<InputFrame>>>;
     fn into_iter(self) -> Self::IntoIter {
         self.slots.into_iter().flatten()
     }
@@ -802,8 +807,8 @@ impl TracedExpansionToken {
 
 /// TeX input stack for source frames and frozen token-list replay.
 #[derive(Debug)]
-pub struct InputStack<S> {
-    frames: StableFrames<S>,
+pub struct InputStack {
+    frames: StableFrames,
     token_frame_indices: Vec<usize>,
     condition_frame_indices: Vec<usize>,
     next_source_id: u32,
@@ -874,7 +879,34 @@ struct AlignmentInput {
 #[must_use]
 pub struct AlignmentCellSuspension(Option<AlignmentInput>);
 
-impl<S> InputStack<S> {
+impl InputStack {
+    /// Constructs a stack with no physical source frames.
+    ///
+    /// This is used for synchronous expansion of an already-frozen token
+    /// list. Any `\input` encountered during that replay pushes an ordinary
+    /// erased source frame through the installed resolver.
+    #[must_use]
+    pub fn empty() -> Self {
+        Self {
+            frames: StableFrames::new(),
+            token_frame_indices: Vec::new(),
+            condition_frame_indices: Vec::new(),
+            next_source_id: 0,
+            unicode_superscript_notation: true,
+            last_source_frame: None,
+            next_replay_marker: 0,
+            next_condition_token: 0,
+            alignment_inputs: Vec::new(),
+            literal_span_cache: AHashMap::new(),
+            meaning_site_cache: Box::new([None; MEANING_SITE_CACHE_LEN]),
+            last_expansion_site: None,
+            #[cfg(feature = "profiling-stats")]
+            expansion_stats: ExpansionStats::default(),
+            active_macro_invocation: OriginId::UNKNOWN,
+            recently_popped_invocation: None,
+        }
+    }
+
     /// Rebases a fresh, not-yet-registered stack into the aggregate source-id
     /// domain used by earlier execution runs.
     pub fn ensure_source_ids_at_least(&mut self, minimum: u32) {
@@ -921,36 +953,24 @@ impl<S> InputStack<S> {
     }
 
     #[must_use]
-    pub fn new(source: S) -> Self
+    pub fn new<S>(source: S) -> Self
     where
-        S: InputSource,
+        S: InputSource + 'static,
     {
-        let mut stack = Self {
-            frames: StableFrames::new(),
-            token_frame_indices: Vec::new(),
-            condition_frame_indices: Vec::new(),
-            next_source_id: 0,
-            unicode_superscript_notation: true,
-            last_source_frame: None,
-            next_replay_marker: 0,
-            next_condition_token: 0,
-            alignment_inputs: Vec::new(),
-            literal_span_cache: AHashMap::new(),
-            meaning_site_cache: Box::new([None; MEANING_SITE_CACHE_LEN]),
-            last_expansion_site: None,
-            #[cfg(feature = "profiling-stats")]
-            expansion_stats: ExpansionStats::default(),
-            active_macro_invocation: OriginId::UNKNOWN,
-            recently_popped_invocation: None,
-        };
+        let mut stack = Self::empty();
         stack.push_source(source);
         stack
     }
 
-    pub fn push_source(&mut self, source: S) -> SourceId
+    pub fn push_source<S>(&mut self, source: S) -> SourceId
     where
-        S: InputSource,
+        S: InputSource + 'static,
     {
+        self.push_boxed_source(Box::new(source))
+    }
+
+    /// Pushes an erased source returned by an input resolver.
+    pub fn push_boxed_source(&mut self, source: Box<dyn InputSource>) -> SourceId {
         let source_id = SourceId::new(self.next_source_id);
         self.next_source_id = self
             .next_source_id
@@ -960,9 +980,9 @@ impl<S> InputStack<S> {
         source_id
     }
 
-    pub fn from_summary<E, F>(summary: &InputSummary, mut reopen_source: F) -> Result<Self, E>
+    pub fn from_summary<E, F, S>(summary: &InputSummary, mut reopen_source: F) -> Result<Self, E>
     where
-        S: InputSource,
+        S: InputSource + 'static,
         F: FnMut(SourceId, Option<InputRecordId>, &SourceFrameSummary) -> Result<S, E>,
     {
         let mut frames = Vec::with_capacity(summary.frames().len());
@@ -975,6 +995,7 @@ impl<S> InputStack<S> {
                 } => {
                     let reopened = reopen_source(*source_id, *input_record, source)?;
                     let descriptor = reopened.source_descriptor();
+                    let reopened: Box<dyn InputSource> = Box::new(reopened);
                     frames.push(InputFrame::Source(SourceInputFrame {
                         source_id: *source_id,
                         input_record: *input_record,
@@ -2195,15 +2216,15 @@ impl LexError {
 
 /// Semantic TeX lexer over a normalized input source.
 #[derive(Debug)]
-pub struct Lexer<S> {
-    input: InputStack<S>,
+pub struct Lexer {
+    input: InputStack,
 }
 
-impl<S> Lexer<S> {
+impl Lexer {
     #[must_use]
-    pub fn new(source: S) -> Self
+    pub fn new<S>(source: S) -> Self
     where
-        S: InputSource,
+        S: InputSource + 'static,
     {
         Self {
             input: InputStack::new(source),
@@ -2223,16 +2244,16 @@ impl<S> Lexer<S> {
     }
 
     #[must_use]
-    pub fn input_stack(&self) -> &InputStack<S> {
+    pub fn input_stack(&self) -> &InputStack {
         &self.input
     }
 
-    pub fn input_stack_mut(&mut self) -> &mut InputStack<S> {
+    pub fn input_stack_mut(&mut self) -> &mut InputStack {
         &mut self.input
     }
 
     #[must_use]
-    pub fn into_inner(self) -> S {
+    pub fn into_inner(self) -> Box<dyn InputSource> {
         match self.input.frames.into_iter().next() {
             Some(InputFrame::Source(source)) => source.lines.into_inner(),
             Some(InputFrame::TokenList(_) | InputFrame::Condition { .. }) | None => {
@@ -2246,10 +2267,7 @@ impl<S> Lexer<S> {
     }
 }
 
-impl<S> Lexer<S>
-where
-    S: InputSource,
-{
+impl Lexer {
     pub fn next_token(
         &mut self,
         stores: &mut impl ExpansionState,
@@ -2266,10 +2284,7 @@ where
     }
 }
 
-impl<S> InputStack<S>
-where
-    S: InputSource,
-{
+impl InputStack {
     pub fn next_token(
         &mut self,
         stores: &mut impl ExpansionState,
@@ -2676,7 +2691,7 @@ where
     }
 }
 
-impl<S> InputStack<S> {
+impl InputStack {
     #[must_use]
     pub fn current_token_list_frame(&self) -> Option<(TokenListId, TokenListReplayKind, usize)> {
         let frame_index = self.current_token_frame_index()?;
@@ -2824,7 +2839,7 @@ impl<S> InputStack<S> {
         self.token_frame_indices.last().copied()
     }
 
-    fn push_frame(&mut self, frame: InputFrame<S>) {
+    fn push_frame(&mut self, frame: InputFrame) {
         let index = self.frames.slot_len();
         match frame {
             InputFrame::Source(_) | InputFrame::TokenList(_) => {
@@ -2835,7 +2850,7 @@ impl<S> InputStack<S> {
         self.frames.push(frame);
     }
 
-    fn remove_frame(&mut self, index: usize) -> InputFrame<S> {
+    fn remove_frame(&mut self, index: usize) -> InputFrame {
         let indices = match self.frames[index] {
             InputFrame::Source(_) | InputFrame::TokenList(_) => &mut self.token_frame_indices,
             InputFrame::Condition { .. } => &mut self.condition_frame_indices,
@@ -2953,13 +2968,10 @@ fn replay_origin(
     origins[frame.index - 1]
 }
 
-fn load_next_line_readonly<S>(
-    source: &mut SourceInputFrame<S>,
+fn load_next_line_readonly(
+    source: &mut SourceInputFrame,
     stores: &impl ExpansionState,
-) -> Result<bool, LexError>
-where
-    S: InputSource,
-{
+) -> Result<bool, LexError> {
     let context = next_line_source_context(source);
     match source
         .lines
@@ -2985,13 +2997,10 @@ where
     }
 }
 
-fn load_next_line<S>(
-    source: &mut SourceInputFrame<S>,
+fn load_next_line(
+    source: &mut SourceInputFrame,
     stores: &mut impl ExpansionState,
-) -> Result<bool, LexError>
-where
-    S: InputSource,
-{
+) -> Result<bool, LexError> {
     let context = next_line_source_context(source);
     match source.lines.next_normalized_line(stores).map_err(|error| {
         map_input_source_error(source, error, context).with_physical_site(stores)
@@ -3015,7 +3024,7 @@ where
     }
 }
 
-fn ensure_source_registered<S>(source: &mut SourceInputFrame<S>, stores: &mut impl ExpansionState) {
+fn ensure_source_registered(source: &mut SourceInputFrame, stores: &mut impl ExpansionState) {
     if source.registration_attempted {
         return;
     }
@@ -3028,8 +3037,8 @@ fn ensure_source_registered<S>(source: &mut SourceInputFrame<S>, stores: &mut im
     }
 }
 
-fn map_input_source_error<S>(
-    source: &SourceInputFrame<S>,
+fn map_input_source_error(
+    source: &SourceInputFrame,
     error: InputSourceError,
     fallback: LexSourceContext,
 ) -> LexError {
@@ -3058,7 +3067,7 @@ fn map_input_source_error<S>(
     }
 }
 
-fn next_line_source_context<S>(source: &SourceInputFrame<S>) -> LexSourceContext {
+fn next_line_source_context(source: &SourceInputFrame) -> LexSourceContext {
     LexSourceContext {
         source_id: source.source_id,
         input_record: source.input_record,
@@ -3069,7 +3078,7 @@ fn next_line_source_context<S>(source: &SourceInputFrame<S>) -> LexSourceContext
     }
 }
 
-fn source_coordinate<S>(source: &SourceInputFrame<S>) -> LexSourceContext {
+fn source_coordinate(source: &SourceInputFrame) -> LexSourceContext {
     source_coordinate_from_frame(source.source_id, source.input_record, &source.frame)
 }
 
@@ -3162,8 +3171,8 @@ fn decode_traced_token(token: TracedTokenWord) -> Token {
         .expect("input stack must only deliver valid traced tokens")
 }
 
-fn next_token_from_line<S>(
-    source: &mut SourceInputFrame<S>,
+fn next_token_from_line(
+    source: &mut SourceInputFrame,
     stores: &mut impl ExpansionState,
     unicode_superscript_notation: bool,
 ) -> Result<Option<DecodedTracedToken>, LexError> {
@@ -3266,8 +3275,8 @@ fn next_token_from_line<S>(
     }
 }
 
-fn next_token_from_line_readonly<S>(
-    source: &mut SourceInputFrame<S>,
+fn next_token_from_line_readonly(
+    source: &mut SourceInputFrame,
     stores: &impl ExpansionState,
     unicode_superscript_notation: bool,
 ) -> Result<Option<Token>, LexError> {
@@ -3343,8 +3352,8 @@ fn next_token_from_line_readonly<S>(
     }
 }
 
-fn scan_control_sequence<S>(
-    source: &mut SourceInputFrame<S>,
+fn scan_control_sequence(
+    source: &mut SourceInputFrame,
     stores: &mut impl ExpansionState,
     unicode_superscript_notation: bool,
     start: LexSourceContext,
@@ -3403,8 +3412,8 @@ fn scan_control_sequence<S>(
     )
 }
 
-fn scan_control_sequence_readonly<S>(
-    source: &mut SourceInputFrame<S>,
+fn scan_control_sequence_readonly(
+    source: &mut SourceInputFrame,
     stores: &impl ExpansionState,
     unicode_superscript_notation: bool,
     context: LexSourceContext,
@@ -3457,8 +3466,8 @@ fn readonly_cs_token(
         })
 }
 
-fn read_expanded_char<S>(
-    source: &mut SourceInputFrame<S>,
+fn read_expanded_char(
+    source: &mut SourceInputFrame,
     stores: &impl ExpansionState,
     unicode_superscript_notation: bool,
 ) -> char {
@@ -3513,8 +3522,8 @@ fn take_ascii_hex(frame: &mut SourceFrame, count: usize) -> Option<u32> {
     Some(value)
 }
 
-fn expand_superscript_notation<S>(
-    source: &mut SourceInputFrame<S>,
+fn expand_superscript_notation(
+    source: &mut SourceInputFrame,
     ch: char,
     stores: &impl ExpansionState,
     unicode_superscript_notation: bool,
@@ -3525,8 +3534,8 @@ fn expand_superscript_notation<S>(
     expand_superscript_after_first(source, stores, unicode_superscript_notation)
 }
 
-fn expand_superscript_after_first<S>(
-    source: &mut SourceInputFrame<S>,
+fn expand_superscript_after_first(
+    source: &mut SourceInputFrame,
     stores: &impl ExpansionState,
     unicode_superscript_notation: bool,
 ) -> Option<char> {
@@ -3589,8 +3598,8 @@ fn expand_superscript_after_first<S>(
     ))
 }
 
-fn chain_superscript_expansion<S>(
-    source: &mut SourceInputFrame<S>,
+fn chain_superscript_expansion(
+    source: &mut SourceInputFrame,
     decoded: char,
     stores: &impl ExpansionState,
     unicode_superscript_notation: bool,

@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use tex_lex::{InputSource, InputStack, LexError};
+use tex_lex::{InputStack, LexError};
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::interner::Symbol;
 use tex_state::meaning::{ExpandablePrimitive, InternalInteger, Meaning, UnexpandablePrimitive};
@@ -191,27 +191,21 @@ impl From<LexError> for ScanIntError {
 /// Supported internal integers are the state surfaces implemented so far:
 /// `\count<number>`, `\dimen<number>` coerced to scaled points, `\endlinechar`,
 /// and chardef-like meanings represented by [`Meaning::CharGiven`].
-pub fn scan_int<S>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+pub fn scan_int(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
     context: TracedTokenWord,
-) -> Result<ScannedInt, ScanIntError>
-where
-    S: InputSource,
-{
+) -> Result<ScannedInt, ScanIntError> {
     scan_int_with_context(input, stores, &mut ExpansionContext::new("texput"), context)
 }
 
 /// Scans a TeX `<number>` while preserving caller-supplied expansion context.
-pub fn scan_int_with_context<S>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
-    expansion: &mut ExpansionContext<'_, S>,
+pub fn scan_int_with_context(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
     context: TracedTokenWord,
-) -> Result<ScannedInt, ScanIntError>
-where
-    S: InputSource,
-{
+) -> Result<ScannedInt, ScanIntError> {
     scan_int_with_mode_and_context(
         input,
         stores,
@@ -221,16 +215,14 @@ where
     )
 }
 
-pub fn scan_int_with_mode_and_context<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+pub fn scan_int_with_mode_and_context(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     context: TracedTokenWord,
 ) -> Result<ScannedInt, ScanIntError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let (negative, token) = scan_signs(input, stores, expansion, mode)?;
     let Some(token) = token else {
@@ -245,28 +237,24 @@ where
     Ok(apply_sign(scanned, negative))
 }
 
-fn next_x<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn next_x(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
 ) -> Result<Option<TracedTokenWord>, ScanIntError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     Ok(mode.next_expanded_token(input, stores, expansion)?)
 }
 
-fn scan_signs<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn scan_signs(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
 ) -> Result<(bool, Option<TracedTokenWord>), ScanIntError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let mut negative = false;
     loop {
@@ -287,16 +275,14 @@ where
     }
 }
 
-fn scan_unsigned_after_first_token<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn scan_unsigned_after_first_token(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     token: TracedTokenWord,
 ) -> Result<ScannedInt, ScanIntError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     match semantic_token(token) {
         Token::Char {
@@ -330,17 +316,15 @@ where
     }
 }
 
-fn scan_prefixed_digits<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn scan_prefixed_digits(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     radix: i64,
     prefix: TracedTokenWord,
 ) -> Result<ScannedInt, ScanIntError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let Some(token) = next_x(input, stores, expansion, mode)? else {
         return Ok(missing_number(prefix));
@@ -352,17 +336,15 @@ where
     scan_radix_digits(input, stores, expansion, mode, radix, (digit, token))
 }
 
-fn scan_radix_digits<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn scan_radix_digits(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     radix: i64,
     first: (i64, TracedTokenWord),
 ) -> Result<ScannedInt, ScanIntError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let (first_digit, first_token) = first;
     let first_delivery = input.take_direct_source_delivery(first_token);
@@ -409,16 +391,14 @@ where
     ))
 }
 
-fn scan_backtick_constant<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn scan_backtick_constant(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     prefix: TracedTokenWord,
 ) -> Result<ScannedInt, ScanIntError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     // TeX's `scan_int` reads the token following a backtick directly, rather
     // than through `get_x_token`. In particular, `\{` is a valid character
@@ -447,15 +427,13 @@ where
     Ok(ScannedInt::new(value, token))
 }
 
-fn consume_optional_expanded_space<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn consume_optional_expanded_space(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
 ) -> Result<(), ScanIntError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let Some(token) = mode.next_expanded_token(input, stores, expansion)? else {
         return Ok(());
@@ -466,16 +444,14 @@ where
     Ok(())
 }
 
-pub(crate) fn scan_num_expr<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+pub(crate) fn scan_num_expr(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     context: TracedTokenWord,
 ) -> Result<ScannedInt, ScanIntError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let (value, overflow) = parse_num_expression(input, stores, expansion, mode, false)?;
     if overflow || !(-i64::from(i32::MAX)..=i64::from(i32::MAX)).contains(&value) {
@@ -489,16 +465,14 @@ where
     }
 }
 
-pub(crate) fn parse_num_expression<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+pub(crate) fn parse_num_expression(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     parenthesized: bool,
 ) -> Result<(i64, bool), ScanIntError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let (mut value, mut overflow) = parse_num_term(input, stores, expansion, mode)?;
     loop {
@@ -537,15 +511,13 @@ where
     Ok((value, overflow))
 }
 
-fn parse_num_term<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn parse_num_term(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
 ) -> Result<(i64, bool), ScanIntError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let (mut value, mut overflow) = parse_num_factor(input, stores, expansion, mode)?;
     loop {
@@ -598,15 +570,13 @@ where
     Ok((value, overflow))
 }
 
-fn parse_num_factor<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn parse_num_factor(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
 ) -> Result<(i64, bool), ScanIntError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let Some(token) = next_nonspace_x(input, stores, expansion, mode)? else {
         return Ok((0, true));
@@ -619,15 +589,13 @@ where
     Ok((i64::from(scanned.value()), scanned.diagnostic().is_some()))
 }
 
-fn next_nonspace_x<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn next_nonspace_x(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
 ) -> Result<Option<TracedTokenWord>, ScanIntError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     loop {
         let token = next_x(input, stores, expansion, mode)?;
@@ -661,17 +629,15 @@ pub(crate) fn rounded_fraction(value: i64, numerator: i64, denominator: i64) -> 
         .filter(|value| value.abs() <= i64::from(i32::MAX))
 }
 
-pub(crate) fn scan_internal_integer<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+pub(crate) fn scan_internal_integer(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     token: TracedTokenWord,
     symbol: Symbol,
 ) -> Result<ScannedInt, ScanIntError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let meaning = stores.meaning(symbol);
     expansion.record_meaning(symbol, meaning);
@@ -907,17 +873,15 @@ where
     }
 }
 
-fn scan_internal_integer_primitive<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn scan_internal_integer_primitive(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     token: TracedTokenWord,
     primitive: tex_state::meaning::UnexpandablePrimitive,
 ) -> Result<ScannedInt, ScanIntError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     match primitive {
         tex_state::meaning::UnexpandablePrimitive::InteractionMode => {
@@ -1158,16 +1122,14 @@ const fn is_internal_numeric_primitive(
     )
 }
 
-fn scan_register_index<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn scan_register_index(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     context: TracedTokenWord,
 ) -> Result<u16, ScanIntError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let scanned = scan_int_with_mode_and_context(input, stores, expansion, mode, context)?;
     let value = scanned.value();
@@ -1179,15 +1141,13 @@ where
     Ok(value as u16)
 }
 
-fn consume_optional_space<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    _context: &mut ExpansionContext<'_, S>,
-    _expander: &mut dyn ExpansionMode<S, St>,
+fn consume_optional_space(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    _context: &mut ExpansionContext<'_>,
+    _expander: &mut dyn ExpansionMode,
 ) -> Result<(), ScanIntError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     // TeX consumes at most one following *raw* space after an internal
     // integer. Expanding here would execute the next command while an
@@ -1218,13 +1178,11 @@ where
     Ok(())
 }
 
-fn unread_token<S>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+fn unread_token(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
     token: TracedTokenWord,
-) where
-    S: InputSource,
-{
+) {
     crate::back_input(input, stores, [token]);
 }
 
@@ -1278,7 +1236,7 @@ const fn missing_number(context: TracedTokenWord) -> ScannedInt {
     ScannedInt::with_diagnostic(0, IntegerDiagnostic::MissingNumber, context)
 }
 
-pub(crate) fn current_if_type<S>(input: &InputStack<S>) -> i32 {
+pub(crate) fn current_if_type(input: &InputStack) -> i32 {
     let Some(condition) = input.current_condition() else {
         return 0;
     };
@@ -1286,7 +1244,7 @@ pub(crate) fn current_if_type<S>(input: &InputStack<S>) -> i32 {
     if condition.inverted() { -code } else { code }
 }
 
-pub(crate) fn current_if_branch<S>(input: &InputStack<S>) -> i32 {
+pub(crate) fn current_if_branch(input: &InputStack) -> i32 {
     input.current_condition().map_or(0, |condition| {
         if condition.evaluating() {
             0

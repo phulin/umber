@@ -1,4 +1,4 @@
-use tex_lex::{InputSource, InputStack};
+use tex_lex::InputStack;
 use tex_out::dvi::DviPagePlan;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
 use tex_state::provenance::InsertedOriginKind;
@@ -36,29 +36,23 @@ pub struct PreparedDviPage {
 }
 
 /// Dispatches one gullet-delivered token in the current mode.
-pub fn dispatch_delivered_token<S>(
+pub fn dispatch_delivered_token(
     nest: &mut ModeNest,
     traced: TracedTokenWord,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<DispatchAction, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<DispatchAction, ExecError> {
     dispatch_delivered_token_with_context(nest, traced, input, stores, execution)
 }
 
-pub(crate) fn dispatch_delivered_token_with_context<S>(
+pub(crate) fn dispatch_delivered_token_with_context(
     nest: &mut ModeNest,
     traced: TracedTokenWord,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<DispatchAction, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<DispatchAction, ExecError> {
     let token = tex_expand::semantic_token(traced);
     let origin = traced.origin();
     if stores.origin_is_inserted_kind(origin, InsertedOriginKind::NoExpand) {
@@ -128,7 +122,7 @@ where
     );
     if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) && !continues_character_run {
         assignments::flush_pending_hchars(nest, stores)?;
-        sync_engine_state::<S>(execution, nest, stores);
+        sync_engine_state(execution, nest, stores);
     }
 
     if matches!(mode, Mode::Vertical | Mode::InternalVertical)
@@ -228,16 +222,13 @@ where
     }
 }
 
-fn dispatch_character_token<S>(
+fn dispatch_character_token(
     nest: &mut ModeNest,
     traced: TracedTokenWord,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<DispatchAction, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<DispatchAction, ExecError> {
     let token = tex_expand::semantic_token(traced);
     let origin = traced.origin();
     match token {
@@ -318,15 +309,12 @@ where
     }
 }
 
-fn start_paragraph_before_replaying_character<S>(
+fn start_paragraph_before_replaying_character(
     nest: &mut ModeNest,
     traced: TracedTokenWord,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     // TeX82 backs up the triggering token before `new_graf`, whose `every_par`
     // replay must therefore run before that first character is reconsidered.
     push_traced_tokens(input, stores, [traced]);
@@ -351,26 +339,20 @@ fn dispatch_delivered_expandable(
     }
 }
 
-pub(crate) fn leave_group<S>(
-    input: &mut InputStack<S>,
+pub(crate) fn leave_group(
+    input: &mut InputStack,
     stores: &mut Universe,
     expected: GroupKind,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     leave_group_with_origin(input, stores, expected, OriginId::UNKNOWN)
 }
 
-pub(crate) fn leave_group_with_origin<S>(
-    input: &mut InputStack<S>,
+pub(crate) fn leave_group_with_origin(
+    input: &mut InputStack,
     stores: &mut Universe,
     expected: GroupKind,
     origin: OriginId,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     match stores.leave_group_with_kind(expected) {
         Ok(tokens) => {
             let tokens: Vec<_> = tokens
@@ -447,9 +429,8 @@ fn is_scanner_owned_group(kind: GroupKind) -> bool {
     )
 }
 
-pub(crate) fn push_tokens<S, I>(input: &mut InputStack<S>, stores: &mut Universe, tokens: I)
+pub(crate) fn push_tokens<I>(input: &mut InputStack, stores: &mut Universe, tokens: I)
 where
-    S: InputSource,
     I: IntoIterator<Item = Token>,
 {
     let tokens: Vec<_> = tokens.into_iter().collect();
@@ -460,23 +441,18 @@ where
     input.push_token_list(token_list, tex_lex::TokenListReplayKind::Inserted);
 }
 
-pub(crate) fn push_traced_tokens<S, I>(input: &mut InputStack<S>, stores: &mut Universe, tokens: I)
+pub(crate) fn push_traced_tokens<I>(input: &mut InputStack, stores: &mut Universe, tokens: I)
 where
-    S: InputSource,
     I: IntoIterator<Item = TracedTokenWord>,
 {
-    tex_expand::back_input(input, stores, tokens);
+    tex_expand::back_input(input, &mut tex_state::ExpansionContext::new(stores), tokens);
 }
 
-pub(crate) fn insert_traced_tokens<S, I>(
-    input: &mut InputStack<S>,
-    stores: &mut Universe,
-    tokens: I,
-) where
-    S: InputSource,
+pub(crate) fn insert_traced_tokens<I>(input: &mut InputStack, stores: &mut Universe, tokens: I)
+where
     I: IntoIterator<Item = TracedTokenWord>,
 {
-    tex_expand::insert_input(input, stores, tokens);
+    tex_expand::insert_input(input, &mut tex_state::ExpansionContext::new(stores), tokens);
 }
 
 pub(crate) fn unimplemented_typesetting(

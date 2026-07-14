@@ -22,16 +22,18 @@ pub(super) fn apply_globaldefs(explicit_global: bool, stores: &Universe) -> bool
     }
 }
 
-pub(super) fn skip_optional_equals_x<S>(
-    input: &mut InputStack<S>,
+pub(super) fn skip_optional_equals_x(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     let traced = loop {
-        let Some(token) = get_x_token_with_context(input, stores, execution)? else {
+        let Some(token) = get_x_token_with_context(
+            input,
+            &mut tex_state::ExpansionContext::new(stores),
+            execution,
+        )?
+        else {
             return Err(ExecError::MissingToken {
                 context: "assignment value",
             });
@@ -41,26 +43,32 @@ where
         }
     };
     if !is_other_equals(tex_expand::semantic_token(traced)) {
-        tex_expand::back_input(input, stores, [traced]);
+        tex_expand::back_input(
+            input,
+            &mut tex_state::ExpansionContext::new(stores),
+            [traced],
+        );
     } else {
-        let Some(next) = get_x_token_with_context(input, stores, execution)? else {
+        let Some(next) = get_x_token_with_context(
+            input,
+            &mut tex_state::ExpansionContext::new(stores),
+            execution,
+        )?
+        else {
             return Ok(());
         };
         if !is_space(tex_expand::semantic_token(next)) {
-            tex_expand::back_input(input, stores, [next]);
+            tex_expand::back_input(input, &mut tex_state::ExpansionContext::new(stores), [next]);
         }
     }
     Ok(())
 }
 
-pub(super) fn scan_definition_target<S>(
-    input: &mut InputStack<S>,
+pub(super) fn scan_definition_target(
+    input: &mut InputStack,
     stores: &mut Universe,
     context: &'static str,
-) -> Result<Symbol, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<Symbol, ExecError> {
     let traced = next_non_space_traced_raw(input, stores)?
         .ok_or(ExecError::MissingControlSequence { context })?;
     let token = tex_expand::semantic_token(traced);
@@ -89,14 +97,11 @@ pub(super) struct TracedDefinitionTarget {
     pub origin: OriginId,
 }
 
-pub(super) fn scan_traced_definition_target<S>(
-    input: &mut InputStack<S>,
+pub(super) fn scan_traced_definition_target(
+    input: &mut InputStack,
     stores: &mut Universe,
     context: &'static str,
-) -> Result<TracedDefinitionTarget, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<TracedDefinitionTarget, ExecError> {
     let traced = next_non_space_traced_raw(input, stores)?
         .ok_or(ExecError::MissingControlSequence { context })?;
     let token = traced
@@ -141,13 +146,10 @@ pub(crate) fn active_character_symbol(stores: &mut Universe, ch: char) -> Symbol
     stores.intern_active_character(ch).symbol()
 }
 
-pub(super) fn scan_optional_equals_one_space<S>(
-    input: &mut InputStack<S>,
+pub(super) fn scan_optional_equals_one_space(
+    input: &mut InputStack,
     stores: &mut Universe,
-) -> Result<TracedTokenWord, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<TracedTokenWord, ExecError> {
     let first = loop {
         let token = input
             .next_traced_token(stores)?
@@ -201,13 +203,10 @@ pub(super) fn token_meaning_for_let(
     }
 }
 
-pub(super) fn next_non_space_traced_raw<S>(
-    input: &mut InputStack<S>,
+pub(super) fn next_non_space_traced_raw(
+    input: &mut InputStack,
     stores: &mut Universe,
-) -> Result<Option<TracedTokenWord>, LexError>
-where
-    S: InputSource,
-{
+) -> Result<Option<TracedTokenWord>, LexError> {
     loop {
         let Some(token) = input.next_traced_token(stores)? else {
             return Ok(None);
@@ -221,9 +220,8 @@ where
     }
 }
 
-pub(super) fn push_tokens<S, I>(input: &mut InputStack<S>, stores: &mut Universe, tokens: I)
+pub(super) fn push_tokens<I>(input: &mut InputStack, stores: &mut Universe, tokens: I)
 where
-    S: InputSource,
     I: IntoIterator<Item = Token>,
 {
     let tokens: Vec<_> = tokens.into_iter().collect();

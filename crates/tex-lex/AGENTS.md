@@ -4,7 +4,7 @@ Read the repository-level `AGENTS.md` before editing here. This crate owns TeX's
 
 ## Crate Role
 
-`tex-lex` turns physical input lines or frozen token lists into TeX tokens under the active catcode table. It owns `InputSource`, in-memory and world-backed source adapters, TeX line normalization, source-frame lexer state, token-list replay frames, conditional frames used while skipping input, and resumable summaries for input-stack state.
+`tex-lex` turns physical input lines or frozen token lists into TeX tokens under the active catcode table. It owns the non-generic `InputStack`, object-safe `InputSource`, in-memory and world-backed source adapters, TeX line normalization, source-frame lexer state, token-list replay frames, conditional frames used while skipping input, and resumable summaries for input-stack state. Source frames erase their source payload and dispatch dynamically only when refilling a physical line; token-list and macro replay stay ordinary frames.
 
 Use this crate for source-local mechanics: reading normalized logical lines, applying catcodes, delivering raw tokens, replaying token lists, and preserving enough input-stack state for snapshots/replay. Durable file identity and actual file reads belong to `World`; expansion semantics belong to `tex-expand`.
 

@@ -1,4 +1,4 @@
-use tex_lex::{InputSource, InputStack, MacroArguments};
+use tex_lex::{InputStack, MacroArguments};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{FontId, TokenListId};
@@ -17,15 +17,12 @@ use crate::{
 };
 
 #[allow(dead_code)]
-pub(crate) fn expand_the<S>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
-    expansion: &mut ExpansionContext<'_, S>,
+pub(crate) fn expand_the(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
     context: TracedTokenWord,
-) -> Result<Dispatch, ExpandError>
-where
-    S: InputSource,
-{
+) -> Result<Dispatch, ExpandError> {
     expand_the_with_mode_and_context(
         input,
         stores,
@@ -35,16 +32,14 @@ where
     )
 }
 
-pub(crate) fn expand_the_with_mode_and_context<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+pub(crate) fn expand_the_with_mode_and_context(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     cause_context: TracedTokenWord,
 ) -> Result<Dispatch, ExpandError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let cause_origin = cause_context.origin();
     let Some(token) =
@@ -790,8 +785,8 @@ where
     }
 }
 
-pub(crate) fn record_meaning_value_dependency<S>(
-    expansion: &mut ExpansionContext<'_, S>,
+pub(crate) fn record_meaning_value_dependency(
+    expansion: &mut ExpansionContext<'_>,
     meaning: Meaning,
 ) {
     let cell = match meaning {
@@ -909,7 +904,7 @@ const fn page_integer_key(integer: tex_state::page::PageInteger) -> u8 {
 }
 
 pub(crate) fn push_rendered_text(
-    stores: &mut impl ExpansionState,
+    stores: &mut tex_state::ExpansionContext<'_>,
     replay_kind: ExpansionReplayKind,
     text: &str,
     parent: OriginId,
@@ -918,7 +913,7 @@ pub(crate) fn push_rendered_text(
 }
 
 pub(crate) fn push_rendered_tokens<I>(
-    stores: &mut impl ExpansionState,
+    stores: &mut tex_state::ExpansionContext<'_>,
     replay_kind: ExpansionReplayKind,
     tokens: I,
     parent: OriginId,
@@ -942,7 +937,10 @@ where
     }
 }
 
-fn freeze_output_tokens(stores: &mut impl ExpansionState, tokens: &[Token]) -> TokenListId {
+fn freeze_output_tokens(
+    stores: &mut tex_state::ExpansionContext<'_>,
+    tokens: &[Token],
+) -> TokenListId {
     stores.intern_token_list(tokens)
 }
 
@@ -1120,15 +1118,12 @@ pub fn token_text(stores: &impl ExpansionState, token: Token) -> String {
         .collect()
 }
 
-pub fn scan_the_text_with_context<S>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
-    expansion: &mut ExpansionContext<'_, S>,
+pub fn scan_the_text_with_context(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
     context: TracedTokenWord,
-) -> Result<String, ExpandError>
-where
-    S: InputSource,
-{
+) -> Result<String, ExpandError> {
     let dispatch = expand_the_with_mode_and_context(
         input,
         stores,
@@ -1272,16 +1267,14 @@ fn component_unit(order: Order, normal_unit: &str) -> &'static str {
     }
 }
 
-fn scan_code_table_char<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn scan_code_table_char(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     context: TracedTokenWord,
 ) -> Result<char, ExpandError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let value =
         scan_int::scan_int_with_mode_and_context(input, stores, expansion, mode, context)?.value();
@@ -1291,16 +1284,14 @@ where
         .ok_or(ExpandError::UnsupportedTheTarget { context })
 }
 
-pub(crate) fn scan_font_selector<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+pub(crate) fn scan_font_selector(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     context: TracedTokenWord,
 ) -> Result<FontId, ExpandError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let Some(token) =
         scan_helpers::next_non_space_x_token_with_mode_and_context(input, stores, expansion, mode)?
@@ -1355,17 +1346,15 @@ where
     }
 }
 
-pub(crate) fn scan_font_char_dimension<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+pub(crate) fn scan_font_char_dimension(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     context: TracedTokenWord,
     primitive: tex_state::meaning::UnexpandablePrimitive,
 ) -> Result<Scaled, ExpandError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let font = scan_font_selector(input, stores, expansion, mode, context)?;
     let code =
@@ -1393,17 +1382,15 @@ where
     })
 }
 
-pub(crate) fn scan_parshape_dimension<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+pub(crate) fn scan_parshape_dimension(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     context: TracedTokenWord,
     primitive: tex_state::meaning::UnexpandablePrimitive,
 ) -> Result<Scaled, ExpandError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let number =
         scan_int::scan_int_with_mode_and_context(input, stores, expansion, mode, context)?.value();
@@ -1420,16 +1407,14 @@ where
     Ok(stores.paragraph_shape_dimension(line, width))
 }
 
-fn scan_math_family<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn scan_math_family(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     context: TracedTokenWord,
 ) -> Result<u8, ExpandError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let scanned =
         scan_int::scan_int_with_mode_and_context(input, stores, expansion, mode, context)?;

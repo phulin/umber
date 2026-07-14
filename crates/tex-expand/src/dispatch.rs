@@ -1,4 +1,4 @@
-use tex_lex::{InputSource, InputStack, MacroArguments};
+use tex_lex::{InputStack, MacroArguments};
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::page::PageMark;
 use tex_state::provenance::{InsertedOriginKind, SynthesizedOriginKind};
@@ -12,15 +12,12 @@ use crate::{
 };
 
 /// Dispatches one token/meaning pair.
-pub fn dispatch<S>(
+pub fn dispatch(
     token: Token,
-    input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
     meaning: Meaning,
-) -> Result<Dispatch, ExpandError>
-where
-    S: InputSource,
-{
+) -> Result<Dispatch, ExpandError> {
     dispatch_with_context(
         token,
         OriginId::UNKNOWN,
@@ -289,11 +286,7 @@ macro_rules! dispatch_match {
                     crate::append_token_string_text(stores, token, &mut text);
                 }
                 text.push('\n');
-                let source = S::from_scantokens(text).ok_or_else(|| ExpandError::InputOpen {
-                    name: "\\scantokens".to_owned(),
-                    message: "this input source cannot represent a virtual file".to_owned(),
-                    context: call_context,
-                })?;
+                let source = tex_lex::MemoryInput::scantokens(text);
                 stores.trace_scantokens_boundary(true);
                 input.push_source(source);
                 Ok(Dispatch::Continue)
@@ -827,22 +820,20 @@ macro_rules! dispatch_match {
     }};
 }
 
-type InputOpenOperation<S, St> = fn(
-    &mut InputStack<S>,
-    &mut St,
-    &mut ExpansionContext<'_, S>,
+type InputOpenOperation = fn(
+    &mut InputStack,
+    &mut tex_state::ExpansionContext<'_>,
+    &mut ExpansionContext<'_>,
     TracedTokenWord,
 ) -> Result<Dispatch, ExpandError>;
 
-fn execute_input_primitive<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
+fn execute_input_primitive(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
     context: TracedTokenWord,
 ) -> Result<Dispatch, ExpandError>
 where
-    S: InputSource,
-    St: ExpansionState + InputOpenState,
 {
     let name = scan_input_name(input, stores, expansion, context)?;
     let transfer_endinput = input.take_current_source_end_after_current_line();
@@ -853,7 +844,7 @@ where
             message,
             context,
         })?;
-    input.push_source(source);
+    input.push_boxed_source(source);
     if transfer_endinput {
         input.end_current_source_after_current_line();
     }
@@ -861,20 +852,18 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn dispatch_core<S, St>(
+fn dispatch_core(
     token: Token,
     call_origin: OriginId,
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
     meaning: Meaning,
-    mode: &mut dyn ExpansionMode<S, St>,
+    mode: &mut dyn ExpansionMode,
     invert: bool,
-    input_open: Option<InputOpenOperation<S, St>>,
+    input_open: Option<InputOpenOperation>,
 ) -> Result<Dispatch, ExpandError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     dispatch_match!(
         token,
@@ -900,17 +889,14 @@ where
     )
 }
 
-pub fn dispatch_with_context<S>(
+pub fn dispatch_with_context(
     token: Token,
     call_origin: OriginId,
-    input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
-    expansion: &mut ExpansionContext<'_, S>,
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
     meaning: Meaning,
-) -> Result<Dispatch, ExpandError>
-where
-    S: InputSource,
-{
+) -> Result<Dispatch, ExpandError> {
     dispatch_core(
         token,
         call_origin,
@@ -920,21 +906,18 @@ where
         meaning,
         &mut DriverExpansionMode,
         false,
-        Some(execute_input_primitive::<S, _>),
+        Some(execute_input_primitive),
     )
 }
 
-pub(crate) fn dispatch_with_context_inverted<S>(
+pub(crate) fn dispatch_with_context_inverted(
     token: Token,
     call_origin: OriginId,
-    input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
-    expansion: &mut ExpansionContext<'_, S>,
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
     meaning: Meaning,
-) -> Result<Dispatch, ExpandError>
-where
-    S: InputSource,
-{
+) -> Result<Dispatch, ExpandError> {
     dispatch_core(
         token,
         call_origin,
@@ -948,17 +931,14 @@ where
     )
 }
 
-pub(crate) fn dispatch_without_input_open<S>(
+pub(crate) fn dispatch_without_input_open(
     token: Token,
     call_origin: OriginId,
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
-    expansion: &mut ExpansionContext<'_, S>,
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
     meaning: Meaning,
-) -> Result<Dispatch, ExpandError>
-where
-    S: InputSource,
-{
+) -> Result<Dispatch, ExpandError> {
     dispatch_core(
         token,
         call_origin,
@@ -972,17 +952,14 @@ where
     )
 }
 
-pub(crate) fn dispatch_without_input_open_inverted<S>(
+pub(crate) fn dispatch_without_input_open_inverted(
     token: Token,
     call_origin: OriginId,
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
-    expansion: &mut ExpansionContext<'_, S>,
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
     meaning: Meaning,
-) -> Result<Dispatch, ExpandError>
-where
-    S: InputSource,
-{
+) -> Result<Dispatch, ExpandError> {
     dispatch_core(
         token,
         call_origin,

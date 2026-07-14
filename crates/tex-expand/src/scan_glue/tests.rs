@@ -25,10 +25,15 @@ fn context() -> TracedTokenWord {
 fn scan(input_text: &str) -> (GlueSpec, Option<Token>) {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new(input_text));
-    let scanned = scan_glue(&mut input, &mut stores, context()).expect("glue scan should succeed");
+    let scanned = scan_glue(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("glue scan should succeed");
     let spec = stores.glue(scanned.id());
     let next = input
-        .next_token(&mut stores)
+        .next_token(&mut tex_state::ExpansionContext::new(&mut stores))
         .expect("remaining token should lex");
     (spec, next)
 }
@@ -53,7 +58,12 @@ fn glueexpr_preserves_precedence_orders_and_relax_termination() {
         "\\glueexpr(1pt plus 2fil minus 3pt)+4pt plus 5fill\\relax X",
     ));
 
-    let scanned = scan_glue(&mut input, &mut stores, context()).expect("glue expression scans");
+    let scanned = scan_glue(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("glue expression scans");
     let spec = stores.glue(scanned.id());
 
     assert_eq!(spec.width.raw(), 5 * Scaled::UNITY);
@@ -62,7 +72,9 @@ fn glueexpr_preserves_precedence_orders_and_relax_termination() {
     assert_eq!(spec.shrink.raw(), 3 * Scaled::UNITY);
     assert_eq!(spec.shrink_order, Order::Normal);
     assert_eq!(
-        input.next_token(&mut stores).expect("terminator remains"),
+        input
+            .next_token(&mut tex_state::ExpansionContext::new(&mut stores))
+            .expect("terminator remains"),
         Some(char_token('X', Catcode::Letter))
     );
 }
@@ -75,7 +87,12 @@ fn muexpr_scales_every_component_with_etex_rounding() {
         "\\muexpr 2mu plus 3fil minus 1mu*3/2\\relax",
     ));
 
-    let scanned = scan_muglue(&mut input, &mut stores, context()).expect("mu expression scans");
+    let scanned = scan_muglue(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("mu expression scans");
     let spec = stores.glue(scanned.id());
 
     assert_eq!(spec.width.raw(), 3 * Scaled::UNITY);
@@ -91,7 +108,12 @@ fn glueexpr_retains_component_order_when_scaling_to_zero() {
     install_glue_expressions(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\glueexpr 1pt plus 1fil*0\\relax"));
 
-    let scanned = scan_glue(&mut input, &mut stores, context()).expect("glue expression scans");
+    let scanned = scan_glue(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("glue expression scans");
     let spec = stores.glue(scanned.id());
 
     assert_eq!(spec.width.raw(), 0);
@@ -99,7 +121,12 @@ fn glueexpr_retains_component_order_when_scaling_to_zero() {
     assert_eq!(spec.stretch_order, Order::Fil);
 
     let mut input = InputStack::new(MemoryInput::new("\\glueexpr 0pt plus 0fil+0pt\\relax"));
-    let scanned = scan_glue(&mut input, &mut stores, context()).expect("glue expression scans");
+    let scanned = scan_glue(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("glue expression scans");
     assert_eq!(stores.glue(scanned.id()).stretch_order, Order::Normal);
 }
 
@@ -115,7 +142,12 @@ fn glue_unit_conversions_preserve_all_components_and_orders() {
     }
 
     let mut input = InputStack::new(MemoryInput::new("\\gluetomu 2pt plus 3fill minus 4fil"));
-    let converted = scan_muglue(&mut input, &mut stores, context()).expect("glue converts to mu");
+    let converted = scan_muglue(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("glue converts to mu");
     assert_eq!(
         stores.glue(converted.id()),
         GlueSpec {
@@ -128,7 +160,12 @@ fn glue_unit_conversions_preserve_all_components_and_orders() {
     );
 
     let mut input = InputStack::new(MemoryInput::new("\\mutoglue 5mu plus 6fil minus 7mu"));
-    let converted = scan_glue(&mut input, &mut stores, context()).expect("mu converts to glue");
+    let converted = scan_glue(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("mu converts to glue");
     let spec = stores.glue(converted.id());
     assert_eq!(spec.width.raw(), 5 * Scaled::UNITY);
     assert_eq!(spec.stretch.raw(), 6 * Scaled::UNITY);
@@ -155,7 +192,12 @@ fn glueexpr_matches_etex_order_dominance_and_combined_scaling() {
     let mut input = InputStack::new(MemoryInput::new(
         "\\glueexpr(1pt plus 2fil+3pt plus 4fil)*3/2\\relax",
     ));
-    let scanned = scan_glue(&mut input, &mut stores, context()).expect("glue expression");
+    let scanned = scan_glue(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("glue expression");
     let spec = stores.glue(scanned.id());
     assert_eq!(spec.width.raw(), 6 * Scaled::UNITY);
     assert_eq!(spec.stretch.raw(), 9 * Scaled::UNITY);
@@ -164,7 +206,12 @@ fn glueexpr_matches_etex_order_dominance_and_combined_scaling() {
     let mut input = InputStack::new(MemoryInput::new(
         "\\muexpr1mu plus 2fil+3mu plus 4fill\\relax",
     ));
-    let scanned = scan_muglue(&mut input, &mut stores, context()).expect("muglue expression");
+    let scanned = scan_muglue(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("muglue expression");
     let spec = stores.glue(scanned.id());
     assert_eq!(spec.width.raw(), 4 * Scaled::UNITY);
     assert_eq!(spec.stretch.raw(), 4 * Scaled::UNITY);
@@ -240,7 +287,12 @@ fn scans_internal_skip_values() {
     stores.set_skip(7, id);
     let mut input = InputStack::new(MemoryInput::new("\\skip7 x"));
 
-    let scanned = scan_glue(&mut input, &mut stores, context()).expect("skip should scan");
+    let scanned = scan_glue(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("skip should scan");
 
     assert_eq!(stores.glue(scanned.id()), stores.glue(id));
 }
@@ -250,7 +302,12 @@ fn scans_muglue_with_mu_units() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new("1mu plus 2fil x"));
 
-    let scanned = scan_muglue(&mut input, &mut stores, context()).expect("muglue should scan");
+    let scanned = scan_muglue(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("muglue should scan");
     let spec = stores.glue(scanned.id());
 
     assert_eq!(spec.width.raw(), 65_536);
@@ -276,7 +333,12 @@ fn scans_internal_muskip_values() {
     stores.set_muskip(7, id);
     let mut input = InputStack::new(MemoryInput::new("\\muskip7 x"));
 
-    let scanned = scan_muglue(&mut input, &mut stores, context()).expect("muskip should scan");
+    let scanned = scan_muglue(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("muskip should scan");
 
     assert_eq!(stores.glue(scanned.id()), stores.glue(id));
 }
@@ -298,7 +360,12 @@ fn scans_internal_muskip_widths_as_mu_components() {
     stores.set_muskip(3, id);
     let mut input = InputStack::new(MemoryInput::new("5mu plus \\muskip3 minus .5\\alias"));
 
-    let scanned = scan_muglue(&mut input, &mut stores, context()).expect("muglue should scan");
+    let scanned = scan_muglue(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("muglue should scan");
     let spec = stores.glue(scanned.id());
     assert_eq!(spec.width.raw(), 5 * Scaled::UNITY);
     assert_eq!(spec.stretch.raw(), 2 * Scaled::UNITY);
@@ -317,7 +384,12 @@ fn ordinary_glue_coerces_muskip_component_width_with_diagnostic() {
     stores.set_muskip(3, id);
     let mut input = InputStack::new(MemoryInput::new("1pt plus \\thin"));
 
-    let scanned = scan_glue(&mut input, &mut stores, context()).expect("glue should scan");
+    let scanned = scan_glue(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("glue should scan");
     assert_eq!(stores.glue(scanned.id()).stretch.raw(), 2 * Scaled::UNITY);
     assert_eq!(
         scanned.diagnostics().collect::<Vec<_>>(),
@@ -342,9 +414,14 @@ fn macro_expanding_to_penalty_recovers_zero_glue_and_replays_command() {
     );
     let mut input = InputStack::new(MemoryInput::new("\\nobreak 10000"));
 
-    let scanned = scan_glue(&mut input, &mut stores, context()).expect("glue scan should recover");
+    let scanned = scan_glue(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("glue scan should recover");
     let replayed = input
-        .next_traced_token(&mut stores)
+        .next_traced_token(&mut tex_state::ExpansionContext::new(&mut stores))
         .expect("token should replay")
         .expect("penalty should remain for execution");
 

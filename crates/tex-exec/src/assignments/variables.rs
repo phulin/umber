@@ -29,17 +29,14 @@ pub(super) enum Variable {
     FontSkewChar(FontId),
 }
 
-pub(super) fn execute_variable_assignment<S>(
+pub(super) fn execute_variable_assignment(
     primitive: UnexpandablePrimitive,
     context: TracedTokenWord,
     prefixes: Prefixes,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     reject_macro_prefixes(prefixes)?;
     let index = scan_register_index(input, stores, execution, context)?;
     let target = match primitive {
@@ -53,17 +50,14 @@ where
     execute_assignment_to_target(target, prefixes, context, input, stores, execution)
 }
 
-pub(super) fn execute_assignment_to_target<S>(
+pub(super) fn execute_assignment_to_target(
     target: Variable,
     prefixes: Prefixes,
     context: TracedTokenWord,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     skip_optional_equals_x(input, stores, execution)?;
     let global = apply_globaldefs(prefixes.global, stores);
     match target {
@@ -133,17 +127,14 @@ where
     Ok(())
 }
 
-pub(super) fn execute_register_def<S>(
+pub(super) fn execute_register_def(
     primitive: UnexpandablePrimitive,
     prefixes: Prefixes,
     context: TracedTokenWord,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     reject_macro_prefixes(prefixes)?;
     let target = scan_definition_target(input, stores, "register definition")?;
     // As for `\chardef`, TeX.web section 1220 installs `\relax` before
@@ -172,17 +163,14 @@ where
     Ok(())
 }
 
-pub(super) fn execute_char_def<S>(
+pub(super) fn execute_char_def(
     primitive: UnexpandablePrimitive,
     prefixes: Prefixes,
     context: TracedTokenWord,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     reject_macro_prefixes(prefixes)?;
     let target = scan_definition_target(input, stores, "character definition")?;
     // TeX.web temporarily makes the target `\relax` before scanning the
@@ -244,17 +232,14 @@ fn recover_restricted_code(
     0
 }
 
-pub(super) fn execute_arithmetic<S>(
+pub(super) fn execute_arithmetic(
     primitive: UnexpandablePrimitive,
     prefixes: Prefixes,
     context: TracedTokenWord,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     reject_macro_prefixes(prefixes)?;
     let target = scan_variable_target(input, stores, execution)?;
     let _ = scan_optional_keyword_x(input, stores, execution, "by")?;
@@ -396,17 +381,14 @@ fn set_font_dimen_recovering(
     }
 }
 
-pub(super) fn execute_code_table_assignment<S>(
+pub(super) fn execute_code_table_assignment(
     primitive: UnexpandablePrimitive,
     prefixes: Prefixes,
     context: TracedTokenWord,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     reject_macro_prefixes(prefixes)?;
     let code = scan_i32(input, stores, execution, context)?;
     skip_optional_equals_x(input, stores, execution)?;

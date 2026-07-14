@@ -1,5 +1,5 @@
 use tex_expand::{get_x_token_with_context, scan_dimen::DimensionDiagnostic};
-use tex_lex::{InputSource, InputStack, MemoryInput, TokenListReplayKind};
+use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
 use tex_out::dvi::{DviPagePlan, DviPagePlanBuilder};
 use tex_out::{
     BoxNode as PageBoxNode, ContentHash as PageContentHash, DEFAULT_BANNER,
@@ -30,15 +30,12 @@ pub(super) struct StagedShipout {
     pub(super) effect_pos: tex_state::EffectPos,
 }
 
-pub(super) fn stage_shipout<S>(
+pub(super) fn stage_shipout(
     node: Node,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<StagedShipout, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<StagedShipout, ExecError> {
     let pending_effects = pending_page_effects(stores.world().effect_records());
     let counts = page_counts(stores);
     let (mag, diagnostic) = stores.prepare_mag();

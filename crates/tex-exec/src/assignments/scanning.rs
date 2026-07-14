@@ -43,14 +43,11 @@ pub(super) fn variable_from_meaning(meaning: Meaning) -> Option<Variable> {
     }
 }
 
-pub(super) fn scan_variable_target<S>(
-    input: &mut InputStack<S>,
+pub(super) fn scan_variable_target(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<Variable, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<Variable, ExecError> {
     let traced =
         next_non_space_traced_x(input, stores, execution)?.ok_or(ExecError::MissingToken {
             context: "arithmetic target",
@@ -112,30 +109,24 @@ where
     }
 }
 
-pub(super) fn scan_register_index<S>(
-    input: &mut InputStack<S>,
+pub(super) fn scan_register_index(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
-) -> Result<u16, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<u16, ExecError> {
     scan_register_index_with_context(input, stores, execution, context)
 }
 
-pub(super) fn scan_register_index_with_context<S>(
-    input: &mut InputStack<S>,
+pub(super) fn scan_register_index_with_context(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
-) -> Result<u16, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<u16, ExecError> {
     let scanned = scan_int::scan_int_with_mode_and_context(
         input,
-        stores,
+        &mut tex_state::ExpansionContext::new(stores),
         execution,
         &mut DriverExpansionMode,
         context,
@@ -157,18 +148,15 @@ where
     Ok(value as u16)
 }
 
-pub(crate) fn scan_i32<S>(
-    input: &mut InputStack<S>,
+pub(crate) fn scan_i32(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
-) -> Result<i32, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<i32, ExecError> {
     let scanned = scan_int::scan_int_with_mode_and_context(
         input,
-        stores,
+        &mut tex_state::ExpansionContext::new(stores),
         execution,
         &mut DriverExpansionMode,
         context,
@@ -180,15 +168,12 @@ where
     Ok(scanned.value())
 }
 
-pub(super) fn scan_nonzero_i32<S>(
-    input: &mut InputStack<S>,
+pub(super) fn scan_nonzero_i32(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
-) -> Result<i32, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<i32, ExecError> {
     let value = scan_i32(input, stores, execution, context)?;
     if value == 0 {
         Err(ExecError::ArithmeticOverflow)
@@ -197,18 +182,15 @@ where
     }
 }
 
-pub(crate) fn scan_scaled<S>(
-    input: &mut InputStack<S>,
+pub(crate) fn scan_scaled(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
-) -> Result<Scaled, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<Scaled, ExecError> {
     let scanned = scan_dimen::scan_dimen_with_mode_and_context(
         input,
-        stores,
+        &mut tex_state::ExpansionContext::new(stores),
         execution,
         &mut DriverExpansionMode,
         scan_dimen::ScanDimenOptions::STANDARD,
@@ -219,19 +201,16 @@ where
     Ok(scanned.value())
 }
 
-pub(crate) fn scan_glue_id<S>(
-    input: &mut InputStack<S>,
+pub(crate) fn scan_glue_id(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     mu: bool,
     context: TracedTokenWord,
-) -> Result<GlueId, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<GlueId, ExecError> {
     let scanned = scan_glue::scan_glue_with_mode_and_context(
         input,
-        stores,
+        &mut tex_state::ExpansionContext::new(stores),
         execution,
         &mut DriverExpansionMode,
         mu,
@@ -242,15 +221,12 @@ where
     Ok(scanned.id())
 }
 
-pub(super) fn scan_token_list_assignment<S>(
-    input: &mut InputStack<S>,
+pub(super) fn scan_token_list_assignment(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
-) -> Result<tex_state::ids::TokenListId, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<tex_state::ids::TokenListId, ExecError> {
     let traced = next_non_space_traced_x(input, stores, execution)?
         .ok_or(ExecError::MissingTracedToken { context })?;
     let token = tex_expand::semantic_token(traced);
@@ -273,16 +249,15 @@ where
     scan_balanced_text_after_open_group(input, stores)
 }
 
-fn scan_balanced_text_after_open_group<S>(
-    input: &mut InputStack<S>,
+fn scan_balanced_text_after_open_group(
+    input: &mut InputStack,
     stores: &mut Universe,
-) -> Result<tex_state::ids::TokenListId, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<tex_state::ids::TokenListId, ExecError> {
     let mut depth = 1usize;
     let mut builder = stores.token_list_builder();
-    while let Some(traced) = tex_expand::next_semantic_raw_token(input, stores)? {
+    while let Some(traced) =
+        tex_expand::next_semantic_raw_token(input, &mut tex_state::ExpansionContext::new(stores))?
+    {
         let token = tex_expand::semantic_token(traced);
         let meaning = match token {
             Token::Cs(symbol) => stores.meaning(symbol),
@@ -328,18 +303,18 @@ where
     })
 }
 
-pub(crate) fn next_non_space_x<S>(
-    input: &mut InputStack<S>,
+pub(crate) fn next_non_space_x(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<Option<Token>, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<Option<Token>, ExecError> {
     loop {
-        let Some(token) =
-            get_x_token_with_context(input, stores, execution)?.map(tex_expand::semantic_token)
-        else {
+        let Some(token) = get_x_token_with_context(
+            input,
+            &mut tex_state::ExpansionContext::new(stores),
+            execution,
+        )?
+        .map(tex_expand::semantic_token) else {
             return Ok(None);
         };
         if !is_space(token) {
@@ -348,16 +323,18 @@ where
     }
 }
 
-pub(crate) fn next_non_space_traced_x<S>(
-    input: &mut InputStack<S>,
+pub(crate) fn next_non_space_traced_x(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<Option<TracedTokenWord>, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<Option<TracedTokenWord>, ExecError> {
     loop {
-        let Some(token) = get_x_token_with_context(input, stores, execution)? else {
+        let Some(token) = get_x_token_with_context(
+            input,
+            &mut tex_state::ExpansionContext::new(stores),
+            execution,
+        )?
+        else {
             return Ok(None);
         };
         if !is_space(tex_expand::semantic_token(token)) {
@@ -366,16 +343,16 @@ where
     }
 }
 
-pub(crate) fn scan_optional_keyword_x<S>(
-    input: &mut InputStack<S>,
+pub(crate) fn scan_optional_keyword_x(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     keyword: &str,
-) -> Result<bool, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<bool, ExecError> {
     Ok(scan_optional_keyword_with_context(
-        input, stores, execution, keyword,
+        input,
+        &mut tex_state::ExpansionContext::new(stores),
+        execution,
+        keyword,
     )?)
 }

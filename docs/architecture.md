@@ -215,6 +215,11 @@ supply.
   input diagnostics. The summary separately retains the next-source-id
   allocator high-water mark and Unicode `^^` mode, preventing resumed input
   from reusing a live id or silently changing lexer configuration.
+  The live stack is not generic over its physical source: a source frame owns
+  a boxed `InputSource`, and dynamic dispatch occurs only when that frame asks
+  for another physical line. Token delivery, token-list replay, macro replay,
+  and scanner traversal remain concrete. Replacement text is replayed through
+  ordinary marked token-list frames rather than a recursive source adapter.
 - Line-oriented details TeX cares about (`\endlinechar`, trailing-space
   trimming, `%` line ends) live here, driven by parameters read through the
   aggregate state API. **Status:** the implemented `tex-lex` input layer
@@ -427,12 +432,14 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   enabled branch. This avoids specializing the entire expansion and scanner
   pipeline for every recorder type.
 - **Status:** the implemented `tex-expand` scaffold exposes that loop over
-  `tex-lex::InputStack` through the shared `ExpansionState` capability, not
-  broad `&mut Universe`. Production callers wrap the owning `Universe` in
-  `ExpansionContext` before entering the gullet. That capability allows meaning
+  the non-generic `tex-lex::InputStack` and one concrete restricted
+  `tex_state::ExpansionContext`, not broad `&mut Universe` and not a generic
+  state implementation. Production and test callers wrap the owning
+  `Universe` in the same facade before entering the gullet. The facade allows meaning
   reads, immutable token/glue/font/node/register/parameter reads, token-list
   freezing, glue interning, magnification preparation, lexer control-sequence
-  interning, and `\csname`'s relaxed control-sequence interning. `ExpansionState`
+  interning, and `\csname`'s relaxed control-sequence interning. Its
+  `ExpansionState` implementation
   cannot construct input-read authority; the top-level expansion/dispatch path
   additionally carries `InputOpenState` only so `\input` can create an
   `InputOpenContext`. Scanner and helper recursion does not receive that
@@ -494,9 +501,9 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   falling back to meaning-word equality. `\ifnum`, `\ifdim`, `\ifodd`, and `\ifcase` reuse the
   shared integer/dimension scanners, including `\ifcase` `\or` limb selection.
   Mode and last-item predicates read ordinary fields from the
-  `EngineStateSnapshot` stored in `ExpansionContext`; box predicates read only
+  `EngineStateSnapshot` stored in `tex_expand::ExpansionContext`; box predicates read only
   the `Universe` box-register facade; `\ifeof` reads the `World` input stream
-  table directly through `ExpansionState`. False
+  table directly through the concrete state facade. False
   conditional limbs and already-taken `\ifcase` limbs are
   skipped by reading raw tokens from `tex-lex` under the active catcode table,
   while `\else`, `\or`, and `\fi` update the input-stack condition frame and
@@ -565,12 +572,12 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   `\def`, `\advance`, register writes, and code-table writes are
   *unexpandable* — they are delivered to the stomach. This is TeX's own
   factoring, and the implementation follows it behaviorally: expansion
-  routines receive `ExpansionState` for reads and for sanctioned immutable
-  content/interner operations only; recursive expanded-token reads from
+  routines receive `tex_state::ExpansionContext` for reads and sanctioned
+  immutable content/interner operations only; recursive expanded-token reads from
   scanners are mediated by an erased `ExpansionMode`, so scanner signatures
   never expose file-open authority. Expanded-token entry points also carry the separate
   `InputOpenState` authority needed for `\input` dispatch. Because
-  `ExpansionState` omits input-open construction and barriered assignment
+  the facade omits input-open construction and barriered assignment
   methods such as meaning, register, code-table, group, and font setters, "the
   gullet cannot mutate Env/register/code-table state" and "ordinary scanner
   helpers cannot open input files" are enforced Rust API boundaries rather than

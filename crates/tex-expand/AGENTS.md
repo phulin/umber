@@ -4,7 +4,7 @@ Read the repository-level `AGENTS.md` before editing here. This crate owns TeX's
 
 ## Crate Role
 
-`tex-expand` implements the `get_x_token`-style expansion loop over `tex-lex::InputStack`. It reads meanings through `tex-state::Universe`, expands expandable primitives and macros, manages conditional skipping, replays frozen token lists through the lexer stack, and provides shared scanners for integers, dimensions, glue, token lists, and expansion-derived textual values.
+`tex-expand` implements the `get_x_token`-style expansion loop over the non-generic `tex-lex::InputStack`. Production and tests pass the same concrete `tex_state::ExpansionContext` facade over `Universe`, so scanner code is statically dispatched without specializing for multiple state implementations. It expands primitives and macros, manages conditional skipping, replays frozen token lists through the lexer stack, and provides shared scanners for integers, dimensions, glue, token lists, and expansion-derived textual values.
 
 Use this crate for behavior that is defined before stomach execution sees an unexpandable token. Expansion receives engine enquiries and job identity as plain context data and invokes an object-safe input resolver only for `\input`; font resolution belongs to the executor. The crate should not open files or perform host effects itself.
 
@@ -13,6 +13,7 @@ Use this crate for behavior that is defined before stomach execution sees an une
 - Do not mutate state except through the aggregate state capabilities exposed by `Universe`.
 - Do not implement unexpandable primitive side effects here; those belong in `tex-exec`.
 - Do not bypass `tex-lex` for input-stack or token-list replay behavior.
+- Keep physical sources and state implementation types out of scanner generic parameters; replacement text belongs on token-list replay frames.
 - Keep scanner arithmetic exact and shared with `tex-arith`/`tex-state::scaled` where appropriate.
 
 ## File Map

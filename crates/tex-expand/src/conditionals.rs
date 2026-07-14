@@ -1,6 +1,5 @@
 use tex_lex::{
-    ConditionFrameSummary, ConditionFrameToken, ConditionKind, ConditionLimb, InputSource,
-    InputStack,
+    ConditionFrameSummary, ConditionFrameToken, ConditionKind, ConditionLimb, InputStack,
 };
 use tex_state::ExpansionState;
 use tex_state::interner::Symbol;
@@ -32,33 +31,30 @@ impl ConditionMetadata {
     }
 }
 
-pub(crate) fn begin_if_evaluation<S>(
-    input: &mut InputStack<S>,
+pub(crate) fn begin_if_evaluation(
+    input: &mut InputStack,
     context: TracedTokenWord,
     metadata: ConditionMetadata,
 ) -> ConditionFrameToken {
     input.push_condition(metadata.apply(ConditionFrameSummary::evaluating_if(context)))
 }
 
-pub(crate) fn begin_ifcase_evaluation<S>(
-    input: &mut InputStack<S>,
+pub(crate) fn begin_ifcase_evaluation(
+    input: &mut InputStack,
     context: TracedTokenWord,
     metadata: ConditionMetadata,
 ) -> ConditionFrameToken {
     input.push_condition(metadata.apply(ConditionFrameSummary::evaluating_ifcase(context)))
 }
 
-pub(crate) fn begin_if<S>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
-    expansion: &mut ExpansionContext<'_, S>,
+pub(crate) fn begin_if(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
     condition: bool,
     metadata: ConditionMetadata,
     context: TracedTokenWord,
-) -> Result<Dispatch, ExpandError>
-where
-    S: InputSource,
-{
+) -> Result<Dispatch, ExpandError> {
     let frame_token =
         input.push_condition(metadata.apply(ConditionFrameSummary::new_if(context, condition)));
     if !condition {
@@ -67,16 +63,13 @@ where
     Ok(Dispatch::Continue)
 }
 
-pub(crate) fn complete_if_evaluation<S>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
-    expansion: &mut ExpansionContext<'_, S>,
+pub(crate) fn complete_if_evaluation(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
     condition: bool,
     frame_token: ConditionFrameToken,
-) -> Result<Dispatch, ExpandError>
-where
-    S: InputSource,
-{
+) -> Result<Dispatch, ExpandError> {
     let current = input
         .current_condition()
         .expect("the evaluating conditional frame remains current");
@@ -95,16 +88,13 @@ where
     Ok(Dispatch::Continue)
 }
 
-pub(crate) fn complete_ifcase_evaluation<S>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
-    expansion: &mut ExpansionContext<'_, S>,
+pub(crate) fn complete_ifcase_evaluation(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
     selected_case: i32,
     frame_token: ConditionFrameToken,
-) -> Result<Dispatch, ExpandError>
-where
-    S: InputSource,
-{
+) -> Result<Dispatch, ExpandError> {
     let current = input
         .current_condition()
         .expect("the evaluating ifcase frame remains current");
@@ -126,16 +116,13 @@ where
     Ok(Dispatch::Continue)
 }
 
-pub(crate) fn handle_else<S>(
+pub(crate) fn handle_else(
     token: Token,
     origin: OriginId,
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
-    expansion: &mut ExpansionContext<'_, S>,
-) -> Result<Dispatch, ExpandError>
-where
-    S: InputSource,
-{
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+) -> Result<Dispatch, ExpandError> {
     let context = TracedTokenWord::pack(token, origin);
     if current_condition_is_evaluating(input) {
         insert_relax_before_token(token, origin, input, stores);
@@ -169,16 +156,13 @@ where
     Ok(Dispatch::Continue)
 }
 
-pub(crate) fn handle_or<S>(
+pub(crate) fn handle_or(
     token: Token,
     origin: OriginId,
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
-    expansion: &mut ExpansionContext<'_, S>,
-) -> Result<Dispatch, ExpandError>
-where
-    S: InputSource,
-{
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+) -> Result<Dispatch, ExpandError> {
     let context = TracedTokenWord::pack(token, origin);
     if current_condition_is_evaluating(input) {
         insert_relax_before_token(token, origin, input, stores);
@@ -212,15 +196,12 @@ where
     Ok(Dispatch::Continue)
 }
 
-pub(crate) fn handle_fi<S>(
+pub(crate) fn handle_fi(
     token: Token,
     origin: OriginId,
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
-) -> Result<Dispatch, ExpandError>
-where
-    S: InputSource,
-{
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+) -> Result<Dispatch, ExpandError> {
     let context = TracedTokenWord::pack(token, origin);
     if current_condition_is_evaluating(input) {
         insert_relax_before_token(token, origin, input, stores);
@@ -236,17 +217,17 @@ where
     Ok(Dispatch::Continue)
 }
 
-fn current_condition_is_evaluating<S>(input: &InputStack<S>) -> bool {
+fn current_condition_is_evaluating(input: &InputStack) -> bool {
     input
         .current_condition()
         .is_some_and(ConditionFrameSummary::evaluating)
 }
 
-fn insert_relax_before_token<S>(
+fn insert_relax_before_token(
     token: Token,
     origin: OriginId,
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
 ) {
     let relax = stores.intern_relaxed_control_sequence("relax");
     push_inserted_token(
@@ -263,40 +244,31 @@ fn insert_relax_before_token<S>(
     );
 }
 
-fn skip_false_limb<S>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
-    expansion: &mut ExpansionContext<'_, S>,
+fn skip_false_limb(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
     frame_token: ConditionFrameToken,
-) -> Result<(), ExpandError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExpandError> {
     skip_until(input, stores, expansion, SkipTarget::ElseOrFi, frame_token)
 }
 
-fn skip_to_fi<S>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
-    expansion: &mut ExpansionContext<'_, S>,
+fn skip_to_fi(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
     frame_token: ConditionFrameToken,
-) -> Result<(), ExpandError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExpandError> {
     skip_until(input, stores, expansion, SkipTarget::Fi, frame_token)
 }
 
-fn skip_ifcase_to_selected_limb<S>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
-    expansion: &mut ExpansionContext<'_, S>,
+fn skip_ifcase_to_selected_limb(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
     selected_case: i32,
     frame_token: ConditionFrameToken,
-) -> Result<(), ExpandError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExpandError> {
     skip_until(
         input,
         stores,
@@ -313,16 +285,13 @@ enum SkipTarget {
     IfCaseSelection(i32),
 }
 
-fn skip_until<S>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
-    expansion: &mut ExpansionContext<'_, S>,
+fn skip_until(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
     target: SkipTarget,
     frame_token: ConditionFrameToken,
-) -> Result<(), ExpandError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExpandError> {
     let mut nesting = 0_u32;
     loop {
         let Some(token) = crate::next_semantic_raw_token(input, stores)? else {
@@ -404,8 +373,8 @@ where
     }
 }
 
-fn move_current_if_to_else<S>(
-    input: &mut InputStack<S>,
+fn move_current_if_to_else(
+    input: &mut InputStack,
     context: TracedTokenWord,
 ) -> Result<(), ExpandError> {
     let frame_token =
@@ -430,8 +399,8 @@ fn move_current_if_to_else<S>(
     Ok(())
 }
 
-fn move_current_ifcase_to_next_or<S>(
-    input: &mut InputStack<S>,
+fn move_current_ifcase_to_next_or(
+    input: &mut InputStack,
     target: SkipTarget,
     context: TracedTokenWord,
 ) -> Result<bool, ExpandError> {
@@ -465,8 +434,8 @@ fn move_current_ifcase_to_next_or<S>(
     Ok(current_limb_taken)
 }
 
-fn move_current_ifcase_to_else<S>(
-    input: &mut InputStack<S>,
+fn move_current_ifcase_to_else(
+    input: &mut InputStack,
     context: TracedTokenWord,
 ) -> Result<(), ExpandError> {
     let frame_token =
@@ -499,9 +468,9 @@ enum ConditionalPrimitive {
     Fi,
 }
 
-fn skipped_conditional_control<S>(
-    stores: &mut impl ExpansionState,
-    expansion: &mut ExpansionContext<'_, S>,
+fn skipped_conditional_control(
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
     token: TracedTokenWord,
 ) -> Result<Option<ConditionalPrimitive>, ExpandError> {
     let Some(symbol) = expandable_symbol(stores, token) else {
@@ -544,16 +513,14 @@ fn skipped_conditional_control<S>(
     }
 }
 
-pub(crate) fn scan_condition_x_token<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+pub(crate) fn scan_condition_x_token(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     context: TracedTokenWord,
 ) -> Result<Token, ExpandError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let token = mode.next_expanded_token(input, stores, expansion)?.ok_or(
         ExpandError::MissingTokenAfterPrimitive {
@@ -598,15 +565,12 @@ pub(crate) enum ConditionalRelation {
 }
 
 #[allow(dead_code)]
-pub(crate) fn scan_conditional_relation<S>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
-    expansion: &mut ExpansionContext<'_, S>,
+pub(crate) fn scan_conditional_relation(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
     context: TracedTokenWord,
-) -> Result<ConditionalRelation, ExpandError>
-where
-    S: InputSource,
-{
+) -> Result<ConditionalRelation, ExpandError> {
     scan_conditional_relation_with_mode_and_context(
         input,
         stores,
@@ -616,16 +580,14 @@ where
     )
 }
 
-pub(crate) fn scan_conditional_relation_with_mode_and_context<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+pub(crate) fn scan_conditional_relation_with_mode_and_context(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     context: TracedTokenWord,
 ) -> Result<ConditionalRelation, ExpandError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let Some(token) =
         scan_helpers::next_non_space_x_token_with_mode_and_context(input, stores, expansion, mode)?
@@ -686,15 +648,12 @@ pub(crate) fn box_register_has_kind(
 }
 
 #[allow(dead_code)]
-pub(crate) fn scan_stream_number<S>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
-    expansion: &mut ExpansionContext<'_, S>,
+pub(crate) fn scan_stream_number(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
     context: TracedTokenWord,
-) -> Result<u8, ExpandError>
-where
-    S: InputSource,
-{
+) -> Result<u8, ExpandError> {
     scan_stream_number_with_mode_and_context(
         input,
         stores,
@@ -704,16 +663,14 @@ where
     )
 }
 
-pub(crate) fn scan_stream_number_with_mode_and_context<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+pub(crate) fn scan_stream_number_with_mode_and_context(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     context: TracedTokenWord,
 ) -> Result<u8, ExpandError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let value =
         scan_int::scan_int_with_mode_and_context(input, stores, expansion, mode, context)?.value();

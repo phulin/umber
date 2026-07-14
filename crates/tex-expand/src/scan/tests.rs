@@ -12,8 +12,13 @@ fn scan(input: &str) -> (Universe, Vec<Token>, Vec<Token>) {
     let mut input = InputStack::new(MemoryInput::new(input));
     let context =
         TracedTokenWord::pack(Token::Cs(stores.intern("def").symbol()), OriginId::UNKNOWN);
-    let scanned = scan_toks(&mut input, &mut stores, MeaningFlags::EMPTY, context)
-        .expect("scan should succeed");
+    let scanned = scan_toks(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        MeaningFlags::EMPTY,
+        context,
+    )
+    .expect("scan should succeed");
     let params = stores.tokens(scanned.parameter_text()).to_vec();
     let replacement = stores.tokens(scanned.replacement_text()).to_vec();
     (stores, params, replacement)
@@ -39,7 +44,7 @@ fn expanded_definition_preserves_protected_macro_tokens() {
 
     let scanned = scan_toks_expanded(
         &mut input,
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         MeaningFlags::EMPTY,
         context,
         &mut ExpansionContext::new("texput"),
@@ -76,7 +81,7 @@ fn expanded_definition_expandafter_forces_only_its_protected_target() {
 
     let scanned = scan_toks_expanded(
         &mut input,
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         MeaningFlags::EMPTY,
         context,
         &mut ExpansionContext::new("texput"),
@@ -125,11 +130,18 @@ fn forbidden_outer_macro_closes_replacement_and_is_replayed() {
     let context =
         TracedTokenWord::pack(Token::Cs(stores.intern("def").symbol()), OriginId::UNKNOWN);
 
-    let scanned = scan_toks(&mut input, &mut stores, MeaningFlags::EMPTY, context)
-        .expect("outer token inserts a synthetic closing brace");
+    let scanned = scan_toks(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        MeaningFlags::EMPTY,
+        context,
+    )
+    .expect("outer token inserts a synthetic closing brace");
     assert!(stores.tokens(scanned.replacement_text()).is_empty());
     assert_eq!(
-        input.next_token(&mut stores).expect("read replayed outer"),
+        input
+            .next_token(&mut tex_state::ExpansionContext::new(&mut stores))
+            .expect("read replayed outer"),
         Some(Token::Cs(outer.symbol()))
     );
 }
@@ -150,7 +162,7 @@ fn forbidden_outer_macro_closes_expanded_replacement_before_expansion() {
 
     let scanned = scan_toks_expanded_with_driver(
         &mut input,
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         MeaningFlags::EMPTY,
         context,
         &mut ExpansionContext::new("texput"),
@@ -159,7 +171,9 @@ fn forbidden_outer_macro_closes_expanded_replacement_before_expansion() {
 
     assert!(stores.tokens(scanned.replacement_text()).is_empty());
     assert_eq!(
-        input.next_token(&mut stores).expect("read replayed outer"),
+        input
+            .next_token(&mut tex_state::ExpansionContext::new(&mut stores))
+            .expect("read replayed outer"),
         Some(Token::Cs(outer.symbol()))
     );
 }
@@ -181,7 +195,7 @@ fn noexpand_suppresses_outer_validation_in_expanded_replacement() {
 
     let scanned = scan_toks_expanded_with_driver(
         &mut input,
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         MeaningFlags::EMPTY,
         context,
         &mut ExpansionContext::new("texput"),
@@ -204,7 +218,7 @@ fn ordinary_expanded_replacement_avoids_back_input() {
 
     let scanned = scan_toks_expanded_with_driver(
         &mut input,
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         MeaningFlags::EMPTY,
         context,
         &mut ExpansionContext::new("texput"),
@@ -222,8 +236,13 @@ fn freezes_parameter_and_replacement_origin_lists_from_source_tokens() {
     let context =
         TracedTokenWord::pack(Token::Cs(stores.intern("def").symbol()), OriginId::UNKNOWN);
 
-    let scanned = scan_toks(&mut input, &mut stores, MeaningFlags::EMPTY, context)
-        .expect("scan should succeed");
+    let scanned = scan_toks(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        MeaningFlags::EMPTY,
+        context,
+    )
+    .expect("scan should succeed");
     let provenance = scanned.provenance();
     let parameter_origins = stores.origin_list(provenance.parameter_origins());
     let replacement_origins = stores.origin_list(provenance.replacement_origins());
@@ -259,8 +278,13 @@ fn out_of_order_parameter_inserts_expected_and_replays_wrong_digit() {
 
     let context =
         TracedTokenWord::pack(Token::Cs(stores.intern("def").symbol()), OriginId::UNKNOWN);
-    let scanned = scan_toks(&mut input, &mut stores, MeaningFlags::EMPTY, context)
-        .expect("scan should recover an out-of-order parameter");
+    let scanned = scan_toks(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        MeaningFlags::EMPTY,
+        context,
+    )
+    .expect("scan should recover an out-of-order parameter");
 
     assert_eq!(
         stores.tokens(scanned.parameter_text()),

@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use tex_lex::{InputSource, InputStack};
+use tex_lex::InputStack;
 use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, GlueParam};
 use tex_state::glue::Order;
@@ -16,15 +16,12 @@ use crate::splitting::{prune_page_top_with_discards, vpack_natural};
 
 use super::super::{scan_optional_keyword_x, scan_register_index, scan_scaled};
 
-pub(super) fn scan_vsplit_node<S>(
-    input: &mut InputStack<S>,
+pub(super) fn scan_vsplit_node(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
-) -> Result<Option<Node>, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<Option<Node>, ExecError> {
     stores.clear_split_discards();
     let index = scan_register_index(input, stores, execution, context)?;
     if !scan_optional_keyword_x(input, stores, execution, "to")? {

@@ -4,7 +4,7 @@ use tex_expand::{
     get_x_token_with_context, meaning_text, scan_dimen::DimensionDiagnostic,
     scan_int::IntegerDiagnostic, scan_the_text_with_context, token_text,
 };
-use tex_lex::{InputSource, InputStack};
+use tex_lex::InputStack;
 use tex_state::env::banks::IntParam;
 use tex_state::page::{PageContents, PageDimension};
 use tex_state::token::{Catcode, Token, TracedTokenWord};
@@ -46,14 +46,8 @@ pub(crate) fn report_illegal_case(stores: &mut Universe, token: Token, mode: Mod
 use crate::{ExecError, push_tokens};
 use crate::{Mode, ModeNest};
 
-pub(crate) fn execute_show<S>(
-    input: &mut InputStack<S>,
-    stores: &mut Universe,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
-    let token = tex_expand::get_token(input, stores)?
+pub(crate) fn execute_show(input: &mut InputStack, stores: &mut Universe) -> Result<(), ExecError> {
+    let token = tex_expand::get_token(input, &mut tex_state::ExpansionContext::new(stores))?
         .ok_or(ExecError::MissingToken { context: "\\show" })?;
     let token = tex_expand::semantic_token(token);
     let text = match token {
@@ -72,16 +66,18 @@ where
     Ok(())
 }
 
-pub(crate) fn execute_showthe<S>(
+pub(crate) fn execute_showthe(
     context: TracedTokenWord,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
-    let text = match scan_the_text_with_context(input, stores, execution, context) {
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
+    let text = match scan_the_text_with_context(
+        input,
+        &mut tex_state::ExpansionContext::new(stores),
+        execution,
+        context,
+    ) {
         Ok(text) => text,
         Err(tex_expand::ExpandError::UnsupportedTheTarget { context }) => {
             let token = tex_expand::semantic_token(context);
@@ -124,17 +120,17 @@ fn catcode_name(cat: Catcode) -> &'static str {
     }
 }
 
-pub(crate) fn execute_showtokens<S>(
+pub(crate) fn execute_showtokens(
     context: TracedTokenWord,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     let tokens = tex_expand::scan::scan_general_text_with_expanded_open_with_driver(
-        input, stores, execution, context,
+        input,
+        &mut tex_state::ExpansionContext::new(stores),
+        execution,
+        context,
     )?;
     write_diagnostic(
         stores,
@@ -164,10 +160,7 @@ pub(crate) fn execute_showgroups(stores: &mut Universe) {
     write_diagnostic(stores, &text);
 }
 
-pub(crate) fn execute_showifs<S>(input: &InputStack<S>, stores: &mut Universe)
-where
-    S: InputSource,
-{
+pub(crate) fn execute_showifs(input: &InputStack, stores: &mut Universe) {
     let conditions = input.conditions().collect::<Vec<_>>();
     let mut text = String::new();
     text.push('\n');
@@ -243,15 +236,12 @@ pub(crate) fn execute_showbox(stores: &mut Universe, index: u16) {
     write_diagnostic(stores, &text);
 }
 
-pub(crate) fn execute_message<S>(
-    input: &mut InputStack<S>,
+pub(crate) fn execute_message(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     error: bool,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     let tokens = scan_balanced_expanded_text(input, stores, execution, "\\message")?;
     let text = print_text_with_newlinechar(stores, &message_tokens_text(stores, &tokens));
     if error {
@@ -384,14 +374,11 @@ fn mode_text(mode: Mode) -> &'static str {
     }
 }
 
-pub(crate) fn execute_showhyphens<S>(
-    input: &mut InputStack<S>,
+pub(crate) fn execute_showhyphens(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     let tokens = scan_balanced_expanded_text(input, stores, execution, "\\showhyphens")?;
     let language = u8::try_from(stores.int_param(IntParam::LANGUAGE)).unwrap_or(0);
     let mut words = Vec::new();
@@ -503,14 +490,11 @@ since the offensive shrinkability has been made finite.\n"
     );
 }
 
-pub(crate) fn execute_change_case<S>(
-    input: &mut InputStack<S>,
+pub(crate) fn execute_change_case(
+    input: &mut InputStack,
     stores: &mut Universe,
     uppercase: bool,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     let mut tokens = scan_balanced_raw_text(
         input,
         stores,
@@ -537,13 +521,10 @@ where
     Ok(())
 }
 
-pub(crate) fn execute_ignorespaces<S>(
-    input: &mut InputStack<S>,
+pub(crate) fn execute_ignorespaces(
+    input: &mut InputStack,
     stores: &mut Universe,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     loop {
         let Some(token) = input.next_token(stores)? else {
             return Ok(());
@@ -566,14 +547,11 @@ fn show_meaning_text(stores: &Universe, token: Token) -> String {
     }
 }
 
-fn scan_balanced_raw_text<S>(
-    input: &mut InputStack<S>,
+fn scan_balanced_raw_text(
+    input: &mut InputStack,
     stores: &mut Universe,
     context: &'static str,
-) -> Result<Vec<Token>, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<Vec<Token>, ExecError> {
     let open = next_non_space_raw(input, stores)?.ok_or(ExecError::MissingToken { context })?;
     if !is_begin_group(open) {
         return Err(ExecError::MissingToken { context });
@@ -597,15 +575,12 @@ where
     Err(ExecError::MissingToken { context })
 }
 
-fn scan_balanced_expanded_text<S>(
-    input: &mut InputStack<S>,
+fn scan_balanced_expanded_text(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: &'static str,
-) -> Result<Vec<Token>, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<Vec<Token>, ExecError> {
     let open =
         next_non_space_x(input, stores, execution)?.ok_or(ExecError::MissingToken { context })?;
     if !is_begin_group(open) {
@@ -613,8 +588,12 @@ where
     }
     let mut depth = 1usize;
     let mut tokens = Vec::new();
-    while let Some(token) =
-        get_x_token_with_context(input, stores, execution)?.map(tex_expand::semantic_token)
+    while let Some(token) = get_x_token_with_context(
+        input,
+        &mut tex_state::ExpansionContext::new(stores),
+        execution,
+    )?
+    .map(tex_expand::semantic_token)
     {
         if is_begin_group(token) {
             depth += 1;
@@ -632,13 +611,10 @@ where
     Err(ExecError::MissingToken { context })
 }
 
-fn next_non_space_raw<S>(
-    input: &mut InputStack<S>,
+fn next_non_space_raw(
+    input: &mut InputStack,
     stores: &mut Universe,
-) -> Result<Option<Token>, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<Option<Token>, ExecError> {
     while let Some(token) = input.next_token(stores)? {
         if !is_space(token) {
             return Ok(Some(token));
@@ -647,16 +623,17 @@ where
     Ok(None)
 }
 
-fn next_non_space_x<S>(
-    input: &mut InputStack<S>,
+fn next_non_space_x(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<Option<Token>, ExecError>
-where
-    S: InputSource,
-{
-    while let Some(token) =
-        get_x_token_with_context(input, stores, execution)?.map(tex_expand::semantic_token)
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<Option<Token>, ExecError> {
+    while let Some(token) = get_x_token_with_context(
+        input,
+        &mut tex_state::ExpansionContext::new(stores),
+        execution,
+    )?
+    .map(tex_expand::semantic_token)
     {
         if !is_space(token) {
             return Ok(Some(token));

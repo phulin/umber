@@ -1,4 +1,4 @@
-use tex_lex::{InputSource, InputStack};
+use tex_lex::InputStack;
 use tex_state::ExpansionState;
 use tex_state::env::banks::IntParam;
 use tex_state::token::{Catcode, Token, TracedTokenWord};
@@ -7,14 +7,11 @@ use crate::{
     ExpandError, ExpansionContext, ExpansionMode, RestrictedExpansionMode, scan_int, semantic_token,
 };
 
-pub(crate) fn next_non_space_x_token_with_context<S>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
-    expansion: &mut ExpansionContext<'_, S>,
-) -> Result<Option<TracedTokenWord>, ExpandError>
-where
-    S: InputSource,
-{
+pub(crate) fn next_non_space_x_token_with_context(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+) -> Result<Option<TracedTokenWord>, ExpandError> {
     next_non_space_x_token_with_mode_and_context(
         input,
         stores,
@@ -23,15 +20,13 @@ where
     )
 }
 
-pub(crate) fn next_non_space_x_token_with_mode_and_context<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+pub(crate) fn next_non_space_x_token_with_mode_and_context(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
 ) -> Result<Option<TracedTokenWord>, ExpandError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     loop {
         let Some(token) = mode.next_expanded_token(input, stores, expansion)? else {
@@ -50,15 +45,12 @@ where
 }
 
 #[allow(dead_code)]
-pub(crate) fn scan_register_index<S>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
-    expansion: &mut ExpansionContext<'_, S>,
+pub(crate) fn scan_register_index(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
     context: tex_state::token::TracedTokenWord,
-) -> Result<u16, ExpandError>
-where
-    S: InputSource,
-{
+) -> Result<u16, ExpandError> {
     scan_register_index_with_mode_and_context(
         input,
         stores,
@@ -68,16 +60,14 @@ where
     )
 }
 
-pub(crate) fn scan_register_index_with_mode_and_context<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+pub(crate) fn scan_register_index_with_mode_and_context(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     context: tex_state::token::TracedTokenWord,
 ) -> Result<u16, ExpandError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let scanned =
         scan_int::scan_int_with_mode_and_context(input, stores, expansion, mode, context)?;
@@ -105,15 +95,12 @@ pub enum ExpandedKeywordMatch {
     PartialMismatch,
 }
 
-pub fn scan_optional_keyword_with_context<S>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
-    expansion: &mut ExpansionContext<'_, S>,
+pub fn scan_optional_keyword_with_context(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
     keyword: &str,
-) -> Result<bool, ExpandError>
-where
-    S: InputSource,
-{
+) -> Result<bool, ExpandError> {
     scan_optional_keyword_with_mode_and_context(
         input,
         stores,
@@ -123,16 +110,14 @@ where
     )
 }
 
-pub fn scan_optional_keyword_with_mode_and_context<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+pub fn scan_optional_keyword_with_mode_and_context(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     keyword: &str,
 ) -> Result<bool, ExpandError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let Some(first) = next_non_space_x_token_with_mode_and_context(input, stores, expansion, mode)?
     else {
@@ -151,16 +136,13 @@ where
 }
 
 #[allow(dead_code)]
-pub fn scan_keyword_after_first_with_context<S>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
-    expansion: &mut ExpansionContext<'_, S>,
+pub fn scan_keyword_after_first_with_context(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
     first: TracedTokenWord,
     keyword: &str,
-) -> Result<ExpandedKeywordMatch, ExpandError>
-where
-    S: InputSource,
-{
+) -> Result<ExpandedKeywordMatch, ExpandError> {
     scan_keyword_after_first_with_mode_and_context(
         input,
         stores,
@@ -171,17 +153,15 @@ where
     )
 }
 
-pub fn scan_keyword_after_first_with_mode_and_context<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+pub fn scan_keyword_after_first_with_mode_and_context(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     first: TracedTokenWord,
     keyword: &str,
 ) -> Result<ExpandedKeywordMatch, ExpandError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     if keyword.is_empty() {
         return Ok(ExpandedKeywordMatch::Matched);
@@ -209,19 +189,16 @@ where
     Ok(ExpandedKeywordMatch::Matched)
 }
 
-fn unread_token<S>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+fn unread_token(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
     token: TracedTokenWord,
-) where
-    S: InputSource,
-{
+) {
     unread_tokens(input, stores, [token]);
 }
 
-fn unread_tokens<S, I>(input: &mut InputStack<S>, stores: &mut impl ExpansionState, tokens: I)
+fn unread_tokens<I>(input: &mut InputStack, stores: &mut tex_state::ExpansionContext<'_>, tokens: I)
 where
-    S: InputSource,
     I: IntoIterator<Item = TracedTokenWord>,
 {
     crate::back_input(input, stores, tokens);

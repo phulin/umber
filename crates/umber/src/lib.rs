@@ -41,22 +41,19 @@ pub enum CheckpointPolicy {
 }
 
 /// Exclusive composition boundary for input, context, state, diagnostics, and artifacts.
-pub struct EngineSession<'a, 'context, S> {
-    input: &'a mut InputStack<S>,
+pub struct EngineSession<'a, 'context> {
+    input: &'a mut InputStack,
     stores: &'a mut Universe,
-    context: ExecutionContext<'context, S>,
+    context: ExecutionContext<'context>,
     artifact_cursor: usize,
     checkpoint_policy: CheckpointPolicy,
 }
 
-impl<'a, 'context, S> EngineSession<'a, 'context, S>
-where
-    S: InputSource,
-{
+impl<'a, 'context> EngineSession<'a, 'context> {
     pub fn new(
-        input: &'a mut InputStack<S>,
+        input: &'a mut InputStack,
         stores: &'a mut Universe,
-        context: ExecutionContext<'context, S>,
+        context: ExecutionContext<'context>,
     ) -> Self {
         let artifact_cursor = stores.world().artifact_commits().len();
         Self {
@@ -178,23 +175,24 @@ impl FileSessionResolvers {
         }
     }
 
-    pub fn context(&mut self) -> ExecutionContext<'_, tex_lex::WorldInput> {
+    pub fn context(&mut self) -> ExecutionContext<'_> {
         ExecutionContext::with_resolvers(&self.job_name, &mut self.input, &mut self.font)
     }
 }
 
 struct FileInputResolver(TexInputSearchPath);
 
-impl InputResolver<tex_lex::WorldInput> for FileInputResolver {
+impl InputResolver for FileInputResolver {
     fn open_input(
         &mut self,
         input: &mut dyn tex_state::InputReadState,
         name: &str,
         _request_index: u64,
-    ) -> Result<tex_lex::WorldInput, String> {
+    ) -> Result<Box<dyn InputSource>, String> {
         self.0
             .read(input, name)
             .map(tex_lex::WorldInput::from_content)
+            .map(|source| Box::new(source) as Box<dyn InputSource>)
     }
 }
 
@@ -602,26 +600,20 @@ mod primitive_mode_tests {
 }
 
 /// Runs an already-open input stack through the same executor path as `umber run`.
-pub fn run_input_with_context<S>(
-    input: &mut InputStack<S>,
+pub fn run_input_with_context(
+    input: &mut InputStack,
     stores: &mut Universe,
-    context: ExecutionContext<'_, S>,
-) -> Result<String, tex_exec::ExecError>
-where
-    S: InputSource,
-{
+    context: ExecutionContext<'_>,
+) -> Result<String, tex_exec::ExecError> {
     run_input_collecting_artifacts(input, stores, context).map(|result| result.terminal_text)
 }
 
 /// Runs input and returns the artifact ids emitted by `\shipout` in order.
-pub fn run_input_collecting_artifacts<S>(
-    input: &mut InputStack<S>,
+pub fn run_input_collecting_artifacts(
+    input: &mut InputStack,
     stores: &mut Universe,
-    context: ExecutionContext<'_, S>,
-) -> Result<RunResult, tex_exec::ExecError>
-where
-    S: InputSource,
-{
+    context: ExecutionContext<'_>,
+) -> Result<RunResult, tex_exec::ExecError> {
     EngineSession::new(input, stores, context).execute()
 }
 
@@ -739,13 +731,13 @@ pub fn run_memory_with_stores(
 #[derive(Clone, Copy, Debug, Default)]
 struct RejectingMemoryInputResolver;
 
-impl InputResolver<MemoryInput> for RejectingMemoryInputResolver {
+impl InputResolver for RejectingMemoryInputResolver {
     fn open_input(
         &mut self,
         _input: &mut dyn tex_state::InputReadState,
         name: &str,
         _request_index: u64,
-    ) -> Result<MemoryInput, String> {
+    ) -> Result<Box<dyn InputSource>, String> {
         Err(format!("memory run cannot open input {name}"))
     }
 }

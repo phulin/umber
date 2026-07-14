@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use tex_lex::{InputSource, InputStack, TokenListReplayKind};
+use tex_lex::{InputStack, TokenListReplayKind};
 use tex_state::env::banks::{DimenParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node, Sign};
@@ -23,32 +23,26 @@ use crate::page_builder::build_page;
 use crate::splitting::{natural_vlist_size, prune_page_top, vpack_natural};
 use crate::{ExecError, ExecutionStats, Mode, ModeNest, leave_group, push_traced_tokens};
 
-pub(crate) fn drain_pending_output<S>(
+pub(crate) fn drain_pending_output(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     stats: &mut ExecutionStats,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     while let Some(fire_up) = stores.page_fire_up() {
         fire_up_page(nest, input, stores, execution, stats, fire_up)?;
     }
     Ok(())
 }
 
-pub(crate) fn finish_end<S>(
+pub(crate) fn finish_end(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     stats: &mut ExecutionStats,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     while !job_is_quiescent(stores) {
         append_end_cleanup_contributions(stores);
         build_page(stores)?;
@@ -57,17 +51,14 @@ where
     Ok(())
 }
 
-fn fire_up_page<S>(
+fn fire_up_page(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     stats: &mut ExecutionStats,
     fire_up: PageFireUp,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     prepare_box255(stores, fire_up)?;
     let output = stores.tok_param(TokParam::OUTPUT);
     if stores.tokens(output).is_empty() {
@@ -396,17 +387,14 @@ fn output_penalty_and_rewrite_break(
     INF_PENALTY
 }
 
-fn run_output_routine<S>(
+fn run_output_routine(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     stats: &mut ExecutionStats,
     output: tex_state::ids::TokenListId,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     let mut transaction = crate::transaction::ExecutionTransaction::begin(nest, stores);
     let mut replay = None;
     let result = {
@@ -422,18 +410,15 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_output_routine_inner<S>(
+fn run_output_routine_inner(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     stats: &mut ExecutionStats,
     output: tex_state::ids::TokenListId,
     replay: &mut Option<tex_lex::TokenListReplayMarker>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     stores.enter_group_with_kind(GroupKind::Output);
     nest.push(Mode::InternalVertical);
     nest.current_list_mut().set_prev_depth(IGNORE_DEPTH);
@@ -485,8 +470,8 @@ where
     Ok(())
 }
 
-fn pop_finished_output_frame<S>(
-    input: &mut InputStack<S>,
+fn pop_finished_output_frame(
+    input: &mut InputStack,
     stores: &Universe,
     output: tex_state::ids::TokenListId,
 ) -> bool {

@@ -19,12 +19,15 @@ use crate::{ExpansionContext, ReadBank, ReadDependency, ReadSetRecorder};
 
 fn scan(input_text: &str) -> (i32, Option<DimensionDiagnostic>, Option<Token>) {
     let mut stores = Universe::new();
-    scan_with_stores(input_text, &mut stores)
+    scan_with_stores(
+        input_text,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    )
 }
 
 fn scan_with_stores(
     input_text: &str,
-    stores: &mut Universe,
+    stores: &mut tex_state::ExpansionContext<'_>,
 ) -> (i32, Option<DimensionDiagnostic>, Option<Token>) {
     let mut input = InputStack::new(MemoryInput::new(input_text));
     let scanned = scan_dimen(&mut input, stores, context()).expect("dimension scan should succeed");
@@ -39,13 +42,13 @@ fn scan_coerced(input_text: &str) -> (i32, Option<DimensionDiagnostic>, Option<T
     let mut input = InputStack::new(MemoryInput::new(input_text));
     let scanned = scan_dimen_with_options(
         &mut input,
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         ScanDimenOptions::with_integer_to_sp_coercion(),
         context(),
     )
     .expect("dimension scan should succeed");
     let next = input
-        .next_token(&mut stores)
+        .next_token(&mut tex_state::ExpansionContext::new(&mut stores))
         .expect("remaining token should lex");
     (scanned.value().raw(), scanned.diagnostic(), next)
 }
@@ -62,7 +65,7 @@ fn dimension_scanner_records_typed_value_and_magnification_dependencies() {
 
     let scanned = scan_dimen_with_options_and_context(
         &mut input,
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         &mut expansion,
         ScanDimenOptions::STANDARD,
         context(),
@@ -111,12 +114,18 @@ fn dimexpr_obeys_precedence_parentheses_and_relax_termination() {
     let mut stores = Universe::new();
     install_dimexpr(&mut stores);
 
-    let (value, diagnostic, next) = scan_with_stores("\\dimexpr 1pt+2pt*3\\relax X", &mut stores);
+    let (value, diagnostic, next) = scan_with_stores(
+        "\\dimexpr 1pt+2pt*3\\relax X",
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    );
     assert_eq!(value, 7 * Scaled::UNITY);
     assert_eq!(diagnostic, None);
     assert_eq!(next, Some(char_token('X', Catcode::Letter)));
 
-    let (value, _, _) = scan_with_stores("\\dimexpr (1pt+2pt)*3\\relax", &mut stores);
+    let (value, _, _) = scan_with_stores(
+        "\\dimexpr (1pt+2pt)*3\\relax",
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    );
     assert_eq!(value, 9 * Scaled::UNITY);
 }
 
@@ -126,11 +135,19 @@ fn dimexpr_uses_etex_rounded_division_and_combined_scaling() {
     install_dimexpr(&mut stores);
 
     assert_eq!(
-        scan_with_stores("\\dimexpr 1pt/3\\relax", &mut stores).0,
+        scan_with_stores(
+            "\\dimexpr 1pt/3\\relax",
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .0,
         21_845
     );
     assert_eq!(
-        scan_with_stores("\\dimexpr 1pt*10/3\\relax", &mut stores).0,
+        scan_with_stores(
+            "\\dimexpr 1pt*10/3\\relax",
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .0,
         218_453
     );
 }
@@ -140,7 +157,10 @@ fn dimexpr_recovers_to_zero_after_intermediate_overflow() {
     let mut stores = Universe::new();
     install_dimexpr(&mut stores);
 
-    let (value, diagnostic, _) = scan_with_stores("\\dimexpr 16383pt+1pt\\relax", &mut stores);
+    let (value, diagnostic, _) = scan_with_stores(
+        "\\dimexpr 16383pt+1pt\\relax",
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    );
     assert_eq!(value, 0);
     assert_eq!(diagnostic, Some(DimensionDiagnostic::TooLarge));
 }
@@ -157,11 +177,19 @@ fn glue_component_enquiries_return_raw_scaled_dimensions() {
     }
 
     assert_eq!(
-        scan_with_stores("\\gluestretch 0pt plus 2fill", &mut stores).0,
+        scan_with_stores(
+            "\\gluestretch 0pt plus 2fill",
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .0,
         2 * Scaled::UNITY
     );
     assert_eq!(
-        scan_with_stores("\\glueshrink 0pt minus 1.5fil", &mut stores).0,
+        scan_with_stores(
+            "\\glueshrink 0pt minus 1.5fil",
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .0,
         98_304
     );
 }
@@ -205,9 +233,26 @@ fn true_units_use_current_mag_before_physical_unit_conversion() {
     let mut stores = Universe::new();
     stores.set_mag(2000);
 
-    assert_eq!(scan_with_stores("1truept x", &mut stores).0, 32_768);
-    assert_eq!(scan_with_stores("1truein x", &mut stores).0, 2_368_143);
-    assert_eq!(scan_with_stores("1pt x", &mut stores).0, 65_536);
+    assert_eq!(
+        scan_with_stores(
+            "1truept x",
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .0,
+        32_768
+    );
+    assert_eq!(
+        scan_with_stores(
+            "1truein x",
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .0,
+        2_368_143
+    );
+    assert_eq!(
+        scan_with_stores("1pt x", &mut tex_state::ExpansionContext::new(&mut stores)).0,
+        65_536
+    );
 }
 
 #[test]
@@ -227,7 +272,7 @@ fn true_physical_units_match_tex_fixed_point_order_at_mag_two_thousand() {
         let mut stores = Universe::new();
         stores.set_mag(2000);
         assert_eq!(
-            scan_with_stores(source, &mut stores).0,
+            scan_with_stores(source, &mut tex_state::ExpansionContext::new(&mut stores)).0,
             expected,
             "{source}"
         );
@@ -235,7 +280,14 @@ fn true_physical_units_match_tex_fixed_point_order_at_mag_two_thousand() {
 
     let mut stores = Universe::new();
     stores.set_mag(2000);
-    assert_eq!(scan_with_stores("-12.truedd x", &mut stores).0, -420_744);
+    assert_eq!(
+        scan_with_stores(
+            "-12.truedd x",
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .0,
+        -420_744
+    );
 }
 
 #[test]
@@ -243,8 +295,22 @@ fn true_unit_scaling_folds_xn_over_d_remainder_into_fraction() {
     let mut stores = Universe::new();
     stores.set_mag(1200);
 
-    assert_eq!(scan_with_stores("1.5truept x", &mut stores).0, 81_920);
-    assert_eq!(scan_with_stores("1truesp x", &mut stores).0, 0);
+    assert_eq!(
+        scan_with_stores(
+            "1.5truept x",
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .0,
+        81_920
+    );
+    assert_eq!(
+        scan_with_stores(
+            "1truesp x",
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .0,
+        0
+    );
 }
 
 #[test]
@@ -255,7 +321,11 @@ fn true_unit_scaling_widens_legal_maximum_mag_fraction_arithmetic() {
     // TeX rounds the 17 retained nines to one whole fractional unit. Combined
     // with xn_over_d's remainder, the pre-division numerator exceeds i32.
     assert_eq!(
-        scan_with_stores("4095.99999999999999999truept x", &mut stores).0,
+        scan_with_stores(
+            "4095.99999999999999999truept x",
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .0,
         125 * Scaled::UNITY
     );
 }
@@ -265,13 +335,19 @@ fn true_units_prepare_and_freeze_magnification() {
     let mut stores = Universe::new();
     stores.set_mag(1200);
 
-    let (value, diagnostic, _next) = scan_with_stores("1truept x", &mut stores);
+    let (value, diagnostic, _next) = scan_with_stores(
+        "1truept x",
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    );
     assert_eq!(value, 54_613);
     assert_eq!(diagnostic, None);
     assert_eq!(stores.prepared_mag(), Some(1200));
 
     stores.set_mag(2000);
-    let (value, diagnostic, _next) = scan_with_stores("1truept x", &mut stores);
+    let (value, diagnostic, _next) = scan_with_stores(
+        "1truept x",
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    );
     assert_eq!(value, 54_613);
     assert_eq!(stores.mag(), 1200);
     assert_eq!(
@@ -292,7 +368,10 @@ fn true_units_report_and_coerce_illegal_magnification() {
     let mut stores = Universe::new();
     stores.set_mag(40_000);
 
-    let (value, diagnostic, _next) = scan_with_stores("1truept x", &mut stores);
+    let (value, diagnostic, _next) = scan_with_stores(
+        "1truept x",
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    );
 
     assert_eq!(value, 65_536);
     assert_eq!(stores.mag(), 1000);
@@ -340,7 +419,10 @@ fn scans_supported_internal_dimensions() {
     );
     stores.set_dimen(3, Scaled::from_raw(42_000));
 
-    let (value, diagnostic, next) = scan_with_stores("\\dimen3 x", &mut stores);
+    let (value, diagnostic, next) = scan_with_stores(
+        "\\dimen3 x",
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    );
 
     assert_eq!(value, 42_000);
     assert_eq!(diagnostic, None);
@@ -369,7 +451,10 @@ fn scales_box_dimensions_used_as_internal_units() {
     }))]);
     stores.set_box_reg(3, boxed);
 
-    let (value, diagnostic, next) = scan_with_stores("2\\dp3 x", &mut stores);
+    let (value, diagnostic, next) = scan_with_stores(
+        "2\\dp3 x",
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    );
 
     assert_eq!(value, -1_118_806);
     assert_eq!(diagnostic, None);
@@ -383,7 +468,10 @@ fn scans_named_dimension_parameter() {
     stores.set_meaning(hsize, Meaning::DimenParam(DimenParam::H_SIZE.raw()));
     stores.set_dimen_param(DimenParam::H_SIZE, Scaled::from_raw(42_000));
 
-    let (value, diagnostic, next) = scan_with_stores("\\hsize x", &mut stores);
+    let (value, diagnostic, next) = scan_with_stores(
+        "\\hsize x",
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    );
 
     assert_eq!(value, 42_000);
     assert_eq!(diagnostic, None);
@@ -407,7 +495,10 @@ fn coerces_named_glue_parameter_width_to_internal_dimension() {
     });
     stores.set_glue_param(GlueParam::SPLIT_TOP_SKIP, glue);
 
-    let (value, diagnostic, next) = scan_with_stores("\\splittopskip x", &mut stores);
+    let (value, diagnostic, next) = scan_with_stores(
+        "\\splittopskip x",
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    );
 
     assert_eq!(value, 42_000);
     assert_eq!(diagnostic, None);
@@ -428,7 +519,10 @@ fn coerces_named_skip_register_width_to_internal_dimension() {
     });
     stores.set_skip(42, glue);
 
-    let (value, diagnostic, next) = scan_with_stores("-\\namedskip x", &mut stores);
+    let (value, diagnostic, next) = scan_with_stores(
+        "-\\namedskip x",
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    );
 
     assert_eq!(value, -42_000);
     assert_eq!(diagnostic, None);
@@ -452,7 +546,10 @@ fn coerces_primitive_skip_register_width_to_internal_dimension() {
     });
     stores.set_skip(42, glue);
 
-    let (value, diagnostic, next) = scan_with_stores("\\skip42 x", &mut stores);
+    let (value, diagnostic, next) = scan_with_stores(
+        "\\skip42 x",
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    );
 
     assert_eq!(value, 42_000);
     assert_eq!(diagnostic, None);
@@ -471,8 +568,12 @@ fn coerces_muglue_register_width_with_incompatible_units_diagnostic() {
     stores.set_muskip(42, glue);
     let mut input = InputStack::new(MemoryInput::new("\\namedmuskip"));
 
-    let scanned = scan_dimen(&mut input, &mut stores, context())
-        .expect("TeX assumes 1mu=1pt for mixed glue units");
+    let scanned = scan_dimen(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("TeX assumes 1mu=1pt for mixed glue units");
 
     assert_eq!(scanned.value().raw(), 42_000);
     assert_eq!(
@@ -488,7 +589,10 @@ fn decimal_factor_multiplies_dimension_register_unit_with_tex_rounding() {
     stores.set_meaning(p_unit, Meaning::DimenRegister(3));
     stores.set_dimen(3, Scaled::from_raw(65_537));
 
-    let (value, diagnostic, next) = scan_with_stores("8.5\\punit x", &mut stores);
+    let (value, diagnostic, next) = scan_with_stores(
+        "8.5\\punit x",
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    );
 
     assert_eq!(value, 557_064);
     assert_eq!(diagnostic, None);
@@ -505,7 +609,10 @@ fn decimal_factor_multiplies_primitive_dimension_register_unit() {
     );
     stores.set_dimen(3, Scaled::from_raw(42_001));
 
-    let (value, diagnostic, next) = scan_with_stores("8.5\\dimen3 x", &mut stores);
+    let (value, diagnostic, next) = scan_with_stores(
+        "8.5\\dimen3 x",
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    );
 
     assert_eq!(value, 357_008);
     assert_eq!(diagnostic, None);
@@ -522,7 +629,14 @@ fn scans_integer_like_internal_values_with_units() {
     );
     stores.set_count(4, 2);
 
-    assert_eq!(scan_with_stores("\\count4pt x", &mut stores).0, 131_072);
+    assert_eq!(
+        scan_with_stores(
+            "\\count4pt x",
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .0,
+        131_072
+    );
 }
 
 #[test]
@@ -535,7 +649,14 @@ fn decimal_factor_accepts_internal_integer_as_scaled_point_unit() {
     );
     stores.set_mag(2000);
 
-    assert_eq!(scan_with_stores(".5\\mag x", &mut stores).0, 1000);
+    assert_eq!(
+        scan_with_stores(
+            ".5\\mag x",
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .0,
+        1000
+    );
 }
 
 #[test]
@@ -547,8 +668,12 @@ fn scans_hex_integer_constants_with_units() {
 fn restores_partially_matched_true_keyword_tokens() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new("1truxpt"));
-    let scanned =
-        scan_dimen(&mut input, &mut stores, context()).expect("bad true keyword recovers");
+    let scanned = scan_dimen(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("bad true keyword recovers");
 
     assert_eq!(scanned.value().raw(), Scaled::UNITY);
     assert_eq!(
@@ -558,19 +683,27 @@ fn restores_partially_matched_true_keyword_tokens() {
         })
     );
     assert_eq!(
-        input.next_token(&mut stores).expect("token should replay"),
+        input
+            .next_token(&mut tex_state::ExpansionContext::new(&mut stores))
+            .expect("token should replay"),
         Some(char_token('t', Catcode::Letter))
     );
     assert_eq!(
-        input.next_token(&mut stores).expect("token should replay"),
+        input
+            .next_token(&mut tex_state::ExpansionContext::new(&mut stores))
+            .expect("token should replay"),
         Some(char_token('r', Catcode::Letter))
     );
     assert_eq!(
-        input.next_token(&mut stores).expect("token should replay"),
+        input
+            .next_token(&mut tex_state::ExpansionContext::new(&mut stores))
+            .expect("token should replay"),
         Some(char_token('u', Catcode::Letter))
     );
     assert_eq!(
-        input.next_token(&mut stores).expect("token should replay"),
+        input
+            .next_token(&mut tex_state::ExpansionContext::new(&mut stores))
+            .expect("token should replay"),
         Some(char_token('x', Catcode::Letter))
     );
 }
@@ -579,8 +712,12 @@ fn restores_partially_matched_true_keyword_tokens() {
 fn partially_matched_keyword_pushback_preserves_source_origins() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new("1truxpt"));
-    let scanned =
-        scan_dimen(&mut input, &mut stores, context()).expect("bad true keyword recovers");
+    let scanned = scan_dimen(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("bad true keyword recovers");
 
     assert_eq!(
         scanned.diagnostic(),
@@ -589,7 +726,7 @@ fn partially_matched_keyword_pushback_preserves_source_origins() {
         })
     );
     let replayed = input
-        .next_traced_token(&mut stores)
+        .next_traced_token(&mut tex_state::ExpansionContext::new(&mut stores))
         .expect("token should replay")
         .expect("partial keyword should be unread");
     assert_eq!(replayed.token(), Some(char_token('t', Catcode::Letter)));
@@ -608,8 +745,12 @@ fn partially_matched_keyword_pushback_preserves_source_origins() {
 fn missing_number_recovers_zero_then_inserted_pt() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new("x"));
-    let scanned =
-        scan_dimen(&mut input, &mut stores, context()).expect("missing dimension recovers");
+    let scanned = scan_dimen(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("missing dimension recovers");
 
     assert_eq!(scanned.value().raw(), 0);
     assert_eq!(
@@ -622,7 +763,9 @@ fn missing_number_recovers_zero_then_inserted_pt() {
         ]
     );
     assert_eq!(
-        input.next_token(&mut stores).expect("token should replay"),
+        input
+            .next_token(&mut tex_state::ExpansionContext::new(&mut stores))
+            .expect("token should replay"),
         Some(char_token('x', Catcode::Letter))
     );
 }
@@ -654,8 +797,12 @@ fn expanded_command_recovery_keeps_replay_frontier_origin() {
     let baseline = stores.snapshot();
     let baseline_stats = stores.provenance_stats();
     let mut input = InputStack::new(MemoryInput::new("\\nobreak"));
-    let scanned =
-        scan_dimen(&mut input, &mut stores, context()).expect("missing dimension recovers");
+    let scanned = scan_dimen(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("missing dimension recovers");
 
     assert_eq!(
         scanned.diagnostics().collect::<Vec<_>>(),
@@ -671,7 +818,7 @@ fn expanded_command_recovery_keeps_replay_frontier_origin() {
         vec![body_origin, body_origin]
     );
     let replayed = input
-        .next_traced_token(&mut stores)
+        .next_traced_token(&mut tex_state::ExpansionContext::new(&mut stores))
         .expect("replay should succeed")
         .expect("rejected command should remain at the replay frontier");
     assert_eq!(replayed.token(), Some(Token::Cs(penalty.symbol())));
@@ -701,7 +848,12 @@ fn eof_missing_dimension_uses_caller_context_origin() {
         },
         origin,
     );
-    let scanned = scan_dimen(&mut input, &mut stores, caller).expect("missing dimension recovers");
+    let scanned = scan_dimen(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        caller,
+    )
+    .expect("missing dimension recovers");
     let origins = scanned.diagnostic_origins().collect::<Vec<_>>();
 
     assert_eq!(
@@ -724,12 +876,22 @@ fn verify_shadow(_: &Universe) {}
 fn font_relative_units_scan_as_nullfont_zero_by_default() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new("1em x"));
-    let em = scan_dimen(&mut input, &mut stores, context()).expect("em scans");
+    let em = scan_dimen(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("em scans");
     assert_eq!(em.value().raw(), 0);
 
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new("1ex x"));
-    let ex = scan_dimen(&mut input, &mut stores, context()).expect("ex scans");
+    let ex = scan_dimen(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("ex scans");
     assert_eq!(ex.value().raw(), 0);
 }
 
@@ -762,7 +924,14 @@ fn scans_values_through_macro_expansion() {
         MacroMeaning::new(MeaningFlags::EMPTY, params, replacement),
     );
 
-    assert_eq!(scan_with_stores("\\number x", &mut stores).0, 98_304);
+    assert_eq!(
+        scan_with_stores(
+            "\\number x",
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .0,
+        98_304
+    );
 }
 
 #[test]
@@ -789,16 +958,35 @@ fn dimexpr_matches_etex_precedence_parentheses_and_rounding() {
     }
 
     assert_eq!(
-        scan_with_stores("\\dimexpr1pt+2pt*3\\relax", &mut stores).0,
+        scan_with_stores(
+            "\\dimexpr1pt+2pt*3\\relax",
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .0,
         7 * 65_536
     );
     assert_eq!(
-        scan_with_stores("\\dimexpr(1pt+2pt)*3\\relax", &mut stores).0,
+        scan_with_stores(
+            "\\dimexpr(1pt+2pt)*3\\relax",
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .0,
         9 * 65_536
     );
-    assert_eq!(scan_with_stores("\\dimexpr5sp/2\\relax", &mut stores).0, 3);
     assert_eq!(
-        scan_with_stores("\\dimexpr-5sp/2\\relax", &mut stores).0,
+        scan_with_stores(
+            "\\dimexpr5sp/2\\relax",
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .0,
+        3
+    );
+    assert_eq!(
+        scan_with_stores(
+            "\\dimexpr-5sp/2\\relax",
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .0,
         -3
     );
 }
@@ -827,7 +1015,11 @@ fn dimexpr_coerces_a_primitive_skip_width_used_as_a_numeric_factor() {
     stores.set_skip(44, glue);
 
     assert_eq!(
-        scan_with_stores("\\dimexpr1sp*\\skip44\\relax", &mut stores).0,
+        scan_with_stores(
+            "\\dimexpr1sp*\\skip44\\relax",
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .0,
         3 * 65_536
     );
 }

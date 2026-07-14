@@ -22,7 +22,7 @@ pub(super) fn normalize_page(
     root: NodeListId,
     effects: Vec<PageEffect>,
     stores: &mut Universe,
-    expansion: &mut tex_expand::ExpansionContext<'_, MemoryInput>,
+    expansion: &mut tex_expand::ExpansionContext<'_>,
 ) -> Result<PageOverlay, ExecError> {
     let pending_effect_count = effects.len();
     let mut overlay = PageOverlay {
@@ -46,7 +46,7 @@ enum NormalizeNode {
 
 fn normalize_list(
     stores: &mut Universe,
-    expansion: &mut tex_expand::ExpansionContext<'_, MemoryInput>,
+    expansion: &mut tex_expand::ExpansionContext<'_>,
     list: NodeListId,
     suppress_deferred_streams: bool,
     depth: usize,
@@ -89,7 +89,7 @@ fn normalize_list(
 
 fn normalize_index(
     stores: &mut Universe,
-    expansion: &mut tex_expand::ExpansionContext<'_, MemoryInput>,
+    expansion: &mut tex_expand::ExpansionContext<'_>,
     list: NodeListId,
     index: usize,
     suppress_deferred_streams: bool,
@@ -189,7 +189,7 @@ fn normalize_index(
 
 fn append_whatsit_effect(
     stores: &mut Universe,
-    expansion: &mut tex_expand::ExpansionContext<'_, MemoryInput>,
+    expansion: &mut tex_expand::ExpansionContext<'_>,
     effects: &mut Vec<PageEffect>,
     whatsit: Whatsit,
     suppress_deferred_streams: bool,
@@ -291,14 +291,18 @@ fn direction_permutation(stores: &Universe, list: NodeListId) -> Option<Vec<usiz
 
 fn expand_write_tokens(
     stores: &mut Universe,
-    expansion: &mut tex_expand::ExpansionContext<'_, MemoryInput>,
+    expansion: &mut tex_expand::ExpansionContext<'_>,
     tokens: TokenListId,
 ) -> Result<String, ExecError> {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(tokens, TokenListReplayKind::Inserted);
     let mut text = String::new();
-    while let Some(token) =
-        get_x_token_with_context(&mut input, stores, expansion)?.map(tex_expand::semantic_token)
+    while let Some(token) = get_x_token_with_context(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(stores),
+        expansion,
+    )?
+    .map(tex_expand::semantic_token)
     {
         diagnostics::append_token_show_text(stores, token, &mut text);
     }

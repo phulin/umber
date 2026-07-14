@@ -1,4 +1,4 @@
-use tex_lex::{InputSource, InputStack, TokenListReplayKind};
+use tex_lex::{InputStack, TokenListReplayKind};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::node::{BoxNode, Direction, GlueKind, Node};
 use tex_state::scaled::Scaled;
@@ -19,18 +19,15 @@ use crate::vertical::{
 };
 use crate::{ExecError, Mode, ModeNest};
 
-pub(super) fn execute_paragraph_command<S>(
+pub(super) fn execute_paragraph_command(
     primitive: UnexpandablePrimitive,
     context: TracedTokenWord,
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     global: bool,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     match primitive {
         UnexpandablePrimitive::Par | UnexpandablePrimitive::EndGraf => end_paragraph(nest, stores),
         UnexpandablePrimitive::Indent => start_paragraph(nest, input, stores, true),
@@ -56,29 +53,23 @@ where
     }
 }
 
-pub(crate) fn ensure_horizontal_for_character<S>(
+pub(crate) fn ensure_horizontal_for_character(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
         start_paragraph(nest, input, stores, true)?;
     }
     Ok(())
 }
 
-fn start_paragraph<S>(
+fn start_paragraph(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
     indent: bool,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     match nest.current_mode() {
         Mode::Vertical | Mode::InternalVertical => {
             // TeX82 new_graf starts every fresh paragraph at line zero. The
@@ -468,16 +459,13 @@ fn remove_final_glue(list: &mut crate::ModeList) {
     }
 }
 
-fn assign_parshape<S>(
-    input: &mut InputStack<S>,
+fn assign_parshape(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
     global: bool,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     skip_optional_equals_x(input, stores, execution)?;
     let count = scan_i32(input, stores, execution, context)?.max(0) as usize;
     let mut lines = Vec::with_capacity(count);
@@ -491,17 +479,14 @@ where
     Ok(())
 }
 
-fn assign_penalty_array<S>(
+fn assign_penalty_array(
     primitive: UnexpandablePrimitive,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
     global: bool,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     skip_optional_equals_x(input, stores, execution)?;
     let count = scan_i32(input, stores, execution, context)?;
     let kind = match primitive {
@@ -527,32 +512,26 @@ where
     Ok(())
 }
 
-fn assign_prevdepth<S>(
+fn assign_prevdepth(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     skip_optional_equals_x(input, stores, execution)?;
     let depth = scan_scaled(input, stores, execution, context)?;
     nest.current_list_mut().set_prev_depth(depth);
     Ok(())
 }
 
-fn assign_prevgraf<S>(
+fn assign_prevgraf(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     skip_optional_equals_x(input, stores, execution)?;
     let lines = scan_i32(input, stores, execution, context)?;
     if lines < 0 {

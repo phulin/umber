@@ -12,17 +12,14 @@ use tex_state::{PrintSink, StreamSlot};
 use crate::diagnostics::print_text_with_newlinechar;
 use crate::vertical::append_node_to_current_list;
 
-pub(in crate::assignments) fn execute_stream_command<S>(
+pub(in crate::assignments) fn execute_stream_command(
     primitive: UnexpandablePrimitive,
     context: TracedTokenWord,
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     let slot = scan_stream_slot(input, stores, execution, context)?;
     match primitive {
         UnexpandablePrimitive::OpenIn => {
@@ -50,16 +47,13 @@ where
     Ok(())
 }
 
-pub(in crate::assignments) fn execute_immediate_stream_command<S>(
+pub(in crate::assignments) fn execute_immediate_stream_command(
     primitive: UnexpandablePrimitive,
     context: TracedTokenWord,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     let slot = scan_stream_slot(input, stores, execution, context)?;
     match primitive {
         UnexpandablePrimitive::OpenOut => {
@@ -81,16 +75,13 @@ pub(in crate::assignments) fn openout_target(name: String) -> String {
     path.to_string_lossy().into_owned()
 }
 
-pub(in crate::assignments) fn execute_read<S>(
+pub(in crate::assignments) fn execute_read(
     primitive: UnexpandablePrimitive,
     context: TracedTokenWord,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     let slot = scan_stream_slot(input, stores, execution, context)?;
     if !scan_optional_keyword_x(input, stores, execution, "to")? {
         return Err(ExecError::ReadNeedsTo);
@@ -116,18 +107,20 @@ where
     Ok(())
 }
 
-pub(in crate::assignments) fn execute_write<S>(
+pub(in crate::assignments) fn execute_write(
     context: TracedTokenWord,
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     let sink = scan_write_sink(input, stores, execution, context)?;
-    let scanned = scan_toks(input, stores, MeaningFlags::EMPTY, context)?;
+    let scanned = scan_toks(
+        input,
+        &mut tex_state::ExpansionContext::new(stores),
+        MeaningFlags::EMPTY,
+        context,
+    )?;
     append_node_to_current_list(
         nest,
         stores,
@@ -138,17 +131,19 @@ where
     )
 }
 
-pub(in crate::assignments) fn execute_immediate_write<S>(
+pub(in crate::assignments) fn execute_immediate_write(
     context: TracedTokenWord,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     let sink = scan_write_sink(input, stores, execution, context)?;
-    let scanned = scan_toks(input, stores, MeaningFlags::EMPTY, context)?;
+    let scanned = scan_toks(
+        input,
+        &mut tex_state::ExpansionContext::new(stores),
+        MeaningFlags::EMPTY,
+        context,
+    )?;
     let text = execution.with_nested(|expansion| {
         expand_write_tokens(stores, expansion, scanned.meaning().replacement_text())
     })?;
@@ -156,16 +151,13 @@ where
     Ok(())
 }
 
-pub(in crate::assignments) fn execute_special<S>(
+pub(in crate::assignments) fn execute_special(
     context: TracedTokenWord,
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     let tokens = scan_balanced_expanded_text(input, stores, execution, context)?;
     let payload = tex_byte_text(&tokens_text(stores, &tokens));
     append_node_to_current_list(
@@ -193,11 +185,9 @@ fn tex_byte_text(text: &str) -> Vec<u8> {
 
 fn expand_write_tokens(
     stores: &mut Universe,
-    expansion: &mut tex_expand::ExpansionContext<'_, MemoryInput>,
+    expansion: &mut tex_expand::ExpansionContext<'_>,
     tokens: TokenListId,
-) -> Result<String, ExecError>
-where
-{
+) -> Result<String, ExecError> {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(tokens, TokenListReplayKind::Inserted);
     let mut text = String::new();
@@ -210,12 +200,10 @@ where
 }
 
 fn next_write_expansion_token(
-    input: &mut InputStack<MemoryInput>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    context: &mut tex_expand::ExpansionContext<'_, MemoryInput>,
-) -> Result<Option<Token>, ExecError>
-where
-{
+    context: &mut tex_expand::ExpansionContext<'_>,
+) -> Result<Option<Token>, ExecError> {
     let Some(read) = input.next_traced_expansion_token(stores)? else {
         return Ok(None);
     };
@@ -240,8 +228,17 @@ where
             return Ok(Some(token));
         }
     }
-    tex_expand::back_input(input, stores, [traced]);
-    Ok(get_x_token_with_context(input, stores, context)?.map(tex_expand::semantic_token))
+    tex_expand::back_input(
+        input,
+        &mut tex_state::ExpansionContext::new(stores),
+        [traced],
+    );
+    Ok(get_x_token_with_context(
+        input,
+        &mut tex_state::ExpansionContext::new(stores),
+        context,
+    )?
+    .map(tex_expand::semantic_token))
 }
 
 fn scan_read_tokens(
@@ -401,15 +398,12 @@ fn scan_read_line_tokens(
     Ok(false)
 }
 
-fn scan_stream_slot<S>(
-    input: &mut InputStack<S>,
+fn scan_stream_slot(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
-) -> Result<StreamSlot, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<StreamSlot, ExecError> {
     let value = scan_i32(input, stores, execution, context)?;
     let value = if (0..tex_state::world::STREAM_SLOT_COUNT as i32).contains(&value) {
         value
@@ -427,15 +421,12 @@ where
     Ok(StreamSlot::new(value as u8))
 }
 
-fn scan_write_sink<S>(
-    input: &mut InputStack<S>,
+fn scan_write_sink(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
-) -> Result<PrintSink, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<PrintSink, ExecError> {
     let value = scan_i32(input, stores, execution, context)?;
     Ok(match value {
         0..=15 => PrintSink::Stream(StreamSlot::new(value as u8)),
@@ -444,21 +435,22 @@ where
     })
 }
 
-fn scan_file_name<S>(
-    input: &mut InputStack<S>,
+fn scan_file_name(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: &'static str,
-) -> Result<String, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<String, ExecError> {
     let mut name = String::new();
     let Some(first) = next_non_space_x(input, stores, execution)? else {
         return Err(ExecError::MissingToken { context });
     };
     append_file_name_token(&mut name, first, context)?;
-    while let Some(traced) = get_x_token_with_context(input, stores, execution)? {
+    while let Some(traced) = get_x_token_with_context(
+        input,
+        &mut tex_state::ExpansionContext::new(stores),
+        execution,
+    )? {
         match tex_expand::semantic_token(traced) {
             Token::Char {
                 cat: Catcode::Space,
@@ -504,15 +496,12 @@ fn tokenize_read_line(line: &str, stores: &mut Universe) -> Result<Vec<Token>, E
     Ok(tokens)
 }
 
-fn scan_balanced_expanded_text<S>(
-    input: &mut InputStack<S>,
+fn scan_balanced_expanded_text(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
-) -> Result<Vec<Token>, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<Vec<Token>, ExecError> {
     let open = next_non_space_x(input, stores, execution)?
         .ok_or(ExecError::MissingTracedToken { context })?;
     if !is_begin_group(open) {
@@ -520,8 +509,12 @@ where
     }
     let mut depth = 1usize;
     let mut tokens = Vec::new();
-    while let Some(token) =
-        get_x_token_with_context(input, stores, execution)?.map(tex_expand::semantic_token)
+    while let Some(token) = get_x_token_with_context(
+        input,
+        &mut tex_state::ExpansionContext::new(stores),
+        execution,
+    )?
+    .map(tex_expand::semantic_token)
     {
         if is_begin_group(token) {
             depth += 1;

@@ -1,4 +1,4 @@
-use tex_lex::{InputSource, InputStack};
+use tex_lex::InputStack;
 use tex_state::Universe;
 use tex_state::env::banks::IntParam;
 use tex_state::math::{MathChar, MathField, MathNoad, NoadClass, NoadKind};
@@ -10,15 +10,12 @@ use crate::{ExecError, ModeNest, push_tokens};
 use super::scan_math_field;
 use crate::math::support::report_math_error;
 
-pub(crate) fn append_mathcode_char<S>(
+pub(crate) fn append_mathcode_char(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
     ch: char,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     let value = stores.mathcode(ch);
     if value == 0x8000 {
         redispatch_active_char(input, stores, ch);
@@ -120,10 +117,7 @@ fn resolve_math_class_family(
     )
 }
 
-pub(crate) fn redispatch_active_char<S>(input: &mut InputStack<S>, stores: &mut Universe, ch: char)
-where
-    S: InputSource,
-{
+pub(crate) fn redispatch_active_char(input: &mut InputStack, stores: &mut Universe, ch: char) {
     let symbol = stores.intern_active_character(ch);
     push_tokens(input, stores, [Token::Cs(symbol.symbol())]);
 }
@@ -133,16 +127,13 @@ pub(crate) fn append_noad(nest: &mut ModeNest, kind: NoadKind, nucleus: MathFiel
         .push(Node::MathNoad(MathNoad::new(kind, nucleus)));
 }
 
-pub(crate) fn attach_script<S>(
+pub(crate) fn attach_script(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     superscript: bool,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     let field = scan_math_field(nest, input, stores, execution)?;
     let Some(mut node) = nest.current_list_mut().pop_last_node() else {
         push_scripted_empty_noad(nest, field, superscript);

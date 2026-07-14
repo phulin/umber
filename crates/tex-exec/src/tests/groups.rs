@@ -139,9 +139,12 @@ fn group_mismatch_errors_use_tex_primary_text() {
     install_unexpandable_primitives(&mut stores);
     stores.enter_group_with_kind(tex_state::GroupKind::SemiSimple);
     let mut input = InputStack::new(MemoryInput::new("}"));
-    let token = tex_expand::get_x_token(&mut input, &mut stores)
-        .expect("right brace tokenizes")
-        .expect("right brace exists");
+    let token = tex_expand::get_x_token(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    )
+    .expect("right brace tokenizes")
+    .expect("right brace exists");
     let err = crate::dispatch::dispatch_delivered_token(
         &mut ModeNest::new(),
         token,
@@ -165,9 +168,12 @@ fn group_mismatch_errors_use_tex_primary_text() {
     install_unexpandable_primitives(&mut stores);
     stores.enter_group_with_kind(tex_state::GroupKind::Simple);
     let mut input = InputStack::new(MemoryInput::new("\\endgroup"));
-    let token = tex_expand::get_x_token(&mut input, &mut stores)
-        .expect("endgroup tokenizes")
-        .expect("endgroup exists");
+    let token = tex_expand::get_x_token(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    )
+    .expect("endgroup tokenizes")
+    .expect("endgroup exists");
     let err = crate::dispatch::dispatch_delivered_token(
         &mut ModeNest::new(),
         token,

@@ -11,12 +11,12 @@ fn char_token(ch: char, cat: Catcode) -> Token {
     Token::Char { ch, cat }
 }
 
-fn cs_token(stores: &mut impl ExpansionState, name: &str) -> Token {
+fn cs_token(stores: &mut tex_state::ExpansionContext<'_>, name: &str) -> Token {
     Token::Cs(stores.intern(name).symbol())
 }
 
 fn macro_meaning(
-    stores: &mut impl ExpansionState,
+    stores: &mut tex_state::ExpansionContext<'_>,
     flags: MeaningFlags,
     params: &[Token],
 ) -> MacroMeaning {
@@ -26,7 +26,7 @@ fn macro_meaning(
 }
 
 fn match_from_list(
-    stores: &mut impl ExpansionState,
+    stores: &mut tex_state::ExpansionContext<'_>,
     meaning: MacroMeaning,
     input_tokens: &[Token],
 ) -> Result<Vec<Vec<Token>>, MacroCallError> {
@@ -50,7 +50,7 @@ fn match_from_list(
 }
 
 fn match_traced_from_list(
-    stores: &mut impl ExpansionState,
+    stores: &mut tex_state::ExpansionContext<'_>,
     meaning: MacroMeaning,
     input_tokens: &[Token],
     input_origins: OriginListId,
@@ -70,17 +70,21 @@ fn match_traced_from_list(
         .collect())
 }
 
-fn source_origin(stores: &mut impl ExpansionState, line: u32, column: u32) -> OriginId {
+fn source_origin(stores: &mut tex_state::ExpansionContext<'_>, line: u32, column: u32) -> OriginId {
     stores.source_origin(tex_state::SourceId::new(1), u64::from(column), line, column)
 }
 
 #[test]
 fn matches_undelimited_single_token_argument_after_optional_spaces() {
     let mut stores = Universe::new();
-    let meaning = macro_meaning(&mut stores, MeaningFlags::EMPTY, &[Token::param(1)]);
+    let meaning = macro_meaning(
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        MeaningFlags::EMPTY,
+        &[Token::param(1)],
+    );
 
     let args = match_from_list(
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         meaning,
         &[
             char_token(' ', Catcode::Space),
@@ -95,10 +99,14 @@ fn matches_undelimited_single_token_argument_after_optional_spaces() {
 #[test]
 fn matches_undelimited_balanced_group_without_outer_braces() {
     let mut stores = Universe::new();
-    let meaning = macro_meaning(&mut stores, MeaningFlags::EMPTY, &[Token::param(1)]);
+    let meaning = macro_meaning(
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        MeaningFlags::EMPTY,
+        &[Token::param(1)],
+    );
 
     let args = match_from_list(
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         meaning,
         &[
             char_token('{', Catcode::BeginGroup),
@@ -125,13 +133,17 @@ fn matches_undelimited_balanced_group_without_outer_braces() {
 #[test]
 fn undelimited_argument_freezes_call_site_origins() {
     let mut stores = Universe::new();
-    let meaning = macro_meaning(&mut stores, MeaningFlags::EMPTY, &[Token::param(1)]);
-    let skipped_space = source_origin(&mut stores, 1, 1);
-    let argument_origin = source_origin(&mut stores, 1, 2);
+    let meaning = macro_meaning(
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        MeaningFlags::EMPTY,
+        &[Token::param(1)],
+    );
+    let skipped_space = source_origin(&mut tex_state::ExpansionContext::new(&mut stores), 1, 1);
+    let argument_origin = source_origin(&mut tex_state::ExpansionContext::new(&mut stores), 1, 2);
     let input_origins = stores.allocate_origin_list(&[skipped_space, argument_origin]);
 
     let args = match_traced_from_list(
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         meaning,
         &[
             char_token(' ', Catcode::Space),
@@ -155,7 +167,7 @@ fn undelimited_argument_freezes_call_site_origins() {
 fn matches_delimited_argument_runs() {
     let mut stores = Universe::new();
     let meaning = macro_meaning(
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         MeaningFlags::EMPTY,
         &[
             Token::param(1),
@@ -167,7 +179,7 @@ fn matches_delimited_argument_runs() {
     );
 
     let args = match_from_list(
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         meaning,
         &[
             char_token('x', Catcode::Letter),
@@ -192,16 +204,16 @@ fn matches_delimited_argument_runs() {
 fn delimited_argument_freezes_only_argument_origins() {
     let mut stores = Universe::new();
     let meaning = macro_meaning(
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         MeaningFlags::EMPTY,
         &[Token::param(1), char_token(',', Catcode::Other)],
     );
-    let argument_origin = source_origin(&mut stores, 2, 1);
-    let delimiter_origin = source_origin(&mut stores, 2, 2);
+    let argument_origin = source_origin(&mut tex_state::ExpansionContext::new(&mut stores), 2, 1);
+    let delimiter_origin = source_origin(&mut tex_state::ExpansionContext::new(&mut stores), 2, 2);
     let input_origins = stores.allocate_origin_list(&[argument_origin, delimiter_origin]);
 
     let args = match_traced_from_list(
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         meaning,
         &[
             char_token('x', Catcode::Letter),
@@ -225,7 +237,7 @@ fn delimited_argument_freezes_only_argument_origins() {
 fn delimited_argument_matching_handles_overlapping_prefixes() {
     let mut stores = Universe::new();
     let meaning = macro_meaning(
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         MeaningFlags::EMPTY,
         &[
             Token::param(1),
@@ -235,7 +247,7 @@ fn delimited_argument_matching_handles_overlapping_prefixes() {
     );
 
     let args = match_from_list(
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         meaning,
         &[
             char_token('a', Catcode::Letter),
@@ -252,7 +264,7 @@ fn delimited_argument_matching_handles_overlapping_prefixes() {
 fn delimited_argument_preserves_recovered_prefix_origins() {
     let mut stores = Universe::new();
     let meaning = macro_meaning(
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         MeaningFlags::EMPTY,
         &[
             Token::param(1),
@@ -260,14 +272,16 @@ fn delimited_argument_preserves_recovered_prefix_origins() {
             char_token('b', Catcode::Letter),
         ],
     );
-    let recovered_origin = source_origin(&mut stores, 3, 1);
-    let delimiter_a_origin = source_origin(&mut stores, 3, 2);
-    let delimiter_b_origin = source_origin(&mut stores, 3, 3);
+    let recovered_origin = source_origin(&mut tex_state::ExpansionContext::new(&mut stores), 3, 1);
+    let delimiter_a_origin =
+        source_origin(&mut tex_state::ExpansionContext::new(&mut stores), 3, 2);
+    let delimiter_b_origin =
+        source_origin(&mut tex_state::ExpansionContext::new(&mut stores), 3, 3);
     let input_origins =
         stores.allocate_origin_list(&[recovered_origin, delimiter_a_origin, delimiter_b_origin]);
 
     let args = match_traced_from_list(
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         meaning,
         &[
             char_token('a', Catcode::Letter),
@@ -292,13 +306,13 @@ fn delimited_argument_preserves_recovered_prefix_origins() {
 fn delimiter_inside_nested_braces_does_not_end_argument() {
     let mut stores = Universe::new();
     let meaning = macro_meaning(
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         MeaningFlags::EMPTY,
         &[Token::param(1), char_token(',', Catcode::Other)],
     );
 
     let args = match_from_list(
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         meaning,
         &[
             char_token('{', Catcode::BeginGroup),
@@ -316,13 +330,13 @@ fn delimiter_inside_nested_braces_does_not_end_argument() {
 fn delimited_argument_strips_one_outer_balanced_group() {
     let mut stores = Universe::new();
     let meaning = macro_meaning(
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         MeaningFlags::EMPTY,
         &[Token::param(1), char_token('x', Catcode::Letter)],
     );
 
     let args = match_from_list(
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         meaning,
         &[
             char_token('{', Catcode::BeginGroup),
@@ -349,13 +363,17 @@ fn delimited_argument_strips_one_outer_balanced_group() {
 fn leading_parameter_text_mismatch_reports_tex_message() {
     let mut stores = Universe::new();
     let meaning = macro_meaning(
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         MeaningFlags::EMPTY,
         &[char_token('a', Catcode::Letter), Token::param(1)],
     );
 
-    let err = match_from_list(&mut stores, meaning, &[char_token('b', Catcode::Letter)])
-        .expect_err("call should not match");
+    let err = match_from_list(
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        meaning,
+        &[char_token('b', Catcode::Letter)],
+    )
+    .expect_err("call should not match");
 
     assert!(matches!(
         err,
@@ -368,10 +386,18 @@ fn leading_parameter_text_mismatch_reports_tex_message() {
 fn non_long_macro_rejects_paragraph_token_in_argument() {
     let mut stores = Universe::new();
     let par = stores.intern("par");
-    let meaning = macro_meaning(&mut stores, MeaningFlags::EMPTY, &[Token::param(1)]);
+    let meaning = macro_meaning(
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        MeaningFlags::EMPTY,
+        &[Token::param(1)],
+    );
 
-    let err = match_from_list(&mut stores, meaning, &[Token::Cs(par.symbol())])
-        .expect_err("non-long macro should reject par");
+    let err = match_from_list(
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        meaning,
+        &[Token::Cs(par.symbol())],
+    )
+    .expect_err("non-long macro should reject par");
 
     assert!(matches!(
         err,
@@ -384,10 +410,18 @@ fn non_long_macro_rejects_paragraph_token_in_argument() {
 fn long_macro_accepts_paragraph_token_in_argument() {
     let mut stores = Universe::new();
     let par = stores.intern("par");
-    let meaning = macro_meaning(&mut stores, MeaningFlags::LONG, &[Token::param(1)]);
+    let meaning = macro_meaning(
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        MeaningFlags::LONG,
+        &[Token::param(1)],
+    );
 
-    let args = match_from_list(&mut stores, meaning, &[Token::Cs(par.symbol())])
-        .expect("long macro should accept par");
+    let args = match_from_list(
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        meaning,
+        &[Token::Cs(par.symbol())],
+    )
+    .expect("long macro should accept par");
 
     assert_eq!(args, vec![vec![Token::Cs(par.symbol())]]);
 }
@@ -399,13 +433,13 @@ fn non_long_delimited_argument_allows_par_from_failed_delimiter_prefix() {
     let bang = char_token('!', Catcode::Other);
     let question = char_token('?', Catcode::Other);
     let meaning = macro_meaning(
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         MeaningFlags::EMPTY,
         &[Token::param(1), Token::Cs(par.symbol()), bang],
     );
 
     let args = match_from_list(
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         meaning,
         &[
             Token::Cs(par.symbol()),
@@ -424,7 +458,7 @@ fn non_long_delimited_argument_rejects_par_that_only_mismatches_delimiter() {
     let mut stores = Universe::new();
     let par = stores.intern("par");
     let meaning = macro_meaning(
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         MeaningFlags::EMPTY,
         &[
             Token::param(1),
@@ -434,7 +468,7 @@ fn non_long_delimited_argument_rejects_par_that_only_mismatches_delimiter() {
     );
 
     let err = match_from_list(
-        &mut stores,
+        &mut tex_state::ExpansionContext::new(&mut stores),
         meaning,
         &[char_token('a', Catcode::Letter), Token::Cs(par.symbol())],
     )
@@ -453,10 +487,18 @@ fn rejects_outer_control_sequence_while_scanning_argument() {
     let params = stores.intern_token_list(&[]);
     let body = stores.intern_token_list(&[]);
     stores.set_macro_meaning(outer, MacroMeaning::new(MeaningFlags::OUTER, params, body));
-    let meaning = macro_meaning(&mut stores, MeaningFlags::EMPTY, &[Token::param(1)]);
+    let meaning = macro_meaning(
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        MeaningFlags::EMPTY,
+        &[Token::param(1)],
+    );
 
-    let err = match_from_list(&mut stores, meaning, &[Token::Cs(outer.symbol())])
-        .expect_err("outer token should be rejected");
+    let err = match_from_list(
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        meaning,
+        &[Token::Cs(outer.symbol())],
+    )
+    .expect_err("outer token should be rejected");
 
     assert!(matches!(
         err,

@@ -980,7 +980,7 @@ fn source_workloads() -> Vec<(&'static str, String, bool)> {
 
 fn drain_traced_source(
     stores: &mut Universe,
-    input: &mut InputStack<MemoryInput>,
+    input: &mut InputStack,
 ) -> (usize, usize, ProvenanceStats, ProvenanceStats) {
     let baseline = stores.provenance_stats();
     let mut count = 0;
@@ -1002,7 +1002,7 @@ fn drain_traced_source(
     )
 }
 
-fn drain_traced_source_timed(stores: &mut Universe, input: &mut InputStack<MemoryInput>) -> usize {
+fn drain_traced_source_timed(stores: &mut Universe, input: &mut InputStack) -> usize {
     let mut count = 0;
     while let Some(token) = input
         .next_traced_token(stores)
@@ -1084,7 +1084,7 @@ fn source_universe(needs_control_sequences: bool) -> Universe {
     stores
 }
 
-fn macro_heavy_case() -> (Universe, InputStack<MemoryInput>, ProvenanceStats) {
+fn macro_heavy_case() -> (Universe, InputStack, ProvenanceStats) {
     let mut stores = Universe::new();
     let macro_cs = stores.intern("hotmacro");
     let params = stores.intern_token_list(&[]);
@@ -1110,7 +1110,7 @@ fn macro_heavy_case() -> (Universe, InputStack<MemoryInput>, ProvenanceStats) {
     (stores, input, baseline)
 }
 
-fn scanner_heavy_case() -> (Universe, InputStack<MemoryInput>, ProvenanceStats) {
+fn scanner_heavy_case() -> (Universe, InputStack, ProvenanceStats) {
     let mut stores = Universe::new();
     install_expandable_primitives(&mut stores);
     let number = stores.symbol("number").expect("number primitive");
@@ -1125,7 +1125,7 @@ fn scanner_heavy_case() -> (Universe, InputStack<MemoryInput>, ProvenanceStats) 
     traced_token_list_input(stores, tokens)
 }
 
-fn generated_run_case() -> (Universe, InputStack<MemoryInput>, ProvenanceStats) {
+fn generated_run_case() -> (Universe, InputStack, ProvenanceStats) {
     let mut stores = Universe::new();
     install_expandable_primitives(&mut stores);
     let roman = stores
@@ -1145,7 +1145,7 @@ fn generated_run_case() -> (Universe, InputStack<MemoryInput>, ProvenanceStats) 
 fn traced_token_list_input(
     mut stores: Universe,
     tokens: Vec<Token>,
-) -> (Universe, InputStack<MemoryInput>, ProvenanceStats) {
+) -> (Universe, InputStack, ProvenanceStats) {
     let token_list = stores.intern_token_list(&tokens);
     let origin = stores.source_origin(SourceId::new(2), 0, 1, 1);
     let origins = stores.allocate_repeated_origin_list(origin, tokens.len());
@@ -1155,9 +1155,12 @@ fn traced_token_list_input(
     (stores, input, baseline)
 }
 
-fn drain_expansion(stores: &mut Universe, input: &mut InputStack<MemoryInput>) -> usize {
+fn drain_expansion(stores: &mut Universe, input: &mut InputStack) -> usize {
+    let mut expansion_stores = tex_state::ExpansionContext::new(stores);
     let mut count = 0;
-    while let Some(token) = get_x_token(input, stores).expect("expansion should succeed") {
+    while let Some(token) =
+        get_x_token(input, &mut expansion_stores).expect("expansion should succeed")
+    {
         black_box(token);
         count += 1;
     }

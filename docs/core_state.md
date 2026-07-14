@@ -1038,8 +1038,10 @@ The type system is the write barrier's bodyguard. The rules:
 - Journal lives inside `Env` (and its siblings inside `Universe`), so
   mutating cells and mutating history require the same `&mut` — the borrow
   checker makes bypass unrepresentable in safe code.
-- Gullet and lexer code use the public `ExpansionState` capability instead of
-  broad `&mut Universe`. The capability includes expansion-safe reads,
+- Gullet scanners use one concrete `tex_state::ExpansionContext` facade over
+  `Universe` instead of being generic over `ExpansionState` or accepting broad
+  `&mut Universe`. The facade implements the public `ExpansionState`
+  capability, which includes expansion-safe reads,
   immutable content creation, interning, and magnification preparation, but
   omits input-file reads, input-open context construction, and Env/register/
   code-table/group/snapshot/font-assignment setters. Only the top-level
@@ -1050,7 +1052,9 @@ The type system is the write barrier's bodyguard. The rules:
   The concrete expansion context holds an object-safe `InputResolver`. Only
   top-level `\input` dispatch invokes it, passing the separate `InputReadState`
   capability through `InputOpenContext`, which exposes only content-addressed
-  input reads. Scanner recursion carries no resolver type parameter.
+  input reads. The lexer input stack likewise erases `InputSource` at each
+  source frame and pays dynamic dispatch only for physical-line refill;
+  scanner recursion carries neither a resolver nor a source type parameter.
 
 ### 10.3 Unforgeable handles
 

@@ -1,5 +1,5 @@
 use tex_expand::{DriverExpansionMode, ExpandError, get_x_token_with_context, scan_dimen};
-use tex_lex::{InputSource, InputStack};
+use tex_lex::InputStack;
 use tex_state::math::{
     FractionThickness, LimitType, MathChoice, MathField, MathFraction, MathNoad, NoadClass,
     NoadKind,
@@ -28,15 +28,12 @@ pub(crate) use chars::{
     math_char_from_mathcode, redispatch_active_char,
 };
 
-pub(super) fn scan_math_field<S>(
+pub(super) fn scan_math_field(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<MathField, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<MathField, ExecError> {
     let traced =
         next_non_space_traced_x(input, stores, execution)?.ok_or(ExecError::MissingToken {
             context: "math field",
@@ -129,15 +126,12 @@ where
     }
 }
 
-pub(super) fn scan_math_group_after_open<S>(
+pub(super) fn scan_math_group_after_open(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<tex_state::ids::NodeListId, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<tex_state::ids::NodeListId, ExecError> {
     let mut transaction = crate::transaction::ExecutionTransaction::begin(nest, stores);
     let result = {
         let (nest, stores) = transaction.parts();
@@ -149,23 +143,24 @@ where
     result
 }
 
-fn scan_math_group_after_open_inner<S>(
+fn scan_math_group_after_open_inner(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<tex_state::ids::NodeListId, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<tex_state::ids::NodeListId, ExecError> {
     stores.enter_group_with_kind(GroupKind::Math);
     nest.push(Mode::Math);
     loop {
-        sync_engine_state::<S>(execution, nest, stores);
-        let token =
-            get_x_token_with_context(input, stores, execution)?.ok_or(ExecError::MissingToken {
-                context: "math group closing brace",
-            })?;
+        sync_engine_state(execution, nest, stores);
+        let token = get_x_token_with_context(
+            input,
+            &mut tex_state::ExpansionContext::new(stores),
+            execution,
+        )?
+        .ok_or(ExecError::MissingToken {
+            context: "math group closing brace",
+        })?;
         let semantic = tex_expand::semantic_token(token);
         if assignments::has_catcode_meaning(stores, semantic, Catcode::EndGroup) {
             crate::leave_group_with_origin(input, stores, GroupKind::Math, token.origin())?;
@@ -192,28 +187,22 @@ where
     }
 }
 
-pub(super) fn scan_math_field_group_after_open<S>(
+pub(super) fn scan_math_field_group_after_open(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<MathField, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<MathField, ExecError> {
     let list = scan_math_group_after_open(nest, input, stores, execution)?;
     Ok(simplify_math_group_field(stores, list))
 }
 
-pub(super) fn scan_math_atom_group_after_open<S>(
+pub(super) fn scan_math_atom_group_after_open(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<MathNoad, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<MathNoad, ExecError> {
     let list = scan_math_group_after_open(nest, input, stores, execution)?;
     let nodes = stores.nodes(list);
     if nodes.len() == 1
@@ -247,53 +236,44 @@ fn simplify_math_group_field(stores: &Universe, list: tex_state::ids::NodeListId
     }
 }
 
-pub(super) fn start_left_group<S>(
+pub(super) fn start_left_group(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     let delimiter = scan_delimiter_token(input, stores, execution)?;
     nest.push(Mode::Math);
     nest.current_list_mut().push(Node::MathNoad(MathNoad::new(
         NoadKind::LeftDelimiter { delimiter },
         MathField::Empty,
     )));
-    sync_engine_state::<S>(execution, nest, stores);
+    sync_engine_state(execution, nest, stores);
     Ok(())
 }
 
-pub(super) fn finish_left_group<S>(
+pub(super) fn finish_left_group(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     let delimiter = scan_delimiter_token(input, stores, execution)?;
     if !current_list_is_left_group(nest, stores) {
         report_math_error(stores, "Extra \\right");
         return Ok(());
     }
     close_left_group(nest, stores, delimiter)?;
-    sync_engine_state::<S>(execution, nest, stores);
+    sync_engine_state(execution, nest, stores);
     Ok(())
 }
 
-pub(super) fn append_middle_delimiter<S>(
+pub(super) fn append_middle_delimiter(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     let delimiter = scan_delimiter_token(input, stores, execution)?;
     if !current_list_is_left_group(nest, stores) {
         report_math_error(stores, "Extra \\middle");
@@ -408,17 +388,14 @@ pub(super) fn finish_current_math_list(
     stores.freeze_node_list(&nodes)
 }
 
-pub(super) fn start_fraction<S>(
+pub(super) fn start_fraction(
     primitive: UnexpandablePrimitive,
     context: TracedTokenWord,
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     if nest.current_list().incomplete_fraction().is_some() {
         report_math_error(stores, "Ambiguous; you need another { and }");
         return Ok(());
@@ -478,15 +455,12 @@ pub(super) fn apply_limit_switch(
     }
 }
 
-pub(super) fn append_math_choice<S>(
+pub(super) fn append_math_choice(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
     let display = scan_required_math_group(nest, input, stores, execution, "\\mathchoice")?;
     let text = scan_required_math_group(nest, input, stores, execution, "\\mathchoice")?;
     let script = scan_required_math_group(nest, input, stores, execution, "\\mathchoice")?;
@@ -500,16 +474,13 @@ where
     Ok(())
 }
 
-fn scan_required_math_group<S>(
+fn scan_required_math_group(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: &'static str,
-) -> Result<tex_state::ids::NodeListId, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<tex_state::ids::NodeListId, ExecError> {
     let Some(opener) = next_non_space_x(input, stores, execution)? else {
         stores.world_mut().write_text(
             tex_state::PrintSink::TerminalAndLog,
@@ -528,15 +499,12 @@ where
     scan_math_group_after_open(nest, input, stores, execution)
 }
 
-pub(super) fn scan_vcenter_field<S>(
+pub(super) fn scan_vcenter_field(
     context: TracedTokenWord,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<MathField, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<MathField, ExecError> {
     let spec = assignments::scan_pack_spec(input, stores, execution, context)?;
     let opener = assignments::next_non_space_x(input, stores, execution)?.ok_or(
         ExecError::MissingToken {
@@ -572,15 +540,12 @@ where
     Ok(MathField::SubBox(boxed))
 }
 
-pub(super) fn scan_math_char_code<S>(
-    input: &mut InputStack<S>,
+pub(super) fn scan_math_char_code(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
-) -> Result<u32, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<u32, ExecError> {
     let value = assignments::scan_i32(input, stores, execution, context)?;
     if !(0..=32_767).contains(&value) {
         return Err(ExecError::InvalidCode {
@@ -591,15 +556,12 @@ where
     Ok(value as u32)
 }
 
-pub(super) fn scan_delimiter_code<S>(
-    input: &mut InputStack<S>,
+pub(super) fn scan_delimiter_code(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
-) -> Result<u32, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<u32, ExecError> {
     let value = assignments::scan_i32(input, stores, execution, context)?;
     if !(0..=0x07ff_ffff).contains(&value) {
         return Err(ExecError::InvalidCode {
@@ -610,16 +572,18 @@ where
     Ok(value as u32)
 }
 
-fn scan_delimiter_token<S>(
-    input: &mut InputStack<S>,
+fn scan_delimiter_token(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<u32, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<u32, ExecError> {
     loop {
-        let Some(traced) = get_x_token_with_context(input, stores, execution)? else {
+        let Some(traced) = get_x_token_with_context(
+            input,
+            &mut tex_state::ExpansionContext::new(stores),
+            execution,
+        )?
+        else {
             report_math_error(stores, "Missing delimiter (. inserted)");
             return Ok(0);
         };
@@ -659,18 +623,15 @@ where
     }
 }
 
-pub(super) fn scan_mu_dimen<S>(
-    input: &mut InputStack<S>,
+pub(super) fn scan_mu_dimen(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
-) -> Result<Scaled, ExecError>
-where
-    S: InputSource,
-{
+) -> Result<Scaled, ExecError> {
     let scanned = scan_dimen::scan_dimen_with_mode_and_context(
         input,
-        stores,
+        &mut tex_state::ExpansionContext::new(stores),
         execution,
         &mut DriverExpansionMode,
         scan_dimen::ScanDimenOptions::STANDARD.requiring_mu_unit(),
@@ -680,18 +641,18 @@ where
     Ok(scanned.value())
 }
 
-fn next_non_space_x<S>(
-    input: &mut InputStack<S>,
+fn next_non_space_x(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<Option<Token>, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<Option<Token>, ExecError> {
     loop {
-        let Some(token) =
-            get_x_token_with_context(input, stores, execution)?.map(tex_expand::semantic_token)
-        else {
+        let Some(token) = get_x_token_with_context(
+            input,
+            &mut tex_state::ExpansionContext::new(stores),
+            execution,
+        )?
+        .map(tex_expand::semantic_token) else {
             return Ok(None);
         };
         if !assignments::is_space(token) {
@@ -700,16 +661,18 @@ where
     }
 }
 
-fn next_non_space_traced_x<S>(
-    input: &mut InputStack<S>,
+fn next_non_space_traced_x(
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
-) -> Result<Option<TracedTokenWord>, ExecError>
-where
-    S: InputSource,
-{
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<Option<TracedTokenWord>, ExecError> {
     loop {
-        let Some(traced) = get_x_token_with_context(input, stores, execution)? else {
+        let Some(traced) = get_x_token_with_context(
+            input,
+            &mut tex_state::ExpansionContext::new(stores),
+            execution,
+        )?
+        else {
             return Ok(None);
         };
         if !assignments::is_space(tex_expand::semantic_token(traced)) {

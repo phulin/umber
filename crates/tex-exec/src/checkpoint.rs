@@ -108,11 +108,11 @@ impl<'a, C: CheckpointSink> EngineSession<'a, C> {
         }
     }
 
-    pub(crate) fn publish<S: InputSource>(
+    pub(crate) fn publish(
         &mut self,
         boundary: EngineBoundary,
         nest: &ModeNest,
-        input: &mut InputStack<S>,
+        input: &mut InputStack,
         universe: &mut Universe,
     ) {
         if !self.sink.wants_checkpoint(boundary) {
@@ -162,16 +162,16 @@ impl<E: std::error::Error + 'static> std::error::Error for EngineRestoreError<E>
 
 impl crate::Executor {
     /// Restores every engine-owned root from a published checkpoint.
-    pub fn restore_checkpoint<S, E, F>(
+    pub fn restore_checkpoint<E, F, T>(
         &mut self,
-        input: &mut InputStack<S>,
+        input: &mut InputStack,
         universe: &mut Universe,
         checkpoint: &EngineCheckpoint,
         reopen_source: F,
     ) -> Result<(), EngineRestoreError<E>>
     where
-        S: InputSource,
-        F: FnMut(SourceId, Option<InputRecordId>, &tex_state::SourceFrameSummary) -> Result<S, E>,
+        F: FnMut(SourceId, Option<InputRecordId>, &tex_state::SourceFrameSummary) -> Result<T, E>,
+        T: InputSource + 'static,
     {
         let restored_input = InputStack::from_summary(&checkpoint.input, reopen_source)
             .map_err(EngineRestoreError::Input)?;

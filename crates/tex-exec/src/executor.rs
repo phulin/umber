@@ -3,7 +3,7 @@ use std::ops::{Deref, DerefMut};
 use std::path::Path;
 
 use tex_expand::{EngineStateSnapshot, InputResolver, ReadRecorder, get_x_token_with_context};
-use tex_lex::{InputSource, InputStack};
+use tex_lex::InputStack;
 use tex_out::dvi::DviPagePlan;
 use tex_state::node::Node;
 use tex_state::token::TracedTokenWord;
@@ -31,12 +31,12 @@ pub trait FontResolver {
 /// Expansion scanners see this only through its concrete dereference to
 /// [`tex_expand::ExpansionContext`]; font resolution remains an execution-only
 /// operation and is invoked solely by `\font` assignment.
-pub struct ExecutionContext<'a, S> {
-    expansion: tex_expand::ExpansionContext<'a, S>,
+pub struct ExecutionContext<'a> {
+    expansion: tex_expand::ExpansionContext<'a>,
     font_resolver: Option<&'a mut dyn FontResolver>,
 }
 
-impl<'a, S> ExecutionContext<'a, S> {
+impl<'a> ExecutionContext<'a> {
     #[must_use]
     pub fn new(job_name: &'a str) -> Self {
         Self {
@@ -48,7 +48,7 @@ impl<'a, S> ExecutionContext<'a, S> {
     #[must_use]
     pub fn with_resolvers(
         job_name: &'a str,
-        input_resolver: &'a mut dyn InputResolver<S>,
+        input_resolver: &'a mut dyn InputResolver,
         font_resolver: &'a mut dyn FontResolver,
     ) -> Self {
         Self {
@@ -79,15 +79,15 @@ impl<'a, S> ExecutionContext<'a, S> {
     }
 }
 
-impl<'a, S> Deref for ExecutionContext<'a, S> {
-    type Target = tex_expand::ExpansionContext<'a, S>;
+impl<'a> Deref for ExecutionContext<'a> {
+    type Target = tex_expand::ExpansionContext<'a>;
 
     fn deref(&self) -> &Self::Target {
         &self.expansion
     }
 }
 
-impl<S> DerefMut for ExecutionContext<'_, S> {
+impl DerefMut for ExecutionContext<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.expansion
     }
@@ -127,42 +127,37 @@ impl Executor {
     }
 
     /// Runs main control until the gullet has no more delivered tokens.
-    pub fn run<S>(
+    pub fn run(
         &mut self,
-        input: &mut InputStack<S>,
+        input: &mut InputStack,
         stores: &mut Universe,
     ) -> Result<ExecutionStats, ExecError>
-    where
-        S: InputSource,
-    {
+where {
         let mut context = ExecutionContext::new("texput");
         self.run_with_context(input, stores, &mut context)
     }
 
     /// Runs main control using driver-provided execution context.
-    pub fn run_with_context<S>(
+    pub fn run_with_context(
         &mut self,
-        input: &mut InputStack<S>,
+        input: &mut InputStack,
         stores: &mut Universe,
-        execution: &mut crate::ExecutionContext<'_, S>,
+        execution: &mut crate::ExecutionContext<'_>,
     ) -> Result<ExecutionStats, ExecError>
-    where
-        S: InputSource,
-    {
+where {
         let mut checkpoints = NoopCheckpointSink;
         self.run_with_context_and_checkpoints(input, stores, execution, &mut checkpoints)
     }
 
     /// Runs main control and publishes restartable state at named safe boundaries.
-    pub fn run_with_context_and_checkpoints<S, C>(
+    pub fn run_with_context_and_checkpoints<C>(
         &mut self,
-        input: &mut InputStack<S>,
+        input: &mut InputStack,
         stores: &mut Universe,
-        execution: &mut crate::ExecutionContext<'_, S>,
+        execution: &mut crate::ExecutionContext<'_>,
         checkpoints: &mut C,
     ) -> Result<ExecutionStats, ExecError>
     where
-        S: InputSource,
         C: CheckpointSink,
     {
         input.ensure_source_ids_at_least(stores.input_summary().next_source_id());
@@ -249,16 +244,15 @@ impl Executor {
     }
 }
 
-fn run_outer_main_control_until<S, C>(
+fn run_outer_main_control_until<C>(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     stats: &mut ExecutionStats,
     session: &mut EngineSession<'_, C>,
 ) -> Result<MainControlExit, ExecError>
 where
-    S: InputSource,
     C: CheckpointSink,
 {
     let result = run_main_control_until_observing(
@@ -295,17 +289,16 @@ pub(crate) enum MainControlExit {
     NotConsumed { token: TracedTokenWord },
 }
 
-pub(crate) fn run_main_control_until<S, F>(
+pub(crate) fn run_main_control_until<F>(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     stats: &mut ExecutionStats,
     should_stop: F,
 ) -> Result<MainControlExit, ExecError>
 where
-    S: InputSource,
-    F: FnMut(&mut InputStack<S>, &Universe) -> bool,
+    F: FnMut(&mut InputStack, &Universe) -> bool,
 {
     let result = run_main_control_until_observing(
         nest,
@@ -321,20 +314,19 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_main_control_until_observing<S, F, O>(
+fn run_main_control_until_observing<F, O>(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+    input: &mut InputStack,
     stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_, S>,
+    execution: &mut crate::ExecutionContext<'_>,
     stats: &mut ExecutionStats,
     allow_text_spans: bool,
     mut should_stop: F,
     mut observe: O,
 ) -> Result<MainControlExit, ExecError>
 where
-    S: InputSource,
-    F: FnMut(&mut InputStack<S>, &Universe) -> bool,
-    O: FnMut(&ModeNest, &mut InputStack<S>, &mut Universe, BoundaryEvent),
+    F: FnMut(&mut InputStack, &Universe) -> bool,
+    O: FnMut(&ModeNest, &mut InputStack, &mut Universe, BoundaryEvent),
 {
     let mut macro_text = Vec::new();
     loop {
@@ -365,7 +357,7 @@ where
         let before_mode = nest.current_mode();
         let before_depth = nest.depth();
         let before_artifacts = stores.world().artifact_commits().len();
-        sync_engine_state::<S>(execution, nest, stores);
+        sync_engine_state(execution, nest, stores);
         let token = {
             let mut expansion = tex_state::ExpansionContext::new(stores);
             match get_x_token_with_context(input, &mut expansion, execution) {
@@ -611,13 +603,11 @@ where
     }
 }
 
-pub(crate) fn sync_engine_state<S>(
-    execution: &mut crate::ExecutionContext<'_, S>,
+pub(crate) fn sync_engine_state(
+    execution: &mut crate::ExecutionContext<'_>,
     nest: &ModeNest,
     stores: &Universe,
-) where
-    S: InputSource,
-{
+) {
     execution.engine = engine_state_snapshot(nest, stores);
 }
 

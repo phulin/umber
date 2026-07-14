@@ -14,15 +14,22 @@ use crate::{ExpansionContext, ReadBank, ReadDependency, ReadRecorder, ReadSetRec
 fn scan(input: &str) -> (i32, Option<IntegerDiagnostic>, Option<Token>) {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new(input));
-    let scanned =
-        scan_int(&mut input, &mut stores, context()).expect("integer scan should succeed");
+    let scanned = scan_int(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("integer scan should succeed");
     let next = input
-        .next_token(&mut stores)
+        .next_token(&mut tex_state::ExpansionContext::new(&mut stores))
         .expect("remaining token should lex");
     (scanned.value(), scanned.diagnostic(), next)
 }
 
-fn scan_with_stores(input_text: &str, stores: &mut impl ExpansionState) -> (i32, Option<Token>) {
+fn scan_with_stores(
+    input_text: &str,
+    stores: &mut tex_state::ExpansionContext<'_>,
+) -> (i32, Option<Token>) {
     let mut input = InputStack::new(MemoryInput::new(input_text));
     let scanned = scan_int(&mut input, stores, context()).expect("integer scan should succeed");
     let next = input
@@ -59,7 +66,10 @@ fn scans_glue_parameter_width_as_an_internal_integer() {
     });
     stores.set_glue_param(GlueParam::TAB_SKIP, glue);
 
-    let (value, next) = scan_with_stores("\\tabskip x", &mut stores);
+    let (value, next) = scan_with_stores(
+        "\\tabskip x",
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    );
 
     assert_eq!(value, -1_118_806);
     assert_eq!(next, Some(char_token('x', Catcode::Letter)));
@@ -90,7 +100,10 @@ fn scans_backtick_character_and_control_sequence_constants() {
     let mut stores = Universe::new();
     let alpha = stores.intern("alpha");
     stores.set_meaning(alpha, Meaning::Relax);
-    let (value, next) = scan_with_stores("`\\alpha x", &mut stores);
+    let (value, next) = scan_with_stores(
+        "`\\alpha x",
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    );
     assert_eq!(value, i32::from(b'a'));
     assert_eq!(next, Some(char_token('x', Catcode::Letter)));
 
@@ -107,7 +120,12 @@ fn backtick_brace_constant_restores_alignment_brace_depth() {
     input.begin_alignment();
     input.begin_alignment_cell(None, empty, stores.execution_group_depth());
 
-    let scanned = scan_int(&mut input, &mut stores, context()).expect("character constant scans");
+    let scanned = scan_int(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("character constant scans");
 
     assert_eq!(scanned.value(), i32::from(b'}'));
     assert!(
@@ -154,9 +172,30 @@ fn scans_supported_internal_integers() {
     stores.set_dimen(3, Scaled::from_raw(65_536));
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
 
-    assert_eq!(scan_with_stores("\\count12 x", &mut stores).0, -34);
-    assert_eq!(scan_with_stores("\\dimen3 x", &mut stores).0, 65_536);
-    assert_eq!(scan_with_stores("\\endlinechar x", &mut stores).0, 13);
+    assert_eq!(
+        scan_with_stores(
+            "\\count12 x",
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .0,
+        -34
+    );
+    assert_eq!(
+        scan_with_stores(
+            "\\dimen3 x",
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .0,
+        65_536
+    );
+    assert_eq!(
+        scan_with_stores(
+            "\\endlinechar x",
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .0,
+        13
+    );
 }
 
 #[test]
@@ -165,7 +204,8 @@ fn scans_chardef_like_meanings() {
     let letter_a = stores.intern("a");
     stores.set_meaning(letter_a, Meaning::CharGiven('A'));
 
-    let (value, next) = scan_with_stores("\\a x", &mut stores);
+    let (value, next) =
+        scan_with_stores("\\a x", &mut tex_state::ExpansionContext::new(&mut stores));
 
     assert_eq!(value, 65);
     assert_eq!(next, Some(char_token('x', Catcode::Letter)));
@@ -191,14 +231,27 @@ fn scans_mathchardef_meaning_direct_macro_and_signed_without_read_ahead() {
     ]);
     let mut direct_input = InputStack::new(MemoryInput::new(""));
     direct_input.push_token_list(explicit_space, tex_lex::TokenListReplayKind::Inserted);
-    let direct =
-        scan_int(&mut direct_input, &mut stores, context()).expect("direct math-given scan");
+    let direct = scan_int(
+        &mut direct_input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("direct math-given scan");
     assert_eq!(direct.value(), 10_000);
     assert_eq!(
-        direct_input.next_token(&mut stores).expect("space remains"),
+        direct_input
+            .next_token(&mut tex_state::ExpansionContext::new(&mut stores))
+            .expect("space remains"),
         Some(char_token(' ', Catcode::Space))
     );
-    assert_eq!(scan_with_stores("-\\wrapped", &mut stores).0, -10_000);
+    assert_eq!(
+        scan_with_stores(
+            "-\\wrapped",
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .0,
+        -10_000
+    );
 }
 
 #[derive(Default)]
@@ -219,8 +272,13 @@ fn mathchardef_scan_records_the_live_meaning() {
     let mut reads = MeaningReads::default();
     let mut expansion = ExpansionContext::new("texput").recording(&mut reads);
 
-    let scanned = scan_int_with_context(&mut input, &mut stores, &mut expansion, context())
-        .expect("math-given scan should succeed");
+    let scanned = scan_int_with_context(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut expansion,
+        context(),
+    )
+    .expect("math-given scan should succeed");
 
     assert_eq!(scanned.value(), 10_000);
     assert!(
@@ -240,8 +298,13 @@ fn typed_read_set_records_internal_register_dependencies_deterministically() {
     let mut reads = ReadSetRecorder::default();
     let mut expansion = ExpansionContext::new("texput").recording(&mut reads);
 
-    let scanned = scan_int_with_context(&mut input, &mut stores, &mut expansion, context())
-        .expect("count-register scan");
+    let scanned = scan_int_with_context(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut expansion,
+        context(),
+    )
+    .expect("count-register scan");
 
     assert_eq!(scanned.value(), 42);
     assert_eq!(
@@ -270,14 +333,26 @@ fn scans_values_through_macro_expansion() {
         MacroMeaning::new(MeaningFlags::EMPTY, params, replacement),
     );
 
-    assert_eq!(scan_with_stores("\\number x", &mut stores).0, 42);
+    assert_eq!(
+        scan_with_stores(
+            "\\number x",
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .0,
+        42
+    );
 }
 
 #[test]
 fn reports_number_too_big_and_caps_value() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new("2147483648 x"));
-    let scanned = scan_int(&mut input, &mut stores, context()).expect("scan should cap overflow");
+    let scanned = scan_int(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("scan should cap overflow");
 
     assert_eq!(scanned.value(), i32::MAX);
     assert_eq!(scanned.diagnostic(), Some(IntegerDiagnostic::NumberTooBig));
@@ -318,9 +393,14 @@ fn missing_number_recovers_zero_and_replays_offending_token() {
 fn missing_number_diagnostic_uses_offending_token_origin() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new("x"));
-    let scanned = scan_int(&mut input, &mut stores, context()).expect("scan should recover");
+    let scanned = scan_int(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("scan should recover");
     let replayed = input
-        .next_traced_token(&mut stores)
+        .next_traced_token(&mut tex_state::ExpansionContext::new(&mut stores))
         .expect("token should replay")
         .expect("offending token should be unread");
 
@@ -343,13 +423,19 @@ fn relax_in_number_slot_recovers_zero_and_replays_token() {
     let relax = stores.intern("relax");
     stores.set_meaning(relax, Meaning::Relax);
     let mut input = InputStack::new(MemoryInput::new("\\relax"));
-    let scanned =
-        scan_int(&mut input, &mut stores, context()).expect("relax should recover as missing");
+    let scanned = scan_int(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("relax should recover as missing");
 
     assert_eq!(scanned.value(), 0);
     assert_eq!(scanned.diagnostic(), Some(IntegerDiagnostic::MissingNumber));
     assert_eq!(
-        input.next_token(&mut stores).expect("token should replay"),
+        input
+            .next_token(&mut tex_state::ExpansionContext::new(&mut stores))
+            .expect("token should replay"),
         Some(Token::Cs(relax.symbol()))
     );
 }
@@ -364,10 +450,14 @@ fn ordinary_unexpandable_command_recovers_zero_and_preserves_origin() {
     );
     let mut input = InputStack::new(MemoryInput::new("\\penalty"));
 
-    let scanned =
-        scan_int(&mut input, &mut stores, context()).expect("penalty should recover as missing");
+    let scanned = scan_int(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("penalty should recover as missing");
     let replayed = input
-        .next_traced_token(&mut stores)
+        .next_traced_token(&mut tex_state::ExpansionContext::new(&mut stores))
         .expect("token should replay")
         .expect("penalty should remain for the stomach");
 
@@ -386,7 +476,12 @@ fn out_of_range_register_numbers_report_and_recover_to_zero() {
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count),
     );
     let mut input = InputStack::new(MemoryInput::new("\\count32768"));
-    let scanned = scan_int(&mut input, &mut stores, context()).expect("register should recover");
+    let scanned = scan_int(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("register should recover");
 
     assert_eq!(scanned.value(), 0);
     assert!(stores.world().effect_records().iter().any(|record| {
@@ -413,11 +508,17 @@ fn numexpr_obeys_precedence_parentheses_and_relax_termination() {
     let mut stores = Universe::new();
     install_numexpr(&mut stores);
 
-    let (value, next) = scan_with_stores("\\numexpr 2+3*4\\relax X", &mut stores);
+    let (value, next) = scan_with_stores(
+        "\\numexpr 2+3*4\\relax X",
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    );
     assert_eq!(value, 14);
     assert_eq!(next, Some(char_token('X', Catcode::Letter)));
 
-    let (value, next) = scan_with_stores("\\numexpr (2+3)*4\\relax X", &mut stores);
+    let (value, next) = scan_with_stores(
+        "\\numexpr (2+3)*4\\relax X",
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    );
     assert_eq!(value, 20);
     assert_eq!(next, Some(char_token('X', Catcode::Letter)));
 }
@@ -427,10 +528,28 @@ fn numexpr_rounds_division_and_combined_multiply_divide_like_etex() {
     let mut stores = Universe::new();
     install_numexpr(&mut stores);
 
-    assert_eq!(scan_with_stores("\\numexpr 5/2\\relax", &mut stores).0, 3);
-    assert_eq!(scan_with_stores("\\numexpr -5/2\\relax", &mut stores).0, -3);
     assert_eq!(
-        scan_with_stores("\\numexpr 7*10/4\\relax", &mut stores).0,
+        scan_with_stores(
+            "\\numexpr 5/2\\relax",
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .0,
+        3
+    );
+    assert_eq!(
+        scan_with_stores(
+            "\\numexpr -5/2\\relax",
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .0,
+        -3
+    );
+    assert_eq!(
+        scan_with_stores(
+            "\\numexpr 7*10/4\\relax",
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .0,
         18
     );
 }
@@ -441,7 +560,12 @@ fn numexpr_reports_arithmetic_overflow_as_a_recoverable_diagnostic() {
     install_numexpr(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\numexpr 2147483647+1\\relax"));
 
-    let scanned = scan_int(&mut input, &mut stores, context()).expect("expression should recover");
+    let scanned = scan_int(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("expression should recover");
 
     assert_eq!(scanned.value(), 0);
     assert_eq!(scanned.diagnostic(), Some(IntegerDiagnostic::NumberTooBig));
@@ -459,15 +583,27 @@ fn glue_order_enquiries_report_exact_etex_order_codes() {
     }
 
     assert_eq!(
-        scan_with_stores("\\gluestretchorder 0pt plus 2fill", &mut stores).0,
+        scan_with_stores(
+            "\\gluestretchorder 0pt plus 2fill",
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .0,
         2
     );
     assert_eq!(
-        scan_with_stores("\\glueshrinkorder 0pt minus 3filll", &mut stores).0,
+        scan_with_stores(
+            "\\glueshrinkorder 0pt minus 3filll",
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .0,
         3
     );
     assert_eq!(
-        scan_with_stores("\\gluestretchorder 0pt plus 2pt", &mut stores).0,
+        scan_with_stores(
+            "\\gluestretchorder 0pt plus 2pt",
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .0,
         0
     );
 }

@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use tex_lex::{InputSource, InputStack, LexError};
+use tex_lex::{InputStack, LexError};
 use tex_state::BoxDimension;
 use tex_state::env::banks::GlueParam;
 use tex_state::glue::Order;
@@ -326,14 +326,11 @@ impl From<scan_int::ScanIntError> for ScanDimenError {
 }
 
 /// Scans a TeX `<dimen>` using expanded tokens.
-pub fn scan_dimen<S>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+pub fn scan_dimen(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
     context: TracedTokenWord,
-) -> Result<ScannedDimen, ScanDimenError>
-where
-    S: InputSource,
-{
+) -> Result<ScannedDimen, ScanDimenError> {
     scan_dimen_with_options_and_context(
         input,
         stores,
@@ -344,15 +341,12 @@ where
 }
 
 /// Scans a TeX `<dimen>` using expanded tokens and caller-specific options.
-pub fn scan_dimen_with_options<S>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+pub fn scan_dimen_with_options(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
     options: ScanDimenOptions,
     context: TracedTokenWord,
-) -> Result<ScannedDimen, ScanDimenError>
-where
-    S: InputSource,
-{
+) -> Result<ScannedDimen, ScanDimenError> {
     scan_dimen_with_options_and_context(
         input,
         stores,
@@ -363,16 +357,13 @@ where
 }
 
 /// Scans a TeX `<dimen>` while preserving caller-supplied expansion context.
-pub fn scan_dimen_with_options_and_context<S>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
-    expansion: &mut ExpansionContext<'_, S>,
+pub fn scan_dimen_with_options_and_context(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
     options: ScanDimenOptions,
     context: TracedTokenWord,
-) -> Result<ScannedDimen, ScanDimenError>
-where
-    S: InputSource,
-{
+) -> Result<ScannedDimen, ScanDimenError> {
     scan_dimen_with_mode_and_context(
         input,
         stores,
@@ -384,17 +375,15 @@ where
 }
 
 /// Scans a TeX `<dimen>` using a caller-supplied recursive expansion capability.
-pub fn scan_dimen_with_mode_and_context<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+pub fn scan_dimen_with_mode_and_context(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     options: ScanDimenOptions,
     context: TracedTokenWord,
 ) -> Result<ScannedDimen, ScanDimenError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     // Physical, true, and recovery-unit paths all consult the prepared job
     // magnification. Recording the key once per dimension scan keeps the
@@ -420,15 +409,13 @@ where
     Ok(apply_sign(scanned, negative))
 }
 
-fn scan_signs<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn scan_signs(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
 ) -> Result<(bool, Option<TracedTokenWord>), ScanDimenError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let mut negative = false;
     loop {
@@ -449,29 +436,25 @@ where
     }
 }
 
-fn next_x<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn next_x(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
 ) -> Result<Option<TracedTokenWord>, ScanDimenError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     Ok(mode.next_expanded_token(input, stores, expansion)?)
 }
 
-pub(crate) fn scan_dim_expr<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+pub(crate) fn scan_dim_expr(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     context: TracedTokenWord,
 ) -> Result<ScannedDimen, ScanDimenError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let (value, bad) = parse_dim_expr(input, stores, expansion, mode, false)?;
     if bad || value.abs() > i64::from(Scaled::MAX_DIMEN.raw()) {
@@ -485,16 +468,14 @@ where
     }
 }
 
-fn parse_dim_expr<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn parse_dim_expr(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     parenthesized: bool,
 ) -> Result<(i64, bool), ScanDimenError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let (mut value, mut bad) = parse_dim_term(input, stores, expansion, mode)?;
     loop {
@@ -533,15 +514,13 @@ where
     Ok((value, bad))
 }
 
-fn parse_dim_term<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn parse_dim_term(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
 ) -> Result<(i64, bool), ScanDimenError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let (mut value, mut bad) = parse_dim_factor(input, stores, expansion, mode)?;
     loop {
@@ -593,15 +572,13 @@ where
     Ok((value, bad))
 }
 
-fn parse_dim_factor<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn parse_dim_factor(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
 ) -> Result<(i64, bool), ScanDimenError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let Some(token) = expr_next(input, stores, expansion, mode)? else {
         return Ok((0, true));
@@ -624,15 +601,13 @@ where
     ))
 }
 
-fn parse_expr_int<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn parse_expr_int(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
 ) -> Result<(i64, bool), ScanDimenError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let Some(token) = expr_next(input, stores, expansion, mode)? else {
         return Ok((0, true));
@@ -647,15 +622,13 @@ where
     Ok((i64::from(scanned.value()), scanned.diagnostic().is_some()))
 }
 
-fn expr_next<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn expr_next(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
 ) -> Result<Option<TracedTokenWord>, ScanDimenError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     loop {
         let token = next_x(input, stores, expansion, mode)?;
@@ -669,17 +642,15 @@ fn expr_is(token: TracedTokenWord, wanted: char) -> bool {
     matches!(semantic_token(token), Token::Char { ch, cat: Catcode::Other } if ch == wanted)
 }
 
-fn scan_unsigned_after_first_token<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn scan_unsigned_after_first_token(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     token: TracedTokenWord,
     options: ScanDimenOptions,
 ) -> Result<ScannedDimen, ScanDimenError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     match semantic_token(token) {
         Token::Char {
@@ -715,16 +686,14 @@ where
     }
 }
 
-fn scan_decimal_integer<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn scan_decimal_integer(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     first_digit: i32,
 ) -> Result<i32, ScanDimenError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let mut value = first_digit;
     loop {
@@ -743,17 +712,15 @@ where
     Ok(value)
 }
 
-fn scan_decimal_tail<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn scan_decimal_tail(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     integer: i32,
     options: ScanDimenOptions,
 ) -> Result<ScannedDimen, ScanDimenError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let Some(token) = next_x(input, stores, expansion, mode)? else {
         let origin = input.current_input_origin(stores);
@@ -774,17 +741,15 @@ where
     }
 }
 
-fn scan_fraction_and_unit<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn scan_fraction_and_unit(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     integer: i32,
     options: ScanDimenOptions,
 ) -> Result<ScannedDimen, ScanDimenError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let fraction = scan_fraction(input, stores, expansion, mode)?;
     match scan_unit(input, stores, expansion, mode, options)? {
@@ -795,15 +760,13 @@ where
     }
 }
 
-fn scan_fraction<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn scan_fraction(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
 ) -> Result<i32, ScanDimenError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let mut digits = Vec::new();
     loop {
@@ -822,18 +785,16 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn scan_internal_or_numeric_dimension<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn scan_internal_or_numeric_dimension(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     token: TracedTokenWord,
     symbol: Symbol,
     options: ScanDimenOptions,
 ) -> Result<ScannedDimen, ScanDimenError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let meaning = stores.meaning(symbol);
     expansion.record_meaning(symbol, meaning);
@@ -1046,17 +1007,15 @@ where
     })
 }
 
-fn scan_integer_constant_with_unit<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn scan_integer_constant_with_unit(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     token: TracedTokenWord,
     options: ScanDimenOptions,
 ) -> Result<ScannedDimen, ScanDimenError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     unread_token(input, stores, token);
     let scanned = scan_int::scan_int_with_mode_and_context(input, stores, expansion, mode, token)?;
@@ -1089,16 +1048,14 @@ where
     })
 }
 
-fn scan_register_index<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn scan_register_index(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     context: TracedTokenWord,
 ) -> Result<u16, ScanDimenError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let scanned =
         scan_int::scan_int_with_mode_and_context(input, stores, expansion, mode, context)?;
@@ -1111,16 +1068,14 @@ where
     Ok(value as u16)
 }
 
-fn scan_unit<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn scan_unit(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     options: ScanDimenOptions,
 ) -> Result<UnitScan, ScanDimenError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     skip_spaces(input, stores, expansion, mode)?;
     let first = match next_x(input, stores, expansion, mode)? {
@@ -1253,17 +1208,15 @@ where
     scan_unit_keyword(input, stores, expansion, mode, first, false)
 }
 
-fn scan_unit_keyword<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn scan_unit_keyword(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     first: TracedTokenWord,
     true_unit: bool,
 ) -> Result<UnitScan, ScanDimenError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let Some(second) = next_x(input, stores, expansion, mode)? else {
         unread_token(input, stores, first);
@@ -1329,17 +1282,15 @@ where
     }
 }
 
-fn keyword_matches<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn keyword_matches(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     first: TracedTokenWord,
     keyword: &str,
 ) -> Result<ExpandedKeywordMatch, ScanDimenError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     Ok(
         scan_helpers::scan_keyword_after_first_with_mode_and_context(
@@ -1348,16 +1299,14 @@ where
     )
 }
 
-fn keyword<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn keyword(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     keyword: &str,
 ) -> Result<bool, ScanDimenError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     skip_spaces(input, stores, expansion, mode)?;
     let Some(first) = next_x(input, stores, expansion, mode)? else {
@@ -1456,7 +1405,7 @@ fn convert_decimal(
 }
 
 fn convert_scanned_unit(
-    stores: &mut impl ExpansionState,
+    stores: &mut tex_state::ExpansionContext<'_>,
     integer: i32,
     fraction: i32,
     unit: ScannedUnit,
@@ -1514,7 +1463,7 @@ fn convert_font_relative_unit(
 }
 
 fn convert_physical_unit(
-    stores: &mut impl ExpansionState,
+    stores: &mut tex_state::ExpansionContext<'_>,
     integer: i32,
     fraction: i32,
     unit: PhysicalUnit,
@@ -1587,15 +1536,13 @@ fn apply_sign(scanned: ScannedDimen, negative: bool) -> ScannedDimen {
     }
 }
 
-fn consume_optional_space<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn consume_optional_space(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
 ) -> Result<(), ScanDimenError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     let Some(token) = next_x(input, stores, expansion, mode)? else {
         return Ok(());
@@ -1606,15 +1553,13 @@ where
     Ok(())
 }
 
-fn skip_spaces<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-    expansion: &mut ExpansionContext<'_, S>,
-    mode: &mut dyn ExpansionMode<S, St>,
+fn skip_spaces(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
 ) -> Result<(), ScanDimenError>
 where
-    S: InputSource,
-    St: ExpansionState,
 {
     loop {
         let Some(token) = next_x(input, stores, expansion, mode)? else {
@@ -1627,19 +1572,16 @@ where
     }
 }
 
-fn unread_token<S>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+fn unread_token(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
     token: TracedTokenWord,
-) where
-    S: InputSource,
-{
+) {
     unread_tokens(input, stores, [token]);
 }
 
-fn unread_tokens<S, I>(input: &mut InputStack<S>, stores: &mut impl ExpansionState, tokens: I)
+fn unread_tokens<I>(input: &mut InputStack, stores: &mut tex_state::ExpansionContext<'_>, tokens: I)
 where
-    S: InputSource,
     I: IntoIterator<Item = TracedTokenWord>,
 {
     crate::back_input(input, stores, tokens);
