@@ -152,3 +152,23 @@ from 99.187 to 97.657 ms/run (1.54%); checkpoint-enabled Gentle improved from
 103.819 to 101.919 ms/run (1.83%). Other sidecars remain columnar because this
 evidence applies specifically to complete-box access, not to a general retreat
 from compact field scans.
+
+## Direct shipout evidence
+
+The direct-emission refactor removed fresh-path `FrozenShipoutNode` snapshots,
+ordinary `PageNode` materialization, and the artifact-byte DVI reparse. A
+200-run default capture reduced the complete `shipout_node` subtree from
+15.22% to 11.14% of whole-run samples (26.8% relative). Within the candidate,
+fused arena emission was 6.47% of the whole run and mutable normalization was
+2.58%. The capture still charged 1.05% to a decoded direction prescan; the
+accepted implementation subsequently replaced that work with a raw compact-tag
+predicate.
+
+Conditioned `BOOB` plus `BOOBOBBO` five times measured 111.963 to 100.468
+ms/run by raw default mean. Removing one isolated 258 ms baseline outlier gives
+104.277 to 99.315 ms/run (4.76%). A post-tag-optimization checkpoint-enabled
+repetition measured 135.664 to 131.800 ms/run (2.85%), with effectively equal
+medians of 105.909 and 105.865 ms/run. Host contention produced large paired
+outliers, so retain both raw means and medians when comparing this run. All
+processes emitted 97 pages and 263,424 DVI bytes; checkpoint runs published
+1,108 checkpoints.
