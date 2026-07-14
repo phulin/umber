@@ -661,6 +661,62 @@ fn expanded_is_installed_only_in_the_latex_extension_layer() {
         stores.meaning(expanded),
         Meaning::ExpandablePrimitive(ExpandablePrimitive::Expanded)
     );
+    let filesize = stores.intern("filesize");
+    assert_eq!(
+        stores.meaning(filesize),
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::FileSize)
+    );
+}
+
+#[test]
+fn filesize_expands_the_filename_and_returns_its_byte_count() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    crate::install_latex_expandable_primitives(&mut stores);
+    let filename = stores.intern("filename");
+    let empty = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[
+        char_token('a'),
+        char_token('s'),
+        char_token('s'),
+        char_token('e'),
+        char_token('t'),
+    ]);
+    stores.set_macro_meaning(
+        filename,
+        MacroMeaning::new(MeaningFlags::EMPTY, empty, body),
+    );
+    let mut input = InputStack::new(MemoryInput::new("\\filesize{\\filename}"));
+    let mut context = MemoryResolverFixture::new("main").with_source("asset", "hello\n");
+
+    assert_eq!(
+        next_expanded_chars_with_context(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores),
+            &mut context,
+        ),
+        "6 "
+    );
+    assert_eq!(context.resolver.sized, vec!["asset"]);
+}
+
+#[test]
+fn filesize_expands_to_nothing_when_the_file_is_missing() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    crate::install_latex_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("a\\filesize{missing}b"));
+    let mut context = MemoryResolverFixture::new("main");
+
+    assert_eq!(
+        next_expanded_chars_with_context(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores),
+            &mut context,
+        ),
+        "ab "
+    );
+    assert_eq!(context.resolver.sized, vec!["missing"]);
 }
 
 #[test]
@@ -3743,6 +3799,24 @@ fn skipped_false_limb_tracks_nested_conditionals() {
 }
 
 #[test]
+fn skipped_false_limb_tracks_nested_etex_conditionals() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    crate::install_etex_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\iffalse x\\ifdefined\\missing y\\fi\\else t\\fi",
+    ));
+
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "t"
+    );
+}
+
+#[test]
 fn skipped_false_limb_resolves_active_conditional_meanings() {
     let mut stores = Universe::new();
     let (_, iffalse, _, _) = conditional_primitives(&mut stores);
@@ -4036,6 +4110,7 @@ struct MemoryResolverFixture {
 struct MemoryResolver {
     sources: AHashMap<String, String>,
     opened: Vec<String>,
+    sized: Vec<String>,
 }
 
 impl MemoryResolverFixture {
@@ -4045,6 +4120,7 @@ impl MemoryResolverFixture {
             resolver: MemoryResolver {
                 sources: AHashMap::new(),
                 opened: Vec::new(),
+                sized: Vec::new(),
             },
             engine: crate::EngineStateSnapshot::default(),
         }
@@ -4090,5 +4166,17 @@ impl crate::InputResolver for MemoryResolver {
             .ok_or_else(|| "missing memory source".to_owned())?;
         self.opened.push(name.to_owned());
         Ok(Box::new(MemoryInput::new(source.clone())))
+    }
+
+    fn input_file_size(
+        &mut self,
+        _input: &mut dyn InputReadState,
+        name: &str,
+        _request_index: u64,
+    ) -> Result<Option<u64>, String> {
+        self.sized.push(name.to_owned());
+        Ok(self.sources.get(name).map(|source| {
+            u64::try_from(source.len()).expect("test source length should fit in u64")
+        }))
     }
 }

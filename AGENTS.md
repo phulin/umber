@@ -53,6 +53,7 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `scripts/build-wasm-plain-format.sh`: reproducible pinned TeX Live 2025 to Umber-native Plain format build and equivalence gate.
 - `scripts/build-wasm-package.sh`: optimized npm-shaped WASM package assembler.
 - `scripts/check-wasm.sh`: complete Firefox, Chrome, Node, and package-content WASM gate.
+- `scripts/discover-latex-kernel.sh`: pinned TeX Live 2025 LaTeX kernel bootstrap discovery and first-diagnostic gate.
 - `scripts/setup-conformance-tests.sh`: pinned third-party acquisition plus local Story, Gentle, TRIP, and e-TRIP DVI-oracle generation with pdfTeX.
 - `scripts/test-wasm-browser.sh`: optimized-package local HTTP integration runner.
 - `third_party/`: ignored reference downloads and external source archives.

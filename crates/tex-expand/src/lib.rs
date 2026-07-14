@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 use std::fmt;
+use std::path::Path;
 #[cfg(feature = "profiling-stats")]
 use std::time::Instant;
 
@@ -20,7 +21,7 @@ use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::provenance::{DiagnosticSite, InsertedOriginKind, SynthesizedOriginKind};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
-use tex_state::{ExpansionState, InputReadState, MeaningCacheGuard, Universe};
+use tex_state::{ExpansionState, FileContent, InputReadState, MeaningCacheGuard, Universe};
 
 const MEANING_SITE_CACHE_LEN: usize = 64;
 
@@ -232,11 +233,19 @@ pub fn install_etex_expandable_primitives(stores: &mut Universe) {
 /// Installs expandable primitives required by the supported LaTeX engine
 /// contract but not provided by e-TeX V2 itself.
 pub fn install_latex_expandable_primitives(stores: &mut Universe) {
-    let symbol = stores.intern("expanded");
-    stores.set_meaning(
-        symbol,
-        Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::Expanded),
-    );
+    for (name, primitive) in [
+        (
+            "expanded",
+            tex_state::meaning::ExpandablePrimitive::Expanded,
+        ),
+        (
+            "filesize",
+            tex_state::meaning::ExpandablePrimitive::FileSize,
+        ),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
+    }
 }
 
 /// Records state reads performed by expansion.
@@ -411,6 +420,7 @@ pub enum ExpandableOpcode {
     Meaning,
     The,
     Expanded,
+    FileSize,
     Unexpanded,
     Detokenize,
     Unless,
@@ -729,7 +739,7 @@ impl ExpandError {
     }
 }
 
-/// Object-safe host boundary used only when expansion executes `\input`.
+/// Object-safe host boundary for expansion-time input access and enquiries.
 pub trait InputResolver {
     fn open_input(
         &mut self,
@@ -737,13 +747,43 @@ pub trait InputResolver {
         name: &str,
         request_index: u64,
     ) -> Result<Box<dyn InputSource>, String>;
+
+    /// Resolves an input and returns its byte size.
+    ///
+    /// Resolvers with a meaningful not-found state should override this and
+    /// return `Ok(None)`. The default preserves retry behavior for virtual
+    /// resolvers by delegating to `open_input`.
+    fn input_file_size(
+        &mut self,
+        input: &mut dyn InputReadState,
+        name: &str,
+        request_index: u64,
+    ) -> Result<Option<u64>, String> {
+        let source = self.open_input(input, name, request_index)?;
+        Ok(source
+            .source_descriptor()
+            .map(|descriptor| descriptor.byte_len()))
+    }
+
+    /// Resolves content for a TeX input stream such as `\openin`.
+    ///
+    /// Missing streams are not fatal in TeX, so the default converts any
+    /// direct World read failure into `Ok(None)`.
+    fn open_stream_input(
+        &mut self,
+        input: &mut dyn InputReadState,
+        name: &str,
+        _request_index: u64,
+    ) -> Result<Option<FileContent>, String> {
+        Ok(input.read_input_file(Path::new(name)).ok())
+    }
 }
 
 /// Plain session data available to top-level expansion dispatch.
 ///
 /// Scanners use one concrete input stack and state facade. Host input policy
 /// and optional read recording are erased behind object-safe interfaces;
-/// input policy is invoked only by the `\input` primitive.
+/// input policy is invoked only by primitives that explicitly access files.
 pub struct ExpansionContext<'a> {
     pub engine: EngineStateSnapshot,
     pub job_name: &'a str,
@@ -896,6 +936,30 @@ impl<'a> ExpansionContext<'a> {
             .as_deref_mut()
             .ok_or_else(|| "no input resolver is installed".to_owned())?
             .open_input(input, name, request_index)
+    }
+
+    pub fn input_file_size(
+        &mut self,
+        input: &mut dyn InputReadState,
+        name: &str,
+    ) -> Result<Option<u64>, String> {
+        let request_index = self.next_resolution_index();
+        self.input_resolver
+            .as_deref_mut()
+            .ok_or_else(|| "no input resolver is installed".to_owned())?
+            .input_file_size(input, name, request_index)
+    }
+
+    pub fn open_stream_input(
+        &mut self,
+        input: &mut dyn InputReadState,
+        name: &str,
+    ) -> Result<Option<FileContent>, String> {
+        let request_index = self.next_resolution_index();
+        match self.input_resolver.as_deref_mut() {
+            Some(resolver) => resolver.open_stream_input(input, name, request_index),
+            None => Ok(input.read_input_file(Path::new(name)).ok()),
+        }
     }
 
     pub fn next_resolution_index(&mut self) -> u64 {

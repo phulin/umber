@@ -202,6 +202,28 @@ impl InputResolver for FileInputResolver {
             .map(tex_lex::WorldInput::from_content)
             .map(|source| Box::new(source) as Box<dyn InputSource>)
     }
+
+    fn input_file_size(
+        &mut self,
+        input: &mut dyn tex_state::InputReadState,
+        name: &str,
+        _request_index: u64,
+    ) -> Result<Option<u64>, String> {
+        Ok(self
+            .0
+            .read(input, name)
+            .ok()
+            .map(|content| u64::try_from(content.bytes().len()).unwrap_or(u64::MAX)))
+    }
+
+    fn open_stream_input(
+        &mut self,
+        input: &mut dyn tex_state::InputReadState,
+        name: &str,
+        _request_index: u64,
+    ) -> Result<Option<tex_state::FileContent>, String> {
+        Ok(self.0.read(input, name).ok())
+    }
 }
 
 struct FileFontResolver(TexFontSearchPath);
@@ -335,10 +357,23 @@ pub fn prepare_etex_run_stores(stores: &mut Universe) {
     tex_exec::install_etex_unexpandable_primitives(stores);
 }
 
+/// Installs the primitive/state setup used by supported LaTeX-DVI runs.
+///
+/// This is an Umber extension layer over e-TeX. It intentionally does not
+/// install pdfTeX identity or PDF-backend primitives.
+pub fn prepare_latex_run_stores(stores: &mut Universe) {
+    prepare_etex_run_stores(stores);
+    tex_expand::install_latex_expandable_primitives(stores);
+    for ch in ['{', '}', '$', '&', '#', '^', '_'] {
+        stores.set_catcode(ch, tex_state::token::Catcode::Other);
+    }
+}
+
 #[cfg(test)]
 mod primitive_mode_tests {
     use super::*;
     use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
+    use tex_state::token::Catcode;
 
     #[test]
     fn protected_is_hidden_in_tex82_compatibility_mode() {
@@ -368,6 +403,26 @@ mod primitive_mode_tests {
         );
         let everyeof = stores.intern("everyeof");
         assert!(matches!(stores.meaning(everyeof), Meaning::TokParam(_)));
+    }
+
+    #[test]
+    fn latex_extensions_are_isolated_from_plain_etex_mode() {
+        let mut etex = Universe::default();
+        prepare_etex_run_stores(&mut etex);
+        let expanded = etex.intern("expanded");
+        assert_eq!(etex.meaning(expanded), Meaning::Undefined);
+
+        let mut latex = Universe::default();
+        prepare_latex_run_stores(&mut latex);
+        let expanded = latex.intern("expanded");
+        assert_eq!(
+            latex.meaning(expanded),
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Expanded)
+        );
+        assert_eq!(latex.catcode('{'), Catcode::Other);
+        assert_eq!(latex.catcode('#'), Catcode::Other);
+        assert_eq!(latex.catcode('A'), Catcode::Letter);
+        assert_eq!(latex.catcode('\\'), Catcode::Escape);
     }
 
     #[test]

@@ -214,6 +214,8 @@ pub enum ExpandablePrimitive {
     IfFontChar,
     /// pdfTeX's message-style balanced-text expansion primitive.
     Expanded,
+    /// Umber's neutral file-size enquiry for the LaTeX extension contract.
+    FileSize,
 }
 
 impl ExpandablePrimitive {
@@ -274,6 +276,7 @@ impl ExpandablePrimitive {
             Self::SplitFirstMarks => 51,
             Self::SplitBotMarks => 52,
             Self::Expanded => 53,
+            Self::FileSize => 54,
         }
     }
 
@@ -334,6 +337,7 @@ impl ExpandablePrimitive {
             51 => Some(Self::SplitFirstMarks),
             52 => Some(Self::SplitBotMarks),
             53 => Some(Self::Expanded),
+            54 => Some(Self::FileSize),
             _ => None,
         }
     }

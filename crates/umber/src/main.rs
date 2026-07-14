@@ -80,15 +80,22 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
         Universe::from_format(world, content.bytes())?
     } else {
         let mut stores = Universe::with_world(world);
-        if opts.etex {
-            umber::prepare_etex_run_stores(&mut stores);
-        } else {
-            umber::prepare_run_stores(&mut stores);
+        match opts.engine {
+            RunEngine::Tex82 => umber::prepare_run_stores(&mut stores),
+            RunEngine::ETex => umber::prepare_etex_run_stores(&mut stores),
+            RunEngine::Latex => umber::prepare_latex_run_stores(&mut stores),
         }
         stores
     };
-    if opts.etex && opts.format.is_some() {
-        tex_exec::install_etex_unexpandable_primitives(&mut stores);
+    if opts.format.is_some() {
+        match opts.engine {
+            RunEngine::Tex82 => {}
+            RunEngine::ETex => tex_exec::install_etex_unexpandable_primitives(&mut stores),
+            RunEngine::Latex => {
+                tex_exec::install_etex_unexpandable_primitives(&mut stores);
+                tex_expand::install_latex_expandable_primitives(&mut stores);
+            }
+        }
     }
     let content = stores.world_mut().read_file(path)?;
 
@@ -309,9 +316,17 @@ struct RunCliOptions {
     html_assets: Option<PathBuf>,
     format: Option<PathBuf>,
     format_out: Option<PathBuf>,
-    etex: bool,
+    engine: RunEngine,
     #[cfg(feature = "profiling-stats")]
     profiling_stats: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum RunEngine {
+    #[default]
+    Tex82,
+    ETex,
+    Latex,
 }
 
 impl RunCliOptions {
@@ -324,7 +339,7 @@ impl RunCliOptions {
         let mut html_assets = None;
         let mut format = None;
         let mut format_out = None;
-        let mut etex = false;
+        let mut engine = RunEngine::Tex82;
         #[cfg(feature = "profiling-stats")]
         let mut profiling_stats = false;
         let mut args = args.peekable();
@@ -334,7 +349,20 @@ impl RunCliOptions {
                     show_fixtures = true;
                 }
                 "--etex" => {
-                    etex = true;
+                    if engine != RunEngine::Tex82 {
+                        return Err(CliError::Usage(
+                            "run accepts only one of --etex and --latex",
+                        ));
+                    }
+                    engine = RunEngine::ETex;
+                }
+                "--latex" => {
+                    if engine != RunEngine::Tex82 {
+                        return Err(CliError::Usage(
+                            "run accepts only one of --etex and --latex",
+                        ));
+                    }
+                    engine = RunEngine::Latex;
                 }
                 #[cfg(feature = "profiling-stats")]
                 "--profiling-stats" => {
@@ -447,7 +475,7 @@ impl RunCliOptions {
             html_assets,
             format,
             format_out,
-            etex,
+            engine,
             #[cfg(feature = "profiling-stats")]
             profiling_stats,
         })

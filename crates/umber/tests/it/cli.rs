@@ -793,6 +793,41 @@ fn run_resolves_area_less_input_through_texinputs_and_advances() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn run_resolves_quoted_openin_through_texinputs() {
+    let temp_dir = tempfile::tempdir().expect("create TeX stream search temp dir");
+    let job_dir = temp_dir.path().join("latex/base");
+    let search_dir = temp_dir.path().join("latex/l3kernel");
+    fs::create_dir_all(&job_dir).expect("create principal input directory");
+    fs::create_dir_all(&search_dir).expect("create TeX stream search directory");
+    let source = job_dir.join("stream-search.tex");
+    fs::write(
+        &source,
+        "\\openin1=\"probe.tex\" \\ifeof1 \\errmessage{missing-probe}\\else \\message{found-probe}\\fi \\end\n",
+    )
+    .expect("write stream search input");
+    fs::write(search_dir.join("probe.tex"), "found\n").expect("write searched stream");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .env("TEXINPUTS", &search_dir)
+        .arg("run")
+        .arg(&source)
+        .arg("--show-fixtures")
+        .output()
+        .expect("run stream search smoke");
+
+    assert!(
+        output.status.success(),
+        "stream search run failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    assert!(stdout.contains("found-probe"));
+    assert!(!stdout.contains("missing-probe"));
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn run_resolves_area_less_tfm_through_texfonts_and_advances() {
     let temp_dir = tempfile::tempdir().expect("create TeX font search temp dir");
     let job_dir = temp_dir.path().join("plain/base");

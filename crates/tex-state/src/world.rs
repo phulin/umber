@@ -1113,12 +1113,40 @@ impl World {
         path: impl AsRef<Path>,
     ) -> Result<FileContent, WorldError> {
         let content = self.read_file(path)?;
+        self.open_in_content(slot, &content)?;
+        Ok(content)
+    }
+
+    /// Opens an input stream from content already resolved and recorded by
+    /// this World.
+    pub fn open_in_content(
+        &mut self,
+        slot: StreamSlot,
+        content: &FileContent,
+    ) -> Result<(), WorldError> {
+        let Some(record) = self.input_record(content.record) else {
+            return Err(WorldError::new(
+                "open input stream",
+                Some(content.path.clone()),
+                "resolved input record is not live in this World",
+            ));
+        };
+        if record.path != content.path
+            || record.hash != content.hash
+            || record.len != content.bytes.len()
+        {
+            return Err(WorldError::new(
+                "open input stream",
+                Some(content.path.clone()),
+                "resolved input content does not match its World record",
+            ));
+        }
         self.stream_bufs_mut().read_streams[slot.index()] = Some(ReadTarget {
             path: content.path.clone(),
             hash: content.hash,
             next_line: 0,
         });
-        Ok(content)
+        Ok(())
     }
 
     pub fn close_in(&mut self, slot: StreamSlot) {

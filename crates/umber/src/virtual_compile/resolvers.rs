@@ -156,6 +156,16 @@ impl InputResolver for VirtualFileResolver<'_> {
             .map(WorldInput::from_content)
             .map(|source| Box::new(source) as Box<dyn tex_lex::InputSource>)
     }
+
+    fn open_stream_input(
+        &mut self,
+        input: &mut dyn InputReadState,
+        name: &str,
+        request_index: u64,
+    ) -> Result<Option<FileContent>, String> {
+        self.open(input, FileKind::TexInput, name, request_index)
+            .map(Some)
+    }
 }
 
 struct VirtualFontResolver<'a> {

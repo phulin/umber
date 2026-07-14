@@ -55,7 +55,7 @@ const fn page_mark_key(mark: PageMark) -> u8 {
 }
 
 macro_rules! dispatch_match {
-    ($token:ident, $call_origin:ident, $input:ident, $stores:ident, $context:ident, $meaning:ident, $invert:expr, $mode:expr, $input_arm:block) => {{
+    ($token:ident, $call_origin:ident, $input:ident, $stores:ident, $context:ident, $meaning:ident, $invert:expr, $mode:expr, $input_arm:block, $filesize_arm:block) => {{
         let token = $token;
         let call_origin = $call_origin;
         let call_context = TracedTokenWord::pack(token, call_origin);
@@ -235,6 +235,7 @@ macro_rules! dispatch_match {
                     macro_invocation: OriginId::UNKNOWN,
                 })
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::FileSize) => $filesize_arm,
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Unexpanded) => {
                 let raw = crate::scan::scan_general_text_with_expanded_open(
                     input, stores, expansion, mode, call_context,
@@ -875,6 +876,47 @@ where
     Ok(Dispatch::Continue)
 }
 
+fn execute_filesize_primitive(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    context: TracedTokenWord,
+) -> Result<Dispatch, ExpandError> {
+    let expanded = crate::scan::scan_general_text_expanded_with_expanded_open(
+        input,
+        stores,
+        expansion,
+        &mut DriverExpansionMode,
+        context,
+    )
+    .map_err(|error| match error {
+        crate::scan::ScanToksError::Lex(error) => ExpandError::Lex(error),
+        crate::scan::ScanToksError::Expand(error) => error,
+        _ => ExpandError::MissingTokenAfterPrimitive {
+            opcode: ExpandableOpcode::FileSize,
+            context,
+        },
+    })?;
+    let mut name = String::new();
+    for &token in stores.tokens(expanded.token_list()) {
+        crate::append_token_string_text(stores, token, &mut name);
+    }
+    match expansion.input_file_size(&mut stores.input_open_context(), &name) {
+        Ok(Some(size)) => Ok(push_rendered_text(
+            stores,
+            ExpansionReplayKind::NumberOutput,
+            &size.to_string(),
+            context.origin(),
+        )),
+        Ok(None) => Ok(Dispatch::Continue),
+        Err(message) => Err(ExpandError::InputOpen {
+            name,
+            message,
+            context,
+        }),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn dispatch_core(
     token: Token,
@@ -906,6 +948,18 @@ where
                 Err(ExpandError::InputOpen {
                     name: "\\input".to_owned(),
                     message: "\\input requires input-open authority".to_owned(),
+                    context,
+                })
+            }
+        },
+        {
+            let context = TracedTokenWord::pack(token, call_origin);
+            if input_open.is_some() {
+                execute_filesize_primitive(input, stores, expansion, context)
+            } else {
+                Err(ExpandError::InputOpen {
+                    name: "\\filesize".to_owned(),
+                    message: "\\filesize requires input-open authority".to_owned(),
                     context,
                 })
             }
@@ -1036,6 +1090,7 @@ pub fn dispatch_expandable_opcode(opcode: ExpandableOpcode) -> Result<(), Expand
         | ExpandableOpcode::Meaning
         | ExpandableOpcode::The
         | ExpandableOpcode::Expanded
+        | ExpandableOpcode::FileSize
         | ExpandableOpcode::Unexpanded
         | ExpandableOpcode::Detokenize
         | ExpandableOpcode::Unless

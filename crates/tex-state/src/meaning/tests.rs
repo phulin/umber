@@ -65,6 +65,7 @@ fn meaning_variants_round_trip() {
         ExpandablePrimitive::SplitBotMark,
     ));
     round_trip(Meaning::ExpandablePrimitive(ExpandablePrimitive::Expanded));
+    round_trip(Meaning::ExpandablePrimitive(ExpandablePrimitive::FileSize));
     round_trip(Meaning::UnexpandablePrimitive(
         UnexpandablePrimitive::FutureLet,
     ));

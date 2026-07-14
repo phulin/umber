@@ -5,6 +5,61 @@ use tex_state::node::Node;
 use tex_state::scaled::Scaled;
 
 #[test]
+fn expl3_primitive_alias_pattern_consumes_its_conditional_terminator() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    tex_expand::install_latex_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let source = r"\long\def\useii#1#2{#2}
+\long\def\usenone#1{}
+\long\def\primitive#1#2{\ifdefined#1\expandafter\useii\fi\usenone{\global\let#2#1}}
+\primitive\expanded\alias
+\primitive\missing\missingalias
+\end";
+    let mut input = InputStack::new(MemoryInput::new(source));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("expl3 primitive aliases execute");
+
+    let alias = stores.symbol("alias").expect("defined primitive alias");
+    let expanded = stores.intern("expanded");
+    assert_eq!(stores.meaning(alias), stores.meaning(expanded));
+    let missing = stores.intern("missingalias");
+    assert_eq!(stores.meaning(missing), Meaning::Undefined);
+    assert!(!terminal_effect_text(&stores).contains("Extra \\fi"));
+}
+
+#[test]
+fn latex_token_loop_preserves_an_enclosing_conditional_frame() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let source = r"\def\space{ }
+\def\nil{\nil}\def\nnil{\nil}
+\long\def\fornoop#1\stop#2#3{}
+\def\tfor#1:={\tforaux#1 }
+\long\def\tforaux#1#2\do#3{\def\fortmp{#2}\ifx\fortmp\space\else\tforloop#2\nil\nil\stop#1{#3}\fi}
+\long\def\tforloop#1#2\stop#3#4{\def#3{#1}\ifx#3\nnil\expandafter\fornoop\else#4\relax\expandafter\tforloop\fi#2\stop#3{#4}}
+\def\outermarker{}
+\ifdefined\outermarker
+  \tfor\item:=ABC\do{\ifx\item\missing\fi}
+\fi
+\end";
+    let mut input = InputStack::new(MemoryInput::new(source));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("LaTeX token loop executes");
+
+    assert!(!terminal_effect_text(&stores).contains("Extra \\fi"));
+}
+
+#[test]
 fn nest_push_pop_and_summary_cover_all_modes() {
     let mut nest = ModeNest::new();
     for mode in [

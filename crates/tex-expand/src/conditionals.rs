@@ -496,7 +496,10 @@ fn skipped_conditional_control(
             | ExpandablePrimitive::IfVoid
             | ExpandablePrimitive::IfHBox
             | ExpandablePrimitive::IfVBox
-            | ExpandablePrimitive::IfEof,
+            | ExpandablePrimitive::IfEof
+            | ExpandablePrimitive::IfDefined
+            | ExpandablePrimitive::IfCsName
+            | ExpandablePrimitive::IfFontChar,
         ) => Ok(Some(ConditionalPrimitive::If)),
         Meaning::ExpandablePrimitive(ExpandablePrimitive::Else) => {
             Ok(Some(ConditionalPrimitive::Else))

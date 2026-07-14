@@ -7,7 +7,7 @@ use tex_state::ids::TokenListId;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{Meaning, MeaningFlags};
 use tex_state::node::{Node, Whatsit};
-use tex_state::{PrintSink, StreamSlot};
+use tex_state::{InputOpenState, PrintSink, StreamSlot};
 
 use crate::diagnostics::print_text_with_newlinechar;
 use crate::vertical::append_node_to_current_list;
@@ -25,8 +25,13 @@ pub(in crate::assignments) fn execute_stream_command(
         UnexpandablePrimitive::OpenIn => {
             skip_optional_equals_x(input, stores, execution)?;
             let name = scan_file_name(input, stores, execution, "\\openin")?;
-            if stores.world_mut().open_in(slot, name).is_err() {
-                stores.world_mut().close_in(slot);
+            let resolved = execution
+                .open_stream_input(&mut stores.input_open_context(), &name)
+                .ok()
+                .flatten();
+            match resolved {
+                Some(content) if stores.world_mut().open_in_content(slot, &content).is_ok() => {}
+                _ => stores.world_mut().close_in(slot),
             }
         }
         UnexpandablePrimitive::CloseIn => stores.world_mut().close_in(slot),
@@ -445,17 +450,21 @@ fn scan_file_name(
     let Some(first) = next_non_space_x(input, stores, execution)? else {
         return Err(ExecError::MissingToken { context });
     };
-    append_file_name_token(&mut name, first, context)?;
+    let quoted = matches!(first, Token::Char { ch: '"', .. });
+    if !quoted {
+        append_file_name_token(&mut name, first, context)?;
+    }
     while let Some(traced) = get_x_token_with_context(
         input,
         &mut tex_state::ExpansionContext::new(stores),
         execution,
     )? {
         match tex_expand::semantic_token(traced) {
+            Token::Char { ch: '"', .. } if quoted => break,
             Token::Char {
                 cat: Catcode::Space,
                 ..
-            } => break,
+            } if !quoted => break,
             token @ Token::Char { .. } => append_file_name_token(&mut name, token, context)?,
             Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => {
                 push_traced_tokens(input, stores, [traced]);
