@@ -124,10 +124,19 @@ fn compact_char_runs_differentially_match_scalar_mixed_lists_and_overflow() {
         let view = universe.nodes(id);
         let fast = measure_hlist(&universe, view);
         let scalar = scalar_hlist(&universe, view);
+        let params = HpackParams {
+            hbadness: case % 10_001,
+            hfuzz: sp(case),
+            overfull_rule: sp(0),
+        };
+        let spec = PackSpec::Natural;
+        let decoded = plan_hpack_nodes(&universe, &nodes, spec, params).finish(id);
+        let compact = hpack(&universe, id, spec, params);
         assert_eq!(fast.width, scalar.width, "width case {case}");
         assert_eq!(fast.height, scalar.height, "height case {case}");
         assert_eq!(fast.depth, scalar.depth, "depth case {case}");
         assert_eq!(fast.has_glue, scalar.has_glue, "glue case {case}");
+        assert_eq!(decoded, compact, "packing case {case}");
     }
 }
 

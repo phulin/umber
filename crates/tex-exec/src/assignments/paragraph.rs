@@ -10,7 +10,7 @@ use tex_typeset::linebreak::{
     try_line_break_without_hyphenation,
 };
 
-use super::boxes::hpack_with_overfull_rule;
+use super::boxes::hpack_owned_with_overfull_rule;
 use super::*;
 use crate::mode::{IGNORE_DEPTH, ParagraphParams};
 use crate::vertical::{
@@ -230,8 +230,8 @@ fn break_current_paragraph(
         kind: GlueKind::ParFillSkip,
         leader: None,
     });
-    let level = nest.pop()?;
-    let hlist = crate::math::finish_math_lists(stores, level.list().nodes(), true);
+    let mut level = nest.pop()?;
+    let hlist = crate::math::finish_math_lists_owned(stores, level.list_mut().take_nodes(), true);
     let line_params = line_break_params(stores, &params);
     let mut decisions = break_hlist(stores, hlist, line_params);
     if let Some(spec) = decisions.last_line_fill {
@@ -265,9 +265,11 @@ fn break_current_paragraph(
     while let Some(mut broken) = materializer.materialize_next(stores, line_nodes) {
         line_count += 1;
         extract_migrating_material(stores, &mut broken.nodes, &mut migrated);
-        let list = stores.freeze_node_list(&broken.nodes);
-        let line =
-            hpack_with_overfull_rule(stores, list, PackSpec::Exactly(broken.dimensions.width));
+        let line = hpack_owned_with_overfull_rule(
+            stores,
+            &mut broken.nodes,
+            PackSpec::Exactly(broken.dimensions.width),
+        );
         let mut line = line;
         line.shift = broken.dimensions.indent;
         last_line = Some(line);

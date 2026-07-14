@@ -208,6 +208,25 @@ fn node_semantic_ids_are_canonical_and_compose_from_children() {
 }
 
 #[test]
+fn owned_node_freeze_reuses_the_source_vector_and_preserves_identity() {
+    let mut borrowed = Stores::new();
+    let borrowed_id = borrowed.freeze_node_list(&[Node::Penalty(17), Node::Penalty(23)]);
+
+    let mut owned = Stores::new();
+    let mut nodes = Vec::with_capacity(8);
+    nodes.extend([Node::Penalty(17), Node::Penalty(23)]);
+    let capacity = nodes.capacity();
+    let owned_id = owned.freeze_node_list_owned(&mut nodes);
+
+    assert!(nodes.is_empty());
+    assert_eq!(nodes.capacity(), capacity);
+    assert_eq!(
+        borrowed.node_semantic_id(borrowed_id),
+        owned.node_semantic_id(owned_id)
+    );
+}
+
+#[test]
 fn frozen_font_semantics_prohibit_late_naming_and_rollback_unseals() {
     let mut stores = Stores::new();
     let snapshot = stores.checkpoint();

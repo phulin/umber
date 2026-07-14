@@ -5,7 +5,7 @@ use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::node::Node;
 use tex_state::token::{Catcode, TracedTokenWord};
 use tex_state::{ExpansionState, GroupKind, Universe};
-use tex_typeset::{PackDiagnostic, PackSpec};
+use tex_typeset::{PackDiagnostic, PackSpec, plan_hpack_nodes};
 
 use crate::packing_params::{hpack, hpack_params, vpack, vpack_params, vtop};
 use crate::{ExecError, Mode, ModeNest, leave_group, push_traced_tokens};
@@ -249,6 +249,30 @@ pub(crate) fn hpack_with_overfull_rule(
         packed.node.children = stores.freeze_node_list(&nodes);
     }
     packed.node
+}
+
+pub(crate) fn hpack_owned_with_overfull_rule(
+    stores: &mut Universe,
+    nodes: &mut Vec<Node>,
+    spec: PackSpec,
+) -> tex_state::node::BoxNode {
+    let params = hpack_params(stores);
+    let plan = plan_hpack_nodes(stores, nodes, spec, params);
+    if !nodes.is_empty()
+        && params.overfull_rule.raw() > 0
+        && plan
+            .diagnostics
+            .iter()
+            .any(|diagnostic| matches!(diagnostic, PackDiagnostic::Overfull { .. }))
+    {
+        nodes.push(Node::Rule {
+            width: Some(params.overfull_rule),
+            height: None,
+            depth: None,
+        });
+    }
+    let children = stores.freeze_node_list_owned(nodes);
+    plan.finish(children).node
 }
 
 pub(crate) fn scan_box_group<S, H>(

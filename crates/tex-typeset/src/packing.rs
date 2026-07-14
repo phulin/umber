@@ -1,7 +1,6 @@
 use tex_arith::{saturating_add as add, saturating_sub as sub};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::NodeListId;
-#[cfg(test)]
 use tex_state::node::Node;
 use tex_state::node::{BoxNode, BoxNodeFields, LeaderPayload, Sign, UnsetKind};
 use tex_state::node_arena::{NodeList, NodeRef};
@@ -53,6 +52,40 @@ pub struct PackedBox {
     pub node: BoxNode,
     pub badness: i32,
     pub diagnostics: Vec<PackDiagnostic>,
+}
+
+/// Horizontal packing result whose decoded children have not yet been frozen.
+///
+/// This lets construction code measure an owned list directly, append any
+/// overfull rule, and freeze the final children only once.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HpackPlan {
+    width: Scaled,
+    height: Scaled,
+    depth: Scaled,
+    glue: GlueSetting,
+    pub diagnostics: Vec<PackDiagnostic>,
+}
+
+impl HpackPlan {
+    #[must_use]
+    pub fn finish(self, children: NodeListId) -> PackedBox {
+        PackedBox {
+            node: BoxNode::new(BoxNodeFields {
+                width: self.width,
+                height: self.height,
+                depth: self.depth,
+                shift: Scaled::from_raw(0),
+                display: false,
+                glue_set: self.glue.ratio,
+                glue_sign: self.glue.sign,
+                glue_order: self.glue.order,
+                children,
+            }),
+            badness: self.glue.badness,
+            diagnostics: self.diagnostics,
+        }
+    }
 }
 
 /// Natural dimensions and glue totals for an unset alignment box.
@@ -111,6 +144,26 @@ pub fn hpack(
         }),
         badness: glue.badness,
         diagnostics,
+    }
+}
+
+/// Plans an hbox directly from decoded construction nodes.
+#[must_use]
+pub fn plan_hpack_nodes(
+    state: &impl TypesetState,
+    nodes: &[Node],
+    spec: PackSpec,
+    params: HpackParams,
+) -> HpackPlan {
+    let meas = measure_hlist_nodes(state, nodes);
+    let width = target_size(meas.width, spec);
+    let glue = set_glue(width, meas.width, &meas);
+    HpackPlan {
+        width,
+        height: meas.height,
+        depth: meas.depth,
+        glue,
+        diagnostics: hpack_diagnostics(glue, params),
     }
 }
 
@@ -178,7 +231,7 @@ impl Measurement {
     };
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct GlueSetting {
     ratio: GlueSetRatio,
     sign: Sign,
@@ -375,6 +428,78 @@ fn measure_hlist(state: &impl TypesetState, nodes: NodeList<'_>) -> Measurement 
             }
         }
         index += 1;
+    }
+    meas
+}
+
+fn measure_hlist_nodes(state: &impl TypesetState, nodes: &[Node]) -> Measurement {
+    let mut meas = Measurement::ZERO;
+    for node in nodes {
+        match node {
+            Node::Char { font, ch } | Node::Lig { font, ch, .. } => {
+                if let Ok(code) = u8::try_from(*ch as u32)
+                    && let Some(metrics) = state.font_char_metrics(*font, code)
+                {
+                    meas.width = add(meas.width, metrics.width);
+                    meas.height = meas.height.max(metrics.height);
+                    meas.depth = meas.depth.max(metrics.depth);
+                }
+            }
+            Node::Kern { amount, .. } => meas.width = add(meas.width, *amount),
+            Node::Glue { spec, leader, .. } => {
+                add_glue(&mut meas, state.glue(*spec), Axis::Horizontal);
+                if let Some(leader) = leader {
+                    add_hleader_perpendicular_dimensions(&mut meas, leader);
+                }
+            }
+            Node::Rule {
+                width,
+                height,
+                depth,
+            } => {
+                if let Some(width) = width {
+                    meas.width = add(meas.width, *width);
+                }
+                if let Some(height) = height {
+                    meas.height = meas.height.max(*height);
+                }
+                if let Some(depth) = depth {
+                    meas.depth = meas.depth.max(*depth);
+                }
+            }
+            Node::HList(box_node) | Node::VList(box_node) => {
+                meas.width = add(meas.width, box_node.width);
+                meas.height = meas.height.max(sub(box_node.height, box_node.shift));
+                meas.depth = meas.depth.max(add(box_node.depth, box_node.shift));
+            }
+            Node::Unset(unset) => {
+                meas.width = add(meas.width, unset.width);
+                meas.height = meas.height.max(unset.height);
+                meas.depth = meas.depth.max(unset.depth);
+            }
+            Node::Disc { replace, .. } => {
+                let replacement = measure_hlist(state, state.nodes(*replace));
+                meas.width = add(meas.width, replacement.width);
+                meas.height = meas.height.max(replacement.height);
+                meas.depth = meas.depth.max(replacement.depth);
+                meas.has_glue |= replacement.has_glue;
+            }
+            Node::MathOn(width) | Node::MathOff(width) => {
+                meas.width = add(meas.width, *width);
+            }
+            Node::Penalty(_)
+            | Node::Mark { .. }
+            | Node::Ins { .. }
+            | Node::Whatsit(_)
+            | Node::MathNoad(_)
+            | Node::FractionNoad(_)
+            | Node::MathStyle(_)
+            | Node::MathChoice(_)
+            | Node::MathList(_)
+            | Node::Nonscript
+            | Node::Direction(_)
+            | Node::Adjust(_) => {}
+        }
     }
     meas
 }

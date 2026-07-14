@@ -1339,9 +1339,16 @@ impl Stores {
 
     /// Appends and freezes a node list in the owned epoch arena.
     pub fn freeze_node_list(&mut self, nodes: &[Node]) -> NodeListId {
-        self.assert_live_handles_in_nodes(nodes);
-        let semantic_id = self.compute_and_seal_node_semantic_id(nodes);
+        let semantic_id = self.validate_and_compute_node_semantic_id(nodes);
         self.nodes.append_with_semantic_id(nodes, semantic_id)
+    }
+
+    /// Freezes an owned decoded node vector and clears it for allocation reuse.
+    pub fn freeze_node_list_owned(&mut self, nodes: &mut Vec<Node>) -> NodeListId {
+        let semantic_id = self.validate_and_compute_node_semantic_id(nodes);
+        let id = self.nodes.append_with_semantic_id(nodes, semantic_id);
+        nodes.clear();
+        id
     }
 
     /// Freezes the current node-list builder value and clears it for reuse.

@@ -776,8 +776,9 @@ assignments, box building, and dispatch into the typesetting kernels.
   finished inline math lists into hlist nodes bracketed by `\mathsurround`
   `MathOn`/`MathOff` markers, snapshots paragraph-shape and line-breaking
   parameters, calls the pure line breaker over the prepared hlist, runs
-  separate post-line-break surgery, freezes each resulting line list, hpack's
-  it to the captured line width, and appends the hboxes through the shared
+  separate post-line-break surgery, measures each decoded line for hpack,
+  inserts any overfull rule before freezing the final line once, and appends
+  the hboxes through the shared
   vertical append routine. Fresh engine state follows TeX82's INITEX
   initialization: the integer and dimension banks start at zero except for
   Knuth's explicit minimum defaults (`\tolerance=10000`, `\mag=1000`,
@@ -863,9 +864,14 @@ makes box-level memoization (M4) sound.
   legal hyphenation point keeps its existing character, ligature, and kern
   nodes byte-for-byte instead of being reconstituted.
   The search result is a break plan independent of paragraph ownership.
-  Execution moves whichever owned list won (original or hyphenated) into
-  a resumable post-line-break materializer. Execution consumes, freezes, and
-  packs one line before requesting the next, then returns the emptied node
+  Execution consumes the popped paragraph list while lowering inline math;
+  paragraphs without math return that allocation unchanged instead of cloning
+  every node. It moves whichever owned list won (original or hyphenated) into
+  a resumable post-line-break materializer. Execution directly measures one
+  decoded line before requesting the next. After any overfull marker is
+  appended, the state boundary validates handles while computing semantic
+  identity in the same traversal, encodes and freezes the final children once,
+  then returns the emptied node
   vector so its allocation is reused across the paragraph; migrating material
   is extracted in place without replacing that buffer. The materializer moves
   retained nodes rather than cloning the paragraph at either boundary.

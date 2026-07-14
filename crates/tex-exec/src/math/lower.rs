@@ -252,6 +252,26 @@ pub(crate) fn finish_math_lists(
     out
 }
 
+pub(crate) fn finish_math_lists_owned(
+    stores: &mut Universe,
+    nodes: Vec<Node>,
+    insert_penalties: bool,
+) -> Vec<Node> {
+    if !nodes.iter().any(|node| matches!(node, Node::MathList(_))) {
+        return nodes;
+    }
+    let mut out = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        match node {
+            Node::MathList(list) => {
+                out.extend(finish_math_list_node(stores, list, insert_penalties));
+            }
+            node => out.push(node),
+        }
+    }
+    out
+}
+
 fn lower_math_box(boxed: &MathBox, children: tex_state::ids::NodeListId) -> BoxNode {
     BoxNode::new(BoxNodeFields {
         width: boxed.width,

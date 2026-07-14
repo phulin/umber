@@ -2024,6 +2024,10 @@ impl Universe {
         self.stores.freeze_node_list(nodes)
     }
 
+    pub fn freeze_node_list_owned(&mut self, nodes: &mut Vec<Node>) -> NodeListId {
+        self.stores.freeze_node_list_owned(nodes)
+    }
+
     pub fn finish_node_list(&mut self, builder: &mut NodeListBuilder) -> NodeListId {
         self.stores.finish_node_list(builder)
     }

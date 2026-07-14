@@ -62,7 +62,7 @@ pub(crate) fn insert_dollar_sign<S>(
     );
 }
 pub(crate) use lower::finish_math_list_node;
-pub(crate) use lower::finish_math_lists;
+pub(crate) use lower::{finish_math_lists, finish_math_lists_owned};
 use scan::*;
 use support::*;
 
