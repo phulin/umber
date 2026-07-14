@@ -14,7 +14,8 @@ use crate::node::{GlueKind, KernKind, Node, Sign};
 use crate::node_arena::NodeRef;
 use crate::state_hash::{StateHashComponent, StateHashFragment, StateHasher};
 use crate::token::Catcode;
-use std::collections::{BTreeMap, VecDeque};
+use ahash::AHashMap;
+use std::collections::VecDeque;
 
 const STORE_SLICE_DOMAIN: u64 = 0x7374_6f72_6573_6c63;
 const JOURNAL_SLICE_DOMAIN: u64 = 0x6a6f_7572_6e61_6c73;
@@ -36,7 +37,7 @@ const FONT_DIMEN_MASK: u32 = (1 << FONT_DIMEN_BITS) - 1;
 /// words. Keeping it out of [`StoreSnapshot`] preserves O(1) snapshots.
 #[derive(Debug, Default)]
 pub(super) struct SemanticHashCache {
-    cells: BTreeMap<CellId, CachedCellHash>,
+    cells: AHashMap<CellId, CachedCellHash>,
     code_tables: Option<CachedProjection<crate::code_tables::CodeTablesSemanticCursor>>,
     hyphenation: Option<CachedProjection<HyphenationSemanticCursor>>,
     last_loaded_font: Option<CachedProjection<FontSelectionCursor>>,
@@ -424,22 +425,27 @@ impl Stores {
                 |cached| cached.value_hash,
             );
 
-            match cache.cells.get_mut(&cell) {
-                Some(cached) => cached.value_hash = current_hash,
+            let order = match cache.cells.get_mut(&cell) {
+                Some(cached) => {
+                    cached.value_hash = current_hash;
+                    cached.order
+                }
                 None => {
                     let key = self.semantic_cell_key(cell);
+                    let order = self.cell_order(&key);
                     cache.cells.insert(
                         cell,
                         CachedCellHash {
-                            order: self.cell_order(&key),
+                            order,
                             key,
                             value_hash: current_hash,
                         },
                     );
+                    order
                 }
-            }
+            };
             if baseline_hash != current_hash {
-                changed_cells.push((cache.cells[&cell].order, cell));
+                changed_cells.push((order, cell));
             }
         }
 
