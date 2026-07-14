@@ -609,32 +609,14 @@ impl Writer {
     }
 
     fn node(&mut self, node: &PageNode) {
-        let mut tasks = vec![WriteTask::Node(node, 1)];
+        let mut tasks = Vec::new();
+        self.write_node(node, 1, &mut tasks);
         while let Some(task) = tasks.pop() {
             if self.error.is_some() {
                 return;
             }
             match task {
-                WriteTask::Node(node, depth) => {
-                    if depth > self.limits.max_depth {
-                        self.error = Some(SerializeError::LimitExceeded {
-                            kind: CodecLimitKind::Depth,
-                            actual: depth,
-                            limit: self.limits.max_depth,
-                        });
-                        continue;
-                    }
-                    self.nodes_seen += 1;
-                    if self.nodes_seen > self.limits.max_nodes {
-                        self.error = Some(SerializeError::LimitExceeded {
-                            kind: CodecLimitKind::Nodes,
-                            actual: self.nodes_seen,
-                            limit: self.limits.max_nodes,
-                        });
-                        continue;
-                    }
-                    self.node_head(node, depth, &mut tasks);
-                }
+                WriteTask::Node(node, depth) => self.write_node(node, depth, &mut tasks),
                 WriteTask::NodeList(nodes, depth) => {
                     self.collection_len(nodes.len());
                     if self.error.is_some() {
@@ -644,6 +626,30 @@ impl Writer {
                 }
             }
         }
+    }
+
+    fn write_node<'a>(&mut self, node: &'a PageNode, depth: usize, tasks: &mut Vec<WriteTask<'a>>) {
+        if self.error.is_some() {
+            return;
+        }
+        if depth > self.limits.max_depth {
+            self.error = Some(SerializeError::LimitExceeded {
+                kind: CodecLimitKind::Depth,
+                actual: depth,
+                limit: self.limits.max_depth,
+            });
+            return;
+        }
+        self.nodes_seen += 1;
+        if self.nodes_seen > self.limits.max_nodes {
+            self.error = Some(SerializeError::LimitExceeded {
+                kind: CodecLimitKind::Nodes,
+                actual: self.nodes_seen,
+                limit: self.limits.max_nodes,
+            });
+            return;
+        }
+        self.node_head(node, depth, tasks);
     }
 
     fn node_head<'a>(&mut self, node: &'a PageNode, depth: usize, tasks: &mut Vec<WriteTask<'a>>) {
