@@ -301,23 +301,164 @@ symbols, glyph variants, extension pieces, shared objects, and multiple
 selected sizes. Additional package coverage is added only with reproducible
 fixtures and explicit license review.
 
-## Implementation phases
+## Staged implementation plan
 
-1. Define canonical catalog, binding, encoding, and provenance schemas without
-   changing current HTML schema 1.
-2. Implement the publisher's TFM identity, encoding parser, license gate,
-   WOFF2 normalization, and clean-rebuild determinism checks.
-3. Publish the existing CM Unicode Roman convenience face through the new
-   catalog and require native/WASM byte identity.
-4. Add curated OT1 text variants and exact TFM bindings.
-5. Add OML, OMS, and OMX mappings and document every nonsemantic or PUA slot.
-6. Implement Type 1 conversion and pinned glyph-name resolution for eligible
-   packages.
-7. Add package scanning, canonical TEXMF winner selection, coverage reports,
-   and an explicit unsupported-font inventory.
-8. Design and version the artifact/HTML schema that separates final rendered
-   glyph identity from semantic source text.
-9. Add VF lowering before claiming general package-font coverage.
+The implementation is tracked by Beads epic `umber2-y2ei`. Stages are ordered
+by their dependencies, and each stage ends in a usable or independently
+verifiable artifact. Stages 1 through 4 are the first delivery milestone: they
+produce a Computer Modern Roman bundle that an application can fetch on
+demand or prefetch while it acquires the corresponding TFM, then use beside
+manifest-mode Umber HTML. Stages 5 through 9 expand fidelity and package
+coverage without delaying that vertical slice.
+
+The first bundle has this transport shape:
+
+```text
+cm-web-fonts/
+  catalog.json
+  objects/
+    sha256-<encoding digest>
+    sha256-<woff2 digest>
+    sha256-<license digest>
+    sha256-<binding/provenance digest>
+```
+
+`catalog.json` is the only trusted URL-bearing object. Its entries bind exact
+TFM content identities to the other immutable objects. An application may
+fetch the catalog and required objects before compilation, fetch them after an
+HTML font requirement is known, or start them speculatively from a trusted TFM
+or format dependency hint. All three paths assemble the same `WebFont` bytes.
+The HTML references only the validated content-addressed face path; it never
+contains a URL derived from a TeX font name.
+
+### Stage 1: freeze the bundle contract
+
+Tracked by `umber2-y2ei.2`.
+
+Define the canonical schema-1 catalog, TFM binding, complete 256-slot encoding,
+provenance/license, and content-object records. Fix canonical JSON field order,
+integer and string rules, object naming, identity domains, size limits, URL
+resolution, and duplicate/case-collision rejection. Add shared golden fixtures
+and identity vectors for Rust and authored JavaScript consumers.
+
+This stage does not change HTML schema 1, perform font conversion, or add
+network access to Rust. It is complete when valid fixtures reserialize to
+byte-identical bytes and both consumers reject the same malformed, ambiguous,
+oversized, and unsupported-version fixtures.
+
+### Stage 2: publish the first exact-identity CM bundle
+
+Tracked by `umber2-y2ei.3`; depends on stage 1.
+
+Create standalone `tools/font-pack`, kept outside the root workspace. Its first
+input profile retains the already pinned CM Unicode Roman WOFF2, verifies the
+TeX Live 2025 `cmr` TFM inputs, publishes their Umber font-metric identities,
+emits the explicit OT1-like schema-1 map, and retains the complete OFL text and
+source/tool provenance. Compatible selected sizes share the one WOFF2 object.
+
+The publisher must parse and validate each TFM checksum and design size, fully
+decode the WOFF2, verify every declared render scalar against its `cmap`, and
+write only canonical content-addressed output. Two builds in clean temporary
+directories must be byte-identical. Host font discovery, basename-only
+binding, and substitution are forbidden. The committed catalog and objects
+are copied into the WASM package by the ordinary package build.
+
+### Stage 3: consume identical bundle bytes natively and in JavaScript
+
+Tracked by `umber2-y2ei.4`; depends on stage 2.
+
+Add strict catalog readers that resolve an exact `HtmlFontKey`/TFM identity,
+load and verify its encoding, face, license, and binding metadata, and assemble
+the existing `WebFont` or `SessionWebFont` value. Rust receives bytes from a
+configured path or caller-owned cache; authored JavaScript receives bytes from
+an injected fetch/cache implementation. Both use the same fixtures, limits,
+and validation outcomes.
+
+The existing directory resolver remains a documented development adapter.
+Production catalog lookup never falls back to it and never accepts a matching
+basename with a different TFM identity. Embedded schema-1 HTML remains
+byte-stable when supplied the same binding bytes.
+
+### Stage 4: fetch or prefetch the sidecar with HTML
+
+Tracked by `umber2-y2ei.5`; depends on stage 3. Completion of this stage is the
+first shippable bundle milestone.
+
+Expose package APIs to:
+
+- resolve exact HTML font requirements on demand;
+- prefetch the associated immutable objects from trusted TFM and format
+  dependency hints;
+- join duplicate in-flight object requests and verified persistent-cache hits;
+  and
+- request manifest-mode WASM HTML whose returned asset paths use the same
+  content-addressed WOFF2 objects.
+
+Demand remains authoritative: a hint may warm the cache but cannot add an
+unused face to output or satisfy a different TFM identity. Fetches are bounded,
+concurrent, cancellable, length- and digest-verified, and injectable in Node
+tests. Cold, warm, corrupt-cache, cancellation, and no-progress browser tests
+must install the returned HTML and assets, wait for every face, reject platform
+fallback, and demonstrate byte identity with the native catalog path. This
+stage may adapt the resource-acquisition session described in
+[wasm_resource_acquisition.md](wasm_resource_acquisition.md), but it must not
+rerun completed TeX execution merely to obtain an HTML font.
+
+### Stage 5: cover Computer Modern text families
+
+Tracked by `umber2-y2ei.6`; depends on stage 4.
+
+Add licensed, curated Roman, italic/slanted, bold, small-caps, sans, and
+typewriter faces for the Plain TeX TFM set. Every binding records its shaping
+strategy and fixed feature settings. Fixtures cover ordinary text, accents,
+font changes, ligatures, kerning, and multiple selected sizes against the DVI
+coordinate oracle and pinned browsers. A TFM program that schema 1 cannot
+reproduce is reported as unsupported instead of being approximated silently.
+
+### Stage 6: cover OML, OMS, and OMX math
+
+Tracked by `umber2-y2ei.7`; depends on stage 5.
+
+Publish licensed math faces and versioned OML, OMS, and OMX mappings. Assign
+deterministic bundle-local PUA scalars to glyph variants and extension pieces
+that lack an unambiguous Unicode scalar, and record absent semantic mappings
+explicitly. Focused fixtures cover math symbols, variants, delimiters, and
+extensible constructions. PUA values may select visible glyphs but must not
+enter accessibility text as meaningful Unicode.
+
+### Stage 7: generalize conversion and package ingestion
+
+Tracked by `umber2-y2ei.8`; depends on stage 6.
+
+Add pinned Type 1 to OpenType/CFF to WOFF2 conversion, pinned Adobe Glyph List
+resolution, canonical TEXMF winner selection, package scanning, license gates,
+coverage reports, and a machine-readable unsupported-font inventory. The
+publisher records every source digest, tool version and option, license
+decision, modification, and attribution obligation. Bitmap-only, proprietary,
+ambiguous, unlicensed, and unresolved-VF inputs remain explicit failures.
+
+### Stage 8: version exact render-glyph semantics
+
+Tracked by `umber2-y2ei.9`; depends on stages 6 and 7.
+
+Design and implement a new artifact/HTML schema that retains the final
+TeX-selected glyph independently from its semantic source sequence. Use that
+identity to select exact visible glyphs through generated `cmap` entries while
+the accessibility layer emits semantic text such as `fi` or `ffi`. Disable
+conflicting browser substitutions for direct-glyph runs. Schema 1 remains
+readable and unchanged; this separation is never introduced as a schema-1
+implementation detail.
+
+### Stage 9: lower virtual fonts and complete package coverage
+
+Tracked by `umber2-y2ei.10`; depends on stages 7 and 8.
+
+Lower VF programs during artifact creation into bounded, positioned operations
+over exact physical font bindings. Test composition, movement, nesting,
+limits, failures, and DVI-coordinate parity. Only after this stage may the
+catalog claim general supported-package coverage. Unresolved programs remain
+typed unsupported-font failures, and package completion still requires every
+exit criterion below.
 
 ## Exit criteria
 
