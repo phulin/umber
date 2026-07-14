@@ -19,8 +19,8 @@ fn typed_attempts_preserve_binary_inputs_and_clear_cached_allocations() {
         .expect("add main source");
 
     let missing = session.compile_attempt().expect("missing attempt");
-    assert_eq!(string_field(missing.as_ref(), "kind"), "need-files");
-    let files = Array::from(&field(missing.as_ref(), "files"));
+    assert_eq!(string_field(missing.as_ref(), "kind"), "need-resources");
+    let files = Array::from(&field(missing.as_ref(), "required"));
     assert_eq!(files.length(), 1);
     let request = files.get(0);
     assert_eq!(string_field(&request, "kind"), "tex");
@@ -36,8 +36,8 @@ fn typed_attempts_preserve_binary_inputs_and_clear_cached_allocations() {
         )
         .expect("provide binary remote input");
     let second = session.compile_attempt().expect("second missing attempt");
-    assert_eq!(string_field(second.as_ref(), "kind"), "need-files");
-    let second_files = Array::from(&field(second.as_ref(), "files"));
+    assert_eq!(string_field(second.as_ref(), "kind"), "need-resources");
+    let second_files = Array::from(&field(second.as_ref(), "required"));
     let second_request = second_files.get(0);
     assert_eq!(string_field(&second_request, "name"), "second.tex");
     let second_bytes = b"%\0\n";

@@ -8,8 +8,8 @@ Run authored tests with `node --test crates/umber-wasm/js/*.test.js`.
 
 ## File map
 
-- `compile.js` / `compile.d.ts`: async resolve/provide/retry facade and public types.
-- `compile.test.js`: retry, progress, abort, and JavaScript-side limit tests.
+- `compile.js` / `compile.d.ts`: typed file/font `ResourceResolver` facade over `advance`/`provideResources` and public types.
+- `compile.test.js`: file/font batching, hints, retry, progress, conflict, abort, and JavaScript-side limit tests.
 - `persistent-cache.js` / `persistent-cache.d.ts`: distribution-scoped IndexedDB and in-memory verified-object stores.
 - `persistent-cache.test.js`: key isolation and cache lifecycle tests.
 - `worker-controller.js` / `worker-controller.d.ts`: main-realm timeout/abort controller.

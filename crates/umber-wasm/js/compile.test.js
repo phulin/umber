@@ -23,9 +23,9 @@ function bindings(results, hooks = {}) {
 			this.userFiles.push({ path, bytes });
 		}
 
-		provideResolvedFile(request, virtualPath, bytes) {
-			hooks.provideResolvedFile?.(request, virtualPath, bytes);
-			this.resolved.push({ request, virtualPath, bytes });
+		provideResources(responses) {
+			hooks.provideResources?.(responses);
+			this.resolved.push(...responses);
 		}
 
 		compileAttempt() {
@@ -40,7 +40,11 @@ function bindings(results, hooks = {}) {
 }
 
 function need(kind, name) {
-	return { kind: "need-files", files: [{ kind, name, originalName: name }] };
+	return {
+		kind: "need-resources",
+		required: [{ type: "file", kind, name, originalName: name }],
+		prefetchHints: [],
+	};
 }
 
 function output() {
@@ -87,6 +91,45 @@ test("performs successful multi-round retries and always disposes", async () => 
 	assert.equal(session.resolved.length, 2);
 	assert.deepEqual([...session.resolved[0].bytes], [0, 0, 1]);
 	assert.equal(session.disposed, true);
+});
+
+test("drives file and font resources through one client-owned resolver API", async () => {
+	const font = {
+		type: "font",
+		logicalName: "cmr10",
+		faceIndex: 0,
+		variations: [],
+		features: [
+			{ tag: "kern", enabled: true },
+			{ tag: "liga", enabled: true },
+		],
+		acceptedContainers: ["woff2"],
+	};
+	const hint = { type: "file", kind: "tex", name: "next.tex", originalName: "next" };
+	const wasm = bindings([
+		{ kind: "need-resources", required: [font], prefetchHints: [hint] },
+		{ kind: "complete", output: output() },
+	]);
+	let resolverOptions;
+	await compile(
+		{ mainPath: "main.tex" },
+		new Map(),
+		{
+			async resolve(requests, options) {
+				resolverOptions = options;
+				return requests.map((request) => ({
+					...request,
+					container: "woff2",
+					bytes: new Uint8Array([119, 79, 70, 50]),
+					provenance: "application-selected",
+				}));
+			},
+		},
+		undefined,
+		wasm,
+	);
+	assert.deepEqual(resolverOptions.prefetchHints, [hint]);
+	assert.equal(wasm.CompilerSession.instances[0].resolved[0].type, "font");
 });
 
 test("rejects no progress, unresolved keys, and engine diagnostics actionably", async (t) => {
@@ -304,11 +347,12 @@ test("enforces attempt, file, and byte ceilings outside custom resolvers", async
 	await t.test("aliases share cached byte accounting", async () => {
 		const wasm = bindings([
 			{
-				kind: "need-files",
-				files: [
-					{ kind: "tex", name: "a.tex", originalName: "a" },
-					{ kind: "tex", name: "path/a.tex", originalName: "path/a" },
+				kind: "need-resources",
+				required: [
+					{ type: "file", kind: "tex", name: "a.tex", originalName: "a" },
+					{ type: "file", kind: "tex", name: "path/a.tex", originalName: "path/a" },
 				],
+				prefetchHints: [],
 			},
 			{ kind: "complete", output: output() },
 		]);

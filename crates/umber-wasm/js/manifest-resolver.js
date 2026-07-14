@@ -99,7 +99,8 @@ export class HttpManifestResolver {
 		this.objectCache = new Map();
 	}
 
-	async resolve(requests, signal) {
+	async resolve(requests, options) {
+		const signal = options?.signal ?? options;
 		throwIfAborted(signal);
 		const jobs = collectJobs(this.manifest, requests);
 		validateJobBudget(jobs, this.maxFiles, this.maxBytes);

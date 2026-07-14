@@ -191,6 +191,11 @@ impl CompilerSession {
 
     #[wasm_bindgen(js_name = compileAttempt)]
     pub fn compile_attempt(&mut self) -> Result<JsAttemptResult, JsValue> {
+        self.advance()
+    }
+
+    /// Advances synchronously until completion, error, or a typed resource batch.
+    pub fn advance(&mut self) -> Result<JsAttemptResult, JsValue> {
         let result = self.session_mut()?.compile_attempt();
         attempt_result(result)
     }

@@ -1,22 +1,19 @@
 import type {
 	CompileOutput,
-	FileRequest,
-	FileRequestKey,
+	ResourceRequest,
+	ResourceResponse,
 	SessionLimits,
 	SessionOptions,
 } from "./umber_wasm.js";
 
-export interface ResolvedDownload {
-	request: FileRequestKey;
-	virtualPath: string;
-	bytes: Uint8Array;
-}
-
-export interface FileResolver {
+export interface ResourceResolver {
 	resolve(
-		requests: readonly FileRequest[],
-		signal?: AbortSignal,
-	): Promise<readonly ResolvedDownload[]>;
+		requests: readonly ResourceRequest[],
+		options?: {
+			signal?: AbortSignal;
+			prefetchHints?: readonly ResourceRequest[];
+		},
+	): Promise<readonly ResourceResponse[]>;
 }
 
 export interface CompilerBindings {
@@ -25,11 +22,8 @@ export interface CompilerBindings {
 	) => {
 		addUserFile(path: string, bytes: Uint8Array): void;
 		addHtmlFont(font: import("./umber_wasm.js").HtmlFontInput): void;
-		provideResolvedFile(
-			request: FileRequestKey,
-			virtualPath: string,
-			bytes: Uint8Array,
-		): void;
+		provideResources(responses: ResourceResponse[]): void;
+		advance?(): import("./umber_wasm.js").AttemptResult;
 		compileAttempt(): import("./umber_wasm.js").AttemptResult;
 		dispose(): void;
 	};
@@ -48,7 +42,7 @@ export function validateSessionLimits(
 export function compile(
 	options: SessionOptions,
 	userFiles: ReadonlyMap<string, Uint8Array>,
-	resolver: FileResolver,
+	resolver: ResourceResolver,
 	signal?: AbortSignal,
 	bindings?: CompilerBindings,
 ): Promise<CompileOutput>;

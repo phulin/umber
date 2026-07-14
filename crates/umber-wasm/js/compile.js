@@ -42,7 +42,10 @@ export async function compile(options, userFiles, resolver, signal, bindings) {
 		addHtmlFonts(session, options?.html?.fonts);
 		for (let round = 0; round < limits.attempts; round += 1) {
 			throwIfAborted(signal);
-			const attempt = session.compileAttempt();
+			const attempt =
+				typeof session.advance === "function"
+					? session.advance()
+					: session.compileAttempt();
 			if (attempt?.kind === "complete") return attempt.output;
 			if (attempt?.kind === "error") {
 				throw new CompileFacadeError(
@@ -53,23 +56,30 @@ export async function compile(options, userFiles, resolver, signal, bindings) {
 					},
 				);
 			}
-			if (attempt?.kind !== "need-files" || !Array.isArray(attempt.files)) {
+			if (
+				attempt?.kind !== "need-resources" ||
+				!Array.isArray(attempt.required) ||
+				!Array.isArray(attempt.prefetchHints)
+			) {
 				throw new CompileFacadeError(
 					"invalid-binding",
 					"compileAttempt returned an invalid result",
 				);
 			}
-			const requested = new Set(attempt.files.map(requestKey));
+			const requested = new Set(attempt.required.map(resourceKey));
 			if (requested.size === 0) {
 				throw new CompileFacadeError(
 					"no-progress",
-					"compile requested no files",
+					"compile requested no resources",
 				);
 			}
 			throwIfAborted(signal);
 			let downloads;
 			try {
-				downloads = await resolver.resolve(attempt.files, signal);
+				downloads = await resolver.resolve(attempt.required, {
+					signal,
+					prefetchHints: attempt.prefetchHints,
+				});
 			} catch (error) {
 				if (signal?.aborted) throw abortReason(signal);
 				throw new CompileFacadeError(
@@ -88,14 +98,14 @@ export async function compile(options, userFiles, resolver, signal, bindings) {
 				);
 			}
 			let progressed = false;
+			const accepted = [];
 			for (const download of downloads) {
-				const validated = validateDownload(download, limits);
-				const key = requestKey(validated.request);
+				const validated = validateResourceResponse(download, limits);
+				const key = resourceKey(validated);
 				const previous = provided.get(key);
 				if (
 					previous !== undefined &&
-					(previous.virtualPath !== validated.virtualPath ||
-						!equalBytes(previous.bytes, validated.bytes))
+					!equalResourceResponse(previous, validated)
 				) {
 					throw new CompileFacadeError(
 						"conflicting-download",
@@ -110,11 +120,12 @@ export async function compile(options, userFiles, resolver, signal, bindings) {
 							provided.size + 1,
 						);
 					}
-					const previousPath = providedPaths.get(validated.virtualPath);
-					if (
-						previousPath !== undefined &&
-						!equalBytes(previousPath, validated.bytes)
-					) {
+					const previousPath =
+						validated.type === "file"
+							? providedPaths.get(validated.virtualPath)
+							: undefined;
+					if (validated.type === "file" && previousPath !== undefined &&
+						!equalBytes(previousPath, validated.bytes)) {
 						throw new CompileFacadeError(
 							"conflicting-download",
 							`${validated.virtualPath} resolved to conflicting bytes`,
@@ -133,19 +144,15 @@ export async function compile(options, userFiles, resolver, signal, bindings) {
 							);
 						}
 					}
-					session.provideResolvedFile(
-						validated.request,
-						validated.virtualPath,
-						validated.bytes,
-					);
-					provided.set(key, {
-						virtualPath: validated.virtualPath,
-						bytes: validated.bytes,
-					});
-					providedPaths.set(validated.virtualPath, validated.bytes);
+					accepted.push(validated);
+					provided.set(key, validated);
+					if (validated.type === "file") {
+						providedPaths.set(validated.virtualPath, validated.bytes);
+					}
 					if (requested.has(key)) progressed = true;
 				}
 			}
+			if (accepted.length > 0) session.provideResources(accepted);
 			if (!progressed) {
 				throw new CompileFacadeError(
 					"no-progress",
@@ -226,34 +233,72 @@ function addUserFiles(session, userFiles, limits) {
 	}
 }
 
-function validateDownload(download, limits) {
+function validateResourceResponse(download, limits) {
 	if (!download || typeof download !== "object") {
 		throw new CompileFacadeError(
 			"invalid-resolver",
 			"resolver returned a non-object download",
 		);
 	}
-	requestKey(download.request);
-	if (typeof download.virtualPath !== "string") {
+	const response = normalizeResourceResponse(download);
+	resourceKey(response);
+	if (response.type === "file" && typeof response.virtualPath !== "string") {
 		throw new CompileFacadeError(
 			"invalid-resolver",
 			"resolved virtualPath must be a string",
 		);
 	}
-	requireBytes(download.bytes, "resolved bytes");
-	if (download.bytes.byteLength > limits.oneFileBytes) {
+	requireBytes(response.bytes, "resolved bytes");
+	if (response.bytes.byteLength > limits.oneFileBytes) {
 		throw limitError(
 			"one resolved file bytes",
 			limits.oneFileBytes,
-			download.bytes.byteLength,
+			response.bytes.byteLength,
 		);
 	}
-	return download;
+	if (response.type === "font") {
+		if (response.container !== "woff2") {
+			throw new CompileFacadeError("invalid-resolver", "WASM fonts must use WOFF2");
+		}
+		for (const field of ["objectSha256", "programIdentity"]) {
+			if (response[field] !== undefined && !/^[0-9a-f]{64}$/.test(response[field])) {
+				throw new CompileFacadeError("invalid-resolver", `${field} must be 64 lowercase hex digits`);
+			}
+		}
+		if (response.provenance !== undefined && typeof response.provenance !== "string") {
+			throw new CompileFacadeError("invalid-resolver", "font provenance must be a string");
+		}
+	}
+	return response;
 }
 
-function requestKey(request) {
+function normalizeResourceResponse(response) {
+	if (response.type === "file" || response.type === "font") return response;
+	if (response.request !== undefined) {
+		return { type: "file", ...response.request, virtualPath: response.virtualPath, bytes: response.bytes };
+	}
+	return response;
+}
+
+function resourceKey(request) {
+	if (request?.type === "font") {
+		if (
+			typeof request.logicalName !== "string" ||
+			request.logicalName.length === 0 ||
+			!Number.isSafeInteger(request.faceIndex) ||
+			request.faceIndex < 0 ||
+			!Array.isArray(request.variations) ||
+			!Array.isArray(request.features)
+		) {
+			throw new CompileFacadeError("invalid-resolver", "invalid font request key");
+		}
+		const variations = request.variations.map(({ tag, value }) => `${tag}:${value}`).join(",");
+		const features = request.features.map(({ tag, enabled }) => `${tag}:${enabled}`).join(",");
+		return `font:${request.logicalName}:${request.faceIndex}:${variations}:${features}`;
+	}
 	if (
 		!request ||
+		request.type !== "file" ||
 		(request.kind !== "tex" && request.kind !== "tfm") ||
 		typeof request.name !== "string" ||
 		request.name.length === 0
@@ -264,6 +309,15 @@ function requestKey(request) {
 		);
 	}
 	return `${request.kind}:${request.name}`;
+}
+
+function equalResourceResponse(left, right) {
+	if (left.type !== right.type || !equalBytes(left.bytes, right.bytes)) return false;
+	if (left.type === "file") return left.virtualPath === right.virtualPath;
+	return left.container === right.container &&
+		left.objectSha256 === right.objectSha256 &&
+		left.programIdentity === right.programIdentity &&
+		left.provenance === right.provenance;
 }
 
 function validateResolver(resolver) {

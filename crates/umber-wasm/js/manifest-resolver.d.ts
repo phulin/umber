@@ -78,7 +78,7 @@ export class HttpManifestResolver {
 	readonly manifest: TexLiveManifest;
 	resolve(
 		requests: readonly FileRequest[],
-		signal?: AbortSignal,
+		options?: AbortSignal | { signal?: AbortSignal },
 	): Promise<readonly ResolvedDownload[]>;
 	resolveFormat(
 		name: string,
