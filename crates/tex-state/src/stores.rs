@@ -1827,7 +1827,15 @@ impl Stores {
     }
 
     pub(crate) fn generation_retained_bytes(&self) -> usize {
-        let serialized = self.encode_format().map_or(0, |format| format.len());
+        // A live accepted generation may legitimately retain survivor pins;
+        // format capture forbids them because formats have a stricter job-start
+        // contract. Use the serialized-size proxy only when that contract is
+        // satisfied instead of turning retention accounting into a panic.
+        let serialized = if self.survivor_pins.is_empty() {
+            self.encode_format().map_or(0, |format| format.len())
+        } else {
+            0
+        };
         let provenance = self.provenance_stats().retained_bytes();
         let source_map = self.source_map.stats().retained_bytes;
         let nodes = self

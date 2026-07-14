@@ -1,6 +1,8 @@
 use std::fmt;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
 
 use tex_lex::{InputSource, InputStack, MemoryInput, WorldInput};
 use tex_state::source_map::SourceMapError;
@@ -365,7 +367,7 @@ impl crate::Executor {
         {
             return Err(EditorRestoreError::ChangedRootPrefix);
         }
-        let fork_started = Instant::now();
+        let fork_started = Timer::start();
         let mut restored_universe = substrate
             .fork_at(&checkpoint.universe)
             .map_err(EditorRestoreError::Fork)?;
@@ -401,6 +403,32 @@ impl crate::Executor {
         *input = restored_input;
         self.nest = restored_modes;
         Ok(fork_latency)
+    }
+}
+
+struct Timer {
+    #[cfg(not(target_arch = "wasm32"))]
+    started: Instant,
+}
+
+impl Timer {
+    #[allow(clippy::disallowed_methods)] // Diagnostic latency; no TeX state observes it.
+    fn start() -> Self {
+        Self {
+            #[cfg(not(target_arch = "wasm32"))]
+            started: Instant::now(),
+        }
+    }
+
+    fn elapsed(&self) -> Duration {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.started.elapsed()
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            Duration::ZERO
+        }
     }
 }
 

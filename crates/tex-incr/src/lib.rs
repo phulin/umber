@@ -2,10 +2,12 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
-use std::path::Path;
-use std::time::{Duration, Instant};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
 
 use tex_exec::{
     CheckpointSink, EditorRestoreError, EngineBoundary, EngineCheckpoint, ExecutionContext,
@@ -150,6 +152,7 @@ pub struct Session {
     history: Vec<BoundaryRecord>,
     substrate: Option<GenerationSubstrate>,
     checkpoint_budget: usize,
+    registered_inputs: BTreeMap<PathBuf, Vec<u8>>,
 }
 
 impl Session {
@@ -173,6 +176,7 @@ impl Session {
             history: Vec::new(),
             substrate: None,
             checkpoint_budget,
+            registered_inputs: BTreeMap::new(),
         })
     }
 
@@ -197,8 +201,44 @@ impl Session {
     }
 
     pub fn cold(&mut self) -> Result<AcceptedOutput, SessionError> {
-        let run = execute_revision(&self.template, &self.job_name, &self.source)?;
+        let mut input_resolver = DirectInputResolver;
+        let mut font_resolver = DirectFontResolver;
+        self.cold_with_resolvers(&mut input_resolver, &mut font_resolver)
+    }
+
+    pub fn cold_with_resolvers(
+        &mut self,
+        input_resolver: &mut dyn InputResolver,
+        font_resolver: &mut dyn tex_exec::FontResolver,
+    ) -> Result<AcceptedOutput, SessionError> {
+        let run = execute_revision(
+            &self.template,
+            &self.job_name,
+            &self.source,
+            input_resolver,
+            font_resolver,
+        )?;
         self.accept_cold(run)
+    }
+
+    /// Adds immutable host input to the template used by a not-yet-accepted
+    /// initial revision or a retry that discovered a new resource.
+    pub fn register_input_file(&mut self, path: &Path, bytes: Vec<u8>) -> Result<(), SessionError> {
+        self.template
+            .world_mut()
+            .set_memory_file(path, bytes.clone())?;
+        self.registered_inputs.insert(path.to_owned(), bytes);
+        Ok(())
+    }
+
+    /// Materializes the currently accepted detached effects without consuming
+    /// the checkpoints required by later edits.
+    pub fn materialize_accepted_world(&self) -> Result<tex_state::World, SessionError> {
+        let substrate = self
+            .substrate
+            .as_ref()
+            .ok_or(SessionError::MissingAcceptedSubstrate)?;
+        Ok(substrate.materialize_detached_outputs(self.effects.clone(), self.artifacts.clone())?)
     }
 
     /// Consumes the rollback-capable session and materializes its accepted
@@ -216,6 +256,18 @@ impl Session {
         &mut self,
         next_revision: RevisionId,
         edit: Edit,
+    ) -> Result<AcceptedOutput, SessionError> {
+        let mut input_resolver = DirectInputResolver;
+        let mut font_resolver = DirectFontResolver;
+        self.advance_with_resolvers(next_revision, edit, &mut input_resolver, &mut font_resolver)
+    }
+
+    pub fn advance_with_resolvers(
+        &mut self,
+        next_revision: RevisionId,
+        edit: Edit,
+        input_resolver: &mut dyn InputResolver,
+        font_resolver: &mut dyn tex_exec::FontResolver,
     ) -> Result<AcceptedOutput, SessionError> {
         self.validate_edit(next_revision, &edit)?;
         let old_source = self.source.clone();
@@ -242,11 +294,14 @@ impl Session {
             &old_pages,
             restart_index,
             &map,
+            input_resolver,
+            font_resolver,
+            &self.registered_inputs,
         )?;
 
         let restart_fork_latency = advance.restart_fork_latency;
         let reexecution_latency = advance.reexecution_latency;
-        let splice_started = Instant::now();
+        let splice_started = Timer::start();
         let (effects, artifacts, pages, mut history, accepted_substrate, mut reuse) =
             if let Some(old_index) = advance.convergence_old_index {
                 let old_effect_prefix = old_history[old_index].effect_prefix;
@@ -384,7 +439,11 @@ impl Session {
         Ok(self.output(reuse, retention))
     }
 
-    fn validate_edit(&self, next_revision: RevisionId, edit: &Edit) -> Result<(), SessionError> {
+    pub fn validate_edit(
+        &self,
+        next_revision: RevisionId,
+        edit: &Edit,
+    ) -> Result<(), SessionError> {
         if edit.base_revision != self.revision {
             return Err(SessionError::StaleRevision {
                 expected: self.revision,
@@ -471,16 +530,15 @@ fn execute_revision(
     template: &Universe,
     job_name: &str,
     source: &str,
+    input_resolver: &mut dyn InputResolver,
+    font_resolver: &mut dyn tex_exec::FontResolver,
 ) -> Result<RevisionRun, SessionError> {
     let mut universe = template.clone();
     universe.begin_retained_session()?;
     let mut input = InputStack::new(MemoryInput::new(source));
     let mut executor = Executor::new();
     let mut sink = HistorySink::default();
-    let mut input_resolver = DirectInputResolver;
-    let mut font_resolver = DirectFontResolver;
-    let mut context =
-        ExecutionContext::with_resolvers(job_name, &mut input_resolver, &mut font_resolver);
+    let mut context = ExecutionContext::with_resolvers(job_name, input_resolver, font_resolver);
     let ExecutionStats { dvi_pages, .. } = executor.run_with_context_and_checkpoints(
         &mut input,
         &mut universe,
@@ -625,6 +683,9 @@ fn execute_advance(
     old_pages: &[DviPagePlan],
     restart: usize,
     map: &EditMap,
+    input_resolver: &mut dyn InputResolver,
+    font_resolver: &mut dyn tex_exec::FontResolver,
+    registered_inputs: &BTreeMap<PathBuf, Vec<u8>>,
 ) -> Result<AdvanceRun, SessionError> {
     let anchor = &old_history[restart];
     let mut scratch = template.clone();
@@ -638,12 +699,12 @@ fn execute_advance(
         old_source,
         source,
     )?;
+    for (path, bytes) in registered_inputs {
+        scratch.world_mut().set_memory_file(path, bytes.clone())?;
+    }
     let mut sink = ResumeSink::new(old_history, restart, map);
-    let mut input_resolver = DirectInputResolver;
-    let mut font_resolver = DirectFontResolver;
-    let mut context =
-        ExecutionContext::with_resolvers(job_name, &mut input_resolver, &mut font_resolver);
-    let reexecution_started = Instant::now();
+    let mut context = ExecutionContext::with_resolvers(job_name, input_resolver, font_resolver);
+    let reexecution_started = Timer::start();
     let ExecutionStats { dvi_pages, .. } = executor.resume_with_context_and_checkpoints(
         &mut input,
         &mut scratch,
@@ -698,6 +759,32 @@ impl InputResolver for DirectInputResolver {
 }
 
 struct DirectFontResolver;
+
+struct Timer {
+    #[cfg(not(target_arch = "wasm32"))]
+    started: Instant,
+}
+
+impl Timer {
+    #[allow(clippy::disallowed_methods)] // Session telemetry; no TeX state observes it.
+    fn start() -> Self {
+        Self {
+            #[cfg(not(target_arch = "wasm32"))]
+            started: Instant::now(),
+        }
+    }
+
+    fn elapsed(&self) -> Duration {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.started.elapsed()
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            Duration::ZERO
+        }
+    }
+}
 
 impl tex_exec::FontResolver for DirectFontResolver {
     fn open_font(

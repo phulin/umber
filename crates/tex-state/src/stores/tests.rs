@@ -1543,6 +1543,16 @@ fn format_capture_rejects_live_survivor_pins() {
 }
 
 #[test]
+fn generation_retention_accounting_accepts_live_survivor_pins() {
+    let mut stores = Stores::new();
+    let value = one_char(&mut stores, 'r');
+    stores.set_box_reg(0, value);
+    let survivor = stores.box_reg(0).expect("box should be stored");
+    stores.pin_survivor(survivor);
+    assert!(stores.generation_retained_bytes() >= std::mem::size_of::<Stores>());
+}
+
+#[test]
 fn released_survivor_key_stays_stale_when_its_storage_is_recycled() {
     let mut stores = Stores::new();
     let old_epoch = one_char(&mut stores, 'o');

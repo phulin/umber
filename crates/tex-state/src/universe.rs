@@ -590,6 +590,19 @@ impl GenerationSubstrate {
         universe.export_retained_effects()?;
         Ok(universe.world)
     }
+
+    /// Materializes detached session output without consuming the retained
+    /// generation used by later incremental revisions.
+    pub fn materialize_detached_outputs(
+        &self,
+        effects: Vec<EffectRecord>,
+        artifacts: Vec<CommittedArtifact>,
+    ) -> Result<World, WorldError> {
+        let mut world = self.universe.world.clone();
+        world.replace_retained_outputs(effects, artifacts)?;
+        world.export_retained_effects()?;
+        Ok(world)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
