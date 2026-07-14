@@ -3,9 +3,10 @@
 /// Version of the schedule-relative checkpoint hash framing.
 ///
 /// Version 3 introduced canonical frozen node-list identities and shallow
-/// node-root composition. Hashes are comparable only when both this version
-/// and the named-boundary schedule match.
-pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 3;
+/// node-root composition. Version 4 encodes RNG state as canonical numeric
+/// words. Hashes are comparable only when both this version and the named-
+/// boundary schedule match.
+pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 4;
 
 pub mod cell;
 pub mod code_tables;

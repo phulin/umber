@@ -955,7 +955,7 @@ pub struct Snapshot {
   a validated conservative root position. Active normalized input state and
   included-file content identities remain semantic.
 
-  **Checkpoint hash schema version 3** frames the semantic slice as ordered,
+  **Checkpoint hash schema version 4** frames the semantic slice as ordered,
   domain-separated component projections. Store journal cells, code tables,
   hyphenation, prepared magnification, font selection, World effects and shell
   escapes, stream buffers, input, interaction mode, page subroots, and the mode
@@ -967,10 +967,11 @@ pub struct Snapshot {
   `InputSummary` publishes one immutable semantic root containing exactly the
   frames, retained source resume state, input record, and Unicode lexer mode;
   allocator counters and diagnostic source ids remain outside that root.
-  Version 3 replaces recursive frozen node-list traversal with the versioned
+  Version 3 replaced recursive frozen node-list traversal with the versioned
   `NodeSemanticId` at every child-list boundary; page projections still visit
   their bounded outer nodes. Clearing the cache recomputes the identical
-  version-3 hash.
+  version-4 hash. Version 4 also encodes deterministic RNG state directly as
+  four numeric words instead of depending on diagnostic `Debug` formatting.
   The version is exposed by `CHECKPOINT_STATE_HASH_SCHEMA_VERSION`, and each
   `EngineCheckpoint` carries its aggregate schema version. Hashes from different
   versions or different named-boundary schedules are not comparable.

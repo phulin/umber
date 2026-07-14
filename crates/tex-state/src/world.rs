@@ -387,6 +387,10 @@ pub struct RngState {
 }
 
 impl RngState {
+    pub(crate) const fn state_words(self) -> [u64; 4] {
+        self.state
+    }
+
     #[must_use]
     pub fn from_seed(seed: u64) -> Self {
         let mut value = seed;

@@ -3846,8 +3846,9 @@ fn hash_stream_bufs(streams: &StreamBufState, hasher: &mut StateHasher) {
 
 fn hash_rng_state(rng: crate::world::RngState, hasher: &mut StateHasher) {
     hasher.tag(0x84);
-    let text = format!("{rng:?}");
-    hasher.str(&text);
+    for word in rng.state_words() {
+        hasher.u64(word);
+    }
 }
 
 fn hash_job_clock(clock: JobClock, hasher: &mut StateHasher) {
