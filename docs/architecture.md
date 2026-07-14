@@ -864,8 +864,12 @@ makes box-level memoization (M4) sound.
   nodes byte-for-byte instead of being reconstituted.
   The search result is a break plan independent of paragraph ownership.
   Execution moves whichever owned list won (original or hyphenated) into
-  post-line-break, which in turn moves retained nodes into line vectors rather
-  than cloning the paragraph at either boundary. Post-line-break produces
+  a resumable post-line-break materializer. Execution consumes, freezes, and
+  packs one line before requesting the next, then returns the emptied node
+  vector so its allocation is reused across the paragraph; migrating material
+  is extracted in place without replacing that buffer. The materializer moves
+  retained nodes rather than cloning the paragraph at either boundary.
+  Post-line-break produces
   line node vectors with named
   `\leftskip`/`\rightskip` glue, per-line width/indent dimensions selected
   from `\parshape` first and otherwise TeX's `\hangindent`/`\hangafter`

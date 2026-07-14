@@ -14,6 +14,92 @@ pub fn post_line_break<S: TypesetState>(
     post_line_break_owned(state, nodes.to_vec(), breaks, params)
 }
 
+/// Stateful source-order materialization of a broken paragraph.
+///
+/// `materialize_next` accepts ownership of the previous line's node buffer,
+/// clears it, and fills it with the next line. Callers that consume one line
+/// before requesting another therefore pay for line storage only once.
+pub struct LineMaterializer {
+    nodes: std::iter::Peekable<std::iter::Enumerate<std::vec::IntoIter<Node>>>,
+    node_count: usize,
+    breaks: Vec<BreakDecision>,
+    line_no: usize,
+    pending_post: Vec<Node>,
+    params: PostLineBreakParams,
+}
+
+impl LineMaterializer {
+    #[must_use]
+    pub fn new(nodes: Vec<Node>, breaks: Vec<BreakDecision>, params: PostLineBreakParams) -> Self {
+        let node_count = nodes.len();
+        Self {
+            nodes: nodes.into_iter().enumerate().peekable(),
+            node_count,
+            breaks,
+            line_no: 0,
+            pending_post: Vec::new(),
+            params,
+        }
+    }
+
+    pub fn materialize_next<S: TypesetState>(
+        &mut self,
+        state: &S,
+        mut line: Vec<Node>,
+    ) -> Option<BrokenLine> {
+        let decision = *self.breaks.get(self.line_no)?;
+        let end = decision.position.min(self.node_count);
+        let start = self.nodes.peek().map_or(end, |(index, _)| *index);
+        let required = end
+            .saturating_sub(start)
+            .saturating_add(self.pending_post.len())
+            .saturating_add(2);
+        line.clear();
+        line.reserve(required);
+
+        let dimensions = self.params.shape.dimensions(self.line_no + 1);
+        if state.glue(self.params.left_skip) != GlueSpec::ZERO {
+            line.push(Node::Glue {
+                spec: self.params.left_skip,
+                kind: GlueKind::LeftSkip,
+                leader: None,
+            });
+        }
+        line.append(&mut self.pending_post);
+        self.pending_post = push_owned_line_segment(
+            state,
+            &mut self.nodes,
+            end,
+            self.node_count,
+            &decision,
+            self.params.empty_list,
+            &mut line,
+        );
+        line.push(Node::Glue {
+            spec: self.params.right_skip,
+            kind: GlueKind::RightSkip,
+            leader: None,
+        });
+
+        let penalty_after = line_penalty_after(
+            self.line_no,
+            &self.breaks,
+            decision.hyphenated,
+            &self.params,
+        );
+        self.line_no += 1;
+        while matches!(self.nodes.peek(), Some((_, node)) if is_discardable(node)) {
+            let _ = self.nodes.next();
+        }
+        Some(BrokenLine {
+            nodes: line,
+            penalty_after,
+            hyphenated: decision.hyphenated,
+            dimensions,
+        })
+    }
+}
+
 /// Materializes broken lines by moving nodes out of an owned paragraph.
 ///
 /// The borrowed convenience entry point above remains useful to pure callers,
@@ -26,51 +112,9 @@ pub fn post_line_break_owned<S: TypesetState>(
     params: PostLineBreakParams,
 ) -> Vec<BrokenLine> {
     let mut lines = Vec::with_capacity(breaks.len());
-    let node_count = nodes.len();
-    let mut nodes = nodes.into_iter().enumerate().peekable();
-    let mut pending_post = Vec::new();
-    for (line_no, decision) in breaks.iter().enumerate() {
-        let end = decision.position.min(node_count);
-        let start = nodes.peek().map_or(end, |(index, _)| *index);
-        let mut line = Vec::with_capacity(
-            end.saturating_sub(start)
-                .saturating_add(pending_post.len())
-                .saturating_add(2),
-        );
-        let dimensions = params.shape.dimensions(line_no + 1);
-        if state.glue(params.left_skip) != GlueSpec::ZERO {
-            line.push(Node::Glue {
-                spec: params.left_skip,
-                kind: GlueKind::LeftSkip,
-                leader: None,
-            });
-        }
-        line.append(&mut pending_post);
-        pending_post = push_owned_line_segment(
-            state,
-            &mut nodes,
-            end,
-            node_count,
-            decision,
-            params.empty_list,
-            &mut line,
-        );
-        line.push(Node::Glue {
-            spec: params.right_skip,
-            kind: GlueKind::RightSkip,
-            leader: None,
-        });
-
-        let penalty_after = line_penalty_after(line_no, breaks, decision.hyphenated, &params);
-        lines.push(BrokenLine {
-            nodes: line,
-            penalty_after,
-            hyphenated: decision.hyphenated,
-            dimensions,
-        });
-        while matches!(nodes.peek(), Some((_, node)) if is_discardable(node)) {
-            let _ = nodes.next();
-        }
+    let mut materializer = LineMaterializer::new(nodes, breaks.to_vec(), params);
+    while let Some(line) = materializer.materialize_next(state, Vec::new()) {
+        lines.push(line);
     }
     lines
 }

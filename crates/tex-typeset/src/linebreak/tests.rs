@@ -1134,6 +1134,61 @@ fn post_line_break_clears_materialized_unbroken_discretionary_replacement() {
 }
 
 #[test]
+fn line_materializer_reuses_the_returned_line_buffer() {
+    let mut universe = Universe::new();
+    let zero = universe.intern_glue(GlueSpec::ZERO);
+    let empty = universe.freeze_node_list(&[]);
+    let nodes = vec![rule(1), rule(2), rule(3), rule(4)];
+    let breaks = vec![
+        BreakDecision {
+            position: 2,
+            penalty: 0,
+            hyphenated: false,
+        },
+        BreakDecision {
+            position: 4,
+            penalty: EJECT_PENALTY,
+            hyphenated: false,
+        },
+    ];
+    let mut materializer = LineMaterializer::new(
+        nodes,
+        breaks,
+        PostLineBreakParams {
+            empty_list: empty,
+            left_skip: zero,
+            right_skip: zero,
+            interline_penalty: 0,
+            club_penalty: 0,
+            widow_penalty: 0,
+            broken_penalty: 0,
+            prev_graf: 0,
+            interline_penalties: Vec::new(),
+            club_penalties: Vec::new(),
+            widow_penalties: Vec::new(),
+            shape: LineShape::natural(sp(100)),
+        },
+    );
+
+    let first = materializer
+        .materialize_next(&universe, Vec::new())
+        .expect("first line");
+    let allocation = first.nodes.as_ptr();
+    let capacity = first.nodes.capacity();
+    let second = materializer
+        .materialize_next(&universe, first.nodes)
+        .expect("second line");
+
+    assert_eq!(second.nodes.as_ptr(), allocation);
+    assert_eq!(second.nodes.capacity(), capacity);
+    assert!(
+        materializer
+            .materialize_next(&universe, second.nodes)
+            .is_none()
+    );
+}
+
+#[test]
 fn post_line_break_omits_only_zero_leftskip() {
     let mut universe = Universe::new();
     let zero = universe.intern_glue(GlueSpec::ZERO);

@@ -243,7 +243,7 @@ pub fn line_break_hyphenated<S: TypesetState>(
 mod post;
 mod widths;
 
-pub use post::{post_line_break, post_line_break_owned};
+pub use post::{LineMaterializer, post_line_break, post_line_break_owned};
 
 use widths::{Widths, line_badness, line_widths_view, node_width};
 

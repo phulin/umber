@@ -5,9 +5,9 @@ use tex_state::scaled::Scaled;
 use tex_state::{ParagraphShapeLine, PenaltyArrayKind, Universe};
 use tex_typeset::PackSpec;
 use tex_typeset::linebreak::{
-    LineBreakParams, LineBreakResult, LineDimensions, LineShape, LineShapeEntry,
+    LineBreakParams, LineBreakResult, LineDimensions, LineMaterializer, LineShape, LineShapeEntry,
     ParagraphShape as TypesetParagraphShape, PostLineBreakParams, line_break_hyphenated,
-    post_line_break_owned, try_line_break_without_hyphenation,
+    try_line_break_without_hyphenation,
 };
 
 use super::boxes::hpack_with_overfull_rule;
@@ -259,10 +259,12 @@ fn break_current_paragraph(
     );
     let mut line_count = 0i32;
     let mut last_line = None;
-    for mut broken in post_line_break_owned(stores, decisions.nodes, &decisions.breaks, post_params)
-    {
+    let mut materializer = LineMaterializer::new(decisions.nodes, decisions.breaks, post_params);
+    let mut line_nodes = Vec::new();
+    let mut migrated = Vec::new();
+    while let Some(mut broken) = materializer.materialize_next(stores, line_nodes) {
         line_count += 1;
-        let migrated = extract_migrating_material(stores, &mut broken.nodes);
+        extract_migrating_material(stores, &mut broken.nodes, &mut migrated);
         let list = stores.freeze_node_list(&broken.nodes);
         let line =
             hpack_with_overfull_rule(stores, list, PackSpec::Exactly(broken.dimensions.width));
@@ -270,12 +272,13 @@ fn break_current_paragraph(
         line.shift = broken.dimensions.indent;
         last_line = Some(line);
         append_node_to_current_list(nest, stores, Node::HList(line))?;
-        for node in migrated {
+        for node in migrated.drain(..) {
             append_migrated_contribution(nest, stores, node);
         }
         if let Some(penalty) = broken.penalty_after {
             append_vertical_contribution(nest, stores, Node::Penalty(penalty));
         }
+        line_nodes = broken.nodes;
     }
     nest.current_list_mut()
         .set_prev_graf(params.prev_graf.saturating_add(line_count));
@@ -299,20 +302,19 @@ pub(crate) fn break_hlist(
     }
 }
 
-fn extract_migrating_material(stores: &Universe, nodes: &mut Vec<Node>) -> Vec<Node> {
-    let mut retained = Vec::with_capacity(nodes.len());
-    let mut migrated = Vec::new();
-    for node in nodes.drain(..) {
+fn extract_migrating_material(stores: &Universe, nodes: &mut Vec<Node>, migrated: &mut Vec<Node>) {
+    migrated.clear();
+    for node in nodes.extract_if(.., |node| {
+        matches!(node, Node::Mark { .. } | Node::Ins { .. } | Node::Adjust(_))
+    }) {
         match node {
             Node::Mark { .. } | Node::Ins { .. } => migrated.push(node),
             Node::Adjust(list) => {
                 migrated.extend(stores.nodes(list).into_iter().map(|node| node.to_owned()))
             }
-            node => retained.push(node),
+            _ => unreachable!("extract predicate restricts migrating node kinds"),
         }
     }
-    *nodes = retained;
-    migrated
 }
 
 fn snapshot_paragraph_params(nest: &ModeNest, stores: &Universe) -> ParagraphParams {
