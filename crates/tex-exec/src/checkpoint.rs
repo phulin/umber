@@ -61,6 +61,15 @@ impl EngineCheckpoint {
 
 /// Receives checkpoints synchronously as the outer executor reaches boundaries.
 pub trait CheckpointSink {
+    /// Whether this sink wants a checkpoint captured at `boundary`.
+    ///
+    /// The default preserves checkpoint delivery for existing sinks. Sinks
+    /// that decline a boundary avoid all input, mode, snapshot, and semantic
+    /// hash construction for it.
+    fn wants_checkpoint(&self, _boundary: EngineBoundary) -> bool {
+        true
+    }
+
     fn checkpoint(&mut self, checkpoint: EngineCheckpoint);
 }
 
@@ -74,6 +83,10 @@ impl CheckpointSink for Vec<EngineCheckpoint> {
 pub(crate) struct NoopCheckpointSink;
 
 impl CheckpointSink for NoopCheckpointSink {
+    fn wants_checkpoint(&self, _boundary: EngineBoundary) -> bool {
+        false
+    }
+
     fn checkpoint(&mut self, _checkpoint: EngineCheckpoint) {}
 }
 
@@ -102,6 +115,9 @@ impl<'a, C: CheckpointSink> EngineSession<'a, C> {
         input: &mut InputStack<S>,
         universe: &mut Universe,
     ) {
+        if !self.sink.wants_checkpoint(boundary) {
+            return;
+        }
         let input_summary = input.publication_summary(universe);
         universe.set_input_summary(input_summary.clone());
         let modes = nest.summary();
