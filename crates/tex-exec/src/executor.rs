@@ -325,7 +325,8 @@ where
                 stats.delivered_tokens += macro_text.len();
                 stats.macro_text_span_tokens += macro_text.len();
                 for token in macro_text.drain(..) {
-                    debug_assert!(assignments::try_append_character(nest, token, stores)?);
+                    let appended = assignments::try_append_character(nest, token, stores)?;
+                    debug_assert!(appended);
                 }
                 continue;
             }

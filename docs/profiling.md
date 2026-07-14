@@ -48,6 +48,17 @@ opening and hashing through `World`, engine initialization, expansion,
 execution, shipout, and final DVI generation. After sampling, the runner checks
 the final DVI against the warm-up result.
 
+The optimized runner must produce 97 pages and a 263,424-byte DVI for the
+current pinned Gentle corpus. That byte count is also the size of
+`tests/corpus/e2e/gentle.expected.dvi`; the strict conformance test remains the
+authoritative byte-for-byte check. Profiles captured before the macro-text
+release-path repair consumed lexer spans from inside a `debug_assert!`, so the
+side-effecting character append was compiled out and those runs produced an
+incorrect 257,304-byte DVI. Do not compare their absolute timings or hotspot
+weights with corrected captures. The first corrected scalar 200-run capture is
+`/tmp/gentle-q50-correct-scalar-baseline.json.gz` (92.351 ms/run on the capture
+machine).
+
 The ordinary end-to-end Gentle conformance test remains the correctness and
 host-workflow measurement. This profiling runner deliberately removes its
 repeated staging, oracle reads, artifact writes, and temporary-directory

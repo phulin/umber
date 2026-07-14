@@ -147,7 +147,7 @@ fn virtualized_execution_trace_is_opt_in_and_semantically_neutral() {
         let mut stores = support::stores_with_fonts();
         stores.world_mut().set_execution_tracing(tracing);
         let mut input = InputStack::new(MemoryInput::new(
-            "\\font\\f=cmr10 \\f x\\par \\setbox0=\\hbox{y}",
+            "\\font\\f=cmr10 \\f \\def\\x{office-A}\\x\\par \\setbox0=\\hbox{\\x}",
         ));
         Executor::new()
             .run(&mut input, &mut stores)
