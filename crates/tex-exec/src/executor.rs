@@ -160,9 +160,40 @@ where {
     where
         C: CheckpointSink,
     {
+        self.run_session(input, stores, execution, checkpoints, true)
+    }
+
+    /// Continues a previously restored named checkpoint without publishing a
+    /// second `JobStart` boundary.
+    pub fn resume_with_context_and_checkpoints<C>(
+        &mut self,
+        input: &mut InputStack,
+        stores: &mut Universe,
+        execution: &mut crate::ExecutionContext<'_>,
+        checkpoints: &mut C,
+    ) -> Result<ExecutionStats, ExecError>
+    where
+        C: CheckpointSink,
+    {
+        self.run_session(input, stores, execution, checkpoints, false)
+    }
+
+    fn run_session<C>(
+        &mut self,
+        input: &mut InputStack,
+        stores: &mut Universe,
+        execution: &mut crate::ExecutionContext<'_>,
+        checkpoints: &mut C,
+        publish_job_start: bool,
+    ) -> Result<ExecutionStats, ExecError>
+    where
+        C: CheckpointSink,
+    {
         input.ensure_source_ids_at_least(stores.input_summary().next_source_id());
         let mut session = EngineSession::new(checkpoints);
-        session.publish(EngineBoundary::JobStart, &self.nest, input, stores);
+        if publish_job_start {
+            session.publish(EngineBoundary::JobStart, &self.nest, input, stores);
+        }
         let artifact_start = stores.world().artifact_commits().len();
         let mut stats = ExecutionStats::default();
         let exit = match run_outer_main_control_until(
@@ -182,9 +213,7 @@ where {
         };
         let result = match exit {
             MainControlExit::EndOfInput => Ok(stats),
-            MainControlExit::Stopped => {
-                unreachable!("top-level main control has no stop condition")
-            }
+            MainControlExit::Stopped => Ok(stats),
             MainControlExit::End { .. } => {
                 if let Err(err) =
                     output::finish_end(&mut self.nest, input, stores, execution, &mut stats)
@@ -266,10 +295,14 @@ where
         |nest, input, stores, event| {
             if event.shipout_complete {
                 session.publish(EngineBoundary::ShipoutComplete, nest, input, stores);
+                if session.stop_requested() {
+                    return true;
+                }
             }
             if event.outer_paragraph_end {
                 session.publish(EngineBoundary::OuterParagraphEnd, nest, input, stores);
             }
+            session.stop_requested()
         },
     );
     result.map_err(|error| error.capture(input))
@@ -308,7 +341,7 @@ where
         stats,
         false,
         should_stop,
-        |_, _, _, _| {},
+        |_, _, _, _| false,
     );
     result.map_err(|error| error.capture(input))
 }
@@ -326,7 +359,7 @@ fn run_main_control_until_observing<F, O>(
 ) -> Result<MainControlExit, ExecError>
 where
     F: FnMut(&mut InputStack, &Universe) -> bool,
-    O: FnMut(&ModeNest, &mut InputStack, &mut Universe, BoundaryEvent),
+    O: FnMut(&ModeNest, &mut InputStack, &mut Universe, BoundaryEvent) -> bool,
 {
     let mut macro_text = Vec::new();
     loop {
@@ -597,7 +630,7 @@ where
                 return Ok(MainControlExit::NotConsumed { token });
             }
         }
-        observe(
+        if observe(
             nest,
             input,
             stores,
@@ -608,7 +641,9 @@ where
                     && nest.depth() == 1,
                 shipout_complete: stores.world().artifact_commits().len() != before_artifacts,
             },
-        );
+        ) {
+            return Ok(MainControlExit::Stopped);
+        }
     }
 }
 

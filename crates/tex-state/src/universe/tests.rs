@@ -1,4 +1,6 @@
-use super::{FormatError, TakeUnboxResult, UnboxKind, Universe, utf8_scalar_len_at};
+use super::{
+    FormatError, GenerationForkError, TakeUnboxResult, UnboxKind, Universe, utf8_scalar_len_at,
+};
 use crate::font::{MAX_FONT_DIMEN, NULL_FONT};
 use crate::glue::{GlueSpec, Order};
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
@@ -829,6 +831,83 @@ fn rollback_rejects_snapshot_from_different_universe() {
 }
 
 #[test]
+fn frozen_generation_forks_once_at_an_owner_exact_snapshot() {
+    let mut universe = Universe::new();
+    universe.set_count(0, 11);
+    let selected = universe.snapshot();
+    universe.set_count(0, 22);
+    let substrate = universe.freeze_generation();
+
+    let fork = substrate
+        .fork_at(&selected)
+        .expect("retained fork succeeds");
+    assert_eq!(fork.count(0), 11);
+
+    let mut foreign = Universe::new();
+    let foreign = foreign.snapshot();
+    assert_eq!(
+        substrate
+            .fork_at(&foreign)
+            .expect_err("foreign root rejected"),
+        GenerationForkError::ForeignSnapshot
+    );
+}
+
+#[test]
+fn generation_fork_detaches_the_accepted_effect_prefix() {
+    let mut universe = Universe::new();
+    universe.begin_retained_session().expect("retained session");
+    universe
+        .world_mut()
+        .write_text(PrintSink::Log, "accepted prefix");
+    let selected_pos = universe.world().effect_pos();
+    let selected = universe.snapshot();
+    universe
+        .world_mut()
+        .write_text(PrintSink::Log, "accepted suffix");
+    let substrate = universe.freeze_generation();
+
+    let mut fork = substrate
+        .fork_at(&selected)
+        .expect("retained fork succeeds");
+    assert_eq!(fork.world().effect_pos(), selected_pos);
+    assert!(fork.world().effect_records().is_empty());
+    fork.world_mut().write_text(PrintSink::Log, "scratch tail");
+    assert_eq!(fork.world().effect_pos().raw(), selected_pos.raw() + 1);
+    assert!(matches!(
+        fork.world().effect_records(),
+        [EffectRecord::StreamWrite { text, .. }] if text == "scratch tail"
+    ));
+    assert_eq!(substrate.world().effect_records().len(), 2);
+}
+
+#[test]
+fn promoted_fork_retargets_only_the_bit_identical_prefix() {
+    let mut universe = Universe::new();
+    let prefix = universe.snapshot();
+    universe.set_count(0, 1);
+    let after_anchor = universe.snapshot();
+    let source = universe.freeze_generation();
+
+    let mut fork = source.fork_at(&prefix).expect("fork at prefix");
+    fork.set_count(1, 2);
+    let target = fork.freeze_generation();
+    let retargeted = target
+        .retarget_prefix_from(&source, &prefix)
+        .expect("prefix retargets");
+    let restored = target
+        .fork_at(&retargeted)
+        .expect("retargeted root restores");
+    assert_eq!(restored.count(0), 0);
+    assert_eq!(
+        target
+            .retarget_prefix_from(&source, &after_anchor)
+            .expect_err("post-anchor record rejected"),
+        GenerationForkError::PrefixBeyondForkAnchor
+    );
+}
+
+#[test]
 fn rollback_restores_store_tuple_and_placeholder_scalars() {
     let mut universe = Universe::new();
     let symbol = universe.intern("x");
@@ -1533,6 +1612,36 @@ fn repeated_shipout_commits_do_not_retain_epoch_page_nodes() {
             .expect("shipout commit succeeds");
         assert_eq!(universe.testing_epoch_node_count(), 0);
     }
+}
+
+#[test]
+fn retained_shipout_rolls_back_logical_output_without_published_host_bytes() {
+    let mut universe = Universe::new();
+    universe
+        .begin_retained_session()
+        .expect("retained session starts");
+    let before = universe.snapshot();
+    let mut transaction = universe.begin_shipout();
+    transaction
+        .world_mut()
+        .write_text(PrintSink::TerminalAndLog, "logical shipout\n");
+    let effect_pos = transaction.world().effect_pos();
+    transaction
+        .commit(
+            crate::VerifiedArtifact::new(b"logical page".to_vec()),
+            effect_pos,
+        )
+        .expect("logical shipout succeeds");
+
+    assert_eq!(universe.world().artifact_commits().len(), 1);
+    assert_eq!(universe.world().effect_records().len(), 1);
+    assert_eq!(universe.world().memory_terminal_output(), Some(&b""[..]));
+    assert_eq!(universe.testing_epoch_node_count(), 0);
+
+    universe.rollback(&before);
+    assert!(universe.world().artifact_commits().is_empty());
+    assert!(universe.world().effect_records().is_empty());
+    assert_eq!(universe.world().memory_terminal_output(), Some(&b""[..]));
 }
 
 #[test]

@@ -779,6 +779,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tex-incr"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "tex-exec",
+ "tex-lex",
+ "tex-out",
+ "tex-state",
+]
+
+[[package]]
 name = "tex-lex"
 version = "0.1.0"
 dependencies = [

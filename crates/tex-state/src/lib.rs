@@ -60,15 +60,16 @@ pub use provenance_resolver::ProvenanceResolver;
 pub use stores::{FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnostic};
 pub use universe::{
     BoxBuildTransaction, BoxDimension, EngineBoundaryHasher, ExpansionContext, ExpansionState,
-    FormatError, InputOpenContext, InputOpenState, InputReadState, InteractionMode,
-    MeaningCacheGuard, ParagraphShapeLine, PenaltyArrayKind, ShipoutTransaction, Snapshot,
-    TakeUnboxResult, UnboxKind, Universe,
+    FormatError, GenerationForkError, GenerationSubstrate, InputOpenContext, InputOpenState,
+    InputReadState, InteractionMode, MeaningCacheGuard, ParagraphShapeLine, PenaltyArrayKind,
+    ShipoutTransaction, Snapshot, TakeUnboxResult, UnboxKind, Universe,
 };
 pub use world::{
     CommittedArtifact, ContentDomain, ContentHash, ContentIdentity, EffectPos, EffectRecord,
     EffectRetrySafety, ExecutionTraceEvent, FileContent, InputRecord, InputRecordId, JobClock,
     MemoryOutput, PrintSink, ReadTarget, RngState, ShellEscapePolicy, ShellEscapeRecord,
-    StreamBufState, StreamSlot, VerifiedArtifact, World, WorldError, WorldSnapshot,
+    StreamBufState, StreamSlot, VerifiedArtifact, World, WorldCommitMode, WorldError,
+    WorldSnapshot,
 };
 
 #[cfg(test)]

@@ -32,6 +32,7 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `crates/tex-lex`: line normalization, tokenization, input stack, and token-list replay.
 - `crates/tex-expand`: gullet expansion, expandable primitives, conditionals, and value scanners.
 - `crates/tex-exec`: stomach execution, mode nest, main-control dispatch, assignments, and h/v-mode material construction.
+- `crates/tex-incr`: named-boundary editor sessions, revision mapping, convergence, pruning, and suffix reuse.
 - `crates/tex-typeset`: pure packing, line-breaking, and list transformation kernels.
 - `crates/tex-out`: committed page artifact model, hashing, and binary serialization.
 - `crates/umber`: CLI driver.

@@ -377,7 +377,7 @@ pub struct InputSummary {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct InputSemanticRoot(Arc<InputSemanticState>);
 
-#[derive(Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 struct InputSemanticState {
     frames: Vec<InputFrameSummary>,
     last_source_record: Option<InputRecordId>,
@@ -512,6 +512,46 @@ impl InputSummary {
     #[must_use]
     pub fn unicode_superscript_notation(&self) -> bool {
         self.semantic_root.0.unicode_superscript_notation
+    }
+
+    /// Conservative complete-physical-line position for the root editor source.
+    #[must_use]
+    pub fn conservative_root_position(&self) -> usize {
+        self.frames()
+            .iter()
+            .find_map(|frame| match frame {
+                InputFrameSummary::Source { source, .. } => Some(source.next_source_offset()),
+                InputFrameSummary::TokenList { .. } | InputFrameSummary::Condition { .. } => None,
+            })
+            .or_else(|| {
+                self.last_source_frame()
+                    .map(SourceFrameSummary::next_source_offset)
+            })
+            .unwrap_or(0)
+    }
+
+    pub(crate) fn rebind_root_generated(
+        &self,
+        source_id: SourceId,
+        registration: RegisteredSource,
+    ) -> Option<Self> {
+        let mut state = (*self.semantic_root.0).clone();
+        let root = state.frames.iter_mut().find_map(|frame| match frame {
+            InputFrameSummary::Source {
+                source_id,
+                input_record,
+                source,
+            } => Some((source_id, input_record, source)),
+            InputFrameSummary::TokenList { .. } | InputFrameSummary::Condition { .. } => None,
+        })?;
+        *root.0 = source_id;
+        *root.1 = None;
+        *root.2 = root.2.clone().with_registration(Some(registration));
+        Some(Self {
+            semantic_root: InputSemanticRoot(Arc::new(state)),
+            last_source_id: self.last_source_id,
+            next_source_id: self.next_source_id.max(source_id.raw().saturating_add(1)),
+        })
     }
 }
 

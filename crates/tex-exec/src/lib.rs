@@ -27,8 +27,8 @@ pub use assignments::{
     install_etex_unexpandable_primitives, install_unexpandable_primitives, try_execute_assignment,
 };
 pub use checkpoint::{
-    CheckpointSink, ENGINE_CHECKPOINT_SCHEMA_VERSION, EngineBoundary, EngineCheckpoint,
-    EngineRestoreError,
+    CheckpointSink, ENGINE_CHECKPOINT_SCHEMA_VERSION, EditorRestoreError, EngineBoundary,
+    EngineCheckpoint, EngineRestoreError,
 };
 pub use dispatch::{DispatchAction, ExecutionStats, dispatch_delivered_token};
 pub use error::ExecError;

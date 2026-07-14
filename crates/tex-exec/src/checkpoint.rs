@@ -1,7 +1,12 @@
 use std::fmt;
+use std::sync::Arc;
 
-use tex_lex::{InputSource, InputStack};
-use tex_state::{InputRecordId, InputSummary, Snapshot, SourceId, Universe};
+use tex_lex::{InputSource, InputStack, MemoryInput, WorldInput};
+use tex_state::source_map::SourceMapError;
+use tex_state::{
+    GenerationForkError, GenerationSubstrate, InputRecordId, InputSummary, Snapshot, SourceId,
+    Universe,
+};
 
 use crate::{ExecError, ModeNest, ModeNestSummary};
 
@@ -30,6 +35,8 @@ pub struct EngineCheckpoint {
     input: InputSummary,
     modes: ModeNestSummary,
     state_hash: u64,
+    effect_prefix: usize,
+    artifact_prefix: usize,
 }
 
 impl EngineCheckpoint {
@@ -57,6 +64,28 @@ impl EngineCheckpoint {
     pub const fn mode_summary(&self) -> &ModeNestSummary {
         &self.modes
     }
+
+    #[must_use]
+    pub const fn artifact_prefix_len(&self) -> usize {
+        self.artifact_prefix
+    }
+
+    #[must_use]
+    pub const fn effect_prefix_len(&self) -> usize {
+        self.effect_prefix
+    }
+
+    /// Retargets an inherited prefix checkpoint onto a promoted fork after
+    /// the state layer proves it lies at or below that fork's exact anchor.
+    pub fn retarget_prefix(
+        &self,
+        target: &GenerationSubstrate,
+        source: &GenerationSubstrate,
+    ) -> Result<Self, GenerationForkError> {
+        let mut checkpoint = self.clone();
+        checkpoint.universe = target.retarget_prefix_from(source, &self.universe)?;
+        Ok(checkpoint)
+    }
 }
 
 /// Receives checkpoints synchronously as the outer executor reaches boundaries.
@@ -68,6 +97,11 @@ pub trait CheckpointSink {
     /// hash construction for it.
     fn wants_checkpoint(&self, _boundary: EngineBoundary) -> bool {
         true
+    }
+
+    /// Stops execution immediately after the last delivered checkpoint.
+    fn stop_requested(&self) -> bool {
+        false
     }
 
     fn checkpoint(&mut self, checkpoint: EngineCheckpoint);
@@ -129,6 +163,9 @@ impl<'a, C: CheckpointSink> EngineSession<'a, C> {
                 fingerprint
             }
         };
+        let effect_prefix = usize::try_from(universe.world().effect_pos().raw())
+            .expect("effect log position must fit in memory address space");
+        let artifact_prefix = universe.world().artifact_commits().len();
         let universe = universe.snapshot();
         let state_hash = combine_mode_hash(universe.state_hash(), mode_hash);
         self.sink.checkpoint(EngineCheckpoint {
@@ -138,7 +175,13 @@ impl<'a, C: CheckpointSink> EngineSession<'a, C> {
             input: input_summary,
             modes,
             state_hash,
+            effect_prefix,
+            artifact_prefix,
         });
+    }
+
+    pub(crate) fn stop_requested(&self) -> bool {
+        self.sink.stop_requested()
     }
 }
 
@@ -148,6 +191,32 @@ pub enum EngineRestoreError<E> {
     Input(E),
     Mode(ExecError),
 }
+
+/// Failure to atomically restore and rebind an editor checkpoint.
+#[derive(Debug)]
+pub enum EditorRestoreError {
+    Fork(GenerationForkError),
+    RootRebind(SourceMapError),
+    IncludedInputUnavailable(SourceId),
+    Mode(ExecError),
+}
+
+impl fmt::Display for EditorRestoreError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Fork(error) => write!(f, "could not fork retained generation: {error}"),
+            Self::RootRebind(error) => write!(f, "could not rebind editor root: {error}"),
+            Self::IncludedInputUnavailable(source) => write!(
+                f,
+                "included generated source {} cannot be reopened",
+                source.raw()
+            ),
+            Self::Mode(error) => write!(f, "could not restore checkpoint mode nest: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for EditorRestoreError {}
 
 impl<E: fmt::Display> fmt::Display for EngineRestoreError<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -178,6 +247,49 @@ impl crate::Executor {
         let restored_modes =
             ModeNest::from_summary(checkpoint.modes.clone()).map_err(EngineRestoreError::Mode)?;
         universe.rollback(&checkpoint.universe);
+        *input = restored_input;
+        self.nest = restored_modes;
+        Ok(())
+    }
+
+    /// Restores a retained checkpoint while substituting only its root editor
+    /// buffer. Preparation happens on a fork, so failure cannot partially
+    /// mutate the live executor, input stack, or Universe.
+    pub fn restore_editor_checkpoint(
+        &mut self,
+        input: &mut InputStack,
+        universe: &mut Universe,
+        substrate: &GenerationSubstrate,
+        checkpoint: &EngineCheckpoint,
+        source: &str,
+    ) -> Result<(), EditorRestoreError> {
+        let mut restored_universe = substrate
+            .fork_at(&checkpoint.universe)
+            .map_err(EditorRestoreError::Fork)?;
+        let (summary, root_source) = restored_universe
+            .rebind_root_editor_input(&checkpoint.input, Arc::from(source.as_bytes()))
+            .map_err(EditorRestoreError::RootRebind)?;
+        let restored_modes =
+            ModeNest::from_summary(checkpoint.modes.clone()).map_err(EditorRestoreError::Mode)?;
+        let restored_input = InputStack::from_summary(&summary, |source_id, record, frame| {
+            if source_id == root_source {
+                return Ok::<Box<dyn InputSource>, EditorRestoreError>(Box::new(
+                    MemoryInput::from_offset(source, frame.next_source_offset()),
+                ));
+            }
+            let Some(record) = record else {
+                return Err(EditorRestoreError::IncludedInputUnavailable(source_id));
+            };
+            let content = restored_universe
+                .world()
+                .recorded_input_content(record)
+                .ok_or(EditorRestoreError::IncludedInputUnavailable(source_id))?;
+            Ok(Box::new(WorldInput::from_content_at_offset(
+                content,
+                frame.next_source_offset(),
+            )))
+        })?;
+        *universe = restored_universe;
         *input = restored_input;
         self.nest = restored_modes;
         Ok(())

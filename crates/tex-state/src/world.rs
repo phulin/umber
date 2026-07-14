@@ -23,6 +23,18 @@ pub use tex_content::{ContentDomain, ContentHash, ContentIdentity};
 /// TeX's 16 read/write stream slots.
 pub const STREAM_SLOT_COUNT: usize = 16;
 
+/// Host-materialization policy for one engine timeline.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum WorldCommitMode {
+    /// Shipout immediately exposes effects to the configured host backend.
+    #[default]
+    Eager,
+    /// Shipout advances TeX-visible virtual state while host effects remain retained.
+    Retained,
+    /// A retained session has exported its effects and cannot be rolled back again.
+    Exported,
+}
+
 /// Exact bytes published by one successful page-artifact commit.
 ///
 /// Construction stays inside the aggregate shipout boundary, so downstream
@@ -380,6 +392,14 @@ pub enum EffectRecord {
     ShellEscape(ShellEscapeRecord),
 }
 
+impl EffectRecord {
+    /// Opaque retained-memory charge for detached session accounting.
+    #[must_use]
+    pub fn retained_bytes(&self) -> usize {
+        effect_retained_bytes(self)
+    }
+}
+
 /// Deterministic xoshiro256** RNG state.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct RngState {
@@ -571,6 +591,8 @@ pub struct WorldSnapshot {
     input_len: usize,
     input_identities: IdentityMark,
     shell_escape_len: usize,
+    artifact_commit_len: usize,
+    commit_mode: WorldCommitMode,
 }
 
 /// Cursor into World-owned state for semantic convergence hashing.
@@ -589,7 +611,7 @@ pub(crate) struct WorldStateHashCursor {
 pub struct World {
     backend: WorldBackend,
     effect_base: EffectPos,
-    effects: Vec<EffectRecord>,
+    effects: Arc<Vec<EffectRecord>>,
     stream_bufs: Arc<StreamBufState>,
     committed_write_streams: [Option<WriteTarget>; STREAM_SLOT_COUNT],
     rng: RngState,
@@ -604,6 +626,7 @@ pub struct World {
     committed_artifacts: Vec<CommittedArtifact>,
     verified_artifacts: BTreeSet<ContentHash>,
     effect_commit_poison: Option<WorldError>,
+    commit_mode: WorldCommitMode,
     execution_tracing: bool,
     execution_trace: Vec<ExecutionTraceEvent>,
     #[cfg(test)]
@@ -637,6 +660,7 @@ impl Clone for World {
             committed_artifacts: self.committed_artifacts.clone(),
             verified_artifacts: self.verified_artifacts.clone(),
             effect_commit_poison: self.effect_commit_poison.clone(),
+            commit_mode: self.commit_mode,
             execution_tracing: self.execution_tracing,
             execution_trace: self.execution_trace.clone(),
             #[cfg(test)]
@@ -662,6 +686,7 @@ impl PartialEq for World {
             && self.artifact_commits == other.artifact_commits
             && self.committed_artifacts == other.committed_artifacts
             && self.effect_commit_poison == other.effect_commit_poison
+            && self.commit_mode == other.commit_mode
     }
 }
 
@@ -702,7 +727,7 @@ impl World {
         Self {
             backend,
             effect_base: EffectPos::default(),
-            effects: Vec::new(),
+            effects: Arc::new(Vec::new()),
             stream_bufs: Arc::new(StreamBufState::default()),
             committed_write_streams: Default::default(),
             rng: RngState::default(),
@@ -717,6 +742,7 @@ impl World {
             committed_artifacts: Vec::new(),
             verified_artifacts: BTreeSet::new(),
             effect_commit_poison: None,
+            commit_mode: WorldCommitMode::Eager,
             execution_tracing: false,
             execution_trace: Vec::new(),
             #[cfg(test)]
@@ -1266,7 +1292,7 @@ impl World {
         for index in 0..count {
             if let Err(err) = self.apply_effect(index) {
                 if applied > 0 {
-                    self.effects.drain(0..applied);
+                    Arc::make_mut(&mut self.effects).drain(0..applied);
                     self.effect_base.0 += applied as u64;
                 }
                 let retry_safety = match err.retry_safety() {
@@ -1284,7 +1310,7 @@ impl World {
             applied += 1;
         }
 
-        self.effects.drain(0..applied);
+        Arc::make_mut(&mut self.effects).drain(0..applied);
         self.effect_base = effect_pos;
         Ok(())
     }
@@ -1340,7 +1366,66 @@ impl World {
 
     #[must_use]
     pub fn effect_records(&self) -> &[EffectRecord] {
-        &self.effects
+        self.effects.as_slice()
+    }
+
+    /// Opens a rollback-capable editor branch before any host-visible effect commits.
+    pub(crate) fn begin_retained_session(&mut self) -> Result<(), WorldError> {
+        if self.shell_escape_policy == ShellEscapePolicy::Enabled {
+            return Err(WorldError::new(
+                "begin retained session",
+                None,
+                "shell escape must be disabled for rollback-capable editor sessions",
+            ));
+        }
+        if self.effect_base != EffectPos::default() {
+            return Err(WorldError::new(
+                "begin retained session",
+                None,
+                "host effects were already materialized on this timeline",
+            ));
+        }
+        self.commit_mode = WorldCommitMode::Retained;
+        Ok(())
+    }
+
+    #[must_use]
+    pub const fn commit_mode(&self) -> WorldCommitMode {
+        self.commit_mode
+    }
+
+    /// Materializes a retained branch once, in order, and seals it against rollback.
+    pub(crate) fn export_retained_effects(&mut self) -> Result<(), WorldError> {
+        if self.commit_mode != WorldCommitMode::Retained {
+            return Err(WorldError::new(
+                "export retained session",
+                None,
+                "world is not an unexported retained session",
+            ));
+        }
+        let end = self.effect_pos();
+        self.commit_mode = WorldCommitMode::Eager;
+        if let Err(error) = self.commit_effects(end) {
+            self.commit_mode = WorldCommitMode::Retained;
+            return Err(error);
+        }
+        self.commit_mode = WorldCommitMode::Exported;
+        Ok(())
+    }
+
+    #[must_use]
+    pub(crate) fn retained_output_bytes(&self) -> usize {
+        let effects = self
+            .effects
+            .iter()
+            .map(effect_retained_bytes)
+            .sum::<usize>();
+        let artifacts = self
+            .committed_artifacts
+            .iter()
+            .map(|artifact| artifact.bytes.len())
+            .sum::<usize>();
+        effects.saturating_add(artifacts)
     }
 
     #[cfg(any(test, feature = "testing", feature = "shadow"))]
@@ -1511,6 +1596,8 @@ impl World {
             input_len: self.inputs.len(),
             input_identities: self.input_identities.watermark(),
             shell_escape_len: self.shell_escapes.len(),
+            artifact_commit_len: self.artifact_commits.len(),
+            commit_mode: self.commit_mode,
         }
     }
 
@@ -1521,18 +1608,53 @@ impl World {
         );
     }
 
+    #[must_use]
+    pub(crate) fn snapshot_is_retained(&self, snapshot: &WorldSnapshot) -> bool {
+        self.effect_pos_is_retained(snapshot.effect_pos)
+    }
+
     pub(crate) fn rollback(&mut self, snapshot: &WorldSnapshot) {
         self.assert_snapshot_retained(snapshot);
         self.input_identities
             .rollback(snapshot.input_identities)
             .expect("World input identity mark must name a retained ancestor");
-        self.effects
+        Arc::make_mut(&mut self.effects)
             .truncate((snapshot.effect_pos.raw() - self.effect_base.raw()) as usize);
         self.stream_bufs = snapshot.stream_bufs.clone();
         self.rng = snapshot.rng;
         self.shell_escape_policy = snapshot.shell_escape_policy;
         self.inputs.truncate(snapshot.input_len);
         self.shell_escapes.truncate(snapshot.shell_escape_len);
+        if snapshot.commit_mode == WorldCommitMode::Retained {
+            self.artifact_commits.truncate(snapshot.artifact_commit_len);
+            self.committed_artifacts
+                .truncate(snapshot.artifact_commit_len);
+        }
+        self.commit_mode = snapshot.commit_mode;
+    }
+
+    /// Restores a checkpoint on a freshly cloned generation while detaching
+    /// the accepted generation's immutable effect prefix.  The fork keeps the
+    /// absolute effect position so semantic cursors remain comparable, but
+    /// owns only effects produced after the restart anchor.
+    pub(crate) fn rollback_generation_fork(&mut self, snapshot: &WorldSnapshot) {
+        self.assert_snapshot_retained(snapshot);
+        self.input_identities
+            .rollback(snapshot.input_identities)
+            .expect("World input identity mark must name a retained ancestor");
+        self.effect_base = snapshot.effect_pos;
+        self.effects = Arc::new(Vec::new());
+        self.stream_bufs = snapshot.stream_bufs.clone();
+        self.rng = snapshot.rng;
+        self.shell_escape_policy = snapshot.shell_escape_policy;
+        self.inputs.truncate(snapshot.input_len);
+        self.shell_escapes.truncate(snapshot.shell_escape_len);
+        if snapshot.commit_mode == WorldCommitMode::Retained {
+            self.artifact_commits.truncate(snapshot.artifact_commit_len);
+            self.committed_artifacts
+                .truncate(snapshot.artifact_commit_len);
+        }
+        self.commit_mode = snapshot.commit_mode;
     }
 
     fn allocate_input_record(&mut self) -> InputRecordId {
@@ -1549,7 +1671,7 @@ impl World {
     }
 
     fn append_effect(&mut self, record: EffectRecord) {
-        self.effects.push(record);
+        Arc::make_mut(&mut self.effects).push(record);
     }
 
     fn apply_effect(&mut self, index: usize) -> Result<(), WorldError> {
@@ -1793,6 +1915,18 @@ fn splitmix64(mut value: u64) -> u64 {
     value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
     value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
     value ^ (value >> 31)
+}
+
+fn effect_retained_bytes(effect: &EffectRecord) -> usize {
+    std::mem::size_of::<EffectRecord>()
+        + match effect {
+            EffectRecord::StreamOpen { target, .. } => target.path.as_os_str().len(),
+            EffectRecord::StreamClose { .. } | EffectRecord::DeferredWrite { .. } => 0,
+            EffectRecord::StreamWrite { text, .. } => text.len(),
+            EffectRecord::Special { class, payload } => class.len().saturating_add(payload.len()),
+            EffectRecord::PdfObjectPlaceholder { label } => label.len(),
+            EffectRecord::ShellEscape(record) => record.command.len(),
+        }
 }
 
 fn real_job_clock() -> JobClock {

@@ -172,6 +172,18 @@ impl MemoryInput {
         source.scantokens = true;
         source
     }
+
+    /// Reopens an editor buffer at a validated physical-line boundary.
+    #[must_use]
+    pub fn from_offset(input: impl Into<String>, next_offset: usize) -> Self {
+        let input = input.into();
+        assert!(next_offset <= input.len() && input.is_char_boundary(next_offset));
+        Self {
+            backing: Arc::from(input.as_bytes()),
+            next_offset,
+            scantokens: false,
+        }
+    }
 }
 
 impl InputSource for MemoryInput {
@@ -221,6 +233,16 @@ impl WorldInput {
     pub fn from_content_after_lines(content: FileContent, lines_read: usize) -> Self {
         let input_record = content.record();
         Self::from_bytes(input_record, content.shared_bytes(), lines_read)
+    }
+
+    /// Reopens pinned content at a checkpoint's next physical byte offset.
+    #[must_use]
+    pub fn from_content_at_offset(content: FileContent, next_offset: usize) -> Self {
+        let input_record = content.record();
+        let mut source = Self::from_bytes(input_record, content.shared_bytes(), 0);
+        assert!(next_offset <= source.backing.len());
+        source.next_offset = next_offset;
+        source
     }
 
     fn from_bytes(input_record: InputRecordId, bytes: Arc<[u8]>, lines_read: usize) -> Self {

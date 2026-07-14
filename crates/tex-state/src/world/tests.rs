@@ -627,6 +627,48 @@ fn commit_flushes_prefix_once_and_drops_history() {
 }
 
 #[test]
+fn retained_session_exports_once_in_order() {
+    let mut universe = Universe::new();
+    let slot = StreamSlot::new(2);
+    universe
+        .begin_retained_session()
+        .expect("retained session starts");
+    universe.world_mut().open_out(slot, "retained.log");
+    universe
+        .world_mut()
+        .write_text(PrintSink::Stream(slot), "one");
+    let prefix = universe.world().effect_pos();
+    universe
+        .world_mut()
+        .write_text(PrintSink::Stream(slot), "two");
+
+    universe
+        .commit_effects(prefix)
+        .expect("logical commit succeeds");
+    assert_eq!(universe.world().memory_output("retained.log"), None);
+    assert_eq!(universe.world().effect_records().len(), 3);
+
+    universe
+        .export_retained_effects()
+        .expect("retained output exports");
+    assert_eq!(
+        universe.world().memory_output("retained.log"),
+        Some(&b"onetwo"[..])
+    );
+    assert!(universe.export_retained_effects().is_err());
+}
+
+#[test]
+fn retained_session_rejects_enabled_shell_escape() {
+    let mut universe = Universe::new();
+    universe
+        .world_mut()
+        .set_shell_escape_policy(ShellEscapePolicy::Enabled);
+    assert!(universe.begin_retained_session().is_err());
+    assert_eq!(universe.world().commit_mode(), WorldCommitMode::Eager);
+}
+
+#[test]
 fn failure_before_effect_reports_prefix_and_retries_without_duplication() {
     let mut world = World::memory();
     let slot = StreamSlot::new(2);

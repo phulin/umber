@@ -54,8 +54,8 @@ use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::token_store::TokenListBuilder;
 use crate::world::{
     ContentHash, EffectPos, EffectRecord, JobClock, PrintSink, ShellEscapePolicy,
-    ShellEscapeRecord, StreamBufState, StreamSlot, World, WorldError, WorldSnapshot,
-    WorldStateHashCursor, install_job_clock_params,
+    ShellEscapeRecord, StreamBufState, StreamSlot, World, WorldCommitMode, WorldError,
+    WorldSnapshot, WorldStateHashCursor, install_job_clock_params,
 };
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
 use std::hash::{Hash, Hasher};
@@ -292,6 +292,7 @@ impl<'a> InputOpenContext<'a> {
 #[derive(Clone, Debug)]
 pub struct Snapshot {
     owner: SnapshotOwner,
+    serial: u64,
     store: StoreSnapshot,
     epoch: Epoch,
     world: WorldSnapshot,
@@ -300,6 +301,41 @@ pub struct Snapshot {
     page: PageBuilderState,
     state_hash: u64,
     state_hash_base: StateHashBase,
+}
+
+/// One immutable accepted-generation state substrate shared by O(1) snapshots.
+#[derive(Debug)]
+pub struct GenerationSubstrate {
+    universe: Universe,
+    charged_bytes: usize,
+}
+
+/// Rejection from the narrow validated generation-fork/retarget operations.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GenerationForkError {
+    ForeignSnapshot,
+    InvalidatedSnapshot,
+    PrefixBeyondForkAnchor,
+    UnrelatedFork,
+}
+
+impl std::fmt::Display for GenerationForkError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::ForeignSnapshot => "checkpoint belongs to another generation substrate",
+            Self::InvalidatedSnapshot => "checkpoint roots are no longer retained",
+            Self::PrefixBeyondForkAnchor => "checkpoint is after the fork anchor",
+            Self::UnrelatedFork => "target substrate was not forked from the source generation",
+        })
+    }
+}
+
+impl std::error::Error for GenerationForkError {}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ForkOrigin {
+    source_owner: SnapshotOwner,
+    anchor_serial: u64,
 }
 
 #[derive(Debug)]
@@ -387,6 +423,17 @@ impl ShipoutTransaction<'_> {
     ) -> Result<ContentHash, WorldError> {
         let hash_base = self.state_hash_base.clone();
         let hash = self.world.store_verified_artifact(&artifact)?;
+        if self.world.commit_mode() == WorldCommitMode::Retained {
+            let node_mark = self.node_mark;
+            self.stores.release_shipout_nodes(node_mark);
+            self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
+            self.page.set_integer(PageInteger::DeadCycles, 0);
+            self.world
+                .record_artifact_commit(hash, artifact.into_bytes());
+            self.rollback = None;
+            self.finished = true;
+            return Ok(hash);
+        }
         if let Err(err) = self.world.commit_effects(effect_pos) {
             self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
             let node_mark = self.node_mark;
@@ -444,6 +491,66 @@ impl Snapshot {
     #[must_use]
     pub const fn state_hash(&self) -> u64 {
         self.state_hash
+    }
+}
+
+impl GenerationSubstrate {
+    /// Freezes one completed mutable timeline as an accepted generation.
+    #[must_use]
+    pub fn new(universe: Universe) -> Self {
+        let charged_bytes = std::mem::size_of::<Universe>().saturating_add(
+            universe.input_summary.len() * std::mem::size_of::<InputFrameSummary>(),
+        );
+        Self {
+            universe,
+            charged_bytes,
+        }
+    }
+
+    /// Opaque charged bytes shared by every checkpoint on this substrate.
+    #[must_use]
+    pub const fn charged_bytes(&self) -> usize {
+        self.charged_bytes
+    }
+
+    #[must_use]
+    pub const fn world(&self) -> &World {
+        self.universe.world()
+    }
+
+    /// Clones this frozen generation once and atomically rolls the clone back
+    /// to an exact owner-validated checkpoint.
+    pub fn fork_at(&self, checkpoint: &Snapshot) -> Result<Universe, GenerationForkError> {
+        self.universe.validate_retained_snapshot(checkpoint)?;
+        let mut fork = self.universe.clone();
+        let checkpoint = fork.retarget_inherited_snapshot(checkpoint);
+        fork.rollback_generation_fork(&checkpoint);
+        fork.fork_origin = Some(ForkOrigin {
+            source_owner: self.universe.owner.snapshot_owner(),
+            anchor_serial: checkpoint.serial,
+        });
+        Ok(fork)
+    }
+
+    /// Retargets a source-generation prefix snapshot onto a promoted fork.
+    /// This is deliberately limited to records at or before the exact fork anchor.
+    pub fn retarget_prefix_from(
+        &self,
+        source: &GenerationSubstrate,
+        checkpoint: &Snapshot,
+    ) -> Result<Snapshot, GenerationForkError> {
+        source.universe.validate_retained_snapshot(checkpoint)?;
+        let origin = self
+            .universe
+            .fork_origin
+            .ok_or(GenerationForkError::UnrelatedFork)?;
+        if origin.source_owner != source.universe.owner.snapshot_owner() {
+            return Err(GenerationForkError::UnrelatedFork);
+        }
+        if checkpoint.serial > origin.anchor_serial {
+            return Err(GenerationForkError::PrefixBeyondForkAnchor);
+        }
+        Ok(self.universe.retarget_inherited_snapshot(checkpoint))
     }
 }
 
@@ -585,6 +692,8 @@ pub struct Universe {
     page: PageBuilderState,
     state_hash_base: StateHashBase,
     state_hash_projection_cache: StateHashProjectionCache,
+    next_snapshot_serial: u64,
+    fork_origin: Option<ForkOrigin>,
 }
 
 /// Canonical semantic hasher for executor-owned state at a named boundary.
@@ -698,6 +807,8 @@ impl Clone for Universe {
             page: self.page.clone(),
             state_hash_base,
             state_hash_projection_cache: self.state_hash_projection_cache.clone(),
+            next_snapshot_serial: self.next_snapshot_serial,
+            fork_origin: self.fork_origin,
         }
     }
 }
@@ -748,6 +859,8 @@ impl Universe {
             page,
             state_hash_base,
             state_hash_projection_cache: StateHashProjectionCache::default(),
+            next_snapshot_serial: 0,
+            fork_origin: None,
         }
     }
 
@@ -857,6 +970,8 @@ impl Universe {
             page,
             state_hash_base,
             state_hash_projection_cache: StateHashProjectionCache::default(),
+            next_snapshot_serial: 0,
+            fork_origin: None,
         })
     }
 
@@ -864,6 +979,33 @@ impl Universe {
     #[must_use]
     pub fn snapshot(&mut self) -> Snapshot {
         self.checkpoint_from_hash_base(self.state_hash_base.clone())
+    }
+
+    #[must_use]
+    pub fn freeze_generation(self) -> GenerationSubstrate {
+        GenerationSubstrate::new(self)
+    }
+
+    fn validate_retained_snapshot(&self, snapshot: &Snapshot) -> Result<(), GenerationForkError> {
+        if snapshot.owner != self.owner.snapshot_owner() {
+            return Err(GenerationForkError::ForeignSnapshot);
+        }
+        if !self.stores.can_restore_snapshot(&snapshot.store)
+            || !self.world.snapshot_is_retained(&snapshot.world)
+        {
+            return Err(GenerationForkError::InvalidatedSnapshot);
+        }
+        Ok(())
+    }
+
+    fn retarget_inherited_snapshot(&self, snapshot: &Snapshot) -> Snapshot {
+        let mut retargeted = snapshot.clone();
+        retargeted.owner = self.owner.snapshot_owner();
+        retargeted.store = self.stores.retarget_inherited_snapshot(&snapshot.store);
+        retargeted.state_hash_base.store = self
+            .stores
+            .retarget_state_hash_cursor(&snapshot.state_hash_base.store);
+        retargeted
     }
 
     fn capture_scoped_rollback(&mut self) -> ScopedRollback {
@@ -930,8 +1072,14 @@ impl Universe {
             checkpoint_hash: state_hash,
         };
         self.state_hash_base = next_hash_base.clone();
+        let serial = self.next_snapshot_serial;
+        self.next_snapshot_serial = self
+            .next_snapshot_serial
+            .checked_add(1)
+            .expect("Universe snapshot serial exhausted");
         Snapshot {
             owner: self.owner.snapshot_owner(),
+            serial,
             epoch: store.epoch(),
             store,
             world,
@@ -974,6 +1122,18 @@ impl Universe {
         self.world.assert_snapshot_retained(&snapshot.world);
         self.stores.rollback(&snapshot.store);
         self.world.rollback(&snapshot.world);
+        self.input_summary = snapshot.input_summary.clone();
+        self.interaction_mode = snapshot.interaction_mode;
+        self.page = snapshot.page.clone();
+        self.state_hash_base = snapshot.state_hash_base.clone();
+        self.state_hash_projection_cache.clear();
+    }
+
+    fn rollback_generation_fork(&mut self, snapshot: &Snapshot) {
+        self.assert_valid_snapshot(snapshot);
+        self.world.assert_snapshot_retained(&snapshot.world);
+        self.stores.rollback(&snapshot.store);
+        self.world.rollback_generation_fork(&snapshot.world);
         self.input_summary = snapshot.input_summary.clone();
         self.interaction_mode = snapshot.interaction_mode;
         self.page = snapshot.page.clone();
@@ -1200,6 +1360,9 @@ impl Universe {
 
     /// Commits an effect prefix and retargets semantic hash cursors after it is dropped.
     pub fn commit_effects(&mut self, effect_pos: EffectPos) -> Result<(), WorldError> {
+        if self.world.commit_mode() == WorldCommitMode::Retained {
+            return Ok(());
+        }
         let hash_base = self.state_hash_base.clone();
         if let Err(err) = self.world.commit_effects(effect_pos) {
             self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
@@ -1207,6 +1370,44 @@ impl Universe {
         }
         self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
         Ok(())
+    }
+
+    /// Opens a rollback-capable editor session with deferred host materialization.
+    pub fn begin_retained_session(&mut self) -> Result<(), WorldError> {
+        self.world.begin_retained_session()
+    }
+
+    /// Consumes the retained effect branch by exposing it exactly once in order.
+    pub fn export_retained_effects(&mut self) -> Result<(), WorldError> {
+        let hash_base = self.state_hash_base.clone();
+        self.world.export_retained_effects()?;
+        self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
+        Ok(())
+    }
+
+    /// Bytes required by detached artifacts and the virtual effect suffix.
+    #[must_use]
+    pub fn retained_output_bytes(&self) -> usize {
+        self.world.retained_output_bytes()
+    }
+
+    /// Rebinds only the root editor frame to a fresh immutable generated buffer.
+    /// The caller must already have proved that the consumed prefix is unchanged.
+    pub fn rebind_root_editor_input(
+        &mut self,
+        summary: &InputSummary,
+        bytes: Arc<[u8]>,
+    ) -> Result<(InputSummary, SourceId), SourceMapError> {
+        let source_id = SourceId::new(summary.next_source_id());
+        let registration = self.register_input_source(
+            source_id,
+            SourceDescriptor::Generated(GeneratedSource::new(bytes)),
+        )?;
+        let rebound = summary
+            .rebind_root_generated(source_id, registration)
+            .ok_or(SourceMapError::UnknownSource)?;
+        self.set_input_summary(rebound.clone());
+        Ok((rebound, source_id))
     }
 
     /// Records the current lexer-owned input stack state for the next snapshot.

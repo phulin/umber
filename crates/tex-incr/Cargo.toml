@@ -1,0 +1,16 @@
+[package]
+name = "tex-incr"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tex-exec = { path = "../tex-exec" }
+tex-lex = { path = "../tex-lex" }
+tex-out = { path = "../tex-out" }
+tex-state = { path = "../tex-state" }
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

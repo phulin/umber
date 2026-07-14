@@ -219,6 +219,20 @@ impl Clone for Stores {
 }
 
 impl Stores {
+    pub(crate) fn can_restore_snapshot(&self, snapshot: &StoreSnapshot) -> bool {
+        snapshot.owner == self.owner.snapshot_owner()
+            && snapshot.env_snapshot.group_depth() == self.env.group_depth()
+            && snapshot.env_snapshot.journal_pos() <= self.env.current_journal_pos()
+            && snapshot.survivor_pin_mark <= self.survivor_pins.len()
+    }
+
+    /// Retargets an already-validated inherited snapshot to this fork's exact owner.
+    pub(crate) fn retarget_inherited_snapshot(&self, snapshot: &StoreSnapshot) -> StoreSnapshot {
+        let mut snapshot = snapshot.clone();
+        snapshot.owner = self.owner.snapshot_owner();
+        snapshot
+    }
+
     pub(crate) fn env_group_depth(&self) -> u32 {
         self.env.group_depth()
     }
