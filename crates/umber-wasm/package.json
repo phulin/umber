@@ -1,5 +1,5 @@
 {
-	"name": "@umber-tex/umber-wasm",
+	"name": "@umber/umber-wasm",
 	"version": "0.1.0",
 	"description": "Browser WebAssembly build of the Umber TeX engine",
 	"type": "module",
