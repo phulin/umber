@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use tex_exec::{Executor, try_execute_assignment};
+use tex_exec::{CheckpointSink, ExecutionStats, Executor, try_execute_assignment};
 use tex_expand::{ExpansionHooks, NoopRecorder, get_x_token_with_hooks};
 use tex_lex::{InputSource, InputStack, MemoryInput};
 use tex_out::dvi::{DviError, DviPagePlan, DviStreamWriter};
@@ -82,13 +82,34 @@ where
             &mut recorder,
             self.hooks,
         )?;
+        Ok(self.finish_execution(artifact_start, stats))
+    }
+
+    /// Executes while publishing restartable state at named safe boundaries.
+    pub fn execute_with_checkpoints<C: CheckpointSink>(
+        &mut self,
+        checkpoints: &mut C,
+    ) -> Result<RunResult, tex_exec::ExecError> {
+        let artifact_start = self.artifact_cursor;
+        let mut recorder = NoopRecorder;
+        let stats = Executor::new().run_with_recorder_hooks_and_checkpoints(
+            self.input,
+            self.stores,
+            &mut recorder,
+            self.hooks,
+            checkpoints,
+        )?;
+        Ok(self.finish_execution(artifact_start, stats))
+    }
+
+    fn finish_execution(&mut self, artifact_start: usize, stats: ExecutionStats) -> RunResult {
         let committed = self.stores.world().artifact_commits();
         debug_assert_eq!(
             &committed[self.artifact_cursor..],
             stats.shipped_artifacts.as_slice()
         );
         self.artifact_cursor = committed.len();
-        Ok(RunResult {
+        RunResult {
             terminal_text: uncommitted_terminal_text(self.stores),
             artifacts: stats.shipped_artifacts,
             dvi_pages: stats.dvi_pages,
@@ -96,7 +117,7 @@ where
                 [artifact_start..self.artifact_cursor]
                 .to_vec(),
             dumped_format: stats.dumped_format,
-        })
+        }
     }
 
     pub fn next_expanded_token(

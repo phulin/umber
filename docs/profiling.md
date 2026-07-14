@@ -28,6 +28,14 @@ cargo run --profile profiling -p umber --bin gentle-profile -- \
   --iterations 10 --warmups 1
 ```
 
+Pass `--checkpoints` to exercise the enabled named-boundary capture path. The
+runner consumes every published checkpoint and folds its semantic hash into a
+bounded observation instead of retaining snapshots across iterations:
+
+```bash
+GENTLE_PROFILE_ITERATIONS=200 scripts/profile-gentle.sh --checkpoints
+```
+
 The runner requires the same external inputs as Gentle conformance. Populate
 them with `scripts/setup-conformance-tests.sh` if necessary.
 

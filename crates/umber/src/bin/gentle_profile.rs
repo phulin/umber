@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
+use tex_exec::{CheckpointSink, EngineCheckpoint};
 use tex_expand::ExpansionHooks;
 #[cfg(feature = "expansion-stats")]
 use tex_lex::ExpansionStats;
@@ -24,6 +25,7 @@ struct Options {
     repo_root: PathBuf,
     iterations: usize,
     warmups: usize,
+    checkpoints: bool,
 }
 
 impl Options {
@@ -31,6 +33,7 @@ impl Options {
         let mut repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let mut iterations = DEFAULT_ITERATIONS;
         let mut warmups = DEFAULT_WARMUPS;
+        let mut checkpoints = false;
         let mut args = env::args().skip(1);
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -47,6 +50,7 @@ impl Options {
                     warmups =
                         parse_positive_count(&next_value(&mut args, "--warmups")?, "--warmups")?;
                 }
+                "--checkpoints" => checkpoints = true,
                 "-h" | "--help" => {
                     print_help();
                     return Ok(None);
@@ -65,6 +69,7 @@ impl Options {
             repo_root,
             iterations,
             warmups,
+            checkpoints,
         }))
     }
 }
@@ -119,8 +124,23 @@ impl ExpansionHooks<WorldInput> for ProfileHooks {
 struct RunOutput {
     dvi: Vec<u8>,
     pages: usize,
+    checkpoints: usize,
+    checkpoint_hash: u64,
     #[cfg(feature = "expansion-stats")]
     expansion_stats: ExpansionStats,
+}
+
+#[derive(Default)]
+struct ProfileCheckpointSink {
+    count: usize,
+    hash: u64,
+}
+
+impl CheckpointSink for ProfileCheckpointSink {
+    fn checkpoint(&mut self, checkpoint: EngineCheckpoint) {
+        self.count += 1;
+        self.hash = self.hash.rotate_left(7) ^ checkpoint.state_hash();
+    }
 }
 
 fn main() -> ExitCode {
@@ -140,22 +160,24 @@ fn run() -> Result<(), String> {
     };
     let template = load_template(&options.repo_root)?;
 
-    let reference = execute_once(&template)?;
+    let reference = execute_once(&template, options.checkpoints)?;
     for _ in 1..options.warmups {
-        let output = execute_once(&template)?;
+        let output = execute_once(&template, options.checkpoints)?;
         if output.dvi != reference.dvi {
             return Err("a warm-up DVI differs from the first warm-up DVI".to_owned());
         }
     }
 
     let started = Instant::now();
-    let mut last = execute_once(&template)?;
+    let mut last = execute_once(&template, options.checkpoints)?;
     let _ = black_box(last.pages);
     let _ = black_box(last.dvi.len());
+    let _ = black_box((last.checkpoints, last.checkpoint_hash));
     for _ in 1..options.iterations {
-        last = execute_once(&template)?;
+        last = execute_once(&template, options.checkpoints)?;
         let _ = black_box(last.pages);
         let _ = black_box(last.dvi.len());
+        let _ = black_box((last.checkpoints, last.checkpoint_hash));
     }
     let elapsed = started.elapsed();
     if last.dvi != reference.dvi {
@@ -235,7 +257,7 @@ fn seed_font_dir(world: &mut World, dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn execute_once(template: &World) -> Result<RunOutput, String> {
+fn execute_once(template: &World, capture_checkpoints: bool) -> Result<RunOutput, String> {
     let mut stores = Universe::with_world(template.clone());
     prepare_run_stores(&mut stores);
     let path = Path::new(JOB_DIR).join(JOB_FILE);
@@ -245,9 +267,14 @@ fn execute_once(template: &World) -> Result<RunOutput, String> {
         .map_err(|error| error.to_string())?;
     let mut input = InputStack::new(WorldInput::from_content(content));
     let mut hooks = ProfileHooks::new();
-    let run = EngineSession::new(&mut input, &mut stores, &mut hooks)
-        .execute()
-        .map_err(|error| error.format_with_provenance(&stores))?;
+    let mut checkpoints = ProfileCheckpointSink::default();
+    let run = if capture_checkpoints {
+        EngineSession::new(&mut input, &mut stores, &mut hooks)
+            .execute_with_checkpoints(&mut checkpoints)
+    } else {
+        EngineSession::new(&mut input, &mut stores, &mut hooks).execute()
+    }
+    .map_err(|error| error.format_with_provenance(&stores))?;
     if run.artifacts.is_empty() {
         return Err("Gentle produced no page artifacts".to_owned());
     }
@@ -255,6 +282,8 @@ fn execute_once(template: &World) -> Result<RunOutput, String> {
     Ok(RunOutput {
         dvi,
         pages: run.artifacts.len(),
+        checkpoints: checkpoints.count,
+        checkpoint_hash: checkpoints.hash,
         #[cfg(feature = "expansion-stats")]
         expansion_stats: input.expansion_stats(),
     })
@@ -263,13 +292,14 @@ fn execute_once(template: &World) -> Result<RunOutput, String> {
 fn print_summary(options: &Options, output: &RunOutput, elapsed: Duration) {
     let mean = elapsed.as_secs_f64() * 1_000.0 / options.iterations as f64;
     println!(
-        "gentle-profile: {} measured runs after {} warm-up(s): {:.3}s total, {:.3}ms mean; {} pages, {} DVI bytes",
+        "gentle-profile: {} measured runs after {} warm-up(s): {:.3}s total, {:.3}ms mean; {} pages, {} DVI bytes, {} checkpoints",
         options.iterations,
         options.warmups,
         elapsed.as_secs_f64(),
         mean,
         output.pages,
-        output.dvi.len()
+        output.dvi.len(),
+        output.checkpoints
     );
     #[cfg(feature = "expansion-stats")]
     println!(
@@ -320,9 +350,10 @@ fn parse_positive_count(value: &str, option: &str) -> Result<usize, String> {
 
 fn print_help() {
     println!(
-        "Usage: gentle-profile [--iterations N] [--warmups N] [--repo-root PATH]\n\n\
+        "Usage: gentle-profile [--iterations N] [--warmups N] [--repo-root PATH] [--checkpoints]\n\n\
          Loads Gentle and its support files once, then executes fresh deterministic\n\
          in-memory Umber sessions for profiling. Defaults: {DEFAULT_ITERATIONS} measured\n\
-         iterations and {DEFAULT_WARMUPS} warm-up."
+         iterations and {DEFAULT_WARMUPS} warm-up. --checkpoints captures and hashes every\n\
+         named executor checkpoint through a bounded profiling sink."
     );
 }
