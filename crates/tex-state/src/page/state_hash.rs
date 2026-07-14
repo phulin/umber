@@ -7,7 +7,7 @@ use crate::ids::{GlueId, TokenListId};
 use crate::node::Node;
 use crate::state_hash::{CachedProjection, StateHashComponent, StateHashFragment, StateHasher};
 use std::collections::{BTreeMap, VecDeque};
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 
 const PAGE_PROJECTION_DOMAIN: u64 = 0x7061_6765_5f70_726a;
 const PAGE_SCALARS_DOMAIN: u64 = 0x7061_6765_5f73_6361;
@@ -19,72 +19,59 @@ const PAGE_DISCARDS_DOMAIN: u64 = 0x7061_6765_5f64_6973;
 const SPLIT_DISCARDS_DOMAIN: u64 = 0x7370_6c69_745f_6469;
 const PAGE_NODE_CHUNK_DOMAIN: u64 = 0x7061_6765_5f63_686b;
 
-/// Maximum number of derived page-tree projections retained by one timeline.
-///
-/// A normal TeX page is far smaller than this. Crossing the limit first drops
-/// dead weak roots, then evicts arbitrary derived entries. Eviction can only
-/// cause canonical recomputation; it cannot affect checkpoint semantics.
-const PAGE_TREE_CACHE_LIMIT: usize = 4_096;
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct PageHashCache {
     insertions: Option<CachedProjection<Arc<Vec<PageInsertion>>>>,
     mark_classes: Option<CachedProjection<Arc<BTreeMap<u16, MarkClassState>>>>,
     contribution: Option<CachedProjection<Arc<VecDeque<Node>>>>,
-    current_page_trees: BTreeMap<usize, CachedProjection<Weak<PageNodeTree>>>,
     current_page_tail: Option<CachedProjection<Arc<Vec<Node>>>>,
     page_discards: Option<CachedProjection<Arc<Vec<Node>>>>,
     split_discards: Option<CachedProjection<Arc<Vec<Node>>>>,
-    tree_limit: usize,
-}
-
-impl Default for PageHashCache {
-    fn default() -> Self {
-        Self::with_tree_limit(PAGE_TREE_CACHE_LIMIT)
-    }
 }
 
 impl PageHashCache {
-    fn with_tree_limit(tree_limit: usize) -> Self {
-        Self {
-            insertions: None,
-            mark_classes: None,
-            contribution: None,
-            current_page_trees: BTreeMap::new(),
-            current_page_tail: None,
-            page_discards: None,
-            split_discards: None,
-            tree_limit,
-        }
-    }
-
     pub(crate) fn clear(&mut self) {
-        *self = Self::with_tree_limit(self.tree_limit);
+        *self = Self::default();
     }
+}
 
-    fn enforce_tree_limit(&mut self) {
-        if self.current_page_trees.len() <= self.tree_limit {
-            return;
+fn project_page_tree(
+    tree: &Arc<PageNodeTree>,
+    hash_nodes: &mut impl FnMut(&[Node], &mut StateHasher) -> usize,
+) -> StateHashFragment {
+    let projection = match tree.as_ref() {
+        PageNodeTree::Leaf { projection, .. } | PageNodeTree::Branch { projection, .. } => {
+            projection
         }
-        self.current_page_trees.retain(|_, cached| {
-            cached
-                .fragment_if(|root| root.strong_count() != 0)
-                .is_some()
-        });
-        while self.current_page_trees.len() > self.tree_limit {
-            self.current_page_trees.pop_first();
+    };
+    *projection.get_or_init(|| match tree.as_ref() {
+        PageNodeTree::Leaf { nodes, .. } => StateHashFragment::from_measured_builder_counted(
+            PAGE_NODE_CHUNK_DOMAIN,
+            StateHashComponent::PageCurrent,
+            |projection| hash_nodes(nodes, projection),
+        ),
+        PageNodeTree::Branch {
+            height,
+            len,
+            left,
+            right,
+            ..
+        } => {
+            let left = project_page_tree(left, hash_nodes);
+            let right = project_page_tree(right, hash_nodes);
+            StateHashFragment::from_measured_builder(
+                PAGE_NODE_CHUNK_DOMAIN,
+                StateHashComponent::PageCurrent,
+                0,
+                |projection| {
+                    projection.u8(*height);
+                    projection.usize(*len);
+                    left.apply(projection);
+                    right.apply(projection);
+                },
+            )
         }
-    }
-
-    #[cfg(test)]
-    pub(super) fn testing_with_tree_limit(tree_limit: usize) -> Self {
-        Self::with_tree_limit(tree_limit)
-    }
-
-    #[cfg(test)]
-    pub(super) fn testing_tree_entries(&self) -> usize {
-        self.current_page_trees.len()
-    }
+    })
 }
 
 /// Cheap semantic-root key for checkpoint hash-base reuse.
@@ -311,18 +298,6 @@ fn project_page_nodes(
     nodes: &PageNodeSequence,
     hash_nodes: &mut impl FnMut(&[Node], &mut StateHasher) -> usize,
 ) -> StateHashFragment {
-    if nodes.len == 0 {
-        cache.current_page_trees.clear();
-    }
-    let mut roots = Vec::with_capacity(nodes.forest.len());
-    for root in nodes.forest.iter() {
-        roots.push(project_page_tree(
-            &mut cache.current_page_trees,
-            root,
-            hash_nodes,
-        ));
-    }
-    cache.enforce_tree_limit();
     let tail = project_arc(
         &mut cache.current_page_tail,
         &nodes.tail,
@@ -336,59 +311,13 @@ fn project_page_nodes(
         0,
         |projection| {
             projection.usize(nodes.len());
-            projection.usize(roots.len());
-            for root in roots {
-                root.apply(projection);
+            projection.usize(nodes.forest.len());
+            for root in nodes.forest.iter() {
+                project_page_tree(root, hash_nodes).apply(projection);
             }
             tail.apply(projection);
         },
     )
-}
-
-fn project_page_tree(
-    cache: &mut BTreeMap<usize, CachedProjection<Weak<PageNodeTree>>>,
-    root: &Arc<PageNodeTree>,
-    hash_nodes: &mut impl FnMut(&[Node], &mut StateHasher) -> usize,
-) -> StateHashFragment {
-    let key = Arc::as_ptr(root) as usize;
-    if let Some(fragment) = cache.get(&key).and_then(|cached| {
-        cached.fragment_if(|cached_root| {
-            cached_root
-                .upgrade()
-                .is_some_and(|cached_root| Arc::ptr_eq(&cached_root, root))
-        })
-    }) {
-        return fragment;
-    }
-    let fragment = match root.as_ref() {
-        PageNodeTree::Leaf(nodes) => StateHashFragment::from_measured_builder_counted(
-            PAGE_NODE_CHUNK_DOMAIN,
-            StateHashComponent::PageCurrent,
-            |projection| hash_nodes(nodes, projection),
-        ),
-        PageNodeTree::Branch {
-            height,
-            len,
-            left,
-            right,
-        } => {
-            let left = project_page_tree(cache, left, hash_nodes);
-            let right = project_page_tree(cache, right, hash_nodes);
-            StateHashFragment::from_measured_builder(
-                PAGE_NODE_CHUNK_DOMAIN,
-                StateHashComponent::PageCurrent,
-                0,
-                |projection| {
-                    projection.u8(*height);
-                    projection.usize(*len);
-                    left.apply(projection);
-                    right.apply(projection);
-                },
-            )
-        }
-    };
-    cache.insert(key, CachedProjection::new(Arc::downgrade(root), fragment));
-    fragment
 }
 
 fn hash_optional_usize(value: Option<usize>, hasher: &mut StateHasher) {

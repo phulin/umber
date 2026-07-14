@@ -1295,16 +1295,18 @@ degenerate case (run once, commit every page, never look back).
   allowing semantically equal rebuilt roots to retarget the cursor without
   adding a false schedule-relative state transition.
   Current-page nodes are stored as a position-canonical binary forest of
-  immutable 64-node leaves, so append and hash publication rebuild only the
-  affected logarithmic path rather than walking or copying the prior page.
+  immutable 64-node leaves. Leaves and branches lazily memoize their canonical
+  projection when a checkpoint first reaches them; ordinary append does no
+  hashing, and forks reuse memoized fragments through the shared tree.
   Leaf projection visits its bounded outer nodes, while frozen child lists
   contribute their versioned canonical `NodeSemanticId` without reopening
   compact node storage.
-  Projection caches remain private derived accelerators and are cleared on
-  rollback; a shared private cache-entry abstraction keeps reuse keys separate
-  from canonical fragments, and pointer identity is never part of a hash
-  value. Page subtree retention is capped at 4,096 weak-root entries, with
-  overflow eviction affecting performance only.
+  Projection caches remain private derived accelerators; a shared private
+  cache-entry abstraction keeps reuse keys separate from canonical fragments,
+  and pointer identity is never part of a hash value. Page-tree memoization
+  lives only as long as its immutable tree and is safe to retain across
+  rollback; the current sub-64-node tail uses the ordinary discardable root
+  cache.
   Every published checkpoint is restartable. If an edit falls inside an
   alignment, box, scanner, inline formula, or output routine, the session
   selects the preceding published boundary and replays the whole construct.

@@ -982,12 +982,15 @@ pub struct Snapshot {
   Page hashing treats scalar state, insertions, marks, contributions, the
   current page, and discard lists as separate projections. The growing current
   page uses canonical 64-node leaves in a binary forest determined by content
-  position. Completing a leaf merges only the binary carry path; checkpoints
-  share every unaffected immutable subtree, and derived subtree fingerprints
-  never become mutation-maintained semantic state. The private subtree cache
-  retains at most 4,096 weak-root entries: crossing that ceiling prunes dead
-  roots and then evicts derived entries, which can cause only canonical
-  recomputation. Feature-gated `node-stats`
+  position. Each immutable leaf or branch owns an initially empty derived
+  fingerprint cell. The first checkpoint that reaches it computes the
+  canonical fragment; later checkpoints and forks reuse it through the shared
+  tree. Ordinary appends never compute or update fingerprints, and publication
+  directly projects only the current tail of fewer than 64 nodes. These cells
+  are excluded from snapshot identity and semantic state; retaining one with
+  an immutable tree across rollback can affect only recomputation cost. A run
+  that never publishes checkpoints leaves every cell empty. Feature-gated
+  `node-stats`
   builds report calls, semantic visits, and elapsed nanoseconds for every hash
   component so optimization decisions can be tied to measured traversal.
 

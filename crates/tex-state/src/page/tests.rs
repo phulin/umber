@@ -117,16 +117,41 @@ fn hash_page(page: &PageBuilderState, cache: &mut PageHashCache) -> u64 {
 }
 
 #[test]
-fn page_projection_cache_is_bounded_across_long_pages_forks_and_rollback() {
-    const LIMIT: usize = 8;
+fn current_page_tree_projection_is_lazy_and_shared() {
     let mut page = PageBuilderState::default();
-    let mut cache = PageHashCache::testing_with_tree_limit(LIMIT);
+    for value in 0..128 {
+        page.push_current_page(kern(value));
+    }
+    let fork = page.clone();
+    assert_eq!(page.current_page.testing_cached_projection_count(), 0);
+
+    let _ = hash_page(&page, &mut PageHashCache::default());
+    assert_eq!(page.current_page.testing_cached_projection_count(), 3);
+    assert_eq!(fork.current_page.testing_cached_projection_count(), 3);
+
+    for value in 128..192 {
+        page.push_current_page(kern(value));
+    }
+    assert_eq!(page.current_page.testing_cached_projection_count(), 3);
+    let _ = hash_page(&page, &mut PageHashCache::default());
+    assert_eq!(page.current_page.testing_cached_projection_count(), 4);
+}
+
+fn assert_projection_count_follows_live_page(page: &PageBuilderState) {
+    let full_leaves = page.current_page.len() / 64;
+    assert!(page.current_page.testing_cached_projection_count() <= full_leaves * 2);
+}
+
+#[test]
+fn page_projection_memoization_follows_live_trees_across_forks_and_rollback() {
+    let mut page = PageBuilderState::default();
+    let mut cache = PageHashCache::default();
 
     for value in 0..2_048 {
         page.push_current_page(kern(value));
         if value % 64 == 63 {
             let _ = hash_page(&page, &mut cache);
-            assert!(cache.testing_tree_entries() <= LIMIT);
+            assert_projection_count_follows_live_page(&page);
         }
     }
 
@@ -138,13 +163,13 @@ fn page_projection_cache_is_bounded_across_long_pages_forks_and_rollback() {
         fork.push_current_page(kern(value));
     }
     let _ = hash_page(&fork, &mut fork_cache);
-    assert!(fork_cache.testing_tree_entries() <= LIMIT);
+    assert_projection_count_follows_live_page(&fork);
 
     page.push_current_page(kern(9_999));
     let _ = hash_page(&page, &mut cache);
     page = rollback;
     assert_eq!(hash_page(&page, &mut cache), rollback_hash);
-    assert!(cache.testing_tree_entries() <= LIMIT);
+    assert_projection_count_follows_live_page(&page);
 
     for page_number in 0..32 {
         let _ = page.take_current_page_prefix(usize::MAX);
@@ -152,11 +177,11 @@ fn page_projection_cache_is_bounded_across_long_pages_forks_and_rollback() {
             hash_page(&page, &mut cache),
             hash_page(&page, &mut PageHashCache::default())
         );
-        assert_eq!(cache.testing_tree_entries(), 0);
+        assert_eq!(page.current_page.testing_cached_projection_count(), 0);
         for value in 0..256 {
             page.push_current_page(kern(page_number * 256 + value));
         }
         let _ = hash_page(&page, &mut cache);
-        assert!(cache.testing_tree_entries() <= LIMIT);
+        assert_projection_count_follows_live_page(&page);
     }
 }

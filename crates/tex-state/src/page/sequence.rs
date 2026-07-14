@@ -1,5 +1,6 @@
 use crate::node::Node;
-use std::sync::Arc;
+use crate::state_hash::StateHashFragment;
+use std::sync::{Arc, OnceLock};
 
 pub(super) const PAGE_NODE_CHUNK_LEN: usize = 64;
 
@@ -9,7 +10,8 @@ pub(super) const PAGE_NODE_CHUNK_LEN: usize = 64;
 /// decomposition of the full-leaf count. Appending a full leaf merges only the
 /// carry path, while snapshots share every unaffected subtree. A bounded tail
 /// holds fewer than 64 nodes. Shape depends only on content position, and the
-/// representation carries no mutation-maintained hash state.
+/// representation carries only lazy derived hash memoization on immutable
+/// tree nodes; ordinary mutation never computes or updates a fingerprint.
 #[derive(Clone, Debug, Default)]
 pub(super) struct PageNodeSequence {
     pub(super) forest: Arc<Vec<Arc<PageNodeTree>>>,
@@ -19,33 +21,37 @@ pub(super) struct PageNodeSequence {
 
 #[derive(Debug)]
 pub(super) enum PageNodeTree {
-    Leaf(Vec<Node>),
+    Leaf {
+        nodes: Vec<Node>,
+        projection: OnceLock<StateHashFragment>,
+    },
     Branch {
         height: u8,
         len: usize,
         left: Arc<PageNodeTree>,
         right: Arc<PageNodeTree>,
+        projection: OnceLock<StateHashFragment>,
     },
 }
 
 impl PageNodeTree {
     pub(super) fn height(&self) -> u8 {
         match self {
-            Self::Leaf(_) => 0,
+            Self::Leaf { .. } => 0,
             Self::Branch { height, .. } => *height,
         }
     }
 
     pub(super) fn len(&self) -> usize {
         match self {
-            Self::Leaf(nodes) => nodes.len(),
+            Self::Leaf { nodes, .. } => nodes.len(),
             Self::Branch { len, .. } => *len,
         }
     }
 
     fn get(&self, index: usize) -> Option<&Node> {
         match self {
-            Self::Leaf(nodes) => nodes.get(index),
+            Self::Leaf { nodes, .. } => nodes.get(index),
             Self::Branch { left, right, .. } => {
                 let left_len = left.len();
                 if index < left_len {
@@ -53,6 +59,23 @@ impl PageNodeTree {
                 } else {
                     right.get(index - left_len)
                 }
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn cached_projection_count(&self) -> usize {
+        match self {
+            Self::Leaf { projection, .. } => usize::from(projection.get().is_some()),
+            Self::Branch {
+                left,
+                right,
+                projection,
+                ..
+            } => {
+                usize::from(projection.get().is_some())
+                    + left.cached_projection_count()
+                    + right.cached_projection_count()
             }
         }
     }
@@ -101,6 +124,14 @@ impl PartialEq for PageNodeSequence {
 }
 
 impl PageNodeSequence {
+    #[cfg(test)]
+    pub(super) fn testing_cached_projection_count(&self) -> usize {
+        self.forest
+            .iter()
+            .map(|root| root.cached_projection_count())
+            .sum()
+    }
+
     pub(super) fn iter(&self) -> PageNodeIter<'_> {
         PageNodeIter {
             nodes: self,
@@ -125,7 +156,10 @@ impl PageNodeSequence {
             return;
         }
 
-        let leaf = Arc::new(PageNodeTree::Leaf(std::mem::take(tail)));
+        let leaf = Arc::new(PageNodeTree::Leaf {
+            nodes: std::mem::take(tail),
+            projection: OnceLock::new(),
+        });
         let forest = Arc::make_mut(&mut self.forest);
         let mut carry = leaf;
         while forest
@@ -138,6 +172,7 @@ impl PageNodeSequence {
                 len: left.len() + carry.len(),
                 left,
                 right: carry,
+                projection: OnceLock::new(),
             });
         }
         forest.push(carry);
