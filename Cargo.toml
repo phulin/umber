@@ -29,8 +29,11 @@ flate2 = "1"
 bincode = "1"
 unicode-width = "0.2"
 
+[profile.dev]
+debug = "line-tables-only"
+
 [profile.test]
-opt-level = 3
+opt-level = 1
 
 [profile.profiling]
 inherits = "release"

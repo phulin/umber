@@ -61,7 +61,10 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - Implementation agents should run the relevant tests explicitly, then use
   `scripts/check.sh` for the format and clippy gate without rerunning tests.
 - Use `scripts/check-and-test.sh` when a single command should run the full
-  workspace test suite followed by the format and clippy gate.
+  workspace test suite concurrently with the format and clippy gate. Clippy
+  uses its own `target/clippy` directory so it does not lock the test build.
+- Use `cargo run-dev -p umber -- <args>` for local CLI runs that should share
+  optimized artifacts with the test build.
 - For fixture regeneration, follow `tests/AGENTS.md` and use
   `scripts/regen-fixtures.sh`.
 - Run `scripts/check-snapshot-budgets.sh` in the explicit performance tier;

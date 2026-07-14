@@ -8,7 +8,8 @@ cd "$repo_root"
 # script does not duplicate their test execution.
 
 cargo fmt --all --check
-cargo clippy --workspace --all-targets -- -D warnings
+CARGO_TARGET_DIR="${CLIPPY_TARGET_DIR:-target/clippy}" \
+  cargo clippy --workspace --all-targets -- -D warnings
 
 if [[ "${CHECK_BENCH:-0}" == 1 ]]; then
   scripts/check-node-width-budget.sh
