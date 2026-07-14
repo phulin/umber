@@ -1,4 +1,4 @@
-use super::sequence::{PageNodeSequence, PageNodeTree};
+use super::sequence::{PageNodeSequence, PageNodeTree, PageTailNode};
 use super::{
     MarkClassState, PageBreak, PageBuilderState, PageContents, PageDimension, PageInsertion,
     PageInsertionStatus,
@@ -21,17 +21,10 @@ const PAGE_NODE_CHUNK_DOMAIN: u64 = 0x7061_6765_5f63_686b;
 const PAGE_NODE_ITEM_DOMAIN: u64 = 0x7061_6765_5f69_746d;
 
 #[derive(Clone, Debug, Default)]
-struct PageTailHashCache {
-    nodes: Vec<Node>,
-    fragments: Vec<StateHashFragment>,
-}
-
-#[derive(Clone, Debug, Default)]
 pub(crate) struct PageHashCache {
     insertions: Option<CachedProjection<Arc<Vec<PageInsertion>>>>,
     mark_classes: Option<CachedProjection<Arc<BTreeMap<u16, MarkClassState>>>>,
     contribution: Option<CachedProjection<Arc<VecDeque<Node>>>>,
-    current_page_tail: PageTailHashCache,
     page_discards: Option<CachedProjection<Arc<Vec<Node>>>>,
     split_discards: Option<CachedProjection<Arc<Vec<Node>>>>,
 }
@@ -127,7 +120,7 @@ pub(crate) struct PageStateHashCursor {
     contribution: Arc<VecDeque<Node>>,
     current_page_len: usize,
     current_page_forest: Weak<Vec<Arc<PageNodeTree>>>,
-    current_page_tail: Weak<Vec<Node>>,
+    current_page_tail: Weak<Vec<PageTailNode>>,
     page_discards: Arc<Vec<Node>>,
     split_discards: Arc<Vec<Node>>,
     insertions: Arc<Vec<PageInsertion>>,
@@ -308,7 +301,7 @@ impl PageBuilderState {
             StateHashComponent::PageContribution,
             |projection| hash_queue(&self.contribution, projection),
         );
-        let current_page = project_page_nodes(cache, &self.current_page, &mut hash_nodes);
+        let current_page = project_page_nodes(&self.current_page, &mut hash_nodes);
         let page_discards = project_arc(
             &mut cache.page_discards,
             &self.page_discards,
@@ -356,11 +349,10 @@ fn project_arc<T>(
 }
 
 fn project_page_nodes(
-    cache: &mut PageHashCache,
     nodes: &PageNodeSequence,
     hash_nodes: &mut impl FnMut(&[Node], &mut StateHasher) -> usize,
 ) -> StateHashFragment {
-    let tail = project_page_tail(&mut cache.current_page_tail, &nodes.tail, hash_nodes);
+    let tail = project_page_tail(&nodes.tail, hash_nodes);
     StateHashFragment::from_measured_builder(
         PAGE_CURRENT_DOMAIN,
         StateHashComponent::PageCurrent,
@@ -377,35 +369,30 @@ fn project_page_nodes(
 }
 
 fn project_page_tail(
-    cache: &mut PageTailHashCache,
-    nodes: &[Node],
+    nodes: &[PageTailNode],
     hash_nodes: &mut impl FnMut(&[Node], &mut StateHasher) -> usize,
 ) -> StateHashFragment {
-    let shared_prefix = cache
-        .nodes
-        .iter()
-        .zip(nodes)
-        .take_while(|(cached, current)| cached == current)
-        .count();
-    cache.nodes.truncate(shared_prefix);
-    cache.fragments.truncate(shared_prefix);
-    for node in &nodes[shared_prefix..] {
-        let fragment = StateHashFragment::from_measured_builder_counted(
-            PAGE_NODE_ITEM_DOMAIN,
-            StateHashComponent::PageCurrent,
-            |projection| hash_nodes(std::slice::from_ref(node), projection),
-        );
-        cache.nodes.push(node.clone());
-        cache.fragments.push(fragment);
+    for tail_node in nodes {
+        tail_node.projection.get_or_init(|| {
+            StateHashFragment::from_measured_builder_counted(
+                PAGE_NODE_ITEM_DOMAIN,
+                StateHashComponent::PageCurrent,
+                |projection| hash_nodes(std::slice::from_ref(&tail_node.node), projection),
+            )
+        });
     }
     StateHashFragment::from_measured_builder(
         PAGE_NODE_CHUNK_DOMAIN,
         StateHashComponent::PageCurrent,
         0,
         |projection| {
-            projection.usize(cache.fragments.len());
-            for fragment in &cache.fragments {
-                fragment.apply(projection);
+            projection.usize(nodes.len());
+            for tail_node in nodes {
+                tail_node
+                    .projection
+                    .get()
+                    .expect("page tail projection was initialized")
+                    .apply(projection);
             }
         },
     )

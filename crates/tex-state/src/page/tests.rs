@@ -138,6 +138,27 @@ fn current_page_tree_projection_is_lazy_and_shared() {
 }
 
 #[test]
+fn current_page_tail_projection_is_lazy_and_follows_copy_on_write() {
+    let mut page = PageBuilderState::default();
+    for value in 0..3 {
+        page.push_current_page(kern(value));
+    }
+    let fork = page.clone();
+    assert_eq!(page.current_page.testing_cached_tail_projection_count(), 0);
+
+    let _ = hash_page(&page, &mut PageHashCache::default());
+    assert_eq!(page.current_page.testing_cached_tail_projection_count(), 3);
+    assert_eq!(fork.current_page.testing_cached_tail_projection_count(), 3);
+
+    page.push_current_page(kern(3));
+    assert_eq!(page.current_page.testing_cached_tail_projection_count(), 3);
+    assert_eq!(fork.current_page.testing_cached_tail_projection_count(), 3);
+    let _ = hash_page(&page, &mut PageHashCache::default());
+    assert_eq!(page.current_page.testing_cached_tail_projection_count(), 4);
+    assert_eq!(fork.current_page.testing_cached_tail_projection_count(), 3);
+}
+
+#[test]
 fn checkpoint_identity_keys_do_not_pin_mutable_page_buffers() {
     let mut page = PageBuilderState::default();
     for value in 0..3 {

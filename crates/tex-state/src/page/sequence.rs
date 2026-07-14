@@ -15,8 +15,19 @@ pub(super) const PAGE_NODE_CHUNK_LEN: usize = 64;
 #[derive(Clone, Debug, Default)]
 pub(super) struct PageNodeSequence {
     pub(super) forest: Arc<Vec<Arc<PageNodeTree>>>,
-    pub(super) tail: Arc<Vec<Node>>,
+    pub(super) tail: Arc<Vec<PageTailNode>>,
     pub(super) len: usize,
+}
+
+/// One node in the bounded mutable tail, with its lazy checkpoint projection.
+///
+/// Keeping the fragment beside the node makes prefix reuse structural: a
+/// checkpoint initializes it once, and copy-on-write page mutation carries it
+/// forward without a second node buffer or an equality scan.
+#[derive(Clone, Debug)]
+pub(super) struct PageTailNode {
+    pub(super) node: Node,
+    pub(super) projection: OnceLock<StateHashFragment>,
 }
 
 #[derive(Debug)]
@@ -132,6 +143,14 @@ impl PageNodeSequence {
             .sum()
     }
 
+    #[cfg(test)]
+    pub(super) fn testing_cached_tail_projection_count(&self) -> usize {
+        self.tail
+            .iter()
+            .filter(|tail_node| tail_node.projection.get().is_some())
+            .count()
+    }
+
     pub(super) fn iter(&self) -> PageNodeIter<'_> {
         PageNodeIter {
             nodes: self,
@@ -150,14 +169,20 @@ impl PageNodeSequence {
 
     pub(super) fn push(&mut self, node: Node) {
         let tail = Arc::make_mut(&mut self.tail);
-        tail.push(node);
+        tail.push(PageTailNode {
+            node,
+            projection: OnceLock::new(),
+        });
         self.len += 1;
         if tail.len() != PAGE_NODE_CHUNK_LEN {
             return;
         }
 
         let leaf = Arc::new(PageNodeTree::Leaf {
-            nodes: std::mem::take(tail),
+            nodes: std::mem::take(tail)
+                .into_iter()
+                .map(|tail_node| tail_node.node)
+                .collect(),
             projection: OnceLock::new(),
         });
         let forest = Arc::make_mut(&mut self.forest);
@@ -200,6 +225,6 @@ impl PageNodeSequence {
             }
             index -= root.len();
         }
-        self.tail.get(index)
+        self.tail.get(index).map(|tail_node| &tail_node.node)
     }
 }
