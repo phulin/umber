@@ -7,7 +7,7 @@ use crate::math::MathField;
 impl NodeStorage {
     pub(crate) fn apply_child_patch(&mut self, patch: ChildPatch) {
         match patch {
-            ChildPatch::Box { row, child } => self.boxes.children[row] = child,
+            ChildPatch::Box { row, child } => self.boxes.rows[row].children = child,
             ChildPatch::Unset { row, child } => self.unsets.children[row] = child,
             ChildPatch::Leader { row, child } => match &mut self.leaders[row].2 {
                 crate::node::LeaderPayload::HList(value)

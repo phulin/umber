@@ -70,7 +70,9 @@ losing their application caller. Percentages use Samply sample weights rather
 than assuming every sample has weight one.
 
 For a focused question, restrict the report to stacks beneath a function. The
-subtree report adds the function's immediate callees and shows both the share
+subtree report adds the function's immediate callees, immediate callers, and
+nearest non-runtime application callers. This assigns allocator or memory
+runtime to the engine operation above it while still showing both the share
 within the subtree and the share of the complete capture:
 
 ```bash
@@ -111,3 +113,20 @@ validation with projection, or changed canonical byte decoding were flat or
 worse under the paired evidence. Treat those residual entries as attribution,
 not independent optimization budgets: moving work between their inline frames
 does not by itself demonstrate a faster checkpoint path.
+
+## Node-sidecar allocation evidence
+
+After content identity v2 removed the earlier hash hotspot, caller
+reconstruction placed `RawVec::finish_grow` at 8.40% of a 200-run default
+Gentle profile. The largest coherent owner was compact node storage, including
+0.56% directly under the nine-column box-sidecar reserve. Boxes are consumed
+as complete values in the current execution, packing, copy, and shipout paths,
+so row-packing that one sidecar removed the independent box reserve frame and
+reduced `finish_grow` to 7.91%.
+
+Thermally conditioned `BOOB` followed by `BOOBOBBO` five times, with ten
+measured runs per process, confirmed the layout change. Default Gentle improved
+from 99.187 to 97.657 ms/run (1.54%); checkpoint-enabled Gentle improved from
+103.819 to 101.919 ms/run (1.83%). Other sidecars remain columnar because this
+evidence applies specifically to complete-box access, not to a general retreat
+from compact field scans.

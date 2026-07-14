@@ -99,7 +99,7 @@ impl NodeStorage {
         for word in &source.storage.words[source.start..source.end] {
             let side = word.payload() as usize;
             match word.tag() {
-                9 | 10 => out.push(self.boxes.children[side]),
+                9 | 10 => out.push(self.boxes.rows[side].children),
                 11 => out.push(self.unsets.children[side]),
                 13 => {
                     if let Some(child) = leader_child(&self.leaders[side].2) {
@@ -178,7 +178,7 @@ impl NodeStorage {
                     let row = self.boxes.copy_row(&source.storage.boxes, side);
                     pending.push(ChildPatch::Box {
                         row: row as usize,
-                        child: source.storage.boxes.children[side],
+                        child: source.storage.boxes.rows[side].children,
                     });
                     NodeWord::sidecar(word.tag(), row)
                 }

@@ -239,10 +239,13 @@ logical node content, not runtime identity or allocation order.
 
 Each node storage instance owns one word vector and per-kind sidecars. Tables
 are structure-of-arrays where fields are independently useful in hot scans;
-columns advance in lockstep and share one logical row count.
+columns advance in lockstep and share one logical row count. Boxes are the
+measured exception: current consumers decode, copy, and patch complete
+`BoxNode` values, so their sidecar is one row-packed vector. That avoids nine
+independent growth streams and keeps a complete box decode contiguous.
 
-- boxes: width, height, depth, shift, display, glue-set numerator/denominator,
-  glue sign/order, children;
+- boxes: one row-packed width, height, depth, shift, display, glue-set,
+  glue sign/order, and children record;
 - unsets: kind, dimensions, span count, stretch/order, shrink/order, children;
 - rules: three optional dimensions;
 - leader glues: spec, glue kind, leader kind, leader box/rule fields;

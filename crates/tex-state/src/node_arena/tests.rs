@@ -450,22 +450,7 @@ fn append_reserves_every_column_of_selected_sidecar_tables() {
 
     arena.append(&boxes);
 
-    let capacities = [
-        arena.storage.boxes.width.capacity(),
-        arena.storage.boxes.height.capacity(),
-        arena.storage.boxes.depth.capacity(),
-        arena.storage.boxes.shift.capacity(),
-        arena.storage.boxes.display.capacity(),
-        arena.storage.boxes.glue_set.capacity(),
-        arena.storage.boxes.glue_sign.capacity(),
-        arena.storage.boxes.glue_order.capacity(),
-        arena.storage.boxes.children.capacity(),
-    ];
-    assert!(
-        capacities
-            .into_iter()
-            .all(|capacity| capacity >= boxes.len())
-    );
+    assert!(arena.storage.boxes.rows.capacity() >= boxes.len());
     assert_eq!(arena.storage.boxes.len(), boxes.len());
 }
 

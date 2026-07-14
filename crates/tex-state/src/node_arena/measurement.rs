@@ -147,18 +147,10 @@ pub fn peak_node_storage_measurement() -> Option<NodeStorageObservation> {
 
 impl NodeStorage {
     #[cfg(feature = "node-stats")]
-    pub(super) fn capacity_signature(&self) -> [usize; 39] {
+    pub(super) fn capacity_signature(&self) -> [usize; 31] {
         [
             self.words.capacity(),
-            self.boxes.width.capacity(),
-            self.boxes.height.capacity(),
-            self.boxes.depth.capacity(),
-            self.boxes.shift.capacity(),
-            self.boxes.display.capacity(),
-            self.boxes.glue_set.capacity(),
-            self.boxes.glue_sign.capacity(),
-            self.boxes.glue_order.capacity(),
-            self.boxes.children.capacity(),
+            self.boxes.rows.capacity(),
             self.unsets.kind.capacity(),
             self.unsets.width.capacity(),
             self.unsets.height.capacity(),
@@ -214,15 +206,7 @@ impl NodeStorage {
             }};
         }
         add!(self.words);
-        add!(self.boxes.width);
-        add!(self.boxes.height);
-        add!(self.boxes.depth);
-        add!(self.boxes.shift);
-        add!(self.boxes.display);
-        add!(self.boxes.glue_set);
-        add!(self.boxes.glue_sign);
-        add!(self.boxes.glue_order);
-        add!(self.boxes.children);
+        add!(self.boxes.rows);
         add!(self.unsets.kind);
         add!(self.unsets.width);
         add!(self.unsets.height);
@@ -282,15 +266,7 @@ impl NodeStorage {
             };
         }
         column!("words", &self.words);
-        column!("boxes.width", &self.boxes.width);
-        column!("boxes.height", &self.boxes.height);
-        column!("boxes.depth", &self.boxes.depth);
-        column!("boxes.shift", &self.boxes.shift);
-        column!("boxes.display", &self.boxes.display);
-        column!("boxes.glue_set", &self.boxes.glue_set);
-        column!("boxes.glue_sign", &self.boxes.glue_sign);
-        column!("boxes.glue_order", &self.boxes.glue_order);
-        column!("boxes.children", &self.boxes.children);
+        column!("boxes.rows", &self.boxes.rows);
         column!("unsets.kind", &self.unsets.kind);
         column!("unsets.width", &self.unsets.width);
         column!("unsets.height", &self.unsets.height);

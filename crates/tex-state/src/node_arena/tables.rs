@@ -4,68 +4,26 @@ use crate::scaled::Scaled;
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct BoxTable {
-    pub(super) width: Vec<Scaled>,
-    pub(super) height: Vec<Scaled>,
-    pub(super) depth: Vec<Scaled>,
-    pub(super) shift: Vec<Scaled>,
-    pub(super) display: Vec<bool>,
-    pub(super) glue_set: Vec<crate::scaled::GlueSetRatio>,
-    pub(super) glue_sign: Vec<crate::node::Sign>,
-    pub(super) glue_order: Vec<crate::glue::Order>,
-    pub(super) children: Vec<NodeListId>,
+    pub(super) rows: Vec<crate::node::BoxNode>,
 }
 
 impl BoxTable {
     pub(super) fn len(&self) -> usize {
-        self.width.len()
+        self.rows.len()
     }
     pub(super) fn reserve(&mut self, additional: usize) {
-        self.width.reserve(additional);
-        self.height.reserve(additional);
-        self.depth.reserve(additional);
-        self.shift.reserve(additional);
-        self.display.reserve(additional);
-        self.glue_set.reserve(additional);
-        self.glue_sign.reserve(additional);
-        self.glue_order.reserve(additional);
-        self.children.reserve(additional);
+        self.rows.reserve(additional);
     }
     pub(super) fn push(&mut self, value: crate::node::BoxNode) -> u32 {
         let index = checked_len(self.len(), "box sidecar exceeds u32 entries");
-        self.width.push(value.width);
-        self.height.push(value.height);
-        self.depth.push(value.depth);
-        self.shift.push(value.shift);
-        self.display.push(value.display);
-        self.glue_set.push(value.glue_set);
-        self.glue_sign.push(value.glue_sign);
-        self.glue_order.push(value.glue_order);
-        self.children.push(value.children);
+        self.rows.push(value);
         index
     }
     pub(super) fn copy_row(&mut self, source: &Self, index: usize) -> u32 {
-        self.push(crate::node::BoxNode::new(crate::node::BoxNodeFields {
-            width: source.width[index],
-            height: source.height[index],
-            depth: source.depth[index],
-            shift: source.shift[index],
-            display: source.display[index],
-            glue_set: source.glue_set[index],
-            glue_sign: source.glue_sign[index],
-            glue_order: source.glue_order[index],
-            children: source.children[index],
-        }))
+        self.push(source.rows[index])
     }
     pub(super) fn truncate(&mut self, len: usize) {
-        self.width.truncate(len);
-        self.height.truncate(len);
-        self.depth.truncate(len);
-        self.shift.truncate(len);
-        self.display.truncate(len);
-        self.glue_set.truncate(len);
-        self.glue_sign.truncate(len);
-        self.glue_order.truncate(len);
-        self.children.truncate(len);
+        self.rows.truncate(len);
     }
 }
 

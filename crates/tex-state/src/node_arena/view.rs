@@ -2,8 +2,7 @@ use super::storage::{NodeStorage, NodeWord, decode_glue, decode_kern, decode_sty
 use crate::ids::{GlueId, NodeListId};
 use crate::math::MathStyle;
 use crate::node::{
-    BoxNode, BoxNodeFields, Direction, DiscKind, GlueKind, KernKind, Node, UnsetNode,
-    UnsetNodeFields,
+    BoxNode, Direction, DiscKind, GlueKind, KernKind, Node, UnsetNode, UnsetNodeFields,
 };
 use crate::scaled::Scaled;
 
@@ -413,17 +412,7 @@ impl NodeStorage {
             7 => NodeRef::MathStyle(decode_style(payload as u8)),
             8 => NodeRef::Nonscript,
             9 | 10 => {
-                let b = BoxNode::new(BoxNodeFields {
-                    width: self.boxes.width[side],
-                    height: self.boxes.height[side],
-                    depth: self.boxes.depth[side],
-                    shift: self.boxes.shift[side],
-                    display: self.boxes.display[side],
-                    glue_set: self.boxes.glue_set[side],
-                    glue_sign: self.boxes.glue_sign[side],
-                    glue_order: self.boxes.glue_order[side],
-                    children: self.boxes.children[side],
-                });
+                let b = self.boxes.rows[side];
                 if word.tag() == 9 {
                     NodeRef::HList(b)
                 } else {

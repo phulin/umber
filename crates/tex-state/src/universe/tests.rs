@@ -790,7 +790,7 @@ fn node_memory_measurement_is_nonsemantic_and_covers_recycled_storage() {
     let columns = universe.node_memory_columns();
     assert!(
         columns.iter().any(|column| {
-            column.name == "survivor.live.boxes.width" && column.logical_bytes > 0
+            column.name == "survivor.live.boxes.rows" && column.logical_bytes > 0
         })
     );
     assert!(columns.iter().any(|column| {
