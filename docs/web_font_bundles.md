@@ -1,480 +1,475 @@
-# TeX Web-Font Bundle Generation
+# OpenType Font Resources for Native and Web Rendering
 
-Status: long-term implementation plan. Current HTML schema 1 accepts explicit
-caller-provided `WebFont` bindings as documented in
-[html_output.md](html_output.md). This document defines the reproducible
-publisher and catalog needed to generate those bindings for TeX packages and
-records a future render/semantic mapping refinement that requires an explicit
-HTML schema change.
+Status: long-term implementation plan. This document defines the font-resource
+architecture shared by native and WebAssembly execution. OpenType font data is
+the source of truth for layout and rendering. Native sessions accept OpenType
+or TrueType SFNT containers; browser sessions accept WOFF2 and decode the same
+OpenType tables for engine use.
+
+## Decision summary
+
+Font acquisition follows the same host-neutral, batched resource protocol as
+other external inputs:
+
+```text
+session.advance()
+  -> NeedResources { required, prefetch_hints }
+  -> client acquires resources concurrently
+  -> session.provide_resources(responses)
+  -> session.advance()
+  -> Complete | NeedResources | Error
+```
+
+The engine never invokes an asynchronous resolver and never constructs a URL.
+The authored JavaScript facade may accept a resolver as a convenience, but it
+only drives this explicit state machine.
+
+One acquired font resource serves both layout and output:
+
+```text
+native: OTF/TTF -> validate OpenType -> derive metrics -> render/output asset
+WASM:   WOFF2   -> decode OpenType   -> derive metrics -> browser @font-face
+```
+
+The font is requested before layout. The engine retains its validated identity
+and bytes, records the selected font identity in committed artifacts, and
+reuses the already supplied resource when generating HTML. There is no second
+HTML-font lookup, no separate web-face binding, and no font catalog inside the
+engine or core WASM package.
+
+The client application owns font selection and distribution. It chooses how a
+logical request maps to a licensed font, where the bytes are hosted, and how
+they are fetched, authenticated, prefetched, cached, and installed. Umber owns
+the request contract, structural validation, resource limits, OpenType
+interpretation, deterministic identity, artifact binding, and output reuse.
 
 ## Goals and non-goals
 
-Every TeX font used by HTML output needs a verified browser face and an
-explicit interpretation of its font-local 8-bit codes. Package ingestion, not
-the WASM runtime, is responsible for producing those resources whenever the
-source and license permit it.
+The completed architecture must:
 
-The bundle pipeline must:
+- derive font metrics and supported shaping data directly from validated
+  OpenType tables;
+- accept OTF and TTF on native hosts and WOFF2 in WebAssembly;
+- request all currently knowable missing fonts in one deterministic batch;
+- let the client resolve logical font requests without exposing URLs to Rust;
+- compute immutable identities after decoding and validation;
+- use the same selected font for layout, artifacts, and HTML;
+- preserve exact page, box, rule, and text-run anchor coordinates while
+  allowing the browser to shape within a run;
+- support embedded and content-addressed manifest HTML assets;
+- make duplicate provisioning idempotent only for identical resources;
+- fail explicitly on malformed, unsupported, conflicting, or unavailable
+  fonts; and
+- behave identically under the low-level session API and the high-level
+  JavaScript resolver facade.
 
-- bind resources to exact TFM content identity rather than a basename;
-- preserve or deliberately reproduce the physical glyph selected by TeX;
-- keep glyph selection separate from semantic Unicode text;
-- generate WOFF2 deterministically with a pinned toolchain;
-- verify maps, glyph coverage, digests, provenance, and embedding permission;
-- share identical faces and encodings across compatible TFM bindings;
-- support native and browser catalogs with identical bytes; and
-- fail explicitly for fonts that cannot be converted or redistributed.
+This architecture does not:
 
-The runtime does not convert arbitrary fonts, infer encodings from names,
-search the host operating system, or treat a visually similar fallback as the
-requested TeX font.
+- require coordinate equality for individual glyphs inside a browser-shaped
+  text run;
+- define a universal font CDN, package catalog, or name-to-URL convention;
+- convert OTF or TTF to WOFF2 during a browser session;
+- search operating-system fonts implicitly;
+- permit a TeX or document font name to become a URL;
+- silently substitute a visually similar platform font;
+- make licensing decisions for the application; or
+- require a separately generated metrics file or browser-font binding.
 
-## Why the TFM and WOFF2 remain separate
+## OpenType font model
 
-Classic TeX identifies a typeset character as a font plus an 8-bit code. A TFM
-provides TeX dimensions, font parameters, ligature/kern programs,
-next-larger links, and extensible recipes. It contains no required outline or
-Unicode identity.
-
-WOFF and WOFF2 package OpenType/SFNT font tables for browsers. They provide
-outlines and character-to-glyph mappings but do not uniquely determine the
-original TFM. An OpenType font can generate many valid TFMs depending on the
-chosen 8-bit encoding, features, TeX font parameters, ligature policy, and
-rounding. Therefore:
-
-- existing classic packages treat the distributed TFM as authoritative and
-  bind a generated or curated WOFF2 to its exact identity;
-- modern packages controlled by Umber may generate TFM, encoding, and WOFF2
-  together from one pinned source; and
-- a WOFF2 must not be used to synthesize a replacement TFM in the browser.
-
-If reducing requests is important, the catalog may group the separate objects
-as one logical package while retaining their individual content identities.
-
-## Bundle identities
-
-The catalog distinguishes:
-
-- `TfmIdentity`: name, domain-separated TFM content hash, TFM checksum, and
-  design size;
-- `HtmlFontKey`: the complete artifact request, adding selected size;
-- `EncodingIdentity`: the hash of the complete versioned slot mapping;
-- `WebFaceIdentity`: SHA-256 of the exact WOFF2 bytes; and
-- `BundleIdentity`: the hash of the binding metadata joining those resources.
-
-Selected size affects the resolved `HtmlFontKey` and CSS projection but does
-not ordinarily require a different WOFF2. A catalog binding may therefore
-serve many selected sizes while each resolver response repeats and validates
-the complete requested key.
-
-No identity is derived solely from a TeX filename. The catalog may list
-accepted logical names, but the TFM hash is mandatory.
-
-## Two mapping domains
-
-The principled mapping separates exact rendering from semantic text:
-
-```text
-(TFM identity, TeX slot) -> exact render glyph
-(encoding identity, source slot sequence) -> semantic Unicode text
-```
-
-These agree for ordinary letters but diverge for ligatures, glyph variants,
-math extension pieces, ornaments, and private package characters.
-
-The planned mapping record is:
+After container decoding, native and WASM paths produce the same validated
+logical model:
 
 ```rust
-pub struct WebGlyphMapping {
-    pub glyph_name: Option<String>,
-    pub render_text: String,
-    pub semantic_text: Option<String>,
-    pub provenance: MappingProvenance,
+pub struct OpenTypeFont {
+    pub identity: FontProgramIdentity,
+    pub face_index: u32,
+    pub cmap: CharacterMap,
+    pub metrics: FontMetrics,
+    pub shaping: ShapingTables,
+    pub math: Option<MathTables>,
+    pub metadata: FontMetadata,
 }
 ```
 
-`render_text` is the scalar sequence placed in the visible font-controlled
-layer. `semantic_text` is used by copy and accessibility output when the
-mapping is known. An absent semantic value makes no Unicode claim.
+The parser bounds table counts, offsets, glyph counts, outlines, collection
+faces, variation axes, mappings, substitution and positioning programs, and
+decoded allocation before publishing the value. Unknown optional tables may
+be retained or ignored by versioned policy; malformed required tables fail.
 
-Where a glyph has an unambiguous standard Unicode character, the generated
-WOFF2 may map that character directly. Otherwise the publisher assigns a
-deterministic bundle-local Private Use Area scalar and adds a `cmap` entry that
-selects the exact glyph. A PUA scalar is a rendering protocol between the HTML
-and its embedded font; it must never leak into the semantic accessibility
-layer as meaningful text.
+The initial metric projection includes:
 
-Mapping sources have strict precedence:
+- units per em;
+- horizontal advances and side bearings;
+- outline bounds needed by native rendering and diagnostics;
+- ascender, descender, and line-gap policy;
+- underline, strikeout, cap-height, and x-height metadata when present;
+- character-to-glyph mappings;
+- GDEF, GSUB, and GPOS data used by the supported shaping policy; and
+- MATH constants, italic corrections, variants, and assemblies when present.
 
-1. an explicit package-provided mapping;
-2. a versioned Umber registry entry for a recognized encoding such as OT1,
-   T1, OML, OMS, or OMX;
-3. an authoritative Unicode `cmap` in the source font;
-4. a pinned Adobe Glyph List mapping for a recognized glyph name;
-5. an explicit catalog override; and
-6. deterministic PUA rendering with no semantic mapping.
+The engine applies one documented rounding policy when projecting font units
+into scaled points. The same parser, projection rules, feature selection, and
+test vectors compile for native and WASM. Browser shaping inside an HTML run is
+allowed to differ slightly from engine positioning; those differences do not
+move the run anchor or any later TeX-positioned object.
 
-The publisher never infers meaning from a slot number, TFM basename, visual
-similarity, or another font's encoding.
+## Containers and identity
 
-Current HTML schema 1 uses one source-code-to-text map and delegates shaping
-inside a run to the browser. Splitting render and semantic values, or carrying
-the final TeX-selected glyph independently from its source sequence, changes
-that contract and requires a new artifact/HTML schema. It must not be slipped
-into schema 1 as an implementation detail.
+The resource has two distinct identities:
 
-## Physical source handling
+- `FontObjectIdentity` is SHA-256 of the exact supplied OTF, TTF, or WOFF2
+  bytes. It verifies transport, cache entries, and duplicate provisioning.
+- `FontProgramIdentity` is a versioned canonical identity over the validated
+  OpenType face and selected variation-independent tables after container
+  decoding. It binds layout and artifacts to the logical font program.
 
-Package ingestion handles source formats as follows:
+The canonical program identity includes the face index and table tags,
+lengths, and canonical decoded bytes for every table that can affect metrics,
+mapping, shaping, outlines, or math. It excludes transport-only representation
+differences such as WOFF2 compression and explicitly ignored metadata. The
+identity version changes if the included-table or canonicalization policy
+changes.
 
-- **WOFF2:** validate and retain exact bytes when they meet catalog policy.
-- **WOFF1:** decode to SFNT and generate canonical WOFF2.
-- **OpenType or TrueType:** generate WOFF2 with pinned fontTools and Brotli
-  versions and canonical options.
-- **Type 1 PFB/PFA:** convert or wrap the outlines as OpenType/CFF, normalize
-  the encoding and tables, then generate WOFF2.
-- **METAFONT source:** prefer a curated licensed vector counterpart. A pinned
-  MF-to-outline conversion is permitted only with documented quality and
-  reproducibility checks.
-- **PK/GF bitmap only:** report HTML unsupported unless a separate,
-  deliberately designed bitmap-font path exists. Do not silently trace or
-  substitute it.
-- **Proprietary or system font:** record an external binding requirement and
-  require an application- or user-supplied licensed face.
+This separation permits an OTF or TTF native object and its WOFF2 browser
+representation to identify the same logical font program while retaining
+different transport digests. A distribution that claims such equivalence must
+publish the expected program identity, and Umber verifies it after decoding.
 
-Already compressed input is never trusted merely because a browser can load
-it. The publisher and serializer still enforce SFNT structure, table and glyph
-limits, `cmap` coverage, and embedding policy.
+Font instances add the selected size, face index, variation coordinates,
+feature policy, synthetic-style prohibition, and writing direction to the
+program identity. Artifacts record the complete instance identity required to
+reproduce their font selection.
 
-## Ligatures, kerning, and glyph identity
+## Resource protocol
 
-Conversion is more than wrapping outlines. A legacy Type 1 font may lack
-OpenType GSUB/GPOS behavior corresponding to its TFM. The publisher must choose
-and record one of these versioned strategies:
+The host-neutral session uses an extensible batch:
 
-- construct browser shaping tables that reproduce the supported TFM
-  ligature/kern behavior;
-- map final TeX-selected glyphs directly and disable conflicting browser
-  substitutions; or
-- declare the binding unsupported for the current HTML schema.
+```rust
+pub enum ResourceRequest {
+    File(FileRequest),
+    Font(FontRequest),
+}
 
-The artifact currently retains source sequences for ligatures so schema 1 can
-reconstruct text and request browser shaping. A future exact-glyph schema
-should retain both the final TeX-selected glyph code and its semantic source
-sequence. That permits a generated PUA `cmap` to select the exact visible glyph
-while the accessibility layer emits `fi`, `ffi`, or other source text.
+pub struct FontRequest {
+    pub key: FontRequestKey,
+    pub accepted_containers: AcceptedFontContainers,
+    pub purposes: FontPurposes,
+}
 
-The publisher must not assume every TFM ligature program can be reproduced by
-turning on generic `liga` and `kern`. Boundary programs, retain/pass-over
-operations, package overrides, and non-text glyphs require explicit testing.
+pub struct FontRequestKey {
+    pub logical_name: String,
+    pub face_index: u32,
+    pub variation: VariationSelection,
+    pub feature_policy: FontFeaturePolicy,
+}
 
-## Virtual fonts
+pub enum ResourceResponse {
+    File(ResolvedFile),
+    Font(ResolvedFont),
+}
 
-A virtual font is a glyph program that may select, move, and compose glyphs
-from several physical fonts. It is not equivalent to one WOFF2 face.
-
-The preferred long-term boundary lowers VF programs during artifact creation
-into positioned physical-font operations. HTML requirements then name the
-underlying physical fonts. Until the engine and artifact model implement that
-boundary, a package whose HTML path depends on an unresolved VF receives a
-typed unsupported-font error. The bundle publisher must not flatten a VF by
-guessing at one constituent face.
-
-## Catalog schema
-
-The canonical catalog stores binding metadata separately from content-addressed
-objects. An illustrative shape is:
-
-```json
-{
-  "schema": 1,
-  "distribution": "texlive-2026",
-  "objectsBaseUrl": "https://cdn.example/texlive/2026/objects/",
-  "texFonts": {
-    "tfm-content-hash": {
-      "names": ["cmr10"],
-      "tfmChecksum": 0,
-      "designSizeRaw": 655360,
-      "encoding": "sha256-encoding",
-      "webFace": "sha256-woff2",
-      "binding": "sha256-binding"
-    }
-  },
-  "encodings": {
-    "sha256-encoding": {
-      "object": "sha256-object",
-      "bytes": 4096
-    }
-  },
-  "webFaces": {
-    "sha256-woff2": {
-      "object": "sha256-object",
-      "bytes": 222840,
-      "license": "OFL-1.1",
-      "provenance": "source and pinned conversion description"
-    }
-  }
+pub struct ResolvedFont {
+    pub request: FontRequestKey,
+    pub container: FontContainer,
+    pub bytes: Vec<u8>,
+    pub declared_object_sha256: Option<[u8; 32]>,
+    pub declared_program_identity: Option<FontProgramIdentity>,
+    pub provenance: Option<String>,
 }
 ```
 
-The final schema must use canonical field order and encoding, reject duplicate
-or case-fold-colliding identities, and keep URLs at the trusted catalog layer.
-Font names and TeX input never become URLs directly.
+Native requests initially accept OTF and TTF. WASM requests accept WOFF2. A
+future native host may accept WOFF2 as an optimization if it uses the identical
+decoder and limits. Container acceptance is an execution capability, not a
+font-name convention.
 
-Small encoding and license records may be inline when measurement shows that
-doing so reduces latency without making the catalog unbounded. WOFF2 and other
-large objects remain content-addressed. Common-family aggregate packs are an
-optional transport optimization, not a new identity layer.
+Requests are sorted and deduplicated by complete typed key. They contain no
+URLs. Responses repeat the request key and are accepted in any order. The
+session validates the container, digest, program identity, face selection,
+variations, tables, and limits before the font becomes visible. Registering
+the same request and identical bytes is a no-op; a different response for an
+already selected request is a typed conflict.
 
-## Offline publisher
+`NeedResources` separates correctness requirements from optional latency
+hints:
 
-A standalone `tools/font-pack` publisher performs package ingestion. It is not
-a root-workspace dependency and is invoked explicitly by distribution build
-scripts.
+```rust
+pub struct NeedResources {
+    pub required: Vec<ResourceRequest>,
+    pub prefetch_hints: Vec<ResourceRequest>,
+}
+```
 
-For each candidate font, it:
+The client may ignore every hint. A hinted resource never becomes live until
+the session actually requires and validates it. Calling `advance` again
+without satisfying any required request is a typed no-progress error.
 
-1. resolves the TFM, VF, encoding, map, physical font, and license files using
-   the pinned distribution's canonical TEXMF winner rules;
-2. computes Umber's domain-separated TFM identity and validates the TFM;
-3. parses the explicit 256-slot encoding and applies versioned mapping sources
-   and overrides;
-4. verifies embedding and redistribution permission before conversion;
-5. converts or normalizes the physical font with pinned tool versions;
-6. constructs the required `cmap` and, when selected, shaping tables;
-7. emits deterministic WOFF2 and computes its SHA-256 and length;
-8. fully decodes the result and verifies every declared render scalar resolves
-   to the intended glyph;
-9. verifies every used or promised semantic mapping and records unknowns
-   explicitly;
-10. emits canonical binding metadata and content-addressed objects; and
-11. repeats the clean build and requires byte-identical output.
+## Font selection and artifact binding
 
-Temporary paths, timestamps, host font discovery, hash-map iteration order,
-and unpinned converter defaults must not affect published bytes.
+A logical name is a request to the host, not a stable font identity. The
+client resolver is the authority that selects a font for that name under its
+application and licensing policy. The first accepted response fixes the font
+program and instance identity for the session.
+
+Committed artifacts never rely on the logical name alone. They record the
+validated font program and instance identities plus the information required
+to associate text runs with the retained resource. Re-rendering an artifact
+therefore requires the same program identity; another face with the same
+family or filename is a conflict, not a fallback.
+
+Font bytes are immutable after registration and shared by identity across
+font instances and output pages. Selected sizes do not duplicate the font
+object. Session and long-lived render ownership use explicit retain/release
+accounting so cached font bytes cannot leak across revisions indefinitely.
+
+## Native integration
+
+Native applications resolve `FontRequest` values from explicit files,
+application assets, or their own network/cache layer. Umber does not search
+the operating system unless the application implements that policy in its
+resolver.
+
+The native path validates OTF or TTF, derives metrics, and retains the original
+container. Native rendering uses the decoded outlines and shaping data. HTML
+may embed or return the same OTF/TTF object with an appropriate validated MIME
+and `@font-face` format declaration. Applications that prefer WOFF2 for native
+HTML may provide a prebuilt equivalent through a future transport-variant
+response; Umber never performs release conversion implicitly.
+
+## WASM and browser integration
+
+The low-level WASM API exposes `advance` and `provideResources`. The authored
+JavaScript facade may accept:
+
+```ts
+interface ResourceResolver {
+  resolve(
+    requests: readonly ResourceRequest[],
+    options?: { signal?: AbortSignal },
+  ): Promise<readonly ResourceResponse[]>;
+}
+```
+
+The facade canonicalizes each batch, invokes the client resolver, provides the
+responses, enforces progress, and advances again. It does not prescribe how
+the resolver maps names to objects or where those objects live.
+
+For a font request, the client supplies WOFF2 once. Rust decodes and validates
+the OpenType program, derives layout metrics, and retains the original WOFF2
+object. HTML generation later uses those exact bytes in embedded mode or
+returns them once under a content-addressed asset name in manifest mode. No
+second fetch or post-layout font-finalization state is needed.
+
+Worker wrappers transfer font bytes as `Uint8Array` values and include them in
+the existing one-object, cached-resource, and aggregate-output budgets.
+Cancellation, concurrency, in-flight joining, persistent storage, and eviction
+belong to the client resolver or application resource coordinator.
+
+## Client application responsibilities
+
+The client application owns:
+
+- mapping logical font requests to selected font objects;
+- choosing a distribution, package, manifest, CDN, or private asset store;
+- URL construction inside its trusted configuration;
+- fetch, authentication, retry, cancellation, and offline policy;
+- eager loading, dependency prefetch, and service-worker behavior;
+- memory and persistent-cache budgets above Umber's hard safety limits;
+- licensing authority for private and proprietary fonts;
+- progress, missing-font, and recovery UX; and
+- DOM installation, Content Security Policy, and asset lifetime.
+
+The client does not parse OpenType for Umber, calculate layout metrics, mint
+program identities, or modify committed artifact font identities. It may
+verify transport digests early, but Rust repeats all correctness-critical
+validation before using the bytes.
+
+## Distribution patterns
+
+The core package defines no catalog schema. Any of these client-owned patterns
+are valid:
+
+- statically import a WOFF2 URL from an application bundle;
+- map logical names through an application JSON manifest;
+- resolve content digests through a CDN or service worker;
+- load user-provided fonts from local storage;
+- fetch authenticated private fonts; or
+- depend on a separate optional package containing Computer Modern assets.
+
+A first-party Computer Modern convenience distribution, if maintained, is an
+ordinary client resolver or asset package. It is versioned and licensed
+separately from the core WASM runtime. The core compiler neither depends on it
+nor contains special cases for its names.
+
+Release pipelines convert OTF/TTF to WOFF2 with their chosen pinned toolchain.
+They should publish object digests, program identities, provenance, and license
+material, but those records are deployment metadata rather than an engine
+protocol or mandatory Umber catalog.
+
+## HTML behavior
+
+HTML preserves exact TeX page geometry and text-run anchors. The browser owns
+glyph selection, advances, kerning, ligatures, and ink placement inside a run
+under the fixed feature, variation, direction, and synthesis policy recorded
+by the font instance. A browser-shaped run may differ slightly in width from
+the engine's line construction without moving any later positioned event.
+
+Visible text uses Unicode text and the acquired OpenType `cmap`. Accessibility
+text remains a separate artifact-order layer. Unknown characters, missing
+glyphs, unsupported variation coordinates, or incompatible shaping policy are
+typed errors in parity mode; the serializer never adds a platform fallback
+family.
+
+Manifest mode returns content-addressed assets alongside HTML. Relative asset
+paths derive only from verified object digests. The application selects the
+installation base and owns object URLs or HTTP paths. Embedded mode uses the
+same retained bytes without another resource lookup.
 
 ## Licensing and provenance
 
-Package presence in TeX Live or another distribution does not by itself prove
-that browser embedding and redistribution under Umber's delivery model are
-allowed. Each binding records:
+Umber validates structure and identity, not legal authority. Public font asset
+packages must retain their license text, provenance, source version, conversion
+tool versions, and redistribution obligations. Applications resolving private
+fonts do so under their own authority.
 
-- source distribution and package version;
-- upstream font name and version;
-- source object digests;
-- conversion tools, versions, and options;
-- license identifier and retained license text;
-- whether modification, WOFF2 conversion, embedding, and redistribution are
-  permitted; and
-- any reserved-font-name or attribution obligations.
+The engine may preserve bounded provenance supplied with a resource for
+diagnostics and output manifests. Provenance never changes font identity and
+is never accepted as proof that embedding or redistribution is permitted.
 
-Unknown or incompatible permission prevents publication. Applications may
-still provide a private binding under their own authority, but Umber must not
-cache or redistribute it as a public catalog object without permission.
+## Security and limits
 
-## Runtime integration
+Required failures include:
 
-At runtime, the committed artifact supplies a complete `HtmlFontKey`. The
-session looks up its TFM identity in the catalog and requests one logical HTML
-font binding through the protocol in
-[wasm_resource_acquisition.md](wasm_resource_acquisition.md). The JavaScript
-resolver may fetch the encoding and WOFF2 concurrently or satisfy them from
-cache, then supplies one atomic response to Rust.
+- malformed SFNT, collection, or WOFF2 structure;
+- unsupported or inconsistent table versions;
+- offset, length, count, recursion, or decompression-limit violations;
+- invalid mappings, outlines, variations, GSUB/GPOS, or MATH programs;
+- declared object-digest or program-identity mismatch;
+- response type or request-key mismatch;
+- conflicting duplicate registration;
+- unsupported face or variation selection;
+- missing glyphs required by the document;
+- unavailable client-selected resources; and
+- retry without progress.
 
-Rust validates the complete binding before serialization. A missing catalog
-entry is an actionable resource miss, not permission to fall back. DVI output
-may still complete when HTML is unavailable, subject to the caller's requested
-aggregate-output policy.
+Error messages may contain logical request keys and content digests. They must
+not interpret a document string as markup or a URL. No partially validated
+font becomes visible to layout or output.
 
-## Initial package coverage
+## Initial coverage
 
-The first curated catalog target is the Computer Modern family required by
-Plain TeX:
+The first end-to-end fixture uses the existing licensed CMU Serif Roman WOFF2
+as a normal OpenType font resource. It demonstrates client resolution, WOFF2
+validation, metric derivation, ordinary Unicode text, browser ligatures and
+kerning, embedded output, manifest assets, and native/WASM agreement at the
+defined font-program boundary. It does not claim glyph-coordinate equality
+inside a browser-shaped run.
 
-- OT1 Roman, slanted/italic, bold, and typewriter faces;
-- OML math italic;
-- OMS math symbols; and
-- OMX math extensions.
-
-This target exercises ordinary Unicode mappings, ligatures, kerning, math
-symbols, glyph variants, extension pieces, shared objects, and multiple
-selected sizes. Additional package coverage is added only with reproducible
-fixtures and explicit license review.
+Coverage then expands to italic, bold, sans, typewriter, variable fonts,
+collections, and OpenType MATH fonts. Each addition uses the same resource
+protocol; no family-specific engine binding is introduced.
 
 ## Staged implementation plan
 
-The implementation is tracked by Beads epic `umber2-y2ei`. Stages are ordered
-by their dependencies, and each stage ends in a usable or independently
-verifiable artifact. Stages 1 through 4 are the first delivery milestone: they
-produce a Computer Modern Roman bundle that an application can fetch on
-demand or prefetch while it acquires the corresponding TFM, then use beside
-manifest-mode Umber HTML. Stages 5 through 9 expand fidelity and package
-coverage without delaying that vertical slice.
+The implementation is tracked by Beads epic `umber2-y2ei`.
 
-The first bundle has this transport shape:
-
-```text
-cm-web-fonts/
-  catalog.json
-  objects/
-    sha256-<encoding digest>
-    sha256-<woff2 digest>
-    sha256-<license digest>
-    sha256-<binding/provenance digest>
-```
-
-`catalog.json` is the only trusted URL-bearing object. Its entries bind exact
-TFM content identities to the other immutable objects. An application may
-fetch the catalog and required objects before compilation, fetch them after an
-HTML font requirement is known, or start them speculatively from a trusted TFM
-or format dependency hint. All three paths assemble the same `WebFont` bytes.
-The HTML references only the validated content-addressed face path; it never
-contains a URL derived from a TeX font name.
-
-### Stage 1: freeze the bundle contract
+### Stage 1: freeze resource and identity contracts
 
 Tracked by `umber2-y2ei.2`.
 
-Define the canonical schema-1 catalog, TFM binding, complete 256-slot encoding,
-provenance/license, and content-object records. Fix canonical JSON field order,
-integer and string rules, object naming, identity domains, size limits, URL
-resolution, and duplicate/case-collision rejection. Add shared golden fixtures
-and identity vectors for Rust and authored JavaScript consumers.
+Define `FontRequest`, `ResolvedFont`, container capabilities, object identity,
+canonical program identity, instance identity, duplicate semantics, limits,
+and shared native/WASM test vectors. The contract contains no URLs, catalog
+records, or asynchronous callbacks.
 
-This stage does not change HTML schema 1, perform font conversion, or add
-network access to Rust. It is complete when valid fixtures reserialize to
-byte-identical bytes and both consumers reject the same malformed, ambiguous,
-oversized, and unsupported-version fixtures.
-
-### Stage 2: publish the first exact-identity CM bundle
+### Stage 2: implement the shared OpenType core
 
 Tracked by `umber2-y2ei.3`; depends on stage 1.
 
-Create standalone `tools/font-pack`, kept outside the root workspace. Its first
-input profile retains the already pinned CM Unicode Roman WOFF2, verifies the
-TeX Live 2025 `cmr` TFM inputs, publishes their Umber font-metric identities,
-emits the explicit OT1-like schema-1 map, and retains the complete OFL text and
-source/tool provenance. Compatible selected sizes share the one WOFF2 object.
+Implement bounded OTF, TTF, collection, and WOFF2 decoding; canonical program
+identity; metrics and `cmap` projection; supported GSUB/GPOS extraction; and
+immutable font-program storage. Prove equivalent OTF/TTF and WOFF2 fixtures
+produce the same program identity and projected metrics.
 
-The publisher must parse and validate each TFM checksum and design size, fully
-decode the WOFF2, verify every declared render scalar against its `cmap`, and
-write only canonical content-addressed output. Two builds in clean temporary
-directories must be byte-identical. Host font discovery, basename-only
-binding, and substitution are forbidden. The committed catalog and objects
-are copied into the WASM package by the ordinary package build.
-
-### Stage 3: consume identical bundle bytes natively and in JavaScript
+### Stage 3: integrate batched font acquisition
 
 Tracked by `umber2-y2ei.4`; depends on stage 2.
 
-Add strict catalog readers that resolve an exact `HtmlFontKey`/TFM identity,
-load and verify its encoding, face, license, and binding metadata, and assemble
-the existing `WebFont` or `SessionWebFont` value. Rust receives bytes from a
-configured path or caller-owned cache; authored JavaScript receives bytes from
-an injected fetch/cache implementation. Both use the same fixtures, limits,
-and validation outcomes.
+Generalize the host-neutral session to return fonts in `NeedResources`, accept
+typed responses, detect conflicts and no progress, and retain selected font
+resources before layout. Collect all currently knowable font misses in one
+deterministic batch.
 
-The existing directory resolver remains a documented development adapter.
-Production catalog lookup never falls back to it and never accepts a matching
-basename with a different TFM identity. Embedded schema-1 HTML remains
-byte-stable when supplied the same binding bytes.
+### Stage 4: expose client-driven WASM orchestration
 
-### Stage 4: fetch or prefetch the sidecar with HTML
+Tracked by `umber2-y2ei.5`; depends on stage 3.
 
-Tracked by `umber2-y2ei.5`; depends on stage 3. Completion of this stage is the
-first shippable bundle milestone.
+Expose the low-level resource state machine and a high-level authored
+JavaScript facade that accepts an application resolver. Test concurrency,
+cancellation, workers, transfer, client caching, hints, partial responses, and
+progress without embedding any distribution policy in the package.
 
-Expose package APIs to:
-
-- resolve exact HTML font requirements on demand;
-- prefetch the associated immutable objects from trusted TFM and format
-  dependency hints;
-- join duplicate in-flight object requests and verified persistent-cache hits;
-  and
-- request manifest-mode WASM HTML whose returned asset paths use the same
-  content-addressed WOFF2 objects.
-
-Demand remains authoritative: a hint may warm the cache but cannot add an
-unused face to output or satisfy a different TFM identity. Fetches are bounded,
-concurrent, cancellable, length- and digest-verified, and injectable in Node
-tests. Cold, warm, corrupt-cache, cancellation, and no-progress browser tests
-must install the returned HTML and assets, wait for every face, reject platform
-fallback, and demonstrate byte identity with the native catalog path. This
-stage may adapt the resource-acquisition session described in
-[wasm_resource_acquisition.md](wasm_resource_acquisition.md), but it must not
-rerun completed TeX execution merely to obtain an HTML font.
-
-### Stage 5: cover Computer Modern text families
+### Stage 5: reuse selected fonts in HTML
 
 Tracked by `umber2-y2ei.6`; depends on stage 4.
 
-Add licensed, curated Roman, italic/slanted, bold, small-caps, sans, and
-typewriter faces for the Plain TeX TFM set. Every binding records its shaping
-strategy and fixed feature settings. Fixtures cover ordinary text, accents,
-font changes, ligatures, kerning, and multiple selected sizes against the DVI
-coordinate oracle and pinned browsers. A TFM program that schema 1 cannot
-reproduce is reported as unsupported instead of being approximated silently.
+Record font program and instance identities in artifacts and generate embedded
+or manifest HTML from the already retained font objects. Remove any post-layout
+font acquisition path. Verify one WOFF2 fetch serves WASM layout and browser
+installation.
 
-### Stage 6: cover OML, OMS, and OMX math
+### Stage 6: complete native/WASM and CM vertical coverage
 
 Tracked by `umber2-y2ei.7`; depends on stage 5.
 
-Publish licensed math faces and versioned OML, OMS, and OMX mappings. Assign
-deterministic bundle-local PUA scalars to glyph variants and extension pieces
-that lack an unambiguous Unicode scalar, and record absent semantic mappings
-explicitly. Focused fixtures cover math symbols, variants, delimiters, and
-extensible constructions. PUA values may select visible glyphs but must not
-enter accessibility text as meaningful Unicode.
+Exercise OTF/TTF native loading and WOFF2 WASM loading with equivalent CMU
+fixtures. Verify metrics, font identity, artifact selection, HTML text, asset
+digests, browser installation, and coordinate anchors across native, WASM,
+Chromium, and Firefox.
 
-### Stage 7: generalize conversion and package ingestion
+### Stage 7: add advanced OpenType text support
 
 Tracked by `umber2-y2ei.8`; depends on stage 6.
 
-Add pinned Type 1 to OpenType/CFF to WOFF2 conversion, pinned Adobe Glyph List
-resolution, canonical TEXMF winner selection, package scanning, license gates,
-coverage reports, and a machine-readable unsupported-font inventory. The
-publisher records every source digest, tool version and option, license
-decision, modification, and attribution obligation. Bitmap-only, proprietary,
-ambiguous, unlicensed, and unresolved-VF inputs remain explicit failures.
+Add collections, variation axes, feature policies, script/language selection,
+mark positioning, and the supported shaping boundary. Keep browser ownership
+inside runs explicit and test deterministic engine layout inputs across native
+and WASM.
 
-### Stage 8: version exact render-glyph semantics
+### Stage 8: add OpenType math support
 
-Tracked by `umber2-y2ei.9`; depends on stages 6 and 7.
+Tracked by `umber2-y2ei.9`; depends on stage 7.
 
-Design and implement a new artifact/HTML schema that retains the final
-TeX-selected glyph independently from its semantic source sequence. Use that
-identity to select exact visible glyphs through generated `cmap` entries while
-the accessibility layer emits semantic text such as `fi` or `ffi`. Disable
-conflicting browser substitutions for direct-glyph runs. Schema 1 remains
-readable and unchanged; this separation is never introduced as a schema-1
-implementation detail.
+Parse and validate MATH constants, italic corrections, variants, assemblies,
+and math glyph information. Integrate them with math layout without inventing
+family-specific mappings or auxiliary metrics files.
 
-### Stage 9: lower virtual fonts and complete package coverage
+### Stage 9: remove superseded font-delivery paths and release
 
-Tracked by `umber2-y2ei.10`; depends on stages 7 and 8.
+Tracked by `umber2-y2ei.10`; depends on stage 8.
 
-Lower VF programs during artifact creation into bounded, positioned operations
-over exact physical font bindings. Test composition, movement, nesting,
-limits, failures, and DVI-coordinate parity. Only after this stage may the
-catalog claim general supported-package coverage. Unresolved programs remain
-typed unsupported-font failures, and package completion still requires every
-exit criterion below.
+Delete superseded web-font binding, preload, and post-finalization APIs; migrate
+native, WASM, worker, examples, and documentation to `NeedResources`; complete
+resource-limit, corruption, cache-lifetime, browser, and licensing review; and
+ship the OpenType resource path as the supported architecture.
 
 ## Exit criteria
 
-Bundle generation is complete for a package only when:
+The architecture is complete when:
 
-- every published TFM binding is keyed by exact content identity and resolves
-  independently of basename or host search order;
-- two clean publisher runs produce byte-identical catalogs and objects;
-- every declared render scalar selects the intended WOFF2 glyph;
-- every semantic mapping has recorded provenance, and unknown semantics remain
-  explicitly absent;
-- license review permits the exact conversion, embedding, and distribution;
-- corrupt, incomplete, conflicting, ambiguous, and unlicensed inputs fail with
+- native OTF/TTF and equivalent WASM WOFF2 yield the same validated font
+  program identity and metric projection;
+- every font is acquired through deterministic `NeedResources` batches before
+  layout and conflicting responses fail atomically;
+- artifacts bind exact font program and instance identities;
+- HTML reuses retained font bytes without a second resolution phase;
+- embedded and manifest modes install without platform fallback;
+- the core package contains no distribution catalog or name-to-URL policy;
+- client resolvers can use static assets, manifests, CDNs, private stores, and
+  persistent caches without changing the engine protocol;
+- malformed, oversized, corrupt, unavailable, and unsupported fonts fail with
   actionable diagnostics;
-- native and WASM consume the same binding bytes and produce identical HTML;
-- ordinary text, ligatures, math symbols, and extensible pieces have focused
-  browser fixtures; and
-- unsupported bitmap, proprietary, or unresolved virtual fonts fail without
-  platform fallback or visual substitution.
+- native, WASM, worker, Chromium, and Firefox gates pass for text and math
+  coverage; and
+- superseded font-delivery APIs and documentation are removed.

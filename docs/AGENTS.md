@@ -49,12 +49,13 @@ resource limits, binding API, and MVP verification boundary.
 
 `wasm_resource_acquisition.md` specifies the long-term typed, batched resource
 state machine above the file-only WASM MVP, including concurrent frontend
-acquisition, dependency prefetch, caching, finalization resumption, and native
-parity.
+acquisition, required-versus-hint semantics, client-owned distribution,
+OpenType font reuse, caching, and native parity.
 
-`web_font_bundles.md` specifies deterministic TeX-package web-font ingestion,
-the versioned catalog and identity model, render-versus-semantic code mapping,
-licensing, source-format policy, and bundle-generation rollout.
+`web_font_bundles.md` specifies the OpenType-first native/WASM font-resource
+model: OTF/TTF native containers, WOFF2 browser containers, canonical program
+identity, batched acquisition, client-owned distribution, retained HTML asset
+reuse, and the migration rollout.
 
 `etex_primitives.md` is the extension-only e-TeX V2 primitive checklist and
 maps each family to its short-reference-manual contract and conformance gate.

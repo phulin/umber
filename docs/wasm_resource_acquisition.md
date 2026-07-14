@@ -2,134 +2,121 @@
 
 Status: long-term implementation plan. The current restart-on-fetch MVP remains
 specified by [wasm_mvp.md](wasm_mvp.md); this document defines its intended
-generalization for compilation inputs and downstream rendering resources.
+generalization into a typed, batched resource state machine for compilation
+inputs and OpenType fonts.
 
 ## Goals
 
 The browser frontend must acquire resources only when a session requires them,
-without turning dynamic TeX discovery into a serialized network waterfall.
-Rust remains synchronous and host-neutral. JavaScript owns asynchronous I/O,
-concurrency, persistent caching, cancellation, and manifest trust. The engine
-continues to observe file bytes only through `World`, while HTML fonts remain
-downstream driver resources and never enter engine state or page-artifact
-identity.
+without turning dynamic discovery into a serialized network waterfall. Rust
+remains synchronous and host-neutral. JavaScript or another host owns
+asynchronous I/O, concurrency, persistent caching, cancellation, authentication,
+and deployment policy.
 
 The completed design must:
 
-- report every currently known missing resource as one deterministic batch;
-- fetch independent objects concurrently with bounded work and memory;
-- use manifest dependencies only as optional prefetch hints;
-- resume finalization without rerunning completed TeX execution;
-- accept byte-identical duplicate provision idempotently and reject conflicts;
-- preserve identical resource validation and HTML bytes in native and WASM;
+- report every currently knowable missing resource as one deterministic batch;
+- distinguish required resources from optional prefetch hints;
+- fetch independent objects concurrently under host-selected limits;
+- accept OTF/TTF fonts natively and WOFF2 fonts in WebAssembly;
+- use one acquired font for engine layout and later HTML output;
+- accept byte-identical duplicate provisioning idempotently and reject
+  conflicts;
 - make cancellation, corruption, unavailable resources, and no progress typed
-  terminal outcomes rather than retry loops; and
-- retain immutable resources across incremental render revisions without
-  retaining unreferenced assets indefinitely.
+  terminal outcomes;
+- preserve identical validation and semantic resource identities in native and
+  WASM; and
+- retain immutable resources across render revisions without leaking
+  unreferenced objects indefinitely.
 
 ## Architectural boundary
 
-The public host protocol is broader than the internal engine file resolver:
+The engine reports typed needs but never invokes a resolver:
 
 ```text
-                    immutable resource catalog
-                      /                  \
-        TeX input and TFM objects       HTML font bindings
-                   |                            |
-              World-backed files          driver cache
-                   |                            |
-                TeX engine              HTML finalization
+                    client-owned resource policy
+                  /            |                \
+             TeX inputs     format images     OpenType fonts
+                  \            |                /
+                   verified ResourceResponse batch
+                                |
+                         host-neutral session
+                         /                  \
+                    TeX execution       HTML/output reuse
 ```
 
-One JavaScript coordinator may acquire both categories, but Rust must keep
-their lifetimes and capabilities separate. A web font is not a virtual file
-that the engine may open. Conversely, a TFM supplied to `World` is not by
-itself permission to select an unrelated browser face.
+Files continue to enter engine I/O through `World`. Fonts enter the immutable
+font-program store after OpenType validation and metric projection. In WASM,
+the retained WOFF2 bytes also become the browser font asset. No resource name
+or TeX input string becomes a URL inside Rust.
 
 ## Session protocol
-
-The long-term session interface replaces the file-specific `NeedFiles` result
-with an extensible resource batch:
 
 ```rust
 pub enum ResourceRequest {
     File(FileRequest),
-    HtmlFont(HtmlFontRequest),
+    Font(FontRequest),
 }
 
-pub struct HtmlFontRequest {
-    pub key: HtmlFontKey,
-    pub used_codes: CodeSet256,
+pub struct NeedResources {
+    pub required: Vec<ResourceRequest>,
+    pub prefetch_hints: Vec<ResourceRequest>,
 }
 
 pub enum SessionAdvance {
-    NeedResources(Vec<ResourceRequest>),
+    NeedResources(NeedResources),
     Complete(MemoryRunOutput),
     Error(CompileError),
 }
-```
 
-`CodeSet256` is a canonical 256-bit set. Requests are sorted by their complete
-typed identity and contain no URLs. The host resolves identities through its
-trusted catalog; TeX input must never construct a fetch URL.
-
-Each `advance` call runs synchronously until it completes, fails, or cannot
-continue without resources. `NeedResources` contains the union of every
-currently knowable miss. The session accepts responses in any order and may
-accept a subset, but another `advance` with no newly satisfied required request
-fails with a typed no-progress error.
-
-The initial public response forms are:
-
-```rust
 pub enum ResourceResponse {
     File(ResolvedFile),
-    HtmlFont(ResolvedHtmlFont),
+    Font(ResolvedFont),
 }
 ```
 
-Every response repeats its request identity. Registration verifies identity,
-declared length, digest, hard limits, and type-specific structure before the
-resource becomes visible. Re-registering identical bytes and metadata is a
-no-op. Re-registering a different value under an existing identity is a typed
-conflict, including at the JavaScript boundary.
+Requests are sorted and deduplicated by complete typed identity and contain no
+URLs. Responses repeat their request keys, may arrive in any order, and may
+satisfy only part of a batch. Another `advance` without any newly satisfied
+required request fails with a typed no-progress error.
 
-## Session states and finalization
+Registration verifies request identity, type, declared length, exact-object
+digest when supplied, hard limits, and type-specific structure before making a
+resource visible. Re-registering identical bytes and metadata is a no-op.
+Registering a different value under an already selected request is a typed
+conflict at both native and WASM boundaries.
 
-The host-neutral session has explicit logical states:
+Font requests and identities follow
+[web_font_bundles.md](web_font_bundles.md). The logical request is resolved by
+the client. Rust validates the supplied font, computes its immutable program
+identity, fixes the session's selection, derives metrics before layout, and
+records the exact instance identity in artifacts.
+
+## Session states
+
+The logical states are:
 
 ```text
-Compiling
-AwaitingFiles
-Finalizing
-AwaitingHtmlFonts
+Running
+AwaitingResources
 Complete
 Failed
 ```
 
-Missing TeX inputs or TFMs may require another compilation attempt under the
-existing restart-on-fetch MVP. Once execution has completed, the session
-retains committed artifacts, DVI plans, diagnostics, and staged effects while
-HTML resources are acquired. Supplying an HTML font resumes only HTML
-finalization; it must not rerun expansion, execution, shipout, or DVI planning.
+Each `advance` call runs synchronously until execution completes, fails, or
+cannot continue without resources. A font is acquired when execution first
+needs it, before font-dependent layout. Because the selected font object is
+retained, HTML generation reuses it and does not introduce a distinct
+post-layout font-finalization state.
 
-Before serialization, HTML lowering collects all required font identities and
-the union of used codes per identity:
-
-```rust
-pub fn collect_html_font_requirements(
-    pages: &[PageArtifact],
-) -> Result<Vec<HtmlFontRequirement>, HtmlError>;
-```
-
-The requirements pass is deterministic, bounded by the existing HTML limits,
-and reusable by native callers. It reports all missing bindings in one batch.
-The synchronous `HtmlFontResolver` then becomes a lookup over already supplied
-bindings, not an acquisition hook.
+The initial file MVP may still restart compilation after a file miss while the
+general session is introduced. The completed architecture resumes from the
+appropriate retained session boundary and never repeats completed work merely
+to reuse a font in output.
 
 ## Frontend acquisition coordinator
 
-The authored JavaScript facade owns one asynchronous coordinator:
+The authored JavaScript facade may accept a client implementation:
 
 ```ts
 interface ResourceResolver {
@@ -140,141 +127,151 @@ interface ResourceResolver {
 }
 ```
 
-For each batch, the coordinator:
+The facade is an ergonomic driver over `advance` and `provideResources`; it is
+not the engine protocol. For each batch it:
 
-1. canonicalizes and deduplicates the required identities;
-2. satisfies memory-cache hits immediately;
-3. joins matching in-flight acquisitions instead of issuing duplicates;
-4. checks the persistent cache by immutable catalog namespace and digest;
-5. expands optional manifest dependency hints;
-6. downloads remaining objects with a bounded concurrency pool;
-7. verifies response status, length, and SHA-256 before caching;
-8. assembles logical resources such as an HTML font binding;
-9. provides verified responses to Rust; and
-10. calls `advance` again only if the batch made progress.
+1. validates and canonicalizes request keys;
+2. forwards required requests to the client resolver;
+3. optionally forwards or schedules prefetch hints;
+4. validates the iterable response shape and byte limits at the JS boundary;
+5. transfers responses into Rust;
+6. requires progress on at least one requested resource; and
+7. advances again until completion or error.
 
-The default concurrency should be measured rather than enshrined in the wire
-protocol. An initial range of eight to sixteen object fetches is appropriate
-for browser testing. The resolver must bound queued requests, in-flight bytes,
-individual objects, aggregate cached bytes, attempts, and returned output.
+The application or its resolver decides whether to use memory caches,
+in-flight joining, HTTP caching, IndexedDB, a service worker, authenticated
+fetches, local user files, or another transport. Reusable helper modules may
+implement these policies, but the core package does not require one catalog or
+deployment model.
 
-Cancellation aborts fetches owned only by the cancelled session. Shared
-in-flight acquisitions remain alive while another session is awaiting them.
-No partially verified response reaches Rust.
+Cancellation aborts work owned only by the cancelled session. A client may
+retain a shared in-flight fetch while another live session still references
+it. No partially downloaded or partially verified response reaches Rust.
 
 ## Prefetch without correctness coupling
 
-Demand requests are authoritative. Manifest dependencies are latency hints and
-may be absent, incomplete, or overinclusive.
+Required requests are authoritative. Hints may be absent, incomplete,
+overinclusive, stale, or ignored.
 
-When a TFM is requested, the standard resolver may begin acquiring the
-catalog's associated encoding and WOFF2 objects concurrently with the required
-TFM. If the completed artifacts later request that HTML font, the exact request
-joins the memory, persistent, or in-flight cache entry. Loading an unused TFM
-therefore permits speculative transfer but never causes an unused font to enter
-the HTML output.
+A trusted application manifest or format description may hint likely input and
+font resources. The coordinator may begin those transfers concurrently. If a
+later required request matches a verified cached or in-flight object, it joins
+that work. An unused hinted resource never becomes live engine state or enters
+HTML output.
 
-Format metadata may hint a common family bundle, such as the Plain TeX
-Computer Modern set. Concurrent individual content-addressed objects are the
-initial strategy. Aggregate downloadable packs should be added only if cold
-browser measurements show material request overhead after HTTP/2 or HTTP/3,
-bounded concurrency, and persistent caching.
+Aggregate packs are a client transport optimization. They do not create a new
+engine identity or allow one response to satisfy a mismatched typed request.
 
-## Catalog and cache identity
+## Cache and identity
 
-The resolver loads one immutable, versioned catalog, following the trust and
-canonical-winner model in [wasm_mvp.md](wasm_mvp.md). The catalog namespace and
-object digest jointly isolate persistent entries across distributions.
+Cache layers may include:
 
-Cache layers are:
+- per-session registered resources keyed by complete request and selected
+  identity;
+- process-wide verified objects keyed by exact object digest;
+- optional persistent browser objects keyed by application namespace and
+  digest; and
+- long-lived render-session references to selected immutable resources.
 
-- per-session registration, keyed by complete typed resource identity;
-- process-wide in-flight and verified-object caches, keyed by object digest;
-- optional persistent browser storage, keyed by catalog namespace and digest;
-  and
-- long-lived render-session retention, reference-counted by live revisions.
+Files, font transport objects, and decoded font programs have separate identity
+domains. OTF/TTF and WOFF2 objects may have different byte digests while
+decoding to the same canonical font-program identity. Cache loss is a
+performance event, not a correctness event: the application may reacquire the
+resource and Rust validates it again.
 
-TFM identity and WOFF2 object identity are different domains. Several exact
-TFM bindings may share one WOFF2 object, and one TFM may be loaded at several
-selected sizes without duplicating face bytes.
+Persistent eviction policy belongs to the application. It must not delete an
+object still referenced by a live session. Rust independently enforces hard
+per-resource, decoded-font, session-cache, and aggregate-output limits.
 
-Persistent eviction is deterministic within an implementation version and
-must never delete an entry still referenced by a live session. Cache loss is a
-performance event, not a correctness event: the resolver can reacquire an
-immutable object from the catalog.
+## Client-owned distribution
 
-## Integrity, trust, and errors
+The client maps logical requests to resources. Valid implementations include:
 
-The catalog origin is the trust root. HTTPS protects transport, while catalog
-signatures or deployment policy establish authenticity; content digests alone
-detect corruption but do not authenticate a malicious manifest.
+- application-bundled URLs;
+- a client JSON manifest;
+- a CDN keyed by content digest;
+- a separate Computer Modern asset package;
+- local user-selected fonts;
+- private authenticated storage; and
+- a service-worker-managed offline distribution.
 
-Required typed failures include:
-
-- unknown resource identity;
-- unavailable catalog object;
-- HTTP, CORS, and abort failures;
-- declared-length or digest mismatch;
-- resource and aggregate limit violations;
-- invalid TFM, WOFF2, encoding, or license metadata;
-- response type or request-identity mismatch;
-- conflicting duplicate registration;
-- missing glyph coverage for a used TeX code; and
-- retry without progress.
-
-Error messages may include catalog keys and content digests, but not untrusted
-markup or executable URLs derived from TeX input.
+The core API neither specifies nor consumes those catalog formats. It does not
+derive an object path from a request name. The client may declare an expected
+digest or canonical font-program identity, but Rust verifies every declared
+value.
 
 ## Native composition
 
-Native callers use the same request identities, catalog schema, object hashes,
-and validation code. A synchronous native adapter may resolve a complete batch
-from local files or an application-managed cache, while an asynchronous native
-application may drive the same state machine as JavaScript. Equal catalog and
-artifact bytes must produce equal HTML and asset bytes.
+Native callers drive the same request and response types. A synchronous adapter
+may resolve a batch from explicit local paths or application assets; an
+asynchronous native host may use the same loop as JavaScript. Native fonts use
+OTF or TTF containers initially, while WASM fonts use WOFF2. Equivalent
+containers must produce the same canonical font-program identity and metric
+projection.
 
-The existing directory HTML font resolver remains a development and migration
-adapter. The manifest-backed catalog becomes the production resolver because a
-basename-only directory cannot represent multiple exact identities safely.
+Native filesystem lookup is an application policy. The engine does not search
+system font directories or infer a file path from a logical font name.
+
+## Integrity, trust, and errors
+
+The client-selected resource source is the trust root for selection and
+licensing. HTTPS, signed manifests, application bundling, or deployment policy
+may establish authenticity. Content digests detect corruption but do not
+authenticate a malicious catalog.
+
+Required typed failures include:
+
+- unknown or unavailable resource request;
+- HTTP, CORS, authentication, and abort failures reported by the client;
+- declared-length or object-digest mismatch;
+- resource and aggregate limit violations;
+- invalid file, format, OTF, TTF, collection, or WOFF2 structure;
+- canonical font-program identity mismatch;
+- response type or request-identity mismatch;
+- conflicting duplicate registration;
+- unsupported font face, variation, mapping, shaping, or math data;
+- missing glyphs required by the document; and
+- retry without progress.
+
+Errors may contain logical request keys and content digests, but not untrusted
+markup or executable URLs derived from document input.
 
 ## Implementation phases
 
-1. Add canonical `ResourceRequest` and `ResourceResponse` types and adapt the
-   existing file-only API without changing its behavior.
-2. Make duplicate registration idempotent only for byte-identical resources
-   and reject conflicts at native and WASM boundaries.
-3. Add the bounded HTML font-requirements pass and retain completed execution
-   state across resource-dependent finalization.
-4. Move `HtmlFontResolver` behind the supplied-resource cache and return one
-   batched HTML font request.
-5. Generalize the authored JavaScript retry loop into the concurrent resource
-   coordinator with cancellation and no-progress detection.
-6. Add immutable catalog font bindings, dependency hints, and persistent cache
-   support using the bundle format in
+1. Generalize the file-only result into canonical `ResourceRequest`,
+   `ResourceResponse`, `NeedResources`, and `SessionAdvance` types without
+   changing existing file behavior.
+2. Make duplicate provisioning idempotent only for identical resources and
+   reject conflicts in Rust, WASM, worker, and JavaScript facades.
+3. Add the OpenType font request and response types defined by
    [web_font_bundles.md](web_font_bundles.md).
-7. Add long-lived resource retention and release to incremental render
-   sessions.
-8. Deprecate direct preload helpers after the catalog path covers the packaged
-   Computer Modern fixture and custom bindings.
-
-Each phase keeps the file-only facade working until its replacement is tested
-in Firefox, Chromium, Node, and native integration tests.
+4. Acquire and validate fonts before layout, retain them by canonical program
+   identity, and record selected instance identities in artifacts.
+5. Reuse retained font objects directly in embedded and manifest HTML output.
+6. Expose the low-level `advance`/`provideResources` API and drive it through an
+   optional high-level client resolver facade.
+7. Add required-versus-hint batching, cancellation, worker transfer, bounded
+   partial responses, and no-progress detection.
+8. Add long-lived retain/release accounting and client-cache integration hooks
+   for incremental render sessions.
+9. Remove superseded preload and post-finalization font-delivery APIs after the
+   OpenType path covers native, WASM, worker, and browser fixtures.
 
 ## Exit criteria
 
-The design is complete when:
+The resource layer is complete when:
 
-- one session result can request multiple files and HTML fonts without ordered
-  one-object retry rounds;
-- the frontend fetches independent misses concurrently and coalesces duplicate
-  in-flight work;
-- completed TeX execution is not repeated while awaiting HTML fonts;
-- a TFM dependency hint can hide a later exact font request without becoming a
-  correctness requirement;
-- a warm persistent-cache run downloads no already verified font objects;
-- cancellation, corruption, conflict, unavailable-resource, limit, and
-  no-progress cases have native and browser coverage;
-- native and WASM produce byte-identical HTML from identical artifacts and
-  catalog resources; and
-- browser latency tests demonstrate that the common Plain TeX path has no
-  serialized web-font waterfall.
+- one session result can request multiple files and fonts without ordered
+  waterfalls;
+- required requests and hints have distinct correctness semantics;
+- native and WASM validate equivalent resources to identical semantic
+  identities;
+- WOFF2 supplied before WASM layout is reused for HTML without another fetch;
+- response order and chunking do not change results;
+- identical duplicate provisioning is a no-op and conflicts fail atomically;
+- cancellation and no-progress paths terminate without leaking resources;
+- retained-resource counts return to baseline after session and revision
+  disposal;
+- client-owned static, manifest, CDN, private, and persistent-cache resolvers
+  pass the same contract tests; and
+- no engine or package path derives a URL from a document resource name.
