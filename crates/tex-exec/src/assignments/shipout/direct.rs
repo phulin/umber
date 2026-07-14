@@ -1,6 +1,5 @@
 use tex_expand::{
-    NoopExpansionHooks, ReadRecorder, get_x_token_with_recorder_and_hooks,
-    scan_dimen::DimensionDiagnostic,
+    ReadRecorder, get_x_token_with_recorder_and_context, scan_dimen::DimensionDiagnostic,
 };
 use tex_lex::{InputSource, InputStack, MemoryInput, TokenListReplayKind};
 use tex_out::dvi::{DviPagePlan, DviPagePlanBuilder};

@@ -1,4 +1,4 @@
-use tex_expand::{ExpansionHooks, NoopRecorder, ReadRecorder};
+use tex_expand::{NoopRecorder, ReadRecorder};
 use tex_lex::{InputSource, InputStack};
 use tex_out::dvi::DviPagePlan;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
@@ -37,33 +37,31 @@ pub struct PreparedDviPage {
 }
 
 /// Dispatches one gullet-delivered token in the current mode.
-pub fn dispatch_delivered_token<S, H>(
+pub fn dispatch_delivered_token<S>(
     nest: &mut ModeNest,
     traced: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<DispatchAction, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     let mut recorder = NoopRecorder;
-    dispatch_delivered_token_with_recorder(nest, traced, input, stores, &mut recorder, hooks)
+    dispatch_delivered_token_with_recorder(nest, traced, input, stores, &mut recorder, execution)
 }
 
-pub(crate) fn dispatch_delivered_token_with_recorder<S, R, H>(
+pub(crate) fn dispatch_delivered_token_with_recorder<S, R>(
     nest: &mut ModeNest,
     traced: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<DispatchAction, ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     let token = tex_expand::semantic_token(traced);
     let origin = traced.origin();
@@ -73,7 +71,7 @@ where
     let mode = nest.current_mode();
     if matches!(mode, Mode::Math | Mode::DisplayMath) {
         return crate::math::dispatch_math_token_with_recorder(
-            nest, traced, input, stores, recorder, hooks,
+            nest, traced, input, stores, recorder, execution,
         );
     }
     if matches!(
@@ -104,7 +102,7 @@ where
             assignments::ensure_horizontal_for_character(nest, input, stores)?;
             return Ok(DispatchAction::Continue);
         }
-        return crate::math::enter_math(nest, input, stores, hooks);
+        return crate::math::enter_math(nest, input, stores, execution);
     }
     let meaning = match token {
         Token::Cs(symbol) => stores.meaning(symbol),
@@ -115,7 +113,9 @@ where
             let symbol = assignments::active_character_symbol(stores, ch);
             stores.meaning(symbol)
         }
-        Token::Char { .. } => return dispatch_character_token(nest, traced, input, stores, hooks),
+        Token::Char { .. } => {
+            return dispatch_character_token(nest, traced, input, stores, execution);
+        }
         Token::Param(_) | Token::Frozen(_) => {
             return Ok(DispatchAction::NotConsumed);
         }
@@ -132,7 +132,7 @@ where
     );
     if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) && !continues_character_run {
         assignments::flush_pending_hchars(nest, stores)?;
-        sync_engine_state::<S, _>(hooks, nest, stores);
+        sync_engine_state::<S>(execution, nest, stores);
     }
 
     if matches!(mode, Mode::Vertical | Mode::InternalVertical)
@@ -171,7 +171,7 @@ where
             TracedTokenWord::pack(Token::Char { ch, cat }, origin),
             input,
             stores,
-            hooks,
+            execution,
         ),
         Meaning::Macro { .. } => Err(ExecError::UnexpectedMacroDelivery {
             name: stores.resolve_cs_name(token),
@@ -189,7 +189,7 @@ where
         }
         Meaning::UnexpandablePrimitive(primitive) => {
             assignments::execute_unexpandable_with_recorder(
-                primitive, traced, nest, input, stores, recorder, hooks,
+                primitive, traced, nest, input, stores, recorder, execution,
             )
         }
         Meaning::Font(id) => {
@@ -219,7 +219,7 @@ where
         | Meaning::TokParam(_)
         | Meaning::PageDimension(_)
         | Meaning::PageInteger(_)) => {
-            assignments::execute_assignment_meaning(meaning, traced, input, stores, hooks)
+            assignments::execute_assignment_meaning(meaning, traced, input, stores, execution)
         }
         Meaning::MathCharGiven(_) => {
             unimplemented_typesetting(mode, token, origin, "math character command")
@@ -232,16 +232,15 @@ where
     }
 }
 
-fn dispatch_character_token<S, H>(
+fn dispatch_character_token<S>(
     nest: &mut ModeNest,
     traced: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<DispatchAction, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     let token = tex_expand::semantic_token(traced);
     let origin = traced.origin();
@@ -285,7 +284,7 @@ where
                 assignments::ensure_horizontal_for_character(nest, input, stores)?;
                 Ok(DispatchAction::Continue)
             } else {
-                crate::math::enter_math(nest, input, stores, hooks)
+                crate::math::enter_math(nest, input, stores, execution)
             }
         }
         Token::Char {

@@ -11,39 +11,38 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{BoxDimension, ExpansionState, PenaltyArrayKind};
 
 use crate::{
-    Dispatch, ExpandError, ExpandNext, ExpandableOpcode, ExpansionHooks, ExpansionReplayKind,
+    Dispatch, ExpandError, ExpandNext, ExpandableOpcode, ExpansionContext, ExpansionReplayKind,
     NoInputExpandNext, ReadBank, ReadCodeTable, ReadDependency, ReadEngineField, ReadFontField,
     ReadRecorder, scan_helpers, scan_int,
 };
 
 #[allow(dead_code)]
-pub(crate) fn expand_the<S, R, H>(
+pub(crate) fn expand_the<S, R>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<Dispatch, ExpandError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
-    expand_the_with_expander_and_hooks(
+    expand_the_with_expander_and_context(
         input,
         stores,
         recorder,
-        hooks,
+        expansion,
         &mut NoInputExpandNext,
         context,
     )
 }
 
-pub(crate) fn expand_the_with_expander_and_hooks<S, St, R, H, E>(
+pub(crate) fn expand_the_with_expander_and_context<S, St, R, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
     cause_context: TracedTokenWord,
 ) -> Result<Dispatch, ExpandError>
@@ -51,12 +50,11 @@ where
     S: InputSource,
     St: ExpansionState,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
-    E: ExpandNext<S, St, R, H>,
+    E: ExpandNext<S, St, R>,
 {
     let cause_origin = cause_context.origin();
-    let Some(token) = scan_helpers::next_non_space_x_token_with_expander_and_hooks(
-        input, stores, recorder, hooks, expander,
+    let Some(token) = scan_helpers::next_non_space_x_token_with_expander_and_context(
+        input, stores, recorder, expansion, expander,
     )?
     else {
         return Err(ExpandError::MissingTokenAfterPrimitive {
@@ -75,8 +73,8 @@ where
     match meaning {
         Meaning::UnexpandablePrimitive(primitive) => match primitive {
             tex_state::meaning::UnexpandablePrimitive::Count => {
-                let index = scan_helpers::scan_register_index_with_expander_and_hooks(
-                    input, stores, recorder, hooks, expander, token,
+                let index = scan_helpers::scan_register_index_with_expander_and_context(
+                    input, stores, recorder, expansion, expander, token,
                 )?;
                 recorder.record_dependency(ReadDependency::Cell {
                     bank: ReadBank::Count,
@@ -90,8 +88,8 @@ where
                 ))
             }
             tex_state::meaning::UnexpandablePrimitive::Dimen => {
-                let index = scan_helpers::scan_register_index_with_expander_and_hooks(
-                    input, stores, recorder, hooks, expander, token,
+                let index = scan_helpers::scan_register_index_with_expander_and_context(
+                    input, stores, recorder, expansion, expander, token,
                 )?;
                 recorder.record_dependency(ReadDependency::Cell {
                     bank: ReadBank::Dimen,
@@ -105,8 +103,8 @@ where
                 ))
             }
             tex_state::meaning::UnexpandablePrimitive::Skip => {
-                let index = scan_helpers::scan_register_index_with_expander_and_hooks(
-                    input, stores, recorder, hooks, expander, token,
+                let index = scan_helpers::scan_register_index_with_expander_and_context(
+                    input, stores, recorder, expansion, expander, token,
                 )?;
                 recorder.record_dependency(ReadDependency::Cell {
                     bank: ReadBank::Skip,
@@ -120,8 +118,8 @@ where
                 ))
             }
             tex_state::meaning::UnexpandablePrimitive::Muskip => {
-                let index = scan_helpers::scan_register_index_with_expander_and_hooks(
-                    input, stores, recorder, hooks, expander, token,
+                let index = scan_helpers::scan_register_index_with_expander_and_context(
+                    input, stores, recorder, expansion, expander, token,
                 )?;
                 recorder.record_dependency(ReadDependency::Cell {
                     bank: ReadBank::Muskip,
@@ -135,8 +133,8 @@ where
                 ))
             }
             tex_state::meaning::UnexpandablePrimitive::Toks => {
-                let index = scan_helpers::scan_register_index_with_expander_and_hooks(
-                    input, stores, recorder, hooks, expander, token,
+                let index = scan_helpers::scan_register_index_with_expander_and_context(
+                    input, stores, recorder, expansion, expander, token,
                 )?;
                 recorder.record_dependency(ReadDependency::Cell {
                     bank: ReadBank::Toks,
@@ -180,7 +178,7 @@ where
             primitive @ (tex_state::meaning::UnexpandablePrimitive::TextFont
             | tex_state::meaning::UnexpandablePrimitive::ScriptFont
             | tex_state::meaning::UnexpandablePrimitive::ScriptScriptFont) => {
-                let family = scan_math_family(input, stores, recorder, hooks, expander, token)?;
+                let family = scan_math_family(input, stores, recorder, expansion, expander, token)?;
                 let size = math_font_size(primitive);
                 recorder.record_dependency(ReadDependency::Cell {
                     bank: ReadBank::MathFamilyFont,
@@ -203,11 +201,11 @@ where
                 ))
             }
             tex_state::meaning::UnexpandablePrimitive::FontDimen => {
-                let scanned = scan_int::scan_int_with_expander_and_hooks(
-                    input, stores, recorder, hooks, expander, token,
+                let scanned = scan_int::scan_int_with_expander_and_context(
+                    input, stores, recorder, expansion, expander, token,
                 )?;
                 let number = scanned.value();
-                let font = scan_font_selector(input, stores, recorder, hooks, expander, token)?;
+                let font = scan_font_selector(input, stores, recorder, expansion, expander, token)?;
                 recorder.record_dependency(ReadDependency::Font {
                     field: ReadFontField::ParameterCount,
                     font: font.raw(),
@@ -242,7 +240,7 @@ where
             | tex_state::meaning::UnexpandablePrimitive::FontCharDp
             | tex_state::meaning::UnexpandablePrimitive::FontCharIc) => {
                 let value = scan_font_char_dimension(
-                    input, stores, recorder, hooks, expander, token, primitive,
+                    input, stores, recorder, expansion, expander, token, primitive,
                 )?;
                 Ok(push_rendered_text(
                     stores,
@@ -255,7 +253,7 @@ where
             | tex_state::meaning::UnexpandablePrimitive::ParShapeIndent
             | tex_state::meaning::UnexpandablePrimitive::ParShapeDimen) => {
                 let value = scan_parshape_dimension(
-                    input, stores, recorder, hooks, expander, token, primitive,
+                    input, stores, recorder, expansion, expander, token, primitive,
                 )?;
                 Ok(push_rendered_text(
                     stores,
@@ -268,8 +266,8 @@ where
             | tex_state::meaning::UnexpandablePrimitive::ClubPenalties
             | tex_state::meaning::UnexpandablePrimitive::WidowPenalties
             | tex_state::meaning::UnexpandablePrimitive::DisplayWidowPenalties) => {
-                let index = scan_int::scan_int_with_expander_and_hooks(
-                    input, stores, recorder, hooks, expander, token,
+                let index = scan_int::scan_int_with_expander_and_context(
+                    input, stores, recorder, expansion, expander, token,
                 )?
                 .value();
                 recorder.record_dependency(ReadDependency::Engine(ReadEngineField::PenaltyArrays));
@@ -296,7 +294,7 @@ where
                 ))
             }
             tex_state::meaning::UnexpandablePrimitive::HyphenChar => {
-                let font = scan_font_selector(input, stores, recorder, hooks, expander, token)?;
+                let font = scan_font_selector(input, stores, recorder, expansion, expander, token)?;
                 recorder.record_dependency(ReadDependency::Font {
                     field: ReadFontField::HyphenChar,
                     font: font.raw(),
@@ -310,7 +308,7 @@ where
                 ))
             }
             tex_state::meaning::UnexpandablePrimitive::SkewChar => {
-                let font = scan_font_selector(input, stores, recorder, hooks, expander, token)?;
+                let font = scan_font_selector(input, stores, recorder, expansion, expander, token)?;
                 recorder.record_dependency(ReadDependency::Font {
                     field: ReadFontField::SkewChar,
                     font: font.raw(),
@@ -326,8 +324,8 @@ where
             tex_state::meaning::UnexpandablePrimitive::Wd
             | tex_state::meaning::UnexpandablePrimitive::Ht
             | tex_state::meaning::UnexpandablePrimitive::Dp => {
-                let index = scan_helpers::scan_register_index_with_expander_and_hooks(
-                    input, stores, recorder, hooks, expander, token,
+                let index = scan_helpers::scan_register_index_with_expander_and_context(
+                    input, stores, recorder, expansion, expander, token,
                 )?;
                 let dimension = match primitive {
                     tex_state::meaning::UnexpandablePrimitive::Wd => BoxDimension::Width,
@@ -349,7 +347,7 @@ where
             tex_state::meaning::UnexpandablePrimitive::SpaceFactor => Ok(push_rendered_text(
                 stores,
                 ExpansionReplayKind::TheOutput,
-                &hooks.space_factor().to_string(),
+                &expansion.engine.space_factor.to_string(),
                 cause_origin,
             )),
             tex_state::meaning::UnexpandablePrimitive::InteractionMode => {
@@ -364,7 +362,7 @@ where
             }
             tex_state::meaning::UnexpandablePrimitive::NumExpr => {
                 let value =
-                    scan_int::scan_num_expr(input, stores, recorder, hooks, expander, token)?
+                    scan_int::scan_num_expr(input, stores, recorder, expansion, expander, token)?
                         .value();
                 Ok(push_rendered_text(
                     stores,
@@ -375,7 +373,7 @@ where
             }
             tex_state::meaning::UnexpandablePrimitive::DimExpr => {
                 let value = crate::scan_dimen::scan_dim_expr(
-                    input, stores, recorder, hooks, expander, token,
+                    input, stores, recorder, expansion, expander, token,
                 )?
                 .value();
                 Ok(push_rendered_text(
@@ -389,7 +387,7 @@ where
             | tex_state::meaning::UnexpandablePrimitive::MuExpr) => {
                 let mu = primitive == tex_state::meaning::UnexpandablePrimitive::MuExpr;
                 let value = crate::scan_glue::scan_glue_expr(
-                    input, stores, recorder, hooks, expander, mu, token,
+                    input, stores, recorder, expansion, expander, mu, token,
                 )?;
                 let spec = stores.glue(value.id());
                 Ok(push_rendered_text(
@@ -405,8 +403,8 @@ where
             }
             primitive @ (tex_state::meaning::UnexpandablePrimitive::GlueStretch
             | tex_state::meaning::UnexpandablePrimitive::GlueShrink) => {
-                let scanned = crate::scan_glue::scan_glue_with_expander_and_hooks(
-                    input, stores, recorder, hooks, expander, false, token,
+                let scanned = crate::scan_glue::scan_glue_with_expander_and_context(
+                    input, stores, recorder, expansion, expander, false, token,
                 )?;
                 let spec = stores.glue(scanned.id());
                 let value = if primitive == tex_state::meaning::UnexpandablePrimitive::GlueStretch {
@@ -423,8 +421,8 @@ where
             }
             primitive @ (tex_state::meaning::UnexpandablePrimitive::GlueStretchOrder
             | tex_state::meaning::UnexpandablePrimitive::GlueShrinkOrder) => {
-                let scanned = crate::scan_glue::scan_glue_with_expander_and_hooks(
-                    input, stores, recorder, hooks, expander, false, token,
+                let scanned = crate::scan_glue::scan_glue_with_expander_and_context(
+                    input, stores, recorder, expansion, expander, false, token,
                 )?;
                 let spec = stores.glue(scanned.id());
                 let order =
@@ -449,8 +447,8 @@ where
             primitive @ (tex_state::meaning::UnexpandablePrimitive::GlueToMu
             | tex_state::meaning::UnexpandablePrimitive::MuToGlue) => {
                 let to_mu = primitive == tex_state::meaning::UnexpandablePrimitive::GlueToMu;
-                let scanned = crate::scan_glue::scan_glue_with_expander_and_hooks(
-                    input, stores, recorder, hooks, expander, !to_mu, token,
+                let scanned = crate::scan_glue::scan_glue_with_expander_and_context(
+                    input, stores, recorder, expansion, expander, !to_mu, token,
                 )?;
                 let spec = stores.glue(scanned.id());
                 Ok(push_rendered_text(
@@ -467,31 +465,31 @@ where
             tex_state::meaning::UnexpandablePrimitive::PrevDepth => Ok(push_rendered_text(
                 stores,
                 ExpansionReplayKind::TheOutput,
-                &format_scaled(hooks.prev_depth()),
+                &format_scaled(expansion.engine.prev_depth),
                 cause_origin,
             )),
             tex_state::meaning::UnexpandablePrimitive::PrevGraf => Ok(push_rendered_text(
                 stores,
                 ExpansionReplayKind::TheOutput,
-                &hooks.prev_graf().to_string(),
+                &expansion.engine.prev_graf.to_string(),
                 cause_origin,
             )),
             tex_state::meaning::UnexpandablePrimitive::LastPenalty => Ok(push_rendered_text(
                 stores,
                 ExpansionReplayKind::TheOutput,
-                &hooks.last_penalty().to_string(),
+                &expansion.engine.last_penalty.to_string(),
                 cause_origin,
             )),
             tex_state::meaning::UnexpandablePrimitive::LastKern => Ok(push_rendered_text(
                 stores,
                 ExpansionReplayKind::TheOutput,
-                &format_scaled(hooks.last_kern()),
+                &format_scaled(expansion.engine.last_kern),
                 cause_origin,
             )),
             tex_state::meaning::UnexpandablePrimitive::LastSkip => Ok(push_rendered_text(
                 stores,
                 ExpansionReplayKind::TheOutput,
-                &format_glue(hooks.last_skip()),
+                &format_glue(expansion.engine.last_skip),
                 cause_origin,
             )),
             tex_state::meaning::UnexpandablePrimitive::CatCode
@@ -500,7 +498,7 @@ where
             | tex_state::meaning::UnexpandablePrimitive::SfCode
             | tex_state::meaning::UnexpandablePrimitive::MathCode
             | tex_state::meaning::UnexpandablePrimitive::DelCode => {
-                let ch = scan_code_table_char(input, stores, recorder, hooks, expander, token)?;
+                let ch = scan_code_table_char(input, stores, recorder, expansion, expander, token)?;
                 crate::record_code_dependency(recorder, code_table_key(primitive), ch);
                 let value = match primitive {
                     tex_state::meaning::UnexpandablePrimitive::CatCode => stores.catcode(ch) as i32,
@@ -618,7 +616,7 @@ where
         Meaning::InternalInteger(InternalInteger::LastNodeType) => Ok(push_rendered_text(
             stores,
             ExpansionReplayKind::TheOutput,
-            &hooks.last_node_type().to_string(),
+            &expansion.engine.last_node_type.to_string(),
             cause_origin,
         )),
         Meaning::CharGiven(ch) => Ok(push_rendered_text(
@@ -672,8 +670,8 @@ where
         }),
         _ => match stores.resolve(symbol) {
             "count" => {
-                let index = scan_helpers::scan_register_index_with_expander_and_hooks(
-                    input, stores, recorder, hooks, expander, token,
+                let index = scan_helpers::scan_register_index_with_expander_and_context(
+                    input, stores, recorder, expansion, expander, token,
                 )?;
                 recorder.record_dependency(ReadDependency::Cell {
                     bank: ReadBank::Count,
@@ -687,8 +685,8 @@ where
                 ))
             }
             "dimen" => {
-                let index = scan_helpers::scan_register_index_with_expander_and_hooks(
-                    input, stores, recorder, hooks, expander, token,
+                let index = scan_helpers::scan_register_index_with_expander_and_context(
+                    input, stores, recorder, expansion, expander, token,
                 )?;
                 recorder.record_dependency(ReadDependency::Cell {
                     bank: ReadBank::Dimen,
@@ -702,8 +700,8 @@ where
                 ))
             }
             "toks" => {
-                let index = scan_helpers::scan_register_index_with_expander_and_hooks(
-                    input, stores, recorder, hooks, expander, token,
+                let index = scan_helpers::scan_register_index_with_expander_and_context(
+                    input, stores, recorder, expansion, expander, token,
                 )?;
                 recorder.record_dependency(ReadDependency::Cell {
                     bank: ReadBank::Toks,
@@ -1056,23 +1054,22 @@ pub fn token_text(stores: &impl ExpansionState, token: Token) -> String {
         .collect()
 }
 
-pub fn scan_the_text_with_hooks<S, R, H>(
+pub fn scan_the_text_with_context<S, R>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<String, ExpandError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
-    let dispatch = expand_the_with_expander_and_hooks(
+    let dispatch = expand_the_with_expander_and_context(
         input,
         stores,
         recorder,
-        hooks,
+        expansion,
         &mut NoInputExpandNext,
         context,
     )?;
@@ -1212,11 +1209,11 @@ fn component_unit(order: Order, normal_unit: &str) -> &'static str {
     }
 }
 
-fn scan_code_table_char<S, St, R, H, E>(
+fn scan_code_table_char<S, St, R, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
     context: TracedTokenWord,
 ) -> Result<char, ExpandError>
@@ -1224,11 +1221,10 @@ where
     S: InputSource,
     St: ExpansionState,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
-    E: ExpandNext<S, St, R, H>,
+    E: ExpandNext<S, St, R>,
 {
-    let value = scan_int::scan_int_with_expander_and_hooks(
-        input, stores, recorder, hooks, expander, context,
+    let value = scan_int::scan_int_with_expander_and_context(
+        input, stores, recorder, expansion, expander, context,
     )?
     .value();
     u32::try_from(value)
@@ -1237,11 +1233,11 @@ where
         .ok_or(ExpandError::UnsupportedTheTarget { context })
 }
 
-pub(crate) fn scan_font_selector<S, St, R, H, E>(
+pub(crate) fn scan_font_selector<S, St, R, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
     context: TracedTokenWord,
 ) -> Result<FontId, ExpandError>
@@ -1249,11 +1245,10 @@ where
     S: InputSource,
     St: ExpansionState,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
-    E: ExpandNext<S, St, R, H>,
+    E: ExpandNext<S, St, R>,
 {
-    let Some(token) = scan_helpers::next_non_space_x_token_with_expander_and_hooks(
-        input, stores, recorder, hooks, expander,
+    let Some(token) = scan_helpers::next_non_space_x_token_with_expander_and_context(
+        input, stores, recorder, expansion, expander,
     )?
     else {
         return Err(ExpandError::MissingTokenAfterPrimitive {
@@ -1281,7 +1276,7 @@ where
             | tex_state::meaning::UnexpandablePrimitive::ScriptFont
             | tex_state::meaning::UnexpandablePrimitive::ScriptScriptFont),
         ) => {
-            let family = scan_math_family(input, stores, recorder, hooks, expander, token)?;
+            let family = scan_math_family(input, stores, recorder, expansion, expander, token)?;
             let size = math_font_size(primitive);
             recorder.record_dependency(ReadDependency::Cell {
                 bank: ReadBank::MathFamilyFont,
@@ -1300,11 +1295,11 @@ where
     }
 }
 
-pub(crate) fn scan_font_char_dimension<S, St, R, H, E>(
+pub(crate) fn scan_font_char_dimension<S, St, R, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
     context: TracedTokenWord,
     primitive: tex_state::meaning::UnexpandablePrimitive,
@@ -1313,12 +1308,11 @@ where
     S: InputSource,
     St: ExpansionState,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
-    E: ExpandNext<S, St, R, H>,
+    E: ExpandNext<S, St, R>,
 {
-    let font = scan_font_selector(input, stores, recorder, hooks, expander, context)?;
-    let code = scan_int::scan_int_with_expander_and_hooks(
-        input, stores, recorder, hooks, expander, context,
+    let font = scan_font_selector(input, stores, recorder, expansion, expander, context)?;
+    let code = scan_int::scan_int_with_expander_and_context(
+        input, stores, recorder, expansion, expander, context,
     )?
     .value();
     recorder.record_dependency(ReadDependency::Font {
@@ -1341,11 +1335,11 @@ where
     })
 }
 
-pub(crate) fn scan_parshape_dimension<S, St, R, H, E>(
+pub(crate) fn scan_parshape_dimension<S, St, R, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
     context: TracedTokenWord,
     primitive: tex_state::meaning::UnexpandablePrimitive,
@@ -1354,11 +1348,10 @@ where
     S: InputSource,
     St: ExpansionState,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
-    E: ExpandNext<S, St, R, H>,
+    E: ExpandNext<S, St, R>,
 {
-    let number = scan_int::scan_int_with_expander_and_hooks(
-        input, stores, recorder, hooks, expander, context,
+    let number = scan_int::scan_int_with_expander_and_context(
+        input, stores, recorder, expansion, expander, context,
     )?
     .value();
     recorder.record_dependency(ReadDependency::Engine(ReadEngineField::ParShape));
@@ -1374,11 +1367,11 @@ where
     Ok(stores.paragraph_shape_dimension(line, width))
 }
 
-fn scan_math_family<S, St, R, H, E>(
+fn scan_math_family<S, St, R, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
     context: TracedTokenWord,
 ) -> Result<u8, ExpandError>
@@ -1386,11 +1379,10 @@ where
     S: InputSource,
     St: ExpansionState,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
-    E: ExpandNext<S, St, R, H>,
+    E: ExpandNext<S, St, R>,
 {
-    let scanned = scan_int::scan_int_with_expander_and_hooks(
-        input, stores, recorder, hooks, expander, context,
+    let scanned = scan_int::scan_int_with_expander_and_context(
+        input, stores, recorder, expansion, expander, context,
     )?;
     Ok(u8::try_from(scanned.value())
         .ok()

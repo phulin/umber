@@ -1,16 +1,16 @@
 use std::collections::{BTreeMap, VecDeque};
+use std::ops::{Deref, DerefMut};
+use std::path::Path;
 
 use tex_expand::{
-    EngineMode, EngineStateSnapshot, ExpansionHooks, NoopRecorder, ReadRecorder,
-    get_x_token_with_recorder_and_hooks,
+    EngineStateSnapshot, InputResolver, NoopRecorder, ReadRecorder,
+    get_x_token_with_recorder_and_context,
 };
 use tex_lex::{InputSource, InputStack};
 use tex_out::dvi::DviPagePlan;
-use tex_state::glue::GlueSpec;
 use tex_state::node::Node;
-use tex_state::scaled::Scaled;
 use tex_state::token::TracedTokenWord;
-use tex_state::{ExpansionContext, InputSummary, Universe};
+use tex_state::{FileContent, InputReadState, InputSummary, Universe};
 
 use crate::checkpoint::{CheckpointSink, EngineBoundary, EngineSession, NoopCheckpointSink};
 use crate::dispatch::{dispatch_delivered_token_with_recorder, unimplemented_typesetting};
@@ -18,6 +18,76 @@ use crate::mode::IGNORE_DEPTH;
 use crate::output;
 use crate::vertical::is_outer_vertical;
 use crate::{DispatchAction, ExecError, ExecutionStats, ModeNest, assignments};
+
+/// Object-safe host boundary used only by the `\font` assignment.
+pub trait FontResolver {
+    fn open_font(
+        &mut self,
+        input: &mut dyn InputReadState,
+        path: &Path,
+        request_index: u64,
+    ) -> Result<FileContent, String>;
+}
+
+/// Concrete execution-session context shared by stomach operations.
+///
+/// Expansion scanners see this only through its concrete dereference to
+/// [`tex_expand::ExpansionContext`]; font resolution remains an execution-only
+/// operation and is invoked solely by `\font` assignment.
+pub struct ExecutionContext<'a, S> {
+    expansion: tex_expand::ExpansionContext<'a, S>,
+    font_resolver: Option<&'a mut dyn FontResolver>,
+}
+
+impl<'a, S> ExecutionContext<'a, S> {
+    #[must_use]
+    pub fn new(job_name: &'a str) -> Self {
+        Self {
+            expansion: tex_expand::ExpansionContext::new(job_name),
+            font_resolver: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_resolvers(
+        job_name: &'a str,
+        input_resolver: &'a mut dyn InputResolver<S>,
+        font_resolver: &'a mut dyn FontResolver,
+    ) -> Self {
+        Self {
+            expansion: tex_expand::ExpansionContext::with_input_resolver(job_name, input_resolver),
+            font_resolver: Some(font_resolver),
+        }
+    }
+
+    pub(crate) fn open_font(
+        &mut self,
+        input: &mut dyn InputReadState,
+        path: &Path,
+    ) -> Result<FileContent, String> {
+        let request_index = self.expansion.next_resolution_index();
+        match self.font_resolver.as_deref_mut() {
+            Some(resolver) => resolver.open_font(input, path, request_index),
+            None => input
+                .read_input_file(path)
+                .map_err(|error| error.to_string()),
+        }
+    }
+}
+
+impl<'a, S> Deref for ExecutionContext<'a, S> {
+    type Target = tex_expand::ExpansionContext<'a, S>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.expansion
+    }
+}
+
+impl<S> DerefMut for ExecutionContext<'_, S> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.expansion
+    }
+}
 
 /// Stomach interpreter state.
 #[derive(Clone, Debug, PartialEq)]
@@ -75,60 +145,57 @@ impl Executor {
         S: InputSource,
         R: ReadRecorder,
     {
-        let mut hooks = NoopExecHooks;
-        self.run_with_recorder_and_hooks(input, stores, recorder, &mut hooks)
+        let mut context = ExecutionContext::new("texput");
+        self.run_with_recorder_and_context(input, stores, recorder, &mut context)
     }
 
-    /// Runs main control while recording reads and using driver expansion hooks.
-    pub fn run_with_recorder_and_hooks<S, R, H>(
+    /// Runs main control while recording reads and using driver expansion context.
+    pub fn run_with_recorder_and_context<S, R>(
         &mut self,
         input: &mut InputStack<S>,
         stores: &mut Universe,
         recorder: &mut R,
-        hooks: &mut H,
+        execution: &mut crate::ExecutionContext<'_, S>,
     ) -> Result<ExecutionStats, ExecError>
     where
         S: InputSource,
         R: ReadRecorder,
-        H: ExpansionHooks<S>,
     {
         let mut checkpoints = NoopCheckpointSink;
-        self.run_with_recorder_hooks_and_checkpoints(
+        self.run_with_recorder_context_and_checkpoints(
             input,
             stores,
             recorder,
-            hooks,
+            execution,
             &mut checkpoints,
         )
     }
 
     /// Runs main control and publishes restartable state at named safe boundaries.
-    pub fn run_with_recorder_hooks_and_checkpoints<S, R, H, C>(
+    pub fn run_with_recorder_context_and_checkpoints<S, R, C>(
         &mut self,
         input: &mut InputStack<S>,
         stores: &mut Universe,
         recorder: &mut R,
-        hooks: &mut H,
+        execution: &mut crate::ExecutionContext<'_, S>,
         checkpoints: &mut C,
     ) -> Result<ExecutionStats, ExecError>
     where
         S: InputSource,
         R: ReadRecorder,
-        H: ExpansionHooks<S>,
         C: CheckpointSink,
     {
         input.ensure_source_ids_at_least(stores.input_summary().next_source_id());
         let mut session = EngineSession::new(checkpoints);
         session.publish(EngineBoundary::JobStart, &self.nest, input, stores);
         let artifact_start = stores.world().artifact_commits().len();
-        let mut exec_hooks = ExecExpansionHooks::new(hooks);
         let mut stats = ExecutionStats::default();
         let exit = match run_outer_main_control_until(
             &mut self.nest,
             input,
             stores,
             recorder,
-            &mut exec_hooks,
+            execution,
             &mut stats,
             &mut session,
         ) {
@@ -150,7 +217,7 @@ impl Executor {
                     input,
                     stores,
                     recorder,
-                    &mut exec_hooks,
+                    execution,
                     &mut stats,
                 ) {
                     let summary = input.publication_summary(stores);
@@ -208,19 +275,18 @@ impl Executor {
     }
 }
 
-fn run_outer_main_control_until<S, R, H, C>(
+fn run_outer_main_control_until<S, R, C>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     stats: &mut ExecutionStats,
     session: &mut EngineSession<'_, C>,
 ) -> Result<MainControlExit, ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
     C: CheckpointSink,
 {
     let result = run_main_control_until_observing(
@@ -228,7 +294,7 @@ where
         input,
         stores,
         recorder,
-        hooks,
+        execution,
         stats,
         true,
         |_, _| false,
@@ -258,19 +324,18 @@ pub(crate) enum MainControlExit {
     NotConsumed { token: TracedTokenWord },
 }
 
-pub(crate) fn run_main_control_until<S, R, H, F>(
+pub(crate) fn run_main_control_until<S, R, F>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     stats: &mut ExecutionStats,
     should_stop: F,
 ) -> Result<MainControlExit, ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
     F: FnMut(&mut InputStack<S>, &Universe) -> bool,
 {
     let result = run_main_control_until_observing(
@@ -278,7 +343,7 @@ where
         input,
         stores,
         recorder,
-        hooks,
+        execution,
         stats,
         false,
         should_stop,
@@ -288,12 +353,12 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_main_control_until_observing<S, R, H, F, O>(
+fn run_main_control_until_observing<S, R, F, O>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     stats: &mut ExecutionStats,
     allow_text_spans: bool,
     mut should_stop: F,
@@ -302,7 +367,6 @@ fn run_main_control_until_observing<S, R, H, F, O>(
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
     F: FnMut(&mut InputStack<S>, &Universe) -> bool,
     O: FnMut(&ModeNest, &mut InputStack<S>, &mut Universe, BoundaryEvent),
 {
@@ -335,10 +399,11 @@ where
         let before_mode = nest.current_mode();
         let before_depth = nest.depth();
         let before_artifacts = stores.world().artifact_commits().len();
-        sync_engine_state::<S, _>(hooks, nest, stores);
+        sync_engine_state::<S>(execution, nest, stores);
         let token = {
-            let mut expansion = ExpansionContext::new(stores);
-            match get_x_token_with_recorder_and_hooks(input, &mut expansion, recorder, hooks) {
+            let mut expansion = tex_state::ExpansionContext::new(stores);
+            match get_x_token_with_recorder_and_context(input, &mut expansion, recorder, execution)
+            {
                 Ok(token) => token,
                 Err(tex_expand::ExpandError::Captured { error, site }) => match *error {
                     tex_expand::ExpandError::UndefinedControlSequence { name, .. } => {
@@ -478,7 +543,7 @@ where
         }
         stats.delivered_tokens += 1;
         let action = match dispatch_delivered_token_with_recorder(
-            nest, token, input, stores, recorder, hooks,
+            nest, token, input, stores, recorder, execution,
         ) {
             Ok(action) => action,
             Err(ExecError::Expand(tex_expand::ExpandError::UndefinedControlSequence {
@@ -543,11 +608,11 @@ where
         };
         match action {
             DispatchAction::Continue => {
-                output::drain_pending_output(nest, input, stores, recorder, hooks, stats)?;
+                output::drain_pending_output(nest, input, stores, recorder, execution, stats)?;
             }
             DispatchAction::Shipout(page) => {
                 stats.prepared_dvi_pages.push(page);
-                output::drain_pending_output(nest, input, stores, recorder, hooks, stats)?;
+                output::drain_pending_output(nest, input, stores, recorder, execution, stats)?;
             }
             DispatchAction::End => {
                 stats.dumped_format = match tex_expand::semantic_token(token) {
@@ -581,12 +646,14 @@ where
     }
 }
 
-pub(crate) fn sync_engine_state<S, H>(hooks: &mut H, nest: &ModeNest, stores: &Universe)
-where
+pub(crate) fn sync_engine_state<S>(
+    execution: &mut crate::ExecutionContext<'_, S>,
+    nest: &ModeNest,
+    stores: &Universe,
+) where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
-    hooks.set_engine_state(engine_state_snapshot(nest, stores));
+    execution.engine = engine_state_snapshot(nest, stores);
 }
 
 fn engine_state_snapshot(nest: &ModeNest, stores: &Universe) -> EngineStateSnapshot {
@@ -637,148 +704,4 @@ fn engine_state_snapshot(nest: &ModeNest, stores: &Universe) -> EngineStateSnaps
         Node::etex_type,
     );
     state
-}
-
-struct ExecExpansionHooks<'a, H> {
-    inner: &'a mut H,
-    state: EngineStateSnapshot,
-}
-
-impl<'a, H> ExecExpansionHooks<'a, H> {
-    fn new(inner: &'a mut H) -> Self {
-        Self {
-            inner,
-            state: EngineStateSnapshot::default(),
-        }
-    }
-}
-
-impl<S, H> ExpansionHooks<S> for ExecExpansionHooks<'_, H>
-where
-    S: InputSource,
-    H: ExpansionHooks<S>,
-{
-    fn open_input<C: tex_state::InputReadState>(
-        &mut self,
-        input: &mut C,
-        name: &str,
-    ) -> Result<S, String> {
-        self.inner.open_input(input, name)
-    }
-
-    fn open_font<C: tex_state::InputReadState>(
-        &mut self,
-        input: &mut C,
-        path: &std::path::Path,
-    ) -> Result<tex_state::FileContent, String> {
-        self.inner.open_font(input, path)
-    }
-
-    fn job_name(&self) -> &str {
-        self.inner.job_name()
-    }
-
-    fn mode(&self) -> EngineMode {
-        self.state.mode
-    }
-
-    fn is_inner_mode(&self) -> bool {
-        self.state.is_inner_mode
-    }
-
-    fn space_factor(&self) -> i32 {
-        self.state.space_factor
-    }
-
-    fn prev_depth(&self) -> Scaled {
-        self.state.prev_depth
-    }
-
-    fn prev_graf(&self) -> i32 {
-        self.state.prev_graf
-    }
-
-    fn par_shape_len(&self) -> i32 {
-        self.state.par_shape_len
-    }
-
-    fn last_penalty(&self) -> i32 {
-        self.state.last_penalty
-    }
-
-    fn last_kern(&self) -> Scaled {
-        self.state.last_kern
-    }
-
-    fn last_skip(&self) -> GlueSpec {
-        self.state.last_skip
-    }
-
-    fn last_node_type(&self) -> i32 {
-        self.state.last_node_type
-    }
-
-    fn input_stream_eof(&self, stores: &impl tex_state::ExpansionState, stream: u8) -> bool {
-        self.inner.input_stream_eof(stores, stream)
-    }
-
-    fn set_engine_state(&mut self, state: EngineStateSnapshot) {
-        self.state = state;
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct NoopExecHooks;
-
-impl<S> ExpansionHooks<S> for NoopExecHooks
-where
-    S: InputSource,
-{
-    fn open_input<C: tex_state::InputReadState>(
-        &mut self,
-        _input: &mut C,
-        _name: &str,
-    ) -> Result<S, String> {
-        Err("execution input hook is not installed".to_owned())
-    }
-}
-
-impl<S> ExpansionHooks<S> for Executor
-where
-    S: InputSource,
-{
-    fn open_input<C: tex_state::InputReadState>(
-        &mut self,
-        _input: &mut C,
-        _name: &str,
-    ) -> Result<S, String> {
-        Err("execution input hook is not installed".to_owned())
-    }
-
-    fn mode(&self) -> EngineMode {
-        self.nest.current_mode().engine_mode()
-    }
-
-    fn is_inner_mode(&self) -> bool {
-        self.nest.current_mode().is_inner()
-    }
-
-    fn space_factor(&self) -> i32 {
-        self.nest.current_list().space_factor()
-    }
-
-    fn prev_depth(&self) -> Scaled {
-        self.nest
-            .current_list()
-            .prev_depth()
-            .unwrap_or(IGNORE_DEPTH)
-    }
-
-    fn prev_graf(&self) -> i32 {
-        self.nest.enclosing_vertical_prev_graf()
-    }
-
-    fn par_shape_len(&self) -> i32 {
-        0
-    }
 }

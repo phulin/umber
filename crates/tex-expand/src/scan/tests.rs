@@ -5,7 +5,7 @@ use tex_state::meaning::MeaningFlags;
 use tex_state::provenance::OriginRecord;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
-use crate::NoopExpansionHooks;
+use crate::ExpansionContext;
 
 fn scan(input: &str) -> (Universe, Vec<Token>, Vec<Token>) {
     let mut stores = Universe::new();
@@ -42,7 +42,7 @@ fn expanded_definition_preserves_protected_macro_tokens() {
         &mut stores,
         MeaningFlags::EMPTY,
         context,
-        &mut NoopExpansionHooks,
+        &mut ExpansionContext::new("texput"),
     )
     .expect("expanded definition scan");
 
@@ -79,7 +79,7 @@ fn expanded_definition_expandafter_forces_only_its_protected_target() {
         &mut stores,
         MeaningFlags::EMPTY,
         context,
-        &mut NoopExpansionHooks,
+        &mut ExpansionContext::new("texput"),
     )
     .expect("expanded definition scan");
 
@@ -153,7 +153,7 @@ fn forbidden_outer_macro_closes_expanded_replacement_before_expansion() {
         &mut stores,
         MeaningFlags::EMPTY,
         context,
-        &mut NoopExpansionHooks,
+        &mut ExpansionContext::new("texput"),
     )
     .expect("outer token inserts a synthetic closing brace");
 
@@ -184,7 +184,7 @@ fn noexpand_suppresses_outer_validation_in_expanded_replacement() {
         &mut stores,
         MeaningFlags::EMPTY,
         context,
-        &mut NoopExpansionHooks,
+        &mut ExpansionContext::new("texput"),
     )
     .expect("noexpand should hide the outer command code from get_next");
 
@@ -207,7 +207,7 @@ fn ordinary_expanded_replacement_avoids_back_input() {
         &mut stores,
         MeaningFlags::EMPTY,
         context,
-        &mut NoopExpansionHooks,
+        &mut ExpansionContext::new("texput"),
     )
     .expect("expanded definition scan");
 

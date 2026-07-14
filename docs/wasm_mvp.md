@@ -20,7 +20,7 @@ or `tex-state`. See [architecture.md](architecture.md) and
 1. Publish an ES-module package that can be initialized with `wasm-pack`
    output and called from a browser or web worker.
 2. Provide one asynchronous JavaScript `compile` operation even though the
-   engine and its file-open hooks remain synchronous.
+   engine and its file resolvers remain synchronous.
 3. Load user files from memory and lazily download distribution `.tex` and
    `.tfm` files through a caller-supplied resolver.
 4. Batch every missing file discovered in one engine attempt, cache successful
@@ -55,7 +55,8 @@ or `tex-state`. See [architecture.md](architecture.md) and
 
 ## 2. Why compilation uses fetch rounds
 
-`ExpansionHooks::open_input` and `ExpansionHooks::open_font` are synchronous.
+The object-safe `InputResolver::open_input` and `FontResolver::open_font`
+boundaries are synchronous.
 Browser `fetch` returns a promise, and blocking the browser thread until that
 promise resolves is neither portable nor acceptable. Static source scanning is
 also insufficient because TeX can construct filenames with macros and choose
@@ -111,7 +112,7 @@ umber-wasm (new cdylib)
                     v
 umber::VirtualCompileSession (new host-neutral driver module)
   - user/distribution byte cache, request bindings, limits, compile attempts
-  - WorldInput and ExpansionHooks composition
+  - WorldInput and localized input/font resolver composition
                     |
                     v
 existing tex-exec / tex-expand / tex-lex / tex-state / tex-out pipeline
@@ -200,7 +201,7 @@ name. Explicit subdirectories remain part of that name.
    supplied, construct a fresh universe and call `prepare_run_stores`.
 5. Read the main file through `World`, construct `WorldInput`, and create an
    `InputStack`.
-6. Run `Executor` with a `VirtualRunHooks` value that owns an ordered,
+6. Run `Executor` with virtual input and font resolvers that share an ordered,
    deduplicated missing-request collection.
 7. For `\input`, check the user area and existing resolved binding. If neither
    is available, record `TexInput`, return the ordinary hook error, and allow
@@ -521,11 +522,11 @@ memory, and the application must treat that as a failed job.
 ### `umber`
 
 - Add host-neutral `VirtualCompileSession`, request/result types, virtual-path
-  validation, cache limits, and `VirtualRunHooks`.
+  validation, cache limits, and virtual input/font resolvers.
 - Run the main source as `WorldInput`, not `MemoryInput`, so successful
   `\input` files receive ordinary content-addressed World records and source
   provenance.
-- Record typed misses in hook side state. Do not infer missing requests by
+- Record typed misses in resolver side state. Do not infer missing requests by
   parsing `ExecError` display strings.
 - Keep the existing CLI behavior and public `TexInputSearchPath` /
   `TexFontSearchPath` behavior unchanged.

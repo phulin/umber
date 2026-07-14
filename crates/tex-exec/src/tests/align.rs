@@ -12,13 +12,13 @@ fn scan_halign_preamble(source: &str) -> (Universe, AlignState) {
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(source));
     input.begin_alignment();
-    let mut hooks = crate::executor::NoopExecHooks;
+    let mut context = crate::ExecutionContext::new("texput");
     let state = crate::align::scan_preamble(
         UnexpandablePrimitive::HAlign,
         alignment_context(),
         &mut input,
         &mut stores,
-        &mut hooks,
+        &mut context,
     )
     .expect("alignment preamble should scan");
     (stores, state)
@@ -29,13 +29,13 @@ fn scan_valign_preamble(source: &str) -> (Universe, AlignState) {
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(source));
     input.begin_alignment();
-    let mut hooks = crate::executor::NoopExecHooks;
+    let mut context = crate::ExecutionContext::new("texput");
     let state = crate::align::scan_preamble(
         UnexpandablePrimitive::VAlign,
         alignment_context(),
         &mut input,
         &mut stores,
-        &mut hooks,
+        &mut context,
     )
     .expect("alignment preamble should scan");
     (stores, state)
@@ -111,11 +111,11 @@ fn nested_shipout_checkpoints(source: &str) -> Vec<EngineCheckpoint> {
     )));
     let mut checkpoints = Vec::new();
     let stats = Executor::new()
-        .run_with_recorder_hooks_and_checkpoints(
+        .run_with_recorder_context_and_checkpoints(
             &mut input,
             &mut stores,
             &mut NoopRecorder,
-            &mut crate::executor::NoopExecHooks,
+            &mut crate::ExecutionContext::new("texput"),
             &mut checkpoints,
         )
         .expect("nested shipout source executes");
@@ -304,26 +304,26 @@ fn halign_head_for_vmode_replay_preserves_command_origin() {
     let mut input = InputStack::new(MemoryInput::new(""));
     let mut nest = ModeNest::new();
     nest.push(Mode::Horizontal);
-    let mut hooks = crate::executor::NoopExecHooks;
+    let mut context = crate::ExecutionContext::new("texput");
 
     assert_eq!(
-        dispatch_delivered_token(&mut nest, command, &mut input, &mut stores, &mut hooks)
+        dispatch_delivered_token(&mut nest, command, &mut input, &mut stores, &mut context)
             .expect("head_for_vmode dispatch"),
         DispatchAction::Continue
     );
-    let inserted = tex_expand::get_x_token_with_recorder_and_hooks(
+    let inserted = tex_expand::get_x_token_with_recorder_and_context(
         &mut input,
         &mut stores,
         &mut NoopRecorder,
-        &mut hooks,
+        &mut context,
     )
     .expect("inserted paragraph read")
     .expect("inserted paragraph token");
-    let replayed = tex_expand::get_x_token_with_recorder_and_hooks(
+    let replayed = tex_expand::get_x_token_with_recorder_and_context(
         &mut input,
         &mut stores,
         &mut NoopRecorder,
-        &mut hooks,
+        &mut context,
     )
     .expect("halign replay read")
     .expect("halign replay token");
@@ -355,20 +355,20 @@ fn hrule_head_for_vmode_defers_rule_until_after_paragraph_dispatch() {
     let mut input = InputStack::new(MemoryInput::new(""));
     let mut nest = ModeNest::new();
     nest.push(Mode::Horizontal);
-    let mut hooks = crate::executor::NoopExecHooks;
+    let mut context = crate::ExecutionContext::new("texput");
 
     assert_eq!(
-        dispatch_delivered_token(&mut nest, command, &mut input, &mut stores, &mut hooks)
+        dispatch_delivered_token(&mut nest, command, &mut input, &mut stores, &mut context)
             .expect("head_for_vmode dispatch"),
         DispatchAction::Continue
     );
     assert!(stores.page_contributions().is_empty());
 
-    let inserted = tex_expand::get_x_token_with_recorder_and_hooks(
+    let inserted = tex_expand::get_x_token_with_recorder_and_context(
         &mut input,
         &mut stores,
         &mut NoopRecorder,
-        &mut hooks,
+        &mut context,
     )
     .expect("inserted paragraph read")
     .expect("inserted paragraph token");
@@ -377,11 +377,11 @@ fn hrule_head_for_vmode_defers_rule_until_after_paragraph_dispatch() {
         Token::Cs(stores.intern("par").symbol())
     );
 
-    let replayed = tex_expand::get_x_token_with_recorder_and_hooks(
+    let replayed = tex_expand::get_x_token_with_recorder_and_context(
         &mut input,
         &mut stores,
         &mut NoopRecorder,
-        &mut hooks,
+        &mut context,
     )
     .expect("replayed hrule read")
     .expect("replayed hrule token");
@@ -399,23 +399,23 @@ fn halign_in_restricted_horizontal_mode_retains_off_save_recovery() {
     let mut input = InputStack::new(MemoryInput::new(""));
     let mut nest = ModeNest::new();
     nest.push(Mode::RestrictedHorizontal);
-    let mut hooks = crate::executor::NoopExecHooks;
+    let mut context = crate::ExecutionContext::new("texput");
 
-    dispatch_delivered_token(&mut nest, command, &mut input, &mut stores, &mut hooks)
+    dispatch_delivered_token(&mut nest, command, &mut input, &mut stores, &mut context)
         .expect("off_save should insert a closing group");
-    let inserted = tex_expand::get_x_token_with_recorder_and_hooks(
+    let inserted = tex_expand::get_x_token_with_recorder_and_context(
         &mut input,
         &mut stores,
         &mut NoopRecorder,
-        &mut hooks,
+        &mut context,
     )
     .expect("inserted group read")
     .expect("inserted group token");
-    let replayed = tex_expand::get_x_token_with_recorder_and_hooks(
+    let replayed = tex_expand::get_x_token_with_recorder_and_context(
         &mut input,
         &mut stores,
         &mut NoopRecorder,
-        &mut hooks,
+        &mut context,
     )
     .expect("halign replay read")
     .expect("halign replay token");
@@ -820,13 +820,13 @@ fn alignment_preamble_errors_match_reference_wording() {
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("{abc\\cr}"));
     input.begin_alignment();
-    let mut hooks = crate::executor::NoopExecHooks;
+    let mut context = crate::ExecutionContext::new("texput");
     crate::align::scan_preamble(
         UnexpandablePrimitive::HAlign,
         alignment_context(),
         &mut input,
         &mut stores,
-        &mut hooks,
+        &mut context,
     )
     .expect("missing hash should be inserted recoverably");
     assert!(
@@ -837,13 +837,13 @@ fn alignment_preamble_errors_match_reference_wording() {
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("{#a#b\\cr}"));
     input.begin_alignment();
-    let mut hooks = crate::executor::NoopExecHooks;
+    let mut context = crate::ExecutionContext::new("texput");
     let state = crate::align::scan_preamble(
         UnexpandablePrimitive::HAlign,
         alignment_context(),
         &mut input,
         &mut stores,
-        &mut hooks,
+        &mut context,
     )
     .expect("extra hash should be ignored recoverably");
     assert!(support::terminal_effect_text(&stores).contains("Only one # is allowed per tab"));

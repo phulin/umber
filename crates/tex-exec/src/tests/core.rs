@@ -49,11 +49,11 @@ fn engine_checkpoint_restores_input_modes_and_universe_atomically() {
     stores.set_count(3, 41);
     let mut checkpoints = Vec::new();
     executor
-        .run_with_recorder_hooks_and_checkpoints(
+        .run_with_recorder_context_and_checkpoints(
             &mut input,
             &mut stores,
             &mut NoopRecorder,
-            &mut NoopExecHooks,
+            &mut crate::ExecutionContext::new("texput"),
             &mut checkpoints,
         )
         .expect("empty job");
@@ -82,11 +82,11 @@ fn engine_session_publishes_named_outer_paragraph_boundary() {
     let mut input = InputStack::new(MemoryInput::new("\\font\\f=cmr10 \\f x\\par"));
     let mut checkpoints = Vec::new();
     Executor::new()
-        .run_with_recorder_hooks_and_checkpoints(
+        .run_with_recorder_context_and_checkpoints(
             &mut input,
             &mut stores,
             &mut NoopRecorder,
-            &mut NoopExecHooks,
+            &mut crate::ExecutionContext::new("texput"),
             &mut checkpoints,
         )
         .expect("paragraph job");
@@ -106,11 +106,11 @@ fn outer_paragraph_checkpoint_retains_survivor_pins_for_mode_restore() {
     let mut checkpoints = Vec::new();
     let mut executor = Executor::new();
     executor
-        .run_with_recorder_hooks_and_checkpoints(
+        .run_with_recorder_context_and_checkpoints(
             &mut input,
             &mut stores,
             &mut NoopRecorder,
-            &mut NoopExecHooks,
+            &mut crate::ExecutionContext::new("texput"),
             &mut checkpoints,
         )
         .expect("paragraph with copied survivor box executes");
@@ -146,11 +146,11 @@ fn shipout_checkpoint_restores_after_nested_work_has_unwound() {
     let mut executor = Executor::new();
     let mut checkpoints = Vec::new();
     executor
-        .run_with_recorder_hooks_and_checkpoints(
+        .run_with_recorder_context_and_checkpoints(
             &mut input,
             &mut stores,
             &mut NoopRecorder,
-            &mut NoopExecHooks,
+            &mut crate::ExecutionContext::new("texput"),
             &mut checkpoints,
         )
         .expect("nested shipout job");
@@ -217,33 +217,23 @@ fn virtualized_execution_trace_is_opt_in_and_semantically_neutral() {
 }
 
 #[test]
-fn mode_queries_are_backed_by_current_nest_level() {
+fn engine_snapshot_queries_are_backed_by_current_nest_level() {
     let mut executor = Executor::new();
-    assert_eq!(
-        <Executor as ExpansionHooks<MemoryInput>>::mode(&executor),
-        EngineMode::Vertical
-    );
-    assert!(!<Executor as ExpansionHooks<MemoryInput>>::is_inner_mode(
-        &executor
-    ));
+    let stores = Universe::new();
+    let mut context = crate::ExecutionContext::<MemoryInput>::new("texput");
+    crate::executor::sync_engine_state(&mut context, executor.nest(), &stores);
+    assert_eq!(context.engine.mode, tex_expand::EngineMode::Vertical);
+    assert!(!context.engine.is_inner_mode);
 
     executor.nest_mut().push(Mode::RestrictedHorizontal);
-    assert_eq!(
-        <Executor as ExpansionHooks<MemoryInput>>::mode(&executor),
-        EngineMode::Horizontal
-    );
-    assert!(<Executor as ExpansionHooks<MemoryInput>>::is_inner_mode(
-        &executor
-    ));
+    crate::executor::sync_engine_state(&mut context, executor.nest(), &stores);
+    assert_eq!(context.engine.mode, tex_expand::EngineMode::Horizontal);
+    assert!(context.engine.is_inner_mode);
 
     executor.nest_mut().push(Mode::DisplayMath);
-    assert_eq!(
-        <Executor as ExpansionHooks<MemoryInput>>::mode(&executor),
-        EngineMode::Math
-    );
-    assert!(!<Executor as ExpansionHooks<MemoryInput>>::is_inner_mode(
-        &executor
-    ));
+    crate::executor::sync_engine_state(&mut context, executor.nest(), &stores);
+    assert_eq!(context.engine.mode, tex_expand::EngineMode::Math);
+    assert!(!context.engine.is_inner_mode);
 }
 
 #[test]
@@ -252,7 +242,7 @@ fn dispatch_relax_continues_without_state_mutation() {
     let relax = stores.intern("relax");
     stores.set_meaning(relax, Meaning::Relax);
     let mut input = InputStack::new(MemoryInput::new(""));
-    let mut hooks = NoopExecHooks;
+    let mut context = crate::ExecutionContext::new("texput");
 
     assert_eq!(
         dispatch_delivered_token(
@@ -260,7 +250,7 @@ fn dispatch_relax_continues_without_state_mutation() {
             TracedTokenWord::pack(Token::Cs(relax.symbol()), OriginId::UNKNOWN),
             &mut input,
             &mut stores,
-            &mut hooks
+            &mut context
         )
         .expect("relax dispatch"),
         DispatchAction::Continue
@@ -424,7 +414,7 @@ fn dispatch_character_hits_loud_typesetting_stub() {
         cat: Catcode::Letter,
     };
     let mut input = InputStack::new(MemoryInput::new(""));
-    let mut hooks = NoopExecHooks;
+    let mut context = crate::ExecutionContext::new("texput");
     let mut nest = ModeNest::new();
 
     nest.push(Mode::Horizontal);
@@ -434,7 +424,7 @@ fn dispatch_character_hits_loud_typesetting_stub() {
             TracedTokenWord::pack(token, OriginId::UNKNOWN),
             &mut input,
             &mut stores,
-            &mut hooks,
+            &mut context,
         )
         .expect("character dispatch"),
         DispatchAction::Continue
@@ -447,14 +437,14 @@ fn dispatch_undefined_control_sequence_reports_and_continues() {
     let undefined = stores.intern("undefined");
     let origin = stores.source_origin(tex_state::SourceId::new(1), 12, 3, 4);
     let mut input = InputStack::new(MemoryInput::new(""));
-    let mut hooks = NoopExecHooks;
+    let mut context = crate::ExecutionContext::new("texput");
 
     let action = dispatch_delivered_token(
         &mut ModeNest::new(),
         TracedTokenWord::pack(Token::Cs(undefined.symbol()), origin),
         &mut input,
         &mut stores,
-        &mut hooks,
+        &mut context,
     )
     .expect("undefined control sequence is recoverable");
 
@@ -520,14 +510,14 @@ fn extra_endcsname_delivery_reports_and_continues() {
     let endcsname = stores.symbol("endcsname").expect("endcsname");
     let origin = stores.source_origin(tex_state::SourceId::new(2), 20, 5, 6);
     let mut input = InputStack::new(MemoryInput::new(""));
-    let mut hooks = NoopExecHooks;
+    let mut context = crate::ExecutionContext::new("texput");
 
     let action = dispatch_delivered_token(
         &mut ModeNest::new(),
         TracedTokenWord::pack(Token::Cs(endcsname.symbol()), origin),
         &mut input,
         &mut stores,
-        &mut hooks,
+        &mut context,
     )
     .expect("extra endcsname is recoverable");
 
@@ -542,14 +532,14 @@ fn illegal_prefix_replays_scanned_token_with_its_origin() {
     let global = stores.symbol("global").expect("global");
     let prefix_origin = stores.source_origin(tex_state::SourceId::new(3), 30, 7, 8);
     let mut input = InputStack::new(MemoryInput::new("x"));
-    let mut hooks = NoopExecHooks;
+    let mut context = crate::ExecutionContext::new("texput");
 
     let action = dispatch_delivered_token(
         &mut ModeNest::new(),
         TracedTokenWord::pack(Token::Cs(global.symbol()), prefix_origin),
         &mut input,
         &mut stores,
-        &mut hooks,
+        &mut context,
     )
     .expect("TeX recovers by backing up the non-assignment token");
 
@@ -737,16 +727,21 @@ fn edef_omits_noexpand_command_and_freezes_the_output() {
 }
 
 #[test]
-fn edef_expansion_uses_active_input_hooks() {
+fn edef_expansion_uses_active_input_resolver() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     install_expandable(&mut stores, "input", ExpandablePrimitive::Input);
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
     let mut input = InputStack::new(MemoryInput::new("\\edef\\e{\\input{inc}}"));
-    let mut hooks = TestHooks::new().with_source("inc", "OK");
+    stores
+        .world_mut()
+        .write_file("inc", "OK")
+        .expect("seed included input");
+    let mut resolvers = MemoryResolvers::new();
+    let mut context = resolvers.context();
 
     Executor::new()
-        .run_with_recorder_and_hooks(&mut input, &mut stores, &mut NoopRecorder, &mut hooks)
+        .run_with_recorder_and_context(&mut input, &mut stores, &mut NoopRecorder, &mut context)
         .expect("edef executes through input hook");
     let e = stores.symbol("e").expect("e was interned");
     let meaning = stores.macro_meaning(e).expect("e is a macro");
@@ -775,13 +770,20 @@ fn input_expands_while_scanning_assignment_values() {
     let mut input = InputStack::new(MemoryInput::new(
         "\\dimen0=\\input{dim}\\skip0=\\input{glue}\\end",
     ));
-    let mut hooks = TestHooks::new()
-        .with_source("dim", "12pt")
-        .with_source("glue", "3pt plus 2pt");
+    stores
+        .world_mut()
+        .write_file("dim", "12pt")
+        .expect("seed dimension input");
+    stores
+        .world_mut()
+        .write_file("glue", "3pt plus 2pt")
+        .expect("seed glue input");
+    let mut resolvers = MemoryResolvers::new();
+    let mut context = resolvers.context();
 
     Executor::new()
-        .run_with_recorder_and_hooks(&mut input, &mut stores, &mut NoopRecorder, &mut hooks)
-        .expect("assignments scan through input hooks");
+        .run_with_recorder_and_context(&mut input, &mut stores, &mut NoopRecorder, &mut context)
+        .expect("assignments scan through input context");
 
     assert_eq!(
         stores.dimen(0),
@@ -807,17 +809,25 @@ fn input_expands_while_scanning_conditional_operands() {
          \\ifnum 1 \\input{relation} 2\\count2=1\\fi\
          \\ifeof\\input{stream}\\count3=1\\fi\\end",
     ));
-    let mut hooks = TestHooks::new()
-        .with_source("left", "1pt")
-        .with_source("right", "2pt")
-        .with_source("a", "a")
-        .with_source("b", "b")
-        .with_source("relation", "<")
-        .with_source("stream", "15");
+    for (path, contents) in [
+        ("left", "1pt"),
+        ("right", "2pt"),
+        ("a", "a"),
+        ("b", "b"),
+        ("relation", "<"),
+        ("stream", "15"),
+    ] {
+        stores
+            .world_mut()
+            .write_file(path, contents)
+            .expect("seed scanner input");
+    }
+    let mut resolvers = MemoryResolvers::new();
+    let mut context = resolvers.context();
 
     Executor::new()
-        .run_with_recorder_and_hooks(&mut input, &mut stores, &mut NoopRecorder, &mut hooks)
-        .expect("conditionals scan through input hooks");
+        .run_with_recorder_and_context(&mut input, &mut stores, &mut NoopRecorder, &mut context)
+        .expect("conditionals scan through input context");
 
     assert_eq!(stores.count(0), 1);
     assert_eq!(stores.count(1), 1);
@@ -834,11 +844,16 @@ fn input_expands_while_scanning_register_indices_and_the_operands() {
     let mut input = InputStack::new(MemoryInput::new(
         "\\count\\input{idx}=9\\edef\\e{\\the\\count\\input{idx}}\\end",
     ));
-    let mut hooks = TestHooks::new().with_source("idx", "5");
+    stores
+        .world_mut()
+        .write_file("idx", "5")
+        .expect("seed register-index input");
+    let mut resolvers = MemoryResolvers::new();
+    let mut context = resolvers.context();
 
     Executor::new()
-        .run_with_recorder_and_hooks(&mut input, &mut stores, &mut NoopRecorder, &mut hooks)
-        .expect("register and the scans use input hooks");
+        .run_with_recorder_and_context(&mut input, &mut stores, &mut NoopRecorder, &mut context)
+        .expect("register and the scans use input context");
 
     assert_eq!(stores.count(5), 9);
     let e = stores.symbol("e").expect("macro was defined");
@@ -917,14 +932,14 @@ fn futurelet_assigns_second_token_meaning_and_preserves_order() {
     install_unexpandable_primitives(&mut stores);
     let futurelet = stores.symbol("futurelet").expect("futurelet");
     let mut input = InputStack::new(MemoryInput::new("\\n\\first x"));
-    let mut hooks = NoopExecHooks;
+    let mut context = crate::ExecutionContext::new("texput");
 
     dispatch_delivered_token(
         &mut ModeNest::new(),
         TracedTokenWord::pack(Token::Cs(futurelet.symbol()), OriginId::UNKNOWN),
         &mut input,
         &mut stores,
-        &mut hooks,
+        &mut context,
     )
     .expect("futurelet executes");
 
@@ -1008,7 +1023,7 @@ fn futurelet_accepts_active_character_target() {
     install_unexpandable_primitives(&mut stores);
     stores.set_catcode('~', Catcode::Active);
     let mut input = InputStack::new(MemoryInput::new("~\\first x"));
-    let mut hooks = NoopExecHooks;
+    let mut context = crate::ExecutionContext::new("texput");
 
     dispatch_delivered_token(
         &mut ModeNest::new(),
@@ -1018,7 +1033,7 @@ fn futurelet_accepts_active_character_target() {
         ),
         &mut input,
         &mut stores,
-        &mut hooks,
+        &mut context,
     )
     .expect("futurelet executes");
 
@@ -3366,11 +3381,11 @@ fn output_routine_emits_one_checkpoint_only_after_teardown() {
     let mut executor = Executor::new();
     let mut checkpoints = Vec::new();
     executor
-        .run_with_recorder_hooks_and_checkpoints(
+        .run_with_recorder_context_and_checkpoints(
             &mut input,
             &mut stores,
             &mut NoopRecorder,
-            &mut NoopExecHooks,
+            &mut crate::ExecutionContext::new("texput"),
             &mut checkpoints,
         )
         .expect("custom output routine executes");

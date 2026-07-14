@@ -8,12 +8,11 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use tex_exec::{CheckpointSink, EngineCheckpoint};
-use tex_expand::ExpansionHooks;
 #[cfg(feature = "profiling-stats")]
 use tex_lex::ExpansionStats;
 use tex_lex::{InputStack, WorldInput};
-use tex_state::{FileContent, InputReadState, JobClock, Universe, World};
-use umber::{EngineSession, dvi_from_page_plans, prepare_run_stores};
+use tex_state::{JobClock, Universe, World};
+use umber::{EngineSession, FileSessionResolvers, dvi_from_page_plans, prepare_run_stores};
 
 const JOB_DIR: &str = "/gentle-profile";
 const JOB_FILE: &str = "profile-job.tex";
@@ -71,53 +70,6 @@ impl Options {
             warmups,
             checkpoints,
         }))
-    }
-}
-
-struct ProfileHooks {
-    base_dir: PathBuf,
-}
-
-impl ProfileHooks {
-    fn new() -> Self {
-        Self {
-            base_dir: PathBuf::from(JOB_DIR),
-        }
-    }
-}
-
-impl ExpansionHooks<WorldInput> for ProfileHooks {
-    fn open_input<C: InputReadState>(
-        &mut self,
-        input: &mut C,
-        name: &str,
-    ) -> Result<WorldInput, String> {
-        let mut requested = PathBuf::from(name);
-        if requested.extension().is_none() {
-            requested.set_extension("tex");
-        }
-        input
-            .read_input_file(&self.base_dir.join(requested))
-            .map(WorldInput::from_content)
-            .map_err(|error| error.to_string())
-    }
-
-    fn open_font<C: InputReadState>(
-        &mut self,
-        input: &mut C,
-        path: &Path,
-    ) -> Result<FileContent, String> {
-        let mut requested = path.to_owned();
-        if requested.extension().is_none() {
-            requested.set_extension("tfm");
-        }
-        input
-            .read_input_file(&self.base_dir.join(requested))
-            .map_err(|error| error.to_string())
-    }
-
-    fn job_name(&self) -> &str {
-        "gentle-profile"
     }
 }
 
@@ -266,13 +218,13 @@ fn execute_once(template: &World, capture_checkpoints: bool) -> Result<RunOutput
         .read_file(&path)
         .map_err(|error| error.to_string())?;
     let mut input = InputStack::new(WorldInput::from_content(content));
-    let mut hooks = ProfileHooks::new();
+    let mut resolvers = FileSessionResolvers::new(&path, Vec::new(), Vec::new());
     let mut checkpoints = ProfileCheckpointSink::default();
     let run = if capture_checkpoints {
-        EngineSession::new(&mut input, &mut stores, &mut hooks)
+        EngineSession::new(&mut input, &mut stores, resolvers.context())
             .execute_with_checkpoints(&mut checkpoints)
     } else {
-        EngineSession::new(&mut input, &mut stores, &mut hooks).execute()
+        EngineSession::new(&mut input, &mut stores, resolvers.context()).execute()
     }
     .map_err(|error| error.format_with_provenance(&stores))?;
     if run.artifacts.is_empty() {

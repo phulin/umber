@@ -1,23 +1,22 @@
-use tex_expand::{ExpansionHooks, ReadRecorder};
+use tex_expand::ReadRecorder;
 use tex_lex::{InputSource, InputStack, TokenListReplayKind};
 use tex_state::ids::TokenListId;
 use tex_state::{ExpansionState, Universe};
 
 use crate::{ExecError, ExecutionStats, ModeNest};
 
-pub(super) fn replay_template<S, R, H>(
+pub(super) fn replay_template<S, R>(
     template: TokenListId,
     cell_v_template: TokenListId,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     {
         // TeX82's end_token_list callback ends a u_template even when its
@@ -37,7 +36,7 @@ where
                 return Ok(());
             }
             match super::execution::run_one_main_control_token(
-                nest, input, stores, recorder, hooks, &mut stats,
+                nest, input, stores, recorder, execution, &mut stats,
             )? {
                 super::execution::TemplateStep::Continue => {}
                 super::execution::TemplateStep::DeferredOuterRecovery => return Ok(()),
@@ -59,19 +58,18 @@ where
     }
 }
 
-pub(super) fn expand_spanned_column_template_at_span_time<S, R, H>(
+pub(super) fn expand_spanned_column_template_at_span_time<S, R>(
     template: TokenListId,
     cell_v_template: TokenListId,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     // Architecture §7 makes alignment the only impure kernel: span-time
     // template expansion is the single explicit gullet interleave while the
@@ -83,7 +81,7 @@ where
         input,
         stores,
         recorder,
-        hooks,
+        execution,
     )
 }
 

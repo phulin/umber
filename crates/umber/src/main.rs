@@ -6,7 +6,7 @@ use tex_lex::{InputStack, Lexer, WorldInput};
 use tex_state::env::banks::IntParam;
 use tex_state::token::Token;
 use tex_state::{FormatError, Universe, World, WorldError};
-use umber::{DriverFile, EngineSession, FileSessionHooks, PlannedFinalization};
+use umber::{DriverFile, EngineSession, FileSessionResolvers, PlannedFinalization};
 
 mod expand_dump;
 
@@ -91,8 +91,8 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
     let content = stores.world_mut().read_file(path)?;
 
     let mut input = InputStack::new(WorldInput::from_content(content));
-    let mut hooks = FileSessionHooks::from_environment(path);
-    let run = match EngineSession::new(&mut input, &mut stores, &mut hooks).execute() {
+    let mut resolvers = FileSessionResolvers::from_environment(path);
+    let run = match EngineSession::new(&mut input, &mut stores, resolvers.context()).execute() {
         Ok(run) => run,
         Err(err) => {
             return Err(CliError::RenderedExec(

@@ -1,8 +1,11 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use tex_exec::{CheckpointSink, ExecutionStats, Executor, try_execute_assignment};
-use tex_expand::{ExpansionHooks, NoopRecorder, get_x_token_with_hooks};
+use tex_exec::{
+    CheckpointSink, ExecutionContext, ExecutionStats, Executor, FontResolver,
+    try_execute_assignment,
+};
+use tex_expand::{InputResolver, NoopRecorder, get_x_token_with_context};
 use tex_lex::{InputSource, InputStack, MemoryInput};
 use tex_out::dvi::{DviError, DviPagePlan, DviStreamWriter};
 use tex_state::env::banks::IntParam;
@@ -34,26 +37,29 @@ pub enum CheckpointPolicy {
     NamedExecutorBoundaries,
 }
 
-/// Exclusive composition boundary for input, hooks, state, diagnostics, and artifacts.
-pub struct EngineSession<'a, S, H> {
+/// Exclusive composition boundary for input, context, state, diagnostics, and artifacts.
+pub struct EngineSession<'a, 'context, S> {
     input: &'a mut InputStack<S>,
     stores: &'a mut Universe,
-    hooks: &'a mut H,
+    context: ExecutionContext<'context, S>,
     artifact_cursor: usize,
     checkpoint_policy: CheckpointPolicy,
 }
 
-impl<'a, S, H> EngineSession<'a, S, H>
+impl<'a, 'context, S> EngineSession<'a, 'context, S>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
-    pub fn new(input: &'a mut InputStack<S>, stores: &'a mut Universe, hooks: &'a mut H) -> Self {
+    pub fn new(
+        input: &'a mut InputStack<S>,
+        stores: &'a mut Universe,
+        context: ExecutionContext<'context, S>,
+    ) -> Self {
         let artifact_cursor = stores.world().artifact_commits().len();
         Self {
             input,
             stores,
-            hooks,
+            context,
             artifact_cursor,
             checkpoint_policy: CheckpointPolicy::NamedExecutorBoundaries,
         }
@@ -76,11 +82,11 @@ where
     pub fn execute(&mut self) -> Result<RunResult, tex_exec::ExecError> {
         let artifact_start = self.artifact_cursor;
         let mut recorder = NoopRecorder;
-        let stats = Executor::new().run_with_recorder_and_hooks(
+        let stats = Executor::new().run_with_recorder_and_context(
             self.input,
             self.stores,
             &mut recorder,
-            self.hooks,
+            &mut self.context,
         )?;
         Ok(self.finish_execution(artifact_start, stats))
     }
@@ -92,11 +98,11 @@ where
     ) -> Result<RunResult, tex_exec::ExecError> {
         let artifact_start = self.artifact_cursor;
         let mut recorder = NoopRecorder;
-        let stats = Executor::new().run_with_recorder_hooks_and_checkpoints(
+        let stats = Executor::new().run_with_recorder_context_and_checkpoints(
             self.input,
             self.stores,
             &mut recorder,
-            self.hooks,
+            &mut self.context,
             checkpoints,
         )?;
         Ok(self.finish_execution(artifact_start, stats))
@@ -124,14 +130,14 @@ where
         &mut self,
     ) -> Result<Option<TracedTokenWord>, tex_expand::ExpandError> {
         let mut expansion = ExpansionContext::new(self.stores);
-        get_x_token_with_hooks(self.input, &mut expansion, self.hooks)
+        get_x_token_with_context(self.input, &mut expansion, &mut self.context)
     }
 
     pub fn try_execute_assignment(
         &mut self,
         token: TracedTokenWord,
     ) -> Result<bool, tex_exec::ExecError> {
-        try_execute_assignment(token, self.input, self.stores, self.hooks)
+        try_execute_assignment(token, self.input, self.stores, &mut self.context)
     }
 
     pub fn publish_input_summary(&mut self) {
@@ -141,13 +147,13 @@ where
 }
 
 /// Shared file search and job identity policy for run-like commands.
-pub struct FileSessionHooks {
-    input_search: TexInputSearchPath,
-    font_search: TexFontSearchPath,
+pub struct FileSessionResolvers {
+    input: FileInputResolver,
+    font: FileFontResolver,
     job_name: String,
 }
 
-impl FileSessionHooks {
+impl FileSessionResolvers {
     #[must_use]
     pub fn from_environment(path: &Path) -> Self {
         let areas = |name| {
@@ -171,34 +177,42 @@ impl FileSessionHooks {
             .unwrap_or("texput")
             .to_owned();
         Self {
-            input_search: TexInputSearchPath::new(&base_dir, tex_input_areas),
-            font_search: TexFontSearchPath::new(base_dir, tex_font_areas),
+            input: FileInputResolver(TexInputSearchPath::new(&base_dir, tex_input_areas)),
+            font: FileFontResolver(TexFontSearchPath::new(base_dir, tex_font_areas)),
             job_name,
         }
     }
+
+    pub fn context(&mut self) -> ExecutionContext<'_, tex_lex::WorldInput> {
+        ExecutionContext::with_resolvers(&self.job_name, &mut self.input, &mut self.font)
+    }
 }
 
-impl ExpansionHooks<tex_lex::WorldInput> for FileSessionHooks {
-    fn open_input<C: tex_state::InputReadState>(
+struct FileInputResolver(TexInputSearchPath);
+
+impl InputResolver<tex_lex::WorldInput> for FileInputResolver {
+    fn open_input(
         &mut self,
-        input: &mut C,
+        input: &mut dyn tex_state::InputReadState,
         name: &str,
+        _request_index: u64,
     ) -> Result<tex_lex::WorldInput, String> {
-        self.input_search
+        self.0
             .read(input, name)
             .map(tex_lex::WorldInput::from_content)
     }
+}
 
-    fn open_font<C: tex_state::InputReadState>(
+struct FileFontResolver(TexFontSearchPath);
+
+impl FontResolver for FileFontResolver {
+    fn open_font(
         &mut self,
-        input: &mut C,
+        input: &mut dyn tex_state::InputReadState,
         path: &Path,
+        _request_index: u64,
     ) -> Result<tex_state::FileContent, String> {
-        self.font_search.read(input, path)
-    }
-
-    fn job_name(&self) -> &str {
-        &self.job_name
+        self.0.read(input, path)
     }
 }
 
@@ -590,29 +604,27 @@ mod primitive_mode_tests {
 }
 
 /// Runs an already-open input stack through the same executor path as `umber run`.
-pub fn run_input_with_hooks<S, H>(
+pub fn run_input_with_context<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    context: ExecutionContext<'_, S>,
 ) -> Result<String, tex_exec::ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
-    run_input_collecting_artifacts(input, stores, hooks).map(|result| result.terminal_text)
+    run_input_collecting_artifacts(input, stores, context).map(|result| result.terminal_text)
 }
 
 /// Runs input and returns the artifact ids emitted by `\shipout` in order.
-pub fn run_input_collecting_artifacts<S, H>(
+pub fn run_input_collecting_artifacts<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    context: ExecutionContext<'_, S>,
 ) -> Result<RunResult, tex_exec::ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
-    EngineSession::new(input, stores, hooks).execute()
+    EngineSession::new(input, stores, context).execute()
 }
 
 /// Reads committed page artifacts from `World` and writes a complete DVI file.
@@ -685,24 +697,40 @@ pub fn run_memory_with_stores(
     stores: &mut Universe,
 ) -> Result<String, tex_exec::ExecError> {
     let mut input = InputStack::new(MemoryInput::new(source));
-    let mut hooks = MemoryRunHooks;
-    run_input_with_hooks(&mut input, stores, &mut hooks)
+    let mut input_resolver = RejectingMemoryInputResolver;
+    let mut font_resolver = DirectFontResolver;
+    let context =
+        ExecutionContext::with_resolvers("texput", &mut input_resolver, &mut font_resolver);
+    run_input_with_context(&mut input, stores, context)
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-struct MemoryRunHooks;
+struct RejectingMemoryInputResolver;
 
-impl ExpansionHooks<MemoryInput> for MemoryRunHooks {
-    fn open_input<C: tex_state::InputReadState>(
+impl InputResolver<MemoryInput> for RejectingMemoryInputResolver {
+    fn open_input(
         &mut self,
-        _input: &mut C,
+        _input: &mut dyn tex_state::InputReadState,
         name: &str,
+        _request_index: u64,
     ) -> Result<MemoryInput, String> {
         Err(format!("memory run cannot open input {name}"))
     }
+}
 
-    fn job_name(&self) -> &str {
-        "texput"
+#[derive(Clone, Copy, Debug, Default)]
+struct DirectFontResolver;
+
+impl FontResolver for DirectFontResolver {
+    fn open_font(
+        &mut self,
+        input: &mut dyn tex_state::InputReadState,
+        path: &Path,
+        _request_index: u64,
+    ) -> Result<tex_state::FileContent, String> {
+        input
+            .read_input_file(path)
+            .map_err(|error| error.to_string())
     }
 }
 

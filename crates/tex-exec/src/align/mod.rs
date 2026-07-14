@@ -11,7 +11,7 @@ mod support;
 mod template;
 mod widths;
 
-use tex_expand::{ExpansionHooks, ReadRecorder};
+use tex_expand::ReadRecorder;
 use tex_lex::{InputSource, InputStack};
 use tex_state::Universe;
 use tex_state::meaning::UnexpandablePrimitive;
@@ -21,19 +21,18 @@ use crate::{ExecError, ModeNest};
 
 pub(crate) use preamble::scan_preamble;
 
-pub(crate) fn execute_alignment<S, R, H>(
+pub(crate) fn execute_alignment<S, R>(
     primitive: UnexpandablePrimitive,
     context: TracedTokenWord,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     if stores.world().execution_tracing_enabled() {
         stores
@@ -45,8 +44,8 @@ where
     let mut transaction = crate::transaction::ExecutionTransaction::begin(nest, stores);
     let result = (|| {
         let (nest, stores) = transaction.parts();
-        let state = scan_preamble(primitive, context, input, stores, hooks)?;
-        execution::execute_alignment(state, nest, input, stores, recorder, hooks)
+        let state = scan_preamble(primitive, context, input, stores, execution)?;
+        execution::execute_alignment(state, nest, input, stores, recorder, execution)
     })();
     match result {
         Ok(()) => {
@@ -65,18 +64,17 @@ where
     }
 }
 
-pub(crate) fn execute_display_halign<S, R, H>(
+pub(crate) fn execute_display_halign<S, R>(
     context: TracedTokenWord,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<Vec<tex_state::node::Node>, ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     if stores.world().execution_tracing_enabled() {
         stores
@@ -88,8 +86,14 @@ where
     let mut transaction = crate::transaction::ExecutionTransaction::begin(nest, stores);
     let result = (|| {
         let (nest, stores) = transaction.parts();
-        let state = scan_preamble(UnexpandablePrimitive::HAlign, context, input, stores, hooks)?;
-        execution::execute_alignment_to_nodes(state, nest, input, stores, recorder, hooks)
+        let state = scan_preamble(
+            UnexpandablePrimitive::HAlign,
+            context,
+            input,
+            stores,
+            execution,
+        )?;
+        execution::execute_alignment_to_nodes(state, nest, input, stores, recorder, execution)
     })();
     match result {
         Ok(nodes) => {

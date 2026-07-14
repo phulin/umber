@@ -37,16 +37,15 @@ where
     }
 }
 
-pub(super) fn execute_def<S, H>(
+pub(super) fn execute_def<S>(
     primitive: UnexpandablePrimitive,
     prefixes: Prefixes,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     let target = scan_traced_definition_target(input, stores, "macro definition")?;
     let expanded = matches!(
@@ -59,7 +58,7 @@ where
             UnexpandablePrimitive::Gdef | UnexpandablePrimitive::Xdef
         );
     let scanned = if expanded {
-        scan_toks_expanded_with_driver(input, stores, prefixes.flags, target.traced, hooks)?
+        scan_toks_expanded_with_driver(input, stores, prefixes.flags, target.traced, execution)?
     } else {
         scan_toks(input, stores, prefixes.flags, target.traced)?
     }
@@ -129,25 +128,24 @@ where
     Ok(())
 }
 
-pub(super) fn execute_globaldefs<S, H>(
+pub(super) fn execute_globaldefs<S>(
     prefixes: Prefixes,
     context: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     reject_macro_prefixes(prefixes)?;
-    skip_optional_equals_x(input, stores, hooks)?;
+    skip_optional_equals_x(input, stores, execution)?;
     let mut recorder = NoopRecorder;
-    let value = scan_int::scan_int_with_expander_and_hooks(
+    let value = scan_int::scan_int_with_expander_and_context(
         input,
         stores,
         &mut recorder,
-        hooks,
+        execution,
         &mut DriverExpandNext,
         context,
     )

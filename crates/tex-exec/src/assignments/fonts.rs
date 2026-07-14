@@ -5,24 +5,23 @@ use tex_state::InputOpenState;
 use tex_state::ids::FontId;
 use tex_state::scaled::FontSizeSpec;
 
-pub(super) fn execute_font_definition<S, H>(
+pub(super) fn execute_font_definition<S>(
     prefixes: Prefixes,
     context: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     reject_macro_prefixes(prefixes)?;
     let target = scan_definition_target(input, stores, "\\font")?;
-    skip_optional_equals_x(input, stores, hooks)?;
-    let font_name = scan_font_file_name(input, stores, hooks)?;
-    let size_spec = scan_font_size_spec(input, stores, hooks, context)?;
+    skip_optional_equals_x(input, stores, execution)?;
+    let font_name = scan_font_file_name(input, stores, execution)?;
+    let size_spec = scan_font_size_spec(input, stores, execution, context)?;
     let path = tfm_path(&font_name);
-    let content = match hooks.open_font(&mut stores.input_open_context(), &path) {
+    let content = match execution.open_font(&mut stores.input_open_context(), &path) {
         Ok(content) => content,
         Err(_) => {
             // TeX.web `new_font` leaves the newly defined selector at
@@ -72,55 +71,53 @@ where
     Ok(())
 }
 
-pub(super) fn scan_font_variable_target<S, H>(
+pub(super) fn scan_font_variable_target<S>(
     primitive: UnexpandablePrimitive,
     context: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<Variable, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     match primitive {
         UnexpandablePrimitive::FontDimen => {
-            let number = scan_i32(input, stores, hooks, context)?;
+            let number = scan_i32(input, stores, execution, context)?;
             if !(1..=i32::from(u16::MAX)).contains(&number) {
                 return Err(ExecError::RegisterNumberOutOfRange(number));
             }
-            let font = scan_font_selector(input, stores, hooks)?;
+            let font = scan_font_selector(input, stores, execution)?;
             Ok(Variable::FontDimen(font, number as u16))
         }
         UnexpandablePrimitive::HyphenChar => {
-            let font = scan_font_selector(input, stores, hooks)?;
+            let font = scan_font_selector(input, stores, execution)?;
             Ok(Variable::FontHyphenChar(font))
         }
         UnexpandablePrimitive::SkewChar => {
-            let font = scan_font_selector(input, stores, hooks)?;
+            let font = scan_font_selector(input, stores, execution)?;
             Ok(Variable::FontSkewChar(font))
         }
         _ => unreachable!("caller restricts font variable primitive"),
     }
 }
 
-pub(super) fn execute_math_family_font_assignment<S, H>(
+pub(super) fn execute_math_family_font_assignment<S>(
     primitive: UnexpandablePrimitive,
     prefixes: Prefixes,
     context: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     reject_macro_prefixes(prefixes)?;
     let size = math_font_size_for_primitive(primitive);
-    let family = scan_math_family(input, stores, hooks, context)?;
-    skip_optional_equals_x(input, stores, hooks)?;
-    let font = scan_font_selector(input, stores, hooks)?;
+    let family = scan_math_family(input, stores, execution, context)?;
+    skip_optional_equals_x(input, stores, execution)?;
+    let font = scan_font_selector(input, stores, execution)?;
     stores.set_math_family_font(
         size,
         family,
@@ -130,17 +127,16 @@ where
     Ok(())
 }
 
-pub(super) fn scan_math_family<S, H>(
+pub(super) fn scan_math_family<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<u8, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
-    let family = scan_i32(input, stores, hooks, context)?;
+    let family = scan_i32(input, stores, execution, context)?;
     if !(0..=15).contains(&family) {
         // TeX.web §435's `scan_four_bit_int` reports the bad value and
         // substitutes family zero so assignment scanning can continue.
@@ -155,18 +151,18 @@ where
     Ok(family as u8)
 }
 
-pub(super) fn scan_font_selector<S, H>(
+pub(super) fn scan_font_selector<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<FontId, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
-    let traced = next_non_space_traced_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
-        context: "font selector",
-    })?;
+    let traced =
+        next_non_space_traced_x(input, stores, execution)?.ok_or(ExecError::MissingToken {
+            context: "font selector",
+        })?;
     let token = tex_expand::semantic_token(traced);
     let Token::Cs(symbol) = token else {
         push_traced_tokens(input, stores, [traced]);
@@ -184,7 +180,7 @@ where
             | UnexpandablePrimitive::ScriptFont
             | UnexpandablePrimitive::ScriptScriptFont),
         ) => {
-            let family = scan_math_family(input, stores, hooks, traced)?;
+            let family = scan_math_family(input, stores, execution, traced)?;
             Ok(stores.math_family_font(math_font_size_for_primitive(primitive), family))
         }
         _ => {
@@ -210,18 +206,17 @@ fn math_font_size_for_primitive(primitive: UnexpandablePrimitive) -> MathFontSiz
     }
 }
 
-fn scan_font_size_spec<S, H>(
+fn scan_font_size_spec<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<FontSizeSpec, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
-    if scan_optional_keyword_x(input, stores, hooks, "at")? {
-        let requested = scan_scaled(input, stores, hooks, context)?;
+    if scan_optional_keyword_x(input, stores, execution, "at")? {
+        let requested = scan_scaled(input, stores, execution, context)?;
         let size = if requested.raw() > 0 && requested.raw() < 2048 * Scaled::UNITY {
             requested
         } else {
@@ -236,8 +231,8 @@ where
         };
         return Ok(FontSizeSpec::At(size));
     }
-    if scan_optional_keyword_x(input, stores, hooks, "scaled")? {
-        let requested = scan_i32(input, stores, hooks, context)?;
+    if scan_optional_keyword_x(input, stores, execution, "scaled")? {
+        let requested = scan_i32(input, stores, execution, context)?;
         let scale = if (1..=32_768).contains(&requested) {
             requested
         } else {
@@ -256,23 +251,22 @@ where
     Ok(FontSizeSpec::Design)
 }
 
-fn scan_font_file_name<S, H>(
+fn scan_font_file_name<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<String, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     let mut name = String::new();
-    let Some(first) = next_non_space_x(input, stores, hooks)? else {
+    let Some(first) = next_non_space_x(input, stores, execution)? else {
         return Err(ExecError::MissingToken { context: "\\font" });
     };
     append_font_name_token(&mut name, first)?;
     let mut recorder = NoopRecorder;
     while let Some(traced) =
-        get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?
+        get_x_token_with_recorder_and_context(input, stores, &mut recorder, execution)?
     {
         match tex_expand::semantic_token(traced) {
             Token::Char {

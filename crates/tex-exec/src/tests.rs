@@ -1,7 +1,5 @@
 use super::*;
-use crate::executor::NoopExecHooks;
-use ahash::AHashMap;
-use tex_expand::{EngineMode, ExpansionHooks, NoopRecorder};
+use tex_expand::NoopRecorder;
 use tex_lex::{InputStack, MemoryInput, WorldInput};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::GlueSpec;

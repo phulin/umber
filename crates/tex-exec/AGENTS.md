@@ -45,7 +45,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/diagnostics.rs`: diagnostic primitives such as `\show`, `\showthe`, `\showbox`, and message writing.
 - `src/dispatch.rs`: main-control token dispatch, group exits, token replay, and execution statistics.
 - `src/error.rs`: execution error enum, conversions, and display text.
-- `src/executor.rs`: `Executor` run loop and expansion-hook integration for engine mode and recovery.
+- `src/executor.rs`: `Executor` run loop, concrete execution context, localized font resolver, and expansion snapshot synchronization.
 - `src/lib.rs`: public crate surface and module wiring for the TeX execution engine.
 - `src/math/`: math-mode stomach front-end that builds frozen mlists, noads, fractions, choices, styles, and mu nodes; split into dispatch, display packaging, lowering, scanner, and support modules.
 - `src/math/scan/tests.rs`: focused math scanner coverage for numeric delimiter bounds and traced-token recovery.
@@ -59,7 +59,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/transaction.rs`: lifetime-bound recursive execution transactions that restore mode and Universe roots unless explicitly committed.
 - `src/tests.rs`: crate-internal test harness module and shared imports.
 - `src/tests/assignments.rs`: tests for registers, definitions, arithmetic, token assignments, and assignments.
-- `src/tests/core.rs`: tests for mode nest behavior, executor hooks, dispatch, and core errors.
+- `src/tests/core.rs`: tests for mode nest behavior, execution context, dispatch, and core errors.
 - `src/tests/fonts.rs`: tests for font loading, font parameters, and font-related grouping semantics.
 - `src/tests/grouping_parity.rs`: grouping, after-token, magnification, and box-register tests that read committed reference micro fixtures.
 - `src/tests/groups.rs`: tests for braces, explicit groups, `\globaldefs`, and aftergroup replay.

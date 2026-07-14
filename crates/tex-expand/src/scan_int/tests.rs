@@ -8,8 +8,8 @@ use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, Universe};
 
-use crate::scan_int::{IntegerDiagnostic, scan_int, scan_int_with_recorder_and_hooks};
-use crate::{NoopExpansionHooks, ReadBank, ReadDependency, ReadRecorder, ReadSetRecorder};
+use crate::scan_int::{IntegerDiagnostic, scan_int, scan_int_with_recorder_and_context};
+use crate::{ExpansionContext, ReadBank, ReadDependency, ReadRecorder, ReadSetRecorder};
 
 fn scan(input: &str) -> (i32, Option<IntegerDiagnostic>, Option<Token>) {
     let mut stores = Universe::new();
@@ -218,11 +218,11 @@ fn mathchardef_scan_records_the_live_meaning() {
     let mut input = InputStack::new(MemoryInput::new("\\math"));
     let mut reads = MeaningReads::default();
 
-    let scanned = scan_int_with_recorder_and_hooks(
+    let scanned = scan_int_with_recorder_and_context(
         &mut input,
         &mut stores,
         &mut reads,
-        &mut NoopExpansionHooks,
+        &mut ExpansionContext::new("texput"),
         context(),
     )
     .expect("math-given scan should succeed");
@@ -244,11 +244,11 @@ fn typed_read_set_records_internal_register_dependencies_deterministically() {
     let mut input = InputStack::new(MemoryInput::new("\\answer"));
     let mut reads = ReadSetRecorder::default();
 
-    let scanned = scan_int_with_recorder_and_hooks(
+    let scanned = scan_int_with_recorder_and_context(
         &mut input,
         &mut stores,
         &mut reads,
-        &mut NoopExpansionHooks,
+        &mut ExpansionContext::new("texput"),
         context(),
     )
     .expect("count-register scan");

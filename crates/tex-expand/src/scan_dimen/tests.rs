@@ -13,9 +13,9 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::scan_dimen::{
     DimensionDiagnostic, InsertedUnit, ScanDimenOptions, scan_dimen, scan_dimen_with_options,
-    scan_dimen_with_options_and_hooks,
+    scan_dimen_with_options_and_context,
 };
-use crate::{NoopExpansionHooks, ReadBank, ReadDependency, ReadSetRecorder};
+use crate::{ExpansionContext, ReadBank, ReadDependency, ReadSetRecorder};
 
 fn scan(input_text: &str) -> (i32, Option<DimensionDiagnostic>, Option<Token>) {
     let mut stores = Universe::new();
@@ -59,11 +59,11 @@ fn dimension_scanner_records_typed_value_and_magnification_dependencies() {
     let mut input = InputStack::new(MemoryInput::new("\\measured"));
     let mut reads = ReadSetRecorder::default();
 
-    let scanned = scan_dimen_with_options_and_hooks(
+    let scanned = scan_dimen_with_options_and_context(
         &mut input,
         &mut stores,
         &mut reads,
-        &mut NoopExpansionHooks,
+        &mut ExpansionContext::new("texput"),
         ScanDimenOptions::STANDARD,
         context(),
     )

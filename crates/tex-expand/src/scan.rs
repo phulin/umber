@@ -5,7 +5,7 @@
 //! text. It freezes the resulting token lists through `Universe`, but it does
 //! not assign the macro meaning to `Env`.
 
-use std::{fmt, marker::PhantomData};
+use std::fmt;
 
 use tex_lex::{
     InputSource, InputStack, LexError, LiteralSpanPolicy, MemoryInput, TokenListReplayKind,
@@ -19,8 +19,8 @@ use tex_state::token_store::TokenListBuilder;
 use tex_state::{ExpansionState, InputReadState, TracedTokenList};
 
 use crate::{
-    DriverExpandNext, ExpandError, ExpandNext, ExpandableOpcode, ExpansionHooks, NoInputExpandNext,
-    NoopRecorder, ReadRecorder,
+    DriverExpandNext, ExpandError, ExpandNext, ExpandableOpcode, ExpansionContext,
+    NoInputExpandNext, NoopRecorder, ReadRecorder,
 };
 
 /// Result of scanning a macro definition without assigning it.
@@ -213,16 +213,15 @@ where
 }
 
 /// Scans a macro definition and expands the replacement text as for `\edef`.
-pub fn scan_toks_expanded<S, H>(
+pub fn scan_toks_expanded<S>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     flags: MeaningFlags,
     context: TracedTokenWord,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
 ) -> Result<ScannedMacro, ScanToksError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     let scanned = scan_toks(input, stores, flags, context)?;
     let meaning = scanned.meaning();
@@ -230,7 +229,7 @@ where
         stores,
         meaning.replacement_text(),
         scanned.provenance().replacement_origins(),
-        hooks,
+        expansion,
         &mut NoInputExpandNext,
     )?;
     Ok(ScannedMacro {
@@ -247,20 +246,20 @@ where
     })
 }
 
-pub fn scan_toks_expanded_with_driver<S, St, H>(
+pub fn scan_toks_expanded_with_driver<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     flags: MeaningFlags,
     context: TracedTokenWord,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
 ) -> Result<ScannedMacro, ScanToksError>
 where
     S: InputSource,
     St: ExpansionState + tex_state::InputOpenState,
-    H: ExpansionHooks<S>,
 {
     let parameter_text = scan_parameter_text(input, stores, context)?;
-    let replacement_text = scan_expanded_replacement_with_driver(input, stores, context, hooks)?;
+    let replacement_text =
+        scan_expanded_replacement_with_driver(input, stores, context, expansion)?;
     Ok(ScannedMacro {
         meaning: MacroMeaning::new(
             flags,
@@ -275,16 +274,15 @@ where
     })
 }
 
-fn scan_expanded_replacement_with_driver<S, St, H>(
+fn scan_expanded_replacement_with_driver<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
     context: TracedTokenWord,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
 ) -> Result<TracedTokenList, ScanToksError>
 where
     S: InputSource,
     St: ExpansionState + tex_state::InputOpenState,
-    H: ExpansionHooks<S>,
 {
     let mut builder = stores.token_list_builder();
     let mut origins = stores.origin_list_builder();
@@ -325,13 +323,13 @@ where
             if matches!(meaning, Meaning::Macro { flags, .. } if !flags.contains(MeaningFlags::PROTECTED))
             {
                 recorder.record_meaning(symbol, meaning);
-                let dispatched = crate::dispatch::dispatch_with_hooks(
+                let dispatched = crate::dispatch::dispatch_with_context(
                     traced_semantic_token(raw),
                     raw.origin(),
                     input,
                     stores,
                     &mut recorder,
-                    hooks,
+                    expansion,
                     meaning,
                 );
                 match dispatched {
@@ -350,11 +348,11 @@ where
                     // Preserve the defining scanner's nested-source seam: the
                     // first expanded token remains available below the
                     // recovery-inserted closing brace.
-                    let Some(traced) = crate::get_x_or_protected_with_recorder_and_hooks(
+                    let Some(traced) = crate::get_x_or_protected_with_recorder_and_context(
                         input,
                         stores,
                         &mut recorder,
-                        hooks,
+                        expansion,
                     )?
                     else {
                         return Err(ScanToksError::EndOfInputInReplacementText { context });
@@ -365,12 +363,12 @@ where
                 continue;
             }
         }
-        let expanded = crate::get_x_or_protected_from_prepared_with_recorder_and_hooks(
+        let expanded = crate::get_x_or_protected_from_prepared_with_recorder_and_context(
             prepared,
             input,
             stores,
             &mut recorder,
-            hooks,
+            expansion,
         )?;
         let Some(traced) = expanded else {
             return Err(ScanToksError::EndOfInputInReplacementText { context });
@@ -441,23 +439,22 @@ where
 /// This matches `scan_toks(macro_def = false, xpand = true)` callers such as
 /// TeX82 `\mark`: parameter tokens are ordinary tokens while scanning the
 /// balanced text, and expansion happens over the frozen raw text.
-pub fn scan_general_text_expanded_with_driver<S, St, H>(
+pub fn scan_general_text_expanded_with_driver<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<TokenListId, ScanToksError>
 where
     S: InputSource,
     St: ExpansionState + tex_state::InputOpenState,
-    H: ExpansionHooks<S>,
 {
     let raw_text = scan_general_text(input, stores, context)?;
     Ok(expand_replacement_text(
         stores,
         raw_text.token_list(),
         raw_text.origin_list(),
-        hooks,
+        expansion,
         &mut DriverExpandNext,
     )?
     .token_list())
@@ -469,39 +466,37 @@ where
 /// This is the `scan_toks(false, false)` entry behavior used by commands such
 /// as `\showtokens`: expansion can expose the opening brace, but the balanced
 /// contents themselves are retained without expansion.
-pub fn scan_general_text_with_expanded_open_with_driver<S, St, H>(
+pub fn scan_general_text_with_expanded_open_with_driver<S, St>(
     input: &mut InputStack<S>,
     stores: &mut St,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<TracedTokenList, ScanToksError>
 where
     S: InputSource,
     St: ExpansionState + tex_state::InputOpenState,
-    H: ExpansionHooks<S>,
 {
     scan_general_text_with_expanded_open(
         input,
         stores,
         &mut NoopRecorder,
-        hooks,
+        expansion,
         &mut DriverExpandNext,
         context,
     )
 }
 
-fn expand_replacement_text<'a, S, St, H, E>(
+fn expand_replacement_text<S, St, E>(
     stores: &mut St,
     replacement_text: TokenListId,
     replacement_origins: OriginListId,
-    hooks: &'a mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
 ) -> Result<TracedTokenList, ScanToksError>
 where
     S: InputSource,
     St: ExpansionState,
-    H: ExpansionHooks<S> + 'a,
-    E: ExpandNext<ReplacementSource<S>, St, NoopRecorder, ReplacementHooks<'a, S, H>>,
+    E: ExpandNext<ReplacementSource<S>, St, NoopRecorder>,
 {
     let mut input = InputStack::new(ReplacementSource::<S>::empty());
     input.push_token_list_with_origins(
@@ -512,7 +507,11 @@ where
     let mut builder = stores.token_list_builder();
     let mut origins = stores.origin_list_builder();
     let mut recorder = NoopRecorder;
-    let mut hooks = ReplacementHooks::new(hooks);
+    let engine = expansion.engine;
+    let job_name = expansion.job_name;
+    let mut resolver = ReplacementInputResolver { inner: expansion };
+    let mut replacement_expansion = ExpansionContext::with_input_resolver(job_name, &mut resolver);
+    replacement_expansion.engine = engine;
 
     loop {
         if input.append_macro_literal_span(
@@ -575,7 +574,7 @@ where
                 &mut input,
                 stores,
                 &mut recorder,
-                &mut hooks,
+                &mut replacement_expansion,
             )?;
             crate::push_dispatch_result(&mut input, stores, dispatch);
             continue;
@@ -591,16 +590,19 @@ where
                 &mut input,
                 stores,
                 &mut recorder,
-                &mut hooks,
+                &mut replacement_expansion,
             )?;
             crate::push_dispatch_result(&mut input, stores, dispatch);
             continue;
         }
 
         unread_token(&mut input, stores, traced);
-        if let Some(expanded) =
-            expander.next_expanded_token(&mut input, stores, &mut recorder, &mut hooks)?
-        {
+        if let Some(expanded) = expander.next_expanded_token(
+            &mut input,
+            stores,
+            &mut recorder,
+            &mut replacement_expansion,
+        )? {
             builder.push(crate::semantic_token(expanded));
             origins.push(expanded.origin());
         }
@@ -669,89 +671,23 @@ where
     }
 }
 
-struct ReplacementHooks<'a, S, H> {
-    inner: &'a mut H,
-    _source: PhantomData<fn() -> S>,
+struct ReplacementInputResolver<'a, 'session, S> {
+    inner: &'a mut ExpansionContext<'session, S>,
 }
 
-impl<'a, S, H> ReplacementHooks<'a, S, H> {
-    fn new(inner: &'a mut H) -> Self {
-        Self {
-            inner,
-            _source: PhantomData,
-        }
-    }
-}
-
-impl<S, H> ExpansionHooks<ReplacementSource<S>> for ReplacementHooks<'_, S, H>
+impl<S> crate::InputResolver<ReplacementSource<S>> for ReplacementInputResolver<'_, '_, S>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
-    fn open_input<C: InputReadState>(
+    fn open_input(
         &mut self,
-        input: &mut C,
+        input: &mut dyn InputReadState,
         name: &str,
+        _request_index: u64,
     ) -> Result<ReplacementSource<S>, String> {
         self.inner
             .open_input(input, name)
             .map(ReplacementSource::Driver)
-    }
-
-    fn open_font<C: InputReadState>(
-        &mut self,
-        input: &mut C,
-        path: &std::path::Path,
-    ) -> Result<tex_state::FileContent, String> {
-        self.inner.open_font(input, path)
-    }
-
-    fn job_name(&self) -> &str {
-        self.inner.job_name()
-    }
-
-    fn mode(&self) -> crate::EngineMode {
-        self.inner.mode()
-    }
-
-    fn is_inner_mode(&self) -> bool {
-        self.inner.is_inner_mode()
-    }
-
-    fn space_factor(&self) -> i32 {
-        self.inner.space_factor()
-    }
-
-    fn prev_depth(&self) -> tex_state::scaled::Scaled {
-        self.inner.prev_depth()
-    }
-
-    fn prev_graf(&self) -> i32 {
-        self.inner.prev_graf()
-    }
-
-    fn last_penalty(&self) -> i32 {
-        self.inner.last_penalty()
-    }
-
-    fn last_kern(&self) -> tex_state::scaled::Scaled {
-        self.inner.last_kern()
-    }
-
-    fn last_skip(&self) -> tex_state::glue::GlueSpec {
-        self.inner.last_skip()
-    }
-
-    fn last_node_type(&self) -> i32 {
-        self.inner.last_node_type()
-    }
-
-    fn input_stream_eof(&self, stores: &impl ExpansionState, stream: u8) -> bool {
-        self.inner.input_stream_eof(stores, stream)
-    }
-
-    fn set_engine_state(&mut self, state: crate::EngineStateSnapshot) {
-        self.inner.set_engine_state(state);
     }
 }
 
@@ -983,11 +919,11 @@ where
 
 /// Scans e-TeX general text after expanding only while looking for its
 /// compulsory opening brace; the balanced contents themselves remain raw.
-pub(crate) fn scan_general_text_with_expanded_open<S, St, R, H, E>(
+pub(crate) fn scan_general_text_with_expanded_open<S, St, R, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
     context: TracedTokenWord,
 ) -> Result<TracedTokenList, ScanToksError>
@@ -995,12 +931,11 @@ where
     S: InputSource,
     St: ExpansionState,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
-    E: ExpandNext<S, St, R, H>,
+    E: ExpandNext<S, St, R>,
 {
     let open = loop {
         let token = expander
-            .next_expanded_token(input, stores, recorder, hooks)?
+            .next_expanded_token(input, stores, recorder, expansion)?
             .ok_or(ScanToksError::EndOfInputInReplacementText { context })?;
         if !matches!(
             traced_semantic_token(token),

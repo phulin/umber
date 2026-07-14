@@ -1,6 +1,5 @@
 use tex_expand::{
-    DriverExpandNext, ExpandError, ExpansionHooks, ReadRecorder,
-    get_x_token_with_recorder_and_hooks, scan_dimen,
+    DriverExpandNext, ExpandError, ReadRecorder, get_x_token_with_recorder_and_context, scan_dimen,
 };
 use tex_lex::{InputSource, InputStack};
 use tex_state::math::{
@@ -31,19 +30,18 @@ pub(crate) use chars::{
     math_char_from_mathcode, redispatch_active_char,
 };
 
-pub(super) fn scan_math_field<S, R, H>(
+pub(super) fn scan_math_field<S, R>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<MathField, ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
-    let traced = next_non_space_traced_x(input, stores, recorder, hooks)?.ok_or(
+    let traced = next_non_space_traced_x(input, stores, recorder, execution)?.ok_or(
         ExecError::MissingToken {
             context: "math field",
         },
@@ -53,26 +51,26 @@ where
         Token::Char {
             cat: Catcode::BeginGroup,
             ..
-        } => scan_math_field_group_after_open(nest, input, stores, recorder, hooks),
+        } => scan_math_field_group_after_open(nest, input, stores, recorder, execution),
         Token::Char {
             ch,
             cat: Catcode::Active,
         } => {
             redispatch_active_char(input, stores, ch);
-            scan_math_field(nest, input, stores, recorder, hooks)
+            scan_math_field(nest, input, stores, recorder, execution)
         }
         Token::Char { ch, .. } => {
             let value = stores.mathcode(ch);
             if value == 0x8000 {
                 redispatch_active_char(input, stores, ch);
-                scan_math_field(nest, input, stores, recorder, hooks)
+                scan_math_field(nest, input, stores, recorder, execution)
             } else {
                 let (_, math_char) = math_char_from_mathcode(ch, value, stores)?;
                 Ok(MathField::MathChar(math_char))
             }
         }
         Token::Cs(_) if assignments::has_catcode_meaning(stores, token, Catcode::BeginGroup) => {
-            scan_math_field_group_after_open(nest, input, stores, recorder, hooks)
+            scan_math_field_group_after_open(nest, input, stores, recorder, execution)
         }
         Token::Cs(symbol) => match stores.meaning(symbol) {
             Meaning::CharGiven(ch) => {
@@ -85,7 +83,7 @@ where
             )?)),
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char) => {
                 let context = TracedTokenWord::pack(Token::Cs(symbol.symbol()), OriginId::UNKNOWN);
-                let value = assignments::scan_i32(input, stores, hooks, context)?;
+                let value = assignments::scan_i32(input, stores, execution, context)?;
                 let ch =
                     u8::try_from(value)
                         .map(char::from)
@@ -120,13 +118,13 @@ where
                     stores,
                     [TracedTokenWord::pack(opener, origin), traced],
                 );
-                scan_math_field(nest, input, stores, recorder, hooks)
+                scan_math_field(nest, input, stores, recorder, execution)
             }
             _ => {
                 let mut temp = ModeNest::new();
                 temp.push(nest.current_mode());
                 dispatch_math_token_with_recorder(
-                    &mut temp, traced, input, stores, recorder, hooks,
+                    &mut temp, traced, input, stores, recorder, execution,
                 )?;
                 let id = finish_current_math_list(&mut temp, stores);
                 Ok(MathField::SubMlist(id))
@@ -138,22 +136,21 @@ where
     }
 }
 
-pub(super) fn scan_math_group_after_open<S, R, H>(
+pub(super) fn scan_math_group_after_open<S, R>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<tex_state::ids::NodeListId, ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     let mut transaction = crate::transaction::ExecutionTransaction::begin(nest, stores);
     let result = {
         let (nest, stores) = transaction.parts();
-        scan_math_group_after_open_inner(nest, input, stores, recorder, hooks)
+        scan_math_group_after_open_inner(nest, input, stores, recorder, execution)
     };
     if result.is_ok() {
         transaction.commit();
@@ -161,27 +158,25 @@ where
     result
 }
 
-fn scan_math_group_after_open_inner<S, R, H>(
+fn scan_math_group_after_open_inner<S, R>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<tex_state::ids::NodeListId, ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     stores.enter_group_with_kind(GroupKind::Math);
     nest.push(Mode::Math);
     loop {
-        sync_engine_state::<S, _>(hooks, nest, stores);
-        let token = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?.ok_or(
-            ExecError::MissingToken {
+        sync_engine_state::<S>(execution, nest, stores);
+        let token = get_x_token_with_recorder_and_context(input, stores, recorder, execution)?
+            .ok_or(ExecError::MissingToken {
                 context: "math group closing brace",
-            },
-        )?;
+            })?;
         let semantic = tex_expand::semantic_token(token);
         if assignments::has_catcode_meaning(stores, semantic, Catcode::EndGroup) {
             crate::leave_group_with_origin(input, stores, GroupKind::Math, token.origin())?;
@@ -189,7 +184,7 @@ where
             let _ = nest.pop()?;
             return Ok(list);
         }
-        match dispatch_math_token_with_recorder(nest, token, input, stores, recorder, hooks)? {
+        match dispatch_math_token_with_recorder(nest, token, input, stores, recorder, execution)? {
             DispatchAction::Continue | DispatchAction::Shipout(_) => {}
             DispatchAction::End => {
                 return Err(ExecError::MissingToken {
@@ -208,35 +203,33 @@ where
     }
 }
 
-pub(super) fn scan_math_field_group_after_open<S, R, H>(
+pub(super) fn scan_math_field_group_after_open<S, R>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<MathField, ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
-    let list = scan_math_group_after_open(nest, input, stores, recorder, hooks)?;
+    let list = scan_math_group_after_open(nest, input, stores, recorder, execution)?;
     Ok(simplify_math_group_field(stores, list))
 }
 
-pub(super) fn scan_math_atom_group_after_open<S, R, H>(
+pub(super) fn scan_math_atom_group_after_open<S, R>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<MathNoad, ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
-    let list = scan_math_group_after_open(nest, input, stores, recorder, hooks)?;
+    let list = scan_math_group_after_open(nest, input, stores, recorder, execution)?;
     let nodes = stores.nodes(list);
     if nodes.len() == 1
         && let Some(tex_state::node_arena::NodeRef::MathNoad(noad)) = nodes.first()
@@ -269,63 +262,60 @@ fn simplify_math_group_field(stores: &Universe, list: tex_state::ids::NodeListId
     }
 }
 
-pub(super) fn start_left_group<S, R, H>(
+pub(super) fn start_left_group<S, R>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
-    let delimiter = scan_delimiter_token(input, stores, recorder, hooks)?;
+    let delimiter = scan_delimiter_token(input, stores, recorder, execution)?;
     nest.push(Mode::Math);
     nest.current_list_mut().push(Node::MathNoad(MathNoad::new(
         NoadKind::LeftDelimiter { delimiter },
         MathField::Empty,
     )));
-    sync_engine_state::<S, _>(hooks, nest, stores);
+    sync_engine_state::<S>(execution, nest, stores);
     Ok(())
 }
 
-pub(super) fn finish_left_group<S, R, H>(
+pub(super) fn finish_left_group<S, R>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
-    let delimiter = scan_delimiter_token(input, stores, recorder, hooks)?;
+    let delimiter = scan_delimiter_token(input, stores, recorder, execution)?;
     if !current_list_is_left_group(nest, stores) {
         report_math_error(stores, "Extra \\right");
         return Ok(());
     }
     close_left_group(nest, stores, delimiter)?;
-    sync_engine_state::<S, _>(hooks, nest, stores);
+    sync_engine_state::<S>(execution, nest, stores);
     Ok(())
 }
 
-pub(super) fn append_middle_delimiter<S, R, H>(
+pub(super) fn append_middle_delimiter<S, R>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
-    let delimiter = scan_delimiter_token(input, stores, recorder, hooks)?;
+    let delimiter = scan_delimiter_token(input, stores, recorder, execution)?;
     if !current_list_is_left_group(nest, stores) {
         report_math_error(stores, "Extra \\middle");
         return Ok(());
@@ -439,19 +429,18 @@ pub(super) fn finish_current_math_list(
     stores.freeze_node_list(&nodes)
 }
 
-pub(super) fn start_fraction<S, R, H>(
+pub(super) fn start_fraction<S, R>(
     primitive: UnexpandablePrimitive,
     context: TracedTokenWord,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     if nest.current_list().incomplete_fraction().is_some() {
         report_math_error(stores, "Ambiguous; you need another { and }");
@@ -461,8 +450,8 @@ where
         UnexpandablePrimitive::OverWithDelims
         | UnexpandablePrimitive::AtopWithDelims
         | UnexpandablePrimitive::AboveWithDelims => (
-            Some(scan_delimiter_token(input, stores, recorder, hooks)?),
-            Some(scan_delimiter_token(input, stores, recorder, hooks)?),
+            Some(scan_delimiter_token(input, stores, recorder, execution)?),
+            Some(scan_delimiter_token(input, stores, recorder, execution)?),
         ),
         _ => (None, None),
     };
@@ -471,7 +460,9 @@ where
             FractionThickness::Explicit(Scaled::from_raw(0))
         }
         UnexpandablePrimitive::Above | UnexpandablePrimitive::AboveWithDelims => {
-            FractionThickness::Explicit(assignments::scan_scaled(input, stores, hooks, context)?)
+            FractionThickness::Explicit(assignments::scan_scaled(
+                input, stores, execution, context,
+            )?)
         }
         _ => FractionThickness::Default,
     };
@@ -510,23 +501,24 @@ pub(super) fn apply_limit_switch(
     }
 }
 
-pub(super) fn append_math_choice<S, R, H>(
+pub(super) fn append_math_choice<S, R>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
-    let display = scan_required_math_group(nest, input, stores, recorder, hooks, "\\mathchoice")?;
-    let text = scan_required_math_group(nest, input, stores, recorder, hooks, "\\mathchoice")?;
-    let script = scan_required_math_group(nest, input, stores, recorder, hooks, "\\mathchoice")?;
+    let display =
+        scan_required_math_group(nest, input, stores, recorder, execution, "\\mathchoice")?;
+    let text = scan_required_math_group(nest, input, stores, recorder, execution, "\\mathchoice")?;
+    let script =
+        scan_required_math_group(nest, input, stores, recorder, execution, "\\mathchoice")?;
     let script_script =
-        scan_required_math_group(nest, input, stores, recorder, hooks, "\\mathchoice")?;
+        scan_required_math_group(nest, input, stores, recorder, execution, "\\mathchoice")?;
     nest.current_list_mut().push(Node::MathChoice(MathChoice {
         display,
         text,
@@ -536,20 +528,19 @@ where
     Ok(())
 }
 
-fn scan_required_math_group<S, R, H>(
+fn scan_required_math_group<S, R>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     context: &'static str,
 ) -> Result<tex_state::ids::NodeListId, ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
-    let Some(opener) = next_non_space_x(input, stores, recorder, hooks)? else {
+    let Some(opener) = next_non_space_x(input, stores, recorder, execution)? else {
         stores.world_mut().write_text(
             tex_state::PrintSink::TerminalAndLog,
             &format!("\n! Missing {{ inserted while scanning {context}.\n"),
@@ -564,24 +555,24 @@ where
         crate::push_tokens(input, stores, [opener]);
         return Ok(stores.freeze_node_list(&[]));
     }
-    scan_math_group_after_open(nest, input, stores, recorder, hooks)
+    scan_math_group_after_open(nest, input, stores, recorder, execution)
 }
 
-pub(super) fn scan_vcenter_field<S, H>(
+pub(super) fn scan_vcenter_field<S>(
     context: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<MathField, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
-    let spec = assignments::scan_pack_spec(input, stores, hooks, context)?;
-    let opener =
-        assignments::next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
+    let spec = assignments::scan_pack_spec(input, stores, execution, context)?;
+    let opener = assignments::next_non_space_x(input, stores, execution)?.ok_or(
+        ExecError::MissingToken {
             context: "\\vcenter",
-        })?;
+        },
+    )?;
     if !assignments::is_begin_group(opener) {
         return Err(ExecError::MissingToken {
             context: "\\vcenter",
@@ -593,7 +584,7 @@ where
     stores.enter_group_with_kind(GroupKind::VCenter);
     let box_group_depth = stores.execution_group_depth();
     inner.push(Mode::InternalVertical);
-    assignments::scan_box_group(inner, input, stores, hooks, box_group_depth)?;
+    assignments::scan_box_group(inner, input, stores, execution, box_group_depth)?;
     let level = inner.pop()?;
     let children = stores.freeze_node_list(level.list().nodes());
     let vbox = Node::VList(
@@ -611,17 +602,16 @@ where
     Ok(MathField::SubBox(boxed))
 }
 
-pub(super) fn scan_math_char_code<S, H>(
+pub(super) fn scan_math_char_code<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<u32, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
-    let value = assignments::scan_i32(input, stores, hooks, context)?;
+    let value = assignments::scan_i32(input, stores, execution, context)?;
     if !(0..=32_767).contains(&value) {
         return Err(ExecError::InvalidCode {
             context: "\\mathchar",
@@ -631,17 +621,16 @@ where
     Ok(value as u32)
 }
 
-pub(super) fn scan_delimiter_code<S, H>(
+pub(super) fn scan_delimiter_code<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<u32, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
-    let value = assignments::scan_i32(input, stores, hooks, context)?;
+    let value = assignments::scan_i32(input, stores, execution, context)?;
     if !(0..=0x07ff_ffff).contains(&value) {
         return Err(ExecError::InvalidCode {
             context: "\\delimiter",
@@ -651,19 +640,19 @@ where
     Ok(value as u32)
 }
 
-fn scan_delimiter_token<S, R, H>(
+fn scan_delimiter_token<S, R>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<u32, ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     loop {
-        let Some(traced) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
+        let Some(traced) =
+            get_x_token_with_recorder_and_context(input, stores, recorder, execution)?
         else {
             report_math_error(stores, "Missing delimiter (. inserted)");
             return Ok(0);
@@ -690,7 +679,7 @@ where
                     Meaning::Relax => continue,
                     Meaning::MathCharGiven(value) => return Ok(u32::from(value)),
                     Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Delimiter) => {
-                        return scan_delimiter_code(input, stores, hooks, traced);
+                        return scan_delimiter_code(input, stores, execution, traced);
                     }
                     _ => {}
                 }
@@ -704,22 +693,21 @@ where
     }
 }
 
-pub(super) fn scan_mu_dimen<S, H>(
+pub(super) fn scan_mu_dimen<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<Scaled, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     let mut recorder = tex_expand::NoopRecorder;
-    let scanned = scan_dimen::scan_dimen_with_expander_and_hooks(
+    let scanned = scan_dimen::scan_dimen_with_expander_and_context(
         input,
         stores,
         &mut recorder,
-        hooks,
+        execution,
         &mut DriverExpandNext,
         scan_dimen::ScanDimenOptions::STANDARD.requiring_mu_unit(),
         context,
@@ -728,20 +716,20 @@ where
     Ok(scanned.value())
 }
 
-fn next_non_space_x<S, R, H>(
+fn next_non_space_x<S, R>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<Option<Token>, ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     loop {
-        let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
-            .map(tex_expand::semantic_token)
+        let Some(token) =
+            get_x_token_with_recorder_and_context(input, stores, recorder, execution)?
+                .map(tex_expand::semantic_token)
         else {
             return Ok(None);
         };
@@ -751,19 +739,19 @@ where
     }
 }
 
-fn next_non_space_traced_x<S, R, H>(
+fn next_non_space_traced_x<S, R>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<Option<TracedTokenWord>, ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     loop {
-        let Some(traced) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
+        let Some(traced) =
+            get_x_token_with_recorder_and_context(input, stores, recorder, execution)?
         else {
             return Ok(None);
         };

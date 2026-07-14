@@ -1,4 +1,3 @@
-use tex_expand::ExpansionHooks;
 use tex_lex::{InputSource, InputStack};
 use tex_state::glue::Order;
 use tex_state::meaning::UnexpandablePrimitive;
@@ -28,27 +27,26 @@ pub(crate) use packaging::{hpack_owned_with_overfull_rule, hpack_with_overfull_r
 pub(crate) use packaging::{scan_box_group, scan_pack_spec};
 use vsplit::scan_vsplit_node;
 
-pub(super) fn execute_make_box<S, H>(
+pub(super) fn execute_make_box<S>(
     primitive: UnexpandablePrimitive,
     context: TracedTokenWord,
     nest: &mut ModeNest,
     _global: bool,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     let node = if primitive == UnexpandablePrimitive::VSplit {
-        scan_vsplit_node(input, stores, hooks, context)?
+        scan_vsplit_node(input, stores, execution, context)?
     } else {
         Some(scan_box_node(
             kind_for_primitive(primitive)?,
             input,
             stores,
-            hooks,
+            execution,
             context,
         )?)
     };
@@ -59,17 +57,16 @@ where
     Ok(())
 }
 
-pub(crate) fn scan_math_box<S, H>(
+pub(crate) fn scan_math_box<S>(
     primitive: UnexpandablePrimitive,
     context: TracedTokenWord,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<Option<Node>, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     let node = match primitive {
         UnexpandablePrimitive::HBox | UnexpandablePrimitive::VBox | UnexpandablePrimitive::VTop => {
@@ -77,13 +74,13 @@ where
                 kind_for_primitive(primitive)?,
                 input,
                 stores,
-                hooks,
+                execution,
                 context,
             )?)
         }
-        UnexpandablePrimitive::VSplit => scan_vsplit_node(input, stores, hooks, context)?,
+        UnexpandablePrimitive::VSplit => scan_vsplit_node(input, stores, execution, context)?,
         UnexpandablePrimitive::Box | UnexpandablePrimitive::Copy => {
-            let index = scan_register_index(input, stores, hooks, context)?;
+            let index = scan_register_index(input, stores, execution, context)?;
             let id = if primitive == UnexpandablePrimitive::Box {
                 stores.take_box_reg_same_level(index)
             } else {
@@ -97,8 +94,8 @@ where
             first_box_node(stores, id)
         }
         UnexpandablePrimitive::Raise | UnexpandablePrimitive::Lower => {
-            let amount = scan_scaled(input, stores, hooks, context)?;
-            let mut node = packaging::scan_required_box_node(input, stores, hooks, context)?;
+            let amount = scan_scaled(input, stores, execution, context)?;
+            let mut node = packaging::scan_required_box_node(input, stores, execution, context)?;
             apply_shift(&mut node, primitive, amount)?;
             Some(node)
         }
@@ -108,24 +105,23 @@ where
     Ok(node)
 }
 
-pub(super) fn execute_setbox<S, H>(
+pub(super) fn execute_setbox<S>(
     global: bool,
     context: TracedTokenWord,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
-    let index = scan_register_index(input, stores, hooks, context)?;
-    skip_optional_equals_x(input, stores, hooks)?;
-    let mut execution = crate::transaction::ExecutionTransaction::begin(nest, stores);
-    let (nest, stores) = execution.parts();
+    let index = scan_register_index(input, stores, execution, context)?;
+    skip_optional_equals_x(input, stores, execution)?;
+    let mut transaction = crate::transaction::ExecutionTransaction::begin(nest, stores);
+    let (nest, stores) = transaction.parts();
     let mut construction = stores.begin_box_build();
-    let value = match scan_box_value(Some(nest), input, &mut construction, hooks, context) {
+    let value = match scan_box_value(Some(nest), input, &mut construction, execution, context) {
         Ok(Some(ScannedBoxValue::Fresh(node))) => {
             let list = construction.freeze_node_list(&[node]);
             Some(list)
@@ -138,25 +134,24 @@ where
         Err(err) => return Err(err),
     };
     construction.finish(index, value, global);
-    execution.commit();
+    transaction.commit();
     Ok(())
 }
 
-pub(super) fn execute_box_dimension_assignment<S, H>(
+pub(super) fn execute_box_dimension_assignment<S>(
     primitive: UnexpandablePrimitive,
     global: bool,
     context: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
-    let index = scan_register_index(input, stores, hooks, context)?;
-    skip_optional_equals_x(input, stores, hooks)?;
-    let value = scan_scaled(input, stores, hooks, context)?;
+    let index = scan_register_index(input, stores, execution, context)?;
+    skip_optional_equals_x(input, stores, execution)?;
+    let value = scan_scaled(input, stores, execution, context)?;
     let dimension = box_dimension(primitive)?;
     if global {
         stores.set_box_dimension_global(index, dimension, value);
@@ -166,21 +161,20 @@ where
     Ok(())
 }
 
-pub(super) fn execute_box_list_command<S, H>(
+pub(super) fn execute_box_list_command<S>(
     primitive: UnexpandablePrimitive,
     context: TracedTokenWord,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     match primitive {
         UnexpandablePrimitive::Box | UnexpandablePrimitive::Copy => {
-            let index = scan_register_index(input, stores, hooks, context)?;
+            let index = scan_register_index(input, stores, execution, context)?;
             let id = if primitive == UnexpandablePrimitive::Box {
                 stores.take_box_reg_same_level(index)
             } else {
@@ -197,7 +191,7 @@ where
         | UnexpandablePrimitive::UnHCopy
         | UnexpandablePrimitive::UnVBox
         | UnexpandablePrimitive::UnVCopy => {
-            let index = scan_register_index(input, stores, hooks, context)?;
+            let index = scan_register_index(input, stores, execution, context)?;
             let source = if matches!(
                 primitive,
                 UnexpandablePrimitive::UnHBox | UnexpandablePrimitive::UnVBox
@@ -258,8 +252,8 @@ where
         | UnexpandablePrimitive::Lower
         | UnexpandablePrimitive::MoveLeft
         | UnexpandablePrimitive::MoveRight => {
-            let amount = scan_scaled(input, stores, hooks, context)?;
-            let mut node = scan_required_box_node(input, stores, hooks, context)?;
+            let amount = scan_scaled(input, stores, execution, context)?;
+            let mut node = scan_required_box_node(input, stores, execution, context)?;
             apply_shift(&mut node, primitive, amount)?;
             append_box_node_to_current_list(nest, stores, node)?;
         }
@@ -282,21 +276,20 @@ where
     Ok(())
 }
 
-pub(super) fn execute_kern_or_skip<S, H>(
+pub(super) fn execute_kern_or_skip<S>(
     primitive: UnexpandablePrimitive,
     context: TracedTokenWord,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     match primitive {
         UnexpandablePrimitive::Kern => {
-            let amount = scan_scaled(input, stores, hooks, context)?;
+            let amount = scan_scaled(input, stores, execution, context)?;
             append_node_to_current_list(
                 nest,
                 stores,
@@ -310,7 +303,7 @@ where
             if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
                 ensure_horizontal_for_character(nest, input, stores)?;
             }
-            let spec = scan_glue_id(input, stores, hooks, false, context)?;
+            let spec = scan_glue_id(input, stores, execution, false, context)?;
             append_node_to_current_list(
                 nest,
                 stores,
@@ -326,27 +319,26 @@ where
         | UnexpandablePrimitive::VFill
         | UnexpandablePrimitive::VSs
         | UnexpandablePrimitive::VFilNeg => {
-            execute_vertical_skip(primitive, nest, input, stores, hooks, context)?
+            execute_vertical_skip(primitive, nest, input, stores, execution, context)?
         }
         _ => unreachable!("caller restricts kern/skip primitives"),
     }
     Ok(())
 }
 
-pub(super) fn execute_leaders<S, H>(
+pub(super) fn execute_leaders<S>(
     primitive: UnexpandablePrimitive,
     context: TracedTokenWord,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
-    let leader = scan_leader_payload(input, stores, hooks, context)?;
-    let spec = match scan_leader_glue(input, stores, hooks, nest.current_mode(), context) {
+    let leader = scan_leader_payload(input, stores, execution, context)?;
+    let spec = match scan_leader_glue(input, stores, execution, nest.current_mode(), context) {
         Ok(spec) => spec,
         Err(ExecError::LeadersNotFollowedByProperGlue { .. }) => {
             // TeX.web §1077 backs up the unsuitable command, discards the
@@ -372,16 +364,15 @@ where
     Ok(())
 }
 
-pub(super) fn execute_hrule<S, H>(
+pub(super) fn execute_hrule<S>(
     context: TracedTokenWord,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     match nest.current_mode() {
         Mode::Vertical | Mode::InternalVertical => {}
@@ -402,7 +393,13 @@ where
             });
         }
     }
-    let node = scan_rule_node(input, stores, hooks, UnexpandablePrimitive::HRule, context)?;
+    let node = scan_rule_node(
+        input,
+        stores,
+        execution,
+        UnexpandablePrimitive::HRule,
+        context,
+    )?;
     append_vertical_contribution(nest, stores, node);
     nest.current_list_mut()
         .set_prev_depth(crate::mode::IGNORE_DEPTH);
@@ -470,17 +467,16 @@ fn execute_delete_last_outer_vertical(
     Ok(())
 }
 
-fn execute_vertical_skip<S, H>(
+fn execute_vertical_skip<S>(
     primitive: UnexpandablePrimitive,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     if nest.current_mode() == Mode::Horizontal {
         end_paragraph(nest, stores)?;
@@ -494,7 +490,7 @@ where
         });
     }
     let spec = match primitive {
-        UnexpandablePrimitive::VSkip => scan_glue_id(input, stores, hooks, false, context)?,
+        UnexpandablePrimitive::VSkip => scan_glue_id(input, stores, execution, false, context)?,
         UnexpandablePrimitive::VFil => stores.intern_glue(infinite_glue(Order::Fil, false, false)),
         UnexpandablePrimitive::VFill => {
             stores.intern_glue(infinite_glue(Order::Fill, false, false))

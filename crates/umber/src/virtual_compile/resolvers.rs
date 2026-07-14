@@ -1,47 +1,73 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use tex_expand::ExpansionHooks;
+use tex_exec::{ExecutionContext, FontResolver};
+use tex_expand::InputResolver;
 use tex_lex::WorldInput;
 use tex_state::{FileContent, InputReadState};
 
 use super::path::RequestedFile;
 use super::{CompileError, FileKind, FileRequest, FileRequestKey, ResolvedFile, VirtualPath};
 
-pub(super) struct VirtualRunHooks<'a> {
+pub(super) struct VirtualRunResolvers<'a> {
+    input: VirtualFileResolver<'a>,
+    font: VirtualFileResolver<'a>,
+}
+
+struct VirtualFileResolver<'a> {
     user_files: &'a BTreeMap<VirtualPath, Vec<u8>>,
     resolved_files: &'a BTreeMap<FileRequestKey, ResolvedFile>,
-    job_name: &'a str,
-    misses: Vec<FileRequest>,
+    misses: Vec<(u64, FileRequest)>,
     seen: BTreeSet<FileRequestKey>,
     fatal: Option<CompileError>,
 }
 
-impl<'a> VirtualRunHooks<'a> {
+impl<'a> VirtualRunResolvers<'a> {
     pub(super) fn new(
         user_files: &'a BTreeMap<VirtualPath, Vec<u8>>,
         resolved_files: &'a BTreeMap<FileRequestKey, ResolvedFile>,
-        job_name: &'a str,
+    ) -> Self {
+        Self {
+            input: VirtualFileResolver::new(user_files, resolved_files),
+            font: VirtualFileResolver::new(user_files, resolved_files),
+        }
+    }
+
+    pub(super) fn context(&mut self, job_name: &'a str) -> ExecutionContext<'_, WorldInput> {
+        ExecutionContext::with_resolvers(job_name, &mut self.input, &mut self.font)
+    }
+
+    pub(super) fn finish(self) -> (Vec<FileRequest>, Option<CompileError>) {
+        let mut misses = self.input.misses;
+        misses.extend(self.font.misses);
+        misses.sort_by_key(|(request_index, _)| *request_index);
+        (
+            misses.into_iter().map(|(_, request)| request).collect(),
+            self.input.fatal.or(self.font.fatal),
+        )
+    }
+}
+
+impl<'a> VirtualFileResolver<'a> {
+    fn new(
+        user_files: &'a BTreeMap<VirtualPath, Vec<u8>>,
+        resolved_files: &'a BTreeMap<FileRequestKey, ResolvedFile>,
     ) -> Self {
         Self {
             user_files,
             resolved_files,
-            job_name,
             misses: Vec::new(),
             seen: BTreeSet::new(),
             fatal: None,
         }
     }
 
-    pub(super) fn finish(self) -> (Vec<FileRequest>, Option<CompileError>) {
-        (self.misses, self.fatal)
-    }
-
-    fn open<C: InputReadState>(
+    fn open(
         &mut self,
-        input: &mut C,
+        input: &mut dyn InputReadState,
         kind: FileKind,
         original_name: &str,
+        request_index: u64,
     ) -> Result<FileContent, String> {
         let requested = match RequestedFile::parse(kind, original_name) {
             Ok(requested) => requested,
@@ -72,19 +98,22 @@ impl<'a> VirtualRunHooks<'a> {
                     return self.read_seeded(input, resolved.virtual_path.as_path());
                 }
                 if self.seen.insert(key.clone()) {
-                    self.misses.push(FileRequest {
-                        key,
-                        original_name: original_name.to_owned(),
-                    });
+                    self.misses.push((
+                        request_index,
+                        FileRequest {
+                            key,
+                            original_name: original_name.to_owned(),
+                        },
+                    ));
                 }
                 Err(format!("{kind} file {original_name} is not cached"))
             }
         }
     }
 
-    fn read_seeded<C: InputReadState>(
+    fn read_seeded(
         &mut self,
-        input: &mut C,
+        input: &mut dyn InputReadState,
         path: &Path,
     ) -> Result<FileContent, String> {
         input.read_input_file(path).map_err(|error| {
@@ -104,20 +133,24 @@ impl<'a> VirtualRunHooks<'a> {
     }
 }
 
-impl ExpansionHooks<WorldInput> for VirtualRunHooks<'_> {
-    fn open_input<C: InputReadState>(
+impl InputResolver<WorldInput> for VirtualFileResolver<'_> {
+    fn open_input(
         &mut self,
-        input: &mut C,
+        input: &mut dyn InputReadState,
         name: &str,
+        request_index: u64,
     ) -> Result<WorldInput, String> {
-        self.open(input, FileKind::TexInput, name)
+        self.open(input, FileKind::TexInput, name, request_index)
             .map(WorldInput::from_content)
     }
+}
 
-    fn open_font<C: InputReadState>(
+impl FontResolver for VirtualFileResolver<'_> {
+    fn open_font(
         &mut self,
-        input: &mut C,
+        input: &mut dyn InputReadState,
         path: &Path,
+        request_index: u64,
     ) -> Result<FileContent, String> {
         let Some(name) = path.to_str() else {
             let failure = CompileError::InvalidRequestedPath {
@@ -127,10 +160,6 @@ impl ExpansionHooks<WorldInput> for VirtualRunHooks<'_> {
             self.record_fatal(failure.clone());
             return Err(failure.to_string());
         };
-        self.open(input, FileKind::Tfm, name)
-    }
-
-    fn job_name(&self) -> &str {
-        self.job_name
+        self.open(input, FileKind::Tfm, name, request_index)
     }
 }

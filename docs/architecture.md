@@ -442,8 +442,10 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   expander/driver-aware entry points for production callers that already own
   input-read authority.
   File reads for `\input` live behind the separate `InputReadState`
-  capability; driver hooks receive an `InputOpenContext`, not `ExpansionState`,
-  so hooks can open input files without seeing meaning reads, Env/register
+  capability; the concrete `ExpansionContext` holds an object-safe
+  `InputResolver`, which receives an `InputOpenContext`, not `ExpansionState`,
+  only when dispatch actually executes `\input`. The resolver can open input
+  files without seeing meaning reads, Env/register
   writes, code-table writes, grouping, snapshot, font-assignment, or general
   World mutation APIs. Macro body replay uses
   the body `TokenListId` directly plus its definition-time `OriginListId`, a
@@ -483,9 +485,10 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   parameter/replacement token-list contents, with non-macro control sequences
   falling back to meaning-word equality. `\ifnum`, `\ifdim`, `\ifodd`, and `\ifcase` reuse the
   shared integer/dimension scanners, including `\ifcase` `\or` limb selection.
-  Mode predicates read only a driver-supplied query trait; box predicates read
-  only the `Universe` box-register facade; `\ifeof` reads the `World` input
-  stream table through the expansion hook's `Universe` access. False
+  Mode and last-item predicates read ordinary fields from the
+  `EngineStateSnapshot` stored in `ExpansionContext`; box predicates read only
+  the `Universe` box-register facade; `\ifeof` reads the `World` input stream
+  table directly through `ExpansionState`. False
   conditional limbs and already-taken `\ifcase` limbs are
   skipped by reading raw tokens from `tex-lex` under the active catcode table,
   while `\else`, `\or`, and `\fi` update the input-stack condition frame and
@@ -515,9 +518,11 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   immutable identifier control sequence, whose identity participates in font
   semantic hashes. Time/job parameters not yet backed by `Env` remain
   documented TODOs until those classes are semantically available.
-- Input/job expandables use explicit driver hooks: `tex-expand` scans the
-  `\input` file name and asks the caller for a new `InputSource`, while
-  `\jobname` renders the caller-provided job name. This preserves the rule
+- Input/job expandables use explicit session context: `tex-expand` scans the
+  `\input` file name and invokes the context's object-safe `InputResolver` for
+  a new `InputSource`, while `\jobname` renders plain session data. The
+  resolver is dynamically dispatched only for `\input`; scanner and ordinary
+  token dispatch carry no resolver type parameter. This preserves the rule
   that file access belongs to `World`/the driver layer, not to the gullet.
   `\fontname` renders loaded font selector names. The mark-family expandables
   replay the frozen token lists stored in the Universe-owned page mark slots;
@@ -809,7 +814,7 @@ assignments, box building, and dispatch into the typesetting kernels.
   loop also reports and consumes recoverable expansion, assignment-target,
   and group-closure errors in place; it must not unwind the box construction
   transaction and expose the unread body to the enclosing list. The gullet's mode predicates
-  are backed by the current nest level through `ExpansionHooks`, collapsing
+  read a snapshot of the current nest level from `ExpansionContext`, collapsing
   the six modes into the three `\ifvmode`/`\ifhmode`/`\ifmmode` families and
   the `\ifinner` bit. Box primitives are implemented for register
   round-trips, packing, unboxing, last-box extraction, dimension reads/writes,

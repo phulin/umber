@@ -26,25 +26,24 @@ pub(super) enum GlueArithmeticRhs {
     Factor(i32),
 }
 
-pub(super) fn scan_glue_or_factor<S, H>(
+pub(super) fn scan_glue_or_factor<S>(
     primitive: UnexpandablePrimitive,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     mu: bool,
     context: TracedTokenWord,
 ) -> Result<GlueArithmeticRhs, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     match primitive {
         UnexpandablePrimitive::Advance => {
-            let id = scan_glue_id(input, stores, hooks, mu, context)?;
+            let id = scan_glue_id(input, stores, execution, mu, context)?;
             Ok(GlueArithmeticRhs::Glue(stores.glue(id)))
         }
         UnexpandablePrimitive::Multiply | UnexpandablePrimitive::Divide => Ok(
-            GlueArithmeticRhs::Factor(scan_i32(input, stores, hooks, context)?),
+            GlueArithmeticRhs::Factor(scan_i32(input, stores, execution, context)?),
         ),
         _ => unreachable!("caller restricts primitive"),
     }

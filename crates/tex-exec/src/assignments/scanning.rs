@@ -43,19 +43,19 @@ pub(super) fn variable_from_meaning(meaning: Meaning) -> Option<Variable> {
     }
 }
 
-pub(super) fn scan_variable_target<S, H>(
+pub(super) fn scan_variable_target<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<Variable, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     let mut recorder = NoopRecorder;
-    let traced = next_non_space_traced_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
-        context: "arithmetic target",
-    })?;
+    let traced =
+        next_non_space_traced_x(input, stores, execution)?.ok_or(ExecError::MissingToken {
+            context: "arithmetic target",
+        })?;
     let token = tex_expand::semantic_token(traced);
     let Token::Cs(symbol) = token else {
         return Err(ExecError::ExpectedControlSequence {
@@ -67,26 +67,26 @@ where
     let meaning = stores.meaning(symbol);
     match meaning {
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count) => Ok(Variable::IntRegister(
-            scan_register_index_with_recorder(input, stores, &mut recorder, hooks, traced)?,
+            scan_register_index_with_recorder(input, stores, &mut recorder, execution, traced)?,
         )),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
             Ok(Variable::DimenRegister(scan_register_index_with_recorder(
                 input,
                 stores,
                 &mut recorder,
-                hooks,
+                execution,
                 traced,
             )?))
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) => Ok(Variable::GlueRegister(
-            scan_register_index_with_recorder(input, stores, &mut recorder, hooks, traced)?,
+            scan_register_index_with_recorder(input, stores, &mut recorder, execution, traced)?,
         )),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
             Ok(Variable::MuGlueRegister(scan_register_index_with_recorder(
                 input,
                 stores,
                 &mut recorder,
-                hooks,
+                execution,
                 traced,
             )?))
         }
@@ -96,7 +96,7 @@ where
                 traced,
                 input,
                 stores,
-                hooks,
+                execution,
             )
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HyphenChar) => {
@@ -105,7 +105,7 @@ where
                 traced,
                 input,
                 stores,
-                hooks,
+                execution,
             )
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::SkewChar) => {
@@ -114,43 +114,41 @@ where
                 traced,
                 input,
                 stores,
-                hooks,
+                execution,
             )
         }
         meaning => variable_from_meaning(meaning).ok_or(ExecError::UnsupportedAssignmentTarget),
     }
 }
 
-pub(super) fn scan_register_index<S, H>(
+pub(super) fn scan_register_index<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<u16, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
-    scan_register_index_with_recorder(input, stores, &mut NoopRecorder, hooks, context)
+    scan_register_index_with_recorder(input, stores, &mut NoopRecorder, execution, context)
 }
 
-pub(super) fn scan_register_index_with_recorder<S, R, H>(
+pub(super) fn scan_register_index_with_recorder<S, R>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<u16, ExecError>
 where
     S: InputSource,
     R: tex_expand::ReadRecorder,
-    H: ExpansionHooks<S>,
 {
-    let scanned = scan_int::scan_int_with_expander_and_hooks(
+    let scanned = scan_int::scan_int_with_expander_and_context(
         input,
         stores,
         recorder,
-        hooks,
+        execution,
         &mut DriverExpandNext,
         context,
     )
@@ -171,22 +169,21 @@ where
     Ok(value as u16)
 }
 
-pub(crate) fn scan_i32<S, H>(
+pub(crate) fn scan_i32<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<i32, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     let mut recorder = NoopRecorder;
-    let scanned = scan_int::scan_int_with_expander_and_hooks(
+    let scanned = scan_int::scan_int_with_expander_and_context(
         input,
         stores,
         &mut recorder,
-        hooks,
+        execution,
         &mut DriverExpandNext,
         context,
     )
@@ -197,17 +194,16 @@ where
     Ok(scanned.value())
 }
 
-pub(super) fn scan_nonzero_i32<S, H>(
+pub(super) fn scan_nonzero_i32<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<i32, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
-    let value = scan_i32(input, stores, hooks, context)?;
+    let value = scan_i32(input, stores, execution, context)?;
     if value == 0 {
         Err(ExecError::ArithmeticOverflow)
     } else {
@@ -215,22 +211,21 @@ where
     }
 }
 
-pub(crate) fn scan_scaled<S, H>(
+pub(crate) fn scan_scaled<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<Scaled, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     let mut recorder = NoopRecorder;
-    let scanned = scan_dimen::scan_dimen_with_expander_and_hooks(
+    let scanned = scan_dimen::scan_dimen_with_expander_and_context(
         input,
         stores,
         &mut recorder,
-        hooks,
+        execution,
         &mut DriverExpandNext,
         scan_dimen::ScanDimenOptions::STANDARD,
         context,
@@ -240,23 +235,22 @@ where
     Ok(scanned.value())
 }
 
-pub(crate) fn scan_glue_id<S, H>(
+pub(crate) fn scan_glue_id<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     mu: bool,
     context: TracedTokenWord,
 ) -> Result<GlueId, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     let mut recorder = NoopRecorder;
-    let scanned = scan_glue::scan_glue_with_expander_and_hooks(
+    let scanned = scan_glue::scan_glue_with_expander_and_context(
         input,
         stores,
         &mut recorder,
-        hooks,
+        execution,
         &mut DriverExpandNext,
         mu,
         context,
@@ -266,23 +260,22 @@ where
     Ok(scanned.id())
 }
 
-pub(super) fn scan_token_list_assignment<S, H>(
+pub(super) fn scan_token_list_assignment<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<tex_state::ids::TokenListId, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
-    let traced = next_non_space_traced_x(input, stores, hooks)?
+    let traced = next_non_space_traced_x(input, stores, execution)?
         .ok_or(ExecError::MissingTracedToken { context })?;
     let token = tex_expand::semantic_token(traced);
     if let Token::Cs(symbol) = token {
         match stores.meaning(symbol) {
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
-                let index = scan_register_index(input, stores, hooks, traced)?;
+                let index = scan_register_index(input, stores, execution, traced)?;
                 return Ok(stores.toks(index));
             }
             Meaning::ToksRegister(index) => return Ok(stores.toks(index)),
@@ -353,19 +346,19 @@ where
     })
 }
 
-pub(crate) fn next_non_space_x<S, H>(
+pub(crate) fn next_non_space_x<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<Option<Token>, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     let mut recorder = NoopRecorder;
     loop {
-        let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?
-            .map(tex_expand::semantic_token)
+        let Some(token) =
+            get_x_token_with_recorder_and_context(input, stores, &mut recorder, execution)?
+                .map(tex_expand::semantic_token)
         else {
             return Ok(None);
         };
@@ -375,18 +368,18 @@ where
     }
 }
 
-pub(crate) fn next_non_space_traced_x<S, H>(
+pub(crate) fn next_non_space_traced_x<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<Option<TracedTokenWord>, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     let mut recorder = NoopRecorder;
     loop {
-        let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?
+        let Some(token) =
+            get_x_token_with_recorder_and_context(input, stores, &mut recorder, execution)?
         else {
             return Ok(None);
         };
@@ -396,22 +389,21 @@ where
     }
 }
 
-pub(crate) fn scan_optional_keyword_x<S, H>(
+pub(crate) fn scan_optional_keyword_x<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     keyword: &str,
 ) -> Result<bool, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     let mut recorder = NoopRecorder;
-    Ok(scan_optional_keyword_with_hooks(
+    Ok(scan_optional_keyword_with_context(
         input,
         stores,
         &mut recorder,
-        hooks,
+        execution,
         keyword,
     )?)
 }

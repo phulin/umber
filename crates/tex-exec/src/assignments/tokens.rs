@@ -22,18 +22,18 @@ pub(super) fn apply_globaldefs(explicit_global: bool, stores: &Universe) -> bool
     }
 }
 
-pub(super) fn skip_optional_equals_x<S, H>(
+pub(super) fn skip_optional_equals_x<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     let mut recorder = NoopRecorder;
     let traced = loop {
-        let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?
+        let Some(token) =
+            get_x_token_with_recorder_and_context(input, stores, &mut recorder, execution)?
         else {
             return Err(ExecError::MissingToken {
                 context: "assignment value",
@@ -46,7 +46,8 @@ where
     if !is_other_equals(tex_expand::semantic_token(traced)) {
         tex_expand::back_input(input, stores, [traced]);
     } else {
-        let Some(next) = get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?
+        let Some(next) =
+            get_x_token_with_recorder_and_context(input, stores, &mut recorder, execution)?
         else {
             return Ok(());
         };

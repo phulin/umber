@@ -9,7 +9,7 @@ use tex_state::provenance::InsertedOriginKind;
 use tex_state::token::{OriginId, Token, TracedTokenWord};
 
 use crate::{
-    Dispatch, ExpandError, ExpandNext, ExpandableOpcode, ExpansionHooks, NoInputExpandNext,
+    Dispatch, ExpandError, ExpandNext, ExpandableOpcode, ExpansionContext, NoInputExpandNext,
     ReadRecorder, expandable_symbol, push_inserted_token, scan_helpers, scan_int, semantic_token,
 };
 
@@ -47,11 +47,11 @@ pub(crate) fn begin_ifcase_evaluation<S>(
     input.push_condition(metadata.apply(ConditionFrameSummary::evaluating_ifcase(context)))
 }
 
-pub(crate) fn begin_if<S, R, H>(
+pub(crate) fn begin_if<S, R>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     condition: bool,
     metadata: ConditionMetadata,
     context: TracedTokenWord,
@@ -59,28 +59,26 @@ pub(crate) fn begin_if<S, R, H>(
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     let frame_token =
         input.push_condition(metadata.apply(ConditionFrameSummary::new_if(context, condition)));
     if !condition {
-        skip_false_limb(input, stores, recorder, hooks, frame_token)?;
+        skip_false_limb(input, stores, recorder, expansion, frame_token)?;
     }
     Ok(Dispatch::Continue)
 }
 
-pub(crate) fn complete_if_evaluation<S, R, H>(
+pub(crate) fn complete_if_evaluation<S, R>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     condition: bool,
     frame_token: ConditionFrameToken,
 ) -> Result<Dispatch, ExpandError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     let current = input
         .current_condition()
@@ -95,23 +93,22 @@ where
         .ok_or(ExpandError::IncompleteIf { context })?;
     debug_assert!(previous.evaluating());
     if !condition {
-        skip_false_limb(input, stores, recorder, hooks, frame_token)?;
+        skip_false_limb(input, stores, recorder, expansion, frame_token)?;
     }
     Ok(Dispatch::Continue)
 }
 
-pub(crate) fn complete_ifcase_evaluation<S, R, H>(
+pub(crate) fn complete_ifcase_evaluation<S, R>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     selected_case: i32,
     frame_token: ConditionFrameToken,
 ) -> Result<Dispatch, ExpandError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     let current = input
         .current_condition()
@@ -129,23 +126,29 @@ where
         .ok_or(ExpandError::IncompleteIf { context })?;
     debug_assert!(previous.evaluating());
     if !take_initial_limb {
-        skip_ifcase_to_selected_limb(input, stores, recorder, hooks, selected_case, frame_token)?;
+        skip_ifcase_to_selected_limb(
+            input,
+            stores,
+            recorder,
+            expansion,
+            selected_case,
+            frame_token,
+        )?;
     }
     Ok(Dispatch::Continue)
 }
 
-pub(crate) fn handle_else<S, R, H>(
+pub(crate) fn handle_else<S, R>(
     token: Token,
     origin: OriginId,
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
 ) -> Result<Dispatch, ExpandError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     let context = TracedTokenWord::pack(token, origin);
     if current_condition_is_evaluating(input) {
@@ -175,23 +178,22 @@ where
         .update_condition(frame_token, else_frame)
         .expect("the current condition frame remains live");
     if frame.any_limb_taken() {
-        skip_to_fi(input, stores, recorder, hooks, frame_token)?;
+        skip_to_fi(input, stores, recorder, expansion, frame_token)?;
     }
     Ok(Dispatch::Continue)
 }
 
-pub(crate) fn handle_or<S, R, H>(
+pub(crate) fn handle_or<S, R>(
     token: Token,
     origin: OriginId,
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
 ) -> Result<Dispatch, ExpandError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     let context = TracedTokenWord::pack(token, origin);
     if current_condition_is_evaluating(input) {
@@ -221,7 +223,7 @@ where
         .update_condition(frame_token, frame.with_or_limb(next_or_count, false))
         .expect("the current condition frame remains live");
     if frame.any_limb_taken() {
-        skip_to_fi(input, stores, recorder, hooks, frame_token)?;
+        skip_to_fi(input, stores, recorder, expansion, frame_token)?;
     }
     Ok(Dispatch::Continue)
 }
@@ -277,61 +279,65 @@ fn insert_relax_before_token<S>(
     );
 }
 
-fn skip_false_limb<S, R, H>(
+fn skip_false_limb<S, R>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     frame_token: ConditionFrameToken,
 ) -> Result<(), ExpandError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     skip_until(
         input,
         stores,
         recorder,
-        hooks,
+        expansion,
         SkipTarget::ElseOrFi,
         frame_token,
     )
 }
 
-fn skip_to_fi<S, R, H>(
+fn skip_to_fi<S, R>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     frame_token: ConditionFrameToken,
 ) -> Result<(), ExpandError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
-    skip_until(input, stores, recorder, hooks, SkipTarget::Fi, frame_token)
+    skip_until(
+        input,
+        stores,
+        recorder,
+        expansion,
+        SkipTarget::Fi,
+        frame_token,
+    )
 }
 
-fn skip_ifcase_to_selected_limb<S, R, H>(
+fn skip_ifcase_to_selected_limb<S, R>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     selected_case: i32,
     frame_token: ConditionFrameToken,
 ) -> Result<(), ExpandError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     skip_until(
         input,
         stores,
         recorder,
-        hooks,
+        expansion,
         SkipTarget::IfCaseSelection(selected_case),
         frame_token,
     )
@@ -344,18 +350,17 @@ enum SkipTarget {
     IfCaseSelection(i32),
 }
 
-fn skip_until<S, R, H>(
+fn skip_until<S, R>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
-    _hooks: &mut H,
+    _context: &mut ExpansionContext<'_, S>,
     target: SkipTarget,
     frame_token: ConditionFrameToken,
 ) -> Result<(), ExpandError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     let mut nesting = 0_u32;
     loop {
@@ -581,11 +586,11 @@ where
     }
 }
 
-pub(crate) fn scan_condition_x_token<S, St, R, H, E>(
+pub(crate) fn scan_condition_x_token<S, St, R, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
     context: TracedTokenWord,
 ) -> Result<Token, ExpandError>
@@ -593,11 +598,10 @@ where
     S: InputSource,
     St: ExpansionState,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
-    E: ExpandNext<S, St, R, H>,
+    E: ExpandNext<S, St, R>,
 {
     let token = expander
-        .next_expanded_token(input, stores, recorder, hooks)?
+        .next_expanded_token(input, stores, recorder, expansion)?
         .ok_or(ExpandError::MissingTokenAfterPrimitive {
             opcode: ExpandableOpcode::If,
             context,
@@ -639,33 +643,32 @@ pub(crate) enum ConditionalRelation {
 }
 
 #[allow(dead_code)]
-pub(crate) fn scan_conditional_relation<S, R, H>(
+pub(crate) fn scan_conditional_relation<S, R>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<ConditionalRelation, ExpandError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
-    scan_conditional_relation_with_expander_and_hooks(
+    scan_conditional_relation_with_expander_and_context(
         input,
         stores,
         recorder,
-        hooks,
+        expansion,
         &mut NoInputExpandNext,
         context,
     )
 }
 
-pub(crate) fn scan_conditional_relation_with_expander_and_hooks<S, St, R, H, E>(
+pub(crate) fn scan_conditional_relation_with_expander_and_context<S, St, R, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
     context: TracedTokenWord,
 ) -> Result<ConditionalRelation, ExpandError>
@@ -673,11 +676,10 @@ where
     S: InputSource,
     St: ExpansionState,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
-    E: ExpandNext<S, St, R, H>,
+    E: ExpandNext<S, St, R>,
 {
-    let Some(token) = scan_helpers::next_non_space_x_token_with_expander_and_hooks(
-        input, stores, recorder, hooks, expander,
+    let Some(token) = scan_helpers::next_non_space_x_token_with_expander_and_context(
+        input, stores, recorder, expansion, expander,
     )?
     else {
         return Err(ExpandError::MissingTokenAfterPrimitive {
@@ -736,33 +738,32 @@ pub(crate) fn box_register_has_kind(
 }
 
 #[allow(dead_code)]
-pub(crate) fn scan_stream_number<S, R, H>(
+pub(crate) fn scan_stream_number<S, R>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<u8, ExpandError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
-    scan_stream_number_with_expander_and_hooks(
+    scan_stream_number_with_expander_and_context(
         input,
         stores,
         recorder,
-        hooks,
+        expansion,
         &mut NoInputExpandNext,
         context,
     )
 }
 
-pub(crate) fn scan_stream_number_with_expander_and_hooks<S, St, R, H, E>(
+pub(crate) fn scan_stream_number_with_expander_and_context<S, St, R, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
     context: TracedTokenWord,
 ) -> Result<u8, ExpandError>
@@ -770,11 +771,10 @@ where
     S: InputSource,
     St: ExpansionState,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
-    E: ExpandNext<S, St, R, H>,
+    E: ExpandNext<S, St, R>,
 {
-    let value = scan_int::scan_int_with_expander_and_hooks(
-        input, stores, recorder, hooks, expander, context,
+    let value = scan_int::scan_int_with_expander_and_context(
+        input, stores, recorder, expansion, expander, context,
     )?
     .value();
     Ok(value.clamp(0, 15) as u8)

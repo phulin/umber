@@ -1046,8 +1046,10 @@ The type system is the write barrier's bodyguard. The rules:
   expansion/dispatch path carries the additional `InputOpenState` authority
   needed to construct `InputOpenContext`; scanner recursion uses the narrow
   `ExpandNext` capability instead of receiving input-open authority directly.
-  Driver `\input` hooks receive the separate `InputReadState` capability
-  through `InputOpenContext`, which exposes only content-addressed input reads.
+  The concrete expansion context holds an object-safe `InputResolver`. Only
+  top-level `\input` dispatch invokes it, passing the separate `InputReadState`
+  capability through `InputOpenContext`, which exposes only content-addressed
+  input reads. Scanner recursion carries no resolver type parameter.
 
 ### 10.3 Unforgeable handles
 

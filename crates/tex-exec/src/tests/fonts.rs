@@ -87,14 +87,11 @@ fn font_definition_uses_driver_font_resolution_and_records_resolved_path() {
     let snapshot = stores.snapshot();
     let mut input = InputStack::new(MemoryInput::new("\\font\\f=cmr10 \\end"));
     let mut recorder = NoopRecorder;
+    let mut resolvers = MemoryResolvers::new().with_font_root("/fonts");
+    let mut context = resolvers.context();
 
     Executor::new()
-        .run_with_recorder_and_hooks(
-            &mut input,
-            &mut stores,
-            &mut recorder,
-            &mut TestHooks::new().with_font_root("/fonts"),
-        )
+        .run_with_recorder_and_context(&mut input, &mut stores, &mut recorder, &mut context)
         .expect("font definition resolves through driver hook");
 
     let font = font_meaning(&stores, "f");

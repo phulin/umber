@@ -1,4 +1,4 @@
-use tex_expand::{ExpansionHooks, ReadRecorder};
+use tex_expand::ReadRecorder;
 use tex_lex::{InputSource, InputStack};
 use tex_state::env::banks::DimenParam;
 use tex_state::node::Node;
@@ -17,19 +17,18 @@ mod direct;
 // compact-list traversal writes canonical artifact bytes and DVI plan bytes.
 // No detached node tree or per-list snapshot crosses that traversal.
 
-pub(super) fn execute_shipout<S, R, H>(
+pub(super) fn execute_shipout<S, R>(
     context: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<Option<PreparedDviPage>, ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
-    let node = scan_required_box_node(input, stores, hooks, context)?;
+    let node = scan_required_box_node(input, stores, execution, context)?;
     shipout_node(node, input, stores, recorder)
 }
 

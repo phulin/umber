@@ -6,7 +6,7 @@ Read the repository-level `AGENTS.md` before editing here. This crate owns TeX's
 
 `tex-expand` implements the `get_x_token`-style expansion loop over `tex-lex::InputStack`. It reads meanings through `tex-state::Universe`, expands expandable primitives and macros, manages conditional skipping, replays frozen token lists through the lexer stack, and provides shared scanners for integers, dimensions, glue, token lists, and expansion-derived textual values.
 
-Use this crate for behavior that is defined before stomach execution sees an unexpandable token. Expansion should be explicit about hooks for file input, font reads requested by the executor, job names, and other driver-owned facts; the crate should not open files or perform host effects itself.
+Use this crate for behavior that is defined before stomach execution sees an unexpandable token. Expansion receives engine enquiries and job identity as plain context data and invokes an object-safe input resolver only for `\input`; font resolution belongs to the executor. The crate should not open files or perform host effects itself.
 
 ## Boundaries
 
@@ -22,8 +22,8 @@ Use this crate for behavior that is defined before stomach execution sees an une
 - `src/args.rs`: macro-call parameter matching and argument token-list freezing.
 - `src/args_tests.rs`: unit coverage for macro argument scanning behavior.
 - `src/conditionals.rs`: conditional stack transitions and skipped-branch scanning for `\if...`, `\else`, `\or`, and `\fi`.
-- `src/dispatch.rs`: expandable token dispatch, hook-aware primitive handling, and expansion result routing.
-- `src/lib.rs`: public crate API, core expansion loop types, hooks, errors, and primitive installation.
+- `src/dispatch.rs`: expandable token dispatch, context-aware primitive handling, and expansion result routing.
+- `src/lib.rs`: public crate API, core expansion loop types, concrete expansion context, localized input resolver, errors, and primitive installation.
 - `src/primitives.rs`: implementations for expandable primitive helpers such as `\expandafter`, `\csname`, and `\input` name scanning.
 - `src/scan.rs`: reusable macro definition token scanning for `\def`/`\edef`-style callers.
 - `src/scan/tests.rs`: unit tests for macro definition token scanning.

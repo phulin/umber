@@ -1,6 +1,6 @@
 use super::*;
-use std::path::PathBuf;
-use tex_expand::ReadRecorder;
+use std::path::{Path, PathBuf};
+use tex_expand::{InputResolver, ReadRecorder};
 use tex_state::interner::Symbol;
 
 pub(super) fn install_expandable(
@@ -67,49 +67,60 @@ pub(super) fn font_meaning(stores: &Universe, name: &str) -> tex_state::ids::Fon
     }
 }
 
-pub(crate) struct TestHooks {
-    sources: AHashMap<String, String>,
-    font_root: Option<PathBuf>,
+pub(crate) struct MemoryResolvers {
+    input: WorldMemoryInputResolver,
+    font: WorldFontResolver,
 }
 
-impl TestHooks {
+impl MemoryResolvers {
     pub(crate) fn new() -> Self {
         Self {
-            sources: AHashMap::new(),
-            font_root: None,
+            input: WorldMemoryInputResolver,
+            font: WorldFontResolver { root: None },
         }
     }
 
-    pub(crate) fn with_source(mut self, name: &str, source: &str) -> Self {
-        self.sources.insert(name.to_owned(), source.to_owned());
+    pub(crate) fn with_font_root(mut self, root: impl Into<PathBuf>) -> Self {
+        self.font.root = Some(root.into());
         self
     }
 
-    pub(crate) fn with_font_root(mut self, root: impl Into<PathBuf>) -> Self {
-        self.font_root = Some(root.into());
-        self
+    pub(crate) fn context(&mut self) -> crate::ExecutionContext<'_, MemoryInput> {
+        crate::ExecutionContext::with_resolvers("texput", &mut self.input, &mut self.font)
     }
 }
 
-impl ExpansionHooks<MemoryInput> for TestHooks {
-    fn open_input<C: tex_state::InputReadState>(
-        &mut self,
-        _input: &mut C,
-        name: &str,
-    ) -> Result<MemoryInput, String> {
-        self.sources
-            .get(name)
-            .map(|source| MemoryInput::new(source.clone()))
-            .ok_or_else(|| format!("unexpected input {name}"))
-    }
+struct WorldMemoryInputResolver;
 
-    fn open_font<C: tex_state::InputReadState>(
+impl InputResolver<MemoryInput> for WorldMemoryInputResolver {
+    fn open_input(
         &mut self,
-        input: &mut C,
+        input: &mut dyn tex_state::InputReadState,
+        name: &str,
+        _request_index: u64,
+    ) -> Result<MemoryInput, String> {
+        let content = input
+            .read_input_file(Path::new(name))
+            .map_err(|error| error.to_string())?;
+        Ok(MemoryInput::new(
+            String::from_utf8_lossy(content.bytes()).into_owned(),
+        ))
+    }
+}
+
+struct WorldFontResolver {
+    root: Option<PathBuf>,
+}
+
+impl crate::FontResolver for WorldFontResolver {
+    fn open_font(
+        &mut self,
+        input: &mut dyn tex_state::InputReadState,
         path: &std::path::Path,
+        _request_index: u64,
     ) -> Result<tex_state::FileContent, String> {
         let path = self
-            .font_root
+            .root
             .as_ref()
             .map_or_else(|| path.to_owned(), |root| root.join(path));
         input.read_input_file(&path).map_err(|err| err.to_string())

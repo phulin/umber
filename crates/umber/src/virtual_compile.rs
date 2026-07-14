@@ -11,12 +11,12 @@ use crate::{
     collect_final_memory_output_from_plans, prepare_run_stores,
 };
 
-mod hooks;
 mod path;
+mod resolvers;
 
-use hooks::VirtualRunHooks;
 pub use path::{VirtualPath, VirtualPathError};
 use path::{normalize_request_name, user_path_for_key};
+use resolvers::VirtualRunResolvers;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum FileKind {
@@ -512,10 +512,11 @@ impl VirtualCompileSession {
             .read_file(self.main_path.as_path())
             .map_err(|_| CompileError::MissingMainFile(self.main_path.to_string()))?;
         let mut input = InputStack::new(WorldInput::from_content(main));
-        let mut hooks =
-            VirtualRunHooks::new(&self.user_files, &self.resolved_files, &self.job_name);
-        let execution = EngineSession::new(&mut input, &mut stores, &mut hooks).execute();
-        let (misses, fatal) = hooks.finish();
+        let mut resolvers = VirtualRunResolvers::new(&self.user_files, &self.resolved_files);
+        let execution =
+            EngineSession::new(&mut input, &mut stores, resolvers.context(&self.job_name))
+                .execute();
+        let (misses, fatal) = resolvers.finish();
 
         if !misses.is_empty() {
             self.awaiting = Some(misses.iter().map(|request| request.key.clone()).collect());

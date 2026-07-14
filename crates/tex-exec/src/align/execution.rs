@@ -1,6 +1,6 @@
 use tex_expand::{
-    ExpansionHooks, ReadRecorder, get_x_or_protected_with_recorder_and_hooks,
-    get_x_token_with_recorder_and_hooks,
+    ReadRecorder, get_x_or_protected_with_recorder_and_context,
+    get_x_token_with_recorder_and_context,
 };
 use tex_lex::{InputSource, InputStack, TokenListReplayKind};
 use tex_state::env::banks::TokParam;
@@ -23,18 +23,17 @@ use crate::{
     DispatchAction, ExecError, ExecutionStats, Mode, ModeNest, leave_group, push_traced_tokens,
 };
 
-pub(crate) fn execute_alignment<S, R, H>(
+pub(crate) fn execute_alignment<S, R>(
     state: AlignState,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     {
         let alignment_kind = state.kind();
@@ -52,7 +51,8 @@ where
         stores.enter_group_with_kind(tex_state::GroupKind::Align);
         replay_everycr(input, stores);
 
-        while let Some(first_token) = align_peek(align_level, nest, input, stores, recorder, hooks)?
+        while let Some(first_token) =
+            align_peek(align_level, nest, input, stores, recorder, execution)?
         {
             init_row(align_level, nest)?;
             let suppress_redundant_cr = execute_row(
@@ -62,7 +62,7 @@ where
                 input,
                 stores,
                 recorder,
-                hooks,
+                execution,
             )?;
             align_state_mut(nest, align_level)?.set_suppress_redundant_cr(suppress_redundant_cr);
             fin_row(align_level, nest, stores)?;
@@ -102,18 +102,17 @@ pub(crate) fn append_finished_alignment(
     }
 }
 
-pub(super) fn execute_alignment_to_nodes<S, R, H>(
+pub(super) fn execute_alignment_to_nodes<S, R>(
     state: AlignState,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<Vec<Node>, ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     {
         let alignment_kind = state.kind();
@@ -130,7 +129,8 @@ where
         stores.enter_group_with_kind(tex_state::GroupKind::Align);
         replay_everycr(input, stores);
 
-        while let Some(first_token) = align_peek(align_level, nest, input, stores, recorder, hooks)?
+        while let Some(first_token) =
+            align_peek(align_level, nest, input, stores, recorder, execution)?
         {
             init_row(align_level, nest)?;
             let suppress_redundant_cr = execute_row(
@@ -140,7 +140,7 @@ where
                 input,
                 stores,
                 recorder,
-                hooks,
+                execution,
             )?;
             align_state_mut(nest, align_level)?.set_suppress_redundant_cr(suppress_redundant_cr);
             fin_row(align_level, nest, stores)?;
@@ -178,22 +178,21 @@ fn replay_everycr<S>(input: &mut InputStack<S>, stores: &Universe) {
     }
 }
 
-fn align_peek<S, H>(
+fn align_peek<S>(
     align_level: usize,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut impl ReadRecorder,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<Option<TracedTokenWord>, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     loop {
         set_align_brace_depth(nest, align_level, 1_000_000);
         input.set_alignment_state(1_000_000);
-        let Some(token) = next_non_space_protected(input, stores, recorder, hooks)? else {
+        let Some(token) = next_non_space_protected(input, stores, recorder, execution)? else {
             stores.world_mut().write_text(
                 PrintSink::TerminalAndLog,
                 "\n! Missing } inserted while finishing alignment.\n",
@@ -204,7 +203,7 @@ where
         };
         let semantic = tex_expand::semantic_token(token);
         if is_noalign(stores, semantic) {
-            super::noalign::execute_noalign(align_level, nest, input, stores, recorder, hooks)?;
+            super::noalign::execute_noalign(align_level, nest, input, stores, recorder, execution)?;
             continue;
         }
         if is_end_group(stores, semantic) {
@@ -248,19 +247,18 @@ fn init_row(align_level: usize, nest: &mut ModeNest) -> Result<(), ExecError> {
     Ok(())
 }
 
-fn execute_row<S, R, H>(
+fn execute_row<S, R>(
     align_level: usize,
     first_token: TracedTokenWord,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<bool, ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     let mut start_token = Some(first_token);
     let mut column = 0usize;
@@ -275,7 +273,7 @@ where
             input,
             stores,
             recorder,
-            hooks,
+            execution,
         )?;
         column = result.next_column;
         if result.ended_row {
@@ -285,7 +283,7 @@ where
         // of every following column, not only after a spanning column.
         input.set_alignment_state(1_000_000);
         start_token = Some(
-            next_non_space_protected(input, stores, recorder, hooks)?.ok_or(
+            next_non_space_protected(input, stores, recorder, execution)?.ok_or(
                 ExecError::MissingToken {
                     context: "alignment cell",
                 },
@@ -330,19 +328,18 @@ struct CellStart {
     first_token: Option<TracedTokenWord>,
 }
 
-fn execute_cell<S, R, H>(
+fn execute_cell<S, R>(
     align_level: usize,
     start: CellStart,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<CellResult, ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     let kind = align_kind(nest, align_level)?;
     nest.push(cell_mode(kind));
@@ -382,7 +379,7 @@ where
                     input,
                     stores,
                     recorder,
-                    hooks,
+                    execution,
                 )?;
             } else {
                 super::template::replay_template(
@@ -392,7 +389,7 @@ where
                     input,
                     stores,
                     recorder,
-                    hooks,
+                    execution,
                 )?;
             }
         } else {
@@ -401,7 +398,7 @@ where
         align_state_mut(nest, align_level)?.start_cell(column, span_count);
 
         let terminator =
-            run_cell_body_until_terminator(align_level, nest, input, stores, recorder, hooks)?;
+            run_cell_body_until_terminator(align_level, nest, input, stores, recorder, execution)?;
         match terminator {
             CellTerminator::Span => {
                 flush_pending_hchars(nest, stores)?;
@@ -412,7 +409,7 @@ where
                 // TeX82 fin_col restores the sentinel before looking for the
                 // first token of the next spanned column.
                 input.set_alignment_state(1_000_000);
-                first_token = next_non_space_protected(input, stores, recorder, hooks)?;
+                first_token = next_non_space_protected(input, stores, recorder, execution)?;
             }
             CellTerminator::AlignmentTab | CellTerminator::Cr => {
                 let next_column = column + 1;
@@ -442,21 +439,25 @@ where
     }
 }
 
-fn next_non_space_protected<S, R, H>(
+fn next_non_space_protected<S, R>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<Option<TracedTokenWord>, ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     loop {
         let token = {
             let mut expansion = ExpansionContext::new(stores);
-            get_x_or_protected_with_recorder_and_hooks(input, &mut expansion, recorder, hooks)?
+            get_x_or_protected_with_recorder_and_context(
+                input,
+                &mut expansion,
+                recorder,
+                execution,
+            )?
         };
         match token {
             Some(token)
@@ -514,25 +515,24 @@ enum CellTerminator {
     Span,
 }
 
-fn run_cell_body_until_terminator<S, R, H>(
+fn run_cell_body_until_terminator<S, R>(
     _align_level: usize,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<CellTerminator, ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     let mut stats = ExecutionStats::default();
     loop {
-        sync_engine_state::<S, _>(hooks, nest, stores);
+        sync_engine_state::<S>(execution, nest, stores);
         let fetched = {
             let mut expansion = ExpansionContext::new(stores);
-            get_x_token_with_recorder_and_hooks(input, &mut expansion, recorder, hooks)
+            get_x_token_with_recorder_and_context(input, &mut expansion, recorder, execution)
         };
         let token = match fetched {
             Ok(Some(token)) => token,
@@ -650,7 +650,7 @@ where
             insert_traced_tokens(input, stores, [TracedTokenWord::pack(left, origin), token]);
             continue;
         }
-        dispatch_and_drain(nest, token, input, stores, recorder, hooks, &mut stats)?;
+        dispatch_and_drain(nest, token, input, stores, recorder, execution, &mut stats)?;
     }
 }
 
@@ -679,23 +679,22 @@ pub(super) enum TemplateStep {
     DeferredOuterRecovery,
 }
 
-pub(super) fn run_one_main_control_token<S, R, H>(
+pub(super) fn run_one_main_control_token<S, R>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     stats: &mut ExecutionStats,
 ) -> Result<TemplateStep, ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
-    sync_engine_state::<S, _>(hooks, nest, stores);
+    sync_engine_state::<S>(execution, nest, stores);
     let fetched = {
         let mut expansion = ExpansionContext::new(stores);
-        get_x_token_with_recorder_and_hooks(input, &mut expansion, recorder, hooks)
+        get_x_token_with_recorder_and_context(input, &mut expansion, recorder, execution)
     };
     let token = match fetched {
         Ok(Some(token)) => token,
@@ -722,62 +721,61 @@ where
     if tex_expand::semantic_token(token).is_frozen_endv() {
         return Ok(TemplateStep::EndV);
     }
-    dispatch_and_drain(nest, token, input, stores, recorder, hooks, stats)?;
+    dispatch_and_drain(nest, token, input, stores, recorder, execution, stats)?;
     Ok(TemplateStep::Continue)
 }
 
-pub(super) fn dispatch_and_drain<S, R, H>(
+pub(super) fn dispatch_and_drain<S, R>(
     nest: &mut ModeNest,
     token: tex_state::token::TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     stats: &mut ExecutionStats,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
-    let action =
-        match dispatch_delivered_token_with_recorder(nest, token, input, stores, recorder, hooks) {
-            Ok(action) => action,
-            Err(ExecError::Expand(tex_expand::ExpandError::UndefinedControlSequence {
-                name,
-                ..
-            })) => {
-                stores.world_mut().write_text(
-                    PrintSink::TerminalAndLog,
-                    &format!("\n! Undefined control sequence \\{name}.\n"),
-                );
-                return Ok(());
-            }
-            Err(ExecError::Expand(tex_expand::ExpandError::Captured { error, .. }))
-                if matches!(
-                    error.as_ref(),
-                    tex_expand::ExpandError::UndefinedControlSequence { .. }
-                ) =>
-            {
-                let tex_expand::ExpandError::UndefinedControlSequence { name, .. } = *error else {
-                    unreachable!("guard restricts captured expansion error")
-                };
-                stores.world_mut().write_text(
-                    PrintSink::TerminalAndLog,
-                    &format!("\n! Undefined control sequence \\{name}.\n"),
-                );
-                return Ok(());
-            }
-            Err(error) => return Err(error),
-        };
+    let action = match dispatch_delivered_token_with_recorder(
+        nest, token, input, stores, recorder, execution,
+    ) {
+        Ok(action) => action,
+        Err(ExecError::Expand(tex_expand::ExpandError::UndefinedControlSequence {
+            name, ..
+        })) => {
+            stores.world_mut().write_text(
+                PrintSink::TerminalAndLog,
+                &format!("\n! Undefined control sequence \\{name}.\n"),
+            );
+            return Ok(());
+        }
+        Err(ExecError::Expand(tex_expand::ExpandError::Captured { error, .. }))
+            if matches!(
+                error.as_ref(),
+                tex_expand::ExpandError::UndefinedControlSequence { .. }
+            ) =>
+        {
+            let tex_expand::ExpandError::UndefinedControlSequence { name, .. } = *error else {
+                unreachable!("guard restricts captured expansion error")
+            };
+            stores.world_mut().write_text(
+                PrintSink::TerminalAndLog,
+                &format!("\n! Undefined control sequence \\{name}.\n"),
+            );
+            return Ok(());
+        }
+        Err(error) => return Err(error),
+    };
     match action {
         DispatchAction::Continue => {
-            crate::output::drain_pending_output(nest, input, stores, recorder, hooks, stats)?;
+            crate::output::drain_pending_output(nest, input, stores, recorder, execution, stats)?;
             Ok(())
         }
         DispatchAction::Shipout(page) => {
             stats.prepared_dvi_pages.push(page);
-            crate::output::drain_pending_output(nest, input, stores, recorder, hooks, stats)?;
+            crate::output::drain_pending_output(nest, input, stores, recorder, execution, stats)?;
             Ok(())
         }
         DispatchAction::End => Ok(()),

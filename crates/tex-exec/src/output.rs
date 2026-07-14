@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use tex_expand::{ExpansionHooks, ReadRecorder};
+use tex_expand::ReadRecorder;
 use tex_lex::{InputSource, InputStack, TokenListReplayKind};
 use tex_state::env::banks::{DimenParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
@@ -24,59 +24,56 @@ use crate::page_builder::build_page;
 use crate::splitting::{natural_vlist_size, prune_page_top, vpack_natural};
 use crate::{ExecError, ExecutionStats, Mode, ModeNest, leave_group, push_traced_tokens};
 
-pub(crate) fn drain_pending_output<S, R, H>(
+pub(crate) fn drain_pending_output<S, R>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     stats: &mut ExecutionStats,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     while let Some(fire_up) = stores.page_fire_up() {
-        fire_up_page(nest, input, stores, recorder, hooks, stats, fire_up)?;
+        fire_up_page(nest, input, stores, recorder, execution, stats, fire_up)?;
     }
     Ok(())
 }
 
-pub(crate) fn finish_end<S, R, H>(
+pub(crate) fn finish_end<S, R>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     stats: &mut ExecutionStats,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     while !job_is_quiescent(stores) {
         append_end_cleanup_contributions(stores);
         build_page(stores)?;
-        drain_pending_output(nest, input, stores, recorder, hooks, stats)?;
+        drain_pending_output(nest, input, stores, recorder, execution, stats)?;
     }
     Ok(())
 }
 
-fn fire_up_page<S, R, H>(
+fn fire_up_page<S, R>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     stats: &mut ExecutionStats,
     fire_up: PageFireUp,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     prepare_box255(stores, fire_up)?;
     let output = stores.tok_param(TokParam::OUTPUT);
@@ -107,7 +104,7 @@ where
         return Ok(());
     }
     stores.set_page_integer(PageInteger::DeadCycles, dead_cycles.saturating_add(1));
-    run_output_routine(nest, input, stores, recorder, hooks, stats, output)?;
+    run_output_routine(nest, input, stores, recorder, execution, stats, output)?;
     stores.clear_page_discards();
     build_page(stores)?;
     Ok(())
@@ -406,19 +403,18 @@ fn output_penalty_and_rewrite_break(
     INF_PENALTY
 }
 
-fn run_output_routine<S, R, H>(
+fn run_output_routine<S, R>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     stats: &mut ExecutionStats,
     output: tex_state::ids::TokenListId,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     let mut transaction = crate::transaction::ExecutionTransaction::begin(nest, stores);
     let mut replay = None;
@@ -429,7 +425,7 @@ where
             input,
             stores,
             recorder,
-            hooks,
+            execution,
             stats,
             output,
             &mut replay,
@@ -444,12 +440,12 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_output_routine_inner<S, R, H>(
+fn run_output_routine_inner<S, R>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     stats: &mut ExecutionStats,
     output: tex_state::ids::TokenListId,
     replay: &mut Option<tex_lex::TokenListReplayMarker>,
@@ -457,7 +453,6 @@ fn run_output_routine_inner<S, R, H>(
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     stores.enter_group_with_kind(GroupKind::Output);
     nest.push(Mode::InternalVertical);
@@ -470,7 +465,7 @@ where
         input,
         stores,
         recorder,
-        hooks,
+        execution,
         stats,
         |input, stores| pop_finished_output_frame(input, stores, output_frame),
     )? {

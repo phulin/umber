@@ -40,7 +40,7 @@ impl TexInputSearchPath {
 
     /// Resolves and records an input through the narrow World-backed input
     /// capability. Failed probes are not input records; the successful read is.
-    pub fn read<C: InputReadState>(
+    pub fn read<C: InputReadState + ?Sized>(
         &self,
         input: &mut C,
         name: &str,
@@ -65,7 +65,7 @@ impl TexFontSearchPath {
 
     /// Resolves and records a TFM through the narrow World-backed input
     /// capability. Failed probes are not input records; the successful read is.
-    pub fn read<C: InputReadState>(
+    pub fn read<C: InputReadState + ?Sized>(
         &self,
         input: &mut C,
         path: &Path,
@@ -113,7 +113,7 @@ fn font_candidates(user_area: &Path, system_areas: &[PathBuf], requested: &Path)
     search_candidates(user_area, system_areas, requested)
 }
 
-fn read_first<C: InputReadState>(
+fn read_first<C: InputReadState + ?Sized>(
     input: &mut C,
     candidates: Vec<PathBuf>,
 ) -> Result<FileContent, String> {

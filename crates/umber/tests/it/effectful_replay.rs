@@ -3,7 +3,8 @@ use std::path::PathBuf;
 
 use proptest::prelude::*;
 use proptest::test_runner::Config;
-use tex_expand::ExpansionHooks;
+use tex_exec::{ExecutionContext, FontResolver};
+use tex_expand::InputResolver;
 use tex_lex::{InputStack, MemoryInput};
 use tex_state::{Universe, World};
 
@@ -239,8 +240,11 @@ fn run_step(universe: &mut Universe, step: &Step) {
 
 fn run_tex_chunk(universe: &mut Universe, source: &str) {
     let mut input = InputStack::new(MemoryInput::new(source));
-    let mut hooks = FuzzHooks;
-    umber::run_input_with_hooks(&mut input, universe, &mut hooks)
+    let mut input_resolver = FuzzInputResolver;
+    let mut font_resolver = RejectingFontResolver;
+    let context =
+        ExecutionContext::with_resolvers("effect-fuzz", &mut input_resolver, &mut font_resolver);
+    umber::run_input_with_context(&mut input, universe, context)
         .unwrap_or_else(|err| panic!("effectful chunk failed: {err}\n{source}"));
 }
 
@@ -322,13 +326,14 @@ fn seed_world(world: &mut World) {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct FuzzHooks;
+struct FuzzInputResolver;
 
-impl ExpansionHooks<MemoryInput> for FuzzHooks {
-    fn open_input<C: tex_state::InputReadState>(
+impl InputResolver<MemoryInput> for FuzzInputResolver {
+    fn open_input(
         &mut self,
-        input: &mut C,
+        input: &mut dyn tex_state::InputReadState,
         name: &str,
+        _request_index: u64,
     ) -> Result<MemoryInput, String> {
         let mut path = PathBuf::from(name);
         if path.extension().is_none() {
@@ -341,9 +346,18 @@ impl ExpansionHooks<MemoryInput> for FuzzHooks {
             String::from_utf8_lossy(content.bytes()).into_owned(),
         ))
     }
+}
 
-    fn job_name(&self) -> &str {
-        "effect-fuzz"
+struct RejectingFontResolver;
+
+impl FontResolver for RejectingFontResolver {
+    fn open_font(
+        &mut self,
+        _input: &mut dyn tex_state::InputReadState,
+        path: &std::path::Path,
+        _request_index: u64,
+    ) -> Result<tex_state::FileContent, String> {
+        Err(format!("unexpected font request {}", path.display()))
     }
 }
 

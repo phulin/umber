@@ -491,7 +491,7 @@ fn math_group_mismatch_reports_the_closing_token_origin() {
         token,
         &mut input,
         &mut stores,
-        &mut NoopExecHooks,
+        &mut crate::ExecutionContext::new("texput"),
     )
     .expect_err("direct dispatch exposes the recoverable math-group mismatch");
 
@@ -516,7 +516,7 @@ fn math_group_mismatch_reports_the_closing_token_origin() {
         token,
         &mut input,
         &mut stores,
-        &mut NoopExecHooks,
+        &mut crate::ExecutionContext::new("texput"),
     )
     .expect_err("direct dispatch exposes the recoverable math-group mismatch");
 
@@ -1426,25 +1426,25 @@ fn assert_replayed_math_error_is_source_backed(source: &str) {
     let mut input = InputStack::new(WorldInput::from_content(content));
     let mut executor = Executor::new();
     let mut recorder = NoopRecorder;
-    let mut hooks = NoopExecHooks;
+    let mut context = crate::ExecutionContext::new("texput");
     let mut stats = ExecutionStats::default();
     let exit = crate::executor::run_main_control_until(
         executor.nest_mut(),
         &mut input,
         &mut stores,
         &mut recorder,
-        &mut hooks,
+        &mut context,
         &mut stats,
         |_, stores| stores.count(7) == 1,
     )
     .expect("execution reaches the provenance sentinel");
     assert_eq!(exit, crate::executor::MainControlExit::Stopped);
 
-    let relax = tex_expand::get_x_token_with_recorder_and_hooks(
+    let relax = tex_expand::get_x_token_with_recorder_and_context(
         &mut input,
         &mut stores,
         &mut recorder,
-        &mut hooks,
+        &mut context,
     )
     .expect("replayed relax tokenizes")
     .expect("replayed relax exists");
@@ -1452,11 +1452,11 @@ fn assert_replayed_math_error_is_source_backed(source: &str) {
         tex_expand::semantic_token(relax),
         Token::Cs(symbol) if matches!(stores.meaning(symbol), Meaning::Relax)
     ));
-    let sentinel = tex_expand::get_x_token_with_recorder_and_hooks(
+    let sentinel = tex_expand::get_x_token_with_recorder_and_context(
         &mut input,
         &mut stores,
         &mut recorder,
-        &mut hooks,
+        &mut context,
     )
     .expect("suppressed expandable tokenizes")
     .expect("suppressed expandable exists");
@@ -1465,7 +1465,7 @@ fn assert_replayed_math_error_is_source_backed(source: &str) {
         sentinel,
         &mut input,
         &mut stores,
-        &mut hooks,
+        &mut context,
     )
     .expect("noexpand presents the control sequence as relax for one delivery");
     assert_eq!(action, crate::dispatch::DispatchAction::Continue);

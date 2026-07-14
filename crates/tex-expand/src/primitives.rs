@@ -5,15 +5,15 @@ use tex_state::provenance::InsertedOriginKind;
 use tex_state::token::{Catcode, Token, TracedTokenWord};
 
 use crate::{
-    Dispatch, ExpandError, ExpandableOpcode, ExpansionHooks, ReadRecorder, apply_dispatch_push,
+    Dispatch, ExpandError, ExpandableOpcode, ExpansionContext, ReadRecorder, apply_dispatch_push,
     get_x_token_without_input_open, push_inserted_token, scan_helpers,
 };
 
-pub(crate) fn expand_after<S, St, R, H, E>(
+pub(crate) fn expand_after<S, St, R, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
     context: TracedTokenWord,
 ) -> Result<(), ExpandError>
@@ -21,8 +21,7 @@ where
     S: InputSource,
     St: ExpansionState,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
-    E: crate::ExpandNext<S, St, R, H>,
+    E: crate::ExpandNext<S, St, R>,
 {
     let Some(saved) = crate::get_token(input, stores)? else {
         return Err(ExpandError::MissingTokenAfterPrimitive {
@@ -36,20 +35,19 @@ where
             context,
         });
     };
-    expander.dispatch_raw_token_after(saved, target, input, stores, recorder, hooks)
+    expander.dispatch_raw_token_after(saved, target, input, stores, recorder, expansion)
 }
 
-pub(crate) fn scan_csname<S, R, H>(
+pub(crate) fn scan_csname<S, R>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<String, ExpandError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     let mut name = String::new();
 
@@ -89,7 +87,7 @@ where
             input,
             stores,
             recorder,
-            hooks,
+            expansion,
             meaning,
         )? {
             Dispatch::Continue => {}
@@ -122,20 +120,19 @@ fn append_csname_token(name: &mut String, token: Token) -> CsNameAppend {
     }
 }
 
-pub(crate) fn scan_input_name<S, R, H>(
+pub(crate) fn scan_input_name<S, R>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<String, ExpandError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     let Some(first) =
-        scan_helpers::next_non_space_x_token_with_hooks(input, stores, recorder, hooks)?
+        scan_helpers::next_non_space_x_token_with_context(input, stores, recorder, expansion)?
     else {
         return Err(ExpandError::MissingInputName { context });
     };
@@ -143,7 +140,7 @@ where
     if is_begin_group(crate::semantic_token(first)) {
         let mut name = String::new();
         loop {
-            let Some(token) = get_x_token_without_input_open(input, stores, recorder, hooks)?
+            let Some(token) = get_x_token_without_input_open(input, stores, recorder, expansion)?
             else {
                 return Err(ExpandError::MissingInputName { context });
             };
@@ -162,7 +159,7 @@ where
     let mut name = String::new();
     append_input_name_token(&mut name, first)?;
     loop {
-        let token = match get_x_token_without_input_open(input, stores, recorder, hooks) {
+        let token = match get_x_token_without_input_open(input, stores, recorder, expansion) {
             Ok(Some(token)) => token,
             Ok(None) => break,
             Err(ExpandError::InputOpen { .. }) if !name.is_empty() => break,

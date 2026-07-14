@@ -1,4 +1,3 @@
-use tex_expand::ExpansionHooks;
 use tex_lex::{InputSource, InputStack};
 use tex_state::Universe;
 use tex_state::env::banks::IntParam;
@@ -10,17 +9,16 @@ use super::*;
 use crate::ExecError;
 use crate::mode::PendingHChar;
 
-pub(super) fn execute_patterns<S, H>(
+pub(super) fn execute_patterns<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     let language = current_language(stores);
-    for word in scan_hyphenation_words(input, stores, hooks, "\\patterns")? {
+    for word in scan_hyphenation_words(input, stores, execution, "\\patterns")? {
         if let Some(pattern) = parse_pattern_word(stores, &word) {
             stores.add_hyphenation_pattern_for_language(language, pattern);
         }
@@ -37,17 +35,16 @@ where
     Ok(())
 }
 
-pub(super) fn execute_hyphenation<S, H>(
+pub(super) fn execute_hyphenation<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     let language = current_language(stores);
-    for word in scan_hyphenation_words(input, stores, hooks, "\\hyphenation")? {
+    for word in scan_hyphenation_words(input, stores, execution, "\\hyphenation")? {
         if let Some(exception) = parse_exception_word(stores, language, &word) {
             stores.add_hyphenation_exception_for_language(language, exception);
         }
@@ -292,20 +289,20 @@ fn permitted_word_terminator(nodes: &[Node], mut index: usize) -> bool {
     true
 }
 
-fn scan_hyphenation_words<S, H>(
+fn scan_hyphenation_words<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     context: &'static str,
 ) -> Result<Vec<Vec<char>>, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     let mut recorder = NoopRecorder;
     let open = loop {
-        let traced = get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?
-            .ok_or(ExecError::MissingToken { context })?;
+        let traced =
+            get_x_token_with_recorder_and_context(input, stores, &mut recorder, execution)?
+                .ok_or(ExecError::MissingToken { context })?;
         let token = tex_expand::semantic_token(traced);
         if is_space(token) {
             continue;
@@ -324,7 +321,7 @@ where
     let mut current = Vec::new();
     let mut depth = 1usize;
     while let Some(traced) =
-        get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?
+        get_x_token_with_recorder_and_context(input, stores, &mut recorder, execution)?
     {
         let token = tex_expand::semantic_token(traced);
         if is_begin_group(token) {

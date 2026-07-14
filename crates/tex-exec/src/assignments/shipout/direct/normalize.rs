@@ -296,10 +296,10 @@ fn expand_write_tokens<R: ReadRecorder>(
 ) -> Result<String, ExecError> {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(tokens, TokenListReplayKind::Inserted);
-    let mut hooks = NoopExpansionHooks;
+    let mut context = tex_expand::ExpansionContext::new("texput");
     let mut text = String::new();
     while let Some(token) =
-        get_x_token_with_recorder_and_hooks(&mut input, stores, recorder, &mut hooks)?
+        get_x_token_with_recorder_and_context(&mut input, stores, recorder, &mut context)?
             .map(tex_expand::semantic_token)
     {
         diagnostics::append_token_show_text(stores, token, &mut text);

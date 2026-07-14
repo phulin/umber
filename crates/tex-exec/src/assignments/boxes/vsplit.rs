@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use tex_expand::ExpansionHooks;
 use tex_lex::{InputSource, InputStack};
 use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, GlueParam};
@@ -17,19 +16,18 @@ use crate::splitting::{prune_page_top_with_discards, vpack_natural};
 
 use super::super::{scan_optional_keyword_x, scan_register_index, scan_scaled};
 
-pub(super) fn scan_vsplit_node<S, H>(
+pub(super) fn scan_vsplit_node<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<Option<Node>, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     stores.clear_split_discards();
-    let index = scan_register_index(input, stores, hooks, context)?;
-    if !scan_optional_keyword_x(input, stores, hooks, "to")? {
+    let index = scan_register_index(input, stores, execution, context)?;
+    if !scan_optional_keyword_x(input, stores, execution, "to")? {
         // TeX.web §1082 inserts the keyword conceptually; keyword scanning
         // has already backed up the first nonmatching token, which is the
         // dimension's first token.
@@ -38,7 +36,7 @@ where
             "\n! Missing `to' inserted.\nI'm working on `\\vsplit<box number> to <dimen>';\nwill look for the <dimen> next.\n",
         );
     }
-    let height = scan_scaled(input, stores, hooks, context)?;
+    let height = scan_scaled(input, stores, execution, context)?;
     split_vbox_register(stores, index, height)
 }
 

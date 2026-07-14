@@ -1,5 +1,4 @@
 use super::*;
-use crate::executor::NoopExecHooks;
 use crate::mode::PendingHChar;
 use crate::tests::support::TestRecorder;
 use tex_expand::NoopRecorder;
@@ -29,7 +28,7 @@ fn non_character_accent_lookahead_replays_the_original_traced_token() {
         &mut input,
         &mut stores,
         &mut NoopRecorder,
-        &mut NoopExecHooks,
+        &mut crate::ExecutionContext::new("texput"),
         TracedTokenWord::pack(
             Token::Char {
                 ch: '^',
@@ -66,7 +65,7 @@ fn accent_lookahead_runs_assignments_and_accepts_char_num() {
         &mut input,
         &mut stores,
         &mut recorder,
-        &mut NoopExecHooks,
+        &mut crate::ExecutionContext::new("texput"),
         TracedTokenWord::pack(
             Token::Char {
                 ch: '^',

@@ -3,7 +3,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use parity_harness::{compare_dvi_files, run_named_fixture_document};
-use tex_expand::ExpansionHooks;
+use tex_exec::{ExecutionContext, FontResolver};
+use tex_expand::InputResolver;
 use tex_lex::{InputStack, WorldInput};
 use tex_state::{FileContent, InputReadState, JobClock, Universe, World};
 
@@ -36,58 +37,74 @@ struct InProcessRun {
     format: Option<Vec<u8>>,
 }
 
-struct InProcessHooks {
+struct InProcessInputResolver {
     base_dir: PathBuf,
+}
+
+impl InputResolver<WorldInput> for InProcessInputResolver {
+    fn open_input(
+        &mut self,
+        input: &mut dyn InputReadState,
+        name: &str,
+        _request_index: u64,
+    ) -> Result<WorldInput, String> {
+        let mut path = PathBuf::from(name);
+        if path.extension().is_none() {
+            path.set_extension("tex");
+        }
+        input
+            .read_input_file(&self.base_dir.join(&path))
+            .or_else(|_| input.read_input_file(&path))
+            .map(WorldInput::from_content)
+            .map_err(|error| error.to_string())
+    }
+}
+
+struct InProcessFontResolver {
+    base_dir: PathBuf,
+}
+
+impl FontResolver for InProcessFontResolver {
+    fn open_font(
+        &mut self,
+        input: &mut dyn InputReadState,
+        path: &Path,
+        _request_index: u64,
+    ) -> Result<FileContent, String> {
+        let mut path = path.to_owned();
+        if path.extension().is_none() {
+            path.set_extension("tfm");
+        }
+        input
+            .read_input_file(&self.base_dir.join(path))
+            .map_err(|error| error.to_string())
+    }
+}
+
+struct InProcessResolvers {
+    input: InProcessInputResolver,
+    font: InProcessFontResolver,
     job_name: String,
 }
 
-impl InProcessHooks {
+impl InProcessResolvers {
     fn new(path: &Path) -> Self {
+        let base_dir = path.parent().unwrap_or_else(|| Path::new(".")).to_owned();
         Self {
-            base_dir: path.parent().unwrap_or_else(|| Path::new(".")).to_owned(),
+            input: InProcessInputResolver {
+                base_dir: base_dir.clone(),
+            },
+            font: InProcessFontResolver { base_dir },
             job_name: path
                 .file_stem()
-                .and_then(|name| name.to_str())
+                .and_then(std::ffi::OsStr::to_str)
                 .unwrap_or("texput")
                 .to_owned(),
         }
     }
-}
 
-impl ExpansionHooks<WorldInput> for InProcessHooks {
-    fn open_input<C: InputReadState>(
-        &mut self,
-        input: &mut C,
-        name: &str,
-    ) -> Result<WorldInput, String> {
-        let mut requested = PathBuf::from(name);
-        if requested.extension().is_none() {
-            requested.set_extension("tex");
-        }
-        let staged = self.base_dir.join(&requested);
-        input
-            .read_input_file(&staged)
-            .or_else(|_| input.read_input_file(&requested))
-            .map(WorldInput::from_content)
-            .map_err(|error| error.to_string())
-    }
-
-    fn open_font<C: InputReadState>(
-        &mut self,
-        input: &mut C,
-        path: &Path,
-    ) -> Result<FileContent, String> {
-        let mut requested = path.to_owned();
-        if requested.extension().is_none() {
-            requested.set_extension("tfm");
-        }
-        input
-            .read_input_file(&self.base_dir.join(requested))
-            .map_err(|error| error.to_string())
-    }
-
-    fn job_name(&self) -> &str {
-        &self.job_name
+    fn context(&mut self) -> ExecutionContext<'_, WorldInput> {
+        ExecutionContext::with_resolvers(&self.job_name, &mut self.input, &mut self.font)
     }
 }
 
@@ -144,8 +161,8 @@ fn run_file_in_process(
         .read_file(&path)
         .map_err(|error| error.to_string())?;
     let mut input = InputStack::new(WorldInput::from_content(content));
-    let mut hooks = InProcessHooks::new(&path);
-    let run = EngineSession::new(&mut input, &mut stores, &mut hooks)
+    let mut resolvers = InProcessResolvers::new(&path);
+    let run = EngineSession::new(&mut input, &mut stores, resolvers.context())
         .execute()
         .map_err(|error| error.format_with_provenance(&stores))?;
     let dvi = if run.artifacts.is_empty() {

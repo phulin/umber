@@ -1,4 +1,4 @@
-use tex_expand::{ExpansionHooks, NoopRecorder, get_x_token_with_recorder_and_hooks};
+use tex_expand::{NoopRecorder, get_x_token_with_recorder_and_context};
 use tex_lex::{InputSource, InputStack};
 use tex_state::ids::NodeListId;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
@@ -38,33 +38,31 @@ impl ScannedBoxValue {
     }
 }
 
-pub(in crate::assignments) fn scan_required_box_node<S, H>(
+pub(in crate::assignments) fn scan_required_box_node<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<Node, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
-    scan_box_value(None, input, stores, hooks, context)?
+    scan_box_value(None, input, stores, execution, context)?
         .map(ScannedBoxValue::into_node)
         .ok_or(ExecError::MissingToken { context: "box" })
 }
 
-pub(super) fn scan_box_value<S, H>(
+pub(super) fn scan_box_value<S>(
     nest: Option<&mut ModeNest>,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<Option<ScannedBoxValue>, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
-    let traced = next_non_space_traced_x(input, stores, hooks)?
+    let traced = next_non_space_traced_x(input, stores, execution)?
         .ok_or(ExecError::MissingTracedToken { context })?;
     let token = tex_expand::semantic_token(traced);
     let Token::Cs(symbol) = token else {
@@ -73,14 +71,18 @@ where
     match stores.meaning(symbol) {
         Meaning::UnexpandablePrimitive(primitive @ UnexpandablePrimitive::HBox)
         | Meaning::UnexpandablePrimitive(primitive @ UnexpandablePrimitive::VBox)
-        | Meaning::UnexpandablePrimitive(primitive @ UnexpandablePrimitive::VTop) => {
-            scan_box_node(kind_for_primitive(primitive)?, input, stores, hooks, traced)
-                .map(ScannedBoxValue::Fresh)
-                .map(Some)
-        }
+        | Meaning::UnexpandablePrimitive(primitive @ UnexpandablePrimitive::VTop) => scan_box_node(
+            kind_for_primitive(primitive)?,
+            input,
+            stores,
+            execution,
+            traced,
+        )
+        .map(ScannedBoxValue::Fresh)
+        .map(Some),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box)
         | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Copy) => {
-            let index = scan_register_index(input, stores, hooks, traced)?;
+            let index = scan_register_index(input, stores, execution, traced)?;
             let id = if matches!(
                 stores.meaning(symbol),
                 Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box)
@@ -99,7 +101,7 @@ where
             Ok(first_box_node(stores, id).map(ScannedBoxValue::Shared))
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VSplit) => {
-            scan_vsplit_node(input, stores, hooks, traced)
+            scan_vsplit_node(input, stores, execution, traced)
                 .map(|value| value.map(ScannedBoxValue::Fresh))
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastBox) => {
@@ -155,21 +157,21 @@ pub(super) fn take_last_box(
     }
 }
 
-pub(super) fn scan_box_node<S, H>(
+pub(super) fn scan_box_node<S>(
     kind: BoxKind,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<Node, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
-    let spec = scan_pack_spec(input, stores, hooks, context)?;
-    let opener = next_non_space_traced_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
-        context: "box group",
-    })?;
+    let spec = scan_pack_spec(input, stores, execution, context)?;
+    let opener =
+        next_non_space_traced_x(input, stores, execution)?.ok_or(ExecError::MissingToken {
+            context: "box group",
+        })?;
     if !has_catcode_meaning(
         stores,
         tex_expand::semantic_token(opener),
@@ -204,7 +206,7 @@ where
         normal_paragraph(&mut inner, stores);
     }
     inner.push(mode);
-    scan_box_group(&mut inner, input, stores, hooks, box_group_depth)?;
+    scan_box_group(&mut inner, input, stores, execution, box_group_depth)?;
     if kind != BoxKind::HBox && inner.current_mode() == Mode::Horizontal {
         // TeX82's vbox_group/vtop_group right-brace handler runs end_graf
         // before package. This matters when display math has resumed an empty
@@ -281,23 +283,23 @@ pub(crate) fn hpack_owned_with_overfull_rule(
     plan.finish(children).node
 }
 
-pub(crate) fn scan_box_group<S, H>(
+pub(crate) fn scan_box_group<S>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     box_group_depth: u32,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     {
         loop {
-            crate::executor::sync_engine_state::<S, _>(hooks, nest, stores);
+            crate::executor::sync_engine_state::<S>(execution, nest, stores);
             let token = {
                 let mut recorder = NoopRecorder;
-                match get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks) {
+                match get_x_token_with_recorder_and_context(input, stores, &mut recorder, execution)
+                {
                     Ok(token) => token,
                     Err(tex_expand::ExpandError::UndefinedControlSequence { name, .. }) => {
                         stores.world_mut().write_text(
@@ -326,66 +328,69 @@ where
                 flush_pending_hchars(nest, stores)?;
                 return Ok(());
             }
-            let action = match crate::dispatch_delivered_token(nest, token, input, stores, hooks) {
-                Ok(action) => action,
-                Err(ExecError::Expand(tex_expand::ExpandError::UndefinedControlSequence {
-                    name,
-                    ..
-                })) => {
-                    stores.world_mut().write_text(
-                        tex_state::PrintSink::TerminalAndLog,
-                        &format!("\n! Undefined control sequence \\{name}.\n"),
-                    );
-                    continue;
-                }
-                Err(ExecError::Expand(tex_expand::ExpandError::Captured { error, .. }))
-                    if matches!(
-                        error.as_ref(),
-                        tex_expand::ExpandError::UndefinedControlSequence { .. }
-                    ) =>
-                {
-                    let tex_expand::ExpandError::UndefinedControlSequence { name, .. } = *error
-                    else {
-                        unreachable!("guard restricts captured expansion error")
-                    };
-                    stores.world_mut().write_text(
-                        tex_state::PrintSink::TerminalAndLog,
-                        &format!("\n! Undefined control sequence \\{name}.\n"),
-                    );
-                    continue;
-                }
-                // Recursive box scanning is still TeX's main-control loop. A
-                // recoverable assignment error must consume the bad command
-                // and continue inside the box, just as the outer executor
-                // does, rather than aborting the construction transaction and
-                // replaying the remaining body on the enclosing list.
-                Err(ExecError::UnsupportedAssignmentTarget) => {
-                    stores.world_mut().write_text(
-                        tex_state::PrintSink::TerminalAndLog,
-                        "\n! Improper assignment target; this assignment is ignored.\n",
-                    );
-                    continue;
-                }
-                Err(ExecError::ExtraConditionalControl { primitive, .. }) => {
-                    let name = match primitive {
-                        tex_state::meaning::ExpandablePrimitive::Else => "else",
-                        tex_state::meaning::ExpandablePrimitive::Fi => "fi",
-                        tex_state::meaning::ExpandablePrimitive::Or => "or",
-                        _ => unreachable!("error variant is restricted to conditional controls"),
-                    };
-                    crate::diagnostics::report_extra_conditional(stores, name);
-                    continue;
-                }
-                Err(
-                    ExecError::ExtraRightBraceOrForgottenEndgroup { .. }
-                    | ExecError::ExtraRightBraceOrForgottenDollar { .. }
-                    | ExecError::TooManyRightBraces { .. }
-                    | ExecError::ExtraEndGroup { .. }
-                    | ExecError::EndGroupMismatch { .. }
-                    | ExecError::MathShiftGroupMismatch { .. },
-                ) => continue,
-                Err(err) => return Err(err),
-            };
+            let action =
+                match crate::dispatch_delivered_token(nest, token, input, stores, execution) {
+                    Ok(action) => action,
+                    Err(ExecError::Expand(tex_expand::ExpandError::UndefinedControlSequence {
+                        name,
+                        ..
+                    })) => {
+                        stores.world_mut().write_text(
+                            tex_state::PrintSink::TerminalAndLog,
+                            &format!("\n! Undefined control sequence \\{name}.\n"),
+                        );
+                        continue;
+                    }
+                    Err(ExecError::Expand(tex_expand::ExpandError::Captured { error, .. }))
+                        if matches!(
+                            error.as_ref(),
+                            tex_expand::ExpandError::UndefinedControlSequence { .. }
+                        ) =>
+                    {
+                        let tex_expand::ExpandError::UndefinedControlSequence { name, .. } = *error
+                        else {
+                            unreachable!("guard restricts captured expansion error")
+                        };
+                        stores.world_mut().write_text(
+                            tex_state::PrintSink::TerminalAndLog,
+                            &format!("\n! Undefined control sequence \\{name}.\n"),
+                        );
+                        continue;
+                    }
+                    // Recursive box scanning is still TeX's main-control loop. A
+                    // recoverable assignment error must consume the bad command
+                    // and continue inside the box, just as the outer executor
+                    // does, rather than aborting the construction transaction and
+                    // replaying the remaining body on the enclosing list.
+                    Err(ExecError::UnsupportedAssignmentTarget) => {
+                        stores.world_mut().write_text(
+                            tex_state::PrintSink::TerminalAndLog,
+                            "\n! Improper assignment target; this assignment is ignored.\n",
+                        );
+                        continue;
+                    }
+                    Err(ExecError::ExtraConditionalControl { primitive, .. }) => {
+                        let name = match primitive {
+                            tex_state::meaning::ExpandablePrimitive::Else => "else",
+                            tex_state::meaning::ExpandablePrimitive::Fi => "fi",
+                            tex_state::meaning::ExpandablePrimitive::Or => "or",
+                            _ => {
+                                unreachable!("error variant is restricted to conditional controls")
+                            }
+                        };
+                        crate::diagnostics::report_extra_conditional(stores, name);
+                        continue;
+                    }
+                    Err(
+                        ExecError::ExtraRightBraceOrForgottenEndgroup { .. }
+                        | ExecError::ExtraRightBraceOrForgottenDollar { .. }
+                        | ExecError::TooManyRightBraces { .. }
+                        | ExecError::ExtraEndGroup { .. }
+                        | ExecError::EndGroupMismatch { .. }
+                        | ExecError::MathShiftGroupMismatch { .. },
+                    ) => continue,
+                    Err(err) => return Err(err),
+                };
             match action {
                 crate::DispatchAction::Continue => {}
                 crate::DispatchAction::Shipout(_) => {}
@@ -410,23 +415,22 @@ where
     }
 }
 
-pub(crate) fn scan_pack_spec<S, H>(
+pub(crate) fn scan_pack_spec<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<PackSpec, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
-    if scan_optional_keyword_x(input, stores, hooks, "to")? {
+    if scan_optional_keyword_x(input, stores, execution, "to")? {
         Ok(PackSpec::Exactly(scan_scaled(
-            input, stores, hooks, context,
+            input, stores, execution, context,
         )?))
-    } else if scan_optional_keyword_x(input, stores, hooks, "spread")? {
+    } else if scan_optional_keyword_x(input, stores, execution, "spread")? {
         Ok(PackSpec::Spread(scan_scaled(
-            input, stores, hooks, context,
+            input, stores, execution, context,
         )?))
     } else {
         Ok(PackSpec::Natural)

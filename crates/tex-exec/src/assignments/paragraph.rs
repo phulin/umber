@@ -19,32 +19,35 @@ use crate::vertical::{
 };
 use crate::{ExecError, Mode, ModeNest};
 
-pub(super) fn execute_paragraph_command<S, H>(
+pub(super) fn execute_paragraph_command<S>(
     primitive: UnexpandablePrimitive,
     context: TracedTokenWord,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     global: bool,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     match primitive {
         UnexpandablePrimitive::Par | UnexpandablePrimitive::EndGraf => end_paragraph(nest, stores),
         UnexpandablePrimitive::Indent => start_paragraph(nest, input, stores, true),
         UnexpandablePrimitive::NoIndent => start_paragraph(nest, input, stores, false),
-        UnexpandablePrimitive::ParShape => assign_parshape(input, stores, hooks, context, global),
+        UnexpandablePrimitive::ParShape => {
+            assign_parshape(input, stores, execution, context, global)
+        }
         primitive @ (UnexpandablePrimitive::InterLinePenalties
         | UnexpandablePrimitive::ClubPenalties
         | UnexpandablePrimitive::WidowPenalties
         | UnexpandablePrimitive::DisplayWidowPenalties) => {
-            assign_penalty_array(primitive, input, stores, hooks, context, global)
+            assign_penalty_array(primitive, input, stores, execution, context, global)
         }
-        UnexpandablePrimitive::PrevDepth => assign_prevdepth(nest, input, stores, hooks, context),
-        UnexpandablePrimitive::PrevGraf => assign_prevgraf(nest, input, stores, hooks, context),
+        UnexpandablePrimitive::PrevDepth => {
+            assign_prevdepth(nest, input, stores, execution, context)
+        }
+        UnexpandablePrimitive::PrevGraf => assign_prevgraf(nest, input, stores, execution, context),
         UnexpandablePrimitive::NoInterlineSkip => {
             nest.current_list_mut().set_prev_depth(IGNORE_DEPTH);
             Ok(())
@@ -465,44 +468,42 @@ fn remove_final_glue(list: &mut crate::ModeList) {
     }
 }
 
-fn assign_parshape<S, H>(
+fn assign_parshape<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     context: TracedTokenWord,
     global: bool,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
-    skip_optional_equals_x(input, stores, hooks)?;
-    let count = scan_i32(input, stores, hooks, context)?.max(0) as usize;
+    skip_optional_equals_x(input, stores, execution)?;
+    let count = scan_i32(input, stores, execution, context)?.max(0) as usize;
     let mut lines = Vec::with_capacity(count);
     for _ in 0..count {
         lines.push(ParagraphShapeLine {
-            indent: scan_scaled(input, stores, hooks, context)?,
-            width: scan_scaled(input, stores, hooks, context)?,
+            indent: scan_scaled(input, stores, execution, context)?,
+            width: scan_scaled(input, stores, execution, context)?,
         });
     }
     stores.set_paragraph_shape(&lines, global);
     Ok(())
 }
 
-fn assign_penalty_array<S, H>(
+fn assign_penalty_array<S>(
     primitive: UnexpandablePrimitive,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     context: TracedTokenWord,
     global: bool,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
-    skip_optional_equals_x(input, stores, hooks)?;
-    let count = scan_i32(input, stores, hooks, context)?;
+    skip_optional_equals_x(input, stores, execution)?;
+    let count = scan_i32(input, stores, execution, context)?;
     let kind = match primitive {
         UnexpandablePrimitive::InterLinePenalties => PenaltyArrayKind::InterLine,
         UnexpandablePrimitive::ClubPenalties => PenaltyArrayKind::Club,
@@ -520,42 +521,40 @@ where
         .try_reserve_exact(count)
         .map_err(|_| ExecError::ArithmeticOverflow)?;
     for _ in 0..count {
-        values.push(scan_i32(input, stores, hooks, context)?);
+        values.push(scan_i32(input, stores, execution, context)?);
     }
     stores.set_penalty_array(kind, &values, global);
     Ok(())
 }
 
-fn assign_prevdepth<S, H>(
+fn assign_prevdepth<S>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
-    skip_optional_equals_x(input, stores, hooks)?;
-    let depth = scan_scaled(input, stores, hooks, context)?;
+    skip_optional_equals_x(input, stores, execution)?;
+    let depth = scan_scaled(input, stores, execution, context)?;
     nest.current_list_mut().set_prev_depth(depth);
     Ok(())
 }
 
-fn assign_prevgraf<S, H>(
+fn assign_prevgraf<S>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
-    skip_optional_equals_x(input, stores, hooks)?;
-    let lines = scan_i32(input, stores, hooks, context)?;
+    skip_optional_equals_x(input, stores, execution)?;
+    let lines = scan_i32(input, stores, execution, context)?;
     if lines < 0 {
         // TeX.web §1247 reports the invalid value and leaves the enclosing
         // vertical list's prev_graf unchanged.

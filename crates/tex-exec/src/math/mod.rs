@@ -1,6 +1,6 @@
 //! Math-mode stomach front-end.
 
-use tex_expand::{ExpansionHooks, ReadRecorder, get_x_token_with_recorder_and_hooks};
+use tex_expand::{ReadRecorder, get_x_token_with_recorder_and_context};
 use tex_lex::{InputSource, InputStack};
 use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, IntParam, TokParam};
@@ -74,15 +74,14 @@ pub(crate) fn testing_finish_current_math_list(
     finish_current_math_list(nest, stores)
 }
 
-pub(crate) fn enter_math<S, H>(
+pub(crate) fn enter_math<S>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<DispatchAction, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     debug_assert!(!matches!(
         nest.current_mode(),
@@ -166,22 +165,21 @@ where
     });
     let tokens = stores.tokens(every).to_vec();
     push_tokens(input, stores, tokens);
-    sync_engine_state::<S, _>(hooks, nest, stores);
+    sync_engine_state::<S>(execution, nest, stores);
     Ok(DispatchAction::Continue)
 }
 
-pub(crate) fn dispatch_math_token_with_recorder<S, R, H>(
+pub(crate) fn dispatch_math_token_with_recorder<S, R>(
     nest: &mut ModeNest,
     traced: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<DispatchAction, ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     let token = tex_expand::semantic_token(traced);
     let origin = traced.origin();
@@ -209,7 +207,7 @@ where
                 );
                 Ok(DispatchAction::Continue)
             } else {
-                finish_math(nest, input, stores, recorder, hooks, origin)
+                finish_math(nest, input, stores, recorder, execution, origin)
             }
         }
         Token::Char {
@@ -220,7 +218,8 @@ where
             cat: Catcode::BeginGroup,
             ..
         } => {
-            let noad = scan::scan_math_atom_group_after_open(nest, input, stores, recorder, hooks)?;
+            let noad =
+                scan::scan_math_atom_group_after_open(nest, input, stores, recorder, execution)?;
             nest.current_list_mut().push(Node::MathNoad(noad));
             Ok(DispatchAction::Continue)
         }
@@ -246,14 +245,14 @@ where
             cat: Catcode::Superscript,
             ..
         } => {
-            attach_script(nest, input, stores, recorder, hooks, true)?;
+            attach_script(nest, input, stores, recorder, execution, true)?;
             Ok(DispatchAction::Continue)
         }
         Token::Char {
             cat: Catcode::Subscript,
             ..
         } => {
-            attach_script(nest, input, stores, recorder, hooks, false)?;
+            attach_script(nest, input, stores, recorder, execution, false)?;
             Ok(DispatchAction::Continue)
         }
         Token::Char {
@@ -268,24 +267,23 @@ where
             Ok(DispatchAction::Continue)
         }
         Token::Cs(symbol) => {
-            dispatch_math_control(nest, traced, symbol, input, stores, recorder, hooks)
+            dispatch_math_control(nest, traced, symbol, input, stores, recorder, execution)
         }
         Token::Param(_) | Token::Frozen(_) => Ok(DispatchAction::NotConsumed),
     }
 }
 
-fn finish_math<S, R, H>(
+fn finish_math<S, R>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     origin: OriginId,
 ) -> Result<DispatchAction, ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     // `off_save` inserts the terminator required by an intervening group and
     // then retries the math shift (tex.web §1027). TRIP deliberately leaves
@@ -305,14 +303,14 @@ where
         stores.enter_group_with_kind(tex_state::GroupKind::MathShift);
     }
     if close_missing_left_group(nest, stores)? {
-        return finish_math(nest, input, stores, recorder, hooks, origin);
+        return finish_math(nest, input, stores, recorder, execution, origin);
     }
     if nest.current_mode() == Mode::Math && nest.current_list().display_eq_no().is_some() {
-        return finish_equation_number(nest, input, stores, recorder, hooks, origin);
+        return finish_equation_number(nest, input, stores, recorder, execution, origin);
     }
     let display = nest.current_mode() == Mode::DisplayMath;
     if display {
-        match get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)? {
+        match get_x_token_with_recorder_and_context(input, stores, recorder, execution)? {
             Some(traced)
                 if matches!(
                     tex_expand::semantic_token(traced),
@@ -364,20 +362,19 @@ where
     Ok(DispatchAction::Continue)
 }
 
-fn finish_equation_number<S, R, H>(
+fn finish_equation_number<S, R>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     origin: OriginId,
 ) -> Result<DispatchAction, ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
-    match get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)? {
+    match get_x_token_with_recorder_and_context(input, stores, recorder, execution)? {
         Some(traced)
             if matches!(
                 tex_expand::semantic_token(traced),
@@ -483,19 +480,18 @@ pub(crate) fn testing_math_font_failure(stores: &Universe) -> Option<&'static st
     })
 }
 
-fn dispatch_math_control<S, R, H>(
+fn dispatch_math_control<S, R>(
     nest: &mut ModeNest,
     traced: TracedTokenWord,
     symbol: tex_state::interner::Symbol,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<DispatchAction, ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     let token = tex_expand::semantic_token(traced);
     let origin = traced.origin();
@@ -521,10 +517,10 @@ where
             input,
             stores,
             recorder,
-            hooks,
+            execution,
         ),
         Meaning::UnexpandablePrimitive(primitive) => {
-            dispatch_math_primitive(primitive, traced, nest, input, stores, recorder, hooks)
+            dispatch_math_primitive(primitive, traced, nest, input, stores, recorder, execution)
         }
         Meaning::ExpandablePrimitive(primitive) => match primitive {
             ExpandablePrimitive::Fi | ExpandablePrimitive::Else | ExpandablePrimitive::Or => {
@@ -548,7 +544,7 @@ where
             origin,
         }),
         meaning if assignments::is_assignment_target_meaning(meaning) => {
-            assignments::execute_assignment_meaning(meaning, traced, input, stores, hooks)
+            assignments::execute_assignment_meaning(meaning, traced, input, stores, execution)
         }
         Meaning::Font(id) => {
             stores.set_current_font_selector(symbol, id);
@@ -563,19 +559,18 @@ where
     }
 }
 
-fn dispatch_math_primitive<S, R, H>(
+fn dispatch_math_primitive<S, R>(
     primitive: UnexpandablePrimitive,
     traced: TracedTokenWord,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<DispatchAction, ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     let token = tex_expand::semantic_token(traced);
     let origin = traced.origin();
@@ -618,12 +613,12 @@ where
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::MathChar => {
-            let code = scan_math_char_code(input, stores, hooks, traced)?;
+            let code = scan_math_char_code(input, stores, execution, traced)?;
             append_math_char_code(nest, stores, code)?;
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::Char => {
-            let value = assignments::scan_i32(input, stores, hooks, traced)?;
+            let value = assignments::scan_i32(input, stores, execution, traced)?;
             let ch = u8::try_from(value)
                 .map(char::from)
                 .map_err(|_| ExecError::InvalidCode {
@@ -634,7 +629,7 @@ where
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::Delimiter => {
-            let delimiter = scan_delimiter_code(input, stores, hooks, traced)?;
+            let delimiter = scan_delimiter_code(input, stores, execution, traced)?;
             // TeX82 treats a standalone \delimiter as the math character in
             // the high 15 bits; the low 12 bits only name its large variant.
             append_math_char_code(nest, stores, delimiter >> 12)?;
@@ -648,12 +643,12 @@ where
         | UnexpandablePrimitive::MathClose
         | UnexpandablePrimitive::MathPunct
         | UnexpandablePrimitive::MathInner => {
-            let field = scan_math_field(nest, input, stores, recorder, hooks)?;
+            let field = scan_math_field(nest, input, stores, recorder, execution)?;
             append_noad(nest, noad_kind_for_constructor(primitive), field);
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::Underline | UnexpandablePrimitive::Overline => {
-            let field = scan_math_field(nest, input, stores, recorder, hooks)?;
+            let field = scan_math_field(nest, input, stores, recorder, execution)?;
             append_noad(
                 nest,
                 if primitive == UnexpandablePrimitive::Underline {
@@ -677,12 +672,12 @@ where
         | UnexpandablePrimitive::OverWithDelims
         | UnexpandablePrimitive::AtopWithDelims
         | UnexpandablePrimitive::AboveWithDelims => {
-            start_fraction(primitive, traced, nest, input, stores, recorder, hooks)?;
+            start_fraction(primitive, traced, nest, input, stores, recorder, execution)?;
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::Radical => {
-            let delimiter = scan_delimiter_code(input, stores, hooks, traced)?;
-            let field = scan_math_field(nest, input, stores, recorder, hooks)?;
+            let delimiter = scan_delimiter_code(input, stores, execution, traced)?;
+            let field = scan_math_field(nest, input, stores, recorder, execution)?;
             append_noad(nest, NoadKind::Radical { delimiter }, field);
             Ok(DispatchAction::Continue)
         }
@@ -693,14 +688,16 @@ where
                     "\n! Please use \\mathaccent for accents in math mode.\nI'm treating this as \\mathaccent.\n",
                 );
             }
-            let accent =
-                math_char_from_code(scan_math_char_code(input, stores, hooks, traced)?, stores)?;
-            let field = scan_math_field(nest, input, stores, recorder, hooks)?;
+            let accent = math_char_from_code(
+                scan_math_char_code(input, stores, execution, traced)?,
+                stores,
+            )?;
+            let field = scan_math_field(nest, input, stores, recorder, execution)?;
             append_noad(nest, NoadKind::Accent { accent }, field);
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::VCenter => {
-            let field = scan_vcenter_field(traced, input, stores, hooks)?;
+            let field = scan_vcenter_field(traced, input, stores, execution)?;
             append_noad(nest, NoadKind::VCenter, field);
             Ok(DispatchAction::Continue)
         }
@@ -713,7 +710,7 @@ where
         | UnexpandablePrimitive::Raise
         | UnexpandablePrimitive::Lower => {
             if let Some(node) =
-                assignments::scan_math_box(primitive, traced, nest, input, stores, hooks)?
+                assignments::scan_math_box(primitive, traced, nest, input, stores, execution)?
             {
                 let list = stores.freeze_node_list(&[node]);
                 append_noad(
@@ -730,7 +727,7 @@ where
         | UnexpandablePrimitive::Leaders
         | UnexpandablePrimitive::CLeaders
         | UnexpandablePrimitive::XLeaders => assignments::execute_unexpandable_with_recorder(
-            primitive, traced, nest, input, stores, recorder, hooks,
+            primitive, traced, nest, input, stores, recorder, execution,
         ),
         UnexpandablePrimitive::HSkip
         | UnexpandablePrimitive::HFil
@@ -738,7 +735,7 @@ where
         | UnexpandablePrimitive::HSs
         | UnexpandablePrimitive::HFilNeg => {
             let spec = if primitive == UnexpandablePrimitive::HSkip {
-                assignments::scan_glue_id(input, stores, hooks, false, traced)?
+                assignments::scan_glue_id(input, stores, execution, false, traced)?
             } else {
                 let spec = assignments::fixed_infinite_glue(primitive);
                 stores.intern_glue(spec)
@@ -751,7 +748,7 @@ where
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::MSkip => {
-            let spec = assignments::scan_glue_id(input, stores, hooks, true, traced)?;
+            let spec = assignments::scan_glue_id(input, stores, execution, true, traced)?;
             nest.current_list_mut().push(Node::Glue {
                 spec,
                 kind: GlueKind::MuSkip,
@@ -760,7 +757,7 @@ where
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::MKern => {
-            let amount = scan_mu_dimen(input, stores, hooks, traced)?;
+            let amount = scan_mu_dimen(input, stores, execution, traced)?;
             nest.current_list_mut().push(Node::Kern {
                 amount,
                 kind: KernKind::Mu,
@@ -768,7 +765,7 @@ where
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::Kern => {
-            let amount = assignments::scan_scaled(input, stores, hooks, traced)?;
+            let amount = assignments::scan_scaled(input, stores, execution, traced)?;
             nest.current_list_mut().push(Node::Kern {
                 amount,
                 kind: KernKind::Explicit,
@@ -783,7 +780,7 @@ where
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::VRule => {
-            let rule = assignments::scan_rule_node(input, stores, hooks, primitive, traced)?;
+            let rule = assignments::scan_rule_node(input, stores, execution, primitive, traced)?;
             nest.current_list_mut().push(rule);
             Ok(DispatchAction::Continue)
         }
@@ -797,12 +794,12 @@ where
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::Penalty => {
-            let penalty = assignments::scan_i32(input, stores, hooks, traced)?;
+            let penalty = assignments::scan_i32(input, stores, execution, traced)?;
             nest.current_list_mut().push(Node::Penalty(penalty));
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::MathChoice => {
-            append_math_choice(nest, input, stores, recorder, hooks)?;
+            append_math_choice(nest, input, stores, recorder, execution)?;
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::EqNo | UnexpandablePrimitive::LeftEqNo => {
@@ -818,19 +815,19 @@ where
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::HAlign if nest.current_mode() == Mode::DisplayMath => {
-            finish_display_halign(traced, nest, input, stores, recorder, hooks)?;
+            finish_display_halign(traced, nest, input, stores, recorder, execution)?;
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::Left => {
-            start_left_group(nest, input, stores, recorder, hooks)?;
+            start_left_group(nest, input, stores, recorder, execution)?;
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::Right => {
-            finish_left_group(nest, input, stores, recorder, hooks)?;
+            finish_left_group(nest, input, stores, recorder, execution)?;
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::Middle => {
-            append_middle_delimiter(nest, input, stores, recorder, hooks)?;
+            append_middle_delimiter(nest, input, stores, recorder, execution)?;
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::DisplayStyle
@@ -843,7 +840,7 @@ where
         }
         primitive if assignments::math_allows_mode_independent_primitive(primitive) => {
             assignments::execute_unexpandable_with_recorder(
-                primitive, traced, nest, input, stores, recorder, hooks,
+                primitive, traced, nest, input, stores, recorder, execution,
             )
         }
         _ => Err(ExecError::UnimplementedTypesetting {
@@ -855,18 +852,17 @@ where
     }
 }
 
-fn finish_display_halign<S, R, H>(
+fn finish_display_halign<S, R>(
     context: TracedTokenWord,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     while stores.innermost_group_kind() == Some(tex_state::GroupKind::SemiSimple) {
         stores.world_mut().write_text(
@@ -900,8 +896,8 @@ where
                 operation: "display interrupt state",
             })?;
     let nodes =
-        crate::align::execute_display_halign(context, nest, input, stores, recorder, hooks)?;
-    finish_display_alignment_assignments(input, stores, recorder, hooks)?;
+        crate::align::execute_display_halign(context, nest, input, stores, recorder, execution)?;
+    finish_display_alignment_assignments(input, stores, recorder, execution)?;
     let closing_origin = consume_display_alignment_closer(input, stores, context.origin())?;
     finish_display_alignment(nest, stores, nodes)?;
     leave_group_with_origin(
@@ -913,19 +909,19 @@ where
     resume_after_display_alignment(nest, input, stores, interrupt.active_directions)
 }
 
-fn finish_display_alignment_assignments<S, R, H>(
+fn finish_display_alignment_assignments<S, R>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
     loop {
-        let Some(first) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
+        let Some(first) =
+            get_x_token_with_recorder_and_context(input, stores, recorder, execution)?
         else {
             return Ok(());
         };
@@ -960,7 +956,7 @@ where
                 )
             ) {
                 let Some(next) =
-                    get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
+                    get_x_token_with_recorder_and_context(input, stores, recorder, execution)?
                 else {
                     push_traced_tokens(input, stores, command);
                     return Ok(());
@@ -983,7 +979,8 @@ where
                 tex_state::PrintSink::TerminalAndLog,
                 "\n! Improper \\setbox.\nSorry, \\setbox is not allowed after \\halign in a display,\nor between \\accent and an accented character.\n",
             );
-            if let Some(next) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
+            if let Some(next) =
+                get_x_token_with_recorder_and_context(input, stores, recorder, execution)?
                 && !matches!(
                     tex_expand::semantic_token(next),
                     Token::Char {
@@ -1001,7 +998,7 @@ where
         if !command.is_empty() {
             push_traced_tokens(input, stores, command);
         }
-        if !assignments::try_execute_assignment(first, input, stores, hooks)? {
+        if !assignments::try_execute_assignment(first, input, stores, execution)? {
             push_traced_tokens(input, stores, [first]);
             return Ok(());
         }

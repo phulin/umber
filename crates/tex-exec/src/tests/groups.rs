@@ -147,7 +147,7 @@ fn group_mismatch_errors_use_tex_primary_text() {
         token,
         &mut input,
         &mut stores,
-        &mut NoopExecHooks,
+        &mut crate::ExecutionContext::new("texput"),
     )
     .expect_err("direct dispatch exposes the recoverable mismatch");
     assert_eq!(err.to_string(), "Extra }, or forgotten \\endgroup.");
@@ -173,7 +173,7 @@ fn group_mismatch_errors_use_tex_primary_text() {
         token,
         &mut input,
         &mut stores,
-        &mut NoopExecHooks,
+        &mut crate::ExecutionContext::new("texput"),
     )
     .expect_err("direct dispatch exposes the recoverable mismatch");
     assert_eq!(err.to_string(), "\\endgroup ended a group started by {");

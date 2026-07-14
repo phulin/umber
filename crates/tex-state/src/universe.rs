@@ -233,10 +233,10 @@ pub trait ExpansionState {
     fn origin_list_if_live(&self, id: OriginListId) -> Option<&[OriginId]>;
 }
 
-/// Input file reads available to driver-supplied `\input` hooks.
+/// Input file reads available to a driver-supplied `\input` resolver.
 ///
 /// This is intentionally separate from [`ExpansionState`] so ordinary gullet
-/// code cannot open files and input hooks cannot see expansion, Env/register,
+/// code cannot open files and input resolvers cannot see expansion, Env/register,
 /// code-table, snapshot, font-assignment, or general [`World`] mutation APIs.
 pub trait InputReadState {
     fn read_input_file(

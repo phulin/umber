@@ -1,8 +1,8 @@
 //! Diagnostic and log-writing primitives.
 
 use tex_expand::{
-    ExpansionHooks, NoopRecorder, get_x_token_with_recorder_and_hooks, meaning_text,
-    scan_dimen::DimensionDiagnostic, scan_int::IntegerDiagnostic, scan_the_text_with_hooks,
+    NoopRecorder, get_x_token_with_recorder_and_context, meaning_text,
+    scan_dimen::DimensionDiagnostic, scan_int::IntegerDiagnostic, scan_the_text_with_context,
     token_text,
 };
 use tex_lex::{InputSource, InputStack};
@@ -73,18 +73,17 @@ where
     Ok(())
 }
 
-pub(crate) fn execute_showthe<S, H>(
+pub(crate) fn execute_showthe<S>(
     context: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     let mut recorder = NoopRecorder;
-    let text = match scan_the_text_with_hooks(input, stores, &mut recorder, hooks, context) {
+    let text = match scan_the_text_with_context(input, stores, &mut recorder, execution, context) {
         Ok(text) => text,
         Err(tex_expand::ExpandError::UnsupportedTheTarget { context }) => {
             let token = tex_expand::semantic_token(context);
@@ -127,18 +126,17 @@ fn catcode_name(cat: Catcode) -> &'static str {
     }
 }
 
-pub(crate) fn execute_showtokens<S, H>(
+pub(crate) fn execute_showtokens<S>(
     context: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     let tokens = tex_expand::scan::scan_general_text_with_expanded_open_with_driver(
-        input, stores, hooks, context,
+        input, stores, execution, context,
     )?;
     write_diagnostic(
         stores,
@@ -247,17 +245,16 @@ pub(crate) fn execute_showbox(stores: &mut Universe, index: u16) {
     write_diagnostic(stores, &text);
 }
 
-pub(crate) fn execute_message<S, H>(
+pub(crate) fn execute_message<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     error: bool,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
-    let tokens = scan_balanced_expanded_text(input, stores, hooks, "\\message")?;
+    let tokens = scan_balanced_expanded_text(input, stores, execution, "\\message")?;
     let text = print_text_with_newlinechar(stores, &message_tokens_text(stores, &tokens));
     if error {
         write_diagnostic(stores, &format!("\n! {text}.\n"));
@@ -389,16 +386,15 @@ fn mode_text(mode: Mode) -> &'static str {
     }
 }
 
-pub(crate) fn execute_showhyphens<S, H>(
+pub(crate) fn execute_showhyphens<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
-    let tokens = scan_balanced_expanded_text(input, stores, hooks, "\\showhyphens")?;
+    let tokens = scan_balanced_expanded_text(input, stores, execution, "\\showhyphens")?;
     let language = u8::try_from(stores.int_param(IntParam::LANGUAGE)).unwrap_or(0);
     let mut words = Vec::new();
     let mut current = String::new();
@@ -603,18 +599,17 @@ where
     Err(ExecError::MissingToken { context })
 }
 
-fn scan_balanced_expanded_text<S, H>(
+fn scan_balanced_expanded_text<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     context: &'static str,
 ) -> Result<Vec<Token>, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     let open =
-        next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingToken { context })?;
+        next_non_space_x(input, stores, execution)?.ok_or(ExecError::MissingToken { context })?;
     if !is_begin_group(open) {
         return Err(ExecError::MissingToken { context });
     }
@@ -622,7 +617,7 @@ where
     let mut depth = 1usize;
     let mut tokens = Vec::new();
     while let Some(token) =
-        get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?
+        get_x_token_with_recorder_and_context(input, stores, &mut recorder, execution)?
             .map(tex_expand::semantic_token)
     {
         if is_begin_group(token) {
@@ -656,18 +651,17 @@ where
     Ok(None)
 }
 
-fn next_non_space_x<S, H>(
+fn next_non_space_x<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<Option<Token>, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
     let mut recorder = NoopRecorder;
     while let Some(token) =
-        get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?
+        get_x_token_with_recorder_and_context(input, stores, &mut recorder, execution)?
             .map(tex_expand::semantic_token)
     {
         if !is_space(token) {

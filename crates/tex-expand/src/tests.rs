@@ -1,6 +1,6 @@
 use crate::{
-    EngineMode, ExpandableOpcode, ExpansionHooks, NoopExpansionHooks, NoopRecorder, ReadRecorder,
-    dispatch, dispatch_expandable_opcode, dispatch_with_hooks, install_expandable_primitives,
+    EngineMode, ExpandableOpcode, ExpansionContext, NoopRecorder, ReadRecorder, dispatch,
+    dispatch_expandable_opcode, dispatch_with_context, install_expandable_primitives,
 };
 use ahash::AHashMap;
 use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
@@ -60,11 +60,11 @@ fn preamble_span_operation_expands_exactly_one_token() {
     );
     let mut input = InputStack::new(MemoryInput::new("\\first"));
 
-    let delivered = crate::expand_once_then_get_token_with_hooks(
+    let delivered = crate::expand_once_then_get_token_with_context(
         &mut input,
         &mut stores,
         &mut NoopRecorder,
-        &mut NoopExpansionHooks,
+        &mut ExpansionContext::new("texput"),
     )
     .expect("one expansion should succeed")
     .expect("macro body should provide a raw token");
@@ -106,16 +106,17 @@ where
         .map(|token| token.map(crate::semantic_token))
 }
 
-fn get_x_token_with_hooks<S, H>(
+fn get_x_token_with_context<S>(
     input: &mut InputStack<S>,
     stores: &mut (impl ExpansionState + InputOpenState),
-    hooks: &mut H,
+    context: &mut MemoryResolverFixture,
 ) -> Result<Option<Token>, crate::ExpandError>
 where
     S: tex_lex::InputSource,
-    H: ExpansionHooks<S>,
+    MemoryResolver: crate::InputResolver<S>,
 {
-    crate::get_x_token_with_hooks(input, stores, hooks)
+    let mut context = context.expansion_context();
+    crate::get_x_token_with_context(input, stores, &mut context)
         .map(|token| token.map(crate::semantic_token))
 }
 
@@ -148,7 +149,7 @@ fn collect_protected_expansion(
 
     let mut input = InputStack::new(MemoryInput::new(source));
     let mut recorder = CountingRecorder::default();
-    let mut hooks = NoopExpansionHooks;
+    let mut context = ExpansionContext::new("texput");
     let mut expanded = Vec::new();
     loop {
         let token = if prepared {
@@ -157,20 +158,20 @@ fn collect_protected_expansion(
             else {
                 break;
             };
-            crate::get_x_or_protected_from_prepared_with_recorder_and_hooks(
+            crate::get_x_or_protected_from_prepared_with_recorder_and_context(
                 first,
                 &mut input,
                 &mut stores,
                 &mut recorder,
-                &mut hooks,
+                &mut context,
             )
             .expect("prepared x_token")
         } else {
-            crate::get_x_or_protected_with_recorder_and_hooks(
+            crate::get_x_or_protected_with_recorder_and_context(
                 &mut input,
                 &mut stores,
                 &mut recorder,
-                &mut hooks,
+                &mut context,
             )
             .expect("ordinary get_x_token")
         };
@@ -249,11 +250,11 @@ fn invalid_conditional_relation_assumes_equal_and_replays_offending_token() {
     let mut input = InputStack::new(MemoryInput::new("!"));
     let ifnum = stores.intern("ifnum");
     let context = TracedTokenWord::pack(Token::Cs(ifnum.symbol()), OriginId::UNKNOWN);
-    let relation = crate::conditionals::scan_conditional_relation_with_expander_and_hooks(
+    let relation = crate::conditionals::scan_conditional_relation_with_expander_and_context(
         &mut input,
         &mut stores,
         &mut NoopRecorder,
-        &mut crate::NoopExpansionHooks,
+        &mut ExpansionContext::new("texput"),
         &mut crate::NoInputExpandNext,
         context,
     )
@@ -486,11 +487,11 @@ fn get_x_or_protected_stops_before_protected_macro_expansion() {
     );
     let mut input = InputStack::new(MemoryInput::new("\\protectedmacro"));
 
-    let delivered = crate::get_x_or_protected_with_recorder_and_hooks(
+    let delivered = crate::get_x_or_protected_with_recorder_and_context(
         &mut input,
         &mut stores,
         &mut NoopRecorder,
-        &mut NoopExpansionHooks,
+        &mut ExpansionContext::new("texput"),
     )
     .expect("protected-aware expansion")
     .expect("protected macro token");
@@ -1446,13 +1447,13 @@ fn macro_body_delivery_does_not_write_provenance_per_token() {
         macro_arguments,
         macro_invocation,
         ..
-    } = dispatch_with_hooks(
+    } = dispatch_with_context(
         Token::Cs(macro_cs.symbol()),
         invocation_origin,
         &mut input,
         &mut stores,
         &mut NoopRecorder,
-        &mut NoopExpansionHooks,
+        &mut ExpansionContext::new("texput"),
         meaning,
     )
     .expect("macro dispatch should succeed")
@@ -1875,7 +1876,7 @@ fn the_records_value_and_code_generation_dependencies_that_mutations_invalidate(
 }
 
 #[test]
-fn number_scanner_preserves_driver_hooks_during_nested_expansion() {
+fn number_scanner_preserves_session_context_during_nested_expansion() {
     let mut stores = Universe::new();
     let number = expandable_primitive(&mut stores, "number", ExpandablePrimitive::Number);
     let input_primitive = expandable_primitive(&mut stores, "input", ExpandablePrimitive::Input);
@@ -1896,13 +1897,13 @@ fn number_scanner_preserves_driver_hooks_during_nested_expansion() {
     let list = stores.intern_token_list(&[Token::Cs(number.symbol()), Token::Cs(digits.symbol())]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
-    let mut hooks = MemoryHooks::new("job").with_source("digs", "42");
+    let mut context = MemoryResolverFixture::new("job").with_source("digs", "42");
 
     assert_eq!(
-        next_expanded_chars_with_hooks(&mut input, &mut stores, &mut hooks),
+        next_expanded_chars_with_context(&mut input, &mut stores, &mut context),
         "42"
     );
-    assert_eq!(hooks.opened, vec!["digs"]);
+    assert_eq!(context.resolver.opened, vec!["digs"]);
 }
 
 #[test]
@@ -2098,13 +2099,13 @@ fn input_pushes_driver_source_and_returns_to_calling_source() {
     stores.set_int_param(tex_state::env::banks::IntParam::END_LINE_CHAR, 13);
     expandable_primitive(&mut stores, "input", ExpandablePrimitive::Input);
     let mut input = InputStack::new(MemoryInput::new("\\input{inc}z"));
-    let mut hooks = MemoryHooks::new("main").with_source("inc", "ab");
+    let mut context = MemoryResolverFixture::new("main").with_source("inc", "ab");
 
     assert_eq!(
-        next_expanded_chars_with_hooks(&mut input, &mut stores, &mut hooks),
+        next_expanded_chars_with_context(&mut input, &mut stores, &mut context),
         "ab z "
     );
-    assert_eq!(hooks.opened, vec!["inc"]);
+    assert_eq!(context.resolver.opened, vec!["inc"]);
 }
 
 #[test]
@@ -2114,10 +2115,10 @@ fn endinput_finishes_current_line_then_pops_source() {
     expandable_primitive(&mut stores, "input", ExpandablePrimitive::Input);
     expandable_primitive(&mut stores, "endinput", ExpandablePrimitive::EndInput);
     let mut input = InputStack::new(MemoryInput::new("\\input{inc}z"));
-    let mut hooks = MemoryHooks::new("main").with_source("inc", "a\\endinput b\nc");
+    let mut context = MemoryResolverFixture::new("main").with_source("inc", "a\\endinput b\nc");
 
     assert_eq!(
-        next_expanded_chars_with_hooks(&mut input, &mut stores, &mut hooks),
+        next_expanded_chars_with_context(&mut input, &mut stores, &mut context),
         "ab z "
     );
 }
@@ -2127,9 +2128,9 @@ fn jobname_expands_from_driver_hook_as_rendered_tokens() {
     let mut stores = Universe::new();
     expandable_primitive(&mut stores, "jobname", ExpandablePrimitive::JobName);
     let mut input = InputStack::new(MemoryInput::new("\\jobname"));
-    let mut hooks = MemoryHooks::new("paper");
+    let mut context = MemoryResolverFixture::new("paper");
 
-    let tokens = collect_expanded_with_hooks(&mut input, &mut stores, &mut hooks);
+    let tokens = collect_expanded_with_context(&mut input, &mut stores, &mut context);
     let text = tokens
         .iter()
         .map(|token| match token {
@@ -2990,12 +2991,12 @@ fn mode_predicates_use_driver_hook() {
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
-    let mut hooks = MemoryHooks::new("main")
+    let mut context = MemoryResolverFixture::new("main")
         .with_mode(EngineMode::Horizontal)
         .with_inner(true);
 
     assert_eq!(
-        next_expanded_chars_with_hooks(&mut input, &mut stores, &mut hooks),
+        next_expanded_chars_with_context(&mut input, &mut stores, &mut context),
         "hvi"
     );
 }
@@ -3044,7 +3045,7 @@ fn box_predicates_read_box_register_state() {
 }
 
 #[test]
-fn ifeof_uses_hook_and_default_world_stream_state() {
+fn ifeof_reads_world_stream_state_directly() {
     let mut stores = Universe::new();
     let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
     let ifeof = expandable_primitive(&mut stores, "ifeof", ExpandablePrimitive::IfEof);
@@ -3064,12 +3065,18 @@ fn ifeof_uses_hook_and_default_world_stream_state() {
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
-    let mut hooks = MemoryHooks::new("main")
-        .with_eof(1, false)
-        .with_eof(2, true);
+    stores
+        .world_mut()
+        .write_file("stream-one.tex", "unread")
+        .expect("seed stream input");
+    stores
+        .world_mut()
+        .open_in(tex_state::StreamSlot::new(1), "stream-one.tex")
+        .expect("open seeded stream input");
+    let mut context = MemoryResolverFixture::new("main");
 
     assert_eq!(
-        next_expanded_chars_with_hooks(&mut input, &mut stores, &mut hooks),
+        next_expanded_chars_with_context(&mut input, &mut stores, &mut context),
         "oe"
     );
 
@@ -3260,14 +3267,14 @@ fn collect_expanded(
     out
 }
 
-fn next_expanded_chars_with_hooks(
+fn next_expanded_chars_with_context(
     input: &mut InputStack<MemoryInput>,
     stores: &mut (impl ExpansionState + InputOpenState),
-    hooks: &mut MemoryHooks,
+    context: &mut MemoryResolverFixture,
 ) -> String {
     let mut out = String::new();
     while let Some(token) =
-        get_x_token_with_hooks(input, stores, hooks).expect("expansion should succeed")
+        get_x_token_with_context(input, stores, context).expect("expansion should succeed")
     {
         let Token::Char { ch, .. } = token else {
             panic!("expected character token, got {token:?}");
@@ -3277,14 +3284,14 @@ fn next_expanded_chars_with_hooks(
     out
 }
 
-fn collect_expanded_with_hooks(
+fn collect_expanded_with_context(
     input: &mut InputStack<MemoryInput>,
     stores: &mut (impl ExpansionState + InputOpenState),
-    hooks: &mut MemoryHooks,
+    context: &mut MemoryResolverFixture,
 ) -> Vec<Token> {
     let mut out = Vec::new();
     while let Some(token) =
-        get_x_token_with_hooks(input, stores, hooks).expect("expansion should succeed")
+        get_x_token_with_context(input, stores, context).expect("expansion should succeed")
     {
         out.push(token);
     }
@@ -3369,53 +3376,62 @@ fn conditional_primitives(stores: &mut Universe) -> (Symbol, Symbol, Symbol, Sym
     )
 }
 
-struct MemoryHooks {
+struct MemoryResolverFixture {
     job_name: String,
-    sources: AHashMap<String, String>,
-    opened: Vec<String>,
-    mode: EngineMode,
-    inner: bool,
-    eof: AHashMap<u8, bool>,
+    resolver: MemoryResolver,
+    engine: crate::EngineStateSnapshot,
 }
 
-impl MemoryHooks {
+struct MemoryResolver {
+    sources: AHashMap<String, String>,
+    opened: Vec<String>,
+}
+
+impl MemoryResolverFixture {
     fn new(job_name: &str) -> Self {
         Self {
             job_name: job_name.to_owned(),
-            sources: AHashMap::new(),
-            opened: Vec::new(),
-            mode: EngineMode::Vertical,
-            inner: false,
-            eof: AHashMap::new(),
+            resolver: MemoryResolver {
+                sources: AHashMap::new(),
+                opened: Vec::new(),
+            },
+            engine: crate::EngineStateSnapshot::default(),
         }
     }
 
     fn with_source(mut self, name: &str, input: &str) -> Self {
-        self.sources.insert(name.to_owned(), input.to_owned());
+        self.resolver
+            .sources
+            .insert(name.to_owned(), input.to_owned());
         self
     }
 
     fn with_mode(mut self, mode: EngineMode) -> Self {
-        self.mode = mode;
+        self.engine.mode = mode;
         self
     }
 
     fn with_inner(mut self, inner: bool) -> Self {
-        self.inner = inner;
+        self.engine.is_inner_mode = inner;
         self
     }
 
-    fn with_eof(mut self, stream: u8, eof: bool) -> Self {
-        self.eof.insert(stream, eof);
-        self
+    fn expansion_context<S>(&mut self) -> ExpansionContext<'_, S>
+    where
+        MemoryResolver: crate::InputResolver<S>,
+    {
+        let mut context = ExpansionContext::with_input_resolver(&self.job_name, &mut self.resolver);
+        context.engine = self.engine;
+        context
     }
 }
 
-impl ExpansionHooks<MemoryInput> for MemoryHooks {
-    fn open_input<C: InputReadState>(
+impl crate::InputResolver<MemoryInput> for MemoryResolver {
+    fn open_input(
         &mut self,
-        _input: &mut C,
+        _input: &mut dyn InputReadState,
         name: &str,
+        _request_index: u64,
     ) -> Result<MemoryInput, String> {
         let source = self
             .sources
@@ -3423,21 +3439,5 @@ impl ExpansionHooks<MemoryInput> for MemoryHooks {
             .ok_or_else(|| "missing memory source".to_owned())?;
         self.opened.push(name.to_owned());
         Ok(MemoryInput::new(source.clone()))
-    }
-
-    fn job_name(&self) -> &str {
-        &self.job_name
-    }
-
-    fn mode(&self) -> EngineMode {
-        self.mode
-    }
-
-    fn is_inner_mode(&self) -> bool {
-        self.inner
-    }
-
-    fn input_stream_eof(&self, _stores: &impl ExpansionState, stream: u8) -> bool {
-        self.eof.get(&stream).copied().unwrap_or(true)
     }
 }

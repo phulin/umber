@@ -4,46 +4,44 @@ use tex_state::env::banks::IntParam;
 use tex_state::token::{Catcode, Token, TracedTokenWord};
 
 use crate::{
-    ExpandError, ExpandNext, ExpansionHooks, NoInputExpandNext, ReadRecorder, scan_int,
+    ExpandError, ExpandNext, ExpansionContext, NoInputExpandNext, ReadRecorder, scan_int,
     semantic_token,
 };
 
-pub(crate) fn next_non_space_x_token_with_hooks<S, R, H>(
+pub(crate) fn next_non_space_x_token_with_context<S, R>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
 ) -> Result<Option<TracedTokenWord>, ExpandError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
-    next_non_space_x_token_with_expander_and_hooks(
+    next_non_space_x_token_with_expander_and_context(
         input,
         stores,
         recorder,
-        hooks,
+        expansion,
         &mut NoInputExpandNext,
     )
 }
 
-pub(crate) fn next_non_space_x_token_with_expander_and_hooks<S, St, R, H, E>(
+pub(crate) fn next_non_space_x_token_with_expander_and_context<S, St, R, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
 ) -> Result<Option<TracedTokenWord>, ExpandError>
 where
     S: InputSource,
     St: ExpansionState,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
-    E: ExpandNext<S, St, R, H>,
+    E: ExpandNext<S, St, R>,
 {
     loop {
-        let Some(token) = expander.next_expanded_token(input, stores, recorder, hooks)? else {
+        let Some(token) = expander.next_expanded_token(input, stores, recorder, expansion)? else {
             return Ok(None);
         };
         if !matches!(
@@ -59,33 +57,32 @@ where
 }
 
 #[allow(dead_code)]
-pub(crate) fn scan_register_index<S, R, H>(
+pub(crate) fn scan_register_index<S, R>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     context: tex_state::token::TracedTokenWord,
 ) -> Result<u16, ExpandError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
-    scan_register_index_with_expander_and_hooks(
+    scan_register_index_with_expander_and_context(
         input,
         stores,
         recorder,
-        hooks,
+        expansion,
         &mut NoInputExpandNext,
         context,
     )
 }
 
-pub(crate) fn scan_register_index_with_expander_and_hooks<S, St, R, H, E>(
+pub(crate) fn scan_register_index_with_expander_and_context<S, St, R, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
     context: tex_state::token::TracedTokenWord,
 ) -> Result<u16, ExpandError>
@@ -93,11 +90,10 @@ where
     S: InputSource,
     St: ExpansionState,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
-    E: ExpandNext<S, St, R, H>,
+    E: ExpandNext<S, St, R>,
 {
-    let scanned = scan_int::scan_int_with_expander_and_hooks(
-        input, stores, recorder, hooks, expander, context,
+    let scanned = scan_int::scan_int_with_expander_and_context(
+        input, stores, recorder, expansion, expander, context,
     )?;
     let value = scanned.value();
     let maximum = maximum_register_index(stores);
@@ -123,33 +119,32 @@ pub enum ExpandedKeywordMatch {
     PartialMismatch,
 }
 
-pub fn scan_optional_keyword_with_hooks<S, R, H>(
+pub fn scan_optional_keyword_with_context<S, R>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     keyword: &str,
 ) -> Result<bool, ExpandError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
-    scan_optional_keyword_with_expander_and_hooks(
+    scan_optional_keyword_with_expander_and_context(
         input,
         stores,
         recorder,
-        hooks,
+        expansion,
         &mut NoInputExpandNext,
         keyword,
     )
 }
 
-pub fn scan_optional_keyword_with_expander_and_hooks<S, St, R, H, E>(
+pub fn scan_optional_keyword_with_expander_and_context<S, St, R, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
     keyword: &str,
 ) -> Result<bool, ExpandError>
@@ -157,16 +152,16 @@ where
     S: InputSource,
     St: ExpansionState,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
-    E: ExpandNext<S, St, R, H>,
+    E: ExpandNext<S, St, R>,
 {
-    let Some(first) =
-        next_non_space_x_token_with_expander_and_hooks(input, stores, recorder, hooks, expander)?
+    let Some(first) = next_non_space_x_token_with_expander_and_context(
+        input, stores, recorder, expansion, expander,
+    )?
     else {
         return Ok(false);
     };
-    match scan_keyword_after_first_with_expander_and_hooks(
-        input, stores, recorder, hooks, expander, first, keyword,
+    match scan_keyword_after_first_with_expander_and_context(
+        input, stores, recorder, expansion, expander, first, keyword,
     )? {
         ExpandedKeywordMatch::Matched => Ok(true),
         ExpandedKeywordMatch::FirstTokenMismatch => {
@@ -178,35 +173,34 @@ where
 }
 
 #[allow(dead_code)]
-pub fn scan_keyword_after_first_with_hooks<S, R, H>(
+pub fn scan_keyword_after_first_with_context<S, R>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     first: TracedTokenWord,
     keyword: &str,
 ) -> Result<ExpandedKeywordMatch, ExpandError>
 where
     S: InputSource,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
 {
-    scan_keyword_after_first_with_expander_and_hooks(
+    scan_keyword_after_first_with_expander_and_context(
         input,
         stores,
         recorder,
-        hooks,
+        expansion,
         &mut NoInputExpandNext,
         first,
         keyword,
     )
 }
 
-pub fn scan_keyword_after_first_with_expander_and_hooks<S, St, R, H, E>(
+pub fn scan_keyword_after_first_with_expander_and_context<S, St, R, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
     recorder: &mut R,
-    hooks: &mut H,
+    expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
     first: TracedTokenWord,
     keyword: &str,
@@ -215,8 +209,7 @@ where
     S: InputSource,
     St: ExpansionState,
     R: ReadRecorder,
-    H: ExpansionHooks<S>,
-    E: ExpandNext<S, St, R, H>,
+    E: ExpandNext<S, St, R>,
 {
     if keyword.is_empty() {
         return Ok(ExpandedKeywordMatch::Matched);
@@ -230,7 +223,7 @@ where
     }
 
     for &expected in &keyword.as_bytes()[1..] {
-        let Some(token) = expander.next_expanded_token(input, stores, recorder, hooks)? else {
+        let Some(token) = expander.next_expanded_token(input, stores, recorder, expansion)? else {
             unread_tokens(input, stores, consumed);
             return Ok(ExpandedKeywordMatch::PartialMismatch);
         };

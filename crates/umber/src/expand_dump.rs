@@ -7,7 +7,7 @@ use tex_state::meaning::Meaning;
 use tex_state::{Universe, World, WorldError};
 
 use crate::format_token;
-use umber::{EngineSession, FileSessionHooks};
+use umber::{EngineSession, FileSessionResolvers};
 
 pub fn expand_dump(path: &str) -> Result<(), ExpandDumpError> {
     let path = Path::new(path);
@@ -16,8 +16,8 @@ pub fn expand_dump(path: &str) -> Result<(), ExpandDumpError> {
     install_dump_primitives(&mut stores);
 
     let mut input = InputStack::new(WorldInput::from_content(content));
-    let mut hooks = FileSessionHooks::from_environment(path);
-    let mut session = EngineSession::new(&mut input, &mut stores, &mut hooks);
+    let mut resolvers = FileSessionResolvers::from_environment(path);
+    let mut session = EngineSession::new(&mut input, &mut stores, resolvers.context());
     match dump(&mut session) {
         Ok(()) => Ok(()),
         Err(err) => {
@@ -27,9 +27,7 @@ pub fn expand_dump(path: &str) -> Result<(), ExpandDumpError> {
     }
 }
 
-fn dump(
-    session: &mut EngineSession<'_, WorldInput, FileSessionHooks>,
-) -> Result<(), ExpandDumpError> {
+fn dump(session: &mut EngineSession<'_, '_, WorldInput>) -> Result<(), ExpandDumpError> {
     while let Some(token) = session.next_expanded_token()? {
         if session.try_execute_assignment(token)? {
             continue;

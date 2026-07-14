@@ -1,4 +1,3 @@
-use tex_expand::ExpansionHooks;
 use tex_lex::{InputSource, InputStack};
 use tex_state::Universe;
 use tex_state::glue::{GlueSpec, Order};
@@ -16,17 +15,16 @@ use super::super::{
 use super::packaging::{first_box_node, kind_for_primitive, scan_box_node};
 use super::vsplit::scan_vsplit_node;
 
-pub(super) fn scan_leader_payload<S, H>(
+pub(super) fn scan_leader_payload<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<LeaderPayload, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
-    let traced = next_non_space_traced_x(input, stores, hooks)?
+    let traced = next_non_space_traced_x(input, stores, execution)?
         .ok_or(ExecError::MissingLeaderPayload { context })?;
     let token = tex_expand::semantic_token(traced);
     let Token::Cs(symbol) = token else {
@@ -37,12 +35,18 @@ where
         Meaning::UnexpandablePrimitive(primitive @ UnexpandablePrimitive::HBox)
         | Meaning::UnexpandablePrimitive(primitive @ UnexpandablePrimitive::VBox)
         | Meaning::UnexpandablePrimitive(primitive @ UnexpandablePrimitive::VTop) => {
-            let node = scan_box_node(kind_for_primitive(primitive)?, input, stores, hooks, traced)?;
+            let node = scan_box_node(
+                kind_for_primitive(primitive)?,
+                input,
+                stores,
+                execution,
+                traced,
+            )?;
             leader_payload_from_node(node, traced)
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box)
         | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Copy) => {
-            let index = scan_register_index(input, stores, hooks, traced)?;
+            let index = scan_register_index(input, stores, execution, traced)?;
             let id = if matches!(
                 stores.meaning(symbol),
                 Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box)
@@ -63,14 +67,14 @@ where
                 .and_then(|node| leader_payload_from_node(node, traced))
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VSplit) => {
-            scan_vsplit_node(input, stores, hooks, traced)?
+            scan_vsplit_node(input, stores, execution, traced)?
                 .ok_or(ExecError::MissingLeaderPayload { context: traced })
                 .and_then(|node| leader_payload_from_node(node, traced))
         }
         Meaning::UnexpandablePrimitive(primitive @ UnexpandablePrimitive::HRule)
         | Meaning::UnexpandablePrimitive(primitive @ UnexpandablePrimitive::VRule) => {
             leader_payload_from_node(
-                scan_rule_node(input, stores, hooks, primitive, traced)?,
+                scan_rule_node(input, stores, execution, primitive, traced)?,
                 traced,
             )
         }
@@ -81,18 +85,17 @@ where
     }
 }
 
-pub(super) fn scan_leader_glue<S, H>(
+pub(super) fn scan_leader_glue<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    hooks: &mut H,
+    execution: &mut crate::ExecutionContext<'_, S>,
     mode: Mode,
     context: TracedTokenWord,
 ) -> Result<GlueId, ExecError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
 {
-    let traced = next_non_space_traced_x(input, stores, hooks)?
+    let traced = next_non_space_traced_x(input, stores, execution)?
         .ok_or(ExecError::LeadersNotFollowedByProperGlue { context })?;
     let token = tex_expand::semantic_token(traced);
     let Token::Cs(symbol) = token else {
@@ -108,7 +111,7 @@ where
         | (
             Mode::Vertical | Mode::InternalVertical,
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VSkip),
-        ) => scan_glue_id(input, stores, hooks, false, traced),
+        ) => scan_glue_id(input, stores, execution, false, traced),
         (
             Mode::Horizontal | Mode::RestrictedHorizontal | Mode::Math | Mode::DisplayMath,
             Meaning::UnexpandablePrimitive(
