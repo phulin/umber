@@ -275,7 +275,7 @@ fn hyphenation_inside_ff_ligature_preserves_the_unbroken_ligature() {
 
 #[test]
 fn composite_rechar_keeps_ligature_provenance_when_emitted() {
-    let current = ReChar {
+    let current = PendingHRunChar {
         font: tex_state::ids::FontId::testing_new(7),
         ch: 'A',
         orig_first: 'B',

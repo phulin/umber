@@ -3,6 +3,7 @@ use tex_fonts::{LigKernChar, LigKernCommand};
 use tex_lex::{InputSource, InputStack};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::glue::{GlueSpec, Order};
+use tex_state::ids::FontId;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::node::{DiscKind, GlueKind, KernKind, Node};
 use tex_state::scaled::Scaled;
@@ -13,6 +14,7 @@ use tex_typeset::{INF_BAD, PackSpec, VpackParams};
 use super::paragraph::{end_paragraph, ensure_horizontal_for_character, normal_paragraph};
 use super::*;
 use crate::dispatch::dispatch_delivered_token_with_recorder;
+use crate::mode::PendingHRunChar;
 use crate::packing_params::vpack;
 use crate::vertical::{append_vertical_contribution, build_page_if_outer_vertical};
 use crate::{DispatchAction, ExecError, Mode, ModeNest, push_traced_tokens};
@@ -70,16 +72,26 @@ pub(crate) fn flush_pending_hchars(
     nest: &mut ModeNest,
     stores: &mut Universe,
 ) -> Result<(), ExecError> {
-    let no_boundary = nest.current_list().no_boundary();
     let insert_hyphen_discs = nest.current_mode() == Mode::Horizontal;
-    let pending = nest.current_list_mut().take_pending_hchars();
-    if pending.is_empty() {
-        return Ok(());
-    }
-    nest.current_list_mut().set_no_boundary(false);
-    let mut nodes = reconstitute(stores, &pending, no_boundary, insert_hyphen_discs);
-    nest.current_list_mut().append(nodes.drain(..));
+    flush_pending_hchar_run(nest, stores, insert_hyphen_discs);
     Ok(())
+}
+
+fn flush_pending_hchar_run(nest: &mut ModeNest, stores: &mut Universe, insert_hyphen_discs: bool) {
+    let Some(pending) = nest.current_list().pending_hchars() else {
+        return;
+    };
+    let no_boundary = nest.current_list().no_boundary();
+    let boundary = (!no_boundary)
+        .then(|| boundary_command_node(stores, pending.first, true))
+        .flatten()
+        .map(|node| (pending.node_start, node));
+    let disc = literal_hyphen_disc(stores, pending.current, insert_hyphen_discs);
+    let list = nest.current_list_mut();
+    let removed = list.take_pending_hchars();
+    debug_assert_eq!(removed, Some(pending));
+    list.set_no_boundary(false);
+    list.push_reconstituted(boundary, rechar_node(pending.current), disc, None);
 }
 
 pub(super) fn execute_hmode_material<S, R, H>(
@@ -401,13 +413,7 @@ fn append_hchar(nest: &mut ModeNest, stores: &mut Universe, ch: char) {
         if language != nest.current_list().hyphen_language() {
             // tex.web's fix_language flushes the current ligature word before
             // recording the new language and its current hyphen minima.
-            let no_boundary = nest.current_list().no_boundary();
-            let pending = nest.current_list_mut().take_pending_hchars();
-            if !pending.is_empty() {
-                nest.current_list_mut().set_no_boundary(false);
-                let nodes = reconstitute(stores, &pending, no_boundary, true);
-                nest.current_list_mut().append(nodes);
-            }
+            flush_pending_hchar_run(nest, stores, true);
             let left_hyphen_min = stores.int_param(IntParam::LEFT_HYPHEN_MIN).clamp(1, 63) as u8;
             let right_hyphen_min = stores.int_param(IntParam::RIGHT_HYPHEN_MIN).clamp(1, 63) as u8;
             nest.current_list_mut()
@@ -423,11 +429,40 @@ fn append_hchar(nest: &mut ModeNest, stores: &mut Universe, ch: char) {
     if let Ok(code) = u8::try_from(ch as u32)
         && stores.font_char_exists(font, code)
     {
-        nest.current_list_mut().push_pending_hchar(font, ch);
+        append_pending_hchar(nest, stores, font, ch);
         update_space_factor(nest, stores, ch);
         return;
     }
     report_missing_character(stores, font, ch);
+}
+
+fn append_pending_hchar(nest: &mut ModeNest, stores: &mut Universe, font: FontId, ch: char) {
+    let Some(mut pending) = nest.current_list().pending_hchars() else {
+        nest.current_list_mut().begin_pending_hchars(font, ch);
+        return;
+    };
+    let next = PendingHRunChar::new(font, ch);
+    let emitted = match reconstitution_step(stores, pending.current, next) {
+        ReconstitutionStep::Merge(merged) => {
+            pending.current = merged;
+            None
+        }
+        ReconstitutionStep::Emit { current, kern } => {
+            let insert_hyphen_discs = nest.current_mode() == Mode::Horizontal;
+            let disc = literal_hyphen_disc(stores, current, insert_hyphen_discs);
+            let kern = kern.map(|amount| Node::Kern {
+                amount,
+                kind: KernKind::Font,
+            });
+            pending.current = next;
+            Some((rechar_node(current), disc, kern))
+        }
+    };
+    let list = nest.current_list_mut();
+    if let Some((current, disc, kern)) = emitted {
+        list.push_reconstituted(None, current, disc, kern);
+    }
+    list.set_pending_hchars(pending);
 }
 
 pub(crate) fn reconstitute(
@@ -436,69 +471,92 @@ pub(crate) fn reconstitute(
     no_left_boundary: bool,
     insert_hyphen_discs: bool,
 ) -> Vec<Node> {
-    let mut out = Vec::new();
-    let mut chars: Vec<_> = pending
-        .iter()
-        .map(|entry| ReChar {
-            font: entry.font,
-            ch: entry.ch,
-            orig_first: entry.ch,
-            orig_last: entry.ch,
-            ligature_present: false,
-        })
-        .collect();
-    let mut i = 0;
-    let mut left_boundary_done = no_left_boundary;
-    while i < chars.len() {
-        let current = chars[i];
-        if !left_boundary_done && i == 0 {
-            left_boundary_done = true;
-            if let Some(node) = boundary_command_node(stores, current.into_pending(), true) {
-                out.push(node);
-            }
-        }
-        if i + 1 < chars.len()
-            && current.font == chars[i + 1].font
-            && let (Ok(left), Ok(right)) = (font_code(current.ch), font_code(chars[i + 1].ch))
-            && let Some(command) = stores.lig_kern_command(
-                current.font,
-                LigKernChar::Char(left),
-                LigKernChar::Char(right),
-            )
-        {
-            match command {
-                LigKernCommand::Kern(amount) => {
-                    out.push(rechar_node(current));
-                    append_literal_hyphen_disc(stores, current, insert_hyphen_discs, &mut out);
+    let mut entries = pending.iter().copied();
+    let Some(first) = entries.next() else {
+        return Vec::new();
+    };
+    let mut out = Vec::with_capacity(pending.len());
+    if !no_left_boundary && let Some(node) = boundary_command_node(stores, first, true) {
+        out.push(node);
+    }
+    let mut current = PendingHRunChar::new(first.font, first.ch);
+    for entry in entries {
+        let next = PendingHRunChar::new(entry.font, entry.ch);
+        match reconstitution_step(stores, current, next) {
+            ReconstitutionStep::Merge(merged) => current = merged,
+            ReconstitutionStep::Emit {
+                current: emitted,
+                kern,
+            } => {
+                out.push(rechar_node(emitted));
+                if let Some(disc) = literal_hyphen_disc(stores, emitted, insert_hyphen_discs) {
+                    out.push(disc);
+                }
+                if let Some(amount) = kern {
                     out.push(Node::Kern {
                         amount,
                         kind: KernKind::Font,
                     });
-                    i += 1;
-                    continue;
                 }
-                LigKernCommand::Ligature(lig) if lig.delete_next => {
-                    chars[i] = ReChar {
-                        font: current.font,
-                        ch: char::from(lig.replacement),
-                        orig_first: current.orig_first,
-                        orig_last: chars[i + 1].orig_last,
-                        ligature_present: true,
-                    };
-                    chars.remove(i + 1);
-                    continue;
-                }
-                LigKernCommand::Ligature(_) => {}
+                current = next;
             }
         }
-        out.push(rechar_node(current));
-        append_literal_hyphen_disc(stores, current, insert_hyphen_discs, &mut out);
-        i += 1;
+    }
+    out.push(rechar_node(current));
+    if let Some(disc) = literal_hyphen_disc(stores, current, insert_hyphen_discs) {
+        out.push(disc);
     }
     out
 }
 
-fn rechar_node(current: ReChar) -> Node {
+enum ReconstitutionStep {
+    Merge(PendingHRunChar),
+    Emit {
+        current: PendingHRunChar,
+        kern: Option<Scaled>,
+    },
+}
+
+fn reconstitution_step(
+    stores: &Universe,
+    current: PendingHRunChar,
+    next: PendingHRunChar,
+) -> ReconstitutionStep {
+    if current.font == next.font
+        && let (Ok(left), Ok(right)) = (font_code(current.ch), font_code(next.ch))
+        && let Some(command) = stores.lig_kern_command(
+            current.font,
+            LigKernChar::Char(left),
+            LigKernChar::Char(right),
+        )
+    {
+        return match command {
+            LigKernCommand::Kern(amount) => ReconstitutionStep::Emit {
+                current,
+                kern: Some(amount),
+            },
+            LigKernCommand::Ligature(lig) if lig.delete_next => {
+                ReconstitutionStep::Merge(PendingHRunChar {
+                    font: current.font,
+                    ch: char::from(lig.replacement),
+                    orig_first: current.orig_first,
+                    orig_last: next.orig_last,
+                    ligature_present: true,
+                })
+            }
+            LigKernCommand::Ligature(_) => ReconstitutionStep::Emit {
+                current,
+                kern: None,
+            },
+        };
+    }
+    ReconstitutionStep::Emit {
+        current,
+        kern: None,
+    }
+}
+
+fn rechar_node(current: PendingHRunChar) -> Node {
     if current.ligature_present {
         Node::Lig {
             font: current.font,
@@ -513,42 +571,21 @@ fn rechar_node(current: ReChar) -> Node {
     }
 }
 
-fn append_literal_hyphen_disc(
+fn literal_hyphen_disc(
     stores: &mut Universe,
-    current: ReChar,
+    current: PendingHRunChar,
     enabled: bool,
-    out: &mut Vec<Node>,
-) {
+) -> Option<Node> {
     if !enabled || stores.font_hyphen_char(current.font) != current.orig_last as i32 {
-        return;
+        return None;
     }
     let empty = stores.freeze_node_list(&[]);
-    out.push(Node::Disc {
+    Some(Node::Disc {
         kind: DiscKind::ExplicitHyphen,
         pre: empty,
         post: empty,
         replace: empty,
-    });
-}
-
-#[derive(Clone, Copy)]
-struct ReChar {
-    font: tex_state::ids::FontId,
-    ch: char,
-    orig_first: char,
-    orig_last: char,
-    // TeX82's explicit `ligature_present` state (tex.web §916-§918).
-    // Glyph identity cannot encode this: a ligature may replace `AA` by `A`.
-    ligature_present: bool,
-}
-
-impl ReChar {
-    fn into_pending(self) -> crate::mode::PendingHChar {
-        crate::mode::PendingHChar {
-            font: self.font,
-            ch: self.ch,
-        }
-    }
+    })
 }
 
 fn boundary_command_node(

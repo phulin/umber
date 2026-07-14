@@ -87,7 +87,7 @@ pub struct ModeList {
     display_eq_no: Option<DisplayEqNo>,
     prev_depth: Option<Scaled>,
     prev_graf: i32,
-    pending_hchars: Arc<Vec<PendingHChar>>,
+    pending_hchars: Option<PendingHRun>,
     space_factor: i32,
     no_boundary: bool,
     hyphen_language: u8,
@@ -116,13 +116,47 @@ impl ModeList {
         Arc::make_mut(&mut self.nodes).extend(nodes);
     }
 
-    pub fn push_pending_hchar(&mut self, font: FontId, ch: char) {
-        Arc::make_mut(&mut self.pending_hchars).push(PendingHChar { font, ch });
+    pub(crate) fn push_reconstituted(
+        &mut self,
+        insertion: Option<(usize, Node)>,
+        first: Node,
+        second: Option<Node>,
+        third: Option<Node>,
+    ) {
+        let target = Arc::make_mut(&mut self.nodes);
+        target.reserve(
+            usize::from(insertion.is_some())
+                + 1
+                + usize::from(second.is_some())
+                + usize::from(third.is_some()),
+        );
+        if let Some((index, node)) = insertion {
+            target.insert(index, node);
+        }
+        target.push(first);
+        if let Some(node) = second {
+            target.push(node);
+        }
+        if let Some(node) = third {
+            target.push(node);
+        }
     }
 
-    pub fn take_pending_hchars(&mut self) -> Vec<PendingHChar> {
-        Arc::try_unwrap(std::mem::take(&mut self.pending_hchars))
-            .unwrap_or_else(|shared| (*shared).clone())
+    pub(crate) fn begin_pending_hchars(&mut self, font: FontId, ch: char) {
+        debug_assert!(self.pending_hchars.is_none());
+        self.pending_hchars = Some(PendingHRun::new(font, ch, self.nodes.len()));
+    }
+
+    pub(crate) const fn pending_hchars(&self) -> Option<PendingHRun> {
+        self.pending_hchars
+    }
+
+    pub(crate) fn set_pending_hchars(&mut self, pending: PendingHRun) {
+        self.pending_hchars = Some(pending);
+    }
+
+    pub(crate) fn take_pending_hchars(&mut self) -> Option<PendingHRun> {
+        self.pending_hchars.take()
     }
 
     #[must_use]
@@ -466,6 +500,46 @@ pub struct PendingHChar {
     pub ch: char,
 }
 
+/// Streaming state for the unresolved tail of one horizontal character run.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PendingHRun {
+    pub(crate) first: PendingHChar,
+    pub(crate) current: PendingHRunChar,
+    pub(crate) node_start: usize,
+}
+
+impl PendingHRun {
+    pub(crate) const fn new(font: FontId, ch: char, node_start: usize) -> Self {
+        Self {
+            first: PendingHChar { font, ch },
+            current: PendingHRunChar::new(font, ch),
+            node_start,
+        }
+    }
+}
+
+/// Current glyph and original-character range carried through ligature folding.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PendingHRunChar {
+    pub(crate) font: FontId,
+    pub(crate) ch: char,
+    pub(crate) orig_first: char,
+    pub(crate) orig_last: char,
+    pub(crate) ligature_present: bool,
+}
+
+impl PendingHRunChar {
+    pub(crate) const fn new(font: FontId, ch: char) -> Self {
+        Self {
+            font,
+            ch,
+            orig_first: ch,
+            orig_last: ch,
+            ligature_present: false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct IncompleteFraction {
     pub numerator: NodeListId,
@@ -633,10 +707,19 @@ fn hash_mode_list(list: &ModeList, projection: &mut EngineBoundaryHasher<'_>) {
         None => projection.bool(false),
     }
     projection.i32(list.prev_graf);
-    projection.usize(list.pending_hchars.len());
-    for pending in list.pending_hchars.iter() {
-        projection.font(pending.font);
-        projection.u32(pending.ch as u32);
+    match list.pending_hchars {
+        Some(pending) => {
+            projection.bool(true);
+            projection.font(pending.first.font);
+            projection.u32(pending.first.ch as u32);
+            projection.usize(pending.node_start);
+            projection.font(pending.current.font);
+            projection.u32(pending.current.ch as u32);
+            projection.u32(pending.current.orig_first as u32);
+            projection.u32(pending.current.orig_last as u32);
+            projection.bool(pending.current.ligature_present);
+        }
+        None => projection.bool(false),
     }
     projection.i32(list.space_factor);
     projection.bool(list.no_boundary);

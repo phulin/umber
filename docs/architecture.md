@@ -624,15 +624,22 @@ assignments, box building, and dispatch into the typesetting kernels.
   and shifted `\raise`/`\lower` boxes) uses the same scanners and packers, then
   contributes an Ord noad whose nucleus is the frozen one-box `SubBox` field;
   register extraction still goes through the same-level `Universe` facade.
-  Horizontal list construction
-  buffers adjacent font-backed characters in the stomach until a boundary
-  command or literal group token, then reconstitutes them through the loaded
-  font's TFM ligature/kern program. In unrestricted horizontal mode, that
-  reconstitution also inserts TeX82's null discretionary after a literal
-  character matching the current font's `\hyphenchar`; restricted horizontal
-  lists suppress the insertion. Literal groups therefore end the current
-  character run exactly like TeX82's non-character `main_loop_lookahead`, so
-  constructs such as `{f}i` suppress cross-boundary ligatures. The stomach
+  Horizontal list construction keeps one unresolved font-backed glyph per mode
+  level and resolves each new adjacent character against it through the loaded
+  font's TFM ligature/kern program. Resolved nodes append directly to the mode
+  list; a boundary command or literal group token finalizes only the last glyph,
+  so the normal execution path needs neither a pending-character vector nor a
+  temporary reconstitution node vector. The run retains its first character and
+  starting node offset so left-boundary output can be inserted at the correct
+  position when the run is finalized, after `\noboundary` has been observed.
+  In unrestricted horizontal mode, finalization also inserts TeX82's null
+  discretionary after a literal character matching the current font's
+  `\hyphenchar`; restricted horizontal lists suppress the insertion. Literal
+  groups therefore end the current character run exactly like TeX82's
+  non-character `main_loop_lookahead`, so constructs such as `{f}i` suppress
+  cross-boundary ligatures. The compact unresolved-glyph state is part of the
+  mode summary, preserving snapshot and replay isolation without separately
+  allocated copy-on-write storage. The stomach
   updates the mode-local `\spacefactor` and appends explicit
   h-mode nodes for spaces, kerns, skips, finite-fill glue, penalties, rules,
   discretionaries, accents, and italic corrections. Text-accent horizontal
