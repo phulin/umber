@@ -169,8 +169,8 @@ checkpoint:
    from the accepted revision to the in-progress revision only after proving
    that the root prefix through its conservative anchor is byte-identical.
 2. **Post-convergence suffix rehome.** Once a new boundary has matched an old
-   boundary under the convergence rules below, the engine may rehome old
-   suffix checkpoints onto the in-progress revision. The match proves equal
+   boundary under the convergence rules below, the engine may rehome the
+   matched record and old suffix checkpoints onto the in-progress revision. The match proves equal
    semantic state at the splice point, and the edit map proves that root input
    from that point through the adopted suffix is unchanged. Rehoming maps each
    conservative anchor and occurrence key, substitutes only the root editor
@@ -195,6 +195,51 @@ not part of `state_hash`. It identifies exactly which artifacts precede the
 boundary so a converged run can splice the old suffix without walking page
 nodes.
 
+## Generation substrates and restart forking
+
+Every checkpoint of a retained generation shares one frozen `Universe`
+substrate. Records are O(1) owner-exact watermark snapshots into that
+substrate, and a retained substrate is never mutated or rolled back in place.
+Restart uses one validated aggregate fork operation: clone the retained
+substrate, retarget ownership internally, and roll the clone back to the
+selected checkpoint atomically, rebinding the root frame to the in-progress
+revision as specified above. Restore atomicity follows by construction: input,
+mode, and root-frame state are prepared and validated against the fork, and
+the fork is swapped into the private executor only on success. Snapshots stay
+owner-exact and there is no general snapshot re-owner API; per-`Universe`
+cloning happens once per restart, never per checkpoint.
+
+The session therefore holds at most two substrates — the accepted frozen
+`Universe` and one in-progress scratch fork — and only while an edit is
+executing. Both terminal outcomes return to one substrate:
+
+- **Convergence.** The match proves the old record at the splice point
+  hash-equal to the new one, so the accepted history keeps the old records at
+  and after the match, rehomed onto the new accepted revision. The scratch
+  fork is discarded together with its diverged-span records; the new artifacts
+  and detached effect slices it produced are session-owned and survive. A
+  later edit inside the diverged span restarts from the restart anchor and
+  replays at most the span the previous edit already re-executed.
+- **Job end without convergence.** The fork becomes the accepted substrate.
+  Records before the restart anchor are retargeted onto it through a second
+  validated aggregate operation that requires the fork's journal prefix to be
+  bit-identical below the anchor, which the fork operation guarantees; the old
+  substrate is then dropped.
+
+Rare partial-adoption outcomes may transiently leave accepted records split
+across both substrates; the next terminal outcome or ordinary eviction
+normalizes back to one. State is never spliced between substrates: adoption is
+by reference plus metadata rehoming only, and mixing one substrate's handles
+with another remains an ownership error.
+
+Because retained substrates are frozen, v1 needs no per-checkpoint pinning of
+journal, node, or content spans: watermark prefixes below a retained
+checkpoint stay intact by construction. Fine-grained per-span retention (the
+`retained_group_roots.md` capability) remains a measured follow-up, not a v1
+prerequisite. The fork's O(state) cost is paid once per `advance` and is
+reported by the session's restart-latency metrics, separately from O(1)
+checkpoint capture.
+
 ## Effects and artifacts across shipout
 
 Batch mode keeps the existing eager rule from `core_state.md` §8: shipout
@@ -218,6 +263,11 @@ irreversible host-visible output. Instead:
   finalization operation; and
 - shell escape remains disabled in an incremental editor session.
 
+Retained session effect, stream, and artifact history is owned by the session
+outside any single `Universe`'s `World` state, or shared through immutable
+references, so forking a substrate never duplicates it and discarding a
+scratch fork never drops it.
+
 Thus rollback across a logical shipout switches to an earlier retained effect,
 stream, and artifact prefix; it never tries to undo bytes already exposed to a
 host. A later branch may produce a different effect/artifact suffix without
@@ -239,12 +289,14 @@ or replay its artifact. However, a checkpoint retained from before the
 shipout may still own page-builder, contribution-list, box-register, deferred-
 write, or group-journal references into those node/content arenas.
 
-Logical shipout therefore releases only node epochs unreachable from every
-live engine root and every retained checkpoint. Retained pre-shipout roots pin
-their node spans and referenced token/glue/font content. Pruning the last
-checkpoint that reaches such a span releases it through the aggregate
-`Universe`/`Stores` ownership path. Neither `tex-incr` nor `tex-exec` receives
-raw node marks, survivor handles, or arena rollback controls.
+Logical shipout's node release stays transaction-local: it releases only
+epochs allocated inside the shipout transaction, which lie above every
+published checkpoint watermark, so records retained on a frozen substrate stay
+restorable without per-span pins. Whole-substrate retention keeps every root a
+record could reach; releasing a substrate's last record releases that storage
+through the aggregate `Universe`/`Stores` ownership path. Neither `tex-incr`
+nor `tex-exec` receives raw node marks, survivor handles, or arena rollback
+controls.
 
 ## Root-buffer revisions and input positions
 
@@ -314,8 +366,10 @@ after TeX state had rejoined.
 The session owns two generations while an edit is running: the accepted
 revision used as the comparison/splice source and the in-progress revision.
 Once the new revision either finishes or converges, it becomes the accepted
-generation and the older generation is dropped. Failed or cancelled execution
-drops only the in-progress branch.
+generation and the session returns to one substrate: at job end the fork
+replaces the old substrate, and on convergence the scratch fork and its
+diverged-span records are discarded while the accepted history is rehomed in
+place. Failed or cancelled execution drops only the in-progress fork.
 
 Within an accepted generation, records are ordered by schedule and never
 mutated in place. Rehoming creates a new accepted record wrapper rather than
@@ -323,9 +377,11 @@ mutating an old generation's record. `JobStart` is always retained.
 
 The host supplies a soft checkpoint-root memory budget. The aggregate state
 layer reports opaque retention units and their charged bytes; `tex-incr` never
-walks stores or estimates their contents. A unit is charged once when the
-session first pins it, even if several checkpoints or both live generations
-share it, and is uncharged when the last session pin is released. Charges
+walks stores or estimates their contents. In v1 the dominant retention unit is
+a generation substrate, charged once and shared by every record retained on
+it. A unit is charged once when the session first pins it, even if several
+checkpoints or both live generations share it, and is uncharged when the last
+session pin is released. Charges
 include checkpoint records, input/mode summaries, journal and group-history
 blocks, retained effects, and content/node/store blocks kept alive as restart
 roots. Allocation ids, sharing counts, and charged sizes are runtime retention
@@ -349,13 +405,15 @@ restart roots in this deterministic order:
 Artifact ids and detached artifact bytes needed to assemble the accepted
 output are revision output metadata and survive checkpoint-root eviction.
 Eviction removes the complete restart record and asks one aggregate session
-API to release its environment, group, input, effect, node, and content roots.
+API to release its roots: record-exclusive metadata is released immediately,
+and substrate storage is released when the substrate's last record goes.
 It cannot leave a hash-only record behind. An edit before the oldest useful
 remaining checkpoint simply restarts at `JobStart`, so pruning changes latency
 but not output.
 
-Dropping the previous generation after convergence also drops any old suffix
-roots not adopted into the new history. Root/reference accounting performs
+Discarding the scratch fork after convergence drops its diverged-span roots;
+replacing the substrate at job end drops the old generation's storage once its
+surviving records are retargeted. Root/reference accounting performs
 iterative reclamation; history length must not turn checkpoint destruction
 into recursive stack growth.
 
@@ -383,10 +441,12 @@ risk; parity tests remain the correctness oracle.
 
 The first matching candidate wins. For a no-op edit this is the first eligible
 named boundary emitted after the selected restart anchor. On a match the
-session stops re-execution, keeps the new records through the match, eagerly
-rehomes the old records strictly after the match onto the new accepted
-revision, and adopts the corresponding artifact ids and detached effect/output
-suffix. Rehoming is permitted only when the edit map proves the root interval
+session stops re-execution and keeps the new artifacts and detached effect
+slices through the match. Because the match proves the old record hash-equal
+at the splice point, the accepted history adopts the old records at and after
+the match, eagerly rehomed onto the new accepted revision, discards the
+scratch fork together with its diverged-span records, and adopts the
+corresponding artifact ids and detached effect/output suffix. Rehoming is permitted only when the edit map proves the root interval
 from the matching anchor through each adopted anchor unchanged; otherwise that
 record and everything after it are not adopted and execution continues.
 
@@ -418,7 +478,14 @@ Implementation is not complete until tests prove all of the following:
 - group-depth-zero eligibility for both paragraph and shipout checkpoints;
 - rollback across logical shipout restores effects, streams, artifacts, nodes,
   input, modes, groups, and semantic state atomically;
-- pruning releases exactly the roots no remaining checkpoint reaches;
+- at most one generation substrate is retained at rest and two while an edit
+  executes: convergence discards the scratch fork and job end replaces the
+  substrate with retargeted prefix records;
+- substrate forking and record retargeting are validated aggregate operations
+  unavailable to `tex-incr`, retargeting requires a bit-identical journal
+  prefix, and cross-substrate handle use is rejected;
+- pruning releases record-exclusive roots deterministically, and releasing a
+  substrate's last record releases its storage;
 - stale editor revisions and changed included files cannot reuse old roots;
 - adopted suffix records are eagerly rehomed, survive a second edit, and never
   accumulate revision-map chains;
