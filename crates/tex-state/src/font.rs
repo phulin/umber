@@ -265,6 +265,13 @@ impl FontStore {
         &self.complete_hash_fragments[id.raw() as usize]
     }
 
+    /// Resolves a live or stored font handle and returns its cached complete
+    /// semantic fragment with a single identity lookup.
+    pub(crate) fn resolve_complete_hash_fragment(&self, id: FontId) -> Option<&StateHashFragment> {
+        let id = self.resolve_stored(id)?;
+        self.complete_hash_fragments.get(id.raw() as usize)
+    }
+
     #[must_use]
     pub(crate) fn contains(&self, id: FontId) -> bool {
         self.identities.contains(id.identity())

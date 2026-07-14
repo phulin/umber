@@ -298,7 +298,7 @@ impl Stores {
             FONT_SELECTION_DOMAIN,
             StateHashComponent::FontSelection,
             |projection| {
-                self.hash_font_fields(self.last_loaded_font, projection);
+                self.hash_font(self.last_loaded_font, projection);
                 1
             },
         );
@@ -362,8 +362,10 @@ impl Stores {
 
     #[cfg(test)]
     pub(crate) fn testing_font_semantic_fingerprint(&self, id: FontId) -> u64 {
-        let id = self.resolve_stored_font(id);
-        self.fonts.complete_hash_fragment(id).fingerprint()
+        self.fonts
+            .resolve_complete_hash_fragment(id)
+            .expect("stored font slot is not live")
+            .fingerprint()
     }
 
     fn assert_valid_hash_cursor(&self, cursor: &StoreStateHashCursor) {
@@ -1081,13 +1083,11 @@ impl Stores {
     }
 
     fn hash_font(&self, font: FontId, hasher: &mut StateHasher) {
-        self.hash_font_fields(self.resolve_stored_font(font), hasher);
-    }
-
-    fn hash_font_fields(&self, font: FontId, hasher: &mut StateHasher) {
-        self.assert_live_font(font);
         hasher.tag(0x68);
-        self.fonts.complete_hash_fragment(font).apply(hasher);
+        self.fonts
+            .resolve_complete_hash_fragment(font)
+            .expect("stored font slot is not live")
+            .apply(hasher);
     }
 
     fn font_semantic_key(&self, font: FontId) -> FontSemanticKey {
