@@ -1,5 +1,4 @@
 use super::*;
-use tex_expand::NoopRecorder;
 use tex_lex::{InputStack, MemoryInput, WorldInput};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::GlueSpec;

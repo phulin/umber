@@ -19,6 +19,15 @@ use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, InputOpenState, InputReadState, Universe};
 
+macro_rules! record_dependency {
+    ($expansion:expr, $dependency:expr) => {
+        if let Some(recorder) = $expansion.recorder.as_deref_mut() {
+            recorder.record_dependency($dependency);
+        }
+    };
+}
+pub(crate) use record_dependency;
+
 pub mod args;
 pub mod scan;
 pub mod scan_dimen;
@@ -209,9 +218,10 @@ pub fn install_etex_expandable_primitives(stores: &mut Universe) {
 
 /// Records state reads performed by expansion.
 ///
-/// The default implementation is `NoopRecorder`. Callers that need read sets
-/// can supply a concrete recorder type and let monomorphization remove this
-/// hook from ordinary builds.
+/// Recorder implementations are erased behind [`ExpansionContext`]. Ordinary
+/// runs install no recorder and skip each event with a predictable conditional
+/// branch; incremental and diagnostic runs may install any implementation
+/// without creating another scanner monomorphization.
 pub trait ReadRecorder {
     fn record_meaning(&mut self, symbol: Symbol, _meaning: Meaning) {
         self.record_dependency(ReadDependency::Meaning(symbol.raw()));
@@ -324,28 +334,19 @@ impl ReadRecorder for ReadSetRecorder {
     }
 }
 
-pub(crate) fn record_code_dependency(
-    recorder: &mut impl ReadRecorder,
+pub(crate) fn record_code_dependency<S>(
+    expansion: &mut ExpansionContext<'_, S>,
     table: ReadCodeTable,
     ch: char,
 ) {
-    recorder.record_dependency(ReadDependency::CodeGeneration(table));
-    recorder.record_dependency(ReadDependency::Code {
-        table,
-        scalar: ch as u32,
-    });
-}
-
-/// Read recorder used when expansion tracing/incremental read sets are off.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct NoopRecorder;
-
-impl ReadRecorder for NoopRecorder {
-    #[inline(always)]
-    fn record_meaning(&mut self, _symbol: Symbol, _meaning: Meaning) {}
-
-    #[inline(always)]
-    fn record_dependency(&mut self, _dependency: ReadDependency) {}
+    crate::record_dependency!(expansion, ReadDependency::CodeGeneration(table));
+    crate::record_dependency!(
+        expansion,
+        ReadDependency::Code {
+            table,
+            scalar: ch as u32,
+        }
+    );
 }
 
 /// Why `tex-expand` is replaying a frozen token list.
@@ -716,13 +717,14 @@ pub trait InputResolver<S> {
 
 /// Plain session data available to top-level expansion dispatch.
 ///
-/// Scanner monomorphizations depend only on the input, state, and recorder
-/// types. Host input policy is erased behind [`InputResolver`] and invoked
-/// only by the `\input` primitive.
+/// Scanner monomorphizations depend only on the input and state types. Host
+/// input policy and optional read recording are erased behind object-safe
+/// interfaces; input policy is invoked only by the `\input` primitive.
 pub struct ExpansionContext<'a, S> {
     pub engine: EngineStateSnapshot,
     pub job_name: &'a str,
     input_resolver: Option<&'a mut dyn InputResolver<S>>,
+    pub(crate) recorder: Option<&'a mut dyn ReadRecorder>,
     resolution_index: u64,
 }
 
@@ -733,6 +735,7 @@ impl<'a, S> ExpansionContext<'a, S> {
             engine: EngineStateSnapshot::default(),
             job_name,
             input_resolver: None,
+            recorder: None,
             resolution_index: 0,
         }
     }
@@ -746,7 +749,44 @@ impl<'a, S> ExpansionContext<'a, S> {
             engine: EngineStateSnapshot::default(),
             job_name,
             input_resolver: Some(input_resolver),
+            recorder: None,
             resolution_index: 0,
+        }
+    }
+
+    /// Installs an erased read recorder for this expansion session.
+    #[must_use]
+    pub fn recording(mut self, recorder: &'a mut dyn ReadRecorder) -> Self {
+        self.recorder = Some(recorder);
+        self
+    }
+
+    /// Creates a context for a nested in-memory expansion while preserving
+    /// session facts and reborrowing the active recorder.
+    ///
+    /// Input resolution is intentionally not inherited because resolver output
+    /// type is tied to `S`; callers use this for token-list expansion with a
+    /// different concrete input source, such as deferred `\write` material.
+    pub fn with_nested<T: 'a, O>(
+        &mut self,
+        operation: impl FnOnce(&mut ExpansionContext<'a, T>) -> O,
+    ) -> O {
+        let mut nested = ExpansionContext {
+            engine: self.engine,
+            job_name: self.job_name,
+            input_resolver: None,
+            recorder: self.recorder.take(),
+            resolution_index: 0,
+        };
+        let output = operation(&mut nested);
+        self.recorder = nested.recorder.take();
+        output
+    }
+
+    #[inline(always)]
+    pub fn record_meaning(&mut self, symbol: Symbol, meaning: Meaning) {
+        if let Some(recorder) = self.recorder.as_deref_mut() {
+            recorder.record_meaning(symbol, meaning);
         }
     }
 
@@ -765,41 +805,35 @@ impl<'a, S> ExpansionContext<'a, S> {
     }
 }
 
-pub trait ExpandNext<S, St: ExpansionState, R> {
+pub trait ExpandNext<S, St: ExpansionState> {
     fn next_expanded_token(
         &mut self,
         input: &mut InputStack<S>,
         stores: &mut St,
-        recorder: &mut R,
         expansion: &mut ExpansionContext<'_, S>,
     ) -> Result<Option<TracedTokenWord>, ExpandError>
     where
-        S: InputSource,
-        R: ReadRecorder;
+        S: InputSource;
 
     fn dispatch_raw_token(
         &mut self,
         token: TracedTokenWord,
         input: &mut InputStack<S>,
         stores: &mut St,
-        recorder: &mut R,
         expansion: &mut ExpansionContext<'_, S>,
     ) -> Result<Dispatch, ExpandError>
     where
-        S: InputSource,
-        R: ReadRecorder;
+        S: InputSource;
 
     fn dispatch_inverted_raw_token(
         &mut self,
         token: TracedTokenWord,
         input: &mut InputStack<S>,
         stores: &mut St,
-        recorder: &mut R,
         expansion: &mut ExpansionContext<'_, S>,
     ) -> Result<Dispatch, ExpandError>
     where
-        S: InputSource,
-        R: ReadRecorder;
+        S: InputSource;
 
     fn dispatch_raw_token_after(
         &mut self,
@@ -807,14 +841,12 @@ pub trait ExpandNext<S, St: ExpansionState, R> {
         target: TracedTokenWord,
         input: &mut InputStack<S>,
         stores: &mut St,
-        recorder: &mut R,
         expansion: &mut ExpansionContext<'_, S>,
     ) -> Result<(), ExpandError>
     where
         S: InputSource,
-        R: ReadRecorder,
     {
-        let dispatch = self.dispatch_raw_token(target, input, stores, recorder, expansion)?;
+        let dispatch = self.dispatch_raw_token(target, input, stores, expansion)?;
         push_dispatch_result(input, stores, dispatch);
         push_inserted_token(input, stores, saved, InsertedOriginKind::ExpandAfter);
         Ok(())
@@ -824,20 +856,18 @@ pub trait ExpandNext<S, St: ExpansionState, R> {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NoInputExpandNext;
 
-impl<S, St, R> ExpandNext<S, St, R> for NoInputExpandNext
+impl<S, St> ExpandNext<S, St> for NoInputExpandNext
 where
     S: InputSource,
     St: ExpansionState,
-    R: ReadRecorder,
 {
     fn next_expanded_token(
         &mut self,
         input: &mut InputStack<S>,
         stores: &mut St,
-        recorder: &mut R,
         expansion: &mut ExpansionContext<'_, S>,
     ) -> Result<Option<TracedTokenWord>, ExpandError> {
-        get_x_token_without_input_open(input, stores, recorder, expansion)
+        get_x_token_without_input_open(input, stores, expansion)
     }
 
     fn dispatch_raw_token(
@@ -845,10 +875,9 @@ where
         token: TracedTokenWord,
         input: &mut InputStack<S>,
         stores: &mut St,
-        recorder: &mut R,
         expansion: &mut ExpansionContext<'_, S>,
     ) -> Result<Dispatch, ExpandError> {
-        dispatch_one_raw_token_with_context(token, input, stores, recorder, expansion)
+        dispatch_one_raw_token_with_context(token, input, stores, expansion)
     }
 
     fn dispatch_inverted_raw_token(
@@ -856,20 +885,18 @@ where
         token: TracedTokenWord,
         input: &mut InputStack<S>,
         stores: &mut St,
-        recorder: &mut R,
         expansion: &mut ExpansionContext<'_, S>,
     ) -> Result<Dispatch, ExpandError> {
         let Some(symbol) = expandable_symbol(stores, token) else {
             return Ok(Dispatch::Deliver(token));
         };
         let meaning = input.resolve_expansion_meaning(stores, symbol);
-        recorder.record_meaning(symbol, meaning);
+        expansion.record_meaning(symbol, meaning);
         dispatch::dispatch_without_input_open_inverted(
             semantic_token(token),
             token.origin(),
             input,
             stores,
-            recorder,
             expansion,
             meaning,
         )
@@ -879,20 +906,18 @@ where
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DriverExpandNext;
 
-impl<S, St, R> ExpandNext<S, St, R> for DriverExpandNext
+impl<S, St> ExpandNext<S, St> for DriverExpandNext
 where
     S: InputSource,
     St: ExpansionState + InputOpenState,
-    R: ReadRecorder,
 {
     fn next_expanded_token(
         &mut self,
         input: &mut InputStack<S>,
         stores: &mut St,
-        recorder: &mut R,
         expansion: &mut ExpansionContext<'_, S>,
     ) -> Result<Option<TracedTokenWord>, ExpandError> {
-        get_x_token_with_recorder_and_context(input, stores, recorder, expansion)
+        get_x_token_with_context(input, stores, expansion)
     }
 
     fn dispatch_raw_token(
@@ -900,20 +925,18 @@ where
         token: TracedTokenWord,
         input: &mut InputStack<S>,
         stores: &mut St,
-        recorder: &mut R,
         expansion: &mut ExpansionContext<'_, S>,
     ) -> Result<Dispatch, ExpandError> {
         let Some(symbol) = expandable_symbol(stores, token) else {
             return Ok(Dispatch::Deliver(token));
         };
         let meaning = input.resolve_expansion_meaning(stores, symbol);
-        recorder.record_meaning(symbol, meaning);
+        expansion.record_meaning(symbol, meaning);
         dispatch::dispatch_with_context(
             semantic_token(token),
             token.origin(),
             input,
             stores,
-            recorder,
             expansion,
             meaning,
         )
@@ -924,20 +947,18 @@ where
         token: TracedTokenWord,
         input: &mut InputStack<S>,
         stores: &mut St,
-        recorder: &mut R,
         expansion: &mut ExpansionContext<'_, S>,
     ) -> Result<Dispatch, ExpandError> {
         let Some(symbol) = expandable_symbol(stores, token) else {
             return Ok(Dispatch::Deliver(token));
         };
         let meaning = input.resolve_expansion_meaning(stores, symbol);
-        recorder.record_meaning(symbol, meaning);
+        expansion.record_meaning(symbol, meaning);
         dispatch::dispatch_with_context_inverted(
             semantic_token(token),
             token.origin(),
             input,
             stores,
-            recorder,
             expansion,
             meaning,
         )
@@ -988,30 +1009,7 @@ pub fn get_x_token<S>(
 where
     S: InputSource,
 {
-    get_x_token_with_recorder_and_context(
-        input,
-        stores,
-        &mut NoopRecorder,
-        &mut ExpansionContext::new("texput"),
-    )
-}
-
-/// Pulls the next fully expanded token while recording meaning reads.
-pub fn get_x_token_with_recorder<S, R>(
-    input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
-    recorder: &mut R,
-) -> Result<Option<TracedTokenWord>, ExpandError>
-where
-    S: InputSource,
-    R: ReadRecorder,
-{
-    get_x_token_with_recorder_and_context(
-        input,
-        stores,
-        recorder,
-        &mut ExpansionContext::new("texput"),
-    )
+    get_x_token_with_context(input, stores, &mut ExpansionContext::new("texput"))
 }
 
 /// Pulls the next fully expanded token using driver-provided expansion context.
@@ -1023,23 +1021,7 @@ pub fn get_x_token_with_context<S>(
 where
     S: InputSource,
 {
-    get_x_token_with_recorder_and_context(input, stores, &mut NoopRecorder, expansion)
-}
-
-/// Pulls the next fully expanded token while recording reads and using context.
-pub fn get_x_token_with_recorder_and_context<S, R>(
-    input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
-    recorder: &mut R,
-    expansion: &mut ExpansionContext<'_, S>,
-) -> Result<Option<TracedTokenWord>, ExpandError>
-where
-    S: InputSource,
-    R: ReadRecorder,
-{
-    match get_x_token_with_recorder_and_context_inner(
-        input, stores, recorder, expansion, false, None,
-    ) {
+    match get_x_token_with_context_inner(input, stores, expansion, false, None) {
         Ok(token) => Ok(token),
         Err(error) => Err(error.capture(input)),
     }
@@ -1047,19 +1029,15 @@ where
 
 /// Pulls the next expanded token while leaving e-TeX protected macros
 /// unexpanded. This is the `get_x_or_protected` operation used by alignments.
-pub fn get_x_or_protected_with_recorder_and_context<S, R>(
+pub fn get_x_or_protected_with_context<S>(
     input: &mut InputStack<S>,
     stores: &mut (impl ExpansionState + InputOpenState),
-    recorder: &mut R,
     expansion: &mut ExpansionContext<'_, S>,
 ) -> Result<Option<TracedTokenWord>, ExpandError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
-    match get_x_token_with_recorder_and_context_inner(
-        input, stores, recorder, expansion, true, None,
-    ) {
+    match get_x_token_with_context_inner(input, stores, expansion, true, None) {
         Ok(token) => Ok(token),
         Err(error) => Err(error.capture(input)),
     }
@@ -1087,41 +1065,30 @@ impl PreparedExpansionToken {
 
 /// TeX82's `x_token`: expand a token already obtained under `get_next`
 /// semantics, while sharing the ordinary `get_x_token` interpreter.
-pub(crate) fn get_x_or_protected_from_prepared_with_recorder_and_context<S, R>(
+pub(crate) fn get_x_or_protected_from_prepared_with_context<S>(
     prepared: PreparedExpansionToken,
     input: &mut InputStack<S>,
     stores: &mut (impl ExpansionState + InputOpenState),
-    recorder: &mut R,
     expansion: &mut ExpansionContext<'_, S>,
 ) -> Result<Option<TracedTokenWord>, ExpandError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
-    match get_x_token_with_recorder_and_context_inner(
-        input,
-        stores,
-        recorder,
-        expansion,
-        true,
-        Some(prepared),
-    ) {
+    match get_x_token_with_context_inner(input, stores, expansion, true, Some(prepared)) {
         Ok(token) => Ok(token),
         Err(error) => Err(error.capture(input)),
     }
 }
 
-fn get_x_token_with_recorder_and_context_inner<S, R>(
+fn get_x_token_with_context_inner<S>(
     input: &mut InputStack<S>,
     stores: &mut (impl ExpansionState + InputOpenState),
-    recorder: &mut R,
     expansion: &mut ExpansionContext<'_, S>,
     protect_macros: bool,
     first: Option<PreparedExpansionToken>,
 ) -> Result<Option<TracedTokenWord>, ExpandError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     let mut first = first;
     loop {
@@ -1169,7 +1136,7 @@ where
         };
 
         let meaning = input.resolve_expansion_meaning(stores, symbol);
-        recorder.record_meaning(symbol, meaning);
+        expansion.record_meaning(symbol, meaning);
         if protect_macros
             && matches!(meaning, Meaning::Macro { flags, .. } if flags.contains(MeaningFlags::PROTECTED))
         {
@@ -1181,15 +1148,8 @@ where
             return Err(ExpandError::ForbiddenOuterTokenInAlignment { context: traced });
         }
 
-        let dispatched = dispatch_with_context(
-            token,
-            read.origin(),
-            input,
-            stores,
-            recorder,
-            expansion,
-            meaning,
-        );
+        let dispatched =
+            dispatch_with_context(token, read.origin(), input, stores, expansion, meaning);
         let dispatched = match dispatched {
             Ok(dispatched) => dispatched,
             Err(ExpandError::MacroCall(args::MacroCallError::DoesNotMatchDefinition {
@@ -1504,15 +1464,13 @@ where
 /// one raw token, expand that token once when it is expandable, then fetch
 /// one raw token from the resulting input. Unlike `get_x_token`, this does
 /// not recursively expand the token produced by that single expansion.
-pub fn expand_once_then_get_token_with_context<S, R>(
+pub fn expand_once_then_get_token_with_context<S>(
     input: &mut InputStack<S>,
     stores: &mut (impl ExpansionState + InputOpenState),
-    recorder: &mut R,
     expansion: &mut ExpansionContext<'_, S>,
 ) -> Result<Option<TracedTokenWord>, ExpandError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     let Some(target) = get_token(input, stores)? else {
         return Ok(None);
@@ -1521,13 +1479,12 @@ where
         return Ok(Some(target));
     };
     let meaning = input.resolve_expansion_meaning(stores, symbol);
-    recorder.record_meaning(symbol, meaning);
+    expansion.record_meaning(symbol, meaning);
     let dispatch = dispatch_with_context(
         semantic_token(target),
         target.origin(),
         input,
         stores,
-        recorder,
         expansion,
         meaning,
     )?;
@@ -1535,15 +1492,13 @@ where
     get_token(input, stores)
 }
 
-pub(crate) fn get_x_token_without_input_open<S, R>(
+pub(crate) fn get_x_token_without_input_open<S>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
-    recorder: &mut R,
     expansion: &mut ExpansionContext<'_, S>,
 ) -> Result<Option<TracedTokenWord>, ExpandError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     loop {
         let read = match input.next_traced_expansion_token(stores) {
@@ -1573,14 +1528,13 @@ where
         };
 
         let meaning = input.resolve_expansion_meaning(stores, symbol);
-        recorder.record_meaning(symbol, meaning);
+        expansion.record_meaning(symbol, meaning);
 
         let dispatched = dispatch::dispatch_without_input_open(
             token,
             read.origin(),
             input,
             stores,
-            recorder,
             expansion,
             meaning,
         );
@@ -1613,16 +1567,14 @@ where
     }
 }
 
-pub(crate) fn dispatch_one_raw_token_with_context<S, R>(
+pub(crate) fn dispatch_one_raw_token_with_context<S>(
     token: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
-    recorder: &mut R,
     expansion: &mut ExpansionContext<'_, S>,
 ) -> Result<Dispatch, ExpandError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     let semantic = semantic_token(token);
     let symbol = match expandable_symbol(stores, token) {
@@ -1631,13 +1583,12 @@ where
     };
 
     let meaning = input.resolve_expansion_meaning(stores, symbol);
-    recorder.record_meaning(symbol, meaning);
+    expansion.record_meaning(symbol, meaning);
     dispatch::dispatch_without_input_open(
         semantic,
         token.origin(),
         input,
         stores,
-        recorder,
         expansion,
         meaning,
     )

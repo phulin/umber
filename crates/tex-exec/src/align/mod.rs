@@ -11,7 +11,6 @@ mod support;
 mod template;
 mod widths;
 
-use tex_expand::ReadRecorder;
 use tex_lex::{InputSource, InputStack};
 use tex_state::Universe;
 use tex_state::meaning::UnexpandablePrimitive;
@@ -21,18 +20,16 @@ use crate::{ExecError, ModeNest};
 
 pub(crate) use preamble::scan_preamble;
 
-pub(crate) fn execute_alignment<S, R>(
+pub(crate) fn execute_alignment<S>(
     primitive: UnexpandablePrimitive,
     context: TracedTokenWord,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     if stores.world().execution_tracing_enabled() {
         stores
@@ -45,7 +42,7 @@ where
     let result = (|| {
         let (nest, stores) = transaction.parts();
         let state = scan_preamble(primitive, context, input, stores, execution)?;
-        execution::execute_alignment(state, nest, input, stores, recorder, execution)
+        execution::execute_alignment(state, nest, input, stores, execution)
     })();
     match result {
         Ok(()) => {
@@ -64,17 +61,15 @@ where
     }
 }
 
-pub(crate) fn execute_display_halign<S, R>(
+pub(crate) fn execute_display_halign<S>(
     context: TracedTokenWord,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<Vec<tex_state::node::Node>, ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     if stores.world().execution_tracing_enabled() {
         stores
@@ -93,7 +88,7 @@ where
             stores,
             execution,
         )?;
-        execution::execute_alignment_to_nodes(state, nest, input, stores, recorder, execution)
+        execution::execute_alignment_to_nodes(state, nest, input, stores, execution)
     })();
     match result {
         Ok(nodes) => {

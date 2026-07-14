@@ -1,4 +1,3 @@
-use tex_expand::ReadRecorder;
 use tex_lex::{InputSource, InputStack};
 use tex_state::env::banks::DimenParam;
 use tex_state::node::Node;
@@ -17,30 +16,27 @@ mod direct;
 // compact-list traversal writes canonical artifact bytes and DVI plan bytes.
 // No detached node tree or per-list snapshot crosses that traversal.
 
-pub(super) fn execute_shipout<S, R>(
+pub(super) fn execute_shipout<S>(
     context: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<Option<PreparedDviPage>, ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     let node = scan_required_box_node(input, stores, execution, context)?;
-    shipout_node(node, input, stores, recorder)
+    shipout_node(node, input, stores, execution)
 }
 
-pub(crate) fn shipout_node<S, R>(
+pub(crate) fn shipout_node<S>(
     node: Node,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<Option<PreparedDviPage>, ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     if huge_shipout_box(&node, stores) {
         stores.world_mut().write_text(
@@ -50,7 +46,7 @@ where
         return Ok(None);
     }
     let mut transaction = stores.begin_shipout();
-    let staged = direct::stage_shipout(node, input, &mut transaction, recorder)?;
+    let staged = direct::stage_shipout(node, input, &mut transaction, execution)?;
     let hash = transaction.commit(staged.artifact, staged.effect_pos)?;
     Ok(Some(PreparedDviPage {
         hash,

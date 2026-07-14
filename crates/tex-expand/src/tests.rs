@@ -1,5 +1,5 @@
 use crate::{
-    EngineMode, ExpandableOpcode, ExpansionContext, NoopRecorder, ReadRecorder, dispatch,
+    EngineMode, ExpandableOpcode, ExpansionContext, ReadRecorder, dispatch,
     dispatch_expandable_opcode, dispatch_with_context, install_expandable_primitives,
 };
 use ahash::AHashMap;
@@ -63,7 +63,6 @@ fn preamble_span_operation_expands_exactly_one_token() {
     let delivered = crate::expand_once_then_get_token_with_context(
         &mut input,
         &mut stores,
-        &mut NoopRecorder,
         &mut ExpansionContext::new("texput"),
     )
     .expect("one expansion should succeed")
@@ -93,16 +92,16 @@ where
     crate::get_x_token(input, stores).map(|token| token.map(crate::semantic_token))
 }
 
-fn get_x_token_with_recorder<S, R>(
+fn get_x_token_recording<S>(
     input: &mut InputStack<S>,
     stores: &mut (impl ExpansionState + InputOpenState),
-    recorder: &mut R,
+    recorder: &mut dyn ReadRecorder,
 ) -> Result<Option<Token>, crate::ExpandError>
 where
     S: tex_lex::InputSource,
-    R: ReadRecorder,
 {
-    crate::get_x_token_with_recorder(input, stores, recorder)
+    let mut expansion = ExpansionContext::new("texput").recording(recorder);
+    crate::get_x_token_with_context(input, stores, &mut expansion)
         .map(|token| token.map(crate::semantic_token))
 }
 
@@ -118,11 +117,6 @@ where
     let mut context = context.expansion_context();
     crate::get_x_token_with_context(input, stores, &mut context)
         .map(|token| token.map(crate::semantic_token))
-}
-
-#[test]
-fn noop_recorder_has_no_state() {
-    assert_eq!(core::mem::size_of::<NoopRecorder>(), 0);
 }
 
 fn collect_protected_expansion(
@@ -149,7 +143,7 @@ fn collect_protected_expansion(
 
     let mut input = InputStack::new(MemoryInput::new(source));
     let mut recorder = CountingRecorder::default();
-    let mut context = ExpansionContext::new("texput");
+    let mut context = ExpansionContext::new("texput").recording(&mut recorder);
     let mut expanded = Vec::new();
     loop {
         let token = if prepared {
@@ -158,22 +152,16 @@ fn collect_protected_expansion(
             else {
                 break;
             };
-            crate::get_x_or_protected_from_prepared_with_recorder_and_context(
+            crate::get_x_or_protected_from_prepared_with_context(
                 first,
                 &mut input,
                 &mut stores,
-                &mut recorder,
                 &mut context,
             )
             .expect("prepared x_token")
         } else {
-            crate::get_x_or_protected_with_recorder_and_context(
-                &mut input,
-                &mut stores,
-                &mut recorder,
-                &mut context,
-            )
-            .expect("ordinary get_x_token")
+            crate::get_x_or_protected_with_context(&mut input, &mut stores, &mut context)
+                .expect("ordinary get_x_token")
         };
         let Some(token) = token else {
             break;
@@ -207,7 +195,6 @@ fn dispatch_delivers_unexpandable_tokens() {
             token,
             &mut InputStack::new(MemoryInput::new("")),
             &mut stores,
-            &mut NoopRecorder,
             Meaning::Relax,
         )
         .expect("dispatch should succeed"),
@@ -253,7 +240,6 @@ fn invalid_conditional_relation_assumes_equal_and_replays_offending_token() {
     let relation = crate::conditionals::scan_conditional_relation_with_expander_and_context(
         &mut input,
         &mut stores,
-        &mut NoopRecorder,
         &mut ExpansionContext::new("texput"),
         &mut crate::NoInputExpandNext,
         context,
@@ -487,10 +473,9 @@ fn get_x_or_protected_stops_before_protected_macro_expansion() {
     );
     let mut input = InputStack::new(MemoryInput::new("\\protectedmacro"));
 
-    let delivered = crate::get_x_or_protected_with_recorder_and_context(
+    let delivered = crate::get_x_or_protected_with_context(
         &mut input,
         &mut stores,
-        &mut NoopRecorder,
         &mut ExpansionContext::new("texput"),
     )
     .expect("protected-aware expansion")
@@ -976,7 +961,7 @@ fn recorder_observes_one_meaning_read_per_control_sequence_token() {
     let mut recorder = CountingRecorder::default();
 
     assert_eq!(
-        get_x_token_with_recorder(&mut input, &mut stores, &mut recorder)
+        get_x_token_recording(&mut input, &mut stores, &mut recorder)
             .expect("expansion should succeed"),
         Some(Token::Cs(relax.symbol()))
     );
@@ -1397,7 +1382,6 @@ fn macro_argument_replay_delivers_call_site_argument_origins() {
         Token::Cs(macro_cs.symbol()),
         &mut input,
         &mut stores,
-        &mut NoopRecorder,
         meaning,
     )
     .expect("macro dispatch should succeed")
@@ -1452,7 +1436,6 @@ fn macro_body_delivery_does_not_write_provenance_per_token() {
         invocation_origin,
         &mut input,
         &mut stores,
-        &mut NoopRecorder,
         &mut ExpansionContext::new("texput"),
         meaning,
     )
@@ -1585,7 +1568,6 @@ fn identical_macro_bodies_keep_shared_body_identity_with_distinct_arguments() {
         Token::Cs(left.symbol()),
         &mut left_input,
         &mut stores,
-        &mut NoopRecorder,
         left_meaning,
     )
     .expect("left dispatch should succeed");
@@ -1611,7 +1593,6 @@ fn identical_macro_bodies_keep_shared_body_identity_with_distinct_arguments() {
         Token::Cs(right.symbol()),
         &mut right_input,
         &mut stores,
-        &mut NoopRecorder,
         right_meaning,
     )
     .expect("right dispatch should succeed");
@@ -1849,7 +1830,7 @@ fn the_records_value_and_code_generation_dependencies_that_mutations_invalidate(
     stores.set_count(7, 41);
     let mut input = InputStack::new(MemoryInput::new("\\the\\value \\the\\catcode`x"));
     let mut reads = crate::ReadSetRecorder::default();
-    while get_x_token_with_recorder(&mut input, &mut stores, &mut reads)
+    while get_x_token_recording(&mut input, &mut stores, &mut reads)
         .expect("recorded expansion")
         .is_some()
     {}
@@ -2212,8 +2193,9 @@ fn the_fontdimen_accepts_current_font_with_exact_output_and_trace() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list_with_origins(tokens, origins, TokenListReplayKind::Inserted);
     let mut recorder = SymbolRecorder::default();
+    let mut expansion = ExpansionContext::new("texput").recording(&mut recorder);
     let mut output = Vec::new();
-    while let Some(token) = crate::get_x_token_with_recorder(&mut input, &mut stores, &mut recorder)
+    while let Some(token) = crate::get_x_token_with_context(&mut input, &mut stores, &mut expansion)
         .expect("fontdimen expansion should succeed")
     {
         output.push(token);
@@ -2350,8 +2332,9 @@ fn the_math_family_fonts_expand_to_identifier_tokens_with_trace_and_reads() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list_with_origins(tokens, origins, TokenListReplayKind::Inserted);
     let mut recorder = SymbolRecorder::default();
+    let mut expansion = ExpansionContext::new("texput").recording(&mut recorder);
     let mut output = Vec::new();
-    while let Some(token) = crate::get_x_token_with_recorder(&mut input, &mut stores, &mut recorder)
+    while let Some(token) = crate::get_x_token_with_context(&mut input, &mut stores, &mut expansion)
         .expect("math-family font identifiers should expand")
     {
         output.push(token);

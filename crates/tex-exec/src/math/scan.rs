@@ -1,6 +1,4 @@
-use tex_expand::{
-    DriverExpandNext, ExpandError, ReadRecorder, get_x_token_with_recorder_and_context, scan_dimen,
-};
+use tex_expand::{DriverExpandNext, ExpandError, get_x_token_with_context, scan_dimen};
 use tex_lex::{InputSource, InputStack};
 use tex_state::math::{
     FractionThickness, LimitType, MathChoice, MathField, MathFraction, MathNoad, NoadClass,
@@ -19,7 +17,7 @@ use crate::mode::IncompleteFraction;
 use crate::packing_params::vpack;
 use crate::{DispatchAction, ExecError, Mode, ModeNest};
 
-use super::{dispatch_math_token_with_recorder, support::report_math_error};
+use super::{dispatch_math_token_with_context, support::report_math_error};
 
 mod chars;
 #[cfg(test)]
@@ -30,47 +28,44 @@ pub(crate) use chars::{
     math_char_from_mathcode, redispatch_active_char,
 };
 
-pub(super) fn scan_math_field<S, R>(
+pub(super) fn scan_math_field<S>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<MathField, ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
-    let traced = next_non_space_traced_x(input, stores, recorder, execution)?.ok_or(
-        ExecError::MissingToken {
+    let traced =
+        next_non_space_traced_x(input, stores, execution)?.ok_or(ExecError::MissingToken {
             context: "math field",
-        },
-    )?;
+        })?;
     let token = tex_expand::semantic_token(traced);
     match token {
         Token::Char {
             cat: Catcode::BeginGroup,
             ..
-        } => scan_math_field_group_after_open(nest, input, stores, recorder, execution),
+        } => scan_math_field_group_after_open(nest, input, stores, execution),
         Token::Char {
             ch,
             cat: Catcode::Active,
         } => {
             redispatch_active_char(input, stores, ch);
-            scan_math_field(nest, input, stores, recorder, execution)
+            scan_math_field(nest, input, stores, execution)
         }
         Token::Char { ch, .. } => {
             let value = stores.mathcode(ch);
             if value == 0x8000 {
                 redispatch_active_char(input, stores, ch);
-                scan_math_field(nest, input, stores, recorder, execution)
+                scan_math_field(nest, input, stores, execution)
             } else {
                 let (_, math_char) = math_char_from_mathcode(ch, value, stores)?;
                 Ok(MathField::MathChar(math_char))
             }
         }
         Token::Cs(_) if assignments::has_catcode_meaning(stores, token, Catcode::BeginGroup) => {
-            scan_math_field_group_after_open(nest, input, stores, recorder, execution)
+            scan_math_field_group_after_open(nest, input, stores, execution)
         }
         Token::Cs(symbol) => match stores.meaning(symbol) {
             Meaning::CharGiven(ch) => {
@@ -118,14 +113,12 @@ where
                     stores,
                     [TracedTokenWord::pack(opener, origin), traced],
                 );
-                scan_math_field(nest, input, stores, recorder, execution)
+                scan_math_field(nest, input, stores, execution)
             }
             _ => {
                 let mut temp = ModeNest::new();
                 temp.push(nest.current_mode());
-                dispatch_math_token_with_recorder(
-                    &mut temp, traced, input, stores, recorder, execution,
-                )?;
+                dispatch_math_token_with_context(&mut temp, traced, input, stores, execution)?;
                 let id = finish_current_math_list(&mut temp, stores);
                 Ok(MathField::SubMlist(id))
             }
@@ -136,21 +129,19 @@ where
     }
 }
 
-pub(super) fn scan_math_group_after_open<S, R>(
+pub(super) fn scan_math_group_after_open<S>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<tex_state::ids::NodeListId, ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     let mut transaction = crate::transaction::ExecutionTransaction::begin(nest, stores);
     let result = {
         let (nest, stores) = transaction.parts();
-        scan_math_group_after_open_inner(nest, input, stores, recorder, execution)
+        scan_math_group_after_open_inner(nest, input, stores, execution)
     };
     if result.is_ok() {
         transaction.commit();
@@ -158,23 +149,21 @@ where
     result
 }
 
-fn scan_math_group_after_open_inner<S, R>(
+fn scan_math_group_after_open_inner<S>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<tex_state::ids::NodeListId, ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     stores.enter_group_with_kind(GroupKind::Math);
     nest.push(Mode::Math);
     loop {
         sync_engine_state::<S>(execution, nest, stores);
-        let token = get_x_token_with_recorder_and_context(input, stores, recorder, execution)?
-            .ok_or(ExecError::MissingToken {
+        let token =
+            get_x_token_with_context(input, stores, execution)?.ok_or(ExecError::MissingToken {
                 context: "math group closing brace",
             })?;
         let semantic = tex_expand::semantic_token(token);
@@ -184,7 +173,7 @@ where
             let _ = nest.pop()?;
             return Ok(list);
         }
-        match dispatch_math_token_with_recorder(nest, token, input, stores, recorder, execution)? {
+        match dispatch_math_token_with_context(nest, token, input, stores, execution)? {
             DispatchAction::Continue | DispatchAction::Shipout(_) => {}
             DispatchAction::End => {
                 return Err(ExecError::MissingToken {
@@ -203,33 +192,29 @@ where
     }
 }
 
-pub(super) fn scan_math_field_group_after_open<S, R>(
+pub(super) fn scan_math_field_group_after_open<S>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<MathField, ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
-    let list = scan_math_group_after_open(nest, input, stores, recorder, execution)?;
+    let list = scan_math_group_after_open(nest, input, stores, execution)?;
     Ok(simplify_math_group_field(stores, list))
 }
 
-pub(super) fn scan_math_atom_group_after_open<S, R>(
+pub(super) fn scan_math_atom_group_after_open<S>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<MathNoad, ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
-    let list = scan_math_group_after_open(nest, input, stores, recorder, execution)?;
+    let list = scan_math_group_after_open(nest, input, stores, execution)?;
     let nodes = stores.nodes(list);
     if nodes.len() == 1
         && let Some(tex_state::node_arena::NodeRef::MathNoad(noad)) = nodes.first()
@@ -262,18 +247,16 @@ fn simplify_math_group_field(stores: &Universe, list: tex_state::ids::NodeListId
     }
 }
 
-pub(super) fn start_left_group<S, R>(
+pub(super) fn start_left_group<S>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
-    let delimiter = scan_delimiter_token(input, stores, recorder, execution)?;
+    let delimiter = scan_delimiter_token(input, stores, execution)?;
     nest.push(Mode::Math);
     nest.current_list_mut().push(Node::MathNoad(MathNoad::new(
         NoadKind::LeftDelimiter { delimiter },
@@ -283,18 +266,16 @@ where
     Ok(())
 }
 
-pub(super) fn finish_left_group<S, R>(
+pub(super) fn finish_left_group<S>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
-    let delimiter = scan_delimiter_token(input, stores, recorder, execution)?;
+    let delimiter = scan_delimiter_token(input, stores, execution)?;
     if !current_list_is_left_group(nest, stores) {
         report_math_error(stores, "Extra \\right");
         return Ok(());
@@ -304,18 +285,16 @@ where
     Ok(())
 }
 
-pub(super) fn append_middle_delimiter<S, R>(
+pub(super) fn append_middle_delimiter<S>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
-    let delimiter = scan_delimiter_token(input, stores, recorder, execution)?;
+    let delimiter = scan_delimiter_token(input, stores, execution)?;
     if !current_list_is_left_group(nest, stores) {
         report_math_error(stores, "Extra \\middle");
         return Ok(());
@@ -429,18 +408,16 @@ pub(super) fn finish_current_math_list(
     stores.freeze_node_list(&nodes)
 }
 
-pub(super) fn start_fraction<S, R>(
+pub(super) fn start_fraction<S>(
     primitive: UnexpandablePrimitive,
     context: TracedTokenWord,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     if nest.current_list().incomplete_fraction().is_some() {
         report_math_error(stores, "Ambiguous; you need another { and }");
@@ -450,8 +427,8 @@ where
         UnexpandablePrimitive::OverWithDelims
         | UnexpandablePrimitive::AtopWithDelims
         | UnexpandablePrimitive::AboveWithDelims => (
-            Some(scan_delimiter_token(input, stores, recorder, execution)?),
-            Some(scan_delimiter_token(input, stores, recorder, execution)?),
+            Some(scan_delimiter_token(input, stores, execution)?),
+            Some(scan_delimiter_token(input, stores, execution)?),
         ),
         _ => (None, None),
     };
@@ -501,24 +478,19 @@ pub(super) fn apply_limit_switch(
     }
 }
 
-pub(super) fn append_math_choice<S, R>(
+pub(super) fn append_math_choice<S>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
-    let display =
-        scan_required_math_group(nest, input, stores, recorder, execution, "\\mathchoice")?;
-    let text = scan_required_math_group(nest, input, stores, recorder, execution, "\\mathchoice")?;
-    let script =
-        scan_required_math_group(nest, input, stores, recorder, execution, "\\mathchoice")?;
-    let script_script =
-        scan_required_math_group(nest, input, stores, recorder, execution, "\\mathchoice")?;
+    let display = scan_required_math_group(nest, input, stores, execution, "\\mathchoice")?;
+    let text = scan_required_math_group(nest, input, stores, execution, "\\mathchoice")?;
+    let script = scan_required_math_group(nest, input, stores, execution, "\\mathchoice")?;
+    let script_script = scan_required_math_group(nest, input, stores, execution, "\\mathchoice")?;
     nest.current_list_mut().push(Node::MathChoice(MathChoice {
         display,
         text,
@@ -528,19 +500,17 @@ where
     Ok(())
 }
 
-fn scan_required_math_group<S, R>(
+fn scan_required_math_group<S>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
     context: &'static str,
 ) -> Result<tex_state::ids::NodeListId, ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
-    let Some(opener) = next_non_space_x(input, stores, recorder, execution)? else {
+    let Some(opener) = next_non_space_x(input, stores, execution)? else {
         stores.world_mut().write_text(
             tex_state::PrintSink::TerminalAndLog,
             &format!("\n! Missing {{ inserted while scanning {context}.\n"),
@@ -555,7 +525,7 @@ where
         crate::push_tokens(input, stores, [opener]);
         return Ok(stores.freeze_node_list(&[]));
     }
-    scan_math_group_after_open(nest, input, stores, recorder, execution)
+    scan_math_group_after_open(nest, input, stores, execution)
 }
 
 pub(super) fn scan_vcenter_field<S>(
@@ -640,20 +610,16 @@ where
     Ok(value as u32)
 }
 
-fn scan_delimiter_token<S, R>(
+fn scan_delimiter_token<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<u32, ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     loop {
-        let Some(traced) =
-            get_x_token_with_recorder_and_context(input, stores, recorder, execution)?
-        else {
+        let Some(traced) = get_x_token_with_context(input, stores, execution)? else {
             report_math_error(stores, "Missing delimiter (. inserted)");
             return Ok(0);
         };
@@ -674,7 +640,7 @@ where
             }
             Token::Cs(symbol) => {
                 let meaning = stores.meaning(symbol);
-                recorder.record_meaning(symbol, meaning);
+                execution.record_meaning(symbol, meaning);
                 match meaning {
                     Meaning::Relax => continue,
                     Meaning::MathCharGiven(value) => return Ok(u32::from(value)),
@@ -702,11 +668,9 @@ pub(super) fn scan_mu_dimen<S>(
 where
     S: InputSource,
 {
-    let mut recorder = tex_expand::NoopRecorder;
     let scanned = scan_dimen::scan_dimen_with_expander_and_context(
         input,
         stores,
-        &mut recorder,
         execution,
         &mut DriverExpandNext,
         scan_dimen::ScanDimenOptions::STANDARD.requiring_mu_unit(),
@@ -716,20 +680,17 @@ where
     Ok(scanned.value())
 }
 
-fn next_non_space_x<S, R>(
+fn next_non_space_x<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<Option<Token>, ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     loop {
         let Some(token) =
-            get_x_token_with_recorder_and_context(input, stores, recorder, execution)?
-                .map(tex_expand::semantic_token)
+            get_x_token_with_context(input, stores, execution)?.map(tex_expand::semantic_token)
         else {
             return Ok(None);
         };
@@ -739,20 +700,16 @@ where
     }
 }
 
-fn next_non_space_traced_x<S, R>(
+fn next_non_space_traced_x<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<Option<TracedTokenWord>, ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     loop {
-        let Some(traced) =
-            get_x_token_with_recorder_and_context(input, stores, recorder, execution)?
-        else {
+        let Some(traced) = get_x_token_with_context(input, stores, execution)? else {
             return Ok(None);
         };
         if !assignments::is_space(tex_expand::semantic_token(traced)) {

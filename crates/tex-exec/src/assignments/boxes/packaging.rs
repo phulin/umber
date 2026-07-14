@@ -1,4 +1,4 @@
-use tex_expand::{NoopRecorder, get_x_token_with_recorder_and_context};
+use tex_expand::get_x_token_with_context;
 use tex_lex::{InputSource, InputStack};
 use tex_state::ids::NodeListId;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
@@ -297,9 +297,7 @@ where
         loop {
             crate::executor::sync_engine_state::<S>(execution, nest, stores);
             let token = {
-                let mut recorder = NoopRecorder;
-                match get_x_token_with_recorder_and_context(input, stores, &mut recorder, execution)
-                {
+                match get_x_token_with_context(input, stores, execution) {
                     Ok(token) => token,
                     Err(tex_expand::ExpandError::UndefinedControlSequence { name, .. }) => {
                         stores.world_mut().write_text(

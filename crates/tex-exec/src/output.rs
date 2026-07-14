@@ -2,7 +2,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use tex_expand::ReadRecorder;
 use tex_lex::{InputSource, InputStack, TokenListReplayKind};
 use tex_state::env::banks::{DimenParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
@@ -24,63 +23,57 @@ use crate::page_builder::build_page;
 use crate::splitting::{natural_vlist_size, prune_page_top, vpack_natural};
 use crate::{ExecError, ExecutionStats, Mode, ModeNest, leave_group, push_traced_tokens};
 
-pub(crate) fn drain_pending_output<S, R>(
+pub(crate) fn drain_pending_output<S>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
     stats: &mut ExecutionStats,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     while let Some(fire_up) = stores.page_fire_up() {
-        fire_up_page(nest, input, stores, recorder, execution, stats, fire_up)?;
+        fire_up_page(nest, input, stores, execution, stats, fire_up)?;
     }
     Ok(())
 }
 
-pub(crate) fn finish_end<S, R>(
+pub(crate) fn finish_end<S>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
     stats: &mut ExecutionStats,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     while !job_is_quiescent(stores) {
         append_end_cleanup_contributions(stores);
         build_page(stores)?;
-        drain_pending_output(nest, input, stores, recorder, execution, stats)?;
+        drain_pending_output(nest, input, stores, execution, stats)?;
     }
     Ok(())
 }
 
-fn fire_up_page<S, R>(
+fn fire_up_page<S>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
     stats: &mut ExecutionStats,
     fire_up: PageFireUp,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     prepare_box255(stores, fire_up)?;
     let output = stores.tok_param(TokParam::OUTPUT);
     if stores.tokens(output).is_empty() {
         prepend_output_heldover(stores, Vec::new());
         let node = take_box255_node(stores)?;
-        let artifact = shipout_node(node, input, stores, recorder)?;
+        let artifact = shipout_node(node, input, stores, execution)?;
         let _ = artifact;
         stores.clear_page_discards();
         build_page(stores)?;
@@ -98,13 +91,13 @@ where
         );
         prepend_output_heldover(stores, Vec::new());
         let node = take_box255_node(stores)?;
-        let _artifact = shipout_node(node, input, stores, recorder)?;
+        let _artifact = shipout_node(node, input, stores, execution)?;
         stores.clear_page_discards();
         build_page(stores)?;
         return Ok(());
     }
     stores.set_page_integer(PageInteger::DeadCycles, dead_cycles.saturating_add(1));
-    run_output_routine(nest, input, stores, recorder, execution, stats, output)?;
+    run_output_routine(nest, input, stores, execution, stats, output)?;
     stores.clear_page_discards();
     build_page(stores)?;
     Ok(())
@@ -403,33 +396,22 @@ fn output_penalty_and_rewrite_break(
     INF_PENALTY
 }
 
-fn run_output_routine<S, R>(
+fn run_output_routine<S>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
     stats: &mut ExecutionStats,
     output: tex_state::ids::TokenListId,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     let mut transaction = crate::transaction::ExecutionTransaction::begin(nest, stores);
     let mut replay = None;
     let result = {
         let (nest, stores) = transaction.parts();
-        run_output_routine_inner(
-            nest,
-            input,
-            stores,
-            recorder,
-            execution,
-            stats,
-            output,
-            &mut replay,
-        )
+        run_output_routine_inner(nest, input, stores, execution, stats, output, &mut replay)
     };
     if result.is_ok() {
         transaction.commit();
@@ -440,11 +422,10 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_output_routine_inner<S, R>(
+fn run_output_routine_inner<S>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
     stats: &mut ExecutionStats,
     output: tex_state::ids::TokenListId,
@@ -452,7 +433,6 @@ fn run_output_routine_inner<S, R>(
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     stores.enter_group_with_kind(GroupKind::Output);
     nest.push(Mode::InternalVertical);
@@ -460,15 +440,9 @@ where
     let output_frame = delimited_output_tokens(stores, output);
     *replay = Some(input.push_token_list(output_frame, TokenListReplayKind::OutputRoutine));
 
-    match run_main_control_until(
-        nest,
-        input,
-        stores,
-        recorder,
-        execution,
-        stats,
-        |input, stores| pop_finished_output_frame(input, stores, output_frame),
-    )? {
+    match run_main_control_until(nest, input, stores, execution, stats, |input, stores| {
+        pop_finished_output_frame(input, stores, output_frame)
+    })? {
         MainControlExit::Stopped => {}
         MainControlExit::EndOfInput => {
             if !input.contains_token_list_frame(output_frame, TokenListReplayKind::OutputRoutine) {

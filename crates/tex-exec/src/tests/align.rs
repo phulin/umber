@@ -111,10 +111,9 @@ fn nested_shipout_checkpoints(source: &str) -> Vec<EngineCheckpoint> {
     )));
     let mut checkpoints = Vec::new();
     let stats = Executor::new()
-        .run_with_recorder_context_and_checkpoints(
+        .run_with_context_and_checkpoints(
             &mut input,
             &mut stores,
-            &mut NoopRecorder,
             &mut crate::ExecutionContext::new("texput"),
             &mut checkpoints,
         )
@@ -311,22 +310,12 @@ fn halign_head_for_vmode_replay_preserves_command_origin() {
             .expect("head_for_vmode dispatch"),
         DispatchAction::Continue
     );
-    let inserted = tex_expand::get_x_token_with_recorder_and_context(
-        &mut input,
-        &mut stores,
-        &mut NoopRecorder,
-        &mut context,
-    )
-    .expect("inserted paragraph read")
-    .expect("inserted paragraph token");
-    let replayed = tex_expand::get_x_token_with_recorder_and_context(
-        &mut input,
-        &mut stores,
-        &mut NoopRecorder,
-        &mut context,
-    )
-    .expect("halign replay read")
-    .expect("halign replay token");
+    let inserted = tex_expand::get_x_token_with_context(&mut input, &mut stores, &mut context)
+        .expect("inserted paragraph read")
+        .expect("inserted paragraph token");
+    let replayed = tex_expand::get_x_token_with_context(&mut input, &mut stores, &mut context)
+        .expect("halign replay read")
+        .expect("halign replay token");
 
     assert_eq!(
         tex_expand::semantic_token(inserted),
@@ -364,27 +353,17 @@ fn hrule_head_for_vmode_defers_rule_until_after_paragraph_dispatch() {
     );
     assert!(stores.page_contributions().is_empty());
 
-    let inserted = tex_expand::get_x_token_with_recorder_and_context(
-        &mut input,
-        &mut stores,
-        &mut NoopRecorder,
-        &mut context,
-    )
-    .expect("inserted paragraph read")
-    .expect("inserted paragraph token");
+    let inserted = tex_expand::get_x_token_with_context(&mut input, &mut stores, &mut context)
+        .expect("inserted paragraph read")
+        .expect("inserted paragraph token");
     assert_eq!(
         tex_expand::semantic_token(inserted),
         Token::Cs(stores.intern("par").symbol())
     );
 
-    let replayed = tex_expand::get_x_token_with_recorder_and_context(
-        &mut input,
-        &mut stores,
-        &mut NoopRecorder,
-        &mut context,
-    )
-    .expect("replayed hrule read")
-    .expect("replayed hrule token");
+    let replayed = tex_expand::get_x_token_with_context(&mut input, &mut stores, &mut context)
+        .expect("replayed hrule read")
+        .expect("replayed hrule token");
     assert_eq!(tex_expand::semantic_token(replayed), hrule);
     assert_eq!(replayed.origin(), command_origin);
 }
@@ -403,22 +382,12 @@ fn halign_in_restricted_horizontal_mode_retains_off_save_recovery() {
 
     dispatch_delivered_token(&mut nest, command, &mut input, &mut stores, &mut context)
         .expect("off_save should insert a closing group");
-    let inserted = tex_expand::get_x_token_with_recorder_and_context(
-        &mut input,
-        &mut stores,
-        &mut NoopRecorder,
-        &mut context,
-    )
-    .expect("inserted group read")
-    .expect("inserted group token");
-    let replayed = tex_expand::get_x_token_with_recorder_and_context(
-        &mut input,
-        &mut stores,
-        &mut NoopRecorder,
-        &mut context,
-    )
-    .expect("halign replay read")
-    .expect("halign replay token");
+    let inserted = tex_expand::get_x_token_with_context(&mut input, &mut stores, &mut context)
+        .expect("inserted group read")
+        .expect("inserted group token");
+    let replayed = tex_expand::get_x_token_with_context(&mut input, &mut stores, &mut context)
+        .expect("halign replay read")
+        .expect("halign replay token");
 
     assert_eq!(
         tex_expand::semantic_token(inserted),
@@ -961,9 +930,13 @@ fn shipout_rejects_unset_alignment_nodes() {
     let nodes_before = stores.testing_epoch_node_count();
     let effects_before = stores.world().effect_records().to_vec();
     let mut shipout_input = InputStack::new(MemoryInput::new(""));
-    let err =
-        crate::assignments::shipout_node(unset, &mut shipout_input, &mut stores, &mut NoopRecorder)
-            .expect_err("unset alignment node must not lower to shipout artifact");
+    let err = crate::assignments::shipout_node(
+        unset,
+        &mut shipout_input,
+        &mut stores,
+        &mut crate::ExecutionContext::new("texput"),
+    )
+    .expect_err("unset alignment node must not lower to shipout artifact");
 
     assert_eq!(
         err.to_string(),

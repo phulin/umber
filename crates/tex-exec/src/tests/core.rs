@@ -49,10 +49,9 @@ fn engine_checkpoint_restores_input_modes_and_universe_atomically() {
     stores.set_count(3, 41);
     let mut checkpoints = Vec::new();
     executor
-        .run_with_recorder_context_and_checkpoints(
+        .run_with_context_and_checkpoints(
             &mut input,
             &mut stores,
-            &mut NoopRecorder,
             &mut crate::ExecutionContext::new("texput"),
             &mut checkpoints,
         )
@@ -82,10 +81,9 @@ fn engine_session_publishes_named_outer_paragraph_boundary() {
     let mut input = InputStack::new(MemoryInput::new("\\font\\f=cmr10 \\f x\\par"));
     let mut checkpoints = Vec::new();
     Executor::new()
-        .run_with_recorder_context_and_checkpoints(
+        .run_with_context_and_checkpoints(
             &mut input,
             &mut stores,
-            &mut NoopRecorder,
             &mut crate::ExecutionContext::new("texput"),
             &mut checkpoints,
         )
@@ -106,10 +104,9 @@ fn outer_paragraph_checkpoint_retains_survivor_pins_for_mode_restore() {
     let mut checkpoints = Vec::new();
     let mut executor = Executor::new();
     executor
-        .run_with_recorder_context_and_checkpoints(
+        .run_with_context_and_checkpoints(
             &mut input,
             &mut stores,
-            &mut NoopRecorder,
             &mut crate::ExecutionContext::new("texput"),
             &mut checkpoints,
         )
@@ -146,10 +143,9 @@ fn shipout_checkpoint_restores_after_nested_work_has_unwound() {
     let mut executor = Executor::new();
     let mut checkpoints = Vec::new();
     executor
-        .run_with_recorder_context_and_checkpoints(
+        .run_with_context_and_checkpoints(
             &mut input,
             &mut stores,
-            &mut NoopRecorder,
             &mut crate::ExecutionContext::new("texput"),
             &mut checkpoints,
         )
@@ -741,7 +737,7 @@ fn edef_expansion_uses_active_input_resolver() {
     let mut context = resolvers.context();
 
     Executor::new()
-        .run_with_recorder_and_context(&mut input, &mut stores, &mut NoopRecorder, &mut context)
+        .run_with_context(&mut input, &mut stores, &mut context)
         .expect("edef executes through input hook");
     let e = stores.symbol("e").expect("e was interned");
     let meaning = stores.macro_meaning(e).expect("e is a macro");
@@ -782,7 +778,7 @@ fn input_expands_while_scanning_assignment_values() {
     let mut context = resolvers.context();
 
     Executor::new()
-        .run_with_recorder_and_context(&mut input, &mut stores, &mut NoopRecorder, &mut context)
+        .run_with_context(&mut input, &mut stores, &mut context)
         .expect("assignments scan through input context");
 
     assert_eq!(
@@ -826,7 +822,7 @@ fn input_expands_while_scanning_conditional_operands() {
     let mut context = resolvers.context();
 
     Executor::new()
-        .run_with_recorder_and_context(&mut input, &mut stores, &mut NoopRecorder, &mut context)
+        .run_with_context(&mut input, &mut stores, &mut context)
         .expect("conditionals scan through input context");
 
     assert_eq!(stores.count(0), 1);
@@ -852,7 +848,7 @@ fn input_expands_while_scanning_register_indices_and_the_operands() {
     let mut context = resolvers.context();
 
     Executor::new()
-        .run_with_recorder_and_context(&mut input, &mut stores, &mut NoopRecorder, &mut context)
+        .run_with_context(&mut input, &mut stores, &mut context)
         .expect("register and the scans use input context");
 
     assert_eq!(stores.count(5), 9);
@@ -3381,10 +3377,9 @@ fn output_routine_emits_one_checkpoint_only_after_teardown() {
     let mut executor = Executor::new();
     let mut checkpoints = Vec::new();
     executor
-        .run_with_recorder_context_and_checkpoints(
+        .run_with_context_and_checkpoints(
             &mut input,
             &mut stores,
-            &mut NoopRecorder,
             &mut crate::ExecutionContext::new("texput"),
             &mut checkpoints,
         )

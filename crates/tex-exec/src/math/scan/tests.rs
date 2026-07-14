@@ -1,6 +1,5 @@
 use super::*;
 use crate::push_traced_tokens;
-use tex_expand::NoopRecorder;
 use tex_lex::MemoryInput;
 use tex_state::provenance::SyntheticOriginKind;
 
@@ -16,7 +15,6 @@ fn invalid_delimiter_pushback_preserves_traced_origin() {
     let delimiter = scan_delimiter_token(
         &mut input,
         &mut stores,
-        &mut NoopRecorder,
         &mut crate::ExecutionContext::new("texput"),
     )
     .expect("invalid delimiter should recover");
@@ -40,7 +38,6 @@ fn delimiter_command_scans_all_twenty_seven_bits() {
     let delimiter = scan_delimiter_token(
         &mut input,
         &mut stores,
-        &mut NoopRecorder,
         &mut crate::ExecutionContext::new("texput"),
     )
     .expect("numeric delimiter should scan");

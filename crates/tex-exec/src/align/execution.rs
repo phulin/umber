@@ -1,7 +1,4 @@
-use tex_expand::{
-    ReadRecorder, get_x_or_protected_with_recorder_and_context,
-    get_x_token_with_recorder_and_context,
-};
+use tex_expand::{get_x_or_protected_with_context, get_x_token_with_context};
 use tex_lex::{InputSource, InputStack, TokenListReplayKind};
 use tex_state::env::banks::TokParam;
 use tex_state::node::{GlueKind, Node};
@@ -13,7 +10,7 @@ use super::support::{
     is_crcr, is_end_group, is_noalign, is_omit, is_span, row_mode, set_align_brace_depth,
 };
 use crate::assignments::flush_pending_hchars;
-use crate::dispatch::{dispatch_delivered_token_with_recorder, insert_traced_tokens};
+use crate::dispatch::{dispatch_delivered_token_with_context, insert_traced_tokens};
 use crate::executor::sync_engine_state;
 use crate::mode::{AlignState, AlignmentKind};
 use crate::vertical::{
@@ -23,17 +20,15 @@ use crate::{
     DispatchAction, ExecError, ExecutionStats, Mode, ModeNest, leave_group, push_traced_tokens,
 };
 
-pub(crate) fn execute_alignment<S, R>(
+pub(crate) fn execute_alignment<S>(
     state: AlignState,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     {
         let alignment_kind = state.kind();
@@ -51,19 +46,10 @@ where
         stores.enter_group_with_kind(tex_state::GroupKind::Align);
         replay_everycr(input, stores);
 
-        while let Some(first_token) =
-            align_peek(align_level, nest, input, stores, recorder, execution)?
-        {
+        while let Some(first_token) = align_peek(align_level, nest, input, stores, execution)? {
             init_row(align_level, nest)?;
-            let suppress_redundant_cr = execute_row(
-                align_level,
-                first_token,
-                nest,
-                input,
-                stores,
-                recorder,
-                execution,
-            )?;
+            let suppress_redundant_cr =
+                execute_row(align_level, first_token, nest, input, stores, execution)?;
             align_state_mut(nest, align_level)?.set_suppress_redundant_cr(suppress_redundant_cr);
             fin_row(align_level, nest, stores)?;
             replay_everycr(input, stores);
@@ -102,17 +88,15 @@ pub(crate) fn append_finished_alignment(
     }
 }
 
-pub(super) fn execute_alignment_to_nodes<S, R>(
+pub(super) fn execute_alignment_to_nodes<S>(
     state: AlignState,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<Vec<Node>, ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     {
         let alignment_kind = state.kind();
@@ -129,19 +113,10 @@ where
         stores.enter_group_with_kind(tex_state::GroupKind::Align);
         replay_everycr(input, stores);
 
-        while let Some(first_token) =
-            align_peek(align_level, nest, input, stores, recorder, execution)?
-        {
+        while let Some(first_token) = align_peek(align_level, nest, input, stores, execution)? {
             init_row(align_level, nest)?;
-            let suppress_redundant_cr = execute_row(
-                align_level,
-                first_token,
-                nest,
-                input,
-                stores,
-                recorder,
-                execution,
-            )?;
+            let suppress_redundant_cr =
+                execute_row(align_level, first_token, nest, input, stores, execution)?;
             align_state_mut(nest, align_level)?.set_suppress_redundant_cr(suppress_redundant_cr);
             fin_row(align_level, nest, stores)?;
             replay_everycr(input, stores);
@@ -183,7 +158,6 @@ fn align_peek<S>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut impl ReadRecorder,
     execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<Option<TracedTokenWord>, ExecError>
 where
@@ -192,7 +166,7 @@ where
     loop {
         set_align_brace_depth(nest, align_level, 1_000_000);
         input.set_alignment_state(1_000_000);
-        let Some(token) = next_non_space_protected(input, stores, recorder, execution)? else {
+        let Some(token) = next_non_space_protected(input, stores, execution)? else {
             stores.world_mut().write_text(
                 PrintSink::TerminalAndLog,
                 "\n! Missing } inserted while finishing alignment.\n",
@@ -203,7 +177,7 @@ where
         };
         let semantic = tex_expand::semantic_token(token);
         if is_noalign(stores, semantic) {
-            super::noalign::execute_noalign(align_level, nest, input, stores, recorder, execution)?;
+            super::noalign::execute_noalign(align_level, nest, input, stores, execution)?;
             continue;
         }
         if is_end_group(stores, semantic) {
@@ -247,18 +221,16 @@ fn init_row(align_level: usize, nest: &mut ModeNest) -> Result<(), ExecError> {
     Ok(())
 }
 
-fn execute_row<S, R>(
+fn execute_row<S>(
     align_level: usize,
     first_token: TracedTokenWord,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<bool, ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     let mut start_token = Some(first_token);
     let mut column = 0usize;
@@ -272,7 +244,6 @@ where
             nest,
             input,
             stores,
-            recorder,
             execution,
         )?;
         column = result.next_column;
@@ -282,13 +253,11 @@ where
         // TeX82 fin_col restores the sentinel before fetching the first token
         // of every following column, not only after a spanning column.
         input.set_alignment_state(1_000_000);
-        start_token = Some(
-            next_non_space_protected(input, stores, recorder, execution)?.ok_or(
-                ExecError::MissingToken {
-                    context: "alignment cell",
-                },
-            )?,
-        );
+        start_token = Some(next_non_space_protected(input, stores, execution)?.ok_or(
+            ExecError::MissingToken {
+                context: "alignment cell",
+            },
+        )?);
     }
 }
 
@@ -328,18 +297,16 @@ struct CellStart {
     first_token: Option<TracedTokenWord>,
 }
 
-fn execute_cell<S, R>(
+fn execute_cell<S>(
     align_level: usize,
     start: CellStart,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<CellResult, ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     let kind = align_kind(nest, align_level)?;
     nest.push(cell_mode(kind));
@@ -378,7 +345,6 @@ where
                     nest,
                     input,
                     stores,
-                    recorder,
                     execution,
                 )?;
             } else {
@@ -388,7 +354,6 @@ where
                     nest,
                     input,
                     stores,
-                    recorder,
                     execution,
                 )?;
             }
@@ -398,7 +363,7 @@ where
         align_state_mut(nest, align_level)?.start_cell(column, span_count);
 
         let terminator =
-            run_cell_body_until_terminator(align_level, nest, input, stores, recorder, execution)?;
+            run_cell_body_until_terminator(align_level, nest, input, stores, execution)?;
         match terminator {
             CellTerminator::Span => {
                 flush_pending_hchars(nest, stores)?;
@@ -409,7 +374,7 @@ where
                 // TeX82 fin_col restores the sentinel before looking for the
                 // first token of the next spanned column.
                 input.set_alignment_state(1_000_000);
-                first_token = next_non_space_protected(input, stores, recorder, execution)?;
+                first_token = next_non_space_protected(input, stores, execution)?;
             }
             CellTerminator::AlignmentTab | CellTerminator::Cr => {
                 let next_column = column + 1;
@@ -439,25 +404,18 @@ where
     }
 }
 
-fn next_non_space_protected<S, R>(
+fn next_non_space_protected<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<Option<TracedTokenWord>, ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     loop {
         let token = {
             let mut expansion = ExpansionContext::new(stores);
-            get_x_or_protected_with_recorder_and_context(
-                input,
-                &mut expansion,
-                recorder,
-                execution,
-            )?
+            get_x_or_protected_with_context(input, &mut expansion, execution)?
         };
         match token {
             Some(token)
@@ -515,24 +473,22 @@ enum CellTerminator {
     Span,
 }
 
-fn run_cell_body_until_terminator<S, R>(
+fn run_cell_body_until_terminator<S>(
     _align_level: usize,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<CellTerminator, ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     let mut stats = ExecutionStats::default();
     loop {
         sync_engine_state::<S>(execution, nest, stores);
         let fetched = {
             let mut expansion = ExpansionContext::new(stores);
-            get_x_token_with_recorder_and_context(input, &mut expansion, recorder, execution)
+            get_x_token_with_context(input, &mut expansion, execution)
         };
         let token = match fetched {
             Ok(Some(token)) => token,
@@ -650,7 +606,7 @@ where
             insert_traced_tokens(input, stores, [TracedTokenWord::pack(left, origin), token]);
             continue;
         }
-        dispatch_and_drain(nest, token, input, stores, recorder, execution, &mut stats)?;
+        dispatch_and_drain(nest, token, input, stores, execution, &mut stats)?;
     }
 }
 
@@ -679,22 +635,20 @@ pub(super) enum TemplateStep {
     DeferredOuterRecovery,
 }
 
-pub(super) fn run_one_main_control_token<S, R>(
+pub(super) fn run_one_main_control_token<S>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
     stats: &mut ExecutionStats,
 ) -> Result<TemplateStep, ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     sync_engine_state::<S>(execution, nest, stores);
     let fetched = {
         let mut expansion = ExpansionContext::new(stores);
-        get_x_token_with_recorder_and_context(input, &mut expansion, recorder, execution)
+        get_x_token_with_context(input, &mut expansion, execution)
     };
     let token = match fetched {
         Ok(Some(token)) => token,
@@ -721,26 +675,23 @@ where
     if tex_expand::semantic_token(token).is_frozen_endv() {
         return Ok(TemplateStep::EndV);
     }
-    dispatch_and_drain(nest, token, input, stores, recorder, execution, stats)?;
+    dispatch_and_drain(nest, token, input, stores, execution, stats)?;
     Ok(TemplateStep::Continue)
 }
 
-pub(super) fn dispatch_and_drain<S, R>(
+pub(super) fn dispatch_and_drain<S>(
     nest: &mut ModeNest,
     token: tex_state::token::TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
     stats: &mut ExecutionStats,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
-    let action = match dispatch_delivered_token_with_recorder(
-        nest, token, input, stores, recorder, execution,
-    ) {
+    let action = match dispatch_delivered_token_with_context(nest, token, input, stores, execution)
+    {
         Ok(action) => action,
         Err(ExecError::Expand(tex_expand::ExpandError::UndefinedControlSequence {
             name, ..
@@ -770,12 +721,12 @@ where
     };
     match action {
         DispatchAction::Continue => {
-            crate::output::drain_pending_output(nest, input, stores, recorder, execution, stats)?;
+            crate::output::drain_pending_output(nest, input, stores, execution, stats)?;
             Ok(())
         }
         DispatchAction::Shipout(page) => {
             stats.prepared_dvi_pages.push(page);
-            crate::output::drain_pending_output(nest, input, stores, recorder, execution, stats)?;
+            crate::output::drain_pending_output(nest, input, stores, execution, stats)?;
             Ok(())
         }
         DispatchAction::End => Ok(()),

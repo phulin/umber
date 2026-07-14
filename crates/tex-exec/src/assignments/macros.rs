@@ -140,11 +140,9 @@ where
 {
     reject_macro_prefixes(prefixes)?;
     skip_optional_equals_x(input, stores, execution)?;
-    let mut recorder = NoopRecorder;
     let value = scan_int::scan_int_with_expander_and_context(
         input,
         stores,
-        &mut recorder,
         execution,
         &mut DriverExpandNext,
         context,

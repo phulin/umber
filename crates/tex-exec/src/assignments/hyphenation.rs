@@ -293,11 +293,9 @@ fn scan_hyphenation_words<S>(
 where
     S: InputSource,
 {
-    let mut recorder = NoopRecorder;
     let open = loop {
-        let traced =
-            get_x_token_with_recorder_and_context(input, stores, &mut recorder, execution)?
-                .ok_or(ExecError::MissingToken { context })?;
+        let traced = get_x_token_with_context(input, stores, execution)?
+            .ok_or(ExecError::MissingToken { context })?;
         let token = tex_expand::semantic_token(traced);
         if is_space(token) {
             continue;
@@ -315,9 +313,7 @@ where
     let mut words = Vec::new();
     let mut current = Vec::new();
     let mut depth = 1usize;
-    while let Some(traced) =
-        get_x_token_with_recorder_and_context(input, stores, &mut recorder, execution)?
-    {
+    while let Some(traced) = get_x_token_with_context(input, stores, execution)? {
         let token = tex_expand::semantic_token(traced);
         if is_begin_group(token) {
             depth += 1;

@@ -1,4 +1,3 @@
-use tex_expand::{NoopRecorder, ReadRecorder};
 use tex_lex::{InputSource, InputStack};
 use tex_out::dvi::DviPagePlan;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
@@ -47,21 +46,18 @@ pub fn dispatch_delivered_token<S>(
 where
     S: InputSource,
 {
-    let mut recorder = NoopRecorder;
-    dispatch_delivered_token_with_recorder(nest, traced, input, stores, &mut recorder, execution)
+    dispatch_delivered_token_with_context(nest, traced, input, stores, execution)
 }
 
-pub(crate) fn dispatch_delivered_token_with_recorder<S, R>(
+pub(crate) fn dispatch_delivered_token_with_context<S>(
     nest: &mut ModeNest,
     traced: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<DispatchAction, ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     let token = tex_expand::semantic_token(traced);
     let origin = traced.origin();
@@ -70,8 +66,8 @@ where
     }
     let mode = nest.current_mode();
     if matches!(mode, Mode::Math | Mode::DisplayMath) {
-        return crate::math::dispatch_math_token_with_recorder(
-            nest, traced, input, stores, recorder, execution,
+        return crate::math::dispatch_math_token_with_context(
+            nest, traced, input, stores, execution,
         );
     }
     if matches!(
@@ -188,8 +184,8 @@ where
             dispatch_delivered_expandable(token, primitive, origin)
         }
         Meaning::UnexpandablePrimitive(primitive) => {
-            assignments::execute_unexpandable_with_recorder(
-                primitive, traced, nest, input, stores, recorder, execution,
+            assignments::execute_unexpandable_with_context(
+                primitive, traced, nest, input, stores, execution,
             )
         }
         Meaning::Font(id) => {

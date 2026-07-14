@@ -5,7 +5,7 @@ use tex_exec::{
     CheckpointSink, ExecutionContext, ExecutionStats, Executor, FontResolver,
     try_execute_assignment,
 };
-use tex_expand::{InputResolver, NoopRecorder, get_x_token_with_context};
+use tex_expand::{InputResolver, get_x_token_with_context};
 use tex_lex::{InputSource, InputStack, MemoryInput};
 use tex_out::dvi::{DviError, DviPagePlan, DviStreamWriter};
 use tex_state::env::banks::IntParam;
@@ -84,13 +84,7 @@ where
 
     pub fn execute(&mut self) -> Result<RunResult, tex_exec::ExecError> {
         let artifact_start = self.artifact_cursor;
-        let mut recorder = NoopRecorder;
-        let stats = Executor::new().run_with_recorder_and_context(
-            self.input,
-            self.stores,
-            &mut recorder,
-            &mut self.context,
-        )?;
+        let stats = Executor::new().run_with_context(self.input, self.stores, &mut self.context)?;
         Ok(self.finish_execution(artifact_start, stats))
     }
 
@@ -100,11 +94,9 @@ where
         checkpoints: &mut C,
     ) -> Result<RunResult, tex_exec::ExecError> {
         let artifact_start = self.artifact_cursor;
-        let mut recorder = NoopRecorder;
-        let stats = Executor::new().run_with_recorder_context_and_checkpoints(
+        let stats = Executor::new().run_with_context_and_checkpoints(
             self.input,
             self.stores,
-            &mut recorder,
             &mut self.context,
             checkpoints,
         )?;

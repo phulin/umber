@@ -1,9 +1,8 @@
 //! Diagnostic and log-writing primitives.
 
 use tex_expand::{
-    NoopRecorder, get_x_token_with_recorder_and_context, meaning_text,
-    scan_dimen::DimensionDiagnostic, scan_int::IntegerDiagnostic, scan_the_text_with_context,
-    token_text,
+    get_x_token_with_context, meaning_text, scan_dimen::DimensionDiagnostic,
+    scan_int::IntegerDiagnostic, scan_the_text_with_context, token_text,
 };
 use tex_lex::{InputSource, InputStack};
 use tex_state::env::banks::IntParam;
@@ -82,8 +81,7 @@ pub(crate) fn execute_showthe<S>(
 where
     S: InputSource,
 {
-    let mut recorder = NoopRecorder;
-    let text = match scan_the_text_with_context(input, stores, &mut recorder, execution, context) {
+    let text = match scan_the_text_with_context(input, stores, execution, context) {
         Ok(text) => text,
         Err(tex_expand::ExpandError::UnsupportedTheTarget { context }) => {
             let token = tex_expand::semantic_token(context);
@@ -613,12 +611,10 @@ where
     if !is_begin_group(open) {
         return Err(ExecError::MissingToken { context });
     }
-    let mut recorder = NoopRecorder;
     let mut depth = 1usize;
     let mut tokens = Vec::new();
     while let Some(token) =
-        get_x_token_with_recorder_and_context(input, stores, &mut recorder, execution)?
-            .map(tex_expand::semantic_token)
+        get_x_token_with_context(input, stores, execution)?.map(tex_expand::semantic_token)
     {
         if is_begin_group(token) {
             depth += 1;
@@ -659,10 +655,8 @@ fn next_non_space_x<S>(
 where
     S: InputSource,
 {
-    let mut recorder = NoopRecorder;
     while let Some(token) =
-        get_x_token_with_recorder_and_context(input, stores, &mut recorder, execution)?
-            .map(tex_expand::semantic_token)
+        get_x_token_with_context(input, stores, execution)?.map(tex_expand::semantic_token)
     {
         if !is_space(token) {
             return Ok(Some(token));

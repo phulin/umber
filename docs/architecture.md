@@ -421,8 +421,11 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   v-template. This is local alignment state, not an engine checkpoint.
 - **Read-set recording** hooks live here and in the stomach: when the
   incremental engine asks for it, meaning lookups record `(cell, epoch)`
-  pairs (`core_state.md` §9). Off by default, zero-cost when off (the
-  recorder is a generic parameter of the loop, monomorphized away).
+  pairs (`core_state.md` §9). `ExpansionContext` carries an optional erased
+  recorder. Ordinary execution takes one predictable `None` branch at each
+  recording boundary, and dependency values are constructed only inside the
+  enabled branch. This avoids specializing the entire expansion and scanner
+  pipeline for every recorder type.
 - **Status:** the implemented `tex-expand` scaffold exposes that loop over
   `tex-lex::InputStack` through the shared `ExpansionState` capability, not
   broad `&mut Universe`. Production callers wrap the owning `Universe` in

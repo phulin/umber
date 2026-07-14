@@ -1,6 +1,4 @@
-use tex_expand::{
-    ReadRecorder, get_x_token_with_recorder_and_context, scan_dimen::DimensionDiagnostic,
-};
+use tex_expand::{get_x_token_with_context, scan_dimen::DimensionDiagnostic};
 use tex_lex::{InputSource, InputStack, MemoryInput, TokenListReplayKind};
 use tex_out::dvi::{DviPagePlan, DviPagePlanBuilder};
 use tex_out::{
@@ -32,15 +30,14 @@ pub(super) struct StagedShipout {
     pub(super) effect_pos: tex_state::EffectPos,
 }
 
-pub(super) fn stage_shipout<S, R>(
+pub(super) fn stage_shipout<S>(
     node: Node,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
+    execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<StagedShipout, ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     let pending_effects = pending_page_effects(stores.world().effect_records());
     let counts = page_counts(stores);
@@ -71,7 +68,8 @@ where
 
     // Phase A is the only mutable pass. It executes deferred effects, freezes
     // math substitutions, and records the rare direction permutations.
-    let overlay = normalize_page(children, pending_effects, stores, recorder)?;
+    let overlay = execution
+        .with_nested(|expansion| normalize_page(children, pending_effects, stores, expansion))?;
 
     // Phase B holds only an immutable state view. One compact-list walk feeds
     // the canonical writer and DVI state machine together.

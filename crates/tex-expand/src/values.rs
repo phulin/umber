@@ -13,35 +13,25 @@ use tex_state::{BoxDimension, ExpansionState, PenaltyArrayKind};
 use crate::{
     Dispatch, ExpandError, ExpandNext, ExpandableOpcode, ExpansionContext, ExpansionReplayKind,
     NoInputExpandNext, ReadBank, ReadCodeTable, ReadDependency, ReadEngineField, ReadFontField,
-    ReadRecorder, scan_helpers, scan_int,
+    scan_helpers, scan_int,
 };
 
 #[allow(dead_code)]
-pub(crate) fn expand_the<S, R>(
+pub(crate) fn expand_the<S>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
-    recorder: &mut R,
     expansion: &mut ExpansionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<Dispatch, ExpandError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
-    expand_the_with_expander_and_context(
-        input,
-        stores,
-        recorder,
-        expansion,
-        &mut NoInputExpandNext,
-        context,
-    )
+    expand_the_with_expander_and_context(input, stores, expansion, &mut NoInputExpandNext, context)
 }
 
-pub(crate) fn expand_the_with_expander_and_context<S, St, R, E>(
+pub(crate) fn expand_the_with_expander_and_context<S, St, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
-    recorder: &mut R,
     expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
     cause_context: TracedTokenWord,
@@ -49,12 +39,11 @@ pub(crate) fn expand_the_with_expander_and_context<S, St, R, E>(
 where
     S: InputSource,
     St: ExpansionState,
-    R: ReadRecorder,
-    E: ExpandNext<S, St, R>,
+    E: ExpandNext<S, St>,
 {
     let cause_origin = cause_context.origin();
     let Some(token) = scan_helpers::next_non_space_x_token_with_expander_and_context(
-        input, stores, recorder, expansion, expander,
+        input, stores, expansion, expander,
     )?
     else {
         return Err(ExpandError::MissingTokenAfterPrimitive {
@@ -68,18 +57,21 @@ where
     };
 
     let meaning = stores.meaning(symbol);
-    recorder.record_meaning(symbol, meaning);
-    record_meaning_value_dependency(recorder, meaning);
+    expansion.record_meaning(symbol, meaning);
+    record_meaning_value_dependency(expansion, meaning);
     match meaning {
         Meaning::UnexpandablePrimitive(primitive) => match primitive {
             tex_state::meaning::UnexpandablePrimitive::Count => {
                 let index = scan_helpers::scan_register_index_with_expander_and_context(
-                    input, stores, recorder, expansion, expander, token,
+                    input, stores, expansion, expander, token,
                 )?;
-                recorder.record_dependency(ReadDependency::Cell {
-                    bank: ReadBank::Count,
-                    index: u32::from(index),
-                });
+                crate::record_dependency!(
+                    expansion,
+                    ReadDependency::Cell {
+                        bank: ReadBank::Count,
+                        index: u32::from(index),
+                    }
+                );
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
@@ -89,12 +81,15 @@ where
             }
             tex_state::meaning::UnexpandablePrimitive::Dimen => {
                 let index = scan_helpers::scan_register_index_with_expander_and_context(
-                    input, stores, recorder, expansion, expander, token,
+                    input, stores, expansion, expander, token,
                 )?;
-                recorder.record_dependency(ReadDependency::Cell {
-                    bank: ReadBank::Dimen,
-                    index: u32::from(index),
-                });
+                crate::record_dependency!(
+                    expansion,
+                    ReadDependency::Cell {
+                        bank: ReadBank::Dimen,
+                        index: u32::from(index),
+                    }
+                );
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
@@ -104,12 +99,15 @@ where
             }
             tex_state::meaning::UnexpandablePrimitive::Skip => {
                 let index = scan_helpers::scan_register_index_with_expander_and_context(
-                    input, stores, recorder, expansion, expander, token,
+                    input, stores, expansion, expander, token,
                 )?;
-                recorder.record_dependency(ReadDependency::Cell {
-                    bank: ReadBank::Skip,
-                    index: u32::from(index),
-                });
+                crate::record_dependency!(
+                    expansion,
+                    ReadDependency::Cell {
+                        bank: ReadBank::Skip,
+                        index: u32::from(index),
+                    }
+                );
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
@@ -119,12 +117,15 @@ where
             }
             tex_state::meaning::UnexpandablePrimitive::Muskip => {
                 let index = scan_helpers::scan_register_index_with_expander_and_context(
-                    input, stores, recorder, expansion, expander, token,
+                    input, stores, expansion, expander, token,
                 )?;
-                recorder.record_dependency(ReadDependency::Cell {
-                    bank: ReadBank::Muskip,
-                    index: u32::from(index),
-                });
+                crate::record_dependency!(
+                    expansion,
+                    ReadDependency::Cell {
+                        bank: ReadBank::Muskip,
+                        index: u32::from(index),
+                    }
+                );
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
@@ -134,12 +135,15 @@ where
             }
             tex_state::meaning::UnexpandablePrimitive::Toks => {
                 let index = scan_helpers::scan_register_index_with_expander_and_context(
-                    input, stores, recorder, expansion, expander, token,
+                    input, stores, expansion, expander, token,
                 )?;
-                recorder.record_dependency(ReadDependency::Cell {
-                    bank: ReadBank::Toks,
-                    index: u32::from(index),
-                });
+                crate::record_dependency!(
+                    expansion,
+                    ReadDependency::Cell {
+                        bank: ReadBank::Toks,
+                        index: u32::from(index),
+                    }
+                );
                 Ok(Dispatch::Push {
                     replay_kind: ExpansionReplayKind::TheOutput,
                     token_list: stores.toks(index),
@@ -149,16 +153,22 @@ where
                 })
             }
             tex_state::meaning::UnexpandablePrimitive::Font => {
-                recorder.record_dependency(ReadDependency::Cell {
-                    bank: ReadBank::CurrentFont,
-                    index: 0,
-                });
+                crate::record_dependency!(
+                    expansion,
+                    ReadDependency::Cell {
+                        bank: ReadBank::CurrentFont,
+                        index: 0,
+                    }
+                );
                 let font = stores.current_font();
-                recorder.record_dependency(ReadDependency::Font {
-                    field: ReadFontField::Identifier,
-                    font: font.raw(),
-                    index: 0,
-                });
+                crate::record_dependency!(
+                    expansion,
+                    ReadDependency::Font {
+                        field: ReadFontField::Identifier,
+                        font: font.raw(),
+                        index: 0,
+                    }
+                );
                 let symbol = stores
                     .font_identifier_symbol(font)
                     .ok_or(ExpandError::UnsupportedTheTarget { context: token })?;
@@ -178,18 +188,24 @@ where
             primitive @ (tex_state::meaning::UnexpandablePrimitive::TextFont
             | tex_state::meaning::UnexpandablePrimitive::ScriptFont
             | tex_state::meaning::UnexpandablePrimitive::ScriptScriptFont) => {
-                let family = scan_math_family(input, stores, recorder, expansion, expander, token)?;
+                let family = scan_math_family(input, stores, expansion, expander, token)?;
                 let size = math_font_size(primitive);
-                recorder.record_dependency(ReadDependency::Cell {
-                    bank: ReadBank::MathFamilyFont,
-                    index: u32::from(family) + 16 * u32::from(math_font_size_key(size)),
-                });
+                crate::record_dependency!(
+                    expansion,
+                    ReadDependency::Cell {
+                        bank: ReadBank::MathFamilyFont,
+                        index: u32::from(family) + 16 * u32::from(math_font_size_key(size)),
+                    }
+                );
                 let font = stores.math_family_font(size, family);
-                recorder.record_dependency(ReadDependency::Font {
-                    field: ReadFontField::Identifier,
-                    font: font.raw(),
-                    index: 0,
-                });
+                crate::record_dependency!(
+                    expansion,
+                    ReadDependency::Font {
+                        field: ReadFontField::Identifier,
+                        font: font.raw(),
+                        index: 0,
+                    }
+                );
                 let symbol = stores
                     .font_identifier_symbol(font)
                     .ok_or(ExpandError::UnsupportedTheTarget { context: token })?;
@@ -202,15 +218,18 @@ where
             }
             tex_state::meaning::UnexpandablePrimitive::FontDimen => {
                 let scanned = scan_int::scan_int_with_expander_and_context(
-                    input, stores, recorder, expansion, expander, token,
+                    input, stores, expansion, expander, token,
                 )?;
                 let number = scanned.value();
-                let font = scan_font_selector(input, stores, recorder, expansion, expander, token)?;
-                recorder.record_dependency(ReadDependency::Font {
-                    field: ReadFontField::ParameterCount,
-                    font: font.raw(),
-                    index: 0,
-                });
+                let font = scan_font_selector(input, stores, expansion, expander, token)?;
+                crate::record_dependency!(
+                    expansion,
+                    ReadDependency::Font {
+                        field: ReadFontField::ParameterCount,
+                        font: font.raw(),
+                        index: 0,
+                    }
+                );
                 let available = stores.font_parameter_count(font);
                 let number = u16::try_from(number)
                     .ok()
@@ -219,11 +238,14 @@ where
                 // points at its zero-valued dummy font-info cell, so \the
                 // still expands to a usable dimension.
                 let value = if let Some(number) = number {
-                    recorder.record_dependency(ReadDependency::Font {
-                        field: ReadFontField::Parameter,
-                        font: font.raw(),
-                        index: number,
-                    });
+                    crate::record_dependency!(
+                        expansion,
+                        ReadDependency::Font {
+                            field: ReadFontField::Parameter,
+                            font: font.raw(),
+                            index: number,
+                        }
+                    );
                     stores.font_dimen(font, number)
                 } else {
                     tex_state::scaled::Scaled::from_raw(0)
@@ -239,9 +261,8 @@ where
             | tex_state::meaning::UnexpandablePrimitive::FontCharHt
             | tex_state::meaning::UnexpandablePrimitive::FontCharDp
             | tex_state::meaning::UnexpandablePrimitive::FontCharIc) => {
-                let value = scan_font_char_dimension(
-                    input, stores, recorder, expansion, expander, token, primitive,
-                )?;
+                let value =
+                    scan_font_char_dimension(input, stores, expansion, expander, token, primitive)?;
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
@@ -252,9 +273,8 @@ where
             primitive @ (tex_state::meaning::UnexpandablePrimitive::ParShapeLength
             | tex_state::meaning::UnexpandablePrimitive::ParShapeIndent
             | tex_state::meaning::UnexpandablePrimitive::ParShapeDimen) => {
-                let value = scan_parshape_dimension(
-                    input, stores, recorder, expansion, expander, token, primitive,
-                )?;
+                let value =
+                    scan_parshape_dimension(input, stores, expansion, expander, token, primitive)?;
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
@@ -267,10 +287,13 @@ where
             | tex_state::meaning::UnexpandablePrimitive::WidowPenalties
             | tex_state::meaning::UnexpandablePrimitive::DisplayWidowPenalties) => {
                 let index = scan_int::scan_int_with_expander_and_context(
-                    input, stores, recorder, expansion, expander, token,
+                    input, stores, expansion, expander, token,
                 )?
                 .value();
-                recorder.record_dependency(ReadDependency::Engine(ReadEngineField::PenaltyArrays));
+                crate::record_dependency!(
+                    expansion,
+                    ReadDependency::Engine(ReadEngineField::PenaltyArrays)
+                );
                 let kind = match primitive {
                     tex_state::meaning::UnexpandablePrimitive::InterLinePenalties => {
                         PenaltyArrayKind::InterLine
@@ -294,12 +317,15 @@ where
                 ))
             }
             tex_state::meaning::UnexpandablePrimitive::HyphenChar => {
-                let font = scan_font_selector(input, stores, recorder, expansion, expander, token)?;
-                recorder.record_dependency(ReadDependency::Font {
-                    field: ReadFontField::HyphenChar,
-                    font: font.raw(),
-                    index: 0,
-                });
+                let font = scan_font_selector(input, stores, expansion, expander, token)?;
+                crate::record_dependency!(
+                    expansion,
+                    ReadDependency::Font {
+                        field: ReadFontField::HyphenChar,
+                        font: font.raw(),
+                        index: 0,
+                    }
+                );
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
@@ -308,12 +334,15 @@ where
                 ))
             }
             tex_state::meaning::UnexpandablePrimitive::SkewChar => {
-                let font = scan_font_selector(input, stores, recorder, expansion, expander, token)?;
-                recorder.record_dependency(ReadDependency::Font {
-                    field: ReadFontField::SkewChar,
-                    font: font.raw(),
-                    index: 0,
-                });
+                let font = scan_font_selector(input, stores, expansion, expander, token)?;
+                crate::record_dependency!(
+                    expansion,
+                    ReadDependency::Font {
+                        field: ReadFontField::SkewChar,
+                        font: font.raw(),
+                        index: 0,
+                    }
+                );
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
@@ -325,7 +354,7 @@ where
             | tex_state::meaning::UnexpandablePrimitive::Ht
             | tex_state::meaning::UnexpandablePrimitive::Dp => {
                 let index = scan_helpers::scan_register_index_with_expander_and_context(
-                    input, stores, recorder, expansion, expander, token,
+                    input, stores, expansion, expander, token,
                 )?;
                 let dimension = match primitive {
                     tex_state::meaning::UnexpandablePrimitive::Wd => BoxDimension::Width,
@@ -351,8 +380,10 @@ where
                 cause_origin,
             )),
             tex_state::meaning::UnexpandablePrimitive::InteractionMode => {
-                recorder
-                    .record_dependency(ReadDependency::Engine(ReadEngineField::InteractionMode));
+                crate::record_dependency!(
+                    expansion,
+                    ReadDependency::Engine(ReadEngineField::InteractionMode)
+                );
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
@@ -362,8 +393,7 @@ where
             }
             tex_state::meaning::UnexpandablePrimitive::NumExpr => {
                 let value =
-                    scan_int::scan_num_expr(input, stores, recorder, expansion, expander, token)?
-                        .value();
+                    scan_int::scan_num_expr(input, stores, expansion, expander, token)?.value();
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
@@ -372,10 +402,9 @@ where
                 ))
             }
             tex_state::meaning::UnexpandablePrimitive::DimExpr => {
-                let value = crate::scan_dimen::scan_dim_expr(
-                    input, stores, recorder, expansion, expander, token,
-                )?
-                .value();
+                let value =
+                    crate::scan_dimen::scan_dim_expr(input, stores, expansion, expander, token)?
+                        .value();
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
@@ -387,7 +416,7 @@ where
             | tex_state::meaning::UnexpandablePrimitive::MuExpr) => {
                 let mu = primitive == tex_state::meaning::UnexpandablePrimitive::MuExpr;
                 let value = crate::scan_glue::scan_glue_expr(
-                    input, stores, recorder, expansion, expander, mu, token,
+                    input, stores, expansion, expander, mu, token,
                 )?;
                 let spec = stores.glue(value.id());
                 Ok(push_rendered_text(
@@ -404,7 +433,7 @@ where
             primitive @ (tex_state::meaning::UnexpandablePrimitive::GlueStretch
             | tex_state::meaning::UnexpandablePrimitive::GlueShrink) => {
                 let scanned = crate::scan_glue::scan_glue_with_expander_and_context(
-                    input, stores, recorder, expansion, expander, false, token,
+                    input, stores, expansion, expander, false, token,
                 )?;
                 let spec = stores.glue(scanned.id());
                 let value = if primitive == tex_state::meaning::UnexpandablePrimitive::GlueStretch {
@@ -422,7 +451,7 @@ where
             primitive @ (tex_state::meaning::UnexpandablePrimitive::GlueStretchOrder
             | tex_state::meaning::UnexpandablePrimitive::GlueShrinkOrder) => {
                 let scanned = crate::scan_glue::scan_glue_with_expander_and_context(
-                    input, stores, recorder, expansion, expander, false, token,
+                    input, stores, expansion, expander, false, token,
                 )?;
                 let spec = stores.glue(scanned.id());
                 let order =
@@ -448,7 +477,7 @@ where
             | tex_state::meaning::UnexpandablePrimitive::MuToGlue) => {
                 let to_mu = primitive == tex_state::meaning::UnexpandablePrimitive::GlueToMu;
                 let scanned = crate::scan_glue::scan_glue_with_expander_and_context(
-                    input, stores, recorder, expansion, expander, !to_mu, token,
+                    input, stores, expansion, expander, !to_mu, token,
                 )?;
                 let spec = stores.glue(scanned.id());
                 Ok(push_rendered_text(
@@ -498,8 +527,8 @@ where
             | tex_state::meaning::UnexpandablePrimitive::SfCode
             | tex_state::meaning::UnexpandablePrimitive::MathCode
             | tex_state::meaning::UnexpandablePrimitive::DelCode => {
-                let ch = scan_code_table_char(input, stores, recorder, expansion, expander, token)?;
-                crate::record_code_dependency(recorder, code_table_key(primitive), ch);
+                let ch = scan_code_table_char(input, stores, expansion, expander, token)?;
+                crate::record_code_dependency(expansion, code_table_key(primitive), ch);
                 let value = match primitive {
                     tex_state::meaning::UnexpandablePrimitive::CatCode => stores.catcode(ch) as i32,
                     tex_state::meaning::UnexpandablePrimitive::LcCode => stores.lccode(ch) as i32,
@@ -671,12 +700,15 @@ where
         _ => match stores.resolve(symbol) {
             "count" => {
                 let index = scan_helpers::scan_register_index_with_expander_and_context(
-                    input, stores, recorder, expansion, expander, token,
+                    input, stores, expansion, expander, token,
                 )?;
-                recorder.record_dependency(ReadDependency::Cell {
-                    bank: ReadBank::Count,
-                    index: u32::from(index),
-                });
+                crate::record_dependency!(
+                    expansion,
+                    ReadDependency::Cell {
+                        bank: ReadBank::Count,
+                        index: u32::from(index),
+                    }
+                );
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
@@ -686,12 +718,15 @@ where
             }
             "dimen" => {
                 let index = scan_helpers::scan_register_index_with_expander_and_context(
-                    input, stores, recorder, expansion, expander, token,
+                    input, stores, expansion, expander, token,
                 )?;
-                recorder.record_dependency(ReadDependency::Cell {
-                    bank: ReadBank::Dimen,
-                    index: u32::from(index),
-                });
+                crate::record_dependency!(
+                    expansion,
+                    ReadDependency::Cell {
+                        bank: ReadBank::Dimen,
+                        index: u32::from(index),
+                    }
+                );
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
@@ -701,12 +736,15 @@ where
             }
             "toks" => {
                 let index = scan_helpers::scan_register_index_with_expander_and_context(
-                    input, stores, recorder, expansion, expander, token,
+                    input, stores, expansion, expander, token,
                 )?;
-                recorder.record_dependency(ReadDependency::Cell {
-                    bank: ReadBank::Toks,
-                    index: u32::from(index),
-                });
+                crate::record_dependency!(
+                    expansion,
+                    ReadDependency::Cell {
+                        bank: ReadBank::Toks,
+                        index: u32::from(index),
+                    }
+                );
                 Ok(Dispatch::Push {
                     replay_kind: ExpansionReplayKind::TheOutput,
                     token_list: stores.toks(index),
@@ -716,10 +754,13 @@ where
                 })
             }
             "endlinechar" => {
-                recorder.record_dependency(ReadDependency::Cell {
-                    bank: ReadBank::IntParam,
-                    index: u32::from(IntParam::END_LINE_CHAR.raw()),
-                });
+                crate::record_dependency!(
+                    expansion,
+                    ReadDependency::Cell {
+                        bank: ReadBank::IntParam,
+                        index: u32::from(IntParam::END_LINE_CHAR.raw()),
+                    }
+                );
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
@@ -728,10 +769,13 @@ where
                 ))
             }
             "escapechar" => {
-                recorder.record_dependency(ReadDependency::Cell {
-                    bank: ReadBank::IntParam,
-                    index: u32::from(IntParam::ESCAPE_CHAR.raw()),
-                });
+                crate::record_dependency!(
+                    expansion,
+                    ReadDependency::Cell {
+                        bank: ReadBank::IntParam,
+                        index: u32::from(IntParam::ESCAPE_CHAR.raw()),
+                    }
+                );
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
@@ -744,7 +788,10 @@ where
     }
 }
 
-pub(crate) fn record_meaning_value_dependency(recorder: &mut impl ReadRecorder, meaning: Meaning) {
+pub(crate) fn record_meaning_value_dependency<S>(
+    expansion: &mut ExpansionContext<'_, S>,
+    meaning: Meaning,
+) {
     let cell = match meaning {
         Meaning::CountRegister(index) => Some((ReadBank::Count, u32::from(index))),
         Meaning::DimenRegister(index) => Some((ReadBank::Dimen, u32::from(index))),
@@ -759,16 +806,22 @@ pub(crate) fn record_meaning_value_dependency(recorder: &mut impl ReadRecorder, 
         Meaning::TokParam(index) => Some((ReadBank::TokParam, u32::from(index))),
         Meaning::InternalInteger(InternalInteger::Badness) => Some((ReadBank::LastBadness, 0)),
         Meaning::InternalInteger(InternalInteger::InputLineNumber) => {
-            recorder.record_dependency(ReadDependency::InputLine);
+            crate::record_dependency!(expansion, ReadDependency::InputLine);
             None
         }
         Meaning::InternalInteger(InternalInteger::ETeXVersion) => None,
         Meaning::InternalInteger(InternalInteger::CurrentGroupLevel) => {
-            recorder.record_dependency(ReadDependency::Engine(ReadEngineField::GroupLevel));
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Engine(ReadEngineField::GroupLevel)
+            );
             None
         }
         Meaning::InternalInteger(InternalInteger::CurrentGroupType) => {
-            recorder.record_dependency(ReadDependency::Engine(ReadEngineField::GroupType));
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Engine(ReadEngineField::GroupType)
+            );
             None
         }
         Meaning::InternalInteger(
@@ -776,26 +829,37 @@ pub(crate) fn record_meaning_value_dependency(recorder: &mut impl ReadRecorder, 
             | InternalInteger::CurrentIfType
             | InternalInteger::CurrentIfBranch,
         ) => {
-            recorder.record_dependency(ReadDependency::Engine(ReadEngineField::ConditionStack));
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Engine(ReadEngineField::ConditionStack)
+            );
             None
         }
         Meaning::InternalInteger(InternalInteger::LastNodeType) => {
-            recorder.record_dependency(ReadDependency::Engine(ReadEngineField::LastNodeType));
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Engine(ReadEngineField::LastNodeType)
+            );
             None
         }
         Meaning::PageDimension(dimension) => {
-            recorder
-                .record_dependency(ReadDependency::PageDimension(page_dimension_key(dimension)));
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::PageDimension(page_dimension_key(dimension))
+            );
             None
         }
         Meaning::PageInteger(integer) => {
-            recorder.record_dependency(ReadDependency::PageInteger(page_integer_key(integer)));
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::PageInteger(page_integer_key(integer))
+            );
             None
         }
         _ => None,
     };
     if let Some((bank, index)) = cell {
-        recorder.record_dependency(ReadDependency::Cell { bank, index });
+        crate::record_dependency!(expansion, ReadDependency::Cell { bank, index });
     }
 }
 
@@ -1054,21 +1118,18 @@ pub fn token_text(stores: &impl ExpansionState, token: Token) -> String {
         .collect()
 }
 
-pub fn scan_the_text_with_context<S, R>(
+pub fn scan_the_text_with_context<S>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
-    recorder: &mut R,
     expansion: &mut ExpansionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<String, ExpandError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     let dispatch = expand_the_with_expander_and_context(
         input,
         stores,
-        recorder,
         expansion,
         &mut NoInputExpandNext,
         context,
@@ -1209,10 +1270,9 @@ fn component_unit(order: Order, normal_unit: &str) -> &'static str {
     }
 }
 
-fn scan_code_table_char<S, St, R, E>(
+fn scan_code_table_char<S, St, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
-    recorder: &mut R,
     expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
     context: TracedTokenWord,
@@ -1220,23 +1280,20 @@ fn scan_code_table_char<S, St, R, E>(
 where
     S: InputSource,
     St: ExpansionState,
-    R: ReadRecorder,
-    E: ExpandNext<S, St, R>,
+    E: ExpandNext<S, St>,
 {
-    let value = scan_int::scan_int_with_expander_and_context(
-        input, stores, recorder, expansion, expander, context,
-    )?
-    .value();
+    let value =
+        scan_int::scan_int_with_expander_and_context(input, stores, expansion, expander, context)?
+            .value();
     u32::try_from(value)
         .ok()
         .and_then(char::from_u32)
         .ok_or(ExpandError::UnsupportedTheTarget { context })
 }
 
-pub(crate) fn scan_font_selector<S, St, R, E>(
+pub(crate) fn scan_font_selector<S, St, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
-    recorder: &mut R,
     expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
     context: TracedTokenWord,
@@ -1244,11 +1301,10 @@ pub(crate) fn scan_font_selector<S, St, R, E>(
 where
     S: InputSource,
     St: ExpansionState,
-    R: ReadRecorder,
-    E: ExpandNext<S, St, R>,
+    E: ExpandNext<S, St>,
 {
     let Some(token) = scan_helpers::next_non_space_x_token_with_expander_and_context(
-        input, stores, recorder, expansion, expander,
+        input, stores, expansion, expander,
     )?
     else {
         return Err(ExpandError::MissingTokenAfterPrimitive {
@@ -1261,14 +1317,17 @@ where
         return Err(ExpandError::UnsupportedTheTarget { context: token });
     };
     let meaning = stores.meaning(symbol);
-    recorder.record_meaning(symbol, meaning);
+    expansion.record_meaning(symbol, meaning);
     match meaning {
         Meaning::Font(id) => Ok(id),
         Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Font) => {
-            recorder.record_dependency(ReadDependency::Cell {
-                bank: ReadBank::CurrentFont,
-                index: 0,
-            });
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Cell {
+                    bank: ReadBank::CurrentFont,
+                    index: 0,
+                }
+            );
             Ok(stores.current_font())
         }
         Meaning::UnexpandablePrimitive(
@@ -1276,12 +1335,15 @@ where
             | tex_state::meaning::UnexpandablePrimitive::ScriptFont
             | tex_state::meaning::UnexpandablePrimitive::ScriptScriptFont),
         ) => {
-            let family = scan_math_family(input, stores, recorder, expansion, expander, token)?;
+            let family = scan_math_family(input, stores, expansion, expander, token)?;
             let size = math_font_size(primitive);
-            recorder.record_dependency(ReadDependency::Cell {
-                bank: ReadBank::MathFamilyFont,
-                index: u32::from(family) + 16 * u32::from(math_font_size_key(size)),
-            });
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Cell {
+                    bank: ReadBank::MathFamilyFont,
+                    index: u32::from(family) + 16 * u32::from(math_font_size_key(size)),
+                }
+            );
             Ok(stores.math_family_font(size, family))
         }
         _ => {
@@ -1295,10 +1357,9 @@ where
     }
 }
 
-pub(crate) fn scan_font_char_dimension<S, St, R, E>(
+pub(crate) fn scan_font_char_dimension<S, St, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
-    recorder: &mut R,
     expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
     context: TracedTokenWord,
@@ -1307,19 +1368,20 @@ pub(crate) fn scan_font_char_dimension<S, St, R, E>(
 where
     S: InputSource,
     St: ExpansionState,
-    R: ReadRecorder,
-    E: ExpandNext<S, St, R>,
+    E: ExpandNext<S, St>,
 {
-    let font = scan_font_selector(input, stores, recorder, expansion, expander, context)?;
-    let code = scan_int::scan_int_with_expander_and_context(
-        input, stores, recorder, expansion, expander, context,
-    )?
-    .value();
-    recorder.record_dependency(ReadDependency::Font {
-        field: ReadFontField::Metrics,
-        font: font.raw(),
-        index: u16::try_from(code).unwrap_or(u16::MAX),
-    });
+    let font = scan_font_selector(input, stores, expansion, expander, context)?;
+    let code =
+        scan_int::scan_int_with_expander_and_context(input, stores, expansion, expander, context)?
+            .value();
+    crate::record_dependency!(
+        expansion,
+        ReadDependency::Font {
+            field: ReadFontField::Metrics,
+            font: font.raw(),
+            index: u16::try_from(code).unwrap_or(u16::MAX),
+        }
+    );
     let Some(metrics) = u8::try_from(code)
         .ok()
         .and_then(|code| stores.font_char_metrics(font, code))
@@ -1335,10 +1397,9 @@ where
     })
 }
 
-pub(crate) fn scan_parshape_dimension<S, St, R, E>(
+pub(crate) fn scan_parshape_dimension<S, St, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
-    recorder: &mut R,
     expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
     context: TracedTokenWord,
@@ -1347,14 +1408,12 @@ pub(crate) fn scan_parshape_dimension<S, St, R, E>(
 where
     S: InputSource,
     St: ExpansionState,
-    R: ReadRecorder,
-    E: ExpandNext<S, St, R>,
+    E: ExpandNext<S, St>,
 {
-    let number = scan_int::scan_int_with_expander_and_context(
-        input, stores, recorder, expansion, expander, context,
-    )?
-    .value();
-    recorder.record_dependency(ReadDependency::Engine(ReadEngineField::ParShape));
+    let number =
+        scan_int::scan_int_with_expander_and_context(input, stores, expansion, expander, context)?
+            .value();
+    crate::record_dependency!(expansion, ReadDependency::Engine(ReadEngineField::ParShape));
     let (line, width) = match primitive {
         tex_state::meaning::UnexpandablePrimitive::ParShapeLength => (number, true),
         tex_state::meaning::UnexpandablePrimitive::ParShapeIndent => (number, false),
@@ -1367,10 +1426,9 @@ where
     Ok(stores.paragraph_shape_dimension(line, width))
 }
 
-fn scan_math_family<S, St, R, E>(
+fn scan_math_family<S, St, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
-    recorder: &mut R,
     expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
     context: TracedTokenWord,
@@ -1378,12 +1436,10 @@ fn scan_math_family<S, St, R, E>(
 where
     S: InputSource,
     St: ExpansionState,
-    R: ReadRecorder,
-    E: ExpandNext<S, St, R>,
+    E: ExpandNext<S, St>,
 {
-    let scanned = scan_int::scan_int_with_expander_and_context(
-        input, stores, recorder, expansion, expander, context,
-    )?;
+    let scanned =
+        scan_int::scan_int_with_expander_and_context(input, stores, expansion, expander, context)?;
     Ok(u8::try_from(scanned.value())
         .ok()
         .filter(|family| *family < 16)

@@ -30,11 +30,8 @@ pub(super) fn skip_optional_equals_x<S>(
 where
     S: InputSource,
 {
-    let mut recorder = NoopRecorder;
     let traced = loop {
-        let Some(token) =
-            get_x_token_with_recorder_and_context(input, stores, &mut recorder, execution)?
-        else {
+        let Some(token) = get_x_token_with_context(input, stores, execution)? else {
             return Err(ExecError::MissingToken {
                 context: "assignment value",
             });
@@ -46,9 +43,7 @@ where
     if !is_other_equals(tex_expand::semantic_token(traced)) {
         tex_expand::back_input(input, stores, [traced]);
     } else {
-        let Some(next) =
-            get_x_token_with_recorder_and_context(input, stores, &mut recorder, execution)?
-        else {
+        let Some(next) = get_x_token_with_context(input, stores, execution)? else {
             return Ok(());
         };
         if !is_space(tex_expand::semantic_token(next)) {

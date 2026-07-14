@@ -264,10 +264,7 @@ where
         return Err(ExecError::MissingToken { context: "\\font" });
     };
     append_font_name_token(&mut name, first)?;
-    let mut recorder = NoopRecorder;
-    while let Some(traced) =
-        get_x_token_with_recorder_and_context(input, stores, &mut recorder, execution)?
-    {
+    while let Some(traced) = get_x_token_with_context(input, stores, execution)? {
         match tex_expand::semantic_token(traced) {
             Token::Char {
                 cat: Catcode::Space,

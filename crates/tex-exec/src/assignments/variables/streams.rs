@@ -1,7 +1,7 @@
 use super::*;
 use std::path::PathBuf;
 
-use tex_expand::{ReadRecorder, token_text};
+use tex_expand::token_text;
 use tex_lex::{MemoryInput, TokenListReplayKind};
 use tex_state::ids::TokenListId;
 use tex_state::macro_store::MacroMeaning;
@@ -138,20 +138,20 @@ where
     )
 }
 
-pub(in crate::assignments) fn execute_immediate_write<S, R>(
+pub(in crate::assignments) fn execute_immediate_write<S>(
     context: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     let sink = scan_write_sink(input, stores, execution, context)?;
     let scanned = scan_toks(input, stores, MeaningFlags::EMPTY, context)?;
-    let text = expand_write_tokens(stores, recorder, scanned.meaning().replacement_text())?;
+    let text = execution.with_nested(|expansion| {
+        expand_write_tokens(stores, expansion, scanned.meaning().replacement_text())
+    })?;
     stores.world_mut().write_text(sink, &text);
     Ok(())
 }
@@ -191,20 +191,17 @@ fn tex_byte_text(text: &str) -> Vec<u8> {
     bytes
 }
 
-fn expand_write_tokens<R>(
+fn expand_write_tokens(
     stores: &mut Universe,
-    recorder: &mut R,
+    expansion: &mut tex_expand::ExpansionContext<'_, MemoryInput>,
     tokens: TokenListId,
 ) -> Result<String, ExecError>
 where
-    R: ReadRecorder,
 {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(tokens, TokenListReplayKind::Inserted);
-    let mut context = tex_expand::ExpansionContext::new("texput");
     let mut text = String::new();
-    while let Some(token) = next_write_expansion_token(&mut input, stores, recorder, &mut context)?
-    {
+    while let Some(token) = next_write_expansion_token(&mut input, stores, expansion)? {
         crate::diagnostics::append_token_show_text(stores, token, &mut text);
     }
     let mut text = print_text_with_newlinechar(stores, &text);
@@ -212,14 +209,12 @@ where
     Ok(text)
 }
 
-fn next_write_expansion_token<R>(
+fn next_write_expansion_token(
     input: &mut InputStack<MemoryInput>,
     stores: &mut Universe,
-    recorder: &mut R,
     context: &mut tex_expand::ExpansionContext<'_, MemoryInput>,
 ) -> Result<Option<Token>, ExecError>
 where
-    R: ReadRecorder,
 {
     let Some(read) = input.next_traced_expansion_token(stores)? else {
         return Ok(None);
@@ -239,17 +234,14 @@ where
     };
     if let Some(symbol) = symbol {
         let meaning = stores.meaning(symbol);
-        recorder.record_meaning(symbol, meaning);
+        context.record_meaning(symbol, meaning);
         if matches!(meaning, Meaning::Macro { flags, .. } if flags.contains(MeaningFlags::PROTECTED))
         {
             return Ok(Some(token));
         }
     }
     tex_expand::back_input(input, stores, [traced]);
-    Ok(
-        get_x_token_with_recorder_and_context(input, stores, recorder, context)?
-            .map(tex_expand::semantic_token),
-    )
+    Ok(get_x_token_with_context(input, stores, context)?.map(tex_expand::semantic_token))
 }
 
 fn scan_read_tokens(
@@ -466,10 +458,7 @@ where
         return Err(ExecError::MissingToken { context });
     };
     append_file_name_token(&mut name, first, context)?;
-    let mut recorder = NoopRecorder;
-    while let Some(traced) =
-        get_x_token_with_recorder_and_context(input, stores, &mut recorder, execution)?
-    {
+    while let Some(traced) = get_x_token_with_context(input, stores, execution)? {
         match tex_expand::semantic_token(traced) {
             Token::Char {
                 cat: Catcode::Space,
@@ -529,12 +518,10 @@ where
     if !is_begin_group(open) {
         return Err(ExecError::MissingTracedToken { context });
     }
-    let mut recorder = NoopRecorder;
     let mut depth = 1usize;
     let mut tokens = Vec::new();
     while let Some(token) =
-        get_x_token_with_recorder_and_context(input, stores, &mut recorder, execution)?
-            .map(tex_expand::semantic_token)
+        get_x_token_with_context(input, stores, execution)?.map(tex_expand::semantic_token)
     {
         if is_begin_group(token) {
             depth += 1;

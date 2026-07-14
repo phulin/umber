@@ -10,8 +10,8 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, PenaltyArrayKind};
 
 use crate::{
-    ExpandError, ExpandNext, ExpansionContext, NoInputExpandNext, NoopRecorder, ReadBank,
-    ReadCodeTable, ReadDependency, ReadEngineField, ReadRecorder, semantic_token,
+    ExpandError, ExpandNext, ExpansionContext, NoInputExpandNext, ReadBank, ReadCodeTable,
+    ReadDependency, ReadEngineField, semantic_token,
 };
 
 const INT_MAX: i64 = i32::MAX as i64;
@@ -199,41 +199,25 @@ pub fn scan_int<S>(
 where
     S: InputSource,
 {
-    scan_int_with_recorder_and_context(
-        input,
-        stores,
-        &mut NoopRecorder,
-        &mut ExpansionContext::new("texput"),
-        context,
-    )
+    scan_int_with_context(input, stores, &mut ExpansionContext::new("texput"), context)
 }
 
 /// Scans a TeX `<number>` while preserving caller-supplied expansion context.
-pub fn scan_int_with_recorder_and_context<S, R>(
+pub fn scan_int_with_context<S>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
-    recorder: &mut R,
     expansion: &mut ExpansionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<ScannedInt, ScanIntError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
-    scan_int_with_expander_and_context(
-        input,
-        stores,
-        recorder,
-        expansion,
-        &mut NoInputExpandNext,
-        context,
-    )
+    scan_int_with_expander_and_context(input, stores, expansion, &mut NoInputExpandNext, context)
 }
 
-pub fn scan_int_with_expander_and_context<S, St, R, E>(
+pub fn scan_int_with_expander_and_context<S, St, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
-    recorder: &mut R,
     expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
     context: TracedTokenWord,
@@ -241,10 +225,9 @@ pub fn scan_int_with_expander_and_context<S, St, R, E>(
 where
     S: InputSource,
     St: ExpansionState,
-    R: ReadRecorder,
-    E: ExpandNext<S, St, R>,
+    E: ExpandNext<S, St>,
 {
-    let (negative, token) = scan_signs(input, stores, recorder, expansion, expander)?;
+    let (negative, token) = scan_signs(input, stores, expansion, expander)?;
     let Some(token) = token else {
         return Ok(ScannedInt::with_diagnostic(
             0,
@@ -253,43 +236,38 @@ where
         ));
     };
 
-    let scanned =
-        scan_unsigned_after_first_token(input, stores, recorder, expansion, expander, token)?;
+    let scanned = scan_unsigned_after_first_token(input, stores, expansion, expander, token)?;
     Ok(apply_sign(scanned, negative))
 }
 
-fn next_x<S, St, R, E>(
+fn next_x<S, St, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
-    recorder: &mut R,
     expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
 ) -> Result<Option<TracedTokenWord>, ScanIntError>
 where
     S: InputSource,
     St: ExpansionState,
-    R: ReadRecorder,
-    E: ExpandNext<S, St, R>,
+    E: ExpandNext<S, St>,
 {
-    Ok(expander.next_expanded_token(input, stores, recorder, expansion)?)
+    Ok(expander.next_expanded_token(input, stores, expansion)?)
 }
 
-fn scan_signs<S, St, R, E>(
+fn scan_signs<S, St, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
-    recorder: &mut R,
     expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
 ) -> Result<(bool, Option<TracedTokenWord>), ScanIntError>
 where
     S: InputSource,
     St: ExpansionState,
-    R: ReadRecorder,
-    E: ExpandNext<S, St, R>,
+    E: ExpandNext<S, St>,
 {
     let mut negative = false;
     loop {
-        let Some(token) = next_x(input, stores, recorder, expansion, expander)? else {
+        let Some(token) = next_x(input, stores, expansion, expander)? else {
             return Ok((negative, None));
         };
         if is_space(token) {
@@ -306,10 +284,9 @@ where
     }
 }
 
-fn scan_unsigned_after_first_token<S, St, R, E>(
+fn scan_unsigned_after_first_token<S, St, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
-    recorder: &mut R,
     expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
     token: TracedTokenWord,
@@ -317,8 +294,7 @@ fn scan_unsigned_after_first_token<S, St, R, E>(
 where
     S: InputSource,
     St: ExpansionState,
-    R: ReadRecorder,
-    E: ExpandNext<S, St, R>,
+    E: ExpandNext<S, St>,
 {
     match semantic_token(token) {
         Token::Char {
@@ -327,7 +303,6 @@ where
         } if ch.is_ascii_digit() => scan_radix_digits(
             input,
             stores,
-            recorder,
             expansion,
             expander,
             10,
@@ -336,17 +311,17 @@ where
         Token::Char {
             ch: '\'',
             cat: Catcode::Other,
-        } => scan_prefixed_digits(input, stores, recorder, expansion, expander, 8, token),
+        } => scan_prefixed_digits(input, stores, expansion, expander, 8, token),
         Token::Char {
             ch: '"',
             cat: Catcode::Other,
-        } => scan_prefixed_digits(input, stores, recorder, expansion, expander, 16, token),
+        } => scan_prefixed_digits(input, stores, expansion, expander, 16, token),
         Token::Char {
             ch: '`',
             cat: Catcode::Other,
-        } => scan_backtick_constant(input, stores, recorder, expansion, expander, token),
+        } => scan_backtick_constant(input, stores, expansion, expander, token),
         Token::Cs(symbol) => {
-            scan_internal_integer(input, stores, recorder, expansion, expander, token, symbol)
+            scan_internal_integer(input, stores, expansion, expander, token, symbol)
         }
         _ => {
             unread_token(input, stores, token);
@@ -355,10 +330,9 @@ where
     }
 }
 
-fn scan_prefixed_digits<S, St, R, E>(
+fn scan_prefixed_digits<S, St, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
-    recorder: &mut R,
     expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
     radix: i64,
@@ -367,31 +341,21 @@ fn scan_prefixed_digits<S, St, R, E>(
 where
     S: InputSource,
     St: ExpansionState,
-    R: ReadRecorder,
-    E: ExpandNext<S, St, R>,
+    E: ExpandNext<S, St>,
 {
-    let Some(token) = next_x(input, stores, recorder, expansion, expander)? else {
+    let Some(token) = next_x(input, stores, expansion, expander)? else {
         return Ok(missing_number(prefix));
     };
     let Some(digit) = token_digit_for_radix(token, radix) else {
         unread_token(input, stores, token);
         return Ok(missing_number(token));
     };
-    scan_radix_digits(
-        input,
-        stores,
-        recorder,
-        expansion,
-        expander,
-        radix,
-        (digit, token),
-    )
+    scan_radix_digits(input, stores, expansion, expander, radix, (digit, token))
 }
 
-fn scan_radix_digits<S, St, R, E>(
+fn scan_radix_digits<S, St, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
-    recorder: &mut R,
     expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
     radix: i64,
@@ -400,8 +364,7 @@ fn scan_radix_digits<S, St, R, E>(
 where
     S: InputSource,
     St: ExpansionState,
-    R: ReadRecorder,
-    E: ExpandNext<S, St, R>,
+    E: ExpandNext<S, St>,
 {
     let (first_digit, first_token) = first;
     let first_delivery = input.take_direct_source_delivery(first_token);
@@ -411,7 +374,7 @@ where
     let mut overflow_context = None;
     let mut last_digit = first_token;
     loop {
-        let Some(token) = next_x(input, stores, recorder, expansion, expander)? else {
+        let Some(token) = next_x(input, stores, expansion, expander)? else {
             break;
         };
         let delivery = input.take_direct_source_delivery(token);
@@ -448,10 +411,9 @@ where
     ))
 }
 
-fn scan_backtick_constant<S, St, R, E>(
+fn scan_backtick_constant<S, St, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
-    recorder: &mut R,
     expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
     prefix: TracedTokenWord,
@@ -459,8 +421,7 @@ fn scan_backtick_constant<S, St, R, E>(
 where
     S: InputSource,
     St: ExpansionState,
-    R: ReadRecorder,
-    E: ExpandNext<S, St, R>,
+    E: ExpandNext<S, St>,
 {
     // TeX's `scan_int` reads the token following a backtick directly, rather
     // than through `get_x_token`. In particular, `\{` is a valid character
@@ -485,24 +446,22 @@ where
             .unwrap_or(0),
         Token::Param(_) | Token::Frozen(_) => return Ok(missing_number(token)),
     };
-    consume_optional_expanded_space(input, stores, recorder, expansion, expander)?;
+    consume_optional_expanded_space(input, stores, expansion, expander)?;
     Ok(ScannedInt::new(value, token))
 }
 
-fn consume_optional_expanded_space<S, St, R, E>(
+fn consume_optional_expanded_space<S, St, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
-    recorder: &mut R,
     expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
 ) -> Result<(), ScanIntError>
 where
     S: InputSource,
     St: ExpansionState,
-    R: ReadRecorder,
-    E: ExpandNext<S, St, R>,
+    E: ExpandNext<S, St>,
 {
-    let Some(token) = expander.next_expanded_token(input, stores, recorder, expansion)? else {
+    let Some(token) = expander.next_expanded_token(input, stores, expansion)? else {
         return Ok(());
     };
     if !is_space(token) {
@@ -511,10 +470,9 @@ where
     Ok(())
 }
 
-pub(crate) fn scan_num_expr<S, St, R, E>(
+pub(crate) fn scan_num_expr<S, St, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
-    recorder: &mut R,
     expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
     context: TracedTokenWord,
@@ -522,11 +480,9 @@ pub(crate) fn scan_num_expr<S, St, R, E>(
 where
     S: InputSource,
     St: ExpansionState,
-    R: ReadRecorder,
-    E: ExpandNext<S, St, R>,
+    E: ExpandNext<S, St>,
 {
-    let (value, overflow) =
-        parse_num_expression(input, stores, recorder, expansion, expander, false)?;
+    let (value, overflow) = parse_num_expression(input, stores, expansion, expander, false)?;
     if overflow || !(-i64::from(i32::MAX)..=i64::from(i32::MAX)).contains(&value) {
         Ok(ScannedInt::with_diagnostic(
             0,
@@ -538,10 +494,9 @@ where
     }
 }
 
-pub(crate) fn parse_num_expression<S, St, R, E>(
+pub(crate) fn parse_num_expression<S, St, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
-    recorder: &mut R,
     expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
     parenthesized: bool,
@@ -549,12 +504,11 @@ pub(crate) fn parse_num_expression<S, St, R, E>(
 where
     S: InputSource,
     St: ExpansionState,
-    R: ReadRecorder,
-    E: ExpandNext<S, St, R>,
+    E: ExpandNext<S, St>,
 {
-    let (mut value, mut overflow) = parse_num_term(input, stores, recorder, expansion, expander)?;
+    let (mut value, mut overflow) = parse_num_term(input, stores, expansion, expander)?;
     loop {
-        let Some(token) = next_nonspace_x(input, stores, recorder, expansion, expander)? else {
+        let Some(token) = next_nonspace_x(input, stores, expansion, expander)? else {
             break;
         };
         let subtract = if is_char(token, '+') {
@@ -571,7 +525,7 @@ where
             }
             break;
         };
-        let (rhs, rhs_overflow) = parse_num_term(input, stores, recorder, expansion, expander)?;
+        let (rhs, rhs_overflow) = parse_num_term(input, stores, expansion, expander)?;
         overflow |= rhs_overflow;
         let result = if subtract {
             value.checked_sub(rhs)
@@ -589,32 +543,30 @@ where
     Ok((value, overflow))
 }
 
-fn parse_num_term<S, St, R, E>(
+fn parse_num_term<S, St, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
-    recorder: &mut R,
     expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
 ) -> Result<(i64, bool), ScanIntError>
 where
     S: InputSource,
     St: ExpansionState,
-    R: ReadRecorder,
-    E: ExpandNext<S, St, R>,
+    E: ExpandNext<S, St>,
 {
-    let (mut value, mut overflow) = parse_num_factor(input, stores, recorder, expansion, expander)?;
+    let (mut value, mut overflow) = parse_num_factor(input, stores, expansion, expander)?;
     loop {
-        let Some(operator) = next_nonspace_x(input, stores, recorder, expansion, expander)? else {
+        let Some(operator) = next_nonspace_x(input, stores, expansion, expander)? else {
             break;
         };
         if is_char(operator, '*') {
             let (numerator, factor_overflow) =
-                parse_num_factor(input, stores, recorder, expansion, expander)?;
+                parse_num_factor(input, stores, expansion, expander)?;
             overflow |= factor_overflow;
-            let following = next_nonspace_x(input, stores, recorder, expansion, expander)?;
+            let following = next_nonspace_x(input, stores, expansion, expander)?;
             if following.is_some_and(|token| is_char(token, '/')) {
                 let (denominator, denominator_overflow) =
-                    parse_num_factor(input, stores, recorder, expansion, expander)?;
+                    parse_num_factor(input, stores, expansion, expander)?;
                 overflow |= denominator_overflow;
                 match rounded_fraction(value, numerator, denominator) {
                     Some(next) => value = next,
@@ -637,7 +589,7 @@ where
             }
         } else if is_char(operator, '/') {
             let (denominator, denominator_overflow) =
-                parse_num_factor(input, stores, recorder, expansion, expander)?;
+                parse_num_factor(input, stores, expansion, expander)?;
             overflow |= denominator_overflow;
             match rounded_quotient(value, denominator) {
                 Some(next) => value = next,
@@ -654,46 +606,41 @@ where
     Ok((value, overflow))
 }
 
-fn parse_num_factor<S, St, R, E>(
+fn parse_num_factor<S, St, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
-    recorder: &mut R,
     expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
 ) -> Result<(i64, bool), ScanIntError>
 where
     S: InputSource,
     St: ExpansionState,
-    R: ReadRecorder,
-    E: ExpandNext<S, St, R>,
+    E: ExpandNext<S, St>,
 {
-    let Some(token) = next_nonspace_x(input, stores, recorder, expansion, expander)? else {
+    let Some(token) = next_nonspace_x(input, stores, expansion, expander)? else {
         return Ok((0, true));
     };
     if is_char(token, '(') {
-        return parse_num_expression(input, stores, recorder, expansion, expander, true);
+        return parse_num_expression(input, stores, expansion, expander, true);
     }
     unread_token(input, stores, token);
-    let scanned =
-        scan_int_with_expander_and_context(input, stores, recorder, expansion, expander, token)?;
+    let scanned = scan_int_with_expander_and_context(input, stores, expansion, expander, token)?;
     Ok((i64::from(scanned.value()), scanned.diagnostic().is_some()))
 }
 
-fn next_nonspace_x<S, St, R, E>(
+fn next_nonspace_x<S, St, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
-    recorder: &mut R,
     expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
 ) -> Result<Option<TracedTokenWord>, ScanIntError>
 where
     S: InputSource,
     St: ExpansionState,
-    R: ReadRecorder,
-    E: ExpandNext<S, St, R>,
+    E: ExpandNext<S, St>,
 {
     loop {
-        let token = next_x(input, stores, recorder, expansion, expander)?;
+        let token = next_x(input, stores, expansion, expander)?;
         if token.is_none_or(|token| !is_space(token)) {
             return Ok(token);
         }
@@ -724,10 +671,9 @@ pub(crate) fn rounded_fraction(value: i64, numerator: i64, denominator: i64) -> 
         .filter(|value| value.abs() <= i64::from(i32::MAX))
 }
 
-pub(crate) fn scan_internal_integer<S, St, R, E>(
+pub(crate) fn scan_internal_integer<S, St, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
-    recorder: &mut R,
     expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
     token: TracedTokenWord,
@@ -736,22 +682,21 @@ pub(crate) fn scan_internal_integer<S, St, R, E>(
 where
     S: InputSource,
     St: ExpansionState,
-    R: ReadRecorder,
-    E: ExpandNext<S, St, R>,
+    E: ExpandNext<S, St>,
 {
     let meaning = stores.meaning(symbol);
-    recorder.record_meaning(symbol, meaning);
-    crate::values::record_meaning_value_dependency(recorder, meaning);
+    expansion.record_meaning(symbol, meaning);
+    crate::values::record_meaning_value_dependency(expansion, meaning);
     match meaning {
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NumExpr) => {
-            scan_num_expr(input, stores, recorder, expansion, expander, token)
+            scan_num_expr(input, stores, expansion, expander, token)
         }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::GlueStretchOrder
             | UnexpandablePrimitive::GlueShrinkOrder),
         ) => {
             let scanned = crate::scan_glue::scan_glue_with_expander_and_context(
-                input, stores, recorder, expansion, expander, false, token,
+                input, stores, expansion, expander, false, token,
             )
             .map_err(|error| ScanIntError::Expand(error.into()))?;
             let spec = stores.glue(scanned.id());
@@ -771,38 +716,50 @@ where
         Meaning::CharGiven(ch) => Ok(ScannedInt::new(ch as i32, token)),
         Meaning::MathCharGiven(value) => Ok(ScannedInt::new(i32::from(value), token)),
         Meaning::CountRegister(index) => {
-            recorder.record_dependency(ReadDependency::Cell {
-                bank: ReadBank::Count,
-                index: u32::from(index),
-            });
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Cell {
+                    bank: ReadBank::Count,
+                    index: u32::from(index),
+                }
+            );
             Ok(ScannedInt::new(stores.count(index), token))
         }
         Meaning::DimenRegister(index) => {
-            recorder.record_dependency(ReadDependency::Cell {
-                bank: ReadBank::Dimen,
-                index: u32::from(index),
-            });
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Cell {
+                    bank: ReadBank::Dimen,
+                    index: u32::from(index),
+                }
+            );
             Ok(ScannedInt::new(stores.dimen(index).raw(), token))
         }
         Meaning::IntParam(index) => {
-            recorder.record_dependency(ReadDependency::Cell {
-                bank: ReadBank::IntParam,
-                index: u32::from(index),
-            });
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Cell {
+                    bank: ReadBank::IntParam,
+                    index: u32::from(index),
+                }
+            );
             Ok(ScannedInt::new(
                 stores.int_param(IntParam::new(index)),
                 token,
             ))
         }
         Meaning::InternalInteger(InternalInteger::Badness) => {
-            recorder.record_dependency(ReadDependency::Cell {
-                bank: ReadBank::LastBadness,
-                index: 0,
-            });
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Cell {
+                    bank: ReadBank::LastBadness,
+                    index: 0,
+                }
+            );
             Ok(ScannedInt::new(stores.last_badness(), token))
         }
         Meaning::InternalInteger(InternalInteger::InputLineNumber) => {
-            recorder.record_dependency(ReadDependency::InputLine);
+            crate::record_dependency!(expansion, ReadDependency::InputLine);
             let line = input
                 .current_source_frame()
                 .map_or(0, |frame| frame.line_number().min(i32::MAX as usize) as i32);
@@ -810,14 +767,20 @@ where
         }
         Meaning::InternalInteger(InternalInteger::ETeXVersion) => Ok(ScannedInt::new(2, token)),
         Meaning::InternalInteger(InternalInteger::CurrentGroupLevel) => {
-            recorder.record_dependency(ReadDependency::Engine(ReadEngineField::GroupLevel));
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Engine(ReadEngineField::GroupLevel)
+            );
             Ok(ScannedInt::new(
                 i32::try_from(stores.execution_group_depth()).unwrap_or(i32::MAX),
                 token,
             ))
         }
         Meaning::InternalInteger(InternalInteger::CurrentGroupType) => {
-            recorder.record_dependency(ReadDependency::Engine(ReadEngineField::GroupType));
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Engine(ReadEngineField::GroupType)
+            );
             Ok(ScannedInt::new(
                 stores
                     .current_group_kind()
@@ -826,29 +789,44 @@ where
             ))
         }
         Meaning::InternalInteger(InternalInteger::CurrentIfLevel) => {
-            recorder.record_dependency(ReadDependency::Engine(ReadEngineField::ConditionStack));
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Engine(ReadEngineField::ConditionStack)
+            );
             Ok(ScannedInt::new(
                 i32::try_from(input.condition_depth()).unwrap_or(i32::MAX),
                 token,
             ))
         }
         Meaning::InternalInteger(InternalInteger::CurrentIfType) => {
-            recorder.record_dependency(ReadDependency::Engine(ReadEngineField::ConditionStack));
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Engine(ReadEngineField::ConditionStack)
+            );
             Ok(ScannedInt::new(current_if_type(input), token))
         }
         Meaning::InternalInteger(InternalInteger::CurrentIfBranch) => {
-            recorder.record_dependency(ReadDependency::Engine(ReadEngineField::ConditionStack));
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Engine(ReadEngineField::ConditionStack)
+            );
             Ok(ScannedInt::new(current_if_branch(input), token))
         }
         Meaning::InternalInteger(InternalInteger::LastNodeType) => {
-            recorder.record_dependency(ReadDependency::Engine(ReadEngineField::LastNodeType));
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Engine(ReadEngineField::LastNodeType)
+            );
             Ok(ScannedInt::new(expansion.engine.last_node_type, token))
         }
         Meaning::DimenParam(index) => {
-            recorder.record_dependency(ReadDependency::Cell {
-                bank: ReadBank::DimenParam,
-                index: u32::from(index),
-            });
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Cell {
+                    bank: ReadBank::DimenParam,
+                    index: u32::from(index),
+                }
+            );
             Ok(ScannedInt::new(
                 stores.dimen_param(DimenParam::new(index)).raw(),
                 token,
@@ -856,29 +834,38 @@ where
         }
         Meaning::SkipRegister(index) => Ok(ScannedInt::new(
             {
-                recorder.record_dependency(ReadDependency::Cell {
-                    bank: ReadBank::Skip,
-                    index: u32::from(index),
-                });
+                crate::record_dependency!(
+                    expansion,
+                    ReadDependency::Cell {
+                        bank: ReadBank::Skip,
+                        index: u32::from(index),
+                    }
+                );
                 stores.glue(stores.skip(index)).width.raw()
             },
             token,
         )),
         Meaning::MuskipRegister(index) => Ok(ScannedInt::new(
             {
-                recorder.record_dependency(ReadDependency::Cell {
-                    bank: ReadBank::Muskip,
-                    index: u32::from(index),
-                });
+                crate::record_dependency!(
+                    expansion,
+                    ReadDependency::Cell {
+                        bank: ReadBank::Muskip,
+                        index: u32::from(index),
+                    }
+                );
                 stores.glue(stores.muskip(index)).width.raw()
             },
             token,
         )),
         Meaning::GlueParam(index) | Meaning::MuGlueParam(index) => {
-            recorder.record_dependency(ReadDependency::Cell {
-                bank: ReadBank::GlueParam,
-                index: u32::from(index),
-            });
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Cell {
+                    bank: ReadBank::GlueParam,
+                    index: u32::from(index),
+                }
+            );
             let glue = stores.glue_param(tex_state::env::banks::GlueParam::new(index));
             Ok(ScannedInt::new(stores.glue(glue).width.raw(), token))
         }
@@ -891,28 +878,26 @@ where
             unread_token(input, stores, token);
             Ok(missing_number(token))
         }
-        Meaning::UnexpandablePrimitive(primitive) => scan_internal_integer_primitive(
-            input, stores, recorder, expansion, expander, token, primitive,
-        ),
+        Meaning::UnexpandablePrimitive(primitive) => {
+            scan_internal_integer_primitive(input, stores, expansion, expander, token, primitive)
+        }
         _ => {
             let name = stores.resolve(symbol);
             match name {
                 "count" => {
-                    let index =
-                        scan_register_index(input, stores, recorder, expansion, expander, token)?;
+                    let index = scan_register_index(input, stores, expansion, expander, token)?;
                     let value = stores.count(index);
-                    consume_optional_space(input, stores, recorder, expansion, expander)?;
+                    consume_optional_space(input, stores, expansion, expander)?;
                     Ok(ScannedInt::new(value, token))
                 }
                 "dimen" => {
-                    let index =
-                        scan_register_index(input, stores, recorder, expansion, expander, token)?;
+                    let index = scan_register_index(input, stores, expansion, expander, token)?;
                     let value = stores.dimen(index).raw();
-                    consume_optional_space(input, stores, recorder, expansion, expander)?;
+                    consume_optional_space(input, stores, expansion, expander)?;
                     Ok(ScannedInt::new(value, token))
                 }
                 "endlinechar" => {
-                    consume_optional_space(input, stores, recorder, expansion, expander)?;
+                    consume_optional_space(input, stores, expansion, expander)?;
                     Ok(ScannedInt::new(
                         stores.int_param(IntParam::END_LINE_CHAR),
                         token,
@@ -933,10 +918,9 @@ where
     }
 }
 
-fn scan_internal_integer_primitive<S, St, R, E>(
+fn scan_internal_integer_primitive<S, St, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
-    recorder: &mut R,
     expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
     token: TracedTokenWord,
@@ -945,44 +929,55 @@ fn scan_internal_integer_primitive<S, St, R, E>(
 where
     S: InputSource,
     St: ExpansionState,
-    R: ReadRecorder,
-    E: ExpandNext<S, St, R>,
+    E: ExpandNext<S, St>,
 {
     match primitive {
         tex_state::meaning::UnexpandablePrimitive::InteractionMode => {
-            recorder.record_dependency(ReadDependency::Engine(ReadEngineField::InteractionMode));
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Engine(ReadEngineField::InteractionMode)
+            );
             Ok(ScannedInt::new(stores.interaction_mode_value(), token))
         }
         tex_state::meaning::UnexpandablePrimitive::Count => {
-            let index = scan_register_index(input, stores, recorder, expansion, expander, token)?;
-            recorder.record_dependency(ReadDependency::Cell {
-                bank: ReadBank::Count,
-                index: u32::from(index),
-            });
+            let index = scan_register_index(input, stores, expansion, expander, token)?;
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Cell {
+                    bank: ReadBank::Count,
+                    index: u32::from(index),
+                }
+            );
             let value = stores.count(index);
             Ok(ScannedInt::new(value, token))
         }
         tex_state::meaning::UnexpandablePrimitive::Dimen => {
-            let index = scan_register_index(input, stores, recorder, expansion, expander, token)?;
-            recorder.record_dependency(ReadDependency::Cell {
-                bank: ReadBank::Dimen,
-                index: u32::from(index),
-            });
+            let index = scan_register_index(input, stores, expansion, expander, token)?;
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Cell {
+                    bank: ReadBank::Dimen,
+                    index: u32::from(index),
+                }
+            );
             let value = stores.dimen(index).raw();
             Ok(ScannedInt::new(value, token))
         }
         primitive @ (tex_state::meaning::UnexpandablePrimitive::Skip
         | tex_state::meaning::UnexpandablePrimitive::Muskip) => {
-            let index = scan_register_index(input, stores, recorder, expansion, expander, token)?;
+            let index = scan_register_index(input, stores, expansion, expander, token)?;
             let (bank, glue) = if primitive == tex_state::meaning::UnexpandablePrimitive::Skip {
                 (ReadBank::Skip, stores.skip(index))
             } else {
                 (ReadBank::Muskip, stores.muskip(index))
             };
-            recorder.record_dependency(ReadDependency::Cell {
-                bank,
-                index: u32::from(index),
-            });
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Cell {
+                    bank,
+                    index: u32::from(index),
+                }
+            );
             Ok(ScannedInt::new(stores.glue(glue).width.raw(), token))
         }
         tex_state::meaning::UnexpandablePrimitive::SpaceFactor => {
@@ -995,18 +990,23 @@ where
             Ok(ScannedInt::new(expansion.engine.prev_graf, token))
         }
         tex_state::meaning::UnexpandablePrimitive::ParShape => {
-            recorder.record_dependency(ReadDependency::Engine(crate::ReadEngineField::ParShape));
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Engine(crate::ReadEngineField::ParShape)
+            );
             Ok(ScannedInt::new(expansion.engine.par_shape_len, token))
         }
         primitive @ (UnexpandablePrimitive::InterLinePenalties
         | UnexpandablePrimitive::ClubPenalties
         | UnexpandablePrimitive::WidowPenalties
         | UnexpandablePrimitive::DisplayWidowPenalties) => {
-            let index = scan_int_with_expander_and_context(
-                input, stores, recorder, expansion, expander, token,
-            )?
-            .value();
-            recorder.record_dependency(ReadDependency::Engine(ReadEngineField::PenaltyArrays));
+            let index =
+                scan_int_with_expander_and_context(input, stores, expansion, expander, token)?
+                    .value();
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Engine(ReadEngineField::PenaltyArrays)
+            );
             let kind = match primitive {
                 UnexpandablePrimitive::InterLinePenalties => PenaltyArrayKind::InterLine,
                 UnexpandablePrimitive::ClubPenalties => PenaltyArrayKind::Club,
@@ -1035,9 +1035,8 @@ where
         | tex_state::meaning::UnexpandablePrimitive::SfCode
         | tex_state::meaning::UnexpandablePrimitive::MathCode
         | tex_state::meaning::UnexpandablePrimitive::DelCode => {
-            let scanned = scan_int_with_expander_and_context(
-                input, stores, recorder, expansion, expander, token,
-            )?;
+            let scanned =
+                scan_int_with_expander_and_context(input, stores, expansion, expander, token)?;
             let code = scanned.value();
             let ch = u32::try_from(code).ok().and_then(char::from_u32).ok_or(
                 ScanIntError::RegisterNumberOutOfRange {
@@ -1047,62 +1046,86 @@ where
             )?;
             let value = match primitive {
                 tex_state::meaning::UnexpandablePrimitive::CatCode => {
-                    recorder
-                        .record_dependency(ReadDependency::CodeGeneration(ReadCodeTable::Catcode));
-                    recorder.record_dependency(ReadDependency::Code {
-                        table: ReadCodeTable::Catcode,
-                        scalar: ch as u32,
+                    crate::record_dependency!(expansion, {
+                        ReadDependency::CodeGeneration(ReadCodeTable::Catcode)
                     });
+                    crate::record_dependency!(
+                        expansion,
+                        ReadDependency::Code {
+                            table: ReadCodeTable::Catcode,
+                            scalar: ch as u32,
+                        }
+                    );
                     stores.catcode(ch) as i32
                 }
                 tex_state::meaning::UnexpandablePrimitive::LcCode => {
-                    recorder
-                        .record_dependency(ReadDependency::CodeGeneration(ReadCodeTable::Lccode));
-                    recorder.record_dependency(ReadDependency::Code {
-                        table: ReadCodeTable::Lccode,
-                        scalar: ch as u32,
+                    crate::record_dependency!(expansion, {
+                        ReadDependency::CodeGeneration(ReadCodeTable::Lccode)
                     });
+                    crate::record_dependency!(
+                        expansion,
+                        ReadDependency::Code {
+                            table: ReadCodeTable::Lccode,
+                            scalar: ch as u32,
+                        }
+                    );
                     stores.lccode(ch) as i32
                 }
                 tex_state::meaning::UnexpandablePrimitive::UcCode => {
-                    recorder
-                        .record_dependency(ReadDependency::CodeGeneration(ReadCodeTable::Uccode));
-                    recorder.record_dependency(ReadDependency::Code {
-                        table: ReadCodeTable::Uccode,
-                        scalar: ch as u32,
+                    crate::record_dependency!(expansion, {
+                        ReadDependency::CodeGeneration(ReadCodeTable::Uccode)
                     });
+                    crate::record_dependency!(
+                        expansion,
+                        ReadDependency::Code {
+                            table: ReadCodeTable::Uccode,
+                            scalar: ch as u32,
+                        }
+                    );
                     stores.uccode(ch) as i32
                 }
                 tex_state::meaning::UnexpandablePrimitive::SfCode => {
-                    recorder
-                        .record_dependency(ReadDependency::CodeGeneration(ReadCodeTable::Sfcode));
-                    recorder.record_dependency(ReadDependency::Code {
-                        table: ReadCodeTable::Sfcode,
-                        scalar: ch as u32,
+                    crate::record_dependency!(expansion, {
+                        ReadDependency::CodeGeneration(ReadCodeTable::Sfcode)
                     });
+                    crate::record_dependency!(
+                        expansion,
+                        ReadDependency::Code {
+                            table: ReadCodeTable::Sfcode,
+                            scalar: ch as u32,
+                        }
+                    );
                     stores.sfcode(ch) as i32
                 }
                 tex_state::meaning::UnexpandablePrimitive::MathCode => {
-                    recorder
-                        .record_dependency(ReadDependency::CodeGeneration(ReadCodeTable::Mathcode));
-                    recorder.record_dependency(ReadDependency::Code {
-                        table: ReadCodeTable::Mathcode,
-                        scalar: ch as u32,
+                    crate::record_dependency!(expansion, {
+                        ReadDependency::CodeGeneration(ReadCodeTable::Mathcode)
                     });
+                    crate::record_dependency!(
+                        expansion,
+                        ReadDependency::Code {
+                            table: ReadCodeTable::Mathcode,
+                            scalar: ch as u32,
+                        }
+                    );
                     stores.mathcode(ch) as i32
                 }
                 tex_state::meaning::UnexpandablePrimitive::DelCode => {
-                    recorder
-                        .record_dependency(ReadDependency::CodeGeneration(ReadCodeTable::Delcode));
-                    recorder.record_dependency(ReadDependency::Code {
-                        table: ReadCodeTable::Delcode,
-                        scalar: ch as u32,
+                    crate::record_dependency!(expansion, {
+                        ReadDependency::CodeGeneration(ReadCodeTable::Delcode)
                     });
+                    crate::record_dependency!(
+                        expansion,
+                        ReadDependency::Code {
+                            table: ReadCodeTable::Delcode,
+                            scalar: ch as u32,
+                        }
+                    );
                     stores.delcode(ch)
                 }
                 _ => unreachable!("outer match restricts primitive"),
             };
-            consume_optional_space(input, stores, recorder, expansion, expander)?;
+            consume_optional_space(input, stores, expansion, expander)?;
             Ok(ScannedInt::new(value, token))
         }
         primitive if is_internal_numeric_primitive(primitive) => {
@@ -1149,10 +1172,9 @@ const fn is_internal_numeric_primitive(
     )
 }
 
-fn scan_register_index<S, St, R, E>(
+fn scan_register_index<S, St, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
-    recorder: &mut R,
     expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
     context: TracedTokenWord,
@@ -1160,11 +1182,9 @@ fn scan_register_index<S, St, R, E>(
 where
     S: InputSource,
     St: ExpansionState,
-    R: ReadRecorder,
-    E: ExpandNext<S, St, R>,
+    E: ExpandNext<S, St>,
 {
-    let scanned =
-        scan_int_with_expander_and_context(input, stores, recorder, expansion, expander, context)?;
+    let scanned = scan_int_with_expander_and_context(input, stores, expansion, expander, context)?;
     let value = scanned.value();
     let maximum = crate::scan_helpers::maximum_register_index(stores);
     if !(0..=i32::from(maximum)).contains(&value) {
@@ -1174,18 +1194,16 @@ where
     Ok(value as u16)
 }
 
-fn consume_optional_space<S, St, R, E>(
+fn consume_optional_space<S, St, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
-    _recorder: &mut R,
     _context: &mut ExpansionContext<'_, S>,
     _expander: &mut E,
 ) -> Result<(), ScanIntError>
 where
     S: InputSource,
     St: ExpansionState,
-    R: ReadRecorder,
-    E: ExpandNext<S, St, R>,
+    E: ExpandNext<S, St>,
 {
     // TeX consumes at most one following *raw* space after an internal
     // integer. Expanding here would execute the next command while an
@@ -1209,8 +1227,7 @@ where
             )
     );
     unread_token(input, stores, token);
-    if is_conditional_delimiter
-        && let Some(inserted) = next_x(input, stores, _recorder, _context, _expander)?
+    if is_conditional_delimiter && let Some(inserted) = next_x(input, stores, _context, _expander)?
     {
         unread_token(input, stores, inserted);
     }

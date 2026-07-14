@@ -1,4 +1,3 @@
-use tex_expand::ReadRecorder;
 use tex_lex::{InputSource, InputStack};
 use tex_state::Universe;
 use tex_state::env::banks::IntParam;
@@ -134,19 +133,17 @@ pub(crate) fn append_noad(nest: &mut ModeNest, kind: NoadKind, nucleus: MathFiel
         .push(Node::MathNoad(MathNoad::new(kind, nucleus)));
 }
 
-pub(crate) fn attach_script<S, R>(
+pub(crate) fn attach_script<S>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
     superscript: bool,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
-    let field = scan_math_field(nest, input, stores, recorder, execution)?;
+    let field = scan_math_field(nest, input, stores, execution)?;
     let Some(mut node) = nest.current_list_mut().pop_last_node() else {
         push_scripted_empty_noad(nest, field, superscript);
         return Ok(());

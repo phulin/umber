@@ -4,8 +4,7 @@ use tex_expand::scan::{
     scan_general_text_expanded_with_driver, scan_toks, scan_toks_expanded_with_driver,
 };
 use tex_expand::{
-    DriverExpandNext, ExpandError, NoopRecorder, ReadRecorder,
-    get_x_token_with_recorder_and_context, scan_dimen, scan_glue, scan_int,
+    DriverExpandNext, ExpandError, get_x_token_with_context, scan_dimen, scan_glue, scan_int,
     scan_optional_keyword_with_context,
 };
 use tex_lex::{InputSource, InputStack, LexError, TokenListReplayKind};
@@ -106,18 +105,16 @@ where
     }
 }
 
-pub(crate) fn execute_unexpandable_with_recorder<S, R>(
+pub(crate) fn execute_unexpandable_with_context<S>(
     primitive: UnexpandablePrimitive,
     traced: TracedTokenWord,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<DispatchAction, ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     let mut prefixes = Prefixes::default();
     let command = match accumulate_prefixes(
@@ -126,7 +123,6 @@ where
         &mut prefixes,
         input,
         stores,
-        recorder,
         execution,
     ) {
         Ok(command) => command,
@@ -152,15 +148,14 @@ where
     }
     if command.command == PrefixedCommand::Primitive(UnexpandablePrimitive::Immediate) {
         reject_all_prefixes(prefixes)?;
-        let outcome = execute_immediate(input, stores, recorder, execution)?;
+        let outcome = execute_immediate(input, stores, execution)?;
         if outcome.assigned {
             fire_afterassignment(input, stores);
         }
         return Ok(outcome.action);
     }
-    let outcome = match execute_prefixed_command(
-        command, prefixes, nest, input, stores, recorder, execution,
-    ) {
+    let outcome = match execute_prefixed_command(command, prefixes, nest, input, stores, execution)
+    {
         Ok(outcome) => outcome,
         Err(ExecError::PrefixWithNonDefinition { .. }) => {
             push_traced_tokens(input, stores, [command.traced]);
@@ -196,21 +191,16 @@ where
     Ok(outcome.action)
 }
 
-fn execute_immediate<S, R>(
+fn execute_immediate<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<CommandOutcome, ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
-    let mut noop = NoopRecorder;
     let traced = loop {
-        let Some(traced) =
-            get_x_token_with_recorder_and_context(input, stores, &mut noop, execution)?
-        else {
+        let Some(traced) = get_x_token_with_context(input, stores, execution)? else {
             return Err(ExecError::MissingPrefixedCommand);
         };
         if !is_space(tex_expand::semantic_token(traced)) {
@@ -230,7 +220,7 @@ where
             Ok(CommandOutcome::assigned())
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Write) => {
-            execute_immediate_write(traced, input, stores, recorder, execution)?;
+            execute_immediate_write(traced, input, stores, execution)?;
             Ok(CommandOutcome::continue_only())
         }
         _ => {
@@ -256,26 +246,16 @@ where
     S: InputSource,
 {
     let mut prefixes = Prefixes::default();
-    let mut recorder = NoopRecorder;
     let command = accumulate_prefixes(
         PrefixedCommand::Meaning(meaning),
         traced,
         &mut prefixes,
         input,
         stores,
-        &mut recorder,
         execution,
     )?;
     let mut nest = ModeNest::new();
-    let outcome = execute_prefixed_command(
-        command,
-        prefixes,
-        &mut nest,
-        input,
-        stores,
-        &mut recorder,
-        execution,
-    )?;
+    let outcome = execute_prefixed_command(command, prefixes, &mut nest, input, stores, execution)?;
     if outcome.assigned {
         fire_afterassignment(input, stores);
     }
@@ -416,18 +396,16 @@ where
     Ok(())
 }
 
-fn accumulate_prefixes<S, R>(
+fn accumulate_prefixes<S>(
     mut command: PrefixedCommand,
     traced: TracedTokenWord,
     prefixes: &mut Prefixes,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<TracedPrefixedCommand, ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     let mut token = tex_expand::semantic_token(traced);
     let mut origin = traced.origin();
@@ -458,7 +436,7 @@ where
         }
 
         let traced = loop {
-            let traced = get_x_token_with_recorder_and_context(input, stores, recorder, execution)?
+            let traced = get_x_token_with_context(input, stores, execution)?
                 .ok_or(ExecError::MissingPrefixedCommand)?;
             let token = tex_expand::semantic_token(traced);
             if is_space(token) {
@@ -505,7 +483,6 @@ fn execute_prefixed_command<S>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut impl ReadRecorder,
     execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<CommandOutcome, ExecError>
 where
@@ -773,7 +750,6 @@ where
                     nest,
                     input,
                     stores,
-                    recorder,
                     execution,
                 )?;
                 Ok(CommandOutcome::continue_only())
@@ -973,15 +949,7 @@ where
                     ensure_horizontal_for_character(nest, input, stores)?;
                     return Ok(CommandOutcome::continue_only());
                 }
-                execute_hmode_material(
-                    command.traced,
-                    primitive,
-                    nest,
-                    input,
-                    stores,
-                    recorder,
-                    execution,
-                )?;
+                execute_hmode_material(command.traced, primitive, nest, input, stores, execution)?;
                 Ok(CommandOutcome::assigned_if(
                     primitive == UnexpandablePrimitive::SpaceFactor,
                 ))
@@ -1044,7 +1012,7 @@ where
             }
             UnexpandablePrimitive::Shipout => {
                 reject_all_prefixes(prefixes)?;
-                match execute_shipout(command.traced, input, stores, recorder, execution)? {
+                match execute_shipout(command.traced, input, stores, execution)? {
                     Some(page) => Ok(CommandOutcome::shipout(page)),
                     None => Ok(CommandOutcome::continue_only()),
                 }

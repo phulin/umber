@@ -1425,14 +1425,12 @@ fn assert_replayed_math_error_is_source_backed(source: &str) {
         .expect("memory source should be readable");
     let mut input = InputStack::new(WorldInput::from_content(content));
     let mut executor = Executor::new();
-    let mut recorder = NoopRecorder;
     let mut context = crate::ExecutionContext::new("texput");
     let mut stats = ExecutionStats::default();
     let exit = crate::executor::run_main_control_until(
         executor.nest_mut(),
         &mut input,
         &mut stores,
-        &mut recorder,
         &mut context,
         &mut stats,
         |_, stores| stores.count(7) == 1,
@@ -1440,26 +1438,16 @@ fn assert_replayed_math_error_is_source_backed(source: &str) {
     .expect("execution reaches the provenance sentinel");
     assert_eq!(exit, crate::executor::MainControlExit::Stopped);
 
-    let relax = tex_expand::get_x_token_with_recorder_and_context(
-        &mut input,
-        &mut stores,
-        &mut recorder,
-        &mut context,
-    )
-    .expect("replayed relax tokenizes")
-    .expect("replayed relax exists");
+    let relax = tex_expand::get_x_token_with_context(&mut input, &mut stores, &mut context)
+        .expect("replayed relax tokenizes")
+        .expect("replayed relax exists");
     assert!(matches!(
         tex_expand::semantic_token(relax),
         Token::Cs(symbol) if matches!(stores.meaning(symbol), Meaning::Relax)
     ));
-    let sentinel = tex_expand::get_x_token_with_recorder_and_context(
-        &mut input,
-        &mut stores,
-        &mut recorder,
-        &mut context,
-    )
-    .expect("suppressed expandable tokenizes")
-    .expect("suppressed expandable exists");
+    let sentinel = tex_expand::get_x_token_with_context(&mut input, &mut stores, &mut context)
+        .expect("suppressed expandable tokenizes")
+        .expect("suppressed expandable exists");
     let action = crate::dispatch::dispatch_delivered_token(
         executor.nest_mut(),
         sentinel,

@@ -1,7 +1,6 @@
 use super::*;
 use crate::mode::PendingHChar;
 use crate::tests::support::TestRecorder;
-use tex_expand::NoopRecorder;
 use tex_lex::MemoryInput;
 use tex_state::hyphenation::ExceptionSpec;
 use tex_state::node::Node;
@@ -27,7 +26,6 @@ fn non_character_accent_lookahead_replays_the_original_traced_token() {
         &mut ModeNest::new(),
         &mut input,
         &mut stores,
-        &mut NoopRecorder,
         &mut crate::ExecutionContext::new("texput"),
         TracedTokenWord::pack(
             Token::Char {
@@ -59,13 +57,13 @@ fn accent_lookahead_runs_assignments_and_accepts_char_num() {
     crate::install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\count0=7 \\char65"));
     let mut recorder = TestRecorder::default();
+    let mut execution = crate::ExecutionContext::new("texput").recording(&mut recorder);
 
     let base = scan_accent_base(
         &mut ModeNest::new(),
         &mut input,
         &mut stores,
-        &mut recorder,
-        &mut crate::ExecutionContext::new("texput"),
+        &mut execution,
         TracedTokenWord::pack(
             Token::Char {
                 ch: '^',

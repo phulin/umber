@@ -917,10 +917,10 @@ fn shipout_write_expansion_uses_active_read_recorder() {
         "\\count0=5 \\shipout\\hbox{\\write16{\\the\\count0}}\\end",
     ));
     let mut recorder = TestRecorder::default();
-    let mut context = crate::ExecutionContext::new("texput");
+    let mut context = crate::ExecutionContext::new("texput").recording(&mut recorder);
 
     Executor::new()
-        .run_with_recorder_and_context(&mut input, &mut stores, &mut recorder, &mut context)
+        .run_with_context(&mut input, &mut stores, &mut context)
         .expect("shipout succeeds");
 
     assert!(

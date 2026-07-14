@@ -1,4 +1,4 @@
-use tex_expand::{NoopRecorder, expand_once_then_get_token_with_context};
+use tex_expand::expand_once_then_get_token_with_context;
 use tex_lex::{InputSource, InputStack};
 use tex_state::env::banks::GlueParam;
 use tex_state::ids::{GlueId, TokenListId};
@@ -325,13 +325,8 @@ where
     }
 
     fn next_expanded(&mut self) -> Result<Option<PreambleToken>, ExecError> {
-        let mut recorder = NoopRecorder;
-        let Some(traced) = expand_once_then_get_token_with_context(
-            self.input,
-            self.stores,
-            &mut recorder,
-            self.execution,
-        )?
+        let Some(traced) =
+            expand_once_then_get_token_with_context(self.input, self.stores, self.execution)?
         else {
             return Ok(None);
         };

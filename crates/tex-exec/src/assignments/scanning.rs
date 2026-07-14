@@ -51,7 +51,6 @@ pub(super) fn scan_variable_target<S>(
 where
     S: InputSource,
 {
-    let mut recorder = NoopRecorder;
     let traced =
         next_non_space_traced_x(input, stores, execution)?.ok_or(ExecError::MissingToken {
             context: "arithmetic target",
@@ -67,27 +66,19 @@ where
     let meaning = stores.meaning(symbol);
     match meaning {
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count) => Ok(Variable::IntRegister(
-            scan_register_index_with_recorder(input, stores, &mut recorder, execution, traced)?,
+            scan_register_index_with_context(input, stores, execution, traced)?,
         )),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
-            Ok(Variable::DimenRegister(scan_register_index_with_recorder(
-                input,
-                stores,
-                &mut recorder,
-                execution,
-                traced,
+            Ok(Variable::DimenRegister(scan_register_index_with_context(
+                input, stores, execution, traced,
             )?))
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) => Ok(Variable::GlueRegister(
-            scan_register_index_with_recorder(input, stores, &mut recorder, execution, traced)?,
+            scan_register_index_with_context(input, stores, execution, traced)?,
         )),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
-            Ok(Variable::MuGlueRegister(scan_register_index_with_recorder(
-                input,
-                stores,
-                &mut recorder,
-                execution,
-                traced,
+            Ok(Variable::MuGlueRegister(scan_register_index_with_context(
+                input, stores, execution, traced,
             )?))
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::FontDimen) => {
@@ -130,24 +121,21 @@ pub(super) fn scan_register_index<S>(
 where
     S: InputSource,
 {
-    scan_register_index_with_recorder(input, stores, &mut NoopRecorder, execution, context)
+    scan_register_index_with_context(input, stores, execution, context)
 }
 
-pub(super) fn scan_register_index_with_recorder<S, R>(
+pub(super) fn scan_register_index_with_context<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<u16, ExecError>
 where
     S: InputSource,
-    R: tex_expand::ReadRecorder,
 {
     let scanned = scan_int::scan_int_with_expander_and_context(
         input,
         stores,
-        recorder,
         execution,
         &mut DriverExpandNext,
         context,
@@ -178,11 +166,9 @@ pub(crate) fn scan_i32<S>(
 where
     S: InputSource,
 {
-    let mut recorder = NoopRecorder;
     let scanned = scan_int::scan_int_with_expander_and_context(
         input,
         stores,
-        &mut recorder,
         execution,
         &mut DriverExpandNext,
         context,
@@ -220,11 +206,9 @@ pub(crate) fn scan_scaled<S>(
 where
     S: InputSource,
 {
-    let mut recorder = NoopRecorder;
     let scanned = scan_dimen::scan_dimen_with_expander_and_context(
         input,
         stores,
-        &mut recorder,
         execution,
         &mut DriverExpandNext,
         scan_dimen::ScanDimenOptions::STANDARD,
@@ -245,11 +229,9 @@ pub(crate) fn scan_glue_id<S>(
 where
     S: InputSource,
 {
-    let mut recorder = NoopRecorder;
     let scanned = scan_glue::scan_glue_with_expander_and_context(
         input,
         stores,
-        &mut recorder,
         execution,
         &mut DriverExpandNext,
         mu,
@@ -354,11 +336,9 @@ pub(crate) fn next_non_space_x<S>(
 where
     S: InputSource,
 {
-    let mut recorder = NoopRecorder;
     loop {
         let Some(token) =
-            get_x_token_with_recorder_and_context(input, stores, &mut recorder, execution)?
-                .map(tex_expand::semantic_token)
+            get_x_token_with_context(input, stores, execution)?.map(tex_expand::semantic_token)
         else {
             return Ok(None);
         };
@@ -376,11 +356,8 @@ pub(crate) fn next_non_space_traced_x<S>(
 where
     S: InputSource,
 {
-    let mut recorder = NoopRecorder;
     loop {
-        let Some(token) =
-            get_x_token_with_recorder_and_context(input, stores, &mut recorder, execution)?
-        else {
+        let Some(token) = get_x_token_with_context(input, stores, execution)? else {
             return Ok(None);
         };
         if !is_space(tex_expand::semantic_token(token)) {
@@ -398,12 +375,7 @@ pub(crate) fn scan_optional_keyword_x<S>(
 where
     S: InputSource,
 {
-    let mut recorder = NoopRecorder;
     Ok(scan_optional_keyword_with_context(
-        input,
-        stores,
-        &mut recorder,
-        execution,
-        keyword,
+        input, stores, execution, keyword,
     )?)
 }

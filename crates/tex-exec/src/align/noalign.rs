@@ -1,4 +1,4 @@
-use tex_expand::{ReadRecorder, get_x_token_with_recorder_and_context};
+use tex_expand::get_x_token_with_context;
 use tex_lex::{InputSource, InputStack};
 use tex_state::{ExpansionContext, PrintSink, Universe};
 
@@ -6,17 +6,15 @@ use crate::assignments::{flush_pending_hchars, next_non_space_x};
 use crate::executor::sync_engine_state;
 use crate::{ExecError, ExecutionStats, ModeNest, leave_group, push_tokens};
 
-pub(super) fn execute_noalign<S, R>(
+pub(super) fn execute_noalign<S>(
     _align_level: usize,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     {
         let opener =
@@ -32,22 +30,20 @@ where
         // particular, \nointerlineskip must update the prev_depth that the
         // next row's append_to_vlist observes.
         crate::assignments::normal_paragraph(nest, stores);
-        scan_noalign_group(nest, input, stores, recorder, execution)?;
+        scan_noalign_group(nest, input, stores, execution)?;
         leave_group(input, stores, tex_state::GroupKind::NoAlign)?;
         Ok(())
     }
 }
 
-fn scan_noalign_group<S, R>(
+fn scan_noalign_group<S>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     let mut stats = ExecutionStats::default();
     let mut brace_depth = 1usize;
@@ -55,7 +51,7 @@ where
         sync_engine_state::<S>(execution, nest, stores);
         let token = {
             let mut expansion = ExpansionContext::new(stores);
-            get_x_token_with_recorder_and_context(input, &mut expansion, recorder, execution)?
+            get_x_token_with_context(input, &mut expansion, execution)?
         }
         .ok_or(ExecError::MissingToken {
             context: "\\noalign closing brace",
@@ -71,9 +67,7 @@ where
                 return Ok(());
             }
         }
-        super::execution::dispatch_and_drain(
-            nest, token, input, stores, recorder, execution, &mut stats,
-        )?;
+        super::execution::dispatch_and_drain(nest, token, input, stores, execution, &mut stats)?;
     }
 }
 

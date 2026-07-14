@@ -58,12 +58,12 @@ fn dimension_scanner_records_typed_value_and_magnification_dependencies() {
     stores.set_dimen(3, Scaled::from_raw(77));
     let mut input = InputStack::new(MemoryInput::new("\\measured"));
     let mut reads = ReadSetRecorder::default();
+    let mut expansion = ExpansionContext::new("texput").recording(&mut reads);
 
     let scanned = scan_dimen_with_options_and_context(
         &mut input,
         &mut stores,
-        &mut reads,
-        &mut ExpansionContext::new("texput"),
+        &mut expansion,
         ScanDimenOptions::STANDARD,
         context(),
     )

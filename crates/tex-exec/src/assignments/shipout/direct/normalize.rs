@@ -18,11 +18,11 @@ pub(super) struct DirectionPermutation {
     pub(super) order: Vec<usize>,
 }
 
-pub(super) fn normalize_page<R: ReadRecorder>(
+pub(super) fn normalize_page(
     root: NodeListId,
     effects: Vec<PageEffect>,
     stores: &mut Universe,
-    recorder: &mut R,
+    expansion: &mut tex_expand::ExpansionContext<'_, MemoryInput>,
 ) -> Result<PageOverlay, ExecError> {
     let pending_effect_count = effects.len();
     let mut overlay = PageOverlay {
@@ -31,7 +31,7 @@ pub(super) fn normalize_page<R: ReadRecorder>(
         math: Vec::new(),
         directions: Vec::new(),
     };
-    normalize_list(stores, recorder, root, false, 1, &mut overlay)?;
+    normalize_list(stores, expansion, root, false, 1, &mut overlay)?;
     Ok(overlay)
 }
 
@@ -44,9 +44,9 @@ enum NormalizeNode {
     Unsupported(&'static str),
 }
 
-fn normalize_list<R: ReadRecorder>(
+fn normalize_list(
     stores: &mut Universe,
-    recorder: &mut R,
+    expansion: &mut tex_expand::ExpansionContext<'_, MemoryInput>,
     list: NodeListId,
     suppress_deferred_streams: bool,
     depth: usize,
@@ -62,7 +62,7 @@ fn normalize_list<R: ReadRecorder>(
         for &index in order {
             normalize_index(
                 stores,
-                recorder,
+                expansion,
                 list,
                 index,
                 suppress_deferred_streams,
@@ -75,7 +75,7 @@ fn normalize_list<R: ReadRecorder>(
         for index in 0..len {
             normalize_index(
                 stores,
-                recorder,
+                expansion,
                 list,
                 index,
                 suppress_deferred_streams,
@@ -87,9 +87,9 @@ fn normalize_list<R: ReadRecorder>(
     Ok(())
 }
 
-fn normalize_index<R: ReadRecorder>(
+fn normalize_index(
     stores: &mut Universe,
-    recorder: &mut R,
+    expansion: &mut tex_expand::ExpansionContext<'_, MemoryInput>,
     list: NodeListId,
     index: usize,
     suppress_deferred_streams: bool,
@@ -142,13 +142,13 @@ fn normalize_index<R: ReadRecorder>(
     match action {
         NormalizeNode::Leaf => {}
         NormalizeNode::List(child, suppress) => {
-            normalize_list(stores, recorder, child, suppress, depth + 1, overlay)?;
+            normalize_list(stores, expansion, child, suppress, depth + 1, overlay)?;
         }
         NormalizeNode::Lists(children) => {
             for child in children {
                 normalize_list(
                     stores,
-                    recorder,
+                    expansion,
                     child,
                     suppress_deferred_streams,
                     depth + 1,
@@ -158,7 +158,7 @@ fn normalize_index<R: ReadRecorder>(
         }
         NormalizeNode::Whatsit(whatsit) => append_whatsit_effect(
             stores,
-            recorder,
+            expansion,
             &mut overlay.effects,
             whatsit,
             suppress_deferred_streams,
@@ -173,7 +173,7 @@ fn normalize_index<R: ReadRecorder>(
             });
             normalize_list(
                 stores,
-                recorder,
+                expansion,
                 replacement,
                 suppress_deferred_streams,
                 depth + 1,
@@ -187,9 +187,9 @@ fn normalize_index<R: ReadRecorder>(
     Ok(())
 }
 
-fn append_whatsit_effect<R: ReadRecorder>(
+fn append_whatsit_effect(
     stores: &mut Universe,
-    recorder: &mut R,
+    expansion: &mut tex_expand::ExpansionContext<'_, MemoryInput>,
     effects: &mut Vec<PageEffect>,
     whatsit: Whatsit,
     suppress_deferred_streams: bool,
@@ -208,7 +208,7 @@ fn append_whatsit_effect<R: ReadRecorder>(
             effects.push(PageEffect::CloseOut { stream: slot.raw() });
         }
         Whatsit::DeferredWrite { sink, tokens } if !suppress_deferred_streams => {
-            let text = expand_write_tokens(stores, recorder, tokens)?;
+            let text = expand_write_tokens(stores, expansion, tokens)?;
             stores.world_mut().write_text(sink, &text);
             effects.push(PageEffect::Write {
                 sink: lower_sink(sink),
@@ -289,18 +289,16 @@ fn direction_permutation(stores: &Universe, list: NodeListId) -> Option<Vec<usiz
     Some(reordered)
 }
 
-fn expand_write_tokens<R: ReadRecorder>(
+fn expand_write_tokens(
     stores: &mut Universe,
-    recorder: &mut R,
+    expansion: &mut tex_expand::ExpansionContext<'_, MemoryInput>,
     tokens: TokenListId,
 ) -> Result<String, ExecError> {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(tokens, TokenListReplayKind::Inserted);
-    let mut context = tex_expand::ExpansionContext::new("texput");
     let mut text = String::new();
     while let Some(token) =
-        get_x_token_with_recorder_and_context(&mut input, stores, recorder, &mut context)?
-            .map(tex_expand::semantic_token)
+        get_x_token_with_context(&mut input, stores, expansion)?.map(tex_expand::semantic_token)
     {
         diagnostics::append_token_show_text(stores, token, &mut text);
     }

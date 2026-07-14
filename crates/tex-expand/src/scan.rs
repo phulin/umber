@@ -20,7 +20,7 @@ use tex_state::{ExpansionState, InputReadState, TracedTokenList};
 
 use crate::{
     DriverExpandNext, ExpandError, ExpandNext, ExpandableOpcode, ExpansionContext,
-    NoInputExpandNext, NoopRecorder, ReadRecorder,
+    NoInputExpandNext,
 };
 
 /// Result of scanning a macro definition without assigning it.
@@ -286,7 +286,6 @@ where
 {
     let mut builder = stores.token_list_builder();
     let mut origins = stores.origin_list_builder();
-    let mut recorder = NoopRecorder;
     let mut brace_level = 1_u32;
     let mut pending_parameter = false;
 
@@ -322,13 +321,12 @@ where
             let meaning = input.resolve_expansion_meaning(stores, symbol);
             if matches!(meaning, Meaning::Macro { flags, .. } if !flags.contains(MeaningFlags::PROTECTED))
             {
-                recorder.record_meaning(symbol, meaning);
+                expansion.record_meaning(symbol, meaning);
                 let dispatched = crate::dispatch::dispatch_with_context(
                     traced_semantic_token(raw),
                     raw.origin(),
                     input,
                     stores,
-                    &mut recorder,
                     expansion,
                     meaning,
                 );
@@ -348,12 +346,8 @@ where
                     // Preserve the defining scanner's nested-source seam: the
                     // first expanded token remains available below the
                     // recovery-inserted closing brace.
-                    let Some(traced) = crate::get_x_or_protected_with_recorder_and_context(
-                        input,
-                        stores,
-                        &mut recorder,
-                        expansion,
-                    )?
+                    let Some(traced) =
+                        crate::get_x_or_protected_with_context(input, stores, expansion)?
                     else {
                         return Err(ScanToksError::EndOfInputInReplacementText { context });
                     };
@@ -363,12 +357,8 @@ where
                 continue;
             }
         }
-        let expanded = crate::get_x_or_protected_from_prepared_with_recorder_and_context(
-            prepared,
-            input,
-            stores,
-            &mut recorder,
-            expansion,
+        let expanded = crate::get_x_or_protected_from_prepared_with_context(
+            prepared, input, stores, expansion,
         )?;
         let Some(traced) = expanded else {
             return Err(ScanToksError::EndOfInputInReplacementText { context });
@@ -476,14 +466,7 @@ where
     S: InputSource,
     St: ExpansionState + tex_state::InputOpenState,
 {
-    scan_general_text_with_expanded_open(
-        input,
-        stores,
-        &mut NoopRecorder,
-        expansion,
-        &mut DriverExpandNext,
-        context,
-    )
+    scan_general_text_with_expanded_open(input, stores, expansion, &mut DriverExpandNext, context)
 }
 
 fn expand_replacement_text<S, St, E>(
@@ -496,7 +479,7 @@ fn expand_replacement_text<S, St, E>(
 where
     S: InputSource,
     St: ExpansionState,
-    E: ExpandNext<ReplacementSource<S>, St, NoopRecorder>,
+    E: ExpandNext<ReplacementSource<S>, St>,
 {
     let mut input = InputStack::new(ReplacementSource::<S>::empty());
     input.push_token_list_with_origins(
@@ -506,7 +489,6 @@ where
     );
     let mut builder = stores.token_list_builder();
     let mut origins = stores.origin_list_builder();
-    let mut recorder = NoopRecorder;
     let engine = expansion.engine;
     let job_name = expansion.job_name;
     let mut resolver = ReplacementInputResolver { inner: expansion };
@@ -573,7 +555,6 @@ where
                 traced,
                 &mut input,
                 stores,
-                &mut recorder,
                 &mut replacement_expansion,
             )?;
             crate::push_dispatch_result(&mut input, stores, dispatch);
@@ -589,7 +570,6 @@ where
                 traced,
                 &mut input,
                 stores,
-                &mut recorder,
                 &mut replacement_expansion,
             )?;
             crate::push_dispatch_result(&mut input, stores, dispatch);
@@ -597,12 +577,9 @@ where
         }
 
         unread_token(&mut input, stores, traced);
-        if let Some(expanded) = expander.next_expanded_token(
-            &mut input,
-            stores,
-            &mut recorder,
-            &mut replacement_expansion,
-        )? {
+        if let Some(expanded) =
+            expander.next_expanded_token(&mut input, stores, &mut replacement_expansion)?
+        {
             builder.push(crate::semantic_token(expanded));
             origins.push(expanded.origin());
         }
@@ -919,10 +896,9 @@ where
 
 /// Scans e-TeX general text after expanding only while looking for its
 /// compulsory opening brace; the balanced contents themselves remain raw.
-pub(crate) fn scan_general_text_with_expanded_open<S, St, R, E>(
+pub(crate) fn scan_general_text_with_expanded_open<S, St, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
-    recorder: &mut R,
     expansion: &mut ExpansionContext<'_, S>,
     expander: &mut E,
     context: TracedTokenWord,
@@ -930,12 +906,11 @@ pub(crate) fn scan_general_text_with_expanded_open<S, St, R, E>(
 where
     S: InputSource,
     St: ExpansionState,
-    R: ReadRecorder,
-    E: ExpandNext<S, St, R>,
+    E: ExpandNext<S, St>,
 {
     let open = loop {
         let token = expander
-            .next_expanded_token(input, stores, recorder, expansion)?
+            .next_expanded_token(input, stores, expansion)?
             .ok_or(ScanToksError::EndOfInputInReplacementText { context })?;
         if !matches!(
             traced_semantic_token(token),

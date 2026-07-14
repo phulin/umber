@@ -1,4 +1,4 @@
-use tex_expand::{ReadRecorder, get_x_token_with_recorder_and_context};
+use tex_expand::get_x_token_with_context;
 use tex_fonts::{LigKernChar, LigKernCommand};
 use tex_lex::{InputSource, InputStack};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
@@ -13,7 +13,7 @@ use tex_typeset::{INF_BAD, PackSpec, VpackParams};
 
 use super::paragraph::{end_paragraph, ensure_horizontal_for_character, normal_paragraph};
 use super::*;
-use crate::dispatch::dispatch_delivered_token_with_recorder;
+use crate::dispatch::dispatch_delivered_token_with_context;
 use crate::mode::PendingHRunChar;
 use crate::packing_params::vpack;
 use crate::vertical::{append_vertical_contribution, build_page_if_outer_vertical};
@@ -94,18 +94,16 @@ fn flush_pending_hchar_run(nest: &mut ModeNest, stores: &mut Universe, insert_hy
     list.push_reconstituted(boundary, rechar_node(pending.current), disc, None);
 }
 
-pub(super) fn execute_hmode_material<S, R>(
+pub(super) fn execute_hmode_material<S>(
     context: TracedTokenWord,
     primitive: UnexpandablePrimitive,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     match primitive {
         UnexpandablePrimitive::Char => {
@@ -206,7 +204,7 @@ where
             }
         }
         UnexpandablePrimitive::Accent => {
-            execute_accent(nest, input, stores, recorder, execution, context)?;
+            execute_accent(nest, input, stores, execution, context)?;
         }
         UnexpandablePrimitive::Mark | UnexpandablePrimitive::Marks => {
             flush_pending_hchars(nest, stores)?;
@@ -717,17 +715,15 @@ fn report_missing_character(stores: &mut Universe, font: tex_state::ids::FontId,
         .write_text(PrintSink::TerminalAndLog, &text);
 }
 
-fn execute_accent<S, R>(
+fn execute_accent<S>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     flush_pending_hchars(nest, stores)?;
     let accent_value = scan_i32(input, stores, execution, context)?;
@@ -740,7 +736,7 @@ where
         report_missing_character(stores, accent_font, char::from(accent));
         return Ok(());
     };
-    let base = scan_accent_base(nest, input, stores, recorder, execution, context)?;
+    let base = scan_accent_base(nest, input, stores, execution, context)?;
     let Some(base) = base else {
         nest.current_list_mut().push(Node::Char {
             font: accent_font,
@@ -800,22 +796,18 @@ where
     Ok(())
 }
 
-fn scan_accent_base<S, R>(
+fn scan_accent_base<S>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    recorder: &mut R,
     execution: &mut crate::ExecutionContext<'_, S>,
     context: TracedTokenWord,
 ) -> Result<Option<u8>, ExecError>
 where
     S: InputSource,
-    R: ReadRecorder,
 {
     loop {
-        let Some(traced) =
-            get_x_token_with_recorder_and_context(input, stores, recorder, execution)?
-        else {
+        let Some(traced) = get_x_token_with_context(input, stores, execution)? else {
             return Ok(None);
         };
         let token = tex_expand::semantic_token(traced);
@@ -837,9 +829,7 @@ where
             continue;
         }
         if meaning.is_some_and(is_accent_assignment_meaning) {
-            match dispatch_delivered_token_with_recorder(
-                nest, traced, input, stores, recorder, execution,
-            )? {
+            match dispatch_delivered_token_with_context(nest, traced, input, stores, execution)? {
                 DispatchAction::Continue => continue,
                 DispatchAction::End | DispatchAction::Shipout(_) | DispatchAction::NotConsumed => {
                     unreachable!("TeX82 do_assignments only dispatches ordinary assignments")
