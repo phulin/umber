@@ -749,6 +749,92 @@ fn ordinary_source_scalars_append_no_provenance_records() {
 }
 
 #[test]
+fn source_text_span_preserves_utf8_cursor_and_catcode_seams() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+    stores.set_catcode('@', Catcode::Active);
+    let mut input = InputStack::new(MemoryInput::new("aé@b"));
+    let first = input
+        .next_traced_token(&mut stores)
+        .expect("valid source")
+        .expect("first token");
+    assert_eq!(first.token(), Some(char_token('a', Catcode::Letter)));
+
+    let mut text = Vec::new();
+    assert_eq!(input.append_source_text_span(&mut stores, &mut text), 1);
+    assert_eq!(text, [char_token('é', Catcode::Other)]);
+    assert_eq!(
+        input.current_source_frame().expect("live frame").column(),
+        2
+    );
+
+    assert_eq!(input.append_source_text_span(&mut stores, &mut text), 0);
+    let active = input
+        .next_traced_token(&mut stores)
+        .expect("valid source")
+        .expect("active token");
+    assert_eq!(active.token(), Some(char_token('@', Catcode::Active)));
+
+    stores.set_catcode('b', Catcode::Other);
+    assert_eq!(input.append_source_text_span(&mut stores, &mut text), 1);
+    assert_eq!(text.last(), Some(&char_token('b', Catcode::Other)));
+    assert_eq!(
+        input.current_source_frame().expect("live frame").offset(),
+        5
+    );
+}
+
+#[test]
+fn source_text_span_deopts_for_superscript_notation_and_alignment() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+    let mut input = InputStack::new(MemoryInput::new("a^^41b"));
+    input
+        .next_traced_token(&mut stores)
+        .expect("valid source")
+        .expect("first token");
+
+    let mut text = Vec::new();
+    assert_eq!(input.append_source_text_span(&mut stores, &mut text), 0);
+    let transformed = input
+        .next_traced_token(&mut stores)
+        .expect("valid notation")
+        .expect("transformed token");
+    assert_eq!(transformed.token(), Some(char_token('A', Catcode::Letter)));
+
+    input.begin_alignment();
+    assert_eq!(input.append_source_text_span(&mut stores, &mut text), 0);
+    input.finish_alignment();
+    assert_eq!(input.append_source_text_span(&mut stores, &mut text), 1);
+    assert_eq!(text, [char_token('b', Catcode::Letter)]);
+}
+
+#[test]
+fn source_text_span_summary_resumes_at_the_exact_provenance_seam() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+    let mut input = InputStack::new(MemoryInput::new("aébc\\foo"));
+    input
+        .next_traced_token(&mut stores)
+        .expect("valid source")
+        .expect("first token");
+    let mut text = Vec::new();
+    assert_eq!(input.append_source_text_span(&mut stores, &mut text), 3);
+
+    let summary = input.publication_summary(&mut stores);
+    let mut restored =
+        InputStack::from_summary(&summary, |_, _, _| Ok::<_, ()>(MemoryInput::new("")))
+            .expect("source summary restores");
+    assert_eq!(restored.summary(), summary);
+    let control = restored
+        .next_traced_token(&mut stores)
+        .expect("valid resumed source")
+        .expect("control token");
+    assert_eq!(control.token(), Some(cs_token(&mut stores, "foo")));
+    assert_source_origin(&stores, control.origin(), 5, 1, 4);
+}
+
+#[test]
 fn physical_byte_coordinates_preserve_crlf_trailing_spaces_and_utf8() {
     let mut stores = Universe::new();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);

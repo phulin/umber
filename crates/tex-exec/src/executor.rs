@@ -352,6 +352,15 @@ where
                 }
                 continue;
             }
+            if input.append_source_text_span(stores, &mut macro_text) > 0 {
+                stats.delivered_tokens += macro_text.len();
+                stats.source_text_span_tokens += macro_text.len();
+                for token in macro_text.drain(..) {
+                    let appended = assignments::try_append_character(nest, token, stores)?;
+                    debug_assert!(appended);
+                }
+                continue;
+            }
         }
 
         let before_mode = nest.current_mode();

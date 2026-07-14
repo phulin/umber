@@ -104,7 +104,7 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
     if opts.profiling_stats {
         let stats = input.expansion_stats();
         eprintln!(
-            "EXPANSION_STATS token_frame_steps={} provenance_resolutions={} character_tokens={} character_fraction={:.6} meaning_lookups={} meaning_cache_hits={} meaning_cache_misses={} literal_spans={} literal_tokens={} mean_literal_run={:.6} segmentation_cache_hits={} segmentation_cache_misses={} builder_appends={}",
+            "EXPANSION_STATS token_frame_steps={} provenance_resolutions={} character_tokens={} character_fraction={:.6} meaning_lookups={} meaning_cache_hits={} meaning_cache_misses={} literal_spans={} literal_tokens={} mean_literal_run={:.6} segmentation_cache_hits={} segmentation_cache_misses={} builder_appends={} source_text_span_attempts={} source_text_spans={} source_text_tokens={} mean_source_text_run={:.6}",
             stats.token_frame_steps,
             stats.provenance_resolutions,
             stats.character_tokens,
@@ -118,6 +118,10 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
             stats.segmentation_cache_hits,
             stats.segmentation_cache_misses,
             stats.builder_appends,
+            stats.source_text_span_attempts,
+            stats.source_text_spans,
+            stats.source_text_tokens,
+            stats.mean_source_text_run(),
         );
         eprintln!(
             "EXPANSION_TIMERS_NS frame_step={} frame_step_samples={} provenance={} provenance_samples={} classification_meaning={} classification_meaning_samples={} builder_append={} builder_append_samples={} attributed_total={}",

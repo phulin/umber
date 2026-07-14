@@ -262,6 +262,16 @@ supply.
   more than 5%. Flat source records remain only as degraded compatibility for
   explicitly unregistered legacy/test origins; production traced inputs do not
   emit them.
+  Horizontal main control may consume a physical-source run directly only
+  when every already-normalized scalar currently has catcode `Letter` or
+  `Other` and its ordinary lexer delivery would use a direct source origin.
+  The run updates the canonical byte cursor, scalar column, and N/M/S state
+  exactly, but does not pre-tokenize future input. It stops before `^^`,
+  whitespace/endlines, control sequences, active or structural characters,
+  synthetic/degraded origins, pending tokens, alignments, tracing, and source
+  transitions. Because accepted character execution cannot mutate catcodes,
+  the next lookup still observes all intervening assignments. Snapshot and
+  diagnostic seams therefore remain the ordinary source-frame cursor.
   Diagnostic resolution dispatches all forms
   through the live source map and computes physical line/column data lazily,
   so frame pop does not lose source text and aggregate rollback cannot alias

@@ -255,7 +255,7 @@ fn print_summary(options: &Options, output: &RunOutput, elapsed: Duration) {
     );
     #[cfg(feature = "profiling-stats")]
     println!(
-        "gentle-profile expansion: token_frame_steps={} provenance_resolutions={} character_tokens={} character_fraction={:.6} meaning_lookups={} meaning_cache_hits={} meaning_cache_misses={} literal_spans={} literal_tokens={} mean_literal_run={:.6} segmentation_cache_hits={} segmentation_cache_misses={} builder_appends={}",
+        "gentle-profile expansion: token_frame_steps={} provenance_resolutions={} character_tokens={} character_fraction={:.6} meaning_lookups={} meaning_cache_hits={} meaning_cache_misses={} literal_spans={} literal_tokens={} mean_literal_run={:.6} segmentation_cache_hits={} segmentation_cache_misses={} builder_appends={} source_text_span_attempts={} source_text_spans={} source_text_tokens={} mean_source_text_run={:.6}",
         output.expansion_stats.token_frame_steps,
         output.expansion_stats.provenance_resolutions,
         output.expansion_stats.character_tokens,
@@ -269,6 +269,10 @@ fn print_summary(options: &Options, output: &RunOutput, elapsed: Duration) {
         output.expansion_stats.segmentation_cache_hits,
         output.expansion_stats.segmentation_cache_misses,
         output.expansion_stats.builder_appends,
+        output.expansion_stats.source_text_span_attempts,
+        output.expansion_stats.source_text_spans,
+        output.expansion_stats.source_text_tokens,
+        output.expansion_stats.mean_source_text_run(),
     );
     #[cfg(feature = "profiling-stats")]
     println!(

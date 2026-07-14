@@ -14,6 +14,8 @@ pub struct ExecutionStats {
     pub delivered_tokens: usize,
     /// Ordinary macro-body characters delivered through the batched main path.
     pub macro_text_span_tokens: usize,
+    /// Ordinary physical-source characters delivered through the batched path.
+    pub source_text_span_tokens: usize,
     pub shipped_artifacts: Vec<ContentHash>,
     /// Precompiled DVI pages aligned with `shipped_artifacts`.
     pub dvi_pages: Vec<DviPagePlan>,

@@ -644,6 +644,9 @@ pub struct ExpansionStats {
     pub segmentation_cache_hits: u64,
     pub segmentation_cache_misses: u64,
     pub builder_appends: u64,
+    pub source_text_span_attempts: u64,
+    pub source_text_spans: u64,
+    pub source_text_tokens: u64,
     pub meaning_cache_hits: u64,
     pub meaning_cache_misses: u64,
     pub frame_step_nanos: u64,
@@ -690,6 +693,15 @@ impl ExpansionStats {
             0.0
         } else {
             self.literal_tokens as f64 / self.literal_spans as f64
+        }
+    }
+
+    #[must_use]
+    pub fn mean_source_text_run(self) -> f64 {
+        if self.source_text_spans == 0 {
+            0.0
+        } else {
+            self.source_text_tokens as f64 / self.source_text_spans as f64
         }
     }
 }
@@ -1562,6 +1574,84 @@ impl InputStack {
         }
         self.record_literal_span(span.end - span.start, false);
         span.end - span.start
+    }
+
+    /// Appends directly backed physical-source characters that horizontal
+    /// main control can consume without expansion or provenance allocation.
+    ///
+    /// The run is deliberately limited to current-catcode `Letter` and
+    /// `Other` scalars. Every other category remains a seam for the ordinary
+    /// lexer, including superscript notation, active and structural tokens,
+    /// whitespace, synthetic end lines, and degraded source origins.
+    pub fn append_source_text_span(
+        &mut self,
+        stores: &mut impl ExpansionState,
+        tokens_out: &mut Vec<Token>,
+    ) -> usize {
+        if self.has_active_alignment() {
+            return 0;
+        }
+        let Some(frame_index) = self.current_token_frame_index() else {
+            return 0;
+        };
+        let InputFrame::Source(source) = &mut self.frames[frame_index] else {
+            return 0;
+        };
+        #[cfg(feature = "profiling-stats")]
+        {
+            self.expansion_stats.source_text_span_attempts += 1;
+        }
+        ensure_source_registered(source, stores);
+        if !source.frame.pending.is_empty() || source.frame.byte_offset >= source.frame.line.len() {
+            return 0;
+        }
+        let Some(registration) = source.registration else {
+            return 0;
+        };
+
+        let start = tokens_out.len();
+        let mut byte_offset = source.frame.byte_offset;
+        let mut column = source.frame.column;
+        while byte_offset < source.frame.line.len() {
+            let ch = source.frame.line[byte_offset..]
+                .chars()
+                .next()
+                .expect("byte cursor remains at a scalar boundary");
+            let cat = stores.catcode(ch);
+            if !matches!(cat, Catcode::Letter | Catcode::Other) {
+                break;
+            }
+            let next = byte_offset + ch.len_utf8();
+            let physical_start = source.frame.physical_line_start + byte_offset;
+            let physical_end = source.frame.physical_line_start + next;
+            let (Ok(physical_start), Ok(physical_end)) =
+                (u64::try_from(physical_start), u64::try_from(physical_end))
+            else {
+                break;
+            };
+            if registration
+                .direct_origin(physical_start, physical_end)
+                .is_none()
+            {
+                break;
+            }
+            tokens_out.push(Token::Char { ch, cat });
+            byte_offset = next;
+            column += 1;
+        }
+        let appended = tokens_out.len() - start;
+        if appended == 0 {
+            return 0;
+        }
+        source.frame.byte_offset = byte_offset;
+        source.frame.column = column;
+        source.frame.state = LexerState::MidLine;
+        #[cfg(feature = "profiling-stats")]
+        {
+            self.expansion_stats.source_text_spans += 1;
+            self.expansion_stats.source_text_tokens += u64::try_from(appended).unwrap_or(u64::MAX);
+        }
+        appended
     }
 
     fn take_macro_literal_span(

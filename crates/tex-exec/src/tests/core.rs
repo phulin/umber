@@ -179,20 +179,22 @@ fn successful_execution_publishes_the_exact_final_input_cursor() {
 
 #[test]
 fn virtualized_execution_trace_is_opt_in_and_semantically_neutral() {
-    fn run(tracing: bool) -> Universe {
+    fn run(tracing: bool) -> (Universe, ExecutionStats) {
         let mut stores = support::stores_with_fonts();
         stores.world_mut().set_execution_tracing(tracing);
         let mut input = InputStack::new(MemoryInput::new(
-            "\\font\\f=cmr10 \\f \\def\\x{office-A}\\x\\par \\setbox0=\\hbox{\\x}",
+            "\\font\\f=cmr10 \\f directtext \\def\\x{office-A}\\x\\par \\setbox0=\\hbox{\\x}",
         ));
-        Executor::new()
+        let stats = Executor::new()
             .run(&mut input, &mut stores)
             .expect("trace comparison source executes");
-        stores
+        (stores, stats)
     }
 
-    let mut ordinary = run(false);
-    let mut traced = run(true);
+    let (mut ordinary, ordinary_stats) = run(false);
+    let (mut traced, traced_stats) = run(true);
+    assert!(ordinary_stats.source_text_span_tokens > 0);
+    assert_eq!(traced_stats.source_text_span_tokens, 0);
     assert!(ordinary.world().execution_trace().is_empty());
     assert!(!traced.world().execution_trace().is_empty());
     assert!(
@@ -581,6 +583,20 @@ fn horizontal_main_control_batches_inactive_alignment_macro_text() {
 
     assert_eq!(stats.macro_text_span_tokens, 8);
     assert!(stats.delivered_tokens >= stats.macro_text_span_tokens);
+}
+
+#[test]
+fn horizontal_main_control_batches_direct_physical_source_text() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("abcdef"));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("source text executes");
+
+    assert_eq!(stats.source_text_span_tokens, 5);
+    assert!(stats.delivered_tokens >= 6);
 }
 
 #[test]

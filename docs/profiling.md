@@ -102,6 +102,25 @@ invalidation through a small exact journal-owned signal, materially improves
 cache reuse, and shows no meaningful throughput regression; the cache itself
 remains justified by the corrected 52.8% guarded-site hit rate.
 
+## Physical-source text-run evidence
+
+Horizontal main control now has a guarded physical-source path alongside the
+existing immutable macro-replay span path. It accepts only directly backed
+`Letter` and `Other` scalars under their current catcodes; all lexer-semantic,
+provenance, tracing, alignment, and source-frame boundaries remain scalar.
+A corrected 200-iteration Gentle run produced the pinned 97 pages and 263,424
+DVI bytes, with 20,436 accepted runs containing 89,522 tokens (4.381 tokens per
+run) from 48,407 source-path probes, a 42.2% accepted-run rate.
+
+The same conditioned `BOOB` plus five `BOOBOBBO` comparison was throughput
+flat across 22 ten-iteration samples per binary. The pre-change baseline mean
+and median were 112.247 and 111.843 ms/run; the source-run candidate measured
+112.263 and 112.003 ms/run, a -0.014% mean change. The path is retained as an
+exact, localized reduction in per-token expansion delivery rather than a
+claimed end-to-end speedup. Focused tests cover dynamic catcode and UTF-8
+cursors, `^^` and alignment deoptimization, tracing, summary restoration, and
+the precise provenance seam; strict Gentle remains byte-identical.
+
 ## Analyze a capture
 
 Use the repository analyzer for a repeatable text report instead of manually
