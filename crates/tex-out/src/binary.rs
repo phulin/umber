@@ -7,7 +7,7 @@ use std::fmt;
 use tex_arith::Scaled;
 
 const MAGIC: &[u8; 4] = b"UMPG";
-const VERSION: u8 = 11;
+const VERSION: u8 = 12;
 
 mod wire {
     pub mod node {
@@ -1937,9 +1937,16 @@ impl Reader<'_> {
             wire::node::LIG => {
                 self.u32()?;
                 self.u32()?;
-                self.u32()?;
-                self.u32()?;
                 self.scaled()?;
+                let count = self.u32()? as usize;
+                if count == 0 || count > 63 {
+                    return Err(ParseError::Validation(
+                        crate::ArtifactValidationError::InvalidLigatureSourceLength { count },
+                    ));
+                }
+                for _ in 0..count {
+                    self.u32()?;
+                }
                 None
             }
             wire::node::KERN => {

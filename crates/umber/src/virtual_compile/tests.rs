@@ -251,7 +251,7 @@ fn requested_html_and_dvi_share_one_committed_compile() {
             b"\\font\\tenrm=cmr10\\relax \\tenrm \\shipout\\hbox{A}\\end".to_vec(),
         )
         .expect("main source");
-    let woff2 = b"deterministic wasm font".to_vec();
+    let woff2 = include_bytes!("../../../umber-wasm/assets/cmu-serif-500-roman.woff2").to_vec();
     let mut encoding = vec![None; 256];
     encoding[usize::from(b'A')] = Some("A".to_owned());
     session

@@ -316,7 +316,12 @@ impl NodeStorage {
         match node {
             Node::Char { font, ch } => NodeWord::new(0, (*ch as u64) | ((font.raw() as u64) << 21)),
             Node::Lig { font, ch, orig } => {
-                push_sidecar(1, &mut self.ligatures, (*font, *ch, orig.clone()))
+                // Character nodes store only the dense font slot in their packed
+                // word. Canonicalize ligature sidecars the same way so a live
+                // epoch-bearing handle and a packed character handle cannot look
+                // like two distinct resources with the same public font id.
+                let font = crate::ids::FontId::new(font.raw());
+                push_sidecar(1, &mut self.ligatures, (font, *ch, orig.clone()))
             }
             Node::Kern { amount, kind } => NodeWord::new(
                 2,

@@ -249,6 +249,34 @@ fn every_inline_kind_uses_only_one_word_and_no_sidecar() {
 }
 
 #[test]
+fn ligature_and_character_fonts_share_the_same_dense_identity() {
+    let tagged = FontId::from_identity(crate::identity::HandleIdentity::reserved(
+        13,
+        core::num::NonZeroU32::new(2).expect("nonzero generation"),
+        7,
+    ));
+    let mut arena = NodeArena::new();
+    let list = arena.append(&[
+        Node::Char {
+            font: tagged,
+            ch: 'A',
+        },
+        Node::Lig {
+            font: tagged,
+            ch: 'B',
+            orig: vec!['A', 'A'],
+        },
+    ]);
+    let nodes = arena.get_epoch(list).into_iter().collect::<Vec<_>>();
+
+    assert!(matches!(
+        nodes.as_slice(),
+        [NodeRef::Char { font: char_font, .. }, NodeRef::Lig { font: lig_font, .. }]
+            if char_font == lig_font
+    ));
+}
+
+#[test]
 fn byte_char_runs_stop_at_fonts_unicode_ligatures_and_other_nodes() {
     let mut arena = NodeArena::new();
     let f1 = FontId::testing_new(1);

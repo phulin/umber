@@ -96,6 +96,27 @@ fn streamed_v10_plans_match_owned_compilation() {
 }
 
 #[test]
+fn streamed_schema_12_ligature_source_keeps_decoder_aligned() {
+    let mut page = glyph_page(13);
+    page.testing_mut().root = hlist(
+        300,
+        100,
+        30,
+        vec![PageNode::Lig {
+            font_id: 3,
+            ch: b'A' as u32,
+            source: vec![b'f' as u32, b'f' as u32, b'i' as u32],
+            width: sp(50),
+        }],
+    );
+    let owned = DviPagePlan::compile(&page).expect("compile owned ligature page");
+    let bytes = page.to_bytes().expect("serialize schema-12 ligature page");
+    let streamed = DviPagePlan::compile_v10(&bytes).expect("compile streamed ligature page");
+
+    assert_eq!(streamed, owned);
+}
+
+#[test]
 fn incremental_event_plan_matches_owned_compilation() {
     let page = glyph_page(17);
     let (root, vertical) = match &page.root {

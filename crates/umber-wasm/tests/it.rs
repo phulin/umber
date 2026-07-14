@@ -102,6 +102,10 @@ async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
         )
         .expect("add source");
     let complete = session.compile_attempt().expect("HTML compile");
+    if string_field(complete.as_ref(), "kind") != "complete" {
+        let diagnostic = field(complete.as_ref(), "diagnostic");
+        panic!("{}", string_field(&diagnostic, "message"));
+    }
     let output = field(complete.as_ref(), "output");
     let html = field(&output, "html");
     assert!(html.is_instance_of::<Uint8Array>());

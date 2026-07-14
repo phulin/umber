@@ -462,14 +462,41 @@ fn install_test_web_font(directory: &std::path::Path, tfm: &std::path::Path, nam
     .expect("write license");
     let mapping = (0u16..=255)
         .map(|code| {
-            let mapped = if code == 45 {
-                "‐".to_owned()
-            } else if (32..=126).contains(&code) {
-                char::from_u32(u32::from(code)).expect("ASCII").to_string()
-            } else {
-                char::from_u32(0xe000 + u32::from(code))
-                    .expect("private-use mapping")
-                    .to_string()
+            let mapped = match code {
+                0 => "Γ".to_owned(),
+                1 => "Δ".to_owned(),
+                2 => "Θ".to_owned(),
+                3 => "Λ".to_owned(),
+                4 => "Ξ".to_owned(),
+                5 => "Π".to_owned(),
+                6 => "Σ".to_owned(),
+                7 => "Υ".to_owned(),
+                8 => "Φ".to_owned(),
+                9 => "Ψ".to_owned(),
+                10 => "Ω".to_owned(),
+                16 => "ı".to_owned(),
+                17 => "ȷ".to_owned(),
+                18 => "`".to_owned(),
+                19 => "´".to_owned(),
+                20 => "ˇ".to_owned(),
+                21 => "˘".to_owned(),
+                22 => "¯".to_owned(),
+                23 => "˚".to_owned(),
+                24 => "¸".to_owned(),
+                25 => "ß".to_owned(),
+                26 => "æ".to_owned(),
+                27 => "œ".to_owned(),
+                28 => "ø".to_owned(),
+                29 => "Æ".to_owned(),
+                30 => "Œ".to_owned(),
+                31 => "Ø".to_owned(),
+                45 => "‐".to_owned(),
+                32..=126 => char::from_u32(u32::from(code)).expect("ASCII").to_string(),
+                127 => "¨".to_owned(),
+                // This corpus gate compares exact coordinates, not glyph artwork.
+                // The single bundled Roman face stands in for math faces here, so
+                // retain a cmap-backed placeholder for codes outside its OT1 map.
+                _ => "A".to_owned(),
             };
             format!("{code:02x}\t{mapped}")
         })
