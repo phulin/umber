@@ -42,5 +42,14 @@ validation, and conditional adoption design. Do not create a separate
 the restart-on-fetch driver protocol, hosted TeX Live manifest, cache and
 resource limits, binding API, and MVP verification boundary.
 
+`wasm_resource_acquisition.md` specifies the long-term typed, batched resource
+state machine above the file-only WASM MVP, including concurrent frontend
+acquisition, dependency prefetch, caching, finalization resumption, and native
+parity.
+
+`web_font_bundles.md` specifies deterministic TeX-package web-font ingestion,
+the versioned catalog and identity model, render-versus-semantic code mapping,
+licensing, source-format policy, and bundle-generation rollout.
+
 `etex_primitives.md` is the extension-only e-TeX V2 primitive checklist and
 maps each family to its short-reference-manual contract and conformance gate.
