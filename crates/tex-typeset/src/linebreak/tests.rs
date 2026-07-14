@@ -301,6 +301,7 @@ fn equal_demerits_prefer_later_route_in_same_line_and_fitness_class() {
     let candidate = |position, fitness| Candidate {
         position,
         width_position: position,
+        start_width: Widths::zero(),
         penalty: 0,
         line: 2,
         fitness,
@@ -317,13 +318,13 @@ fn equal_demerits_prefer_later_route_in_same_line_and_fitness_class() {
         candidate(6, Fitness::Decent),
         candidate(6, Fitness::Loose),
     ];
-    let mut best = BestRoutes::default();
+    let mut active = Vec::new();
 
-    best.record(&candidates, 1);
-    best.record(&candidates, 2);
-    best.record(&candidates, 3);
+    record_best_route(&mut active, 0, &candidates, 1);
+    record_best_route(&mut active, 0, &candidates, 2);
+    record_best_route(&mut active, 0, &candidates, 3);
 
-    assert_eq!(best.iter().collect::<Vec<_>>(), vec![2, 3]);
+    assert_eq!(active, vec![2, 3]);
 }
 
 #[test]
@@ -394,6 +395,7 @@ fn easy_line_active_nodes_accumulate_in_source_order() {
     let candidate = |position| Candidate {
         position,
         width_position: position,
+        start_width: Widths::zero(),
         penalty: 0,
         line: 9,
         fitness: Fitness::Decent,
@@ -949,6 +951,7 @@ fn final_hyphen_demerits_rank_terminal_routes_before_candidate_pruning() {
     let active = |path_demerits, hyphenated| Candidate {
         position: 0,
         width_position: 0,
+        start_width: Widths::zero(),
         penalty: 0,
         line: 9,
         fitness: Fitness::Decent,
@@ -965,6 +968,9 @@ fn final_hyphen_demerits_rank_terminal_routes_before_candidate_pruning() {
         penalty: EJECT_PENALTY,
         hyphenated: false,
         add_width: Widths::zero(),
+        line_width: Widths::zero(),
+        next_position: 1,
+        next_width: Widths::zero(),
     };
     let unhyphenated = active(12_886, false);
     let hyphenated = active(10_566, true);

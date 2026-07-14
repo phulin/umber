@@ -37,7 +37,7 @@ impl Widths {
         widths
     }
 
-    fn sub(self, other: Self) -> Self {
+    pub(super) fn sub(self, other: Self) -> Self {
         let mut out = Self::zero();
         out.natural = sub_scaled(self.natural, other.natural);
         for order in 0..4 {
@@ -78,27 +78,6 @@ impl Widths {
     }
 }
 
-pub(super) struct PrefixWidths {
-    widths: Vec<Widths>,
-}
-
-impl PrefixWidths {
-    pub(super) fn new<S: TypesetState>(state: &S, nodes: &[Node]) -> Self {
-        let mut widths = Vec::with_capacity(nodes.len() + 1);
-        let mut current = Widths::zero();
-        widths.push(current);
-        for node in nodes {
-            current.add_assign(node_width(state, node));
-            widths.push(current);
-        }
-        Self { widths }
-    }
-
-    pub(super) fn between(&self, start: usize, end: usize) -> Widths {
-        self.widths[end].sub(self.widths[start])
-    }
-}
-
 pub(super) fn line_widths_view<S: TypesetState>(
     state: &S,
     nodes: NodeList<'_>,
@@ -130,7 +109,7 @@ pub(super) fn line_widths_view<S: TypesetState>(
     widths
 }
 
-fn node_width<S: TypesetState>(state: &S, node: &Node) -> Widths {
+pub(super) fn node_width<S: TypesetState>(state: &S, node: &Node) -> Widths {
     let mut widths = Widths::zero();
     match node {
         Node::Char { font, ch } | Node::Lig { font, ch, .. } => {

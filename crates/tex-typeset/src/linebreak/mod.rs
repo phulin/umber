@@ -245,7 +245,7 @@ mod widths;
 
 pub use post::{post_line_break, post_line_break_owned};
 
-use widths::{PrefixWidths, Widths, line_badness, line_widths_view};
+use widths::{Widths, line_badness, line_widths_view, node_width};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Fitness {
@@ -255,18 +255,11 @@ enum Fitness {
     VeryLoose = 3,
 }
 
-impl Fitness {
-    const COUNT: usize = 4;
-
-    const fn index(self) -> usize {
-        self as usize
-    }
-}
-
 #[derive(Clone, Debug)]
 struct Candidate {
     position: usize,
     width_position: usize,
+    start_width: Widths,
     penalty: i32,
     line: usize,
     fitness: Fitness,
@@ -285,52 +278,9 @@ struct Breakpoint {
     penalty: i32,
     hyphenated: bool,
     add_width: Widths,
-}
-
-#[derive(Default)]
-struct BestRoutes {
-    slots: Vec<Option<usize>>,
-    touched: Vec<usize>,
-}
-
-impl BestRoutes {
-    fn clear(&mut self) {
-        for &slot in &self.touched {
-            self.slots[slot] = None;
-        }
-        self.touched.clear();
-    }
-
-    fn is_empty(&self) -> bool {
-        self.touched.is_empty()
-    }
-
-    fn record(&mut self, candidates: &[Candidate], candidate_id: usize) {
-        let candidate = &candidates[candidate_id];
-        let slot = candidate.line * Fitness::COUNT + candidate.fitness.index();
-        if self.slots.len() <= slot {
-            self.slots.resize(slot + 1, None);
-        }
-        match self.slots[slot] {
-            Some(current) if candidate.path_demerits <= candidates[current].path_demerits => {
-                // TeX82 uses `d <= minimal_demerits[fit_class]`, so an equal
-                // later route replaces the earlier route without changing
-                // this class's active-list visit order.
-                self.slots[slot] = Some(candidate_id);
-            }
-            None => {
-                self.slots[slot] = Some(candidate_id);
-                self.touched.push(slot);
-            }
-            Some(_) => {}
-        }
-    }
-
-    fn iter(&self) -> impl Iterator<Item = usize> + '_ {
-        self.touched
-            .iter()
-            .map(|&slot| self.slots[slot].expect("touched route slot is populated"))
-    }
+    line_width: Widths,
+    next_position: usize,
+    next_width: Widths,
 }
 
 fn run_pass<S: TypesetState>(
@@ -341,21 +291,12 @@ fn run_pass<S: TypesetState>(
     emergency: bool,
     final_pass: bool,
 ) -> Option<BreakPlan> {
-    let prefix = PrefixWidths::new(state, nodes);
     let mut background = Widths::from_glue(params.left_skip);
     background.add_assign(Widths::from_glue(params.right_skip));
-    let breakpoints = legal_breakpoints(state, nodes, params);
-    if breakpoints.is_empty() {
-        return Some(BreakPlan {
-            breaks: Vec::new(),
-            demerits: 0,
-            last_line_fill: None,
-        });
-    }
-
     let mut candidates = vec![Candidate {
         position: 0,
         width_position: 0,
+        start_width: Widths::zero(),
         penalty: 0,
         line: 0,
         fitness: Fitness::Decent,
@@ -367,27 +308,26 @@ fn run_pass<S: TypesetState>(
         line_glue: Scaled::from_raw(0),
     }];
     let mut active = vec![0usize];
-    let mut next = Vec::new();
-    let mut best_new = BestRoutes::default();
-    let mut finals = Vec::new();
     let last_line_fit = LastLineFit::new(params, background);
     let easy_line = tex_easy_line(params);
 
-    for bp in breakpoints {
-        next.clear();
-        best_new.clear();
+    for bp in LegalBreakpoints::new(state, nodes, params) {
+        let prior_active_len = active.len();
+        let mut survivor_count = 0;
         let forced = bp.penalty <= EJECT_PENALTY;
-        for (active_index, &active_id) in active.iter().enumerate() {
+        for active_index in 0..prior_active_len {
+            let active_id = active[active_index];
             let active_candidate = &candidates[active_id];
             // Material discarded after the active break can extend beyond a
             // later syntactic breakpoint (for example, through consecutive
             // penalties). Such a breakpoint is no longer reachable from this
             // active node and must not create a backwards break chain.
             if active_candidate.width_position > bp.width_position {
-                next.push(active_id);
+                active[survivor_count] = active_id;
+                survivor_count += 1;
                 continue;
             }
-            let mut widths = prefix.between(active_candidate.width_position, bp.width_position);
+            let mut widths = bp.line_width.sub(active_candidate.start_width);
             widths.add_assign(background);
             widths.add_assign(bp.add_width);
             let target = params.shape.dimensions(active_candidate.line + 1).width;
@@ -415,9 +355,9 @@ fn run_pass<S: TypesetState>(
                     )
                 });
             let artificial = final_pass
-                && next.is_empty()
-                && best_new.is_empty()
-                && active_index + 1 == active.len()
+                && survivor_count == 0
+                && active.len() == prior_active_len
+                && active_index + 1 == prior_active_len
                 && (b > INF_BAD || forced);
             let deactivates = b > INF_BAD || forced;
             let feasible = bp.penalty < INF_PENALTY && (artificial || b <= tolerance);
@@ -439,13 +379,8 @@ fn run_pass<S: TypesetState>(
                 let id = candidates.len();
                 candidates.push(Candidate {
                     position: bp.position,
-                    width_position: if bp.hyphenated
-                        && discretionary_post_is_nonempty(state, nodes, bp.position)
-                    {
-                        bp.position
-                    } else {
-                        next_width_position(nodes, bp.position)
-                    },
+                    width_position: bp.next_position,
+                    start_width: bp.next_width,
                     penalty: bp.penalty,
                     line: active_candidate.line + 1,
                     fitness,
@@ -463,30 +398,52 @@ fn run_pass<S: TypesetState>(
                         |(_, _, adjustment)| adjustment,
                     ),
                 });
-                best_new.record(&candidates, id);
+                record_best_route(&mut active, prior_active_len, &candidates, id);
             }
             if !deactivates {
-                next.push(active_id);
+                active[survivor_count] = active_id;
+                survivor_count += 1;
             }
         }
-        if forced && bp.position >= nodes.len() {
-            finals.extend(best_new.iter());
-        }
-        // BestRoutes preserves the first visit position for each class while
-        // replacing equal-demerit routes in place. Re-establish TeX's active
-        // list order after extending the reusable frontier buffer.
-        next.extend(best_new.iter());
-        sort_active_candidates(&mut next, &candidates, params, easy_line);
-        std::mem::swap(&mut active, &mut next);
+        let winner_count = active.len() - prior_active_len;
+        active.copy_within(
+            prior_active_len..prior_active_len + winner_count,
+            survivor_count,
+        );
+        active.truncate(survivor_count + winner_count);
+        sort_active_candidates(&mut active, &candidates, params, easy_line);
     }
 
-    let chosen = choose_final(&candidates, &finals, params.looseness)?;
-    let best = *finals.iter().min_by_key(|&&id| candidates[id].demerits)?;
+    let chosen = choose_final(&candidates, &active, params.looseness)?;
+    let best = *active.iter().min_by_key(|&&id| candidates[id].demerits)?;
     let actual_looseness = candidates[chosen].line as i32 - candidates[best].line as i32;
     if !final_pass && actual_looseness != params.looseness {
         return None;
     }
     Some(reconstruct(nodes, &candidates, chosen, last_line_fit))
+}
+
+fn record_best_route(
+    active: &mut Vec<usize>,
+    winner_start: usize,
+    candidates: &[Candidate],
+    candidate_id: usize,
+) {
+    let candidate = &candidates[candidate_id];
+    if let Some(slot) = active[winner_start..].iter().position(|&current_id| {
+        let current = &candidates[current_id];
+        current.line == candidate.line && current.fitness == candidate.fitness
+    }) {
+        let slot = winner_start + slot;
+        let current = active[slot];
+        if candidate.path_demerits <= candidates[current].path_demerits {
+            // TeX82 uses `d <= minimal_demerits[fit_class]`, so an equal
+            // later route replaces the earlier route in its first-visit slot.
+            active[slot] = candidate_id;
+        }
+    } else {
+        active.push(candidate_id);
+    }
 }
 
 fn tex_easy_line(params: &LineBreakParams) -> usize {
@@ -729,85 +686,160 @@ fn discretionary_penalty(pre_is_empty: bool, params: &LineBreakParams) -> i32 {
     }
 }
 
+struct LegalBreakpoints<'a, S> {
+    state: &'a S,
+    nodes: &'a [Node],
+    params: &'a LineBreakParams,
+    index: usize,
+    prefix: Widths,
+    auto_breaking: bool,
+    last_position: Option<usize>,
+    terminal_emitted: bool,
+}
+
+impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
+    fn new(state: &'a S, nodes: &'a [Node], params: &'a LineBreakParams) -> Self {
+        Self {
+            state,
+            nodes,
+            params,
+            index: 0,
+            prefix: Widths::zero(),
+            auto_breaking: true,
+            last_position: None,
+            terminal_emitted: false,
+        }
+    }
+
+    fn breakpoint(
+        &self,
+        position: usize,
+        width_position: usize,
+        penalty: i32,
+        hyphenated: bool,
+        add_width: Widths,
+        line_width: Widths,
+    ) -> Breakpoint {
+        let next_position =
+            if hyphenated && discretionary_post_is_nonempty(self.state, self.nodes, position) {
+                position
+            } else {
+                next_width_position(self.nodes, position)
+            };
+        let mut next_width = line_width;
+        for node in &self.nodes[width_position..next_position] {
+            next_width.add_assign(node_width(self.state, node));
+        }
+        Breakpoint {
+            position,
+            width_position,
+            penalty,
+            hyphenated,
+            add_width,
+            line_width,
+            next_position,
+            next_width,
+        }
+    }
+}
+
+impl<S: TypesetState> Iterator for LegalBreakpoints<'_, S> {
+    type Item = Breakpoint;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.index < self.nodes.len() {
+            let i = self.index;
+            let before = self.prefix;
+            self.prefix
+                .add_assign(node_width(self.state, &self.nodes[i]));
+            self.index += 1;
+
+            let definition = match &self.nodes[i] {
+                Node::Glue { .. }
+                    if self.auto_breaking && i > 0 && !is_discardable(&self.nodes[i - 1]) =>
+                {
+                    Some((i + 1, i, 0, false, Widths::zero(), before))
+                }
+                Node::Kern {
+                    kind: KernKind::Explicit,
+                    ..
+                } if self.auto_breaking
+                    && i + 1 < self.nodes.len()
+                    && matches!(self.nodes[i + 1], Node::Glue { .. }) =>
+                {
+                    Some((i + 1, i + 1, 0, false, Widths::zero(), self.prefix))
+                }
+                Node::Penalty(penalty) if *penalty < INF_PENALTY => {
+                    Some((i + 1, i, *penalty, false, Widths::zero(), before))
+                }
+                Node::Disc { pre, .. } => Some((
+                    i + 1,
+                    i,
+                    discretionary_penalty(self.state.nodes(*pre).is_empty(), self.params),
+                    true,
+                    line_widths_view(
+                        self.state,
+                        self.state.nodes(*pre),
+                        0,
+                        self.state.nodes(*pre).len(),
+                    ),
+                    before,
+                )),
+                Node::MathOff(_) if matches!(self.nodes.get(i + 1), Some(Node::Glue { .. })) => {
+                    self.auto_breaking = true;
+                    Some((i + 1, i + 1, 0, false, Widths::zero(), self.prefix))
+                }
+                Node::MathOn(_) => {
+                    self.auto_breaking = false;
+                    None
+                }
+                Node::MathOff(_) => {
+                    self.auto_breaking = true;
+                    None
+                }
+                _ => None,
+            };
+            if let Some((position, width_position, penalty, hyphenated, add_width, line_width)) =
+                definition
+            {
+                self.last_position = Some(position);
+                return Some(self.breakpoint(
+                    position,
+                    width_position,
+                    penalty,
+                    hyphenated,
+                    add_width,
+                    line_width,
+                ));
+            }
+        }
+
+        if !self.terminal_emitted
+            && self
+                .last_position
+                .is_none_or(|position| position < self.nodes.len())
+        {
+            self.terminal_emitted = true;
+            return Some(self.breakpoint(
+                self.nodes.len(),
+                self.nodes.len(),
+                EJECT_PENALTY,
+                false,
+                Widths::zero(),
+                self.prefix,
+            ));
+        }
+        None
+    }
+}
+
+#[cfg(test)]
 fn legal_breakpoints<S: TypesetState>(
     state: &S,
     nodes: &[Node],
     params: &LineBreakParams,
 ) -> Vec<Breakpoint> {
-    let mut out = Vec::new();
-    let mut auto_breaking = true;
-    for i in 0..nodes.len() {
-        match &nodes[i] {
-            Node::Glue { .. } if auto_breaking && i > 0 && !is_discardable(&nodes[i - 1]) => {
-                out.push(Breakpoint {
-                    position: i + 1,
-                    width_position: i,
-                    penalty: 0,
-                    hyphenated: false,
-                    add_width: Widths::zero(),
-                });
-            }
-            Node::Kern {
-                kind: KernKind::Explicit,
-                ..
-            } if auto_breaking
-                && i + 1 < nodes.len()
-                && matches!(nodes[i + 1], Node::Glue { .. }) =>
-            {
-                out.push(Breakpoint {
-                    position: i + 1,
-                    width_position: i + 1,
-                    penalty: 0,
-                    hyphenated: false,
-                    add_width: Widths::zero(),
-                });
-            }
-            Node::Penalty(penalty) if *penalty < INF_PENALTY => out.push(Breakpoint {
-                position: i + 1,
-                width_position: i,
-                penalty: *penalty,
-                hyphenated: false,
-                add_width: Widths::zero(),
-            }),
-            Node::Disc { pre, .. } => {
-                out.push(Breakpoint {
-                    position: i + 1,
-                    width_position: i,
-                    penalty: discretionary_penalty(state.nodes(*pre).is_empty(), params),
-                    hyphenated: true,
-                    add_width: line_widths_view(
-                        state,
-                        state.nodes(*pre),
-                        0,
-                        state.nodes(*pre).len(),
-                    ),
-                });
-            }
-            Node::MathOff(_) if matches!(nodes.get(i + 1), Some(Node::Glue { .. })) => {
-                out.push(Breakpoint {
-                    position: i + 1,
-                    width_position: i + 1,
-                    penalty: 0,
-                    hyphenated: false,
-                    add_width: Widths::zero(),
-                });
-                auto_breaking = true;
-            }
-            Node::MathOn(_) => auto_breaking = false,
-            Node::MathOff(_) => auto_breaking = true,
-            _ => {}
-        }
-    }
-    if !matches!(out.last(), Some(bp) if bp.position >= nodes.len()) {
-        out.push(Breakpoint {
-            position: nodes.len(),
-            width_position: nodes.len(),
-            penalty: EJECT_PENALTY,
-            hyphenated: false,
-            add_width: Widths::zero(),
-        });
-    }
-    out
+    LegalBreakpoints::new(state, nodes, params).collect()
 }
 
 fn is_discardable(node: &Node) -> bool {
