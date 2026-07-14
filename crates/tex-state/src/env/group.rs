@@ -1,7 +1,24 @@
 use super::{Env, cell_key, checked_aftergroup_start, u32_len};
 use crate::journal::{BoxUndoRec, Entry, JournalPos, Marker, UndoRec};
 use crate::token::Token;
-use ahash::{AHashMap, AHashSet};
+use ahash::AHashMap;
+
+#[derive(Clone, Copy, Debug)]
+struct GlobalCompactionState<T> {
+    first_old: T,
+    has_later_global: bool,
+    refiled: bool,
+}
+
+impl<T> GlobalCompactionState<T> {
+    fn new(first_old: T) -> Self {
+        Self {
+            first_old,
+            has_later_global: false,
+            refiled: false,
+        }
+    }
+}
 
 /// TeX group boundary kind tracked on state-layer group markers.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -355,39 +372,54 @@ impl Env {
     ) {
         let mut globals = Vec::new();
         let mut box_globals = Vec::new();
-        let mut globally_reassigned = AHashSet::new();
-        let mut globally_reassigned_boxes = AHashSet::new();
-        let mut first_old = AHashMap::new();
-        let mut first_box_old = AHashMap::new();
+        let mut cell_states = AHashMap::new();
+        let mut box_states = AHashMap::new();
 
         for index in marker_index + 1..group_end {
             if let Entry::Undo(rec) = self.journal.entry(index) {
-                first_old
+                cell_states
                     .entry(cell_key(rec.cell()))
-                    .or_insert_with(|| rec.old());
+                    .or_insert_with(|| GlobalCompactionState::new(rec.old()));
             } else if let Entry::BoxUndo(id) = self.journal.entry(index) {
                 let rec = self.journal.box_undo(id);
-                first_box_old
+                box_states
                     .entry(rec.index())
-                    .or_insert_with(|| rec.old());
+                    .or_insert_with(|| GlobalCompactionState::new(rec.old()));
             }
         }
 
         for index in (marker_index + 1..group_end).rev() {
             match self.journal.entry(index) {
                 Entry::Undo(rec) if rec.cell().is_global() => {
-                    globally_reassigned.insert(cell_key(rec.cell()));
+                    cell_states
+                        .get_mut(&cell_key(rec.cell()))
+                        .expect("journal cell was indexed before group compaction")
+                        .has_later_global = true;
                     globals.push(rec);
                 }
-                Entry::Undo(rec) if globally_reassigned.contains(&cell_key(rec.cell())) => {}
-                Entry::Undo(rec) => self.restore_raw(rec.cell(), rec.old()),
+                Entry::Undo(rec) => {
+                    let state = cell_states
+                        .get(&cell_key(rec.cell()))
+                        .expect("journal cell was indexed before group compaction");
+                    if !state.has_later_global {
+                        self.restore_raw(rec.cell(), rec.old());
+                    }
+                }
                 Entry::BoxUndo(id) => {
                     let rec = self.journal.box_undo(id);
                     if rec.is_global() {
-                        globally_reassigned_boxes.insert(rec.index());
+                        box_states
+                            .get_mut(&rec.index())
+                            .expect("box undo was indexed before group compaction")
+                            .has_later_global = true;
                         box_globals.push(rec);
-                    } else if !globally_reassigned_boxes.contains(&rec.index()) {
-                        self.boxes.restore(rec.index(), rec.old());
+                    } else {
+                        let state = box_states
+                            .get(&rec.index())
+                            .expect("box undo was indexed before group compaction");
+                        if !state.has_later_global {
+                            self.boxes.restore(rec.index(), rec.old());
+                        }
                     }
                 }
                 Entry::Marker(Marker::Checkpoint(_)) => {}
@@ -399,25 +431,31 @@ impl Env {
 
         self.journal.truncate_to(JournalPos::from_raw(marker_index));
         self.journal.truncate_box_undos(box_undo_len);
-        let mut refiled_globals = AHashSet::new();
         for rec in globals.into_iter().rev() {
             self.restore_raw(rec.cell(), rec.new_value());
             let key = cell_key(rec.cell());
-            let old = if refiled_globals.insert(key) {
-                first_old[&key]
-            } else {
+            let state = cell_states
+                .get_mut(&key)
+                .expect("journal cell was indexed before group compaction");
+            let old = if state.refiled {
                 rec.old()
+            } else {
+                state.refiled = true;
+                state.first_old
             };
             self.journal
                 .push_undo(UndoRec::new(rec.cell(), old, rec.new_value()));
         }
-        let mut refiled_box_globals = AHashSet::new();
         for rec in box_globals.into_iter().rev() {
             self.boxes.restore(rec.index(), rec.new_value());
-            let old = if refiled_box_globals.insert(rec.index()) {
-                first_box_old[&rec.index()]
-            } else {
+            let state = box_states
+                .get_mut(&rec.index())
+                .expect("box undo was indexed before group compaction");
+            let old = if state.refiled {
                 rec.old()
+            } else {
+                state.refiled = true;
+                state.first_old
             };
             self.journal
                 .push_box_undo(BoxUndoRec::new(rec.index(), true, old, rec.new_value()));
