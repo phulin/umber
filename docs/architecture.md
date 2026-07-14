@@ -1285,7 +1285,7 @@ degenerate case (run once, commit every page, never look back).
   instead of re-walking both old and final content. Rollback clears this cache
   and reconstructs missing baselines from journal old words; it is not part of
   the snapshot or semantic state tuple.
-  Checkpoint-hash schema version 4 extends that rule to non-journal state with
+  Checkpoint-hash schema version 5 extends that rule to non-journal state with
   domain-separated component projections keyed by immutable roots or cheap
   semantic cursors. Stable code tables, hyphenation, stream buffers, input
   roots, page subroots, and mode roots reuse their canonical fingerprints.

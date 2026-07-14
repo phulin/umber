@@ -23,6 +23,7 @@ const HYPHENATION_DOMAIN: u64 = 0x6879_7068_656e_6174;
 const PREPARED_MAG_DOMAIN: u64 = 0x7072_6570_5f6d_6167;
 const FONT_SELECTION_DOMAIN: u64 = 0x666f_6e74_5f73_656c;
 const CELL_VALUE_DOMAIN: u64 = 0x6365_6c6c_7661_6c75;
+const CELL_ORDER_DOMAIN: u64 = 0x6365_6c6c_5f6f_7264;
 #[cfg(test)]
 const NODE_LIST_MAX_ITEMS: usize = 1_000_000;
 const FONT_DIMEN_BITS: u32 = 15;
@@ -40,7 +41,7 @@ pub(super) struct SemanticHashCache {
     hyphenation: Option<CachedProjection<HyphenationSemanticCursor>>,
     last_loaded_font: Option<CachedProjection<FontSelectionCursor>>,
     first_old: Vec<(CellId, usize, u64)>,
-    changed_cells: Vec<CellId>,
+    changed_cells: Vec<(u64, CellId)>,
     #[cfg(test)]
     hyphenation_hash_calls: usize,
 }
@@ -84,6 +85,7 @@ impl SemanticHashCache {
 #[derive(Clone, Debug)]
 struct CachedCellHash {
     key: SemanticCellKey,
+    order: u64,
     value_hash: u64,
 }
 
@@ -425,34 +427,43 @@ impl Stores {
             match cache.cells.get_mut(&cell) {
                 Some(cached) => cached.value_hash = current_hash,
                 None => {
+                    let key = self.semantic_cell_key(cell);
                     cache.cells.insert(
                         cell,
                         CachedCellHash {
-                            key: self.semantic_cell_key(cell),
+                            order: self.cell_order(&key),
+                            key,
                             value_hash: current_hash,
                         },
                     );
                 }
             }
             if baseline_hash != current_hash {
-                changed_cells.push(cell);
+                changed_cells.push((cache.cells[&cell].order, cell));
             }
         }
 
+        changed_cells.sort_unstable_by(|(left_order, left), (right_order, right)| {
+            left_order.cmp(right_order).then_with(|| {
+                cache.cells[left]
+                    .key
+                    .cmp(&cache.cells[right].key)
+                    .then_with(|| left.cmp(right))
+            })
+        });
         changed_cells
-            .sort_unstable_by(|left, right| cache.cells[left].key.cmp(&cache.cells[right].key));
-        changed_cells.dedup_by(|right, left| cache.cells[left].key == cache.cells[right].key);
+            .dedup_by(|(_, right), (_, left)| cache.cells[left].key == cache.cells[right].key);
 
         #[cfg(feature = "node-stats")]
         crate::measurement::record_hash_changed_cells(
             changed_cells.len(),
             first_old.capacity() * core::mem::size_of::<(CellId, usize, u64)>()
-                + changed_cells.capacity() * core::mem::size_of::<CellId>(),
+                + changed_cells.capacity() * core::mem::size_of::<(u64, CellId)>(),
         );
 
         hasher.tag(0x10);
         hasher.usize(changed_cells.len());
-        for &cell in &changed_cells {
+        for &(_, cell) in &changed_cells {
             let cached = &cache.cells[&cell];
             self.hash_cell_key(&cached.key, hasher);
             hasher.u64(cached.value_hash);
@@ -497,6 +508,12 @@ impl Stores {
                 index: cell.index(),
             },
         }
+    }
+
+    fn cell_order(&self, key: &SemanticCellKey) -> u64 {
+        let mut hasher = StateHasher::new(CELL_ORDER_DOMAIN);
+        self.hash_cell_key(key, &mut hasher);
+        hasher.finish()
     }
 
     fn hash_cell_key(&self, key: &SemanticCellKey, hasher: &mut StateHasher) {

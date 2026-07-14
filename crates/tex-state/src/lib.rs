@@ -4,9 +4,10 @@
 ///
 /// Version 3 introduced canonical frozen node-list identities and shallow
 /// node-root composition. Version 4 encodes RNG state as canonical numeric
-/// words. Hashes are comparable only when both this version and the named-
-/// boundary schedule match.
-pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 4;
+/// words. Version 5 orders changed cells by a cached canonical key fingerprint
+/// with full-key collision fallback. Hashes are comparable only when both this
+/// version and the named-boundary schedule match.
+pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 5;
 
 pub mod cell;
 pub mod code_tables;
