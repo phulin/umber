@@ -2,13 +2,13 @@ const REQUIRED_CSP =
 	"default-src 'none'; font-src data: 'self'; style-src 'unsafe-inline'; img-src data:";
 
 /** Installs Umber-generated standalone HTML in a scriptless iframe boundary. */
-export function installHtmlPreview(iframe, html) {
+export function installHtmlPreview(iframe, html, options = {}) {
 	if (!iframe || typeof iframe.setAttribute !== "function") {
 		throw new TypeError("preview target must be an iframe-like element");
 	}
 	const text = decode(html);
 	validate(text);
-	iframe.setAttribute("sandbox", "");
+	iframe.setAttribute("sandbox", options.allowDomAccess ? "allow-same-origin" : "");
 	iframe.setAttribute("referrerpolicy", "no-referrer");
 	iframe.setAttribute("title", "Umber HTML preview");
 	iframe.srcdoc = text;

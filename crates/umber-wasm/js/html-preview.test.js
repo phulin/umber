@@ -16,6 +16,13 @@ test("installs canonical output into a scriptless iframe", () => {
 	assert.equal(attributes.get("referrerpolicy"), "no-referrer");
 });
 
+test("can expose the validated document to a parent-side interaction bridge", () => {
+	const attributes = new Map();
+	const iframe = { setAttribute: (name, value) => attributes.set(name, value) };
+	installHtmlPreview(iframe, canonical, { allowDomAccess: true });
+	assert.equal(attributes.get("sandbox"), "allow-same-origin");
+});
+
 test("rejects active or non-Umber markup", () => {
 	const iframe = { setAttribute() {} };
 	assert.throws(() => installHtmlPreview(iframe, "<script>alert(1)</script>"));
