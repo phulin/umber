@@ -152,6 +152,56 @@ fn edited_output_is_byte_identical_to_a_fresh_cold_session() {
 }
 
 #[test]
+fn edits_inside_nonrestartable_constructs_replay_from_the_preceding_boundary() {
+    let cases = [
+        ("scanner", "\\count0=1 \\end"),
+        ("box", "\\setbox0=\\hbox{\\count0=1}\\end"),
+        (
+            "alignment",
+            "\\setbox0=\\vbox{\\halign{#\\cr \\count0=1\\cr}}\\end",
+        ),
+        ("inline math", "\\setbox0=\\hbox{$\\count0=1$}\\end"),
+    ];
+    for (name, original) in cases {
+        let edit_at = original.find("=1").expect("marked edit") + 1;
+        let mut session =
+            Session::start(template(), name, RevisionId::new(1), original, usize::MAX)
+                .expect("incremental session");
+        session
+            .cold()
+            .unwrap_or_else(|error| panic!("{name} cold run failed: {error}"));
+        let incremental = session
+            .advance(
+                RevisionId::new(2),
+                Edit {
+                    base_revision: RevisionId::new(1),
+                    expected_hash: ContentHash::from_bytes(original.as_bytes()),
+                    range: edit_at..edit_at + 1,
+                    replacement: "2".to_owned(),
+                },
+            )
+            .unwrap_or_else(|error| panic!("{name} incremental run failed: {error}"));
+        assert_eq!(
+            incremental.reuse.restart_boundary.map(|key| key.boundary),
+            Some(EngineBoundary::JobStart),
+            "{name} must replay from JobStart"
+        );
+
+        let mut edited = original.to_owned();
+        edited.replace_range(edit_at..edit_at + 1, "2");
+        let mut cold = Session::start(template(), name, RevisionId::new(2), edited, usize::MAX)
+            .expect("cold comparison session");
+        let cold = cold
+            .cold()
+            .unwrap_or_else(|error| panic!("{name} comparison run failed: {error}"));
+        assert_eq!(
+            incremental.dvi_pages, cold.dvi_pages,
+            "{name} edit differs from cold"
+        );
+    }
+}
+
+#[test]
 fn promoted_prefix_records_remain_restartable_on_the_next_edit() {
     let first = persistent_source(1);
     let second = persistent_source(2);
