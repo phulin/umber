@@ -40,6 +40,50 @@ fn streamed_v10_builder_is_byte_identical_to_owned_encoding() {
 }
 
 #[test]
+fn streamed_fixed_width_leaves_are_byte_identical_to_owned_encoding() {
+    let mut page = sample_artifact();
+    let leaves = vec![
+        PageNode::Char {
+            font_id: 1,
+            ch: 'A' as u32,
+            width: Scaled::from_raw(42),
+        },
+        PageNode::Lig {
+            font_id: 1,
+            ch: 'f' as u32,
+            left: 'f' as u32,
+            right: 'i' as u32,
+            width: Scaled::from_raw(84),
+        },
+        PageNode::Kern {
+            amount: Scaled::from_raw(-10),
+            kind: KernKind::Font,
+        },
+        PageNode::Penalty(-50),
+        PageNode::WhatsitAnchor { effect_index: 0 },
+        PageNode::MathOn(Scaled::from_raw(7)),
+        PageNode::MathOff(Scaled::from_raw(-7)),
+    ];
+    let PageNode::VList(root) = &mut page.testing_mut().root else {
+        unreachable!("sample root is a vlist");
+    };
+    root.children = leaves;
+    let root = match &page.root {
+        PageNode::VList(root) => root,
+        _ => unreachable!("sample root is a vlist"),
+    };
+    let mut builder = crate::V10ArtifactBuilder::new(page.job.clone(), page.counts, root, true);
+    for child in &root.children {
+        builder.push_node(child).expect("stream fixed leaf");
+    }
+    let streamed = builder
+        .finish(&page.fonts, &page.effects)
+        .expect("finish stream");
+
+    assert_eq!(streamed, page.to_bytes().expect("owned encoding"));
+}
+
+#[test]
 fn artifact_bytes_and_hash_are_deterministic() {
     let first = sample_artifact();
     let second = sample_artifact();

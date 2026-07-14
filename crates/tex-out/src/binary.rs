@@ -655,10 +655,12 @@ impl Writer {
     fn node_head<'a>(&mut self, node: &'a PageNode, depth: usize, tasks: &mut Vec<WriteTask<'a>>) {
         match node {
             PageNode::Char { font_id, ch, width } => {
-                self.u8(wire::node::CHAR);
-                self.u32(*font_id);
-                self.u32(*ch);
-                self.scaled(*width);
+                let mut bytes = [0; 13];
+                bytes[0] = wire::node::CHAR;
+                bytes[1..5].copy_from_slice(&font_id.to_le_bytes());
+                bytes[5..9].copy_from_slice(&ch.to_le_bytes());
+                bytes[9..13].copy_from_slice(&width.raw().to_le_bytes());
+                self.raw(&bytes);
             }
             PageNode::Lig {
                 font_id,
@@ -667,17 +669,21 @@ impl Writer {
                 right,
                 width,
             } => {
-                self.u8(wire::node::LIG);
-                self.u32(*font_id);
-                self.u32(*ch);
-                self.u32(*left);
-                self.u32(*right);
-                self.scaled(*width);
+                let mut bytes = [0; 21];
+                bytes[0] = wire::node::LIG;
+                bytes[1..5].copy_from_slice(&font_id.to_le_bytes());
+                bytes[5..9].copy_from_slice(&ch.to_le_bytes());
+                bytes[9..13].copy_from_slice(&left.to_le_bytes());
+                bytes[13..17].copy_from_slice(&right.to_le_bytes());
+                bytes[17..21].copy_from_slice(&width.raw().to_le_bytes());
+                self.raw(&bytes);
             }
             PageNode::Kern { amount, kind } => {
-                self.u8(wire::node::KERN);
-                self.scaled(*amount);
-                self.u8(kern_kind_tag(*kind));
+                let mut bytes = [0; 6];
+                bytes[0] = wire::node::KERN;
+                bytes[1..5].copy_from_slice(&amount.raw().to_le_bytes());
+                bytes[5] = kern_kind_tag(*kind);
+                self.raw(&bytes);
             }
             PageNode::Glue { spec, kind, leader } => {
                 self.u8(wire::node::GLUE);
@@ -708,8 +714,7 @@ impl Writer {
                 }
             }
             PageNode::Penalty(value) => {
-                self.u8(wire::node::PENALTY);
-                self.i32(*value);
+                self.tagged_i32(wire::node::PENALTY, *value);
             }
             PageNode::Rule {
                 width,
@@ -754,16 +759,13 @@ impl Writer {
                 tasks.push(WriteTask::NodeList(content, depth + 1));
             }
             PageNode::WhatsitAnchor { effect_index } => {
-                self.u8(wire::node::WHATSIT_ANCHOR);
-                self.u32(*effect_index);
+                self.tagged_u32(wire::node::WHATSIT_ANCHOR, *effect_index);
             }
             PageNode::MathOn(width) => {
-                self.u8(wire::node::MATH_ON);
-                self.scaled(*width);
+                self.tagged_i32(wire::node::MATH_ON, width.raw());
             }
             PageNode::MathOff(width) => {
-                self.u8(wire::node::MATH_OFF);
-                self.scaled(*width);
+                self.tagged_i32(wire::node::MATH_OFF, width.raw());
             }
             PageNode::Adjust(content) => {
                 self.u8(wire::node::ADJUST);
@@ -798,6 +800,20 @@ impl Writer {
                 }
             }
         }
+    }
+
+    fn tagged_i32(&mut self, tag: u8, value: i32) {
+        let mut bytes = [0; 5];
+        bytes[0] = tag;
+        bytes[1..].copy_from_slice(&value.to_le_bytes());
+        self.raw(&bytes);
+    }
+
+    fn tagged_u32(&mut self, tag: u8, value: u32) {
+        let mut bytes = [0; 5];
+        bytes[0] = tag;
+        bytes[1..].copy_from_slice(&value.to_le_bytes());
+        self.raw(&bytes);
     }
 
     fn box_fields(&mut self, box_node: &BoxNode) {
