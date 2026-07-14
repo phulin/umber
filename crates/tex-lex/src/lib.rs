@@ -8,6 +8,8 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::ops::{Index, IndexMut};
 use std::sync::Arc;
+#[cfg(feature = "expansion-stats")]
+use std::time::{Duration, Instant};
 
 use tex_state::env::banks::TokParam;
 use tex_state::ids::{OriginListId, TokenListId};
@@ -608,10 +610,13 @@ pub enum LiteralSpanPolicy {
     HorizontalText,
 }
 
-/// Feature-gated attribution counters for token-list expansion delivery.
+/// Feature-gated attribution counters and wall-clock timers for token-list
+/// expansion delivery.
 ///
 /// With `expansion-stats` disabled the input stack contains no counter field
 /// and all snapshots returned by [`InputStack::expansion_stats`] are zero.
+/// Timer totals are diagnostic: their very small scopes include clock-reading
+/// overhead and do not partition all expansion work or the whole engine run.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ExpansionStats {
     pub token_frame_steps: u64,
@@ -625,9 +630,35 @@ pub struct ExpansionStats {
     pub builder_appends: u64,
     pub meaning_cache_hits: u64,
     pub meaning_cache_misses: u64,
+    pub frame_step_nanos: u64,
+    pub provenance_nanos: u64,
+    pub classification_meaning_nanos: u64,
+    pub builder_append_nanos: u64,
+    pub frame_step_timer_samples: u64,
+    pub provenance_timer_samples: u64,
+    pub classification_meaning_timer_samples: u64,
+    pub builder_append_timer_samples: u64,
+}
+
+#[cfg(feature = "expansion-stats")]
+fn duration_nanos_saturating(duration: Duration) -> u64 {
+    u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
+}
+
+#[cfg(feature = "expansion-stats")]
+fn add_elapsed(total: &mut u64, started: Instant) {
+    *total = total.saturating_add(duration_nanos_saturating(started.elapsed()));
 }
 
 impl ExpansionStats {
+    #[must_use]
+    pub fn attributed_nanos(self) -> u64 {
+        self.frame_step_nanos
+            .saturating_add(self.provenance_nanos)
+            .saturating_add(self.classification_meaning_nanos)
+            .saturating_add(self.builder_append_nanos)
+    }
+
     #[must_use]
     pub fn character_fraction(self) -> f64 {
         if self.token_frame_steps == 0 {
@@ -1149,6 +1180,25 @@ impl<S> InputStack<S> {
         stores: &impl ExpansionState,
         symbol: Symbol,
     ) -> Meaning {
+        #[cfg(feature = "expansion-stats")]
+        let started = Instant::now();
+        let meaning = self.resolve_expansion_meaning_inner(stores, symbol);
+        #[cfg(feature = "expansion-stats")]
+        {
+            add_elapsed(
+                &mut self.expansion_stats.classification_meaning_nanos,
+                started,
+            );
+            self.expansion_stats.classification_meaning_timer_samples += 1;
+        }
+        meaning
+    }
+
+    fn resolve_expansion_meaning_inner(
+        &mut self,
+        stores: &impl ExpansionState,
+        symbol: Symbol,
+    ) -> Meaning {
         let Some((token_list, token_index)) = self.last_expansion_site else {
             self.record_expansion_meaning_lookup();
             return stores.meaning(symbol);
@@ -1431,6 +1481,8 @@ impl<S> InputStack<S> {
         let Some(span) = self.take_macro_literal_span(stores, policy) else {
             return 0;
         };
+        #[cfg(feature = "expansion-stats")]
+        let started = Instant::now();
         let stored = stores.tokens(span.token_list);
         tokens_out.extend_from_slice(&stored[span.start..span.end]);
         if span.origin_list == OriginListId::EMPTY {
@@ -1441,6 +1493,11 @@ impl<S> InputStack<S> {
             origins_out.extend_from_slice(&origins[span.start..span.end]);
         } else {
             origins_out.extend_repeated(OriginId::UNKNOWN, span.end - span.start);
+        }
+        #[cfg(feature = "expansion-stats")]
+        {
+            add_elapsed(&mut self.expansion_stats.builder_append_nanos, started);
+            self.expansion_stats.builder_append_timer_samples += 1;
         }
         self.record_literal_span(span.end - span.start, true);
         span.end - span.start
@@ -1462,8 +1519,15 @@ impl<S> InputStack<S> {
         else {
             return 0;
         };
+        #[cfg(feature = "expansion-stats")]
+        let started = Instant::now();
         let stored = stores.tokens(span.token_list);
         tokens_out.extend_from_slice(&stored[span.start..span.end]);
+        #[cfg(feature = "expansion-stats")]
+        {
+            add_elapsed(&mut self.expansion_stats.builder_append_nanos, started);
+            self.expansion_stats.builder_append_timer_samples += 1;
+        }
         self.record_literal_span(span.end - span.start, false);
         span.end - span.start
     }
@@ -2206,7 +2270,12 @@ where
             };
             match &mut self.frames[frame_index] {
                 InputFrame::TokenList(token_list) => {
-                    match next_traced_token_from_token_list_frame(token_list, stores) {
+                    match next_traced_token_from_token_list_frame(
+                        token_list,
+                        stores,
+                        #[cfg(feature = "expansion-stats")]
+                        None,
+                    ) {
                         Some(TracedTokenReplay::PushArgument(argument)) => {
                             self.push_frame(InputFrame::TokenList(TokenListInputFrame {
                                 token_list: argument.token_list(),
@@ -2379,7 +2448,12 @@ where
                             self.expansion_stats.provenance_resolutions += 1;
                         }
                     }
-                    match next_traced_token_from_token_list_frame(token_list, stores) {
+                    match next_traced_token_from_token_list_frame(
+                        token_list,
+                        stores,
+                        #[cfg(feature = "expansion-stats")]
+                        Some(&mut self.expansion_stats),
+                    ) {
                         Some(TracedTokenReplay::PushArgument(argument)) => {
                             self.push_frame(InputFrame::TokenList(TokenListInputFrame {
                                 token_list: argument.token_list(),
@@ -2771,19 +2845,46 @@ fn next_token_from_token_list_frame(
 fn next_traced_token_from_token_list_frame(
     frame: &mut TokenListInputFrame,
     stores: &mut impl ExpansionState,
+    #[cfg(feature = "expansion-stats")] mut stats: Option<&mut ExpansionStats>,
 ) -> Option<TracedTokenReplay> {
+    #[cfg(feature = "expansion-stats")]
+    let frame_started = Instant::now();
     let tokens = stores.tokens(frame.token_list);
-    let token = tokens.get(frame.index).copied()?;
+    let Some(token) = tokens.get(frame.index).copied() else {
+        #[cfg(feature = "expansion-stats")]
+        if let Some(stats) = stats {
+            add_elapsed(&mut stats.frame_step_nanos, frame_started);
+            stats.frame_step_timer_samples += 1;
+        }
+        return None;
+    };
     frame.index += 1;
 
     if frame.replay_kind == TokenListReplayKind::MacroBody
         && let Token::Param(slot) = token
         && let Some(argument) = frame.macro_arguments.get_traced(slot)
     {
+        #[cfg(feature = "expansion-stats")]
+        if let Some(stats) = stats {
+            add_elapsed(&mut stats.frame_step_nanos, frame_started);
+            stats.frame_step_timer_samples += 1;
+        }
         return Some(TracedTokenReplay::PushArgument(argument));
     }
 
+    #[cfg(feature = "expansion-stats")]
+    if let Some(stats) = stats.as_deref_mut() {
+        add_elapsed(&mut stats.frame_step_nanos, frame_started);
+        stats.frame_step_timer_samples += 1;
+    }
+    #[cfg(feature = "expansion-stats")]
+    let provenance_started = Instant::now();
     let origin = replay_origin(frame, stores, token);
+    #[cfg(feature = "expansion-stats")]
+    if let Some(stats) = stats {
+        add_elapsed(&mut stats.provenance_nanos, provenance_started);
+        stats.provenance_timer_samples += 1;
+    }
     let token = TracedTokenWord::pack(token, origin);
     if frame.replay_kind == TokenListReplayKind::NoExpand {
         return Some(TracedTokenReplay::DeliverNoExpand(token));

@@ -119,6 +119,18 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
             stats.segmentation_cache_misses,
             stats.builder_appends,
         );
+        eprintln!(
+            "EXPANSION_TIMERS_NS frame_step={} frame_step_samples={} provenance={} provenance_samples={} classification_meaning={} classification_meaning_samples={} builder_append={} builder_append_samples={} attributed_total={}",
+            stats.frame_step_nanos,
+            stats.frame_step_timer_samples,
+            stats.provenance_nanos,
+            stats.provenance_timer_samples,
+            stats.classification_meaning_nanos,
+            stats.classification_meaning_timer_samples,
+            stats.builder_append_nanos,
+            stats.builder_append_timer_samples,
+            stats.attributed_nanos(),
+        );
     }
     #[cfg(feature = "node-stats")]
     for (kind, count) in tex_state::node::node_append_histogram() {

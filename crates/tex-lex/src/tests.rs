@@ -1335,6 +1335,7 @@ fn expansion_stats_measure_literal_runs_and_segmentation_reuse() {
     assert_eq!(stats.segmentation_cache_misses, 1);
     assert_eq!(stats.segmentation_cache_hits, 1);
     assert_eq!(stats.builder_appends, 6);
+    assert_eq!(stats.builder_append_timer_samples, 2);
 }
 
 #[cfg(feature = "expansion-stats")]
@@ -1391,6 +1392,17 @@ fn macro_site_meaning_cache_is_guarded_across_writes_groups_and_rollback() {
     assert_eq!(stats.meaning_cache_hits, 1);
     assert_eq!(stats.meaning_cache_misses, 5);
     assert_eq!(stats.meaning_lookups, 5);
+    assert_eq!(stats.frame_step_timer_samples, 1);
+    assert_eq!(stats.provenance_timer_samples, 1);
+    assert_eq!(stats.classification_meaning_timer_samples, 6);
+    assert_eq!(
+        stats.attributed_nanos(),
+        stats
+            .frame_step_nanos
+            .saturating_add(stats.provenance_nanos)
+            .saturating_add(stats.classification_meaning_nanos)
+            .saturating_add(stats.builder_append_nanos)
+    );
 }
 
 #[test]

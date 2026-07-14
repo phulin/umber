@@ -288,6 +288,19 @@ fn print_summary(options: &Options, output: &RunOutput, elapsed: Duration) {
         output.expansion_stats.segmentation_cache_misses,
         output.expansion_stats.builder_appends,
     );
+    #[cfg(feature = "expansion-stats")]
+    println!(
+        "gentle-profile expansion timers (ns): frame_step={} frame_step_samples={} provenance={} provenance_samples={} classification_meaning={} classification_meaning_samples={} builder_append={} builder_append_samples={} attributed_total={}",
+        output.expansion_stats.frame_step_nanos,
+        output.expansion_stats.frame_step_timer_samples,
+        output.expansion_stats.provenance_nanos,
+        output.expansion_stats.provenance_timer_samples,
+        output.expansion_stats.classification_meaning_nanos,
+        output.expansion_stats.classification_meaning_timer_samples,
+        output.expansion_stats.builder_append_nanos,
+        output.expansion_stats.builder_append_timer_samples,
+        output.expansion_stats.attributed_nanos(),
+    );
 }
 
 fn next_value(args: &mut impl Iterator<Item = String>, option: &str) -> Result<String, String> {
