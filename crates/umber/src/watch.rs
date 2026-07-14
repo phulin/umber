@@ -12,6 +12,7 @@ pub(super) fn run(mut args: impl Iterator<Item = String>) -> Result<(), WatchErr
         .ok_or(WatchError::Usage("missing input path for watch"))?;
     let mut output = input.with_extension("dvi");
     let mut poll = Duration::from_millis(100);
+    let mut format = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--dvi" => {
@@ -30,13 +31,29 @@ pub(super) fn run(mut args: impl Iterator<Item = String>) -> Result<(), WatchErr
                         .map_err(|_| WatchError::Usage("--poll-ms must be an integer"))?,
                 );
             }
-            _ => return Err(WatchError::Usage("watch accepts --dvi and --poll-ms")),
+            "--format" => {
+                format = Some(
+                    args.next()
+                        .map(PathBuf::from)
+                        .ok_or(WatchError::Usage("missing input path for --format"))?,
+                );
+            }
+            _ => {
+                return Err(WatchError::Usage(
+                    "watch accepts --dvi, --format, and --poll-ms",
+                ));
+            }
         }
     }
 
     let source = std::fs::read_to_string(&input)?;
-    let mut template = Universe::with_world(World::real());
-    umber::prepare_run_stores(&mut template);
+    let template = if let Some(format) = format {
+        Universe::from_format(World::real(), &std::fs::read(format)?)?
+    } else {
+        let mut template = Universe::with_world(World::real());
+        umber::prepare_run_stores(&mut template);
+        template
+    };
     let job_name = input
         .file_stem()
         .and_then(std::ffi::OsStr::to_str)
@@ -128,6 +145,7 @@ pub(super) enum WatchError {
     Io(std::io::Error),
     Session(tex_incr::SessionError),
     Dvi(tex_out::dvi::DviError),
+    Format(tex_state::FormatError),
 }
 
 impl std::fmt::Display for WatchError {
@@ -137,6 +155,7 @@ impl std::fmt::Display for WatchError {
             Self::Io(error) => write!(f, "watch I/O failed: {error}"),
             Self::Session(error) => write!(f, "watch execution failed: {error}"),
             Self::Dvi(error) => write!(f, "watch DVI failed: {error}"),
+            Self::Format(error) => write!(f, "watch format failed: {error}"),
         }
     }
 }
@@ -158,6 +177,12 @@ impl From<tex_incr::SessionError> for WatchError {
 impl From<tex_out::dvi::DviError> for WatchError {
     fn from(value: tex_out::dvi::DviError) -> Self {
         Self::Dvi(value)
+    }
+}
+
+impl From<tex_state::FormatError> for WatchError {
+    fn from(value: tex_state::FormatError) -> Self {
+        Self::Format(value)
     }
 }
 
