@@ -8,7 +8,8 @@ use tex_state_benchmarks::{
     DEEP_GROUP_GLOBAL_WRITE_BUDGET, DEEP_GROUP_LARGE_DEPTH, DEEP_GROUP_SMALL_DEPTH,
     DETACHED_CODE_TABLE_WRITE_BUDGET, LATENCY_NOISE_ALLOWANCE_NS, LATENCY_SCALE_BUDGET,
     RETAINED_BYTES_PER_CAPTURE_BUDGET, RETAINED_CAPTURES, WORKLOADS, WorkloadKind, build_workload,
-    deep_group_code_table_workload,
+    SURVIVOR_PIN_CHURN, SURVIVOR_PIN_LOG_RETAINED_BUDGET, deep_group_code_table_workload,
+    survivor_pin_churn_workload,
 };
 
 struct TrackingAllocator;
@@ -105,6 +106,9 @@ fn main() {
         check_detached_code_table_write(&mut failures);
         check_deep_group_global_write(&mut failures);
     }
+    if workload_filter.is_none() {
+        check_survivor_pin_retention(&mut failures);
+    }
     if selected == 0 {
         eprintln!(
             "snapshot-gate: unknown workload {}",
@@ -124,6 +128,23 @@ fn main() {
             "snapshot-gate: {} budget violation(s); rerun with --enforce to fail",
             failures.len()
         );
+    }
+}
+
+fn check_survivor_pin_retention(failures: &mut Vec<String>) {
+    let universe = survivor_pin_churn_workload(SURVIVOR_PIN_CHURN);
+    let pins = universe.testing_survivor_pin_count();
+    let retained = universe.testing_survivor_pin_retained_bytes();
+    println!("survivor_pin_log {pins} {retained}");
+    if pins != SURVIVOR_PIN_CHURN {
+        failures.push(format!(
+            "survivor pin churn retained {pins} entries (expected {SURVIVOR_PIN_CHURN})"
+        ));
+    }
+    if retained > SURVIVOR_PIN_LOG_RETAINED_BUDGET {
+        failures.push(format!(
+            "survivor pin log retained {retained} bytes (budget {SURVIVOR_PIN_LOG_RETAINED_BUDGET})"
+        ));
     }
 }
 

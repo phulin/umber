@@ -256,7 +256,7 @@ fn frozen_font_semantics_prohibit_late_naming_and_rollback_unseals() {
 }
 
 #[test]
-fn node_semantic_ids_follow_rollback_promotion_and_epoch_clone() {
+fn node_semantic_ids_follow_rollback_and_promotion() {
     let mut stores = Stores::new();
     let snapshot = stores.checkpoint();
     let stale = stores.freeze_node_list(&[Node::Penalty(1)]);
@@ -273,9 +273,6 @@ fn node_semantic_ids_follow_rollback_promotion_and_epoch_clone() {
     stores.set_box_reg(0, root);
     let survivor = stores.box_reg(0).expect("box assignment promotes the list");
     assert_eq!(stores.node_semantic_id(survivor), semantic_id);
-
-    let epoch_clone = stores.clone_node_list_to_epoch(survivor);
-    assert_eq!(stores.node_semantic_id(epoch_clone), semantic_id);
 }
 
 #[test]
@@ -1535,6 +1532,17 @@ fn survivor_pin_marks_follow_interleaved_snapshot_and_shipout_ordering() {
 }
 
 #[test]
+#[should_panic(expected = "format dumps require an empty survivor pin log")]
+fn format_capture_rejects_live_survivor_pins() {
+    let mut stores = Stores::new();
+    let value = one_char(&mut stores, 'f');
+    stores.set_box_reg(0, value);
+    let survivor = stores.box_reg(0).expect("box should be stored");
+    stores.pin_survivor(survivor);
+    let _ = stores.encode_format();
+}
+
+#[test]
 fn released_survivor_key_stays_stale_when_its_storage_is_recycled() {
     let mut stores = Stores::new();
     let old_epoch = one_char(&mut stores, 'o');
@@ -2118,94 +2126,6 @@ fn promotion_handles_pathologically_deep_box_nesting() {
         &[Node::Char {
             font: NULL_FONT,
             ch: 'x'
-        }]
-    );
-}
-
-#[test]
-fn survivor_clone_to_epoch_is_iterative_and_child_first() {
-    const DEPTH: usize = 8_192;
-    let mut stores = Stores::new();
-    let mut current = one_char(&mut stores, 'd');
-    for _ in 0..DEPTH {
-        current = stores.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
-            width: scaled(1),
-            height: scaled(1),
-            depth: scaled(0),
-            shift: scaled(0),
-            display: false,
-            glue_set: GlueSetRatio::ZERO,
-            glue_sign: Sign::Normal,
-            glue_order: Order::Normal,
-            children: current,
-        }))]);
-    }
-    stores.set_box_reg(19, current);
-    let survivor = stores.box_reg(19).expect("deep graph should be promoted");
-
-    let mut cloned = stores.clone_node_list_to_epoch(survivor);
-    assert!(matches!(cloned.arena(), ArenaRef::Epoch));
-    for _ in 0..DEPTH {
-        let parent = cloned;
-        let Some(crate::node_arena::NodeRef::HList(value)) = stores.nodes(parent).first() else {
-            panic!("deep clone should retain hlist shape");
-        };
-        assert!(matches!(value.children.arena(), ArenaRef::Epoch));
-        let child_span = stores.nodes.span(value.children).expect("child is live");
-        let parent_span = stores.nodes.span(parent).expect("parent is live");
-        assert!(child_span.start + child_span.len <= parent_span.start);
-        cloned = value.children;
-    }
-    assert_eq!(
-        stores.nodes(cloned),
-        &[Node::Char {
-            font: NULL_FONT,
-            ch: 'd'
-        }]
-    );
-}
-
-#[test]
-fn mixed_epoch_survivor_clone_memoizes_shared_exact_spans() {
-    let mut stores = Stores::new();
-    let child = one_char(&mut stores, 's');
-    stores.set_box_reg(20, child);
-    let survivor = stores.box_reg(20).expect("child should be promoted");
-    let fields = BoxNodeFields {
-        width: scaled(1),
-        height: scaled(1),
-        depth: scaled(0),
-        shift: scaled(0),
-        display: false,
-        glue_set: GlueSetRatio::ZERO,
-        glue_sign: Sign::Normal,
-        glue_order: Order::Normal,
-        children: survivor,
-    };
-    let mixed = stores.freeze_node_list(&[
-        Node::HList(BoxNode::new(fields)),
-        Node::VList(BoxNode::new(fields)),
-    ]);
-
-    let cloned = stores.clone_node_list_to_epoch(mixed);
-    let nodes = stores.nodes(cloned);
-    let (
-        Some(crate::node_arena::NodeRef::HList(first)),
-        Some(crate::node_arena::NodeRef::VList(second)),
-    ) = (nodes.get(0), nodes.get(1))
-    else {
-        panic!("mixed clone should retain wrapper nodes");
-    };
-    assert_eq!(first.children, second.children, "shared span cloned once");
-    assert!(matches!(first.children.arena(), ArenaRef::Epoch));
-    let child_span = stores.nodes.span(first.children).expect("child is live");
-    let parent_span = stores.nodes.span(cloned).expect("parent is live");
-    assert!(child_span.start + child_span.len <= parent_span.start);
-    assert_eq!(
-        stores.nodes(first.children),
-        &[Node::Char {
-            font: NULL_FONT,
-            ch: 's'
         }]
     );
 }

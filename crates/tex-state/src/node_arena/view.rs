@@ -205,9 +205,6 @@ impl<'a> NodeList<'a> {
             end: self.end,
         }
     }
-    pub(crate) fn child_lists(self, out: &mut Vec<NodeListId>) {
-        self.storage.collect_compact_children(self, out);
-    }
     /// Returns the maximal same-font run of inline byte-character words at
     /// `index`. Ligatures and every non-character word deliberately terminate
     /// a run so callers retain their ordinary semantic handling.

@@ -69,9 +69,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/source_map.rs`: Rollback-coupled logical source regions, validated positions/spans, and immutable World/generated backing identities.
 - `src/source_map/tests.rs`: Source-region anchors, validation, overflow, rollback/reuse, and O(1)-mark tests.
 - `src/state_hash.rs`: Deterministic semantic state hasher used by snapshots and replay convergence checks.
-- `src/stores.rs`: Internal aggregate store tuple that coordinates interner, env, token, provenance, glue, node, font, survivor, input, and rollback state.
+- `src/stores.rs`: Internal aggregate store tuple that coordinates interner, env, token, provenance, glue, node, font, survivor pins, input, and rollback/shipout scope state.
 - `src/stores/handles.rs`: Store-boundary liveness checks for symbols, token lists, origins, glue, fonts, macros, and node handles.
-- `src/stores/node_clone.rs`: Iterative child-first cloning of mixed node graphs into epoch storage.
 - `src/stores/node_semantic.rs`: Canonical node encoding and bottom-up semantic-identity composition at aggregate freeze.
 - `src/stores/format.rs`: Deterministic versioned format-image DTO capture/validation and fresh-store reconstruction.
 - `src/stores/format/node.rs`: Handle-free serialized node/math DTO graph and validated conversion to and from live nodes.

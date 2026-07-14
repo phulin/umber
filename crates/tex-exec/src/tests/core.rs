@@ -99,6 +99,46 @@ fn engine_session_publishes_named_outer_paragraph_boundary() {
 }
 
 #[test]
+fn outer_paragraph_checkpoint_retains_survivor_pins_for_mode_restore() {
+    let mut stores = support::stores_with_fonts();
+    let source = "\\font\\f=cmr10 \\f \\setbox0=\\hbox{Q}\\copy0 X\\par";
+    let mut input = InputStack::new(MemoryInput::new(source));
+    let mut checkpoints = Vec::new();
+    let mut executor = Executor::new();
+    executor
+        .run_with_recorder_hooks_and_checkpoints(
+            &mut input,
+            &mut stores,
+            &mut NoopRecorder,
+            &mut NoopExecHooks,
+            &mut checkpoints,
+        )
+        .expect("paragraph with copied survivor box executes");
+    let checkpoint = checkpoints
+        .iter()
+        .find(|checkpoint| checkpoint.boundary() == EngineBoundary::OuterParagraphEnd)
+        .expect("outer paragraph checkpoint")
+        .clone();
+    let expected_mode_hash = checkpoint.mode_summary().semantic_fingerprint(&stores);
+
+    let replacement = stores.freeze_node_list(&[Node::Kern {
+        amount: Scaled::from_raw(0),
+        kind: tex_state::node::KernKind::Explicit,
+    }]);
+    stores.set_box_reg_global(0, replacement);
+    executor
+        .restore_checkpoint(&mut input, &mut stores, &checkpoint, |_, _, _| {
+            Ok::<_, ()>(MemoryInput::new(source))
+        })
+        .expect("retained checkpoint restores survivor-backed mode roots");
+
+    assert_eq!(
+        executor.nest().summary().semantic_fingerprint(&stores),
+        expected_mode_hash
+    );
+}
+
+#[test]
 fn shipout_checkpoint_restores_after_nested_work_has_unwound() {
     let source = "\\font\\f=cmr10 \\f \\setbox0=\\hbox{\\shipout\\hbox{A}B}\\end";
     let mut stores = support::stores_with_fonts();

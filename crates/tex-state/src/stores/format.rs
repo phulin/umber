@@ -167,6 +167,10 @@ impl Stores {
         if self.env.group_depth() != 0 {
             return Err(StoreFormatError::OpenGroups(self.env.group_depth()));
         }
+        assert!(
+            self.survivor_pins.is_empty(),
+            "format dumps require an empty survivor pin log"
+        );
         let format = StoreFormat::capture(self)?;
         bincode::serialize(&format).map_err(|error| StoreFormatError::Codec(error.to_string()))
     }

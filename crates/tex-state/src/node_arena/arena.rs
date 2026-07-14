@@ -1,5 +1,4 @@
 use super::checked_len;
-use super::copy::ChildPatch;
 #[cfg(feature = "node-stats")]
 use super::measurement::NodeMemoryColumn;
 use super::semantic::{NodeSemanticId, NodeSemanticIdBuilder};
@@ -171,40 +170,6 @@ impl NodeArena {
         self.append_with_semantic_id(nodes, semantic_id)
     }
 
-    pub(crate) fn append_compact_remapped(
-        &mut self,
-        source: NodeList<'_>,
-        semantic_id: NodeSemanticId,
-        patches: &mut Vec<ChildPatch>,
-        mut remap: impl FnMut(NodeListId) -> NodeListId,
-    ) -> NodeListId {
-        debug_assert!(
-            patches.is_empty(),
-            "epoch child-patch scratch must be clear"
-        );
-        let (start, len) = self.storage.append_compact(source, patches);
-        for patch in patches.drain(..) {
-            let patch = patch.remap(&mut remap);
-            #[cfg(debug_assertions)]
-            patch.for_each_child(|child| {
-                let child = self
-                    .span(child)
-                    .expect("patched epoch child node-list id must be live");
-                let end = child
-                    .start
-                    .checked_add(child.len)
-                    .expect("child span overflow");
-                debug_assert!(end <= start, "epoch child must end before its parent");
-            });
-            self.storage.apply_child_patch(patch);
-        }
-        if len == 0 {
-            debug_assert_eq!(semantic_id, self.semantic_ids[0]);
-            NodeListId::new_epoch(HandleIdentity::builtin(0))
-        } else {
-            self.mint_span(start, len, semantic_id)
-        }
-    }
     #[cfg(debug_assertions)]
     fn debug_assert_bottom_up(&self, nodes: &[Node], new_start: u32) {
         let mut children = Vec::new();

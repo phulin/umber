@@ -166,13 +166,6 @@ fn allocation_graph_transfer(c: &mut Criterion) {
         );
     });
 
-    group.bench_function("clone_to_epoch/deep", |b| {
-        b.iter_batched(
-            survivor_deep_graph_case,
-            |(mut stores, root)| black_box(stores.clone_node_list_to_epoch(root)),
-            BatchSize::SmallInput,
-        );
-    });
     group.finish();
 }
 
@@ -277,14 +270,6 @@ fn mixed_ownership_case() -> (Universe, tex_state::ids::NodeListId) {
         Node::VList(benchmark_box(epoch, 2)),
     ]);
     (stores, root)
-}
-
-fn survivor_deep_graph_case() -> (Universe, tex_state::ids::NodeListId) {
-    let mut stores = Universe::new();
-    let epoch = deep_epoch_graph(&mut stores, ALLOCATION_GRAPH_DEPTH);
-    stores.set_box_reg(0, epoch);
-    let survivor = stores.box_reg(0).expect("survivor should be live");
-    (stores, survivor)
 }
 
 fn traced_freeze_case(len: usize, preintern: bool) -> (Universe, Vec<TracedTokenWord>) {

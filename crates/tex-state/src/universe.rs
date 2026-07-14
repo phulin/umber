@@ -2560,111 +2560,6 @@ impl Universe {
         }
     }
 
-    pub fn clone_node_list_to_epoch(&mut self, id: NodeListId) -> NodeListId {
-        self.stores.clone_node_list_to_epoch(id)
-    }
-
-    pub fn clone_node_to_epoch(&mut self, node: Node) -> Node {
-        match node {
-            Node::HList(mut box_node) => {
-                box_node.children = self.clone_node_list_to_epoch(box_node.children);
-                Node::HList(box_node)
-            }
-            Node::VList(mut box_node) => {
-                box_node.children = self.clone_node_list_to_epoch(box_node.children);
-                Node::VList(box_node)
-            }
-            Node::Unset(mut unset) => {
-                unset.children = self.clone_node_list_to_epoch(unset.children);
-                Node::Unset(unset)
-            }
-            Node::Disc {
-                kind,
-                pre,
-                post,
-                replace,
-            } => Node::Disc {
-                kind,
-                pre: self.clone_node_list_to_epoch(pre),
-                post: self.clone_node_list_to_epoch(post),
-                replace: self.clone_node_list_to_epoch(replace),
-            },
-            Node::Ins {
-                class,
-                size,
-                split_top_skip,
-                split_max_depth,
-                floating_penalty,
-                content,
-            } => Node::Ins {
-                class,
-                size,
-                split_top_skip,
-                split_max_depth,
-                floating_penalty,
-                content: self.clone_node_list_to_epoch(content),
-            },
-            Node::Adjust(content) => Node::Adjust(self.clone_node_list_to_epoch(content)),
-            Node::MathNoad(mut noad) => {
-                noad.nucleus = self.clone_math_field_to_epoch(noad.nucleus);
-                noad.subscript = self.clone_math_field_to_epoch(noad.subscript);
-                noad.superscript = self.clone_math_field_to_epoch(noad.superscript);
-                Node::MathNoad(noad)
-            }
-            Node::FractionNoad(mut fraction) => {
-                fraction.numerator = self.clone_node_list_to_epoch(fraction.numerator);
-                fraction.denominator = self.clone_node_list_to_epoch(fraction.denominator);
-                Node::FractionNoad(fraction)
-            }
-            Node::MathChoice(mut choice) => {
-                choice.display = self.clone_node_list_to_epoch(choice.display);
-                choice.text = self.clone_node_list_to_epoch(choice.text);
-                choice.script = self.clone_node_list_to_epoch(choice.script);
-                choice.script_script = self.clone_node_list_to_epoch(choice.script_script);
-                Node::MathChoice(choice)
-            }
-            Node::MathList(mut list) => {
-                list.content = self.clone_node_list_to_epoch(list.content);
-                Node::MathList(list)
-            }
-            Node::Glue {
-                spec,
-                kind,
-                leader: Some(payload),
-            } => Node::Glue {
-                spec,
-                kind,
-                leader: Some(match payload {
-                    crate::node::LeaderPayload::HList(mut box_node) => {
-                        box_node.children = self.clone_node_list_to_epoch(box_node.children);
-                        crate::node::LeaderPayload::HList(box_node)
-                    }
-                    crate::node::LeaderPayload::VList(mut box_node) => {
-                        box_node.children = self.clone_node_list_to_epoch(box_node.children);
-                        crate::node::LeaderPayload::VList(box_node)
-                    }
-                    payload => payload,
-                }),
-            },
-            node => node,
-        }
-    }
-
-    fn clone_math_field_to_epoch(
-        &mut self,
-        field: crate::math::MathField,
-    ) -> crate::math::MathField {
-        match field {
-            crate::math::MathField::SubBox(list) => {
-                crate::math::MathField::SubBox(self.clone_node_list_to_epoch(list))
-            }
-            crate::math::MathField::SubMlist(list) => {
-                crate::math::MathField::SubMlist(self.clone_node_list_to_epoch(list))
-            }
-            field => field,
-        }
-    }
-
     pub fn set_int_param(&mut self, param: IntParam, value: i32) {
         self.stores.set_int_param(param, value);
     }
@@ -2976,6 +2871,12 @@ impl Universe {
     #[must_use]
     pub fn testing_survivor_pin_count(&self) -> usize {
         self.stores.testing_survivor_pin_count()
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub fn testing_survivor_pin_retained_bytes(&self) -> usize {
+        self.stores.testing_survivor_pin_retained_bytes()
     }
 
     /// Computes allocator-payload accounting for all compact node storage.

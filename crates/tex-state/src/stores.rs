@@ -51,7 +51,6 @@ use std::sync::Arc;
 
 mod format;
 mod handles;
-mod node_clone;
 mod node_semantic;
 mod state_hash;
 
@@ -60,7 +59,6 @@ pub(crate) use format::StoreFormatError;
 pub(crate) use format::{TestingFontFormatCorruption, testing_corrupt_font_format};
 
 pub use crate::env::group::{GroupKind, GroupMismatch};
-use node_clone::EpochCloneScratch;
 pub(crate) use state_hash::StoreStateHashCursor;
 
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
@@ -158,7 +156,6 @@ pub struct Stores {
     /// This never rewinds across group restoration or snapshot rollback.
     meaning_generation: u64,
     semantic_hash_cache: state_hash::SemanticHashCache,
-    epoch_clone_scratch: EpochCloneScratch,
 }
 
 /// Recoverable diagnostics from TeX's `prepare_mag` operation.
@@ -211,7 +208,6 @@ impl Clone for Stores {
             last_loaded_font: self.last_loaded_font,
             meaning_generation: self.meaning_generation,
             semantic_hash_cache: self.semantic_hash_cache.clone(),
-            epoch_clone_scratch: EpochCloneScratch::default(),
         }
     }
 }
@@ -250,7 +246,6 @@ impl Stores {
             last_loaded_font: NULL_FONT,
             meaning_generation: 1,
             semantic_hash_cache: state_hash::SemanticHashCache::default(),
-            epoch_clone_scratch: EpochCloneScratch::default(),
         };
         stores.set_int_param(IntParam::MAG, 1000);
         stores.set_int_param(IntParam::TOLERANCE, 10_000);
@@ -2020,6 +2015,14 @@ impl Stores {
         self.nodes.testing_node_count()
     }
 
+    /// The epoch-clone facility has been removed; register-read paths must
+    /// keep this structural regression counter at zero.
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub const fn testing_epoch_clone_counts(&self) -> (u64, u64) {
+        (0, 0)
+    }
+
     #[cfg(any(test, feature = "testing"))]
     #[must_use]
     pub fn testing_survivor_refcount(&self, id: NodeListId) -> u32 {
@@ -2031,6 +2034,12 @@ impl Stores {
     #[must_use]
     pub fn testing_survivor_pin_count(&self) -> usize {
         self.survivor_pins.len()
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub fn testing_survivor_pin_retained_bytes(&self) -> usize {
+        self.survivor_pins.capacity() * mem::size_of::<NodeListId>()
     }
 
     #[cfg(any(test, feature = "testing"))]

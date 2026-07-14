@@ -19,6 +19,8 @@ pub const DEEP_GROUP_LARGE_DEPTH: usize = 4_096;
 pub const LATENCY_SCALE_BUDGET: u128 = 4;
 pub const LATENCY_NOISE_ALLOWANCE_NS: u128 = 25_000;
 pub const RETAINED_CAPTURES: usize = 32;
+pub const SURVIVOR_PIN_CHURN: usize = 20_000;
+pub const SURVIVOR_PIN_LOG_RETAINED_BUDGET: usize = 512 * 1024;
 
 pub const WORKLOADS: [WorkloadKind; 7] = [
     WorkloadKind::Input,
@@ -145,6 +147,21 @@ pub fn deep_group_code_table_workload(depth: usize) -> Universe {
     let mut universe = Universe::new();
     for _ in 0..depth {
         universe.enter_group();
+    }
+    universe
+}
+
+#[must_use]
+pub fn survivor_pin_churn_workload(pins: usize) -> Universe {
+    let mut universe = Universe::new();
+    let list = universe.freeze_node_list(&[Node::Kern {
+        amount: Scaled::from_raw(0),
+        kind: KernKind::Explicit,
+    }]);
+    universe.set_box_reg(0, list);
+    let survivor = universe.box_reg(0).expect("benchmark box should be stored");
+    for _ in 0..pins {
+        universe.pin_survivor(survivor);
     }
     universe
 }

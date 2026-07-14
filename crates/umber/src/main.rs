@@ -200,11 +200,6 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
             append.capacity_growth_events,
             append.retained_payload_bytes_grown,
         );
-        let clone = tex_state::measurement::epoch_clone_measurement();
-        eprintln!(
-            "ALLOC_EPOCH_CLONE calls={} source_words={} transient_owned_node_bytes={}",
-            clone.list_calls, clone.source_words, clone.transient_owned_node_bytes,
-        );
         let hash = tex_state::measurement::state_hash_measurement();
         eprintln!(
             "ALLOC_STATE_HASH calls={} journal_entries={} changed_cells={} node_frames={} owned_node_bytes={} owned_font_keys={} peak_changed_scratch_bytes={} peak_node_scratch_bytes={}",

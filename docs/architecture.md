@@ -613,10 +613,13 @@ assignments, box building, and dispatch into the typesetting kernels.
   `\overfullrule` is positive, the execution hand-off appends TeX's
   running-height rule node to the packed child list before the box can be
   stored, appended, or shipped. Storing the resulting one-node list in a box
-  register is the barriered promotion write. Pulling boxes back out through `\copy`,
-  `\box`, unboxing, `\lastbox`, or box-dimension rewrites clones any
-  survivor-backed node tree into the current epoch before it can be appended
-  to an unfinished mode list or promoted again. Destructive unboxing validates
+  register is the barriered promotion write. Pulling boxes back out through
+  `\copy` or `\box` pins the self-contained survivor root and appends the box
+  node with its existing children. Unboxing pins the root and splices only its
+  top-level children; deeper descendants remain survivor-backed. `\lastbox`
+  already owns current construction material. Box-dimension rewrites copy only
+  the one outer box node and reuse its child span until the register write
+  promotes the replacement. Destructive unboxing validates
   the requested horizontal/vertical list kind before taking the register, so
   TeX's incompatible-list recovery preserves the register and its survivor
   ownership exactly; copy variants never clear it. In math mode, the applicable
@@ -980,9 +983,10 @@ makes box-level memoization (M4) sound.
   normally.
 - **Vertical packing, `\vsplit`, marks**: operate on survivor-arena lists
   (they are reachable from box registers by definition); mark extraction
-  reads are recorded like any state read. `\vsplit` clones the source vbox
-  children back to epoch storage, chooses its split with the shared pure
-  `tex-typeset::vert_break`, writes only the split mark slots, prunes the
+  reads are recorded like any state read. `\vsplit` pins and reads the source
+  vbox children directly, materializes only the top-level sequence it must
+  partition, chooses its split with the shared pure `tex-typeset::vert_break`,
+  writes only the split mark slots, prunes the
   survivor remainder with `\splittopskip`, and replaces or clears the source
   register through the same-level `Universe` box facade.
 - **Status — implemented packing foundation**: `tex-typeset` currently provides pure

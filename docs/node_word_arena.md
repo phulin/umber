@@ -301,9 +301,19 @@ ownership. A process-unique 20-bit root key is folded into every packed
 survivor handle and resolves through an O(1) arena-local key-to-slot table.
 Cloning preserves inherited key mappings, while sibling forks cannot mint the
 same later key. Exhausting the encodable key space is deterministic and never
-wraps. Live box registers and retained undo records own references;
-replacement, group exit, rollback, and shipout release them through the same
-barriered paths as today. At refcount zero, all destination vectors are
+wraps. Live box registers and retained undo records own references.
+Box-register reads that publish nodes into nest or page state add one root
+entry to the aggregate survivor pin log instead of cloning the graph back into
+the epoch. One root pin covers every interior span because survivor children
+remain in the same self-contained root. Store snapshots and shipout allocation
+scopes capture the pin-log length; rollback and scope release drain only their
+suffix and decrement those roots. Group exit does not truncate the node arena
+and therefore does not truncate pins. Retained engine checkpoints keep the
+live pin-log prefix alongside the same journal-owned register references used
+by ordinary snapshots. Format images never serialize this runtime ownership
+log and assert that it is empty at their quiescent capture boundary.
+Replacement, group exit, rollback, and shipout otherwise release references
+through the same barriered paths as today. At refcount zero, all destination vectors are
 cleared and move together into a recycled `NodeStorage` pool. Recycling may
 reuse capacity but never the root slot or a packed handle. The pool and its
 reuse counters are derived allocator state: cloning may copy them and rollback
@@ -334,8 +344,9 @@ yield owned/borrowed logical `Node` views while consumers migrate, but it is
 not a second mutable representation. Debugging and `\showlists` use the same
 accessors as production.
 
-All node mutation is builder-then-freeze. Algorithms that currently rewrite a
-cloned `Node` list build a new list; they never mutate a frozen word or sidecar
+All node mutation is builder-then-freeze. Algorithms that rewrite a logical
+list build only the changed top-level list; unchanged descendants may remain
+survivor-backed under a root pin. They never mutate a frozen word or sidecar
 row. Pure typesetting receives immutable views and plain copied parameters.
 Execution performs stateful list publication, survivor transfer, and box
 register writes only through `Universe`. Shipout lowers through views into

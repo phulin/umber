@@ -18,13 +18,6 @@ pub struct NodeAppendMeasurement {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct EpochCloneMeasurement {
-    pub list_calls: u64,
-    pub source_words: u64,
-    pub transient_owned_node_bytes: u64,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct StateHashMeasurement {
     pub calls: u64,
     pub journal_entries: u64,
@@ -68,10 +61,6 @@ static NODE_APPEND_SIDECARS: [AtomicU64; 13] = [const { AtomicU64::new(0) }; 13]
 static NODE_APPEND_GROWTH_EVENTS: AtomicU64 = AtomicU64::new(0);
 static NODE_APPEND_GROWN_BYTES: AtomicU64 = AtomicU64::new(0);
 
-static EPOCH_CLONE_CALLS: AtomicU64 = AtomicU64::new(0);
-static EPOCH_CLONE_WORDS: AtomicU64 = AtomicU64::new(0);
-static EPOCH_CLONE_OWNED_BYTES: AtomicU64 = AtomicU64::new(0);
-
 static HASH_CALLS: AtomicU64 = AtomicU64::new(0);
 static HASH_JOURNAL_ENTRIES: AtomicU64 = AtomicU64::new(0);
 static HASH_CHANGED_CELLS: AtomicU64 = AtomicU64::new(0);
@@ -112,17 +101,6 @@ pub(crate) fn record_node_append(
     }
     NODE_APPEND_GROWTH_EVENTS.fetch_add(capacity_growth_events as u64, Ordering::Relaxed);
     NODE_APPEND_GROWN_BYTES.fetch_add(retained_payload_bytes_grown as u64, Ordering::Relaxed);
-}
-
-pub(crate) fn record_epoch_clone(source_words: usize, owned_words: Option<usize>) {
-    EPOCH_CLONE_CALLS.fetch_add(1, Ordering::Relaxed);
-    EPOCH_CLONE_WORDS.fetch_add(source_words as u64, Ordering::Relaxed);
-    if let Some(owned_words) = owned_words {
-        EPOCH_CLONE_OWNED_BYTES.fetch_add(
-            (owned_words * core::mem::size_of::<crate::node::Node>()) as u64,
-            Ordering::Relaxed,
-        );
-    }
 }
 
 pub(crate) fn record_hash_call(journal_entries: usize) {
@@ -200,15 +178,6 @@ pub fn node_append_measurement() -> NodeAppendMeasurement {
         }),
         capacity_growth_events: NODE_APPEND_GROWTH_EVENTS.load(Ordering::Relaxed),
         retained_payload_bytes_grown: NODE_APPEND_GROWN_BYTES.load(Ordering::Relaxed),
-    }
-}
-
-#[must_use]
-pub fn epoch_clone_measurement() -> EpochCloneMeasurement {
-    EpochCloneMeasurement {
-        list_calls: EPOCH_CLONE_CALLS.load(Ordering::Relaxed),
-        source_words: EPOCH_CLONE_WORDS.load(Ordering::Relaxed),
-        transient_owned_node_bytes: EPOCH_CLONE_OWNED_BYTES.load(Ordering::Relaxed),
     }
 }
 
