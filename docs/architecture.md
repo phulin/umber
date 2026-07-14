@@ -266,7 +266,8 @@ supply.
   when every already-normalized scalar currently has catcode `Letter` or
   `Other` and its ordinary lexer delivery would use a direct source origin.
   The run updates the canonical byte cursor, scalar column, and N/M/S state
-  exactly, but does not pre-tokenize future input. It stops before `^^`,
+  exactly. Its temporary tokenization is never persisted across a
+  deoptimization seam. It stops before `^^`,
   whitespace/endlines, control sequences, active or structural characters,
   synthetic/degraded origins, pending tokens, alignments, tracing, and source
   transitions. Because accepted character execution cannot mutate catcodes,

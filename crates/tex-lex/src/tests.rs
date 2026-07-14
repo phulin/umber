@@ -835,6 +835,58 @@ fn source_text_span_summary_resumes_at_the_exact_provenance_seam() {
 }
 
 #[test]
+fn source_text_span_deopts_for_pending_delivery_and_source_transition() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+    let mut input = InputStack::new(MemoryInput::new("ab"));
+    input
+        .next_traced_token(&mut stores)
+        .expect("valid outer source")
+        .expect("first token");
+    let pending = TracedTokenWord::pack(char_token('x', Catcode::Other), OriginId::UNKNOWN);
+    assert!(input.push_current_source_pending(pending));
+    let mut text = Vec::new();
+    assert_eq!(input.append_source_text_span(&mut stores, &mut text), 0);
+    assert_eq!(
+        input
+            .next_traced_token(&mut stores)
+            .expect("valid pending delivery"),
+        Some(pending)
+    );
+    assert_eq!(input.append_source_text_span(&mut stores, &mut text), 1);
+    assert_eq!(text, [char_token('b', Catcode::Letter)]);
+
+    let mut transition = InputStack::new(MemoryInput::new("ab"));
+    transition
+        .next_traced_token(&mut stores)
+        .expect("valid outer source")
+        .expect("outer first token");
+    transition.push_source(MemoryInput::new("cd"));
+    transition
+        .next_traced_token(&mut stores)
+        .expect("valid nested source")
+        .expect("nested first token");
+    text.clear();
+    assert_eq!(
+        transition.append_source_text_span(&mut stores, &mut text),
+        1
+    );
+    assert_eq!(text, [char_token('d', Catcode::Letter)]);
+    assert_eq!(
+        transition.append_source_text_span(&mut stores, &mut text),
+        0
+    );
+    assert_eq!(
+        transition
+            .next_traced_token(&mut stores)
+            .expect("nested source pops at its boundary")
+            .expect("outer source resumes")
+            .token(),
+        Some(char_token('b', Catcode::Letter))
+    );
+}
+
+#[test]
 fn physical_byte_coordinates_preserve_crlf_trailing_spaces_and_utf8() {
     let mut stores = Universe::new();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
