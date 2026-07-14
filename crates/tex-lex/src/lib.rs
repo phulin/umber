@@ -364,7 +364,7 @@ impl SourceFrame {
             self.line_number,
             self.column,
             self.state,
-            self.line.clone(),
+            self.line.as_str(),
             self.byte_offset,
             self.physical_content_end,
             self.terminator_start,

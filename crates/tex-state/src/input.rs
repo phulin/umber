@@ -707,7 +707,7 @@ impl SourceFrameSummary {
         line_number: usize,
         column: usize,
         lexer_state: LexerState,
-        normalized_line: String,
+        normalized_line: impl Into<Arc<str>>,
         line_byte_offset: usize,
         physical_content_end: usize,
         terminator_start: usize,
