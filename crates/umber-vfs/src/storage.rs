@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::Arc;
 
 use tex_content::{ContentDomain, ContentIdentity};
 
@@ -149,6 +150,10 @@ impl FileLayer {
     pub(crate) fn files(&self) -> impl Iterator<Item = (&VirtualPath, &VirtualFile)> {
         self.files.iter()
     }
+
+    pub(crate) fn get(&self, path: &VirtualPath) -> Option<&VirtualFile> {
+        self.files.get(path)
+    }
 }
 
 fn validate_ownership(kind: LayerKind, file: &VirtualFile) -> Result<(), ImmutableBindingError> {
@@ -202,26 +207,15 @@ impl fmt::Display for StorageIdentity {
 
 /// Separate deterministic storage for the four VFS ownership layers.
 #[derive(Clone, Debug)]
-pub struct LayeredFileStorage {
-    user: FileLayer,
-    resolved_resource: FileLayer,
-    accepted_generated: FileLayer,
-    pending_generated: FileLayer,
+pub(crate) struct StorageGeneration {
+    user: Arc<FileLayer>,
+    resolved_resource: Arc<FileLayer>,
+    accepted_generated: Arc<FileLayer>,
+    pending_generated: Arc<FileLayer>,
 }
 
-impl LayeredFileStorage {
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            user: FileLayer::new(LayerKind::User),
-            resolved_resource: FileLayer::new(LayerKind::ResolvedResource),
-            accepted_generated: FileLayer::new(LayerKind::AcceptedGenerated),
-            pending_generated: FileLayer::new(LayerKind::PendingGenerated),
-        }
-    }
-
-    #[must_use]
-    pub const fn layer(&self, kind: LayerKind) -> &FileLayer {
+impl StorageGeneration {
+    pub(crate) fn layer(&self, kind: LayerKind) -> &FileLayer {
         match kind {
             LayerKind::User => &self.user,
             LayerKind::ResolvedResource => &self.resolved_resource,
@@ -229,24 +223,63 @@ impl LayeredFileStorage {
             LayerKind::PendingGenerated => &self.pending_generated,
         }
     }
+}
+
+/// Mutable handle to copy-on-write deterministic file storage.
+///
+/// Snapshots retain the previous generation, while a mutation copies only the
+/// generation header and the layer being changed.
+#[derive(Clone, Debug)]
+pub struct LayeredFileStorage {
+    generation: Arc<StorageGeneration>,
+}
+
+impl LayeredFileStorage {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            generation: Arc::new(StorageGeneration {
+                user: Arc::new(FileLayer::new(LayerKind::User)),
+                resolved_resource: Arc::new(FileLayer::new(LayerKind::ResolvedResource)),
+                accepted_generated: Arc::new(FileLayer::new(LayerKind::AcceptedGenerated)),
+                pending_generated: Arc::new(FileLayer::new(LayerKind::PendingGenerated)),
+            }),
+        }
+    }
+
+    #[must_use]
+    pub fn layer(&self, kind: LayerKind) -> &FileLayer {
+        self.generation.layer(kind)
+    }
 
     pub fn insert(
         &mut self,
         kind: LayerKind,
         file: VirtualFile,
     ) -> Result<InsertOutcome, ImmutableBindingError> {
-        match kind {
-            LayerKind::User => &mut self.user,
-            LayerKind::ResolvedResource => &mut self.resolved_resource,
-            LayerKind::AcceptedGenerated => &mut self.accepted_generated,
-            LayerKind::PendingGenerated => &mut self.pending_generated,
-        }
-        .insert(file)
+        let generation = Arc::make_mut(&mut self.generation);
+        let layer = match kind {
+            LayerKind::User => &mut generation.user,
+            LayerKind::ResolvedResource => &mut generation.resolved_resource,
+            LayerKind::AcceptedGenerated => &mut generation.accepted_generated,
+            LayerKind::PendingGenerated => &mut generation.pending_generated,
+        };
+        Arc::make_mut(layer).insert(file)
     }
 
     /// Computes storage identity in explicit layer and canonical-path order.
     #[must_use]
     pub fn identity(&self) -> StorageIdentity {
+        self.generation.identity()
+    }
+
+    pub(crate) fn shared_generation(&self) -> Arc<StorageGeneration> {
+        Arc::clone(&self.generation)
+    }
+}
+
+impl StorageGeneration {
+    pub(crate) fn identity(&self) -> StorageIdentity {
         let mut preimage = Vec::new();
         preimage.push(1); // Layered storage schema version.
         for kind in [

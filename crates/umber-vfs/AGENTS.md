@@ -27,6 +27,8 @@ resource-registration, and accounting boundaries are specified in
 - `src/limits.rs`: checked file-count and byte limits shared by all VFS clients.
 - `src/resource.rs`: typed resource requests, deterministic batches, and atomic provisioning.
 - `src/resource/tests.rs`: request, registration, conflict, limit, and retry tests.
+- `src/snapshot.rs`: immutable generation snapshots, exact reads, invalidation, and bounded enumeration.
+- `src/snapshot/tests.rs`: snapshot stability, precedence, retention, staleness, and ordering tests.
 - `src/storage.rs`: deterministic ownership layers and conflict handling.
 - `src/tests.rs`: focused identity, storage, canonicalization, and property tests.
 

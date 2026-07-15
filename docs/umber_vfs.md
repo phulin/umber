@@ -1,8 +1,8 @@
 # Shared virtual filesystem
 
 Status: canonical paths, immutable files, layered storage, typed file requests,
-resource registration, and file limits implemented; snapshots and transactions
-proposed.
+resource registration, file limits, and deterministic snapshots implemented;
+transactions proposed.
 
 This document defines `umber-vfs`, the host-neutral virtual filesystem shared
 by Umber's TeX driver, bibliography processing, native embeddings, and the
@@ -178,6 +178,12 @@ accepted bibliography result.
 Directory enumeration is explicit, bounded, and lexically ordered by
 canonical path. No semantic algorithm may depend on map iteration order.
 
+The implemented storage handle owns an `Arc`-backed copy-on-write generation.
+Capturing or cloning a snapshot therefore retains one generation without
+copying its maps or file bytes. A later storage mutation copies only the
+generation header and changed ownership layer; existing snapshots continue to
+observe their exact earlier generation.
+
 ## Transactions and build atomicity
 
 There are two transaction scopes:
@@ -225,9 +231,13 @@ The base VFS API is byte-oriented and synchronous:
 
 ```rust
 impl VfsSnapshot {
-    pub fn get(&self, path: &VirtualPath) -> Option<VirtualFileRef<'_>>;
-    pub fn contains(&self, path: &VirtualPath) -> bool;
-    pub fn list(&self, prefix: &VirtualPath) -> Result<Vec<VirtualPath>, VfsError>;
+    pub fn get(&self, path: &VirtualPath)
+        -> Result<Option<&VirtualFile>, SnapshotError>;
+    pub fn contains(&self, path: &VirtualPath) -> Result<bool, SnapshotError>;
+    pub fn list(&self, prefix: &VirtualPath, limit: usize)
+        -> Result<Vec<VirtualPath>, SnapshotError>;
+    pub fn list_root(&self, root: VirtualRoot, limit: usize)
+        -> Result<Vec<VirtualPath>, SnapshotError>;
 }
 
 impl StageTransaction<'_> {
@@ -243,6 +253,20 @@ opens exact VFS files as `InputSource` values and publishes committed memory
 outputs into a stage transaction. The bibliography layer uses its own adapter
 over the same snapshot and transaction types. Neither engine receives mutable
 access to the workspace maps.
+
+`list` includes an exact prefix binding and descendants separated by a path
+component boundary; it never treats a byte-prefix sibling as a descendant.
+`list_root` covers the complete `/job` or `/texlive` namespace. Both merge the
+ordered ownership layers directly, return each visible path once, and fail
+before allocating more than the caller's result limit.
+
+Snapshots may be created with an immutable set of invalidated accepted-output
+paths. Such a path still resolves through pending output or the user layer when
+present. Explicitly invalidating a snapshot makes every clone sharing its
+validity token return `SnapshotError::Stale`; storage mutation itself does not
+make retained snapshots stale. `SnapshotRetention` reports every binding and
+logical file byte kept alive by the retained generation, including hidden
+shadowed bindings.
 
 ## Resource requests and registration
 
@@ -331,6 +355,10 @@ declared size is known, during bounded stream growth, at stage commit, and at
 build acceptance. Replaced generations cease to count once no live snapshot
 or accepted history retains them. Telemetry reports logical bytes separately
 from retained shared allocations.
+
+The implemented snapshot accounting exposes retained-generation binding and
+logical-byte totals. Transaction and session owners will aggregate those
+values with allocation-level telemetry when they adopt snapshots.
 
 No subsystem can bypass VFS accounting by returning an auxiliary output in a
 separate unbounded collection.
@@ -422,15 +450,18 @@ byte-identical generated files and DVI.
    batches, resolved-file validation/provisioning, request-bound origins, and
    file-related limit checks into `umber-vfs`. `VirtualCompileSession` consumes
    this registry and re-exports the shared value types.
-4. Adapt the existing TeX resolver and memory-output collector to VFS
-   snapshots and stage transactions without changing public compile behavior.
+4. **Complete in `umber-vfs`.** Add cheap retained snapshots, exact lookup,
+   accepted-output invalidation, stale-clone protection, and bounded lexical
+   enumeration.
 5. Add build transactions over the accepted and pending generated layers;
    migrate persistent compile-session atomicity to them.
-6. Add the bibliography resource kinds and adapters defined in
+6. Adapt the existing TeX resolver and memory-output collector to VFS
+   snapshots and stage transactions without changing public compile behavior.
+7. Add the bibliography resource kinds and adapters defined in
    [`bib.md`](bib.md).
-7. Implement native multi-stage orchestration, then expose the identical state
+8. Implement native multi-stage orchestration, then expose the identical state
    machine through `umber-wasm`.
-8. Remove superseded private file maps and duplicate path/request types after
+9. Remove superseded private file maps and duplicate path/request types after
    all native, incremental, and browser tests use `umber-vfs`.
 
 ## Exit criteria

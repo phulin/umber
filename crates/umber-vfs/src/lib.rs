@@ -6,6 +6,7 @@ use std::path::Path;
 mod file;
 mod limits;
 mod resource;
+mod snapshot;
 mod storage;
 
 pub use file::{
@@ -16,6 +17,7 @@ pub use resource::{
     FileKind, FileProvisioner, FileRequest, FileRequestBatch, FileRequestKey, ProvisionError,
     ProvisionOutcome, RequestKeyError, ResolvedFile, ResourceDomain, RetryError,
 };
+pub use snapshot::{SnapshotError, SnapshotRetention, VfsSnapshot, VirtualRoot};
 pub use storage::{
     DISTRIBUTION_LAYER_PRECEDENCE, FileLayer, ImmutableBindingError, InsertOutcome,
     JOB_LAYER_PRECEDENCE, LayerKind, LayeredFileStorage, StorageIdentity,
