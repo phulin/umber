@@ -1,0 +1,699 @@
+# In-process bibliography backend
+
+Status: proposed design contract.
+
+This document defines Umber's pure-Rust bibliography subsystem. Every Rust
+package uses the `bib-*` prefix, and modules, types, commands, features, and
+symbols use the neutral `bib` name. The upstream program name is reserved for
+compatibility documentation and fixture provenance and does not appear in Rust
+identifiers.
+
+The bibliography subsystem runs in the Umber process and inside
+`umber-wasm`. It does not invoke Perl, spawn a subprocess, or access a native
+filesystem. It reads and writes through the shared transactional virtual
+filesystem specified by [`umber_vfs.md`](umber_vfs.md).
+
+The central decision is:
+
+> Bibliography processing is a deterministic staged transformation from a
+> control file and immutable datasource bytes to a typed processed document,
+> diagnostics, and exact generated files. Host I/O and multi-pass project
+> policy remain outside the semantic crates.
+
+## Compatibility target
+
+The initial exact-parity target is upstream Biber commit `74252e6`:
+
+- program version 2.22 beta;
+- control-file schema 3.11; and
+- BBL schema 3.3.
+
+That commit is a fixed semantic and fixture baseline, not a moving dependency.
+Upgrades are explicit versioned migrations with differential fixtures. The
+reference program may run only in setup and fixture-regeneration tooling. It
+is never a runtime component of a native or browser build.
+
+For the pinned target, exact compatibility includes:
+
+- control and configuration semantics;
+- BibTeX and BibLaTeXML datasource parsing;
+- Unicode normalization, recoding, collation, transliteration, and locale
+  tailoring;
+- names, dates, ranges, annotations, verbatim values, URI lists, and other
+  typed field forms;
+- sourcemaps, aliases, xdata, crossrefs, related entries, sets, inheritance,
+  filtering, sorting, labels, hashes, and uniqueness;
+- ordinary and tool-mode processing;
+- BBL, BibTeX, BibLaTeXML, BBLXML, and DOT output;
+- command options, configuration precedence, diagnostics, and exit status;
+  and
+- malformed-input and validation behavior exercised by the upstream suite.
+
+Primary generated artifacts are compared byte for byte. Diagnostics are
+compared by typed severity, stable code, order, source location, and rendered
+text after fixing environmental inputs such as clock, locale, and virtual
+path roots.
+
+## Goals
+
+The subsystem must:
+
+- provide exact cold-run behavior for the pinned compatibility target;
+- expose one small public Rust facade usable directly by `umber` and
+  `umber-wasm`;
+- use the same semantic implementation and resource protocol in native and
+  browser builds;
+- keep all filesystem and network policy in the host/project layers;
+- expose an immutable processed bibliography for callers that need structured
+  data rather than serialized output;
+- isolate independently implementable parsing, graph, sorting, labeling, and
+  output work behind stable typed contracts;
+- preserve input order explicitly whenever it is semantically observable;
+- make all Unicode, schema, encoding, identifier-validation, and compatibility
+  tables versioned immutable resources;
+- support content-addressed caching without making cache hits observable; and
+- translate the upstream tests directly enough that assertion names, fixture
+  bytes, and expected values remain auditable.
+
+## Non-goals
+
+The initial implementation does not:
+
+- execute TeX or decide how many document passes a project requires;
+- fetch URLs, inspect environment variables, read system configuration, or
+  search a native TeX installation;
+- load native XML, collation, or encoding libraries;
+- expose mutable semantic internals as a cross-crate API;
+- preserve Perl object layout, global variables, incidental hash iteration,
+  or implementation-specific allocation behavior;
+- parallelize dependent transformations within one bibliography section until
+  exact sequential parity is established; or
+- claim compatibility with an upstream version other than the pinned target.
+
+## Crate architecture
+
+The implementation is split at semantic ownership boundaries:
+
+```text
+                           bib-engine
+                public session, pipeline, result API
+                                 |
+      +----------+----------+----------+----------+
+      |          |          |          |          |
+ bib-input   bib-graph   bib-sort   bib-label  bib-output
+      |          |          |          |          |
+      +----------+----------+----------+----------+
+                              bib-model
+                                 |
+                             bib-unicode
+```
+
+The intended packages are:
+
+- `bib-model`: versioned domain values, identifiers, scoped options,
+  diagnostics, source locations, sections, entries, lists, and processed
+  documents;
+- `bib-unicode`: pinned normalization, collation, locale tailoring,
+  transliteration, legacy encodings, and TeX recoding data;
+- `bib-input`: control/config parsing and validation plus BibTeX and
+  BibLaTeXML datasource parsing;
+- `bib-graph`: sourcemaps, aliases, dynamic entries, xdata, crossrefs, related
+  entries, sets, dependency closure, inheritance, and data-model validation;
+- `bib-sort`: list construction, filters, sort templates, sort-key generation,
+  presort, sort initials, and stable ordering;
+- `bib-label`: static and context-dependent entry processing, name visibility,
+  hashes, label fields, extradate/title values, and uniqueness;
+- `bib-output`: detached deterministic serializers for every supported output
+  format; and
+- `bib-engine`: the only ordinary dependency of `umber`, composing the stages
+  and exposing resource-session and one-shot APIs.
+
+All dependencies point toward `bib-model` and `bib-unicode`; semantic worker
+crates do not depend on `bib-engine` or `umber`. `bib-output` consumes a frozen
+processed document and cannot mutate processing state.
+
+## Domain model
+
+The model uses typed identifiers and values rather than unstructured nested
+maps at public boundaries:
+
+```rust
+pub struct EntryId(/* private canonical key */);
+pub struct SectionId(u32);
+pub struct DataListId(/* private stable key */);
+
+pub enum FieldValue {
+    Literal(Literal),
+    Verbatim(Verbatim),
+    Integer(i64),
+    NameList(NameList),
+    LiteralList(LiteralList),
+    KeyList(Vec<EntryId>),
+    UriList(UriList),
+    RangeList(RangeList),
+    Date(DateValue),
+}
+
+pub struct Entry {
+    id: EntryId,
+    entry_type: EntryType,
+    fields: FieldMap,
+    options: ScopedOptions,
+    annotations: AnnotationMap,
+    source: SourceLocation,
+}
+```
+
+Dynamic field names permitted by the control file remain validated interned
+identifiers, not one Rust enum variant per possible field. `FieldValue` is
+typed according to the active data model. An invalid type transition is a
+diagnostic or error at the same point as the reference behavior.
+
+The model distinguishes:
+
+- raw decoded datasource values;
+- normalized typed values;
+- inherited and transformed values with provenance;
+- computed label/sort/context fields; and
+- serialized presentation.
+
+This separation prevents output escaping rules from leaking back into semantic
+identity. Provenance records the source file, entry, field, transformation,
+and inherited parent where required for diagnostics, but is excluded from
+semantic hashes unless upstream behavior makes it observable.
+
+Every collection with observable order stores that order explicitly. Private
+hash maps may accelerate lookup but cannot determine output, diagnostic, or
+processing order.
+
+## Configuration and option scopes
+
+Configuration is parsed into an immutable `BibConfiguration` with explicit
+precedence layers:
+
+```text
+compiled defaults
+    -> tool configuration when applicable
+    -> user configuration
+    -> command options
+    -> control-file global options
+    -> section/type/entry/name/list scopes
+```
+
+The exact precedence and reset points follow the pinned reference behavior.
+Per-section processing creates a resolved option view rather than mutating a
+process-global singleton. Regular expressions, sort templates, label
+templates, inheritance rules, and data models are compiled during
+configuration finalization and shared immutably across sections.
+
+Invalid, unavailable, or incompatible versions fail before datasource
+processing and carry the control/config source location when available.
+
+## Input pipeline
+
+`bib-input` consumes exact bytes from an `umber-vfs` snapshot. It never opens a
+path independently.
+
+### Control and configuration XML
+
+The XML path performs:
+
+1. encoding detection and bounded decoding;
+2. well-formedness parsing with source locations;
+3. namespace and version checks;
+4. XInclude or equivalent supported inclusion through typed VFS reads;
+5. Relax NG validation when requested;
+6. conversion into typed configuration, section, datasource, sorting, label,
+   and data-model structures; and
+7. deterministic option finalization.
+
+The validator is pure Rust and supports the complete schema behavior required
+by the pinned distribution. It does not call libxml2, libxslt, or another
+native library. Schema and transform data are versioned distribution resources
+or compiled immutable tables with recorded source hashes.
+
+### BibTeX datasource
+
+The parser reproduces the pinned reference grammar and recovery behavior,
+including comments, preambles, string macros, concatenation, duplicate and
+case-colliding keys, month macros, nested braces, quoted values, malformed
+entries, and encoding/recode stages. Parser recovery preserves diagnostic
+order and resumes at the same logical boundary as the reference tests.
+
+Parsing produces a datasource-local raw entry store. Entry selection,
+dependency traversal, inheritance, and sorting occur later; the parser does
+not silently bake processing policy into field values.
+
+### BibLaTeXML datasource
+
+The XML datasource follows the same typed raw-entry contract. Handler tables
+map schema datatypes to `FieldValue` construction. Validation, annotations,
+related data, date/range/list parsing, and normalized string behavior remain
+separately testable.
+
+## Processing pipeline
+
+Cold processing defines correctness. The facade executes the following stable
+order:
+
+1. parse and finalize control/configuration;
+2. create sections, datasource declarations, and output/list specifications;
+3. perform global setup and resolve data-field sets;
+4. for each nonempty section in declared order:
+   1. create the section's resolved option view;
+   2. fetch directly cited entries and recursively required dependents;
+   3. resolve citation-key aliases;
+   4. instantiate dynamic entries;
+   5. resolve alias references and xdata;
+   6. cite and preprocess set members;
+   7. calculate and apply cross-entry relationships and inheritance;
+   8. validate the resulting entries against the active data model;
+   9. postprocess sets;
+   10. compute section-static entry data;
+   11. construct, filter, label, uniquify, and sort output lists; and
+   12. freeze a processed output section;
+5. compute output-global metadata; and
+6. serialize requested files from the frozen processed document.
+
+Tool mode uses a synthetic section and its documented setup, data source,
+transformation, resolution, validation, list, and serialization behavior. It
+is a first-class mode, not a separate executable implementation.
+
+Each stage accepts an explicit context and mutable private builder, then
+returns a validated next-stage value or ordered diagnostics. No stage reads a
+global configuration object, current directory, process locale, or argument
+vector.
+
+## Public API
+
+`bib-engine` exposes both a resumable session for virtual-resource acquisition
+and a convenient one-shot operation for callers that already have every file:
+
+```rust
+pub struct BibSession {
+    /* retained parsed-source and semantic caches */
+}
+
+pub struct BibJob {
+    pub control_path: VirtualPath,
+    pub options: BibOptions,
+}
+
+pub enum BibAttempt {
+    Complete(BibResult),
+    NeedResources(NeedResources),
+    Failed(BibFailure),
+}
+
+pub struct BibResult {
+    pub document: Arc<ProcessedBibliography>,
+    pub files: Vec<GeneratedFile>,
+    pub diagnostics: Vec<BibDiagnostic>,
+    pub stats: BibStats,
+}
+
+impl BibSession {
+    pub fn new(options: BibSessionOptions) -> Result<Self, BibInitFailure>;
+
+    pub fn process(
+        &mut self,
+        job: &BibJob,
+        files: &VfsSnapshot,
+    ) -> BibAttempt;
+}
+```
+
+The facade does not own host acquisition. `NeedResources` contains typed
+logical requests that the project session merges with TeX requests. After the
+host registers responses in `umber-vfs`, the caller invokes `process` again.
+An attempt either returns a complete detached result, returns needs without
+publishing generated files, or fails.
+
+Serialization may also be invoked separately:
+
+```rust
+pub fn serialize(
+    document: &ProcessedBibliography,
+    request: &OutputRequest,
+) -> Result<GeneratedFile, BibOutputFailure>;
+```
+
+Read-only query APIs expose sections, entries, fields, resolved relationships,
+and list order without exposing mutable builders or crate-private caches.
+
+## Virtual filesystem contract
+
+The subsystem follows [`umber_vfs.md`](umber_vfs.md) exactly:
+
+- `.bcf`, `.bib`, XML, configuration, and schema bytes are immutable VFS
+  inputs;
+- missing datasources and includes become typed batched resource requests;
+- `.bbl`, `.blg`, generated schemas, transformed bibliography files, and other
+  outputs are detached `GeneratedFile` values until the project orchestrator
+  writes them into a stage transaction;
+- the bibliography stage reads one immutable snapshot;
+- failed or suspended attempts publish no writes; and
+- the complete multipass build becomes caller-visible only after atomic build
+  acceptance.
+
+Datasource names are not URLs inside semantic Rust code. A remote datasource
+produces a logical request containing the original identifier and required
+kind. Native or JavaScript policy maps that request to bytes and supplies a
+canonical virtual path.
+
+## Umber project integration
+
+The multi-pass policy belongs to a higher-level `LatexProjectSession` in
+`umber`, above both `EngineSession` and `BibSession`:
+
+```text
+begin pending VFS build
+    -> run TeX against pending snapshot
+    -> collect .bcf and auxiliary writes into the build overlay
+    -> run bib when the control file requests it or its semantic input changed
+    -> publish .bbl and .blg into the next overlay generation
+    -> rerun TeX with the new .bbl
+    -> repeat until the selected auxiliary identities stabilize
+    -> accept VFS build, TeX output, and editor revision atomically
+```
+
+The convergence set includes the control file, bibliography output, and TeX
+auxiliary files selected by the project mode. Byte identity is the default
+criterion; any semantic normalization requires a separate documented proof
+that it cannot alter a later pass.
+
+A missing TeX or bibliography resource returns one merged deterministic batch.
+No-progress, pass-limit, output-limit, or oscillating-output conditions are
+typed failures. The last accepted root revision, generated files, DVI/HTML,
+and source maps remain available after any failed pending build.
+
+The existing single-pass `EngineSession` and `VirtualCompileSession` APIs
+remain available. Callers opt into project orchestration rather than silently
+changing the meaning or latency of a one-pass compile operation.
+
+## WebAssembly integration
+
+`umber-wasm` compiles the complete `bib` dependency graph into the same module
+as the TeX engine. The JavaScript layer drives only the generic resource loop:
+
+```text
+Rust returns NeedResources
+    -> JavaScript resolves requests concurrently
+    -> verified bytes enter umber-vfs
+    -> Rust resumes the project state machine
+```
+
+JavaScript does not parse control files, bibliography data, or generated
+output, and it does not choose semantic processing order. The browser and
+native paths use identical Rust options, VFS snapshots, tables, diagnostics,
+and serializers.
+
+Every production dependency must support `wasm32-unknown-unknown`. In
+particular, the implementation cannot depend on Perl, native ICU, libxml2,
+libxslt, native regular-expression engines, system locales, subprocesses,
+threads required for correctness, or the native filesystem.
+
+## Unicode, encodings, and collation
+
+Exact Unicode behavior is a versioned semantic dependency. `bib-unicode`
+contains or consumes pinned data for:
+
+- Unicode normalization forms;
+- default collation elements and contractions;
+- locale-specific tailoring used by the compatibility target;
+- case mapping and script-sensitive behavior;
+- legacy input/output encodings;
+- TeX command-to-Unicode and Unicode-to-TeX recoding; and
+- supported transliteration schemes.
+
+The selected table versions and compatibility patches enter cache identity
+and build metadata. Host locale and browser internationalization APIs are
+never consulted. If an existing pure-Rust library differs from the reference
+on a tested case, the discrepancy is resolved through pinned compatibility
+data or an owned implementation rather than platform-specific fallback.
+
+Sort keys are opaque versioned values. Their byte representation may be
+private, but comparisons must reproduce reference ordering, equality,
+padding, case, numeric, and missing-value behavior exactly.
+
+## Regular expressions and user transformations
+
+Configuration sourcemaps and filters may use syntax or semantics beyond
+Rust's standard finite-automata regular expressions. The implementation must
+inventory the pinned test and configuration surface, then provide a bounded
+pure-Rust compatibility layer for the required constructs.
+
+Compilation happens during configuration finalization. Execution enforces
+input, capture, replacement, and step limits. Unsupported syntax produces a
+typed diagnostic at the same semantic phase as the compatibility target; it
+does not fall through to a host regex engine.
+
+## Output and diagnostics
+
+Serializers consume only a frozen `ProcessedBibliography`, an explicit output
+request, and immutable compatibility tables. They do not read files, options,
+or mutable global state.
+
+Every output writer specifies:
+
+- exact encoding and byte-order behavior;
+- newline policy;
+- field, entry, section, macro, and comment order;
+- escaping and recoding stage;
+- schema/version headers;
+- malformed or unrepresentable-value diagnostics; and
+- output-size accounting.
+
+Diagnostics have stable codes and structured data:
+
+```rust
+pub struct BibDiagnostic {
+    pub code: BibDiagnosticCode,
+    pub severity: BibSeverity,
+    pub message: String,
+    pub source: Option<BibSourceLocation>,
+    pub entry: Option<EntryId>,
+    pub field: Option<FieldId>,
+}
+```
+
+Rendering compatibility is tested separately from diagnostic structure. Paths
+are canonical virtual paths, and messages contain no native temporary
+directories or host URLs.
+
+## Caching and incremental builds
+
+Cold execution remains the correctness definition. Caches are detached,
+versioned, bounded, and freely discardable.
+
+Useful cache layers include:
+
+- decoded immutable source bytes keyed by content identity and encoding;
+- parsed control/config/schema values keyed by bytes and parser version;
+- parsed datasource entries keyed by bytes, configuration-relevant options,
+  and compatibility tables;
+- section dependency closure keyed by cited entries and graph-affecting
+  configuration;
+- collation keys keyed by normalized value, locale, options, and table version;
+  and
+- serialized outputs keyed by processed-document identity and output request.
+
+No cache key contains allocation order, process-local handles, hash-map order,
+native path metadata, or diagnostic provenance ids. A cache hit must yield the
+same diagnostics and generated bytes in the same order as a cold run.
+
+The project session may skip bibliography processing when the control file,
+all selected datasource identities, configuration, options, and compatibility
+data are unchanged and the accepted generated output is still present. This
+is an optimization, not a convergence assumption.
+
+## Limits, trust, and failures
+
+Session limits cover:
+
+- control/config/schema size and nesting;
+- datasource count and bytes;
+- entry, field, name, list, range, and annotation counts;
+- parser nesting and recovery work;
+- dependency depth and graph edges;
+- regex compilation and execution work;
+- collation-key and transformed-string size;
+- diagnostics;
+- processed-document retained bytes;
+- generated file count and bytes; and
+- project pass count.
+
+All size arithmetic is checked. Recursive graph operations use explicit depth
+or work budgets and diagnose cycles deterministically. XML entity expansion,
+includes, and remote identifiers cannot bypass the VFS request protocol or
+limits.
+
+Required typed failure classes distinguish invalid invocation, incompatible
+version, malformed input, validation failure, missing resource, resource
+conflict, semantic processing failure, output failure, limit violation, and
+internal invariant failure. Compatibility warnings do not become fatal unless
+the selected mode requires that behavior.
+
+## Direct test translation
+
+The pinned upstream repository contains 51 test files with 1,275 declared
+assertions. The complete suite, including development-gated whole-output
+tests, is the initial parity ledger.
+
+Public parity tests use one Cargo integration-test binary:
+
+```text
+crates/bib-engine/tests/it.rs
+crates/bib-engine/tests/it/upstream/
+  annotations.rs
+  basic_misc.rs
+  bcfvalidation.rs
+  ...
+  uniqueness.rs
+  utils.rs
+  xdata.rs
+```
+
+Redistributable inputs and expected files live under:
+
+```text
+tests/corpus/bib/upstream-2.22/
+```
+
+Translation rules are:
+
+- retain upstream test-file grouping, assertion names, and assertion order;
+- preserve fixture and expected bytes exactly;
+- preserve Unicode normalization form in Rust source or byte fixtures;
+- compare primary generated files as bytes;
+- test structured diagnostics and their rendered compatibility text;
+- preserve upstream license and provenance beside imported material;
+- record the upstream commit and SHA-256 for every imported file in a
+  machine-readable fixture manifest;
+- keep live reference execution out of ordinary Cargo tests; and
+- regenerate reference-derived fixtures only through
+  `scripts/regen-fixtures.sh`.
+
+Implementation status, owners, dependencies, and blockers live in Beads. The
+fixture manifest records provenance and test configuration, not task status.
+
+Test ownership follows semantic boundaries:
+
+- `bib-input`: control validation, config, aliases at parse time, encodings,
+  BibTeX, and BibLaTeXML;
+- `bib-graph`: crossrefs, xdata, related entries, maps, sections, and sets;
+- `bib-sort`: data lists, skips, truncation, sort order/case/locale, and complex
+  sorting;
+- `bib-label`: names, label families, extra fields, and uniqueness;
+- `bib-output`: whole BBL/BibTeX/DOT files and tool output; and
+- `bib-model`/`bib-unicode`: utilities, dates, language tags,
+  transliteration, annotations, and value invariants.
+
+Each implementation task ports the assertions it makes pass. Internal helper
+tests remain beside their owning modules under `src/.../tests.rs`; public
+compatibility tests exercise only the `bib-engine` facade.
+
+## Differential and end-to-end gates
+
+The default correctness tier is hermetic and consumes committed fixtures:
+
+```text
+cargo test --workspace --tests
+```
+
+Reference regeneration runs the pinned Perl implementation in an isolated,
+dependency-locked environment with a fixed locale, clock policy, virtualized
+paths, and network disabled except for explicit remote-resource fixtures.
+`scripts/regen-fixtures.sh` is the only write path.
+
+Parity closes in four tiers:
+
+1. translated assertion parity for all 51 upstream test files;
+2. whole-output parity for every committed control/data fixture and output
+   format;
+3. differential execution of the pinned reference and Rust implementation
+   during fixture regeneration; and
+4. end-to-end LaTeX parity:
+
+```text
+TeX pass -> .bcf -> Rust bib -> .bbl -> TeX passes -> DVI
+reference toolchain                              -> DVI
+```
+
+The final `.bbl`, relevant auxiliary files, diagnostics, and DVI must be
+byte-identical under the pinned environment. Native and WASM must also produce
+identical results from the same VFS inputs and options.
+
+## Parallel implementation plan
+
+The work is organized as a Beads epic with dependency-aware child features.
+After the facade contracts and model skeleton land, four-agent waves can work
+without editing the same crate subtree.
+
+### Foundation wave
+
+1. `bib-model`, option scopes, diagnostics, and frozen document contracts.
+2. Unicode, dates, names, recoding, encodings, and collation feasibility.
+3. BibTeX parsing and datasource-local entry construction.
+4. XML control/config/schema and BibLaTeXML parsing.
+
+The foundation gate freezes the stage input/output contracts and proves the
+highest-risk pure-Rust/WASM dependencies.
+
+### Semantic wave
+
+1. Relationships, inheritance, sourcemaps, sections, and sets.
+2. Data lists, filters, sort templates, and collation keys.
+3. Labels, hashes, extra fields, and uniqueness.
+4. BBL and secondary serializers plus tool mode.
+
+Each lane owns its direct test cohort and commits in logical passing slices.
+
+### Integration wave
+
+1. `BibSession`, resource retries, caches, and public queries.
+2. Native command/API compatibility and output collection.
+3. `LatexProjectSession` and transactional multipass convergence.
+4. `umber-wasm` bindings and browser resource-loop parity.
+
+The coordinator owns shared workspace dependency changes, fixture manifest
+merges, root documentation, and `AGENTS.md` maps. Agent branches own complete
+crate or module subtrees to minimize merge conflicts.
+
+## Documentation and existing contracts
+
+This design extends the engine composition described in
+[`architecture.md`](architecture.md) without putting bibliography semantics in
+the lexer, expander, executor, state, typesetting, or output crates.
+
+[`persistent_compile_sessions.md`](persistent_compile_sessions.md) remains the
+accepted revision and resource-retry contract. It gains project-level
+orchestration above the existing single-pass session. The resource protocol in
+[`wasm_resource_acquisition.md`](wasm_resource_acquisition.md) remains
+client-owned and gains bibliography file kinds through `umber-vfs`.
+
+Once the in-process native and WASM parity gates pass, the automatic
+bibliography non-goal in [`latex_dvi.md`](latex_dvi.md) is removed and replaced
+with the exact supported version, modes, and project-session behavior.
+
+## Exit criteria
+
+The bibliography subsystem is complete for the pinned target when:
+
+- every supported operation runs as pure Rust in the Umber process and in
+  `umber-wasm`, with no subprocess or native filesystem dependency;
+- all 51 upstream test files and all 1,275 declared assertions have direct
+  passing Rust equivalents, including development-gated whole-output tests;
+- every output format and ordered diagnostic matches the pinned reference;
+- native and WASM consume the same VFS bytes and produce identical results;
+- TeX and bibliography stages exchange files transactionally and resource
+  misses never partially publish a build;
+- end-to-end LaTeX `.bbl`, auxiliary, and DVI parity passes;
+- all caches can be disabled without changing results;
+- resource, recursion, regex, output, and retained-memory limits are covered by
+  adversarial tests;
+- public Umber callers can run a one-shot bibliography job, retain a
+  `BibSession`, query the processed document, or use automatic project
+  orchestration; and
+- architecture, testing, WASM, LaTeX, and directory-map documentation describe
+  the implemented state rather than the rollout plan.

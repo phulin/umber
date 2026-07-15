@@ -56,3 +56,13 @@ maps each family to its short-reference-manual contract and conformance gate.
 `latex_dvi.md` defines the supported LaTeX-DVI engine identity, extension
 inventory, pinned distribution boundary, parity contract, and explicit
 non-goals such as pdfLaTeX identity and PDF output.
+
+`umber_vfs.md` defines the proposed host-neutral shared virtual filesystem,
+including canonical paths, immutable input layers, generated-file
+transactions, typed resource registration, build atomicity, native/WASM
+parity, migration, and validation.
+
+`bib.md` defines the proposed pure-Rust in-process bibliography subsystem,
+its `bib-*` crate boundaries, exact compatibility target, public API,
+processing pipeline, direct upstream-test translation, shared-VFS dependency,
+multi-pass native/WASM composition, rollout, and exit criteria.
