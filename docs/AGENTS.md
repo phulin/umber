@@ -69,6 +69,10 @@ enquiries, and the detached `pdf_writer` resource boundary.
 graphics-state lowering, color-stack page/form scope, saved positions and
 snapping, and the timer/random integration boundary.
 
+`pdftex_navigation.md` defines destination scanners and name trees, outline
+hierarchy and actions, article-thread bead lifecycles, object ownership,
+diagnostics, reserved codecs, and the typed PDF writer boundary.
+
 `latex_dvi.md` defines the supported LaTeX-DVI engine identity, extension
 inventory, pinned distribution boundary, parity contract, and explicit
 non-goals such as pdfLaTeX identity and PDF output.

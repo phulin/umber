@@ -481,7 +481,9 @@ checklist and include focused pdfTeX-oracle fixtures:
     link start/end, margins, running-link controls, and last enquiries.
     Depends on issues 2 and 13.
 16. **Implement PDF destinations, outlines, and article threads.** Cover
-    destination and outline actions plus thread start/end and margins.
+    destination and outline actions plus thread start/end and margins. The
+    exact scanner, ownership, hierarchy, diagnostic, codec, typed-writer, and
+    fixture contracts are fixed in `pdftex_navigation.md`.
     Depends on issues 2 and 13.
 17. **Implement PDF font maps, embedding, and ToUnicode controls.** Cover font
     attributes/maps, included characters, glyph mapping, built-in ToUnicode,
