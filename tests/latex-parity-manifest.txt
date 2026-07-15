@@ -1,9 +1,9 @@
-# Pinned upstream LaTeX2e DVI parity corpus.
+# Pinned upstream LaTeX2e repository and DVI parity selection rule.
 #
-# The archive hash pins the complete, unmodified LPPL distribution. Support and
-# case records additionally make the exact exercised inputs reviewable without
-# extracting the archive. Fields are whitespace-separated; categories use
-# commas so paths and records remain shell-readable.
+# The archive identity covers the complete, unmodified LPPL repository. Cases
+# are deliberately not pinned one file at a time: setup derives the corpus from
+# every .lvt in the declared scopes whose same-stem standard .tlg records a
+# shipped DVI box. The exact pinned tree currently yields 295 cases.
 snapshot release-2024-11-01-PL2
 commit 08926fa6af2c978cbd19f14597252877619f6338
 archive_url https://github.com/latex3/latex2e/archive/08926fa6af2c978cbd19f14597252877619f6338.tar.gz
@@ -11,17 +11,9 @@ archive_root latex2e-08926fa6af2c978cbd19f14597252877619f6338
 archive_bytes 8465571
 archive_sha256 eeacc19ae021b4acf113560960574419ee4f9c2aa5a8e907dd77e06c9430a7e1
 source_date_epoch 1730419200
-
-# support <archive-relative-path> <bytes> <sha256>
-support support/test2e.tex 10408 8a155d4bec0c8423274f15f766f07876512c9f7c9e00fbe46f298df7896bd913
-support support/regression-test.tex 8277 3553c70ed5ccfce0731eea47cf505ae8fb32434861ae5de30c7480cde1d2e79b
-
-# case <name> <archive-relative-path> <bytes> <sha256> <passes> <categories> <support-path>
-case paragraph-fill base/testfiles/github-0385.lvt 153 eb919acc80a57ba710b2666af7d234e1d072c79981d7d67989b24111def0457e 1 paragraphs,glue support/test2e.tex
-case tables base/testfiles/github-0192.lvt 238 58cbd31ac9457a0fc179c86648849e9fdd5f830b59d96151d19e586cb3e56f77 1 tables,boxes,glue support/test2e.tex
-case list-hooks base/testfiles/github-1641.lvt 559 e678e5458d66416318f585d6d68cc27bc083d4e2b08f3a1016867c3104ad1ff4 1 lists,boxes,hooks support/test2e.tex
-case footnote-symbols base/testfiles/tlb1684.lvt 423 93b33b62480d62fccc2f32dd712cd4d352289fef9376e7ebc5a10376416afb95 1 footnotes,fonts support/test2e.tex
-case display-math base/testfiles/github-0252.lvt 394 a31d7b11f70bde7d1b6c2af0118e0a9cf58e3033fa450040894344d93b9471fd 1 math,glue support/test2e.tex
-case font-selection base/testfiles/github-0782.lvt 216 14812a2bfaae88851686271881339bcd77b0f1f7a711332bf94be7face8c2f66 1 fonts,encodings support/test2e.tex
-case two-column-pages base/testfiles/tlb-newpage-001.lvt 386 b9ea0bf3a8f7d1271900cf6f1e46cf4f6a03da215848380096b6af4247e600c9 1 pages,columns,glue support/test2e.tex
-case shipout-hooks base/testfiles-lthooks2/github-0431.lvt 495 42f2a200ebd8f44053c3ec2935cff02099310c080667c25f7e4cd26f6bad7f21 1 shipout,hooks,pages support/regression-test.tex
+selection standard-tlg-shipout
+expected_cases 295
+scope base
+scope required/tools
+scope required/graphics
+scope required/amsmath

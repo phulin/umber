@@ -6,6 +6,7 @@ manifest="${repo_root}/tests/latex-parity-manifest.txt"
 parity_root="${repo_root}/third_party/latex2e-parity"
 archive="${parity_root}/latex2e.tar.gz"
 source_dir="${parity_root}/source"
+case_list="${parity_root}/dvi-cases.txt"
 offline=0
 
 usage() {
@@ -85,22 +86,31 @@ if [[ ! -f "$stamp" || "$(cat "$stamp")" != "$archive_hash" ]]; then
   printf '%s\n' "$archive_hash" > "$stamp"
 fi
 
-while read -r kind path expected_bytes expected_hash extra; do
-  [[ "$kind" == support ]] || continue
-  [[ -z "${extra:-}" ]] || fail "invalid support record for $path"
-  verify_file "${source_dir}/${path}" "$expected_bytes" "$expected_hash"
-done < "$manifest"
+selection="$(field selection)"
+expected_cases="$(field expected_cases)"
+[[ "$selection" == standard-tlg-shipout ]] || fail "unsupported selection rule: $selection"
+[[ "$expected_cases" =~ ^[1-9][0-9]*$ ]] || fail "invalid expected_cases value"
 
-while read -r kind name path expected_bytes expected_hash passes categories support_path extra; do
-  [[ "$kind" == case ]] || continue
-  [[ -z "${extra:-}" ]] || fail "invalid case record for $name"
-  [[ "$path" != /* && "$path" != *..* && "$support_path" != /* && "$support_path" != *..* ]] || \
-    fail "unsafe path in case record for $name"
-  [[ "$passes" =~ ^[1-9][0-9]*$ ]] || fail "invalid pass count for $name"
-  [[ -n "$categories" ]] || fail "missing categories for $name"
-  verify_file "${source_dir}/${path}" "$expected_bytes" "$expected_hash"
-  [[ -f "${source_dir}/${support_path}" ]] || fail "missing support file for $name"
+tmp_cases="${case_list}.tmp"
+: > "$tmp_cases"
+while read -r kind scope extra; do
+  [[ "$kind" == scope ]] || continue
+  [[ -z "${extra:-}" ]] || fail "invalid scope record: $scope"
+  [[ "$scope" != /* && "$scope" != *..* ]] || fail "unsafe scope: $scope"
+  scope_dir="${source_dir}/${scope}"
+  [[ -d "$scope_dir" ]] || fail "missing pinned scope: $scope"
+  while IFS= read -r lvt; do
+    tlg="${lvt%.lvt}.tlg"
+    if [[ -f "$tlg" ]] && grep -Eq 'Completed box being shipped out|\\box255' "$tlg"; then
+      printf '%s\n' "${lvt#${source_dir}/}" >> "$tmp_cases"
+    fi
+  done < <(find "$scope_dir" -type f -name '*.lvt' -print)
 done < "$manifest"
+LC_ALL=C sort -u -o "$tmp_cases" "$tmp_cases"
+actual_cases="$(wc -l < "$tmp_cases" | tr -d ' ')"
+[[ "$actual_cases" == "$expected_cases" ]] || \
+  fail "selection produced $actual_cases cases, expected $expected_cases"
+mv "$tmp_cases" "$case_list"
 
 printf 'LaTeX2e parity snapshot verified: %s (%s cases)\n' \
-  "$(field snapshot)" "$(awk '$1 == "case" { count++ } END { print count + 0 }' "$manifest")"
+  "$(field snapshot)" "$actual_cases"
