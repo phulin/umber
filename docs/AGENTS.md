@@ -53,6 +53,10 @@ reuse, and the migration rollout.
 `etex_primitives.md` is the extension-only e-TeX V2 primitive checklist and
 maps each family to its short-reference-manual contract and conformance gate.
 
+`pdftex_primitives.md` is the source-derived pdfTeX 1.40.27 inventory and
+divides all 158 extension primitives into corpus-observed high priority and
+deferred compatibility sets.
+
 `latex_dvi.md` defines the supported LaTeX-DVI engine identity, extension
 inventory, pinned distribution boundary, parity contract, and explicit
 non-goals such as pdfLaTeX identity and PDF output.
