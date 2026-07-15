@@ -1020,6 +1020,8 @@ pub struct Universe {
     fork_origin: Option<ForkOrigin>,
     /// Operational memo metadata; excluded from snapshots and semantic hashes.
     dependencies: DependencyRuntime,
+    /// Optional pure-query cache; excluded from snapshots and semantic hashes.
+    pure_memo: crate::pure_memo::PureMemoRuntime,
 }
 
 /// Canonical semantic hasher for executor-owned state at a named boundary.
@@ -1143,6 +1145,7 @@ impl Clone for Universe {
             next_snapshot_serial: self.next_snapshot_serial,
             fork_origin: self.fork_origin,
             dependencies: self.dependencies.clone(),
+            pure_memo: self.pure_memo.clone(),
         }
     }
 }
@@ -1203,6 +1206,7 @@ impl Universe {
             next_snapshot_serial: 0,
             fork_origin: None,
             dependencies: DependencyRuntime::default(),
+            pure_memo: crate::pure_memo::PureMemoRuntime::default(),
         }
     }
 
@@ -1291,6 +1295,39 @@ impl Universe {
         self.dependencies
             .tracker()
             .validate_region(observations, read_current)
+    }
+
+    /// Enables the bounded session-local pure-query cache.
+    pub fn enable_pure_memo(&mut self, config: crate::PureMemoConfig) {
+        self.pure_memo.enable(config);
+    }
+
+    /// Disables the pure-query cache and releases every retained value.
+    pub fn disable_pure_memo(&mut self) {
+        self.pure_memo.disable();
+    }
+
+    #[must_use]
+    pub fn pure_memo_stats(&self) -> crate::PureMemoStats {
+        self.pure_memo.stats()
+    }
+
+    #[doc(hidden)]
+    pub fn lookup_pure_memo(
+        &mut self,
+        key: crate::PureMemoKey,
+    ) -> Option<crate::DetachedMemoValue> {
+        self.pure_memo.lookup(key)
+    }
+
+    #[doc(hidden)]
+    pub fn insert_pure_memo(&mut self, key: crate::PureMemoKey, value: crate::DetachedMemoValue) {
+        self.pure_memo.insert(key, value);
+    }
+
+    #[doc(hidden)]
+    pub fn reject_pure_memo(&mut self, key: crate::PureMemoKey) {
+        self.pure_memo.reject(key);
     }
 
     fn mark_code_changed(&mut self, table: DependencyCodeTable, ch: char) {
@@ -1493,6 +1530,7 @@ impl Universe {
             next_snapshot_serial: 0,
             fork_origin: None,
             dependencies: DependencyRuntime::default(),
+            pure_memo: crate::pure_memo::PureMemoRuntime::default(),
         })
     }
 

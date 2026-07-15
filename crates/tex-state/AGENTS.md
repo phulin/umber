@@ -79,6 +79,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/page/tests.rs`: Page snapshot-root sharing and copy-on-write isolation tests.
 - `src/provenance.rs`: Diagnostic origin-record and origin-list arenas with rollback watermarks.
 - `src/provenance/tests.rs`: Unit tests for provenance allocation, readback, and rollback marks.
+- `src/pure_memo.rs`: Optional bounded session-local cache for strongly verified detached pure-query results.
+- `src/pure_memo/tests.rs`: Collision, eviction, retention-release, and disabled-cache tests.
 - `src/scaled.rs`: Compatibility re-export for shared TeX scaled-point arithmetic.
 - `src/source_map.rs`: Rollback-coupled logical source regions, validated positions/spans, and immutable World/generated backing identities.
 - `src/source_map/tests.rs`: Source-region anchors, validation, overflow, rollback/reuse, and O(1)-mark tests.

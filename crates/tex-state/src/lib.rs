@@ -65,6 +65,7 @@ pub mod page;
 mod pdf;
 pub mod provenance;
 mod provenance_resolver;
+mod pure_memo;
 pub mod scaled;
 pub mod source_fragments;
 pub mod source_map;
@@ -113,6 +114,7 @@ pub use page::{
     PageFireUp, PageInteger,
 };
 pub use provenance_resolver::{ProvenanceResolver, ResolvedSourceLocation};
+pub use pure_memo::{PureMemoConfig, PureMemoKey, PureMemoStats};
 pub use source_fragments::{
     EditorLayout, EditorLayoutError, FragmentId, FragmentStore, LayoutGeneration,
     LayoutResolvedOrigin, Piece, PieceId, RootSpanId,
