@@ -102,6 +102,13 @@ piece table, document-start table, editor path, and lazily built line index as
 charged with those roots. The checkpoint budget uses the sum, while output
 bytes remain reported separately.
 
+Accepted-output metrics are the point-in-time values captured during accept,
+before a cold source query can allocate the line index. Native session
+telemetry and the WASM `retentionMetrics` getter are live views: after a query
+they refresh `diagnostic_bytes` and the checkpoint budget overage from the
+accepted layout, so the lazy allocation is charged without making acceptance
+or semantic snapshots cache-dependent.
+
 The long-session tests exercise 64 alternating leading insert/deletes, 128
 successive edits to one line, and 32 separated line replacements. Fully
 replaced fragment bytes are reclaimed after both convergent and nonconvergent
@@ -130,8 +137,9 @@ construction and retained storage are O(Σ `v_f log v_f`) for per-fragment
 view counts `v_f`; current/deleted lookup is O(log fragments + log `v_f`).
 The minimum document-order value preserves repeated/overlapping-view and
 zero-width-anchor semantics. Accepted engine snapshots remain O(1): the
-completed immutable layout, including its index, is shared rather than
-rebuilt by snapshot capture.
+immutable layout and any operational line index already present are shared
+rather than rebuilt by snapshot capture, while constructing the index later
+does not alter semantic snapshot state.
 
 The scaling table below is a 20-sample calibration run on the adoption host
 (one-second warmup and two-second measurement); the reproduction command

@@ -73,6 +73,13 @@ Observable effects are materialized through a lightweight clone of the
 accepted retained `World`; inspecting output therefore does not clone engine
 stores, consume checkpoints, or prevent later patches.
 
+The retention values copied into an accepted output are a point-in-time
+snapshot taken during acceptance. The session's `retention_metrics()` getter,
+and therefore the WASM `retentionMetrics` property, is live: it preserves the
+accepted checkpoint/output totals but refreshes diagnostic bytes and protected
+budget overage so caches allocated by later rendered-source queries are
+included.
+
 `dispose()` releases resources, accepted history, and output. No session
 method succeeds after disposal.
 
@@ -106,6 +113,12 @@ each text unit. On a click, the session parses and positions only the selected
 page, follows that address into the sidecar, and resolves the opaque origin
 against the accepted source substrate. Paths, byte ranges, lines, and columns
 are therefore computed only on demand.
+
+The first successful current-document query may lazily allocate the accepted
+layout's line-start index. That index remains operational, diagnostic-only
+state: it does not affect semantic state, snapshot identity, or snapshot
+capture complexity, and live session retention telemetry charges it after the
+query.
 
 Origin columns and artifact sidecars are excluded from semantic node hashes,
 artifact bytes, and artifact content identity. Reused committed pages retain

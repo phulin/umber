@@ -127,10 +127,19 @@ async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
     assert!(html.is_instance_of::<Uint8Array>());
     let html_text = String::from_utf8(Uint8Array::new(&html).to_vec()).expect("HTML UTF-8");
     let event = rendered_text_event(&html_text, b'A');
+    let retention_before = session.retention_metrics().expect("accepted retention");
+    let diagnostic_before = field(&retention_before, "diagnosticBytes")
+        .as_f64()
+        .expect("numeric diagnostic bytes");
     let location = session
         .rendered_source_location(1, event, Some(0))
         .expect("source query")
         .expect("mapped source");
+    let retention_after = session.retention_metrics().expect("live retention");
+    let diagnostic_after = field(&retention_after, "diagnosticBytes")
+        .as_f64()
+        .expect("numeric diagnostic bytes");
+    assert!(diagnostic_after > diagnostic_before);
     assert!(
         session
             .rendered_source_location(1, event, Some(2))

@@ -422,7 +422,6 @@ pub struct VirtualCompileSession {
     accepted_output: Option<MemoryRunOutput>,
     pending_patch: Option<(tex_incr::RevisionId, tex_incr::Edit)>,
     last_reuse: Option<tex_incr::ReuseMetrics>,
-    last_retention: Option<tex_incr::RetentionMetrics>,
 }
 
 impl VirtualCompileSession {
@@ -468,7 +467,6 @@ impl VirtualCompileSession {
             accepted_output: None,
             pending_patch: None,
             last_reuse: None,
-            last_retention: None,
         })
     }
 
@@ -634,8 +632,10 @@ impl VirtualCompileSession {
     }
 
     #[must_use]
-    pub const fn retention_metrics(&self) -> Option<tex_incr::RetentionMetrics> {
-        self.last_retention
+    pub fn retention_metrics(&self) -> Option<tex_incr::RetentionMetrics> {
+        self.incremental
+            .as_ref()
+            .and_then(tex_incr::Session::retention_metrics)
     }
 
     pub fn provide_resolved_file(
@@ -1042,7 +1042,6 @@ impl VirtualCompileSession {
         check_limit("returned output bytes", existing, self.limits.output_bytes)?;
         self.pending_patch = None;
         self.last_reuse = Some(accepted.reuse);
-        self.last_retention = Some(accepted.retention);
         self.accepted_output = Some(output.clone());
         Ok(CompileAttemptResult::Complete(output))
     }
@@ -1070,7 +1069,6 @@ impl VirtualCompileSession {
         self.accepted_output = None;
         self.pending_patch = None;
         self.last_reuse = None;
-        self.last_retention = None;
         Ok(())
     }
 

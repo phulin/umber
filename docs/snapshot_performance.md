@@ -58,6 +58,13 @@ before the observation. Workload construction and the first state-hash capture
 occur outside the measured region. This isolates steady capture from initial
 semantic hashing and makes results stable across machines.
 
+Query-owned diagnostic caches are deliberately not constructed by snapshot
+capture. In particular, an editor layout's line-start index remains lazy and
+nonsemantic, so the O(1) capture rows do not force it. The accepted-session
+retention budget is covered separately by live native/WASM telemetry tests:
+after a cold rendered-source query, diagnostic bytes and protected overage
+increase by the retained line-index allocation.
+
 ## Budgets
 
 The expected asymptotic capture cost is O(1) in every payload dimension. A large

@@ -161,6 +161,7 @@ pub struct Session {
     substrate: Option<GenerationSubstrate>,
     checkpoint_budget: usize,
     registered_inputs: BTreeMap<PathBuf, Vec<u8>>,
+    accepted_retention: Option<RetentionMetrics>,
 }
 
 impl Session {
@@ -217,6 +218,7 @@ impl Session {
             substrate: None,
             checkpoint_budget,
             registered_inputs: BTreeMap::new(),
+            accepted_retention: None,
         })
     }
 
@@ -238,6 +240,22 @@ impl Session {
     #[must_use]
     pub fn history(&self) -> &[BoundaryRecord] {
         &self.history
+    }
+
+    /// Returns live retention telemetry for the accepted session state.
+    ///
+    /// The accepted output keeps its point-in-time metrics, while this view
+    /// also charges diagnostic caches constructed by later source queries.
+    #[must_use]
+    pub fn retention_metrics(&self) -> Option<RetentionMetrics> {
+        self.accepted_retention.map(|mut retention| {
+            retention.diagnostic_bytes = self.diagnostic_retained_bytes();
+            retention.protected_overage_bytes = retention
+                .checkpoint_root_bytes
+                .saturating_add(retention.diagnostic_bytes)
+                .saturating_sub(self.checkpoint_budget);
+            retention
+        })
     }
 
     pub fn cold(&mut self) -> Result<AcceptedOutput, SessionError> {
@@ -647,6 +665,7 @@ impl Session {
                 .saturating_add(retention.diagnostic_bytes)
                 .saturating_sub(self.checkpoint_budget);
         }
+        self.accepted_retention = Some(retention);
         Ok(self.output(reuse, retention))
     }
 
@@ -695,6 +714,7 @@ impl Session {
         self.artifacts = run.artifacts;
         self.dvi_pages = run.dvi_pages;
         self.substrate = Some(run.substrate);
+        self.accepted_retention = Some(retention);
         Ok(self.output(
             ReuseMetrics {
                 pages_retyped: self.artifacts.len(),

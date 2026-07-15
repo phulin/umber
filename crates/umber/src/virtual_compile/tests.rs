@@ -460,10 +460,13 @@ fn requested_html_and_dvi_share_one_committed_compile() {
     assert!(output.html_assets.is_empty());
 
     let (page, event) = rendered_text_address(&html, b'A');
+    let retention_before = session.retention_metrics().expect("accepted retention");
     let location = session
         .rendered_source_location(page, event, Some(0))
         .expect("source query")
         .expect("mapped source");
+    let retention_after = session.retention_metrics().expect("live retention");
+    assert!(retention_after.diagnostic_bytes > retention_before.diagnostic_bytes);
     let source = b"\\font\\tenrm=cmr10\\relax \\tenrm \\shipout\\hbox{A}\\end";
     let start = source.iter().position(|byte| *byte == b'A').expect("A");
     assert_eq!(location.revision, RevisionId::new(1));

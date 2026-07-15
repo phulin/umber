@@ -32,6 +32,44 @@ fn cold_history_contains_only_named_restartable_boundaries() {
 }
 
 #[test]
+fn live_retention_charges_line_index_built_after_acceptance() {
+    let text = "\\font\\tenrm=cmr10\\relax\\tenrm\\shipout\\hbox{A}\\end";
+    let mut session = Session::start(template(), "retention-query", RevisionId::new(1), text, 0)
+        .expect("session starts");
+    session
+        .register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("font fixture registers");
+    let accepted = session.cold().expect("cold execution succeeds");
+    let before = session.retention_metrics().expect("accepted retention");
+    assert_eq!(before, accepted.retention);
+
+    let event = (0..32)
+        .find(|&event| {
+            session
+                .rendered_origin(1, event, Some(0))
+                .expect("render lookup")
+                .is_some()
+        })
+        .expect("source-backed text event");
+    session
+        .rendered_source_location(1, event, Some(0))
+        .expect("source query")
+        .expect("mapped source");
+
+    let after = session.retention_metrics().expect("live retention");
+    let line_index_bytes = after.diagnostic_bytes - before.diagnostic_bytes;
+    assert!(line_index_bytes > 0);
+    assert_eq!(
+        after.protected_overage_bytes - before.protected_overage_bytes,
+        line_index_bytes
+    );
+    assert_eq!(
+        accepted.retention, before,
+        "accepted output is point-in-time"
+    );
+}
+
+#[test]
 fn no_op_revision_converges_at_first_eligible_boundary() {
     let text = source("a");
     let mut session = Session::start(
