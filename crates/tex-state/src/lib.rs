@@ -58,6 +58,7 @@ pub mod math;
 pub mod meaning;
 #[cfg(feature = "profiling-stats")]
 pub mod measurement;
+pub mod memo;
 pub mod node;
 pub mod node_arena;
 pub mod page;
@@ -101,6 +102,9 @@ pub use input::{
     ConditionFrameSummary, ConditionFrameToken, ConditionKind, ConditionLimb, InputFrameSummary,
     InputSummary, LexerState, MACRO_ARGUMENT_SLOTS, MacroArgumentRange, MacroArguments,
     SourceFrameSummary, SourceId, TokenListReplayKind, TracedTokenList,
+};
+pub use memo::{
+    DetachedMemoValue, MEMO_VALUE_SCHEMA_VERSION, MemoValueError, MemoValueKind, MemoValueLimits,
 };
 pub use page::{
     AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_PENALTY, PageBreak, PageContents, PageDimension,

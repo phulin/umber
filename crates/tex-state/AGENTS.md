@@ -52,6 +52,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/math.rs`: Immutable math-list model for noads, fields, fractions, styles, choices, and math font families.
 - `src/meaning.rs`: TeX meaning representation, primitive enums, flags, and packed raw meaning encode/decode logic.
 - `src/meaning/tests.rs`: Unit tests for meaning round trips, flag packing, and primitive encoding.
+- `src/memo.rs`: Opaque schema-versioned detached memo envelopes and aggregate token/glue/macro import APIs.
+- `src/memo/tests.rs`: Cross-Universe memo import, corruption, bounds, kind, and semantic round-trip tests.
 - `src/measurement.rs`: `profiling-stats` process-local allocation-owner counters used by dedicated profiling builds.
 - `src/node.rs`: Immutable TeX node, box, glue, kern, penalty, rule, whatsit, math-list, discretionary, and list-field model.
 - `src/node_arena.rs`: Compact-node module boundary and deliberately narrow re-exports.
