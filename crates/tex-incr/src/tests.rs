@@ -593,7 +593,11 @@ fn multi_round_resource_retry_drops_orphan_fragment_bytes_and_keeps_parity() {
         .advance_with_resolvers(RevisionId::new(2), edit, &mut inputs, &mut fonts)
         .expect("fully provisioned retry succeeds");
     assert_eq!(session.fragments.source_bytes(), replacement.len());
-    assert_eq!(session.fragments.len(), 4, "failed ids remain burned");
+    assert_eq!(
+        session.fragments.len(),
+        2,
+        "failed candidates retain no fragment metadata"
+    );
 
     let mut cold = Session::start(
         template(),
@@ -643,7 +647,11 @@ fn repeated_fatal_advance_drops_orphan_fragment_bytes_before_later_accept() {
         assert_eq!(session.fragments.source_bytes(), initial_live_bytes);
     }
     assert_eq!(peak_live_bytes, initial_live_bytes);
-    assert_eq!(session.fragments.len(), 5, "failed ids remain burned");
+    assert_eq!(
+        session.fragments.len(),
+        1,
+        "failed candidates retain no fragment metadata"
+    );
 
     session
         .cold()
@@ -652,7 +660,7 @@ fn repeated_fatal_advance_drops_orphan_fragment_bytes_before_later_accept() {
         .advance(RevisionId::new(2), edit)
         .expect("same pending edit later succeeds");
     assert_eq!(session.fragments.source_bytes(), replacement.len());
-    assert_eq!(session.fragments.len(), 6);
+    assert_eq!(session.fragments.len(), 2);
 
     let mut cold = Session::start(
         template(),

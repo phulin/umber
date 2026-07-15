@@ -139,6 +139,68 @@ pub struct AcceptedOutput {
     pub retention: RetentionMetrics,
 }
 
+/// One fully executed editor revision that has not replaced accepted session
+/// state yet.
+///
+/// Hosts may materialize and validate its detached output before calling
+/// [`Session::accept_pending`]. Dropping this value rolls the candidate back
+/// without changing the accepted revision.
+pub struct PendingRevision {
+    session_output_id: RenderedOutputId,
+    base_revision: RevisionId,
+    base_content_hash: ContentHash,
+    revision: RevisionId,
+    source: String,
+    fragments: FragmentStore,
+    layout: EditorLayout,
+    content_hash: ContentHash,
+    effects: Vec<EffectRecord>,
+    artifacts: Vec<CommittedArtifact>,
+    dvi_pages: Vec<DviPagePlan>,
+    history: Vec<BoundaryRecord>,
+    substrate: PendingSubstrate,
+    reuse: ReuseMetrics,
+}
+
+enum PendingSubstrate {
+    Retained {
+        scratch: Universe,
+        adopted_origins: Vec<OriginId>,
+    },
+    Replaced(GenerationSubstrate),
+}
+
+impl PendingRevision {
+    #[must_use]
+    pub const fn revision(&self) -> RevisionId {
+        self.revision
+    }
+
+    #[must_use]
+    pub const fn content_hash(&self) -> ContentHash {
+        self.content_hash
+    }
+
+    #[must_use]
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    #[must_use]
+    pub fn artifacts(&self) -> &[CommittedArtifact] {
+        &self.artifacts
+    }
+
+    #[must_use]
+    pub const fn reuse(&self) -> ReuseMetrics {
+        self.reuse
+    }
+
+    pub fn dvi_bytes(&self) -> Result<Vec<u8>, DviError> {
+        dvi_bytes(&self.dvi_pages)
+    }
+}
+
 /// Typed result of resolving an accepted rendered event against a DOM revision.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RenderedSourceResult {
@@ -206,12 +268,16 @@ impl RenderMapCache {
 
 impl AcceptedOutput {
     pub fn dvi_bytes(&self) -> Result<Vec<u8>, DviError> {
-        let mut writer = DviStreamWriter::new(Vec::new());
-        for plan in &self.dvi_pages {
-            writer.write_page_plan(plan)?;
-        }
-        writer.finish()
+        dvi_bytes(&self.dvi_pages)
     }
+}
+
+fn dvi_bytes(pages: &[DviPagePlan]) -> Result<Vec<u8>, DviError> {
+    let mut writer = DviStreamWriter::new(Vec::new());
+    for plan in pages {
+        writer.write_page_plan(plan)?;
+    }
+    writer.finish()
 }
 
 /// Long-lived incremental session. Live executor state is deliberately private.
@@ -535,30 +601,25 @@ impl Session {
         input_resolver: &mut dyn InputResolver,
         font_resolver: &mut dyn tex_exec::FontResolver,
     ) -> Result<AcceptedOutput, SessionError> {
-        let mut appended_fragment = None;
-        let attempt = self.advance_attempt(
+        let pending = self.prepare_advance_with_resolvers(
             next_revision,
             edit,
             input_resolver,
             font_resolver,
-            &mut appended_fragment,
-        );
-        if attempt.is_err()
-            && let Some(fragment) = appended_fragment
-        {
-            self.fragments.discard_unpublished_bytes(fragment);
-        }
-        attempt
+        )?;
+        self.accept_pending(pending)
     }
 
-    fn advance_attempt(
+    /// Executes an edit into private candidate state without changing the
+    /// accepted revision. The caller may validate all downstream output and
+    /// either atomically accept the candidate or drop it.
+    pub fn prepare_advance_with_resolvers(
         &mut self,
         next_revision: RevisionId,
         edit: Edit,
         input_resolver: &mut dyn InputResolver,
         font_resolver: &mut dyn tex_exec::FontResolver,
-        appended_fragment: &mut Option<tex_state::FragmentId>,
-    ) -> Result<AcceptedOutput, SessionError> {
+    ) -> Result<PendingRevision, SessionError> {
         self.validate_edit(next_revision, &edit)?;
         self.clear_render_maps();
         let old_source = self.source.clone();
@@ -569,14 +630,14 @@ impl Session {
         let mut next = old_source.clone();
         next.replace_range(edit.range.clone(), &edit.replacement);
         let (expanded_range, expanded_replacement) = line_expanded_replacement(&old_source, &edit);
-        let (fragment, _) = self.fragments.append(
+        let mut fragments = self.fragments.clone();
+        let (fragment, _) = fragments.append(
             Arc::from(expanded_replacement.as_bytes()),
             next_revision.raw(),
         )?;
-        *appended_fragment = Some(fragment);
         let next_layout = replace_layout_range(
             &self.layout,
-            &self.fragments,
+            &fragments,
             expanded_range,
             fragment,
             expanded_replacement.len(),
@@ -597,7 +658,7 @@ impl Session {
             &next,
             &old_history,
             &old_pages,
-            &self.fragments,
+            &fragments,
             &next_layout,
             restart_index,
             &map,
@@ -609,7 +670,7 @@ impl Session {
         let restart_fork_latency = advance.restart_fork_latency;
         let reexecution_latency = advance.reexecution_latency;
         let splice_started = Timer::start();
-        let (effects, artifacts, pages, mut history, accepted_substrate, mut reuse) =
+        let (effects, artifacts, pages, mut history, pending_substrate, mut reuse) =
             if let Some(old_index) = advance.convergence_old_index {
                 let old_effect_prefix = old_history[old_index].effect_prefix;
                 let new_effect_prefix = advance
@@ -665,21 +726,16 @@ impl Session {
                     .flat_map(|origins| origins.iter())
                     .copied()
                     .collect::<Vec<_>>();
-                self.substrate
-                    .as_mut()
-                    .ok_or(SessionError::MissingAcceptedSubstrate)?
-                    .retain_artifact_origins_from_fork(
-                        &advance.scratch,
-                        &adopted_origins,
-                        &self.source_path,
-                    )?;
                 let convergence_boundary = history.get(restart_index + 1).map(BoundaryRecord::key);
                 (
                     effects,
                     artifacts,
                     pages,
                     history,
-                    None,
+                    PendingSubstrate::Retained {
+                        scratch: advance.scratch,
+                        adopted_origins,
+                    },
                     ReuseMetrics {
                         restart_boundary: old_history.get(restart_index).map(BoundaryRecord::key),
                         convergence_boundary,
@@ -719,7 +775,7 @@ impl Session {
                     artifacts,
                     advance.pages_through_stop,
                     history,
-                    Some(target),
+                    PendingSubstrate::Replaced(target),
                     ReuseMetrics {
                         restart_boundary: old_history.get(restart_index).map(BoundaryRecord::key),
                         convergence_boundary: None,
@@ -735,26 +791,87 @@ impl Session {
         for record in &mut history {
             record.revision = next_revision;
         }
-        self.revision = next_revision;
-        self.source = next;
-        self.layout = next_layout;
-        self.content_hash = ContentHash::from_bytes(self.source.as_bytes());
-        self.effects = effects;
-        self.artifacts = artifacts;
-        self.dvi_pages = pages;
-        if let Some(substrate) = accepted_substrate {
-            self.substrate = Some(substrate);
+        let content_hash = ContentHash::from_bytes(next.as_bytes());
+        Ok(PendingRevision {
+            session_output_id: self.output_id,
+            base_revision: self.revision,
+            base_content_hash: self.content_hash,
+            revision: next_revision,
+            source: next,
+            fragments,
+            layout: next_layout,
+            content_hash,
+            effects,
+            artifacts,
+            dvi_pages: pages,
+            history,
+            substrate: pending_substrate,
+            reuse,
+        })
+    }
+
+    /// Materializes detached effects for a prepared revision without
+    /// publishing that revision into the session.
+    pub fn materialize_pending_world(
+        &self,
+        pending: &PendingRevision,
+    ) -> Result<tex_state::World, SessionError> {
+        self.validate_pending(pending)?;
+        let substrate = match &pending.substrate {
+            PendingSubstrate::Retained { .. } => self
+                .substrate
+                .as_ref()
+                .ok_or(SessionError::MissingAcceptedSubstrate)?,
+            PendingSubstrate::Replaced(substrate) => substrate,
+        };
+        Ok(substrate
+            .materialize_detached_outputs(pending.effects.clone(), pending.artifacts.clone())?)
+    }
+
+    /// Atomically replaces accepted editor state with one prepared revision.
+    pub fn accept_pending(
+        &mut self,
+        pending: PendingRevision,
+    ) -> Result<AcceptedOutput, SessionError> {
+        self.validate_pending(&pending)?;
+        let PendingRevision {
+            revision,
+            source,
+            mut fragments,
+            layout,
+            content_hash,
+            effects,
+            artifacts,
+            dvi_pages,
+            history,
+            substrate,
+            reuse,
+            ..
+        } = pending;
+
+        match substrate {
+            PendingSubstrate::Retained {
+                scratch,
+                adopted_origins,
+            } => self
+                .substrate
+                .as_mut()
+                .ok_or(SessionError::MissingAcceptedSubstrate)?
+                .retain_artifact_origins_from_fork(&scratch, &adopted_origins, &self.source_path)?,
+            PendingSubstrate::Replaced(substrate) => self.substrate = Some(substrate),
         }
+
         let substrate_bytes = self
             .substrate
             .as_ref()
-            .expect("accepted substrate is retained")
+            .expect("prepared revisions retain an accepted substrate")
             .charged_bytes();
-        let output_bytes = output_bytes(&self.effects, &self.artifacts);
-        let oldest_revision = oldest_retained_revision(&history, next_revision);
-        self.fragments
-            .prune_for_layout(&self.layout, next_revision.raw(), oldest_revision.raw());
-        let diagnostic_bytes = self.diagnostic_retained_bytes();
+        let output_bytes = output_bytes(&effects, &artifacts);
+        let oldest_revision = oldest_retained_revision(&history, revision);
+        fragments.prune_for_layout(&layout, revision.raw(), oldest_revision.raw());
+        let diagnostic_bytes = fragments
+            .retained_bytes()
+            .saturating_add(layout.retained_bytes());
         let (history, mut retention) = prune_history(
             history,
             self.checkpoint_budget,
@@ -762,23 +879,44 @@ impl Session {
             diagnostic_bytes,
             output_bytes,
         );
-        self.history = history;
-        let pruned_oldest_revision = oldest_retained_revision(&self.history, next_revision);
+        let pruned_oldest_revision = oldest_retained_revision(&history, revision);
         if pruned_oldest_revision > oldest_revision
-            && self.fragments.prune_for_layout(
-                &self.layout,
-                next_revision.raw(),
-                pruned_oldest_revision.raw(),
-            ) > 0
+            && fragments.prune_for_layout(&layout, revision.raw(), pruned_oldest_revision.raw()) > 0
         {
-            retention.diagnostic_bytes = self.diagnostic_retained_bytes();
+            retention.diagnostic_bytes = fragments
+                .retained_bytes()
+                .saturating_add(layout.retained_bytes());
             retention.protected_overage_bytes = retention
                 .checkpoint_root_bytes
                 .saturating_add(retention.diagnostic_bytes)
                 .saturating_sub(self.checkpoint_budget);
         }
+
+        self.clear_render_maps();
+        self.revision = revision;
+        self.source = source;
+        self.fragments = fragments;
+        self.layout = layout;
+        self.content_hash = content_hash;
+        self.effects = effects;
+        self.artifacts = artifacts;
+        self.dvi_pages = dvi_pages;
+        self.history = history;
         self.accepted_retention = Some(retention);
         Ok(self.output(reuse, retention))
+    }
+
+    fn validate_pending(&self, pending: &PendingRevision) -> Result<(), SessionError> {
+        if pending.session_output_id != self.output_id
+            || pending.base_revision != self.revision
+            || pending.base_content_hash != self.content_hash
+        {
+            return Err(SessionError::StaleRevision {
+                expected: self.revision,
+                actual: pending.base_revision,
+            });
+        }
+        Ok(())
     }
 
     pub fn validate_edit(

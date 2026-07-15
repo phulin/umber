@@ -89,6 +89,7 @@ export interface RetentionMetrics {
   checkpointRootBytes: number;
   diagnosticBytes: number;
   outputBytes: number;
+  resourceBytes: number;
   protectedOverageBytes: number;
 }
 

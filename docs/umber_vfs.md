@@ -2,8 +2,8 @@
 
 Status: canonical paths, immutable files, layered storage, typed file requests,
 resource registration, file limits, deterministic snapshots, generated-file
-transactions, TeX compile-session input/output adapters, and shared native/WASM
-resource batching implemented.
+transactions, TeX compile-session input/output adapters, shared native/WASM
+resource batching, and atomic editor-revision/build acceptance implemented.
 
 This document defines `umber-vfs`, the host-neutral virtual filesystem shared
 by Umber's TeX driver, bibliography processing, native embeddings, and the
@@ -336,6 +336,13 @@ It does not mutate the accepted user layer. Accepting the compile revision
 publishes the new root identity together with the generated build; rollback
 retains the prior root and generated files.
 
+The compile session implements this without weakening the immutable build API:
+it clones the provisioner's copy-on-write generation, replaces the root only
+in that private generation, and runs the complete build transaction there.
+After output construction and build acceptance succeed on the clone, one
+non-fallible provisioner swap is composed with `tex-incr` candidate acceptance.
+Resource suspension or any terminal failure drops the clone.
+
 ## Limits and accounting
 
 File-related fields currently embedded in `umber::SessionLimits` move into a
@@ -370,11 +377,14 @@ or accepted history retains them. Telemetry reports logical bytes separately
 from retained shared allocations.
 
 The implemented snapshot accounting exposes retained-generation binding and
-logical-byte totals. `VirtualCompileSession` resolves TeX inputs and TFM files
+logical-byte totals split into immutable input and generated-output charges.
+`VirtualCompileSession` resolves TeX inputs and TFM files
 directly from a stage snapshot, then registers the selected shared bytes with
 `World` for input identity and provenance. Transaction and retained-session
-owners will aggregate snapshot values with allocation-level telemetry when
-editor-revision transactions are integrated.
+owners aggregate the accepted input generation into `resource_bytes`; accepted
+generated-generation and retained returned-output bytes are included in
+`output_bytes`. Private attempt generations vanish on rollback and replaced
+internal generations cease to count when their last snapshot is released.
 
 No subsystem can bypass VFS accounting by returning an auxiliary output in a
 separate unbounded collection.
@@ -487,11 +497,15 @@ byte-identical generated files and DVI.
    `FileProvisioner` registration path. Browser JavaScript owns acquisition and
    transport only; VFS validation, exact duplicates, conflicts, limits, partial
    progress, and no-progress remain Rust semantics.
-8. Add the bibliography resource kinds and adapters defined in
+8. **Complete.** Compose prepared `tex-incr` revisions with private VFS build
+   generations. Candidate root bytes, generated files, diagnostics, artifacts,
+   DVI/HTML, and returned output now accept or roll back together, with composed
+   retention charges.
+9. Add the bibliography resource kinds and adapters defined in
    [`bib.md`](bib.md).
-9. Implement native multi-stage orchestration, then expose the identical state
+10. Implement native multi-stage orchestration, then expose the identical state
    machine through `umber-wasm`.
-10. Remove any remaining superseded adapter state after all native,
+11. Remove any remaining superseded adapter state after all native,
    incremental, and browser generated-output paths use `umber-vfs`.
 
 ## Exit criteria

@@ -14,6 +14,8 @@ use crate::{
 pub struct SnapshotRetention {
     pub bindings: usize,
     pub logical_bytes: usize,
+    pub input_bytes: usize,
+    pub generated_bytes: usize,
 }
 
 /// One canonical public namespace root for root-level enumeration.
@@ -106,15 +108,27 @@ impl VfsSnapshot {
     pub fn retention(&self) -> SnapshotRetention {
         let mut bindings = 0usize;
         let mut logical_bytes = 0usize;
+        let mut input_bytes = 0usize;
+        let mut generated_bytes = 0usize;
         for kind in all_layers() {
             for (_, file) in self.generation.layer(kind).files() {
                 bindings += 1;
                 logical_bytes += file.bytes().len();
+                match kind {
+                    LayerKind::User | LayerKind::ResolvedResource => {
+                        input_bytes += file.bytes().len();
+                    }
+                    LayerKind::AcceptedGenerated | LayerKind::PendingGenerated => {
+                        generated_bytes += file.bytes().len();
+                    }
+                }
             }
         }
         SnapshotRetention {
             bindings,
             logical_bytes,
+            input_bytes,
+            generated_bytes,
         }
     }
 

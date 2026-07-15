@@ -130,6 +130,12 @@ async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
     let event = rendered_text_event(&html_text, b'A');
     let output_id = rendered_output_id(&html_text);
     let retention_before = session.retention_metrics().expect("accepted retention");
+    assert!(
+        field(&retention_before, "resourceBytes")
+            .as_f64()
+            .expect("numeric resource bytes")
+            > 0.0
+    );
     let diagnostic_before = field(&retention_before, "diagnosticBytes")
         .as_f64()
         .expect("numeric diagnostic bytes");

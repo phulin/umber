@@ -233,6 +233,11 @@ pub(crate) fn retention_metrics(
     set(&object, "outputBytes", &usize_value(metrics.output_bytes))?;
     set(
         &object,
+        "resourceBytes",
+        &usize_value(metrics.resource_bytes),
+    )?;
+    set(
+        &object,
         "protectedOverageBytes",
         &usize_value(metrics.protected_overage_bytes),
     )?;

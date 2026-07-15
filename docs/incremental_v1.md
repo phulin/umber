@@ -383,6 +383,15 @@ replaces the old substrate, and on convergence the scratch fork and its
 diverged-span records are discarded while the accepted history is rehomed in
 place. Failed or cancelled execution drops only the in-progress fork.
 
+Host composition may keep a fully executed revision in an opaque prepared
+state before publishing it. A prepared revision owns its candidate source
+layout, effects, artifacts, checkpoints, and either the replacement substrate
+or the convergence scratch data required at commit. It may materialize
+detached output for validation, but it does not change accepted session state.
+Dropping it is rollback; accepting it performs the existing pruning and
+generation transition once. This is the boundary used to compose editor
+acceptance with VFS build transactions.
+
 Within an accepted generation, records are ordered by schedule and never
 mutated in place. Rehoming creates a new accepted record wrapper rather than
 mutating an old generation's record. `JobStart` is always retained.

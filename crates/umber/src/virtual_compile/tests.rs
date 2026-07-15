@@ -337,6 +337,150 @@ fn auxiliary_stage_limit_fails_without_publishing_generated_files() {
 }
 
 #[test]
+fn accepted_patch_publishes_root_generated_files_and_output_together() {
+    let source = concat!(
+        "\\immediate\\openout1=state.aux ",
+        "\\immediate\\write1{old} ",
+        "\\immediate\\closeout1 \\end"
+    );
+    let mut session = session(source);
+    let CompileAttemptResult::Complete(old_output) = session.compile_attempt() else {
+        panic!("initial revision should complete");
+    };
+    let old_generation = session.files.snapshot().generation_identity();
+    let start = source.find("old").expect("old payload");
+    let mut next_source = source.to_owned();
+    next_source.replace_range(start..start + 3, "new");
+
+    session
+        .apply_patch(SourcePatch {
+            next_revision: RevisionId::new(2),
+            base_revision: RevisionId::new(1),
+            expected_hash: session.content_hash().expect("accepted hash"),
+            range: start..start + 3,
+            replacement: "new".to_owned(),
+        })
+        .expect("patch");
+    assert_eq!(session.accepted_output.as_ref(), Some(&old_output));
+    let CompileAttemptResult::Complete(new_output) = session.compile_attempt() else {
+        panic!("patched revision should complete");
+    };
+
+    let snapshot = session.files.snapshot();
+    assert_ne!(snapshot.generation_identity(), old_generation);
+    assert_eq!(
+        snapshot
+            .get(&session.main_path)
+            .expect("root lookup")
+            .expect("root")
+            .bytes(),
+        next_source.as_bytes()
+    );
+    let auxiliary = snapshot
+        .get(&VirtualPath::user("state.aux").expect("aux path"))
+        .expect("aux lookup")
+        .expect("accepted aux");
+    assert!(auxiliary.bytes().windows(3).any(|bytes| bytes == b"new"));
+    assert_ne!(new_output, old_output);
+    assert_eq!(session.revision(), Some(RevisionId::new(2)));
+
+    let vfs = snapshot.retention();
+    let engine = session
+        .incremental
+        .as_ref()
+        .and_then(tex_incr::Session::retention_metrics)
+        .expect("engine retention");
+    let returned = memory_run_output_bytes(&new_output);
+    let retention = session.retention_metrics().expect("session retention");
+    assert_eq!(retention.resource_bytes, vfs.input_bytes);
+    assert_eq!(
+        retention.output_bytes,
+        engine.output_bytes + returned + vfs.generated_bytes
+    );
+}
+
+#[test]
+fn failed_patch_restores_the_complete_accepted_build() {
+    let source = concat!(
+        "\\immediate\\openout1=state.aux ",
+        "\\immediate\\write1{old} ",
+        "\\immediate\\closeout1 \\end"
+    );
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        limits: SessionLimits {
+            output_bytes: 512,
+            ..SessionLimits::default()
+        },
+        ..SessionOptions::default()
+    })
+    .expect("session");
+    session
+        .add_user_file("main.tex", source.as_bytes().to_vec())
+        .expect("main source");
+    let CompileAttemptResult::Complete(old_output) = session.compile_attempt() else {
+        panic!("initial revision should fit");
+    };
+    let old_hash = session.content_hash().expect("accepted hash");
+    let old_snapshot = session.files.snapshot();
+    let old_generation = old_snapshot.generation_identity();
+    let old_root = old_snapshot
+        .get(&session.main_path)
+        .expect("root lookup")
+        .expect("root")
+        .bytes()
+        .to_vec();
+    let old_aux = old_snapshot
+        .get(&VirtualPath::user("state.aux").expect("aux path"))
+        .expect("aux lookup")
+        .expect("aux")
+        .bytes()
+        .to_vec();
+    drop(old_snapshot);
+    let start = source.find("old").expect("old payload");
+
+    session
+        .apply_patch(SourcePatch {
+            next_revision: RevisionId::new(2),
+            base_revision: RevisionId::new(1),
+            expected_hash: old_hash,
+            range: start..start + 3,
+            replacement: "x".repeat(1_024),
+        })
+        .expect("valid patch");
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Error(CompileError::LimitExceeded { .. })
+    ));
+
+    let snapshot = session.files.snapshot();
+    assert_eq!(snapshot.generation_identity(), old_generation);
+    assert_eq!(
+        snapshot
+            .get(&session.main_path)
+            .expect("root lookup")
+            .expect("root")
+            .bytes(),
+        old_root
+    );
+    assert_eq!(
+        snapshot
+            .get(&VirtualPath::user("state.aux").expect("aux path"))
+            .expect("aux lookup")
+            .expect("aux")
+            .bytes(),
+        old_aux
+    );
+    assert_eq!(session.revision(), Some(RevisionId::new(1)));
+    assert_eq!(session.content_hash(), Some(old_hash));
+    assert_eq!(session.accepted_output.as_ref(), Some(&old_output));
+    assert!(session.pending_patch.is_none());
+    assert_eq!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(old_output)
+    );
+}
+
+#[test]
 fn format_and_fresh_initialization_both_complete() {
     let mut stores = Universe::with_world(World::memory());
     prepare_run_stores(&mut stores);

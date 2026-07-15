@@ -178,6 +178,16 @@ pub struct CompileDiagnostic {
     pub column: Option<usize>,
 }
 
+/// Live retained-memory charges for one accepted compile session.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RetentionMetrics {
+    pub checkpoint_root_bytes: usize,
+    pub diagnostic_bytes: usize,
+    pub output_bytes: usize,
+    pub resource_bytes: usize,
+    pub protected_overage_bytes: usize,
+}
+
 /// One rendered text unit resolved against the accepted editor revision.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RenderedSourceLocation {
@@ -354,6 +364,64 @@ pub struct VirtualCompileSession {
     last_reuse: Option<tex_incr::ReuseMetrics>,
 }
 
+enum CandidateExecution {
+    Initial {
+        session: Box<tex_incr::Session>,
+        accepted: Result<Box<tex_incr::AcceptedOutput>, tex_incr::SessionError>,
+    },
+    Pending(Result<Box<tex_incr::PendingRevision>, tex_incr::SessionError>),
+}
+
+enum PreparedExecution {
+    Initial {
+        session: Box<tex_incr::Session>,
+        accepted: Box<tex_incr::AcceptedOutput>,
+    },
+    Pending(Box<tex_incr::PendingRevision>),
+}
+
+impl CandidateExecution {
+    fn into_prepared(self) -> Result<PreparedExecution, tex_incr::SessionError> {
+        match self {
+            Self::Initial { session, accepted } => Ok(PreparedExecution::Initial {
+                session,
+                accepted: accepted?,
+            }),
+            Self::Pending(pending) => Ok(PreparedExecution::Pending(pending?)),
+        }
+    }
+}
+
+impl PreparedExecution {
+    fn revision(&self) -> tex_incr::RevisionId {
+        match self {
+            Self::Initial { accepted, .. } => accepted.revision,
+            Self::Pending(pending) => pending.revision(),
+        }
+    }
+
+    fn reuse(&self) -> tex_incr::ReuseMetrics {
+        match self {
+            Self::Initial { accepted, .. } => accepted.reuse,
+            Self::Pending(pending) => pending.reuse(),
+        }
+    }
+
+    fn artifacts(&self) -> &[tex_state::CommittedArtifact] {
+        match self {
+            Self::Initial { accepted, .. } => &accepted.artifacts,
+            Self::Pending(pending) => pending.artifacts(),
+        }
+    }
+
+    fn dvi_bytes(&self) -> Result<Vec<u8>, tex_out::dvi::DviError> {
+        match self {
+            Self::Initial { accepted, .. } => accepted.dvi_bytes(),
+            Self::Pending(pending) => pending.dvi_bytes(),
+        }
+    }
+}
+
 impl VirtualCompileSession {
     pub fn new(options: SessionOptions) -> Result<Self, CompileError> {
         let limits = options.limits.validate()?;
@@ -481,7 +549,6 @@ impl VirtualCompileSession {
             .map_err(|error| CompileError::Incremental(error.to_string()))?;
         self.pending_patch = Some((patch.next_revision, edit));
         self.awaiting = None;
-        self.accepted_output = None;
         Ok(())
     }
 
@@ -517,7 +584,7 @@ impl VirtualCompileSession {
         output_id: tex_incr::RenderedOutputId,
         revision: tex_incr::RevisionId,
     ) -> Result<Option<RenderedSourceResult>, CompileError> {
-        if self.accepted_output.is_none() {
+        if self.accepted_output.is_none() || self.pending_patch.is_some() {
             return Ok(None);
         }
         let Some(session) = self.incremental.as_ref() else {
@@ -557,10 +624,26 @@ impl VirtualCompileSession {
     }
 
     #[must_use]
-    pub fn retention_metrics(&self) -> Option<tex_incr::RetentionMetrics> {
-        self.incremental
+    pub fn retention_metrics(&self) -> Option<RetentionMetrics> {
+        let engine = self
+            .incremental
             .as_ref()
-            .and_then(tex_incr::Session::retention_metrics)
+            .and_then(tex_incr::Session::retention_metrics)?;
+        let vfs = self.files.snapshot().retention();
+        let returned_output = self
+            .accepted_output
+            .as_ref()
+            .map_or(0, memory_run_output_bytes);
+        Some(RetentionMetrics {
+            checkpoint_root_bytes: engine.checkpoint_root_bytes,
+            diagnostic_bytes: engine.diagnostic_bytes,
+            output_bytes: engine
+                .output_bytes
+                .saturating_add(returned_output)
+                .saturating_add(vfs.generated_bytes),
+            resource_bytes: vfs.input_bytes,
+            protected_overage_bytes: engine.protected_overage_bytes,
+        })
     }
 
     pub fn provide_resolved_file(
@@ -709,6 +792,9 @@ impl VirtualCompileSession {
             return CompileAttemptResult::Complete(output.clone());
         }
         if self.attempts >= self.limits.attempts {
+            if self.accepted_output.is_some() {
+                self.pending_patch = None;
+            }
             return CompileAttemptResult::Error(CompileError::AttemptLimit {
                 limit: self.limits.attempts,
             });
@@ -722,6 +808,9 @@ impl VirtualCompileSession {
                 ResourceRequestKey::Font(key) => self.resolved_fonts.contains_key(key),
             });
             if !progressed {
+                if self.accepted_output.is_some() {
+                    self.pending_patch = None;
+                }
                 return CompileAttemptResult::Error(CompileError::NoProgress);
             }
         }
@@ -730,12 +819,17 @@ impl VirtualCompileSession {
 
         match self.run_attempt() {
             Ok(result) => result,
-            Err(error) => CompileAttemptResult::Error(error),
+            Err(error) => {
+                if self.accepted_output.is_some() {
+                    self.pending_patch = None;
+                }
+                CompileAttemptResult::Error(error)
+            }
         }
     }
 
     fn run_attempt(&mut self) -> Result<CompileAttemptResult, CompileError> {
-        if self.incremental.is_none() {
+        let mut initial_session = if self.incremental.is_none() {
             let snapshot = self.files.snapshot();
             let source = snapshot
                 .get(&self.main_path)
@@ -753,7 +847,7 @@ impl VirtualCompileSession {
                 prepare_run_stores(&mut template);
                 template
             };
-            self.incremental = Some(
+            Some(Box::new(
                 tex_incr::Session::start_with_source_path(
                     template,
                     &self.job_name,
@@ -763,17 +857,30 @@ impl VirtualCompileSession {
                     self.limits.cached_file_bytes,
                 )
                 .map_err(|error| CompileError::Incremental(error.to_string()))?,
-            );
+            ))
+        } else {
+            None
+        };
+
+        let mut pending_files = self.files.clone();
+        if let Some((_, edit)) = &self.pending_patch {
+            let session = self
+                .incremental
+                .as_ref()
+                .expect("a pending patch requires an accepted incremental session");
+            let mut pending_source = session.source().to_owned();
+            pending_source.replace_range(edit.range.clone(), &edit.replacement);
+            pending_files
+                .register_user(self.main_path.clone(), pending_source.into_bytes())
+                .map_err(map_user_registration)?;
         }
 
-        let resolved_paths = self
-            .files
+        let resolved_paths = pending_files
             .resolved_paths()
             .map(|(key, path)| (key.clone(), path.clone()))
             .collect::<BTreeMap<_, _>>();
-        let mut build = self
-            .files
-            .begin_build(BuildPlan::new(BuildId::new(u64::from(self.attempts))));
+        let mut build =
+            pending_files.begin_build(BuildPlan::new(BuildId::new(u64::from(self.attempts))));
         let mut stage = build
             .begin_stage(ProducerId::new(1))
             .map_err(map_transaction)?;
@@ -787,15 +894,26 @@ impl VirtualCompileSession {
         );
         let (input_resolver, font_resolver) = resolvers.resolvers();
         let execution = if let Some((next_revision, edit)) = &self.pending_patch {
-            self.incremental
-                .as_mut()
-                .expect("incremental session was initialized")
-                .advance_with_resolvers(*next_revision, edit.clone(), input_resolver, font_resolver)
+            CandidateExecution::Pending(
+                self.incremental
+                    .as_mut()
+                    .expect("incremental session was initialized")
+                    .prepare_advance_with_resolvers(
+                        *next_revision,
+                        edit.clone(),
+                        input_resolver,
+                        font_resolver,
+                    )
+                    .map(Box::new),
+            )
         } else {
-            self.incremental
-                .as_mut()
-                .expect("incremental session was initialized")
+            let mut session = initial_session
+                .take()
+                .expect("initial execution owns a private incremental session");
+            let accepted = session
                 .cold_with_resolvers(input_resolver, font_resolver)
+                .map(Box::new);
+            CandidateExecution::Initial { session, accepted }
         };
         let (file_misses, font_misses, fatal) = resolvers.finish();
 
@@ -839,8 +957,8 @@ impl VirtualCompileSession {
             build.discard();
             return Err(fatal);
         }
-        let accepted = match execution {
-            Ok(accepted) => accepted,
+        let execution = match execution.into_prepared() {
+            Ok(execution) => execution,
             Err(error) => {
                 stage.discard();
                 build.discard();
@@ -852,12 +970,15 @@ impl VirtualCompileSession {
                 }));
             }
         };
-        let accepted_world = self
-            .incremental
-            .as_ref()
-            .expect("accepted incremental session exists")
-            .materialize_accepted_world()
-            .map_err(|error| CompileError::Output(error.to_string()))?;
+        let accepted_world = match &execution {
+            PreparedExecution::Initial { session, .. } => session.materialize_accepted_world(),
+            PreparedExecution::Pending(pending) => self
+                .incremental
+                .as_ref()
+                .expect("a prepared patch has an accepted incremental session")
+                .materialize_pending_world(pending),
+        }
+        .map_err(|error| CompileError::Output(error.to_string()))?;
         let terminal = accepted_world
             .memory_terminal_output()
             .ok_or_else(|| CompileError::Output("accepted output is not memory-backed".to_owned()))?
@@ -868,10 +989,10 @@ impl VirtualCompileSession {
             .to_vec();
         let files =
             publish_auxiliary_outputs(&accepted_world, &mut stage).map_err(map_memory_output)?;
-        let dvi = if accepted.dvi_pages.is_empty() {
+        let dvi = if execution.artifacts().is_empty() {
             Vec::new()
         } else {
-            accepted
+            execution
                 .dvi_bytes()
                 .map_err(|error| CompileError::Output(error.to_string()))?
         };
@@ -897,18 +1018,21 @@ impl VirtualCompileSession {
             );
         let remaining = self.limits.output_bytes.saturating_sub(existing);
         let html = if self.html {
-            let output_id = self
-                .incremental
-                .as_ref()
-                .expect("accepted incremental session exists")
-                .output_id();
+            let output_id = match &execution {
+                PreparedExecution::Initial { session, .. } => session.output_id(),
+                PreparedExecution::Pending(_) => self
+                    .incremental
+                    .as_ref()
+                    .expect("a prepared patch has an accepted incremental session")
+                    .output_id(),
+            };
             let mut resolver = SessionFontResolver {
                 fonts: &self.html_fonts,
                 resolved: &self.resolved_fonts,
                 responses: &self.font_responses,
             };
             let html_options = tex_out::html::HtmlOptions {
-                revision: accepted.revision.raw(),
+                revision: execution.revision().raw(),
                 output_id,
                 max_html_bytes: remaining,
                 max_total_asset_bytes: remaining,
@@ -917,7 +1041,7 @@ impl VirtualCompileSession {
             };
             Some(
                 crate::html_from_committed_artifacts(
-                    &accepted.artifacts,
+                    execution.artifacts(),
                     &mut resolver,
                     &html_options,
                 )
@@ -947,8 +1071,20 @@ impl VirtualCompileSession {
         check_limit("returned output bytes", existing, self.limits.output_bytes)?;
         stage.finish().map_err(map_transaction)?;
         build.accept().map_err(map_transaction)?;
+        let reuse = execution.reuse();
+        match execution {
+            PreparedExecution::Initial { session, .. } => self.incremental = Some(*session),
+            PreparedExecution::Pending(pending) => {
+                self.incremental
+                    .as_mut()
+                    .expect("a prepared patch has an accepted incremental session")
+                    .accept_pending(*pending)
+                    .map_err(|error| CompileError::Incremental(error.to_string()))?;
+            }
+        }
+        self.files = pending_files;
         self.pending_patch = None;
-        self.last_reuse = Some(accepted.reuse);
+        self.last_reuse = Some(reuse);
         self.accepted_output = Some(output.clone());
         Ok(CompileAttemptResult::Complete(output))
     }
@@ -1100,6 +1236,23 @@ fn check_limit(resource: &'static str, attempted: usize, limit: usize) -> Result
         });
     }
     Ok(())
+}
+
+fn memory_run_output_bytes(output: &MemoryRunOutput) -> usize {
+    output
+        .terminal
+        .len()
+        .saturating_add(output.log.len())
+        .saturating_add(output.dvi.len())
+        .saturating_add(output.html.as_ref().map_or(0, Vec::len))
+        .saturating_add(
+            output
+                .html_assets
+                .iter()
+                .chain(&output.files)
+                .map(|file| file.bytes.len())
+                .sum::<usize>(),
+        )
 }
 
 fn map_user_registration(error: UserRegistrationError) -> CompileError {

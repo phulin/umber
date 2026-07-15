@@ -84,9 +84,12 @@ stage snapshot and asks `World` to register the selected shared bytes, rather
 than retaining or seeding a parallel file map. The TeX driver owns extension
 and search policy and combines the resulting file needs with font requests.
 After a successful World effect commit, the driver copies complete auxiliary
-files into the stage write set and accepts the generated layer only with the
-compile result. Native and WASM adapters share the same Rust domain/kind wire
-vocabulary.
+files into the stage write set. Editor execution first produces an opaque
+prepared `tex-incr` revision; its root bytes and generated writes live in a
+private copy-on-write VFS generation until diagnostics, DVI/HTML, and output
+limits validate. The driver then accepts the prepared revision and swaps the
+VFS generation as one externally atomic operation. Native and WASM adapters
+share the same Rust domain/kind wire vocabulary.
 
 ## 4. Lexer
 
@@ -188,8 +191,10 @@ effects, source fragments, and pruning metadata. V1 restart boundaries are
 Checkpoint publication remains executor-controlled.
 
 `VirtualCompileSession` composes resource acquisition with revision-checked
-root patches. Acceptance is atomic: a resource miss or failed revision does
-not replace the prior accepted output. Identical-history convergence can reuse
+root patches. Acceptance is atomic across incremental history, the synthetic
+VFS root, generated files, diagnostics, artifacts, and rendered output: a
+resource miss or failed revision does not replace prior accepted state.
+Identical-history convergence can reuse
 suffixes; general changed-content reuse belongs to the constrained trace and
 memoization design in [incremental_memoization.md](incremental_memoization.md).
 

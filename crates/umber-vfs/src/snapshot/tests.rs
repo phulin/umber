@@ -239,7 +239,9 @@ fn retention_counts_all_generation_bindings_and_stale_clones_fail_reads() {
         snapshot.retention(),
         SnapshotRetention {
             bindings: 2,
-            logical_bytes: 10
+            logical_bytes: 10,
+            input_bytes: 10,
+            generated_bytes: 0,
         }
     );
 

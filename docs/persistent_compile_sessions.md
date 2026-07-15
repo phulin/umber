@@ -28,6 +28,15 @@ publishes a revision.
 `advance()` again without a patch returns the accepted output without
 re-executing TeX. Native and WASM callers observe the same result variants.
 
+Execution prepares a private `tex-incr` revision before it changes accepted
+history. The driver materializes diagnostics, artifacts, DVI/HTML, and
+auxiliary files from that candidate while a cloned `umber-vfs` build
+generation owns the candidate root bytes and generated stage writes. Only
+after every fallible output, stage, build-limit, and collision check succeeds
+does the session commit the incremental revision and swap in the VFS
+generation. Dropping either candidate leaves the previously accepted revision,
+root binding, generated files, and output unchanged.
+
 ## Patch contract
 
 A patch is one UTF-8 byte-range replacement against the root editor buffer:
@@ -40,7 +49,11 @@ base revision + expected content hash + [start, end) + replacement
 The base revision and hash prevent stale edits. Both range endpoints must be
 UTF-8 boundaries and must lie within the accepted source. Only one patch may
 be pending. A patch is applied atomically when `advance()` accepts it; failure
-or a resource request leaves the accepted revision unchanged.
+or a resource request leaves the accepted revision unchanged. The prior
+accepted output remains retained while a patch waits for resources. A terminal
+compile or output failure rejects the pending patch and makes that output
+immediately observable again; a resource suspension keeps the private patch
+retryable without publishing its root or stage writes.
 
 The initial revision is `1`. Public revision numbers use JavaScript-safe
 unsigned 32-bit integers at the WASM boundary and widen to the engine's `u64`
@@ -76,6 +89,13 @@ A resource request, diagnostic failure, or output-limit failure discards that
 stage, so the session retains no parallel byte maps, file-accounting counters,
 or partially published generated files.
 
+For an editor patch, the candidate root replaces the main user binding only in
+the cloned provisioner generation used by the candidate build. Build
+acceptance on that clone is still private; the provisioner generation and
+`tex-incr` candidate are installed together after output validation. This is
+the synthetic immutable root file promised by the VFS contract, without a
+second root-byte store in the WASM adapter.
+
 Clearing the distribution cache preserves the latest root bytes but discards
 accepted incremental history and restarts resource acquisition as a cold
 revision.
@@ -100,6 +120,13 @@ accepted checkpoint and artifact-output bases, adds any later per-page render
 maps to `output_bytes`, and refreshes diagnostic bytes and protected budget
 overage for a later layout line index. The accepted output's copied metrics do
 not change.
+
+Composed session telemetry also reports `resource_bytes`, the logical bytes in
+the retained VFS user/resolved-input generation. `output_bytes` charges the
+incremental detached output, the retained returned `MemoryRunOutput`, and the
+accepted generated VFS generation. Replacing an accepted build therefore
+removes the old internal VFS generation charge as soon as no external snapshot
+retains it; charges do not accumulate with revision count.
 
 `dispose()` releases resources, accepted history, and output. No session
 method succeeds after disposal.

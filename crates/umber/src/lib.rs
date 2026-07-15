@@ -33,15 +33,15 @@ pub use tex_fonts::{
     FontProgramIdentity, FontPurposes, FontRequest, FontRequestKey, OpenTypeTag, ResolvedFont,
     VariationCoordinate, VariationSelection,
 };
+pub use tex_incr::ReuseMetrics;
 pub use tex_incr::{RenderedOutputId, RevisionId};
-pub use tex_incr::{RetentionMetrics, ReuseMetrics};
 pub use umber_vfs::FileContentId;
 pub use virtual_compile::{
     CompileAttemptResult, CompileDiagnostic, CompileError, FileKind, FileRequest, FileRequestKey,
     NeedResources, RenderedSourceLocation, RenderedSourceResult, RequestKeyError, ResolvedFile,
-    ResourceDomain, ResourceRequest, ResourceResponse, SessionLimits, SessionOptions,
-    SessionWebFont, SourcePatch, VfsLimitError, VfsLimitKind, VfsLimits, VirtualCompileSession,
-    VirtualPath, VirtualPathError,
+    ResourceDomain, ResourceRequest, ResourceResponse, RetentionMetrics, SessionLimits,
+    SessionOptions, SessionWebFont, SourcePatch, VfsLimitError, VfsLimitKind, VfsLimits,
+    VirtualCompileSession, VirtualPath, VirtualPathError,
 };
 
 /// The only checkpoint policy supported by composed engine sessions.
