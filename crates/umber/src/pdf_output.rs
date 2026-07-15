@@ -1,13 +1,16 @@
 //! Detached PDF assembly from checkpointed shipout receipts.
 
 use tex_arith::Scaled;
+use tex_expand::append_token_string_text;
+use tex_out::PageNode;
 use tex_out::pdf::{
     PdfContentRectangle, PdfDictionary, PdfIndirectObject, PdfModelError, PdfNumber, PdfObject,
     PdfObjectCompression, PdfObjectId, PdfSerializationOptions, PdfSerializeError,
     PdfStreamCompression, PdfValue, PdfVersion, UnvalidatedPdfDocument, filled_rectangle_content,
 };
 use tex_out::positioned::{PositionedError, PositionedEvent};
-use tex_state::env::banks::IntParam;
+use tex_state::env::banks::{IntParam, TokParam};
+use tex_state::ids::TokenListId;
 use tex_state::{
     CommittedArtifact, ContentHash, PDF_CATALOG_OBJECT_ID, PDF_PAGES_OBJECT_ID,
     PdfOutputParameters, Universe, WorldError,
@@ -39,18 +42,23 @@ pub fn pdf_from_committed_artifacts(
         let bytes = artifact_bytes(stores, artifacts, record.artifact())?;
         let artifact = tex_out::PageArtifact::from_bytes(&bytes)?;
         let positioned = tex_out::positioned::lower_page(&artifact, page_index as u32)?;
-        let page_width = positive_extent(positioned.width);
-        let page_height = positive_extent(positioned.height);
+        let (page_width, page_height) = pdf_page_extents(&artifact, record)?;
         let mut rectangles = Vec::new();
         for event in positioned.events {
             match event {
                 PositionedEvent::Rule(rule) => rectangles.push(PdfContentRectangle {
-                    x: scaled_to_bp_f32(rule.x, parameters.decimal_digits),
+                    x: scaled_to_bp_f32(
+                        rule.x
+                            .checked_add(record.h_origin())
+                            .ok_or(PdfBuildError::PageGeometryOverflow)?,
+                        parameters.decimal_digits,
+                    ),
                     y: scaled_to_bp_f32(
                         page_height
                             .checked_sub(rule.y)
+                            .and_then(|value| value.checked_sub(record.v_origin()))
                             .and_then(|value| value.checked_sub(rule.height))
-                            .ok_or(PositionedError::PositionOverflow)?,
+                            .ok_or(PdfBuildError::PageGeometryOverflow)?,
                         parameters.decimal_digits,
                     ),
                     width: scaled_to_bp_f32(rule.width, parameters.decimal_digits),
@@ -75,6 +83,7 @@ pub fn pdf_from_committed_artifacts(
             "ProcSet",
             PdfValue::Array(vec![PdfValue::Name("PDF".into())]),
         )?;
+        resources.set_raw_entries(token_list_bytes(stores, record.resources()));
         objects.push(indirect_dictionary(resources_id, resources));
         objects.push(PdfIndirectObject {
             id: contents_id,
@@ -87,17 +96,24 @@ pub fn pdf_from_committed_artifacts(
         let mut page = PdfDictionary::new();
         page.insert("Type", PdfValue::Name("Page".into()))?;
         page.insert("Parent", PdfValue::Reference(pages_id))?;
-        page.insert(
-            "MediaBox",
-            PdfValue::Array(vec![
-                PdfValue::Integer(0),
-                PdfValue::Integer(0),
-                PdfValue::Number(scaled_to_bp_number(page_width, parameters.decimal_digits)?),
-                PdfValue::Number(scaled_to_bp_number(page_height, parameters.decimal_digits)?),
-            ]),
-        )?;
+        let page_attr = token_list_bytes(stores, record.page_attr());
+        if !page_attr
+            .windows(b"/MediaBox".len())
+            .any(|window| window == b"/MediaBox")
+        {
+            page.insert(
+                "MediaBox",
+                PdfValue::Array(vec![
+                    PdfValue::Integer(0),
+                    PdfValue::Integer(0),
+                    PdfValue::Number(scaled_to_bp_number(page_width, parameters.decimal_digits)?),
+                    PdfValue::Number(scaled_to_bp_number(page_height, parameters.decimal_digits)?),
+                ]),
+            )?;
+        }
         page.insert("Resources", PdfValue::Reference(resources_id))?;
         page.insert("Contents", PdfValue::Reference(contents_id))?;
+        page.set_raw_entries(page_attr);
         objects.push(indirect_dictionary(page_id, page));
     }
 
@@ -105,6 +121,10 @@ pub fn pdf_from_committed_artifacts(
     pages.insert("Type", PdfValue::Name("Pages".into()))?;
     pages.insert("Count", PdfValue::Integer(page_records.len() as i64))?;
     pages.insert("Kids", PdfValue::Array(kids))?;
+    pages.set_raw_entries(token_list_bytes(
+        stores,
+        stores.tok_param(TokParam::PDF_PAGES_ATTR),
+    ));
     objects.push(indirect_dictionary(pages_id, pages));
 
     let document = UnvalidatedPdfDocument {
@@ -184,12 +204,48 @@ fn indirect_dictionary(id: PdfObjectId, dictionary: PdfDictionary) -> PdfIndirec
     }
 }
 
-fn positive_extent(value: Scaled) -> Scaled {
-    if value.raw() > 0 {
-        value
+fn pdf_page_extents(
+    artifact: &tex_out::PageArtifact,
+    record: tex_state::PdfPageRecord,
+) -> Result<(Scaled, Scaled), PdfBuildError> {
+    let root = match &artifact.root {
+        PageNode::HList(root) | PageNode::VList(root) => root,
+        _ => unreachable!("validated artifact root is a box"),
+    };
+    let h_offset = record
+        .h_origin()
+        .checked_add(artifact.job.h_offset)
+        .ok_or(PdfBuildError::PageGeometryOverflow)?;
+    let v_offset = record
+        .v_origin()
+        .checked_add(artifact.job.v_offset)
+        .ok_or(PdfBuildError::PageGeometryOverflow)?;
+    let width = if record.width().raw() == 0 {
+        root.width
+            .checked_add(h_offset)
+            .and_then(|value| value.checked_add(h_offset))
+            .ok_or(PdfBuildError::PageGeometryOverflow)?
     } else {
-        Scaled::from_raw(1)
+        record.width()
+    };
+    let height = if record.height().raw() == 0 {
+        root.height
+            .checked_add(root.depth)
+            .and_then(|value| value.checked_add(v_offset))
+            .and_then(|value| value.checked_add(v_offset))
+            .ok_or(PdfBuildError::PageGeometryOverflow)?
+    } else {
+        record.height()
+    };
+    Ok((width, height))
+}
+
+fn token_list_bytes(stores: &Universe, id: TokenListId) -> Vec<u8> {
+    let mut text = String::new();
+    for &token in stores.tokens(id) {
+        append_token_string_text(stores, token, &mut text);
     }
+    text.into_bytes()
 }
 
 fn scaled_to_bp_f32(value: Scaled, decimal_digits: i32) -> f32 {
@@ -224,6 +280,7 @@ pub enum PdfBuildError {
     InvalidVersionParameters,
     InvalidCompressionLevel(i32),
     InvalidObjectCompressionLevel(i32),
+    PageGeometryOverflow,
     InvalidObjectId(u32),
     TextRequiresFontResources,
     UnsupportedSpecial(String),
@@ -252,6 +309,7 @@ impl std::fmt::Display for PdfBuildError {
             Self::InvalidObjectCompressionLevel(level) => {
                 write!(f, "invalid \\pdfobjcompresslevel {level}; expected 0..=3")
             }
+            Self::PageGeometryOverflow => f.write_str("pdfTeX page geometry arithmetic overflowed"),
             Self::InvalidObjectId(id) => write!(f, "invalid PDF object id {id}"),
             Self::TextRequiresFontResources => {
                 f.write_str("PDF text output requires embedded font resources")
@@ -366,6 +424,173 @@ mod tests {
         assert_eq!(stores.pdf_pages()[0].resources_object(), 3);
         assert_eq!(stores.pdf_pages()[0].contents_object(), 4);
         assert_eq!(stores.pdf_pages()[0].page_object(), 5);
+    }
+
+    fn pdf_number(object: &lopdf::Object) -> f32 {
+        match object {
+            lopdf::Object::Integer(value) => *value as f32,
+            lopdf::Object::Real(value) => *value,
+            other => panic!("expected PDF number, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn page_parameters_are_consumed_at_pdftex_scopes() {
+        let (stores, run_result) = run(concat!(
+            "\\pdfoutput=1\\pdfcompresslevel=0\\pdfdecimaldigits=3",
+            "\\pdfpagesattr{/Lang (early)}",
+            "\\pdfpagewidth=100bp\\pdfpageheight=200bp",
+            "\\pdfhorigin=10bp\\pdfvorigin=20bp",
+            "\\pdfpageattr{/Rotate 90}",
+            "\\pdfpageresources{/ExtGState << /A << /Type /ExtGState >> >>}",
+            "\\shipout\\vbox{\\hrule width1bp height2bp}",
+            "\\pdfpagewidth=300bp\\pdfpageheight=400bp",
+            "\\pdfhorigin=30bp\\pdfvorigin=40bp",
+            "\\pdfpageattr{/Rotate 180}",
+            "\\pdfpageresources{/ColorSpace << /C /DeviceRGB >>}",
+            "\\shipout\\vbox{\\hrule width3bp height4bp}",
+            "\\pdfpagesattr{/Lang (final)}\\end",
+        ));
+        let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+            .expect("PDF assembles");
+        let parsed = lopdf::Document::load_mem(&pdf).expect("lopdf parses output");
+        let pages = parsed.get_pages();
+        assert_eq!(pages.len(), 2);
+
+        let pages_root = parsed
+            .get_object((PDF_PAGES_OBJECT_ID, 0))
+            .expect("pages root")
+            .as_dict()
+            .expect("pages dictionary");
+        assert_eq!(
+            pages_root
+                .get(b"Lang")
+                .expect("final pages attribute")
+                .as_str()
+                .expect("language string"),
+            b"final"
+        );
+
+        for (number, expected_box, expected_rotate, resource_key) in [
+            (1, [0.0, 0.0, 100.0, 200.0], 90, b"ExtGState".as_slice()),
+            (2, [0.0, 0.0, 300.0, 400.0], 180, b"ColorSpace".as_slice()),
+        ] {
+            let page_id = pages[&number];
+            let page = parsed
+                .get_object(page_id)
+                .expect("page")
+                .as_dict()
+                .expect("page dictionary");
+            let media_box = page
+                .get(b"MediaBox")
+                .expect("MediaBox")
+                .as_array()
+                .expect("MediaBox array");
+            for (actual, expected) in media_box.iter().map(pdf_number).zip(expected_box) {
+                assert!((actual - expected).abs() < 0.002, "{actual} != {expected}");
+            }
+            assert_eq!(
+                page.get(b"Rotate")
+                    .expect("rotation")
+                    .as_i64()
+                    .expect("integer rotation"),
+                expected_rotate
+            );
+            let resources_id = page
+                .get(b"Resources")
+                .expect("resources")
+                .as_reference()
+                .expect("resources reference");
+            let resources = parsed
+                .get_object(resources_id)
+                .expect("resources")
+                .as_dict()
+                .expect("resources dictionary");
+            assert!(resources.has(resource_key));
+        }
+
+        assert!(
+            pdf.windows(b"10 178 1 2 re".len())
+                .any(|window| { window == b"10 178 1 2 re" })
+        );
+        assert!(
+            pdf.windows(b"30 356 3 4 re".len())
+                .any(|window| { window == b"30 356 3 4 re" })
+        );
+    }
+
+    #[test]
+    fn raw_media_box_overrides_automatic_box_and_pk_mode_freezes() {
+        let (stores, run_result) = run(concat!(
+            "\\pdfoutput=1\\pdfcompresslevel=0\\pdfpkmode{first}",
+            "\\pdfpagewidth=100bp\\pdfpageheight=200bp",
+            "\\pdfpageattr{/MediaBox [1 2 3 4] /Rotate 90}",
+            "\\shipout\\vbox{\\hrule width1bp height1bp}",
+            "\\pdfpkmode{second}\\end",
+        ));
+        let fixed_pk_mode = stores.fixed_pdf_pk_mode().expect("PK mode frozen");
+        assert_eq!(token_list_bytes(&stores, fixed_pk_mode), b"first");
+        assert_eq!(
+            token_list_bytes(&stores, stores.tok_param(TokParam::PDF_PK_MODE)),
+            b"second"
+        );
+
+        let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+            .expect("PDF assembles");
+        assert_eq!(
+            pdf.windows(b"/MediaBox".len())
+                .filter(|window| *window == b"/MediaBox")
+                .count(),
+            1
+        );
+        let parsed = lopdf::Document::load_mem(&pdf).expect("lopdf parses output");
+        let page_id = parsed.get_pages()[&1];
+        let page = parsed
+            .get_object(page_id)
+            .expect("page")
+            .as_dict()
+            .expect("page dictionary");
+        let media_box = page
+            .get(b"MediaBox")
+            .expect("raw MediaBox")
+            .as_array()
+            .expect("MediaBox array");
+        assert_eq!(
+            media_box.iter().map(pdf_number).collect::<Vec<_>>(),
+            vec![1.0, 2.0, 3.0, 4.0]
+        );
+    }
+
+    #[test]
+    fn zero_page_dimensions_fall_back_to_box_plus_twice_the_origins() {
+        let (stores, run_result) = run(concat!(
+            "\\pdfoutput=1\\pdfcompresslevel=0\\pdfdecimaldigits=3",
+            "\\pdfpagewidth=0pt\\pdfpageheight=0pt",
+            "\\pdfhorigin=10bp\\pdfvorigin=20bp",
+            "\\shipout\\vbox{\\hrule width1bp height2bp}\\end",
+        ));
+        let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+            .expect("PDF assembles");
+        let parsed = lopdf::Document::load_mem(&pdf).expect("lopdf parses output");
+        let page_id = parsed.get_pages()[&1];
+        let page = parsed
+            .get_object(page_id)
+            .expect("page")
+            .as_dict()
+            .expect("page dictionary");
+        let media_box = page
+            .get(b"MediaBox")
+            .expect("MediaBox")
+            .as_array()
+            .expect("MediaBox array");
+        let actual = media_box.iter().map(pdf_number).collect::<Vec<_>>();
+        for (actual, expected) in actual.iter().zip([0.0, 0.0, 21.0, 42.0]) {
+            assert!((*actual - expected).abs() < 0.002, "{actual} != {expected}");
+        }
+        assert!(
+            pdf.windows(b"10 20 1 2 re".len())
+                .any(|window| window == b"10 20 1 2 re")
+        );
     }
 
     #[test]
