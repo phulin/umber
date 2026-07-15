@@ -281,6 +281,7 @@ fn format_rejection_and_job_clock_are_deterministic() {
     let mut clocked = VirtualCompileSession::new(SessionOptions {
         clock: tex_state::JobClock {
             time: 754,
+            second: 0,
             day: 13,
             month: 7,
             year: 2042,

@@ -1644,6 +1644,7 @@ fn rollback_bumps_epoch_past_previous_live_epoch() {
 fn job_clock_initializes_tex_clock_parameters_once() {
     let clock = JobClock {
         time: 721,
+        second: 37,
         day: 8,
         month: 7,
         year: 2026,

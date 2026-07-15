@@ -536,6 +536,7 @@ impl Default for RngState {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct JobClock {
     pub time: i32,
+    pub second: i32,
     pub day: i32,
     pub month: i32,
     pub year: i32,
@@ -545,6 +546,7 @@ impl JobClock {
     /// A deterministic clock used by hermetic in-memory worlds.
     pub const DEFAULT: Self = Self {
         time: 0,
+        second: 0,
         day: 1,
         month: 1,
         year: 1970,
@@ -2231,6 +2233,7 @@ fn unix_seconds_to_job_clock(seconds: u64) -> JobClock {
     let (year, month, day) = civil_from_days(days);
     JobClock {
         time: (seconds_of_day / 60) as i32,
+        second: (seconds_of_day % 60) as i32,
         day,
         month,
         year,

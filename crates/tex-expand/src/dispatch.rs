@@ -248,6 +248,24 @@ macro_rules! dispatch_match {
                     call_origin,
                 ))
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::CreationDate) => {
+                let clock = expansion.job_clock;
+                let creation_date = format!(
+                    "D:{:04}{:02}{:02}{:02}{:02}{:02}Z",
+                    clock.year,
+                    clock.month,
+                    clock.day,
+                    clock.time.div_euclid(60),
+                    clock.time.rem_euclid(60),
+                    clock.second,
+                );
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::NumberOutput,
+                    &creation_date,
+                    call_origin,
+                ))
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Unexpanded) => {
                 let raw = crate::scan::scan_general_text_with_expanded_open(
                     input, stores, expansion, mode, call_context,
@@ -1118,6 +1136,7 @@ pub fn dispatch_expandable_opcode(opcode: ExpandableOpcode) -> Result<(), Expand
         | ExpandableOpcode::FileSize
         | ExpandableOpcode::StringCompare
         | ExpandableOpcode::ShellEscape
+        | ExpandableOpcode::CreationDate
         | ExpandableOpcode::Unexpanded
         | ExpandableOpcode::Detokenize
         | ExpandableOpcode::Unless

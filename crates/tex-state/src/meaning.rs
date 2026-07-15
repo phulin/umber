@@ -220,6 +220,8 @@ pub enum ExpandablePrimitive {
     StringCompare,
     /// Disabled/enabled shell-escape status for the LaTeX extension contract.
     ShellEscape,
+    /// Immutable UTC job-creation timestamp for the LaTeX extension contract.
+    CreationDate,
 }
 
 impl ExpandablePrimitive {
@@ -283,6 +285,7 @@ impl ExpandablePrimitive {
             Self::FileSize => 54,
             Self::StringCompare => 55,
             Self::ShellEscape => 56,
+            Self::CreationDate => 57,
         }
     }
 
@@ -346,6 +349,7 @@ impl ExpandablePrimitive {
             54 => Some(Self::FileSize),
             55 => Some(Self::StringCompare),
             56 => Some(Self::ShellEscape),
+            57 => Some(Self::CreationDate),
             _ => None,
         }
     }

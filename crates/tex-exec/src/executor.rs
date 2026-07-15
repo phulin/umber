@@ -200,6 +200,7 @@ where {
         C: CheckpointSink,
     {
         input.ensure_source_ids_at_least(stores.input_summary().next_source_id());
+        execution.job_clock = stores.world().job_clock();
         let mut session = EngineSession::new(checkpoints);
         if publish_job_start {
             session.publish(EngineBoundary::JobStart, &self.nest, input, stores);

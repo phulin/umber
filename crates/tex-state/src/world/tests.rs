@@ -512,11 +512,12 @@ fn unix_clock_conversion_matches_epoch() {
 }
 
 #[test]
-fn unix_clock_conversion_uses_utc_minutes_and_date() {
+fn unix_clock_conversion_uses_utc_time_and_date() {
     assert_eq!(
-        unix_seconds_to_job_clock(1_783_604_160),
+        unix_seconds_to_job_clock(1_783_604_197),
         JobClock {
             time: 816,
+            second: 37,
             day: 9,
             month: 7,
             year: 2026,

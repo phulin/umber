@@ -144,6 +144,7 @@ fn load_template(repo_root: &Path) -> Result<World, String> {
     let corpus = repo_root.join("third_party/corpus");
     let mut world = World::memory_with_clock(JobClock {
         time: 13 * 60 + 36,
+        second: 0,
         day: 9,
         month: 7,
         year: 2026,

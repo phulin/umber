@@ -22,7 +22,9 @@ use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::provenance::{DiagnosticSite, InsertedOriginKind};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
-use tex_state::{ExpansionState, FileContent, InputReadState, MeaningCacheGuard, Universe};
+use tex_state::{
+    ExpansionState, FileContent, InputReadState, JobClock, MeaningCacheGuard, Universe,
+};
 
 const MEANING_SITE_CACHE_LEN: usize = 64;
 
@@ -251,6 +253,10 @@ pub fn install_latex_expandable_primitives(stores: &mut Universe) {
             "shellescape",
             tex_state::meaning::ExpandablePrimitive::ShellEscape,
         ),
+        (
+            "creationdate",
+            tex_state::meaning::ExpandablePrimitive::CreationDate,
+        ),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
@@ -432,6 +438,7 @@ pub enum ExpandableOpcode {
     FileSize,
     StringCompare,
     ShellEscape,
+    CreationDate,
     Unexpanded,
     Detokenize,
     Unless,
@@ -802,6 +809,7 @@ pub trait InputResolver {
 pub struct ExpansionContext<'a> {
     pub engine: EngineStateSnapshot,
     pub job_name: &'a str,
+    pub job_clock: JobClock,
     input_resolver: Option<&'a mut dyn InputResolver>,
     pub(crate) recorder: Option<&'a mut dyn ReadRecorder>,
     resolution_index: u64,
@@ -815,6 +823,7 @@ impl<'a> ExpansionContext<'a> {
         Self {
             engine: EngineStateSnapshot::default(),
             job_name,
+            job_clock: JobClock::DEFAULT,
             input_resolver: None,
             recorder: None,
             resolution_index: 0,
@@ -831,6 +840,7 @@ impl<'a> ExpansionContext<'a> {
         Self {
             engine: EngineStateSnapshot::default(),
             job_name,
+            job_clock: JobClock::DEFAULT,
             input_resolver: Some(input_resolver),
             recorder: None,
             resolution_index: 0,
@@ -924,6 +934,7 @@ impl<'a> ExpansionContext<'a> {
         let mut nested = ExpansionContext {
             engine: self.engine,
             job_name: self.job_name,
+            job_clock: self.job_clock,
             input_resolver: self.input_resolver.take(),
             recorder: self.recorder.take(),
             resolution_index: self.resolution_index,

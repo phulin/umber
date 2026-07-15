@@ -4186,6 +4186,7 @@ fn hash_rng_state(rng: crate::world::RngState, hasher: &mut StateHasher) {
 fn hash_job_clock(clock: JobClock, hasher: &mut StateHasher) {
     hasher.tag(0x85);
     hasher.i32(clock.time);
+    hasher.i32(clock.second);
     hasher.i32(clock.day);
     hasher.i32(clock.month);
     hasher.i32(clock.year);

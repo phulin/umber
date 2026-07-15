@@ -127,6 +127,7 @@ fn run_file_in_process(
         .ok_or_else(|| format!("input has no parent: {}", path.display()))?;
     let mut world = World::memory_with_clock(JobClock {
         time: 13 * 60 + 36,
+        second: 0,
         day: 9,
         month: 7,
         year: 2026,

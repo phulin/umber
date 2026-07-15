@@ -537,6 +537,35 @@ fn run_initializes_clock_parameters_from_source_date_epoch() {
     assert!(stdout.contains("clock=816/9/7/2026"));
 }
 
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn latex_creationdate_uses_the_source_date_epoch_job_clock() {
+    let temp_dir = tempfile::tempdir().expect("create creation-date temp dir");
+    let source = temp_dir.path().join("creationdate.tex");
+    fs::write(
+        &source,
+        "\\catcode123=1 \\catcode125=2 \\message{created=\\creationdate}\\end\n",
+    )
+    .expect("write creation-date fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .arg("run")
+        .arg("--latex")
+        .arg("--show-fixtures")
+        .arg(&source)
+        .output()
+        .expect("run Umber LaTeX creation-date fixture");
+
+    assert!(
+        output.status.success(),
+        "creation-date run failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    assert!(stdout.contains("created=D:20260709133600Z"));
+}
+
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn assert_dvi_area_matches_committed_fixture(area: &str) {
     for case in corpus_cases(area) {

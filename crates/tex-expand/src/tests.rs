@@ -734,6 +734,11 @@ fn expanded_is_installed_only_in_the_latex_extension_layer() {
         stores.meaning(shellescape),
         Meaning::ExpandablePrimitive(ExpandablePrimitive::ShellEscape)
     );
+    let creationdate = stores.intern("creationdate");
+    assert_eq!(
+        stores.meaning(creationdate),
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::CreationDate)
+    );
 }
 
 #[test]
@@ -744,6 +749,35 @@ fn shellescape_reports_the_disabled_world_policy() {
     let mut expansion = tex_state::ExpansionContext::new(&mut stores);
 
     assert_eq!(next_expanded_chars(&mut input, &mut expansion), "A0B");
+}
+
+#[test]
+fn creationdate_reports_the_immutable_utc_job_clock() {
+    let mut stores = Universe::new();
+    crate::install_latex_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\creationdate"));
+    let mut expansion = tex_state::ExpansionContext::new(&mut stores);
+    let mut context = ExpansionContext::new("texput");
+    context.job_clock = tex_state::JobClock {
+        time: 22 * 60,
+        second: 37,
+        day: 14,
+        month: 7,
+        year: 2026,
+    };
+
+    let mut rendered = String::new();
+    while let Some(token) =
+        crate::get_x_token_with_context(&mut input, &mut expansion, &mut context)
+            .expect("creation date should expand")
+    {
+        let Token::Char { ch, cat } = crate::semantic_token(token) else {
+            panic!("expected character token, got {token:?}");
+        };
+        assert_eq!(cat, Catcode::Other);
+        rendered.push(ch);
+    }
+    assert_eq!(rendered, "D:20260714220037Z");
 }
 
 #[test]
