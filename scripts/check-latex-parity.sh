@@ -26,6 +26,7 @@ active_receipt="$receipt"
 triage_dir="${target_dir}/latex-parity/triage"
 failures_report="${target_dir}/latex-parity/last-run-failures.txt"
 non_dvi_report="${target_dir}/latex-parity/last-run-non-dvi.txt"
+scratch_parent="${target_dir}/latex-parity/work"
 
 usage() {
   cat <<'EOF'
@@ -88,6 +89,20 @@ absolute_file() {
   local directory
   directory="$(cd "$(dirname "$path")" && pwd)"
   printf '%s/%s\n' "$directory" "$(basename "$path")"
+}
+
+reap_abandoned_work_roots() {
+  local stale owner
+  mkdir -p "$scratch_parent"
+  shopt -s nullglob
+  for stale in "$scratch_parent"/run.*; do
+    owner="$(sed -n '1p' "$stale/.owner-pid" 2>/dev/null || true)"
+    if [[ "$owner" =~ ^[1-9][0-9]*$ ]] && kill -0 "$owner" 2>/dev/null; then
+      continue
+    fi
+    rm -rf -- "$stale"
+  done
+  shopt -u nullglob
 }
 
 prepare_format() {
@@ -168,6 +183,15 @@ EOF
     fail "self-test staged more than one format identity"
   [[ "$(awk '$1 == "case" { count++ } END { print count + 0 }' "$active_receipt")" == 3 ]] || \
     fail "self-test did not stage every case"
+  scratch_parent="${temp}/work"
+  mkdir -p "${scratch_parent}/run.abandoned" "${scratch_parent}/run.live"
+  printf '%s\n' 999999999 > "${scratch_parent}/run.abandoned/.owner-pid"
+  printf '%s\n' "$$" > "${scratch_parent}/run.live/.owner-pid"
+  reap_abandoned_work_roots
+  [[ ! -e "${scratch_parent}/run.abandoned" ]] || \
+    fail "self-test did not reclaim abandoned parity work"
+  [[ -d "${scratch_parent}/run.live" ]] || \
+    fail "self-test reclaimed a live parity run"
   printf '%s\n' 'LaTeX parity format-reuse self-test: passed (one build, three identical restores)'
 }
 
@@ -220,7 +244,9 @@ for relative_dir in "${texinput_rel_dirs[@]}"; do
   texinputs+=":${texmf_dist}/${relative_dir}"
 done
 texfonts="${texmf_dist}/fonts/tfm/public/cm:${texmf_dist}/fonts/tfm/public/latex-fonts:${texmf_dist}/fonts/tfm/public/amsfonts/cmextra:${texmf_dist}/fonts/tfm/public/amsfonts/euler:${texmf_dist}/fonts/tfm/public/amsfonts/symbols:${texmf_dist}/fonts/tfm/public/amsfonts/cyrillic:${texmf_dist}/fonts/tfm/jknappen/ec"
-work_root="$(mktemp -d "${TMPDIR:-/tmp}/umber-latex-parity.XXXXXX")"
+reap_abandoned_work_roots
+work_root="$(mktemp -d "${scratch_parent}/run.XXXXXX")"
+printf '%s\n' "$$" > "${work_root}/.owner-pid"
 cleanup() {
   if [[ $keep_work -eq 0 ]]; then
     rm -rf "$work_root"
@@ -229,6 +255,9 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 case_error() {
   local case_name="$1"
