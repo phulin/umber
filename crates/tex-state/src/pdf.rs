@@ -11,11 +11,95 @@ use std::collections::BTreeMap;
 const PDF_STATE_DOMAIN: u64 = 0x7064_665f_7374_6174;
 const PDF_PAGE_DOMAIN: u64 = 0x7064_665f_7061_6765;
 const PDF_FONT_DOMAIN: u64 = 0x7064_665f_666f_6e74;
+const PDF_EXTERNAL_IMAGE_DOMAIN: u64 = 0x7064_665f_7869_6d67;
 pub const PDF_CATALOG_OBJECT_ID: u32 = 1;
 pub const PDF_PAGES_OBJECT_ID: u32 = 2;
 const FIRST_DYNAMIC_OBJECT: u32 = 3;
 const OBJECTS_PER_PAGE: u32 = 3;
 const MAX_OBJECT_ID: u32 = i32::MAX as u32;
+
+/// Typed identity assigned to an external-image object by pdfTeX's object table.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct PdfExternalImageId(u32);
+
+impl PdfExternalImageId {
+    pub fn new(raw: u32) -> Result<Self, PdfExternalImageIdError> {
+        (raw > 0 && raw <= MAX_OBJECT_ID)
+            .then_some(Self(raw))
+            .ok_or(PdfExternalImageIdError)
+    }
+
+    #[must_use]
+    pub const fn raw(self) -> u32 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PdfExternalImageIdError;
+
+impl std::fmt::Display for PdfExternalImageIdError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PDF external-image object number must be in 1..=2147483647")
+    }
+}
+
+impl std::error::Error for PdfExternalImageIdError {}
+
+/// The selected PDF page box, already normalized into TeX scaled points.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct PdfPageBox {
+    pub left: Scaled,
+    pub bottom: Scaled,
+    pub right: Scaled,
+    pub top: Scaled,
+}
+
+/// Metadata retained after host-neutral external-image validation.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PdfExternalImageMetadata {
+    PdfPage { page_box: PdfPageBox },
+    Raster,
+}
+
+impl PdfExternalImageMetadata {
+    #[must_use]
+    pub const fn bbox_coordinate(self, index: u8) -> Option<Scaled> {
+        match (self, index) {
+            (Self::PdfPage { page_box }, 1) => Some(page_box.left),
+            (Self::PdfPage { page_box }, 2) => Some(page_box.bottom),
+            (Self::PdfPage { page_box }, 3) => Some(page_box.right),
+            (Self::PdfPage { page_box }, 4) => Some(page_box.top),
+            (Self::Raster, 1..=4) => Some(Scaled::from_raw(0)),
+            (_, _) => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct PdfExternalImageRecord {
+    id: PdfExternalImageId,
+    metadata: PdfExternalImageMetadata,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PdfExternalImageRegistrationError {
+    Duplicate(PdfExternalImageId),
+}
+
+impl std::fmt::Display for PdfExternalImageRegistrationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Duplicate(id) => write!(
+                f,
+                "PDF external-image object {} is already registered",
+                id.raw()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for PdfExternalImageRegistrationError {}
 
 /// The PDF object ledger cannot reserve another indirect object.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -342,12 +426,14 @@ pub(crate) struct PdfStateCursor {
     font_resource_count: usize,
     fingerprint: u64,
     match_fingerprint: u64,
+    external_image_fingerprint: u64,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct PdfStateSnapshot {
     cursor: PdfStateCursor,
     match_state: Arc<PdfMatchState>,
+    external_images: Arc<Vec<PdfExternalImageRecord>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -371,6 +457,8 @@ pub(crate) struct PdfState {
     font_resources: Vec<PdfFontResourceRecord>,
     fingerprint: u64,
     match_state: Arc<PdfMatchState>,
+    external_images: Arc<Vec<PdfExternalImageRecord>>,
+    external_image_fingerprint: u64,
 }
 
 impl Default for PdfState {
@@ -385,6 +473,8 @@ impl Default for PdfState {
             font_resources: Vec::new(),
             fingerprint: base_fingerprint(false),
             match_state: Arc::new(PdfMatchState::default()),
+            external_images: Arc::new(Vec::new()),
+            external_image_fingerprint: external_image_base_fingerprint(),
         }
     }
 }
@@ -413,13 +503,14 @@ impl PdfState {
         self.next_object
     }
     #[must_use]
-    pub(crate) const fn is_format_empty(&self) -> bool {
+    pub(crate) fn is_format_empty(&self) -> bool {
         self.pages.is_empty()
             && self.next_object == FIRST_DYNAMIC_OBJECT
             && self.output_parameters.is_none()
             && self.pk_mode.is_none()
             && self.font_operations.is_empty()
             && self.font_resources.is_empty()
+            && self.external_images.is_empty()
     }
 
     pub(crate) fn ensure_page_capacity(&self, parameters: PdfOutputParameters) -> Result<(), ()> {
@@ -814,6 +905,31 @@ impl PdfState {
         None
     }
 
+    pub(crate) fn register_external_image(
+        &mut self,
+        id: PdfExternalImageId,
+        metadata: PdfExternalImageMetadata,
+    ) -> Result<(), PdfExternalImageRegistrationError> {
+        let images = Arc::make_mut(&mut self.external_images);
+        match images.binary_search_by_key(&id, |record| record.id) {
+            Ok(_) => return Err(PdfExternalImageRegistrationError::Duplicate(id)),
+            Err(index) => images.insert(index, PdfExternalImageRecord { id, metadata }),
+        }
+        self.external_image_fingerprint = external_image_fingerprint(images);
+        Ok(())
+    }
+
+    #[must_use]
+    pub(crate) fn external_image(
+        &self,
+        id: PdfExternalImageId,
+    ) -> Option<PdfExternalImageMetadata> {
+        self.external_images
+            .binary_search_by_key(&id, |record| record.id)
+            .ok()
+            .map(|index| self.external_images[index].metadata)
+    }
+
     #[must_use]
     pub(crate) fn cursor(&self) -> PdfStateCursor {
         PdfStateCursor {
@@ -826,6 +942,7 @@ impl PdfState {
             font_resource_count: self.font_resources.len(),
             fingerprint: self.fingerprint,
             match_fingerprint: self.match_state.fingerprint,
+            external_image_fingerprint: self.external_image_fingerprint,
         }
     }
     #[must_use]
@@ -833,6 +950,7 @@ impl PdfState {
         PdfStateSnapshot {
             cursor: self.cursor(),
             match_state: Arc::clone(&self.match_state),
+            external_images: Arc::clone(&self.external_images),
         }
     }
 
@@ -851,6 +969,8 @@ impl PdfState {
         self.font_resources.truncate(cursor.font_resource_count);
         self.fingerprint = cursor.fingerprint;
         self.match_state = snapshot.match_state;
+        self.external_images = snapshot.external_images;
+        self.external_image_fingerprint = cursor.external_image_fingerprint;
     }
 
     pub(crate) fn set_match(
@@ -894,8 +1014,32 @@ impl PdfState {
             hasher.usize(cursor.font_resource_count);
             hasher.u64(cursor.fingerprint);
             hasher.u64(cursor.match_fingerprint);
+            hasher.u64(cursor.external_image_fingerprint);
         })
     }
+}
+
+fn external_image_base_fingerprint() -> u64 {
+    StateHasher::new(PDF_EXTERNAL_IMAGE_DOMAIN).finish()
+}
+
+fn external_image_fingerprint(images: &[PdfExternalImageRecord]) -> u64 {
+    let mut hasher = StateHasher::new(PDF_EXTERNAL_IMAGE_DOMAIN);
+    hasher.usize(images.len());
+    for record in images {
+        hasher.u32(record.id.raw());
+        match record.metadata {
+            PdfExternalImageMetadata::PdfPage { page_box } => {
+                hasher.u8(0);
+                hasher.i32(page_box.left.raw());
+                hasher.i32(page_box.bottom.raw());
+                hasher.i32(page_box.right.raw());
+                hasher.i32(page_box.top.raw());
+            }
+            PdfExternalImageMetadata::Raster => hasher.u8(1),
+        }
+    }
+    hasher.finish()
 }
 
 fn append_font_resource_fingerprint(previous: u64, record: PdfFontResourceRecord) -> u64 {
@@ -1285,5 +1429,50 @@ mod tests {
         let entries = state.resolved_font_map_lines();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].tex_name, b"cmtt10");
+    }
+
+    #[test]
+    fn external_image_metadata_is_typed_hashed_and_rollback_safe() {
+        let mut state = PdfState::default();
+        state.enable();
+        let initial = state.snapshot();
+        let initial_hash = state.hash_fragment();
+        let id = PdfExternalImageId::new(7).expect("valid image object");
+        let metadata = PdfExternalImageMetadata::PdfPage {
+            page_box: PdfPageBox {
+                left: Scaled::from_raw(-2),
+                bottom: Scaled::from_raw(3),
+                right: Scaled::from_raw(40),
+                top: Scaled::from_raw(50),
+            },
+        };
+
+        state
+            .register_external_image(id, metadata)
+            .expect("register image metadata");
+        let registered_hash = state.hash_fragment();
+        assert_ne!(registered_hash, initial_hash);
+        assert_eq!(state.external_image(id), Some(metadata));
+        assert!(!state.is_format_empty());
+        assert_eq!(metadata.bbox_coordinate(1), Some(Scaled::from_raw(-2)));
+        assert_eq!(metadata.bbox_coordinate(4), Some(Scaled::from_raw(50)));
+        assert_eq!(metadata.bbox_coordinate(5), None);
+        assert_eq!(
+            state.register_external_image(id, PdfExternalImageMetadata::Raster),
+            Err(PdfExternalImageRegistrationError::Duplicate(id))
+        );
+
+        state.rollback(initial.clone());
+        assert_eq!(state.external_image(id), None);
+        assert_eq!(state.hash_fragment(), initial_hash);
+        state
+            .register_external_image(id, metadata)
+            .expect("replay image metadata");
+        assert_eq!(state.hash_fragment(), registered_hash);
+
+        assert_eq!(
+            PdfExternalImageMetadata::Raster.bbox_coordinate(3),
+            Some(Scaled::from_raw(0))
+        );
     }
 }

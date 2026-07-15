@@ -33,6 +33,7 @@ use crate::page::{
     PageInsertion, PageInteger, PageMark, PageStateHashCursor,
 };
 use crate::pdf::{
+    PdfExternalImageId, PdfExternalImageMetadata, PdfExternalImageRegistrationError,
     PdfFontResourceRecord, PdfObjectCapacityError, PdfOutputParameters, PdfPageParameters,
     PdfState, PdfStateCursor, PdfStateSnapshot, PdfTokenParameter,
 };
@@ -184,6 +185,7 @@ pub trait ExpansionState {
     fn page_mark(&self, mark: PageMark) -> TokenListId;
     fn page_mark_class(&self, mark: PageMark, class: u16) -> TokenListId;
     fn page_insertion_height(&self, class: u16) -> Option<Scaled>;
+    fn pdf_external_image(&self, id: PdfExternalImageId) -> Option<PdfExternalImageMetadata>;
     fn penalty_array_value(&self, kind: PenaltyArrayKind, index: i32) -> i32;
     fn paragraph_shape_dimension(&self, line: i32, width: bool) -> Scaled;
     fn report_bad_register_code(&mut self, _value: i32, _maximum: u16) {}
@@ -1884,6 +1886,20 @@ impl Universe {
     #[must_use]
     pub const fn fixed_pdf_pk_mode(&self) -> Option<TokenListId> {
         self.pdf.pk_mode()
+    }
+
+    /// Registers validated, detached metadata for an external-image object.
+    pub fn register_pdf_external_image(
+        &mut self,
+        id: PdfExternalImageId,
+        metadata: PdfExternalImageMetadata,
+    ) -> Result<(), PdfExternalImageRegistrationError> {
+        self.pdf.register_external_image(id, metadata)
+    }
+
+    #[must_use]
+    pub fn pdf_external_image(&self, id: PdfExternalImageId) -> Option<PdfExternalImageMetadata> {
+        self.pdf.external_image(id)
     }
 
     /// Records a parsed, host-neutral font-map mutation.
@@ -4109,6 +4125,10 @@ impl ExpansionState for Universe {
         Self::page_insertion_height(self, class)
     }
 
+    fn pdf_external_image(&self, id: PdfExternalImageId) -> Option<PdfExternalImageMetadata> {
+        Self::pdf_external_image(self, id)
+    }
+
     fn penalty_array_value(&self, kind: PenaltyArrayKind, index: i32) -> i32 {
         Self::penalty_array_value(self, kind, index)
     }
@@ -4573,6 +4593,10 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn page_insertion_height(&self, class: u16) -> Option<Scaled> {
         self.universe.page_insertion_height(class)
+    }
+
+    fn pdf_external_image(&self, id: PdfExternalImageId) -> Option<PdfExternalImageMetadata> {
+        self.universe.pdf_external_image(id)
     }
 
     fn penalty_array_value(&self, kind: PenaltyArrayKind, index: i32) -> i32 {

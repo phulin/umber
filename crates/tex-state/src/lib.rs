@@ -21,11 +21,12 @@
 /// identities to checkpoint hashing. Version 13 adds the output controls
 /// frozen by the first shipped page. Version 14 adds pdfTeX's mutable
 /// per-font character-code and ligature-suppression state. Version 15 adds
-/// checkpointed PDF font resource and indirect-object identities.
+/// checkpointed PDF font resource and indirect-object identities. Version 16
+/// adds typed external-image metadata used by pdfTeX page-box enquiries.
 /// Hashes are
 /// comparable only when both this version and the named-boundary schedule
 /// match.
-pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 15;
+pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 16;
 
 pub mod cell;
 pub mod code_tables;
@@ -61,9 +62,10 @@ pub mod token_store;
 mod universe;
 
 pub use pdf::{
-    PDF_CATALOG_OBJECT_ID, PDF_PAGES_OBJECT_ID, PdfFontConfiguration, PdfFontMapOperation,
-    PdfFontResourceRecord, PdfGlyphToUnicode, PdfObjectCapacityError, PdfOutputParameters,
-    PdfPageRecord,
+    PDF_CATALOG_OBJECT_ID, PDF_PAGES_OBJECT_ID, PdfExternalImageId, PdfExternalImageIdError,
+    PdfExternalImageMetadata, PdfExternalImageRegistrationError, PdfFontConfiguration,
+    PdfFontMapOperation, PdfFontResourceRecord, PdfGlyphToUnicode, PdfObjectCapacityError,
+    PdfOutputParameters, PdfPageBox, PdfPageRecord,
 };
 pub mod world;
 
