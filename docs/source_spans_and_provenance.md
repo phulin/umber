@@ -182,6 +182,15 @@ required for exact replay. `InputSummary` also preserves the source-id
 allocator high-water mark and Unicode `^^` configuration. Obtaining the
 current physical source position becomes O(1); it never rescans a line prefix.
 
+For the editor root, a frozen `LayoutCursor` is installed beside the reopened
+contiguous document buffer. Its immutable O(pieces) segment table maps each
+physical line refill to one fragment `RegisteredSource` and a
+fragment-relative line base. The mutable cursor advances only at refill, while
+ordinary token delivery keeps the same single-add `direct_origin(start, end)`
+path. Source summaries retain document offsets as before; resume reinstalls and
+seeks the frozen cursor from those offsets without changing the root
+`SourceId`.
+
 ### 4.3 Lazy lines and columns
 
 Tokens never store line or column. When a diagnostic is rendered, the resolver

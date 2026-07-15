@@ -20,7 +20,7 @@ Use this crate for source-local mechanics: reading normalized logical lines, app
 
 - `AGENTS.md`: crate-local guidance, boundaries, validation notes, and this file map.
 - `Cargo.toml`: crate manifest for the `tex-lex` library and its `tex-state` dependency.
-- `src/lib.rs`: input sources, line normalization, source-frame lexer state, tokenization, input stack, token-list replay, condition frames, and resumable summaries.
+- `src/lib.rs`: input sources, line normalization, frozen editor layout cursors, source-frame lexer state, tokenization, input stack, token-list replay, condition frames, and resumable summaries.
 - `src/tests.rs`: crate-internal coverage for line handling, TeX tokenization rules, input-stack replay, condition frames, summaries, and lexer edge cases.
 - `src/tests/input_lines.rs`: focused tests that memory and world-backed file inputs share TeX line normalization behavior.
 

@@ -63,6 +63,23 @@ zero `SourceMap` region lookups: it validates offsets through the frame's
 Unregistered or invalid ranges retain the aggregate-validated fallback. The
 remaining cost includes one exact-range arena record per control sequence.
 
+### Edit-stable layout cursor contract
+
+Phase 2 of edit-stable source coordinates preserves the measured construction
+path above. `LayoutCursor` work occurs once while freezing an editor layout and
+once per physical-line refill; it installs a `RegisteredSource` plus one
+fragment-relative line base on the source frame. The ordinary scalar path still
+calls `registration.direct_origin(start, end)` directly, with no layout lookup,
+allocation, provenance-store write, or new conditional per token. Exact
+control-sequence and transformed-input spans likewise validate through the
+already-selected registration.
+
+Lexer coverage exercises direct ASCII/UTF-8 delivery, `^^` lookahead and rewind,
+piece transitions, synthetic endline anchors, and summary restoration with a
+cursor reinstalled. The existing throughput matrix remains the adoption gate;
+the standalone benchmark fixture compilation repair needed for a fresh matrix
+run is tracked separately from the lexer change.
+
 ## Incremental memory
 
 Logical bytes include live origin records, origin-list spans and entries, source

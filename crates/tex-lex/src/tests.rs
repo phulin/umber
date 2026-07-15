@@ -1,13 +1,18 @@
 use super::{
     ConditionFrameSummary, ConditionKind, ConditionLimb, InputFrame, InputFrameSummary,
-    InputSource, InputStack, LexError, Lexer, LexerState, LineEvent, LineReader, LiteralSpanPolicy,
-    MacroArguments, MemoryInput, TokenListReplayKind, load_next_line,
+    InputSource, InputStack, LayoutCursor, LayoutCursorError, LexError, Lexer, LexerState,
+    LineEvent, LineReader, LiteralSpanPolicy, MacroArguments, MemoryInput, TokenListReplayKind,
+    load_next_line,
 };
+use std::sync::Arc;
 use tex_state::env::banks::IntParam;
 use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::provenance::{InsertedOriginKind, OriginRecord};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
-use tex_state::{ExpansionState, ProvenanceResolver, TracedTokenList, Universe};
+use tex_state::{
+    EditorLayout, ExpansionState, FragmentStore, LayoutGeneration, Piece, ProvenanceResolver,
+    TracedTokenList, Universe,
+};
 
 mod input_lines;
 
@@ -653,6 +658,210 @@ fn traced_source_origins_use_token_start_coordinates() {
         .expect("superscript token");
     assert_eq!(superscript.token(), Some(char_token('A', Catcode::Letter)));
     assert_source_origin(&stores, superscript.origin(), 8, 1, 7);
+}
+
+#[test]
+fn layout_cursor_hands_each_physical_line_its_fragment_registration() {
+    let (fragments, layout, registrations) = three_line_fragment_layout();
+    let cursor = LayoutCursor::new(&layout, &fragments).expect("line-aligned layout freezes");
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+    let mut input = InputStack::new(MemoryInput::new("aa\nbb\ncc"));
+    assert_eq!(
+        input.install_root_layout_cursor(cursor),
+        Some(tex_state::SourceId::new(0))
+    );
+
+    let expected = [
+        registrations[0]
+            .direct_origin(0, 1)
+            .expect("first fragment origin"),
+        registrations[0]
+            .direct_origin(1, 2)
+            .expect("first fragment origin"),
+        registrations[1]
+            .direct_origin(0, 1)
+            .expect("second fragment origin"),
+        registrations[1]
+            .direct_origin(1, 2)
+            .expect("second fragment origin"),
+        registrations[2]
+            .direct_origin(0, 1)
+            .expect("third fragment origin"),
+        registrations[2]
+            .direct_origin(1, 2)
+            .expect("third fragment origin"),
+    ];
+    for expected_origin in expected {
+        let token = input
+            .next_traced_token(&mut stores)
+            .expect("layout-backed tokenization succeeds")
+            .expect("source character is delivered");
+        assert_eq!(token.origin(), expected_origin);
+    }
+    assert!(
+        input
+            .next_traced_token(&mut stores)
+            .expect("layout-backed EOF succeeds")
+            .is_none()
+    );
+}
+
+#[test]
+fn layout_cursor_preserves_transformed_spans_and_synthetic_anchors() {
+    let mut fragments = FragmentStore::new();
+    let (first_id, first) = fragments
+        .append(Arc::from(&b"^^61\n"[..]), 1)
+        .expect("first fragment appends");
+    let (second_id, second) = fragments
+        .append(Arc::from(&b"^^62"[..]), 1)
+        .expect("second fragment appends");
+    let layout = EditorLayout::new(
+        "root.tex",
+        LayoutGeneration::new(1),
+        vec![Piece::new(first_id, 0, 5), Piece::new(second_id, 0, 4)],
+        &fragments,
+    )
+    .expect("layout is valid");
+    let mut input = InputStack::new(MemoryInput::new("^^61\n^^62"));
+    input.install_root_layout_cursor(
+        LayoutCursor::new(&layout, &fragments).expect("line-aligned layout freezes"),
+    );
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, 13);
+
+    let transformed = input
+        .next_traced_token(&mut stores)
+        .expect("first transform succeeds")
+        .expect("first transformed token");
+    let OriginRecord::SourceSpan(first_span) = stores.origin(transformed.origin()) else {
+        panic!("transformed spelling must retain an exact span");
+    };
+    assert_eq!(first_span, first.span(0, 4).expect("first spelling span"));
+
+    let endline = input
+        .next_traced_token(&mut stores)
+        .expect("synthetic endline succeeds")
+        .expect("synthetic endline token");
+    let anchor = assert_inserted_origin(&stores, endline.origin(), InsertedOriginKind::EndLine);
+    let OriginRecord::SourceSpan(anchor_span) = stores.origin(anchor) else {
+        panic!("synthetic endline parent must retain its fragment anchor");
+    };
+    assert_eq!(anchor_span, first.span(4, 4).expect("line anchor span"));
+
+    let transformed = input
+        .next_traced_token(&mut stores)
+        .expect("second transform succeeds")
+        .expect("second transformed token");
+    let OriginRecord::SourceSpan(second_span) = stores.origin(transformed.origin()) else {
+        panic!("transformed spelling must retain an exact span");
+    };
+    assert_eq!(
+        second_span,
+        second.span(0, 4).expect("second spelling span")
+    );
+}
+
+#[test]
+fn restored_summary_reinstalls_cursor_without_changing_root_source_id() {
+    let (fragments, layout, registrations) = three_line_fragment_layout();
+    let cursor = LayoutCursor::new(&layout, &fragments).expect("line-aligned layout freezes");
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+    let source = "aa\nbb\ncc";
+    let mut input = InputStack::new(MemoryInput::new(source));
+    let stable_source = input
+        .install_root_layout_cursor(cursor.clone())
+        .expect("root source exists");
+    input
+        .next_traced_token(&mut stores)
+        .expect("first token succeeds")
+        .expect("first token");
+    let summary = input.summary();
+
+    let mut restored = InputStack::from_summary(&summary, |_, _, source_summary| {
+        Ok::<_, ()>(MemoryInput::from_offset(
+            source,
+            source_summary.next_source_offset(),
+        ))
+    })
+    .expect("source summary restores");
+    assert_eq!(
+        restored.install_root_layout_cursor(cursor),
+        Some(stable_source)
+    );
+
+    let second = restored
+        .next_traced_token(&mut stores)
+        .expect("restored line succeeds")
+        .expect("second first-line token");
+    assert_eq!(
+        second.origin(),
+        registrations[0]
+            .direct_origin(1, 2)
+            .expect("first fragment origin")
+    );
+    let third = restored
+        .next_traced_token(&mut stores)
+        .expect("piece-boundary line succeeds")
+        .expect("first second-line token");
+    assert_eq!(
+        third.origin(),
+        registrations[1]
+            .direct_origin(0, 1)
+            .expect("second fragment origin")
+    );
+}
+
+#[test]
+fn layout_cursor_rejects_piece_boundaries_inside_physical_lines() {
+    let mut fragments = FragmentStore::new();
+    let (first, _) = fragments
+        .append(Arc::from(&b"ab"[..]), 1)
+        .expect("first fragment appends");
+    let (second, _) = fragments
+        .append(Arc::from(&b"cd"[..]), 1)
+        .expect("second fragment appends");
+    let layout = EditorLayout::new(
+        "root.tex",
+        LayoutGeneration::new(1),
+        vec![Piece::new(first, 0, 2), Piece::new(second, 0, 2)],
+        &fragments,
+    )
+    .expect("piece ranges are structurally valid");
+    assert_eq!(
+        LayoutCursor::new(&layout, &fragments).expect_err("mid-line boundary must be rejected"),
+        LayoutCursorError::PieceBoundaryInsideLine
+    );
+}
+
+fn three_line_fragment_layout() -> (
+    FragmentStore,
+    EditorLayout,
+    [tex_state::source_map::RegisteredSource; 3],
+) {
+    let mut fragments = FragmentStore::new();
+    let (first_id, first) = fragments
+        .append(Arc::from(&b"aa\n"[..]), 1)
+        .expect("first fragment appends");
+    let (second_id, second) = fragments
+        .append(Arc::from(&b"bb\n"[..]), 1)
+        .expect("second fragment appends");
+    let (third_id, third) = fragments
+        .append(Arc::from(&b"cc"[..]), 1)
+        .expect("third fragment appends");
+    let layout = EditorLayout::new(
+        "root.tex",
+        LayoutGeneration::new(1),
+        vec![
+            Piece::new(first_id, 0, 3),
+            Piece::new(second_id, 0, 3),
+            Piece::new(third_id, 0, 2),
+        ],
+        &fragments,
+    )
+    .expect("layout is valid");
+    (fragments, layout, [first, second, third])
 }
 
 #[test]

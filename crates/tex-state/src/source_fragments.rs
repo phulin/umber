@@ -90,6 +90,22 @@ impl FragmentStore {
         self.fragments.is_empty()
     }
 
+    /// Returns the immutable bytes retained for one fragment.
+    #[must_use]
+    pub fn bytes(&self, id: FragmentId) -> Option<&[u8]> {
+        self.get(id)?.bytes.as_deref()
+    }
+
+    /// Returns the allocation-free registration capability for one fragment.
+    #[must_use]
+    pub fn registration(&self, id: FragmentId) -> Option<RegisteredSource> {
+        let fragment = self.get(id)?;
+        Some(RegisteredSource::new(
+            fragment.region_start,
+            fragment.byte_len,
+        ))
+    }
+
     fn get(&self, id: FragmentId) -> Option<&SourceFragment> {
         self.fragments.get(id.0 as usize)
     }

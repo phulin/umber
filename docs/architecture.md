@@ -269,6 +269,12 @@ supply.
   overlay first and returns current document coordinates or typed deletion,
   then falls through to World/generated engine sources. Lazy line indexes are
   tied to the exact layout generation, while fragment snapshots remain O(1).
+  `tex-lex` derives a frozen O(pieces) `LayoutCursor` from that layout. Physical
+  line refill advances it monotonically and installs the line's fragment
+  registration plus fragment-relative base on the root frame. Token delivery
+  therefore retains the existing allocation-free `RegisteredSource` add, and
+  summary restore reinstalls the cursor using unchanged document offsets and
+  the session-stable root `SourceId`.
   Horizontal main control may consume a physical-source run directly only
   when every already-normalized scalar currently has catcode `Letter` or
   `Other` and its ordinary lexer delivery would use a direct source origin.

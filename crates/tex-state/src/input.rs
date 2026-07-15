@@ -729,6 +729,9 @@ pub struct SourceFrameSummary {
     normalized_line: Arc<str>,
     line_byte_offset: usize,
     physical_content_end: usize,
+    /// Provenance-only coordinate base for the current physical line. This is
+    /// fragment-relative for editor layouts and document-relative otherwise.
+    origin_line_start: u64,
     terminator_start: usize,
     terminator_end: usize,
     normalized_end_anchor: usize,
@@ -803,6 +806,7 @@ impl SourceFrameSummary {
             normalized_line: normalized_line.into(),
             line_byte_offset,
             physical_content_end,
+            origin_line_start: u64::try_from(buffer_offset).unwrap_or(u64::MAX),
             terminator_start,
             terminator_end,
             normalized_end_anchor,
@@ -830,6 +834,19 @@ impl SourceFrameSummary {
     pub const fn with_registration(mut self, registration: Option<RegisteredSource>) -> Self {
         self.registration = registration;
         self
+    }
+
+    /// Attaches the provenance coordinate base selected at physical-line refill.
+    #[must_use]
+    pub const fn with_origin_line_start(mut self, origin_line_start: u64) -> Self {
+        self.origin_line_start = origin_line_start;
+        self
+    }
+
+    /// Returns the provenance coordinate base for the current physical line.
+    #[must_use]
+    pub const fn origin_line_start(&self) -> u64 {
+        self.origin_line_start
     }
 
     /// Returns the aggregate source registration retained for resume.

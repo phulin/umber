@@ -21,13 +21,135 @@ use tex_state::provenance::{
 use tex_state::source_map::{RegisteredSource, SourceDescriptor};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::token_store::TokenListBuilder;
-use tex_state::{ExpansionState, FileContent, InputRecordId, WorldError};
+use tex_state::{
+    EditorLayout, ExpansionState, FileContent, FragmentStore, InputRecordId, WorldError,
+};
 
 pub use tex_state::{
     ConditionFrameSummary, ConditionFrameToken, ConditionKind, ConditionLimb, InputFrameSummary,
     InputSummary, LexerState, MACRO_ARGUMENT_SLOTS, MacroArguments, SourceFrameSummary, SourceId,
     TokenListReplayKind, TracedTokenList,
 };
+
+/// One invalid editor layout encountered while freezing its lexer cursor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LayoutCursorError {
+    MissingFragmentBytes,
+    MissingFragmentRegistration,
+    PieceBoundaryInsideLine,
+    DocumentOffsetOverflow,
+}
+
+impl fmt::Display for LayoutCursorError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let message = match self {
+            Self::MissingFragmentBytes => "layout cursor fragment bytes are unavailable",
+            Self::MissingFragmentRegistration => {
+                "layout cursor fragment registration is unavailable"
+            }
+            Self::PieceBoundaryInsideLine => {
+                "layout cursor piece boundary is not a physical-line boundary"
+            }
+            Self::DocumentOffsetOverflow => "layout cursor document offset overflowed",
+        };
+        formatter.write_str(message)
+    }
+}
+
+impl std::error::Error for LayoutCursorError {}
+
+#[derive(Clone, Copy, Debug)]
+struct LayoutCursorSegment {
+    document_start: usize,
+    document_end: usize,
+    registration: RegisteredSource,
+    fragment_start: u64,
+}
+
+/// Frozen per-revision mapping from document lines to fragment coordinates.
+///
+/// Segment storage is immutable and shared. Only the monotonic segment index
+/// changes while physical lines are refilled.
+#[derive(Clone, Debug)]
+pub struct LayoutCursor {
+    segments: Arc<[LayoutCursorSegment]>,
+    index: usize,
+}
+
+impl LayoutCursor {
+    /// Builds the O(pieces) refill cursor for one validated editor layout.
+    pub fn new(
+        layout: &EditorLayout,
+        fragments: &FragmentStore,
+    ) -> Result<Self, LayoutCursorError> {
+        let nonempty: Vec<_> = layout
+            .pieces()
+            .iter()
+            .enumerate()
+            .filter(|(_, piece)| piece.start() != piece.end())
+            .collect();
+        let mut segments = Vec::with_capacity(nonempty.len());
+        for (position, (piece_index, piece)) in nonempty.iter().copied().enumerate() {
+            let bytes = fragments
+                .bytes(piece.fragment())
+                .ok_or(LayoutCursorError::MissingFragmentBytes)?;
+            let start = piece.start() as usize;
+            let end = piece.end() as usize;
+            if (start != 0 && bytes.get(start.wrapping_sub(1)) != Some(&b'\n'))
+                || (position + 1 != nonempty.len()
+                    && (end == 0 || bytes.get(end - 1) != Some(&b'\n')))
+            {
+                return Err(LayoutCursorError::PieceBoundaryInsideLine);
+            }
+            let document_start = usize::try_from(layout.doc_starts()[piece_index])
+                .map_err(|_| LayoutCursorError::DocumentOffsetOverflow)?;
+            let document_end = document_start
+                .checked_add(end - start)
+                .ok_or(LayoutCursorError::DocumentOffsetOverflow)?;
+            let registration = fragments
+                .registration(piece.fragment())
+                .ok_or(LayoutCursorError::MissingFragmentRegistration)?;
+            segments.push(LayoutCursorSegment {
+                document_start,
+                document_end,
+                registration,
+                fragment_start: piece.start().into(),
+            });
+        }
+        Ok(Self {
+            segments: segments.into(),
+            index: 0,
+        })
+    }
+
+    fn seek(&mut self, document_offset: usize) {
+        self.index = self
+            .segments
+            .partition_point(|segment| segment.document_start <= document_offset)
+            .saturating_sub(1);
+    }
+
+    fn line_registration(
+        &mut self,
+        document_start: usize,
+        document_end: usize,
+    ) -> Option<(RegisteredSource, u64)> {
+        while self.index + 1 < self.segments.len()
+            && document_start >= self.segments[self.index + 1].document_start
+        {
+            self.index += 1;
+        }
+        let segment = self.segments.get(self.index)?;
+        if document_start < segment.document_start || document_end > segment.document_end {
+            return None;
+        }
+        let within = u64::try_from(document_start - segment.document_start).ok()?;
+        Some((
+            segment.registration,
+            segment.fragment_start.checked_add(within)?,
+        ))
+    }
+}
 
 /// Source of physical input lines.
 ///
@@ -344,6 +466,9 @@ pub struct SourceFrame {
     byte_offset: usize,
     pending: VecDeque<TracedTokenWord>,
     physical_line_start: usize,
+    /// Fragment-relative base for this physical line. For ordinary sources it
+    /// equals `physical_line_start`, keeping token construction branch-free.
+    origin_line_start: u64,
     physical_content_end: usize,
     terminator_start: usize,
     terminator_end: usize,
@@ -402,6 +527,7 @@ impl SourceFrame {
             self.pending.iter().copied().collect(),
             self.end_after_current_line,
         )
+        .with_origin_line_start(self.origin_line_start)
     }
 
     fn from_summary(summary: &SourceFrameSummary) -> Self {
@@ -415,6 +541,7 @@ impl SourceFrame {
             byte_offset: summary.line_byte_offset(),
             pending: summary.pending().iter().copied().collect(),
             physical_line_start: summary.buffer_offset(),
+            origin_line_start: summary.origin_line_start(),
             physical_content_end: summary.physical_content_end(),
             terminator_start: summary.terminator_start(),
             terminator_end: summary.terminator_end(),
@@ -437,6 +564,7 @@ struct SourceInputFrame {
     descriptor: Option<SourceDescriptor>,
     registration_attempted: bool,
     registration: Option<RegisteredSource>,
+    layout_cursor: Option<LayoutCursor>,
     scantokens: bool,
 }
 
@@ -454,6 +582,7 @@ impl SourceInputFrame {
             descriptor,
             registration_attempted: false,
             registration: None,
+            layout_cursor: None,
             scantokens,
         }
     }
@@ -1033,6 +1162,32 @@ impl InputStack {
         source_id
     }
 
+    /// Installs the frozen editor layout on the root physical source without
+    /// changing its session-stable `SourceId`.
+    pub fn install_root_layout_cursor(&mut self, mut cursor: LayoutCursor) -> Option<SourceId> {
+        let source = self.frames.iter_mut().find_map(|frame| match frame {
+            InputFrame::Source(source) => Some(source),
+            InputFrame::TokenList(_) | InputFrame::Condition { .. } => None,
+        })?;
+        cursor.seek(source.frame.physical_line_start);
+        source.registration = if source.frame.line_number == 0 {
+            None
+        } else {
+            let (registration, origin_line_start) = cursor
+                .line_registration(
+                    source.frame.physical_line_start,
+                    source.frame.terminator_end,
+                )
+                .expect("restored editor line must be contained by one layout piece");
+            source.frame.origin_line_start = origin_line_start;
+            Some(registration)
+        };
+        source.descriptor = None;
+        source.registration_attempted = true;
+        source.layout_cursor = Some(cursor);
+        Some(source.source_id)
+    }
+
     pub fn from_summary<E, F, S>(summary: &InputSummary, mut reopen_source: F) -> Result<Self, E>
     where
         S: InputSource + 'static,
@@ -1058,6 +1213,7 @@ impl InputStack {
                         descriptor,
                         registration_attempted: source.registration().is_some(),
                         registration: source.registration(),
+                        layout_cursor: None,
                         scantokens: source.is_scantokens(),
                     }));
                 }
@@ -1649,11 +1805,14 @@ impl InputStack {
                 break;
             }
             let next = byte_offset + ch.len_utf8();
-            let physical_start = source.frame.physical_line_start + byte_offset;
-            let physical_end = source.frame.physical_line_start + next;
-            let (Ok(physical_start), Ok(physical_end)) =
-                (u64::try_from(physical_start), u64::try_from(physical_end))
+            let Some(physical_start) = source
+                .frame
+                .origin_line_start
+                .checked_add(byte_offset as u64)
             else {
+                break;
+            };
+            let Some(physical_end) = source.frame.origin_line_start.checked_add(next as u64) else {
                 break;
             };
             let Some(origin) = registration.direct_origin(physical_start, physical_end) else {
@@ -2028,11 +2187,12 @@ impl InputStack {
             InputFrame::TokenList(_) | InputFrame::Condition { .. } => None,
         }) {
             ensure_source_registered(source, stores);
-            return allocate_source_origin(stores, source_coordinate(source));
+            return allocate_source_origin(stores, source.registration, source_coordinate(source));
         }
         if let Some(last) = &self.last_source_frame {
             return allocate_source_origin(
                 stores,
+                last.registration,
                 source_coordinate_from_frame(last.source_id, last.input_record, &last.frame),
             );
         }
@@ -2086,10 +2246,12 @@ impl InputStack {
         if first.source != last.source || first.start > last.start || first.end > last.end {
             return None;
         }
-        let frame_is_live = self.frames.iter().any(
-            |frame| matches!(frame, InputFrame::Source(source) if source.source_id == first.source),
-        );
-        frame_is_live.then(|| stores.source_range_origin(first.source, first.start, last.end))
+        let registration = self.frames.iter().find_map(|frame| match frame {
+            InputFrame::Source(source) if source.source_id == first.source => source.registration,
+            InputFrame::Source(_) | InputFrame::TokenList(_) | InputFrame::Condition { .. } => None,
+        })?;
+        let span = registration.span(first.start, last.end).ok()?;
+        Some(stores.source_span_origin(span))
     }
 
     fn diagnostic_expansion_head(&self) -> Option<OriginId> {
@@ -3084,6 +3246,7 @@ fn load_next_line_readonly(
         .map_err(|error| map_input_source_error(source, error, context))?
     {
         Some(line) => {
+            install_line_coordinates(source, &line);
             source.frame.state = LexerState::NewLine;
             source.frame.line = line.text;
             source.frame.byte_offset = 0;
@@ -3111,6 +3274,7 @@ fn load_next_line(
         map_input_source_error(source, error, context).with_physical_site(stores)
     })? {
         Some(line) => {
+            install_line_coordinates(source, &line);
             source.frame.state = LexerState::NewLine;
             source.frame.line = line.text;
             source.frame.byte_offset = 0;
@@ -3139,6 +3303,18 @@ fn ensure_source_registered(source: &mut SourceInputFrame, stores: &mut impl Exp
         source.registration = stores
             .register_input_source(source.source_id, descriptor)
             .ok();
+    }
+}
+
+fn install_line_coordinates(source: &mut SourceInputFrame, line: &NormalizedLine) {
+    if let Some(cursor) = &mut source.layout_cursor {
+        let (registration, origin_line_start) = cursor
+            .line_registration(line.physical_start, line.terminator_end)
+            .expect("physical editor line must be contained by one layout piece");
+        source.registration = Some(registration);
+        source.frame.origin_line_start = origin_line_start;
+    } else {
+        source.frame.origin_line_start = u64::try_from(line.physical_start).unwrap_or(u64::MAX);
     }
 }
 
@@ -3192,17 +3368,22 @@ fn source_coordinate_from_frame(
     input_record: Option<InputRecordId>,
     frame: &SourceFrame,
 ) -> LexSourceContext {
-    let byte_offset = frame
+    let line_offset = frame
         .synthetic_endline_start
         .filter(|start| frame.byte_offset >= *start)
-        .map_or(frame.physical_line_start + frame.byte_offset, |_| {
-            frame.normalized_end_anchor
+        .map_or(frame.byte_offset, |_| {
+            frame
+                .normalized_end_anchor
+                .saturating_sub(frame.physical_line_start)
         });
+    let byte_offset = frame
+        .origin_line_start
+        .saturating_add(u64::try_from(line_offset).unwrap_or(u64::MAX));
     LexSourceContext {
         source_id,
         input_record,
-        byte_offset: u64::try_from(byte_offset).unwrap_or(u64::MAX),
-        byte_end: u64::try_from(byte_offset).unwrap_or(u64::MAX),
+        byte_offset,
+        byte_end: byte_offset,
         line: u32::try_from(frame.line_number).unwrap_or(u32::MAX),
         column: u32::try_from(frame.column).unwrap_or(u32::MAX),
     }
@@ -3222,6 +3403,18 @@ fn traced_source_token(
         None => stores.source_range_origin(start.source_id, start.byte_offset, end.byte_offset),
     };
     DecodedTracedToken::new(token, origin)
+}
+
+fn source_range_origin(
+    stores: &mut impl ExpansionState,
+    registration: Option<RegisteredSource>,
+    start: LexSourceContext,
+    end: LexSourceContext,
+) -> OriginId {
+    match registration.and_then(|source| source.span(start.byte_offset, end.byte_offset).ok()) {
+        Some(span) => stores.source_span_origin(span),
+        None => stores.source_range_origin(start.source_id, start.byte_offset, end.byte_offset),
+    }
 }
 
 #[inline(always)]
@@ -3244,20 +3437,28 @@ fn traced_ordinary_source_token(
             stores.source_token_origin(start.source_id, start.byte_offset, end.byte_offset)
         }
     } else {
-        stores.source_range_origin(start.source_id, start.byte_offset, end.byte_offset)
+        source_range_origin(stores, registration, start, end)
     };
     DecodedTracedToken::new(token, origin)
 }
 
 fn allocate_source_origin(
     stores: &mut impl ExpansionState,
+    registration: Option<RegisteredSource>,
     coordinate: LexSourceContext,
 ) -> OriginId {
-    stores.source_range_origin(
-        coordinate.source_id,
-        coordinate.byte_offset,
-        coordinate.byte_end,
-    )
+    match registration.and_then(|registration| {
+        registration
+            .span(coordinate.byte_offset, coordinate.byte_end)
+            .ok()
+    }) {
+        Some(span) => stores.source_span_origin(span),
+        None => stores.source_range_origin(
+            coordinate.source_id,
+            coordinate.byte_offset,
+            coordinate.byte_end,
+        ),
+    }
 }
 
 fn traced_inserted_token(
@@ -3288,8 +3489,7 @@ fn next_token_from_line(
         Catcode::Ignored => Ok(None),
         Catcode::Invalid => {
             let end = source_coordinate(source);
-            let origin =
-                stores.source_range_origin(start.source_id, start.byte_offset, end.byte_offset);
+            let origin = source_range_origin(stores, source.registration, start, end);
             Err(LexError::InvalidCharacter {
                 ch,
                 context: LexSourceContext {
@@ -3307,7 +3507,7 @@ fn next_token_from_line(
             Ok(None)
         }
         Catcode::EndLine => {
-            let parent = allocate_source_origin(stores, start);
+            let parent = allocate_source_origin(stores, source.registration, start);
             let (token, kind) = match source.frame.state {
                 LexerState::NewLine => {
                     let par = stores.intern("par");
