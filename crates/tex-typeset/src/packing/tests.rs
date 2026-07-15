@@ -496,6 +496,79 @@ fn vpack_clamps_depth_to_box_max_depth() {
 }
 
 #[test]
+fn vtop_with_leading_glue_has_zero_height() {
+    let mut universe = Universe::new();
+    let child = universe.freeze_node_list(&[]);
+    let glue = universe.intern_glue(GlueSpec {
+        width: sp(7),
+        ..GlueSpec::ZERO
+    });
+    let list = universe.freeze_node_list(&[
+        Node::Glue {
+            spec: glue,
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+        Node::HList(BoxNode::new(BoxNodeFields {
+            width: sp(5),
+            height: sp(10),
+            depth: sp(3),
+            shift: sp(0),
+            display: false,
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children: child,
+        })),
+    ]);
+
+    let packed = vtop(
+        &universe,
+        list,
+        PackSpec::Natural,
+        VpackParams {
+            vbadness: INF_BAD,
+            vfuzz: sp(0),
+            box_max_depth: sp(100),
+        },
+    );
+
+    assert_eq!(packed.node.height, sp(0));
+    assert_eq!(packed.node.depth, sp(20));
+}
+
+#[test]
+fn vtop_preserves_total_size_when_first_box_exceeds_target() {
+    let mut universe = Universe::new();
+    let child = universe.freeze_node_list(&[]);
+    let list = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+        width: sp(5),
+        height: sp(10),
+        depth: sp(3),
+        shift: sp(0),
+        display: false,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children: child,
+    }))]);
+
+    let packed = vtop(
+        &universe,
+        list,
+        PackSpec::Exactly(sp(5)),
+        VpackParams {
+            vbadness: INF_BAD,
+            vfuzz: sp(0),
+            box_max_depth: sp(100),
+        },
+    );
+
+    assert_eq!(packed.node.height, sp(10));
+    assert_eq!(packed.node.depth, sp(-2));
+}
+
+#[test]
 fn vertical_spacing_consumes_previous_depth() {
     let mut universe = Universe::new();
     let child = universe.freeze_node_list(&[]);

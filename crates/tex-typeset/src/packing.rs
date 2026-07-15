@@ -628,23 +628,13 @@ fn vtop_split(
     total_height: Scaled,
     total_depth: Scaled,
 ) -> (Scaled, Scaled) {
-    let first = state.nodes(list).iter().find_map(|node| match node {
-        NodeRef::HList(box_node) | NodeRef::VList(box_node) => {
-            Some((box_node.height, box_node.depth))
-        }
-        NodeRef::Rule { height, depth, .. } => Some((
-            height.unwrap_or(Scaled::from_raw(0)),
-            depth.unwrap_or(Scaled::from_raw(0)),
-        )),
-        _ => None,
-    });
-    if let Some((height, depth)) = first {
-        let total = add(total_height, total_depth);
-        let new_depth = sub(total, height).max(depth);
-        (height, new_depth)
-    } else {
-        (Scaled::from_raw(0), add(total_height, total_depth))
-    }
+    let first_height = match state.nodes(list).first() {
+        Some(NodeRef::HList(box_node) | NodeRef::VList(box_node)) => box_node.height,
+        Some(NodeRef::Rule { height, .. }) => height.unwrap_or(Scaled::from_raw(0)),
+        _ => Scaled::from_raw(0),
+    };
+    let depth = sub(add(total_height, total_depth), first_height);
+    (first_height, depth)
 }
 
 #[cfg(test)]
