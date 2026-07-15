@@ -25,11 +25,13 @@ pub struct PdfContentRectangle {
 #[must_use]
 pub fn filled_rectangle_content(rectangles: &[PdfContentRectangle]) -> Vec<u8> {
     let mut content = pdf_writer::Content::new();
+    content.save_state();
     for rectangle in rectangles {
         content
             .rect(rectangle.x, rectangle.y, rectangle.width, rectangle.height)
             .fill_nonzero();
     }
+    content.restore_state();
     content.finish().to_vec()
 }
 

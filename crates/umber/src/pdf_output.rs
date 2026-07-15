@@ -68,7 +68,12 @@ pub fn pdf_from_committed_artifacts(
         let contents_id = object_id(record.contents_object())?;
         let page_id = object_id(record.page_object())?;
         kids.push(PdfValue::Reference(page_id));
-        objects.push(indirect_dictionary(resources_id, PdfDictionary::new()));
+        let mut resources = PdfDictionary::new();
+        resources.insert(
+            "ProcSet",
+            PdfValue::Array(vec![PdfValue::Name("PDF".into())]),
+        )?;
+        objects.push(indirect_dictionary(resources_id, resources));
         objects.push(PdfIndirectObject {
             id: contents_id,
             object: PdfObject::Stream {
@@ -164,11 +169,15 @@ fn positive_extent(value: Scaled) -> Scaled {
 }
 
 fn scaled_to_bp_f32(value: Scaled) -> f32 {
-    value.raw() as f32 * 7200.0 / (7227.0 * 65536.0)
+    scaled_to_bp_milli(value) as f32 / 1_000.0
 }
 
 fn scaled_to_bp_number(value: Scaled) -> Result<PdfNumber, PdfModelError> {
-    const SCALE: i128 = 100_000;
+    PdfNumber::new(scaled_to_bp_milli(value), 3)
+}
+
+fn scaled_to_bp_milli(value: Scaled) -> i64 {
+    const SCALE: i128 = 1_000;
     const NUMERATOR: i128 = 7_200;
     const DENOMINATOR: i128 = 7_227 * 65_536;
     let numerator = i128::from(value.raw()) * NUMERATOR * SCALE;
@@ -177,7 +186,7 @@ fn scaled_to_bp_number(value: Scaled) -> Result<PdfNumber, PdfModelError> {
     } else {
         (numerator - DENOMINATOR / 2) / DENOMINATOR
     };
-    PdfNumber::new(rounded as i64, 5)
+    rounded as i64
 }
 
 #[derive(Debug)]
@@ -306,6 +315,11 @@ mod tests {
         assert_eq!(stores.pdf_pages(), first_pages);
         assert_eq!(stores.snapshot().state_hash(), first_hash);
         assert!(first.starts_with(b"%PDF-1.4"));
+        assert!(
+            first
+                .windows(b"/ProcSet[/PDF]".len())
+                .any(|window| window == b"/ProcSet[/PDF]")
+        );
         assert!(first.windows(2).any(|window| window == b"re"));
         assert_eq!(stores.pdf_pages().len(), 1);
         assert_eq!(stores.pdf_pages()[0].resources_object(), 3);
