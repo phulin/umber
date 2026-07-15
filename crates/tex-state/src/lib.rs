@@ -115,7 +115,7 @@ pub use page::{
     PageFireUp, PageInteger,
 };
 pub use provenance_resolver::{ProvenanceResolver, ResolvedSourceLocation};
-pub use pure_memo::{PureMemoConfig, PureMemoKey, PureMemoStats};
+pub use pure_memo::{PureMemoConfig, PureMemoKey, PureMemoRuntime, PureMemoStats};
 pub use source_fragments::{
     EditorLayout, EditorLayoutError, FragmentId, FragmentStore, LayoutGeneration,
     LayoutResolvedOrigin, Piece, PieceId, RootSpanId,

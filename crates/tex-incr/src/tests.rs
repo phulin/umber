@@ -56,6 +56,43 @@ fn root_span_at(session: &Session, range: std::ops::Range<usize>) -> RootSpanId 
         .expect("range belongs to one retained piece")
 }
 
+#[test]
+fn pure_memo_runtime_survives_accepted_revisions() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let paragraph = "\\vrule width1pt height1pt \\vrule width1pt height1pt";
+    let source = format!(
+        "\\hsize=20pt\\pretolerance=10000 {paragraph}\\par\n\\prevgraf=0 {paragraph}\\par\n\\vfill\\eject\\end"
+    );
+    let mut session = Session::start(
+        universe,
+        "pure-memo-lifetime",
+        RevisionId::new(1),
+        source.clone(),
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+    let after_cold = session.pure_memo_stats();
+    assert!(after_cold.retained_entries > 0);
+
+    let digit = source.find("width1pt").expect("first width") + "width".len();
+    session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: digit..digit + 1,
+                replacement: "2".to_owned(),
+            },
+        )
+        .expect("accepted edit");
+    let after_edit = session.pure_memo_stats();
+    assert!(after_edit.lookups > after_cold.lookups);
+    assert!(after_edit.hits > after_cold.hits);
+}
+
 fn assert_semantic_edit_matches_cold(name: &str, original: &str, edited: &str) -> ReuseMetrics {
     let mut session = Session::start(template(), name, RevisionId::new(1), original, usize::MAX)
         .expect("incremental session");

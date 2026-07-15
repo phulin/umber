@@ -5,7 +5,7 @@
 //! uses no locks or atomics.
 
 use crate::{ContentHash, DetachedMemoValue};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{HashMap, VecDeque};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PureMemoConfig {
@@ -35,7 +35,7 @@ pub struct PureMemoStats {
 }
 
 /// Strong key used to verify a compact candidate bucket.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct PureMemoKey {
     domain: u32,
     candidate: u64,
@@ -55,7 +55,6 @@ impl PureMemoKey {
 
 #[derive(Clone, Debug)]
 struct Entry {
-    key: PureMemoKey,
     value: DetachedMemoValue,
     charge: usize,
 }
@@ -63,25 +62,31 @@ struct Entry {
 #[derive(Clone, Debug)]
 struct PureMemoCache {
     config: PureMemoConfig,
-    buckets: BTreeMap<u64, Vec<Entry>>,
+    entries: HashMap<PureMemoKey, Entry>,
     insertion_order: VecDeque<PureMemoKey>,
     stats: PureMemoStats,
 }
 
+/// Opaque operational cache owned by a long-lived execution session.
+///
+/// Moving this runtime between a session and a scratch [`crate::Universe`]
+/// keeps memo contents out of semantic state while preserving them across
+/// accepted editor revisions.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct PureMemoRuntime {
+pub struct PureMemoRuntime {
     cache: Option<PureMemoCache>,
 }
 
 impl PureMemoRuntime {
-    pub(crate) const fn is_enabled(&self) -> bool {
+    #[must_use]
+    pub const fn is_enabled(&self) -> bool {
         self.cache.is_some()
     }
 
     pub(crate) fn enable(&mut self, config: PureMemoConfig) {
         self.cache = Some(PureMemoCache {
             config,
-            buckets: BTreeMap::new(),
+            entries: HashMap::new(),
             insertion_order: VecDeque::new(),
             stats: PureMemoStats::default(),
         });
@@ -94,11 +99,7 @@ impl PureMemoRuntime {
     pub(crate) fn lookup(&mut self, key: PureMemoKey) -> Option<DetachedMemoValue> {
         let cache = self.cache.as_mut()?;
         cache.stats.lookups = cache.stats.lookups.saturating_add(1);
-        let hit = cache
-            .buckets
-            .get(&key.candidate)
-            .and_then(|bucket| bucket.iter().find(|entry| entry.key == key))
-            .map(|entry| entry.value.clone());
+        let hit = cache.entries.get(&key).map(|entry| entry.value.clone());
         if hit.is_some() {
             cache.stats.hits = cache.stats.hits.saturating_add(1);
         } else {
@@ -111,12 +112,17 @@ impl PureMemoRuntime {
         let Some(cache) = self.cache.as_mut() else {
             return;
         };
-        let charge = std::mem::size_of::<Entry>().saturating_add(value.retained_bytes());
+        let payload_bytes = value
+            .retained_bytes()
+            .saturating_sub(std::mem::size_of::<DetachedMemoValue>());
+        // Charge the map key and FIFO key as well as the entry and owned payload.
+        let charge = std::mem::size_of::<Entry>()
+            .saturating_add(std::mem::size_of::<PureMemoKey>().saturating_mul(2))
+            .saturating_add(payload_bytes);
         if cache.config.max_entries == 0 || charge > cache.config.max_retained_bytes {
             return;
         }
-        let bucket = cache.buckets.entry(key.candidate).or_default();
-        if let Some(entry) = bucket.iter_mut().find(|entry| entry.key == key) {
+        if let Some(entry) = cache.entries.get_mut(&key) {
             cache.stats.retained_bytes = cache
                 .stats
                 .retained_bytes
@@ -125,7 +131,7 @@ impl PureMemoRuntime {
             entry.value = value;
             entry.charge = charge;
         } else {
-            bucket.push(Entry { key, value, charge });
+            cache.entries.insert(key, Entry { value, charge });
             cache.insertion_order.push_back(key);
             cache.stats.inserts = cache.stats.inserts.saturating_add(1);
             cache.stats.retained_entries = cache.stats.retained_entries.saturating_add(1);
@@ -142,7 +148,8 @@ impl PureMemoRuntime {
         cache.remove(key, false);
     }
 
-    pub(crate) fn stats(&self) -> PureMemoStats {
+    #[must_use]
+    pub fn stats(&self) -> PureMemoStats {
         self.cache
             .as_ref()
             .map_or_else(PureMemoStats::default, |cache| cache.stats)
@@ -162,20 +169,13 @@ impl PureMemoCache {
     }
 
     fn remove(&mut self, key: PureMemoKey, eviction: bool) {
-        let Some(bucket) = self.buckets.get_mut(&key.candidate) else {
+        let Some(entry) = self.entries.remove(&key) else {
             return;
         };
-        let Some(index) = bucket.iter().position(|entry| entry.key == key) else {
-            return;
-        };
-        let entry = bucket.swap_remove(index);
         self.stats.retained_entries = self.stats.retained_entries.saturating_sub(1);
         self.stats.retained_bytes = self.stats.retained_bytes.saturating_sub(entry.charge);
         if eviction {
             self.stats.evictions = self.stats.evictions.saturating_add(1);
-        }
-        if bucket.is_empty() {
-            self.buckets.remove(&key.candidate);
         }
     }
 }

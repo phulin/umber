@@ -53,7 +53,7 @@ fn expansion_memo_preserves_execution_state_and_effects() {
     assert_eq!(memo_effects, cold_effects);
     assert!(cold_memo.is_none());
     let memo = memo.expect("memo stats enabled");
-    assert!(memo.substitution_hits >= 1, "{memo:?}");
+    assert_eq!(memo.substitution_lookups, 0, "{memo:?}");
     assert!(memo.episode_hits >= 1, "{memo:?}");
 }
 

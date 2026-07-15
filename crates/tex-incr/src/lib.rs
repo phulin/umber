@@ -310,6 +310,7 @@ fn dvi_bytes(pages: &[DviPagePlan]) -> Result<Vec<u8>, DviError> {
 /// Long-lived incremental session. Live executor state is deliberately private.
 pub struct Session {
     template: Universe,
+    pure_memo: tex_state::PureMemoRuntime,
     job_name: String,
     source_path: String,
     revision: RevisionId,
@@ -371,8 +372,11 @@ impl Session {
         )?;
         let mut output_id = [0; 16];
         getrandom::fill(&mut output_id).map_err(SessionError::OutputIdentity)?;
+        let mut template = template;
+        let pure_memo = template.take_pure_memo_runtime();
         Ok(Self {
             template,
+            pure_memo,
             job_name: job_name.into(),
             source_path,
             revision,
@@ -418,6 +422,12 @@ impl Session {
     #[must_use]
     pub fn history(&self) -> &[BoundaryRecord] {
         &self.history
+    }
+
+    /// Returns telemetry for the session-owned pure-query cache.
+    #[must_use]
+    pub fn pure_memo_stats(&self) -> tex_state::PureMemoStats {
+        self.pure_memo.stats()
     }
 
     /// Returns live retention telemetry for the accepted session state.
@@ -470,6 +480,7 @@ impl Session {
     ) -> Result<AcceptedOutput, SessionError> {
         let run = execute_revision(
             &self.template,
+            &mut self.pure_memo,
             &self.job_name,
             &self.source,
             &self.fragments,
@@ -775,6 +786,7 @@ impl Session {
         substrate.world().validate_recorded_inputs()?;
         let advance = execute_advance(
             &self.template,
+            &mut self.pure_memo,
             substrate,
             &self.job_name,
             &old_source,
@@ -1219,6 +1231,7 @@ impl CheckpointSink for HistorySink {
 #[allow(clippy::too_many_arguments)]
 fn execute_revision(
     template: &Universe,
+    pure_memo: &mut tex_state::PureMemoRuntime,
     job_name: &str,
     source: &str,
     fragments: &FragmentStore,
@@ -1246,18 +1259,21 @@ fn execute_revision(
         ),
         None => ExecutionContext::with_resolvers(job_name, input_resolver, font_resolver),
     };
+    universe.install_pure_memo_runtime(std::mem::take(pure_memo));
+    let execution_result = executor.run_with_context_and_checkpoints(
+        &mut input,
+        &mut universe,
+        &mut context,
+        &mut sink,
+    );
+    *pure_memo = universe.take_pure_memo_runtime();
     let ExecutionStats {
         dvi_pages,
         dumped_format,
         delivered_tokens,
         main_control_dispatches,
         ..
-    } = executor.run_with_context_and_checkpoints(
-        &mut input,
-        &mut universe,
-        &mut context,
-        &mut sink,
-    )?;
+    } = execution_result?;
     let expansion_stats = input.expansion_stats();
     let effects = universe.world().effect_records().to_vec();
     let artifacts = universe.world().committed_artifacts().to_vec();
@@ -1416,6 +1432,7 @@ fn push_checkpoint(
 #[allow(clippy::disallowed_methods)] // Session telemetry; no TeX state observes it.
 fn execute_advance(
     template: &Universe,
+    pure_memo: &mut tex_state::PureMemoRuntime,
     substrate: &GenerationSubstrate,
     job_name: &str,
     old_source: &str,
@@ -1460,18 +1477,21 @@ fn execute_advance(
         None => ExecutionContext::with_resolvers(job_name, input_resolver, font_resolver),
     };
     let reexecution_started = Timer::start();
+    scratch.install_pure_memo_runtime(std::mem::take(pure_memo));
+    let execution_result = executor.resume_with_context_and_checkpoints(
+        &mut input,
+        &mut scratch,
+        &mut context,
+        &mut sink,
+    );
+    *pure_memo = scratch.take_pure_memo_runtime();
     let ExecutionStats {
         dvi_pages,
         dumped_format,
         delivered_tokens,
         main_control_dispatches,
         ..
-    } = executor.resume_with_context_and_checkpoints(
-        &mut input,
-        &mut scratch,
-        &mut context,
-        &mut sink,
-    )?;
+    } = execution_result?;
     let reexecution_latency = reexecution_started.elapsed();
     let expansion_stats = input.expansion_stats();
     let reexecuted_paragraphs = sink

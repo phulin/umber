@@ -199,6 +199,15 @@ impl MemoValidationStamp {
         }
     }
 
+    /// Builds an owner-only probe for the fast path; its hash is not observed.
+    #[must_use]
+    pub const fn new_for_owner(universe_nonce: u64) -> Self {
+        Self {
+            universe_nonce,
+            state_hash: 0,
+        }
+    }
+
     #[must_use]
     pub const fn same_universe(self, other: Self) -> bool {
         self.universe_nonce == other.universe_nonce

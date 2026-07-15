@@ -415,6 +415,12 @@ impl<'a> ExpansionContext<'a> {
         crate::MemoValidationStamp::new(self.universe.owner.0.nonce, state_hash)
     }
 
+    /// Returns the cheap process-local identity used by owner-fast memo checks.
+    #[must_use]
+    pub const fn memo_owner_nonce(&self) -> u64 {
+        self.universe.owner.0.nonce
+    }
+
     /// Returns the mutation stamp for one previously recorded expansion read.
     #[must_use]
     pub fn dependency_changed_at(&self, key: DependencyKey) -> ChangedAt {
@@ -1332,6 +1338,16 @@ impl Universe {
     /// Disables the pure-query cache and releases every retained value.
     pub fn disable_pure_memo(&mut self) {
         self.pure_memo.disable();
+    }
+
+    /// Removes the operational memo runtime without touching semantic state.
+    pub fn take_pure_memo_runtime(&mut self) -> crate::PureMemoRuntime {
+        std::mem::take(&mut self.pure_memo)
+    }
+
+    /// Installs a session-owned operational memo runtime.
+    pub fn install_pure_memo_runtime(&mut self, runtime: crate::PureMemoRuntime) {
+        self.pure_memo = runtime;
     }
 
     #[must_use]

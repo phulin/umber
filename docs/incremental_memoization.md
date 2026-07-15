@@ -288,10 +288,10 @@ benefit exceeds validation overhead.
 
 ### Macro substitution and expansion
 
-Pure macro parameter substitution is keyed by the macro-definition semantic
-identity, semantic argument token lists, delimiter structure, and expansion
-mode. It returns a detached substituted token list. Argument scanning remains
-ordinary execution.
+Macro parameter substitution remains the existing lazy token-list replay.
+An eager memo layer was removed after measurement showed that copying the
+definition and arguments, hashing them, materializing a replacement, and
+interning that replacement duplicated more work than it avoided.
 
 Recursive expanded-stream reuse is recorded as an expansion episode with a
 stable input trace, dynamic read constraints, returned semantic tokens, and an
@@ -303,27 +303,24 @@ Expansion episodes that open inputs, perform untracked relaxed interning,
 consume interactive input, or cross a barrier execute normally until those
 operations gain explicit replay semantics.
 
-The implemented expansion cache is session-local, bounded by entry count and
-retained bytes, and opt-in through `ExecutionContext`. Pure substitution stores
-a structural token/provenance plan and recreates current-call origins on every
-hit. The initial recursive episode boundary is deliberately narrower than the
+The implemented expansion-episode cache is session-local, bounded by entry
+count and retained bytes, hash-indexed, and opt-in through `ExecutionContext`.
+The initial recursive episode boundary is deliberately narrower than the
 design maximum: it surrounds caller-owned frozen general-text expansion, uses
-dynamic changed-at dependencies plus an allocation-independent cross-Universe
-state projection, and rejects input opens, `\csname`, `\scantokens`,
+dynamic changed-at dependencies and executor facts in its key. Same-owner hits
+avoid a whole-Universe projection; allocation-independent state projection is
+reserved for an actual cross-owner candidate. It rejects input opens,
+`\csname`, `\scantokens`,
 `\endinput`, unsupported provenance, and malformed entries atomically. Full-key
 verification handles candidate collisions. Cache-on/off execution tests compare
 final semantic state and effects; offset-shifting and allocation-distinct tests
 verify provenance rebinding.
 
-The optimized Gentle profile on 2026-07-15 measured 20 runs after two warm-ups.
-With memoization disabled the mean was 178.677 ms; with expansion memoization it
-was 186.083 ms, about 4.1% slower. Substitution nevertheless hit 12,979 of
-14,018 lookups (92.6%) and avoided 129,669 token substitutions, while retaining
-1,382,784 bytes in 1,024 entries with 15 evictions. The supported recursive
-episode boundary received no Gentle lookups. These are diagnostic observations,
-not latency gates. Together with the accepted-edit pure-query result below,
-they do not justify enabling either cache or adding paragraph/page/output replay
-machinery in the current release.
+The losing substitution layer is no longer part of enabled execution. Gentle
+now reports zero substitution lookups and retains zero memo bytes because its
+main `\edef` path does not cross the supported recursive episode boundary. The
+layer remains opt-in until a real workload exercises that boundary and wins an
+alternating paired timing gate.
 
 ### Paragraph pipeline
 
@@ -367,16 +364,22 @@ demerits, and detached last-line glue. Hyphenation, post-line materialization,
 packing diagnostics, math lowering, and DVI planning remain ordinary execution
 until their complete explicit keys show an end-to-end benefit.
 
-The cache is session-local, bounded by entry count and retained bytes, and off
-by default. The disabled facade is one `Option` branch with no hashing, lock,
-or atomic operation. On the 128-node `linebreak_memo` Criterion workload
+The cache runtime is owned by the long-lived editor session and lent to each
+scratch execution attempt, so accepted revisions reuse it without including it
+in snapshots, formats, rollback state, or semantic hashes. It is bounded by
+entry count and retained bytes and remains off by default. The disabled facade
+is one `Option` branch with no hashing, lock, or atomic operation. On the
+128-node `linebreak_memo` Criterion workload
 (2026-07-15), raw pretolerance measured 3.99 ms, the disabled facade 3.55 ms
 (benchmark noise, no measurable regression), and a strong-key-verified detached
 hit 10.18 us, about 392x faster. A cache-on/off executor test with repeated
 paragraph content verifies identical DVI plans, virtual effects, and final
 semantic state. The `pure_memo_accepted_edit` benchmark edits the first of two
 otherwise identical 128-rule paragraphs. Disabled execution measured 0.919 ms;
-enabled execution measured 1.205 ms, about 31% slower. Existing named-boundary
+enabled execution measured 1.205 ms, about 31% slower. A rerun after fixing
+cross-revision ownership measured 1.397 ms disabled and 2.025 ms enabled
+(20-sample point estimates in a noisy run), so persistence alone does not make
+this edit workload a win. Existing named-boundary
 convergence skips the unchanged second paragraph, leaving only a strong-key
 miss on the edited paragraph. The layer therefore remains off by default.
 Edit-level layout caching should be reconsidered only after paragraph-front-end

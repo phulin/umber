@@ -2,7 +2,7 @@ use super::*;
 
 use tex_lex::{InputStack, MemoryInput};
 use tex_state::Universe;
-use tex_state::macro_store::MacroMeaning;
+use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::MeaningFlags;
 use tex_state::token::Catcode;
 
@@ -82,7 +82,7 @@ fn expand_definition_body(
 }
 
 #[test]
-fn repeated_substitution_hits_and_rebinds_each_argument_origin() {
+fn enabled_memo_keeps_macro_substitution_lazy_and_rebinds_each_argument_origin() {
     let mut stores = Universe::new();
     crate::install_expandable_primitives(&mut stores);
     let body_origin = stores.source_origin(tex_state::SourceId::new(8), 80, 8, 8);
@@ -110,11 +110,10 @@ fn repeated_substitution_hits_and_rebinds_each_argument_origin() {
     assert_ne!(output[1].origin(), output[4].origin());
 
     let stats = expansion.memo_stats().expect("memo stats enabled");
-    assert_eq!(stats.substitution_lookups, 2);
-    assert_eq!(stats.substitution_hits, 1);
-    assert_eq!(stats.substitution_misses, 1);
-    assert_eq!(stats.substituted_tokens_reused, 3);
-    assert!(stats.retained_bytes > 0);
+    assert_eq!(stats.substitution_lookups, 0);
+    assert_eq!(stats.substitution_hits, 0);
+    assert_eq!(stats.substitution_misses, 0);
+    assert_eq!(stats.substituted_tokens_reused, 0);
 }
 
 #[test]
@@ -141,7 +140,7 @@ fn equal_semantics_hit_across_universes_but_use_target_provenance() {
             .memo_stats()
             .expect("memo stats enabled")
             .substitution_hits,
-        1
+        0
     );
 }
 
@@ -174,7 +173,7 @@ fn forced_candidate_collision_verifies_full_semantic_key() {
         ]
     );
     let stats = expansion.memo_stats().expect("memo stats enabled");
-    assert_eq!(stats.substitution_misses, 2);
+    assert_eq!(stats.substitution_misses, 0);
     assert_eq!(stats.substitution_hits, 0);
 }
 
@@ -191,9 +190,8 @@ fn entry_and_byte_budgets_evict_and_clear_to_baseline() {
 
     let _ = expand_all(&mut stores, &mut expansion, "\\a{x}\\b{x}%");
     let stats = expansion.memo_stats().expect("memo stats enabled");
-    assert_eq!(stats.retained_entries, 1);
-    assert_eq!(stats.evictions, 1);
-    assert!(stats.retained_bytes > 0);
+    assert_eq!(stats.retained_entries, 0);
+    assert_eq!(stats.evictions, 0);
     expansion.clear_memoization();
     assert_eq!(
         expansion
@@ -266,6 +264,26 @@ fn episode_dependencies_ignore_unrelated_mutation_and_invalidate_meaning_change(
     let stats = expansion.memo_stats().expect("memo stats enabled");
     assert_eq!(stats.episode_hits, 1);
     assert_eq!(stats.episode_invalidations, 1);
+}
+
+#[test]
+fn episode_key_includes_executor_mode_facts() {
+    let mut stores = Universe::new();
+    crate::install_expandable_primitives(&mut stores);
+    let mut expansion = ExpansionContext::new("texput").memoizing(ExpansionMemoConfig::default());
+
+    assert_eq!(
+        expand_definition_body(&mut stores, &mut expansion, "{\\ifvmode V\\else H\\fi}%",).0,
+        vec![letter('V')]
+    );
+    expansion.engine.mode = crate::EngineMode::Horizontal;
+    assert_eq!(
+        expand_definition_body(&mut stores, &mut expansion, "{\\ifvmode V\\else H\\fi}%",).0,
+        vec![letter('H')]
+    );
+    let stats = expansion.memo_stats().expect("memo stats enabled");
+    assert_eq!(stats.episode_hits, 0);
+    assert_eq!(stats.episode_misses, 2);
 }
 
 #[test]
@@ -373,7 +391,8 @@ fn episode_collision_and_malformed_entry_fall_back_to_cold_expansion() {
         .as_mut()
         .expect("memo cache enabled")
         .episodes
-        .iter_mut()
+        .values_mut()
+        .flatten()
         .find(|entry| entry.key.input == vec![letter('A')])
         .expect("cached A episode")
         .origins
