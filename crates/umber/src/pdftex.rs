@@ -49,7 +49,6 @@ pub const PDFTEX_PRIMITIVE_NAMES: &[&str] = &[
     "pdffilesize",
     "pdffirstlineheight",
     "pdffontattr",
-    "pdffontexpand",
     "pdffontname",
     "pdffontobjnum",
     "pdffontsize",
@@ -346,6 +345,7 @@ pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
         ("pdfnoligatures", UnexpandablePrimitive::PdfNoLigatures),
         ("letterspacefont", UnexpandablePrimitive::LetterspaceFont),
         ("pdfcopyfont", UnexpandablePrimitive::PdfCopyFont),
+        ("pdffontexpand", UnexpandablePrimitive::PdfFontExpand),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));

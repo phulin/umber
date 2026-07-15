@@ -598,6 +598,7 @@ pub enum UnexpandablePrimitive {
     PdfNoLigatures,
     LetterspaceFont,
     PdfCopyFont,
+    PdfFontExpand,
     /// A registered pdfTeX name whose semantics belong to a later parity issue.
     PdfTeXUnimplemented,
 }
@@ -828,6 +829,7 @@ impl UnexpandablePrimitive {
             Self::PdfNoLigatures => 219,
             Self::LetterspaceFont => 220,
             Self::PdfCopyFont => 221,
+            Self::PdfFontExpand => 222,
         }
     }
 
@@ -1056,6 +1058,7 @@ impl UnexpandablePrimitive {
             219 => Some(Self::PdfNoLigatures),
             220 => Some(Self::LetterspaceFont),
             221 => Some(Self::PdfCopyFont),
+            222 => Some(Self::PdfFontExpand),
             _ => None,
         }
     }

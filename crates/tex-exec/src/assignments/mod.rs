@@ -111,7 +111,10 @@ pub(crate) fn execute_unexpandable_with_context(
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<DispatchAction, ExecError> {
-    if primitive == UnexpandablePrimitive::PdfTeXUnimplemented {
+    if matches!(
+        primitive,
+        UnexpandablePrimitive::PdfTeXUnimplemented | UnexpandablePrimitive::PdfFontExpand
+    ) {
         return Err(ExecError::UnsupportedCommand {
             token: tex_expand::semantic_token(traced),
             opcode: primitive.operand() as u8,
@@ -1343,7 +1346,8 @@ fn execute_prefixed_command(
             | UnexpandablePrimitive::Immediate
             | UnexpandablePrimitive::End
             | UnexpandablePrimitive::Dump => unreachable!("prefixes are accumulated first"),
-            UnexpandablePrimitive::PdfTeXUnimplemented => {
+            UnexpandablePrimitive::PdfTeXUnimplemented
+            | UnexpandablePrimitive::PdfFontExpand => {
                 unreachable!("unsupported pdfTeX placeholders return before prefix handling")
             }
         },
