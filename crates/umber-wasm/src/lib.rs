@@ -121,14 +121,10 @@ export interface Diagnostic {
   column?: number;
 }
 
-export interface RenderedSourceLocation {
-  revision: number;
-  path: string;
-  start: number;
-  end: number;
-  line: number;
-  column: number;
-}
+export type RenderedSourceResult =
+  | { kind: "current"; path: string; start: number; end: number; line: number; column: number }
+  | { kind: "deleted"; mintedRevision: number }
+  | { kind: "stale-revision"; accepted: number };
 
 export type AttemptResult =
   | { kind: "need-resources"; required: ResourceRequest[]; prefetchHints: ResourceRequest[] }
@@ -156,8 +152,8 @@ extern "C" {
     #[wasm_bindgen(typescript_type = "ResourceResponse")]
     pub type JsResourceResponse;
 
-    #[wasm_bindgen(typescript_type = "RenderedSourceLocation")]
-    pub type JsRenderedSourceLocation;
+    #[wasm_bindgen(typescript_type = "RenderedSourceResult")]
+    pub type JsRenderedSourceResult;
 }
 
 #[wasm_bindgen]
@@ -291,23 +287,20 @@ impl CompilerSession {
         page: u32,
         event: u32,
         unit: Option<u32>,
-    ) -> Result<Option<JsRenderedSourceLocation>, JsValue> {
-        let session = self.session_ref()?;
-        let Some(revision) = session.revision() else {
-            return Ok(None);
-        };
-        match session
-            .rendered_source_location(page, event, unit, revision)
+        revision: u32,
+    ) -> Result<Option<JsRenderedSourceResult>, JsValue> {
+        match self
+            .session_ref()?
+            .rendered_source_location(
+                page,
+                event,
+                unit,
+                umber::RevisionId::new(u64::from(revision)),
+            )
             .map_err(boundary_error)?
         {
-            Some(umber::RenderedSourceResult::Current(location)) => {
-                result::rendered_source_location(location).map(Some)
-            }
-            Some(
-                umber::RenderedSourceResult::Deleted { .. }
-                | umber::RenderedSourceResult::StaleRevision { .. },
-            )
-            | None => Ok(None),
+            Some(result) => result::rendered_source_result(result).map(Some),
+            None => Ok(None),
         }
     }
 

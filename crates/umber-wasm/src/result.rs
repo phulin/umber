@@ -5,7 +5,7 @@ use umber::{
 use wasm_bindgen::{JsCast, JsValue};
 
 use crate::JsAttemptResult;
-use crate::JsRenderedSourceLocation;
+use crate::JsRenderedSourceResult;
 
 pub(crate) fn attempt_result(result: CompileAttemptResult) -> Result<JsAttemptResult, JsValue> {
     let object = Object::new();
@@ -217,28 +217,44 @@ pub(crate) fn retention_metrics(
     Ok(object.into())
 }
 
-pub(crate) fn rendered_source_location(
-    location: umber::RenderedSourceLocation,
-) -> Result<JsRenderedSourceLocation, JsValue> {
+pub(crate) fn rendered_source_result(
+    result: umber::RenderedSourceResult,
+) -> Result<JsRenderedSourceResult, JsValue> {
     let object = Object::new();
-    set(
-        &object,
-        "revision",
-        &JsValue::from_f64(location.revision.raw() as f64),
-    )?;
-    set(&object, "path", &JsValue::from_str(&location.path))?;
-    set(&object, "start", &JsValue::from_f64(location.start as f64))?;
-    set(&object, "end", &JsValue::from_f64(location.end as f64))?;
-    set(
-        &object,
-        "line",
-        &JsValue::from_f64(f64::from(location.line)),
-    )?;
-    set(
-        &object,
-        "column",
-        &JsValue::from_f64(f64::from(location.column)),
-    )?;
+    match result {
+        umber::RenderedSourceResult::Current(location) => {
+            set(&object, "kind", &JsValue::from_str("current"))?;
+            set(&object, "path", &JsValue::from_str(&location.path))?;
+            set(&object, "start", &JsValue::from_f64(location.start as f64))?;
+            set(&object, "end", &JsValue::from_f64(location.end as f64))?;
+            set(
+                &object,
+                "line",
+                &JsValue::from_f64(f64::from(location.line)),
+            )?;
+            set(
+                &object,
+                "column",
+                &JsValue::from_f64(f64::from(location.column)),
+            )?;
+        }
+        umber::RenderedSourceResult::Deleted { minted_revision } => {
+            set(&object, "kind", &JsValue::from_str("deleted"))?;
+            set(
+                &object,
+                "mintedRevision",
+                &JsValue::from_f64(minted_revision as f64),
+            )?;
+        }
+        umber::RenderedSourceResult::StaleRevision { accepted } => {
+            set(&object, "kind", &JsValue::from_str("stale-revision"))?;
+            set(
+                &object,
+                "accepted",
+                &JsValue::from_f64(accepted.raw() as f64),
+            )?;
+        }
+    }
     Ok(object.unchecked_into())
 }
 

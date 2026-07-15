@@ -132,7 +132,7 @@ async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
         .as_f64()
         .expect("numeric diagnostic bytes");
     let location = session
-        .rendered_source_location(1, event, Some(0))
+        .rendered_source_location(1, event, Some(0), 1)
         .expect("source query")
         .expect("mapped source");
     let retention_after = session.retention_metrics().expect("live retention");
@@ -142,7 +142,7 @@ async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
     assert!(diagnostic_after > diagnostic_before);
     assert!(
         session
-            .rendered_source_location(1, event, Some(2))
+            .rendered_source_location(1, event, Some(2), 1)
             .expect("space query")
             .is_none()
     );
@@ -150,7 +150,7 @@ async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
         .windows(2)
         .position(|window| window == b"AV")
         .expect("rendered A");
-    assert_eq!(field(location.as_ref(), "revision").as_f64(), Some(1.0));
+    assert_eq!(string_field(location.as_ref(), "kind"), "current");
     assert_eq!(string_field(location.as_ref(), "path"), "/job/main.tex");
     assert_eq!(
         field(location.as_ref(), "start").as_f64(),
@@ -160,6 +160,12 @@ async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
         field(location.as_ref(), "end").as_f64(),
         Some((source_start + 1) as f64)
     );
+    let stale = session
+        .rendered_source_location(1, event, Some(0), 0)
+        .expect("stale query")
+        .expect("typed stale result");
+    assert_eq!(string_field(stale.as_ref(), "kind"), "stale-revision");
+    assert_eq!(field(stale.as_ref(), "accepted").as_f64(), Some(1.0));
     let function = js_sys::Function::new_with_args(
         "bytes",
         r#"
@@ -318,9 +324,129 @@ fn persistent_session_applies_revision_checked_patches() {
     );
 }
 
+#[wasm_bindgen_test]
+fn rendered_queries_track_length_changes_before_a_reused_page() {
+    let original =
+        "\\font\\tenrm=cmr10\\relax\\tenrm %a\n\\shipout\\hbox{\\char65}\\shipout\\hbox{B}\\end";
+    let options = options("main.tex");
+    set(&options, "html", Object::new().as_ref());
+    let mut session =
+        CompilerSession::new(options.unchecked_ref::<JsSessionOptions>()).expect("HTML session");
+    session
+        .add_user_file(
+            "cmr10.tfm",
+            &bytes(include_bytes!(
+                "../../tex-fonts/tests/fixtures/cm/cmr10.tfm"
+            )),
+        )
+        .expect("add TFM");
+    session
+        .add_user_file("main.tex", &bytes(original.as_bytes()))
+        .expect("add source");
+    provide_requested_html_font(&mut session);
+    let initial = session.advance().expect("initial compile");
+    assert_eq!(string_field(initial.as_ref(), "kind"), "complete");
+
+    let comment = original.find("%a").expect("comment") + 1;
+    let first_hash = session
+        .accepted_content_hash()
+        .expect("content hash")
+        .expect("accepted revision");
+    let first_patch = source_patch(2, 1, &first_hash, comment, comment + 1, "b");
+    session
+        .apply_patch(first_patch.unchecked_ref::<JsSourcePatch>())
+        .expect("comment patch");
+    let second = session.advance().expect("second revision");
+    assert_eq!(string_field(second.as_ref(), "kind"), "complete");
+
+    let mut revision_two = original.to_owned();
+    revision_two.replace_range(comment..comment + 1, "b");
+    let insert_at = revision_two.find('\n').expect("comment newline");
+    let inserted = " longer";
+    let second_hash = session
+        .accepted_content_hash()
+        .expect("content hash")
+        .expect("accepted revision");
+    let second_patch = source_patch(3, 2, &second_hash, insert_at, insert_at, inserted);
+    session
+        .apply_patch(second_patch.unchecked_ref::<JsSourcePatch>())
+        .expect("length-changing patch");
+    let third = session.advance().expect("third revision");
+    assert_eq!(string_field(third.as_ref(), "kind"), "complete");
+    let reuse = session.reuse_metrics().expect("reuse metrics");
+    assert!(field(&reuse, "pagesReused").as_f64().unwrap_or_default() > 0.0);
+    let third_output = field(third.as_ref(), "output");
+    let third_html = String::from_utf8(Uint8Array::new(&field(&third_output, "html")).to_vec())
+        .expect("third HTML");
+    let b_event = rendered_text_event(&third_html, b'B');
+    let mut revision_three = revision_two;
+    revision_three.insert_str(insert_at, inserted);
+    let b_offset = revision_three.find("{B}").expect("B box") + 1;
+    let current = session
+        .rendered_source_location(2, b_event, Some(0), 3)
+        .expect("current query")
+        .expect("current result");
+    assert_eq!(string_field(current.as_ref(), "kind"), "current");
+    assert_eq!(
+        field(current.as_ref(), "start").as_f64(),
+        Some(b_offset as f64)
+    );
+
+    let line_start = revision_three
+        .find("\\shipout\\hbox{\\char65}")
+        .expect("char line");
+    let line_end = revision_three[line_start..]
+        .find("\\shipout\\hbox{B}")
+        .map(|offset| line_start + offset)
+        .expect("second shipout");
+    let replacement = &revision_three[line_start..line_end];
+    let third_hash = session
+        .accepted_content_hash()
+        .expect("content hash")
+        .expect("accepted revision");
+    let remint = source_patch(4, 3, &third_hash, line_start, line_end, replacement);
+    session
+        .apply_patch(remint.unchecked_ref::<JsSourcePatch>())
+        .expect("equivalent remint patch");
+    let fourth = session.advance().expect("fourth revision");
+    assert_eq!(string_field(fourth.as_ref(), "kind"), "complete");
+    let deleted = session
+        .rendered_source_location(2, b_event, Some(0), 4)
+        .expect("deleted query")
+        .expect("deleted result");
+    assert_eq!(string_field(deleted.as_ref(), "kind"), "deleted");
+    assert_eq!(
+        field(deleted.as_ref(), "mintedRevision").as_f64(),
+        Some(1.0)
+    );
+}
+
 fn session(main_path: &str) -> CompilerSession {
     let options = options(main_path);
     CompilerSession::new(options.unchecked_ref::<JsSessionOptions>()).expect("construct session")
+}
+
+fn provide_requested_html_font(session: &mut CompilerSession) {
+    let missing = session.advance().expect("font request");
+    assert_eq!(string_field(missing.as_ref(), "kind"), "need-resources");
+    let required = Array::from(&field(missing.as_ref(), "required"));
+    assert_eq!(required.length(), 1);
+    let request: Object = required.get(0).unchecked_into();
+    let response = Object::assign(&Object::new(), &request);
+    set(&response, "container", &JsValue::from_str("woff2"));
+    set(
+        &response,
+        "bytes",
+        bytes(include_bytes!("../assets/cmu-serif-500-roman.woff2")).as_ref(),
+    );
+    set(
+        &response,
+        "provenance",
+        &JsValue::from_str("test CM fixture"),
+    );
+    session
+        .provide_resources(&Array::of1(&response))
+        .expect("provide HTML font");
 }
 
 fn session_with_format(main_path: &str, format: &[u8]) -> CompilerSession {
