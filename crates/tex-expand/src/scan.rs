@@ -13,7 +13,7 @@ use tex_lex::{
 use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
-use tex_state::provenance::{InsertedOriginKind, OriginListBuilder};
+use tex_state::provenance::{InsertedOriginKind, OriginListBuilder, OriginRecord};
 use tex_state::token::{Catcode, Token, TracedTokenWord};
 use tex_state::token_store::TokenListBuilder;
 use tex_state::{ExpansionState, TracedTokenList};
@@ -406,6 +406,7 @@ where
             return Ok(finish_traced_list(stores, &mut builder, &mut origins));
         }
         let token = traced_semantic_token(traced);
+        let traced = normalize_stored_noexpand_origin(stores, traced, token);
 
         // e-TeX's `\unexpanded` contributes its token list through TeX's
         // `the_toks` path. Parameter characters from that list are copied
@@ -683,7 +684,7 @@ fn collect_expanded_text(
             };
             let suppressed = traced_semantic_token(suppressed_token);
             let origin = stores.inserted_origin(
-                InsertedOriginKind::NoExpand,
+                InsertedOriginKind::Unexpanded,
                 suppressed,
                 suppressed_token.origin(),
             );
@@ -792,6 +793,22 @@ fn push_scanned_token(
 ) {
     builder.push(token);
     origins.push(traced.origin());
+}
+
+fn normalize_stored_noexpand_origin(
+    stores: &mut tex_state::ExpansionContext<'_>,
+    traced: TracedTokenWord,
+    token: Token,
+) -> TracedTokenWord {
+    if matches!(
+        stores.origin(traced.origin()),
+        OriginRecord::Inserted(inserted) if inserted.kind() == InsertedOriginKind::NoExpand
+    ) {
+        let origin = stores.inserted_origin(InsertedOriginKind::Unexpanded, token, traced.origin());
+        TracedTokenWord::pack(token, origin)
+    } else {
+        traced
+    }
 }
 
 fn finish_traced_list(

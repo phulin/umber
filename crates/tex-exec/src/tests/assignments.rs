@@ -362,6 +362,38 @@ fn token_register_assignments_scan_balanced_text_and_copy_variables() {
 }
 
 #[test]
+fn noexpand_in_edef_preserves_a_token_register_assignment() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"\toksdef\T=0 \T={OLD} \edef\set{\noexpand\T={NEW}} \set",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("noexpanded token-register assignment executes");
+
+    assert_eq!(
+        stores.tokens(stores.toks(0)),
+        &[
+            Token::Char {
+                ch: 'N',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: 'E',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: 'W',
+                cat: Catcode::Letter,
+            },
+        ]
+    );
+}
+
+#[test]
 fn token_register_runaway_closes_before_outer_macro_and_replays_it() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
