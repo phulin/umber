@@ -64,7 +64,13 @@ fn committed_pdftex_fixture_matches_structure_and_bytes() {
 #[test]
 #[allow(clippy::disallowed_methods)] // Hermetic CLI fixture boundary.
 fn committed_embedded_font_fixtures_match_bytes_structure_and_attestations() {
-    for case in ["embedded_type1", "embedded_truetype"] {
+    for case in [
+        "embedded_type1",
+        "embedded_truetype",
+        "embedded_subset_type1",
+        "embedded_subset_truetype",
+        "embedded_subset_omit",
+    ] {
         check_embedded_font_case(case);
     }
 }
@@ -83,7 +89,10 @@ fn check_embedded_font_case(case: &str) {
         temp.path().join("cmr10.tfm"),
     )
     .expect("stage cmr10 TFM");
-    if case == "embedded_type1" {
+    if matches!(
+        case,
+        "embedded_type1" | "embedded_subset_type1" | "embedded_subset_omit"
+    ) {
         fs::copy(
             corpus_root().join("pdf/embedded_type1.pfb"),
             temp.path().join("cmr10.pfb"),
@@ -95,6 +104,13 @@ fn check_embedded_font_case(case: &str) {
             .expect("decode committed TrueType fixture");
         fs::write(temp.path().join("cmu-serif.ttf"), program.bytes())
             .expect("stage decoded TrueType program");
+        if case == "embedded_subset_truetype" {
+            fs::copy(
+                corpus_root().join("pdf/fixture.enc"),
+                temp.path().join("fixture.enc"),
+            )
+            .expect("stage subset encoding");
+        }
     }
 
     let actual_path = temp.path().join(format!("{case}.umber.pdf"));
@@ -124,12 +140,23 @@ fn check_embedded_font_case(case: &str) {
         normalize_structure(&reference).expect("normalize reference font PDF"),
         read_fixture("pdf", case, "ref.structure")
     );
-    let extracted = lopdf::Document::load_mem(&actual)
-        .expect("parse embedded-font PDF")
-        .extract_text(&[1])
-        .expect("extract embedded-font text");
     let expected_extract = read_binary_fixture("pdf", case, "extract");
-    assert_eq!(extracted.trim().as_bytes(), expected_extract.trim_ascii());
+    if case.starts_with("embedded_subset_") {
+        assert!(
+            !expected_extract.trim_ascii().is_empty(),
+            "pinned Poppler extraction for {case} is empty"
+        );
+    } else {
+        let extracted = lopdf::Document::load_mem(&actual)
+            .expect("parse embedded-font PDF")
+            .extract_text(&[1])
+            .expect("extract embedded-font text");
+        assert_eq!(
+            extracted.trim().as_bytes(),
+            expected_extract.trim_ascii(),
+            "lopdf extraction drift for {case}"
+        );
+    }
 
     let raster = read_binary_fixture("pdf", case, "pgm");
     let expected_attestation = format!(

@@ -66,7 +66,7 @@ oracle-backed test. Every name in a missing row is missing.
 | Primitive-identity conditional | 1 | missing | `\ifpdfprimitive` |
 | Horizontal-mode normalization | 1 | missing | `\quitvmode` |
 | Character codes and ligature control | 10 | done | `\lpcode`, `\rpcode`, `\efcode`, `\tagcode`, `\knbscode`, `\stbscode`, `\shbscode`, `\knbccode`, `\knaccode`, `\pdfnoligatures` |
-| PDF backend actions | 43 | partial (font expansion and font-map state done) | `\pdffontexpand`, `\pdfincludechars`, `\pdffontattr`, `\pdfmapfile`, `\pdfmapline` (done); `\pdfliteral`, `\pdfcolorstack`, `\pdfsetmatrix`, `\pdfsave`, `\pdfrestore`, `\pdfobj`, `\pdfrefobj`, `\pdfxform`, `\pdfrefxform`, `\pdfximage`, `\pdfrefximage`, `\pdfannot`, `\pdfstartlink`, `\pdfendlink`, `\pdfoutline`, `\pdfdest`, `\pdfthread`, `\pdfstartthread`, `\pdfendthread`, `\pdfsavepos`, `\pdfsnaprefpoint`, `\pdfsnapy`, `\pdfsnapycomp`, `\pdfinfo`, `\pdfcatalog`, `\pdfnames`, `\pdftrailer`, `\pdftrailerid`, `\pdfresettimer`, `\pdfsetrandomseed`, `\pdfglyphtounicode`, `\pdfnobuiltintounicode`, `\pdfinterwordspaceon`, `\pdfinterwordspaceoff`, `\pdffakespace`, `\pdfrunninglinkoff`, `\pdfrunninglinkon`, `\pdfspacefont` |
+| PDF backend actions | 43 | partial (font expansion, font maps, subsetting, and ToUnicode done) | `\pdffontexpand`, `\pdfincludechars`, `\pdffontattr`, `\pdfmapfile`, `\pdfmapline`, `\pdfglyphtounicode`, `\pdfnobuiltintounicode` (done); `\pdfliteral`, `\pdfcolorstack`, `\pdfsetmatrix`, `\pdfsave`, `\pdfrestore`, `\pdfobj`, `\pdfrefobj`, `\pdfxform`, `\pdfrefxform`, `\pdfximage`, `\pdfrefximage`, `\pdfannot`, `\pdfstartlink`, `\pdfendlink`, `\pdfoutline`, `\pdfdest`, `\pdfthread`, `\pdfstartthread`, `\pdfendthread`, `\pdfsavepos`, `\pdfsnaprefpoint`, `\pdfsnapy`, `\pdfsnapycomp`, `\pdfinfo`, `\pdfcatalog`, `\pdfnames`, `\pdftrailer`, `\pdftrailerid`, `\pdfresettimer`, `\pdfsetrandomseed`, `\pdfinterwordspaceon`, `\pdfinterwordspaceoff`, `\pdffakespace`, `\pdfrunninglinkoff`, `\pdfrunninglinkon`, `\pdfspacefont` |
 | Compatibility error policy | 1 | missing | `\ignoreprimitiveerror` |
 | Late expansion conditionals | 3 | partial (1 done) | `\ifincsname` (done); `\ifpdfabsnum`, `\ifpdfabsdim` |
 
@@ -191,8 +191,16 @@ differences, embedded `/FontFile` and `/FontFile2` streams, per-page `/Font`
 resources, and absolute text operators are emitted through the detached graph
 and canonical `pdf_writer` serializer. Font resource names and dictionary
 object numbers are allocated at enquiry or first shipout use and survive
-checkpoint rollback exactly. Subset program rewriting and ToUnicode streams
-remain owned by child 17.3.
+checkpoint rollback exactly. Finalization projects the union of committed page
+glyph use and `\pdfincludechars` through the selected encoding. Type-1 eexec
+programs are decrypted, reduced to the named CharStrings plus `.notdef`, and
+deterministically re-encrypted; TrueType glyf programs use a compact named-glyph
+and composite closure. Both reproduce pdfTeX's MD5-derived six-letter subset
+name. Positive `\pdfgentounicode` emits UTF-16BE CMaps from global or
+`tfm:name/glyph` mappings, while per-font `\pdfnobuiltintounicode` suppresses
+the stream and nonzero `\pdfomitcharset` suppresses eligible Type-1 `/CharSet`.
+All dictionaries and streams continue through the canonical vendored
+`pdf_writer` graph.
 
 ## Compatibility and alias decisions
 

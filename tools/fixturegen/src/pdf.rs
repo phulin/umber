@@ -144,7 +144,7 @@ fn stage_font_resources(case: &str, directory: &Path) -> Result<()> {
     )
     .context("failed to stage cmr10.tfm")?;
     match case {
-        "embedded_type1" => {
+        "embedded_type1" | "embedded_subset_type1" | "embedded_subset_omit" => {
             let committed = corpus_root().join("pdf/embedded_type1.pfb");
             if !committed.is_file() {
                 let output = Command::new("kpsewhich")
@@ -160,13 +160,20 @@ fn stage_font_resources(case: &str, directory: &Path) -> Result<()> {
             fs::copy(committed, directory.join("cmr10.pfb"))
                 .context("failed to stage cmr10.pfb")?;
         }
-        "embedded_truetype" => {
+        "embedded_truetype" | "embedded_subset_truetype" => {
             let woff2 = fs::read(root.join("crates/umber-wasm/assets/cmu-serif-500-roman.woff2"))
                 .context("failed to read committed CMU Serif WOFF2")?;
             let program = tex_fonts::PdfTrueTypeProgram::from_woff2(&woff2)
                 .context("failed to decode committed CMU Serif WOFF2")?;
             fs::write(directory.join("cmu-serif.ttf"), program.bytes())
                 .context("failed to stage decoded CMU Serif TTF")?;
+            if case == "embedded_subset_truetype" {
+                fs::copy(
+                    corpus_root().join("pdf/fixture.enc"),
+                    directory.join("fixture.enc"),
+                )
+                .context("failed to stage subset encoding")?;
+            }
         }
         _ => {}
     }

@@ -1,0 +1,14 @@
+pdf-structure-v1
+version 1.4
+catalog /Catalog
+pages 1
+page 1
+media-box 0 0 39.851 19.925
+resources <</Font <</F1 <</BaseFont /KWJZXE+CMUSerif-Roman /Encoding <</Differences [65 /A /B /C] /Type /Encoding>> /FirstChar 65 /FontDescriptor <</Ascent 935 /CapHeight 935 /Descent -250 /Flags 4 /FontBBox [-1135 -387 1495 1094] /FontFile2 stream <</Length 3452 /Length1 3452>> bytes 3452 sha256 12458429bf344fbab2f5d0b453121b855de8758f12b11e12046616962a97e110 /FontName /KWJZXE+CMUSerif-Roman /ItalicAngle 0 /StemV 80 /Type /FontDescriptor /XHeight 0>> /LastChar 67 /Name /F1 /Subtype /TrueType /ToUnicode stream <</Length 354>> bytes 354 sha256 3f07304edb30939d341dc6e767eeee038a073ec1e605e1651af3ed87cc6f5a82 /Type /Font /Widths [750 708 722]>>>> /ProcSet [/PDF]>>
+content q
+content Q
+content BT
+content /F1 9.963 Tf
+content 1 0 0 1 0 13.117 Tm
+content <4142> Tj
+content ET

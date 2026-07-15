@@ -1,0 +1,12 @@
+pdf-structure-v1
+version 1.4
+catalog /Catalog
+pages 1
+page 1
+media-box 0 0 39.851 19.925
+resources <</Font <</F1 <</BaseFont /QBBONQ+CMR10 /FirstChar 65 /FontDescriptor <</Ascent 694 /CapHeight 683 /CharSet <2f412f422f43> /Descent -194 /Flags 4 /FontBBox [-40 -250 1009 750] /FontFile stream <</Length 8728 /Length1 1391 /Length2 7337 /Length3 0>> bytes 8728 sha256 cb0d5b818d741c0c3122f6825d3b15b3ad414c6ea4d2855497e41731309af34e /FontName /QBBONQ+CMR10 /ItalicAngle 0 /StemV 69 /Type /FontDescriptor /XHeight 431>> /LastChar 67 /Subtype /Type1 /ToUnicode stream <</Length 652>> bytes 652 sha256 000f11667c4f07689243e22ab2b00b506ea48fdff859649c38630ddf42d22b46 /Type /Font /Widths [750 708.3 722.2]>>>> /ProcSet [/PDF /Text]>>
+content BT
+content /F1 9.963 Tf
+content 0 13.117 Td
+content [<4142>] TJ
+content ET

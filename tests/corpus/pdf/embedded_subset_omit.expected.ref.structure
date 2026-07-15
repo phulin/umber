@@ -1,0 +1,12 @@
+pdf-structure-v1
+version 1.4
+catalog /Catalog
+pages 1
+page 1
+media-box 0 0 39.851 19.925
+resources <</Font <</F1 <</BaseFont /GBZLEI+CMR10 /FirstChar 65 /FontDescriptor <</Ascent 694 /CapHeight 683 /Descent -194 /Flags 4 /FontBBox [-40 -250 1009 750] /FontFile stream <</Length 7397 /Length1 1363 /Length2 6034 /Length3 0>> bytes 7397 sha256 4aa6b03214bd3a9fa7266ab0fd6fe2a9b2fb6a74d1cacfd26191bd42c4756a76 /FontName /GBZLEI+CMR10 /ItalicAngle 0 /StemV 69 /Type /FontDescriptor /XHeight 431>> /LastChar 65 /Subtype /Type1 /Type /Font /Widths [750]>>>> /ProcSet [/PDF /Text]>>
+content BT
+content /F1 9.963 Tf
+content 0 13.117 Td
+content [<41>] TJ
+content ET
