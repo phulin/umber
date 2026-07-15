@@ -314,6 +314,7 @@ fn execute_pdf_object(
         Some(id) => id,
         None => {
             if use_object_number {
+                stores.set_pdf_return_value(-1);
                 stores.world_mut().write_text(
                     tex_state::PrintSink::TerminalAndLog,
                     "\npdfTeX warning (\\pdfobj): invalid object number being ignored\n",

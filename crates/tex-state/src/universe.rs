@@ -243,6 +243,9 @@ pub trait ExpansionState {
     fn pdf_last_ximage(&self) -> u32 {
         0
     }
+    fn pdf_return_value(&self) -> i32 {
+        0
+    }
     fn pdf_uniform_deviate(&mut self, _bound: i32) -> i32 {
         0
     }
@@ -2380,6 +2383,17 @@ impl Universe {
         self.pdf
             .last_external_image()
             .map_or(0, |record| record.id().raw())
+    }
+
+    /// Returns pdfTeX's session-global result value.
+    #[must_use]
+    pub const fn pdf_return_value(&self) -> i32 {
+        self.pdf.return_value()
+    }
+
+    /// Updates pdfTeX's session-global result value.
+    pub const fn set_pdf_return_value(&mut self, value: i32) {
+        self.pdf.set_return_value(value);
     }
 
     /// Appends expanded tokens to one document-level PDF dictionary destination.
@@ -4569,6 +4583,10 @@ impl ExpansionState for Universe {
         Self::pdf_last_ximage(self)
     }
 
+    fn pdf_return_value(&self) -> i32 {
+        Self::pdf_return_value(self)
+    }
+
     fn pdf_uniform_deviate(&mut self, bound: i32) -> i32 {
         Self::pdf_uniform_deviate(self, bound)
     }
@@ -5077,6 +5095,10 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn pdf_last_ximage(&self) -> u32 {
         self.universe.pdf_last_ximage()
+    }
+
+    fn pdf_return_value(&self) -> i32 {
+        self.universe.pdf_return_value()
     }
 
     fn pdf_uniform_deviate(&mut self, bound: i32) -> i32 {

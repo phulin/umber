@@ -804,6 +804,7 @@ pub(crate) struct PdfStateCursor {
     form_fingerprint: u64,
     next_form_resource: u32,
     form_artifact_fingerprint: u64,
+    return_value: i32,
 }
 
 #[derive(Clone, Debug)]
@@ -871,6 +872,7 @@ pub(crate) struct PdfState {
     next_form_resource: u32,
     form_artifacts: Arc<BTreeMap<u32, PdfFormArtifact>>,
     form_artifact_fingerprint: u64,
+    return_value: i32,
 }
 
 impl Default for PdfState {
@@ -914,6 +916,7 @@ impl Default for PdfState {
             next_form_resource: 1,
             form_artifacts: Arc::new(BTreeMap::new()),
             form_artifact_fingerprint: StateHasher::new(0x7064_665f_666d_6172).finish(),
+            return_value: 0,
         }
     }
 }
@@ -1836,6 +1839,7 @@ impl PdfState {
             form_fingerprint: self.form_fingerprint,
             next_form_resource: self.next_form_resource,
             form_artifact_fingerprint: self.form_artifact_fingerprint,
+            return_value: self.return_value,
         }
     }
     #[must_use]
@@ -1906,6 +1910,7 @@ impl PdfState {
         self.next_form_resource = cursor.next_form_resource;
         self.form_artifacts = snapshot.form_artifacts;
         self.form_artifact_fingerprint = cursor.form_artifact_fingerprint;
+        self.return_value = cursor.return_value;
     }
 
     pub(crate) fn set_match(
@@ -1961,6 +1966,7 @@ impl PdfState {
             hasher.u64(cursor.form_fingerprint);
             hasher.u32(cursor.next_form_resource);
             hasher.u64(cursor.form_artifact_fingerprint);
+            hasher.i32(cursor.return_value);
             hasher.bool(cursor.document_objects.pages().is_some());
             if let Some(id) = cursor.document_objects.pages() {
                 hasher.u32(id);
@@ -1987,6 +1993,17 @@ impl PdfState {
 
     pub(crate) const fn last_position(&self) -> (Scaled, Scaled) {
         self.last_position
+    }
+
+    /// Returns pdfTeX's session-global multi-purpose result value.
+    #[must_use]
+    pub(crate) const fn return_value(&self) -> i32 {
+        self.return_value
+    }
+
+    /// Updates pdfTeX's session-global multi-purpose result value.
+    pub(crate) const fn set_return_value(&mut self, value: i32) {
+        self.return_value = value;
     }
 
     pub(crate) const fn snap_reference(&self) -> (Scaled, Scaled) {
@@ -3027,6 +3044,28 @@ mod tests {
         state.append_document_fragment(PdfDocumentFragmentKind::Catalog, first);
         state.append_document_fragment(PdfDocumentFragmentKind::Info, second);
         assert_eq!(state.hash_fragment(), appended_hash);
+    }
+
+    #[test]
+    fn return_value_is_checkpointed_hashed_and_excluded_from_formats() {
+        let mut state = PdfState::default();
+        assert_eq!(state.return_value(), 0);
+        assert!(state.is_format_empty());
+        let initial = state.snapshot();
+        let initial_hash = state.hash_fragment();
+
+        state.set_return_value(-1);
+        assert_eq!(state.return_value(), -1);
+        assert!(state.is_format_empty());
+        let failed_hash = state.hash_fragment();
+        assert_ne!(failed_hash, initial_hash);
+
+        state.rollback(initial.clone());
+        assert_eq!(state.return_value(), 0);
+        assert_eq!(state.hash_fragment(), initial_hash);
+        state.set_return_value(-1);
+        assert_eq!(state.hash_fragment(), failed_hash);
+        state.rollback(initial);
     }
 
     #[test]

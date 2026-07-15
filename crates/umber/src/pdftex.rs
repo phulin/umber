@@ -391,6 +391,7 @@ pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
         ("pdflastypos", InternalInteger::PdfLastYPos),
         ("pdflastxform", InternalInteger::PdfLastXForm),
         ("pdflastximage", InternalInteger::PdfLastXImage),
+        ("pdfretval", InternalInteger::PdfReturnValue),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::InternalInteger(integer));
@@ -819,15 +820,26 @@ mod tests {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
         let output = crate::run_memory_with_stores(
-            "\\pdfoutput=1\\pdfobj useobjnum 99 {fallback}\\message{last=\\the\\pdflastobj}\\end",
+            concat!(
+                "\\pdfoutput=1\\message{retval0=\\the\\pdfretval}",
+                "\\pdfobj useobjnum 99 {fallback}",
+                "\\message{retval1=\\the\\pdfretval,last=\\the\\pdflastobj}",
+                "\\pdfobj reserveobjnum",
+                "\\pdfobj useobjnum \\pdflastobj {valid}",
+                "\\message{retval2=\\the\\pdfretval}\\end",
+            ),
             &mut stores,
         )
         .expect("recover invalid useobjnum");
         assert_eq!(
             output,
-            "\npdfTeX warning (\\pdfobj): invalid object number being ignored\nlast=1"
+            concat!(
+                "retval0=0\npdfTeX warning (\\pdfobj): invalid object number being ignored\n",
+                "retval1=-1,last=1 retval2=-1",
+            )
         );
-        assert_eq!(stores.pdf_last_object(), 1);
+        assert_eq!(stores.pdf_last_object(), 2);
+        assert_eq!(stores.pdf_return_value(), -1);
 
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
@@ -848,6 +860,28 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "pdfTeX error (ext1): `\\pdfobj reserveobjnum' cannot be used with \\immediate."
+        );
+    }
+
+    #[test]
+    fn pdfretval_meaning_survives_formats_but_runtime_value_resets() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        assert_eq!(InternalInteger::PdfReturnValue.operand(), 22);
+        let symbol = stores.intern("pdfretval");
+        assert_eq!(
+            stores.meaning(symbol),
+            Meaning::InternalInteger(InternalInteger::PdfReturnValue)
+        );
+        stores.set_pdf_return_value(-1);
+
+        let format = stores.dump_format().expect("runtime result is not dumped");
+        let mut loaded = Universe::from_format(World::default(), &format).expect("load format");
+        assert_eq!(loaded.pdf_return_value(), 0);
+        let loaded_symbol = loaded.intern("pdfretval");
+        assert_eq!(
+            loaded.meaning(loaded_symbol),
+            Meaning::InternalInteger(InternalInteger::PdfReturnValue)
         );
     }
 

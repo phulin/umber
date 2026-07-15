@@ -1683,6 +1683,7 @@ fn hash_internal_integer(integer: InternalInteger, hasher: &mut StateHasher) {
         InternalInteger::PdfLastYPos => hasher.tag(15),
         InternalInteger::PdfLastXForm => hasher.tag(16),
         InternalInteger::PdfLastXImage => hasher.tag(21),
+        InternalInteger::PdfReturnValue => hasher.tag(22),
         InternalInteger::CurrentGroupLevel => hasher.tag(3),
         InternalInteger::CurrentGroupType => hasher.tag(4),
         InternalInteger::CurrentIfLevel => hasher.tag(5),

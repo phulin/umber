@@ -801,6 +801,13 @@ where
                 token,
             ))
         }
+        Meaning::InternalInteger(InternalInteger::PdfReturnValue) => {
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Engine(ReadEngineField::PdfObjects)
+            );
+            Ok(ScannedInt::new(stores.pdf_return_value(), token))
+        }
         Meaning::InternalInteger(InternalInteger::CurrentGroupLevel) => {
             crate::record_dependency!(
                 expansion,
