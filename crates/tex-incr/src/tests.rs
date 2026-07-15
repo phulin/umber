@@ -1,5 +1,6 @@
 use super::*;
 
+use tex_state::RootSpanId;
 use tex_state::input::SourceId;
 use tex_state::token::{Catcode, Token, TracedTokenWord};
 
@@ -33,6 +34,26 @@ fn multi_page_source(pages: usize) -> String {
     }
     source.push_str("\\end");
     source
+}
+
+fn root_span_at(session: &Session, range: std::ops::Range<usize>) -> RootSpanId {
+    session
+        .layout
+        .pieces()
+        .iter()
+        .enumerate()
+        .find_map(|(index, piece)| {
+            let doc_start = session.layout.doc_starts()[index] as usize;
+            let doc_end = doc_start + (piece.end() - piece.start()) as usize;
+            (doc_start <= range.start && range.end <= doc_end).then(|| {
+                session.fragments.root_span_id(
+                    piece,
+                    u32::try_from(range.start - doc_start).expect("local start")
+                        ..u32::try_from(range.end - doc_start).expect("local end"),
+                )
+            })?
+        })
+        .expect("range belongs to one retained piece")
 }
 
 fn assert_semantic_edit_matches_cold(name: &str, original: &str, edited: &str) -> ReuseMetrics {
@@ -368,6 +389,70 @@ fn multi_page_baseline_distinguishes_comment_and_semantic_edits() {
     assert_eq!(semantic.reuse.pages_retyped, 10);
     assert!(semantic.reuse.same_history_hash_mismatches > 0);
     assert!(semantic.reuse.reexecuted_bytes < original.len());
+}
+
+#[test]
+fn unchanged_unicode_crlf_span_identity_survives_multiple_surrounding_edits() {
+    let original = "% α\r\n% keep\r\n% ω\r\n\\end";
+    let keep = original.find("keep").expect("keep span");
+    let mut session = Session::start(
+        template(),
+        "stable-spans",
+        RevisionId::new(1),
+        original,
+        usize::MAX,
+    )
+    .expect("session");
+    session.cold().expect("cold run");
+    let initial = root_span_at(&session, keep..keep + 4);
+
+    let alpha = session.source().find('α').expect("alpha");
+    let hash = session.content_hash();
+    session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: hash,
+                range: alpha..alpha + 'α'.len_utf8(),
+                replacement: "prefix".to_owned(),
+            },
+        )
+        .expect("prefix edit");
+    let keep = session.source().find("keep").expect("mapped keep");
+    assert_eq!(root_span_at(&session, keep..keep + 4), initial);
+
+    let omega = session.source().find('ω').expect("omega");
+    let hash = session.content_hash();
+    session
+        .advance(
+            RevisionId::new(3),
+            Edit {
+                base_revision: RevisionId::new(2),
+                expected_hash: hash,
+                range: omega..omega + 'ω'.len_utf8(),
+                replacement: "suffix-long".to_owned(),
+            },
+        )
+        .expect("suffix edit");
+    let keep = session.source().find("keep").expect("mapped keep");
+    assert_eq!(root_span_at(&session, keep..keep + 4), initial);
+
+    let hash = session.content_hash();
+    session
+        .advance(
+            RevisionId::new(4),
+            Edit {
+                base_revision: RevisionId::new(3),
+                expected_hash: hash,
+                range: keep..keep + 4,
+                replacement: "keep".to_owned(),
+            },
+        )
+        .expect("equal-byte replacement");
+    let replaced = root_span_at(&session, keep..keep + 4);
+    assert_ne!(replaced.piece(), initial.piece());
+    assert_eq!(replaced.content(), initial.content());
 }
 
 #[test]

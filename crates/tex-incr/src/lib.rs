@@ -26,8 +26,10 @@ use tex_state::{
     LayoutResolvedOrigin, Piece, Universe, WorldError,
 };
 
+mod delivery;
 mod episode;
 
+pub use delivery::{DeliveryIdentity, SyntheticDeliveryKind};
 pub use episode::TransientTokenEpisode;
 
 /// Monotonic identity of an immutable editor buffer.
