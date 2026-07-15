@@ -134,7 +134,7 @@ fn scan_u_template(
             }
             None => unreachable!("preamble EOF is converted to recovery tokens"),
         };
-        if is_parameter_token(token) {
+        if is_parameter_token(scanner.stores, token) {
             return Ok(scanner.stores.finish_token_list(&mut builder));
         }
         // TeX82 removes spacer commands from the start of every u-template.
@@ -147,7 +147,7 @@ fn scan_u_template(
         // TeX82 records a leading tab on an empty u-template as `cur_loop`;
         // it is a periodic-preamble marker, not a missing-parameter error.
         if scanner.at_template_level()
-            && is_alignment_tab_token(token)
+            && is_alignment_tab_token(scanner.stores, token)
             && !has_material
             && loop_start.is_none()
         {
@@ -155,7 +155,7 @@ fn scan_u_template(
             continue;
         }
         if scanner.at_template_level()
-            && (is_alignment_tab_token(token) || is_cr_token(scanner.stores, token))
+            && (is_alignment_tab_token(scanner.stores, token) || is_cr_token(scanner.stores, token))
         {
             scanner.lookahead = Some(PreambleToken::Token(token));
             scanner.report_missing_parameter();
@@ -183,14 +183,14 @@ fn scan_v_template(
             }
             None => unreachable!("preamble EOF is converted to recovery tokens"),
         };
-        if is_parameter_token(token) {
+        if is_parameter_token(scanner.stores, token) {
             scanner.stores.world_mut().write_text(
                 tex_state::PrintSink::TerminalAndLog,
                 "\n! Only one # is allowed per tab.\nThere should be exactly one # between &'s, when an\n\\halign or \\valign is being set up. In this case you had\nmore than one, so I'm ignoring all but the first.\n",
             );
             continue;
         }
-        if scanner.at_template_level() && is_alignment_tab_token(token) {
+        if scanner.at_template_level() && is_alignment_tab_token(scanner.stores, token) {
             builder.push(end_template);
             return Ok((
                 scanner.stores.finish_token_list(&mut builder),
@@ -263,7 +263,7 @@ impl<'a, 'ctx> PreambleScanner<'a, 'ctx> {
         let Some(token) = self.next_token()? else {
             return Ok(false);
         };
-        if matches!(token, PreambleToken::Token(token) if self.at_template_level() && is_alignment_tab_token(token))
+        if matches!(token, PreambleToken::Token(token) if self.at_template_level() && is_alignment_tab_token(self.stores, token))
         {
             Ok(true)
         } else {
@@ -407,24 +407,12 @@ impl<'a, 'ctx> PreambleScanner<'a, 'ctx> {
     }
 }
 
-fn is_parameter_token(token: Token) -> bool {
-    matches!(
-        token,
-        Token::Char {
-            cat: Catcode::Parameter,
-            ..
-        }
-    )
+fn is_parameter_token(stores: &Universe, token: Token) -> bool {
+    has_catcode_meaning(stores, token, Catcode::Parameter)
 }
 
-fn is_alignment_tab_token(token: Token) -> bool {
-    matches!(
-        token,
-        Token::Char {
-            cat: Catcode::AlignmentTab,
-            ..
-        }
-    )
+fn is_alignment_tab_token(stores: &Universe, token: Token) -> bool {
+    has_catcode_meaning(stores, token, Catcode::AlignmentTab)
 }
 
 fn is_tabskip_token(stores: &Universe, token: Token) -> bool {

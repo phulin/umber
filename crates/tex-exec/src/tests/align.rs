@@ -725,6 +725,28 @@ fn plain_ialign_accepts_bgroup_and_leading_periodic_preamble() {
 }
 
 #[test]
+fn preamble_recognizes_parameter_character_alias_by_meaning() {
+    let stores = run_boxed_alignment_source("\\let\\sharp=#\\halign{u\\sharp v\\cr x\\cr}");
+    let rows = vlist_rows(&stores, box_zero_vlist(&stores));
+    let cells = row_cells(&stores, rows[0]);
+
+    assert_eq!(cells.len(), 1);
+    assert_eq!(cell_text(&stores, cells[0]), "uxv");
+    assert!(!support::terminal_effect_text(&stores).contains("Missing # inserted"));
+}
+
+#[test]
+fn preamble_recognizes_alignment_tab_alias_by_meaning() {
+    let stores = run_boxed_alignment_source("\\let\\tab=&\\halign{#\\tab#\\cr a&b\\cr}");
+    let rows = vlist_rows(&stores, box_zero_vlist(&stores));
+    let cells = row_cells(&stores, rows[0]);
+
+    assert_eq!(cells.len(), 2);
+    assert_eq!(cell_text(&stores, cells[0]), "a");
+    assert_eq!(cell_text(&stores, cells[1]), "b");
+}
+
+#[test]
 fn plain_tab_row_closes_alignment_and_box_before_surrounding_begingroup() {
     let source = "\\let\\bgroup={\\let\\egroup=}\
          \\def\\tbbox{\\setbox0=\\hbox\\bgroup}\
