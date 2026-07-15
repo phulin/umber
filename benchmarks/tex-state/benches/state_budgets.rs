@@ -15,7 +15,7 @@ use tex_state::meaning::MeaningFlags;
 use tex_state::node::{BoxNode, BoxNodeFields, KernKind, Node, Sign};
 use tex_state::provenance::ProvenanceStats;
 use tex_state::scaled::{GlueSetRatio, Scaled};
-use tex_state::token::{Catcode, Token, TracedTokenWord};
+use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 const GROUP_SIZES: [usize; 3] = [4, 64, 512];
 const ROLLBACK_TOTAL_CELLS: [usize; 2] = [1024, 4096];
@@ -91,12 +91,14 @@ fn allocation_append_case(shape: &str) -> (Universe, Vec<Node>) {
                 MathField::MathChar(MathChar {
                     family: (index % 16) as u8,
                     character: char::from(b'a' + (index % 26) as u8),
+                    origin: OriginId::UNKNOWN,
                 }),
             )),
             "mixed" => match index % 4 {
                 0 => Node::Char {
                     font,
                     ch: char::from(b'a' + (index % 26) as u8),
+                    origin: OriginId::UNKNOWN,
                 },
                 1 => Node::HList(benchmark_box(empty, index as i32)),
                 2 => Node::MathNoad(MathNoad::new(
@@ -380,6 +382,7 @@ fn checkpoint_state_hash(c: &mut Criterion) {
                     .map(|index| Node::Char {
                         font,
                         ch: char::from(b'a' + (index % 26) as u8),
+                        origin: OriginId::UNKNOWN,
                     })
                     .collect::<Vec<_>>();
                 let list = stores.freeze_node_list(&chars);
