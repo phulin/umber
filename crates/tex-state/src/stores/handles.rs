@@ -378,6 +378,16 @@ impl Stores {
                 identifier: crate::PdfActionIdentifier::Name(tokens),
                 ..
             }) => self.assert_live_token_list(*tokens),
+            Node::Whatsit(crate::node::Whatsit::PdfThread {
+                identifier,
+                attributes,
+                ..
+            }) => {
+                if let crate::PdfActionIdentifier::Name(tokens) = identifier {
+                    self.assert_live_token_list(*tokens);
+                }
+                self.assert_live_token_list(*attributes);
+            }
             Node::Whatsit(
                 crate::node::Whatsit::OpenOut { .. }
                 | crate::node::Whatsit::CloseOut { .. }
@@ -399,6 +409,7 @@ impl Stores {
                 | crate::node::Whatsit::PdfRefXForm { .. }
                 | crate::node::Whatsit::PdfRefXImage { .. }
                 | crate::node::Whatsit::PdfDestination { .. }
+                | crate::node::Whatsit::PdfEndThread
                 | crate::node::Whatsit::Language { .. },
             ) => {}
             Node::Kern { .. }

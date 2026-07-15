@@ -288,6 +288,8 @@ impl NodeStorage {
                 | crate::node::Whatsit::PdfRefXForm { .. }
                 | crate::node::Whatsit::PdfRefXImage { .. }
                 | crate::node::Whatsit::PdfDestination { .. }
+                | crate::node::Whatsit::PdfThread { .. }
+                | crate::node::Whatsit::PdfEndThread
                 | crate::node::Whatsit::Language { .. } => {}
             }
         }

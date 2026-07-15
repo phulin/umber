@@ -461,6 +461,66 @@ fn append_whatsit_effect(
                 margin: stores.dimen_param(DimenParam::PDF_DEST_MARGIN),
             }));
         }
+        Whatsit::PdfThread {
+            identifier,
+            dimensions,
+            attributes,
+            running,
+        } => {
+            if suppress_deferred_streams {
+                return Ok(());
+            }
+            if color_target == tex_state::PdfColorStackTarget::Form {
+                return Err(ExecError::PdfThreadInForm);
+            }
+            let identity = match identifier {
+                tex_state::PdfActionIdentifier::Name(tokens) => {
+                    let mut text = String::new();
+                    for &token in stores.tokens(tokens) {
+                        tex_expand::append_token_string_text(stores, token, &mut text);
+                    }
+                    tex_state::PdfDestinationIdentity::Name(text.into_bytes())
+                }
+                tex_state::PdfActionIdentifier::Number(number) => {
+                    tex_state::PdfDestinationIdentity::Number(number)
+                }
+                tex_state::PdfActionIdentifier::Raw(_) => {
+                    unreachable!("thread scanner uses typed identifiers")
+                }
+            };
+            let (thread, bead) = stores
+                .append_pdf_thread_bead(identity.clone())
+                .map_err(|_| ExecError::PdfObjectCapacity)?;
+            let identifier = match identity {
+                tex_state::PdfDestinationIdentity::Name(name) => {
+                    tex_out::PdfDestinationIdentifier::Name(name)
+                }
+                tex_state::PdfDestinationIdentity::Number(number) => {
+                    tex_out::PdfDestinationIdentifier::Number(number)
+                }
+            };
+            let mut attribute_bytes = String::new();
+            for &token in stores.tokens(attributes) {
+                tex_expand::append_token_string_text(stores, token, &mut attribute_bytes);
+            }
+            let marker = tex_out::PdfThreadEffect {
+                thread_object: thread.object(),
+                bead_object: bead.bead_object(),
+                rectangle_object: bead.rectangle_object(),
+                identifier,
+                width: dimensions.width,
+                height: dimensions.height,
+                depth: dimensions.depth,
+                attributes: attribute_bytes.into_bytes(),
+                margin: stores.dimen_param(DimenParam::PDF_THREAD_MARGIN),
+            };
+            effects.push(if running {
+                PageEffect::PdfStartThread(marker)
+            } else {
+                PageEffect::PdfThread(marker)
+            });
+        }
+        Whatsit::PdfEndThread => effects.push(PageEffect::PdfEndThread),
         Whatsit::OpenOut { .. }
         | Whatsit::CloseOut { .. }
         | Whatsit::DeferredWrite { .. }

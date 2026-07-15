@@ -430,6 +430,9 @@ pub enum PageEffect {
         depth: Scaled,
     },
     PdfDestination(PdfDestinationEffect),
+    PdfThread(PdfThreadEffect),
+    PdfStartThread(PdfThreadEffect),
+    PdfEndThread,
 }
 
 /// Ordered PDF-only accessibility control retained at its shipped position.
@@ -463,6 +466,20 @@ pub struct PdfDestinationEffect {
     pub identifier: PdfDestinationIdentifier,
     pub structure: Option<u32>,
     pub kind: PdfDestinationKind,
+    pub margin: Scaled,
+}
+
+/// A one-shot bead or the first bead of a running article thread.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct PdfThreadEffect {
+    pub thread_object: u32,
+    pub bead_object: u32,
+    pub rectangle_object: u32,
+    pub identifier: PdfDestinationIdentifier,
+    pub width: Option<Scaled>,
+    pub height: Option<Scaled>,
+    pub depth: Option<Scaled>,
+    pub attributes: Vec<u8>,
     pub margin: Scaled,
 }
 
@@ -595,6 +612,9 @@ fn validate_artifact(
             PageEffect::PdfRefXForm { .. }
             | PageEffect::PdfRefXImage { .. }
             | PageEffect::PdfDestination(_) => None,
+            PageEffect::PdfThread(_) | PageEffect::PdfStartThread(_) | PageEffect::PdfEndThread => {
+                None
+            }
         };
         if stream.is_some_and(|stream| stream >= 16) {
             return Err(ArtifactValidationError::InvalidStream {

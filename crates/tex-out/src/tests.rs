@@ -63,6 +63,32 @@ fn pdf_destinations_round_trip_nullable_zoom_and_running_rectangle_dimensions() 
 }
 
 #[test]
+fn pdf_article_thread_effects_round_trip_reserved_tags() {
+    let marker = crate::PdfThreadEffect {
+        thread_object: 7,
+        bead_object: 8,
+        rectangle_object: 9,
+        identifier: PdfDestinationIdentifier::Name(b"chapter".to_vec()),
+        width: Some(Scaled::from_raw(10)),
+        height: None,
+        depth: Some(Scaled::from_raw(20)),
+        attributes: b"/Title (last)".to_vec(),
+        margin: Scaled::from_raw(-3),
+    };
+    let mut artifact = sample_artifact();
+    artifact.testing_mut().effects.extend([
+        PageEffect::PdfThread(marker.clone()),
+        PageEffect::PdfStartThread(marker),
+        PageEffect::PdfEndThread,
+    ]);
+    let bytes = artifact.to_bytes().expect("thread artifact serializes");
+    assert_eq!(
+        PageArtifact::from_bytes(&bytes).expect("thread artifact parses"),
+        artifact
+    );
+}
+
+#[test]
 fn generated_font_constructions_round_trip_with_source_identity() {
     let mut artifact = sample_artifact();
     let loaded = artifact.fonts[0].clone();

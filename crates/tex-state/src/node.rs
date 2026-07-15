@@ -559,6 +559,13 @@ pub enum Whatsit {
         structure: Option<u32>,
         kind: PdfDestinationKind,
     },
+    PdfThread {
+        identifier: crate::PdfActionIdentifier,
+        dimensions: crate::PdfAnnotationDimensions,
+        attributes: TokenListId,
+        running: bool,
+    },
+    PdfEndThread,
     Language {
         language: u8,
         left_hyphen_min: u8,

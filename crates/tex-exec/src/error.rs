@@ -168,6 +168,8 @@ pub enum ExecError {
     PdfDestinationIdentifierMissing,
     PdfDestinationKindMissing,
     PdfDestinationInForm,
+    PdfThreadIdentifierMissing,
+    PdfThreadInForm,
     VSplitNeedsVBox,
     Box255NotVoidBeforeOutput,
     OutputRoutineBox255NotVoid,
@@ -371,6 +373,12 @@ impl fmt::Display for ExecError {
             Self::PdfDestinationInForm => {
                 f.write_str("pdfTeX error (ext4): destinations cannot be inside an XForm")
             }
+            Self::PdfThreadIdentifierMissing => {
+                f.write_str("pdfTeX error (ext4): thread identifier type missing")
+            }
+            Self::PdfThreadInForm => {
+                f.write_str("pdfTeX error (ext4): threads cannot be inside an XForm")
+            }
             Self::VSplitNeedsVBox => write!(f, "\\vsplit needs a \\vbox"),
             Self::Box255NotVoidBeforeOutput => write!(f, "\\box255 is not void"),
             Self::OutputRoutineBox255NotVoid => {
@@ -463,6 +471,8 @@ impl std::error::Error for ExecError {
             | Self::PdfDestinationIdentifierMissing
             | Self::PdfDestinationKindMissing
             | Self::PdfDestinationInForm
+            | Self::PdfThreadIdentifierMissing
+            | Self::PdfThreadInForm
             | Self::VSplitNeedsVBox
             | Self::Box255NotVoidBeforeOutput
             | Self::OutputRoutineBox255NotVoid
@@ -552,6 +562,8 @@ impl ExecError {
             | Self::PdfDestinationIdentifierMissing
             | Self::PdfDestinationKindMissing
             | Self::PdfDestinationInForm
+            | Self::PdfThreadIdentifierMissing
+            | Self::PdfThreadInForm
             | Self::VSplitNeedsVBox
             | Self::Box255NotVoidBeforeOutput
             | Self::OutputRoutineBox255NotVoid

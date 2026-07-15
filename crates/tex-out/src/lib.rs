@@ -50,6 +50,6 @@ pub use model::{
     GlueSign, GlueSpec, JobInfo, KernKind, LeaderPayload, OpenTypeFontResource, PageArtifact,
     PageArtifactBuilder, PageEffect, PageNode, PageToken, PdfAccessibilityEffect,
     PdfAnnotationEffect, PdfDestinationEffect, PdfDestinationIdentifier, PdfDestinationKind,
-    PdfLiteralMode, TokenCatcode, UnvalidatedPageArtifact,
+    PdfLiteralMode, PdfThreadEffect, TokenCatcode, UnvalidatedPageArtifact,
 };
 pub use tex_content::{ContentDomain, ContentHash, ContentIdentity};

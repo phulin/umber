@@ -957,6 +957,80 @@ fn execute_pdf_outline(
     Ok(())
 }
 
+fn scan_pdf_thread_identifier(
+    context: TracedTokenWord,
+    input: &mut InputStack,
+    stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<tex_state::PdfActionIdentifier, ExecError> {
+    if scan_optional_keyword_x(input, stores, execution, "num")? {
+        Ok(tex_state::PdfActionIdentifier::Number(
+            scan_pdf_destination_positive(context, input, stores, execution, "thread identifier")?,
+        ))
+    } else if scan_optional_keyword_x(input, stores, execution, "name")? {
+        Ok(tex_state::PdfActionIdentifier::Name(
+            scan_general_text_expanded_with_driver(
+                input,
+                &mut tex_state::ExpansionContext::new(stores),
+                execution,
+                context,
+            )?,
+        ))
+    } else {
+        Err(ExecError::PdfThreadIdentifierMissing)
+    }
+}
+
+fn execute_pdf_thread(
+    context: TracedTokenWord,
+    nest: &mut ModeNest,
+    input: &mut InputStack,
+    stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
+    running: bool,
+) -> Result<(), ExecError> {
+    if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+        return Err(ExecError::PdfExtensionInDviMode(if running {
+            "pdfstartthread"
+        } else {
+            "pdfthread"
+        }));
+    }
+    let dimensions = scan_pdf_annotation_dimensions(context, input, stores, execution)?;
+    let attributes = if scan_optional_keyword_x(input, stores, execution, "attr")? {
+        scan_general_text_expanded_with_driver(
+            input,
+            &mut tex_state::ExpansionContext::new(stores),
+            execution,
+            context,
+        )?
+    } else {
+        TokenListId::EMPTY
+    };
+    let identifier = scan_pdf_thread_identifier(context, input, stores, execution)?;
+    crate::vertical::append_node_to_current_list(
+        nest,
+        stores,
+        Node::Whatsit(tex_state::node::Whatsit::PdfThread {
+            identifier,
+            dimensions,
+            attributes,
+            running,
+        }),
+    )
+}
+
+fn execute_pdf_end_thread(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecError> {
+    if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+        return Err(ExecError::PdfExtensionInDviMode("pdfendthread"));
+    }
+    crate::vertical::append_node_to_current_list(
+        nest,
+        stores,
+        Node::Whatsit(tex_state::node::Whatsit::PdfEndThread),
+    )
+}
+
 pub(crate) fn warn_pdf_destination_duplicate(
     stores: &mut Universe,
     identity: &tex_state::PdfDestinationIdentity,
@@ -2406,6 +2480,23 @@ fn execute_prefixed_command(
                 execute_pdf_destination(command.traced, nest, input, stores, execution)?;
                 Ok(CommandOutcome::continue_only())
             }
+            UnexpandablePrimitive::PdfThread | UnexpandablePrimitive::PdfStartThread => {
+                reject_all_prefixes(prefixes)?;
+                execute_pdf_thread(
+                    command.traced,
+                    nest,
+                    input,
+                    stores,
+                    execution,
+                    primitive == UnexpandablePrimitive::PdfStartThread,
+                )?;
+                Ok(CommandOutcome::continue_only())
+            }
+            UnexpandablePrimitive::PdfEndThread => {
+                reject_all_prefixes(prefixes)?;
+                execute_pdf_end_thread(nest, stores)?;
+                Ok(CommandOutcome::continue_only())
+            }
             UnexpandablePrimitive::PdfStartLink => {
                 reject_all_prefixes(prefixes)?;
                 execute_pdf_start_link(command.traced, nest, input, stores, execution)?;
@@ -2456,10 +2547,7 @@ fn execute_prefixed_command(
                 )?;
                 Ok(CommandOutcome::continue_only())
             }
-            UnexpandablePrimitive::PdfTeXUnimplemented
-            | UnexpandablePrimitive::PdfThread
-            | UnexpandablePrimitive::PdfStartThread
-            | UnexpandablePrimitive::PdfEndThread => {
+            UnexpandablePrimitive::PdfTeXUnimplemented => {
                 unreachable!("unsupported pdfTeX placeholders return before prefix handling")
             }
         },

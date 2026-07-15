@@ -1331,6 +1331,36 @@ impl Stores {
                     crate::node::PdfDestinationKind::Fit => hasher.u8(7),
                 }
             }
+            Whatsit::PdfThread {
+                identifier,
+                dimensions,
+                attributes,
+                running,
+            } => {
+                hasher.tag(25);
+                match identifier {
+                    crate::PdfActionIdentifier::Name(tokens) => {
+                        hasher.u8(0);
+                        self.hash_token_list_semantic(*tokens, hasher);
+                    }
+                    crate::PdfActionIdentifier::Number(number) => {
+                        hasher.u8(1);
+                        hasher.u32(*number);
+                    }
+                    crate::PdfActionIdentifier::Raw(_) => {
+                        unreachable!("threads use typed identifiers")
+                    }
+                }
+                for value in [dimensions.width, dimensions.height, dimensions.depth] {
+                    hasher.bool(value.is_some());
+                    if let Some(value) = value {
+                        hasher.i32(value.raw());
+                    }
+                }
+                self.hash_token_list_semantic(*attributes, hasher);
+                hasher.bool(*running);
+            }
+            Whatsit::PdfEndThread => hasher.tag(26),
         }
     }
 

@@ -816,6 +816,8 @@ fn anchor_for_whatsit(
         | Whatsit::PdfLinkEnd { .. }
         | Whatsit::PdfRunningLink(_)
         | Whatsit::PdfDestination { .. }
+        | Whatsit::PdfThread { .. }
+        | Whatsit::PdfEndThread
         | Whatsit::PdfLiteral { .. }
         | Whatsit::DeferredPdfLiteral { .. }
         | Whatsit::PdfSetMatrix { .. }

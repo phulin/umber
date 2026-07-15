@@ -412,6 +412,36 @@ impl Stores {
                 }
                 hash_pdf_destination_kind(hasher, *kind);
             }
+            Whatsit::PdfThread {
+                identifier,
+                dimensions,
+                attributes,
+                running,
+            } => {
+                hasher.tag(24);
+                match identifier {
+                    crate::PdfActionIdentifier::Name(tokens) => {
+                        hasher.u8(0);
+                        hasher.u64(self.token_list_semantic_id_value(*tokens));
+                    }
+                    crate::PdfActionIdentifier::Number(number) => {
+                        hasher.u8(1);
+                        hasher.u32(*number);
+                    }
+                    crate::PdfActionIdentifier::Raw(_) => {
+                        unreachable!("threads use typed identifiers")
+                    }
+                }
+                for value in [dimensions.width, dimensions.height, dimensions.depth] {
+                    hasher.bool(value.is_some());
+                    if let Some(value) = value {
+                        hasher.i32(value.raw());
+                    }
+                }
+                hasher.u64(self.token_list_semantic_id_value(*attributes));
+                hasher.bool(*running);
+            }
+            Whatsit::PdfEndThread => hasher.tag(25),
         }
     }
 }

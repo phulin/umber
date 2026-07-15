@@ -200,6 +200,16 @@ pub(super) enum FormatWhatsit {
         height: Option<i32>,
         depth: Option<i32>,
     },
+    PdfThread {
+        name_tokens: Option<u32>,
+        number: Option<u32>,
+        width: Option<i32>,
+        height: Option<i32>,
+        depth: Option<i32>,
+        attributes: u32,
+        running: bool,
+    },
+    PdfEndThread,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -607,6 +617,30 @@ impl FormatWhatsit {
                     depth: dimensions.depth.map(Scaled::raw),
                 }
             }
+            Whatsit::PdfThread {
+                identifier,
+                dimensions,
+                attributes,
+                running,
+            } => {
+                let (name_tokens, number) = match identifier {
+                    crate::PdfActionIdentifier::Name(tokens) => (Some(tokens.raw()), None),
+                    crate::PdfActionIdentifier::Number(number) => (None, Some(number)),
+                    crate::PdfActionIdentifier::Raw(_) => {
+                        unreachable!("threads use typed identifiers")
+                    }
+                };
+                Self::PdfThread {
+                    name_tokens,
+                    number,
+                    width: dimensions.width.map(Scaled::raw),
+                    height: dimensions.height.map(Scaled::raw),
+                    depth: dimensions.depth.map(Scaled::raw),
+                    attributes: attributes.raw(),
+                    running,
+                }
+            }
+            Whatsit::PdfEndThread => Self::PdfEndThread,
         }
     }
 
@@ -726,6 +760,34 @@ impl FormatWhatsit {
                     kind,
                 }
             }
+            Self::PdfThread {
+                name_tokens,
+                number,
+                width,
+                height,
+                depth,
+                attributes,
+                running,
+            } => {
+                let identifier = match (name_tokens, number) {
+                    (Some(tokens), None) => {
+                        crate::PdfActionIdentifier::Name(token_list_id(stores, tokens)?)
+                    }
+                    (None, Some(number)) => crate::PdfActionIdentifier::Number(number),
+                    _ => return Err(StoreFormatError::Invalid("PDF thread identifier")),
+                };
+                Whatsit::PdfThread {
+                    identifier,
+                    dimensions: crate::PdfAnnotationDimensions {
+                        width: width.map(Scaled::from_raw),
+                        height: height.map(Scaled::from_raw),
+                        depth: depth.map(Scaled::from_raw),
+                    },
+                    attributes: token_list_id(stores, attributes)?,
+                    running,
+                }
+            }
+            Self::PdfEndThread => Whatsit::PdfEndThread,
         })
     }
 }

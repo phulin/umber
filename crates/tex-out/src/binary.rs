@@ -2,7 +2,7 @@ use crate::{
     BoxNode, ContentHash, DiscKind, EffectSink, FontResource, FontResourceConstruction, GlueKind,
     GlueOrder, GlueSetRatio, GlueSign, GlueSpec, KernKind, LeaderPayload, PageArtifact, PageEffect,
     PageNode, PageToken, PdfAccessibilityEffect, PdfAnnotationEffect, PdfDestinationEffect,
-    PdfDestinationIdentifier, PdfDestinationKind, PdfLiteralMode, TokenCatcode,
+    PdfDestinationIdentifier, PdfDestinationKind, PdfLiteralMode, PdfThreadEffect, TokenCatcode,
     UnvalidatedPageArtifact,
 };
 use std::fmt;
@@ -64,6 +64,9 @@ mod wire {
         pub const PDF_ANNOTATION: u8 = 16;
         pub const PDF_REF_XIMAGE: u8 = 17;
         pub const PDF_DESTINATION: u8 = 18;
+        pub const PDF_THREAD: u8 = 19;
+        pub const PDF_START_THREAD: u8 = 20;
+        pub const PDF_END_THREAD: u8 = 21;
     }
 
     pub mod token {
@@ -85,6 +88,42 @@ mod wire {
         pub const COPIED: u8 = 1;
         pub const LETTERSPACED: u8 = 2;
         pub const EXPANDED: u8 = 3;
+    }
+}
+
+#[cfg(test)]
+mod wire_tag_tests {
+    use super::wire;
+
+    #[test]
+    fn page_effect_tags_are_append_only_unique_and_bijective() {
+        let tags = [
+            wire::effect::OPEN_OUT,
+            wire::effect::CLOSE_OUT,
+            wire::effect::WRITE,
+            wire::effect::SPECIAL,
+            wire::effect::PDF_ACCESSIBILITY,
+            wire::effect::PDF_LITERAL,
+            wire::effect::PDF_SET_MATRIX,
+            wire::effect::PDF_SAVE,
+            wire::effect::PDF_RESTORE,
+            wire::effect::PDF_COLOR_STACK,
+            wire::effect::PDF_SAVE_POSITION,
+            wire::effect::PDF_SNAP_STATE,
+            wire::effect::PDF_SNAP_REF_POINT,
+            wire::effect::PDF_SNAP_Y,
+            wire::effect::PDF_SNAP_Y_COMP,
+            wire::effect::PDF_REF_XFORM,
+            wire::effect::PDF_ANNOTATION,
+            wire::effect::PDF_REF_XIMAGE,
+            wire::effect::PDF_DESTINATION,
+            wire::effect::PDF_THREAD,
+            wire::effect::PDF_START_THREAD,
+            wire::effect::PDF_END_THREAD,
+        ];
+        for (expected, tag) in (0_u8..).zip(tags) {
+            assert_eq!(tag, expected);
+        }
     }
 }
 
@@ -1586,6 +1625,35 @@ impl Writer {
                     }
                     self.scaled(marker.margin);
                 }
+                PageEffect::PdfThread(marker) | PageEffect::PdfStartThread(marker) => {
+                    self.u8(if matches!(effect, PageEffect::PdfThread(_)) {
+                        wire::effect::PDF_THREAD
+                    } else {
+                        wire::effect::PDF_START_THREAD
+                    });
+                    self.u32(marker.thread_object);
+                    self.u32(marker.bead_object);
+                    self.u32(marker.rectangle_object);
+                    match &marker.identifier {
+                        PdfDestinationIdentifier::Name(name) => {
+                            self.u8(0);
+                            self.bytes(name);
+                        }
+                        PdfDestinationIdentifier::Number(number) => {
+                            self.u8(1);
+                            self.u32(*number);
+                        }
+                    }
+                    for value in [marker.width, marker.height, marker.depth] {
+                        self.u8(u8::from(value.is_some()));
+                        if let Some(value) = value {
+                            self.scaled(value);
+                        }
+                    }
+                    self.bytes(&marker.attributes);
+                    self.scaled(marker.margin);
+                }
+                PageEffect::PdfEndThread => self.u8(wire::effect::PDF_END_THREAD),
             }
         }
     }
@@ -2352,6 +2420,50 @@ impl Reader<'_> {
                         margin: self.scaled()?,
                     })
                 }
+                tag @ (wire::effect::PDF_THREAD | wire::effect::PDF_START_THREAD)
+                    if version >= VERSION =>
+                {
+                    let thread_object = self.u32()?;
+                    let bead_object = self.u32()?;
+                    let rectangle_object = self.u32()?;
+                    let identifier = match self.u8()? {
+                        0 => PdfDestinationIdentifier::Name(self.bytes()?),
+                        1 => PdfDestinationIdentifier::Number(self.u32()?),
+                        tag => {
+                            return Err(ParseError::InvalidTag {
+                                kind: "PDF thread identifier",
+                                tag,
+                            });
+                        }
+                    };
+                    let mut dimension = || -> Result<Option<Scaled>, ParseError> {
+                        match self.u8()? {
+                            0 => Ok(None),
+                            1 => Ok(Some(self.scaled()?)),
+                            tag => Err(ParseError::InvalidTag {
+                                kind: "PDF thread dimension",
+                                tag,
+                            }),
+                        }
+                    };
+                    let marker = PdfThreadEffect {
+                        thread_object,
+                        bead_object,
+                        rectangle_object,
+                        identifier,
+                        width: dimension()?,
+                        height: dimension()?,
+                        depth: dimension()?,
+                        attributes: self.bytes()?,
+                        margin: self.scaled()?,
+                    };
+                    if tag == wire::effect::PDF_THREAD {
+                        PageEffect::PdfThread(marker)
+                    } else {
+                        PageEffect::PdfStartThread(marker)
+                    }
+                }
+                wire::effect::PDF_END_THREAD if version >= VERSION => PageEffect::PdfEndThread,
                 tag => {
                     return Err(ParseError::InvalidTag {
                         kind: "effect",
