@@ -10,14 +10,16 @@ use tex_out::pdf::{
     PdfSerializeError, PdfStreamCompression, PdfTrailer, PdfValue, PdfVersion,
     UnvalidatedPdfDocument, page_content,
 };
-use tex_out::positioned::{PositionedError, PositionedEvent};
+use tex_out::positioned::{
+    BoxKind, PositionedBox, PositionedError, PositionedEvent, PositionedPage,
+};
 use tex_state::env::banks::{IntParam, TokParam};
 use tex_state::ids::FontId;
 use tex_state::ids::TokenListId;
 use tex_state::{
     CommittedArtifact, ContentHash, PdfActionDestination, PdfActionIdentifier, PdfActionRecord,
-    PdfActionSpec, PdfActionTarget, PdfActionWindow, PdfDocumentFragmentKind, PdfOutputParameters,
-    Universe, WorldError,
+    PdfActionSpec, PdfActionTarget, PdfActionWindow, PdfAnnotationDimensions,
+    PdfDocumentFragmentKind, PdfLinkRecord, PdfOutputParameters, Universe, WorldError,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -79,6 +81,14 @@ pub fn pdf_from_committed_artifacts_at_dpi(
     let options = serialization_options(parameters)?;
     let page_records = stores.pdf_pages().to_vec();
     let font_usage = collect_font_usage(stores, artifacts, &page_records)?;
+    let positioned_pages = positioned_pages(stores, artifacts, &page_records)?;
+    let page_link_margins = page_records
+        .iter()
+        .map(|record| record.link_margin())
+        .collect::<Vec<_>>();
+    let mut page_annotations =
+        lower_page_annotations(stores, &positioned_pages, &page_link_margins)?;
+    assign_annotation_objects(stores, &mut page_annotations)?;
     let include_info = stores.int_param(IntParam::PDF_OMIT_INFO_DICT) == 0;
     let document_ids = stores
         .finalize_pdf_document_objects(include_info)
@@ -204,7 +214,7 @@ pub fn pdf_from_committed_artifacts_at_dpi(
     for (page_index, record) in page_records.iter().copied().enumerate() {
         let bytes = artifact_bytes(stores, artifacts, record.artifact())?;
         let artifact = tex_out::PageArtifact::from_bytes(&bytes)?;
-        let positioned = tex_out::positioned::lower_page(&artifact, page_index as u32)?;
+        let positioned = positioned_pages[page_index].clone();
         let (page_width, page_height) = pdf_page_extents(&artifact, record)?;
         let mut rectangles = Vec::new();
         let mut text_runs = Vec::new();
@@ -441,7 +451,9 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                 PositionedEvent::Special(special) => {
                     return Err(PdfBuildError::UnsupportedSpecial(special.class));
                 }
-                PositionedEvent::Box(_) | PositionedEvent::TextRun(_) => {}
+                PositionedEvent::Box(_)
+                | PositionedEvent::BoxEnd(_)
+                | PositionedEvent::TextRun(_) => {}
             }
         }
 
@@ -588,6 +600,289 @@ fn collect_font_usage(
         }
     }
     Ok(usage)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ShippedAnnotation {
+    source_object: u32,
+    object: u32,
+    kind: ShippedAnnotationKind,
+    rect: ShippedAnnotationRect,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ShippedAnnotationKind {
+    Annotation,
+    Link,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ShippedAnnotationRect {
+    left: Scaled,
+    top: Scaled,
+    right: Scaled,
+    bottom: Scaled,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ActiveShippedLink {
+    record: PdfLinkRecord,
+    depth: u32,
+    candidate: Option<(u32, Scaled)>,
+}
+
+fn positioned_pages(
+    stores: &Universe,
+    artifacts: &[CommittedArtifact],
+    records: &[tex_state::PdfPageRecord],
+) -> Result<Vec<PositionedPage>, PdfBuildError> {
+    records
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(page_index, record)| {
+            let bytes = artifact_bytes(stores, artifacts, record.artifact())?;
+            let artifact = tex_out::PageArtifact::from_bytes(&bytes)?;
+            Ok(tex_out::positioned::lower_page(
+                &artifact,
+                page_index as u32,
+            )?)
+        })
+        .collect()
+}
+
+fn lower_page_annotations(
+    stores: &Universe,
+    pages: &[PositionedPage],
+    link_margins: &[Scaled],
+) -> Result<Vec<Vec<ShippedAnnotation>>, PdfBuildError> {
+    let annotations = stores
+        .pdf_annotations()
+        .iter()
+        .copied()
+        .map(|record| (record.object(), record))
+        .collect::<BTreeMap<_, _>>();
+    let links = stores
+        .pdf_links()
+        .iter()
+        .copied()
+        .map(|record| (record.object(), record))
+        .collect::<BTreeMap<_, _>>();
+    let mut active = Vec::<ActiveShippedLink>::new();
+    let mut result = Vec::with_capacity(pages.len());
+
+    for (page, link_margin) in pages.iter().zip(link_margins.iter().copied()) {
+        let mut shipped = Vec::new();
+        let mut boxes = BTreeMap::<u32, PositionedBox>::new();
+        let mut running = true;
+        for event in &page.events {
+            match event {
+                PositionedEvent::Box(positioned_box) => {
+                    boxes.insert(positioned_box.id, *positioned_box);
+                    if running && positioned_box.kind == BoxKind::Horizontal {
+                        for link in &mut active {
+                            if link.depth == positioned_box.depth
+                                && link.record.dimensions().width.is_none()
+                            {
+                                link.candidate = Some((positioned_box.id, positioned_box.x));
+                            }
+                        }
+                    }
+                }
+                PositionedEvent::BoxEnd(end) => {
+                    let positioned_box = boxes[&end.id];
+                    for link in &mut active {
+                        if let Some((box_id, left)) = link.candidate
+                            && box_id == end.id
+                        {
+                            shipped.push(link_segment(
+                                link.record,
+                                positioned_box,
+                                left,
+                                positioned_box
+                                    .x
+                                    .checked_add(positioned_box.width)
+                                    .ok_or(PdfBuildError::PageGeometryOverflow)?,
+                                link_margin,
+                            )?);
+                            link.candidate = None;
+                        }
+                    }
+                }
+                PositionedEvent::PdfAnnotation(marker) => {
+                    let positioned_box = boxes[&marker.containing_box];
+                    match marker.marker {
+                        tex_out::PdfAnnotationEffect::Annotation { object } => {
+                            let record = annotations
+                                .get(&object)
+                                .copied()
+                                .ok_or(PdfBuildError::MissingAnnotationRecord(object))?;
+                            let data = record
+                                .data()
+                                .ok_or(PdfBuildError::UninitializedAnnotation(object))?;
+                            shipped.push(ShippedAnnotation {
+                                source_object: object,
+                                object,
+                                kind: ShippedAnnotationKind::Annotation,
+                                rect: marker_rect(
+                                    marker.x,
+                                    marker.y,
+                                    positioned_box,
+                                    data.dimensions,
+                                    link_margin,
+                                )?,
+                            });
+                        }
+                        tex_out::PdfAnnotationEffect::LinkStart { object } => {
+                            let record = links
+                                .get(&object)
+                                .copied()
+                                .ok_or(PdfBuildError::MissingLinkRecord(object))?;
+                            let mut link = ActiveShippedLink {
+                                record,
+                                depth: marker.depth,
+                                candidate: None,
+                            };
+                            if let Some(width) = record.dimensions().width {
+                                shipped.push(link_segment(
+                                    record,
+                                    positioned_box,
+                                    marker.x,
+                                    marker
+                                        .x
+                                        .checked_add(width)
+                                        .ok_or(PdfBuildError::PageGeometryOverflow)?,
+                                    link_margin,
+                                )?);
+                            } else {
+                                link.candidate = Some((marker.containing_box, marker.x));
+                            }
+                            active.push(link);
+                        }
+                        tex_out::PdfAnnotationEffect::LinkEnd { object } => {
+                            let index = active
+                                .iter()
+                                .rposition(|link| link.record.object() == object)
+                                .ok_or(PdfBuildError::MissingOpenLink(object))?;
+                            let link = active.remove(index);
+                            if link.record.dimensions().width.is_none() {
+                                let left = link
+                                    .candidate
+                                    .filter(|(box_id, _)| *box_id == marker.containing_box)
+                                    .map_or(positioned_box.x, |(_, left)| left);
+                                shipped.push(link_segment(
+                                    link.record,
+                                    positioned_box,
+                                    left,
+                                    marker.x,
+                                    link_margin,
+                                )?);
+                            }
+                        }
+                        tex_out::PdfAnnotationEffect::RunningLink(enabled) => running = enabled,
+                    }
+                }
+                PositionedEvent::TextRun(_)
+                | PositionedEvent::Rule(_)
+                | PositionedEvent::Special(_)
+                | PositionedEvent::PdfAccessibility(_) => {}
+            }
+        }
+        result.push(shipped);
+    }
+    Ok(result)
+}
+
+fn link_segment(
+    record: PdfLinkRecord,
+    positioned_box: PositionedBox,
+    left: Scaled,
+    right: Scaled,
+    margin: Scaled,
+) -> Result<ShippedAnnotation, PdfBuildError> {
+    let dimensions = record.dimensions();
+    let baseline = positioned_box.baseline;
+    Ok(ShippedAnnotation {
+        source_object: record.object(),
+        object: record.object(),
+        kind: ShippedAnnotationKind::Link,
+        rect: marker_rect_with_right(left, right, baseline, positioned_box, dimensions, margin)?,
+    })
+}
+
+fn marker_rect(
+    left: Scaled,
+    baseline: Scaled,
+    positioned_box: PositionedBox,
+    dimensions: PdfAnnotationDimensions,
+    margin: Scaled,
+) -> Result<ShippedAnnotationRect, PdfBuildError> {
+    let right = left
+        .checked_add(dimensions.width.unwrap_or_else(|| {
+            positioned_box
+                .x
+                .checked_add(positioned_box.width)
+                .and_then(|right| right.checked_sub(left))
+                .unwrap_or(Scaled::from_raw(0))
+        }))
+        .ok_or(PdfBuildError::PageGeometryOverflow)?;
+    marker_rect_with_right(left, right, baseline, positioned_box, dimensions, margin)
+}
+
+fn marker_rect_with_right(
+    left: Scaled,
+    right: Scaled,
+    baseline: Scaled,
+    positioned_box: PositionedBox,
+    dimensions: PdfAnnotationDimensions,
+    margin: Scaled,
+) -> Result<ShippedAnnotationRect, PdfBuildError> {
+    let top = match dimensions.height {
+        Some(height) => baseline
+            .checked_sub(height)
+            .ok_or(PdfBuildError::PageGeometryOverflow)?,
+        None => positioned_box.y,
+    };
+    let bottom = match dimensions.depth {
+        Some(depth) => baseline
+            .checked_add(depth)
+            .ok_or(PdfBuildError::PageGeometryOverflow)?,
+        None => positioned_box
+            .y
+            .checked_add(positioned_box.height)
+            .ok_or(PdfBuildError::PageGeometryOverflow)?,
+    };
+    Ok(ShippedAnnotationRect {
+        left: left
+            .checked_sub(margin)
+            .ok_or(PdfBuildError::PageGeometryOverflow)?,
+        top: top
+            .checked_sub(margin)
+            .ok_or(PdfBuildError::PageGeometryOverflow)?,
+        right: right
+            .checked_add(margin)
+            .ok_or(PdfBuildError::PageGeometryOverflow)?,
+        bottom: bottom
+            .checked_add(margin)
+            .ok_or(PdfBuildError::PageGeometryOverflow)?,
+    })
+}
+
+fn assign_annotation_objects(
+    stores: &mut Universe,
+    pages: &mut [Vec<ShippedAnnotation>],
+) -> Result<(), PdfBuildError> {
+    let mut used = BTreeSet::new();
+    for annotation in pages.iter_mut().flatten() {
+        annotation.object = if used.insert(annotation.source_object) {
+            annotation.source_object
+        } else {
+            stores
+                .reserve_pdf_link_continuation()
+                .map_err(|_| PdfBuildError::ObjectCapacity)?
+        };
+    }
+    Ok(())
 }
 
 #[derive(Clone)]
@@ -1619,6 +1914,10 @@ pub enum PdfBuildError {
     PageGeometryOverflow,
     InvalidObjectId(u32),
     ObjectCapacity,
+    MissingAnnotationRecord(u32),
+    UninitializedAnnotation(u32),
+    MissingLinkRecord(u32),
+    MissingOpenLink(u32),
     OpenActionPageNotFound(u32),
     OpenActionHasNoPage,
     ReferencedRawObjectUninitialized(u32),
@@ -1667,6 +1966,18 @@ impl std::fmt::Display for PdfBuildError {
             Self::PageGeometryOverflow => f.write_str("pdfTeX page geometry arithmetic overflowed"),
             Self::InvalidObjectId(id) => write!(f, "invalid PDF object id {id}"),
             Self::ObjectCapacity => f.write_str("pdfTeX error (obj): too many PDF objects."),
+            Self::MissingAnnotationRecord(id) => {
+                write!(f, "shipped annotation references missing object {id}")
+            }
+            Self::UninitializedAnnotation(id) => {
+                write!(f, "shipped annotation object {id} was never initialized")
+            }
+            Self::MissingLinkRecord(id) => {
+                write!(f, "shipped link references missing object {id}")
+            }
+            Self::MissingOpenLink(id) => {
+                write!(f, "shipped link end {id} has no active start")
+            }
             Self::OpenActionPageNotFound(page) => {
                 write!(f, "PDF open action references missing page {page}")
             }
@@ -1793,6 +2104,98 @@ mod tests {
     use tex_exec::ExecutionContext;
     use tex_lex::{InputStack, MemoryInput};
     use tex_state::{JobClock, World};
+
+    fn positioned_fixture(events: Vec<PositionedEvent>, page_index: u32) -> PositionedPage {
+        PositionedPage {
+            page_index,
+            width: Scaled::from_raw(200),
+            height: Scaled::from_raw(200),
+            mag: 1_000,
+            counts: [0; 10],
+            fonts: Vec::new(),
+            events,
+        }
+    }
+
+    #[test]
+    fn running_link_geometry_continues_with_fresh_page_local_segments() {
+        use tex_out::positioned::{PositionedBoxEnd, PositionedPdfAnnotation};
+
+        let mut stores = Universe::default();
+        let link = stores
+            .create_pdf_link(
+                PdfAnnotationDimensions::RUNNING,
+                TokenListId::EMPTY,
+                PdfActionSpec::User(TokenListId::EMPTY),
+                0,
+            )
+            .expect("logical link");
+        stores.end_pdf_link();
+        let first_box = PositionedBox {
+            id: 0,
+            depth: 2,
+            kind: BoxKind::Horizontal,
+            x: Scaled::from_raw(10),
+            y: Scaled::from_raw(20),
+            width: Scaled::from_raw(100),
+            height: Scaled::from_raw(30),
+            baseline: Scaled::from_raw(40),
+        };
+        let second_box = PositionedBox {
+            id: 0,
+            depth: 2,
+            kind: BoxKind::Horizontal,
+            x: Scaled::from_raw(5),
+            y: Scaled::from_raw(30),
+            width: Scaled::from_raw(80),
+            height: Scaled::from_raw(25),
+            baseline: Scaled::from_raw(45),
+        };
+        let pages = vec![
+            positioned_fixture(
+                vec![
+                    PositionedEvent::Box(first_box),
+                    PositionedEvent::PdfAnnotation(PositionedPdfAnnotation {
+                        x: Scaled::from_raw(30),
+                        y: first_box.baseline,
+                        containing_box: 0,
+                        depth: 2,
+                        marker: tex_out::PdfAnnotationEffect::LinkStart {
+                            object: link.object(),
+                        },
+                    }),
+                    PositionedEvent::BoxEnd(PositionedBoxEnd { id: 0, depth: 2 }),
+                ],
+                0,
+            ),
+            positioned_fixture(
+                vec![
+                    PositionedEvent::Box(second_box),
+                    PositionedEvent::PdfAnnotation(PositionedPdfAnnotation {
+                        x: Scaled::from_raw(25),
+                        y: second_box.baseline,
+                        containing_box: 0,
+                        depth: 2,
+                        marker: tex_out::PdfAnnotationEffect::LinkEnd {
+                            object: link.object(),
+                        },
+                    }),
+                    PositionedEvent::BoxEnd(PositionedBoxEnd { id: 0, depth: 2 }),
+                ],
+                1,
+            ),
+        ];
+        let mut shipped =
+            lower_page_annotations(&stores, &pages, &[Scaled::from_raw(2), Scaled::from_raw(3)])
+                .expect("link lowering");
+        assert_eq!(shipped[0][0].rect.left, Scaled::from_raw(28));
+        assert_eq!(shipped[0][0].rect.right, Scaled::from_raw(112));
+        assert_eq!(shipped[1][0].rect.left, Scaled::from_raw(2));
+        assert_eq!(shipped[1][0].rect.right, Scaled::from_raw(28));
+        assign_annotation_objects(&mut stores, &mut shipped).expect("continuation object");
+        assert_eq!(shipped[0][0].object, link.object());
+        assert_ne!(shipped[1][0].object, link.object());
+    }
 
     fn run_in(stores: &mut Universe, source: &str) -> RunResult {
         let mut input = InputStack::new(MemoryInput::new(source));

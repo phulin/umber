@@ -8,7 +8,8 @@ use std::fmt;
 use tex_arith::Scaled;
 
 const MAGIC: &[u8; 4] = b"UMPG";
-const VERSION: u8 = 16;
+const VERSION: u8 = 17;
+const PRE_ANNOTATION_VERSION: u8 = 16;
 const PDF_ACCESSIBILITY_VERSION: u8 = 15;
 const FONT_CONSTRUCTION_VERSION: u8 = 14;
 const OPENTYPE_FONT_VERSION: u8 = 13;
@@ -46,7 +47,8 @@ mod wire {
         pub const WRITE: u8 = 2;
         pub const SPECIAL: u8 = 3;
         pub const PDF_ACCESSIBILITY: u8 = 4;
-        pub const PDF_ANNOTATION: u8 = 5;
+        // Tags 5..=15 are reserved by independently developed artifact effects.
+        pub const PDF_ANNOTATION: u8 = 16;
     }
 
     pub mod token {
@@ -240,6 +242,7 @@ pub(crate) fn from_bytes(
     reader.expect_magic()?;
     let version = reader.u8()?;
     if version != VERSION
+        && version != PRE_ANNOTATION_VERSION
         && version != PDF_ACCESSIBILITY_VERSION
         && version != FONT_CONSTRUCTION_VERSION
         && version != OPENTYPE_FONT_VERSION
@@ -1728,6 +1731,7 @@ impl Reader<'_> {
         self.expect_magic()?;
         let version = self.u8()?;
         if version != VERSION
+            && version != PRE_ANNOTATION_VERSION
             && version != PDF_ACCESSIBILITY_VERSION
             && version != FONT_CONSTRUCTION_VERSION
             && version != OPENTYPE_FONT_VERSION
@@ -2878,5 +2882,25 @@ fn parse_glue_kind(tag: u8) -> Result<GlueKind, ParseError> {
             kind: "glue kind",
             tag,
         }),
+    }
+}
+
+#[cfg(test)]
+mod wire_tests {
+    use super::wire;
+
+    #[test]
+    fn effect_tags_are_unique_and_annotations_use_the_append_only_range() {
+        let tags = [
+            wire::effect::OPEN_OUT,
+            wire::effect::CLOSE_OUT,
+            wire::effect::WRITE,
+            wire::effect::SPECIAL,
+            wire::effect::PDF_ACCESSIBILITY,
+            wire::effect::PDF_ANNOTATION,
+        ];
+        let unique = tags.into_iter().collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(unique.len(), tags.len());
+        const { assert!(wire::effect::PDF_ANNOTATION >= 16) };
     }
 }

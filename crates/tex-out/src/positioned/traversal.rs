@@ -5,9 +5,9 @@ use crate::dvi::glue::adjusted_glue_width;
 use crate::{BoxNode, GlueKind, KernKind, LeaderPayload, PageArtifact, PageEffect, PageNode};
 
 use super::{
-    BoxKind, PositionedBox, PositionedError, PositionedEvent, PositionedLimits, PositionedPage,
-    PositionedPdfAccessibility, PositionedPdfAnnotation, PositionedRule, PositionedSourceRef,
-    PositionedSpecial, PositionedTextRun, TextUnit,
+    BoxKind, PositionedBox, PositionedBoxEnd, PositionedError, PositionedEvent, PositionedLimits,
+    PositionedPage, PositionedPdfAccessibility, PositionedPdfAnnotation, PositionedRule,
+    PositionedSourceRef, PositionedSpecial, PositionedTextRun, TextUnit,
 };
 
 const LEADER_ROUNDING_COMPENSATION: Scaled = Scaled::from_raw(10);
@@ -36,6 +36,8 @@ pub(super) fn lower(
         cur_v: add(root.height, page.job.v_offset)?,
         current_font_id: None,
         node_ordinals: index_nodes(&page.root),
+        next_box_id: 0,
+        box_stack: Vec::new(),
     };
     match kind {
         BoxKind::Horizontal => out.hlist(root, 1)?,
@@ -60,6 +62,8 @@ struct Lowerer<'a> {
     cur_v: Scaled,
     current_font_id: Option<u32>,
     node_ordinals: BTreeMap<usize, u32>,
+    next_box_id: u32,
+    box_stack: Vec<u32>,
 }
 
 impl Lowerer<'_> {
@@ -91,7 +95,7 @@ impl Lowerer<'_> {
         self.check_depth(depth)?;
         let base_line = self.cur_v;
         let left_edge = self.cur_h;
-        self.box_event(BoxKind::Horizontal, this_box, left_edge, base_line)?;
+        let box_id = self.box_event(BoxKind::Horizontal, this_box, left_edge, base_line, depth)?;
         let mut cur_g = Scaled::from_raw(0);
         let mut cur_glue = Scaled::from_raw(0);
         let mut run = RunBuilder::default();
@@ -207,7 +211,7 @@ impl Lowerer<'_> {
                 }
                 PageNode::WhatsitAnchor { effect_index } => {
                     run.flush(self)?;
-                    self.special(*effect_index)?;
+                    self.special(*effect_index, depth)?;
                 }
                 PageNode::Penalty(_)
                 | PageNode::Disc { .. }
@@ -219,14 +223,15 @@ impl Lowerer<'_> {
             }
             self.cur_v = base_line;
         }
-        run.flush(self)
+        run.flush(self)?;
+        self.end_box(box_id, depth)
     }
 
     fn vlist(&mut self, this_box: &BoxNode, depth: usize) -> Result<(), PositionedError> {
         self.check_depth(depth)?;
         let baseline = self.cur_v;
         let left_edge = self.cur_h;
-        self.box_event(BoxKind::Vertical, this_box, left_edge, baseline)?;
+        let box_id = self.box_event(BoxKind::Vertical, this_box, left_edge, baseline, depth)?;
         self.cur_v = sub(self.cur_v, this_box.height)?;
         let top_edge = self.cur_v;
         let mut cur_g = Scaled::from_raw(0);
@@ -254,7 +259,7 @@ impl Lowerer<'_> {
                     self.vleaders(this_box, *kind, leader, height, left_edge, top_edge, depth)?;
                 }
                 PageNode::Kern { amount, .. } => self.cur_v = add(self.cur_v, *amount)?,
-                PageNode::WhatsitAnchor { effect_index } => self.special(*effect_index)?,
+                PageNode::WhatsitAnchor { effect_index } => self.special(*effect_index, depth)?,
                 PageNode::Char { .. }
                 | PageNode::Lig { .. }
                 | PageNode::Penalty(_)
@@ -266,7 +271,7 @@ impl Lowerer<'_> {
                 | PageNode::Adjust(_) => {}
             }
         }
-        Ok(())
+        self.end_box(box_id, depth)
     }
 
     fn box_event(
@@ -275,14 +280,39 @@ impl Lowerer<'_> {
         node: &BoxNode,
         x: Scaled,
         baseline: Scaled,
-    ) -> Result<(), PositionedError> {
+        depth: usize,
+    ) -> Result<u32, PositionedError> {
+        let id = self.next_box_id;
+        self.next_box_id =
+            self.next_box_id
+                .checked_add(1)
+                .ok_or(PositionedError::TooManyEvents {
+                    limit: self.limits.max_events,
+                })?;
+        let depth = u32::try_from(depth).map_err(|_| PositionedError::NestingTooDeep {
+            limit: self.limits.max_depth,
+        })?;
         self.push(PositionedEvent::Box(PositionedBox {
+            id,
+            depth,
             kind,
             x,
             y: sub(baseline, node.height)?,
             width: node.width,
             height: add(node.height, node.depth)?,
             baseline,
+        }))?;
+        self.box_stack.push(id);
+        Ok(id)
+    }
+
+    fn end_box(&mut self, id: u32, depth: usize) -> Result<(), PositionedError> {
+        debug_assert_eq!(self.box_stack.pop(), Some(id));
+        self.push(PositionedEvent::BoxEnd(PositionedBoxEnd {
+            id,
+            depth: u32::try_from(depth).map_err(|_| PositionedError::NestingTooDeep {
+                limit: self.limits.max_depth,
+            })?,
         }))
     }
 
@@ -366,7 +396,7 @@ impl Lowerer<'_> {
         Ok(())
     }
 
-    fn special(&mut self, effect_index: u32) -> Result<(), PositionedError> {
+    fn special(&mut self, effect_index: u32, depth: usize) -> Result<(), PositionedError> {
         let effect = self
             .effects
             .get(effect_index as usize)
@@ -393,6 +423,13 @@ impl Lowerer<'_> {
                 self.push(PositionedEvent::PdfAnnotation(PositionedPdfAnnotation {
                     x: self.cur_h,
                     y: self.cur_v,
+                    containing_box: *self
+                        .box_stack
+                        .last()
+                        .expect("positioned effects are nested in a box"),
+                    depth: u32::try_from(depth).map_err(|_| PositionedError::NestingTooDeep {
+                        limit: self.limits.max_depth,
+                    })?,
                     marker: *marker,
                 }))?;
             }

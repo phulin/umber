@@ -376,6 +376,7 @@ pub(crate) struct PdfPageParameters {
     pub(crate) v_origin: Scaled,
     pub(crate) width: Scaled,
     pub(crate) height: Scaled,
+    pub(crate) link_margin: Scaled,
     pub(crate) page_attr: PdfTokenParameter,
     pub(crate) resources: PdfTokenParameter,
     /// Raw `\pdfomitprocset` value captured when this page is shipped.
@@ -425,6 +426,10 @@ impl PdfPageRecord {
     #[must_use]
     pub const fn height(self) -> Scaled {
         self.parameters.height
+    }
+    #[must_use]
+    pub const fn link_margin(self) -> Scaled {
+        self.parameters.link_margin
     }
     #[must_use]
     pub const fn page_attr(self) -> TokenListId {
@@ -876,6 +881,10 @@ impl PdfState {
         });
         self.open_link_fingerprint = open_link_fingerprint(&self.open_links);
         Ok(record)
+    }
+
+    pub(crate) fn reserve_link_continuation(&mut self) -> Result<u32, PdfObjectCapacityError> {
+        self.reserve_document_object()
     }
 
     pub(crate) fn end_link(&mut self) -> Option<PdfOpenLink> {
@@ -1906,6 +1915,7 @@ mod tests {
             v_origin: Scaled::from_raw(20),
             width: Scaled::from_raw(30),
             height: Scaled::from_raw(40),
+            link_margin: Scaled::from_raw(0),
             page_attr: token,
             resources: token,
             omit_procset: 0,
@@ -2207,6 +2217,7 @@ mod tests {
             v_origin: Scaled::from_raw(0),
             width: Scaled::from_raw(1),
             height: Scaled::from_raw(1),
+            link_margin: Scaled::from_raw(0),
             page_attr: token,
             resources: token,
             omit_procset: 0,
@@ -2353,6 +2364,7 @@ mod tests {
                 v_origin: Scaled::from_raw(0),
                 width: Scaled::from_raw(1),
                 height: Scaled::from_raw(1),
+                link_margin: Scaled::from_raw(0),
                 page_attr: token,
                 resources: token,
                 omit_procset: 0,

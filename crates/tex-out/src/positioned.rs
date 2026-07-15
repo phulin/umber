@@ -46,6 +46,7 @@ pub struct PositionedPage {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PositionedEvent {
     Box(PositionedBox),
+    BoxEnd(PositionedBoxEnd),
     TextRun(PositionedTextRun),
     Rule(PositionedRule),
     Special(PositionedSpecial),
@@ -55,12 +56,21 @@ pub enum PositionedEvent {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PositionedBox {
+    pub id: u32,
+    pub depth: u32,
     pub kind: BoxKind,
     pub x: Scaled,
     pub y: Scaled,
     pub width: Scaled,
     pub height: Scaled,
     pub baseline: Scaled,
+}
+
+/// Ordered exit from a positioned box entered by [`PositionedEvent::Box`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PositionedBoxEnd {
+    pub id: u32,
+    pub depth: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -126,6 +136,8 @@ pub struct PositionedPdfAccessibility {
 pub struct PositionedPdfAnnotation {
     pub x: Scaled,
     pub y: Scaled,
+    pub containing_box: u32,
+    pub depth: u32,
     pub marker: crate::PdfAnnotationEffect,
 }
 

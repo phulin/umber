@@ -753,6 +753,7 @@ fn write_page(
             }
             PositionedEvent::PdfAccessibility(_) => {}
             PositionedEvent::PdfAnnotation(_) => {}
+            PositionedEvent::BoxEnd(_) => {}
         }
         check_html_size(out, options)?;
     }

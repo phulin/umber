@@ -2214,6 +2214,12 @@ impl Universe {
         self.pdf.links()
     }
 
+    /// Reserves a distinct indirect annotation object for a shipped segment
+    /// after the logical link's first segment.
+    pub fn reserve_pdf_link_continuation(&mut self) -> Result<u32, PdfObjectCapacityError> {
+        self.pdf.reserve_link_continuation()
+    }
+
     /// Appends expanded tokens to one document-level PDF dictionary destination.
     pub fn append_pdf_document_fragment(
         &mut self,
@@ -2293,6 +2299,7 @@ impl Universe {
             v_origin: self.dimen_param(DimenParam::PDF_V_ORIGIN),
             width: self.dimen_param(DimenParam::PDF_PAGE_WIDTH),
             height: self.dimen_param(DimenParam::PDF_PAGE_HEIGHT),
+            link_margin: self.dimen_param(DimenParam::PDF_LINK_MARGIN),
             page_attr: self.current_pdf_token_parameter(TokParam::PDF_PAGE_ATTR),
             resources: self.current_pdf_token_parameter(TokParam::PDF_PAGE_RESOURCES),
             omit_procset: self.int_param(IntParam::PDF_OMIT_PROCSET),
