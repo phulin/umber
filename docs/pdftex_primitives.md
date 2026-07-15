@@ -58,7 +58,7 @@ oracle-backed test. Every name in a missing row is missing.
 | Family (source registration block) | Count | Status | Primitive names |
 | --- | ---: | --- | --- |
 | PDF token-list parameters | 4 | done | `\pdfpagesattr`, `\pdfpageattr`, `\pdfpageresources`, `\pdfpkmode` |
-| PDF integer parameters | 38 | partial (output policy done; remaining state only) | `\pdfoutput`, `\pdfcompresslevel`, `\pdfobjcompresslevel`, `\pdfdecimaldigits`, `\pdfmovechars`, `\pdfimageresolution`, `\pdfpkresolution`, `\pdfuniqueresname`, `\pdfoptionpdfminorversion`, `\pdfoptionalwaysusepdfpagebox`, `\pdfoptionpdfinclusionerrorlevel`, `\pdfmajorversion`, `\pdfminorversion`, `\pdfforcepagebox`, `\pdfpagebox`, `\pdfinclusionerrorlevel`, `\pdfgamma`, `\pdfimagegamma`, `\pdfimagehicolor`, `\pdfimageapplygamma`, `\pdfadjustspacing`, `\pdfprotrudechars`, `\pdftracingfonts`, `\pdfadjustinterwordglue`, `\pdfprependkern`, `\pdfappendkern`, `\pdfgentounicode`, `\pdfdraftmode`, `\pdfinclusioncopyfonts`, `\pdfsuppresswarningdupdest`, `\pdfsuppresswarningdupmap`, `\pdfsuppresswarningpagegroup`, `\pdfinfoomitdate`, `\pdfsuppressptexinfo`, `\pdfomitcharset`, `\pdfomitinfodict`, `\pdfomitprocset`, `\pdfptexuseunderscore` |
+| PDF integer parameters | 38 | partial (output policy, metadata effects, and microtype/font configuration contract done) | `\pdfoutput`, `\pdfcompresslevel`, `\pdfobjcompresslevel`, `\pdfdecimaldigits`, `\pdfmovechars`, `\pdfimageresolution`, `\pdfpkresolution`, `\pdfuniqueresname`, `\pdfoptionpdfminorversion`, `\pdfoptionalwaysusepdfpagebox`, `\pdfoptionpdfinclusionerrorlevel`, `\pdfmajorversion`, `\pdfminorversion`, `\pdfforcepagebox`, `\pdfpagebox`, `\pdfinclusionerrorlevel`, `\pdfgamma`, `\pdfimagegamma`, `\pdfimagehicolor`, `\pdfimageapplygamma`, `\pdfadjustspacing`, `\pdfprotrudechars`, `\pdftracingfonts`, `\pdfadjustinterwordglue`, `\pdfprependkern`, `\pdfappendkern`, `\pdfgentounicode`, `\pdfdraftmode`, `\pdfinclusioncopyfonts`, `\pdfsuppresswarningdupdest`, `\pdfsuppresswarningdupmap`, `\pdfsuppresswarningpagegroup`, `\pdfinfoomitdate`, `\pdfsuppressptexinfo`, `\pdfomitcharset`, `\pdfomitinfodict`, `\pdfomitprocset`, `\pdfptexuseunderscore` |
 | PDF dimension parameters | 13 | done | `\pdfhorigin`, `\pdfvorigin`, `\pdfpagewidth`, `\pdfpageheight`, `\pdflinkmargin`, `\pdfdestmargin`, `\pdfthreadmargin`, `\pdffirstlineheight`, `\pdflastlinedepth`, `\pdfeachlineheight`, `\pdfeachlinedepth`, `\pdfignoreddimen`, `\pdfpxdimen` |
 | Font construction and primitive recovery | 3 | missing | `\letterspacefont`, `\pdfcopyfont`, `\pdfprimitive` |
 | Read-only integer enquiries | 14 | missing | `\pdftexversion`, `\pdflastobj`, `\pdflastxform`, `\pdflastximage`, `\pdflastximagepages`, `\pdflastannot`, `\pdflastxpos`, `\pdflastypos`, `\pdfretval`, `\pdflastximagecolordepth`, `\pdfelapsedtime`, `\pdfshellescape`, `\pdfrandomseed`, `\pdflastlink` |
@@ -126,6 +126,28 @@ warns once and transfers a nonzero value to the corresponding current
 control. Those image effects, live page-box selection, and draft publication
 behavior are tracked after external-image issue 14 by issue 6.2.
 
+The INITEX microtype/font-configuration oracle at
+`tests/corpus/tex_exec/pdf_font_config` covers the nine issue-7 parameter
+names, zero defaults, signed assignments, grouping, and
+`\pdftracingfonts` box diagnostics. `PdfFontConfiguration` is a typed live
+projection of the canonical integer cells, not separately stored state. It
+pins the source-level distinctions that adjustment and protrusion affect final
+line material at values above zero but add line-breaking work only above one;
+interword adjustment and prepend/append kerns use positive values. A zero PK
+resolution selects the driver-provided DPI and the output consumer clamps the
+result to `72..=8000`. ToUnicode generation is positive-only, while any
+nonzero `\pdfomitcharset` omits the eligible subset Type-1 `/CharSet` entry.
+The latter two contracts come from `writefont.c` at the same pinned TeX Live
+source commit as `pdftex.web`.
+
+The actual expansion/protrusion, character-code-driven glue/kern, ToUnicode,
+PK-font, and font-dictionary effects remain deliberately unclaimed: issue
+7.2 depends on character tables (10), font shaping/expansion (11), and font
+maps/embedding (17). Those backends must consume the typed live projection and
+continue to serialize PDF through the canonical `pdf_writer` adapter. This
+split prevents the configuration issue from duplicating the owning font
+subsystems.
+
 The four PDF token parameters follow pdfTeX's distinct consumption scopes:
 `\pdfpageattr` and `\pdfpageresources` are captured in each successful
 shipout receipt, `\pdfpagesattr` is read when the final page-tree root is
@@ -188,7 +210,10 @@ checklist and include focused pdfTeX-oracle fixtures:
    Depends on issue 3.
 7. **Implement PDF microtype and font-output configuration parameters.**
    Cover adjustment, protrusion, kern insertion, tracing, ToUnicode, PK
-   resolution, and character-set omission. Depends on issue 3.
+   resolution, and character-set omission. The oracle-backed configuration
+   contract and tracing diagnostic are complete in issue 7.1; effective
+   shaping and font-output integration remains in issue 7.2 after issues 10,
+   11, and 17. Depends on issue 3.
 8. **Implement PDF metadata and warning-policy configuration parameters.**
    Cover date/info/procset omission, duplicate warnings, pTeX information,
    underscore policy, and compatibility-only parameter behavior. Depends on

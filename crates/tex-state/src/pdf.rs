@@ -13,6 +13,98 @@ const FIRST_DYNAMIC_OBJECT: u32 = 3;
 const OBJECTS_PER_PAGE: u32 = 3;
 const MAX_OBJECT_ID: u32 = i32::MAX as u32;
 
+/// Live pdfTeX microtype and font-output controls.
+///
+/// The raw values remain ordinary grouped integer parameters in `Env`; this
+/// projection gives downstream paragraph and font backends one typed,
+/// host-neutral contract without introducing shadow state.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct PdfFontConfiguration {
+    pub adjust_spacing: i32,
+    pub protrude_chars: i32,
+    pub tracing_fonts: i32,
+    pub adjust_interword_glue: i32,
+    pub prepend_kern: i32,
+    pub append_kern: i32,
+    pub generate_to_unicode: i32,
+    pub pk_resolution: i32,
+    pub omit_charset: i32,
+}
+
+impl PdfFontConfiguration {
+    /// Enables expansion while final line boxes are packed.
+    #[must_use]
+    pub const fn adjusts_spacing(self) -> bool {
+        self.adjust_spacing > 0
+    }
+
+    /// Enables expansion-aware line-breaking passes 7 and 8.
+    #[must_use]
+    pub const fn adjusts_line_breaking(self) -> bool {
+        self.adjust_spacing > 1
+    }
+
+    /// Enables margin-kern insertion in materialized lines.
+    #[must_use]
+    pub const fn protrudes_chars(self) -> bool {
+        self.protrude_chars > 0
+    }
+
+    /// Enables protrusion-aware line-breaking width calculations.
+    #[must_use]
+    pub const fn protrudes_during_line_breaking(self) -> bool {
+        self.protrude_chars > 1
+    }
+
+    #[must_use]
+    pub const fn traces_fonts(self) -> bool {
+        self.tracing_fonts > 0
+    }
+
+    #[must_use]
+    pub const fn adjusts_interword_glue(self) -> bool {
+        self.adjust_interword_glue > 0
+    }
+
+    #[must_use]
+    pub const fn prepends_kerns(self) -> bool {
+        self.prepend_kern > 0
+    }
+
+    #[must_use]
+    pub const fn appends_kerns(self) -> bool {
+        self.append_kern > 0
+    }
+
+    #[must_use]
+    pub const fn generates_to_unicode(self) -> bool {
+        self.generate_to_unicode > 0
+    }
+
+    #[must_use]
+    pub const fn omits_charset(self) -> bool {
+        self.omit_charset != 0
+    }
+
+    /// Resolves pdfTeX's zero sentinel against driver configuration, then
+    /// applies the engine's `72..=8000` DPI output-time clamp.
+    #[must_use]
+    pub const fn resolved_pk_resolution(self, driver_dpi: i32) -> i32 {
+        let dpi = if self.pk_resolution == 0 {
+            driver_dpi
+        } else {
+            self.pk_resolution
+        };
+        if dpi < 72 {
+            72
+        } else if dpi > 8_000 {
+            8_000
+        } else {
+            dpi
+        }
+    }
+}
+
 /// pdfTeX output controls frozen by the first shipped page.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct PdfOutputParameters {
@@ -381,6 +473,44 @@ fn hash_output_parameters(hasher: &mut StateHasher, parameters: Option<PdfOutput
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn font_configuration_preserves_pdftex_thresholds_and_pk_resolution() {
+        let mut configuration = PdfFontConfiguration {
+            adjust_spacing: 1,
+            protrude_chars: 1,
+            tracing_fonts: 1,
+            adjust_interword_glue: 1,
+            prepend_kern: 1,
+            append_kern: 1,
+            generate_to_unicode: 1,
+            pk_resolution: 0,
+            omit_charset: 1,
+        };
+        assert!(configuration.adjusts_spacing());
+        assert!(!configuration.adjusts_line_breaking());
+        assert!(configuration.protrudes_chars());
+        assert!(!configuration.protrudes_during_line_breaking());
+        assert!(configuration.traces_fonts());
+        assert!(configuration.adjusts_interword_glue());
+        assert!(configuration.prepends_kerns());
+        assert!(configuration.appends_kerns());
+        assert!(configuration.generates_to_unicode());
+        assert!(configuration.omits_charset());
+        assert_eq!(configuration.resolved_pk_resolution(600), 600);
+
+        configuration.adjust_spacing = 2;
+        configuration.protrude_chars = 2;
+        configuration.pk_resolution = 9_000;
+        assert!(configuration.adjusts_line_breaking());
+        assert!(configuration.protrudes_during_line_breaking());
+        assert_eq!(configuration.resolved_pk_resolution(600), 8_000);
+
+        configuration.pk_resolution = -1;
+        configuration.omit_charset = -1;
+        assert_eq!(configuration.resolved_pk_resolution(600), 72);
+        assert!(configuration.omits_charset());
+    }
 
     #[test]
     fn image_output_controls_use_pdftex_consumer_ranges() {

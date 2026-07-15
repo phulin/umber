@@ -604,6 +604,53 @@ mod tests {
     }
 
     #[test]
+    fn pdf_font_configuration_matches_the_pinned_initex_oracle() {
+        let reference = test_support::read_fixture("tex_exec", "pdf_font_config", "ref");
+        for expected in [
+            "defaults=0/0/0/0/0/0/0/0/0",
+            "local=-1/-2/-3/-4/-5/-6/-7/-8/-9",
+            "restored=1/2/3/4/5/6/7/300/9",
+            ".\\a A",
+            ".\\b B",
+            ".\\a (cmr10) A",
+            ".\\b (cmr10@12.0pt) B",
+        ] {
+            assert!(
+                reference.contains(expected),
+                "missing {expected:?}: {reference}"
+            );
+        }
+
+        const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+        let mut stores = Universe::default();
+        stores
+            .world_mut()
+            .set_memory_file("cmr10.tfm", CMR10.to_vec())
+            .expect("seed cmr10");
+        prepare_pdftex_run_stores(&mut stores);
+        let output = crate::run_memory_with_stores(
+            include_str!("../../../tests/corpus/tex_exec/pdf_font_config.tex"),
+            &mut stores,
+        )
+        .expect("pdfTeX font configuration assignments and diagnostics");
+        for expected in [
+            "defaults=0/0/0/0/0/0/0/0/0",
+            "local=-1/-2/-3/-4/-5/-6/-7/-8/-9",
+            "restored=1/2/3/4/5/6/7/300/9",
+            ".\\a A",
+            ".\\b B",
+            ".\\a (cmr10) A",
+            ".\\b (cmr10@12.0pt) B",
+        ] {
+            assert!(output.contains(expected), "missing {expected:?}: {output}");
+        }
+        let configuration = stores.pdf_font_configuration();
+        assert_eq!(configuration.resolved_pk_resolution(600), 300);
+        assert!(configuration.traces_fonts());
+        assert!(configuration.omits_charset());
+    }
+
+    #[test]
     fn pdf_output_policy_matches_the_pinned_initex_oracle() {
         let reference = test_support::read_fixture("tex_exec", "pdf_output_policy", "ref");
         for expected in [

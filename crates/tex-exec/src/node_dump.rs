@@ -474,10 +474,20 @@ fn dump_mark(stores: &Universe, class: u16, tokens: TokenListId, out: &mut Strin
 }
 
 fn dump_font(stores: &Universe, font: tex_state::ids::FontId) -> String {
-    if let Some(symbol) = stores.font_identifier_symbol(font) {
-        return tex_expand::token_text(stores, Token::Cs(symbol.symbol()));
+    let identifier = stores.font_identifier_symbol(font).map_or_else(
+        || format!("\\{}", stores.font_name(font)),
+        |symbol| tex_expand::token_text(stores, Token::Cs(symbol.symbol())),
+    );
+    if !stores.pdf_font_configuration().traces_fonts() {
+        return identifier;
     }
-    format!("\\{}", stores.font_name(font))
+    let loaded = stores.font(font);
+    let mut result = format!("{identifier} ({})", loaded.name());
+    if loaded.size() != loaded.design_size() {
+        result.pop();
+        let _ = write!(result, "@{}pt)", format_scaled_without_unit(loaded.size()));
+    }
+    result
 }
 
 fn dump_char(ch: char) -> String {

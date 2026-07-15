@@ -90,10 +90,11 @@ otherwise leak into byte output.
 `tests/corpus/tex_exec` contains small reference-observation sources and
 normalized `<case>.expected.ref` outputs used by `tex-exec` crate-internal
 tests for grouping, after-token ordering, magnification diagnostics, and
-box-register behavior. The `pdf_output_policy`, `pdf_image_config`, and
-`pdf_metadata_config` cases run pinned pdfTeX in INITEX mode so PDF parameter
-defaults, grouping, and first-write recovery do not inherit format-file
-assignments; their fixtures anchor the corresponding Umber policy tests.
+box-register behavior. The `pdf_output_policy`, `pdf_image_config`,
+`pdf_metadata_config`, and `pdf_font_config` cases run pinned pdfTeX in INITEX
+mode so PDF parameter defaults, grouping, first-write recovery, and font
+diagnostics do not inherit format-file assignments; their fixtures anchor the
+corresponding Umber policy tests.
 
 `tests/corpus/tex_exec_io` contains small file-effect and DVI special-payload
 sources plus reference observations used by `tex-exec` I/O and shipout tests.

@@ -1709,6 +1709,23 @@ impl Universe {
         self.pdf.output_parameters()
     }
 
+    /// Reads the live pdfTeX microtype/font-output parameters from their
+    /// canonical grouped integer cells.
+    #[must_use]
+    pub fn pdf_font_configuration(&self) -> crate::PdfFontConfiguration {
+        crate::PdfFontConfiguration {
+            adjust_spacing: self.int_param(IntParam::PDF_ADJUST_SPACING),
+            protrude_chars: self.int_param(IntParam::PDF_PROTRUDE_CHARS),
+            tracing_fonts: self.int_param(IntParam::PDF_TRACING_FONTS),
+            adjust_interword_glue: self.int_param(IntParam::PDF_ADJUST_INTERWORD_GLUE),
+            prepend_kern: self.int_param(IntParam::PDF_PREPEND_KERN),
+            append_kern: self.int_param(IntParam::PDF_APPEND_KERN),
+            generate_to_unicode: self.int_param(IntParam::PDF_GEN_TO_UNICODE),
+            pk_resolution: self.int_param(IntParam::PDF_PK_RESOLUTION),
+            omit_charset: self.int_param(IntParam::PDF_OMIT_CHARSET),
+        }
+    }
+
     /// Returns the PK mode consumed when PDF output was first initialized.
     #[must_use]
     pub const fn fixed_pdf_pk_mode(&self) -> Option<TokenListId> {

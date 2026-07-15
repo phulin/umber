@@ -1,0 +1,22 @@
+success: false
+stdout:
+defaults=0/0/0/0/0/0/0/0/0
+local=-1/-2/-3/-4/-5/-6/-7/-8/-9 restored=1/2/3/4/5/6/7/300/9
+! OK (see the transcript file).
+! OK (see the transcript file).
+log:
+defaults=0/0/0/0/0/0/0/0/0
+local=-1/-2/-3/-4/-5/-6/-7/-8/-9 restored=1/2/3/4/5/6/7/300/9
+> \box0=
+\hbox(8.19998+0.0)x16.00005
+.\a A
+.\b B
+
+! OK.
+
+> \box0=
+\hbox(8.19998+0.0)x16.00005
+.\a (cmr10) A
+.\b (cmr10@12.0pt) B
+
+! OK.

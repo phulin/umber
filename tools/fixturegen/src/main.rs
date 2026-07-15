@@ -211,7 +211,10 @@ fn regenerate_tex_exec_case(case: &str) -> Result<()> {
     let mut opts = RunOpts::default();
     if matches!(
         case,
-        "pdf_output_policy" | "pdf_image_config" | "pdf_metadata_config"
+        "pdf_output_policy"
+            | "pdf_image_config"
+            | "pdf_metadata_config"
+            | "pdf_font_config"
     ) {
         opts.ini = true;
     }
