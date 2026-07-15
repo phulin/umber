@@ -34,6 +34,17 @@ roots; rollback removes allocations and mutations in the discarded suffix,
 so replay receives the same identities. An object number is not a content
 hash and is never reused on a live descendant timeline.
 
+The implemented engine ledger reserves object 1 for the catalog and object 2
+for the page-tree root. Each successful pdfTeX-mode shipout atomically reserves
+the next three identities for its resource dictionary, content stream, and
+page dictionary and records the committed artifact hash beside them. The
+append occurs only after artifact storage and effect commit succeed. Scoped
+shipout failure, ordinary snapshot rollback, and retained-generation rollback
+therefore remove the entire suffix and replay the same identities and semantic
+hash. A format may be dumped with an enabled but empty ledger; any committed
+PDF page makes the format ineligible, and the ledger itself is omitted from
+the format image.
+
 ## Detached structural model
 
 The detached model represents PDF values without text formatting ambiguity:
@@ -90,6 +101,14 @@ clock, random identifier, host path, hash-map
 iteration order, or allocation address. Failure builds into a private buffer
 and returns a typed error without publishing a prefix.
 
+The Umber driver lowers committed positioned rule events into `pdf_writer`
+content operations, builds the detached catalog/page/resource graph, and
+serializes only after validation. `umber run --pdftex --pdf <path>` publishes
+the resulting private buffer through the same effect-before-driver
+finalization barrier as DVI and HTML. The current integration deliberately
+returns typed errors for text and specials until their resource-owning
+primitive slices are implemented; a minimal rule-only page is complete.
+
 ## Parity oracle
 
 Committed minimal fixtures are regenerated only through
@@ -112,7 +131,7 @@ also run the complete committed DVI corpus byte-for-byte.
 1. Detached model, validation, canonical semantic identity, and this design.
    **Done.**
 2. Valid deterministic PDF serialization for a minimal page. **Done.**
-3. pdfTeX shipout integration and checkpointed engine ledger.
+3. pdfTeX shipout integration and checkpointed engine ledger. **Done.**
 4. Normalized pdfTeX structure fixtures, rendered-page fixtures, and the full
    DVI regression gate.
 

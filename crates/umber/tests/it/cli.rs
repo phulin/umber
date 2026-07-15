@@ -21,6 +21,92 @@ fn exits_successfully() {
     assert!(status.success());
 }
 
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn pdftex_rule_page_is_published_only_to_an_explicit_distinct_pdf_path() {
+    let temp_dir = tempfile::tempdir().expect("create PDF output temp dir");
+    let source = temp_dir.path().join("rule.tex");
+    let pdf = temp_dir.path().join("rule.pdf");
+    let dvi = temp_dir.path().join("rule.dvi");
+    fs::write(
+        &source,
+        "\\pdfoutput=1\\pdfcompresslevel=0\\shipout\\vbox{\\hrule width10pt height5pt}\\end\n",
+    )
+    .expect("write PDF rule fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .arg("run")
+        .arg("--pdftex")
+        .arg("--pdf")
+        .arg(&pdf)
+        .arg("--dvi")
+        .arg(&dvi)
+        .arg(&source)
+        .output()
+        .expect("run pdfTeX PDF fixture");
+
+    assert!(
+        output.status.success(),
+        "pdfTeX run failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let pdf_bytes = fs::read(&pdf).expect("read published PDF");
+    assert!(pdf_bytes.starts_with(b"%PDF-1.4"));
+    assert!(pdf_bytes.ends_with(b"%%EOF"));
+    assert!(fs::metadata(&dvi).expect("published DVI").len() > 0);
+
+    let rejected = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .arg("run")
+        .arg("--pdf")
+        .arg(temp_dir.path().join("wrong-mode.pdf"))
+        .arg(&source)
+        .output()
+        .expect("reject PDF without pdfTeX mode");
+    assert!(!rejected.status.success());
+    assert_eq!(
+        String::from_utf8(rejected.stderr).expect("stderr is utf-8"),
+        "umber: --pdf requires --pdftex\n"
+    );
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn pdf_lowering_failure_does_not_publish_any_driver_output() {
+    let temp_dir = tempfile::tempdir().expect("create PDF failure temp dir");
+    let source = temp_dir.path().join("text.tex");
+    let pdf = temp_dir.path().join("text.pdf");
+    let dvi = temp_dir.path().join("text.dvi");
+    fs::write(
+        &source,
+        "\\pdfoutput=1\\shipout\\vbox{\\special{unsupported}}\\end\n",
+    )
+    .expect("write unsupported PDF special fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .arg("run")
+        .arg("--pdftex")
+        .arg("--pdf")
+        .arg(&pdf)
+        .arg("--dvi")
+        .arg(&dvi)
+        .arg(&source)
+        .output()
+        .expect("run unsupported PDF special fixture");
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("PDF output does not support special")
+    );
+    assert!(!pdf.exists(), "failed PDF finalization published a file");
+    assert!(
+        !dvi.exists(),
+        "failed PDF finalization published peer output"
+    );
+}
+
 #[cfg(feature = "profiling-stats")]
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary file and command execution.

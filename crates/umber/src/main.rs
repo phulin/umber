@@ -263,6 +263,10 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
         let dvi = umber::dvi_from_page_plans(&run.dvi_pages)?;
         driver_files.push(DriverFile::new(output.clone(), dvi));
     }
+    if let Some(output) = &opts.pdf {
+        let pdf = umber::pdf_from_committed_artifacts(&stores, &run.committed_artifacts)?;
+        driver_files.push(DriverFile::new(output.clone(), pdf));
+    }
     if let Some(output) = &opts.html {
         let font_dir = opts
             .html_font_dir
@@ -324,6 +328,7 @@ struct RunCliOptions {
     input: PathBuf,
     show_fixtures: bool,
     dvi: Option<PathBuf>,
+    pdf: Option<PathBuf>,
     html: Option<PathBuf>,
     html_font_dir: Option<PathBuf>,
     html_assets: Option<PathBuf>,
@@ -340,6 +345,7 @@ impl RunCliOptions {
         let mut input = None;
         let mut show_fixtures = false;
         let mut dvi = None;
+        let mut pdf = None;
         let mut html = None;
         let mut html_font_dir = None;
         let mut html_assets = None;
@@ -385,6 +391,15 @@ impl RunCliOptions {
                         return Err(CliError::Usage("missing output path for --dvi"));
                     };
                     dvi = Some(PathBuf::from(path));
+                }
+                "--pdf" => {
+                    if pdf.is_some() {
+                        return Err(CliError::Usage("run accepts at most one --pdf output path"));
+                    }
+                    let Some(path) = args.next() else {
+                        return Err(CliError::Usage("missing output path for --pdf"));
+                    };
+                    pdf = Some(PathBuf::from(path));
                 }
                 "--html" => {
                     if html.is_some() {
@@ -450,13 +465,13 @@ impl RunCliOptions {
                 }
                 flag if flag.starts_with('-') => {
                     return Err(CliError::Usage(
-                        "run accepts one input path with optional --show-fixtures and --dvi <path>",
+                        "run accepts one input path with supported output and engine options",
                     ));
                 }
                 path => {
                     if input.is_some() {
                         return Err(CliError::Usage(
-                            "run accepts one input path with optional --show-fixtures and --dvi <path>",
+                            "run accepts one input path with supported output and engine options",
                         ));
                     }
                     input = Some(PathBuf::from(path));
@@ -464,6 +479,9 @@ impl RunCliOptions {
             }
         }
         let input = input.ok_or(CliError::Usage("missing input path for run"))?;
+        if pdf.is_some() && engine != RunEngine::PdfTex {
+            return Err(CliError::Usage("--pdf requires --pdftex"));
+        }
         if dvi
             .as_ref()
             .zip(format_out.as_ref())
@@ -488,10 +506,20 @@ impl RunCliOptions {
                 "--dvi and --html must use different output paths",
             ));
         }
+        if [&dvi, &html, &format_out]
+            .into_iter()
+            .flatten()
+            .any(|path| Some(path) == pdf.as_ref())
+        {
+            return Err(CliError::Usage(
+                "--pdf must use a distinct downstream output path",
+            ));
+        }
         Ok(Self {
             input,
             show_fixtures,
             dvi,
+            pdf,
             html,
             html_font_dir,
             html_assets,
@@ -565,6 +593,7 @@ enum CliError {
     RenderedExec(String),
     Dvi(umber::DviBuildError),
     Html(umber::HtmlBuildError),
+    Pdf(umber::PdfBuildError),
     Format(FormatError),
     Finalization(umber::FinalizationError),
     InputReceipt(String),
@@ -582,6 +611,7 @@ impl std::fmt::Display for CliError {
             Self::RenderedExec(text) => f.write_str(text),
             Self::Dvi(err) => write!(f, "{err}"),
             Self::Html(err) => write!(f, "{err}"),
+            Self::Pdf(err) => write!(f, "{err}"),
             Self::Format(err) => write!(f, "{err}"),
             Self::Finalization(err) => write!(f, "{err}"),
             Self::InputReceipt(message) => f.write_str(message),
@@ -619,6 +649,12 @@ impl From<umber::DviBuildError> for CliError {
 impl From<umber::HtmlBuildError> for CliError {
     fn from(value: umber::HtmlBuildError) -> Self {
         Self::Html(value)
+    }
+}
+
+impl From<umber::PdfBuildError> for CliError {
+    fn from(value: umber::PdfBuildError) -> Self {
+        Self::Pdf(value)
     }
 }
 
