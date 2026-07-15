@@ -60,13 +60,13 @@ oracle-backed test. Every name in a missing row is missing.
 | PDF token-list parameters | 4 | done | `\pdfpagesattr`, `\pdfpageattr`, `\pdfpageresources`, `\pdfpkmode` |
 | PDF integer parameters | 38 | partial (output policy, metadata effects, and microtype/font configuration contract done) | `\pdfoutput`, `\pdfcompresslevel`, `\pdfobjcompresslevel`, `\pdfdecimaldigits`, `\pdfmovechars`, `\pdfimageresolution`, `\pdfpkresolution`, `\pdfuniqueresname`, `\pdfoptionpdfminorversion`, `\pdfoptionalwaysusepdfpagebox`, `\pdfoptionpdfinclusionerrorlevel`, `\pdfmajorversion`, `\pdfminorversion`, `\pdfforcepagebox`, `\pdfpagebox`, `\pdfinclusionerrorlevel`, `\pdfgamma`, `\pdfimagegamma`, `\pdfimagehicolor`, `\pdfimageapplygamma`, `\pdfadjustspacing`, `\pdfprotrudechars`, `\pdftracingfonts`, `\pdfadjustinterwordglue`, `\pdfprependkern`, `\pdfappendkern`, `\pdfgentounicode`, `\pdfdraftmode`, `\pdfinclusioncopyfonts`, `\pdfsuppresswarningdupdest`, `\pdfsuppresswarningdupmap`, `\pdfsuppresswarningpagegroup`, `\pdfinfoomitdate`, `\pdfsuppressptexinfo`, `\pdfomitcharset`, `\pdfomitinfodict`, `\pdfomitprocset`, `\pdfptexuseunderscore` |
 | PDF dimension parameters | 13 | done | `\pdfhorigin`, `\pdfvorigin`, `\pdfpagewidth`, `\pdfpageheight`, `\pdflinkmargin`, `\pdfdestmargin`, `\pdfthreadmargin`, `\pdffirstlineheight`, `\pdflastlinedepth`, `\pdfeachlineheight`, `\pdfeachlinedepth`, `\pdfignoreddimen`, `\pdfpxdimen` |
-| Font construction and primitive recovery | 3 | missing | `\letterspacefont`, `\pdfcopyfont`, `\pdfprimitive` |
+| Font construction and primitive recovery | 3 | partial (generated fonts done) | `\letterspacefont`, `\pdfcopyfont` (done); `\pdfprimitive` |
 | Read-only integer enquiries | 14 | missing | `\pdftexversion`, `\pdflastobj`, `\pdflastxform`, `\pdflastximage`, `\pdflastximagepages`, `\pdflastannot`, `\pdflastxpos`, `\pdflastypos`, `\pdfretval`, `\pdflastximagecolordepth`, `\pdfelapsedtime`, `\pdfshellescape`, `\pdfrandomseed`, `\pdflastlink` |
-| Expandable conversions and enquiries | 27 | partial (identity and `\pdffontsize` done) | `\expanded`, `\pdftexrevision`, `\pdftexbanner`, `\pdffontsize` (done); `\pdffontname`, `\pdffontobjnum`, `\pdfpageref`, `\leftmarginkern`, `\rightmarginkern`, `\pdfxformname`, `\pdfescapestring`, `\pdfescapename`, `\pdfescapehex`, `\pdfunescapehex`, `\pdfcreationdate`, `\pdffilemoddate`, `\pdffilesize`, `\pdfmdfivesum`, `\pdffiledump`, `\pdfmatch`, `\pdflastmatch`, `\pdfstrcmp`, `\pdfcolorstackinit`, `\pdfuniformdeviate`, `\pdfnormaldeviate`, `\pdfinsertht`, `\pdfximagebbox` |
+| Expandable conversions and enquiries | 27 | partial (identity, font size, and margin kerns done) | `\expanded`, `\pdftexrevision`, `\pdftexbanner`, `\pdffontsize`, `\leftmarginkern`, `\rightmarginkern` (done); `\pdffontname`, `\pdffontobjnum`, `\pdfpageref`, `\pdfxformname`, `\pdfescapestring`, `\pdfescapename`, `\pdfescapehex`, `\pdfunescapehex`, `\pdfcreationdate`, `\pdffilemoddate`, `\pdffilesize`, `\pdfmdfivesum`, `\pdffiledump`, `\pdfmatch`, `\pdflastmatch`, `\pdfstrcmp`, `\pdfcolorstackinit`, `\pdfuniformdeviate`, `\pdfnormaldeviate`, `\pdfinsertht`, `\pdfximagebbox` |
 | Primitive-identity conditional | 1 | missing | `\ifpdfprimitive` |
 | Horizontal-mode normalization | 1 | missing | `\quitvmode` |
 | Character codes and ligature control | 10 | done | `\lpcode`, `\rpcode`, `\efcode`, `\tagcode`, `\knbscode`, `\stbscode`, `\shbscode`, `\knbccode`, `\knaccode`, `\pdfnoligatures` |
-| PDF backend actions | 43 | missing | `\pdfliteral`, `\pdfcolorstack`, `\pdfsetmatrix`, `\pdfsave`, `\pdfrestore`, `\pdfobj`, `\pdfrefobj`, `\pdfxform`, `\pdfrefxform`, `\pdfximage`, `\pdfrefximage`, `\pdfannot`, `\pdfstartlink`, `\pdfendlink`, `\pdfoutline`, `\pdfdest`, `\pdfthread`, `\pdfstartthread`, `\pdfendthread`, `\pdfsavepos`, `\pdfsnaprefpoint`, `\pdfsnapy`, `\pdfsnapycomp`, `\pdfinfo`, `\pdfcatalog`, `\pdfnames`, `\pdfincludechars`, `\pdffontattr`, `\pdfmapfile`, `\pdfmapline`, `\pdftrailer`, `\pdftrailerid`, `\pdfresettimer`, `\pdfsetrandomseed`, `\pdffontexpand`, `\pdfglyphtounicode`, `\pdfnobuiltintounicode`, `\pdfinterwordspaceon`, `\pdfinterwordspaceoff`, `\pdffakespace`, `\pdfrunninglinkoff`, `\pdfrunninglinkon`, `\pdfspacefont` |
+| PDF backend actions | 43 | partial (font expansion done) | `\pdffontexpand` (done); `\pdfliteral`, `\pdfcolorstack`, `\pdfsetmatrix`, `\pdfsave`, `\pdfrestore`, `\pdfobj`, `\pdfrefobj`, `\pdfxform`, `\pdfrefxform`, `\pdfximage`, `\pdfrefximage`, `\pdfannot`, `\pdfstartlink`, `\pdfendlink`, `\pdfoutline`, `\pdfdest`, `\pdfthread`, `\pdfstartthread`, `\pdfendthread`, `\pdfsavepos`, `\pdfsnaprefpoint`, `\pdfsnapy`, `\pdfsnapycomp`, `\pdfinfo`, `\pdfcatalog`, `\pdfnames`, `\pdfincludechars`, `\pdffontattr`, `\pdfmapfile`, `\pdfmapline`, `\pdftrailer`, `\pdftrailerid`, `\pdfresettimer`, `\pdfsetrandomseed`, `\pdfglyphtounicode`, `\pdfnobuiltintounicode`, `\pdfinterwordspaceon`, `\pdfinterwordspaceoff`, `\pdffakespace`, `\pdfrunninglinkoff`, `\pdfrunninglinkon`, `\pdfspacefont` |
 | Compatibility error policy | 1 | missing | `\ignoreprimitiveerror` |
 | Late expansion conditionals | 3 | partial (1 done) | `\ifincsname` (done); `\ifpdfabsnum`, `\ifpdfabsdim` |
 
@@ -156,6 +156,16 @@ The 13 dimensions share the ordinary dimension scanner and display path.
 `px` uses the live `\pdfpxdimen` only in pdfTeX mode; line height/depth
 parameters apply during paragraph materialization with first/last overrides
 of the each-line values and `\pdfignoreddimen` as the inactive sentinel.
+
+The generated-font and microtype slice implements independent copied and
+letterspaced font state, validated `\pdffontexpand` configuration, discrete
+expansion-aware line breaking and final glyph/kern substitution, and signed
+protrusion margin kerns. Generated and expanded identity survives snapshots,
+formats, and detached page artifacts. Letterspaced virtual packets lower to
+explicit movements around glyphs from the physical source font; PDF output
+continues to use only the canonical `pdf_writer` serialization pipeline.
+`\leftmarginkern` and `\rightmarginkern` implement pdfTeX's box-register edge
+scan and exact void/non-hbox diagnostic.
 
 ## Compatibility and alias decisions
 
