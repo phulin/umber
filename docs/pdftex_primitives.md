@@ -35,12 +35,11 @@ WASM session option `engine: "pdftex"` select this layer and its truthful
 semantics remain in later checklist issues fail explicitly as unsupported
 rather than behaving like `\relax`.
 
-In addition to `\expanded` and `\ifincsname`, the output-policy slice now
+In addition to `\expanded` and `\ifincsname`, the parameter slices now
 implements `\pdfoutput`, PDF major/minor version, stream/object compression,
-decimal precision, the page-box controls, and the three legacy `\pdfoption...`
-aliases. The other parameter effects remain assigned to checklist issues 4
-and 6--8; the remaining exact names still fail explicitly until their issue is
-complete.
+decimal precision, page geometry/attributes, and image-configuration state.
+The other parameter effects remain assigned to checklist issues 6--8; the
+remaining exact names still fail explicitly until their issue is complete.
 There are two intentional pre-existing visibility overlaps: e-TeX mode keeps
 `\ifincsname`, and the supported LaTeX-DVI contract keeps `\expanded` (and
 inherits `\ifincsname` through e-TeX). The source-set gate therefore requires
@@ -79,8 +78,12 @@ applicable.
 
 The parameter-state slice uses reserved cells in the existing typed integer,
 dimension, and token-list banks. pdfTeX mode initializes the cells to the
-pinned INITEX defaults; other engine modes leave them untouched. The three
-legacy `\pdfoption...` spellings share cells with their current counterparts.
+pinned INITEX defaults; other engine modes leave them untouched. Of the three
+legacy `\pdfoption...` spellings, `\pdfoptionpdfminorversion` shares the
+`\pdfminorversion` cell. The pinned
+source and INITEX oracle prove that `\pdfoptionalwaysusepdfpagebox` and
+`\pdfoptionpdfinclusionerrorlevel` instead have independent compatibility
+cells.
 Assignments therefore inherit TeX grouping, `\global`, and `\globaldefs`
 semantics from the common environment barrier, while snapshots, semantic
 hashes, and format images include the values through the existing bank
@@ -90,9 +93,23 @@ The completed output-policy consumer freezes normalized values at the first
 committed shipout and uses `pdf_writer` for ordinary streams, object streams,
 type-2 cross-reference entries, and final framing. The committed INITEX oracle
 at `tests/corpus/tex_exec/pdf_output_policy` covers defaults, grouping, range
-recovery, and diagnostics; focused hermetic tests cover the three shared alias
-cells, fatal post-write changes, PDF headers and object-compression levels,
-decimal rounding, and unchanged DVI output.
+recovery, and diagnostics; focused hermetic tests cover the shared
+minor-version alias, the two independent obsolete inclusion cells, fatal
+post-write changes, PDF headers and object-compression levels, decimal
+rounding, and unchanged DVI output.
+
+The INITEX image-configuration oracle at
+`tests/corpus/tex_exec/pdf_image_config` covers all 14 issue-6 names. Integer
+assignment accepts the ordinary signed TeX range and groups normally;
+consumers clamp gamma values to `0..=1000000`, image high-color,
+apply-gamma, and inclusion-copy-fonts to `0..=1`, nonzero PK resolution to
+`72..=8000`, and image resolution to `0..=65535`. Draft mode retains its raw
+fixed value and is enabled when positive; changing it after output is written
+is a fatal setup error. `\pdfuniqueresname` is enabled only by a positive
+value. The two obsolete inclusion controls are not no-ops: image scanning
+warns once and transfers a nonzero value to the corresponding current
+control. Those image effects, live page-box selection, and draft publication
+behavior are tracked after external-image issue 14 by issue 6.2.
 
 The four PDF token parameters follow pdfTeX's distinct consumption scopes:
 `\pdfpageattr` and `\pdfpageresources` are captured in each successful
@@ -109,10 +126,10 @@ The implementation should preserve exact pdfTeX spellings even when a shared
 engine-neutral implementation exists. In particular, `\pdfcreationdate`,
 `\pdffilesize`, `\pdfshellescape`, and `\pdfstrcmp` should initially be aliases
 over Umber's existing neutral facilities, with pdfTeX-compatible results and
-error behavior. `\pdfoptionpdfminorversion`,
-`\pdfoptionpdfinclusionerrorlevel`, and `\pdfoptionalwaysusepdfpagebox` are
-legacy aliases for their current parameter counterparts and should share one
-state cell per pair.
+error behavior. `\pdfoptionpdfminorversion` is a legacy alias for
+`\pdfminorversion` and shares its state cell. The two obsolete inclusion
+controls instead retain the separate scan-time compatibility behavior
+described above.
 
 Potential compatibility/no-op controls are `\pdfmovechars`, the image gamma
 controls, `\pdfignoreddimen`, `\pdfpkmode`, and warning-suppression or omission
@@ -151,7 +168,9 @@ checklist and include focused pdfTeX-oracle fixtures:
    and the three `\pdfoption...` aliases. Depends on issue 3.
 6. **Implement PDF image, inclusion, and draft configuration parameters.**
    Cover resolution, gamma, inclusion policy, copy-fonts, draft mode, and
-   unique resource names. Depends on issue 3.
+   unique resource names. The oracle-backed state/range child is complete;
+   representative image effects remain dependency-ordered after issue 14.
+   Depends on issue 3.
 7. **Implement PDF microtype and font-output configuration parameters.**
    Cover adjustment, protrusion, kern insertion, tracing, ToUnicode, PK
    resolution, and character-set omission. Depends on issue 3.

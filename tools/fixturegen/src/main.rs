@@ -209,7 +209,7 @@ fn regenerate_etex_reference_log_case(case: &str) -> Result<()> {
 
 fn regenerate_tex_exec_case(case: &str) -> Result<()> {
     let mut opts = RunOpts::default();
-    if case == "pdf_output_policy" {
+    if matches!(case, "pdf_output_policy" | "pdf_image_config") {
         opts.ini = true;
     }
     let output = RefTex::locate()?.run(&source_path("tex_exec", case), &opts)?;

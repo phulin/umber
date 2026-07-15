@@ -22,6 +22,18 @@ pub struct PdfOutputParameters {
     pub compress_level: i32,
     pub object_compress_level: i32,
     pub decimal_digits: i32,
+    /// Gamma controls fixed when PDF output is initialized.
+    pub gamma: i32,
+    pub image_gamma: i32,
+    pub image_hicolor: i32,
+    pub image_apply_gamma: i32,
+    /// Raw draft value fixed by the first output write; positive enables it.
+    pub draft_mode: i32,
+    pub inclusion_copy_fonts: i32,
+    /// PK resolution remains zero until a driver supplies its configured DPI.
+    pub pk_resolution: i32,
+    /// Normalized boolean controlling document-wide resource-name prefixes.
+    pub unique_resource_names: i32,
 }
 
 impl PdfOutputParameters {
@@ -43,6 +55,17 @@ impl PdfOutputParameters {
             minor_version,
             object_compress_level,
             decimal_digits: self.decimal_digits.clamp(0, 4),
+            gamma: self.gamma.clamp(0, 1_000_000),
+            image_gamma: self.image_gamma.clamp(0, 1_000_000),
+            image_hicolor: self.image_hicolor.clamp(0, 1),
+            image_apply_gamma: self.image_apply_gamma.clamp(0, 1),
+            inclusion_copy_fonts: self.inclusion_copy_fonts.clamp(0, 1),
+            pk_resolution: if self.pk_resolution == 0 {
+                0
+            } else {
+                self.pk_resolution.clamp(72, 8_000)
+            },
+            unique_resource_names: i32::from(self.unique_resource_names > 0),
             ..self
         }
     }
@@ -337,12 +360,49 @@ fn hash_output_parameters(hasher: &mut StateHasher, parameters: Option<PdfOutput
         hasher.i32(parameters.compress_level);
         hasher.i32(parameters.object_compress_level);
         hasher.i32(parameters.decimal_digits);
+        hasher.i32(parameters.gamma);
+        hasher.i32(parameters.image_gamma);
+        hasher.i32(parameters.image_hicolor);
+        hasher.i32(parameters.image_apply_gamma);
+        hasher.i32(parameters.draft_mode);
+        hasher.i32(parameters.inclusion_copy_fonts);
+        hasher.i32(parameters.pk_resolution);
+        hasher.i32(parameters.unique_resource_names);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_output_controls_use_pdftex_consumer_ranges() {
+        let parameters = PdfOutputParameters {
+            output: 1,
+            major_version: 1,
+            minor_version: 4,
+            compress_level: 9,
+            object_compress_level: 0,
+            decimal_digits: 3,
+            gamma: -1,
+            image_gamma: 1_000_001,
+            image_hicolor: 2,
+            image_apply_gamma: -1,
+            draft_mode: 2,
+            inclusion_copy_fonts: -1,
+            pk_resolution: 9_000,
+            unique_resource_names: -2,
+        }
+        .normalized();
+        assert_eq!(parameters.gamma, 0);
+        assert_eq!(parameters.image_gamma, 1_000_000);
+        assert_eq!(parameters.image_hicolor, 1);
+        assert_eq!(parameters.image_apply_gamma, 0);
+        assert_eq!(parameters.draft_mode, 2);
+        assert_eq!(parameters.inclusion_copy_fonts, 0);
+        assert_eq!(parameters.pk_resolution, 8_000);
+        assert_eq!(parameters.unique_resource_names, 0);
+    }
 
     #[test]
     fn rollback_reuses_page_object_suffix_and_fingerprint() {
@@ -357,6 +417,14 @@ mod tests {
             compress_level: 9,
             object_compress_level: 0,
             decimal_digits: 3,
+            gamma: 1_000,
+            image_gamma: 2_200,
+            image_hicolor: 1,
+            image_apply_gamma: 0,
+            draft_mode: 0,
+            inclusion_copy_fonts: 0,
+            pk_resolution: 0,
+            unique_resource_names: 0,
         };
         let token = PdfTokenParameter {
             tokens: TokenListId::EMPTY,

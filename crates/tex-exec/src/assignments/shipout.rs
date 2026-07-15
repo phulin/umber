@@ -63,6 +63,9 @@ fn prepare_pdf_output_policy(stores: &mut Universe) -> Result<(), ExecError> {
         {
             return Err(ExecError::PdfVersionChanged);
         }
+        if stores.int_param(IntParam::PDF_DRAFT_MODE) != fixed.draft_mode {
+            return Err(ExecError::PdfDraftModeChanged);
+        }
         return Ok(());
     }
     if current_output <= 0 {

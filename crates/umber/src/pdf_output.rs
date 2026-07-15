@@ -159,6 +159,14 @@ fn output_parameters(stores: &Universe) -> PdfOutputParameters {
             compress_level: stores.int_param(IntParam::PDF_COMPRESS_LEVEL),
             object_compress_level: stores.int_param(IntParam::PDF_OBJ_COMPRESS_LEVEL),
             decimal_digits: stores.int_param(IntParam::PDF_DECIMAL_DIGITS),
+            gamma: stores.int_param(IntParam::PDF_GAMMA),
+            image_gamma: stores.int_param(IntParam::PDF_IMAGE_GAMMA),
+            image_hicolor: stores.int_param(IntParam::PDF_IMAGE_HICOLOR),
+            image_apply_gamma: stores.int_param(IntParam::PDF_IMAGE_APPLY_GAMMA),
+            draft_mode: stores.int_param(IntParam::PDF_DRAFT_MODE),
+            inclusion_copy_fonts: stores.int_param(IntParam::PDF_INCLUSION_COPY_FONTS),
+            pk_resolution: stores.int_param(IntParam::PDF_PK_RESOLUTION),
+            unique_resource_names: stores.int_param(IntParam::PDF_UNIQUE_RESNAME),
         }
         .normalized()
     })
@@ -632,6 +640,10 @@ mod tests {
         for (assignment, expected) in [
             ("\\pdfminorversion=7", "PDF version cannot be changed"),
             ("\\pdfoutput=0", "\\pdfoutput can only be changed"),
+            (
+                "\\pdfdraftmode=1",
+                "\\pdfdraftmode can only be changed before anything is written",
+            ),
         ] {
             let mut stores = Universe::default();
             prepare_pdftex_run_stores(&mut stores);

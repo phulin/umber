@@ -178,10 +178,13 @@ const PDFTEX_INT_PARAMETER_MEANINGS: &[(&str, IntParam)] = &[
     ("pdfpkresolution", IntParam::PDF_PK_RESOLUTION),
     ("pdfuniqueresname", IntParam::PDF_UNIQUE_RESNAME),
     ("pdfoptionpdfminorversion", IntParam::PDF_MINOR_VERSION),
-    ("pdfoptionalwaysusepdfpagebox", IntParam::PDF_FORCE_PAGE_BOX),
+    (
+        "pdfoptionalwaysusepdfpagebox",
+        IntParam::PDF_OPTION_ALWAYS_USE_PDF_PAGE_BOX,
+    ),
     (
         "pdfoptionpdfinclusionerrorlevel",
-        IntParam::PDF_INCLUSION_ERROR_LEVEL,
+        IntParam::PDF_OPTION_INCLUSION_ERROR_LEVEL,
     ),
     ("pdfmajorversion", IntParam::PDF_MAJOR_VERSION),
     ("pdfminorversion", IntParam::PDF_MINOR_VERSION),
@@ -237,8 +240,10 @@ const PDFTEX_INT_PARAMETER_DEFAULTS: &[(IntParam, i32)] = &[
     (IntParam::PDF_PK_RESOLUTION, 0),
     (IntParam::PDF_UNIQUE_RESNAME, 0),
     (IntParam::PDF_MINOR_VERSION, 4),
+    (IntParam::PDF_OPTION_ALWAYS_USE_PDF_PAGE_BOX, 0),
     (IntParam::PDF_FORCE_PAGE_BOX, 0),
     (IntParam::PDF_PAGE_BOX, 0),
+    (IntParam::PDF_OPTION_INCLUSION_ERROR_LEVEL, 0),
     (IntParam::PDF_INCLUSION_ERROR_LEVEL, 0),
     (IntParam::PDF_MAJOR_VERSION, 1),
     (IntParam::PDF_GAMMA, 1000),
@@ -455,7 +460,7 @@ mod tests {
         prepare_pdftex_run_stores(&mut stores);
 
         assert_eq!(PDFTEX_INT_PARAMETER_MEANINGS.len(), 38);
-        assert_eq!(PDFTEX_INT_PARAMETER_DEFAULTS.len(), 35);
+        assert_eq!(PDFTEX_INT_PARAMETER_DEFAULTS.len(), 37);
         assert_eq!(PDFTEX_DIMEN_PARAMETERS.len(), 13);
         assert_eq!(PDFTEX_TOK_PARAMETERS.len(), 4);
         for &(parameter, expected) in PDFTEX_INT_PARAMETER_DEFAULTS {
@@ -472,14 +477,16 @@ mod tests {
             assert_eq!(stores.tok_param(parameter), TokenListId::EMPTY, "{name}");
         }
 
-        for (alias, canonical) in [
-            ("pdfoptionpdfminorversion", "pdfminorversion"),
+        let alias = stores.intern("pdfoptionpdfminorversion");
+        let canonical = stores.intern("pdfminorversion");
+        assert_eq!(stores.meaning(alias), stores.meaning(canonical));
+        for (obsolete, current) in [
             ("pdfoptionalwaysusepdfpagebox", "pdfforcepagebox"),
             ("pdfoptionpdfinclusionerrorlevel", "pdfinclusionerrorlevel"),
         ] {
-            let alias = stores.intern(alias);
-            let canonical = stores.intern(canonical);
-            assert_eq!(stores.meaning(alias), stores.meaning(canonical));
+            let obsolete = stores.intern(obsolete);
+            let current = stores.intern(current);
+            assert_ne!(stores.meaning(obsolete), stores.meaning(current));
         }
     }
 
@@ -532,8 +539,8 @@ mod tests {
                 "{\\pdfoptionpdfminorversion=6 ",
                 "\\pdfoptionalwaysusepdfpagebox=4 ",
                 "\\pdfoptionpdfinclusionerrorlevel=3 ",
-                "\\message{aliases-local=\\the\\pdfminorversion/\\the\\pdfforcepagebox/\\the\\pdfinclusionerrorlevel}} ",
-                "\\message{aliases-restored=\\the\\pdfminorversion/\\the\\pdfforcepagebox/\\the\\pdfinclusionerrorlevel} ",
+                "\\message{compat-local=\\the\\pdfminorversion/\\the\\pdfoptionalwaysusepdfpagebox/\\the\\pdfforcepagebox/\\the\\pdfoptionpdfinclusionerrorlevel/\\the\\pdfinclusionerrorlevel}} ",
+                "\\message{compat-restored=\\the\\pdfminorversion/\\the\\pdfoptionalwaysusepdfpagebox/\\the\\pdfforcepagebox/\\the\\pdfoptionpdfinclusionerrorlevel/\\the\\pdfinclusionerrorlevel} ",
                 "\\end",
             ),
             &mut stores,
@@ -542,12 +549,20 @@ mod tests {
 
         assert!(output.contains("local=3/20.0pt/inner"), "{output}");
         assert!(output.contains("restored=7/10.0pt/outer"), "{output}");
-        assert!(output.contains("aliases-local=6/4/3"), "{output}");
-        assert!(output.contains("aliases-restored=7/2/1"), "{output}");
+        assert!(output.contains("compat-local=6/4/0/3/0"), "{output}");
+        assert!(output.contains("compat-restored=7/2/0/1/0"), "{output}");
         assert_eq!(stores.int_param(IntParam::PDF_COMPRESS_LEVEL), 4);
         assert_eq!(stores.int_param(IntParam::PDF_MINOR_VERSION), 7);
-        assert_eq!(stores.int_param(IntParam::PDF_FORCE_PAGE_BOX), 2);
-        assert_eq!(stores.int_param(IntParam::PDF_INCLUSION_ERROR_LEVEL), 1);
+        assert_eq!(
+            stores.int_param(IntParam::PDF_OPTION_ALWAYS_USE_PDF_PAGE_BOX),
+            2
+        );
+        assert_eq!(stores.int_param(IntParam::PDF_FORCE_PAGE_BOX), 0);
+        assert_eq!(
+            stores.int_param(IntParam::PDF_OPTION_INCLUSION_ERROR_LEVEL),
+            1
+        );
+        assert_eq!(stores.int_param(IntParam::PDF_INCLUSION_ERROR_LEVEL), 0);
         assert_eq!(
             stores.dimen_param(DimenParam::PDF_H_ORIGIN),
             Scaled::from_raw(30 * 65_536)
@@ -556,6 +571,36 @@ mod tests {
             token_list_text(&stores, stores.tok_param(TokParam::PDF_PAGES_ATTR)),
             "global"
         );
+    }
+
+    #[test]
+    fn pdf_image_configuration_matches_the_pinned_initex_oracle() {
+        let reference = test_support::read_fixture("tex_exec", "pdf_image_config", "ref");
+        for expected in [
+            "defaults=72/0/0/0/0/0/0/0/1000/2200/1/0/0/0",
+            "local=-1/9000/-2/5/1/2/3/4/-3/1000001/2/-1/2/-1",
+            "restored=96/300/1/2/3/4/1/2/900/1800/0/1/0/1",
+        ] {
+            assert!(
+                reference.contains(expected),
+                "missing {expected:?}: {reference}"
+            );
+        }
+
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let output = crate::run_memory_with_stores(
+            include_str!("../../../tests/corpus/tex_exec/pdf_image_config.tex"),
+            &mut stores,
+        )
+        .expect("pdfTeX image configuration assignments");
+        for expected in [
+            "defaults=72/0/0/0/0/0/0/0/1000/2200/1/0/0/0",
+            "local=-1/9000/-2/5/1/2/3/4/-3/1000001/2/-1/2/-1",
+            "restored=96/300/1/2/3/4/1/2/900/1800/0/1/0/1",
+        ] {
+            assert!(output.contains(expected), "missing {expected:?}: {output}");
+        }
     }
 
     #[test]
@@ -607,6 +652,14 @@ mod tests {
                 compress_level: 7,
                 object_compress_level: 0,
                 decimal_digits: 4,
+                gamma: 1_000,
+                image_gamma: 2_200,
+                image_hicolor: 1,
+                image_apply_gamma: 0,
+                draft_mode: 0,
+                inclusion_copy_fonts: 0,
+                pk_resolution: 0,
+                unique_resource_names: 0,
             })
         );
     }
@@ -697,6 +750,8 @@ mod tests {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
         stores.set_int_param(IntParam::PDF_COMPRESS_LEVEL, 5);
+        stores.set_int_param(IntParam::PDF_OPTION_ALWAYS_USE_PDF_PAGE_BOX, 2);
+        stores.set_int_param(IntParam::PDF_OPTION_INCLUSION_ERROR_LEVEL, 3);
         stores.set_dimen_param(DimenParam::PDF_PAGE_WIDTH, Scaled::from_raw(12_345));
         let first_tokens = stores.intern_token_list(&[
             Token::Char {
@@ -724,6 +779,8 @@ mod tests {
         let first = stores.snapshot();
 
         stores.set_int_param(IntParam::PDF_COMPRESS_LEVEL, 2);
+        stores.set_int_param(IntParam::PDF_OPTION_ALWAYS_USE_PDF_PAGE_BOX, 4);
+        stores.set_int_param(IntParam::PDF_OPTION_INCLUSION_ERROR_LEVEL, 5);
         stores.set_dimen_param(DimenParam::PDF_PAGE_WIDTH, Scaled::from_raw(54_321));
         let second_tokens = stores.intern_token_list(&[Token::Char {
             ch: 'x',
@@ -738,6 +795,14 @@ mod tests {
         assert_eq!(first.state_hash(), restored.state_hash());
         assert_eq!(stores.int_param(IntParam::PDF_COMPRESS_LEVEL), 5);
         assert_eq!(
+            stores.int_param(IntParam::PDF_OPTION_ALWAYS_USE_PDF_PAGE_BOX),
+            2
+        );
+        assert_eq!(
+            stores.int_param(IntParam::PDF_OPTION_INCLUSION_ERROR_LEVEL),
+            3
+        );
+        assert_eq!(
             stores.dimen_param(DimenParam::PDF_PAGE_WIDTH),
             Scaled::from_raw(12_345)
         );
@@ -750,6 +815,14 @@ mod tests {
         let loaded = Universe::from_format(World::default(), &format).expect("load format");
         assert_eq!(loaded.dump_format().expect("redump format"), format);
         assert_eq!(loaded.int_param(IntParam::PDF_COMPRESS_LEVEL), 5);
+        assert_eq!(
+            loaded.int_param(IntParam::PDF_OPTION_ALWAYS_USE_PDF_PAGE_BOX),
+            2
+        );
+        assert_eq!(
+            loaded.int_param(IntParam::PDF_OPTION_INCLUSION_ERROR_LEVEL),
+            3
+        );
         assert_eq!(
             loaded.dimen_param(DimenParam::PDF_PAGE_WIDTH),
             Scaled::from_raw(12_345)

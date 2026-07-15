@@ -141,6 +141,7 @@ pub enum ExecError {
     InvalidShipoutArtifact(String),
     PdfOutputModeChanged,
     PdfVersionChanged,
+    PdfDraftModeChanged,
     VSplitNeedsVBox,
     Box255NotVoidBeforeOutput,
     OutputRoutineBox255NotVoid,
@@ -277,6 +278,10 @@ impl fmt::Display for ExecError {
                 f,
                 "pdfTeX error (setup): PDF version cannot be changed after data is written to the PDF file"
             ),
+            Self::PdfDraftModeChanged => write!(
+                f,
+                "pdfTeX error (setup): \\pdfdraftmode can only be changed before anything is written to the output"
+            ),
             Self::VSplitNeedsVBox => write!(f, "\\vsplit needs a \\vbox"),
             Self::Box255NotVoidBeforeOutput => write!(f, "\\box255 is not void"),
             Self::OutputRoutineBox255NotVoid => {
@@ -345,6 +350,7 @@ impl std::error::Error for ExecError {
             | Self::InvalidShipoutArtifact(_)
             | Self::PdfOutputModeChanged
             | Self::PdfVersionChanged
+            | Self::PdfDraftModeChanged
             | Self::VSplitNeedsVBox
             | Self::Box255NotVoidBeforeOutput
             | Self::OutputRoutineBox255NotVoid
@@ -410,6 +416,7 @@ impl ExecError {
             | Self::InvalidShipoutArtifact(_)
             | Self::PdfOutputModeChanged
             | Self::PdfVersionChanged
+            | Self::PdfDraftModeChanged
             | Self::VSplitNeedsVBox
             | Self::Box255NotVoidBeforeOutput
             | Self::OutputRoutineBox255NotVoid

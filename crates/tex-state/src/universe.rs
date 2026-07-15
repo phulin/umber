@@ -1723,6 +1723,14 @@ impl Universe {
             compress_level: self.int_param(IntParam::PDF_COMPRESS_LEVEL),
             object_compress_level: self.int_param(IntParam::PDF_OBJ_COMPRESS_LEVEL),
             decimal_digits: self.int_param(IntParam::PDF_DECIMAL_DIGITS),
+            gamma: self.int_param(IntParam::PDF_GAMMA),
+            image_gamma: self.int_param(IntParam::PDF_IMAGE_GAMMA),
+            image_hicolor: self.int_param(IntParam::PDF_IMAGE_HICOLOR),
+            image_apply_gamma: self.int_param(IntParam::PDF_IMAGE_APPLY_GAMMA),
+            draft_mode: self.int_param(IntParam::PDF_DRAFT_MODE),
+            inclusion_copy_fonts: self.int_param(IntParam::PDF_INCLUSION_COPY_FONTS),
+            pk_resolution: self.int_param(IntParam::PDF_PK_RESOLUTION),
+            unique_resource_names: self.int_param(IntParam::PDF_UNIQUE_RESNAME),
         }
         .normalized()
     }

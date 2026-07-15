@@ -233,6 +233,16 @@ impl IntParam {
     pub const PDF_OMIT_INFO_DICT: Self = Self::new(104);
     pub const PDF_OMIT_PROCSET: Self = Self::new(105);
     pub const PDF_PTEX_USE_UNDERSCORE: Self = Self::new(106);
+    /// Obsolete `\pdfoptionalwaysusepdfpagebox` compatibility cell.
+    ///
+    /// pdfTeX keeps this separate from `\pdfforcepagebox` and transfers it
+    /// only while scanning an external image.
+    pub const PDF_OPTION_ALWAYS_USE_PDF_PAGE_BOX: Self = Self::new(107);
+    /// Obsolete `\pdfoptionpdfinclusionerrorlevel` compatibility cell.
+    ///
+    /// pdfTeX keeps this separate from `\pdfinclusionerrorlevel` and
+    /// transfers it only while scanning an external image.
+    pub const PDF_OPTION_INCLUSION_ERROR_LEVEL: Self = Self::new(108);
 
     /// Current hyphenation language.
     pub const LANGUAGE: Self = Self::new(50);

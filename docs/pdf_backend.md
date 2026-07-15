@@ -136,10 +136,12 @@ returns typed errors for text and specials until their resource-owning
 primitive slices are implemented; a minimal rule-only page is complete.
 
 pdfTeX mode freezes `\pdfoutput`, the PDF version, stream/object compression,
-and decimal precision at the first committed shipout. Invalid major/minor
+decimal precision, gamma conversion, draft mode, inclusion copy-fonts, PK
+resolution, and unique-resource-name policy at the first committed shipout.
+Invalid major/minor
 versions recover to 1.4 with the pinned diagnostics; compression and precision
-use pdfTeX's bounded first-write values. Later output-mode or version changes
-are fatal setup errors. `\pdfdecimaldigits` controls page-box and rule-number
+use pdfTeX's bounded first-write values. Later output-mode, version, or draft
+mode changes are fatal setup errors. `\pdfdecimaldigits` controls page-box and rule-number
 rounding, and DVI plans remain byte-identical whether PDF mode is selected or
 not.
 
