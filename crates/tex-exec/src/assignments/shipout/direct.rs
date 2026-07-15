@@ -61,6 +61,7 @@ fn stage_form_inner(
     };
     let overlay = normalize_page(
         children,
+        vertical,
         Vec::new(),
         stores,
         expansion,
@@ -163,6 +164,7 @@ pub(super) fn stage_shipout(
     let overlay = execution.with_nested(|expansion| {
         normalize_page(
             children,
+            vertical,
             pending_effects,
             stores,
             expansion,

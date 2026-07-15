@@ -932,6 +932,39 @@ mod tests {
     }
 
     #[test]
+    fn running_thread_lifecycle_reports_hlist_and_nesting_errors() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let output = crate::run_memory_with_stores(
+            "\\pdfoutput=1\\shipout\\hbox{\\pdfstartthread name{bad}\\pdfendthread}\\end",
+            &mut stores,
+        )
+        .expect("thread lifecycle diagnostics recover");
+        assert!(
+            output.contains("\\pdfstartthread ended up in hlist"),
+            "{output}"
+        );
+        assert!(
+            output.contains("\\pdfendthread ended up in hlist"),
+            "{output}"
+        );
+
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let output = crate::run_memory_with_stores(
+            "\\pdfoutput=1\\shipout\\vbox{\\pdfstartthread name{nested}\\vbox{\\pdfendthread}}\\end",
+            &mut stores,
+        )
+        .expect("misnested thread diagnostic recovers");
+        assert!(
+            output.contains(
+                "\\pdfendthread ended up in different nesting level than \\pdfstartthread"
+            ),
+            "{output}"
+        );
+    }
+
+    #[test]
     fn pdf_destination_duplicate_scanned_after_ship_uses_current_suppression() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);

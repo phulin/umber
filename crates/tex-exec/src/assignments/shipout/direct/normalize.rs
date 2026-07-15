@@ -8,6 +8,7 @@ pub(super) struct PageOverlay {
     pub(super) directions: Vec<DirectionPermutation>,
     pub(super) diagnostics: Vec<(PrintSink, String)>,
     color_target: tex_state::PdfColorStackTarget,
+    running_thread_depth: Option<usize>,
 }
 
 pub(super) struct MathSubstitution {
@@ -23,6 +24,7 @@ pub(super) struct DirectionPermutation {
 
 pub(super) fn normalize_page(
     root: NodeListId,
+    root_vertical: bool,
     effects: Vec<PageEffect>,
     stores: &mut Universe,
     expansion: &mut tex_expand::ExpansionContext<'_>,
@@ -67,18 +69,33 @@ pub(super) fn normalize_page(
         directions: Vec::new(),
         diagnostics: Vec::new(),
         color_target,
+        running_thread_depth: None,
     };
-    normalize_list(stores, expansion, root, false, 1, &mut overlay)?;
+    normalize_list(
+        stores,
+        expansion,
+        root,
+        false,
+        !root_vertical,
+        1,
+        &mut overlay,
+    )?;
     Ok(overlay)
 }
 
 enum NormalizeNode {
     Leaf,
-    List(NodeListId, bool),
+    List(NodeListId, bool, bool),
     Lists([NodeListId; 3]),
     Whatsit(Whatsit),
     Math(tex_state::math::MathListNode),
     Unsupported(&'static str),
+}
+
+#[derive(Clone, Copy)]
+struct NormalizeLocation {
+    in_hlist: bool,
+    depth: usize,
 }
 
 fn normalize_list(
@@ -86,6 +103,7 @@ fn normalize_list(
     expansion: &mut tex_expand::ExpansionContext<'_>,
     list: NodeListId,
     suppress_deferred_streams: bool,
+    in_hlist: bool,
     depth: usize,
     overlay: &mut PageOverlay,
 ) -> Result<(), ExecError> {
@@ -103,7 +121,7 @@ fn normalize_list(
                 list,
                 index,
                 suppress_deferred_streams,
-                depth,
+                NormalizeLocation { in_hlist, depth },
                 overlay,
             )?;
         }
@@ -116,7 +134,7 @@ fn normalize_list(
                 list,
                 index,
                 suppress_deferred_streams,
-                depth,
+                NormalizeLocation { in_hlist, depth },
                 overlay,
             )?;
         }
@@ -130,31 +148,35 @@ fn normalize_index(
     list: NodeListId,
     index: usize,
     suppress_deferred_streams: bool,
-    depth: usize,
+    location: NormalizeLocation,
     overlay: &mut PageOverlay,
 ) -> Result<(), ExecError> {
+    let NormalizeLocation { in_hlist, depth } = location;
     let action = {
         let node = stores
             .nodes(list)
             .get(index)
             .expect("normalization index belongs to the frozen list");
         match node {
-            NodeRef::HList(box_node) | NodeRef::VList(box_node) => {
-                NormalizeNode::List(box_node.children, suppress_deferred_streams)
+            NodeRef::HList(box_node) => {
+                NormalizeNode::List(box_node.children, suppress_deferred_streams, true)
+            }
+            NodeRef::VList(box_node) => {
+                NormalizeNode::List(box_node.children, suppress_deferred_streams, false)
             }
             NodeRef::Glue {
                 leader: Some(StateLeaderPayload::HList(box_node)),
                 ..
-            }
-            | NodeRef::Glue {
+            } => NormalizeNode::List(box_node.children, true, true),
+            NodeRef::Glue {
                 leader: Some(StateLeaderPayload::VList(box_node)),
                 ..
-            } => NormalizeNode::List(box_node.children, true),
+            } => NormalizeNode::List(box_node.children, true, false),
             NodeRef::Disc {
                 pre, post, replace, ..
             } => NormalizeNode::Lists([pre, post, replace]),
             NodeRef::Ins { content, .. } | NodeRef::Adjust(content) => {
-                NormalizeNode::List(content, suppress_deferred_streams)
+                NormalizeNode::List(content, suppress_deferred_streams, in_hlist)
             }
             NodeRef::Whatsit(whatsit) => NormalizeNode::Whatsit(whatsit.clone()),
             NodeRef::MathList(math) => NormalizeNode::Math(math),
@@ -178,8 +200,16 @@ fn normalize_index(
     };
     match action {
         NormalizeNode::Leaf => {}
-        NormalizeNode::List(child, suppress) => {
-            normalize_list(stores, expansion, child, suppress, depth + 1, overlay)?;
+        NormalizeNode::List(child, suppress, child_in_hlist) => {
+            normalize_list(
+                stores,
+                expansion,
+                child,
+                suppress,
+                child_in_hlist,
+                depth + 1,
+                overlay,
+            )?;
         }
         NormalizeNode::Lists(children) => {
             for child in children {
@@ -188,6 +218,7 @@ fn normalize_index(
                     expansion,
                     child,
                     suppress_deferred_streams,
+                    in_hlist,
                     depth + 1,
                     overlay,
                 )?;
@@ -196,11 +227,10 @@ fn normalize_index(
         NormalizeNode::Whatsit(whatsit) => append_whatsit_effect(
             stores,
             expansion,
-            &mut overlay.effects,
-            &mut overlay.diagnostics,
+            overlay,
             whatsit,
             suppress_deferred_streams,
-            overlay.color_target,
+            location,
         )?,
         NormalizeNode::Math(math) => {
             let mut nodes = crate::math::finish_math_list_node(stores, math, false);
@@ -215,6 +245,7 @@ fn normalize_index(
                 expansion,
                 replacement,
                 suppress_deferred_streams,
+                in_hlist,
                 depth + 1,
                 overlay,
             )?;
@@ -229,12 +260,16 @@ fn normalize_index(
 fn append_whatsit_effect(
     stores: &mut Universe,
     expansion: &mut tex_expand::ExpansionContext<'_>,
-    effects: &mut Vec<PageEffect>,
-    diagnostics: &mut Vec<(PrintSink, String)>,
+    overlay: &mut PageOverlay,
     whatsit: Whatsit,
     suppress_deferred_streams: bool,
-    color_target: tex_state::PdfColorStackTarget,
+    location: NormalizeLocation,
 ) -> Result<(), ExecError> {
+    let NormalizeLocation { in_hlist, depth } = location;
+    let color_target = overlay.color_target;
+    let effects = &mut overlay.effects;
+    let diagnostics = &mut overlay.diagnostics;
+    let running_thread_depth = &mut overlay.running_thread_depth;
     match whatsit {
         Whatsit::OpenOut { slot, path } if !suppress_deferred_streams => {
             let path = super::super::super::variables::openout_target(path);
@@ -470,6 +505,17 @@ fn append_whatsit_effect(
             if suppress_deferred_streams {
                 return Ok(());
             }
+            if running && in_hlist {
+                diagnostics.push((
+                    PrintSink::TerminalAndLog,
+                    "\npdfTeX warning: \\pdfstartthread ended up in hlist\n".to_owned(),
+                ));
+                effects.push(PageEffect::PdfLiteral {
+                    mode: tex_out::PdfLiteralMode::Direct,
+                    payload: Vec::new(),
+                });
+                return Ok(());
+            }
             if color_target == tex_state::PdfColorStackTarget::Form {
                 return Err(ExecError::PdfThreadInForm);
             }
@@ -514,13 +560,39 @@ fn append_whatsit_effect(
                 attributes: attribute_bytes.into_bytes(),
                 margin: stores.dimen_param(DimenParam::PDF_THREAD_MARGIN),
             };
+            if running {
+                *running_thread_depth = Some(depth);
+            }
             effects.push(if running {
                 PageEffect::PdfStartThread(marker)
             } else {
                 PageEffect::PdfThread(marker)
             });
         }
-        Whatsit::PdfEndThread => effects.push(PageEffect::PdfEndThread),
+        Whatsit::PdfEndThread if in_hlist => {
+            diagnostics.push((
+                PrintSink::TerminalAndLog,
+                "\npdfTeX warning: \\pdfendthread ended up in hlist\n".to_owned(),
+            ));
+            effects.push(PageEffect::PdfLiteral {
+                mode: tex_out::PdfLiteralMode::Direct,
+                payload: Vec::new(),
+            });
+        }
+        Whatsit::PdfEndThread => match running_thread_depth.take() {
+            Some(start_depth) if start_depth != depth => {
+                diagnostics.push((
+                    PrintSink::TerminalAndLog,
+                    "\npdfTeX warning: \\pdfendthread ended up in different nesting level than \\pdfstartthread\n"
+                        .to_owned(),
+                ));
+                effects.push(PageEffect::PdfLiteral {
+                    mode: tex_out::PdfLiteralMode::Direct,
+                    payload: Vec::new(),
+                });
+            }
+            _ => effects.push(PageEffect::PdfEndThread),
+        },
         Whatsit::OpenOut { .. }
         | Whatsit::CloseOut { .. }
         | Whatsit::DeferredWrite { .. }
