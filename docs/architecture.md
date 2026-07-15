@@ -77,10 +77,12 @@ They are sorted, deduplicated, and returned in one `NeedResources` batch;
 Rust never invents URLs or performs asynchronous I/O.
 
 `umber-vfs` owns file request identity, required-versus-hint file batches,
-generic response validation, request-bound resolved origins, and file limits.
-The TeX driver owns extension and search policy and combines the resulting
-file needs with font requests. Native and WASM adapters share the same Rust
-domain/kind wire vocabulary.
+generic response validation, request-bound resolved origins, layered session
+input storage, snapshots, and file limits. `VirtualCompileSession` seeds its
+initial `World` from that storage rather than retaining parallel user and
+resolved byte maps. The TeX driver owns extension and search policy and
+combines the resulting file needs with font requests. Native and WASM adapters
+share the same Rust domain/kind wire vocabulary.
 
 ## 4. Lexer
 

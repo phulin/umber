@@ -60,6 +60,9 @@ Domain-qualified file request identity, deterministic file batching, generic
 registration, and file limits are owned by `umber-vfs`. The compile session
 adds TeX lookup/default-extension policy and combines file requests with font
 requests, while the WASM layer only adapts the shared Rust wire values.
+`FileProvisioner` also owns the session's layered user and resolved-resource
+storage. Initial engine state is seeded from one immutable VFS snapshot, so
+the session retains no parallel byte maps or file-accounting counters.
 
 Clearing the distribution cache preserves the latest root bytes but discards
 accepted incremental history and restarts resource acquisition as a cold

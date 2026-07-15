@@ -1,8 +1,9 @@
 # Shared virtual filesystem
 
 Status: canonical paths, immutable files, layered storage, typed file requests,
-resource registration, file limits, deterministic snapshots, and generated-file
-transactions implemented; compile-session migration remains in progress.
+resource registration, file limits, deterministic snapshots, generated-file
+transactions, and compile-session input ownership implemented; generated-output
+transaction migration remains in progress.
 
 This document defines `umber-vfs`, the host-neutral virtual filesystem shared
 by Umber's TeX driver, bibliography processing, native embeddings, and the
@@ -355,11 +356,12 @@ pub struct VfsLimits {
 ```
 
 Generated-file count and byte limits are enforced independently for a private
-stage write set and for the complete pending build overlay. Today
+stage write set and for the complete pending build overlay.
 `VirtualCompileSession::SessionLimits` preserves its public compatibility
-fields but delegates file hard-ceiling, replacement, and provisioning checks
-to `VfsLimits` and `FileProvisioner`; later compile-session transaction
-migration will expose appropriately composed generated-output limits.
+fields but delegates user-file and resolved-file hard ceilings, replacement,
+registration, and accounting to `VfsLimits` and `FileProvisioner`. Later
+compile-session transaction migration will expose appropriately composed
+generated-output limits.
 
 Limits use checked arithmetic and are enforced before allocation where the
 declared size is known, during bounded stream growth, at stage commit, and at
@@ -368,8 +370,10 @@ or accepted history retains them. Telemetry reports logical bytes separately
 from retained shared allocations.
 
 The implemented snapshot accounting exposes retained-generation binding and
-logical-byte totals. Transaction and session owners will aggregate those
-values with allocation-level telemetry when they adopt snapshots.
+logical-byte totals. `VirtualCompileSession` uses a snapshot to seed the
+initial engine `World`; transaction and retained-session owners will aggregate
+snapshot values with allocation-level telemetry when generated-output and
+editor-revision transactions are integrated.
 
 No subsystem can bypass VFS accounting by returning an auxiliary output in a
 separate unbounded collection.
@@ -467,14 +471,17 @@ byte-identical generated files and DVI.
 5. **Complete in `umber-vfs`.** Add producer-scoped stage transactions and
    multi-stage build transactions over the accepted and pending generated
    layers. Persistent compile-session migration remains in later phases.
-6. Adapt the existing TeX resolver and memory-output collector to VFS
-   snapshots and stage transactions without changing public compile behavior.
+6. **Input ownership complete.** `VirtualCompileSession` registers user and
+   resolved inputs in `FileProvisioner`'s layered storage, seeds its initial
+   `World` from a VFS snapshot, and retains no private file maps or counters.
+   Direct snapshot-backed TeX resolvers and stage-transaction publication for
+   memory outputs remain the next adapter phase.
 7. Add the bibliography resource kinds and adapters defined in
    [`bib.md`](bib.md).
 8. Implement native multi-stage orchestration, then expose the identical state
    machine through `umber-wasm`.
-9. Remove superseded private file maps and duplicate path/request types after
-   all native, incremental, and browser tests use `umber-vfs`.
+9. Remove any remaining superseded adapter state after all native,
+   incremental, and browser generated-output paths use `umber-vfs`.
 
 ## Exit criteria
 
