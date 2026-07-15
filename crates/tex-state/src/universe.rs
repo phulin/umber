@@ -8,7 +8,9 @@
 
 use crate::code_tables::{CodeTableGenerations, DelCode, LcCode, MathCode, SfCode, UcCode};
 use crate::dependency::{
-    ChangedAt, DependencyKey, DependencyRuntime, DependencyValue, ObservedDependency,
+    ChangedAt, DependencyBank, DependencyCodeTable, DependencyEngineField, DependencyFontField,
+    DependencyKey, DependencyPageField, DependencyRuntime, DependencyValue, DependencyWorldField,
+    ObservedDependency,
 };
 #[cfg(test)]
 use crate::env::Env;
@@ -1291,6 +1293,20 @@ impl Universe {
             .validate_region(observations, read_current)
     }
 
+    fn mark_code_changed(&mut self, table: DependencyCodeTable, ch: char) {
+        self.dependencies.mark_changed(DependencyKey::Code {
+            table,
+            scalar: ch as u32,
+        });
+        self.dependencies
+            .mark_changed(DependencyKey::CodeGeneration(table));
+    }
+
+    fn mark_cell_changed(&mut self, bank: DependencyBank, index: u32) {
+        self.dependencies
+            .mark_changed(DependencyKey::Cell { bank, index });
+    }
+
     /// Projects executor-owned roots into the same allocation-independent
     /// semantic hash vocabulary used by Universe checkpoints.
     #[must_use]
@@ -1856,6 +1872,9 @@ impl Universe {
 
     /// Mutates the external-effect capability object through the Universe boundary.
     pub fn world_mut(&mut self) -> &mut World {
+        // This intentionally broad escape hatch is retained for top-level
+        // drivers. Capability-specific paths below mark narrower World keys.
+        self.dependencies.invalidate_all();
         &mut self.world
     }
 
@@ -1864,6 +1883,10 @@ impl Universe {
     pub fn record_deferred_write(&mut self, stream: StreamSlot, tokens: TokenListId) {
         self.stores.assert_live_token_list(tokens);
         self.world.record_deferred_write(stream, tokens);
+        self.dependencies.mark_changed(DependencyKey::World {
+            field: DependencyWorldField::OutputStream,
+            index: u64::from(stream.raw()),
+        });
     }
 
     /// Marks the start of node allocations owned by one in-progress shipout.
@@ -1889,6 +1912,10 @@ impl Universe {
             self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
             return Err(err);
         }
+        self.dependencies.mark_changed(DependencyKey::World {
+            field: DependencyWorldField::MaterializationBarrier,
+            index: 0,
+        });
         self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
         Ok(())
     }
@@ -1959,6 +1986,7 @@ impl Universe {
     pub fn set_input_summary(&mut self, summary: InputSummary) {
         self.stores.assert_live_input_summary(&self.world, &summary);
         self.input_summary = summary;
+        self.dependencies.mark_changed(DependencyKey::InputStack);
     }
 
     /// Returns the lexer-owned input stack state restored by the last rollback.
@@ -1988,6 +2016,9 @@ impl Universe {
     /// Sets the current interaction mode.
     pub fn set_interaction_mode(&mut self, mode: InteractionMode) {
         self.interaction_mode = mode;
+        self.dependencies.mark_changed(DependencyKey::Engine(
+            DependencyEngineField::InteractionMode,
+        ));
     }
 
     pub fn set_pdf_match_state(
@@ -2763,10 +2794,12 @@ impl Universe {
 
     pub fn set_catcode(&mut self, ch: char, value: Catcode) {
         self.stores.set_catcode(ch, value);
+        self.mark_code_changed(DependencyCodeTable::Catcode, ch);
     }
 
     pub fn set_catcode_global(&mut self, ch: char, value: Catcode) {
         self.stores.set_catcode_global(ch, value);
+        self.mark_code_changed(DependencyCodeTable::Catcode, ch);
     }
 
     #[must_use]
@@ -2776,10 +2809,12 @@ impl Universe {
 
     pub fn set_lccode(&mut self, ch: char, value: LcCode) {
         self.stores.set_lccode(ch, value);
+        self.mark_code_changed(DependencyCodeTable::Lccode, ch);
     }
 
     pub fn set_lccode_global(&mut self, ch: char, value: LcCode) {
         self.stores.set_lccode_global(ch, value);
+        self.mark_code_changed(DependencyCodeTable::Lccode, ch);
     }
 
     #[must_use]
@@ -2789,10 +2824,12 @@ impl Universe {
 
     pub fn set_uccode(&mut self, ch: char, value: UcCode) {
         self.stores.set_uccode(ch, value);
+        self.mark_code_changed(DependencyCodeTable::Uccode, ch);
     }
 
     pub fn set_uccode_global(&mut self, ch: char, value: UcCode) {
         self.stores.set_uccode_global(ch, value);
+        self.mark_code_changed(DependencyCodeTable::Uccode, ch);
     }
 
     #[must_use]
@@ -2802,10 +2839,12 @@ impl Universe {
 
     pub fn set_sfcode(&mut self, ch: char, value: SfCode) {
         self.stores.set_sfcode(ch, value);
+        self.mark_code_changed(DependencyCodeTable::Sfcode, ch);
     }
 
     pub fn set_sfcode_global(&mut self, ch: char, value: SfCode) {
         self.stores.set_sfcode_global(ch, value);
+        self.mark_code_changed(DependencyCodeTable::Sfcode, ch);
     }
 
     #[must_use]
@@ -2815,10 +2854,12 @@ impl Universe {
 
     pub fn set_mathcode(&mut self, ch: char, value: MathCode) {
         self.stores.set_mathcode(ch, value);
+        self.mark_code_changed(DependencyCodeTable::Mathcode, ch);
     }
 
     pub fn set_mathcode_global(&mut self, ch: char, value: MathCode) {
         self.stores.set_mathcode_global(ch, value);
+        self.mark_code_changed(DependencyCodeTable::Mathcode, ch);
     }
 
     #[must_use]
@@ -2828,23 +2869,31 @@ impl Universe {
 
     pub fn set_delcode(&mut self, ch: char, value: DelCode) {
         self.stores.set_delcode(ch, value);
+        self.mark_code_changed(DependencyCodeTable::Delcode, ch);
     }
 
     pub fn set_delcode_global(&mut self, ch: char, value: DelCode) {
         self.stores.set_delcode_global(ch, value);
+        self.mark_code_changed(DependencyCodeTable::Delcode, ch);
     }
 
     pub fn add_hyphenation_pattern(&mut self, pattern: PatternSpec) {
         self.stores.add_hyphenation_pattern(pattern);
+        self.dependencies
+            .mark_changed(DependencyKey::HyphenationPatterns(0));
     }
 
     pub fn add_hyphenation_pattern_for_language(&mut self, language: u8, pattern: PatternSpec) {
         self.stores
             .add_hyphenation_pattern_for_language(language, pattern);
+        self.dependencies
+            .mark_changed(DependencyKey::HyphenationPatterns(language));
     }
 
     pub fn add_hyphenation_exception(&mut self, exception: ExceptionSpec) {
         self.stores.add_hyphenation_exception(exception);
+        self.dependencies
+            .mark_changed(DependencyKey::HyphenationExceptions(0));
     }
 
     pub fn add_hyphenation_exception_for_language(
@@ -2854,6 +2903,8 @@ impl Universe {
     ) {
         self.stores
             .add_hyphenation_exception_for_language(language, exception);
+        self.dependencies
+            .mark_changed(DependencyKey::HyphenationExceptions(language));
     }
 
     pub fn save_hyphenation_codes(
@@ -2862,6 +2913,8 @@ impl Universe {
         codes: impl IntoIterator<Item = (char, char)>,
     ) {
         self.stores.save_hyphenation_codes(language, codes);
+        self.dependencies
+            .mark_changed(DependencyKey::HyphenationCodes(language));
     }
 
     #[must_use]
@@ -2897,7 +2950,9 @@ impl Universe {
     }
 
     pub fn set_meaning(&mut self, symbol: impl crate::interner::SymbolReference, meaning: Meaning) {
+        let dependency = DependencyKey::Meaning(symbol_reference_raw(symbol));
         self.stores.set_meaning(symbol, meaning);
+        self.dependencies.mark_changed(dependency);
     }
 
     pub fn intern_relaxed_control_sequence(&mut self, name: &str) -> SymbolId {
@@ -2909,7 +2964,9 @@ impl Universe {
         symbol: impl crate::interner::SymbolReference,
         meaning: Meaning,
     ) {
+        let dependency = DependencyKey::Meaning(symbol_reference_raw(symbol));
         self.stores.set_meaning_global(symbol, meaning);
+        self.dependencies.mark_changed(dependency);
     }
 
     pub fn intern_macro(&mut self, macro_meaning: MacroMeaning) -> MacroDefinitionId {
@@ -2948,7 +3005,9 @@ impl Universe {
         symbol: impl crate::interner::SymbolReference,
         macro_meaning: MacroMeaning,
     ) {
+        let dependency = DependencyKey::Meaning(symbol_reference_raw(symbol));
         self.stores.set_macro_meaning(symbol, macro_meaning);
+        self.dependencies.mark_changed(dependency);
     }
 
     pub fn set_macro_meaning_with_provenance(
@@ -2957,8 +3016,10 @@ impl Universe {
         macro_meaning: MacroMeaning,
         provenance: MacroDefinitionProvenance,
     ) {
+        let dependency = DependencyKey::Meaning(symbol_reference_raw(symbol));
         self.stores
             .set_macro_meaning_with_provenance(symbol, macro_meaning, provenance);
+        self.dependencies.mark_changed(dependency);
     }
 
     pub fn set_macro_meaning_global(
@@ -2966,7 +3027,9 @@ impl Universe {
         symbol: impl crate::interner::SymbolReference,
         macro_meaning: MacroMeaning,
     ) {
+        let dependency = DependencyKey::Meaning(symbol_reference_raw(symbol));
         self.stores.set_macro_meaning_global(symbol, macro_meaning);
+        self.dependencies.mark_changed(dependency);
     }
 
     pub fn set_macro_meaning_global_with_provenance(
@@ -2975,8 +3038,10 @@ impl Universe {
         macro_meaning: MacroMeaning,
         provenance: MacroDefinitionProvenance,
     ) {
+        let dependency = DependencyKey::Meaning(symbol_reference_raw(symbol));
         self.stores
             .set_macro_meaning_global_with_provenance(symbol, macro_meaning, provenance);
+        self.dependencies.mark_changed(dependency);
     }
 
     #[must_use]
@@ -3556,10 +3621,12 @@ impl Universe {
 
     pub fn set_current_font(&mut self, id: FontId) {
         self.stores.set_current_font(id);
+        self.mark_cell_changed(DependencyBank::CurrentFont, 0);
     }
 
     pub fn set_current_font_global(&mut self, id: FontId) {
         self.stores.set_current_font_global(id);
+        self.mark_cell_changed(DependencyBank::CurrentFont, 0);
     }
 
     pub fn set_current_font_selector(
@@ -3591,6 +3658,10 @@ impl Universe {
         global: bool,
     ) {
         self.stores.set_math_family_font(size, family, id, global);
+        self.mark_cell_changed(
+            DependencyBank::MathFamilyFont,
+            u32::from(size.index()) * 16 + u32::from(family),
+        );
     }
 
     #[must_use]
@@ -3609,7 +3680,20 @@ impl Universe {
         number: u32,
         value: Scaled,
     ) -> Result<(), FontParameterError> {
-        self.stores.set_font_dimen(font, number, value)
+        let result = self.stores.set_font_dimen(font, number, value);
+        if result.is_ok() {
+            self.dependencies.mark_changed(DependencyKey::Font {
+                field: DependencyFontField::Parameter,
+                font: font.raw(),
+                index: number,
+            });
+            self.dependencies.mark_changed(DependencyKey::Font {
+                field: DependencyFontField::ParameterCount,
+                font: font.raw(),
+                index: 0,
+            });
+        }
+        result
     }
 
     #[must_use]
@@ -3619,6 +3703,11 @@ impl Universe {
 
     pub fn set_font_hyphen_char(&mut self, font: FontId, value: i32) {
         self.stores.set_font_hyphen_char(font, value);
+        self.dependencies.mark_changed(DependencyKey::Font {
+            field: DependencyFontField::HyphenChar,
+            font: font.raw(),
+            index: 0,
+        });
     }
 
     #[must_use]
@@ -3628,6 +3717,11 @@ impl Universe {
 
     pub fn set_font_skew_char(&mut self, font: FontId, value: i32) {
         self.stores.set_font_skew_char(font, value);
+        self.dependencies.mark_changed(DependencyKey::Font {
+            field: DependencyFontField::SkewChar,
+            font: font.raw(),
+            index: 0,
+        });
     }
 
     #[must_use]
@@ -3664,10 +3758,18 @@ impl Universe {
 
     pub fn enter_group(&mut self) {
         self.stores.enter_group();
+        self.dependencies
+            .mark_changed(DependencyKey::Engine(DependencyEngineField::GroupLevel));
+        self.dependencies
+            .mark_changed(DependencyKey::Engine(DependencyEngineField::GroupType));
     }
 
     pub fn enter_group_with_kind(&mut self, kind: GroupKind) {
         self.stores.enter_group_with_kind(kind);
+        self.dependencies
+            .mark_changed(DependencyKey::Engine(DependencyEngineField::GroupLevel));
+        self.dependencies
+            .mark_changed(DependencyKey::Engine(DependencyEngineField::GroupType));
     }
 
     pub fn push_aftergroup(&mut self, payload: Token) {
@@ -3678,6 +3780,7 @@ impl Universe {
     pub fn leave_group(&mut self) -> Vec<Token> {
         let tokens = self.stores.leave_group();
         self.retarget_hash_base_after_group_compaction();
+        self.dependencies.invalidate_all();
         tokens
     }
 
@@ -3687,6 +3790,7 @@ impl Universe {
     ) -> Result<Vec<Token>, GroupMismatch> {
         let tokens = self.stores.leave_group_with_kind(expected)?;
         self.retarget_hash_base_after_group_compaction();
+        self.dependencies.invalidate_all();
         Ok(tokens)
     }
 
@@ -3700,6 +3804,7 @@ impl Universe {
 
     pub fn set_count(&mut self, index: u16, value: i32) {
         self.stores.set_count(index, value);
+        self.mark_cell_changed(DependencyBank::Count, u32::from(index));
     }
 
     #[must_use]
@@ -3709,10 +3814,12 @@ impl Universe {
 
     pub fn set_count_global(&mut self, index: u16, value: i32) {
         self.stores.set_count_global(index, value);
+        self.mark_cell_changed(DependencyBank::Count, u32::from(index));
     }
 
     pub fn set_dimen(&mut self, index: u16, value: Scaled) {
         self.stores.set_dimen(index, value);
+        self.mark_cell_changed(DependencyBank::Dimen, u32::from(index));
     }
 
     #[must_use]
@@ -3722,10 +3829,12 @@ impl Universe {
 
     pub fn set_dimen_global(&mut self, index: u16, value: Scaled) {
         self.stores.set_dimen_global(index, value);
+        self.mark_cell_changed(DependencyBank::Dimen, u32::from(index));
     }
 
     pub fn set_skip(&mut self, index: u16, value: GlueId) {
         self.stores.set_skip(index, value);
+        self.mark_cell_changed(DependencyBank::Skip, u32::from(index));
     }
 
     #[must_use]
@@ -3735,10 +3844,12 @@ impl Universe {
 
     pub fn set_skip_global(&mut self, index: u16, value: GlueId) {
         self.stores.set_skip_global(index, value);
+        self.mark_cell_changed(DependencyBank::Skip, u32::from(index));
     }
 
     pub fn set_muskip(&mut self, index: u16, value: GlueId) {
         self.stores.set_muskip(index, value);
+        self.mark_cell_changed(DependencyBank::Muskip, u32::from(index));
     }
 
     #[must_use]
@@ -3748,10 +3859,12 @@ impl Universe {
 
     pub fn set_muskip_global(&mut self, index: u16, value: GlueId) {
         self.stores.set_muskip_global(index, value);
+        self.mark_cell_changed(DependencyBank::Muskip, u32::from(index));
     }
 
     pub fn set_toks(&mut self, index: u16, value: TokenListId) {
         self.stores.set_toks(index, value);
+        self.mark_cell_changed(DependencyBank::Toks, u32::from(index));
     }
 
     #[must_use]
@@ -3761,14 +3874,17 @@ impl Universe {
 
     pub fn set_toks_global(&mut self, index: u16, value: TokenListId) {
         self.stores.set_toks_global(index, value);
+        self.mark_cell_changed(DependencyBank::Toks, u32::from(index));
     }
 
     pub fn set_box_reg(&mut self, index: u16, value: NodeListId) {
         self.stores.set_box_reg(index, value);
+        self.mark_cell_changed(DependencyBank::Box, u32::from(index));
     }
 
     pub fn set_box_reg_global(&mut self, index: u16, value: NodeListId) {
         self.stores.set_box_reg_global(index, value);
+        self.mark_cell_changed(DependencyBank::Box, u32::from(index));
     }
 
     /// Marks the epoch-node suffix owned by one box-register value scan.
@@ -3794,6 +3910,8 @@ impl Universe {
 
     pub fn set_page_dimension(&mut self, dimension: PageDimension, value: Scaled) {
         self.page.set_dimension(dimension, value);
+        self.dependencies
+            .mark_changed(DependencyKey::PageDimension(dimension.index()));
     }
 
     #[must_use]
@@ -3803,6 +3921,12 @@ impl Universe {
 
     pub fn set_page_integer(&mut self, integer: PageInteger, value: i32) {
         self.page.set_integer(integer, value);
+        let index = match integer {
+            PageInteger::DeadCycles => 0,
+            PageInteger::InsertPenalties => 1,
+        };
+        self.dependencies
+            .mark_changed(DependencyKey::PageInteger(index));
     }
 
     #[must_use]
@@ -3813,6 +3937,8 @@ impl Universe {
     pub fn set_page_mark(&mut self, mark: PageMark, value: TokenListId) {
         let _ = self.stores.tokens(value);
         self.page.set_mark(mark, value);
+        self.dependencies
+            .mark_changed(DependencyKey::PageMark(mark.index()));
     }
 
     #[must_use]
@@ -3823,6 +3949,11 @@ impl Universe {
     pub fn set_page_mark_class(&mut self, mark: PageMark, class: u16, value: TokenListId) {
         let _ = self.stores.tokens(value);
         self.page.set_mark_class(mark, class, value);
+        self.dependencies
+            .mark_changed(DependencyKey::PageMarkClass {
+                mark: mark.index(),
+                class,
+            });
     }
 
     pub fn page_mark_classes(&self) -> impl Iterator<Item = u16> + '_ {
@@ -3849,10 +3980,14 @@ impl Universe {
         let vsize = self.dimen_param(DimenParam::V_SIZE);
         let max_depth = self.dimen_param(DimenParam::MAX_DEPTH);
         self.page.freeze_specs(contents, vsize, max_depth);
+        self.dependencies
+            .mark_changed(DependencyKey::Page(DependencyPageField::Contents));
     }
 
     pub fn start_new_page(&mut self) {
         self.page.start_new_page();
+        self.dependencies
+            .mark_changed(DependencyKey::Page(DependencyPageField::CurrentPage));
     }
 
     #[must_use]
@@ -3863,14 +3998,21 @@ impl Universe {
     pub fn push_page_discard(&mut self, node: Node) {
         self.stores.assert_live_handles_in_node(&node);
         self.page.push_page_discard(node);
+        self.dependencies
+            .mark_changed(DependencyKey::Page(DependencyPageField::Discards));
     }
 
     pub fn take_page_discards(&mut self) -> Vec<Node> {
-        self.page.take_page_discards()
+        let nodes = self.page.take_page_discards();
+        self.dependencies
+            .mark_changed(DependencyKey::Page(DependencyPageField::Discards));
+        nodes
     }
 
     pub fn clear_page_discards(&mut self) {
         self.page.clear_page_discards();
+        self.dependencies
+            .mark_changed(DependencyKey::Page(DependencyPageField::Discards));
     }
 
     #[must_use]
@@ -3883,14 +4025,21 @@ impl Universe {
             self.stores.assert_live_handles_in_node(node);
         }
         self.page.set_split_discards(nodes);
+        self.dependencies
+            .mark_changed(DependencyKey::Page(DependencyPageField::SplitDiscards));
     }
 
     pub fn take_split_discards(&mut self) -> Vec<Node> {
-        self.page.take_split_discards()
+        let nodes = self.page.take_split_discards();
+        self.dependencies
+            .mark_changed(DependencyKey::Page(DependencyPageField::SplitDiscards));
+        nodes
     }
 
     pub fn clear_split_discards(&mut self) {
         self.page.clear_split_discards();
+        self.dependencies
+            .mark_changed(DependencyKey::Page(DependencyPageField::SplitDiscards));
     }
 
     #[must_use]
@@ -3900,6 +4049,8 @@ impl Universe {
 
     pub fn set_page_contents(&mut self, contents: PageContents) {
         self.page.set_contents(contents);
+        self.dependencies
+            .mark_changed(DependencyKey::Page(DependencyPageField::Contents));
     }
 
     #[must_use]
@@ -3929,10 +4080,14 @@ impl Universe {
 
     pub fn record_best_page_break(&mut self, break_index: usize, best_size: Scaled, cost: i32) {
         self.page.record_best_break(break_index, best_size, cost);
+        self.dependencies
+            .mark_changed(DependencyKey::Page(DependencyPageField::BreakState));
     }
 
     pub fn record_page_fire_up(&mut self, trigger_index: usize) {
         self.page.record_fire_up(trigger_index);
+        self.dependencies
+            .mark_changed(DependencyKey::Page(DependencyPageField::FireUp));
     }
 
     #[must_use]
@@ -3943,11 +4098,15 @@ impl Universe {
     pub fn append_page_contribution(&mut self, node: Node) {
         self.stores.assert_live_handles_in_node(&node);
         self.page.push_contribution(node);
+        self.dependencies
+            .mark_changed(DependencyKey::Page(DependencyPageField::Contributions));
     }
 
     pub fn prepend_page_contribution(&mut self, node: Node) {
         self.stores.assert_live_handles_in_node(&node);
         self.page.prepend_contribution(node);
+        self.dependencies
+            .mark_changed(DependencyKey::Page(DependencyPageField::Contributions));
     }
 
     #[must_use]
@@ -3971,11 +4130,17 @@ impl Universe {
     }
 
     pub fn pop_page_contribution_front(&mut self) -> Option<Node> {
-        self.page.pop_contribution_front()
+        let node = self.page.pop_contribution_front();
+        self.dependencies
+            .mark_changed(DependencyKey::Page(DependencyPageField::Contributions));
+        node
     }
 
     pub fn pop_page_contribution_tail(&mut self) -> Option<Node> {
-        self.page.pop_contribution_tail()
+        let node = self.page.pop_contribution_tail();
+        self.dependencies
+            .mark_changed(DependencyKey::Page(DependencyPageField::Contributions));
+        node
     }
 
     /// Transfers the outer vertical contribution tail when it is a box.
@@ -3998,12 +4163,16 @@ impl Universe {
             }
             _ => unreachable!("contribution tail was checked to be a box"),
         }
+        self.dependencies
+            .mark_changed(DependencyKey::Page(DependencyPageField::Contributions));
         Some(node)
     }
 
     pub fn prepend_page_contributions(&mut self, nodes: Vec<Node>) {
         self.stores.assert_live_handles_in_nodes(&nodes);
         self.page.prepend_contributions(nodes);
+        self.dependencies
+            .mark_changed(DependencyKey::Page(DependencyPageField::Contributions));
     }
 
     #[must_use]
@@ -4024,6 +4193,8 @@ impl Universe {
     pub fn push_current_page_node(&mut self, node: Node) {
         self.stores.assert_live_handles_in_node(&node);
         self.page.push_current_page(node);
+        self.dependencies
+            .mark_changed(DependencyKey::Page(DependencyPageField::CurrentPage));
     }
 
     #[must_use]
@@ -4045,10 +4216,15 @@ impl Universe {
 
     pub fn upsert_page_insertion(&mut self, insertion: PageInsertion) {
         self.page.upsert_page_insertion(insertion);
+        self.dependencies
+            .mark_changed(DependencyKey::Page(DependencyPageField::Insertions));
     }
 
     pub fn take_current_page_prefix(&mut self, split_index: usize) -> (Vec<Node>, Vec<Node>) {
-        self.page.take_current_page_prefix(split_index)
+        let split = self.page.take_current_page_prefix(split_index);
+        self.dependencies
+            .mark_changed(DependencyKey::Page(DependencyPageField::CurrentPage));
+        split
     }
 
     pub fn update_page_last_from_node(&mut self, node: &Node) {
@@ -4081,6 +4257,7 @@ impl Universe {
             self.stores.pin_survivor(value);
         }
         let _ = self.stores.take_box_reg(index);
+        self.mark_cell_changed(DependencyBank::Box, u32::from(index));
         value
     }
 
@@ -4090,6 +4267,7 @@ impl Universe {
             self.stores.pin_survivor(value);
         }
         let _ = self.stores.take_box_reg_same_level(index);
+        self.mark_cell_changed(DependencyBank::Box, u32::from(index));
         value
     }
 
@@ -4126,23 +4304,28 @@ impl Universe {
         self.stores.pin_survivor(value);
         let taken = self.stores.take_box_reg_same_level(index);
         debug_assert_eq!(taken, Some(value));
+        self.mark_cell_changed(DependencyBank::Box, u32::from(index));
         TakeUnboxResult::Children(children)
     }
 
     pub fn set_box_reg_same_level(&mut self, index: u16, value: NodeListId) {
         self.stores.set_box_reg_same_level(index, value);
+        self.mark_cell_changed(DependencyBank::Box, u32::from(index));
     }
 
     pub fn clear_box_reg(&mut self, index: u16) {
         self.stores.clear_box_reg(index);
+        self.mark_cell_changed(DependencyBank::Box, u32::from(index));
     }
 
     pub fn clear_box_reg_global(&mut self, index: u16) {
         self.stores.clear_box_reg_global(index);
+        self.mark_cell_changed(DependencyBank::Box, u32::from(index));
     }
 
     pub fn clear_box_reg_same_level(&mut self, index: u16) {
         self.stores.clear_box_reg_same_level(index);
+        self.mark_cell_changed(DependencyBank::Box, u32::from(index));
     }
 
     #[must_use]
@@ -4177,10 +4360,12 @@ impl Universe {
 
     pub fn set_int_param(&mut self, param: IntParam, value: i32) {
         self.stores.set_int_param(param, value);
+        self.mark_cell_changed(DependencyBank::IntParam, u32::from(param.raw()));
     }
 
     pub fn set_int_param_global(&mut self, param: IntParam, value: i32) {
         self.stores.set_int_param_global(param, value);
+        self.mark_cell_changed(DependencyBank::IntParam, u32::from(param.raw()));
     }
 
     #[must_use]
@@ -4195,6 +4380,7 @@ impl Universe {
 
     pub fn set_last_badness(&mut self, value: i32) {
         self.stores.set_last_badness(value);
+        self.mark_cell_changed(DependencyBank::LastBadness, 0);
     }
 
     #[must_use]
@@ -4204,10 +4390,12 @@ impl Universe {
 
     pub fn set_mag(&mut self, value: i32) {
         self.stores.set_mag(value);
+        self.mark_cell_changed(DependencyBank::Magnification, 0);
     }
 
     pub fn set_mag_global(&mut self, value: i32) {
         self.stores.set_mag_global(value);
+        self.mark_cell_changed(DependencyBank::Magnification, 0);
     }
 
     #[must_use]
@@ -4226,10 +4414,14 @@ impl Universe {
 
     pub fn set_dimen_param(&mut self, param: DimenParam, value: Scaled) {
         self.stores.set_dimen_param(param, value);
+        self.mark_cell_changed(DependencyBank::DimenParam, u32::from(param.raw()));
+        self.mark_cell_changed(DependencyBank::DimenParam, u32::from(param.raw()));
     }
 
     pub fn set_dimen_param_global(&mut self, param: DimenParam, value: Scaled) {
         self.stores.set_dimen_param_global(param, value);
+        self.mark_cell_changed(DependencyBank::DimenParam, u32::from(param.raw()));
+        self.mark_cell_changed(DependencyBank::DimenParam, u32::from(param.raw()));
     }
 
     #[must_use]
@@ -4239,6 +4431,8 @@ impl Universe {
 
     pub fn set_glue_param(&mut self, param: GlueParam, value: GlueId) {
         self.stores.set_glue_param(param, value);
+        self.mark_cell_changed(DependencyBank::GlueParam, u32::from(param.raw()));
+        self.mark_cell_changed(DependencyBank::GlueParam, u32::from(param.raw()));
     }
 
     #[must_use]
@@ -4248,10 +4442,14 @@ impl Universe {
 
     pub fn set_glue_param_global(&mut self, param: GlueParam, value: GlueId) {
         self.stores.set_glue_param_global(param, value);
+        self.mark_cell_changed(DependencyBank::GlueParam, u32::from(param.raw()));
+        self.mark_cell_changed(DependencyBank::GlueParam, u32::from(param.raw()));
     }
 
     pub fn set_tok_param(&mut self, param: TokParam, value: TokenListId) {
         self.stores.set_tok_param(param, value);
+        self.mark_cell_changed(DependencyBank::TokParam, u32::from(param.raw()));
+        self.mark_cell_changed(DependencyBank::TokParam, u32::from(param.raw()));
     }
 
     #[must_use]
@@ -4261,6 +4459,8 @@ impl Universe {
 
     pub fn set_tok_param_global(&mut self, param: TokParam, value: TokenListId) {
         self.stores.set_tok_param_global(param, value);
+        self.mark_cell_changed(DependencyBank::TokParam, u32::from(param.raw()));
+        self.mark_cell_changed(DependencyBank::TokParam, u32::from(param.raw()));
     }
 
     /// Returns the current barriered, group-scoped `\parshape` value.
@@ -4543,6 +4743,14 @@ fn box_dimension_from_nodes(nodes: NodeList<'_>, dimension: BoxDimension) -> Opt
         BoxDimension::Height => box_node.height,
         BoxDimension::Depth => box_node.depth,
     })
+}
+
+fn symbol_reference_raw(symbol: impl crate::interner::SymbolReference) -> u32 {
+    symbol
+        .live_id()
+        .map(|id| id.symbol().raw())
+        .or_else(|| symbol.stored_key().map(Symbol::raw))
+        .expect("symbol reference has a live id or compact key")
 }
 
 fn set_box_dimension_in_node(node: &mut Node, dimension: BoxDimension, value: Scaled) -> bool {

@@ -166,18 +166,73 @@ fn aggregate_region_validates_after_change_and_restore() {
     };
     let mut universe = crate::Universe::new();
     universe.begin_dependency_region();
-    universe.record_dependency(key, DependencyValue::Integer(5));
+    universe.record_dependency(key, DependencyValue::Integer(0));
     let mut observations = universe.finish_dependency_region();
 
-    universe.mark_dependency_changed(key);
-    assert!(universe.validate_dependencies(&mut observations, |_| { DependencyValue::Integer(5) }));
+    universe.set_count(13, 9);
+    let mut reads = 0;
+    assert!(universe.validate_dependencies(&mut observations, |_| {
+        reads += 1;
+        DependencyValue::Integer(0)
+    }));
+    assert_eq!(
+        reads, 0,
+        "unrelated register write missed the stamp fast path"
+    );
+
+    universe.set_count(12, 5);
+    assert!(
+        !universe.validate_dependencies(&mut observations, |_| { DependencyValue::Integer(5) })
+    );
+
+    universe.set_count(12, 0);
+    assert!(universe.validate_dependencies(&mut observations, |_| { DependencyValue::Integer(0) }));
     assert_eq!(
         observations[0].changed_at,
         universe.dependency_changed_at(key)
     );
+}
 
-    universe.mark_dependency_changed(key);
-    assert!(
-        !universe.validate_dependencies(&mut observations, |_| { DependencyValue::Integer(6) })
-    );
+#[test]
+fn aggregate_mutation_barriers_advance_exact_registered_facts() {
+    use crate::page::PageDimension;
+    use crate::scaled::Scaled;
+    use crate::token::Catcode;
+
+    let count = DependencyKey::Cell {
+        bank: DependencyBank::Count,
+        index: 7,
+    };
+    let catcode = DependencyKey::Code {
+        table: DependencyCodeTable::Catcode,
+        scalar: 'x' as u32,
+    };
+    let generation = DependencyKey::CodeGeneration(DependencyCodeTable::Catcode);
+    let page = DependencyKey::PageDimension(PageDimension::Goal.index());
+    let world = DependencyKey::World {
+        field: DependencyWorldField::Rng,
+        index: 0,
+    };
+    let mut universe = crate::Universe::new();
+    universe.begin_dependency_region();
+    for key in [count, catcode, generation, page, world] {
+        universe.record_dependency(key, DependencyValue::Absent);
+    }
+    let _ = universe.finish_dependency_region();
+
+    universe.set_count(8, 1);
+    assert_eq!(universe.dependency_changed_at(count), ChangedAt::NEVER);
+    universe.set_count(7, 1);
+    assert!(universe.dependency_changed_at(count) > ChangedAt::NEVER);
+
+    universe.set_catcode('x', Catcode::Letter);
+    assert!(universe.dependency_changed_at(catcode) > ChangedAt::NEVER);
+    assert!(universe.dependency_changed_at(generation) > ChangedAt::NEVER);
+
+    universe.set_page_dimension(PageDimension::Goal, Scaled::from_raw(100));
+    assert!(universe.dependency_changed_at(page) > ChangedAt::NEVER);
+
+    let before_world = universe.dependency_changed_at(world);
+    let _ = universe.world_mut();
+    assert!(universe.dependency_changed_at(world) > before_world);
 }
