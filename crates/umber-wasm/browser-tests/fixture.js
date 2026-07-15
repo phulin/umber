@@ -123,7 +123,10 @@ async function integration() {
 	const retainedRepeat = retained.advance();
 	assert(retainedRepeat.kind === "complete", "retained output reread failed");
 	const htmlSecond = retainedRepeat.output;
-	assert(htmlFirst.html instanceof Uint8Array, "session returned no HTML bytes");
+	assert(
+		htmlFirst.html instanceof Uint8Array,
+		"session returned no HTML bytes",
+	);
 	assert(htmlFirst.dvi.byteLength > 0, "joint HTML compile returned no DVI");
 	assert(htmlFirst.htmlAssets.length === 0, "embedded HTML returned assets");
 	assert(
@@ -131,7 +134,9 @@ async function integration() {
 			htmlFirst.html.every((byte, index) => byte === htmlSecond.html[index]),
 		"accepted session HTML reread was not deterministic",
 	);
-	const generatedGeometry = await installAndMeasureGeneratedHtml(htmlFirst.html);
+	const generatedGeometry = await installAndMeasureGeneratedHtml(
+		htmlFirst.html,
+	);
 	const clickSource = assertClickToSource(
 		retained,
 		htmlFiles.get("html.tex"),
