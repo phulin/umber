@@ -55,7 +55,7 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `scripts/setup-latex-parity-tests.sh`: hash-pinned acquisition and offline verification for the upstream LaTeX2e regression snapshot.
 - `scripts/check-latex-parity.sh`: explicit coordinate-exact upstream LaTeX DVI tier that builds or accepts one pregenerated format and restores it for every isolated case.
 - `scripts/setup-conformance-tests.sh`: pinned third-party acquisition plus local Story, Gentle, TRIP, and e-TRIP DVI-oracle generation with pdfTeX.
-- `scripts/profile-pdftex-arxiv.sh`: disposable `/tmp` pdfTeX primitive tracer build and five-document arXiv source smoke profile.
+- `scripts/profile-pdftex-arxiv.sh`: disposable `/tmp` pdfTeX primitive tracer build and reproducible 100-document arXiv source profile.
 - `scripts/test-wasm-browser.sh`: optimized-package local HTTP integration runner.
 - `third_party/`: ignored reference downloads and external source archives.
 

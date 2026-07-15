@@ -6,6 +6,9 @@ readonly SOURCE="$ROOT/source"
 readonly BUILD="$ROOT/build"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly PATCH="$SCRIPT_DIR/pdftex-primitive-trace.patch"
+# Uniform reservoir sample from 3,100,507 metadata records, seed 0x554D424552.
+# The first 100 source bundles containing a LaTeX entrypoint were retained.
+readonly SAMPLE="${PDFTEX_PROFILE_SAMPLE:-$SCRIPT_DIR/pdftex-arxiv-sample-100.tsv}"
 readonly UPSTREAM=https://github.com/TeX-Live/texlive-source.git
 readonly REVISION=1664cf0ab3f6ce3b80db649bc6723f54ab12016c
 readonly PDFTEX="$BUILD/texk/web2c/pdftex"
@@ -36,7 +39,9 @@ tex_env() {
 setup() {
   mkdir -p "$ROOT"
   if [[ ! -d "$SOURCE/.git" ]]; then
-    git clone "$UPSTREAM" "$SOURCE"
+    git init "$SOURCE"
+    git -C "$SOURCE" fetch --depth 1 "$UPSTREAM" "$REVISION"
+    git -C "$SOURCE" checkout --detach FETCH_HEAD
   fi
   if [[ -n "$(git -C "$SOURCE" status --porcelain)" ]]; then
     echo "refusing to replace changes in $SOURCE" >&2
@@ -105,18 +110,12 @@ entrypoint() {
     | head -1
 }
 
-smoke() {
-  [[ -x "$PDFTEX" && -f "$FORMAT" ]] || {
-    echo "run '$0 setup' first" >&2
-    exit 1
-  }
-  mkdir -p "$ROOT/samples" "$ROOT/results"
-  printf 'id\tcategory\tentrypoint\texit\tprimitive_count\n' >"$ROOT/results/summary.tsv"
-
-  while IFS=$'\t' read -r id category; do
-    local archive="$ROOT/samples/$id.src"
-    local directory="$ROOT/samples/$id"
-    local result="$ROOT/results/$id"
+process_sample() {
+    local id=$1 category=$2
+    local key=${id//\//_}
+    local archive="$ROOT/samples/$key.src"
+    local directory="$ROOT/samples/$key"
+    local result="$ROOT/results/$key"
     if [[ ! -f "$archive" ]]; then
       curl -L --fail --show-error --silent --retry 3 \
         -o "$archive" "https://export.arxiv.org/e-print/$id"
@@ -128,7 +127,7 @@ smoke() {
     main="$(entrypoint "$directory")"
     [[ -n "$main" ]] || {
       echo "no TeX entrypoint found for $id" >&2
-      continue
+      return
     }
     mkdir -p "$result"
     set +e
@@ -151,13 +150,28 @@ smoke() {
     printf '%s\t%s\t%s\t%s\t%s\n' \
       "$id" "$category" "${main#"$directory/"}" "$rc" "$count" \
       | tee -a "$ROOT/results/summary.tsv"
-  done <<'SAMPLE'
-2607.12962v1	cs.LG
-2607.12553v1	math.PR
-2607.11384v1	physics.comp-ph
-2607.12830v1	stat.ML
-2607.09872v1	q-bio.QM
-SAMPLE
+}
+
+smoke() {
+  [[ -x "$PDFTEX" && -f "$FORMAT" ]] || {
+    echo "run '$0 setup' first" >&2
+    exit 1
+  }
+  [[ -f "$SAMPLE" ]] || {
+    echo "sample manifest not found: $SAMPLE" >&2
+    exit 1
+  }
+  mkdir -p "$ROOT/samples" "$ROOT/results"
+  printf 'id\tcategory\tentrypoint\texit\tprimitive_count\n' >"$ROOT/results/summary.tsv"
+
+  local jobs=${PDFTEX_PROFILE_JOBS:-8}
+  while IFS=$'\t' read -r id category; do
+    while (( $(jobs -pr | wc -l) >= jobs )); do
+      sleep 0.1
+    done
+    process_sample "$id" "$category" &
+  done < <(sed '1d' "$SAMPLE")
+  wait
 
   awk '{ seen[$0]++ } END { for (primitive in seen) print seen[primitive], primitive }' \
     "$ROOT"/results/*/primitives.txt \
