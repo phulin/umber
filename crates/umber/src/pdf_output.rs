@@ -241,6 +241,14 @@ fn pdf_font_objects(
         .resolved_pdf_font_map_lines()
         .into_iter()
         .find(|entry| entry.tex_name == font.name.as_bytes());
+    if mapped
+        .as_ref()
+        .is_some_and(|entry| entry.program == tex_fonts::PdfFontMapProgram::Subset)
+    {
+        return Err(PdfBuildError::SubsetFontRequiresSubsetting(
+            font.name.clone(),
+        ));
+    }
     let program_name = mapped.as_ref().and_then(|entry| entry.font_file.as_deref());
     let resident = mapped
         .as_ref()
@@ -613,6 +621,7 @@ pub enum PdfBuildError {
     MissingFontProgram(Vec<u8>),
     MissingFontResource(String),
     MissingEncoding(Vec<u8>),
+    SubsetFontRequiresSubsetting(String),
     MissingLiveFont(String),
     UnsupportedSpecial(String),
     World(WorldError),
@@ -660,6 +669,10 @@ impl std::fmt::Display for PdfBuildError {
                 f,
                 "PDF encoding resource {:?} was not supplied",
                 String::from_utf8_lossy(name)
+            ),
+            Self::SubsetFontRequiresSubsetting(name) => write!(
+                f,
+                "PDF font {name:?} requests subset embedding; subset construction is deferred to umber2-kbz0.17.3"
             ),
             Self::MissingLiveFont(name) => {
                 write!(f, "PDF artifact font {name:?} has no live metric source")
@@ -827,7 +840,7 @@ mod tests {
             concat!(
                 "\\pdfoutput=1\\pdfcompresslevel=0",
                 "\\font\\f=cmr10 ",
-                "\\pdfmapline{=cmr10 CMR10 <fixture.enc <cmr10.pfb}",
+                "\\pdfmapline{=cmr10 CMR10 <fixture.enc <<cmr10.pfb}",
                 "\\pdffontattr\\f{/TestAttr 42}",
                 "\\shipout\\hbox{\\f\\char65\\char66\\char67}\\end",
             ),
@@ -845,6 +858,13 @@ mod tests {
         let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
             .expect("text PDF assembles");
         let parsed = lopdf::Document::load_mem(&pdf).expect("lopdf parses output");
+        assert_eq!(
+            parsed
+                .extract_text(&[1])
+                .expect("extract Type1 text")
+                .trim(),
+            "ABC"
+        );
         let page_id = parsed.get_pages()[&1];
         let page = parsed
             .get_object(page_id)
@@ -987,6 +1007,41 @@ mod tests {
     }
 
     #[test]
+    fn subset_map_entry_is_deferred_without_silently_embedding_full_program() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        stores
+            .world_mut()
+            .set_memory_file(
+                "cmr10.tfm",
+                include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm").to_vec(),
+            )
+            .expect("seed TFM");
+        let pfb = [
+            &[0x80, 1, 1, 0, 0, 0, b'a'][..],
+            &[0x80, 2, 1, 0, 0, 0, b'b'],
+            &[0x80, 3],
+        ]
+        .concat();
+        stores
+            .provide_pdf_type1_program(b"cmr10.pfb".to_vec(), &pfb)
+            .expect("synthetic PFB");
+        let run_result = run_in(
+            &mut stores,
+            concat!(
+                "\\pdfoutput=1\\font\\f=cmr10 ",
+                "\\pdfmapline{=cmr10 CMR10 <cmr10.pfb}",
+                "\\shipout\\hbox{\\f A}\\end",
+            ),
+        );
+        let error = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+            .expect_err("subset path must not emit the complete program");
+        assert!(
+            matches!(error, PdfBuildError::SubsetFontRequiresSubsetting(name) if name == "cmr10")
+        );
+    }
+
+    #[test]
     fn committed_woff2_embeds_as_valid_truetype_fontfile2() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
@@ -1021,6 +1076,13 @@ mod tests {
         );
         assert!(pdf.windows(b"/FontFile2".len()).any(|w| w == b"/FontFile2"));
         let parsed = lopdf::Document::load_mem(&pdf).expect("lopdf parses TrueType output");
+        assert_eq!(
+            parsed
+                .extract_text(&[1])
+                .expect("extract TrueType text")
+                .trim(),
+            "ABC"
+        );
         let embedded = parsed
             .objects
             .values()
