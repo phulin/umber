@@ -53,6 +53,42 @@ fn user_area_wins_before_configured_system_areas() {
 }
 
 #[test]
+fn input_with_non_tex_extension_falls_back_to_appended_tex_extension() {
+    let mut world = World::memory();
+    world
+        .set_memory_file("/tree/lipsum.ltd.tex", b"dummy text".to_vec())
+        .expect("seed extension fallback input");
+    let mut universe = tex_state::Universe::with_world(world);
+    let search = TexInputSearchPath::new("/job", [PathBuf::from("/tree")]);
+
+    let content = search
+        .read(&mut universe.input_open_context(), "lipsum.ltd")
+        .expect("resolve appended tex extension");
+
+    assert_eq!(content.path(), Path::new("/tree/lipsum.ltd.tex"));
+}
+
+#[test]
+fn input_with_non_tex_extension_prefers_the_exact_name() {
+    let mut world = World::memory();
+    world
+        .set_memory_file("/tree/data.ltd", b"exact".to_vec())
+        .expect("seed exact input");
+    world
+        .set_memory_file("/tree/data.ltd.tex", b"fallback".to_vec())
+        .expect("seed extension fallback input");
+    let mut universe = tex_state::Universe::with_world(world);
+    let search = TexInputSearchPath::new("/job", [PathBuf::from("/tree")]);
+
+    let content = search
+        .read(&mut universe.input_open_context(), "data.ltd")
+        .expect("resolve exact extension first");
+
+    assert_eq!(content.path(), Path::new("/tree/data.ltd"));
+    assert_eq!(content.bytes(), b"exact");
+}
+
+#[test]
 fn explicit_area_does_not_fall_through_to_system_areas() {
     let mut world = World::memory();
     world

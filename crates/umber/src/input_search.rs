@@ -45,8 +45,17 @@ impl TexInputSearchPath {
         input: &mut C,
         name: &str,
     ) -> Result<FileContent, String> {
-        let requested = with_default_extension(Path::new(name), "tex");
-        let candidates = search_candidates(&self.user_area, &self.system_areas, &requested);
+        let name = Path::new(name);
+        let requested = with_default_extension(name, "tex");
+        let mut candidates = search_candidates(&self.user_area, &self.system_areas, &requested);
+        if name.extension().is_some_and(|extension| extension != "tex") {
+            let fallback = append_extension(name, "tex");
+            for candidate in search_candidates(&self.user_area, &self.system_areas, &fallback) {
+                if !candidates.contains(&candidate) {
+                    candidates.push(candidate);
+                }
+            }
+        }
         read_first(input, candidates)
     }
 }
@@ -83,6 +92,13 @@ fn with_default_extension(path: &Path, extension: &str) -> PathBuf {
     let mut path = path.to_owned();
     path.set_extension(extension);
     path
+}
+
+fn append_extension(path: &Path, extension: &str) -> PathBuf {
+    let mut path = path.as_os_str().to_os_string();
+    path.push(".");
+    path.push(extension);
+    path.into()
 }
 
 fn search_candidates(user_area: &Path, system_areas: &[PathBuf], requested: &Path) -> Vec<PathBuf> {
