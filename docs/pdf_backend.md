@@ -181,6 +181,27 @@ mode changes are fatal setup errors. `\pdfdecimaldigits` controls page-box and r
 rounding, and DVI plans remain byte-identical whether PDF mode is selected or
 not.
 
+External images cross the execution boundary as immutable typed sources, not
+filesystem handles. `\pdfximage` records raster metadata or a selected PDF
+page and `\pdfrefximage` becomes a positioned artifact effect. Raster PNG and
+JPEG sources lower to typed image XObjects; alpha is a separately reserved
+soft mask. Included PDF pages lower to form XObjects with selected-page-box
+translation, recursively remapped inherited resources, and typed transparency
+group references. Repeated references reuse the registered object. The
+serializer uses `pdf_writer`'s typed image, form, resources, page, and content
+builders; imported dictionaries are converted to the detached typed value
+model before serialization, so `lopdf` is only an input parser.
+
+Image configuration is consumed at its pdfTeX scope. The live image resolution
+sets missing raster DPI, gamma and high-color controls transform PNG samples,
+and explicit/live/obsolete page-box controls are resolved while scanning the
+image request. Included-PDF versions follow the signed inclusion error level.
+The frozen unique-resource setting selects deterministic content-derived
+XObject names. Draft mode suppresses publication without truncating an
+existing destination. Upstream `\pdfinclusioncopyfonts=0` substitutes only an
+embedded Type-1 font that matches a host font-map entry; the detached importer
+has no such candidate and therefore copies the included graph for either value.
+
 ## Parity oracle
 
 `tests/corpus/tex_exec/pdf_output_policy` is regenerated with pinned pdfTeX

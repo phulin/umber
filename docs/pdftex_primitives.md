@@ -66,7 +66,7 @@ oracle-backed test. Every name in a missing row is missing.
 | Primitive-identity conditional | 1 | done | `\ifpdfprimitive` |
 | Horizontal-mode normalization | 1 | done | `\quitvmode` |
 | Character codes and ligature control | 10 | done | `\lpcode`, `\rpcode`, `\efcode`, `\tagcode`, `\knbscode`, `\stbscode`, `\shbscode`, `\knbccode`, `\knaccode`, `\pdfnoligatures` |
-| PDF backend actions | 43 | partial (27 done) | `\pdffontexpand`, `\pdfincludechars`, `\pdffontattr`, `\pdfmapfile`, `\pdfmapline`, `\pdfglyphtounicode`, `\pdfnobuiltintounicode`, `\pdfresettimer`, `\pdfsetrandomseed`, `\pdfobj`, `\pdfrefobj`, `\pdfinfo`, `\pdfcatalog`, `\pdfnames`, `\pdftrailer`, `\pdftrailerid`, `\pdfliteral`, `\pdfcolorstack`, `\pdfsetmatrix`, `\pdfsave`, `\pdfrestore`, `\pdfsavepos`, `\pdfsnaprefpoint`, `\pdfsnapy`, `\pdfsnapycomp`, `\pdfxform`, `\pdfrefxform` (done); `\pdfximage`, `\pdfrefximage`, `\pdfannot`, `\pdfstartlink`, `\pdfendlink`, `\pdfoutline`, `\pdfdest`, `\pdfthread`, `\pdfstartthread`, `\pdfendthread`, `\pdfinterwordspaceon`, `\pdfinterwordspaceoff`, `\pdffakespace`, `\pdfrunninglinkoff`, `\pdfrunninglinkon`, `\pdfspacefont` |
+| PDF backend actions | 43 | partial (29 done) | `\pdffontexpand`, `\pdfincludechars`, `\pdffontattr`, `\pdfmapfile`, `\pdfmapline`, `\pdfglyphtounicode`, `\pdfnobuiltintounicode`, `\pdfresettimer`, `\pdfsetrandomseed`, `\pdfobj`, `\pdfrefobj`, `\pdfinfo`, `\pdfcatalog`, `\pdfnames`, `\pdftrailer`, `\pdftrailerid`, `\pdfliteral`, `\pdfcolorstack`, `\pdfsetmatrix`, `\pdfsave`, `\pdfrestore`, `\pdfsavepos`, `\pdfsnaprefpoint`, `\pdfsnapy`, `\pdfsnapycomp`, `\pdfxform`, `\pdfrefxform`, `\pdfximage`, `\pdfrefximage` (done); `\pdfannot`, `\pdfstartlink`, `\pdfendlink`, `\pdfoutline`, `\pdfdest`, `\pdfthread`, `\pdfstartthread`, `\pdfendthread`, `\pdfinterwordspaceon`, `\pdfinterwordspaceoff`, `\pdffakespace`, `\pdfrunninglinkoff`, `\pdfrunninglinkon`, `\pdfspacefont` |
 | Compatibility error policy | 1 | done | `\ignoreprimitiveerror` |
 | Late expansion conditionals | 3 | done | `\ifincsname`, `\ifpdfabsnum`, `\ifpdfabsdim` |
 
@@ -130,8 +130,19 @@ fixed value and is enabled when positive; changing it after output is written
 is a fatal setup error. `\pdfuniqueresname` is enabled only by a positive
 value. The two obsolete inclusion controls are not no-ops: image scanning
 warns once and transfers a nonzero value to the corresponding current
-control. Those image effects, live page-box selection, and draft publication
-behavior are tracked after external-image issue 14 by issue 6.2.
+control. External-image registration and lowering now consume those controls.
+`\pdfimageresolution` supplies missing raster DPI, including pdfTeX's
+zero-to-72-dpi fallback; `\pdfimageapplygamma`, `\pdfimagegamma`, and
+`\pdfgamma` transform PNG samples, while `\pdfimagehicolor=0` reduces 16-bit
+PNG color and mask samples to 8 bits. PDF-page inclusion applies explicit and
+live page boxes, obsolete warning-and-global-transfer behavior, and the signed
+PDF-version error policy. Positive `\pdfuniqueresname` produces stable
+content-derived XObject names. Positive `\pdfdraftmode` completes the run but
+leaves a requested PDF path untouched and emits pdfTeX's warning.
+`\pdfinclusioncopyfonts=0` differs in upstream pdfTeX only when an included
+embedded Type-1 font has a matching host font-map entry. Umber's detached
+external-image boundary has no host font-map substitution candidate, so both
+values copy the included resource graph for the unmatched case.
 
 The INITEX microtype/font-configuration oracle at
 `tests/corpus/tex_exec/pdf_font_config` covers the nine issue-7 parameter
@@ -178,10 +189,16 @@ in scaled points; indices 1 through 4 return left, bottom, right, and top.
 Raster images return `0.0pt` for every valid index. Missing image objects and
 indices outside 1 through 4 are fatal with pdfTeX's pinned diagnostics. The
 metadata registry is snapshot-, rollback-, and semantic-hash-safe and performs
-no host I/O. Image parsing, resource acquisition, object allocation, and
-`\pdfximage`/`\pdfrefximage` registration remain tracked by issue
-`umber2-kbz0.14.3`; emitted PDF bytes continue exclusively through
-`pdf_writer` at the existing detached output boundary.
+no host I/O. `\pdfximage` scans page, page-box, and dimension options, opens a
+host-neutral immutable raster or PDF-page source, allocates its typed object
+identity, and updates `\pdflastximage`. `\pdfrefximage` appends a typed whatsit
+that survives checkpoint, rollback, semantic hashing, artifact encoding, and
+positioned shipout. PNG (gray/RGB/indexed/alpha), JPEG, and selected PDF pages
+lower to typed image or form XObjects; repeated references reuse the same
+object and PDF-page resources and transparency groups are recursively
+remapped. Final PDF dictionaries, streams, resource entries, and content
+operations are serialized exclusively through `pdf_writer` at the detached
+output boundary.
 
 The four PDF token parameters follow pdfTeX's distinct consumption scopes:
 `\pdfpageattr` and `\pdfpageresources` are captured in each successful
