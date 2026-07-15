@@ -926,6 +926,7 @@ impl VirtualCompileSession {
             &self.resolved_files,
             &self.resolved_fonts,
             self.accepted_font_containers,
+            self.html,
         );
         let (input_resolver, font_resolver) = resolvers.resolvers();
         let execution = if let Some((next_revision, edit)) = &self.pending_patch {

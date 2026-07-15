@@ -32,6 +32,7 @@ impl<'a> VirtualRunResolvers<'a> {
         resolved_files: &'a BTreeMap<FileRequestKey, CachedFile>,
         resolved_fonts: &'a BTreeMap<FontRequestKey, OpenTypeFont>,
         accepted_font_containers: AcceptedFontContainers,
+        require_opentype: bool,
     ) -> Self {
         Self {
             input: VirtualFileResolver::new(user_files, resolved_files),
@@ -40,6 +41,7 @@ impl<'a> VirtualRunResolvers<'a> {
                 resolved_files,
                 resolved_fonts,
                 accepted_font_containers,
+                require_opentype,
             ),
         }
     }
@@ -172,6 +174,7 @@ struct VirtualFontResolver<'a> {
     files: VirtualFileResolver<'a>,
     resolved_fonts: &'a BTreeMap<FontRequestKey, OpenTypeFont>,
     accepted_font_containers: AcceptedFontContainers,
+    require_opentype: bool,
     font_misses: BTreeMap<FontRequestKey, FontRequest>,
 }
 
@@ -181,11 +184,13 @@ impl<'a> VirtualFontResolver<'a> {
         resolved_files: &'a BTreeMap<FileRequestKey, CachedFile>,
         resolved_fonts: &'a BTreeMap<FontRequestKey, OpenTypeFont>,
         accepted_font_containers: AcceptedFontContainers,
+        require_opentype: bool,
     ) -> Self {
         Self {
             files: VirtualFileResolver::new(user_files, resolved_files),
             resolved_fonts,
             accepted_font_containers,
+            require_opentype,
             font_misses: BTreeMap::new(),
         }
     }
@@ -207,6 +212,12 @@ impl FontResolver for VirtualFontResolver<'_> {
             return Err(failure.to_string());
         };
         let tfm = self.files.open(input, FileKind::Tfm, name, request_index);
+        if !self.require_opentype {
+            return tfm.map(|metrics| tex_exec::FontSource {
+                metrics,
+                opentype: None,
+            });
+        }
         let logical_name = path
             .file_stem()
             .and_then(|stem| stem.to_str())

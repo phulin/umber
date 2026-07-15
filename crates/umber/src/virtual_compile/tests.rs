@@ -302,7 +302,7 @@ fn format_rejection_and_job_clock_are_deterministic() {
 fn valid_tfm_produces_a_nonempty_dvi() {
     let mut session = session("\\font\\tenrm=cmr10\\relax \\tenrm \\shipout\\hbox{A}\\end");
     let missing = resources(session.compile_attempt());
-    assert_eq!(missing.len(), 2);
+    assert_eq!(missing.len(), 1);
     let file = missing
         .iter()
         .find_map(|request| match request {
@@ -310,13 +310,6 @@ fn valid_tfm_produces_a_nonempty_dvi() {
             ResourceRequest::Font(_) => None,
         })
         .expect("TFM request");
-    let font = missing
-        .iter()
-        .find_map(|request| match request {
-            ResourceRequest::Font(request) => Some(request.clone()),
-            ResourceRequest::File(_) => None,
-        })
-        .expect("font request");
     session
         .provide_resolved_file(
             file.key().clone(),
@@ -324,7 +317,6 @@ fn valid_tfm_produces_a_nonempty_dvi() {
             CMR10.to_vec(),
         )
         .expect("provide tfm");
-    provide_cmu_font(&mut session, font);
     let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
         panic!("compile should complete");
     };
@@ -334,7 +326,17 @@ fn valid_tfm_produces_a_nonempty_dvi() {
 
 #[test]
 fn font_batches_accept_partial_unordered_responses_and_reject_conflicts() {
-    let mut session = session("\\font\\tenrm=cmr10\\relax \\tenrm \\shipout\\hbox{A}\\end");
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        html: true,
+        ..SessionOptions::default()
+    })
+    .expect("HTML session");
+    session
+        .add_user_file(
+            "main.tex",
+            b"\\font\\tenrm=cmr10\\relax \\tenrm \\shipout\\hbox{A}\\end".to_vec(),
+        )
+        .expect("main source");
     let missing = resources(session.compile_attempt());
     let file = missing
         .iter()
@@ -382,7 +384,14 @@ fn font_batches_accept_partial_unordered_responses_and_reject_conflicts() {
 
 #[test]
 fn invalid_mixed_batch_publishes_nothing() {
-    let mut session = session("\\font\\tenrm=cmr10\\relax \\end");
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        html: true,
+        ..SessionOptions::default()
+    })
+    .expect("HTML session");
+    session
+        .add_user_file("main.tex", b"\\font\\tenrm=cmr10\\relax \\end".to_vec())
+        .expect("main source");
     let missing = resources(session.compile_attempt());
     let file = missing
         .iter()
