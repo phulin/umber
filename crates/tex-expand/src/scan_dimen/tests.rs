@@ -688,6 +688,30 @@ fn decimal_factor_multiplies_primitive_dimension_register_unit() {
 }
 
 #[test]
+fn decimal_factor_multiplies_a_dimexpr_unit() {
+    let mut stores = Universe::new();
+    for (name, meaning) in [
+        (
+            "dimexpr",
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::DimExpr),
+        ),
+        ("relax", Meaning::Relax),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, meaning);
+    }
+
+    let (value, diagnostic, next) = scan_with_stores(
+        "0.5\\dimexpr(10pt+2pt)\\relax x",
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    );
+
+    assert_eq!(value, 6 * Scaled::UNITY);
+    assert_eq!(diagnostic, None);
+    assert_eq!(next, Some(char_token('x', Catcode::Letter)));
+}
+
+#[test]
 fn scans_integer_like_internal_values_with_units() {
     let mut stores = Universe::new();
     let count = stores.intern("count");

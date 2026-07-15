@@ -1101,6 +1101,12 @@ where
         let meaning = stores.meaning(symbol);
         expansion.record_meaning(symbol, meaning);
         crate::values::record_meaning_value_dependency(expansion, meaning);
+        if meaning == Meaning::UnexpandablePrimitive(UnexpandablePrimitive::DimExpr) {
+            let expression = scan_dim_expr(input, stores, expansion, mode, first)?;
+            return Ok(UnitScan::Scanned(ScannedUnit::InternalExpression(
+                expression,
+            )));
+        }
         let internal = match meaning {
             Meaning::DimenRegister(index) => Some(stores.dimen(index)),
             Meaning::DimenParam(index) => {
@@ -1283,7 +1289,11 @@ where
                 unit: stores.font_parameter(font, 5),
             }))
         }
-        Some(ScannedUnit::Infinite(_) | ScannedUnit::Internal(_)) => {
+        Some(
+            ScannedUnit::Infinite(_)
+            | ScannedUnit::Internal(_)
+            | ScannedUnit::InternalExpression(_),
+        ) => {
             unreachable!("unit keywords never return non-keyword units")
         }
         Some(ScannedUnit::FontRelative { .. }) => {
@@ -1343,6 +1353,7 @@ enum ScannedUnit {
     Physical { unit: PhysicalUnit, true_unit: bool },
     Infinite(Order),
     Internal(Scaled),
+    InternalExpression(ScannedDimen),
     FontRelative { unit: Scaled },
     Em,
     Ex,
@@ -1437,8 +1448,21 @@ fn convert_scanned_unit(
         ScannedUnit::Internal(unit) | ScannedUnit::FontRelative { unit } => {
             convert_font_relative_unit(integer, fraction, unit)
         }
+        ScannedUnit::InternalExpression(expression) => {
+            let converted = convert_font_relative_unit(integer, fraction, expression.value())?;
+            Ok(prepend_diagnostics(converted, expression))
+        }
         ScannedUnit::Em | ScannedUnit::Ex => unreachable!("font units are handled while scanning"),
     }
+}
+
+fn prepend_diagnostics(value: ScannedDimen, prior: ScannedDimen) -> ScannedDimen {
+    let mut combined = ScannedDimen::new(value.value());
+    combined.order = value.order();
+    for (diagnostic, origin) in prior.diagnostic_records().chain(value.diagnostic_records()) {
+        combined = combined.with_added_diagnostic(diagnostic, origin);
+    }
+    combined
 }
 
 fn convert_font_relative_unit(
