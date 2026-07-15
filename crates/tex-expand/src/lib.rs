@@ -22,6 +22,11 @@ use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::provenance::{DiagnosticSite, InsertedOriginKind};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+pub use tex_state::{
+    DependencyBank as ReadBank, DependencyCodeTable as ReadCodeTable,
+    DependencyEngineField as ReadEngineField, DependencyFontField as ReadFontField,
+    DependencyKey as ReadDependency,
+};
 use tex_state::{
     ExpansionState, FileContent, InputReadState, JobClock, MeaningCacheGuard, Universe,
 };
@@ -474,101 +479,6 @@ pub trait ReadRecorder {
     }
 
     fn record_dependency(&mut self, _dependency: ReadDependency) {}
-}
-
-/// Typed semantic keys read by expansion and scanners.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum ReadDependency {
-    Meaning(u32),
-    Cell {
-        bank: ReadBank,
-        index: u32,
-    },
-    Code {
-        table: ReadCodeTable,
-        scalar: u32,
-    },
-    CodeGeneration(ReadCodeTable),
-    Font {
-        field: ReadFontField,
-        font: u32,
-        index: u32,
-    },
-    PageDimension(u8),
-    PageInteger(u8),
-    PageMark(u8),
-    PageMarkClass {
-        mark: u8,
-        class: u16,
-    },
-    InputLine,
-    InputStream(u8),
-    Engine(ReadEngineField),
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum ReadBank {
-    Count,
-    Dimen,
-    Skip,
-    Muskip,
-    Toks,
-    Box,
-    IntParam,
-    DimenParam,
-    GlueParam,
-    TokParam,
-    CurrentFont,
-    MathFamilyFont,
-    LastBadness,
-    Magnification,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum ReadEngineField {
-    Mode,
-    InnerMode,
-    GroupLevel,
-    GroupType,
-    ConditionLevel,
-    ConditionType,
-    ConditionBranch,
-    ConditionStack,
-    LastNodeType,
-    ParShape,
-    PenaltyArrays,
-    InteractionMode,
-    PdfTimer,
-    PdfRandom,
-    PdfShellEscape,
-    PageInsertions,
-    PdfExternalImages,
-    PdfObjects,
-    PdfPositions,
-    PdfForms,
-    PdfPages,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum ReadCodeTable {
-    Catcode,
-    Lccode,
-    Uccode,
-    Sfcode,
-    Mathcode,
-    Delcode,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum ReadFontField {
-    Identifier,
-    Name,
-    Parameter,
-    ParameterCount,
-    HyphenChar,
-    SkewChar,
-    Metrics,
-    PdfCode,
 }
 
 /// Deterministic concrete recorder for memoization and speculation clients.

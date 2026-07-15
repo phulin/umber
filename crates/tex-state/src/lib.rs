@@ -40,6 +40,7 @@ pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 24;
 
 pub mod cell;
 pub mod code_tables;
+pub mod dependency;
 pub mod env;
 pub mod epoch;
 pub mod font;
@@ -91,6 +92,11 @@ pub use pdf::{
 pub mod world;
 
 pub use font::PdfFontCode;
+pub use dependency::{
+    ChangedAt, DependencyBank, DependencyCodeTable, DependencyEngineField, DependencyFontField,
+    DependencyKey, DependencyPageField, DependencyRegion, DependencyTracker, DependencyValidation,
+    DependencyValue, DependencyWorldField, ObservedDependency,
+};
 pub use input::{
     ConditionFrameSummary, ConditionFrameToken, ConditionKind, ConditionLimb, InputFrameSummary,
     InputSummary, LexerState, MACRO_ARGUMENT_SLOTS, MacroArgumentRange, MacroArguments,
