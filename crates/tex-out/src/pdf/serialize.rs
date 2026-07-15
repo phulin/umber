@@ -373,7 +373,7 @@ fn write_form_xobject(
     dictionary: &PdfDictionary,
     data: &[u8],
     bbox: [PdfNumber; 4],
-    matrix: [PdfNumber; 6],
+    matrix: Option<[PdfNumber; 6]>,
     compression: PdfStreamCompression,
 ) -> Result<(), PdfSerializeError> {
     let bbox = Rect::new(
@@ -382,18 +382,24 @@ fn write_form_xobject(
         number_as_f32(bbox[2]),
         number_as_f32(bbox[3]),
     );
-    let matrix = matrix.map(number_as_f32);
+    let matrix = matrix.map(|matrix| matrix.map(number_as_f32));
     match compression {
         PdfStreamCompression::None => {
             let mut form = pdf.form_xobject(reference, data);
-            form.bbox(bbox).matrix(matrix);
+            form.bbox(bbox);
+            if let Some(matrix) = matrix {
+                form.matrix(matrix);
+            }
             write_form_entries(&mut form, dictionary)?;
             form.finish();
         }
         PdfStreamCompression::Flate { level } => {
             let compressed = deflate(data, level)?;
             let mut form = pdf.form_xobject(reference, &compressed);
-            form.bbox(bbox).matrix(matrix).filter(Filter::FlateDecode);
+            form.bbox(bbox).filter(Filter::FlateDecode);
+            if let Some(matrix) = matrix {
+                form.matrix(matrix);
+            }
             write_form_entries(&mut form, dictionary)?;
             form.finish();
         }

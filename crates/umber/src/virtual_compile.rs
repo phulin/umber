@@ -16,6 +16,7 @@ use crate::{
 
 mod path;
 mod resolvers;
+pub(crate) use resolvers::parse_image;
 
 use path::user_path_for_key;
 use resolvers::VirtualRunResolvers;

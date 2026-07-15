@@ -634,21 +634,48 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                             }
                             let name = image_resource_name(&image, parameters);
                             page_images.insert(name.clone(), object_id(object)?);
+                            let total_height = height
+                                .checked_add(depth)
+                                .ok_or(PdfBuildError::PageGeometryOverflow)?;
                             let y = page_height
                                 .checked_sub(graphics.y)
                                 .and_then(|value| value.checked_sub(record.v_origin()))
-                                .and_then(|value| value.checked_sub(depth))
+                                .and_then(|value| value.checked_sub(total_height))
                                 .ok_or(PdfBuildError::PageGeometryOverflow)?;
+                            let (placed_width, placed_height) = match image.metadata() {
+                                PdfExternalImageMetadata::PdfPage { page_box, .. } => {
+                                    let natural_width =
+                                        page_box
+                                            .right
+                                            .checked_sub(page_box.left)
+                                            .ok_or(PdfBuildError::PageGeometryOverflow)?;
+                                    let natural_height = page_box
+                                        .top
+                                        .checked_sub(page_box.bottom)
+                                        .ok_or(PdfBuildError::PageGeometryOverflow)?;
+                                    (
+                                        scaled_to_bp_f32(width, parameters.decimal_digits)
+                                            / scaled_to_bp_f32(
+                                                natural_width,
+                                                parameters.decimal_digits,
+                                            ),
+                                        scaled_to_bp_f32(total_height, parameters.decimal_digits)
+                                            / scaled_to_bp_f32(
+                                                natural_height,
+                                                parameters.decimal_digits,
+                                            ),
+                                    )
+                                }
+                                PdfExternalImageMetadata::Raster(_) => (
+                                    scaled_to_bp_f32(width, parameters.decimal_digits),
+                                    scaled_to_bp_f32(total_height, parameters.decimal_digits),
+                                ),
+                            };
                             PdfContentOperation::ImageXObject {
                                 x,
                                 y: scaled_to_bp_f32(y, parameters.decimal_digits),
-                                width: scaled_to_bp_f32(width, parameters.decimal_digits),
-                                height: scaled_to_bp_f32(
-                                    height
-                                        .checked_add(depth)
-                                        .ok_or(PdfBuildError::PageGeometryOverflow)?,
-                                    parameters.decimal_digits,
-                                ),
+                                width: placed_width,
+                                height: placed_height,
                                 name,
                             }
                         }
@@ -1024,7 +1051,7 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                     scaled_to_bp_number(form.width(), parameters.decimal_digits)?,
                     scaled_to_bp_number(total_height, parameters.decimal_digits)?,
                 ],
-                matrix: [one, zero, zero, one, zero, zero],
+                matrix: Some([one, zero, zero, one, zero, zero]),
             },
         });
     }
@@ -2742,6 +2769,7 @@ fn import_pdf_page(
         })
         .transpose()?;
     let mut dictionary = PdfDictionary::new();
+    dictionary.insert("FormType", PdfValue::Integer(1))?;
     dictionary.insert("Resources", PdfValue::Dictionary(resources))?;
     if let Some(group) = group {
         dictionary.insert("Group", PdfValue::Reference(group))?;
@@ -2771,15 +2799,21 @@ fn import_pdf_page(
             object: PdfObject::FormXObject {
                 dictionary,
                 data,
-                bbox: [zero, zero, one, one],
-                matrix: [
-                    pdf_number_from_f32(1.0 / width_bp)?,
+                bbox: [
                     zero,
                     zero,
-                    pdf_number_from_f32(1.0 / height_bp)?,
-                    pdf_number_from_f32(-left_bp / width_bp)?,
-                    pdf_number_from_f32(-bottom_bp / height_bp)?,
+                    scaled_to_bp_number(width, 4)?,
+                    scaled_to_bp_number(height, 4)?,
                 ],
+                matrix: Some([
+                    one,
+                    zero,
+                    zero,
+                    one,
+                    pdf_number_from_f32(-left_bp)?,
+                    pdf_number_from_f32(-bottom_bp)?,
+                ])
+                .filter(|matrix| *matrix != [one, zero, zero, one, zero, zero]),
             },
         },
         dependencies,

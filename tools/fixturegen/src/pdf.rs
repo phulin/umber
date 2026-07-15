@@ -43,6 +43,13 @@ pub(super) fn regenerate_case(case: &str) -> Result<()> {
     fs::copy(&source, temp.path().join(&source_name))
         .context("failed to stage PDF fixture source")?;
     stage_font_resources(case, temp.path())?;
+    if case == "external_pdf_page" {
+        fs::copy(
+            corpus_root().join("pdf/minimal_rule.expected.ref.pdf"),
+            temp.path().join("minimal_rule.expected.ref.pdf"),
+        )
+        .context("failed to stage included PDF page")?;
+    }
 
     let reference_pdf = temp.path().join(format!("{case}.pdf"));
     let reference = Command::new(&pdftex)

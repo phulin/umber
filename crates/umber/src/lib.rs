@@ -2,8 +2,8 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use tex_exec::{
-    CheckpointSink, ExecutionContext, ExecutionStats, Executor, FontResolver,
-    try_execute_assignment,
+    CheckpointSink, ExecutionContext, ExecutionStats, Executor, FontResolver, PdfImageRequest,
+    PdfImageResolver, try_execute_assignment,
 };
 use tex_expand::{InputResolver, get_x_token_with_context};
 use tex_lex::{InputSource, InputStack, MemoryInput};
@@ -158,6 +158,7 @@ impl<'a, 'context> EngineSession<'a, 'context> {
 pub struct FileSessionResolvers {
     input: FileInputResolver,
     font: FileFontResolver,
+    image: FileImageResolver,
     job_name: String,
 }
 
@@ -184,15 +185,22 @@ impl FileSessionResolvers {
             .and_then(std::ffi::OsStr::to_str)
             .unwrap_or("texput")
             .to_owned();
+        let input_search = TexInputSearchPath::new(&base_dir, tex_input_areas);
         Self {
-            input: FileInputResolver(TexInputSearchPath::new(&base_dir, tex_input_areas)),
+            input: FileInputResolver(input_search.clone()),
             font: FileFontResolver(TexFontSearchPath::new(base_dir, tex_font_areas)),
+            image: FileImageResolver(input_search),
             job_name,
         }
     }
 
     pub fn context(&mut self) -> ExecutionContext<'_> {
-        ExecutionContext::with_resolvers(&self.job_name, &mut self.input, &mut self.font)
+        ExecutionContext::with_resource_resolvers(
+            &self.job_name,
+            &mut self.input,
+            &mut self.font,
+            &mut self.image,
+        )
     }
 
     /// Acquires every mapline-selected font program and encoding through the
@@ -334,6 +342,20 @@ impl InputResolver for FileInputResolver {
 }
 
 struct FileFontResolver(TexFontSearchPath);
+
+struct FileImageResolver(TexInputSearchPath);
+
+impl PdfImageResolver for FileImageResolver {
+    fn open_image(
+        &mut self,
+        input: &mut dyn tex_state::InputReadState,
+        request: &PdfImageRequest,
+        _request_index: u64,
+    ) -> Result<tex_state::PdfExternalImageSource, String> {
+        let content = self.0.read(input, &request.name)?;
+        virtual_compile::parse_image(&content, request)
+    }
+}
 
 impl FontResolver for FileFontResolver {
     fn open_font(

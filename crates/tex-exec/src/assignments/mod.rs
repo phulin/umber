@@ -479,7 +479,7 @@ fn execute_pdf_ximage(
             break;
         }
     }
-    let name = scan_pdf_image_name(input, stores, execution)?;
+    let name = scan_pdf_image_name(context, input, stores, execution)?;
     let obsolete_page_box = stores.int_param(IntParam::PDF_OPTION_ALWAYS_USE_PDF_PAGE_BOX);
     if obsolete_page_box != 0 {
         stores.world_mut().write_text(
@@ -608,6 +608,7 @@ fn scaled_image_dimensions(
 }
 
 fn scan_pdf_image_name(
+    context: TracedTokenWord,
     input: &mut InputStack,
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
@@ -617,6 +618,26 @@ fn scan_pdf_image_name(
             context: "\\pdfximage",
         });
     };
+    if matches!(
+        tex_expand::semantic_token(first),
+        Token::Char {
+            cat: Catcode::BeginGroup,
+            ..
+        }
+    ) {
+        push_traced_tokens(input, stores, [first]);
+        let tokens = scan_general_text_expanded_with_driver(
+            input,
+            &mut tex_state::ExpansionContext::new(stores),
+            execution,
+            context,
+        )?;
+        let mut name = String::new();
+        for &token in stores.tokens(tokens) {
+            append_token_string_text(stores, token, &mut name);
+        }
+        return Ok(name);
+    }
     let quoted = matches!(
         tex_expand::semantic_token(first),
         Token::Char { ch: '"', .. }

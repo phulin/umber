@@ -329,7 +329,15 @@ fn canonical_form_stream(
     stream: &lopdf::Stream,
     depth: usize,
 ) -> Result<String> {
-    let dictionary = canonical_dictionary_without(document, &stream.dict, b"Length")?;
+    let mut semantic_dictionary = stream.dict.clone();
+    for private_metadata in [
+        b"PTEX.FileName".as_slice(),
+        b"PTEX.InfoDict".as_slice(),
+        b"PTEX.PageNumber".as_slice(),
+    ] {
+        semantic_dictionary.remove(private_metadata);
+    }
+    let dictionary = canonical_dictionary_without(document, &semantic_dictionary, b"Length")?;
     let bytes = stream
         .decompressed_content()
         .context("failed to decode Form XObject stream")?;

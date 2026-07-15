@@ -98,7 +98,7 @@ impl PdfImageResolver for VirtualImageResolver<'_> {
     }
 }
 
-fn parse_image(
+pub(crate) fn parse_image(
     content: &FileContent,
     request: &PdfImageRequest,
 ) -> Result<PdfExternalImageSource, String> {

@@ -476,7 +476,7 @@ pub enum PdfObject {
         dictionary: PdfDictionary,
         data: Vec<u8>,
         bbox: [PdfNumber; 4],
-        matrix: [PdfNumber; 6],
+        matrix: Option<[PdfNumber; 6]>,
     },
     /// A typed raster image serialized through `pdf_writer::ImageXObject`.
     ImageXObject {
@@ -1024,9 +1024,12 @@ fn hash_object(object: &PdfObject, hasher: &mut CanonicalHasher) {
                 hasher.i64(value.coefficient());
                 hasher.byte(value.decimal_places());
             }
-            for value in matrix {
-                hasher.i64(value.coefficient());
-                hasher.byte(value.decimal_places());
+            hasher.byte(u8::from(matrix.is_some()));
+            if let Some(matrix) = matrix {
+                for value in matrix {
+                    hasher.i64(value.coefficient());
+                    hasher.byte(value.decimal_places());
+                }
             }
             hasher.bytes(data);
         }
