@@ -5233,7 +5233,7 @@ mod tests {
         let source = concat!(
             "\\pdfoutput=1\\pdfcompresslevel=0",
             "\\shipout\\vbox{\\hrule width1pt height1pt}",
-            "\\pdfinfoomitdate=1\\pdfsuppressptexinfo=1\\end",
+            "\\pdfinfoomitdate=-1\\pdfsuppressptexinfo=-1\\end",
         );
         let (mut stores, run_result) = run(source);
         let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
@@ -5292,13 +5292,14 @@ mod tests {
         let (mut stores, run_result) = run(concat!(
             "\\pdfoutput=1\\pdfcompresslevel=0",
             "{\\pdfomitprocset=1\\shipout\\vbox{\\hrule width1pt height1pt}}",
-            "\\shipout\\vbox{\\hrule width1pt height1pt}\\end",
+            "\\shipout\\vbox{\\hrule width1pt height1pt}",
+            "{\\pdfomitprocset=-1\\shipout\\vbox{\\hrule width1pt height1pt}}\\end",
         ));
         let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
             .expect("PDF assembles");
         let parsed = lopdf::Document::load_mem(&pdf).expect("lopdf parses output");
         let pages = parsed.get_pages();
-        for (page_number, expected) in [(1, false), (2, true)] {
+        for (page_number, expected) in [(1, false), (2, true), (3, true)] {
             let page = parsed
                 .get_object(pages[&page_number])
                 .expect("page object")

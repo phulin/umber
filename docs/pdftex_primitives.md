@@ -374,9 +374,12 @@ compatibility controls:
   `\pdfimageapplygamma` are fixed and clamped when PDF output opens. Pinned
   `writepng.c` uses apply-gamma plus the two gamma values for libpng sample
   conversion and uses high-color to retain or strip 16-bit samples (PDF below
-  1.5 forces stripping). End-to-end raster inclusion evidence remains owned by
-  `umber2-kbz0.6.2` after external-image support; these values must not be
-  treated as no-ops in the interim.
+  1.5 forces stripping). The native raster test now pins pdfTeX's exact output
+  samples for a `gAMA=.5` grayscale ramp: disabled gamma preserves
+  `00 01 11 22 33 44 55 66 77 88 99 aa bb cc dd ee ff`, while enabled gamma
+  at `\pdfgamma=1000` and `\pdfimagegamma=2200` emits
+  `00 00 01 05 0a 12 1c 29 38 49 5c 71 89 a3 c0 de ff`. It also proves that
+  `\pdfimagehicolor=1` retains 16-bit samples only at PDF 1.5 or newer.
 - The warning knobs have distinct predicates at their producers: duplicate
   destination and map warnings are suppressed only by positive values, while
   the page-group warning is suppressed by any nonzero value. Destination,
@@ -392,6 +395,24 @@ compatibility controls:
   `\pdfptexuseunderscore` selects `PTEX_` only when positive (or for PDF 2).
   Metadata and embedded-font PDF fixtures exercise these typed `pdf_writer`
   dictionary paths.
+
+The audit above is tied to the pinned TeX Live source, rather than inferred
+from parameter names. The exact producer map is:
+
+| Control | Pinned pdfTeX 1.40.27 producer | Executable evidence |
+| --- | --- | --- |
+| `\quitvmode` | `pdftex.web:29876-29898` (`start_par`, subtype 2) | `pdf_compatibility_controls` covers vertical, horizontal, and math modes |
+| `\ignoreprimitiveerror` | `pdftex.web:27668-27688` (low bit in `\vsplit`) | `pdf_compatibility_controls` covers ordinary and ignored recovery |
+| `\pdfmovechars` | `pdftex.web:16089-16098` (`pdf_use_font`) | `pdf_move_chars_warning` covers first-use reset and already-used-font retention |
+| `\pdfignoreddimen` | `pdftex.web:21415`, `23663`, and `25984-25998` | `pdf_ignored_dimen_effects` covers live `prevdepth` and line overrides |
+| `\pdfpkmode` | `pdftex.web:19821-19825` | PK request/freezing tests plus the 300/600-DPI fixtures |
+| PNG gamma/high color | `pdftex.web:15477-15480`; `writepng.c:524-545` | exact gamma ramp and PDF 1.4/1.5 16-bit tests |
+| duplicate map warning | `mapfile.c:185-198` (`> 0` suppresses) | exact `-1/0/1` diagnostic test |
+| page-group warning | `pdftoepdf.cc:934-936` (`!= 0` suppresses) | exact `-1/0/1` included-page-group test |
+| duplicate destination warning | `pdftex.web:35015-35030` (`> 0` suppresses) | dependency `umber2-kbz0.16.1` owns both navigation collision timings |
+| Info/date/pTeX controls | `pdftex.web:20341-20358`, `20427`, and `20463` | default, signed omission, odd suppression, key spelling, and Info removal tests |
+| `\pdfomitcharset` | `writefont.c:487-515` | positive and negative Type-1 subset fixtures |
+| `\pdfomitprocset` | `pdftex.web:19356-19359` | signed, zero, grouped, per-page, and PDF-2 tests |
 
 ## Beads epic decomposition
 
