@@ -83,7 +83,7 @@ pub use pdf::{
     PdfObjectCapacityError, PdfOpenLink, PdfOutlineRecord, PdfOutputParameters, PdfPageBox,
     PdfPageGroupInclusion, PdfPageGroupSelector, PdfPageGroupWarning, PdfPageRecord,
     PdfRasterColorSpace, PdfRasterFormat, PdfRasterImageMetadata, PdfRawObjectData, PdfRawObjectId,
-    PdfRawObjectInitializeError, PdfRawObjectRecord,
+    PdfRawObjectInitializeError, PdfRawObjectRecord, PdfThreadBeadRecord, PdfThreadRecord,
 };
 pub mod world;
 

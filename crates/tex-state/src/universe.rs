@@ -2371,6 +2371,18 @@ impl Universe {
         self.pdf.destinations(structure)
     }
 
+    pub fn append_pdf_thread_bead(
+        &mut self,
+        identity: crate::PdfDestinationIdentity,
+    ) -> Result<(crate::PdfThreadRecord, crate::PdfThreadBeadRecord), PdfObjectCapacityError> {
+        self.pdf.append_thread_bead(identity)
+    }
+
+    #[must_use]
+    pub fn pdf_threads(&self) -> &[crate::PdfThreadRecord] {
+        self.pdf.threads()
+    }
+
     pub fn create_pdf_outline(
         &mut self,
         attributes: TokenListId,

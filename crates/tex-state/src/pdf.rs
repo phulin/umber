@@ -6,6 +6,7 @@ mod destination;
 mod document;
 mod object;
 mod outline;
+mod thread;
 
 pub use action::{
     PdfActionDestination, PdfActionIdentifier, PdfActionRecord, PdfActionSpec, PdfActionTarget,
@@ -23,6 +24,7 @@ pub use object::{
     PdfRawObjectData, PdfRawObjectId, PdfRawObjectInitializeError, PdfRawObjectRecord,
 };
 pub use outline::PdfOutlineRecord;
+pub use thread::{PdfThreadBeadRecord, PdfThreadRecord};
 
 use std::sync::Arc;
 
@@ -812,6 +814,7 @@ pub(crate) struct PdfStateCursor {
     destination_fingerprint: u64,
     structure_destination_fingerprint: u64,
     outline_fingerprint: u64,
+    thread_fingerprint: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -831,6 +834,7 @@ pub(crate) struct PdfStateSnapshot {
     destinations: Arc<Vec<PdfDestinationRecord>>,
     structure_destinations: Arc<Vec<PdfDestinationRecord>>,
     outlines: Arc<Vec<PdfOutlineRecord>>,
+    threads: Arc<Vec<PdfThreadRecord>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -889,6 +893,8 @@ pub(crate) struct PdfState {
     structure_destination_fingerprint: u64,
     outlines: Arc<Vec<PdfOutlineRecord>>,
     outline_fingerprint: u64,
+    threads: Arc<Vec<PdfThreadRecord>>,
+    thread_fingerprint: u64,
 }
 
 impl Default for PdfState {
@@ -939,6 +945,8 @@ impl Default for PdfState {
             structure_destination_fingerprint: destination_fingerprint(&[], true),
             outlines: Arc::new(Vec::new()),
             outline_fingerprint: outline_fingerprint(&[]),
+            threads: Arc::new(Vec::new()),
+            thread_fingerprint: thread_fingerprint(&[]),
         }
     }
 }
@@ -1011,6 +1019,7 @@ impl PdfState {
             && self.last_position == (Scaled::from_raw(0), Scaled::from_raw(0))
             && self.snap_reference == (Scaled::from_raw(0), Scaled::from_raw(0))
             && self.forms.is_empty()
+            && self.threads.is_empty()
     }
 
     pub(crate) fn ensure_page_capacity(&self, parameters: PdfOutputParameters) -> Result<(), ()> {
@@ -1305,6 +1314,36 @@ impl PdfState {
         } else {
             &self.destinations
         }
+    }
+
+    pub(crate) fn append_thread_bead(
+        &mut self,
+        identity: PdfDestinationIdentity,
+    ) -> Result<(PdfThreadRecord, PdfThreadBeadRecord), PdfObjectCapacityError> {
+        let index = self
+            .threads
+            .iter()
+            .position(|thread| thread.identity() == &identity);
+        let index = match index {
+            Some(index) => index,
+            None => {
+                let object = self.reserve_document_object()?;
+                Arc::make_mut(&mut self.threads).push(PdfThreadRecord::new(identity, object));
+                self.threads.len() - 1
+            }
+        };
+        let bead = PdfThreadBeadRecord::new(
+            self.reserve_document_object()?,
+            self.reserve_document_object()?,
+        );
+        let threads = Arc::make_mut(&mut self.threads);
+        threads[index].push_bead(bead);
+        self.thread_fingerprint = thread_fingerprint(threads);
+        Ok((threads[index].clone(), bead))
+    }
+
+    pub(crate) fn threads(&self) -> &[PdfThreadRecord] {
+        &self.threads
     }
 
     pub(crate) fn create_outline(
@@ -1979,6 +2018,7 @@ impl PdfState {
             destination_fingerprint: self.destination_fingerprint,
             structure_destination_fingerprint: self.structure_destination_fingerprint,
             outline_fingerprint: self.outline_fingerprint,
+            thread_fingerprint: self.thread_fingerprint,
         }
     }
     #[must_use]
@@ -1999,6 +2039,7 @@ impl PdfState {
             destinations: Arc::clone(&self.destinations),
             structure_destinations: Arc::clone(&self.structure_destinations),
             outlines: Arc::clone(&self.outlines),
+            threads: Arc::clone(&self.threads),
         }
     }
 
@@ -2059,6 +2100,8 @@ impl PdfState {
         self.structure_destination_fingerprint = cursor.structure_destination_fingerprint;
         self.outlines = snapshot.outlines;
         self.outline_fingerprint = cursor.outline_fingerprint;
+        self.threads = snapshot.threads;
+        self.thread_fingerprint = cursor.thread_fingerprint;
     }
 
     pub(crate) fn set_match(
@@ -2118,6 +2161,7 @@ impl PdfState {
             hasher.u64(cursor.destination_fingerprint);
             hasher.u64(cursor.structure_destination_fingerprint);
             hasher.u64(cursor.outline_fingerprint);
+            hasher.u64(cursor.thread_fingerprint);
             hasher.bool(cursor.document_objects.pages().is_some());
             if let Some(id) = cursor.document_objects.pages() {
                 hasher.u32(id);
@@ -2417,6 +2461,28 @@ fn destination_fingerprint(records: &[PdfDestinationRecord], structure: bool) ->
 
 fn outline_fingerprint(_records: &[PdfOutlineRecord]) -> u64 {
     StateHasher::new(0x7064_665f_6f75_746c).finish()
+}
+
+fn thread_fingerprint(records: &[PdfThreadRecord]) -> u64 {
+    let mut hasher = StateHasher::new(0x7064_665f_7468_7264);
+    for record in records {
+        match record.identity() {
+            PdfDestinationIdentity::Name(name) => {
+                hasher.u8(0);
+                hasher.bytes(name);
+            }
+            PdfDestinationIdentity::Number(number) => {
+                hasher.u8(1);
+                hasher.u32(*number);
+            }
+        }
+        hasher.u32(record.object());
+        for bead in record.beads() {
+            hasher.u32(bead.bead_object());
+            hasher.u32(bead.rectangle_object());
+        }
+    }
+    hasher.finish()
 }
 
 fn append_outline_fingerprint(
