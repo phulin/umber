@@ -540,13 +540,11 @@ impl InputSummary {
             .unwrap_or(0)
     }
 
-    pub(crate) fn rebind_root_generated(
+    pub(crate) fn rebind_root_layout(
         &self,
-        source_id: SourceId,
-        registration: RegisteredSource,
         bytes: &[u8],
         mapped_position: usize,
-    ) -> Option<Self> {
+    ) -> Option<(Self, SourceId)> {
         let mut state = (*self.semantic_root.0).clone();
         let root = state.frames.iter_mut().find_map(|frame| match frame {
             InputFrameSummary::Source {
@@ -556,10 +554,11 @@ impl InputSummary {
             } => Some((source_id, input_record, source)),
             InputFrameSummary::TokenList { .. } | InputFrameSummary::Condition { .. } => None,
         })?;
-        *root.0 = source_id;
+        let source_id = *root.0;
+        let registration = root.2.registration();
         *root.1 = None;
         *root.2 = if root.2.next_source_offset() == mapped_position {
-            root.2.clone().with_registration(Some(registration))
+            root.2.clone()
         } else {
             let line_number = bytes[..mapped_position]
                 .iter()
@@ -582,13 +581,16 @@ impl InputSummary {
                 Vec::new(),
                 false,
             )
-            .with_registration(Some(registration))
+            .with_registration(registration)
         };
-        Some(Self {
-            semantic_root: InputSemanticRoot(Arc::new(state)),
-            last_source_id: self.last_source_id,
-            next_source_id: self.next_source_id.max(source_id.raw().saturating_add(1)),
-        })
+        Some((
+            Self {
+                semantic_root: InputSemanticRoot(Arc::new(state)),
+                last_source_id: self.last_source_id,
+                next_source_id: self.next_source_id,
+            },
+            source_id,
+        ))
     }
 }
 

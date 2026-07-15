@@ -90,13 +90,23 @@ impl Stores {
             source.is_resume_complete(),
             "input source frame is not resume-complete"
         );
+        let registration = source
+            .registration()
+            .expect("input source frame has no registered source capability");
+        if self.source_fragments.contains_registration(registration) {
+            assert!(
+                input_record.is_none(),
+                "fragment-backed editor source frame carries a World input record"
+            );
+            for &word in source.pending() {
+                self.assert_live_traced_token_word(word);
+            }
+            return;
+        }
         let region = self
             .source_map
             .region_for_source(source_id)
             .expect("input source id is not live in this Universe timeline");
-        let registration = source
-            .registration()
-            .expect("input source frame has no registered source capability");
         assert!(
             self.source_map
                 .contains_registration(source_id, registration),
@@ -240,10 +250,12 @@ impl Stores {
 
     pub(super) fn assert_live_origin(&self, id: OriginId) {
         let live = match id.decode() {
-            crate::token::OriginEncoding::DirectSource(position) => self
-                .source_map
-                .region_for_backed_position(position)
-                .is_some(),
+            crate::token::OriginEncoding::DirectSource(position) => {
+                self.source_map
+                    .region_for_backed_position(position)
+                    .is_some()
+                    || self.source_fragments.contains_position(position)
+            }
             crate::token::OriginEncoding::Unknown | crate::token::OriginEncoding::Arena(_) => {
                 self.provenance.contains_origin(id)
             }

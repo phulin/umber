@@ -35,6 +35,7 @@ use crate::provenance::{
     SynthesizedOriginKind, SyntheticOrigin, SyntheticOriginKind,
 };
 use crate::scaled::Scaled;
+use crate::source_fragments::FragmentStore;
 use crate::source_map::{
     GeneratedSource, SourceBacking, SourceDescriptor, SourceMap, SourceMapError, SourceMapMark,
     SourcePos, SourceRegion, SourceSpan,
@@ -142,6 +143,7 @@ pub struct Stores {
     tokens: TokenStore,
     provenance: ProvenanceStore,
     source_map: SourceMap,
+    source_fragments: FragmentStore,
     macros: MacroStore,
     glue: GlueStore,
     fonts: FontStore,
@@ -202,6 +204,7 @@ impl Clone for Stores {
             tokens: self.tokens.clone(),
             provenance: self.provenance.clone(),
             source_map: self.source_map.clone(),
+            source_fragments: self.source_fragments.clone(),
             macros: self.macros.clone(),
             glue: self.glue.clone(),
             fonts: self.fonts.clone(),
@@ -219,6 +222,10 @@ impl Clone for Stores {
 }
 
 impl Stores {
+    pub(crate) fn install_source_fragments(&mut self, fragments: FragmentStore) {
+        self.source_fragments = fragments;
+    }
+
     pub(crate) fn can_restore_snapshot(&self, snapshot: &StoreSnapshot) -> bool {
         snapshot.owner == self.owner.snapshot_owner()
             && snapshot.env_snapshot.group_depth() == self.env.group_depth()
@@ -254,6 +261,7 @@ impl Stores {
             tokens: TokenStore::new(),
             provenance: ProvenanceStore::new(),
             source_map: SourceMap::default(),
+            source_fragments: FragmentStore::new(),
             macros: MacroStore::new(),
             glue: GlueStore::new(),
             fonts: FontStore::new(),

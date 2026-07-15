@@ -1,8 +1,9 @@
 # Edit-Stable Source Coordinates
 
-Status: proposed design. Replaces per-revision whole-document source regions
-with fragment-backed coordinates so token, node, and shipout provenance stays
-resolvable and correct across editor inserts and deletes.
+Status: implemented through phase 3. Per-revision whole-document source
+regions have been replaced by fragment-backed coordinates so token, node, and
+shipout provenance stays resolvable and correct across editor inserts and
+deletes. Phase 4 pruning and long-session measurement remain pending.
 
 ## 1. Problem
 
@@ -285,16 +286,16 @@ lookups chase at most one hop. Deferred until measurements demand it.
 
 ## 10. Implementation phases
 
-1. **tex-state substrate.** Add `FragmentStore`, `FragmentId`,
+1. **tex-state substrate (complete).** Add `FragmentStore`, `FragmentId`,
    fragment-backed region resolution behind the aggregate facade, the
    session-lifetime position allocator split, and the layout-aware resolver
    with typed `Deleted`. Unit-test region disjointness, deletion, liveness,
    and allocator monotonicity across simulated fork discard.
-2. **tex-lex cursor.** Add the frozen `LayoutCursor` and per-line
+2. **tex-lex cursor (complete).** Add the frozen `LayoutCursor` and per-line
    registration handoff to the root frame; prove per-token minting is
    unchanged (existing provenance benchmarks; the
    `provenance_performance.md` throughput matrix is the gate).
-3. **tex-incr adoption.** Line-expanded edit application, fragment minting,
+3. **tex-incr adoption (complete).** Line-expanded edit application, fragment minting,
    layout maintenance and generation stamping in `advance`; replace
    whole-document `rebind_root_editor_input` with cursor installation;
    route `rendered_source_location` (and the retained maps from

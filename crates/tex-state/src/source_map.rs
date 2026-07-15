@@ -46,6 +46,10 @@ impl RegisteredSource {
         Self { start, byte_len }
     }
 
+    pub(crate) const fn start(self) -> SourcePos {
+        self.start
+    }
+
     /// Encodes a nonempty backed scalar directly when it fits the packed form.
     #[must_use]
     #[inline(always)]

@@ -5,6 +5,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
@@ -14,12 +15,14 @@ use tex_exec::{
     ExecutionStats, Executor,
 };
 use tex_expand::InputResolver;
-use tex_lex::{InputSource, InputStack, MemoryInput, WorldInput};
+use tex_lex::{InputSource, InputStack, LayoutCursor, LayoutCursorError, MemoryInput, WorldInput};
 use tex_out::dvi::{DviError, DviPagePlan, DviStreamWriter};
 use tex_out::positioned::PositionedEvent;
+use tex_state::token::OriginId;
 use tex_state::{
-    CommittedArtifact, ContentHash, EffectRecord, GenerationForkError, GenerationSubstrate,
-    InputReadState, Universe, WorldError,
+    CommittedArtifact, ContentHash, EditorLayout, EditorLayoutError, EffectRecord, FragmentStore,
+    GenerationForkError, GenerationSubstrate, InputReadState, LayoutGeneration,
+    LayoutResolvedOrigin, Piece, Universe, WorldError,
 };
 
 /// Monotonic identity of an immutable editor buffer.
@@ -147,6 +150,8 @@ pub struct Session {
     source_path: String,
     revision: RevisionId,
     source: String,
+    fragments: FragmentStore,
+    layout: EditorLayout,
     content_hash: ContentHash,
     effects: Vec<EffectRecord>,
     artifacts: Vec<CommittedArtifact>,
@@ -184,13 +189,26 @@ impl Session {
         checkpoint_budget: usize,
     ) -> Result<Self, SessionError> {
         let source = source.into();
+        let source_path = source_path.into();
+        let mut fragments = FragmentStore::new();
+        let (fragment, _) = fragments.append(Arc::from(source.as_bytes()), revision.raw())?;
+        let fragment_len = u32::try_from(source.len())
+            .map_err(|_| SessionError::Layout(EditorLayoutError::DocumentTooLarge))?;
+        let layout = EditorLayout::new(
+            source_path.clone(),
+            LayoutGeneration::new(revision.raw()),
+            vec![Piece::new(fragment, 0, fragment_len)],
+            &fragments,
+        )?;
         Ok(Self {
             template,
             job_name: job_name.into(),
-            source_path: source_path.into(),
+            source_path,
             revision,
             content_hash: ContentHash::from_bytes(source.as_bytes()),
             source,
+            fragments,
+            layout,
             effects: Vec::new(),
             artifacts: Vec::new(),
             dvi_pages: Vec::new(),
@@ -236,6 +254,8 @@ impl Session {
             &self.template,
             &self.job_name,
             &self.source,
+            &self.fragments,
+            &self.layout,
             input_resolver,
             font_resolver,
         )?;
@@ -269,6 +289,63 @@ impl Session {
         event: u32,
         unit: Option<u32>,
     ) -> Result<Option<tex_state::ResolvedSourceLocation>, SessionError> {
+        match self.rendered_source_origin(page, event, unit)? {
+            Some(LayoutResolvedOrigin::Current {
+                path,
+                doc_offset_lo,
+                doc_offset_hi,
+                line,
+                column,
+            }) => Ok(Some(tex_state::ResolvedSourceLocation {
+                path,
+                start: doc_offset_lo,
+                end: doc_offset_hi,
+                line,
+                column,
+            })),
+            Some(LayoutResolvedOrigin::Foreign) => {
+                let Some(origin) = self.rendered_origin(page, event, unit)? else {
+                    return Ok(None);
+                };
+                let substrate = self
+                    .substrate
+                    .as_ref()
+                    .ok_or(SessionError::MissingAcceptedSubstrate)?;
+                Ok(substrate.resolve_origin_with_generated_path(origin, &self.source_path))
+            }
+            Some(LayoutResolvedOrigin::Deleted { .. } | LayoutResolvedOrigin::Unknown) | None => {
+                Ok(None)
+            }
+        }
+    }
+
+    /// Resolves one rendered unit with typed current/deleted editor semantics.
+    pub fn rendered_source_origin(
+        &self,
+        page: u32,
+        event: u32,
+        unit: Option<u32>,
+    ) -> Result<Option<LayoutResolvedOrigin>, SessionError> {
+        let Some(origin) = self.rendered_origin(page, event, unit)? else {
+            return Ok(None);
+        };
+        let substrate = self
+            .substrate
+            .as_ref()
+            .ok_or(SessionError::MissingAcceptedSubstrate)?;
+        Ok(Some(substrate.resolve_layout_origin(
+            origin,
+            &self.fragments,
+            &self.layout,
+        )))
+    }
+
+    fn rendered_origin(
+        &self,
+        page: u32,
+        event: u32,
+        unit: Option<u32>,
+    ) -> Result<Option<OriginId>, SessionError> {
         let Some(page_index) = page.checked_sub(1).map(|page| page as usize) else {
             return Ok(None);
         };
@@ -297,11 +374,7 @@ impl Session {
         else {
             return Ok(None);
         };
-        let substrate = self
-            .substrate
-            .as_ref()
-            .ok_or(SessionError::MissingAcceptedSubstrate)?;
-        Ok(substrate.resolve_origin_with_generated_path(origin, &self.source_path))
+        Ok(Some(origin))
     }
 
     /// Consumes the rollback-capable session and materializes its accepted
@@ -340,6 +413,19 @@ impl Session {
         let old_pages = self.dvi_pages.clone();
         let mut next = old_source.clone();
         next.replace_range(edit.range.clone(), &edit.replacement);
+        let (expanded_range, expanded_replacement) = line_expanded_replacement(&old_source, &edit);
+        let (fragment, _) = self.fragments.append(
+            Arc::from(expanded_replacement.as_bytes()),
+            next_revision.raw(),
+        )?;
+        let next_layout = replace_layout_range(
+            &self.layout,
+            &self.fragments,
+            expanded_range,
+            fragment,
+            expanded_replacement.len(),
+            LayoutGeneration::new(next_revision.raw()),
+        )?;
         let restart_index = select_restart(&old_history, &old_source, &next, &edit);
         let map = EditMap::new(edit.range.clone(), edit.replacement.len());
         let substrate = self
@@ -355,6 +441,8 @@ impl Session {
             &next,
             &old_history,
             &old_pages,
+            &self.fragments,
+            &next_layout,
             restart_index,
             &map,
             input_resolver,
@@ -479,6 +567,7 @@ impl Session {
         }
         self.revision = next_revision;
         self.source = next;
+        self.layout = next_layout;
         self.content_hash = ContentHash::from_bytes(self.source.as_bytes());
         self.effects = effects;
         self.artifacts = artifacts;
@@ -593,12 +682,19 @@ fn execute_revision(
     template: &Universe,
     job_name: &str,
     source: &str,
+    fragments: &FragmentStore,
+    layout: &EditorLayout,
     input_resolver: &mut dyn InputResolver,
     font_resolver: &mut dyn tex_exec::FontResolver,
 ) -> Result<RevisionRun, SessionError> {
     let mut universe = template.clone();
     universe.begin_retained_session()?;
     let mut input = InputStack::new(MemoryInput::new(source));
+    universe.install_editor_fragments(fragments.clone());
+    universe.set_root_editor_content_hash(ContentHash::from_bytes(source.as_bytes()));
+    input
+        .install_root_layout_cursor(LayoutCursor::new(layout, fragments)?)
+        .expect("new editor input has a root source");
     let mut executor = Executor::new();
     let mut sink = HistorySink::default();
     let mut context = ExecutionContext::with_resolvers(job_name, input_resolver, font_resolver);
@@ -744,6 +840,8 @@ fn execute_advance(
     source: &str,
     old_history: &[BoundaryRecord],
     old_pages: &[DviPagePlan],
+    fragments: &FragmentStore,
+    layout: &EditorLayout,
     restart: usize,
     map: &EditMap,
     input_resolver: &mut dyn InputResolver,
@@ -761,6 +859,8 @@ fn execute_advance(
         anchor.checkpoint(),
         old_source,
         source,
+        fragments.clone(),
+        LayoutCursor::new(layout, fragments)?,
     )?;
     for (path, bytes) in registered_inputs {
         scratch.world_mut().set_memory_file(path, bytes.clone())?;
@@ -789,6 +889,92 @@ fn execute_advance(
         restart_fork_latency,
         reexecution_latency,
     })
+}
+
+fn line_expanded_replacement(old: &str, edit: &Edit) -> (std::ops::Range<usize>, String) {
+    let start = old.as_bytes()[..edit.range.start]
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map_or(0, |position| position + 1);
+    let end = if edit.range.start != edit.range.end
+        && old.as_bytes().get(edit.range.end.wrapping_sub(1)) == Some(&b'\n')
+    {
+        edit.range.end
+    } else {
+        old.as_bytes()[edit.range.end..]
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map_or(old.len(), |position| edit.range.end + position + 1)
+    };
+    let mut replacement = String::with_capacity(
+        edit.range.start - start + edit.replacement.len() + end - edit.range.end,
+    );
+    replacement.push_str(&old[start..edit.range.start]);
+    replacement.push_str(&edit.replacement);
+    replacement.push_str(&old[edit.range.end..end]);
+    (start..end, replacement)
+}
+
+fn replace_layout_range(
+    old: &EditorLayout,
+    fragments: &FragmentStore,
+    replaced: std::ops::Range<usize>,
+    replacement: tex_state::FragmentId,
+    replacement_len: usize,
+    generation: LayoutGeneration,
+) -> Result<EditorLayout, SessionError> {
+    let replaced_start = u64::try_from(replaced.start)
+        .map_err(|_| SessionError::Layout(EditorLayoutError::DocumentTooLarge))?;
+    let replaced_end = u64::try_from(replaced.end)
+        .map_err(|_| SessionError::Layout(EditorLayoutError::DocumentTooLarge))?;
+    let replacement_len = u32::try_from(replacement_len)
+        .map_err(|_| SessionError::Layout(EditorLayoutError::DocumentTooLarge))?;
+    let mut pieces = Vec::with_capacity(old.pieces().len().saturating_add(2));
+    let mut inserted = false;
+    for (index, piece) in old.pieces().iter().enumerate() {
+        if piece.start() == piece.end() {
+            continue;
+        }
+        let doc_start = old.doc_starts()[index];
+        let doc_end = doc_start + u64::from(piece.end() - piece.start());
+        if doc_end <= replaced_start {
+            pieces.push(piece.clone());
+            continue;
+        }
+        if doc_start >= replaced_end {
+            if !inserted {
+                pieces.push(Piece::new(replacement, 0, replacement_len));
+                inserted = true;
+            }
+            pieces.push(piece.clone());
+            continue;
+        }
+        if doc_start < replaced_start {
+            let left_end = piece.start()
+                + u32::try_from(replaced_start - doc_start)
+                    .map_err(|_| SessionError::Layout(EditorLayoutError::DocumentTooLarge))?;
+            pieces.push(Piece::new(piece.fragment(), piece.start(), left_end));
+        }
+        if !inserted {
+            pieces.push(Piece::new(replacement, 0, replacement_len));
+            inserted = true;
+        }
+        if doc_end > replaced_end {
+            let right_start = piece.start()
+                + u32::try_from(replaced_end - doc_start)
+                    .map_err(|_| SessionError::Layout(EditorLayoutError::DocumentTooLarge))?;
+            pieces.push(Piece::new(piece.fragment(), right_start, piece.end()));
+        }
+    }
+    if !inserted {
+        pieces.push(Piece::new(replacement, 0, replacement_len));
+    }
+    Ok(EditorLayout::new(
+        old.path(),
+        generation,
+        pieces,
+        fragments,
+    )?)
 }
 
 fn select_restart(history: &[BoundaryRecord], old: &str, new: &str, edit: &Edit) -> usize {
@@ -980,6 +1166,9 @@ pub enum SessionError {
     World(WorldError),
     Restore(EditorRestoreError),
     Fork(GenerationForkError),
+    Fragment(tex_state::source_map::SourceMapError),
+    Layout(EditorLayoutError),
+    LayoutCursor(LayoutCursorError),
     RenderSource(String),
 }
 
@@ -1002,6 +1191,9 @@ impl fmt::Display for SessionError {
             Self::World(error) => write!(f, "incremental world failed: {error}"),
             Self::Restore(error) => write!(f, "incremental restart failed: {error}"),
             Self::Fork(error) => write!(f, "incremental generation retarget failed: {error}"),
+            Self::Fragment(error) => write!(f, "editor fragment allocation failed: {error}"),
+            Self::Layout(error) => write!(f, "editor layout update failed: {error}"),
+            Self::LayoutCursor(error) => write!(f, "editor layout cursor failed: {error}"),
             Self::RenderSource(error) => write!(f, "rendered source query failed: {error}"),
         }
     }
@@ -1030,6 +1222,24 @@ impl From<EditorRestoreError> for SessionError {
 impl From<GenerationForkError> for SessionError {
     fn from(value: GenerationForkError) -> Self {
         Self::Fork(value)
+    }
+}
+
+impl From<tex_state::source_map::SourceMapError> for SessionError {
+    fn from(value: tex_state::source_map::SourceMapError) -> Self {
+        Self::Fragment(value)
+    }
+}
+
+impl From<EditorLayoutError> for SessionError {
+    fn from(value: EditorLayoutError) -> Self {
+        Self::Layout(value)
+    }
+}
+
+impl From<LayoutCursorError> for SessionError {
+    fn from(value: LayoutCursorError) -> Self {
+        Self::LayoutCursor(value)
     }
 }
 

@@ -73,6 +73,7 @@ struct LayoutCursorSegment {
 #[derive(Clone, Debug)]
 pub struct LayoutCursor {
     segments: Arc<[LayoutCursorSegment]>,
+    root_registration: Option<RegisteredSource>,
     index: usize,
 }
 
@@ -116,8 +117,13 @@ impl LayoutCursor {
                 fragment_start: piece.start().into(),
             });
         }
+        let root_registration = layout
+            .pieces()
+            .first()
+            .and_then(|piece| fragments.registration(piece.fragment()));
         Ok(Self {
             segments: segments.into(),
+            root_registration,
             index: 0,
         })
     }
@@ -1171,7 +1177,7 @@ impl InputStack {
         })?;
         cursor.seek(source.frame.physical_line_start);
         source.registration = if source.frame.line_number == 0 {
-            None
+            cursor.root_registration
         } else {
             let (registration, origin_line_start) = cursor
                 .line_registration(

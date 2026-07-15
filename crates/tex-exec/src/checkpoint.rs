@@ -1,14 +1,13 @@
 use std::fmt;
-use std::sync::Arc;
 use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
-use tex_lex::{InputSource, InputStack, MemoryInput, WorldInput};
+use tex_lex::{InputSource, InputStack, LayoutCursor, MemoryInput, WorldInput};
 use tex_state::source_map::SourceMapError;
 use tex_state::{
-    GenerationForkError, GenerationSubstrate, InputRecordId, InputSummary, Snapshot, SourceId,
-    Universe,
+    ContentHash, FragmentStore, GenerationForkError, GenerationSubstrate, InputRecordId,
+    InputSummary, Snapshot, SourceId, Universe,
 };
 
 use crate::{ExecError, ModeNest, ModeNestSummary};
@@ -345,6 +344,7 @@ impl crate::Executor {
     /// Restores a retained checkpoint while substituting only its root editor
     /// buffer. Preparation happens on a fork, so failure cannot partially
     /// mutate the live executor, input stack, or Universe.
+    #[allow(clippy::too_many_arguments)]
     #[allow(clippy::disallowed_methods)] // Diagnostic latency; no engine fact observes it.
     pub fn restore_editor_checkpoint(
         &mut self,
@@ -354,6 +354,8 @@ impl crate::Executor {
         checkpoint: &EngineCheckpoint,
         old_source: &str,
         source: &str,
+        fragments: FragmentStore,
+        layout_cursor: LayoutCursor,
     ) -> Result<Duration, EditorRestoreError> {
         if checkpoint.root_content_hash
             != Some(tex_state::ContentHash::from_bytes(old_source.as_bytes()))
@@ -372,16 +374,13 @@ impl crate::Executor {
             .fork_at(&checkpoint.universe)
             .map_err(EditorRestoreError::Fork)?;
         let fork_latency = fork_started.elapsed();
+        restored_universe.install_editor_fragments(fragments);
         let (summary, root_source) = restored_universe
-            .rebind_root_editor_input(
-                &checkpoint.input,
-                Arc::from(source.as_bytes()),
-                checkpoint.root_anchor,
-            )
+            .rebind_root_editor_layout(&checkpoint.input, source.as_bytes(), checkpoint.root_anchor)
             .map_err(EditorRestoreError::RootRebind)?;
         let restored_modes =
             ModeNest::from_summary(checkpoint.modes.clone()).map_err(EditorRestoreError::Mode)?;
-        let restored_input = InputStack::from_summary(&summary, |source_id, record, frame| {
+        let mut restored_input = InputStack::from_summary(&summary, |source_id, record, frame| {
             if source_id == root_source {
                 return Ok::<Box<dyn InputSource>, EditorRestoreError>(Box::new(
                     MemoryInput::from_offset(source, checkpoint.root_anchor),
@@ -399,6 +398,12 @@ impl crate::Executor {
                 frame.next_source_offset(),
             )))
         })?;
+        let installed_root = restored_input
+            .install_root_layout_cursor(layout_cursor)
+            .ok_or(EditorRestoreError::RootRevisionMismatch)?;
+        debug_assert_eq!(installed_root, root_source);
+        restored_universe.set_root_editor_content_hash(ContentHash::from_bytes(source.as_bytes()));
+        restored_universe.set_input_summary(restored_input.summary());
         *universe = restored_universe;
         *input = restored_input;
         self.nest = restored_modes;

@@ -541,6 +541,18 @@ impl GenerationSubstrate {
             .resolve_origin_with_generated_path(origin, generated_path)
     }
 
+    /// Resolves one retained origin against the session's current editor layout.
+    #[must_use]
+    pub fn resolve_layout_origin(
+        &self,
+        origin: crate::token::OriginId,
+        fragments: &crate::FragmentStore,
+        layout: &crate::EditorLayout,
+    ) -> crate::LayoutResolvedOrigin {
+        crate::ProvenanceResolver::new(&self.universe)
+            .resolve_layout_origin(origin, fragments, layout)
+    }
+
     #[doc(hidden)]
     pub fn validate_checkpoint_snapshot(
         &self,
@@ -551,7 +563,7 @@ impl GenerationSubstrate {
 
     #[must_use]
     pub fn root_content_hash(&self, summary: &InputSummary) -> Option<ContentHash> {
-        self.universe.stores.root_generated_content_hash(summary)
+        self.universe.root_editor_content_hash(summary)
     }
 
     /// Clones this frozen generation once and atomically rolls the clone back
@@ -753,6 +765,8 @@ pub struct Universe {
     world: World,
     interaction_mode: InteractionMode,
     input_summary: InputSummary,
+    /// Operational editor revision identity; excluded from snapshots and semantic hashes.
+    editor_content_hash: Option<ContentHash>,
     page: PageBuilderState,
     state_hash_base: StateHashBase,
     state_hash_projection_cache: StateHashProjectionCache,
@@ -868,6 +882,7 @@ impl Clone for Universe {
             world: self.world.clone(),
             interaction_mode: self.interaction_mode,
             input_summary: self.input_summary.clone(),
+            editor_content_hash: self.editor_content_hash,
             page: self.page.clone(),
             state_hash_base,
             state_hash_projection_cache: self.state_hash_projection_cache.clone(),
@@ -920,6 +935,7 @@ impl Universe {
             world,
             interaction_mode: InteractionMode::default(),
             input_summary,
+            editor_content_hash: None,
             page,
             state_hash_base,
             state_hash_projection_cache: StateHashProjectionCache::default(),
@@ -1031,6 +1047,7 @@ impl Universe {
             world,
             interaction_mode: mode,
             input_summary,
+            editor_content_hash: None,
             page,
             state_hash_base,
             state_hash_projection_cache: StateHashProjectionCache::default(),
@@ -1455,36 +1472,39 @@ impl Universe {
         self.world.retained_output_bytes()
     }
 
-    /// Rebinds only the root editor frame to a fresh immutable generated buffer.
-    /// The caller must already have proved that the consumed prefix is unchanged.
-    pub fn rebind_root_editor_input(
-        &mut self,
+    /// Rehomes the stable root editor frame without registering a document-sized backing.
+    pub fn rebind_root_editor_layout(
+        &self,
         summary: &InputSummary,
-        bytes: Arc<[u8]>,
+        bytes: &[u8],
         mapped_position: usize,
     ) -> Result<(InputSummary, SourceId), SourceMapError> {
         if mapped_position > bytes.len()
-            || std::str::from_utf8(&bytes)
+            || std::str::from_utf8(bytes)
                 .ok()
                 .is_none_or(|source| !source.is_char_boundary(mapped_position))
         {
             return Err(SourceMapError::OffsetOutsideSource);
         }
-        let source_id = SourceId::new(summary.next_source_id());
-        let registration = self.register_input_source(
-            source_id,
-            SourceDescriptor::Generated(GeneratedSource::new(bytes.clone())),
-        )?;
-        let rebound = summary
-            .rebind_root_generated(source_id, registration, &bytes, mapped_position)
-            .ok_or(SourceMapError::UnknownSource)?;
-        self.set_input_summary(rebound.clone());
-        Ok((rebound, source_id))
+        summary
+            .rebind_root_layout(bytes, mapped_position)
+            .ok_or(SourceMapError::UnknownSource)
+    }
+
+    /// Installs the immutable session fragment snapshot for this compile.
+    pub fn install_editor_fragments(&mut self, fragments: crate::FragmentStore) {
+        self.stores.install_source_fragments(fragments);
+    }
+
+    /// Sets operational editor revision identity outside semantic state.
+    pub fn set_root_editor_content_hash(&mut self, hash: ContentHash) {
+        self.editor_content_hash = Some(hash);
     }
 
     #[must_use]
     pub fn root_editor_content_hash(&self, summary: &InputSummary) -> Option<ContentHash> {
-        self.stores.root_generated_content_hash(summary)
+        self.editor_content_hash
+            .or_else(|| self.stores.root_generated_content_hash(summary))
     }
 
     /// Records the current lexer-owned input stack state for the next snapshot.

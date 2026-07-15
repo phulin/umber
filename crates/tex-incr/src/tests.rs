@@ -64,6 +64,143 @@ fn no_op_revision_converges_at_first_eligible_boundary() {
 }
 
 #[test]
+fn reused_suffix_origin_resolves_at_current_offset_after_earlier_insert() {
+    let body = source("a");
+    let original = format!("%a\n{body}");
+    let body_offset = original.find("\\shipout").expect("shipout offset");
+    let initial_piece = session_piece_origin_setup(&original, body_offset);
+    let (mut session, origin) = initial_piece;
+    session.cold().expect("cold execution succeeds");
+    let inserted = " longer";
+    let output = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(original.as_bytes()),
+                range: 2..2,
+                replacement: inserted.to_owned(),
+            },
+        )
+        .expect("insertion converges");
+    assert!(output.reuse.pages_reused > 0);
+    assert_eq!(
+        session
+            .substrate
+            .as_ref()
+            .expect("accepted substrate")
+            .resolve_layout_origin(origin, &session.fragments, &session.layout),
+        LayoutResolvedOrigin::Current {
+            path: "<editor>".to_owned(),
+            doc_offset_lo: (body_offset + inserted.len()) as u64,
+            doc_offset_hi: (body_offset + inserted.len() + 1) as u64,
+            line: 2,
+            column: 1,
+        }
+    );
+}
+
+#[test]
+fn convergent_old_substrate_resolves_new_fragment_origins() {
+    let body = source("a");
+    let original = format!("%a\n{body}");
+    let mut session = Session::start(
+        template(),
+        "scratch-origin",
+        RevisionId::new(1),
+        original.clone(),
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold execution succeeds");
+    let old_substrate = session.substrate.as_ref().expect("substrate") as *const _;
+    let output = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(original.as_bytes()),
+                range: 1..2,
+                replacement: "b".to_owned(),
+            },
+        )
+        .expect("edit converges");
+    assert!(output.reuse.convergence_boundary.is_some());
+    assert_eq!(
+        session.substrate.as_ref().expect("retained substrate") as *const _,
+        old_substrate,
+        "convergence must retain the old substrate"
+    );
+    let new_piece = session.layout.pieces().first().expect("replacement piece");
+    let origin = session
+        .fragments
+        .registration(new_piece.fragment())
+        .expect("new fragment registration")
+        .direct_origin(1, 2)
+        .expect("new fragment origin");
+    assert!(matches!(
+        session
+            .substrate
+            .as_ref()
+            .expect("retained substrate")
+            .resolve_layout_origin(origin, &session.fragments, &session.layout),
+        LayoutResolvedOrigin::Current {
+            doc_offset_lo: 1,
+            doc_offset_hi: 2,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn reminted_line_positions_resolve_typed_deleted() {
+    let original = format!("%a\n{}", source("a"));
+    let (mut session, origin) = session_piece_origin_setup(&original, 1);
+    session.cold().expect("cold execution succeeds");
+    session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(original.as_bytes()),
+                range: 1..2,
+                replacement: "b".to_owned(),
+            },
+        )
+        .expect("edit succeeds");
+    assert_eq!(
+        session
+            .substrate
+            .as_ref()
+            .expect("accepted substrate")
+            .resolve_layout_origin(origin, &session.fragments, &session.layout),
+        LayoutResolvedOrigin::Deleted { minted_revision: 1 }
+    );
+}
+
+fn session_piece_origin_setup(
+    source: &str,
+    offset: usize,
+) -> (Session, tex_state::token::OriginId) {
+    let session = Session::start(
+        template(),
+        "layout-origin",
+        RevisionId::new(1),
+        source,
+        usize::MAX,
+    )
+    .expect("session starts");
+    let piece = session.layout.pieces().first().expect("initial piece");
+    let origin = session
+        .fragments
+        .registration(piece.fragment())
+        .expect("initial fragment registration")
+        .direct_origin(offset as u64, offset as u64 + 1)
+        .expect("initial fragment origin");
+    (session, origin)
+}
+
+#[test]
 fn adopted_old_suffix_remains_restartable_on_the_next_edit() {
     let body = source("a");
     let original = format!("%a\n{body}");

@@ -106,6 +106,19 @@ impl FragmentStore {
         ))
     }
 
+    #[must_use]
+    pub(crate) fn contains_registration(&self, registration: RegisteredSource) -> bool {
+        self.fragment_at(registration.start())
+            .is_some_and(|(_, fragment)| {
+                RegisteredSource::new(fragment.region_start, fragment.byte_len) == registration
+            })
+    }
+
+    #[must_use]
+    pub(crate) fn contains_position(&self, position: SourcePos) -> bool {
+        self.fragment_at(position).is_some()
+    }
+
     fn get(&self, id: FragmentId) -> Option<&SourceFragment> {
         self.fragments.get(id.0 as usize)
     }
