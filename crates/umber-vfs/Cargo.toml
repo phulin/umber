@@ -1,0 +1,11 @@
+[package]
+name = "umber-vfs"
+version.workspace = true
+edition.workspace = true
+description = "Host-neutral virtual filesystem primitives for Umber"
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

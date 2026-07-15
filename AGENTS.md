@@ -33,6 +33,7 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `crates/tex-incr`: named-boundary editor sessions, revision mapping, convergence, pruning, and suffix reuse.
 - `crates/tex-typeset`: pure packing, line-breaking, and list transformation kernels.
 - `crates/tex-out`: committed page artifact model, hashing, and binary serialization.
+- `crates/umber-vfs`: host-neutral canonical virtual paths and shared virtual filesystem substrate.
 - `crates/umber`: CLI driver.
 - `crates/umber-wasm`: WebAssembly binding and authored JavaScript browser package.
 - `crates/test-support`: shared fixture and parity-test helpers.

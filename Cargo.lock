@@ -894,6 +894,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "umber-vfs"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+]
+
+[[package]]
 name = "umber-wasm"
 version = "0.1.0"
 dependencies = [
