@@ -315,6 +315,15 @@ mod tests {
         run_input_collecting_artifacts(&mut input, stores, context).expect("minimal page ships")
     }
 
+    fn try_run_in(stores: &mut Universe, source: &str) -> Result<RunResult, tex_exec::ExecError> {
+        let mut input = InputStack::new(MemoryInput::new(source));
+        let mut input_resolver = RejectingMemoryInputResolver;
+        let mut font_resolver = DirectFontResolver;
+        let context =
+            ExecutionContext::with_resolvers("pdf-test", &mut input_resolver, &mut font_resolver);
+        run_input_collecting_artifacts(&mut input, stores, context)
+    }
+
     fn run(source: &str) -> (Universe, RunResult) {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
@@ -375,8 +384,7 @@ mod tests {
             "\\pdfoutput=1\\pdfmajorversion=1\\pdfminorversion=5",
             "\\pdfcompresslevel=0\\pdfobjcompresslevel=1\\pdfdecimaldigits=0",
             "\\shipout\\vbox{\\hrule width10pt height5pt}",
-            "\\pdfminorversion=7\\pdfcompresslevel=9",
-            "\\pdfobjcompresslevel=0\\pdfdecimaldigits=4",
+            "\\pdfcompresslevel=9\\pdfobjcompresslevel=0\\pdfdecimaldigits=4",
             "\\shipout\\vbox{\\hrule width10pt height5pt}\\end",
         ));
         let bytes = pdf_from_committed_artifacts(&stores, &run.committed_artifacts)
@@ -392,15 +400,23 @@ mod tests {
             .as_stream()
             .expect("contents stream");
         assert!(contents.dict.get(b"Filter").is_err());
-        assert!(
-            String::from_utf8_lossy(
-                stores
-                    .world()
-                    .memory_terminal_output()
-                    .expect("memory terminal output")
-            )
-            .contains("PDF version cannot be changed after data is written")
-        );
+    }
+
+    #[test]
+    fn frozen_output_mode_and_version_changes_are_fatal_setup_errors() {
+        for (assignment, expected) in [
+            ("\\pdfminorversion=7", "PDF version cannot be changed"),
+            ("\\pdfoutput=0", "\\pdfoutput can only be changed"),
+        ] {
+            let mut stores = Universe::default();
+            prepare_pdftex_run_stores(&mut stores);
+            let source = format!(
+                "\\pdfoutput=1\\pdfminorversion=5\\shipout\\vbox{{\\hrule width1pt height1pt}}{assignment}\\shipout\\vbox{{\\hrule width1pt height1pt}}\\end"
+            );
+            let error = try_run_in(&mut stores, &source).expect_err("setup error must succumb");
+            assert!(error.to_string().contains(expected), "{error}");
+            assert_eq!(stores.pdf_pages().len(), 1);
+        }
     }
 
     #[test]

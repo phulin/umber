@@ -225,6 +225,14 @@ fn adapter_range_and_compression_errors_are_typed() {
         }),
         Err(PdfSerializeError::InvalidObjectCompressionLevel(4))
     );
+    assert_eq!(
+        sample.to_pdf_bytes_with_options(PdfSerializationOptions {
+            pretty: false,
+            stream_compression: PdfStreamCompression::None,
+            object_compression: PdfObjectCompression::ObjectStreams { level: 1 },
+        }),
+        Err(PdfSerializeError::ObjectStreamsRequirePdf15)
+    );
 }
 
 #[test]

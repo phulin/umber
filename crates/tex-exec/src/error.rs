@@ -139,6 +139,8 @@ pub enum ExecError {
         node: &'static str,
     },
     InvalidShipoutArtifact(String),
+    PdfOutputModeChanged,
+    PdfVersionChanged,
     VSplitNeedsVBox,
     Box255NotVoidBeforeOutput,
     OutputRoutineBox255NotVoid,
@@ -267,6 +269,14 @@ impl fmt::Display for ExecError {
                 )
             }
             Self::InvalidShipoutArtifact(error) => write!(f, "{error}"),
+            Self::PdfOutputModeChanged => write!(
+                f,
+                "pdfTeX error (setup): \\pdfoutput can only be changed before anything is written to the output"
+            ),
+            Self::PdfVersionChanged => write!(
+                f,
+                "pdfTeX error (setup): PDF version cannot be changed after data is written to the PDF file"
+            ),
             Self::VSplitNeedsVBox => write!(f, "\\vsplit needs a \\vbox"),
             Self::Box255NotVoidBeforeOutput => write!(f, "\\box255 is not void"),
             Self::OutputRoutineBox255NotVoid => {
@@ -333,6 +343,8 @@ impl std::error::Error for ExecError {
             | Self::UnimplementedTypesetting { .. }
             | Self::UnsupportedShipoutNode { .. }
             | Self::InvalidShipoutArtifact(_)
+            | Self::PdfOutputModeChanged
+            | Self::PdfVersionChanged
             | Self::VSplitNeedsVBox
             | Self::Box255NotVoidBeforeOutput
             | Self::OutputRoutineBox255NotVoid
@@ -396,6 +408,8 @@ impl ExecError {
             | Self::TerminalReadEof
             | Self::UnsupportedShipoutNode { .. }
             | Self::InvalidShipoutArtifact(_)
+            | Self::PdfOutputModeChanged
+            | Self::PdfVersionChanged
             | Self::VSplitNeedsVBox
             | Self::Box255NotVoidBeforeOutput
             | Self::OutputRoutineBox255NotVoid

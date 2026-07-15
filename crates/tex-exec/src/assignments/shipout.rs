@@ -33,7 +33,7 @@ pub(crate) fn shipout_node(
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<Option<PreparedDviPage>, ExecError> {
-    report_pdf_output_policy_diagnostics(stores);
+    prepare_pdf_output_policy(stores)?;
     if huge_shipout_box(&node, stores) {
         stores.world_mut().write_text(
             PrintSink::TerminalAndLog,
@@ -50,29 +50,23 @@ pub(crate) fn shipout_node(
     }))
 }
 
-fn report_pdf_output_policy_diagnostics(stores: &mut Universe) {
+fn prepare_pdf_output_policy(stores: &mut Universe) -> Result<(), ExecError> {
     let current_output = stores.int_param(IntParam::PDF_OUTPUT);
     if let Some(fixed) = stores.fixed_pdf_output_parameters() {
         if current_output != fixed.output {
-            stores.world_mut().write_text(
-                PrintSink::TerminalAndLog,
-                "\n! pdfTeX error (setup): \\pdfoutput can only be changed before anything is written to the output.\n",
-            );
+            return Err(ExecError::PdfOutputModeChanged);
         }
         let current_major = stores.int_param(IntParam::PDF_MAJOR_VERSION);
         let current_minor = stores.int_param(IntParam::PDF_MINOR_VERSION);
         if fixed.output > 0
             && (current_major != fixed.major_version || current_minor != fixed.minor_version)
         {
-            stores.world_mut().write_text(
-                PrintSink::TerminalAndLog,
-                "\n! pdfTeX error (setup): PDF version cannot be changed after data is written to the PDF file.\n",
-            );
+            return Err(ExecError::PdfVersionChanged);
         }
-        return;
+        return Ok(());
     }
     if current_output <= 0 {
-        return;
+        return Ok(());
     }
 
     let major = stores.int_param(IntParam::PDF_MAJOR_VERSION);
@@ -106,6 +100,7 @@ fn report_pdf_output_policy_diagnostics(stores: &mut Universe) {
             "\npdfTeX warning (Object streams): \\pdfobjcompresslevel > 0 requires PDF-1.5 or greater. Object streams disabled now.\n",
         );
     }
+    Ok(())
 }
 
 fn huge_shipout_box(node: &Node, stores: &Universe) -> bool {

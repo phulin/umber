@@ -46,6 +46,7 @@ pub enum PdfSerializeError {
     IntegerOutOfRange(i64),
     InvalidCompressionLevel(u8),
     InvalidObjectCompressionLevel(u8),
+    ObjectStreamsRequirePdf15,
     ObjectIdSpaceExhausted,
     CompressionFilterConflict(PdfObjectId),
     Compression(std::io::ErrorKind),
@@ -164,6 +165,14 @@ fn validate_serialization_inputs(
         && !(1..=3).contains(&level)
     {
         return Err(PdfSerializeError::InvalidObjectCompressionLevel(level));
+    }
+    if matches!(
+        options.object_compression,
+        PdfObjectCompression::ObjectStreams { .. }
+    ) && document.version().major() == 1
+        && document.version().minor() < 5
+    {
+        return Err(PdfSerializeError::ObjectStreamsRequirePdf15);
     }
     for indirect in document.objects() {
         writer_ref(indirect.id)?;
