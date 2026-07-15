@@ -217,7 +217,7 @@ texinputs="."
 for relative_dir in "${texinput_rel_dirs[@]}"; do
   texinputs+=":${texmf_dist}/${relative_dir}"
 done
-texfonts="${texmf_dist}/fonts/tfm/public/cm:${texmf_dist}/fonts/tfm/public/latex-fonts:${texmf_dist}/fonts/tfm/jknappen/ec"
+texfonts="${texmf_dist}/fonts/tfm/public/cm:${texmf_dist}/fonts/tfm/public/latex-fonts:${texmf_dist}/fonts/tfm/public/amsfonts/cmextra:${texmf_dist}/fonts/tfm/public/amsfonts/euler:${texmf_dist}/fonts/tfm/public/amsfonts/symbols:${texmf_dist}/fonts/tfm/public/amsfonts/cyrillic:${texmf_dist}/fonts/tfm/jknappen/ec"
 work_root="$(mktemp -d "${TMPDIR:-/tmp}/umber-latex-parity.XXXXXX")"
 cleanup() {
   local status=$?
