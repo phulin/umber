@@ -393,6 +393,7 @@ impl Stores {
                 | crate::node::Whatsit::PdfSnapRefPoint
                 | crate::node::Whatsit::PdfSnapYComp { .. }
                 | crate::node::Whatsit::PdfRefXForm { .. }
+                | crate::node::Whatsit::PdfRefXImage { .. }
                 | crate::node::Whatsit::Language { .. },
             ) => {}
             Node::Kern { .. }

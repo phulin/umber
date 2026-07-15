@@ -458,6 +458,12 @@ impl Lowerer<'_> {
             height,
             depth,
             ..
+        }
+        | PageEffect::PdfRefXImage {
+            width,
+            height,
+            depth,
+            ..
         } = effect
         {
             if vertical {

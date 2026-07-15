@@ -8,7 +8,8 @@ use std::fmt;
 use tex_arith::Scaled;
 
 const MAGIC: &[u8; 4] = b"UMPG";
-const VERSION: u8 = 17;
+const VERSION: u8 = 18;
+const PRE_IMAGE_VERSION: u8 = 17;
 const PRE_ANNOTATION_VERSION: u8 = 16;
 const PDF_ACCESSIBILITY_VERSION: u8 = 15;
 const FONT_CONSTRUCTION_VERSION: u8 = 14;
@@ -59,6 +60,7 @@ mod wire {
         pub const PDF_SNAP_Y_COMP: u8 = 14;
         pub const PDF_REF_XFORM: u8 = 15;
         pub const PDF_ANNOTATION: u8 = 16;
+        pub const PDF_REF_XIMAGE: u8 = 17;
     }
 
     pub mod token {
@@ -1520,6 +1522,18 @@ impl Writer {
                     self.scaled(*height);
                     self.scaled(*depth);
                 }
+                PageEffect::PdfRefXImage {
+                    object,
+                    width,
+                    height,
+                    depth,
+                } => {
+                    self.u8(wire::effect::PDF_REF_XIMAGE);
+                    self.u32(*object);
+                    self.scaled(*width);
+                    self.scaled(*height);
+                    self.scaled(*depth);
+                }
             }
         }
     }
@@ -2195,6 +2209,14 @@ impl Reader<'_> {
                 wire::effect::PDF_SNAP_Y_COMP => PageEffect::PdfSnapYComp { ratio: self.u16()? },
                 wire::effect::PDF_REF_XFORM if version >= PRE_ANNOTATION_VERSION => {
                     PageEffect::PdfRefXForm {
+                        object: self.u32()?,
+                        width: self.scaled()?,
+                        height: self.scaled()?,
+                        depth: self.scaled()?,
+                    }
+                }
+                wire::effect::PDF_REF_XIMAGE if version >= PRE_IMAGE_VERSION => {
+                    PageEffect::PdfRefXImage {
                         object: self.u32()?,
                         width: self.scaled()?,
                         height: self.scaled()?,
@@ -3025,7 +3047,7 @@ mod wire_tests {
     use super::wire;
 
     #[test]
-    fn effect_tags_are_unique_and_annotations_use_the_append_only_range() {
+    fn effect_tags_are_unique_and_pdf_extensions_use_the_append_only_range() {
         let tags = [
             wire::effect::OPEN_OUT,
             wire::effect::CLOSE_OUT,
@@ -3033,9 +3055,11 @@ mod wire_tests {
             wire::effect::SPECIAL,
             wire::effect::PDF_ACCESSIBILITY,
             wire::effect::PDF_ANNOTATION,
+            wire::effect::PDF_REF_XIMAGE,
         ];
         let unique = tags.into_iter().collect::<std::collections::BTreeSet<_>>();
         assert_eq!(unique.len(), tags.len());
-        const { assert!(wire::effect::PDF_ANNOTATION >= 16) };
+        const { assert!(wire::effect::PDF_ANNOTATION == 16) };
+        const { assert!(wire::effect::PDF_REF_XIMAGE == 17) };
     }
 }

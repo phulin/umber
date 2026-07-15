@@ -167,6 +167,12 @@ pub(super) enum FormatWhatsit {
     PdfReferenceObject {
         object: u32,
     },
+    PdfRefXImage {
+        object: u32,
+        width: i32,
+        height: i32,
+        depth: i32,
+    },
     PdfAccessibility(PdfAccessibilityControl),
     PdfAnnotation {
         object: u32,
@@ -544,6 +550,17 @@ impl FormatWhatsit {
                 height: height.raw(),
                 depth: depth.raw(),
             },
+            Whatsit::PdfRefXImage {
+                object,
+                width,
+                height,
+                depth,
+            } => Self::PdfRefXImage {
+                object,
+                width: width.raw(),
+                height: height.raw(),
+                depth: depth.raw(),
+            },
         }
     }
 
@@ -608,6 +625,17 @@ impl FormatWhatsit {
                 height,
                 depth,
             } => Whatsit::PdfRefXForm {
+                object,
+                width: Scaled::from_raw(width),
+                height: Scaled::from_raw(height),
+                depth: Scaled::from_raw(depth),
+            },
+            Self::PdfRefXImage {
+                object,
+                width,
+                height,
+                depth,
+            } => Whatsit::PdfRefXImage {
                 object,
                 width: Scaled::from_raw(width),
                 height: Scaled::from_raw(height),

@@ -710,6 +710,12 @@ fn sample_artifact() -> PageArtifact {
             PageEffect::PdfSnapRefPoint,
             PageEffect::PdfSnapY { spec: glue },
             PageEffect::PdfSnapYComp { ratio: 500 },
+            PageEffect::PdfRefXImage {
+                object: 42,
+                width: Scaled::from_raw(600),
+                height: Scaled::from_raw(700),
+                depth: Scaled::from_raw(80),
+            },
         ],
     }
     .validate()

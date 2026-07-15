@@ -286,6 +286,7 @@ impl NodeStorage {
                 | crate::node::Whatsit::PdfSnapY { .. }
                 | crate::node::Whatsit::PdfSnapYComp { .. }
                 | crate::node::Whatsit::PdfRefXForm { .. }
+                | crate::node::Whatsit::PdfRefXImage { .. }
                 | crate::node::Whatsit::Language { .. } => {}
             }
         }

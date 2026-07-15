@@ -122,10 +122,7 @@ pub(crate) fn execute_unexpandable_with_context(
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<DispatchAction, ExecError> {
-    if matches!(
-        primitive,
-        UnexpandablePrimitive::PdfTeXUnimplemented | UnexpandablePrimitive::PdfRefXImage
-    ) {
+    if primitive == UnexpandablePrimitive::PdfTeXUnimplemented {
         return Err(ExecError::UnsupportedCommand {
             token: tex_expand::semantic_token(traced),
             opcode: primitive.operand() as u8,
@@ -2068,7 +2065,31 @@ fn execute_prefixed_command(
             | UnexpandablePrimitive::Immediate
             | UnexpandablePrimitive::End
             | UnexpandablePrimitive::Dump => unreachable!("prefixes are accumulated first"),
-            UnexpandablePrimitive::PdfTeXUnimplemented | UnexpandablePrimitive::PdfRefXImage => {
+            UnexpandablePrimitive::PdfRefXImage => {
+                reject_all_prefixes(prefixes)?;
+                if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+                    return Err(ExecError::PdfExtensionInDviMode("pdfrefximage"));
+                }
+                let object = scan_i32(input, stores, execution, command.traced)?;
+                let image = u32::try_from(object)
+                    .ok()
+                    .and_then(|object| tex_state::PdfExternalImageId::new(object).ok())
+                    .and_then(|id| stores.pdf_external_image_record(id))
+                    .ok_or(ExecError::PdfReferencedObjectNotFound)?;
+                let dimensions = image.dimensions();
+                crate::vertical::append_node_to_current_list(
+                    nest,
+                    stores,
+                    Node::Whatsit(tex_state::node::Whatsit::PdfRefXImage {
+                        object: image.id().raw(),
+                        width: dimensions.width,
+                        height: dimensions.height,
+                        depth: dimensions.depth,
+                    }),
+                )?;
+                Ok(CommandOutcome::continue_only())
+            }
+            UnexpandablePrimitive::PdfTeXUnimplemented => {
                 unreachable!("unsupported pdfTeX placeholders return before prefix handling")
             }
         },

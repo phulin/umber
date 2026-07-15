@@ -1467,6 +1467,17 @@ impl PdfState {
             .map(|index| self.external_images[index].metadata)
     }
 
+    #[must_use]
+    pub(crate) fn external_image_record(
+        &self,
+        id: PdfExternalImageId,
+    ) -> Option<PdfExternalImageRecord> {
+        self.external_images
+            .binary_search_by_key(&id, |record| record.id)
+            .ok()
+            .map(|index| self.external_images[index])
+    }
+
     pub(crate) fn allocate_external_image(
         &mut self,
         source: PdfExternalImageSource,

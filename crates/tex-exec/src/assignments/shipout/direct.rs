@@ -822,7 +822,7 @@ fn anchor_for_whatsit(
         | Whatsit::PdfSnapRefPoint
         | Whatsit::PdfSnapY { .. }
         | Whatsit::PdfSnapYComp { .. } => true,
-        Whatsit::PdfRefXForm { .. } => true,
+        Whatsit::PdfRefXForm { .. } | Whatsit::PdfRefXImage { .. } => true,
     };
     if !anchored {
         return Ok(None);

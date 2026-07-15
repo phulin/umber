@@ -2143,6 +2143,14 @@ impl Universe {
         self.pdf.last_external_image()
     }
 
+    #[must_use]
+    pub fn pdf_external_image_record(
+        &self,
+        id: crate::PdfExternalImageId,
+    ) -> Option<crate::PdfExternalImageRecord> {
+        self.pdf.external_image_record(id)
+    }
+
     /// Lazily reserves the page-resource name and font-dictionary object used
     /// by enquiries and by the first shipped page containing this font.
     pub fn ensure_pdf_font_resource(

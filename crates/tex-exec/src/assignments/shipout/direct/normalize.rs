@@ -365,6 +365,17 @@ fn append_whatsit_effect(
                 depth,
             });
         }
+        Whatsit::PdfRefXImage {
+            object,
+            width,
+            height,
+            depth,
+        } => effects.push(PageEffect::PdfRefXImage {
+            object,
+            width,
+            height,
+            depth,
+        }),
         Whatsit::OpenOut { .. }
         | Whatsit::CloseOut { .. }
         | Whatsit::DeferredWrite { .. }

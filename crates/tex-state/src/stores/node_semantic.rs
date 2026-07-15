@@ -339,6 +339,18 @@ impl Stores {
                 hasher.tag(17);
                 hasher.u32(*object);
             }
+            Whatsit::PdfRefXImage {
+                object,
+                width,
+                height,
+                depth,
+            } => {
+                hasher.tag(28);
+                hasher.u32(*object);
+                hasher.i32(width.raw());
+                hasher.i32(height.raw());
+                hasher.i32(depth.raw());
+            }
             Whatsit::PdfAccessibility(control) => {
                 hasher.tag(18);
                 hasher.u8(match control {
