@@ -24,7 +24,7 @@ mod transaction;
 mod vertical;
 
 pub use assignments::{
-    install_etex_unexpandable_primitives, install_unexpandable_primitives,
+    cached_pretolerance_plan, install_etex_unexpandable_primitives, install_unexpandable_primitives,
     register_etex_unexpandable_primitives, register_unexpandable_primitives,
     try_execute_assignment,
 };

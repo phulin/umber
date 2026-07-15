@@ -67,6 +67,9 @@ use macros::*;
 pub(crate) use paragraph::apply_line_expansion as test_apply_line_expansion;
 #[cfg(test)]
 pub(crate) use paragraph::break_hlist as test_break_hlist;
+pub use paragraph::cached_pretolerance_plan;
+#[cfg(test)]
+pub(crate) use paragraph::test_pretolerance_memo_key;
 use paragraph::*;
 pub(crate) use paragraph::{
     display_line_dimensions, end_paragraph, ensure_horizontal_for_character,

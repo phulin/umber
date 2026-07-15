@@ -1312,6 +1312,11 @@ impl Universe {
         self.pure_memo.stats()
     }
 
+    #[must_use]
+    pub const fn pure_memo_enabled(&self) -> bool {
+        self.pure_memo.is_enabled()
+    }
+
     #[doc(hidden)]
     pub fn lookup_pure_memo(
         &mut self,

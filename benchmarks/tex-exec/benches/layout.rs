@@ -1,5 +1,6 @@
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
-use tex_state::Universe;
+use tex_exec::cached_pretolerance_plan;
+use tex_state::{PureMemoConfig, Universe};
 use tex_state::glue::GlueSpec;
 use tex_state::math::{MathChoice, MathField, MathNoad, NoadClass, NoadKind};
 use tex_state::node::Node;
@@ -86,6 +87,42 @@ fn linebreak(c: &mut Criterion) {
         })
     });
     group.finish();
+
+    let memo_nodes = &nodes[..128];
+    let mut memo_group = c.benchmark_group("linebreak_memo");
+    memo_group.throughput(Throughput::Elements(memo_nodes.len() as u64));
+    memo_group.bench_function("raw", |b| {
+        b.iter(|| {
+            black_box(try_line_break_without_hyphenation(
+                black_box(&state),
+                black_box(memo_nodes),
+                black_box(&params),
+            ))
+        })
+    });
+    let mut disabled = state.clone();
+    memo_group.bench_function("disabled_facade", |b| {
+        b.iter(|| {
+            black_box(cached_pretolerance_plan(
+                black_box(&mut disabled),
+                black_box(memo_nodes),
+                black_box(&params),
+            ))
+        })
+    });
+    let mut memoized = state.clone();
+    memoized.enable_pure_memo(PureMemoConfig::default());
+    let _ = cached_pretolerance_plan(&mut memoized, memo_nodes, &params);
+    memo_group.bench_function("verified_memo_hit", |b| {
+        b.iter(|| {
+            black_box(cached_pretolerance_plan(
+                black_box(&mut memoized),
+                black_box(memo_nodes),
+                black_box(&params),
+            ))
+        })
+    });
+    memo_group.finish();
 }
 
 fn math(c: &mut Criterion) {

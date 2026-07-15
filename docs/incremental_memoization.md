@@ -336,6 +336,26 @@ detached content rather than arena handles.
 Migrating marks, insertions, and adjustments remain explicit outputs of line
 materialization and inputs to page building.
 
+The first measured pure-query implementation caches only the pretolerance
+`BreakPlan`. It uses four independently domain-separated semantic projections
+of the prepared hlist plus canonical framing of every `LineBreakParams` and
+`LineShape` field. The compact 64-bit projection selects a bucket; a 256-bit
+content identity verifies the candidate. Values contain only break positions,
+demerits, and detached last-line glue. Hyphenation, post-line materialization,
+packing diagnostics, math lowering, and DVI planning remain ordinary execution
+until their complete explicit keys show an end-to-end benefit.
+
+The cache is session-local, bounded by entry count and retained bytes, and off
+by default. The disabled facade is one `Option` branch with no hashing, lock,
+or atomic operation. On the 128-node `linebreak_memo` Criterion workload
+(2026-07-15), raw pretolerance measured 3.99 ms, the disabled facade 3.55 ms
+(benchmark noise, no measurable regression), and a strong-key-verified detached
+hit 10.18 us, about 392x faster. A cache-on/off executor test with repeated
+paragraph content verifies identical DVI plans, virtual effects, and final
+semantic state. General edit-level benefit is intentionally deferred to the
+paragraph-front-end reuse layer, where repeated layout inputs can arise across
+accepted revisions rather than only within one execution.
+
 ### Page builder, insertions, and marks
 
 Page building is a sequential transducer, not a pure function of a paragraph.

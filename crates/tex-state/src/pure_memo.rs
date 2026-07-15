@@ -74,6 +74,10 @@ pub(crate) struct PureMemoRuntime {
 }
 
 impl PureMemoRuntime {
+    pub(crate) const fn is_enabled(&self) -> bool {
+        self.cache.is_some()
+    }
+
     pub(crate) fn enable(&mut self, config: PureMemoConfig) {
         self.cache = Some(PureMemoCache {
             config,

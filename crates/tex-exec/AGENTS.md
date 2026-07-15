@@ -28,7 +28,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/assignments/hyphenation.rs`: `\patterns`, `\hyphenation`, and `\showhyphens` execution support.
 - `src/assignments/macros.rs`: macro-definition primitives plus `\aftergroup` and `\afterassignment`.
 - `src/assignments/mod.rs`: assignment dispatcher, prefix handling, group commands, and shared scan helpers.
-- `src/assignments/paragraph.rs`: paragraph start/end, parshape, line breaking, indentation, and prevdepth logic.
+- `src/assignments/paragraph.rs`: paragraph start/end, parshape, line breaking, indentation, prevdepth logic, and the optional detached pretolerance-plan cache boundary.
 - `src/assignments/pdf_fonts.rs`: pdfTeX map, font-attribute, and forced-character action scanning into host-neutral state.
 - `src/assignments/pdf_actions.rs`: shared pdfTeX action scanner for catalog, link, and outline consumers.
 - `src/assignments/primitives.rs`: registration table for unexpandable primitive meanings.
@@ -65,7 +65,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/tests/fonts.rs`: tests for font loading, font parameters, and font-related grouping semantics.
 - `src/tests/grouping_parity.rs`: grouping, after-token, magnification, and box-register tests that read committed reference micro fixtures.
 - `src/tests/groups.rs`: tests for braces, explicit groups, `\globaldefs`, and aftergroup replay.
-- `src/tests/hyphenation.rs`: tests for hyphenation patterns, exceptions, minima, and paragraph hyphenation.
+- `src/tests/hyphenation.rs`: tests for hyphenation patterns, exceptions, minima, paragraph hyphenation, pure-plan cache keys, malformed misses, and cache-on/off parity.
 - `src/tests/io.rs`: tests for input/output streams, reads, writes, immediate effects, and shipout effects.
 - `src/tests/math.rs`: tests for math-mode parsing, noad construction, scripts, fractions, choices, families, and mu material.
 - `src/tests/support.rs`: shared test helpers for seeded fonts, terminal output, and meaning lookup.

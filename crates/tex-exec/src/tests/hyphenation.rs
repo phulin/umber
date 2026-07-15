@@ -295,3 +295,198 @@ fn successful_pretolerance_does_not_allocate_hyphenation_nodes() {
 
     assert_eq!(stores.testing_epoch_node_count(), nodes_before);
 }
+
+#[test]
+fn pretolerance_memo_hits_and_every_explicit_parameter_changes_its_strong_key() {
+    use tex_state::PureMemoConfig;
+    use tex_state::glue::GlueSpec;
+    use tex_typeset::linebreak::{LineShape, LineShapeEntry, ParagraphShape};
+
+    let mut stores = Universe::new();
+    stores.enable_pure_memo(PureMemoConfig::default());
+    let nodes = vec![
+        Node::Rule {
+            width: Some(Scaled::from_raw(10)),
+            height: Some(Scaled::from_raw(5)),
+            depth: Some(Scaled::from_raw(0)),
+        },
+        Node::Penalty(-10_000),
+    ];
+    let base = tex_typeset::linebreak::LineBreakParams {
+        pretolerance: 10_000,
+        tolerance: 9_999,
+        line_penalty: 10,
+        hyphen_penalty: 50,
+        ex_hyphen_penalty: 51,
+        adj_demerits: 52,
+        double_hyphen_demerits: 53,
+        final_hyphen_demerits: 54,
+        emergency_stretch: Scaled::from_raw(55),
+        looseness: 0,
+        last_line_fit: 56,
+        left_skip: GlueSpec::ZERO,
+        right_skip: GlueSpec::ZERO,
+        par_fill_skip: GlueSpec::ZERO,
+        shape: LineShape::natural(Scaled::from_raw(1_000)),
+    };
+
+    let first = crate::assignments::test_break_hlist(&mut stores, nodes.clone(), base.clone());
+    let second = crate::assignments::test_break_hlist(&mut stores, nodes.clone(), base.clone());
+    assert_eq!(first.breaks, second.breaks);
+    assert_eq!(stores.pure_memo_stats().hits, 1);
+
+    let base_key = crate::assignments::test_pretolerance_memo_key(&stores, &nodes, &base);
+    let mut variants = Vec::new();
+    macro_rules! changed {
+        ($field:ident, $value:expr) => {{
+            let mut params = base.clone();
+            params.$field = $value;
+            variants.push(params);
+        }};
+    }
+    changed!(pretolerance, 9_998);
+    changed!(tolerance, 9_997);
+    changed!(line_penalty, 11);
+    changed!(hyphen_penalty, 60);
+    changed!(ex_hyphen_penalty, 61);
+    changed!(adj_demerits, 62);
+    changed!(double_hyphen_demerits, 63);
+    changed!(final_hyphen_demerits, 64);
+    changed!(emergency_stretch, Scaled::from_raw(65));
+    changed!(looseness, 1);
+    changed!(last_line_fit, 66);
+    changed!(
+        left_skip,
+        GlueSpec {
+            width: Scaled::from_raw(1),
+            ..GlueSpec::ZERO
+        }
+    );
+    changed!(
+        right_skip,
+        GlueSpec {
+            stretch: Scaled::from_raw(1),
+            ..GlueSpec::ZERO
+        }
+    );
+    changed!(
+        par_fill_skip,
+        GlueSpec {
+            shrink: Scaled::from_raw(1),
+            ..GlueSpec::ZERO
+        }
+    );
+    let mut shape = base.shape.clone();
+    shape.hang_indent = Scaled::from_raw(1);
+    variants.push(tex_typeset::linebreak::LineBreakParams {
+        shape,
+        ..base.clone()
+    });
+    let mut shape = base.shape.clone();
+    shape.hang_after = 2;
+    variants.push(tex_typeset::linebreak::LineBreakParams {
+        shape,
+        ..base.clone()
+    });
+    let mut shape = base.shape.clone();
+    shape.line_offset = 3;
+    variants.push(tex_typeset::linebreak::LineBreakParams {
+        shape,
+        ..base.clone()
+    });
+    let mut shape = base.shape.clone();
+    shape.parshape = Some(ParagraphShape {
+        lines: vec![LineShapeEntry {
+            indent: Scaled::from_raw(4),
+            width: Scaled::from_raw(900),
+        }],
+    });
+    variants.push(tex_typeset::linebreak::LineBreakParams {
+        shape,
+        ..base.clone()
+    });
+
+    for variant in variants {
+        assert_ne!(
+            crate::assignments::test_pretolerance_memo_key(&stores, &nodes, &variant),
+            base_key
+        );
+    }
+}
+
+#[test]
+fn malformed_pretolerance_entry_is_rejected_and_recomputed() {
+    use tex_state::{DetachedMemoValue, DetachedPureKernelPlan, PureMemoConfig, PureMemoStats};
+
+    let mut stores = Universe::new();
+    stores.enable_pure_memo(PureMemoConfig::default());
+    let nodes = vec![Node::Penalty(-10_000)];
+    let params = tex_typeset::linebreak::LineBreakParams {
+        pretolerance: 10_000,
+        tolerance: 10_000,
+        line_penalty: 0,
+        hyphen_penalty: 0,
+        ex_hyphen_penalty: 0,
+        adj_demerits: 0,
+        double_hyphen_demerits: 0,
+        final_hyphen_demerits: 0,
+        emergency_stretch: Scaled::from_raw(0),
+        looseness: 0,
+        last_line_fit: 0,
+        left_skip: tex_state::glue::GlueSpec::ZERO,
+        right_skip: tex_state::glue::GlueSpec::ZERO,
+        par_fill_skip: tex_state::glue::GlueSpec::ZERO,
+        shape: tex_typeset::linebreak::LineShape::natural(Scaled::from_raw(1_000)),
+    };
+    let key = crate::assignments::test_pretolerance_memo_key(&stores, &nodes, &params);
+    let malformed = DetachedMemoValue::from_pure_kernel_plan(&DetachedPureKernelPlan {
+        kernel: "line-break-pretolerance".to_owned(),
+        plan_schema: 1,
+        payload: vec![1, 2, 3],
+    })
+    .expect("malformed plan envelope");
+    stores.insert_pure_memo(key, malformed);
+
+    let result = crate::assignments::test_break_hlist(&mut stores, nodes, params);
+    assert!(!result.breaks.is_empty());
+    let PureMemoStats { malformed, .. } = stores.pure_memo_stats();
+    assert_eq!(malformed, 1);
+}
+
+#[test]
+fn enabled_pretolerance_memo_preserves_end_to_end_state_effects_and_dvi() {
+    fn run(
+        enabled: bool,
+    ) -> (
+        ExecutionStats,
+        u64,
+        Vec<EffectRecord>,
+        tex_state::PureMemoStats,
+    ) {
+        let mut stores = Universe::with_world(tex_state::World::memory());
+        tex_expand::install_expandable_primitives(&mut stores);
+        install_unexpandable_primitives(&mut stores);
+        if enabled {
+            stores.enable_pure_memo(tex_state::PureMemoConfig::default());
+        }
+        let source = r"\hsize=20pt \pretolerance=10000
+            identical paragraph text\par
+            \prevgraf=0 identical paragraph text\par
+            \vfill\eject\end";
+        let mut input = InputStack::new(MemoryInput::new(source));
+        let stats = Executor::new()
+            .run(&mut input, &mut stores)
+            .expect("memo parity program");
+        let hash = stores.snapshot().state_hash();
+        let effects = stores.world().effect_records().to_vec();
+        let memo = stores.pure_memo_stats();
+        (stats, hash, effects, memo)
+    }
+
+    let (cold_stats, cold_hash, cold_effects, _) = run(false);
+    let (memo_stats, memo_hash, memo_effects, memo) = run(true);
+    assert_eq!(memo_stats, cold_stats);
+    assert_eq!(memo_hash, cold_hash);
+    assert_eq!(memo_effects, cold_effects);
+    assert!(memo.hits >= 1, "expected the repeated paragraph to hit");
+}
