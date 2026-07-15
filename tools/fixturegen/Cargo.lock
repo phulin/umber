@@ -696,6 +696,7 @@ dependencies = [
  "anyhow",
  "lopdf",
  "refexec",
+ "sha2 0.10.9",
  "similar",
  "tempfile",
 ]

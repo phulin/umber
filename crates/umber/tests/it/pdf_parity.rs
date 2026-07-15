@@ -61,6 +61,87 @@ fn committed_pdftex_fixture_matches_structure_and_bytes() {
     );
 }
 
+#[test]
+#[allow(clippy::disallowed_methods)] // Hermetic CLI fixture boundary.
+fn committed_embedded_font_fixtures_match_bytes_structure_and_attestations() {
+    for case in ["embedded_type1", "embedded_truetype"] {
+        check_embedded_font_case(case);
+    }
+}
+
+#[allow(clippy::disallowed_methods)]
+fn check_embedded_font_case(case: &str) {
+    let temp = tempfile::tempdir().expect("create embedded-font parity directory");
+    let source_name = format!("{case}.tex");
+    fs::copy(
+        corpus_root().join("pdf").join(&source_name),
+        temp.path().join(&source_name),
+    )
+    .expect("stage embedded-font source");
+    fs::copy(
+        corpus_root().join("../../crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"),
+        temp.path().join("cmr10.tfm"),
+    )
+    .expect("stage cmr10 TFM");
+    if case == "embedded_type1" {
+        fs::copy(
+            corpus_root().join("pdf/embedded_type1.pfb"),
+            temp.path().join("cmr10.pfb"),
+        )
+        .expect("stage committed Type1 program");
+    } else {
+        let woff2 = include_bytes!("../../../umber-wasm/assets/cmu-serif-500-roman.woff2");
+        let program = tex_fonts::PdfTrueTypeProgram::from_woff2(woff2)
+            .expect("decode committed TrueType fixture");
+        fs::write(temp.path().join("cmu-serif.ttf"), program.bytes())
+            .expect("stage decoded TrueType program");
+    }
+
+    let actual_path = temp.path().join(format!("{case}.umber.pdf"));
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .args(["run", "--pdftex", "--pdf"])
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .env("TEXFONTS", temp.path())
+        .arg(&actual_path)
+        .arg(temp.path().join(&source_name))
+        .output()
+        .expect("run embedded-font PDF fixture");
+    assert!(
+        output.status.success(),
+        "{case} failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let actual = fs::read(actual_path).expect("read embedded-font PDF");
+    let expected_umber = read_binary_fixture("pdf", case, "umber.pdf");
+    assert_eq!(actual, expected_umber, "deterministic {case} bytes changed");
+    assert_eq!(
+        normalize_structure(&actual).expect("normalize embedded-font PDF"),
+        read_fixture("pdf", case, "umber.structure")
+    );
+    let reference = read_binary_fixture("pdf", case, "ref.pdf");
+    assert_eq!(
+        normalize_structure(&reference).expect("normalize reference font PDF"),
+        read_fixture("pdf", case, "ref.structure")
+    );
+    let extracted = lopdf::Document::load_mem(&actual)
+        .expect("parse embedded-font PDF")
+        .extract_text(&[1])
+        .expect("extract embedded-font text");
+    let expected_extract = read_binary_fixture("pdf", case, "extract");
+    assert_eq!(extracted.trim().as_bytes(), expected_extract.trim_ascii());
+
+    let raster = read_binary_fixture("pdf", case, "pgm");
+    let expected_attestation = format!(
+        "pdf-render-v2\nrenderer pdftoppm version 25.08.0\narguments -r 72 -gray -singlefile\ncomparison max-gray-delta 2\nextractor pdftotext version 25.08.0\nextraction exact-utf8\nreference-pdf-sha256 {}\number-pdf-sha256 {}\npgm-sha256 {}\nextract-sha256 {}\n",
+        digest(&reference),
+        digest(&expected_umber),
+        digest(&raster),
+        digest(&expected_extract),
+    );
+    assert_eq!(read_fixture("pdf", case, "render"), expected_attestation);
+}
+
 fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }

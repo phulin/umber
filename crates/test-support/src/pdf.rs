@@ -2,6 +2,7 @@
 
 use anyhow::{Context, Result, bail};
 use lopdf::{Document, Object};
+use sha2::{Digest, Sha256};
 
 /// Parses a PDF and projects catalog, ordered pages, resources, media boxes,
 /// and decoded content operations without preserving object numbers or byte
@@ -115,7 +116,19 @@ fn canonical_object(document: &Document, object: &Object, depth: usize) -> Resul
                 .collect::<Result<Vec<_>>>()?;
             format!("<<{}>>", entries.join(" "))
         }
-        Object::Stream(_) => bail!("resource structure contains an unexpected stream"),
+        Object::Stream(stream) => {
+            let dictionary = canonical_object(
+                document,
+                &Object::Dictionary(stream.dict.clone()),
+                depth + 1,
+            )?;
+            format!(
+                "stream {} bytes {} sha256 {:x}",
+                dictionary,
+                stream.content.len(),
+                Sha256::digest(&stream.content)
+            )
+        }
         Object::Reference(_) => unreachable!("references were dereferenced"),
     })
 }

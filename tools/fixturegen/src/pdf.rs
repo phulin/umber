@@ -12,6 +12,7 @@ use super::umber_bin;
 
 const PDFTEX_VERSION: &str = "pdfTeX 3.141592653-2.6-1.40.27 (TeX Live 2025)";
 const RENDERER_VERSION: &str = "pdftoppm version 25.08.0";
+const EXTRACTOR_VERSION: &str = "pdftotext version 25.08.0";
 const RENDERER_ARGS: &[&str] = &["-r", "72", "-gray", "-singlefile"];
 
 pub(super) fn regenerate_area() -> Result<()> {
@@ -34,15 +35,19 @@ pub(super) fn regenerate_case(case: &str) -> Result<()> {
     require_version(&pdftex, "--version", PDFTEX_VERSION)?;
     let renderer = locate_tool("UMBER_PDF_RENDERER", "pdftoppm")?;
     require_version(&renderer, "-v", RENDERER_VERSION)?;
+    let extractor = locate_tool("UMBER_PDF_EXTRACTOR", "pdftotext")?;
+    require_version(&extractor, "-v", EXTRACTOR_VERSION)?;
 
     let temp = TempDir::new().context("failed to create PDF fixture temp directory")?;
     let source_name = format!("{case}.tex");
     fs::copy(&source, temp.path().join(&source_name))
         .context("failed to stage PDF fixture source")?;
+    stage_font_resources(case, temp.path())?;
 
     let reference_pdf = temp.path().join(format!("{case}.pdf"));
     let reference = Command::new(&pdftex)
         .current_dir(temp.path())
+        .env("TEXFONTS", temp.path())
         .args(["--ini", "-interaction=nonstopmode"])
         .arg(&source_name)
         .output()
@@ -57,6 +62,7 @@ pub(super) fn regenerate_case(case: &str) -> Result<()> {
     let umber_pdf = temp.path().join(format!("{case}.umber.pdf"));
     let actual = Command::new(umber_bin())
         .args(["run", "--pdftex", "--pdf"])
+        .env("TEXFONTS", temp.path())
         .arg(&umber_pdf)
         .arg(temp.path().join(&source_name))
         .output()
@@ -72,7 +78,8 @@ pub(super) fn regenerate_case(case: &str) -> Result<()> {
     let umber_bytes = fs::read(&umber_pdf).context("failed to read Umber PDF")?;
     let reference_structure = normalize_structure(&reference_bytes)?;
     let umber_structure = normalize_structure(&umber_bytes)?;
-    if reference_structure != umber_structure {
+    let font_case = case.starts_with("embedded_");
+    if !font_case && reference_structure != umber_structure {
         bail!(
             "normalized PDF structure mismatch for pdf/{case}:\nreference:\n{reference_structure}\nUmber:\n{umber_structure}"
         );
@@ -80,22 +87,90 @@ pub(super) fn regenerate_case(case: &str) -> Result<()> {
 
     let reference_pgm = render(&renderer, &reference_pdf, temp.path().join("reference"))?;
     let umber_pgm = render(&renderer, &umber_pdf, temp.path().join("umber"))?;
-    if reference_pgm != umber_pgm {
+    if (!font_case && reference_pgm != umber_pgm)
+        || (font_case && !pixels_within(&reference_pgm, &umber_pgm, 2))
+    {
         bail!("rendered PDF pixels differ for pdf/{case}");
+    }
+    let reference_text = extract(&extractor, &reference_pdf)?;
+    let umber_text = extract(&extractor, &umber_pdf)?;
+    if reference_text != umber_text {
+        bail!("extracted PDF text differs for pdf/{case}");
     }
 
     write_fixture(case, "ref.pdf", &reference_bytes)?;
     write_fixture(case, "umber.pdf", &umber_bytes)?;
-    write_fixture(case, "structure", reference_structure.as_bytes())?;
+    if font_case {
+        write_fixture(case, "ref.structure", reference_structure.as_bytes())?;
+        write_fixture(case, "umber.structure", umber_structure.as_bytes())?;
+    } else {
+        write_fixture(case, "structure", reference_structure.as_bytes())?;
+    }
     write_fixture(case, "pgm", &reference_pgm)?;
-    let attestation = format!(
-        "pdf-render-v1\nrenderer {RENDERER_VERSION}\narguments {}\ncomparison exact-gray-pixels\nreference-pdf-sha256 {}\number-pdf-sha256 {}\npgm-sha256 {}\n",
-        RENDERER_ARGS.join(" "),
-        digest(&reference_bytes),
-        digest(&umber_bytes),
-        digest(&reference_pgm),
-    );
+    let attestation = if font_case {
+        write_fixture(case, "extract", &reference_text)?;
+        format!(
+            "pdf-render-v2\nrenderer {RENDERER_VERSION}\narguments {}\ncomparison max-gray-delta 2\nextractor {EXTRACTOR_VERSION}\nextraction exact-utf8\nreference-pdf-sha256 {}\number-pdf-sha256 {}\npgm-sha256 {}\nextract-sha256 {}\n",
+            RENDERER_ARGS.join(" "),
+            digest(&reference_bytes),
+            digest(&umber_bytes),
+            digest(&reference_pgm),
+            digest(&reference_text),
+        )
+    } else {
+        format!(
+            "pdf-render-v1\nrenderer {RENDERER_VERSION}\narguments {}\ncomparison exact-gray-pixels\nreference-pdf-sha256 {}\number-pdf-sha256 {}\npgm-sha256 {}\n",
+            RENDERER_ARGS.join(" "),
+            digest(&reference_bytes),
+            digest(&umber_bytes),
+            digest(&reference_pgm),
+        )
+    };
     write_fixture(case, "render", attestation.as_bytes())
+}
+
+fn stage_font_resources(case: &str, directory: &Path) -> Result<()> {
+    if !case.starts_with("embedded_") {
+        return Ok(());
+    }
+    let corpus = corpus_root();
+    let root = corpus
+        .parent()
+        .and_then(Path::parent)
+        .context("corpus root has no repository parent")?;
+    fs::copy(
+        root.join("crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"),
+        directory.join("cmr10.tfm"),
+    )
+    .context("failed to stage cmr10.tfm")?;
+    match case {
+        "embedded_type1" => {
+            let committed = corpus_root().join("pdf/embedded_type1.pfb");
+            if !committed.is_file() {
+                let output = Command::new("kpsewhich")
+                    .arg("cmr10.pfb")
+                    .output()
+                    .context("failed to locate cmr10.pfb with kpsewhich")?;
+                let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+                if !output.status.success() || !path.is_file() {
+                    bail!("kpsewhich did not locate cmr10.pfb");
+                }
+                fs::copy(&path, &committed).context("failed to pin cmr10.pfb")?;
+            }
+            fs::copy(committed, directory.join("cmr10.pfb"))
+                .context("failed to stage cmr10.pfb")?;
+        }
+        "embedded_truetype" => {
+            let woff2 = fs::read(root.join("crates/umber-wasm/assets/cmu-serif-500-roman.woff2"))
+                .context("failed to read committed CMU Serif WOFF2")?;
+            let program = tex_fonts::PdfTrueTypeProgram::from_woff2(&woff2)
+                .context("failed to decode committed CMU Serif WOFF2")?;
+            fs::write(directory.join("cmu-serif.ttf"), program.bytes())
+                .context("failed to stage decoded CMU Serif TTF")?;
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 fn locate_tool(variable: &str, fallback: &str) -> Result<PathBuf> {
@@ -150,6 +225,26 @@ fn render(renderer: &Path, pdf: &Path, prefix: PathBuf) -> Result<Vec<u8>> {
         bail!("pinned PDF renderer failed for {}", pdf.display());
     }
     fs::read(prefix.with_extension("pgm")).context("renderer did not write PGM output")
+}
+
+fn extract(extractor: &Path, pdf: &Path) -> Result<Vec<u8>> {
+    let output = Command::new(extractor)
+        .arg(pdf)
+        .arg("-")
+        .output()
+        .context("failed to run pinned PDF text extractor")?;
+    if !output.status.success() {
+        bail!("pinned PDF extractor failed for {}", pdf.display());
+    }
+    Ok(output.stdout)
+}
+
+fn pixels_within(left: &[u8], right: &[u8], delta: u8) -> bool {
+    left.len() == right.len()
+        && left
+            .iter()
+            .zip(right)
+            .all(|(left, right)| left.abs_diff(*right) <= delta)
 }
 
 fn write_fixture(case: &str, kind: &str, bytes: &[u8]) -> Result<()> {
