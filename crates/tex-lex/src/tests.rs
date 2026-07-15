@@ -708,6 +708,30 @@ fn layout_cursor_hands_each_physical_line_its_fragment_registration() {
 }
 
 #[test]
+fn direct_root_delivery_exposes_piece_identity_without_origin_identity() {
+    let (fragments, layout, _) = three_line_fragment_layout();
+    let expected = fragments
+        .root_span_id(&layout.pieces()[0], 0..1)
+        .expect("expected root identity");
+    let mut input = InputStack::new(MemoryInput::new("aa\nbb\ncc"));
+    input.install_root_layout_cursor(
+        LayoutCursor::new(&layout, &fragments).expect("layout cursor freezes"),
+    );
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+
+    let token = input
+        .next_traced_token(&mut stores)
+        .expect("delivery succeeds")
+        .expect("source token");
+    let delivery = input
+        .take_direct_source_delivery(token)
+        .expect("direct delivery proof");
+
+    assert_eq!(delivery.root_span_id(&fragments), Some(expected));
+}
+
+#[test]
 fn layout_cursor_scalar_crossing_direct_boundary_uses_fragment_span() {
     let mut fragments = FragmentStore::new();
     let (fragment, registration) = fragments

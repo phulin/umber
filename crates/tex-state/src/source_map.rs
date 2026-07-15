@@ -50,6 +50,10 @@ impl RegisteredSource {
         self.start
     }
 
+    pub(crate) const fn byte_len(self) -> u64 {
+        self.byte_len
+    }
+
     /// Encodes a nonempty backed scalar directly when it fits the packed form.
     #[must_use]
     #[inline(always)]

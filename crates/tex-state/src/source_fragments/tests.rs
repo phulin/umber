@@ -15,6 +15,46 @@ fn append(
 }
 
 #[test]
+fn root_span_identity_preserves_occurrence_and_shares_content_identity() {
+    let mut fragments = FragmentStore::new();
+    let (first, _) = append(&mut fragments, b"same\nleft", 1);
+    let (duplicate, _) = append(&mut fragments, b"same\nright", 1);
+    let whole_first = Piece::new(first, 0, 9);
+    let split_first = Piece::new(first, 0, 5);
+    let whole_duplicate = Piece::new(duplicate, 0, 10);
+
+    let original = fragments
+        .root_span_id(&whole_first, 0..4)
+        .expect("original span");
+    let after_split = fragments
+        .root_span_id(&split_first, 0..4)
+        .expect("split span");
+    let equal_elsewhere = fragments
+        .root_span_id(&whole_duplicate, 0..4)
+        .expect("duplicate span");
+
+    assert_eq!(original, after_split, "piece splitting preserves identity");
+    assert_ne!(original.piece(), equal_elsewhere.piece());
+    assert_eq!(original.content(), equal_elsewhere.content());
+}
+
+#[test]
+fn replaced_equal_bytes_receive_a_distinct_root_span_occurrence() {
+    let mut fragments = FragmentStore::new();
+    let (old, _) = append(&mut fragments, b"same", 1);
+    let (replacement, _) = append(&mut fragments, b"same", 2);
+    let old = fragments
+        .root_span_id(&Piece::new(old, 0, 4), 0..4)
+        .expect("old span");
+    let replacement = fragments
+        .root_span_id(&Piece::new(replacement, 0, 4), 0..4)
+        .expect("replacement span");
+
+    assert_ne!(old.piece(), replacement.piece());
+    assert_eq!(old.content(), replacement.content());
+}
+
+#[test]
 fn fragment_and_engine_regions_are_disjoint_and_monotonic() {
     let mut fragments = FragmentStore::new();
     let (_, first) = append(&mut fragments, b"first", 1);

@@ -22,7 +22,7 @@ use tex_state::source_map::{RegisteredSource, SourceDescriptor};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::token_store::TokenListBuilder;
 use tex_state::{
-    EditorLayout, ExpansionState, FileContent, FragmentStore, InputRecordId, WorldError,
+    EditorLayout, ExpansionState, FileContent, FragmentStore, InputRecordId, RootSpanId, WorldError,
 };
 #[cfg(feature = "profiling-stats")]
 use tex_state::{ProfilingTimer, World};
@@ -1224,6 +1224,15 @@ pub struct DirectSourceDelivery {
     source: SourceId,
     start: u64,
     end: u64,
+    registration: RegisteredSource,
+}
+
+impl DirectSourceDelivery {
+    /// Returns stable editor-piece identity when this delivery came from the root layout.
+    #[must_use]
+    pub fn root_span_id(self, fragments: &FragmentStore) -> Option<RootSpanId> {
+        fragments.registered_root_span_id(self.registration, self.start..self.end)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2532,7 +2541,8 @@ impl InputStack {
         };
         let end = source_coordinate(source).byte_offset;
         let start = end.checked_sub(u64::try_from(ch.len_utf8()).ok()?)?;
-        if source.registration?.direct_origin(start, end)? != token.origin() {
+        let registration = source.registration?;
+        if registration.direct_origin(start, end)? != token.origin() {
             return None;
         }
         Some(DirectSourceDelivery {
@@ -2540,6 +2550,7 @@ impl InputStack {
             source: source.source_id,
             start,
             end,
+            registration,
         })
     }
 

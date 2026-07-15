@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
+use crate::ContentHash;
 use crate::source_map::{
     LogicalPositionAllocator, RegisteredSource, SourceMapError, SourcePos, SourceSpan,
 };
@@ -32,6 +33,54 @@ fn next_fragment_lineage() -> u64 {
 pub struct FragmentId {
     lineage: u64,
     slot: u32,
+}
+
+/// Session-stable identity of immutable editor backing used by one or more pieces.
+///
+/// Splitting a piece preserves this identity; replaced backing receives a new
+/// identity even when its bytes happen to be equal.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct PieceId(FragmentId);
+
+impl PieceId {
+    #[must_use]
+    pub const fn fragment(self) -> FragmentId {
+        self.0
+    }
+}
+
+/// Stable identity of a byte range in immutable editor backing.
+///
+/// The occurrence component distinguishes duplicate equal text, while the
+/// content identity permits pure caches to share values deliberately.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct RootSpanId {
+    piece: PieceId,
+    start: u32,
+    end: u32,
+    content: ContentHash,
+}
+
+impl RootSpanId {
+    #[must_use]
+    pub const fn piece(self) -> PieceId {
+        self.piece
+    }
+
+    #[must_use]
+    pub const fn start(self) -> u32 {
+        self.start
+    }
+
+    #[must_use]
+    pub const fn end(self) -> u32 {
+        self.end
+    }
+
+    #[must_use]
+    pub const fn content(self) -> ContentHash {
+        self.content
+    }
 }
 
 impl FragmentId {
@@ -406,6 +455,51 @@ impl FragmentStore {
         self.sources.get(&id)?.bytes.as_deref()
     }
 
+    /// Identifies a range relative to a current piece without using document offsets.
+    #[must_use]
+    pub fn root_span_id(&self, piece: &Piece, range: Range<u32>) -> Option<RootSpanId> {
+        let piece_len = piece.end().checked_sub(piece.start())?;
+        if range.start > range.end || range.end > piece_len {
+            return None;
+        }
+        let start = piece.start().checked_add(range.start)?;
+        let end = piece.start().checked_add(range.end)?;
+        let bytes = self
+            .bytes(piece.fragment())?
+            .get(start as usize..end as usize)?;
+        Some(RootSpanId {
+            piece: piece.id(),
+            start,
+            end,
+            content: ContentHash::from_bytes(bytes),
+        })
+    }
+
+    /// Resolves a registered editor-fragment delivery to stable backing identity.
+    #[must_use]
+    pub fn registered_root_span_id(
+        &self,
+        registration: RegisteredSource,
+        range: Range<u64>,
+    ) -> Option<RootSpanId> {
+        if range.start > range.end || range.end > registration.byte_len() {
+            return None;
+        }
+        let (fragment_id, fragment) = self.fragment_at(registration.start())?;
+        if RegisteredSource::new(fragment.region_start, fragment.byte_len) != registration {
+            return None;
+        }
+        let start = u32::try_from(range.start).ok()?;
+        let end = u32::try_from(range.end).ok()?;
+        let bytes = self.bytes(fragment_id)?.get(start as usize..end as usize)?;
+        Some(RootSpanId {
+            piece: PieceId(fragment_id),
+            start,
+            end,
+            content: ContentHash::from_bytes(bytes),
+        })
+    }
+
     /// Returns the allocation-free registration capability for one fragment.
     #[must_use]
     pub fn registration(&self, id: FragmentId) -> Option<RegisteredSource> {
@@ -505,6 +599,11 @@ impl Piece {
     #[must_use]
     pub const fn fragment(&self) -> FragmentId {
         self.fragment
+    }
+
+    #[must_use]
+    pub const fn id(&self) -> PieceId {
+        PieceId(self.fragment)
     }
 
     #[must_use]

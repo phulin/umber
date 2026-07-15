@@ -103,7 +103,7 @@ pub use page::{
 pub use provenance_resolver::{ProvenanceResolver, ResolvedSourceLocation};
 pub use source_fragments::{
     EditorLayout, EditorLayoutError, FragmentId, FragmentStore, LayoutGeneration,
-    LayoutResolvedOrigin, Piece,
+    LayoutResolvedOrigin, Piece, PieceId, RootSpanId,
 };
 pub use stores::{FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnostic};
 pub use universe::{
