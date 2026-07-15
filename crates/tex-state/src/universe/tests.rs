@@ -7,7 +7,8 @@ use crate::hyphenation::{ExceptionSpec, PatternSpec};
 use crate::ids::{ArenaRef, FontId, NodeListId};
 use crate::input::{
     ConditionFrameSummary, ConditionFrameToken, InputFrameSummary, InputSummary, LexerState,
-    MacroArguments, SourceFrameSummary, SourceId, TokenListReplayKind, TracedTokenList,
+    MacroArgumentRange, MacroArguments, SourceFrameSummary, SourceId, TokenListReplayKind,
+    TracedTokenList,
 };
 use crate::macro_store::MacroMeaning;
 use crate::meaning::{Meaning, MeaningFlags, RawMeaning};
@@ -1339,8 +1340,7 @@ fn input_summary_validation_is_recursive_and_atomic_after_reuse() {
         }
     };
 
-    let mut stale_argument = MacroArguments::new();
-    stale_argument.set_traced(1, stale_list);
+    let stale_argument = one_macro_argument(stale_word, 1);
     let mut invalid = vec![
         InputSummary::new(
             vec![InputFrameSummary::Source {
@@ -1429,8 +1429,7 @@ fn input_summary_validation_is_recursive_and_atomic_after_reuse() {
         assert_eq!(universe.input_summary(), &InputSummary::default());
     }
 
-    let mut arguments = MacroArguments::new();
-    arguments.set_traced(9, list);
+    let arguments = one_macro_argument(word, 9);
     let valid = InputSummary::new(
         vec![
             InputFrameSummary::Source {
@@ -1512,7 +1511,6 @@ fn snapshot_reuses_hash_base_for_origin_only_input_summary_changes() {
     let body = universe.intern_token_list(&[body_token]);
     let params = universe.intern_token_list(&[]);
     let definition = universe.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, params, body));
-    let argument = universe.intern_token_list(&[Token::param(1)]);
     let left_origin = universe.source_origin(crate::input::SourceId::new(1), 10, 2, 3);
     let right_origin = universe.source_origin(crate::input::SourceId::new(2), 20, 4, 5);
     let left_origins = universe.allocate_origin_list(&[left_origin]);
@@ -1521,8 +1519,8 @@ fn snapshot_reuses_hash_base_for_origin_only_input_summary_changes() {
         universe.macro_invocation_origin(definition, left_origin, left_origin, OriginId::UNKNOWN);
     let right_invocation =
         universe.macro_invocation_origin(definition, right_origin, right_origin, OriginId::UNKNOWN);
-    let left_summary = macro_replay_summary(body, argument, left_origins, left_invocation);
-    let right_summary = macro_replay_summary(body, argument, right_origins, right_invocation);
+    let left_summary = macro_replay_summary(body, left_origins, left_invocation, left_origin);
+    let right_summary = macro_replay_summary(body, right_origins, right_invocation, right_origin);
     assert_eq!(left_summary, right_summary);
 
     universe.set_input_summary(left_summary);
@@ -3160,12 +3158,11 @@ fn source_summary_with_identity(
 
 fn macro_replay_summary(
     body: crate::ids::TokenListId,
-    argument: crate::ids::TokenListId,
     origins: crate::ids::OriginListId,
     invocation: OriginId,
+    argument_origin: OriginId,
 ) -> InputSummary {
-    let mut arguments = MacroArguments::new();
-    arguments.set_traced(1, TracedTokenList::new(argument, origins));
+    let arguments = one_macro_argument(TracedTokenWord::pack(Token::param(1), argument_origin), 1);
     InputSummary::new(
         vec![InputFrameSummary::TokenList {
             token_list: body,
@@ -3179,6 +3176,12 @@ fn macro_replay_summary(
         None,
         None,
     )
+}
+
+fn one_macro_argument(word: TracedTokenWord, slot: u8) -> MacroArguments {
+    let mut ranges = [None; crate::input::MACRO_ARGUMENT_SLOTS];
+    ranges[usize::from(slot - 1)] = Some(MacroArgumentRange::new(0, 1));
+    MacroArguments::from_parts(Arc::from([word]), ranges)
 }
 
 fn transient_summary(word: TracedTokenWord) -> InputSummary {

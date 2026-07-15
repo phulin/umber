@@ -43,10 +43,8 @@ impl Stores {
                         *index <= self.tokens(*token_list).len(),
                         "input token-list frame index exceeds its live token list"
                     );
-                    for slot in 1..=crate::input::MACRO_ARGUMENT_SLOTS as u8 {
-                        if let Some(argument) = macro_arguments.get_traced(slot) {
-                            self.assert_live_traced_token_list(argument);
-                        }
+                    for &word in macro_arguments.tokens().iter() {
+                        self.assert_live_traced_token_word(word);
                     }
                     self.assert_live_origin(*macro_invocation);
                     self.assert_live_origin(*parent_macro_invocation);

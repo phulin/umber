@@ -4301,9 +4301,12 @@ fn hash_input_summary_fields(
                 hasher.usize(*index);
                 for slot in 1..=crate::input::MACRO_ARGUMENT_SLOTS as u8 {
                     match macro_arguments.get(slot) {
-                        Some(token_list) => {
+                        Some(tokens) => {
                             hasher.bool(true);
-                            stores.hash_token_list_semantic(token_list, hasher);
+                            hasher.usize(tokens.len());
+                            for &word in tokens {
+                                hash_traced_token_semantic(stores, word, hasher);
+                            }
                         }
                         None => hasher.bool(false),
                     }

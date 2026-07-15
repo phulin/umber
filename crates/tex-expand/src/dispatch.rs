@@ -79,7 +79,7 @@ macro_rules! dispatch_match {
                     replay_kind: ExpansionReplayKind::MacroBody,
                     token_list: macro_meaning.replacement_text(),
                     origin_list: provenance.replacement_origins(),
-                    macro_arguments: arguments.as_macro_arguments(),
+                    macro_arguments: arguments.into_macro_arguments(),
                     macro_invocation: stores.macro_invocation_origin(
                         definition,
                         call_origin,

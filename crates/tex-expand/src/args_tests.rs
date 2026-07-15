@@ -1,6 +1,5 @@
 use crate::args::{MacroCallError, match_macro_call};
 use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
-use tex_state::TracedTokenList;
 use tex_state::ids::OriginListId;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::MeaningFlags;
@@ -42,9 +41,12 @@ fn match_from_list(
     )?;
     Ok((1..=matched.len())
         .map(|slot| {
-            stores
-                .tokens(matched.get(slot as u8).expect("slot"))
-                .to_vec()
+            matched
+                .get(slot as u8)
+                .expect("slot")
+                .iter()
+                .map(|word| word.token().expect("valid argument token"))
+                .collect()
         })
         .collect())
 }
@@ -54,7 +56,7 @@ fn match_traced_from_list(
     meaning: MacroMeaning,
     input_tokens: &[Token],
     input_origins: OriginListId,
-) -> Result<Vec<TracedTokenList>, MacroCallError> {
+) -> Result<Vec<Vec<TracedTokenWord>>, MacroCallError> {
     let call = cs_token(stores, "m");
     let input_list = stores.intern_token_list(input_tokens);
     let mut input = InputStack::new(MemoryInput::new(""));
@@ -66,7 +68,7 @@ fn match_traced_from_list(
         meaning,
     )?;
     Ok((1..=matched.len())
-        .map(|slot| matched.get_traced(slot as u8).expect("slot"))
+        .map(|slot| matched.get(slot as u8).expect("slot").to_vec())
         .collect())
 }
 
@@ -153,14 +155,8 @@ fn undelimited_argument_freezes_call_site_origins() {
     )
     .expect("argument should match");
 
-    assert_eq!(
-        stores.tokens(args[0].token_list()),
-        &[char_token('x', Catcode::Letter)]
-    );
-    assert_eq!(
-        stores.origin_list(args[0].origin_list()),
-        &[argument_origin]
-    );
+    assert_eq!(args[0][0].token(), Some(char_token('x', Catcode::Letter)));
+    assert_eq!(args[0][0].origin(), argument_origin);
 }
 
 #[test]
@@ -223,14 +219,8 @@ fn delimited_argument_freezes_only_argument_origins() {
     )
     .expect("argument should match");
 
-    assert_eq!(
-        stores.tokens(args[0].token_list()),
-        &[char_token('x', Catcode::Letter)]
-    );
-    assert_eq!(
-        stores.origin_list(args[0].origin_list()),
-        &[argument_origin]
-    );
+    assert_eq!(args[0][0].token(), Some(char_token('x', Catcode::Letter)));
+    assert_eq!(args[0][0].origin(), argument_origin);
 }
 
 #[test]
@@ -292,14 +282,8 @@ fn delimited_argument_preserves_recovered_prefix_origins() {
     )
     .expect("overlapping delimiter prefix should match");
 
-    assert_eq!(
-        stores.tokens(args[0].token_list()),
-        &[char_token('a', Catcode::Letter)]
-    );
-    assert_eq!(
-        stores.origin_list(args[0].origin_list()),
-        &[recovered_origin]
-    );
+    assert_eq!(args[0][0].token(), Some(char_token('a', Catcode::Letter)));
+    assert_eq!(args[0][0].origin(), recovered_origin);
 }
 
 #[test]

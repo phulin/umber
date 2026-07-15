@@ -1174,9 +1174,10 @@ there is no masking fallback, so 131073 cannot alias fontdimen 1. This changes
 no journal layout: `CellId`, `UndoRec`, and `Entry` retain the sizes documented
 in §6. Format-image version 7 rejects the earlier packed interpretation, and
 checkpoint-hash schema version 10 frames the widened parameter count as `u32`.
-Checkpoint-hash schema version 11 adds transient token replay frames. Their
-remaining packed words are projected as semantic tokens through stable
-control-sequence atoms; inline diagnostic origins are deliberately excluded.
+Checkpoint-hash schema version 11 adds transient token replay frames and
+range-backed packed macro arguments. Their words are projected as semantic
+tokens through stable control-sequence atoms; inline diagnostic origins are
+deliberately excluded.
 
 ### 10.4 Builder-then-freeze for content
 

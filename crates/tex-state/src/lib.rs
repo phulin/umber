@@ -15,7 +15,8 @@
 /// cursor state in the semantic projection. Version 10 widens font-parameter
 /// counts and fontdimen slots to the 17-bit domain used by LaTeX's font-backed
 /// integer arrays. Version 11 adds by-value transient input replay frames and
-/// hashes their remaining semantic token sequence without diagnostic origins.
+/// packed macro arguments, hashing their semantic token sequences without
+/// diagnostic origins.
 /// Hashes are
 /// comparable only when both this version and the named-boundary schedule
 /// match.
@@ -56,8 +57,8 @@ pub mod world;
 
 pub use input::{
     ConditionFrameSummary, ConditionFrameToken, ConditionKind, ConditionLimb, InputFrameSummary,
-    InputSummary, LexerState, MACRO_ARGUMENT_SLOTS, MacroArguments, SourceFrameSummary, SourceId,
-    TokenListReplayKind, TracedTokenList,
+    InputSummary, LexerState, MACRO_ARGUMENT_SLOTS, MacroArgumentRange, MacroArguments,
+    SourceFrameSummary, SourceId, TokenListReplayKind, TracedTokenList,
 };
 pub use page::{
     AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_PENALTY, PageBreak, PageContents, PageDimension,

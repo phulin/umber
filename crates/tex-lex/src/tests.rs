@@ -1,8 +1,8 @@
 use super::{
     ConditionFrameSummary, ConditionKind, ConditionLimb, InputFrame, InputFrameSummary,
     InputSource, InputStack, LayoutCursor, LayoutCursorError, LexError, Lexer, LexerState,
-    LineEvent, LineReader, LiteralSpanPolicy, MacroArguments, MemoryInput, TokenListReplayKind,
-    load_next_line,
+    LineEvent, LineReader, LiteralSpanPolicy, MACRO_ARGUMENT_SLOTS, MacroArgumentRange,
+    MacroArguments, MemoryInput, TokenListReplayKind, load_next_line,
 };
 use std::sync::Arc;
 use tex_state::env::banks::IntParam;
@@ -1701,16 +1701,22 @@ fn macro_literal_spans_copy_body_and_argument_provenance_at_matching_offsets() {
         char_token('y', Catcode::Other),
     ];
     let body = stores.intern_token_list(&body_tokens);
-    let argument = stores.intern_token_list(&argument_tokens);
     let body_origin = stores.source_origin(tex_state::SourceId::new(1), 10, 1, 1);
     let argument_origin = stores.source_origin(tex_state::SourceId::new(2), 20, 2, 1);
     let body_origins = stores.allocate_origin_list(&[body_origin; 5]);
-    let argument_origins = stores.allocate_origin_list(&[argument_origin; 2]);
-    let mut arguments = MacroArguments::new();
-    arguments.set_traced(1, TracedTokenList::new(argument, argument_origins));
+    let argument_words = argument_tokens
+        .into_iter()
+        .map(|token| TracedTokenWord::pack(token, argument_origin))
+        .collect();
+    let mut ranges = [None; MACRO_ARGUMENT_SLOTS];
+    ranges[0] = Some(MacroArgumentRange::new(0, 2));
+    let arguments = MacroArguments::from_parts(argument_words, ranges);
 
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_macro_body_with_origins(body, body_origins, arguments);
+    let summary = input.summary();
+    let mut input = InputStack::from_summary(&summary, |_, _, _| Ok::<_, ()>(MemoryInput::new("")))
+        .expect("restore macro arguments by value");
     let mut tokens = stores.token_list_builder();
     let mut origins = stores.origin_list_builder();
 
@@ -1730,7 +1736,23 @@ fn macro_literal_spans_copy_body_and_argument_provenance_at_matching_offsets() {
             &mut origins,
             LiteralSpanPolicy::ExpandedReplacement,
         ),
-        2
+        0
+    );
+    let first_argument = input
+        .next_traced_token(&mut stores)
+        .expect("argument replay")
+        .expect("first argument token");
+    let second_argument = input
+        .next_traced_token(&mut stores)
+        .expect("argument replay")
+        .expect("second argument token");
+    assert_eq!(
+        first_argument.unpack(),
+        Some((argument_tokens[0], argument_origin))
+    );
+    assert_eq!(
+        second_argument.unpack(),
+        Some((argument_tokens[1], argument_origin))
     );
     assert_eq!(
         input.append_macro_literal_span(
@@ -1755,23 +1777,11 @@ fn macro_literal_spans_copy_body_and_argument_provenance_at_matching_offsets() {
     let origin_list = stores.finish_origin_list(&mut origins);
     assert_eq!(
         stores.tokens(token_list),
-        [
-            body_tokens[0],
-            body_tokens[1],
-            argument_tokens[0],
-            argument_tokens[1],
-            body_tokens[3],
-        ]
+        [body_tokens[0], body_tokens[1], body_tokens[3]]
     );
     assert_eq!(
         stores.origin_list(origin_list),
-        [
-            body_origin,
-            body_origin,
-            argument_origin,
-            argument_origin,
-            body_origin,
-        ]
+        [body_origin, body_origin, body_origin]
     );
 }
 

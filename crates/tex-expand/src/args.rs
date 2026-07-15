@@ -10,58 +10,52 @@ use std::sync::Arc;
 
 use tex_lex::{InputStack, LexError, MACRO_ARGUMENT_SLOTS, MacroArguments};
 use tex_state::ExpansionState;
-use tex_state::TracedTokenList;
-use tex_state::ids::TokenListId;
+use tex_state::MacroArgumentRange;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{Meaning, MeaningFlags};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::ExpansionContext;
 
-/// Frozen arguments matched for one macro call.
+/// Packed transient arguments matched for one macro call.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct MatchedArguments {
-    arguments: Vec<TracedTokenList>,
+    tokens: Vec<TracedTokenWord>,
+    slots: [Option<MacroArgumentRange>; MACRO_ARGUMENT_SLOTS],
+    len: usize,
 }
 
 impl MatchedArguments {
     #[must_use]
     pub fn len(&self) -> usize {
-        self.arguments.len()
+        self.len
     }
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.arguments.is_empty()
+        self.len == 0
     }
 
     #[must_use]
-    pub fn get(&self, slot: u8) -> Option<TokenListId> {
-        self.get_traced(slot).map(TracedTokenList::token_list)
+    pub fn get(&self, slot: u8) -> Option<&[TracedTokenWord]> {
+        let index = usize::from(slot.checked_sub(1)?);
+        let range = self.slots.get(index).copied().flatten()?;
+        Some(&self.tokens[range.start()..range.start() + range.len()])
     }
 
     #[must_use]
-    pub fn get_traced(&self, slot: u8) -> Option<TracedTokenList> {
-        slot.checked_sub(1)
-            .and_then(|index| self.arguments.get(index as usize))
-            .copied()
-    }
-
-    #[must_use]
-    pub fn as_macro_arguments(&self) -> MacroArguments {
+    pub fn into_macro_arguments(self) -> MacroArguments {
         assert!(
-            self.arguments.len() <= MACRO_ARGUMENT_SLOTS,
+            self.len <= MACRO_ARGUMENT_SLOTS,
             "macro calls support only #1 through #9"
         );
-        let mut arguments = MacroArguments::new();
-        for (index, &id) in self.arguments.iter().enumerate() {
-            arguments.set_traced((index + 1) as u8, id);
-        }
-        arguments
+        MacroArguments::from_parts(self.tokens, self.slots)
     }
 
-    fn push(&mut self, id: TracedTokenList) {
-        self.arguments.push(id);
+    fn push(&mut self, range: MacroArgumentRange) {
+        assert!(self.len < MACRO_ARGUMENT_SLOTS);
+        self.slots[self.len] = Some(range);
+        self.len += 1;
     }
 }
 
@@ -155,7 +149,14 @@ struct PendingArgumentToken {
     allow_par: bool,
 }
 
-/// Matches one macro call and freezes each argument token list.
+#[derive(Clone, Copy)]
+struct MacroCallContext<'a> {
+    flags: MeaningFlags,
+    macro_name: &'a str,
+    call_token: TracedTokenWord,
+}
+
+/// Matches one macro call into a single transient packed-token buffer.
 pub fn match_macro_call(
     input: &mut InputStack,
     stores: &mut tex_state::ExpansionContext<'_>,
@@ -195,31 +196,47 @@ pub(crate) fn match_macro_call_with_context(
         call_token,
     )?;
 
-    let mut matched = MatchedArguments::default();
-    for spec in &pattern.specs {
-        let id = if spec.delimiter.is_empty() {
-            scan_undelimited_argument(
-                input,
-                stores,
-                expansion,
-                meaning.flags(),
-                &macro_name,
-                call_token,
-            )?
-        } else {
-            scan_delimited_argument(
-                input,
-                stores,
-                expansion,
-                meaning.flags(),
-                &macro_name,
-                &spec.delimiter,
-                call_token,
-            )?
-        };
-        matched.push(id);
+    let mut matched = MatchedArguments {
+        tokens: input.take_transient_token_buffer(),
+        ..MatchedArguments::default()
+    };
+    let result = (|| {
+        for spec in &pattern.specs {
+            let range = if spec.delimiter.is_empty() {
+                scan_undelimited_argument(
+                    input,
+                    stores,
+                    expansion,
+                    meaning.flags(),
+                    &macro_name,
+                    call_token,
+                    &mut matched.tokens,
+                )?
+            } else {
+                scan_delimited_argument(
+                    input,
+                    stores,
+                    expansion,
+                    MacroCallContext {
+                        flags: meaning.flags(),
+                        macro_name: &macro_name,
+                        call_token,
+                    },
+                    spec,
+                    &mut matched.tokens,
+                )?
+            };
+            matched.push(range);
+        }
+        Ok(())
+    })();
+    match result {
+        Ok(()) => Ok(matched),
+        Err(error) => {
+            input.recycle_transient_token_buffer(std::mem::take(&mut matched.tokens));
+            Err(error)
+        }
     }
-    Ok(matched)
 }
 
 fn parse_parameter_text(tokens: &[Token]) -> ParameterPattern {
@@ -282,13 +299,14 @@ fn scan_undelimited_argument(
     flags: MeaningFlags,
     macro_name: &str,
     call_context: TracedTokenWord,
-) -> Result<TracedTokenList, MacroCallError> {
+    tokens: &mut Vec<TracedTokenWord>,
+) -> Result<MacroArgumentRange, MacroCallError> {
     let mut token = next_checked_token(input, stores, expansion, flags, macro_name, call_context)?;
     while is_space_token(traced_semantic_token(token)) {
         token = next_checked_token(input, stores, expansion, flags, macro_name, call_context)?;
     }
 
-    let mut tokens = Vec::new();
+    let start = tokens.len();
     if is_begin_group(traced_semantic_token(token)) {
         scan_balanced_group(
             input,
@@ -297,12 +315,12 @@ fn scan_undelimited_argument(
             flags,
             macro_name,
             call_context,
-            &mut tokens,
+            tokens,
         )?;
     } else {
         tokens.push(token);
     }
-    Ok(freeze_traced_tokens(stores, &tokens))
+    Ok(MacroArgumentRange::new(start, tokens.len() - start))
 }
 
 fn scan_balanced_group(
@@ -344,12 +362,12 @@ fn scan_delimited_argument(
     input: &mut InputStack,
     stores: &mut tex_state::ExpansionContext<'_>,
     expansion: &mut ExpansionContext<'_>,
-    flags: MeaningFlags,
-    macro_name: &str,
-    delimiter: &[Token],
-    call_context: TracedTokenWord,
-) -> Result<TracedTokenList, MacroCallError> {
-    let mut argument = Vec::new();
+    context: MacroCallContext<'_>,
+    spec: &ParameterSpec,
+    argument: &mut Vec<TracedTokenWord>,
+) -> Result<MacroArgumentRange, MacroCallError> {
+    let delimiter = &spec.delimiter;
+    let start = argument.len();
     let mut pending = VecDeque::new();
     let mut level = 0_u32;
 
@@ -358,8 +376,8 @@ fn scan_delimited_argument(
             input,
             stores,
             expansion,
-            macro_name,
-            call_context,
+            context.macro_name,
+            context.call_token,
             &mut pending,
         )?;
         let token = traced_semantic_token(scanned.token);
@@ -371,8 +389,8 @@ fn scan_delimited_argument(
                     input,
                     stores,
                     expansion,
-                    macro_name,
-                    call_context,
+                    context.macro_name,
+                    context.call_token,
                     &mut pending,
                 )?;
                 candidate.push(next);
@@ -382,10 +400,15 @@ fn scan_delimited_argument(
                 }
             }
             if matched {
-                let stripped = strip_outer_group(&argument);
-                return Ok(freeze_traced_tokens(stores, stripped));
+                let len = argument.len() - start;
+                let stripped_len = strip_outer_group(&argument[start..]).len();
+                if stripped_len != len {
+                    argument.remove(start);
+                    argument.pop();
+                }
+                return Ok(MacroArgumentRange::new(start, argument.len() - start));
             }
-            push_argument_token(&mut argument, &mut level, candidate[0].token);
+            push_argument_token(argument, &mut level, candidate[0].token);
             let last_index = candidate.len() - 1;
             for (index, candidate_token) in candidate[1..].iter().enumerate().rev() {
                 let was_matched_prefix = index + 1 < last_index;
@@ -397,8 +420,8 @@ fn scan_delimited_argument(
             continue;
         }
 
-        check_argument_par(stores, flags, macro_name, scanned)?;
-        push_argument_token(&mut argument, &mut level, scanned.token);
+        check_argument_par(stores, context.flags, context.macro_name, scanned)?;
+        push_argument_token(argument, &mut level, scanned.token);
     }
 }
 
@@ -547,13 +570,6 @@ fn strip_outer_group(tokens: &[TracedTokenWord]) -> &[TracedTokenWord] {
     }
 
     &tokens[1..tokens.len() - 1]
-}
-
-fn freeze_traced_tokens(
-    stores: &mut tex_state::ExpansionContext<'_>,
-    tokens: &[TracedTokenWord],
-) -> TracedTokenList {
-    stores.finish_traced_token_list(tokens)
 }
 
 fn traced_semantic_token(token: TracedTokenWord) -> Token {

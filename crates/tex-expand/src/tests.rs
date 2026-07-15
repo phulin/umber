@@ -2225,8 +2225,8 @@ fn identical_macro_bodies_keep_shared_body_identity_with_distinct_arguments() {
     };
     assert_eq!(left_body, first_body);
     assert_eq!(
-        stores.tokens(left_arguments.get(1).expect("left #1")),
-        &[char_token('x')]
+        left_arguments.get(1).expect("left #1")[0].token(),
+        Some(char_token('x'))
     );
 
     let right_arg = stores.intern_token_list(&[char_token('y')]);
@@ -2250,8 +2250,8 @@ fn identical_macro_bodies_keep_shared_body_identity_with_distinct_arguments() {
     };
     assert_eq!(right_body, second_body);
     assert_eq!(
-        stores.tokens(right_arguments.get(1).expect("right #1")),
-        &[char_token('y')]
+        right_arguments.get(1).expect("right #1")[0].token(),
+        Some(char_token('y'))
     );
 
     let invocation = stores.intern_token_list(&[

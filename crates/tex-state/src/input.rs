@@ -48,48 +48,86 @@ impl TracedTokenList {
     }
 }
 
-/// Frozen macro arguments carried by a macro-body replay frame.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+/// Compact range into one packed macro-argument buffer.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct MacroArgumentRange {
+    start: u32,
+    len: u32,
+}
+
+impl MacroArgumentRange {
+    #[must_use]
+    pub fn new(start: usize, len: usize) -> Self {
+        Self {
+            start: u32::try_from(start).expect("macro argument offset exceeds u32"),
+            len: u32::try_from(len).expect("macro argument length exceeds u32"),
+        }
+    }
+
+    #[must_use]
+    pub const fn start(self) -> usize {
+        self.start as usize
+    }
+
+    #[must_use]
+    pub const fn len(self) -> usize {
+        self.len as usize
+    }
+
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.len == 0
+    }
+}
+
+/// By-value checkpoint form of macro arguments carried by a macro-body frame.
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub struct MacroArguments {
-    slots: [Option<TracedTokenList>; MACRO_ARGUMENT_SLOTS],
+    tokens: Arc<[TracedTokenWord]>,
+    slots: [Option<MacroArgumentRange>; MACRO_ARGUMENT_SLOTS],
 }
 
 impl MacroArguments {
     /// Creates an empty argument-slot frame.
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             slots: [None; MACRO_ARGUMENT_SLOTS],
+            tokens: Arc::from([]),
         }
     }
 
-    /// Records one frozen argument token list in a one-based TeX slot.
-    pub fn set(&mut self, slot: u8, token_list: TokenListId) {
-        self.set_traced(slot, TracedTokenList::synthetic(token_list));
-    }
-
-    /// Records one traced frozen argument token list in a one-based TeX slot.
-    pub fn set_traced(&mut self, slot: u8, token_list: TracedTokenList) {
-        let index = argument_index(slot);
-        self.slots[index] = Some(token_list);
-    }
-
-    /// Reads the frozen argument token list for a one-based TeX slot.
     #[must_use]
-    pub fn get(self, slot: u8) -> Option<TokenListId> {
-        self.get_traced(slot).map(TracedTokenList::token_list)
+    pub fn from_parts(
+        tokens: Arc<[TracedTokenWord]>,
+        slots: [Option<MacroArgumentRange>; MACRO_ARGUMENT_SLOTS],
+    ) -> Self {
+        for range in slots.iter().flatten().copied() {
+            assert!(range.start().saturating_add(range.len()) <= tokens.len());
+        }
+        Self { tokens, slots }
     }
 
-    /// Reads the traced frozen argument token list for a one-based TeX slot.
     #[must_use]
-    pub fn get_traced(self, slot: u8) -> Option<TracedTokenList> {
+    pub fn tokens(&self) -> &Arc<[TracedTokenWord]> {
+        &self.tokens
+    }
+
+    #[must_use]
+    pub fn get(&self, slot: u8) -> Option<&[TracedTokenWord]> {
         let index = argument_index(slot);
-        self.slots[index]
+        let range = self.slots[index]?;
+        Some(&self.tokens[range.start()..range.start() + range.len()])
+    }
+
+    #[must_use]
+    pub const fn ranges(&self) -> &[Option<MacroArgumentRange>; MACRO_ARGUMENT_SLOTS] {
+        &self.slots
     }
 
     /// Returns whether no argument slots are populated.
     #[must_use]
-    pub fn is_empty(self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.slots.iter().all(Option::is_none)
     }
 }
@@ -428,9 +466,25 @@ impl InputSummary {
             })
             .sum::<usize>()
             .saturating_mul(std::mem::size_of::<TracedTokenWord>());
+        let macro_argument_words = self
+            .semantic_root
+            .0
+            .frames
+            .iter()
+            .filter_map(|frame| match frame {
+                InputFrameSummary::TokenList {
+                    macro_arguments, ..
+                } => Some(macro_arguments.tokens().len()),
+                InputFrameSummary::Source { .. }
+                | InputFrameSummary::TransientTokenList { .. }
+                | InputFrameSummary::Condition { .. } => None,
+            })
+            .sum::<usize>()
+            .saturating_mul(std::mem::size_of::<TracedTokenWord>());
         std::mem::size_of::<InputSemanticState>()
             .saturating_add(frames)
             .saturating_add(transient_words)
+            .saturating_add(macro_argument_words)
     }
 
     pub(crate) fn semantic_root(&self) -> InputSemanticRoot {
@@ -682,7 +736,7 @@ impl PartialEq for InputFrameSummary {
                 left_token_list == right_token_list
                     && left_replay_kind == right_replay_kind
                     && left_index == right_index
-                    && macro_arguments_semantic_eq(*left_arguments, *right_arguments)
+                    && macro_arguments_semantic_eq(left_arguments, right_arguments)
             }
             (
                 Self::TransientTokenList {
@@ -739,7 +793,7 @@ impl Hash for InputFrameSummary {
                 token_list.hash(state);
                 replay_kind.hash(state);
                 index.hash(state);
-                hash_macro_arguments_semantic(*macro_arguments, state);
+                hash_macro_arguments_semantic(macro_arguments, state);
             }
             Self::TransientTokenList {
                 tokens,
@@ -771,13 +825,26 @@ fn traced_tokens_semantic_eq(left: &[TracedTokenWord], right: &[TracedTokenWord]
             .all(|(&left, &right)| left.token() == right.token())
 }
 
-fn macro_arguments_semantic_eq(left: MacroArguments, right: MacroArguments) -> bool {
-    (1..=MACRO_ARGUMENT_SLOTS as u8).all(|slot| left.get(slot) == right.get(slot))
+fn macro_arguments_semantic_eq(left: &MacroArguments, right: &MacroArguments) -> bool {
+    (1..=MACRO_ARGUMENT_SLOTS as u8).all(|slot| match (left.get(slot), right.get(slot)) {
+        (Some(left), Some(right)) => traced_tokens_semantic_eq(left, right),
+        (None, None) => true,
+        (Some(_), None) | (None, Some(_)) => false,
+    })
 }
 
-fn hash_macro_arguments_semantic<H: Hasher>(arguments: MacroArguments, state: &mut H) {
+fn hash_macro_arguments_semantic<H: Hasher>(arguments: &MacroArguments, state: &mut H) {
     for slot in 1..=MACRO_ARGUMENT_SLOTS as u8 {
-        arguments.get(slot).hash(state);
+        match arguments.get(slot) {
+            Some(words) => {
+                true.hash(state);
+                words.len().hash(state);
+                for &word in words {
+                    word.token().hash(state);
+                }
+            }
+            None => false.hash(state),
+        }
     }
 }
 
