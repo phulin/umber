@@ -275,6 +275,10 @@ pub trait ExpansionState {
     fn glue_param(&self, param: GlueParam) -> GlueId;
     fn tok_param(&self, param: TokParam) -> TokenListId;
     fn input_stream_eof(&self, stream: StreamSlot) -> bool;
+    /// Stable content identity for a pinned World input record.
+    fn input_content_identity(&self, _record: crate::InputRecordId) -> Option<ContentHash> {
+        None
+    }
     fn bootstrap_origin(&self) -> OriginId;
     fn synthetic_origin(&mut self, kind: SyntheticOriginKind) -> OriginId;
     fn synthesized_origin(&mut self, kind: SynthesizedOriginKind, parent: OriginId) -> OriginId;
@@ -5006,6 +5010,12 @@ impl ExpansionState for Universe {
 
     fn input_stream_eof(&self, stream: StreamSlot) -> bool {
         self.world.input_stream_eof(stream)
+    }
+
+    fn input_content_identity(&self, record: crate::InputRecordId) -> Option<ContentHash> {
+        self.world()
+            .input_record(record)
+            .map(crate::InputRecord::hash)
     }
 }
 

@@ -1,8 +1,8 @@
 use super::{
-    ConditionFrameSummary, ConditionKind, ConditionLimb, InputFrame, InputFrameSummary,
-    InputSource, InputStack, LayoutCursor, LayoutCursorError, LexError, Lexer, LexerState,
-    LineEvent, LineReader, LiteralSpanPolicy, MACRO_ARGUMENT_SLOTS, MacroArgumentRange,
-    MacroArguments, MemoryInput, TokenListReplayKind, load_next_line,
+    ConditionFrameSummary, ConditionKind, ConditionLimb, ImmutableSourceKind, InputFrame,
+    InputFrameSummary, InputSource, InputStack, LayoutCursor, LayoutCursorError, LexError, Lexer,
+    LexerState, LineEvent, LineReader, LiteralSpanPolicy, MACRO_ARGUMENT_SLOTS, MacroArgumentRange,
+    MacroArguments, MemoryInput, StableSourceSpanId, TokenListReplayKind, load_next_line,
 };
 use std::sync::Arc;
 use tex_state::env::banks::IntParam;
@@ -10,8 +10,8 @@ use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::provenance::{InsertedOriginKind, OriginRecord};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{
-    EditorLayout, ExpansionState, FragmentStore, LayoutGeneration, Piece, ProvenanceResolver,
-    Universe,
+    ContentHash, EditorLayout, ExpansionState, FragmentStore, LayoutGeneration, Piece,
+    ProvenanceResolver, Universe,
 };
 
 mod input_lines;
@@ -729,6 +729,62 @@ fn direct_root_delivery_exposes_piece_identity_without_origin_identity() {
         .expect("direct delivery proof");
 
     assert_eq!(delivery.root_span_id(&fragments), Some(expected));
+}
+
+#[test]
+fn immutable_source_delivery_identity_uses_content_not_runtime_record() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+    stores
+        .world_mut()
+        .set_memory_file("included.tex", b"x".to_vec())
+        .expect("seed include");
+    let content = stores
+        .world_mut()
+        .read_file("included.tex")
+        .expect("open include");
+    let expected = content.hash();
+    let mut included = InputStack::new(super::WorldInput::from_content(content));
+    let token = included
+        .next_traced_token(&mut stores)
+        .expect("include delivery")
+        .expect("include token");
+    let delivery = included
+        .take_direct_source_delivery(token)
+        .expect("include proof")
+        .stable_id(&stores, &FragmentStore::new())
+        .expect("stable include identity");
+    assert_eq!(
+        delivery.span(),
+        StableSourceSpanId::Immutable {
+            kind: ImmutableSourceKind::Included,
+            content: expected,
+            start: 0,
+            end: 1,
+        }
+    );
+
+    let mut generated_stores = Universe::new();
+    generated_stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+    let mut generated = InputStack::new(MemoryInput::new("x"));
+    let token = generated
+        .next_traced_token(&mut generated_stores)
+        .expect("generated delivery")
+        .expect("generated token");
+    let delivery = generated
+        .take_direct_source_delivery(token)
+        .expect("generated proof")
+        .stable_id(&generated_stores, &FragmentStore::new())
+        .expect("stable generated identity");
+    assert_eq!(
+        delivery.span(),
+        StableSourceSpanId::Immutable {
+            kind: ImmutableSourceKind::Generated,
+            content: ContentHash::from_bytes(b"x"),
+            start: 0,
+            end: 1,
+        }
+    );
 }
 
 #[test]

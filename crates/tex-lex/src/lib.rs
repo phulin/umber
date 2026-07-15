@@ -22,7 +22,8 @@ use tex_state::source_map::{RegisteredSource, SourceDescriptor};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::token_store::TokenListBuilder;
 use tex_state::{
-    EditorLayout, ExpansionState, FileContent, FragmentStore, InputRecordId, RootSpanId, WorldError,
+    ContentHash, EditorLayout, ExpansionState, FileContent, FragmentStore, InputRecordId,
+    RootSpanId, WorldError,
 };
 #[cfg(feature = "profiling-stats")]
 use tex_state::{ProfilingTimer, World};
@@ -1225,6 +1226,46 @@ pub struct DirectSourceDelivery {
     start: u64,
     end: u64,
     registration: RegisteredSource,
+    input_record: Option<InputRecordId>,
+    generated_content: Option<ContentHash>,
+}
+
+/// Stable class of immutable non-editor input.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ImmutableSourceKind {
+    Included,
+    Generated,
+}
+
+/// Allocation-independent source range used by execution traces.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum StableSourceSpanId {
+    Root(RootSpanId),
+    Immutable {
+        kind: ImmutableSourceKind,
+        content: ContentHash,
+        start: u64,
+        end: u64,
+    },
+}
+
+/// Stable identity of one token delivery, separate from diagnostic provenance.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct SourceDeliveryId {
+    span: StableSourceSpanId,
+    token_ordinal: u32,
+}
+
+impl SourceDeliveryId {
+    #[must_use]
+    pub const fn span(self) -> StableSourceSpanId {
+        self.span
+    }
+
+    #[must_use]
+    pub const fn token_ordinal(self) -> u32 {
+        self.token_ordinal
+    }
 }
 
 impl DirectSourceDelivery {
@@ -1232,6 +1273,36 @@ impl DirectSourceDelivery {
     #[must_use]
     pub fn root_span_id(self, fragments: &FragmentStore) -> Option<RootSpanId> {
         fragments.registered_root_span_id(self.registration, self.start..self.end)
+    }
+
+    /// Builds a stable delivery identity for editor, included, or generated input.
+    #[must_use]
+    pub fn stable_id(
+        self,
+        stores: &impl ExpansionState,
+        fragments: &FragmentStore,
+    ) -> Option<SourceDeliveryId> {
+        let span = if let Some(root) = self.root_span_id(fragments) {
+            StableSourceSpanId::Root(root)
+        } else if let Some(record) = self.input_record {
+            StableSourceSpanId::Immutable {
+                kind: ImmutableSourceKind::Included,
+                content: stores.input_content_identity(record)?,
+                start: self.start,
+                end: self.end,
+            }
+        } else {
+            StableSourceSpanId::Immutable {
+                kind: ImmutableSourceKind::Generated,
+                content: self.generated_content?,
+                start: self.start,
+                end: self.end,
+            }
+        };
+        Some(SourceDeliveryId {
+            span,
+            token_ordinal: 0,
+        })
     }
 }
 
@@ -2551,6 +2622,14 @@ impl InputStack {
             start,
             end,
             registration,
+            input_record: source.input_record,
+            generated_content: source
+                .descriptor
+                .as_ref()
+                .and_then(|descriptor| match descriptor {
+                    SourceDescriptor::Generated(source) => Some(source.hash()),
+                    SourceDescriptor::World { .. } => None,
+                }),
         })
     }
 
