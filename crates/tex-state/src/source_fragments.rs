@@ -1,5 +1,7 @@
 //! Edit-stable source fragments and current-document piece-table resolution.
 
+mod layout_index;
+
 use std::collections::HashMap;
 use std::mem;
 use std::ops::Range;
@@ -11,6 +13,7 @@ use std::sync::{Arc, OnceLock};
 use crate::source_map::{
     LogicalPositionAllocator, RegisteredSource, SourceMapError, SourcePos, SourceSpan,
 };
+use layout_index::FragmentPieceIndex;
 
 static NEXT_FRAGMENT_LINEAGE: AtomicU64 = AtomicU64::new(1);
 
@@ -507,6 +510,7 @@ pub struct EditorLayout {
     generation: LayoutGeneration,
     pieces: Arc<[Piece]>,
     doc_starts: Arc<[u64]>,
+    fragment_index: Box<[FragmentPieceIndex]>,
     byte_len: u64,
     line_index: OnceLock<LineIndex>,
     #[cfg(test)]
@@ -521,8 +525,9 @@ impl EditorLayout {
         fragments: &FragmentStore,
     ) -> Result<Self, EditorLayoutError> {
         let mut doc_starts = Vec::with_capacity(pieces.len());
+        let mut fragment_pieces: HashMap<FragmentId, Vec<(u32, u32, usize)>> = HashMap::new();
         let mut byte_len = 0_u64;
-        for piece in &pieces {
+        for (piece_index, piece) in pieces.iter().enumerate() {
             let fragment = fragments
                 .get(piece.fragment)
                 .ok_or(EditorLayoutError::UnknownFragment)?;
@@ -531,15 +536,26 @@ impl EditorLayout {
                 return Err(EditorLayoutError::InvalidPieceRange);
             }
             doc_starts.push(byte_len);
+            fragment_pieces.entry(piece.fragment).or_default().push((
+                piece.range.start,
+                piece.range.end,
+                piece_index,
+            ));
             byte_len = byte_len
                 .checked_add(u64::from(piece.range.end - piece.range.start))
                 .ok_or(EditorLayoutError::DocumentTooLarge)?;
         }
+        let mut fragment_index = fragment_pieces
+            .into_iter()
+            .map(|(fragment, pieces)| FragmentPieceIndex::build(fragment, pieces))
+            .collect::<Result<Vec<_>, _>>()?;
+        fragment_index.sort_unstable_by_key(|index| index.fragment);
         Ok(Self {
             path: path.into(),
             generation,
             pieces: pieces.into(),
             doc_starts: doc_starts.into(),
+            fragment_index: fragment_index.into_boxed_slice(),
             byte_len,
             line_index: OnceLock::new(),
             #[cfg(test)]
@@ -592,28 +608,28 @@ impl EditorLayout {
             .saturating_add(self.path.len())
             .saturating_add(self.pieces.len().saturating_mul(mem::size_of::<Piece>()))
             .saturating_add(self.doc_starts.len().saturating_mul(mem::size_of::<u64>()))
+            .saturating_add(
+                self.fragment_index
+                    .iter()
+                    .map(FragmentPieceIndex::retained_bytes)
+                    .sum::<usize>(),
+            )
             .saturating_add(self.line_index.get().map_or(0, |index| {
                 index.starts.len().saturating_mul(mem::size_of::<u64>())
             }))
     }
 
     fn current_range(&self, fragment: FragmentId, lo: u64, hi: u64) -> Option<(u64, u64)> {
-        self.pieces.iter().enumerate().find_map(|(index, piece)| {
-            if piece.fragment != fragment {
-                return None;
-            }
-            let start = u64::from(piece.range.start);
-            let end = u64::from(piece.range.end);
-            let covered = if lo == hi {
-                start <= lo && lo <= end
-            } else {
-                start <= lo && lo < end && hi <= end
-            };
-            covered.then(|| {
-                let doc_lo = self.doc_starts[index] + (lo - start);
-                (doc_lo, doc_lo + (hi - lo))
-            })
-        })
+        let fragment_index = self
+            .fragment_index
+            .binary_search_by_key(&fragment, |index| index.fragment)
+            .ok()
+            .map(|index| &self.fragment_index[index])?;
+        let index = fragment_index.covering_piece(lo, hi)?;
+        let piece = &self.pieces[index];
+        let start = u64::from(piece.range.start);
+        let doc_lo = self.doc_starts[index] + (lo - start);
+        Some((doc_lo, doc_lo + (hi - lo)))
     }
 
     fn line_column(&self, fragments: &FragmentStore, offset: u64) -> Option<(u32, u32)> {

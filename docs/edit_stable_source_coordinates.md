@@ -85,14 +85,19 @@ from the table at read time. A `SourcePos` inside `F1` resolves to a typed
   calling `RegisteredSource::direct_origin(start, end)` with
   fragment-relative offsets. No table is consulted per token (§4).
 - **Fragment metadata** costs O(log fragments) per accepted append and O(1)
-  per immutable engine-generation snapshot. The current flat piece-table
-  replacement still rebuilds O(pieces); optimizing that separate layout
-  operation is deferred. Nothing retained is rewritten, so there is nothing
-  to go stale.
-- **Read** pays the deferred work: piece-table search, prefix-sum offset
-  reconstruction, and lazy line indexing of the current document. Reads are
-  rare (clicks, hovers, diagnostics), so O(log pieces) plus a per-generation
-  cached line index is acceptable by requirement.
+  per immutable engine-generation snapshot. Piece replacement rebuilds the
+  O(pieces) flat arrays plus the indexed layout described below. Nothing
+  retained is rewritten, so there is nothing to go stale.
+- **Layout construction** rebuilds the flat piece and document-start arrays
+  and a static fragment/offset index. For fragment `f` with `v_f` views, the
+  index costs O(`v_f log v_f`) time and storage; total index cost is
+  O(Σ `v_f log v_f`). This remains accepted-edit work and the resulting
+  layout is immutable and shareable.
+- **Read** pays O(log fragments + log views-of-the-hit-fragment) to select the
+  first covering piece, independent of preceding document-order pieces, plus
+  lazy line indexing of the current document. Reads are rare (clicks, hovers,
+  diagnostics), and subsequent line/column queries reuse the per-generation
+  line index.
 
 ## 3. Data structures
 
@@ -122,6 +127,14 @@ pub struct EditorLayout {
     generation: LayoutGeneration,
     pieces: Vec<Piece>,               // document order
     doc_starts: Vec<usize>,           // prefix sums, rebuilt per accept (O(pieces))
+    fragment_index: Vec<FragmentPieceIndex>, // sorted by FragmentId
+}
+
+pub struct FragmentPieceIndex {
+    starts: Vec<u32>,                 // views sorted by fragment start
+    ends: Vec<u32>,                   // compressed end-offset domain
+    roots: Vec<NodeId>,               // persistent range-min prefix roots
+    nodes: Vec<RangeMinNode>,         // earliest document piece per end range
 }
 
 pub struct Piece {
@@ -144,6 +157,15 @@ with its validated layout at rebind. It therefore survives fork discard: a
 fragment minted for an edit stays resolvable no matter which substrate —
 scratch or converged — wins the revision, which fixes the dead-origin defect
 directly.
+
+For each fragment, index construction sweeps views by start offset. Every
+prefix root is a persistent range-min tree over end offsets and stores the
+earliest document-order piece index. Resolution binary-searches the last
+eligible start prefix and range-mins the end-offset suffix that covers the
+requested high offset. This is O(log views) even when one fragment has many
+repeated or overlapping views. Selecting the minimum piece index preserves
+the former linear scan's first-covering-view semantics, including zero-width
+anchors (whose end threshold is the anchor itself).
 
 Convergence also transfers the diagnostic graph reachable from each adopted
 artifact's `render_origins` through the `GenerationSubstrate` aggregate
@@ -221,10 +243,13 @@ resolve(origin, &FragmentStore, &EditorLayout) ->
 2. Binary-search the fragment store's region ranges. A miss falls through to
    the substrate source map (engine-registered sources) and resolves as
    today.
-3. On a fragment hit, binary-search `EditorLayout.pieces` for a view
-   covering the fragment-relative offset. No covering view means the text
-   was edited away: return typed `Deleted` (optionally with the nearest
-   surviving neighbor for UX) — never a stale offset.
+3. On a fragment hit, binary-search the fragment-id table, then use its
+   persistent start-prefix/end-suffix range-min index to select the earliest
+   document-order view covering the complete fragment-relative span. No
+   covering view means the text was edited away: return typed `Deleted`
+   (optionally with the nearest surviving neighbor for UX) — never a stale
+   offset. This is O(log pieces) in the worst case and does not scan earlier
+   document pieces.
 4. Covering view: `doc_offset = doc_starts[piece] + (pos - view.start)`,
    then line/column via a lazily built line-start index of the **current**
    document, cached and keyed by `LayoutGeneration`.
@@ -270,9 +295,12 @@ magnitude below the boundary, before any host-side edit coalescing.
 Exhaustion degrades exactly as today: arena `SourceSpan` fallback, then
 `OriginId::UNKNOWN` — never an abort, never a wrong location.
 
-Piece count grows by ≤2 per edit and is only a read-path and
-per-advance-cursor cost (10^5 pieces ≈ a few MB of table and 17-step binary
-searches). If it ever matters, an **epoch rebase** is reserved: mint one
+Piece count grows by ≤2 per edit and is a layout-build, retained-diagnostic,
+read-path, and per-advance-cursor cost. The fragment/offset index makes reads
+logarithmic but adds O(Σ `v_f log v_f`) retained nodes; a worst-case 10^5
+views of one fragment is roughly 17 tree levels and tens of MiB rather than
+the few MiB of the flat tables alone. If it ever matters, an **epoch rebase**
+is reserved: mint one
 fragment covering the whole current document, reset the layout to one piece,
 and rewrite each live fragment's metadata with a remap into the new epoch so
 lookups chase at most one hop. Deferred until measurements demand it.

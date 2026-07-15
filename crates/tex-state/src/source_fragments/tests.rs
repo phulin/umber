@@ -185,6 +185,128 @@ fn empty_fragments_and_end_anchors_resolve_without_borrowing_a_neighbor() {
 }
 
 #[test]
+fn repeated_fragment_views_keep_first_covering_piece_semantics() {
+    let mut fragments = FragmentStore::new();
+    let (filler_id, _) = append(&mut fragments, b"----", 1);
+    let (repeated_id, repeated) = append(&mut fragments, b"abcdefghij", 1);
+    let layout = EditorLayout::new(
+        "root.tex",
+        LayoutGeneration::new(1),
+        vec![
+            Piece::new(filler_id, 0, 4),
+            Piece::new(repeated_id, 2, 8),
+            Piece::new(repeated_id, 0, 10),
+        ],
+        &fragments,
+    )
+    .expect("layout is valid");
+
+    let overlapping = repeated.span(3, 4).expect("overlapping span is valid");
+    assert!(matches!(
+        resolve_fragment_span(overlapping, &fragments, &layout),
+        Some(LayoutResolvedOrigin::Current {
+            doc_offset_lo: 5,
+            ..
+        })
+    ));
+
+    let later_only = repeated.span(1, 2).expect("later-only span is valid");
+    assert!(matches!(
+        resolve_fragment_span(later_only, &fragments, &layout),
+        Some(LayoutResolvedOrigin::Current {
+            doc_offset_lo: 11,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn repeated_zero_width_views_resolve_to_first_covering_anchor() {
+    let mut fragments = FragmentStore::new();
+    let (id, registration) = append(&mut fragments, b"abcdefgh", 1);
+    let layout = EditorLayout::new(
+        "root.tex",
+        LayoutGeneration::new(1),
+        vec![Piece::new(id, 4, 4), Piece::new(id, 0, 8)],
+        &fragments,
+    )
+    .expect("layout is valid");
+    let anchor = registration.span(4, 4).expect("anchor is valid");
+
+    assert_eq!(
+        resolve_fragment_span(anchor, &fragments, &layout),
+        Some(LayoutResolvedOrigin::Current {
+            path: "root.tex".into(),
+            doc_offset_lo: 0,
+            doc_offset_hi: 0,
+            line: 1,
+            column: 1,
+        })
+    );
+}
+
+#[test]
+fn fragment_index_matches_linear_first_covering_reference() {
+    let mut fragments = FragmentStore::new();
+    let (id, _) = append(&mut fragments, b"abcdefgh", 1);
+    let layout = EditorLayout::new(
+        "root.tex",
+        LayoutGeneration::new(1),
+        vec![
+            Piece::new(id, 4, 4),
+            Piece::new(id, 2, 6),
+            Piece::new(id, 0, 3),
+            Piece::new(id, 5, 8),
+            Piece::new(id, 0, 8),
+        ],
+        &fragments,
+    )
+    .expect("layout is valid");
+
+    for lo in 0..=8_u64 {
+        for hi in lo..=8 {
+            let expected = layout
+                .pieces()
+                .iter()
+                .enumerate()
+                .find_map(|(index, piece)| {
+                    let start = u64::from(piece.start());
+                    let end = u64::from(piece.end());
+                    let covered = if lo == hi {
+                        start <= lo && lo <= end
+                    } else {
+                        start <= lo && lo < end && hi <= end
+                    };
+                    covered.then(|| {
+                        let doc_lo = layout.doc_starts()[index] + lo - start;
+                        (doc_lo, doc_lo + hi - lo)
+                    })
+                });
+            assert_eq!(layout.current_range(id, lo, hi), expected, "{lo}..{hi}");
+        }
+    }
+}
+
+#[test]
+fn gaps_between_repeated_fragment_views_remain_deleted() {
+    let mut fragments = FragmentStore::new();
+    let (id, registration) = append(&mut fragments, b"abcdefgh", 9);
+    let layout = EditorLayout::new(
+        "root.tex",
+        LayoutGeneration::new(1),
+        vec![Piece::new(id, 0, 2), Piece::new(id, 6, 8)],
+        &fragments,
+    )
+    .expect("layout is valid");
+    let gap = registration.span(3, 4).expect("gap span is valid");
+
+    assert_eq!(
+        resolve_fragment_span(gap, &fragments, &layout),
+        Some(LayoutResolvedOrigin::Deleted { minted_revision: 9 })
+    );
+}
+
+#[test]
 fn line_index_is_lazy_once_per_layout_generation() {
     let mut fragments = FragmentStore::new();
     let (id, registration) = append(&mut fragments, b"a\nb", 1);

@@ -112,21 +112,50 @@ positions for 100,000 edits to a typical 100-byte line, 0.47% of the 2^31
 boundary. Boundary tests prove the degradation chain is direct position, exact
 arena `SourceSpan`, then `OriginId::UNKNOWN` for an invalid span.
 
-The dedicated 4,096-piece Criterion fixture measures `LayoutCursor`
-construction and resolution of an origin in the final piece. The cold row
-includes lazy line-index construction; the warm row reuses it. Run it with:
+The dedicated Criterion fixture keeps the 4,096-piece `LayoutCursor` and cold
+resolution rows, then scales warm current and typed-deleted resolution across
+64, 256, 1,024, 4,096, and 16,384 repeated views of one fragment. The deleted
+origin lies in a gap in that same fragment, so it exercises indexed offset
+rejection rather than the absent-fragment fast path. The cold row includes
+lazy line-index construction; warm current reuses it. Run it with:
 
 ```bash
 cargo bench --manifest-path benchmarks/tex-state/Cargo.toml --bench state_budgets -- edit_stable_source_coordinates
 ```
 
-Measured 95% confidence intervals on the adoption host are recorded below.
+`EditorLayout` now builds a static two-dimensional index per fragment. A
+start-offset binary search selects a persistent prefix root; an end-offset
+range-min query returns the earliest document-order covering piece. Index
+construction and retained storage are O(Σ `v_f log v_f`) for per-fragment
+view counts `v_f`; current/deleted lookup is O(log fragments + log `v_f`).
+The minimum document-order value preserves repeated/overlapping-view and
+zero-width-anchor semantics. Accepted engine snapshots remain O(1): the
+completed immutable layout, including its index, is shared rather than
+rebuilt by snapshot capture.
+
+The scaling table below is a 20-sample calibration run on the adoption host
+(one-second warmup and two-second measurement); the reproduction command
+above retains Criterion's 100-sample default.
+
+| Repeated pieces | Warm final-piece current | Indexed in-fragment deleted |
+| ---: | ---: | ---: |
+| 64 | 59.630-59.681 ns | 25.463-25.484 ns |
+| 256 | 64.253-64.768 ns | 37.339-37.446 ns |
+| 1,024 | 71.481-71.842 ns | 76.218-76.759 ns |
+| 4,096 | 86.222-87.710 ns | 195.29-196.15 ns |
+| 16,384 | 124.71-130.00 ns | 657.38-664.20 ns |
+
+The final-piece row grows by about 2.1x while the repeated-view count grows
+256x. Deleted lookup remains sub-microsecond at 16,384 views and follows the
+same bounded binary-search/range-min path; neither operation visits preceding
+document-order pieces.
+
+The one-time 4,096-piece rows from the same calibration are recorded below.
 
 | Operation | Time | Effective piece rate |
 | --- | ---: | ---: |
-| `LayoutCursor` construction, 4,096 pieces | 20.063-20.568 us | 199.14-204.16 Mpiece/s |
-| Resolve final-piece origin, cold line index | 24.855-31.721 us | 129.13-164.80 Mpiece/s |
-| Resolve final-piece origin, warm line index | 2.5177-2.5740 us | 1.5913-1.6269 Gpiece/s |
+| `LayoutCursor` construction, 4,096 pieces | 56.700-58.581 us | 69.92-72.24 Mpiece/s |
+| Resolve final-piece origin, cold line index | 60.215-72.068 us | 56.84-68.02 Mpiece/s |
 
 An epoch rebase is not adopted. Bytes already remain bounded independently of
 metadata, observed piece growth meets the ≤2-per-edit design bound, 100,000
@@ -164,9 +193,10 @@ entries by layout generation without cloning metadata or allocating a
 fragment-count bitmap. A pointer-identity regression test also proves a
 snapshot retains its old length and no source bytes after later owner appends.
 
-This measurement deliberately excludes the flat `EditorLayout` rebuild, which
-remains O(pieces) and is tracked as a separate layout optimization rather than
-being hidden in the fragment-table claim.
+This measurement deliberately excludes the `EditorLayout` rebuild, which now
+costs O(Σ `v_f log v_f`) for the fragment/offset index in addition to the flat
+O(pieces) arrays. It remains a separate layout cost rather than being hidden in
+the fragment-table claim.
 
 ## Incremental memory
 

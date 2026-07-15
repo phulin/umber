@@ -38,7 +38,7 @@ const ALLOCATION_GRAPH_DEPTH: usize = 128;
 const ALLOCATION_LIST_LEN: usize = 1_024;
 const PAGE_QUEUE_LEN: usize = 65_536;
 const TOKEN_PROJECTION_SIZES: [usize; 3] = [64, 1_024, 16_384];
-const EDIT_STABLE_PIECES: usize = 4_096;
+const EDIT_STABLE_PIECE_COUNTS: [usize; 5] = [64, 256, 1_024, 4_096, 16_384];
 
 const HASH_MIX_INCREMENT: u64 = 0x9e37_79b9_7f4a_7c15;
 const HASH_INITIAL_STATE: u64 = 0x6a09_e667_f3bc_c909;
@@ -841,11 +841,12 @@ fn provenance_diagnostic_rendering(c: &mut Criterion) {
 }
 
 fn edit_stable_source_coordinates(c: &mut Criterion) {
-    let (fragments, layout, origin) = edit_stable_layout_case();
     let universe = Universe::new();
     let mut group = c.benchmark_group("edit_stable_source_coordinates");
-    group.throughput(Throughput::Elements(EDIT_STABLE_PIECES as u64));
+    let resolver = ProvenanceResolver::new(&universe);
 
+    let (fragments, layout, _, _) = edit_stable_layout_case(4_096);
+    group.throughput(Throughput::Elements(4_096));
     group.bench_function("layout_cursor_build_4096_pieces", |b| {
         b.iter(|| {
             black_box(
@@ -854,46 +855,69 @@ fn edit_stable_source_coordinates(c: &mut Criterion) {
             );
         });
     });
-
-    group.bench_function("resolve_last_piece_cold", |b| {
+    group.bench_function("resolve_last_piece_cold_4096_pieces", |b| {
         b.iter_batched(
-            edit_stable_layout_case,
-            |(fragments, layout, origin)| {
-                black_box(
-                    ProvenanceResolver::new(&universe)
-                        .resolve_layout_origin(origin, &fragments, &layout),
-                );
+            || edit_stable_layout_case(4_096),
+            |(fragments, layout, origin, _)| {
+                black_box(resolver.resolve_layout_origin(origin, &fragments, &layout));
             },
             BatchSize::SmallInput,
         );
     });
 
-    let resolver = ProvenanceResolver::new(&universe);
-    black_box(resolver.resolve_layout_origin(origin, &fragments, &layout));
-    group.bench_function("resolve_last_piece_warm", |b| {
-        b.iter(|| {
-            black_box(resolver.resolve_layout_origin(origin, &fragments, &layout));
-        });
-    });
+    for piece_count in EDIT_STABLE_PIECE_COUNTS {
+        let (fragments, layout, origin, deleted_origin) = edit_stable_layout_case(piece_count);
+        group.throughput(Throughput::Elements(piece_count as u64));
+
+        black_box(resolver.resolve_layout_origin(origin, &fragments, &layout));
+        group.bench_with_input(
+            BenchmarkId::new("resolve_last_piece_warm", piece_count),
+            &piece_count,
+            |b, _| {
+                b.iter(|| {
+                    black_box(resolver.resolve_layout_origin(origin, &fragments, &layout));
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("resolve_deleted", piece_count),
+            &piece_count,
+            |b, _| {
+                b.iter(|| {
+                    black_box(resolver.resolve_layout_origin(
+                        deleted_origin,
+                        &fragments,
+                        &layout,
+                    ));
+                });
+            },
+        );
+    }
     group.finish();
 }
 
-fn edit_stable_layout_case() -> (FragmentStore, EditorLayout, OriginId) {
-    let bytes = "x\n".repeat(EDIT_STABLE_PIECES);
+fn edit_stable_layout_case(
+    piece_count: usize,
+) -> (FragmentStore, EditorLayout, OriginId, OriginId) {
+    let bytes = format!("d\n{}", "x\n".repeat(piece_count));
     let mut fragments = FragmentStore::new();
     let (fragment, registration) = fragments
         .append(Arc::from(bytes.as_bytes()), 1)
         .expect("benchmark fragment fits logical position space");
-    let pieces = (0..EDIT_STABLE_PIECES)
-        .map(|index| Piece::new(fragment, (index * 2) as u32, (index * 2 + 2) as u32))
+    let pieces = (0..piece_count)
+        .map(|index| Piece::new(fragment, (index * 2 + 2) as u32, (index * 2 + 4) as u32))
         .collect();
     let layout = EditorLayout::new("<benchmark>", LayoutGeneration::new(1), pieces, &fragments)
         .expect("benchmark layout is valid");
-    let offset = ((EDIT_STABLE_PIECES - 1) * 2) as u64;
+    let offset = ((piece_count - 1) * 2 + 2) as u64;
     let origin = registration
         .direct_origin(offset, offset + 1)
         .expect("benchmark origin is directly encodable");
-    (fragments, layout, origin)
+    let deleted_origin = registration
+        .direct_origin(0, 1)
+        .expect("deleted benchmark origin is directly encodable");
+    (fragments, layout, origin, deleted_origin)
 }
 
 fn provenance_expansion(c: &mut Criterion) {
