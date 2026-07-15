@@ -33,6 +33,7 @@ mod binary;
 pub mod dvi;
 pub mod html;
 mod model;
+pub mod pdf;
 pub mod positioned;
 
 #[cfg(test)]
