@@ -52,6 +52,39 @@ fn origin_literal_moves_but_page_and_direct_literals_do_not() {
     );
 }
 
+#[test]
+fn direct_literal_preserves_text_state_but_page_literal_closes_it() {
+    let text = |bytes: &[u8]| {
+        PdfContentOperation::Text(PdfContentTextRun {
+            x: 0.0,
+            baseline: 0.0,
+            font_name: b"F1".to_vec(),
+            font_size: 10.0,
+            bytes: bytes.to_vec(),
+        })
+    };
+    let bytes = ordered_page_content(&[
+        text(b"A"),
+        PdfContentOperation::Literal {
+            mode: crate::PdfLiteralMode::Direct,
+            x: 0.0,
+            y: 0.0,
+            bytes: b"DIRECT".to_vec(),
+        },
+        text(b"B"),
+        PdfContentOperation::Literal {
+            mode: crate::PdfLiteralMode::Page,
+            x: 0.0,
+            y: 0.0,
+            bytes: b"PAGE".to_vec(),
+        },
+    ]);
+    let content = String::from_utf8(bytes).expect("ASCII content");
+    assert_eq!(content.matches("BT").count(), 1);
+    assert!(content.contains("(A) Tj\nDIRECT\n/F1"), "{content}");
+    assert!(content.contains("(B) Tj\nET\nPAGE"), "{content}");
+}
+
 fn id(raw: u32) -> PdfObjectId {
     PdfObjectId::new(raw).expect("nonzero test object id")
 }

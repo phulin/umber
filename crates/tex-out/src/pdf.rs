@@ -154,6 +154,7 @@ pub fn ordered_page_content(operations: &[PdfContentOperation]) -> Vec<u8> {
     let mut content = pdf_writer::Content::new();
     let mut origin = (0.0, 0.0);
     let mut saved_origins = Vec::new();
+    let mut in_text = false;
     let set_origin = |content: &mut pdf_writer::Content, origin: &mut (f32, f32), x, y| {
         let dx = x - origin.0;
         let dy = y - origin.1;
@@ -165,34 +166,43 @@ pub fn ordered_page_content(operations: &[PdfContentOperation]) -> Vec<u8> {
     for operation in operations {
         match operation {
             PdfContentOperation::Rectangle(rectangle) => {
+                end_pdf_text(&mut content, &mut in_text);
                 content
                     .rect(rectangle.x, rectangle.y, rectangle.width, rectangle.height)
                     .fill_nonzero();
             }
             PdfContentOperation::Text(run) => {
+                if !in_text {
+                    content.begin_text();
+                    in_text = true;
+                }
                 content
-                    .begin_text()
                     .set_font(Name(&run.font_name), run.font_size)
                     .set_text_matrix([1.0, 0.0, 0.0, 1.0, run.x, run.baseline])
-                    .show(Str(&run.bytes))
-                    .end_text();
+                    .show(Str(&run.bytes));
             }
             PdfContentOperation::Literal { mode, x, y, bytes } => {
+                if *mode != crate::PdfLiteralMode::Direct {
+                    end_pdf_text(&mut content, &mut in_text);
+                }
                 if *mode == crate::PdfLiteralMode::Origin {
                     set_origin(&mut content, &mut origin, *x, *y);
                 }
                 content.verbatim_operations(bytes);
             }
             PdfContentOperation::SetMatrix { x, y, matrix } => {
+                end_pdf_text(&mut content, &mut in_text);
                 set_origin(&mut content, &mut origin, *x, *y);
                 content.transform([matrix[0], matrix[1], matrix[2], matrix[3], 0.0, 0.0]);
             }
             PdfContentOperation::Save { x, y } => {
+                end_pdf_text(&mut content, &mut in_text);
                 set_origin(&mut content, &mut origin, *x, *y);
                 saved_origins.push(origin);
                 content.save_state();
             }
             PdfContentOperation::Restore { x, y } => {
+                end_pdf_text(&mut content, &mut in_text);
                 set_origin(&mut content, &mut origin, *x, *y);
                 content.restore_state();
                 if let Some(saved) = saved_origins.pop() {
@@ -201,7 +211,15 @@ pub fn ordered_page_content(operations: &[PdfContentOperation]) -> Vec<u8> {
             }
         }
     }
+    end_pdf_text(&mut content, &mut in_text);
     content.finish().to_vec()
+}
+
+fn end_pdf_text(content: &mut pdf_writer::Content, in_text: &mut bool) {
+    if *in_text {
+        content.end_text();
+        *in_text = false;
+    }
 }
 
 /// Stable indirect-object identity within one PDF document timeline.
