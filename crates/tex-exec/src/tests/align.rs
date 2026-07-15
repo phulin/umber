@@ -468,6 +468,16 @@ fn math_group_scanned_inside_cell_does_not_hide_row_terminator() {
 }
 
 #[test]
+fn end_template_closes_unterminated_math_before_packaging_cell() {
+    let stores = run_boxed_alignment_source("\\halign{#\\cr $x\\cr}");
+    let rows = vlist_rows(&stores, box_zero_vlist(&stores));
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(row_cells(&stores, rows[0]).len(), 1);
+    assert!(support::terminal_effect_text(&stores).contains("Missing $ inserted"));
+}
+
+#[test]
 fn split_hbox_template_injects_v_part_before_inline_math_row_terminator() {
     let stores = run_boxed_alignment_source(
         "\\halign{\\hbox to 20pt{#}\\cr \\hfil{}$\\mathrel{a}$Size$\\mathrel{b}$\\cr}",

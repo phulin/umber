@@ -338,7 +338,7 @@ fn head_for_vmode(command: TracedTokenWord, input: &mut InputStack, stores: &mut
     push_traced_tokens(input, stores, [TracedTokenWord::pack(par, origin), command]);
 }
 
-fn off_save_alignment(
+pub(crate) fn off_save_alignment(
     command: TracedTokenWord,
     input: &mut InputStack,
     stores: &mut Universe,

@@ -521,6 +521,16 @@ fn run_cell_body_until_terminator(
             Err(error) => return Err(error.into()),
         };
         let semantic = tex_expand::semantic_token(token);
+        if semantic.is_frozen_endv()
+            && matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath)
+        {
+            // TeX82 reaches `endv` through main_control. In math mode it must
+            // first apply `off_save`, which inserts the delimiter needed to
+            // close an intervening math or ordinary group and then retries
+            // the inaccessible token in the alignment cell's base mode.
+            crate::assignments::off_save_alignment(token, input, stores)?;
+            continue;
+        }
         if semantic.is_frozen_endv() {
             let terminator = input
                 .finish_alignment_cell()
