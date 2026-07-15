@@ -82,10 +82,7 @@ pub(super) fn scan_font_variable_target(
     match primitive {
         UnexpandablePrimitive::FontDimen => {
             let number = scan_i32(input, stores, execution, context)?;
-            if !(1..=i32::try_from(tex_state::font::MAX_FONT_DIMEN)
-                .expect("maximum fontdimen fits i32"))
-                .contains(&number)
-            {
+            if number < 1 {
                 return Err(ExecError::RegisterNumberOutOfRange(number));
             }
             let font = scan_font_selector(input, stores, execution)?;

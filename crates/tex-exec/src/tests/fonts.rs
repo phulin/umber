@@ -130,7 +130,7 @@ fn fontdimen_capacity_boundary_is_injective_and_recovers_without_mutation() {
     let mut stores = stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
-        "\\font\\f=cmr10 \\relax \\fontdimen1\\f=1pt \\fontdimen32768\\f=2pt \\fontdimen32769\\f=9pt \\message{first=\\the\\fontdimen1\\f,max=\\the\\fontdimen32768\\f,bad=\\the\\fontdimen32769\\f}\\end",
+        "\\font\\f=cmr10 \\relax \\fontdimen1\\f=1pt \\fontdimen131072\\f=2pt \\fontdimen131073\\f=9pt \\message{first=\\the\\fontdimen1\\f,max=\\the\\fontdimen131072\\f,bad=\\the\\fontdimen131073\\f}\\end",
     ));
 
     Executor::new()
@@ -138,13 +138,13 @@ fn fontdimen_capacity_boundary_is_injective_and_recovers_without_mutation() {
         .expect("out-of-range fontdimen assignment recovers");
 
     let font = font_meaning(&stores, "f");
-    assert_eq!(stores.font_parameter_count(font), 32_768);
+    assert_eq!(stores.font_parameter_count(font), 131_072);
     assert_eq!(
         stores.font_parameter(font, 1),
         Scaled::from_raw(Scaled::UNITY)
     );
     assert_eq!(
-        stores.font_parameter(font, 32_768),
+        stores.font_parameter(font, 131_072),
         Scaled::from_raw(2 * Scaled::UNITY)
     );
     let output = terminal_effect_text(&stores);
