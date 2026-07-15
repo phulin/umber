@@ -427,6 +427,11 @@ fn font_hash_fragment(font: &LoadedFont) -> StateHashFragment {
                 fragment.i32(i32::from(*amount));
                 fragment.bool(*no_ligatures);
             }
+            FontConstruction::Expanded { source, ratio } => {
+                fragment.u8(3);
+                fragment.bytes(&source.bytes());
+                fragment.i32(i32::from(*ratio));
+            }
         }
     })
 }

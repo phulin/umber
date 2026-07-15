@@ -3,10 +3,10 @@ use tex_lex::{InputStack, TokenListReplayKind};
 use tex_out::dvi::{DviPagePlan, DviPagePlanBuilder};
 use tex_out::{
     BoxNode as PageBoxNode, ContentHash as PageContentHash, DEFAULT_BANNER,
-    DiscKind as PageDiscKind, EffectSink, FontResource, GlueKind as PageGlueKind,
-    GlueOrder as PageGlueOrder, GlueSign, GlueSpec as PageGlueSpec, JobInfo,
-    KernKind as PageKernKind, LeaderPayload as PageLeaderPayload, PageEffect, PageNode, PageToken,
-    TokenCatcode, V10ArtifactBuilder, V10NodeListWriter,
+    DiscKind as PageDiscKind, EffectSink, FontResource, FontResourceConstruction,
+    GlueKind as PageGlueKind, GlueOrder as PageGlueOrder, GlueSign, GlueSpec as PageGlueSpec,
+    JobInfo, KernKind as PageKernKind, LeaderPayload as PageLeaderPayload, PageEffect, PageNode,
+    PageToken, TokenCatcode, V10ArtifactBuilder, V10NodeListWriter,
 };
 use tex_state::env::banks::DimenParam;
 use tex_state::glue::Order;
@@ -647,6 +647,21 @@ fn math_substitution(overlay: &PageOverlay, list: NodeListId, index: usize) -> O
 }
 
 fn font_resource_id(stores: &Universe, font: FontId, emission: &mut EmissionState) -> u32 {
+    let logical_id = register_font_resource(stores, font, emission);
+    match stores.font(font).construction() {
+        tex_fonts::FontConstruction::Loaded => logical_id,
+        tex_fonts::FontConstruction::Copied { source }
+        | tex_fonts::FontConstruction::Letterspaced { source, .. }
+        | tex_fonts::FontConstruction::Expanded { source, .. } => {
+            let source = stores
+                .font_by_source_identity(*source)
+                .expect("validated generated font source is live");
+            font_resource_id(stores, source, emission)
+        }
+    }
+}
+
+fn register_font_resource(stores: &Universe, font: FontId, emission: &mut EmissionState) -> u32 {
     let slot = font.raw() as usize;
     if emission.font_slots.len() <= slot {
         emission.font_slots.resize(slot + 1, None);
@@ -656,6 +671,43 @@ fn font_resource_id(stores: &Universe, font: FontId, emission: &mut EmissionStat
     }
     let id = font.raw().saturating_sub(1);
     let loaded = stores.font(font);
+    let construction = match loaded.construction() {
+        tex_fonts::FontConstruction::Loaded => FontResourceConstruction::Loaded,
+        tex_fonts::FontConstruction::Copied { source } => {
+            let source_font = stores
+                .font_by_source_identity(*source)
+                .expect("validated copied font source is live");
+            FontResourceConstruction::Copied {
+                source_font_id: register_font_resource(stores, source_font, emission),
+                source_identity: *source,
+            }
+        }
+        tex_fonts::FontConstruction::Letterspaced {
+            source,
+            amount,
+            no_ligatures,
+        } => {
+            let source_font = stores
+                .font_by_source_identity(*source)
+                .expect("validated letterspaced font source is live");
+            FontResourceConstruction::Letterspaced {
+                source_font_id: register_font_resource(stores, source_font, emission),
+                source_identity: *source,
+                amount: *amount,
+                no_ligatures: *no_ligatures,
+            }
+        }
+        tex_fonts::FontConstruction::Expanded { source, ratio } => {
+            let source_font = stores
+                .font_by_source_identity(*source)
+                .expect("validated expanded font source is live");
+            FontResourceConstruction::Expanded {
+                source_font_id: register_font_resource(stores, source_font, emission),
+                source_identity: *source,
+                ratio: *ratio,
+            }
+        }
+    };
     emission.fonts.push(FontResource {
         font_id: id,
         name: loaded.name().to_owned(),
@@ -669,6 +721,8 @@ fn font_resource_id(stores: &Universe, font: FontId, emission: &mut EmissionStat
             instance_identity: font.instance_identity,
             container: font.container,
         }),
+        semantic_identity: loaded.source_identity(),
+        construction,
     });
     emission.font_slots[slot] = Some(id);
     id

@@ -1,7 +1,7 @@
 use crate::{
-    BoxNode, ContentHash, DiscKind, EffectSink, FontResource, GlueKind, GlueOrder, GlueSetRatio,
-    GlueSign, GlueSpec, KernKind, LeaderPayload, PageArtifact, PageEffect, PageNode, PageToken,
-    TokenCatcode, UnvalidatedPageArtifact,
+    BoxNode, ContentHash, DiscKind, EffectSink, FontResource, FontResourceConstruction, GlueKind,
+    GlueOrder, GlueSetRatio, GlueSign, GlueSpec, KernKind, LeaderPayload, PageArtifact, PageEffect,
+    PageNode, PageToken, TokenCatcode, UnvalidatedPageArtifact,
 };
 use std::fmt;
 use tex_arith::Scaled;
@@ -56,6 +56,13 @@ mod wire {
         pub const LOG: u8 = 1;
         pub const TERMINAL_AND_LOG: u8 = 2;
         pub const STREAM: u8 = 3;
+    }
+
+    pub mod font_construction {
+        pub const LOADED: u8 = 0;
+        pub const COPIED: u8 = 1;
+        pub const LETTERSPACED: u8 = 2;
+        pub const EXPANDED: u8 = 3;
     }
 }
 
@@ -1342,6 +1349,40 @@ impl Writer {
                 }
                 None => self.u8(0),
             }
+            self.raw(&font.semantic_identity.bytes());
+            match font.construction {
+                FontResourceConstruction::Loaded => self.u8(wire::font_construction::LOADED),
+                FontResourceConstruction::Copied {
+                    source_font_id,
+                    source_identity,
+                } => {
+                    self.u8(wire::font_construction::COPIED);
+                    self.u32(source_font_id);
+                    self.raw(&source_identity.bytes());
+                }
+                FontResourceConstruction::Letterspaced {
+                    source_font_id,
+                    source_identity,
+                    amount,
+                    no_ligatures,
+                } => {
+                    self.u8(wire::font_construction::LETTERSPACED);
+                    self.u32(source_font_id);
+                    self.raw(&source_identity.bytes());
+                    self.raw(&amount.to_le_bytes());
+                    self.u8(u8::from(no_ligatures));
+                }
+                FontResourceConstruction::Expanded {
+                    source_font_id,
+                    source_identity,
+                    ratio,
+                } => {
+                    self.u8(wire::font_construction::EXPANDED);
+                    self.u32(source_font_id);
+                    self.raw(&source_identity.bytes());
+                    self.raw(&ratio.to_le_bytes());
+                }
+            }
         }
     }
 
@@ -1790,7 +1831,9 @@ impl Reader<'_> {
     }
 
     fn fonts(&mut self, version: u8) -> Result<Vec<FontResource>, ParseError> {
-        let len = self.collection_len(if version >= OPENTYPE_FONT_VERSION {
+        let len = self.collection_len(if version >= VERSION {
+            125
+        } else if version >= OPENTYPE_FONT_VERSION {
             53
         } else {
             52
@@ -1842,6 +1885,57 @@ impl Reader<'_> {
             } else {
                 None
             };
+            let (semantic_identity, construction) = if version >= VERSION {
+                let semantic_identity = tex_fonts::FontSourceIdentity::from_bytes(self.identity()?);
+                let tag = self.u8()?;
+                let construction = match tag {
+                    wire::font_construction::LOADED => FontResourceConstruction::Loaded,
+                    wire::font_construction::COPIED => FontResourceConstruction::Copied {
+                        source_font_id: self.u32()?,
+                        source_identity: tex_fonts::FontSourceIdentity::from_bytes(
+                            self.identity()?,
+                        ),
+                    },
+                    wire::font_construction::LETTERSPACED => {
+                        FontResourceConstruction::Letterspaced {
+                            source_font_id: self.u32()?,
+                            source_identity: tex_fonts::FontSourceIdentity::from_bytes(
+                                self.identity()?,
+                            ),
+                            amount: i16::from_le_bytes(self.take(2)?.try_into().unwrap()),
+                            no_ligatures: match self.u8()? {
+                                0 => false,
+                                1 => true,
+                                tag => {
+                                    return Err(ParseError::InvalidTag {
+                                        kind: "letterspace no-ligatures flag",
+                                        tag,
+                                    });
+                                }
+                            },
+                        }
+                    }
+                    wire::font_construction::EXPANDED => FontResourceConstruction::Expanded {
+                        source_font_id: self.u32()?,
+                        source_identity: tex_fonts::FontSourceIdentity::from_bytes(
+                            self.identity()?,
+                        ),
+                        ratio: i16::from_le_bytes(self.take(2)?.try_into().unwrap()),
+                    },
+                    tag => {
+                        return Err(ParseError::InvalidTag {
+                            kind: "font construction",
+                            tag,
+                        });
+                    }
+                };
+                (semantic_identity, construction)
+            } else {
+                (
+                    tex_fonts::FontSourceIdentity::from_bytes([0; 32]),
+                    FontResourceConstruction::Loaded,
+                )
+            };
             fonts.push(FontResource {
                 font_id,
                 name,
@@ -1850,6 +1944,8 @@ impl Reader<'_> {
                 design_size,
                 at_size,
                 opentype,
+                semantic_identity,
+                construction,
             });
         }
         Ok(fonts)

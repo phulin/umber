@@ -107,6 +107,10 @@ enum FormatFontConstruction {
         amount: i16,
         no_ligatures: bool,
     },
+    Expanded {
+        source: [u8; 32],
+        ratio: i16,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -785,6 +789,12 @@ impl FormatFont {
                     amount: *amount,
                     no_ligatures: *no_ligatures,
                 },
+                tex_fonts::FontConstruction::Expanded { source, ratio } => {
+                    FormatFontConstruction::Expanded {
+                        source: source.bytes(),
+                        ratio: *ratio,
+                    }
+                }
             },
         }
     }
@@ -805,6 +815,12 @@ impl FormatFont {
                 amount,
                 no_ligatures,
             },
+            FormatFontConstruction::Expanded { source, ratio } => {
+                tex_fonts::FontConstruction::Expanded {
+                    source: tex_fonts::FontSourceIdentity::from_bytes(source),
+                    ratio,
+                }
+            }
         };
         LoadedFont::new(
             self.name,

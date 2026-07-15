@@ -127,6 +127,8 @@ pub enum ArtifactValidationError {
     EmptyFontName { font_id: u32 },
     InvalidFontSize { font_id: u32 },
     MissingFont { font_id: u32 },
+    MissingFontSource { font_id: u32, source_font_id: u32 },
+    FontSourceIdentityMismatch { font_id: u32, source_font_id: u32 },
     MissingEffect { effect_index: u32 },
     CharacterOutOfRange { ch: u32 },
     InvalidLigatureSourceLength { count: usize },
@@ -174,6 +176,28 @@ pub struct FontResource {
     pub design_size: Scaled,
     pub at_size: Scaled,
     pub opentype: Option<OpenTypeFontResource>,
+    pub semantic_identity: tex_fonts::FontSourceIdentity,
+    pub construction: FontResourceConstruction,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum FontResourceConstruction {
+    Loaded,
+    Copied {
+        source_font_id: u32,
+        source_identity: tex_fonts::FontSourceIdentity,
+    },
+    Letterspaced {
+        source_font_id: u32,
+        source_identity: tex_fonts::FontSourceIdentity,
+        amount: i16,
+        no_ligatures: bool,
+    },
+    Expanded {
+        source_font_id: u32,
+        source_identity: tex_fonts::FontSourceIdentity,
+        ratio: i16,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -384,6 +408,7 @@ fn validate_artifact(
     }
 
     let mut font_ids = std::collections::BTreeSet::new();
+    let mut font_identities = std::collections::BTreeMap::new();
     for font in &artifact.fonts {
         if !font_ids.insert(font.font_id) {
             return Err(ArtifactValidationError::DuplicateFont {
@@ -399,6 +424,40 @@ fn validate_artifact(
             return Err(ArtifactValidationError::InvalidFontSize {
                 font_id: font.font_id,
             });
+        }
+        font_identities.insert(font.font_id, font.semantic_identity);
+    }
+    for font in &artifact.fonts {
+        let source = match font.construction {
+            FontResourceConstruction::Loaded => None,
+            FontResourceConstruction::Copied {
+                source_font_id,
+                source_identity,
+            }
+            | FontResourceConstruction::Letterspaced {
+                source_font_id,
+                source_identity,
+                ..
+            }
+            | FontResourceConstruction::Expanded {
+                source_font_id,
+                source_identity,
+                ..
+            } => Some((source_font_id, source_identity)),
+        };
+        if let Some((source_font_id, source_identity)) = source {
+            let Some(actual) = font_identities.get(&source_font_id) else {
+                return Err(ArtifactValidationError::MissingFontSource {
+                    font_id: font.font_id,
+                    source_font_id,
+                });
+            };
+            if *actual != source_identity {
+                return Err(ArtifactValidationError::FontSourceIdentityMismatch {
+                    font_id: font.font_id,
+                    source_font_id,
+                });
+            }
         }
     }
     for effect in &artifact.effects {

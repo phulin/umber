@@ -70,6 +70,10 @@ pub enum FontConstruction {
         amount: i16,
         no_ligatures: bool,
     },
+    Expanded {
+        source: FontSourceIdentity,
+        ratio: i16,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -203,6 +207,11 @@ impl LoadedFont {
                 hasher.update(source.bytes());
                 hasher.update(amount.to_le_bytes());
                 hasher.update([u8::from(no_ligatures)]);
+            }
+            FontConstruction::Expanded { source, ratio } => {
+                hasher.update([3]);
+                hasher.update(source.bytes());
+                hasher.update(ratio.to_le_bytes());
             }
         }
         FontSourceIdentity(hasher.finalize().into())

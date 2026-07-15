@@ -168,6 +168,8 @@ pub(super) struct FontKey {
     tfm_checksum: u32,
     design_size: Scaled,
     at_size: Scaled,
+    semantic_identity: tex_fonts::FontSourceIdentity,
+    construction: crate::FontResourceConstruction,
 }
 
 impl From<&FontResource> for FontKey {
@@ -179,6 +181,8 @@ impl From<&FontResource> for FontKey {
             tfm_checksum: font.tfm_checksum,
             design_size: font.design_size,
             at_size: font.at_size,
+            semantic_identity: font.semantic_identity,
+            construction: font.construction.clone(),
         }
     }
 }

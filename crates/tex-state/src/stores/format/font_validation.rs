@@ -57,7 +57,8 @@ impl StoreFormat {
             let source = match font.construction {
                 FormatFontConstruction::Loaded => None,
                 FormatFontConstruction::Copied { source }
-                | FormatFontConstruction::Letterspaced { source, .. } => Some(source),
+                | FormatFontConstruction::Letterspaced { source, .. }
+                | FormatFontConstruction::Expanded { source, .. } => Some(source),
             };
             if source.is_some_and(|source| !source_identities.contains(&source)) {
                 return Err(StoreFormatError::Invalid(
