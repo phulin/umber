@@ -35,10 +35,12 @@ WASM session option `engine: "pdftex"` select this layer and its truthful
 semantics remain in later checklist issues fail explicitly as unsupported
 rather than behaving like `\relax`.
 
-The two fully implemented pdfTeX-layer names are `\expanded` and
-`\ifincsname`. The 55 parameter names have typed, assignable state, but their
-downstream PDF and typesetting effects remain assigned to checklist issues
-4--8; the other 101 exact names still lack their final semantics.
+In addition to `\expanded` and `\ifincsname`, the output-policy slice now
+implements `\pdfoutput`, PDF major/minor version, stream/object compression,
+decimal precision, the page-box controls, and the three legacy `\pdfoption...`
+aliases. The other parameter effects remain assigned to checklist issues 4
+and 6--8; the remaining exact names still fail explicitly until their issue is
+complete.
 There are two intentional pre-existing visibility overlaps: e-TeX mode keeps
 `\ifincsname`, and the supported LaTeX-DVI contract keeps `\expanded` (and
 inherits `\ifincsname` through e-TeX). The source-set gate therefore requires
@@ -57,7 +59,7 @@ oracle-backed test. Every name in a missing row is missing.
 | Family (source registration block) | Count | Status | Primitive names |
 | --- | ---: | --- | --- |
 | PDF token-list parameters | 4 | partial (state done) | `\pdfpagesattr`, `\pdfpageattr`, `\pdfpageresources`, `\pdfpkmode` |
-| PDF integer parameters | 38 | partial (state done) | `\pdfoutput`, `\pdfcompresslevel`, `\pdfobjcompresslevel`, `\pdfdecimaldigits`, `\pdfmovechars`, `\pdfimageresolution`, `\pdfpkresolution`, `\pdfuniqueresname`, `\pdfoptionpdfminorversion`, `\pdfoptionalwaysusepdfpagebox`, `\pdfoptionpdfinclusionerrorlevel`, `\pdfmajorversion`, `\pdfminorversion`, `\pdfforcepagebox`, `\pdfpagebox`, `\pdfinclusionerrorlevel`, `\pdfgamma`, `\pdfimagegamma`, `\pdfimagehicolor`, `\pdfimageapplygamma`, `\pdfadjustspacing`, `\pdfprotrudechars`, `\pdftracingfonts`, `\pdfadjustinterwordglue`, `\pdfprependkern`, `\pdfappendkern`, `\pdfgentounicode`, `\pdfdraftmode`, `\pdfinclusioncopyfonts`, `\pdfsuppresswarningdupdest`, `\pdfsuppresswarningdupmap`, `\pdfsuppresswarningpagegroup`, `\pdfinfoomitdate`, `\pdfsuppressptexinfo`, `\pdfomitcharset`, `\pdfomitinfodict`, `\pdfomitprocset`, `\pdfptexuseunderscore` |
+| PDF integer parameters | 38 | partial (output policy done; remaining state only) | `\pdfoutput`, `\pdfcompresslevel`, `\pdfobjcompresslevel`, `\pdfdecimaldigits`, `\pdfmovechars`, `\pdfimageresolution`, `\pdfpkresolution`, `\pdfuniqueresname`, `\pdfoptionpdfminorversion`, `\pdfoptionalwaysusepdfpagebox`, `\pdfoptionpdfinclusionerrorlevel`, `\pdfmajorversion`, `\pdfminorversion`, `\pdfforcepagebox`, `\pdfpagebox`, `\pdfinclusionerrorlevel`, `\pdfgamma`, `\pdfimagegamma`, `\pdfimagehicolor`, `\pdfimageapplygamma`, `\pdfadjustspacing`, `\pdfprotrudechars`, `\pdftracingfonts`, `\pdfadjustinterwordglue`, `\pdfprependkern`, `\pdfappendkern`, `\pdfgentounicode`, `\pdfdraftmode`, `\pdfinclusioncopyfonts`, `\pdfsuppresswarningdupdest`, `\pdfsuppresswarningdupmap`, `\pdfsuppresswarningpagegroup`, `\pdfinfoomitdate`, `\pdfsuppressptexinfo`, `\pdfomitcharset`, `\pdfomitinfodict`, `\pdfomitprocset`, `\pdfptexuseunderscore` |
 | PDF dimension parameters | 13 | partial (state done) | `\pdfhorigin`, `\pdfvorigin`, `\pdfpagewidth`, `\pdfpageheight`, `\pdflinkmargin`, `\pdfdestmargin`, `\pdfthreadmargin`, `\pdffirstlineheight`, `\pdflastlinedepth`, `\pdfeachlineheight`, `\pdfeachlinedepth`, `\pdfignoreddimen`, `\pdfpxdimen` |
 | Font construction and primitive recovery | 3 | missing | `\letterspacefont`, `\pdfcopyfont`, `\pdfprimitive` |
 | Read-only integer enquiries | 14 | missing | `\pdftexversion`, `\pdflastobj`, `\pdflastxform`, `\pdflastximage`, `\pdflastximagepages`, `\pdflastannot`, `\pdflastxpos`, `\pdflastypos`, `\pdfretval`, `\pdflastximagecolordepth`, `\pdfelapsedtime`, `\pdfshellescape`, `\pdfrandomseed`, `\pdflastlink` |
@@ -83,6 +85,14 @@ Assignments therefore inherit TeX grouping, `\global`, and `\globaldefs`
 semantics from the common environment barrier, while snapshots, semantic
 hashes, and format images include the values through the existing bank
 machinery. Downstream consumers must not introduce shadow parameter state.
+
+The completed output-policy consumer freezes normalized values at the first
+committed shipout and uses `pdf_writer` for ordinary streams, object streams,
+type-2 cross-reference entries, and final framing. The committed INITEX oracle
+at `tests/corpus/tex_exec/pdf_output_policy` covers defaults, grouping, range
+recovery, and diagnostics; focused hermetic tests cover the three shared alias
+cells, fatal post-write changes, PDF headers and object-compression levels,
+decimal rounding, and unchanged DVI output.
 
 ## Compatibility and alias decisions
 

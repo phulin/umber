@@ -527,6 +527,13 @@ mod tests {
                 "\\pdfhorigin=30pt ",
                 "\\pdfpagesattr{global}} ",
                 "\\pdfoptionpdfminorversion=7 ",
+                "\\pdfoptionalwaysusepdfpagebox=2 ",
+                "\\pdfoptionpdfinclusionerrorlevel=1 ",
+                "{\\pdfoptionpdfminorversion=6 ",
+                "\\pdfoptionalwaysusepdfpagebox=4 ",
+                "\\pdfoptionpdfinclusionerrorlevel=3 ",
+                "\\message{aliases-local=\\the\\pdfminorversion/\\the\\pdfforcepagebox/\\the\\pdfinclusionerrorlevel}} ",
+                "\\message{aliases-restored=\\the\\pdfminorversion/\\the\\pdfforcepagebox/\\the\\pdfinclusionerrorlevel} ",
                 "\\end",
             ),
             &mut stores,
@@ -535,8 +542,12 @@ mod tests {
 
         assert!(output.contains("local=3/20.0pt/inner"), "{output}");
         assert!(output.contains("restored=7/10.0pt/outer"), "{output}");
+        assert!(output.contains("aliases-local=6/4/3"), "{output}");
+        assert!(output.contains("aliases-restored=7/2/1"), "{output}");
         assert_eq!(stores.int_param(IntParam::PDF_COMPRESS_LEVEL), 4);
         assert_eq!(stores.int_param(IntParam::PDF_MINOR_VERSION), 7);
+        assert_eq!(stores.int_param(IntParam::PDF_FORCE_PAGE_BOX), 2);
+        assert_eq!(stores.int_param(IntParam::PDF_INCLUSION_ERROR_LEVEL), 1);
         assert_eq!(
             stores.dimen_param(DimenParam::PDF_H_ORIGIN),
             Scaled::from_raw(30 * 65_536)
@@ -544,6 +555,59 @@ mod tests {
         assert_eq!(
             token_list_text(&stores, stores.tok_param(TokParam::PDF_PAGES_ATTR)),
             "global"
+        );
+    }
+
+    #[test]
+    fn pdf_output_policy_matches_the_pinned_initex_oracle() {
+        let reference = test_support::read_fixture("tex_exec", "pdf_output_policy", "ref");
+        for expected in [
+            "defaults=0/1.4/9/0/3",
+            "local=3/6 restored=7/5",
+            "pdfTeX error (invalid pdfmajorversion)",
+            "pdfTeX error (invalid pdfminorversion)",
+            "Object streams disabled now",
+            "recovered=1.4",
+        ] {
+            assert!(
+                reference.contains(expected),
+                "missing {expected:?}: {reference}"
+            );
+        }
+
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let output = crate::run_memory_with_stores(
+            include_str!("../../../tests/corpus/tex_exec/pdf_output_policy.tex"),
+            &mut stores,
+        )
+        .expect("Umber recovers from the pinned range cases");
+        let terminal = stores.world().memory_terminal_output().unwrap_or_default();
+        let observed = format!("{}{}", String::from_utf8_lossy(terminal), output);
+        for expected in [
+            "defaults=0/1.4/9/0/3",
+            "local=3/6",
+            "restored=7/5",
+            "pdfTeX error (invalid pdfmajorversion)",
+            "pdfTeX error (invalid pdfminorversion)",
+            "Object streams disabled now",
+            "recovered=1.4",
+        ] {
+            assert!(
+                observed.contains(expected),
+                "missing {expected:?}: {observed}"
+            );
+        }
+        assert_eq!(
+            stores.fixed_pdf_output_parameters(),
+            Some(tex_state::PdfOutputParameters {
+                output: 1,
+                major_version: 1,
+                minor_version: 4,
+                compress_level: 7,
+                object_compress_level: 0,
+                decimal_digits: 4,
+            })
         );
     }
 

@@ -1,0 +1,16 @@
+\catcode`\{=1
+\catcode`\}=2
+\newlinechar=10
+\message{defaults=\the\pdfoutput/\the\pdfmajorversion.\the\pdfminorversion/\the\pdfcompresslevel/\the\pdfobjcompresslevel/\the\pdfdecimaldigits}
+\pdfcompresslevel=7
+\pdfminorversion=5
+{\pdfcompresslevel=3\pdfminorversion=6\message{local=\the\pdfcompresslevel/\the\pdfminorversion}}
+\message{restored=\the\pdfcompresslevel/\the\pdfminorversion}
+\pdfoutput=1
+\pdfmajorversion=0
+\pdfminorversion=12
+\pdfobjcompresslevel=9
+\pdfdecimaldigits=9
+\shipout\vbox{\hrule width10.12345pt height5pt}
+\message{recovered=\the\pdfmajorversion.\the\pdfminorversion}
+\end

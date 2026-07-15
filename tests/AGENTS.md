@@ -90,7 +90,9 @@ otherwise leak into byte output.
 `tests/corpus/tex_exec` contains small reference-observation sources and
 normalized `<case>.expected.ref` outputs used by `tex-exec` crate-internal
 tests for grouping, after-token ordering, magnification diagnostics, and
-box-register behavior.
+box-register behavior. The `pdf_output_policy` case runs pinned pdfTeX in
+INITEX mode so output-control defaults and first-write recovery do not inherit
+format-file assignments; its fixture also anchors Umber's PDF policy tests.
 
 `tests/corpus/tex_exec_io` contains small file-effect and DVI special-payload
 sources plus reference observations used by `tex-exec` I/O and shipout tests.

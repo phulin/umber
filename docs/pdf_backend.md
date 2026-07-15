@@ -86,13 +86,14 @@ Compact, uncompressed output is the default. Options can request
 at levels 0--9; the adapter supplies compressed bytes and declares
 `/FlateDecode` through the crate's stream API. Automatic compression rejects
 streams that already declare `/Filter` or `/DecodeParms`. Object streams are a
-later adapter policy over the same structural graph. The pinned local
+PDF 1.5-or-newer adapter policy over the same structural graph. The pinned local
 `pdf-writer` fork exposes an object-stream builder that serializes eligible
 non-stream values through `Obj`, registers their container and index, and emits
-matching type-2 entries from `finish_with_xref_stream`. Levels 1--3 can
-therefore select their eligible object set without any PDF syntax in `tex-out`;
-stream objects remain ordinary type-1 entries. None of these byte policies
-change semantic identity.
+matching type-2 entries from `finish_with_xref_stream`. Positive
+`\pdfobjcompresslevel` values 1--3 enable that path; stream objects remain
+ordinary type-1 entries. When stream compression is enabled, ordinary,
+object, and cross-reference streams all declare deterministic Flate encoding
+through `pdf_writer`. None of these byte policies change semantic identity.
 
 The selected 0.15.0 source fork is path-pinned in the workspace manifest and
 lockfile, retains both upstream licenses, and records its crates.io checksum
@@ -116,7 +117,21 @@ finalization barrier as DVI and HTML. The current integration deliberately
 returns typed errors for text and specials until their resource-owning
 primitive slices are implemented; a minimal rule-only page is complete.
 
+pdfTeX mode freezes `\pdfoutput`, the PDF version, stream/object compression,
+and decimal precision at the first committed shipout. Invalid major/minor
+versions recover to 1.4 with the pinned diagnostics; compression and precision
+use pdfTeX's bounded first-write values. Later output-mode or version changes
+are fatal setup errors. `\pdfdecimaldigits` controls page-box and rule-number
+rounding, and DVI plans remain byte-identical whether PDF mode is selected or
+not.
+
 ## Parity oracle
+
+`tests/corpus/tex_exec/pdf_output_policy` is regenerated with pinned pdfTeX
+1.40.27 in INITEX mode. It commits the output-control defaults, TeX grouping,
+first-write range recovery, warning text, and recovered version. Hermetic
+Umber tests pair that fixture with alias-cell, fatal setup, version header,
+object-stream/type-2-xref, decimal rounding, and DVI/PDF switching assertions.
 
 Committed `tests/corpus/pdf` minimal fixtures are regenerated only through
 `scripts/regen-fixtures.sh --area pdf` or its `--case pdf/<case>` form. The

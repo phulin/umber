@@ -208,7 +208,11 @@ fn regenerate_etex_reference_log_case(case: &str) -> Result<()> {
 }
 
 fn regenerate_tex_exec_case(case: &str) -> Result<()> {
-    let output = RefTex::locate()?.run(&source_path("tex_exec", case), &RunOpts::default())?;
+    let mut opts = RunOpts::default();
+    if case == "pdf_output_policy" {
+        opts.ini = true;
+    }
+    let output = RefTex::locate()?.run(&source_path("tex_exec", case), &opts)?;
     write_text_fixture("tex_exec", case, "ref", &format_micro_reference(&output))
 }
 
