@@ -15,9 +15,9 @@ use tex_state::env::banks::{IntParam, TokParam};
 use tex_state::ids::FontId;
 use tex_state::ids::TokenListId;
 use tex_state::{
-    CommittedArtifact, ContentHash, PDF_CATALOG_OBJECT_ID, PDF_PAGES_OBJECT_ID,
-    PdfActionDestination, PdfActionIdentifier, PdfActionRecord, PdfActionSpec, PdfActionTarget,
-    PdfActionWindow, PdfDocumentFragmentKind, PdfOutputParameters, Universe, WorldError,
+    CommittedArtifact, ContentHash, PdfActionDestination, PdfActionIdentifier, PdfActionRecord,
+    PdfActionSpec, PdfActionTarget, PdfActionWindow, PdfDocumentFragmentKind, PdfOutputParameters,
+    Universe, WorldError,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -77,14 +77,22 @@ pub fn pdf_from_committed_artifacts_at_dpi(
     }
     let version = pdf_version(parameters)?;
     let options = serialization_options(parameters)?;
-    let catalog_id = object_id(PDF_CATALOG_OBJECT_ID)?;
-    let pages_id = object_id(PDF_PAGES_OBJECT_ID)?;
     let page_records = stores.pdf_pages().to_vec();
     let font_usage = collect_font_usage(stores, artifacts, &page_records)?;
     let include_info = stores.int_param(IntParam::PDF_OMIT_INFO_DICT) == 0;
     let document_ids = stores
         .finalize_pdf_document_objects(include_info)
         .map_err(|_| PdfBuildError::ObjectCapacity)?;
+    let catalog_id = object_id(
+        document_ids
+            .catalog()
+            .expect("PDF finalization allocates the catalog"),
+    )?;
+    let pages_id = object_id(
+        document_ids
+            .pages()
+            .expect("PDF finalization allocates the page tree"),
+    )?;
     let mut next_object = stores.pdf_next_object_id();
     let mut objects =
         Vec::with_capacity(2 + page_records.len() * 3 + stores.pdf_raw_objects().len() + 2);
@@ -1639,9 +1647,9 @@ mod tests {
         );
         assert!(first.windows(2).any(|window| window == b"re"));
         assert_eq!(stores.pdf_pages().len(), 1);
-        assert_eq!(stores.pdf_pages()[0].resources_object(), 3);
-        assert_eq!(stores.pdf_pages()[0].contents_object(), 4);
-        assert_eq!(stores.pdf_pages()[0].page_object(), 5);
+        assert_eq!(stores.pdf_pages()[0].resources_object(), 1);
+        assert_eq!(stores.pdf_pages()[0].page_object(), 2);
+        assert_eq!(stores.pdf_pages()[0].contents_object(), 3);
     }
 
     #[test]
@@ -1689,6 +1697,7 @@ mod tests {
                 "\\font\\f=cmr10 ",
                 "\\pdfmapline{=cmr10 CMR10 <fixture.enc <<cmr10.pfb}",
                 "\\pdffontattr\\f{/TestAttr 42}",
+                "\\immediate\\pdfobj{<< /Kind /AllocatorProbe >>}",
                 "\\shipout\\hbox{\\f\\char65\\char66\\char67}\\end",
             ),
         );
@@ -1704,7 +1713,22 @@ mod tests {
         );
         let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
             .expect("text PDF assembles");
+        let replay = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
+            .expect("text PDF replay assembles");
+        assert_eq!(pdf, replay);
         let parsed = lopdf::Document::load_mem(&pdf).expect("lopdf parses output");
+        assert_eq!(
+            parsed
+                .get_object((1, 0))
+                .expect("raw allocator probe")
+                .as_dict()
+                .expect("raw probe dictionary")
+                .get(b"Kind")
+                .expect("probe Kind")
+                .as_name()
+                .expect("probe name"),
+            b"AllocatorProbe"
+        );
         assert_eq!(
             parsed
                 .extract_text(&[1])
@@ -2322,8 +2346,15 @@ mod tests {
         let pages = parsed.get_pages();
         assert_eq!(pages.len(), 2);
 
+        let pages_id = parsed
+            .catalog()
+            .expect("catalog")
+            .get(b"Pages")
+            .expect("page-tree reference")
+            .as_reference()
+            .expect("Pages is indirect");
         let pages_root = parsed
-            .get_object((PDF_PAGES_OBJECT_ID, 0))
+            .get_object(pages_id)
             .expect("pages root")
             .as_dict()
             .expect("pages dictionary");
@@ -2513,13 +2544,14 @@ mod tests {
         ));
         let bytes = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
             .expect("fixed-policy PDF assembles");
+        let first_contents = stores.pdf_pages()[0].contents_object();
 
         assert!(bytes.starts_with(b"%PDF-1.5"));
         assert!(bytes.windows(12).any(|window| window == b"/Type/ObjStm"));
         let parsed = lopdf::Document::load_mem(&bytes).expect("fixed-policy PDF parses");
         assert_eq!(parsed.get_pages().len(), 2);
         let contents = parsed
-            .get_object((4, 0))
+            .get_object((first_contents, 0))
             .expect("first contents")
             .as_stream()
             .expect("contents stream");
@@ -2563,8 +2595,9 @@ mod tests {
 
             let parsed = lopdf::Document::load_mem(&first).expect("object-stream PDF parses");
             assert_eq!(parsed.get_pages().len(), 1);
+            let contents_id = stores.pdf_pages()[0].contents_object();
             let contents = parsed
-                .get_object((4, 0))
+                .get_object((contents_id, 0))
                 .expect("ordinary content stream")
                 .as_stream()
                 .expect("contents stream");
@@ -2592,7 +2625,7 @@ mod tests {
             &mut stores,
             concat!(
                 "\\pdfoutput=1\\pdfminorversion=5\\pdfcompresslevel=0\\pdfobjcompresslevel=1",
-                "\\pdfobj{<< /Kind /Ordinary >>}\\pdfrefobj 3",
+                "\\pdfobj{<< /Kind /Ordinary >>}\\pdfrefobj 1",
                 "\\immediate\\pdfobj stream attr {/Subtype /XML}{stream payload}",
                 "\\immediate\\pdfobj stream file {payload.bin}",
                 "\\pdfcatalog{/PageMode /UseNone}",
@@ -2608,7 +2641,7 @@ mod tests {
         let parsed = lopdf::Document::load_mem(&pdf).expect("lopdf parses extension output");
 
         let ordinary = parsed
-            .get_object((3, 0))
+            .get_object((1, 0))
             .expect("referenced ordinary object")
             .as_dict()
             .expect("ordinary raw dictionary");
@@ -2621,7 +2654,7 @@ mod tests {
             b"Ordinary"
         );
         let stream = parsed
-            .get_object((4, 0))
+            .get_object((2, 0))
             .expect("immediate stream")
             .as_stream()
             .expect("stream object");
@@ -2637,7 +2670,7 @@ mod tests {
         );
         assert_eq!(
             parsed
-                .get_object((5, 0))
+                .get_object((3, 0))
                 .expect("file stream")
                 .as_stream()
                 .expect("file stream object")
@@ -2659,6 +2692,7 @@ mod tests {
             .expect("Names")
             .as_reference()
             .expect("Names reference");
+        assert_eq!(names_id, (8, 0));
         assert!(
             parsed
                 .get_object(names_id)
@@ -2709,18 +2743,18 @@ mod tests {
         let (mut stores, run_result) = run(concat!(
             "\\pdfoutput=1\\pdfcompresslevel=0\\pdfobjcompresslevel=0",
             "\\pdfcatalog{/PageMode /UseNone} openaction goto page 1 {/Fit}",
-            "\\pdfobj{(raw)}\\pdfrefobj 5",
+            "\\pdfobj{(raw)}\\pdfrefobj 3",
             "\\shipout\\vbox{\\hrule width1pt height1pt}\\end",
         ));
         let action = stores
             .pdf_catalog_open_action()
             .expect("open action record");
-        assert_eq!(action.id(), 3);
-        assert_eq!(action.target_object(), Some(4));
-        assert_eq!(stores.pdf_raw_objects()[0].id().raw(), 5);
-        assert_eq!(stores.pdf_pages()[0].resources_object(), 6);
-        assert_eq!(stores.pdf_pages()[0].contents_object(), 7);
-        assert_eq!(stores.pdf_pages()[0].page_object(), 4);
+        assert_eq!(action.id(), 1);
+        assert_eq!(action.target_object(), Some(2));
+        assert_eq!(stores.pdf_raw_objects()[0].id().raw(), 3);
+        assert_eq!(stores.pdf_pages()[0].resources_object(), 4);
+        assert_eq!(stores.pdf_pages()[0].contents_object(), 5);
+        assert_eq!(stores.pdf_pages()[0].page_object(), 2);
 
         let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
             .expect("open action PDF assembles");
@@ -2732,10 +2766,10 @@ mod tests {
                 .expect("OpenAction")
                 .as_reference()
                 .expect("action reference"),
-            (3, 0)
+            (1, 0)
         );
         let action = parsed
-            .get_object((3, 0))
+            .get_object((1, 0))
             .expect("action object")
             .as_dict()
             .expect("action dictionary");
@@ -2756,7 +2790,7 @@ mod tests {
             destination[0]
                 .as_reference()
                 .expect("destination page reference"),
-            (4, 0)
+            (2, 0)
         );
         assert_eq!(destination[1].as_name().expect("destination view"), b"Fit");
     }
@@ -2808,10 +2842,10 @@ mod tests {
 
     #[test]
     fn referenced_reserved_object_fails_before_pdf_writer_publication() {
-        let (mut stores, run_result) = run("\\pdfoutput=1\\pdfobj reserveobjnum\\pdfrefobj 3\\end");
+        let (mut stores, run_result) = run("\\pdfoutput=1\\pdfobj reserveobjnum\\pdfrefobj 1\\end");
         assert!(matches!(
             pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts),
-            Err(PdfBuildError::ReferencedRawObjectUninitialized(3))
+            Err(PdfBuildError::ReferencedRawObjectUninitialized(1))
         ));
     }
 

@@ -1942,14 +1942,14 @@ fn pdf_page_allocation_replays_identical_object_ids_and_hashes() {
     let first_page = universe.pdf_pages()[0];
     let first_state_hash = universe.snapshot().state_hash();
     assert_eq!(first_page.artifact(), first_hash);
-    assert_eq!(first_page.resources_object(), 3);
-    assert_eq!(first_page.contents_object(), 4);
-    assert_eq!(first_page.page_object(), 5);
-    assert_eq!(universe.pdf_next_object_id(), 6);
+    assert_eq!(first_page.resources_object(), 1);
+    assert_eq!(first_page.page_object(), 2);
+    assert_eq!(first_page.contents_object(), 3);
+    assert_eq!(universe.pdf_next_object_id(), 4);
 
     universe.rollback(&before);
     assert!(universe.pdf_pages().is_empty());
-    assert_eq!(universe.pdf_next_object_id(), 3);
+    assert_eq!(universe.pdf_next_object_id(), 1);
 
     let effect_pos = universe.world().effect_pos();
     let replay_hash = universe
@@ -1995,7 +1995,7 @@ fn first_shipout_freezes_pdf_controls_and_dvi_mode_allocates_no_pdf_page() {
     assert_eq!(fixed.object_compress_level, 3);
     assert_eq!(fixed.decimal_digits, 4);
     assert!(universe.pdf_pages().is_empty());
-    assert_eq!(universe.pdf_next_object_id(), 3);
+    assert_eq!(universe.pdf_next_object_id(), 1);
 
     universe.set_int_param(IntParam::PDF_OUTPUT, 1);
     assert_eq!(
@@ -2029,7 +2029,7 @@ fn failed_shipout_does_not_allocate_pdf_objects() {
         .expect_err("effect failure rejects shipout");
 
     assert!(universe.pdf_pages().is_empty());
-    assert_eq!(universe.pdf_next_object_id(), 3);
+    assert_eq!(universe.pdf_next_object_id(), 1);
 }
 
 #[test]

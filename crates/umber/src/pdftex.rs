@@ -482,8 +482,8 @@ mod tests {
             concat!(
                 "\\pdfoutput=1",
                 "\\pdfobj reserveobjnum",
-                "\\pdfobj useobjnum 3 stream attr {/Subtype /XML} {payload}",
-                "\\pdfrefobj 3",
+                "\\pdfobj useobjnum 1 stream attr {/Subtype /XML} {payload}",
+                "\\pdfrefobj 1",
                 "\\immediate\\pdfobj {42}",
                 "\\end",
             ),
@@ -491,18 +491,18 @@ mod tests {
         )
         .expect("execute raw PDF objects");
 
-        assert_eq!(stores.pdf_last_object(), 4);
+        assert_eq!(stores.pdf_last_object(), 2);
         let records = stores.pdf_raw_objects();
         assert_eq!(records.len(), 2);
         let first = records[0];
         let first_data = first.data().expect("initialized reserved object");
-        assert_eq!(first.id().raw(), 3);
+        assert_eq!(first.id().raw(), 1);
         assert!(first_data.is_stream());
         assert!(!first_data.is_file());
         assert!(first_data.stream_attr().is_some());
         assert!(first.is_referenced());
         assert!(!first.is_immediate());
-        assert_eq!(records[1].id().raw(), 4);
+        assert_eq!(records[1].id().raw(), 2);
         assert!(records[1].is_immediate());
     }
 
@@ -515,7 +515,7 @@ mod tests {
             &mut stores,
         )
         .expect("recover invalid useobjnum");
-        assert_eq!(stores.pdf_last_object(), 3);
+        assert_eq!(stores.pdf_last_object(), 1);
 
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
@@ -544,14 +544,14 @@ mod tests {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
         crate::run_memory_with_stores(
-            "\\pdfoutput=1\\pdfobj{x}\\setbox0=\\hbox{\\pdfrefobj 3}\\end",
+            "\\pdfoutput=1\\pdfobj{x}\\setbox0=\\hbox{\\pdfrefobj 1}\\end",
             &mut stores,
         )
         .expect("discarded reference box executes");
         assert!(
             !stores
-                .pdf_raw_object(3)
-                .expect("raw object 3")
+                .pdf_raw_object(1)
+                .expect("raw object 1")
                 .is_referenced()
         );
 
@@ -560,15 +560,15 @@ mod tests {
         crate::run_memory_with_stores(
             concat!(
                 "\\pdfoutput=1\\pdfobj{x}",
-                "\\setbox0=\\hbox{\\pdfrefobj 3}\\shipout\\box0\\end",
+                "\\setbox0=\\hbox{\\pdfrefobj 1}\\shipout\\box0\\end",
             ),
             &mut stores,
         )
         .expect("shipped reference box executes");
         assert!(
             stores
-                .pdf_raw_object(3)
-                .expect("raw object 3")
+                .pdf_raw_object(1)
+                .expect("raw object 1")
                 .is_referenced()
         );
     }
@@ -675,7 +675,7 @@ mod tests {
         )
         .expect("open action scans");
         let action = stores.pdf_catalog_open_action().expect("catalog action");
-        assert_eq!(action.id(), 3);
+        assert_eq!(action.id(), 1);
         let tex_state::PdfActionSpec::GoTo(destination) = action.spec() else {
             panic!("expected GoTo action");
         };

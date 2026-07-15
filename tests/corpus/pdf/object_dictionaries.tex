@@ -9,8 +9,7 @@
 \pdfhorigin=0pt
 \pdfvorigin=0pt
 \pdfobj reserveobjnum
-\edef\reserved{\the\pdflastobj}
-\pdfobj useobjnum \reserved stream attr {/Subtype /XML} {stream payload}
+\pdfobj useobjnum 1 stream attr {/Subtype /XML} {stream payload}
 \immediate\pdfobj{<< /Kind /Immediate >>}
 \pdfcatalog{/PageMode /UseNone}
 \pdfcatalog{/ViewerPreferences << /HideToolbar true >>} openaction goto page 1 {/Fit}
@@ -19,6 +18,6 @@
 \pdfinfo{/Subject (Parity fixture)}
 \pdftrailer{/Custom true}
 \pdftrailerid{object-dictionary-fixture}
-\setbox0=\vbox{\pdfrefobj \reserved\hrule width 10pt height 5pt}
+\setbox0=\vbox{\pdfrefobj 1\hrule width 10pt height 5pt}
 \shipout\box0
 \end

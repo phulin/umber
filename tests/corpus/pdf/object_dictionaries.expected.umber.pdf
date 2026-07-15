@@ -2,30 +2,24 @@
 %€€€€
 
 1 0 obj
-<</Type/Catalog/Names 9 0 R/OpenAction 5 0 R/Pages 2 0 R /PageMode /UseNone/ViewerPreferences << /HideToolbar true >>>>
-endobj
-2 0 obj
-<</Count 1/Kids[6 0 R]/Type/Pages>>
-endobj
-3 0 obj
 <</Length 14 /Subtype /XML>>
 stream
 stream payload
 endstream
 endobj
-4 0 obj
+2 0 obj
 << /Kind /Immediate >>
 endobj
+3 0 obj
+<< /S /GoTo /D [4 0 R /Fit] >>
+endobj
+4 0 obj
+<</Contents 6 0 R/MediaBox[0 0 9.963 4.981]/Parent 7 0 R/Resources 5 0 R/Type/Page>>
+endobj
 5 0 obj
-<< /S /GoTo /D [6 0 R /Fit] >>
-endobj
-6 0 obj
-<</Contents 8 0 R/MediaBox[0 0 9.963 4.981]/Parent 2 0 R/Resources 7 0 R/Type/Page>>
-endobj
-7 0 obj
 <</ProcSet[/PDF]>>
 endobj
-8 0 obj
+6 0 obj
 <</Length 24>>
 stream
 q
@@ -34,27 +28,33 @@ f
 Q
 endstream
 endobj
-9 0 obj
+7 0 obj
+<</Count 1/Kids[4 0 R]/Type/Pages>>
+endobj
+8 0 obj
 << /EmbeddedFiles << >>>>
 endobj
+9 0 obj
+<</Type/Catalog/Names 8 0 R/OpenAction 3 0 R/Pages 7 0 R /PageMode /UseNone/ViewerPreferences << /HideToolbar true >>>>
+endobj
 10 0 obj
-<< /Title (Objects and dictionaries)/Subject (Parity fixture)>>
+<</CreationDate(D:20260709133600Z)/Creator(TeX)/ModDate(D:20260709133600Z)/PTEX.Fullbanner(This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025))/Producer(pdfTeX-1.40.27)/Trapped/False /Title (Objects and dictionaries)/Subject (Parity fixture)>>
 endobj
 xref
 0 11
 0000000000 65535 f
 0000000016 00000 n
-0000000151 00000 n
-0000000202 00000 n
-0000000278 00000 n
-0000000316 00000 n
-0000000362 00000 n
-0000000462 00000 n
-0000000496 00000 n
-0000000568 00000 n
+0000000092 00000 n
+0000000130 00000 n
+0000000176 00000 n
+0000000276 00000 n
+0000000310 00000 n
+0000000382 00000 n
+0000000433 00000 n
+0000000474 00000 n
 0000000609 00000 n
 trailer
-<</Size 11/Root 1 0 R/Info 10 0 R /Custom true/ID[<95E1CAD27741C91D014E5DC18B0F75F8><95E1CAD27741C91D014E5DC18B0F75F8>]>>
+<</Size 11/Root 9 0 R/Info 10 0 R /Custom true/ID[<95E1CAD27741C91D014E5DC18B0F75F8><95E1CAD27741C91D014E5DC18B0F75F8>]>>
 startxref
-689
+881
 %%EOF

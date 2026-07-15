@@ -22,14 +22,26 @@ pub enum PdfDocumentFragmentKind {
 /// Canonical ledger identities allocated for final document dictionaries.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct PdfDocumentObjectIds {
+    pages: Option<u32>,
     names: Option<u32>,
+    catalog: Option<u32>,
     info: Option<u32>,
 }
 
 impl PdfDocumentObjectIds {
     #[must_use]
+    pub const fn pages(self) -> Option<u32> {
+        self.pages
+    }
+
+    #[must_use]
     pub const fn names(self) -> Option<u32> {
         self.names
+    }
+
+    #[must_use]
+    pub const fn catalog(self) -> Option<u32> {
+        self.catalog
     }
 
     #[must_use]
@@ -37,8 +49,16 @@ impl PdfDocumentObjectIds {
         self.info
     }
 
+    pub(crate) fn set_pages(&mut self, id: u32) {
+        self.pages = Some(id);
+    }
+
     pub(crate) fn set_names(&mut self, id: u32) {
         self.names = Some(id);
+    }
+
+    pub(crate) fn set_catalog(&mut self, id: u32) {
+        self.catalog = Some(id);
     }
 
     pub(crate) fn set_info(&mut self, id: u32) {

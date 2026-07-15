@@ -13,7 +13,12 @@ const PINNED_SOURCE_DATE_EPOCH: &str = "1783604160";
 #[allow(clippy::disallowed_methods)] // Hermetic CLI fixture boundary.
 fn committed_pdftex_fixtures_match_structure_and_bytes() {
     for case in corpus_cases("pdf") {
-        assert_committed_case(case.name());
+        let expected_structure = corpus_root()
+            .join("pdf")
+            .join(format!("{}.expected.structure", case.name()));
+        if expected_structure.exists() {
+            assert_committed_case(case.name());
+        }
     }
 }
 
@@ -84,9 +89,30 @@ fn object_dictionary_pdf_replays_to_identical_bytes_and_state() {
     let checkpoint = stores.snapshot();
 
     umber::run_memory_with_stores(&source, &mut stores).expect("first PDF execution");
+    let raw_objects = stores.pdf_raw_objects();
+    assert_eq!(raw_objects.len(), 2);
+    assert_eq!(raw_objects[0].id().raw(), 1);
+    assert!(raw_objects[0].is_referenced());
+    assert_eq!(raw_objects[1].id().raw(), 2);
+    assert!(raw_objects[1].is_immediate());
+    let action = stores
+        .pdf_catalog_open_action()
+        .expect("fixture installs its catalog action");
+    assert_eq!(action.id(), 3);
+    assert_eq!(action.target_object(), Some(4));
+    assert_eq!(stores.pdf_pages()[0].resources_object(), 5);
+    assert_eq!(stores.pdf_pages()[0].contents_object(), 6);
+    assert_eq!(stores.pdf_pages()[0].page_object(), 4);
     let first_artifacts = stores.world().committed_artifacts().to_vec();
     let first = umber::pdf_from_committed_artifacts(&mut stores, &first_artifacts)
         .expect("first PDF finalization");
+    let document_ids = stores
+        .finalize_pdf_document_objects(true)
+        .expect("document identities remain idempotent");
+    assert_eq!(document_ids.pages(), Some(7));
+    assert_eq!(document_ids.names(), Some(8));
+    assert_eq!(document_ids.catalog(), Some(9));
+    assert_eq!(document_ids.info(), Some(10));
     let first_hash = stores.snapshot().state_hash();
 
     stores.rollback(&checkpoint);

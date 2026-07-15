@@ -34,11 +34,15 @@ roots; rollback removes allocations and mutations in the discarded suffix,
 so replay receives the same identities. An object number is not a content
 hash and is never reused on a live descendant timeline.
 
-The implemented engine ledger reserves object 1 for the catalog and object 2
-for the page-tree root. Each successful pdfTeX-mode shipout atomically reserves
-the next three identities for its resource dictionary, content stream, and
-page dictionary and records the committed artifact hash beside them. The
-append occurs only after artifact storage and effect commit succeed. Scoped
+The implemented engine ledger begins at object 1, so the first user object or
+font enquiry observes the same identity as pdfTeX. An ordinary successful
+pdfTeX-mode shipout atomically reserves its resource dictionary, page
+dictionary, and content stream in that order. A page identity reserved earlier
+by an action is reused while shipout allocates only its resource and content
+objects. Page-tree, optional Names, catalog, and optional Info dictionaries are
+allocated idempotently from the same ledger during finalization, after page
+objects, in pdfTeX order. The page append occurs only after artifact storage
+and effect commit succeed. Scoped
 shipout failure, ordinary snapshot rollback, and retained-generation rollback
 therefore remove the entire suffix and replay the same identities and semantic
 hash. A format may be dumped with an enabled but empty ledger; any committed
@@ -213,12 +217,13 @@ objects with catalog, open-action, names, info, trailer, and trailer-ID input.
 Its retained-session regression rolls back and replays the source, requiring
 identical PDF bytes and finalized engine-state hashes.
 
-The normalized graph currently deliberately hides indirect-object numbers.
-That is appropriate for writer-layout differences, but it does not prove
-observable `\pdflastobj` numbering parity: Umber's eagerly reserved catalog and
-page-tree identities offset user object numbers from pdfTeX. The object parity
-gate therefore remains open until allocation order is aligned and a focused
-oracle asserts those numbers.
+The normalized graph deliberately hides indirect-object numbers because
+writer layout is not semantic structure. A separate focused oracle asserts the
+observable identities: the composed case allocates raw objects 1 and 2, its
+action and forward page as 3 and 4, page resources and content as 5 and 6, and
+the page tree, Names, catalog, and Info dictionaries as 7 through 10. It also
+uses `useobjnum 1` and `\pdfrefobj 1`, so explicit identity preservation is not
+masked by normalization.
 
 ## Delivery gates
 

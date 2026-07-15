@@ -24,10 +24,15 @@
 /// checkpointed PDF font resource and indirect-object identities. Version 16
 /// adds typed external-image metadata used by pdfTeX page-box enquiries.
 /// Version 17 adds reserved and initialized raw PDF object records.
+/// Version 18 adds document dictionary/trailer fragments and their final
+/// object identities. Version 19 adds typed catalog actions and forward page
+/// reservations.
+/// Version 20 aligns canonical PDF allocation order with pdfTeX, including
+/// user objects, pages, and final document dictionaries.
 /// Hashes are
 /// comparable only when both this version and the named-boundary schedule
 /// match.
-pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 19;
+pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 20;
 
 pub mod cell;
 pub mod code_tables;
@@ -63,13 +68,12 @@ pub mod token_store;
 mod universe;
 
 pub use pdf::{
-    PDF_CATALOG_OBJECT_ID, PDF_PAGES_OBJECT_ID, PdfActionDestination, PdfActionIdentifier,
-    PdfActionRecord, PdfActionSpec, PdfActionTarget, PdfActionWindow, PdfDocumentFragmentKind,
-    PdfDocumentObjectIds, PdfExternalImageId, PdfExternalImageIdError, PdfExternalImageMetadata,
-    PdfExternalImageRegistrationError, PdfFontConfiguration, PdfFontMapOperation,
-    PdfFontResourceRecord, PdfGlyphToUnicode, PdfObjectCapacityError, PdfOutputParameters,
-    PdfPageBox, PdfPageRecord, PdfRawObjectData, PdfRawObjectId, PdfRawObjectInitializeError,
-    PdfRawObjectRecord,
+    PdfActionDestination, PdfActionIdentifier, PdfActionRecord, PdfActionSpec, PdfActionTarget,
+    PdfActionWindow, PdfDocumentFragmentKind, PdfDocumentObjectIds, PdfExternalImageId,
+    PdfExternalImageIdError, PdfExternalImageMetadata, PdfExternalImageRegistrationError,
+    PdfFontConfiguration, PdfFontMapOperation, PdfFontResourceRecord, PdfGlyphToUnicode,
+    PdfObjectCapacityError, PdfOutputParameters, PdfPageBox, PdfPageRecord, PdfRawObjectData,
+    PdfRawObjectId, PdfRawObjectInitializeError, PdfRawObjectRecord,
 };
 pub mod world;
 

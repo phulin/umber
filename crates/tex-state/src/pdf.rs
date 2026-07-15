@@ -27,9 +27,7 @@ const PDF_STATE_DOMAIN: u64 = 0x7064_665f_7374_6174;
 const PDF_PAGE_DOMAIN: u64 = 0x7064_665f_7061_6765;
 const PDF_FONT_DOMAIN: u64 = 0x7064_665f_666f_6e74;
 const PDF_EXTERNAL_IMAGE_DOMAIN: u64 = 0x7064_665f_7869_6d67;
-pub const PDF_CATALOG_OBJECT_ID: u32 = 1;
-pub const PDF_PAGES_OBJECT_ID: u32 = 2;
-const FIRST_DYNAMIC_OBJECT: u32 = 3;
+const FIRST_DYNAMIC_OBJECT: u32 = 1;
 const OBJECTS_PER_PAGE: u32 = 3;
 const MAX_OBJECT_ID: u32 = i32::MAX as u32;
 
@@ -611,8 +609,8 @@ impl PdfState {
         let record = PdfPageRecord {
             artifact,
             resources_object: self.next_object,
-            contents_object: self.next_object + 1,
-            page_object: reserved_page.unwrap_or(self.next_object + 2),
+            contents_object: self.next_object + u32::from(reserved_page.is_none()) + 1,
+            page_object: reserved_page.unwrap_or(self.next_object + 1),
             parameters: page,
         };
         self.next_object += if reserved_page.is_some() {
@@ -1104,6 +1102,10 @@ impl PdfState {
         &mut self,
         include_info: bool,
     ) -> Result<PdfDocumentObjectIds, PdfObjectCapacityError> {
+        if self.document_objects.pages().is_none() {
+            let id = self.reserve_document_object()?;
+            self.document_objects.set_pages(id);
+        }
         if self.document_objects.names().is_none()
             && self
                 .document_fragments(PdfDocumentFragmentKind::Names)
@@ -1112,6 +1114,10 @@ impl PdfState {
         {
             let id = self.reserve_document_object()?;
             self.document_objects.set_names(id);
+        }
+        if self.document_objects.catalog().is_none() {
+            let id = self.reserve_document_object()?;
+            self.document_objects.set_catalog(id);
         }
         if include_info && self.document_objects.info().is_none() {
             let id = self.reserve_document_object()?;
@@ -1233,8 +1239,16 @@ impl PdfState {
             hasher.u64(cursor.document_fragment_fingerprint);
             hasher.u64(cursor.action_fingerprint);
             hasher.u64(cursor.page_reservation_fingerprint);
+            hasher.bool(cursor.document_objects.pages().is_some());
+            if let Some(id) = cursor.document_objects.pages() {
+                hasher.u32(id);
+            }
             hasher.bool(cursor.document_objects.names().is_some());
             if let Some(id) = cursor.document_objects.names() {
+                hasher.u32(id);
+            }
+            hasher.bool(cursor.document_objects.catalog().is_some());
+            if let Some(id) = cursor.document_objects.catalog() {
                 hasher.u32(id);
             }
             hasher.bool(cursor.document_objects.info().is_some());
@@ -1720,9 +1734,9 @@ mod tests {
         let initial_hash = state.hash_fragment();
 
         let first = state.reserve_raw_object().expect("reserve raw object");
-        assert_eq!(first.raw(), 3);
-        assert_eq!(state.last_raw_object(), 3);
-        assert_eq!(state.next_object(), 4);
+        assert_eq!(first.raw(), 1);
+        assert_eq!(state.last_raw_object(), 1);
+        assert_eq!(state.next_object(), 2);
         assert_eq!(state.raw_object(first).expect("reserved").data(), None);
         let tokens = PdfTokenParameter {
             tokens: TokenListId::EMPTY,
@@ -1746,7 +1760,7 @@ mod tests {
         state.rollback(initial);
         assert_eq!(state.raw_object(first), None);
         assert_eq!(state.last_raw_object(), 0);
-        assert_eq!(state.next_object(), 3);
+        assert_eq!(state.next_object(), 1);
         assert_eq!(state.hash_fragment(), initial_hash);
         let replay = state.reserve_raw_object().expect("replay reservation");
         state
@@ -1805,6 +1819,97 @@ mod tests {
     }
 
     #[test]
+    fn mixed_resource_allocation_is_collision_free_and_replays_exactly() {
+        let mut pk_bytes = vec![247, 89, 0];
+        pk_bytes.extend_from_slice(&[0; 16]);
+        pk_bytes.extend_from_slice(&[0xe0, 9, 65, 0, 0, 0, 3, 3, 2, 0, 1, 0b1010_1000]);
+        pk_bytes.push(245);
+        let pk_font = tex_fonts::PdfPkFont::parse(&pk_bytes).expect("synthetic PK parses");
+        let pk_request = tex_fonts::PdfPkFontRequest::new(b"cmr10".to_vec(), 300, b"cx".to_vec());
+        let token = PdfTokenParameter {
+            tokens: TokenListId::EMPTY,
+            semantic_id: 29,
+        };
+        let output = PdfOutputParameters {
+            output: 1,
+            major_version: 1,
+            minor_version: 4,
+            compress_level: 0,
+            object_compress_level: 0,
+            decimal_digits: 3,
+            gamma: 0,
+            image_gamma: 0,
+            image_hicolor: 0,
+            image_apply_gamma: 0,
+            draft_mode: 0,
+            inclusion_copy_fonts: 0,
+            pk_resolution: 300,
+            unique_resource_names: 0,
+        };
+        let page = PdfPageParameters {
+            h_origin: Scaled::from_raw(0),
+            v_origin: Scaled::from_raw(0),
+            width: Scaled::from_raw(1),
+            height: Scaled::from_raw(1),
+            page_attr: token,
+            resources: token,
+            omit_procset: 0,
+        };
+        let exercise = |state: &mut PdfState| {
+            state.provide_pk_font(pk_request.clone(), pk_font.clone());
+            state
+                .register_external_image(
+                    PdfExternalImageId::new(99).expect("image identity"),
+                    PdfExternalImageMetadata::Raster,
+                )
+                .expect("image metadata");
+            let font = state
+                .ensure_font_resource(
+                    crate::font::NULL_FONT,
+                    tex_fonts::FontSourceIdentity::from_bytes([7; 32]),
+                    [11; 32],
+                    None,
+                )
+                .expect("font object");
+            let raw = state.reserve_raw_object().expect("raw object");
+            state
+                .initialize_raw_object(raw, PdfRawObjectData::new(false, None, false, token), true)
+                .expect("raw data");
+            state.commit_page(ContentHash::new([13; 32]), output, page, token);
+            state.append_document_fragment(PdfDocumentFragmentKind::Names, token);
+            let document = state
+                .finalize_document_objects(true)
+                .expect("document objects");
+            let page = state.pages()[0];
+            vec![
+                font.object_number(),
+                raw.raw(),
+                page.resources_object(),
+                page.page_object(),
+                page.contents_object(),
+                document.pages().expect("pages"),
+                document.names().expect("names"),
+                document.catalog().expect("catalog"),
+                document.info().expect("info"),
+            ]
+        };
+
+        let mut state = PdfState::default();
+        state.enable();
+        let initial = state.snapshot();
+        let first = exercise(&mut state);
+        assert_eq!(first, (1..=9).collect::<Vec<_>>());
+        let completed_hash = state.hash_fragment();
+        let completed_cursor = state.cursor();
+
+        state.rollback(initial);
+        let replay = exercise(&mut state);
+        assert_eq!(replay, first);
+        assert_eq!(state.cursor(), completed_cursor);
+        assert_eq!(state.hash_fragment(), completed_hash);
+    }
+
+    #[test]
     fn final_document_objects_allocate_once_through_the_shared_ledger() {
         let mut state = PdfState::default();
         state.enable();
@@ -1813,14 +1918,16 @@ mod tests {
             semantic_id: 7,
         };
         let raw = state.reserve_raw_object().expect("raw object");
-        assert_eq!(raw.raw(), 3);
+        assert_eq!(raw.raw(), 1);
         state.append_document_fragment(PdfDocumentFragmentKind::Names, token);
         let before = state.snapshot();
 
         let objects = state
             .finalize_document_objects(true)
             .expect("final dictionaries");
-        assert_eq!(objects.names(), Some(4));
+        assert_eq!(objects.pages(), Some(2));
+        assert_eq!(objects.names(), Some(3));
+        assert_eq!(objects.catalog(), Some(4));
         assert_eq!(objects.info(), Some(5));
         assert_eq!(state.next_object(), 6);
         assert_eq!(
@@ -1832,7 +1939,7 @@ mod tests {
         );
 
         state.rollback(before);
-        assert_eq!(state.next_object(), 4);
+        assert_eq!(state.next_object(), 2);
         let replay = state
             .finalize_document_objects(true)
             .expect("replayed finalization");
@@ -1857,9 +1964,9 @@ mod tests {
         let record = state
             .set_catalog_open_action(action, action.fingerprint(|_| 17))
             .expect("reserve action and page target");
-        assert_eq!(record.id(), 3);
-        assert_eq!(record.target_object(), Some(4));
-        assert_eq!(state.next_object(), 5);
+        assert_eq!(record.id(), 1);
+        assert_eq!(record.target_object(), Some(2));
+        assert_eq!(state.next_object(), 3);
 
         let parameters = PdfOutputParameters {
             output: 1,
@@ -1895,9 +2002,9 @@ mod tests {
             },
             token,
         );
-        assert_eq!(state.pages()[0].resources_object(), 5);
-        assert_eq!(state.pages()[0].contents_object(), 6);
-        assert_eq!(state.pages()[0].page_object(), 4);
+        assert_eq!(state.pages()[0].resources_object(), 3);
+        assert_eq!(state.pages()[0].contents_object(), 4);
+        assert_eq!(state.pages()[0].page_object(), 2);
         let completed_hash = state.hash_fragment();
 
         state.rollback(initial.clone());

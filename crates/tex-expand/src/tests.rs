@@ -66,14 +66,16 @@ fn pdf_font_enquiries_share_stable_resource_and_object_identities() {
         assert_eq!(cat, Catcode::Other);
         output.push(ch);
     }
-    assert_eq!(output, "131334");
-    assert_eq!(stores.pdf_next_object_id(), 5);
+    assert_eq!(output, "111132");
+    assert_eq!(stores.pdf_next_object_id(), 3);
+    let resources = stores.pdf_font_resources().collect::<Vec<_>>();
+    assert_eq!(resources.len(), 2);
     assert_eq!(
         stores
             .pdf_font_resources()
             .map(|record| (record.resource_number(), record.object_number()))
             .collect::<Vec<_>>(),
-        vec![(1, 3), (3, 4)]
+        vec![(1, 1), (3, 2)]
     );
 }
 
@@ -102,14 +104,14 @@ fn pdf_last_object_reads_the_checkpointed_canonical_ledger() {
     crate::install_expandable_primitives(&mut stores);
     crate::install_pdftex_expandable_primitives(&mut stores);
 
-    for (expected, reserve) in [("0", false), ("3", true)] {
+    for (expected, reserve) in [("0", false), ("1", true)] {
         if reserve {
             assert_eq!(
                 stores
                     .reserve_pdf_raw_object()
                     .expect("reserve raw object")
                     .raw(),
-                3
+                1
             );
         }
         let mut input = InputStack::new(MemoryInput::new("\\the\\pdflastobj"));

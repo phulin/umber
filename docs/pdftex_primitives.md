@@ -234,8 +234,9 @@ immediate objects, document dictionary fragments, trailer fragments, and
 custom trailer IDs are lowered only through the `pdf_writer` adapter; raw
 syntax is confined to writer-framed object bodies or dictionary extension
 entries. Repeated info, catalog, names, trailer, and trailer-ID token lists are
-expanded when scanned and concatenated in source order. Final Names and Info
-dictionary identities are allocated idempotently from the same ledger. The
+expanded when scanned and concatenated in source order. Final page-tree,
+Names, catalog, and Info dictionary identities are allocated idempotently from
+the same ledger in pdfTeX order. The
 optional `\pdfcatalog ... openaction` suffix is scanned into a typed action
 model shared with the later link and outline slices. Its action, destination,
 structure, and forward-page identities are reserved immediately from that same
@@ -245,9 +246,10 @@ reference and writer-framed action object without folding it into raw catalog
 fragment bytes. The pinned `object_dictionaries` PDF fixture composes these
 forms and document dictionaries, compares their normalized graph and exact
 rendering with pdfTeX, and requires byte-identical retained-snapshot replay.
-Exact user-visible object numbering is still gated separately: the current
-eager catalog/page-tree reservations offset `\pdflastobj` from pdfTeX and must
-be aligned before the object/dictionary parity issue can close.
+Its focused identity assertions require raw objects 1 and 2, action/forward
+page identities 3 and 4, page resource/content identities 5 and 6, and final
+document identities 7 through 10, including exact `useobjnum` and `\pdfrefobj`
+preservation.
 
 The generated-font and microtype slice implements independent copied and
 letterspaced font state, validated `\pdffontexpand` configuration, discrete
