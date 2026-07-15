@@ -4,8 +4,8 @@ use tex_expand::scan::{
     scan_general_text_expanded_with_driver, scan_toks, scan_toks_expanded_with_driver,
 };
 use tex_expand::{
-    DriverExpansionMode, ExpandError, get_x_token_with_context, scan_dimen, scan_glue, scan_int,
-    scan_optional_keyword_with_context,
+    DriverExpansionMode, ExpandError, get_command_token_with_context, get_x_token_with_context,
+    scan_dimen, scan_glue, scan_int, scan_optional_keyword_with_context,
 };
 use tex_lex::{InputStack, LexError, TokenListReplayKind};
 use tex_state::code_tables::{DelCode, LcCode, MathCode, SfCode, UcCode};
@@ -420,7 +420,7 @@ fn accumulate_prefixes(
         }
 
         let traced = loop {
-            let traced = get_x_token_with_context(
+            let traced = get_command_token_with_context(
                 input,
                 &mut tex_state::ExpansionContext::new(stores),
                 execution,
@@ -433,21 +433,6 @@ fn accumulate_prefixes(
             if let Token::Cs(symbol) = token
                 && stores.meaning(symbol) == Meaning::Relax
             {
-                continue;
-            }
-            if let Token::Cs(symbol) = token
-                && matches!(
-                    stores.meaning(symbol),
-                    Meaning::Macro { flags, .. }
-                        if prefixes.flags.contains(MeaningFlags::PROTECTED)
-                            && flags.contains(MeaningFlags::PROTECTED)
-                )
-            {
-                // `\unexpanded` suppresses expansion only while its result is
-                // being returned. Once a prefixed-command scan asks for the
-                // next command, a protected macro in that result is ordinary
-                // command-demand input and expands (e-TeX manual §3.1).
-                crate::push_tokens(input, stores, [token]);
                 continue;
             }
             break traced;

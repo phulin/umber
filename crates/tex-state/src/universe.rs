@@ -4480,6 +4480,7 @@ fn hash_token_list_replay_kind(kind: TokenListReplayKind, hasher: &mut StateHash
         TokenListReplayKind::MacroBody => 0,
         TokenListReplayKind::MacroArgument => 1,
         TokenListReplayKind::NoExpand => 2,
+        TokenListReplayKind::Unexpanded => 10,
         TokenListReplayKind::EveryPar => 3,
         TokenListReplayKind::EveryCr => 4,
         TokenListReplayKind::Mark => 5,

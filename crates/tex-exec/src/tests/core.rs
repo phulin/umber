@@ -3832,3 +3832,25 @@ fn protected_prefix_resumes_command_demand_after_unexpanded_tokens() {
     assert_eq!(stores.tokens(replacement).len(), 1);
     assert!(!terminal_effect_text(&stores).contains("You can't use a prefix"));
 }
+
+#[test]
+fn global_prefix_resumes_command_demand_inside_unexpanded_tokens() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"\let\flag\iftrue\def\setfalse{\let\flag\iffalse}\begingroup\global\unexpanded{\setfalse}\endgroup",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("unexpanded command demand executes");
+
+    let flag = stores.intern("flag");
+    assert_eq!(
+        stores.meaning(flag),
+        Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::IfFalse)
+    );
+    assert!(!terminal_effect_text(&stores).contains("You can't use a prefix"));
+}

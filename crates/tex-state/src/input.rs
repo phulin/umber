@@ -174,6 +174,8 @@ pub enum TokenListReplayKind {
     MacroBody,
     MacroArgument,
     NoExpand,
+    /// Tokens returned by e-TeX `\unexpanded`; command demand may expand them.
+    Unexpanded,
     EveryPar,
     EveryCr,
     Mark,

@@ -1066,6 +1066,7 @@ pub struct TracedExpansionToken {
     token: Token,
     origin: OriginId,
     suppress_expansion: bool,
+    expand_for_command_demand: bool,
     macro_replay_site: Option<MacroReplaySite>,
 }
 
@@ -1096,6 +1097,7 @@ impl TracedExpansionToken {
         Self::from_decoded(
             DecodedTracedToken::from_word(token),
             suppress_expansion,
+            false,
             None,
         )
     }
@@ -1103,12 +1105,14 @@ impl TracedExpansionToken {
     fn from_decoded(
         token: DecodedTracedToken,
         suppress_expansion: bool,
+        expand_for_command_demand: bool,
         macro_replay_site: Option<MacroReplaySite>,
     ) -> Self {
         Self {
             token: token.token,
             origin: token.origin,
             suppress_expansion,
+            expand_for_command_demand,
             macro_replay_site,
         }
     }
@@ -1131,6 +1135,12 @@ impl TracedExpansionToken {
     #[must_use]
     pub const fn suppress_expansion(self) -> bool {
         self.suppress_expansion
+    }
+
+    /// Returns whether nested command demand should resume expansion.
+    #[must_use]
+    pub const fn expand_for_command_demand(self) -> bool {
+        self.expand_for_command_demand
     }
 
     #[must_use]
@@ -2992,6 +3002,7 @@ impl InputStack {
                             return Ok(Some(TracedExpansionToken::from_decoded(
                                 token,
                                 false,
+                                false,
                                 macro_replay_site,
                             )));
                         }
@@ -2999,6 +3010,7 @@ impl InputStack {
                             return Ok(Some(TracedExpansionToken::from_decoded(
                                 token,
                                 true,
+                                token_list.replay_kind == TokenListReplayKind::Unexpanded,
                                 macro_replay_site,
                             )));
                         }
@@ -3072,7 +3084,9 @@ impl InputStack {
                     else {
                         continue;
                     };
-                    return Ok(Some(TracedExpansionToken::from_decoded(token, false, None)));
+                    return Ok(Some(TracedExpansionToken::from_decoded(
+                        token, false, false, None,
+                    )));
                 }
                 InputFrame::Condition { .. } => {
                     unreachable!("current_token_frame_index skips conditions")
@@ -3387,7 +3401,10 @@ fn next_token_from_token_list_frame(
         return Some(TokenReplay::PushArgument(slot));
     }
 
-    if frame.replay_kind == TokenListReplayKind::NoExpand {
+    if matches!(
+        frame.replay_kind,
+        TokenListReplayKind::NoExpand | TokenListReplayKind::Unexpanded
+    ) {
         return Some(TokenReplay::DeliverNoExpand(token));
     }
 
@@ -3444,7 +3461,10 @@ fn next_traced_token_from_token_list_frame(
         stats.provenance_timer_samples += 1;
     }
     let token = DecodedTracedToken::new(token, origin);
-    if frame.replay_kind == TokenListReplayKind::NoExpand {
+    if matches!(
+        frame.replay_kind,
+        TokenListReplayKind::NoExpand | TokenListReplayKind::Unexpanded
+    ) {
         return Some(TracedTokenReplay::DeliverNoExpand(token));
     }
 

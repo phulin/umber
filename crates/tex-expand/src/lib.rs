@@ -419,7 +419,7 @@ impl ExpansionReplayKind {
             Self::MacroBody => TokenListReplayKind::MacroBody,
             Self::TheOutput | Self::NumberOutput | Self::JobName => TokenListReplayKind::Inserted,
             Self::Mark => TokenListReplayKind::Mark,
-            Self::Unexpanded => TokenListReplayKind::NoExpand,
+            Self::Unexpanded => TokenListReplayKind::Unexpanded,
             Self::Inserted => TokenListReplayKind::Inserted,
         }
     }
@@ -1209,7 +1209,23 @@ pub fn get_x_token_with_context(
     stores: &mut tex_state::ExpansionContext<'_>,
     expansion: &mut ExpansionContext<'_>,
 ) -> Result<Option<TracedTokenWord>, ExpandError> {
-    match get_x_token_with_context_inner(input, stores, expansion, false, None) {
+    match get_x_token_with_context_inner(input, stores, expansion, false, false, None) {
+        Ok(token) => Ok(token),
+        Err(error) => Err(error.capture(input)),
+    }
+}
+
+/// Pulls the next command token after a prefix.
+///
+/// e-TeX `\unexpanded` suppresses tokens for the enclosing expansion-only
+/// consumer, but a nested command-demand scan resumes macro expansion. An
+/// explicit `\noexpand` remains suppressed.
+pub fn get_command_token_with_context(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+) -> Result<Option<TracedTokenWord>, ExpandError> {
+    match get_x_token_with_context_inner(input, stores, expansion, false, true, None) {
         Ok(token) => Ok(token),
         Err(error) => Err(error.capture(input)),
     }
@@ -1222,7 +1238,7 @@ pub fn get_x_or_protected_with_context(
     stores: &mut tex_state::ExpansionContext<'_>,
     expansion: &mut ExpansionContext<'_>,
 ) -> Result<Option<TracedTokenWord>, ExpandError> {
-    match get_x_token_with_context_inner(input, stores, expansion, true, None) {
+    match get_x_token_with_context_inner(input, stores, expansion, true, false, None) {
         Ok(token) => Ok(token),
         Err(error) => Err(error.capture(input)),
     }
@@ -1256,7 +1272,7 @@ pub(crate) fn get_x_or_protected_from_prepared_with_context(
     stores: &mut tex_state::ExpansionContext<'_>,
     expansion: &mut ExpansionContext<'_>,
 ) -> Result<Option<TracedTokenWord>, ExpandError> {
-    match get_x_token_with_context_inner(input, stores, expansion, true, Some(prepared)) {
+    match get_x_token_with_context_inner(input, stores, expansion, true, false, Some(prepared)) {
         Ok(token) => Ok(token),
         Err(error) => Err(error.capture(input)),
     }
@@ -1267,6 +1283,7 @@ fn get_x_token_with_context_inner(
     stores: &mut tex_state::ExpansionContext<'_>,
     expansion: &mut ExpansionContext<'_>,
     protect_macros: bool,
+    command_demand: bool,
     first: Option<PreparedExpansionToken>,
 ) -> Result<Option<TracedTokenWord>, ExpandError> {
     let mut first = first;
@@ -1298,7 +1315,7 @@ fn get_x_token_with_context_inner(
             )));
         }
 
-        if read.suppress_expansion() {
+        if read.suppress_expansion() && !(command_demand && read.expand_for_command_demand()) {
             if !alignment_prepared && intercept_suppressed_alignment_token(input, stores, traced) {
                 continue;
             }
