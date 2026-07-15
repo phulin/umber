@@ -320,7 +320,11 @@ The losing substitution layer is no longer part of enabled execution. Gentle
 now reports zero substitution lookups and retains zero memo bytes because its
 main `\edef` path does not cross the supported recursive episode boundary. The
 layer remains opt-in until a real workload exercises that boundary and wins an
-alternating paired timing gate.
+alternating paired timing gate. A repeated ABBA rerun after removing eager
+substitution produced six stable 10-run blocks: disabled averaged 131.62 ms and
+enabled averaged 131.24 ms. The 0.29% difference is noise-level parity, while
+both enabled runs reported zero lookups and zero retained bytes; the earlier
+roughly 4% sequential difference was not reproducible under stable load.
 
 ### Paragraph pipeline
 
