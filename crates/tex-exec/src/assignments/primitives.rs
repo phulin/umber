@@ -420,7 +420,7 @@ const TOK_PARAMS: &[(&str, u16)] = &[
     ("everyvbox", 5),
     ("everyjob", 6),
     ("everycr", 7),
-    ("errhelp", 8),
+    ("errhelp", TokParam::ERR_HELP.raw()),
 ];
 
 const PAGE_DIMENSIONS: &[(&str, PageDimension)] = &[

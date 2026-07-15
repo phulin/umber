@@ -409,8 +409,13 @@ impl TokParam {
     /// TeX's `\everycr` token-list parameter.
     pub const EVERY_CR: Self = Self::new(7);
 
+    /// TeX's supplementary-help token list used after an error prompt.
+    pub const ERR_HELP: Self = Self::new(8);
+
     /// e-TeX's token list inserted at natural real or virtual EOF.
-    pub const EVERY_EOF: Self = Self::new(8);
+    ///
+    /// Slot 8 remains TeX's `\errhelp`; e-TeX state must not alias it.
+    pub const EVERY_EOF: Self = Self::new(13);
 
     pub const PDF_PAGES_ATTR: Self = Self::new(9);
     pub const PDF_PAGE_ATTR: Self = Self::new(10);

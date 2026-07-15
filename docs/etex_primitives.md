@@ -28,7 +28,7 @@ pass.
 | `\detokenize` | done | Produces only catcode-10 spaces and catcode-12 other characters; every control word produces a trailing space, including the last. |
 | `\readline` | done | Reads through the virtualized `\read` path with catcode-10 codepoint 32 and catcode-12 other characters, including `\endlinechar`. |
 | `\scantokens` | done | Serializes unexpanded general text with TeX's `new_string` character behavior, splits `\newlinechar` into pseudo-file records, and reprocesses under current catcodes and `^^` notation. |
-| `\everyeof` | done | Inserts its tokens once at natural EOF for real and generated virtual files, but not for `\endinput`, and remains ordered before the pseudo-file closing trace. |
+| `\everyeof` | done | Inserts its tokens once at natural EOF for real and generated virtual files, but not for `\endinput`, and remains ordered before the pseudo-file closing trace. Its grouped, snapshot-covered token parameter is distinct from TeX's `\errhelp` cell. |
 | `\unless` | done | Negates every boolean conditional through the shared conditional-frame path and rejects `\ifcase` as the manual requires. |
 | `\tracingscantokens` | done | Positive values trace `( ` at pseudo-file entry and `)` only after any `\everyeof` replay, as specified in section 3.6. |
 

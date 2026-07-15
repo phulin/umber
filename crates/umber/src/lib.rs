@@ -398,8 +398,11 @@ pub fn prepare_latex_run_stores(stores: &mut Universe) {
 #[cfg(test)]
 mod primitive_mode_tests {
     use super::*;
+    use tex_state::World;
+    use tex_state::env::banks::TokParam;
+    use tex_state::ids::TokenListId;
     use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
-    use tex_state::token::Catcode;
+    use tex_state::token::{Catcode, Token};
 
     #[test]
     fn protected_is_hidden_in_tex82_compatibility_mode() {
@@ -411,6 +414,11 @@ mod primitive_mode_tests {
         assert_eq!(stores.meaning(readline), Meaning::Undefined);
         let everyeof = stores.intern("everyeof");
         assert_eq!(stores.meaning(everyeof), Meaning::Undefined);
+        let errhelp = stores.intern("errhelp");
+        assert_eq!(
+            stores.meaning(errhelp),
+            Meaning::TokParam(TokParam::ERR_HELP.raw())
+        );
     }
 
     #[test]
@@ -428,7 +436,97 @@ mod primitive_mode_tests {
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ReadLine)
         );
         let everyeof = stores.intern("everyeof");
-        assert!(matches!(stores.meaning(everyeof), Meaning::TokParam(_)));
+        assert_eq!(
+            stores.meaning(everyeof),
+            Meaning::TokParam(TokParam::EVERY_EOF.raw())
+        );
+        let errhelp = stores.intern("errhelp");
+        assert_eq!(
+            stores.meaning(errhelp),
+            Meaning::TokParam(TokParam::ERR_HELP.raw())
+        );
+        assert_ne!(stores.meaning(errhelp), stores.meaning(everyeof));
+    }
+
+    #[test]
+    fn errhelp_and_everyeof_assign_group_snapshot_hash_and_format_independently() {
+        let mut stores = Universe::default();
+        prepare_etex_run_stores(&mut stores);
+        let output = run_memory_with_stores(
+            concat!(
+                "\\errhelp{help-outer}\\everyeof{eof-outer}",
+                "{\\errhelp{help-inner}\\everyeof{eof-inner}",
+                "\\message{local=[\\the\\errhelp]/[\\the\\everyeof]}}",
+                "\\message{restored=[\\the\\errhelp]/[\\the\\everyeof]}",
+                "{\\globaldefs=1\\errhelp{help-global}\\everyeof{eof-global}}",
+                "\\end",
+            ),
+            &mut stores,
+        )
+        .expect("independent token parameters execute");
+        assert!(
+            output.contains("local=[help-inner]/[eof-inner]"),
+            "{output}"
+        );
+        assert!(
+            output.contains("restored=[help-outer]/[eof-outer]"),
+            "{output}"
+        );
+        assert_eq!(token_list_text(&stores, TokParam::ERR_HELP), "help-global");
+        assert_eq!(token_list_text(&stores, TokParam::EVERY_EOF), "eof-global");
+
+        let committed = stores.snapshot();
+        let changed_help = stores.intern_token_list(&[Token::Char {
+            ch: 'H',
+            cat: Catcode::Other,
+        }]);
+        let changed_eof = stores.intern_token_list(&[Token::Char {
+            ch: 'E',
+            cat: Catcode::Other,
+        }]);
+        stores.set_tok_param(TokParam::ERR_HELP, changed_help);
+        stores.set_tok_param(TokParam::EVERY_EOF, changed_eof);
+        assert_ne!(stores.snapshot().state_hash(), committed.state_hash());
+
+        stores.rollback(&committed);
+        assert_eq!(stores.snapshot().state_hash(), committed.state_hash());
+        assert_eq!(token_list_text(&stores, TokParam::ERR_HELP), "help-global");
+        assert_eq!(token_list_text(&stores, TokParam::EVERY_EOF), "eof-global");
+
+        let mut format_stores = Universe::default();
+        prepare_etex_run_stores(&mut format_stores);
+        let format_help = intern_text(&mut format_stores, "help-format");
+        let format_eof = intern_text(&mut format_stores, "eof-format");
+        format_stores.set_tok_param_global(TokParam::ERR_HELP, format_help);
+        format_stores.set_tok_param_global(TokParam::EVERY_EOF, format_eof);
+        let format = format_stores.dump_format().expect("token parameter format");
+        let loaded = Universe::from_format(World::default(), &format).expect("load format");
+        assert_eq!(loaded.dump_format().expect("redump format"), format);
+        assert_eq!(token_list_text(&loaded, TokParam::ERR_HELP), "help-format");
+        assert_eq!(token_list_text(&loaded, TokParam::EVERY_EOF), "eof-format");
+    }
+
+    fn intern_text(stores: &mut Universe, text: &str) -> TokenListId {
+        let tokens = text
+            .chars()
+            .map(|ch| Token::Char {
+                ch,
+                cat: Catcode::Other,
+            })
+            .collect::<Vec<_>>();
+        stores.intern_token_list(&tokens)
+    }
+
+    fn token_list_text(stores: &Universe, parameter: TokParam) -> String {
+        let id: TokenListId = stores.tok_param(parameter);
+        stores
+            .tokens(id)
+            .iter()
+            .filter_map(|token| match token {
+                Token::Char { ch, .. } => Some(*ch),
+                _ => None,
+            })
+            .collect()
     }
 
     #[test]
