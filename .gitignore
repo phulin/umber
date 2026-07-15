@@ -8,6 +8,7 @@ target/
 /third_party/hyphen/
 /third_party/trip/
 /third_party/texlive-source/
+/third_party/latex2e-parity/
 
 # Locally generated end-to-end conformance oracles. These are derived from
 # third-party documents and must never be committed.
