@@ -332,9 +332,13 @@ fn pdf_font_objects(
     {
         return Err(PdfBuildError::MissingFontProgram(program_name.to_vec()));
     }
-    let base_font = mapped
-        .as_ref()
-        .and_then(|entry| entry.postscript_name.as_deref())
+    let base_font = truetype
+        .and_then(tex_fonts::PdfTrueTypeProgram::postscript_name)
+        .or_else(|| {
+            mapped
+                .as_ref()
+                .and_then(|entry| entry.postscript_name.as_deref())
+        })
         .unwrap_or(font.name.as_bytes())
         .to_vec();
     let encoding = mapped

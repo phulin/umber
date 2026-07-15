@@ -26,6 +26,7 @@ pub struct PdfTrueTypeProgram {
     italic_angle: i32,
     stem_v: i32,
     fixed_pitch: bool,
+    postscript_name: Option<Vec<u8>>,
 }
 
 impl PdfTrueTypeProgram {
@@ -38,6 +39,15 @@ impl PdfTrueTypeProgram {
         };
         let bbox = face.global_bounding_box();
         let weight = i32::from(face.weight().to_number());
+        let postscript_name = face
+            .names()
+            .into_iter()
+            .find(|name| name.name_id == ttf_parser::name_id::POST_SCRIPT_NAME)
+            .and_then(|name| {
+                name.to_string()
+                    .map(String::into_bytes)
+                    .or_else(|| name.name.is_ascii().then(|| name.name.to_vec()))
+            });
         Ok(Self {
             identity: PdfTrueTypeProgramIdentity(Sha256::digest(bytes).into()),
             bytes: bytes.to_vec(),
@@ -57,6 +67,7 @@ impl PdfTrueTypeProgram {
             italic_angle: face.italic_angle().round() as i32,
             stem_v: 50 + weight.saturating_mul(3) / 40,
             fixed_pitch: face.is_monospaced(),
+            postscript_name,
         })
     }
 
@@ -128,6 +139,10 @@ impl PdfTrueTypeProgram {
     pub const fn fixed_pitch(&self) -> bool {
         self.fixed_pitch
     }
+    #[must_use]
+    pub fn postscript_name(&self) -> Option<&[u8]> {
+        self.postscript_name.as_deref()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -189,6 +204,10 @@ mod tests {
         assert!(program.bytes().starts_with(&[0, 1, 0, 0]));
         assert!(program.ascent() > 0);
         assert!(program.bbox()[2] > program.bbox()[0]);
+        assert_eq!(
+            program.postscript_name(),
+            Some(b"CMUSerif-Roman".as_slice())
+        );
     }
 
     #[test]
