@@ -75,20 +75,22 @@ pub(super) fn materialize_node_list(
         let node = match node {
             NodeRef::Char { font, ch, .. } => {
                 let (code, width) = glyph(stores, font, ch)?;
-                Some(PageNode::Char {
-                    font_id: font_resource_id(stores, font, emission),
-                    ch: u32::from(code),
-                    width,
-                })
+                nodes.extend(materialize_glyph(
+                    stores, font, code, width, None, emission,
+                )?);
+                continue;
             }
             NodeRef::Lig { font, ch, orig, .. } => {
                 let (code, width) = glyph(stores, font, ch)?;
-                Some(PageNode::Lig {
-                    font_id: font_resource_id(stores, font, emission),
-                    ch: u32::from(code),
-                    source: orig.iter().map(|source| *source as u32).collect(),
+                nodes.extend(materialize_glyph(
+                    stores,
+                    font,
+                    code,
                     width,
-                })
+                    Some(orig),
+                    emission,
+                )?);
+                continue;
             }
             NodeRef::Kern { amount, kind } => Some(PageNode::Kern {
                 amount,
@@ -212,6 +214,44 @@ pub(super) fn materialize_node_list(
         if let Some(node) = node {
             nodes.push(node);
         }
+    }
+    Ok(nodes)
+}
+
+fn materialize_glyph(
+    stores: &Universe,
+    font: FontId,
+    code: u8,
+    width: tex_state::scaled::Scaled,
+    ligature_source: Option<&[char]>,
+    emission: &mut EmissionState,
+) -> Result<Vec<PageNode>, ExecError> {
+    let projection = glyph_projection(stores, font, code, width, emission)?;
+    let mut nodes = Vec::with_capacity(3);
+    if projection.left.raw() != 0 {
+        nodes.push(PageNode::Kern {
+            amount: projection.left,
+            kind: PageKernKind::Explicit,
+        });
+    }
+    nodes.push(match ligature_source {
+        Some(source) => PageNode::Lig {
+            font_id: projection.font_id,
+            ch: u32::from(code),
+            source: source.iter().map(|source| *source as u32).collect(),
+            width: projection.width,
+        },
+        None => PageNode::Char {
+            font_id: projection.font_id,
+            ch: u32::from(code),
+            width: projection.width,
+        },
+    });
+    if projection.right.raw() != 0 {
+        nodes.push(PageNode::Kern {
+            amount: projection.right,
+            kind: PageKernKind::Explicit,
+        });
     }
     Ok(nodes)
 }

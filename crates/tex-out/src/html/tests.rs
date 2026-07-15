@@ -297,6 +297,8 @@ fn page() -> crate::PageArtifact {
         design_size: sp(655_360),
         at_size: sp(655_360),
         opentype: None,
+        semantic_identity: tex_fonts::FontSourceIdentity::from_bytes([7; 32]),
+        construction: crate::FontResourceConstruction::Loaded,
     };
     UnvalidatedPageArtifact {
         job: JobInfo {

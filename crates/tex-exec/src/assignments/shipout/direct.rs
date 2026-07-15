@@ -200,12 +200,8 @@ fn emit_char_run(
     emission: &mut EmissionState,
 ) -> Result<(), ExecError> {
     let font = run.font();
-    let font_id = font_resource_id(stores, font, emission);
     let widths = stores.font_widths(font);
     let characters = stores.font_characters(font);
-    if let Some(dvi) = dvi.as_deref_mut() {
-        dvi.add_fonts(&emission.fonts).map_err(invalid_artifact)?;
-    }
     for (code, origin) in run.codes().zip(run.origins()) {
         if characters[usize::from(code)].is_none() {
             return Err(ExecError::UnsupportedShipoutNode {
@@ -213,12 +209,16 @@ fn emit_char_run(
             });
         }
         let width = widths[usize::from(code)];
-        emission.node([origin]);
-        output.char(font_id, u32::from(code), width)?;
-        if let Some(dvi) = dvi.as_deref_mut() {
-            dvi.char(font_id, u32::from(code), width)
-                .map_err(invalid_artifact)?;
-        }
+        emit_glyph(
+            stores,
+            font,
+            code,
+            width,
+            [origin],
+            output,
+            dvi.as_deref_mut(),
+            emission,
+        )?;
     }
     Ok(())
 }
@@ -254,14 +254,7 @@ fn emit_index(
     match node {
         NodeRef::Char { font, ch, origin } => {
             let (code, width) = glyph(stores, font, ch)?;
-            let font_id = font_resource_id(stores, font, emission);
-            emission.node([origin]);
-            output.char(font_id, u32::from(code), width)?;
-            if let Some(dvi) = dvi.as_deref_mut() {
-                dvi.add_fonts(&emission.fonts).map_err(invalid_artifact)?;
-                dvi.char(font_id, u32::from(code), width)
-                    .map_err(invalid_artifact)?;
-            }
+            emit_glyph(stores, font, code, width, [origin], output, dvi, emission)?;
         }
         NodeRef::Lig {
             font,
@@ -270,19 +263,17 @@ fn emit_index(
             origins,
         } => {
             let (code, width) = glyph(stores, font, ch)?;
-            let font_id = font_resource_id(stores, font, emission);
-            emission.node(origins.iter().copied());
-            output.lig(
-                font_id,
-                u32::from(code),
-                orig.iter().map(|source| *source as u32),
+            emit_ligature(
+                stores,
+                font,
+                code,
+                orig,
                 width,
+                origins.iter().copied(),
+                output,
+                dvi,
+                emission,
             )?;
-            if let Some(dvi) = dvi.as_deref_mut() {
-                dvi.add_fonts(&emission.fonts).map_err(invalid_artifact)?;
-                dvi.char(font_id, u32::from(code), width)
-                    .map_err(invalid_artifact)?;
-            }
         }
         NodeRef::Kern { amount, kind } => {
             emission.node([]);
@@ -659,6 +650,141 @@ fn font_resource_id(stores: &Universe, font: FontId, emission: &mut EmissionStat
             font_resource_id(stores, source, emission)
         }
     }
+}
+
+#[derive(Clone, Copy)]
+struct GlyphProjection {
+    font_id: u32,
+    width: tex_state::scaled::Scaled,
+    left: tex_state::scaled::Scaled,
+    right: tex_state::scaled::Scaled,
+}
+
+fn glyph_projection(
+    stores: &Universe,
+    font: FontId,
+    code: u8,
+    logical_width: tex_state::scaled::Scaled,
+    emission: &mut EmissionState,
+) -> Result<GlyphProjection, ExecError> {
+    let font_id = font_resource_id(stores, font, emission);
+    let loaded = stores.font(font);
+    let tex_fonts::FontConstruction::Letterspaced { source, amount, .. } = loaded.construction()
+    else {
+        return Ok(GlyphProjection {
+            font_id,
+            width: logical_width,
+            left: tex_state::scaled::Scaled::from_raw(0),
+            right: tex_state::scaled::Scaled::from_raw(0),
+        });
+    };
+    let source_font = stores
+        .font_by_source_identity(*source)
+        .expect("validated letterspaced font source is live");
+    let source_width = stores
+        .font_char_metrics(source_font, code)
+        .map(|metrics| metrics.width)
+        .ok_or(ExecError::UnsupportedShipoutNode {
+            node: "missing letterspace source character metrics",
+        })?;
+    let quad = stores.font(source_font).parameters()[5];
+    let left = round_scaled_ratio(quad, i32::from(*amount), 2000)?;
+    let right = logical_width
+        .checked_sub(source_width)
+        .and_then(|difference| difference.checked_sub(left))
+        .ok_or(ExecError::ArithmeticOverflow)?;
+    Ok(GlyphProjection {
+        font_id,
+        width: source_width,
+        left,
+        right,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_glyph(
+    stores: &Universe,
+    font: FontId,
+    code: u8,
+    logical_width: tex_state::scaled::Scaled,
+    origins: impl IntoIterator<Item = OriginId>,
+    output: &mut V10NodeListWriter<'_>,
+    mut dvi: Option<&mut DviPagePlanBuilder>,
+    emission: &mut EmissionState,
+) -> Result<(), ExecError> {
+    let projection = glyph_projection(stores, font, code, logical_width, emission)?;
+    emit_projection_kern(projection.left, output, dvi.as_deref_mut(), emission)?;
+    emission.node(origins);
+    output.char(projection.font_id, u32::from(code), projection.width)?;
+    if let Some(dvi) = dvi.as_deref_mut() {
+        dvi.add_fonts(&emission.fonts).map_err(invalid_artifact)?;
+        dvi.char(projection.font_id, u32::from(code), projection.width)
+            .map_err(invalid_artifact)?;
+    }
+    emit_projection_kern(projection.right, output, dvi, emission)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_ligature(
+    stores: &Universe,
+    font: FontId,
+    code: u8,
+    source: &[char],
+    logical_width: tex_state::scaled::Scaled,
+    origins: impl IntoIterator<Item = OriginId>,
+    output: &mut V10NodeListWriter<'_>,
+    mut dvi: Option<&mut DviPagePlanBuilder>,
+    emission: &mut EmissionState,
+) -> Result<(), ExecError> {
+    let projection = glyph_projection(stores, font, code, logical_width, emission)?;
+    emit_projection_kern(projection.left, output, dvi.as_deref_mut(), emission)?;
+    emission.node(origins);
+    output.lig(
+        projection.font_id,
+        u32::from(code),
+        source.iter().map(|source| *source as u32),
+        projection.width,
+    )?;
+    if let Some(dvi) = dvi.as_deref_mut() {
+        dvi.add_fonts(&emission.fonts).map_err(invalid_artifact)?;
+        dvi.char(projection.font_id, u32::from(code), projection.width)
+            .map_err(invalid_artifact)?;
+    }
+    emit_projection_kern(projection.right, output, dvi, emission)
+}
+
+fn emit_projection_kern(
+    amount: tex_state::scaled::Scaled,
+    output: &mut V10NodeListWriter<'_>,
+    dvi: Option<&mut DviPagePlanBuilder>,
+    emission: &mut EmissionState,
+) -> Result<(), ExecError> {
+    if amount.raw() == 0 {
+        return Ok(());
+    }
+    emission.node([]);
+    output.kern(amount, PageKernKind::Explicit)?;
+    if let Some(dvi) = dvi {
+        dvi.kern(amount).map_err(invalid_artifact)?;
+    }
+    Ok(())
+}
+
+fn round_scaled_ratio(
+    value: tex_state::scaled::Scaled,
+    numerator: i32,
+    denominator: i32,
+) -> Result<tex_state::scaled::Scaled, ExecError> {
+    let product = i64::from(value.raw()) * i64::from(numerator);
+    let denominator = i64::from(denominator);
+    let rounded = if product >= 0 {
+        (product + denominator / 2) / denominator
+    } else {
+        -((-product + denominator / 2) / denominator)
+    };
+    Ok(tex_state::scaled::Scaled::from_raw(
+        i32::try_from(rounded).map_err(|_| ExecError::ArithmeticOverflow)?,
+    ))
 }
 
 fn register_font_resource(stores: &Universe, font: FontId, emission: &mut EmissionState) -> u32 {

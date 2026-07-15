@@ -167,6 +167,8 @@ mod tests {
             design_size: Scaled::from_raw(1),
             at_size: Scaled::from_raw(1),
             opentype: None,
+            semantic_identity: tex_fonts::FontSourceIdentity::from_bytes(tfm.bytes()),
+            construction: tex_out::FontResourceConstruction::Loaded,
         };
         let web = DirectoryHtmlFontResolver::new(root, &mut world)
             .resolve(&font)

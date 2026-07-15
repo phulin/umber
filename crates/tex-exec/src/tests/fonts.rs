@@ -66,6 +66,79 @@ fn pdftex_generated_fonts_match_copy_and_letterspace_state() {
 }
 
 #[test]
+fn letterspaced_shipout_flattens_virtual_packets_onto_the_source_font() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let letterspacefont = stores.intern("letterspacefont");
+    stores.set_meaning(
+        letterspacefont,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LetterspaceFont),
+    );
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\base=cmr10 at 12pt \\
+         \\letterspacefont\\spaced=\\base 100 nolig \\
+         \\spaced \\shipout\\hbox{AA}\\end",
+    ));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("letterspaced shipout succeeds");
+    let bytes = stores
+        .world()
+        .read_artifact(stats.shipped_artifacts[0])
+        .expect("read artifact")
+        .expect("artifact stored");
+    let artifact = tex_out::PageArtifact::from_bytes(&bytes).expect("artifact parses");
+    let base = font_meaning(&stores, "base");
+    let spaced = font_meaning(&stores, "spaced");
+    let base_id = base.raw() - 1;
+    let source_width = stores.font_char_metrics(base, b'A').unwrap().width;
+    let spaced_width = stores.font_char_metrics(spaced, b'A').unwrap().width;
+    let left = Scaled::from_raw(39_322);
+    let right = spaced_width
+        .checked_sub(source_width)
+        .and_then(|difference| difference.checked_sub(left))
+        .expect("letterspace movement");
+
+    assert!(artifact.fonts.iter().any(|font| {
+        matches!(
+            font.construction,
+            tex_out::FontResourceConstruction::Letterspaced {
+                source_font_id,
+                amount: 100,
+                ..
+            } if source_font_id == base_id
+        )
+    }));
+    let tex_out::PageNode::HList(root) = &artifact.root else {
+        panic!("shipout root should be an hlist")
+    };
+    assert!(matches!(
+        root.children.as_slice(),
+        [
+            tex_out::PageNode::Kern { amount: first_left, kind: tex_out::KernKind::Explicit },
+            tex_out::PageNode::Char { font_id: first_font, ch: 65, width: first_width },
+            tex_out::PageNode::Kern { amount: first_right, kind: tex_out::KernKind::Explicit },
+            tex_out::PageNode::Kern { amount: second_left, kind: tex_out::KernKind::Explicit },
+            tex_out::PageNode::Char { font_id: second_font, ch: 65, width: second_width },
+            tex_out::PageNode::Kern { amount: second_right, kind: tex_out::KernKind::Explicit },
+        ] if *first_left == left
+            && *second_left == left
+            && *first_right == right
+            && *second_right == right
+            && *first_font == base_id
+            && *second_font == base_id
+            && *first_width == source_width
+            && *second_width == source_width
+    ));
+
+    let dvi = tex_out::dvi::write_dvi(&[artifact]).expect("flattened DVI writes");
+    assert!(dvi.windows(b"cmr10".len()).any(|bytes| bytes == b"cmr10"));
+    assert!(!dvi.windows(b"+100ls".len()).any(|bytes| bytes == b"+100ls"));
+}
+
+#[test]
 fn font_definition_loads_tfm_via_world_and_reuses_identity() {
     let mut stores = stores_with_fonts();
     let mut input = InputStack::new(MemoryInput::new("\\font\\a=cmr10 \\font\\b=cmr10 \\end"));

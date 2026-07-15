@@ -21,6 +21,54 @@ fn page_artifact_round_trips() {
 }
 
 #[test]
+fn generated_font_constructions_round_trip_with_source_identity() {
+    let mut artifact = sample_artifact();
+    let loaded = artifact.fonts[0].clone();
+    let copied_identity = tex_fonts::FontSourceIdentity::from_bytes([5; 32]);
+    let letterspaced_identity = tex_fonts::FontSourceIdentity::from_bytes([6; 32]);
+    let expanded_identity = tex_fonts::FontSourceIdentity::from_bytes([7; 32]);
+    artifact.testing_mut().fonts.extend([
+        FontResource {
+            font_id: 2,
+            semantic_identity: copied_identity,
+            construction: crate::FontResourceConstruction::Copied {
+                source_font_id: 1,
+                source_identity: loaded.semantic_identity,
+            },
+            ..loaded.clone()
+        },
+        FontResource {
+            font_id: 3,
+            name: "cmr10+100ls".to_owned(),
+            semantic_identity: letterspaced_identity,
+            construction: crate::FontResourceConstruction::Letterspaced {
+                source_font_id: 1,
+                source_identity: loaded.semantic_identity,
+                amount: 100,
+                no_ligatures: true,
+            },
+            ..loaded.clone()
+        },
+        FontResource {
+            font_id: 4,
+            semantic_identity: expanded_identity,
+            construction: crate::FontResourceConstruction::Expanded {
+                source_font_id: 1,
+                source_identity: loaded.semantic_identity,
+                ratio: -20,
+            },
+            ..loaded
+        },
+    ]);
+
+    let bytes = artifact.to_bytes().expect("generated fonts serialize");
+    assert_eq!(
+        PageArtifact::from_bytes(&bytes).expect("generated fonts parse"),
+        artifact
+    );
+}
+
+#[test]
 fn margin_kern_sides_round_trip() {
     let mut artifact = sample_artifact();
     let PageNode::VList(root) = &mut artifact.testing_mut().root else {
@@ -533,6 +581,8 @@ fn sample_artifact() -> PageArtifact {
                 instance_identity: tex_fonts::FontInstanceIdentity::from_bytes([3; 32]),
                 container: tex_fonts::FontContainer::Woff2,
             }),
+            semantic_identity: tex_fonts::FontSourceIdentity::from_bytes([4; 32]),
+            construction: crate::FontResourceConstruction::Loaded,
         }],
         counts: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
         root: PageNode::VList(BoxNode {

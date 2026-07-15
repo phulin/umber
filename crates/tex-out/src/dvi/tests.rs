@@ -748,6 +748,8 @@ fn font_resource(font_id: u32, name: &str) -> FontResource {
         design_size: sp(655_360),
         at_size: sp(655_360),
         opentype: None,
+        semantic_identity: tex_fonts::FontSourceIdentity::from_bytes([font_id as u8; 32]),
+        construction: crate::FontResourceConstruction::Loaded,
     }
 }
 

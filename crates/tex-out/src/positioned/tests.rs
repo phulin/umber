@@ -196,6 +196,57 @@ fn dvi_oracle_ignores_within_run_glyph_advances_and_width() {
         .expect("interior browser-owned glyph positions are excluded");
 }
 
+#[test]
+fn explicit_letterspace_movements_anchor_each_physical_glyph() {
+    let page = page(PageNode::HList(box_node(
+        100,
+        40,
+        10,
+        vec![
+            PageNode::Kern {
+                amount: sp(4),
+                kind: KernKind::Explicit,
+            },
+            PageNode::Char {
+                font_id: 1,
+                ch: b'A' as u32,
+                width: sp(20),
+            },
+            PageNode::Kern {
+                amount: sp(5),
+                kind: KernKind::Explicit,
+            },
+            PageNode::Kern {
+                amount: sp(4),
+                kind: KernKind::Explicit,
+            },
+            PageNode::Char {
+                font_id: 1,
+                ch: b'B' as u32,
+                width: sp(20),
+            },
+            PageNode::Kern {
+                amount: sp(5),
+                kind: KernKind::Explicit,
+            },
+        ],
+    )));
+    let positioned = lower_page(&page, 9).expect("lower flattened letterspace page");
+    let runs = positioned
+        .events
+        .iter()
+        .filter_map(|event| match event {
+            PositionedEvent::TextRun(run) => Some(run),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(runs.len(), 2);
+    assert_eq!((runs[0].x, runs[0].font_id), (sp(4), 1));
+    assert_eq!((runs[1].x, runs[1].font_id), (sp(33), 1));
+    compare_page(&page, &positioned).expect("positioned anchors match flattened DVI");
+}
+
 fn page(root: PageNode) -> crate::PageArtifact {
     UnvalidatedPageArtifact {
         job: JobInfo {
@@ -212,6 +263,8 @@ fn page(root: PageNode) -> crate::PageArtifact {
             design_size: sp(655_360),
             at_size: sp(655_360),
             opentype: None,
+            semantic_identity: tex_fonts::FontSourceIdentity::from_bytes([1; 32]),
+            construction: crate::FontResourceConstruction::Loaded,
         }],
         counts: [0; 10],
         root,

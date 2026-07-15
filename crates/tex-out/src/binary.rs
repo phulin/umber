@@ -1902,7 +1902,7 @@ impl Reader<'_> {
                             source_identity: tex_fonts::FontSourceIdentity::from_bytes(
                                 self.identity()?,
                             ),
-                            amount: i16::from_le_bytes(self.take(2)?.try_into().unwrap()),
+                            amount: self.u16()? as i16,
                             no_ligatures: match self.u8()? {
                                 0 => false,
                                 1 => true,
@@ -1920,7 +1920,7 @@ impl Reader<'_> {
                         source_identity: tex_fonts::FontSourceIdentity::from_bytes(
                             self.identity()?,
                         ),
-                        ratio: i16::from_le_bytes(self.take(2)?.try_into().unwrap()),
+                        ratio: self.u16()? as i16,
                     },
                     tag => {
                         return Err(ParseError::InvalidTag {
