@@ -108,11 +108,8 @@ impl std::fmt::Display for FontExpansionError {
             Self::DifferentStep => {
                 "using fonts with different step of expansion in one paragraph is not allowed"
             }
-            Self::DifferentStretchLimit => {
-                "using fonts with different stretch limit of expansion in one paragraph is not allowed"
-            }
-            Self::DifferentShrinkLimit => {
-                "using fonts with different shrink limit of expansion in one paragraph is not allowed"
+            Self::DifferentStretchLimit | Self::DifferentShrinkLimit => {
+                "using fonts with different limit of expansion in one paragraph is not allowed"
             }
         })
     }

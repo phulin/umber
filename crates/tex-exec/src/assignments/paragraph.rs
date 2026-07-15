@@ -433,6 +433,8 @@ fn line_break_params(stores: &Universe, params: &ParagraphParams) -> LineBreakPa
         double_hyphen_demerits: params.double_hyphen_demerits,
         final_hyphen_demerits: params.final_hyphen_demerits,
         last_line_fit: params.last_line_fit,
+        pdf_adjust_spacing: stores.int_param(IntParam::PDF_ADJUST_SPACING),
+        pdf_protrude_chars: stores.int_param(IntParam::PDF_PROTRUDE_CHARS),
         emergency_stretch: params.emergency_stretch,
         looseness: params.looseness,
         left_skip: stores.glue(params.left_skip),

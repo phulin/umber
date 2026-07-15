@@ -12,6 +12,7 @@ mod packing;
 mod vertical_break;
 
 use tex_state::Universe;
+use tex_state::font::PdfFontCode;
 use tex_state::glue::GlueSpec;
 use tex_state::ids::{FontId, NodeListId};
 use tex_state::node_arena::NodeList;
@@ -36,6 +37,18 @@ pub trait TypesetState {
     fn font_char_metrics(&self, font: FontId, code: u8) -> Option<tex_fonts::CharMetrics>;
     fn font_widths(&self, font: FontId) -> &[Scaled; 256];
     fn font_characters(&self, font: FontId) -> &[Option<tex_fonts::CharMetrics>];
+    fn font_parameter_value(&self, _font: FontId, _number: u32) -> Scaled {
+        Scaled::from_raw(0)
+    }
+    fn pdf_font_code(&self, table: PdfFontCode, _font: FontId, _code: u8) -> i32 {
+        if table == PdfFontCode::Ef { 1000 } else { 0 }
+    }
+    fn font_kern(&self, _font: FontId, _left: u8, _right: u8) -> Option<Scaled> {
+        None
+    }
+    fn font_expansion_spec(&self, _font: FontId) -> Option<expansion::FontExpansionSpec> {
+        None
+    }
 }
 
 impl TypesetState for Universe {
@@ -57,6 +70,26 @@ impl TypesetState for Universe {
 
     fn font_characters(&self, font: FontId) -> &[Option<tex_fonts::CharMetrics>] {
         Universe::font_characters(self, font)
+    }
+
+    fn font_parameter_value(&self, font: FontId, number: u32) -> Scaled {
+        Universe::font_parameter(self, font, number)
+    }
+
+    fn pdf_font_code(&self, table: PdfFontCode, font: FontId, code: u8) -> i32 {
+        Universe::pdf_font_code(self, table, font, code)
+    }
+
+    fn font_kern(&self, font: FontId, left: u8, right: u8) -> Option<Scaled> {
+        match Universe::lig_kern_command(
+            self,
+            font,
+            tex_fonts::LigKernChar::Char(left),
+            tex_fonts::LigKernChar::Char(right),
+        ) {
+            Some(tex_fonts::LigKernCommand::Kern(amount)) => Some(amount),
+            _ => None,
+        }
     }
 }
 

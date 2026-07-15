@@ -22,6 +22,8 @@ fn params(width: i32) -> LineBreakParams {
         emergency_stretch: sp(0),
         looseness: 0,
         last_line_fit: 0,
+        pdf_adjust_spacing: 0,
+        pdf_protrude_chars: 0,
         left_skip: GlueSpec::ZERO,
         right_skip: GlueSpec::ZERO,
         par_fill_skip: GlueSpec::ZERO,

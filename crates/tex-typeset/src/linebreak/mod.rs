@@ -23,6 +23,12 @@ pub struct LineBreakParams {
     pub emergency_stretch: Scaled,
     pub looseness: i32,
     pub last_line_fit: i32,
+    /// pdfTeX's `\pdfadjustspacing`: positive values expand finalized lines;
+    /// values greater than one also affect breakpoint feasibility.
+    pub pdf_adjust_spacing: i32,
+    /// pdfTeX's `\pdfprotrudechars`: positive values materialize margin
+    /// kerns; values greater than one also affect breakpoint feasibility.
+    pub pdf_protrude_chars: i32,
     pub left_skip: GlueSpec,
     pub right_skip: GlueSpec,
     pub par_fill_skip: GlueSpec,
@@ -245,7 +251,67 @@ mod widths;
 
 pub use post::{LineMaterializer, post_line_break, post_line_break_owned};
 
-use widths::{Widths, line_badness, line_widths_view, node_width};
+use widths::{Widths, line_badness, line_widths_nodes, line_widths_view, node_width_at};
+
+/// Validates pdfTeX's paragraph-wide expansion-step and limit invariants.
+///
+/// Callers need this only when `pdf_adjust_spacing > 1`; mode 1 performs
+/// final-line expansion independently and permits unlike font settings.
+pub fn validate_paragraph_expansion<S: TypesetState>(
+    state: &S,
+    nodes: &[Node],
+) -> Result<(), crate::expansion::FontExpansionError> {
+    let mut paragraph = crate::expansion::ParagraphExpansion::default();
+    observe_expansion_fonts(state, nodes, &mut paragraph)
+}
+
+fn observe_expansion_fonts<S: TypesetState>(
+    state: &S,
+    nodes: &[Node],
+    paragraph: &mut crate::expansion::ParagraphExpansion,
+) -> Result<(), crate::expansion::FontExpansionError> {
+    for node in nodes {
+        match node {
+            Node::Char { font, .. } | Node::Lig { font, .. } => {
+                if let Some(spec) = state.font_expansion_spec(*font) {
+                    paragraph.observe(spec)?;
+                }
+            }
+            Node::Disc {
+                pre, post, replace, ..
+            } => {
+                for list in [*pre, *post, *replace] {
+                    let owned: Vec<_> = state
+                        .nodes(list)
+                        .into_iter()
+                        .map(|node| node.to_owned())
+                        .collect();
+                    observe_expansion_fonts(state, &owned, paragraph)?;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Plans pdfTeX's normalized signed expansion ratio for one finalized line.
+///
+/// This is pure: execution uses the result to intern and substitute discrete
+/// generated fonts before performing ordinary final hpack.
+#[must_use]
+pub fn plan_line_expansion<S: TypesetState>(state: &S, nodes: &[Node], target: Scaled) -> i32 {
+    let widths = line_widths_nodes(state, nodes);
+    let shortfall = Scaled::from_raw(target.raw().saturating_sub(widths.natural.raw()));
+    crate::expansion::line_expansion_ratio(
+        shortfall,
+        crate::expansion::ExpansionCapacity {
+            stretch: widths.font_stretch,
+            shrink: widths.font_shrink,
+        },
+        widths.has_infinite_adjustment(shortfall.raw()),
+    )
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Fitness {
@@ -349,7 +415,16 @@ fn run_pass<S: TypesetState>(
             // e-TeX's last-line adjustment ratio.
             widths.add_normal_stretch(extra);
             let terminal = forced && bp.position >= nodes.len();
-            let normal_b = line_badness(widths, target, Scaled::from_raw(0));
+            // Character protrusion, when breakpoint-aware, adjusts `target`
+            // through the same signed-shortfall seam before expansion. The
+            // protrusion module owns edge discovery and will supply the
+            // adjustment here without changing the expansion/glue ordering.
+            let normal_b = line_badness(
+                widths,
+                target,
+                Scaled::from_raw(0),
+                (params.pdf_adjust_spacing > 1).then_some(expansion_steps(widths)),
+            );
             let fitted = terminal
                 .then(|| last_line_fit.badness(&active_candidate, widths, target))
                 .flatten();
@@ -736,8 +811,8 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
                 next_width_position(self.nodes, position)
             };
         let mut next_width = line_width;
-        for node in &self.nodes[width_position..next_position] {
-            next_width.add_assign(node_width(self.state, node));
+        for index in width_position..next_position {
+            next_width.add_assign(node_width_at(self.state, self.nodes, index));
         }
         Breakpoint {
             position,
@@ -752,6 +827,14 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
     }
 }
 
+fn expansion_steps(widths: Widths) -> (i32, i32) {
+    let step = widths.expansion_step.unwrap_or(1).max(1);
+    (
+        widths.expansion_stretch_limit.unwrap_or(0) / step,
+        widths.expansion_shrink_limit.unwrap_or(0) / step,
+    )
+}
+
 impl<S: TypesetState> Iterator for LegalBreakpoints<'_, S> {
     type Item = Breakpoint;
 
@@ -760,7 +843,7 @@ impl<S: TypesetState> Iterator for LegalBreakpoints<'_, S> {
             let i = self.index;
             let before = self.prefix;
             self.prefix
-                .add_assign(node_width(self.state, &self.nodes[i]));
+                .add_assign(node_width_at(self.state, self.nodes, i));
             self.index += 1;
 
             let definition = match &self.nodes[i] {
