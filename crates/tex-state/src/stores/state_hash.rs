@@ -1211,6 +1211,16 @@ impl Stores {
                     crate::PdfColorStackAction::Current => hasher.u8(3),
                 }
             }
+            Whatsit::PdfSavePos => hasher.tag(24),
+            Whatsit::PdfSnapRefPoint => hasher.tag(25),
+            Whatsit::PdfSnapY { glue } => {
+                hasher.tag(26);
+                self.hash_glue_semantic(*glue, hasher);
+            }
+            Whatsit::PdfSnapYComp { ratio } => {
+                hasher.tag(27);
+                hasher.u16(*ratio);
+            }
             Whatsit::Language {
                 language,
                 left_hyphen_min,
@@ -1645,6 +1655,8 @@ fn hash_internal_integer(integer: InternalInteger, hasher: &mut StateHasher) {
         InternalInteger::PdfLastObject => hasher.tag(13),
         InternalInteger::PdfLastAnnot => hasher.tag(17),
         InternalInteger::PdfLastLink => hasher.tag(18),
+        InternalInteger::PdfLastXPos => hasher.tag(14),
+        InternalInteger::PdfLastYPos => hasher.tag(15),
         InternalInteger::CurrentGroupLevel => hasher.tag(3),
         InternalInteger::CurrentGroupType => hasher.tag(4),
         InternalInteger::CurrentIfLevel => hasher.tag(5),

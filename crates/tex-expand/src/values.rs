@@ -670,6 +670,18 @@ where
             &stores.pdf_last_link().to_string(),
             cause_origin,
         )),
+        Meaning::InternalInteger(InternalInteger::PdfLastXPos) => Ok(push_rendered_text(
+            stores,
+            ExpansionReplayKind::TheOutput,
+            &stores.pdf_last_position().0.raw().to_string(),
+            cause_origin,
+        )),
+        Meaning::InternalInteger(InternalInteger::PdfLastYPos) => Ok(push_rendered_text(
+            stores,
+            ExpansionReplayKind::TheOutput,
+            &stores.pdf_last_position().1.raw().to_string(),
+            cause_origin,
+        )),
         Meaning::InternalInteger(InternalInteger::CurrentGroupLevel) => Ok(push_rendered_text(
             stores,
             ExpansionReplayKind::TheOutput,

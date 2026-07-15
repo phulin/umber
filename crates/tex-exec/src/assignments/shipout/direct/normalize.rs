@@ -25,6 +25,18 @@ pub(super) fn normalize_page(
     expansion: &mut tex_expand::ExpansionContext<'_>,
 ) -> Result<PageOverlay, ExecError> {
     let mut effects = effects;
+    let snap_reference = stores.pdf_snap_reference();
+    if snap_reference
+        != (
+            tex_state::scaled::Scaled::from_raw(0),
+            tex_state::scaled::Scaled::from_raw(0),
+        )
+    {
+        effects.push(PageEffect::PdfSnapState {
+            x: snap_reference.0,
+            y: snap_reference.1,
+        });
+    }
     for restoration in stores.pdf_page_color_stack_restorations() {
         effects.push(PageEffect::PdfColorStack {
             mode: lower_color_stack_mode(restoration.mode),
@@ -306,6 +318,12 @@ fn append_whatsit_effect(
                 }
             }
         }
+        Whatsit::PdfSavePos => effects.push(PageEffect::PdfSavePosition),
+        Whatsit::PdfSnapRefPoint => effects.push(PageEffect::PdfSnapRefPoint),
+        Whatsit::PdfSnapY { glue } => effects.push(PageEffect::PdfSnapY {
+            spec: super::lower_glue(stores.glue(glue)),
+        }),
+        Whatsit::PdfSnapYComp { ratio } => effects.push(PageEffect::PdfSnapYComp { ratio }),
         Whatsit::OpenOut { .. }
         | Whatsit::CloseOut { .. }
         | Whatsit::DeferredWrite { .. }

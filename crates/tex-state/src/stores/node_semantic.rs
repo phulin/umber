@@ -315,6 +315,16 @@ impl Stores {
                     crate::PdfColorStackAction::Current => hasher.u8(3),
                 }
             }
+            Whatsit::PdfSavePos => hasher.tag(23),
+            Whatsit::PdfSnapRefPoint => hasher.tag(24),
+            Whatsit::PdfSnapY { glue } => {
+                hasher.tag(25);
+                self.hash_glue_semantic(*glue, hasher);
+            }
+            Whatsit::PdfSnapYComp { ratio } => {
+                hasher.tag(26);
+                hasher.u16(*ratio);
+            }
             Whatsit::Language {
                 language,
                 left_hyphen_min,

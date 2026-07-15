@@ -632,6 +632,10 @@ fn anchor_for_whatsit(
         | Whatsit::PdfSave
         | Whatsit::PdfRestore => true,
         Whatsit::PdfColorStack { .. } => true,
+        Whatsit::PdfSavePos
+        | Whatsit::PdfSnapRefPoint
+        | Whatsit::PdfSnapY { .. }
+        | Whatsit::PdfSnapYComp { .. } => true,
     };
     if !anchored {
         return Ok(None);

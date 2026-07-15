@@ -394,6 +394,18 @@ pub enum PageEffect {
         payload: Vec<u8>,
         page_start: bool,
     },
+    PdfSavePosition,
+    PdfSnapState {
+        x: Scaled,
+        y: Scaled,
+    },
+    PdfSnapRefPoint,
+    PdfSnapY {
+        spec: GlueSpec,
+    },
+    PdfSnapYComp {
+        ratio: u16,
+    },
 }
 
 /// Ordered PDF-only accessibility control retained at its shipped position.
@@ -517,6 +529,11 @@ fn validate_artifact(
             | PageEffect::PdfSave
             | PageEffect::PdfRestore => None,
             PageEffect::PdfColorStack { .. } => None,
+            PageEffect::PdfSavePosition
+            | PageEffect::PdfSnapState { .. }
+            | PageEffect::PdfSnapRefPoint
+            | PageEffect::PdfSnapY { .. }
+            | PageEffect::PdfSnapYComp { .. } => None,
         };
         if stream.is_some_and(|stream| stream >= 16) {
             return Err(ArtifactValidationError::InvalidStream {

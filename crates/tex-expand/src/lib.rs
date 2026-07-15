@@ -518,6 +518,7 @@ pub enum ReadEngineField {
     PageInsertions,
     PdfExternalImages,
     PdfObjects,
+    PdfPositions,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

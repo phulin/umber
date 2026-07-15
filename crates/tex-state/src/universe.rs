@@ -188,6 +188,9 @@ pub trait ExpansionState {
     fn page_mark_class(&self, mark: PageMark, class: u16) -> TokenListId;
     fn page_insertion_height(&self, class: u16) -> Option<Scaled>;
     fn pdf_external_image(&self, id: PdfExternalImageId) -> Option<PdfExternalImageMetadata>;
+    fn pdf_last_position(&self) -> (Scaled, Scaled) {
+        (Scaled::from_raw(0), Scaled::from_raw(0))
+    }
     fn allocate_pdf_color_stack(
         &mut self,
         _mode: crate::PdfColorStackMode,
@@ -1955,6 +1958,23 @@ impl Universe {
 
     pub fn pdf_page_color_stack_restorations(&mut self) -> Vec<crate::PdfColorStackEmission> {
         self.pdf.page_color_stack_restorations()
+    }
+
+    pub const fn pdf_last_position(&self) -> (Scaled, Scaled) {
+        self.pdf.last_position()
+    }
+
+    pub const fn pdf_snap_reference(&self) -> (Scaled, Scaled) {
+        self.pdf.snap_reference()
+    }
+
+    pub fn publish_pdf_traversal_positions(
+        &mut self,
+        last_position: Option<(Scaled, Scaled)>,
+        snap_reference: (Scaled, Scaled),
+    ) {
+        self.pdf
+            .publish_traversal_positions(last_position, snap_reference);
     }
 
     /// Records a parsed, host-neutral font-map mutation.
@@ -4358,6 +4378,10 @@ impl ExpansionState for Universe {
         Self::pdf_external_image(self, id)
     }
 
+    fn pdf_last_position(&self) -> (Scaled, Scaled) {
+        Self::pdf_last_position(self)
+    }
+
     fn allocate_pdf_color_stack(
         &mut self,
         mode: crate::PdfColorStackMode,
@@ -4847,6 +4871,10 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn pdf_external_image(&self, id: PdfExternalImageId) -> Option<PdfExternalImageMetadata> {
         self.universe.pdf_external_image(id)
+    }
+
+    fn pdf_last_position(&self) -> (Scaled, Scaled) {
+        self.universe.pdf_last_position()
     }
 
     fn allocate_pdf_color_stack(

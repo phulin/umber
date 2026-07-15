@@ -770,6 +770,20 @@ where
                 token,
             ))
         }
+        Meaning::InternalInteger(InternalInteger::PdfLastXPos) => {
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Engine(ReadEngineField::PdfPositions)
+            );
+            Ok(ScannedInt::new(stores.pdf_last_position().0.raw(), token))
+        }
+        Meaning::InternalInteger(InternalInteger::PdfLastYPos) => {
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Engine(ReadEngineField::PdfPositions)
+            );
+            Ok(ScannedInt::new(stores.pdf_last_position().1.raw(), token))
+        }
         Meaning::InternalInteger(InternalInteger::CurrentGroupLevel) => {
             crate::record_dependency!(
                 expansion,

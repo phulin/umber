@@ -530,6 +530,8 @@ pub(crate) struct PdfStateCursor {
     link_fingerprint: u64,
     open_link_fingerprint: u64,
     color_stack_fingerprint: u64,
+    last_position: (Scaled, Scaled),
+    snap_reference: (Scaled, Scaled),
 }
 
 #[derive(Clone, Debug)]
@@ -588,6 +590,8 @@ pub(crate) struct PdfState {
     open_link_fingerprint: u64,
     color_stacks: Arc<Vec<PdfColorStack>>,
     color_stack_fingerprint: u64,
+    last_position: (Scaled, Scaled),
+    snap_reference: (Scaled, Scaled),
 }
 
 impl Default for PdfState {
@@ -624,6 +628,8 @@ impl Default for PdfState {
             open_link_fingerprint: open_link_fingerprint(&[]),
             color_stacks: Arc::new(Vec::new()),
             color_stack_fingerprint: color_stack_fingerprint(&[]),
+            last_position: (Scaled::from_raw(0), Scaled::from_raw(0)),
+            snap_reference: (Scaled::from_raw(0), Scaled::from_raw(0)),
         }
     }
 }
@@ -693,6 +699,8 @@ impl PdfState {
             && self.links.is_empty()
             && self.open_links.is_empty()
             && self.color_stacks.is_empty()
+            && self.last_position == (Scaled::from_raw(0), Scaled::from_raw(0))
+            && self.snap_reference == (Scaled::from_raw(0), Scaled::from_raw(0))
     }
 
     pub(crate) fn ensure_page_capacity(&self, parameters: PdfOutputParameters) -> Result<(), ()> {
@@ -1390,6 +1398,8 @@ impl PdfState {
             link_fingerprint: self.link_fingerprint,
             open_link_fingerprint: self.open_link_fingerprint,
             color_stack_fingerprint: self.color_stack_fingerprint,
+            last_position: self.last_position,
+            snap_reference: self.snap_reference,
         }
     }
     #[must_use]
@@ -1451,6 +1461,8 @@ impl PdfState {
         self.open_link_fingerprint = cursor.open_link_fingerprint;
         self.color_stacks = snapshot.color_stacks;
         self.color_stack_fingerprint = cursor.color_stack_fingerprint;
+        self.last_position = cursor.last_position;
+        self.snap_reference = cursor.snap_reference;
     }
 
     pub(crate) fn set_match(
@@ -1520,7 +1532,30 @@ impl PdfState {
                 hasher.u32(id);
             }
             hasher.u64(cursor.color_stack_fingerprint);
+            hasher.i32(cursor.last_position.0.raw());
+            hasher.i32(cursor.last_position.1.raw());
+            hasher.i32(cursor.snap_reference.0.raw());
+            hasher.i32(cursor.snap_reference.1.raw());
         })
+    }
+
+    pub(crate) const fn last_position(&self) -> (Scaled, Scaled) {
+        self.last_position
+    }
+
+    pub(crate) const fn snap_reference(&self) -> (Scaled, Scaled) {
+        self.snap_reference
+    }
+
+    pub(crate) fn publish_traversal_positions(
+        &mut self,
+        last_position: Option<(Scaled, Scaled)>,
+        snap_reference: (Scaled, Scaled),
+    ) {
+        if let Some(position) = last_position {
+            self.last_position = position;
+        }
+        self.snap_reference = snap_reference;
     }
 
     fn ensure_default_color_stack(&mut self) {

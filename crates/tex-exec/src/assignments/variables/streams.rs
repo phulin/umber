@@ -185,7 +185,8 @@ pub(in crate::assignments) fn execute_pdf_graphics(
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<(), ExecError> {
-    if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+    if stores.int_param(IntParam::PDF_OUTPUT) <= 0 && primitive != UnexpandablePrimitive::PdfSavePos
+    {
         return Err(ExecError::UnimplementedTypesetting {
             mode: nest.current_mode(),
             token: tex_expand::semantic_token(context),
@@ -264,6 +265,21 @@ pub(in crate::assignments) fn execute_pdf_graphics(
                 return Ok(());
             };
             Node::Whatsit(Whatsit::PdfColorStack { id, action })
+        }
+        UnexpandablePrimitive::PdfSavePos => Node::Whatsit(Whatsit::PdfSavePos),
+        UnexpandablePrimitive::PdfSnapRefPoint => Node::Whatsit(Whatsit::PdfSnapRefPoint),
+        UnexpandablePrimitive::PdfSnapY => {
+            let glue = scan_glue_id(input, stores, execution, false, context)?;
+            if stores.glue(glue).width.raw() < 0 {
+                return Err(ExecError::InvalidShipoutArtifact(
+                    "pdfTeX error (\\pdfsnapy): negative glue".to_owned(),
+                ));
+            }
+            Node::Whatsit(Whatsit::PdfSnapY { glue })
+        }
+        UnexpandablePrimitive::PdfSnapYComp => {
+            let ratio = scan_i32(input, stores, execution, context)?.clamp(0, 1000) as u16;
+            Node::Whatsit(Whatsit::PdfSnapYComp { ratio })
         }
         _ => unreachable!("caller restricts PDF graphics primitive"),
     };

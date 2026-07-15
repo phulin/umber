@@ -368,6 +368,10 @@ pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
         ("pdfsave", UnexpandablePrimitive::PdfSave),
         ("pdfrestore", UnexpandablePrimitive::PdfRestore),
         ("pdfcolorstack", UnexpandablePrimitive::PdfColorStack),
+        ("pdfsavepos", UnexpandablePrimitive::PdfSavePos),
+        ("pdfsnaprefpoint", UnexpandablePrimitive::PdfSnapRefPoint),
+        ("pdfsnapy", UnexpandablePrimitive::PdfSnapY),
+        ("pdfsnapycomp", UnexpandablePrimitive::PdfSnapYComp),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
@@ -378,6 +382,8 @@ pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
         ("pdfshellescape", InternalInteger::PdfShellEscape),
         ("pdflastannot", InternalInteger::PdfLastAnnot),
         ("pdflastlink", InternalInteger::PdfLastLink),
+        ("pdflastxpos", InternalInteger::PdfLastXPos),
+        ("pdflastypos", InternalInteger::PdfLastYPos),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::InternalInteger(integer));

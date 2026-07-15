@@ -1426,7 +1426,11 @@ fn execute_prefixed_command(
             | UnexpandablePrimitive::PdfSetMatrix
             | UnexpandablePrimitive::PdfSave
             | UnexpandablePrimitive::PdfRestore
-            | UnexpandablePrimitive::PdfColorStack => {
+            | UnexpandablePrimitive::PdfColorStack
+            | UnexpandablePrimitive::PdfSavePos
+            | UnexpandablePrimitive::PdfSnapRefPoint
+            | UnexpandablePrimitive::PdfSnapY
+            | UnexpandablePrimitive::PdfSnapYComp => {
                 reject_all_prefixes(prefixes)?;
                 execute_pdf_graphics(primitive, command.traced, nest, input, stores, execution)?;
                 Ok(CommandOutcome::continue_only())

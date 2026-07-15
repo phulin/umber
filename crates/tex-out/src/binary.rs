@@ -52,7 +52,12 @@ mod wire {
         pub const PDF_SAVE: u8 = 7;
         pub const PDF_RESTORE: u8 = 8;
         pub const PDF_COLOR_STACK: u8 = 9;
-        // Tags 10..=15 are reserved by independently developed artifact effects.
+        pub const PDF_SAVE_POSITION: u8 = 10;
+        pub const PDF_SNAP_STATE: u8 = 11;
+        pub const PDF_SNAP_REF_POINT: u8 = 12;
+        pub const PDF_SNAP_Y: u8 = 13;
+        pub const PDF_SNAP_Y_COMP: u8 = 14;
+        // Tag 15 is reserved by independently developed artifact effects.
         pub const PDF_ANNOTATION: u8 = 16;
     }
 
@@ -1488,6 +1493,21 @@ impl Writer {
                     self.u8(u8::from(*page_start));
                     self.bytes(payload);
                 }
+                PageEffect::PdfSavePosition => self.u8(wire::effect::PDF_SAVE_POSITION),
+                PageEffect::PdfSnapState { x, y } => {
+                    self.u8(wire::effect::PDF_SNAP_STATE);
+                    self.scaled(*x);
+                    self.scaled(*y);
+                }
+                PageEffect::PdfSnapRefPoint => self.u8(wire::effect::PDF_SNAP_REF_POINT),
+                PageEffect::PdfSnapY { spec } => {
+                    self.u8(wire::effect::PDF_SNAP_Y);
+                    self.glue_spec(*spec);
+                }
+                PageEffect::PdfSnapYComp { ratio } => {
+                    self.u8(wire::effect::PDF_SNAP_Y_COMP);
+                    self.u16(*ratio);
+                }
             }
         }
     }
@@ -2143,6 +2163,16 @@ impl Reader<'_> {
                     },
                     payload: self.bytes()?,
                 },
+                wire::effect::PDF_SAVE_POSITION => PageEffect::PdfSavePosition,
+                wire::effect::PDF_SNAP_STATE => PageEffect::PdfSnapState {
+                    x: self.scaled()?,
+                    y: self.scaled()?,
+                },
+                wire::effect::PDF_SNAP_REF_POINT => PageEffect::PdfSnapRefPoint,
+                wire::effect::PDF_SNAP_Y => PageEffect::PdfSnapY {
+                    spec: self.glue_spec()?,
+                },
+                wire::effect::PDF_SNAP_Y_COMP => PageEffect::PdfSnapYComp { ratio: self.u16()? },
                 tag => {
                     return Err(ParseError::InvalidTag {
                         kind: "effect",

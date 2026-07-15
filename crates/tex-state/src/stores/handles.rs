@@ -371,6 +371,9 @@ impl Stores {
             ) => {
                 self.assert_live_token_list(*tokens);
             }
+            Node::Whatsit(crate::node::Whatsit::PdfSnapY { glue }) => {
+                self.assert_live_glue(*glue);
+            }
             Node::Whatsit(
                 crate::node::Whatsit::OpenOut { .. }
                 | crate::node::Whatsit::CloseOut { .. }
@@ -386,6 +389,9 @@ impl Stores {
                 | crate::node::Whatsit::PdfSave
                 | crate::node::Whatsit::PdfRestore
                 | crate::node::Whatsit::PdfColorStack { .. }
+                | crate::node::Whatsit::PdfSavePos
+                | crate::node::Whatsit::PdfSnapRefPoint
+                | crate::node::Whatsit::PdfSnapYComp { .. }
                 | crate::node::Whatsit::Language { .. },
             ) => {}
             Node::Kern { .. }

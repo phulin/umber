@@ -151,6 +151,14 @@ pub(super) enum FormatWhatsit {
         action: u8,
         payload: Vec<u8>,
     },
+    PdfSavePos,
+    PdfSnapRefPoint,
+    PdfSnapY {
+        glue: u32,
+    },
+    PdfSnapYComp {
+        ratio: u16,
+    },
     Language {
         language: u8,
         left_hyphen_min: u8,
@@ -500,6 +508,10 @@ impl FormatWhatsit {
                     payload,
                 }
             }
+            Whatsit::PdfSavePos => Self::PdfSavePos,
+            Whatsit::PdfSnapRefPoint => Self::PdfSnapRefPoint,
+            Whatsit::PdfSnapY { glue } => Self::PdfSnapY { glue: glue.raw() },
+            Whatsit::PdfSnapYComp { ratio } => Self::PdfSnapYComp { ratio },
             Whatsit::Language {
                 language,
                 left_hyphen_min,
@@ -552,6 +564,12 @@ impl FormatWhatsit {
                     _ => return Err(StoreFormatError::Invalid("PDF color stack action")),
                 },
             },
+            Self::PdfSavePos => Whatsit::PdfSavePos,
+            Self::PdfSnapRefPoint => Whatsit::PdfSnapRefPoint,
+            Self::PdfSnapY { glue } => Whatsit::PdfSnapY {
+                glue: glue_id(stores, glue)?,
+            },
+            Self::PdfSnapYComp { ratio } => Whatsit::PdfSnapYComp { ratio },
             Self::Language {
                 language,
                 left_hyphen_min,

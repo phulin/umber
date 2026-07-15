@@ -534,6 +534,14 @@ pub enum Whatsit {
         id: u32,
         action: crate::PdfColorStackAction,
     },
+    PdfSavePos,
+    PdfSnapRefPoint,
+    PdfSnapY {
+        glue: GlueId,
+    },
+    PdfSnapYComp {
+        ratio: u16,
+    },
     Language {
         language: u8,
         left_hyphen_min: u8,
