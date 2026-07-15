@@ -1812,7 +1812,15 @@ impl Universe {
         logical_name: Vec<u8>,
         bytes: &[u8],
     ) -> Result<(), tex_fonts::PdfTrueTypeProgramError> {
-        let program = tex_fonts::PdfTrueTypeProgram::parse(bytes)?;
+        let is_woff2 = logical_name
+            .rsplit(|byte| *byte == b'.')
+            .next()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case(b"woff2"));
+        let program = if is_woff2 {
+            tex_fonts::PdfTrueTypeProgram::from_woff2(bytes)?
+        } else {
+            tex_fonts::PdfTrueTypeProgram::parse(bytes)?
+        };
         self.pdf.provide_truetype_program(logical_name, program);
         Ok(())
     }

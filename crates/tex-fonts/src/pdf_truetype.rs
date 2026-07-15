@@ -59,6 +59,13 @@ impl PdfTrueTypeProgram {
         })
     }
 
+    pub fn from_woff2(bytes: &[u8]) -> Result<Self, PdfTrueTypeProgramError> {
+        let mut source = bytes;
+        let decoded = woff2_patched::convert_woff2_to_ttf(&mut source)
+            .map_err(|_| PdfTrueTypeProgramError::InvalidWoff2)?;
+        Self::parse(&decoded)
+    }
+
     #[must_use]
     pub const fn identity(&self) -> PdfTrueTypeProgramIdentity {
         self.identity
@@ -104,11 +111,15 @@ impl PdfTrueTypeProgram {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PdfTrueTypeProgramError {
     InvalidSfnt,
+    InvalidWoff2,
 }
 
 impl std::fmt::Display for PdfTrueTypeProgramError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("invalid TrueType SFNT font program")
+        match self {
+            Self::InvalidSfnt => f.write_str("invalid TrueType SFNT font program"),
+            Self::InvalidWoff2 => f.write_str("invalid WOFF2 font program"),
+        }
     }
 }
 
@@ -124,5 +135,14 @@ mod tests {
             PdfTrueTypeProgram::parse(b"not a font"),
             Err(PdfTrueTypeProgramError::InvalidSfnt)
         );
+    }
+
+    #[test]
+    fn decodes_committed_woff2_to_pdf_ready_sfnt() {
+        let bytes = include_bytes!("../../umber-wasm/assets/cmu-serif-500-roman.woff2");
+        let program = PdfTrueTypeProgram::from_woff2(bytes).expect("committed WOFF2");
+        assert!(program.bytes().starts_with(&[0, 1, 0, 0]));
+        assert!(program.ascent() > 0);
+        assert!(program.bbox()[2] > program.bbox()[0]);
     }
 }

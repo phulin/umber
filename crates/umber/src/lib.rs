@@ -224,7 +224,10 @@ impl FileSessionResolvers {
             let is_truetype = name
                 .rsplit(|byte| *byte == b'.')
                 .next()
-                .is_some_and(|extension| extension.eq_ignore_ascii_case(b"ttf"));
+                .is_some_and(|extension| {
+                    extension.eq_ignore_ascii_case(b"ttf")
+                        || extension.eq_ignore_ascii_case(b"woff2")
+                });
             if (is_truetype && stores.pdf_truetype_program(&name).is_some())
                 || (!is_truetype && stores.pdf_type1_program(&name).is_some())
             {

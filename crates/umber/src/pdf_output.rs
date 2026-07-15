@@ -253,7 +253,9 @@ fn pdf_font_objects(
     let is_truetype = program_name.is_some_and(|name| {
         name.rsplit(|byte| *byte == b'.')
             .next()
-            .is_some_and(|extension| extension.eq_ignore_ascii_case(b"ttf"))
+            .is_some_and(|extension| {
+                extension.eq_ignore_ascii_case(b"ttf") || extension.eq_ignore_ascii_case(b"woff2")
+            })
     });
     let type1 = (!is_truetype)
         .then(|| program_name.and_then(|name| stores.pdf_type1_program(name)))
@@ -981,6 +983,58 @@ mod tests {
         assert!(
             !pdf.windows(b"/FontFile".len())
                 .any(|window| window == b"/FontFile")
+        );
+    }
+
+    #[test]
+    fn committed_woff2_embeds_as_valid_truetype_fontfile2() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        stores
+            .world_mut()
+            .set_memory_file(
+                "cmr10.tfm",
+                include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm").to_vec(),
+            )
+            .expect("seed TFM");
+        let logical_name = b"cmu-serif-500-roman.woff2".to_vec();
+        stores
+            .provide_pdf_truetype_program(
+                logical_name,
+                include_bytes!("../../umber-wasm/assets/cmu-serif-500-roman.woff2"),
+            )
+            .expect("decode committed WOFF2");
+        let run_result = run_in(
+            &mut stores,
+            concat!(
+                "\\pdfoutput=1\\pdfcompresslevel=0",
+                "\\font\\f=cmr10 ",
+                "\\pdfmapline{=cmr10 CMUSerif <<cmu-serif-500-roman.woff2}",
+                "\\shipout\\hbox{\\f ABC}\\end",
+            ),
+        );
+        let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+            .expect("TrueType PDF assembles");
+        assert!(
+            pdf.windows(b"/Subtype/TrueType".len())
+                .any(|w| w == b"/Subtype/TrueType")
+        );
+        assert!(pdf.windows(b"/FontFile2".len()).any(|w| w == b"/FontFile2"));
+        let parsed = lopdf::Document::load_mem(&pdf).expect("lopdf parses TrueType output");
+        let embedded = parsed
+            .objects
+            .values()
+            .filter_map(|object| object.as_stream().ok())
+            .find(|stream| stream.content.starts_with(&[0, 1, 0, 0]))
+            .expect("decoded SFNT is embedded");
+        assert_eq!(
+            embedded
+                .dict
+                .get(b"Length1")
+                .expect("Length1")
+                .as_i64()
+                .expect("integer Length1") as usize,
+            embedded.content.len()
         );
     }
 
