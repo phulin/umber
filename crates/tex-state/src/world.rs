@@ -1209,10 +1209,7 @@ impl World {
         let Some(target) = self.stream_bufs.read_streams[slot.index()].as_ref() else {
             return true;
         };
-        let Some(bytes) = self.input_contents.get(&target.hash) else {
-            return true;
-        };
-        target.next_byte >= bytes.len()
+        !self.input_contents.contains_key(&target.hash)
     }
 
     pub fn read_stream_line(&mut self, slot: StreamSlot) -> Result<Option<String>, WorldError> {

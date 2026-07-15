@@ -124,6 +124,11 @@ fixed job time, randomness, filesystem-like effects, and resource observation.
 Engine crates do not call host filesystem, clock, terminal, or random APIs.
 `clippy.toml` enforces the principal forbidden methods.
 
+Input streams retain TeX's semantic open/closed state separately from their
+byte cursor. Reading the final physical line leaves a stream open; only a
+subsequent read attempt past that line closes it, which is the state observed
+by `\ifeof`.
+
 Effects are recorded in execution order and published at explicit commit
 boundaries. A failed or rolled-back transaction cannot leak writes, artifact
 receipts, DVI plans, or auxiliary output. Virtual compile sessions clone or

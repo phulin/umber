@@ -361,7 +361,7 @@ fn input_stream_reads_are_pinned_and_snapshot_cursor_restores() {
         world.read_stream_line(slot).expect("read second line"),
         Some("two".to_owned())
     );
-    assert!(world.input_stream_eof(slot));
+    assert!(!world.input_stream_eof(slot));
 
     world.rollback(&snapshot);
 
@@ -420,7 +420,7 @@ fn input_stream_advances_an_incremental_byte_cursor() {
             .as_deref(),
         Some("末")
     );
-    assert!(world.input_stream_eof(slot));
+    assert!(!world.input_stream_eof(slot));
     assert_eq!(
         world
             .stream_bufs()
@@ -429,6 +429,13 @@ fn input_stream_advances_an_incremental_byte_cursor() {
             .next_byte(),
         contents.len()
     );
+    assert_eq!(
+        world
+            .read_stream_line(slot)
+            .expect("read past the final line"),
+        Some(String::new())
+    );
+    assert!(world.input_stream_eof(slot));
 }
 
 #[test]

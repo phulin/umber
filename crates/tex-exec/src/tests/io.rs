@@ -34,6 +34,35 @@ fn openin_read_defines_control_sequence_from_world_stream() {
 }
 
 #[test]
+fn ifeof_remains_false_until_a_read_attempts_past_the_final_line() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    stores
+        .world_mut()
+        .set_memory_file("stream.tex", b"one\ntwo\n".to_vec())
+        .expect("seed stream");
+    let mut input = InputStack::new(MemoryInput::new(concat!(
+        "\\openin1=stream.tex ",
+        "\\read1 to \\first ",
+        "\\read1 to \\second ",
+        "\\ifeof1\\message{EARLY}\\else\\message{[\\second]}\\fi ",
+        "\\read1 to \\past ",
+        "\\ifeof1\\message{CLOSED}\\fi ",
+        "\\end",
+    )));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("read through stream EOF");
+
+    let output = terminal_effect_text(&stores);
+    assert!(output.contains("[two ]"), "{output:?}");
+    assert!(!output.contains("EARLY"), "{output:?}");
+    assert!(output.contains("CLOSED"), "{output:?}");
+}
+
+#[test]
 fn openin_accepts_a_quoted_filename_with_spaces() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
