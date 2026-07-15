@@ -625,7 +625,10 @@ const LITERAL_SPAN_CACHE_MAX_ENTRIES: usize = 4096;
 /// The marker is intentionally absent from resumable input summaries: callers
 /// use it only to delimit a synchronous replay operation on the current stack.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct TokenListReplayMarker(u64);
+pub struct TokenListReplayMarker {
+    sequence: u64,
+    frame_index: usize,
+}
 
 #[derive(Debug)]
 enum InputFrame {
@@ -688,11 +691,17 @@ impl StableFrames {
     fn last_mut(&mut self) -> Option<&mut InputFrame> {
         self.slots.iter_mut().rev().find_map(Option::as_mut)
     }
-    fn iter_indexed(&self) -> impl DoubleEndedIterator<Item = (usize, &InputFrame)> {
-        self.slots
+    fn iter_indexed_from(
+        &self,
+        start: usize,
+    ) -> impl DoubleEndedIterator<Item = (usize, &InputFrame)> {
+        self.slots[start..]
             .iter()
             .enumerate()
-            .filter_map(|(index, frame)| frame.as_ref().map(|frame| (index, frame)))
+            .filter_map(move |(offset, frame)| frame.as_ref().map(|frame| (start + offset, frame)))
+    }
+    fn get(&self, index: usize) -> Option<&InputFrame> {
+        self.slots.get(index)?.as_ref()
     }
 }
 
@@ -1002,6 +1011,7 @@ impl TracedExpansionToken {
 #[derive(Debug)]
 pub struct InputStack {
     frames: StableFrames,
+    source_frame_count: usize,
     token_frame_indices: Vec<usize>,
     condition_frame_indices: Vec<usize>,
     next_source_id: u32,
@@ -1079,6 +1089,7 @@ impl InputStack {
     pub fn empty() -> Self {
         Self {
             frames: StableFrames::new(),
+            source_frame_count: 0,
             token_frame_indices: Vec::new(),
             condition_frame_indices: Vec::new(),
             next_source_id: 0,
@@ -1263,6 +1274,10 @@ impl InputStack {
             })
             .unwrap_or(OriginId::UNKNOWN);
 
+        let source_frame_count = frames
+            .iter()
+            .filter(|frame| matches!(frame, InputFrame::Source(_)))
+            .count();
         let token_frame_indices = frames
             .iter()
             .enumerate()
@@ -1279,6 +1294,7 @@ impl InputStack {
             .collect();
         Ok(Self {
             frames: StableFrames::from_vec(frames),
+            source_frame_count,
             token_frame_indices,
             condition_frame_indices,
             next_source_id: summary.next_source_id(),
@@ -1632,7 +1648,10 @@ impl InputStack {
         origin_list: OriginListId,
         replay_kind: TokenListReplayKind,
     ) -> TokenListReplayMarker {
-        let replay_marker = TokenListReplayMarker(self.next_replay_marker);
+        let replay_marker = TokenListReplayMarker {
+            sequence: self.next_replay_marker,
+            frame_index: self.frames.slot_len(),
+        };
         self.next_replay_marker = self
             .next_replay_marker
             .checked_add(1)
@@ -2079,10 +2098,7 @@ impl InputStack {
     /// still unbalanced. Token-list and conditional frames do not count.
     #[must_use]
     pub fn source_depth(&self) -> usize {
-        self.frames
-            .iter()
-            .filter(|frame| matches!(frame, InputFrame::Source(_)))
-            .count()
+        self.source_frame_count
     }
 
     #[must_use]
@@ -3005,16 +3021,13 @@ impl InputStack {
     /// This is the input-stack half of recursive execution rollback. It does
     /// not rewind source frames that predate the replay capability.
     pub fn abort_token_list_replay(&mut self, marker: TokenListReplayMarker) -> bool {
-        let Some(target) = self.frames.iter_indexed().find_map(|(index, frame)| {
-            matches!(frame, InputFrame::TokenList(frame) if frame.replay_marker == Some(marker))
-                .then_some(index)
-        }) else {
+        let Some(target) = self.replay_marker_frame_index(marker) else {
             return false;
         };
         let indices = self
             .frames
-            .iter_indexed()
-            .filter_map(|(index, _)| (index >= target).then_some(index))
+            .iter_indexed_from(target)
+            .map(|(index, _)| index)
             .collect::<Vec<_>>();
         for index in indices.into_iter().rev() {
             let removed = self.remove_frame(index);
@@ -3043,12 +3056,7 @@ impl InputStack {
     /// Returns whether a synchronously delimited replay frame is still live.
     #[must_use]
     pub fn contains_token_list_replay_marker(&self, marker: TokenListReplayMarker) -> bool {
-        self.frames.iter().any(|frame| {
-            matches!(
-                frame,
-                InputFrame::TokenList(frame) if frame.replay_marker == Some(marker)
-            )
-        })
+        self.replay_marker_frame_index(marker).is_some()
     }
 
     /// Retires a marked replay once it and every token-list replay above it
@@ -3064,38 +3072,28 @@ impl InputStack {
         marker: TokenListReplayMarker,
         stores: &impl ExpansionState,
     ) -> bool {
-        let Some(marked_index) = self.frames.iter_indexed().find_map(|(index, frame)| {
-            matches!(
-                frame,
-                InputFrame::TokenList(frame) if frame.replay_marker == Some(marker)
-            )
-            .then_some(index)
-        }) else {
+        let Some(marked_index) = self.replay_marker_frame_index(marker) else {
             return true;
         };
 
-        let can_finish = self
-            .frames
-            .iter_indexed()
-            .filter(|(index, _)| *index >= marked_index)
-            .all(|(_, frame)| match frame {
-                InputFrame::TokenList(frame) => {
-                    frame.index >= stores.tokens(frame.token_list).len()
-                }
-                InputFrame::Condition { .. } => true,
-                InputFrame::Source(_) => false,
-            });
+        let can_finish =
+            self.frames
+                .iter_indexed_from(marked_index)
+                .all(|(_, frame)| match frame {
+                    InputFrame::TokenList(frame) => {
+                        frame.index >= stores.tokens(frame.token_list).len()
+                    }
+                    InputFrame::Condition { .. } => true,
+                    InputFrame::Source(_) => false,
+                });
         if !can_finish {
             return false;
         }
 
         let retire = self
             .frames
-            .iter_indexed()
-            .filter_map(|(index, frame)| {
-                (index >= marked_index && matches!(frame, InputFrame::TokenList(_)))
-                    .then_some(index)
-            })
+            .iter_indexed_from(marked_index)
+            .filter_map(|(index, frame)| matches!(frame, InputFrame::TokenList(_)).then_some(index))
             .collect::<Vec<_>>();
         for index in retire.into_iter().rev() {
             if matches!(self.frames[index], InputFrame::TokenList(_)) {
@@ -3108,6 +3106,14 @@ impl InputStack {
         true
     }
 
+    fn replay_marker_frame_index(&self, marker: TokenListReplayMarker) -> Option<usize> {
+        matches!(
+            self.frames.get(marker.frame_index),
+            Some(InputFrame::TokenList(frame)) if frame.replay_marker == Some(marker)
+        )
+        .then_some(marker.frame_index)
+    }
+
     fn current_token_frame_index(&self) -> Option<usize> {
         self.token_frame_indices.last().copied()
     }
@@ -3115,15 +3121,23 @@ impl InputStack {
     fn push_frame(&mut self, frame: InputFrame) {
         let index = self.frames.slot_len();
         match frame {
-            InputFrame::Source(_) | InputFrame::TokenList(_) => {
-                self.token_frame_indices.push(index)
+            InputFrame::Source(_) => {
+                self.source_frame_count += 1;
+                self.token_frame_indices.push(index);
             }
+            InputFrame::TokenList(_) => self.token_frame_indices.push(index),
             InputFrame::Condition { .. } => self.condition_frame_indices.push(index),
         }
         self.frames.push(frame);
     }
 
     fn remove_frame(&mut self, index: usize) -> InputFrame {
+        if matches!(self.frames[index], InputFrame::Source(_)) {
+            self.source_frame_count = self
+                .source_frame_count
+                .checked_sub(1)
+                .expect("source frame count must match live source frames");
+        }
         let indices = match self.frames[index] {
             InputFrame::Source(_) | InputFrame::TokenList(_) => &mut self.token_frame_indices,
             InputFrame::Condition { .. } => &mut self.condition_frame_indices,

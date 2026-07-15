@@ -1257,6 +1257,34 @@ fn input_summary_restores_source_allocator_and_unicode_superscript_mode() {
 }
 
 #[test]
+fn source_depth_tracks_nested_sources_and_summary_restoration() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+    let mut input = InputStack::new(MemoryInput::new("a"));
+    assert_eq!(input.source_depth(), 1);
+
+    input.push_source(MemoryInput::new(""));
+    input.push_source(MemoryInput::new("b"));
+    assert_eq!(input.source_depth(), 3);
+
+    assert_eq!(
+        input.next_token(&mut stores).expect("nested token"),
+        Some(char_token('b', Catcode::Letter))
+    );
+    assert_eq!(input.source_depth(), 3);
+    assert_eq!(
+        input.next_token(&mut stores).expect("outer token"),
+        Some(char_token('a', Catcode::Letter))
+    );
+    assert_eq!(input.source_depth(), 1);
+
+    let summary = input.summary();
+    let restored = InputStack::from_summary(&summary, |_, _, _| Ok::<_, ()>(MemoryInput::new("")))
+        .expect("summary restores");
+    assert_eq!(restored.source_depth(), 1);
+}
+
+#[test]
 fn nested_sources_keep_independent_physical_offsets() {
     let mut stores = Universe::new();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
@@ -1443,6 +1471,14 @@ fn replay_markers_distinguish_frames_with_identical_content() {
     );
     assert!(!input.contains_token_list_replay_marker(inner));
     assert!(input.contains_token_list_replay_marker(outer));
+
+    assert_eq!(
+        input.next_token(&mut stores).expect("outer frame pops"),
+        Some(char_token('a', Catcode::Letter))
+    );
+    let replacement = input.push_token_list(list, TokenListReplayKind::Inserted);
+    assert!(!input.contains_token_list_replay_marker(outer));
+    assert!(input.contains_token_list_replay_marker(replacement));
 }
 
 #[test]
