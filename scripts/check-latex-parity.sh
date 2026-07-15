@@ -14,6 +14,7 @@ offline=0
 keep_work=0
 self_test=0
 format_build_count=0
+case_timeout_seconds="${UMBER_LATEX_CASE_TIMEOUT_SECONDS:-30}"
 
 target_dir="${CARGO_TARGET_DIR:-${repo_root}/target}"
 if [[ "$target_dir" != /* ]]; then
@@ -65,6 +66,11 @@ done
 fail() {
   printf 'check-latex-parity.sh: %s\n' "$*" >&2
   exit 1
+}
+
+run_with_case_timeout() {
+  perl -e '$seconds = shift @ARGV; alarm $seconds; exec @ARGV' \
+    "$case_timeout_seconds" "$@"
 }
 
 sha256() {
@@ -175,6 +181,9 @@ else
   "${repo_root}/scripts/setup-latex-parity-tests.sh"
 fi
 [[ -x "$reference_latex" ]] || fail "missing reference LaTeX; set UMBER_REF_LATEX"
+[[ "$case_timeout_seconds" =~ ^[1-9][0-9]*$ ]] || \
+  fail "UMBER_LATEX_CASE_TIMEOUT_SECONDS must be a positive integer"
+command -v perl >/dev/null 2>&1 || fail "Perl is required for per-case timeouts"
 reference_version="$($reference_latex --version | sed -n '1p')"
 [[ "$reference_version" == *'TeX Live 2025'* ]] || \
   fail "reference LaTeX is not from pinned TeX Live 2025: $reference_version"
@@ -259,12 +268,16 @@ run_one_case() {
   local reference_status=0
   (
     cd "$reference_dir"
-    env SOURCE_DATE_EPOCH="$source_date_epoch" FORCE_SOURCE_DATE=1 \
+    run_with_case_timeout env SOURCE_DATE_EPOCH="$source_date_epoch" FORCE_SOURCE_DATE=1 \
       TEXINPUTS="${local_inputs}:" \
       "$reference_latex" -interaction=batchmode document.tex \
         > document.stdout 2> document.stderr < /dev/null
   ) || reference_status=$?
   if [[ ! -f "${reference_dir}/document.dvi" ]]; then
+    if [[ $reference_status -eq 142 ]]; then
+      case_error "$case_name" "reference timed out after ${case_timeout_seconds}s"
+      return 1
+    fi
     printf 'LaTeX DVI parity: %s has no classic LaTeX DVI (status %s)\n' \
       "$case_name" "$reference_status"
     return 2
@@ -275,13 +288,17 @@ run_one_case() {
   local umber_status=0
   (
     cd "$umber_dir"
-    env SOURCE_DATE_EPOCH="$source_date_epoch" FORCE_SOURCE_DATE=1 \
+    run_with_case_timeout env SOURCE_DATE_EPOCH="$source_date_epoch" FORCE_SOURCE_DATE=1 \
       TEXINPUTS="$local_inputs" TEXFONTS="$texfonts" \
       "$umber_bin" run --latex document.tex --format latex.fmt --dvi document.dvi \
         > document.stdout 2> document.stderr < /dev/null
   ) || umber_status=$?
   if [[ ! -f "${umber_dir}/document.dvi" ]]; then
-    case_error "$case_name" "Umber emitted no DVI (status $umber_status)"
+    if [[ $umber_status -eq 142 ]]; then
+      case_error "$case_name" "Umber timed out after ${case_timeout_seconds}s"
+    else
+      case_error "$case_name" "Umber emitted no DVI (status $umber_status)"
+    fi
     return 1
   fi
 
