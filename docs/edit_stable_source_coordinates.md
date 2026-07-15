@@ -1,9 +1,10 @@
 # Edit-Stable Source Coordinates
 
-Status: implemented through phase 3. Per-revision whole-document source
+Status: implemented through phase 4. Per-revision whole-document source
 regions have been replaced by fragment-backed coordinates so token, node, and
 shipout provenance stays resolvable and correct across editor inserts and
-deletes. Phase 4 pruning and long-session measurement remain pending.
+deletes. Retired fragment bytes are pruned after checkpoint protection ends,
+and long-session capacity and read-path costs are measured.
 
 ## 1. Problem
 
@@ -300,10 +301,10 @@ lookups chase at most one hop. Deferred until measurements demand it.
    whole-document `rebind_root_editor_input` with cursor installation;
    route `rendered_source_location` (and the retained maps from
    `rendered_source_map.md`, if landed first) through the layout-aware
-   resolver. Gate: an edit-before-reused-page scenario resolves reused-page
-   origins to *current* offsets; a convergence-adopted scratch page
-   resolves at all (both currently fail).
-4. **Pruning and measurement.** Fragment byte pruning, retained-memory
+   resolver. Regression tests prove an edit-before-reused-page scenario
+   resolves reused-page origins to *current* offsets and a
+   convergence-adopted scratch page resolves at all.
+4. **Pruning and measurement (complete).** Fragment byte pruning, retained-memory
    accounting, long-session capacity tests (keystroke storm, alternating
    insert/delete, pathological piece growth), and a
    `provenance_performance.md` update recording construction parity and

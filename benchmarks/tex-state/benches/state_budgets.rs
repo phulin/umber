@@ -1,11 +1,12 @@
+use std::sync::Arc;
+
 use criterion::{
     BatchSize, BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main,
 };
 use tex_expand::{get_x_token, install_expandable_primitives};
-use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
+use tex_lex::{InputStack, LayoutCursor, MemoryInput, TokenListReplayKind};
 use tex_state::ProvenanceResolver;
 use tex_state::SourceId;
-use tex_state::Universe;
 use tex_state::glue::Order;
 use tex_state::ids::OriginListId;
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
@@ -16,6 +17,7 @@ use tex_state::node::{BoxNode, BoxNodeFields, KernKind, Node, Sign};
 use tex_state::provenance::ProvenanceStats;
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+use tex_state::{EditorLayout, FragmentStore, LayoutGeneration, Piece, Universe};
 
 const GROUP_SIZES: [usize; 3] = [4, 64, 512];
 const ROLLBACK_TOTAL_CELLS: [usize; 2] = [1024, 4096];
@@ -36,6 +38,7 @@ const ALLOCATION_GRAPH_DEPTH: usize = 128;
 const ALLOCATION_LIST_LEN: usize = 1_024;
 const PAGE_QUEUE_LEN: usize = 65_536;
 const TOKEN_PROJECTION_SIZES: [usize; 3] = [64, 1_024, 16_384];
+const EDIT_STABLE_PIECES: usize = 4_096;
 
 const HASH_MIX_INCREMENT: u64 = 0x9e37_79b9_7f4a_7c15;
 const HASH_INITIAL_STATE: u64 = 0x6a09_e667_f3bc_c909;
@@ -837,6 +840,62 @@ fn provenance_diagnostic_rendering(c: &mut Criterion) {
     group.finish();
 }
 
+fn edit_stable_source_coordinates(c: &mut Criterion) {
+    let (fragments, layout, origin) = edit_stable_layout_case();
+    let universe = Universe::new();
+    let mut group = c.benchmark_group("edit_stable_source_coordinates");
+    group.throughput(Throughput::Elements(EDIT_STABLE_PIECES as u64));
+
+    group.bench_function("layout_cursor_build_4096_pieces", |b| {
+        b.iter(|| {
+            black_box(
+                LayoutCursor::new(black_box(&layout), black_box(&fragments))
+                    .expect("line-aligned benchmark layout"),
+            );
+        });
+    });
+
+    group.bench_function("resolve_last_piece_cold", |b| {
+        b.iter_batched(
+            edit_stable_layout_case,
+            |(fragments, layout, origin)| {
+                black_box(
+                    ProvenanceResolver::new(&universe)
+                        .resolve_layout_origin(origin, &fragments, &layout),
+                );
+            },
+            BatchSize::SmallInput,
+        );
+    });
+
+    let resolver = ProvenanceResolver::new(&universe);
+    black_box(resolver.resolve_layout_origin(origin, &fragments, &layout));
+    group.bench_function("resolve_last_piece_warm", |b| {
+        b.iter(|| {
+            black_box(resolver.resolve_layout_origin(origin, &fragments, &layout));
+        });
+    });
+    group.finish();
+}
+
+fn edit_stable_layout_case() -> (FragmentStore, EditorLayout, OriginId) {
+    let bytes = "x\n".repeat(EDIT_STABLE_PIECES);
+    let mut fragments = FragmentStore::new();
+    let (fragment, registration) = fragments
+        .append(Arc::from(bytes.as_bytes()), 1)
+        .expect("benchmark fragment fits logical position space");
+    let pieces = (0..EDIT_STABLE_PIECES)
+        .map(|index| Piece::new(fragment, (index * 2) as u32, (index * 2 + 2) as u32))
+        .collect();
+    let layout = EditorLayout::new("<benchmark>", LayoutGeneration::new(1), pieces, &fragments)
+        .expect("benchmark layout is valid");
+    let offset = ((EDIT_STABLE_PIECES - 1) * 2) as u64;
+    let origin = registration
+        .direct_origin(offset, offset + 1)
+        .expect("benchmark origin is directly encodable");
+    (fragments, layout, origin)
+}
+
 fn provenance_expansion(c: &mut Criterion) {
     let mut group = c.benchmark_group("provenance_expansion");
     group.throughput(Throughput::Elements(MACRO_CALLS as u64));
@@ -1222,6 +1281,7 @@ criterion_group!(
     provenance_source_lexing,
     provenance_expansion,
     provenance_memory_invariants,
-    provenance_diagnostic_rendering
+    provenance_diagnostic_rendering,
+    edit_stable_source_coordinates
 );
 criterion_main!(benches);
