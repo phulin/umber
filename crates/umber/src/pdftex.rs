@@ -2080,6 +2080,7 @@ mod tests {
                     },
                     page: 1,
                     has_page_group: false,
+                    pdf_version: (1, 4),
                 },
             )
             .expect("register PDF page-box metadata");

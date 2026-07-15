@@ -264,11 +264,18 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
         driver_files.push(DriverFile::new(output.clone(), dvi));
     }
     if let Some(output) = &opts.pdf {
-        resolvers
-            .provide_pdf_font_programs(&mut stores)
-            .map_err(CliError::PdfFontResource)?;
-        let pdf = umber::pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)?;
-        driver_files.push(DriverFile::new(output.clone(), pdf));
+        if stores
+            .fixed_pdf_output_parameters()
+            .is_some_and(|parameters| parameters.draft_mode > 0)
+        {
+            eprintln!("pdfTeX warning: \\pdfdraftmode enabled, not changing output pdf");
+        } else {
+            resolvers
+                .provide_pdf_font_programs(&mut stores)
+                .map_err(CliError::PdfFontResource)?;
+            let pdf = umber::pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)?;
+            driver_files.push(DriverFile::new(output.clone(), pdf));
+        }
     }
     if let Some(output) = &opts.html {
         let font_dir = opts

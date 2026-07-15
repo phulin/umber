@@ -153,8 +153,8 @@ fn parse_image(
     Ok(PdfExternalImageSource {
         identity: content.hash(),
         metadata: PdfExternalImageMetadata::Raster(metadata),
-        natural_width: pixels_to_scaled(metadata.width),
-        natural_height: pixels_to_scaled(metadata.height),
+        natural_width: pixels_to_scaled(metadata.width, request.resolution),
+        natural_height: pixels_to_scaled(metadata.height, request.resolution),
         bytes: content.shared_bytes(),
     })
 }
@@ -164,6 +164,7 @@ fn parse_pdf_image(
     request: &PdfImageRequest,
 ) -> Result<PdfExternalImageSource, String> {
     let document = lopdf::Document::load_mem(content.bytes()).map_err(|error| error.to_string())?;
+    let pdf_version = parse_pdf_version(&document.version)?;
     let page_id = document
         .get_pages()
         .get(&request.page)
@@ -197,11 +198,26 @@ fn parse_pdf_image(
             page_box,
             page: request.page,
             has_page_group,
+            pdf_version,
         },
         natural_width: page_box.right - page_box.left,
         natural_height: page_box.top - page_box.bottom,
         bytes: content.shared_bytes(),
     })
+}
+
+fn parse_pdf_version(version: &str) -> Result<(u8, u8), String> {
+    let (major, minor) = version
+        .split_once('.')
+        .ok_or_else(|| format!("invalid PDF version {version:?}"))?;
+    Ok((
+        major
+            .parse()
+            .map_err(|_| format!("invalid PDF version {version:?}"))?,
+        minor
+            .parse()
+            .map_err(|_| format!("invalid PDF version {version:?}"))?,
+    ))
 }
 
 fn png_has_chunk(bytes: &[u8], wanted: &[u8; 4]) -> bool {
@@ -295,8 +311,9 @@ fn jpeg_dimensions(bytes: &[u8]) -> Result<(u32, u32, u8, u8), String> {
     Err("JPEG has no supported frame header".to_owned())
 }
 
-fn pixels_to_scaled(pixels: u32) -> Scaled {
-    pdf_points_to_scaled(f64::from(pixels))
+fn pixels_to_scaled(pixels: u32, resolution: u32) -> Scaled {
+    let resolution = if resolution == 0 { 72 } else { resolution };
+    pdf_points_to_scaled(f64::from(pixels) * 72.0 / f64::from(resolution))
 }
 
 fn pdf_points_to_scaled(points: f64) -> Scaled {
@@ -505,5 +522,16 @@ impl FontResolver for VirtualFontResolver<'_> {
                 direction: tex_fonts::WritingDirection::LeftToRight,
             }),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pixels_to_scaled;
+
+    #[test]
+    fn zero_image_resolution_uses_pdftexs_seventy_two_dpi_fallback() {
+        assert_eq!(pixels_to_scaled(10, 0), pixels_to_scaled(10, 72));
+        assert_eq!(pixels_to_scaled(10, 144), pixels_to_scaled(5, 72));
     }
 }

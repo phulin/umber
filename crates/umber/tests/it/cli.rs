@@ -73,6 +73,44 @@ fn pdftex_rule_page_is_published_only_to_an_explicit_distinct_pdf_path() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn pdfdraftmode_does_not_replace_the_requested_pdf_output() {
+    let temp_dir = tempfile::tempdir().expect("create draft-mode output temp dir");
+    let source = temp_dir.path().join("draft.tex");
+    let pdf = temp_dir.path().join("draft.pdf");
+    fs::write(
+        &source,
+        "\\pdfoutput=1\\pdfdraftmode=1\\shipout\\vbox{\\hrule width10pt height5pt}\\end\n",
+    )
+    .expect("write draft-mode fixture");
+    fs::write(&pdf, b"existing output\n").expect("seed existing PDF path");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .arg("run")
+        .arg("--pdftex")
+        .arg("--pdf")
+        .arg(&pdf)
+        .arg(&source)
+        .output()
+        .expect("run draft-mode fixture");
+
+    assert!(
+        output.status.success(),
+        "draft-mode run failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stderr).expect("stderr is utf-8"),
+        "pdfTeX warning: \\pdfdraftmode enabled, not changing output pdf\n"
+    );
+    assert_eq!(
+        fs::read(&pdf).expect("read unchanged output"),
+        b"existing output\n"
+    );
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn pdf_lowering_failure_does_not_publish_any_driver_output() {
     let temp_dir = tempfile::tempdir().expect("create PDF failure temp dir");
     let source = temp_dir.path().join("text.tex");

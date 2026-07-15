@@ -59,6 +59,7 @@ pub struct PdfImageRequest {
     pub name: String,
     pub page: u32,
     pub page_box: PdfImagePageBox,
+    pub resolution: u32,
 }
 
 /// Host boundary for loading and validating `\pdfximage` resources.

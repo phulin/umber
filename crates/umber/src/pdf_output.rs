@@ -246,7 +246,7 @@ pub fn pdf_from_committed_artifacts_at_dpi(
         match image.metadata() {
             PdfExternalImageMetadata::Raster(metadata) => {
                 let (color_data, filter, bits, color_space, alpha_data) =
-                    raster_image_streams(image.bytes(), metadata)?;
+                    raster_image_streams(image.bytes(), metadata, parameters)?;
                 objects.push(PdfIndirectObject {
                     id: object_id(image.id().raw())?,
                     object: PdfObject::ImageXObject {
@@ -632,7 +632,7 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                                     }
                                 }
                             }
-                            let name = format!("Im{object}").into_bytes();
+                            let name = image_resource_name(&image, parameters);
                             page_images.insert(name.clone(), object_id(object)?);
                             let y = page_height
                                 .checked_sub(graphics.y)
@@ -2296,6 +2296,7 @@ type RasterStreams = (
 fn raster_image_streams(
     bytes: &[u8],
     metadata: tex_state::PdfRasterImageMetadata,
+    parameters: PdfOutputParameters,
 ) -> Result<RasterStreams, PdfBuildError> {
     if metadata.width == 0 || metadata.height == 0 {
         return Err(PdfBuildError::InvalidRasterDimensions);
@@ -2305,7 +2306,7 @@ fn raster_image_streams(
         PdfRasterColorSpace::Rgb => PdfImageColorSpace::DeviceRgb,
         PdfRasterColorSpace::Cmyk => PdfImageColorSpace::DeviceCmyk,
     };
-    match metadata.format {
+    let streams: Result<RasterStreams, PdfBuildError> = match metadata.format {
         PdfRasterFormat::Jpeg => Ok((
             bytes.to_vec(),
             PdfImageFilter::Dct,
@@ -2342,7 +2343,39 @@ fn raster_image_streams(
             color_space,
             None,
         )),
+    };
+    let mut streams = streams?;
+    if metadata.format == PdfRasterFormat::Png
+        && metadata.bits_per_component == 16
+        && parameters.image_hicolor == 0
+    {
+        let samples = match streams.1 {
+            PdfImageFilter::FlatePngPredictor { .. } => png_opaque_samples(bytes, metadata)?,
+            PdfImageFilter::Flate => inflate(&streams.0)?,
+            PdfImageFilter::Dct => unreachable!("PNG streams do not use DCT"),
+        };
+        streams.0 = zlib(&strip_png_16(&samples))?;
+        streams.1 = PdfImageFilter::Flate;
+        streams.2 = 8;
+        if let Some(alpha) = streams.4.take() {
+            streams.4 = Some(zlib(&strip_png_16(&inflate(&alpha)?))?);
+        }
     }
+    if metadata.format == PdfRasterFormat::Png && parameters.image_apply_gamma > 0 {
+        let mut samples = match streams.1 {
+            PdfImageFilter::FlatePngPredictor { .. } => png_opaque_samples(bytes, metadata)?,
+            PdfImageFilter::Flate => inflate(&streams.0)?,
+            PdfImageFilter::Dct => unreachable!("PNG streams do not use DCT"),
+        };
+        apply_png_gamma(&mut samples, bytes, streams.2, parameters)?;
+        streams.0 = zlib(&samples)?;
+        streams.1 = PdfImageFilter::Flate;
+    }
+    Ok(streams)
+}
+
+fn strip_png_16(samples: &[u8]) -> Vec<u8> {
+    samples.chunks_exact(2).map(|sample| sample[0]).collect()
 }
 
 fn raster_color_components(color_space: PdfRasterColorSpace) -> u8 {
@@ -2350,6 +2383,18 @@ fn raster_color_components(color_space: PdfRasterColorSpace) -> u8 {
         PdfRasterColorSpace::Gray => 1,
         PdfRasterColorSpace::Rgb => 3,
         PdfRasterColorSpace::Cmyk => 4,
+    }
+}
+
+fn image_resource_name(
+    image: &tex_state::PdfExternalImageRecord,
+    parameters: PdfOutputParameters,
+) -> Vec<u8> {
+    if parameters.unique_resource_names > 0 {
+        let prefix = image.identity().hex();
+        format!("{}Im{}", &prefix[..6], image.id().raw()).into_bytes()
+    } else {
+        format!("Im{}", image.id().raw()).into_bytes()
     }
 }
 
@@ -2378,6 +2423,79 @@ fn png_idat(bytes: &[u8]) -> Result<Vec<u8>, PdfBuildError> {
     (!data.is_empty())
         .then_some(data)
         .ok_or(PdfBuildError::InvalidPng)
+}
+
+fn inflate(bytes: &[u8]) -> Result<Vec<u8>, PdfBuildError> {
+    let mut decoder = flate2::read::ZlibDecoder::new(bytes);
+    let mut output = Vec::new();
+    decoder
+        .read_to_end(&mut output)
+        .map_err(|_| PdfBuildError::InvalidPng)?;
+    Ok(output)
+}
+
+fn png_opaque_samples(
+    bytes: &[u8],
+    metadata: tex_state::PdfRasterImageMetadata,
+) -> Result<Vec<u8>, PdfBuildError> {
+    if !matches!(metadata.bits_per_component, 8 | 16) {
+        return Err(PdfBuildError::InvalidPng);
+    }
+    let component_bytes = usize::from(metadata.bits_per_component / 8);
+    let pixel_bytes = usize::from(raster_color_components(metadata.color_space)) * component_bytes;
+    let row_bytes = usize::try_from(metadata.width)
+        .ok()
+        .and_then(|width| width.checked_mul(pixel_bytes))
+        .ok_or(PdfBuildError::InvalidPng)?;
+    let height = usize::try_from(metadata.height).map_err(|_| PdfBuildError::InvalidPng)?;
+    let filtered = inflate(&png_idat(bytes)?)?;
+    if filtered.len() != (row_bytes + 1).saturating_mul(height) {
+        return Err(PdfBuildError::InvalidPng);
+    }
+    let mut previous = vec![0u8; row_bytes];
+    let mut current = vec![0u8; row_bytes];
+    let mut samples = Vec::with_capacity(row_bytes * height);
+    for row in filtered.chunks_exact(row_bytes + 1) {
+        unfilter_png_row(row[0], &row[1..], &previous, &mut current, pixel_bytes)?;
+        samples.extend_from_slice(&current);
+        std::mem::swap(&mut previous, &mut current);
+    }
+    Ok(samples)
+}
+
+fn apply_png_gamma(
+    samples: &mut [u8],
+    png: &[u8],
+    bits_per_component: u8,
+    parameters: PdfOutputParameters,
+) -> Result<(), PdfBuildError> {
+    let file_gamma = png_chunk(png, b"gAMA")
+        .and_then(|chunk| <[u8; 4]>::try_from(chunk).ok())
+        .map(u32::from_be_bytes)
+        .map_or_else(
+            || 1_000.0 / f64::from(parameters.image_gamma.max(1)),
+            |gamma| f64::from(gamma) / 100_000.0,
+        );
+    let screen_gamma = f64::from(parameters.gamma.max(1)) / 1_000.0;
+    let exponent = 1.0 / (file_gamma * screen_gamma);
+    match bits_per_component {
+        8 => {
+            for sample in samples {
+                let normalized = f64::from(*sample) / 255.0;
+                *sample = (normalized.powf(exponent) * 255.0).round() as u8;
+            }
+        }
+        16 => {
+            for sample in samples.chunks_exact_mut(2) {
+                let value = u16::from_be_bytes([sample[0], sample[1]]);
+                let normalized = f64::from(value) / 65_535.0;
+                let corrected = (normalized.powf(exponent) * 65_535.0).round() as u16;
+                sample.copy_from_slice(&corrected.to_be_bytes());
+            }
+        }
+        _ => return Err(PdfBuildError::InvalidPng),
+    }
+    Ok(())
 }
 
 fn png_alpha_streams(
@@ -3328,6 +3446,23 @@ mod tests {
         sources: VecDeque<tex_state::PdfExternalImageSource>,
     }
 
+    struct RecordingImageResolver {
+        source: tex_state::PdfExternalImageSource,
+        requests: Vec<tex_exec::PdfImageRequest>,
+    }
+
+    impl tex_exec::PdfImageResolver for RecordingImageResolver {
+        fn open_image(
+            &mut self,
+            _input: &mut dyn tex_state::InputReadState,
+            request: &tex_exec::PdfImageRequest,
+            _request_index: u64,
+        ) -> Result<tex_state::PdfExternalImageSource, String> {
+            self.requests.push(request.clone());
+            Ok(self.source.clone())
+        }
+    }
+
     impl tex_exec::PdfImageResolver for QueueImageResolver {
         fn open_image(
             &mut self,
@@ -3404,6 +3539,29 @@ mod tests {
         header.extend_from_slice(&[8, color_type, 0, 0, 0]);
         chunk(b"IHDR", &header, &mut png);
         chunk(b"IDAT", &zlib(scanline).expect("compress PNG"), &mut png);
+        chunk(b"IEND", &[], &mut png);
+        png
+    }
+
+    fn test_gamma_png(scanline: &[u8], gamma: u32) -> Vec<u8> {
+        fn chunk(kind: &[u8; 4], data: &[u8], target: &mut Vec<u8>) {
+            target.extend_from_slice(&(data.len() as u32).to_be_bytes());
+            target.extend_from_slice(kind);
+            target.extend_from_slice(data);
+            target.extend_from_slice(&[0; 4]);
+        }
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        let mut header = Vec::new();
+        header.extend_from_slice(&2u32.to_be_bytes());
+        header.extend_from_slice(&1u32.to_be_bytes());
+        header.extend_from_slice(&[8, 0, 0, 0, 0]);
+        chunk(b"IHDR", &header, &mut png);
+        chunk(b"gAMA", &gamma.to_be_bytes(), &mut png);
+        chunk(
+            b"IDAT",
+            &zlib(scanline).expect("compress gamma PNG"),
+            &mut png,
+        );
         chunk(b"IEND", &[], &mut png);
         png
     }
@@ -3492,6 +3650,7 @@ mod tests {
                 page_box,
                 page: 1,
                 has_page_group: has_group,
+                pdf_version: (1, 5),
             },
             natural_width: page_box.right,
             natural_height: page_box.top,
@@ -3500,10 +3659,109 @@ mod tests {
     }
 
     #[test]
+    fn ximage_applies_resolution_and_obsolete_pagebox_controls_to_the_host_request() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let mut input = InputStack::new(MemoryInput::new(concat!(
+            "\\pdfoutput=1 \\pdfimageresolution=144 ",
+            "\\pdfoptionalwaysusepdfpagebox=4 ",
+            "\\pdfoptionpdfinclusionerrorlevel=-1 ",
+            "\\pdfximage mediabox \"page.pdf\"\\end",
+        )));
+        let mut input_resolver = RejectingMemoryInputResolver;
+        let mut font_resolver = DirectFontResolver;
+        let mut image_resolver = RecordingImageResolver {
+            source: test_pdf_page_source(false),
+            requests: Vec::new(),
+        };
+        let context = ExecutionContext::with_resource_resolvers(
+            "pdf-test",
+            &mut input_resolver,
+            &mut font_resolver,
+            &mut image_resolver,
+        );
+        run_input_collecting_artifacts(&mut input, &mut stores, context)
+            .expect("configured image opens");
+
+        assert_eq!(image_resolver.requests.len(), 1);
+        let request = &image_resolver.requests[0];
+        assert_eq!(request.resolution, 144);
+        assert_eq!(request.page_box, tex_exec::PdfImagePageBox::Trim);
+        assert_eq!(stores.int_param(IntParam::PDF_FORCE_PAGE_BOX), 4);
+        assert_eq!(
+            stores.int_param(IntParam::PDF_OPTION_ALWAYS_USE_PDF_PAGE_BOX),
+            0
+        );
+        assert_eq!(stores.int_param(IntParam::PDF_INCLUSION_ERROR_LEVEL), -1);
+        assert_eq!(
+            stores.int_param(IntParam::PDF_OPTION_INCLUSION_ERROR_LEVEL),
+            0
+        );
+        let diagnostics = stores
+            .world()
+            .effect_records()
+            .iter()
+            .filter_map(|effect| match effect {
+                tex_state::EffectRecord::StreamWrite { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(diagnostics.contains("\\pdfoptionalwaysusepdfpagebox is obsolete"));
+        assert!(diagnostics.contains("\\pdfoptionpdfinclusionerrorlevel is obsolete"));
+        assert!(!diagnostics.contains("Primitive \\pdfforcepagebox is obsolete"));
+    }
+
+    #[test]
+    fn ximage_enforces_the_configured_pdf_inclusion_version_policy() {
+        let image = test_pdf_page_source(false);
+        let mut warning_stores = Universe::default();
+        prepare_pdftex_run_stores(&mut warning_stores);
+        run_with_image(
+            &mut warning_stores,
+            "\\pdfoutput=1 \\pdfinclusionerrorlevel=0 \\pdfximage \"page.pdf\"\\end",
+            image.clone(),
+        );
+        assert!(
+            warning_stores
+                .world()
+                .effect_records()
+                .iter()
+                .any(|effect| {
+                    matches!(effect, tex_state::EffectRecord::StreamWrite { text, .. }
+                if text.contains("found PDF version <1.5>, but at most version <1.4> allowed"))
+                })
+        );
+
+        let mut fatal_stores = Universe::default();
+        prepare_pdftex_run_stores(&mut fatal_stores);
+        let mut input = InputStack::new(MemoryInput::new(
+            "\\pdfoutput=1 \\pdfinclusionerrorlevel=1 \\pdfximage \"page.pdf\"\\end",
+        ));
+        let mut input_resolver = RejectingMemoryInputResolver;
+        let mut font_resolver = DirectFontResolver;
+        let mut image_resolver = StaticImageResolver { source: image };
+        let context = ExecutionContext::with_resource_resolvers(
+            "pdf-test",
+            &mut input_resolver,
+            &mut font_resolver,
+            &mut image_resolver,
+        );
+        let error = run_input_collecting_artifacts(&mut input, &mut fatal_stores, context)
+            .expect_err("positive inclusion error level rejects a newer PDF");
+        assert!(
+            error
+                .to_string()
+                .contains("found PDF version <1.5>, but at most version <1.4> allowed")
+        );
+    }
+
+    #[test]
     fn raster_png_ximage_is_reused_and_emitted_through_typed_xobjects() {
         let png = test_png(2, &[0, 255, 0, 0, 0, 0, 255]);
+        let identity = ContentHash::from_bytes(&png);
         let image = tex_state::PdfExternalImageSource {
-            identity: ContentHash::from_bytes(&png),
+            identity,
             metadata: PdfExternalImageMetadata::Raster(tex_state::PdfRasterImageMetadata {
                 format: PdfRasterFormat::Png,
                 width: 2,
@@ -3522,7 +3780,7 @@ mod tests {
         let result = run_with_image(
             &mut stores,
             concat!(
-                "\\pdfoutput=1 \\pdfcompresslevel=0 ",
+                "\\pdfoutput=1 \\pdfcompresslevel=0 \\pdfuniqueresname=1 ",
                 "\\pdfximage width 20pt height 10pt \"pixel.png\"",
                 "\\setbox0=\\hbox{\\pdfrefximage\\pdflastximage\\kern5pt",
                 "\\pdfrefximage\\pdflastximage}",
@@ -3558,10 +3816,11 @@ mod tests {
         );
         let page_id = parsed.get_pages()[&1];
         let content = parsed.get_page_content(page_id).expect("page content");
+        let resource_use = format!("/{}Im1 Do", &identity.hex()[..6]);
         assert_eq!(
             content
-                .windows(7)
-                .filter(|window| *window == b"/Im1 Do")
+                .windows(resource_use.len())
+                .filter(|window| *window == resource_use.as_bytes())
                 .count(),
             2
         );
@@ -3626,6 +3885,77 @@ mod tests {
             mask.decompressed_content().expect("alpha samples"),
             vec![64, 192]
         );
+    }
+
+    #[test]
+    fn png_gamma_controls_transform_samples_when_enabled() {
+        let png = test_gamma_png(&[0, 128, 64], 50_000);
+        let source = tex_state::PdfExternalImageSource {
+            identity: ContentHash::from_bytes(&png),
+            metadata: PdfExternalImageMetadata::Raster(tex_state::PdfRasterImageMetadata {
+                format: PdfRasterFormat::Png,
+                width: 2,
+                height: 1,
+                bits_per_component: 8,
+                color_space: PdfRasterColorSpace::Gray,
+                alpha: false,
+                png_color_type: Some(0),
+            }),
+            natural_width: Scaled::from_raw(2 * 65_536),
+            natural_height: Scaled::from_raw(65_536),
+            bytes: png.into(),
+        };
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let result = run_with_image(
+            &mut stores,
+            concat!(
+                "\\pdfoutput=1 \\pdfgamma=1000 \\pdfimagegamma=2200 ",
+                "\\pdfimageapplygamma=1 \\pdfximage \"gamma.png\"",
+                "\\shipout\\hbox{\\pdfrefximage\\pdflastximage}\\end",
+            ),
+            source,
+        );
+        let pdf = pdf_from_committed_artifacts(&mut stores, &result.committed_artifacts)
+            .expect("lower gamma-corrected PNG");
+        let parsed = lopdf::Document::load_mem(&pdf).expect("parse gamma PDF");
+        let image = parsed
+            .get_object((1, 0))
+            .expect("gamma image")
+            .as_stream()
+            .expect("gamma stream");
+        assert_eq!(
+            image.decompressed_content().expect("corrected samples"),
+            vec![64, 16]
+        );
+    }
+
+    #[test]
+    fn png_hicolor_control_reduces_sixteen_bit_samples() {
+        let mut png = test_gamma_png(&[0, 0x12, 0x34], 100_000);
+        png[24] = 16;
+        let metadata = tex_state::PdfRasterImageMetadata {
+            format: PdfRasterFormat::Png,
+            width: 1,
+            height: 1,
+            bits_per_component: 16,
+            color_space: PdfRasterColorSpace::Gray,
+            alpha: false,
+            png_color_type: Some(0),
+        };
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let mut parameters = output_parameters(&stores);
+        parameters.image_hicolor = 0;
+        parameters.image_apply_gamma = 0;
+
+        let (samples, filter, bits, color_space, alpha) =
+            raster_image_streams(&png, metadata, parameters).expect("reduce 16-bit PNG");
+        assert_eq!(filter, PdfImageFilter::Flate);
+        assert_eq!(bits, 8);
+        assert_eq!(color_space, PdfImageColorSpace::DeviceGray);
+        assert!(alpha.is_none());
+        assert_eq!(inflate(&samples).expect("inflate reduced samples"), [0x12]);
     }
 
     #[test]

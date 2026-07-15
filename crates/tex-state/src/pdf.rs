@@ -140,6 +140,7 @@ pub enum PdfExternalImageMetadata {
         page_box: PdfPageBox,
         page: u32,
         has_page_group: bool,
+        pdf_version: (u8, u8),
     },
     Raster(PdfRasterImageMetadata),
 }
@@ -2238,6 +2239,7 @@ fn external_image_fingerprint(images: &[PdfExternalImageRecord]) -> u64 {
                 page_box,
                 page,
                 has_page_group,
+                pdf_version,
             } => {
                 hasher.u8(0);
                 hasher.i32(page_box.left.raw());
@@ -2246,6 +2248,8 @@ fn external_image_fingerprint(images: &[PdfExternalImageRecord]) -> u64 {
                 hasher.i32(page_box.top.raw());
                 hasher.u32(page);
                 hasher.bool(has_page_group);
+                hasher.u8(pdf_version.0);
+                hasher.u8(pdf_version.1);
             }
             PdfExternalImageMetadata::Raster(metadata) => {
                 hasher.u8(1);
@@ -2820,6 +2824,7 @@ mod tests {
             },
             page: 1,
             has_page_group: false,
+            pdf_version: (1, 4),
         };
 
         state

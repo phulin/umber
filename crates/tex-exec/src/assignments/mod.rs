@@ -437,6 +437,7 @@ fn execute_pdf_ximage(
     }
     let mut page = 1_u32;
     let mut page_box = crate::PdfImagePageBox::Crop;
+    let mut page_box_explicit = false;
     let mut width = None;
     let mut height = None;
     let mut depth = None;
@@ -455,14 +456,19 @@ fn execute_pdf_ximage(
                 .unwrap_or(1);
         } else if scan_optional_keyword_x(input, stores, execution, "mediabox")? {
             page_box = crate::PdfImagePageBox::Media;
+            page_box_explicit = true;
         } else if scan_optional_keyword_x(input, stores, execution, "cropbox")? {
             page_box = crate::PdfImagePageBox::Crop;
+            page_box_explicit = true;
         } else if scan_optional_keyword_x(input, stores, execution, "bleedbox")? {
             page_box = crate::PdfImagePageBox::Bleed;
+            page_box_explicit = true;
         } else if scan_optional_keyword_x(input, stores, execution, "trimbox")? {
             page_box = crate::PdfImagePageBox::Trim;
+            page_box_explicit = true;
         } else if scan_optional_keyword_x(input, stores, execution, "artbox")? {
             page_box = crate::PdfImagePageBox::Art;
+            page_box_explicit = true;
         } else if scan_optional_keyword_x(input, stores, execution, "width")? {
             width = Some(scan_scaled(input, stores, execution, context)?);
         } else if scan_optional_keyword_x(input, stores, execution, "height")? {
@@ -474,14 +480,91 @@ fn execute_pdf_ximage(
         }
     }
     let name = scan_pdf_image_name(input, stores, execution)?;
+    let obsolete_page_box = stores.int_param(IntParam::PDF_OPTION_ALWAYS_USE_PDF_PAGE_BOX);
+    if obsolete_page_box != 0 {
+        stores.world_mut().write_text(
+            tex_state::PrintSink::TerminalAndLog,
+            "PDF inclusion: Primitive \\pdfoptionalwaysusepdfpagebox is obsolete; use \\pdfpagebox instead.\n",
+        );
+        stores.set_int_param_global(IntParam::PDF_FORCE_PAGE_BOX, obsolete_page_box);
+        stores.set_int_param_global(IntParam::PDF_OPTION_ALWAYS_USE_PDF_PAGE_BOX, 0);
+    }
+    let obsolete_error_level = stores.int_param(IntParam::PDF_OPTION_INCLUSION_ERROR_LEVEL);
+    if obsolete_error_level != 0 {
+        stores.world_mut().write_text(
+            tex_state::PrintSink::TerminalAndLog,
+            "PDF inclusion: Primitive \\pdfoptionpdfinclusionerrorlevel is obsolete; use \\pdfinclusionerrorlevel instead.\n",
+        );
+        stores.set_int_param_global(IntParam::PDF_INCLUSION_ERROR_LEVEL, obsolete_error_level);
+        stores.set_int_param_global(IntParam::PDF_OPTION_INCLUSION_ERROR_LEVEL, 0);
+    }
+    let forced_page_box = stores.int_param(IntParam::PDF_FORCE_PAGE_BOX);
+    let configured_page_box = if forced_page_box > 0 {
+        let warning =
+            "PDF inclusion: Primitive \\pdfforcepagebox is obsolete; use \\pdfpagebox instead.";
+        let already_warned = stores.world().effect_records().iter().any(|effect| {
+            matches!(effect, tex_state::EffectRecord::StreamWrite { text, .. } if text.contains(warning))
+        });
+        if obsolete_page_box == 0 && !already_warned {
+            stores.world_mut().write_text(
+                tex_state::PrintSink::TerminalAndLog,
+                &format!("{warning}\n"),
+            );
+        }
+        forced_page_box
+    } else if !page_box_explicit {
+        stores.int_param(IntParam::PDF_PAGE_BOX)
+    } else {
+        0
+    };
+    page_box = match configured_page_box {
+        1 => crate::PdfImagePageBox::Media,
+        2 => crate::PdfImagePageBox::Crop,
+        3 => crate::PdfImagePageBox::Bleed,
+        4 => crate::PdfImagePageBox::Trim,
+        5 => crate::PdfImagePageBox::Art,
+        _ => page_box,
+    };
     let request = crate::PdfImageRequest {
         name: name.clone(),
         page,
         page_box,
+        resolution: u32::try_from(
+            stores
+                .int_param(IntParam::PDF_IMAGE_RESOLUTION)
+                .clamp(0, 65_535),
+        )
+        .expect("clamped image resolution is nonnegative"),
     };
     let source = execution
         .open_pdf_image(&mut stores.input_open_context(), &request)
-        .map_err(|message| ExecError::PdfImageOpen { name, message })?;
+        .map_err(|message| ExecError::PdfImageOpen {
+            name: name.clone(),
+            message,
+        })?;
+    if let tex_state::PdfExternalImageMetadata::PdfPage { pdf_version, .. } = source.metadata {
+        let wanted = (
+            stores.int_param(IntParam::PDF_MAJOR_VERSION).max(1) as u8,
+            u8::try_from(stores.int_param(IntParam::PDF_MINOR_VERSION))
+                .ok()
+                .filter(|minor| *minor <= 9)
+                .unwrap_or(4),
+        );
+        if pdf_version > wanted {
+            let message = format!(
+                "PDF inclusion: found PDF version <{}.{}>, but at most version <{}.{}> allowed",
+                pdf_version.0, pdf_version.1, wanted.0, wanted.1,
+            );
+            match stores.int_param(IntParam::PDF_INCLUSION_ERROR_LEVEL) {
+                1.. => return Err(ExecError::PdfImageOpen { name, message }),
+                0 => stores.world_mut().write_text(
+                    tex_state::PrintSink::TerminalAndLog,
+                    &format!("{message}\n"),
+                ),
+                ..=-1 => {}
+            }
+        }
+    }
     let dimensions = scaled_image_dimensions(&source, width, height, depth);
     stores
         .allocate_pdf_external_image(source, dimensions)
