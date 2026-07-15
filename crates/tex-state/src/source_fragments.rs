@@ -2,6 +2,7 @@
 
 use std::mem;
 use std::ops::Range;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -10,20 +11,36 @@ use crate::source_map::{
     LogicalPositionAllocator, RegisteredSource, SourceMapError, SourcePos, SourceSpan,
 };
 
-/// Dense, session-local identity of an immutable source fragment.
+static NEXT_FRAGMENT_LINEAGE: AtomicU64 = AtomicU64::new(1);
+
+fn next_fragment_lineage() -> u64 {
+    NEXT_FRAGMENT_LINEAGE
+        .fetch_update(
+            AtomicOrdering::Relaxed,
+            AtomicOrdering::Relaxed,
+            |lineage| lineage.checked_add(1),
+        )
+        .expect("fragment lineage identity space exhausted")
+}
+
+/// Generation-tagged, session-local identity of an immutable source fragment.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct FragmentId(u32);
+pub struct FragmentId {
+    lineage: u64,
+    slot: u32,
+}
 
 impl FragmentId {
     #[must_use]
-    pub const fn raw(self) -> u32 {
-        self.0
+    pub(crate) const fn raw(self) -> u32 {
+        self.slot
     }
 }
 
 /// Immutable source text and its permanently reserved logical range.
 #[derive(Clone, Debug)]
 struct SourceFragment {
+    id: FragmentId,
     bytes: Option<Arc<[u8]>>,
     region_start: SourcePos,
     byte_len: u64,
@@ -39,12 +56,31 @@ impl SourceFragment {
 
 /// Session-scoped append-only registry of immutable editor source fragments.
 ///
-/// Clones are O(1) read-only snapshots. Appending uses copy-on-write, so an
-/// engine generation retains exactly the fragment table installed for it and
-/// never receives mutation authority.
-#[derive(Clone, Debug, Default)]
+/// Clones share their inherited rows in O(1) and receive a fresh append
+/// lineage. Appending uses copy-on-write, so sibling suffixes cannot mint the
+/// same identity even when they occupy the same dense slot.
+#[derive(Debug)]
 pub struct FragmentStore {
     fragments: Arc<[SourceFragment]>,
+    append_lineage: u64,
+}
+
+impl Clone for FragmentStore {
+    fn clone(&self) -> Self {
+        Self {
+            fragments: Arc::clone(&self.fragments),
+            append_lineage: next_fragment_lineage(),
+        }
+    }
+}
+
+impl Default for FragmentStore {
+    fn default() -> Self {
+        Self {
+            fragments: Arc::from([]),
+            append_lineage: next_fragment_lineage(),
+        }
+    }
 }
 
 impl FragmentStore {
@@ -65,9 +101,14 @@ impl FragmentStore {
         let byte_len =
             u64::try_from(bytes.len()).map_err(|_| SourceMapError::LogicalPositionExhausted)?;
         let (start, _) = LogicalPositionAllocator.reserve(byte_len)?;
-        let raw = u32::try_from(self.fragments.len())
+        let slot = u32::try_from(self.fragments.len())
             .map_err(|_| SourceMapError::LogicalPositionExhausted)?;
+        let id = FragmentId {
+            lineage: self.append_lineage,
+            slot,
+        };
         let fragment = SourceFragment {
+            id,
             bytes: Some(bytes),
             region_start: SourcePos::from_raw_for_store(start),
             byte_len,
@@ -78,7 +119,7 @@ impl FragmentStore {
         fragments.push(fragment);
         self.fragments = fragments.into();
         Ok((
-            FragmentId(raw),
+            id,
             RegisteredSource::new(SourcePos::from_raw_for_store(start), byte_len),
         ))
     }
@@ -162,6 +203,7 @@ impl FragmentStore {
             .collect::<Vec<_>>();
         Self {
             fragments: fragments.into(),
+            append_lineage: next_fragment_lineage(),
         }
     }
 
@@ -201,7 +243,9 @@ impl FragmentStore {
     }
 
     fn get(&self, id: FragmentId) -> Option<&SourceFragment> {
-        self.fragments.get(id.0 as usize)
+        self.fragments
+            .get(id.slot as usize)
+            .filter(|fragment| fragment.id == id)
     }
 
     fn fragment_at(&self, position: SourcePos) -> Option<(FragmentId, &SourceFragment)> {
@@ -210,7 +254,7 @@ impl FragmentStore {
             .partition_point(|fragment| fragment.region_start <= position)
             .checked_sub(1)?;
         let fragment = &self.fragments[index];
-        (position.raw() <= fragment.anchor()).then_some((FragmentId(index as u32), fragment))
+        (position.raw() <= fragment.anchor()).then_some((fragment.id, fragment))
     }
 
     fn span_for_direct(&self, position: SourcePos) -> Option<SourceSpan> {
@@ -352,6 +396,24 @@ impl EditorLayout {
             #[cfg(test)]
             line_index_builds: AtomicUsize::new(0),
         })
+    }
+
+    /// Verifies that every piece still names the exact fragment allocation
+    /// against which this layout was constructed.
+    pub(crate) fn validate_store(
+        &self,
+        fragments: &FragmentStore,
+    ) -> Result<(), EditorLayoutError> {
+        for piece in self.pieces.iter() {
+            let fragment = fragments
+                .get(piece.fragment)
+                .ok_or(EditorLayoutError::UnknownFragment)?;
+            if piece.range.start > piece.range.end || u64::from(piece.range.end) > fragment.byte_len
+            {
+                return Err(EditorLayoutError::InvalidPieceRange);
+            }
+        }
+        Ok(())
     }
 
     #[must_use]

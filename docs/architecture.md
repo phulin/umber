@@ -264,8 +264,11 @@ supply.
   emit them.
   Editor-stable coordinates add a session append-only `FragmentStore` whose
   immutable rows reserve ranges from the same non-rewinding allocator as
-  engine source regions. Accepted `EditorLayout` piece tables carry validated
-  fragment views and a `LayoutGeneration`; diagnostic resolution checks this
+  engine source regions. O(1) clones receive fresh append lineages, and opaque
+  fragment handles combine that lineage with their dense slot so forked
+  suffixes cannot alias. Accepted `EditorLayout` piece tables carry validated
+  fragment views and a `LayoutGeneration`; aggregate installation revalidates
+  the store/layout pair before diagnostic resolution checks this
   overlay first and returns current document coordinates or typed deletion,
   then falls through to World/generated engine sources. Lazy line indexes are
   tied to the exact layout generation, while fragment snapshots remain O(1).

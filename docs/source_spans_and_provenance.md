@@ -213,11 +213,15 @@ The editor root uses a session-scoped `FragmentStore` alongside the
 rollback-coupled source map. Each immutable fragment reserves one disjoint
 logical range plus its end anchor from the same non-rewinding allocator used
 by engine sources. The fragment table is append-only and cloned as an O(1)
-`Arc` snapshot for engine generations, so discarded forks cannot cause either
-fragment or engine ranges to be handed out again.
+`Arc` snapshot for engine generations. Every clone receives a fresh append
+lineage, and `FragmentId` carries that lineage plus its dense slot, so sibling
+appends cannot alias even when they occupy the same slot. Discarded forks
+cannot cause either fragment ids or logical ranges to be handed out again.
 
 `EditorLayout` is an immutable piece table for one `LayoutGeneration`. It
-validates fragment-relative piece ranges and stores document prefix sums.
+validates generation-tagged fragment identities and relative piece ranges and
+stores document prefix sums. `Universe::install_editor_fragments` requires the
+paired layout and revalidates that pairing before publishing fragment metadata.
 Layout-aware resolution checks fragments before the engine source map: a live
 piece yields current document offsets and lazy line/column data, a fragment
 range absent from the layout yields typed `Deleted`, an engine source yields

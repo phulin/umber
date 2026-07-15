@@ -95,6 +95,58 @@ fn fragment_snapshot_survives_simulated_fork_discard() {
 }
 
 #[test]
+fn forked_fragment_appends_mint_distinct_handles_at_the_same_dense_slot() {
+    let base = FragmentStore::new();
+    let mut left = base.clone();
+    let mut right = base;
+    let (left_id, left_registration) = append(&mut left, b"left", 1);
+    let (right_id, right_registration) = append(&mut right, b"right", 1);
+
+    assert_eq!(left_id.raw(), right_id.raw());
+    assert_ne!(left_id, right_id);
+    assert_eq!(left.bytes(left_id), Some(&b"left"[..]));
+    assert_eq!(right.bytes(right_id), Some(&b"right"[..]));
+    assert_eq!(left.bytes(right_id), None);
+    assert_eq!(right.bytes(left_id), None);
+    assert_ne!(
+        left_registration.span(0, 1).expect("left span").lo(),
+        right_registration.span(0, 1).expect("right span").lo()
+    );
+}
+
+#[test]
+fn cross_store_layout_and_aggregate_installation_are_rejected() {
+    let mut first = FragmentStore::new();
+    let (first_id, _) = append(&mut first, b"first", 1);
+    let layout = EditorLayout::new(
+        "root.tex",
+        LayoutGeneration::new(1),
+        vec![Piece::new(first_id, 0, 5)],
+        &first,
+    )
+    .expect("first-store layout");
+
+    let mut second = FragmentStore::new();
+    let (second_id, _) = append(&mut second, b"other", 1);
+    assert_eq!(first_id.raw(), second_id.raw());
+    assert!(matches!(
+        EditorLayout::new(
+            "root.tex",
+            LayoutGeneration::new(1),
+            vec![Piece::new(first_id, 0, 5)],
+            &second,
+        ),
+        Err(EditorLayoutError::UnknownFragment)
+    ));
+
+    let mut universe = crate::Universe::new();
+    assert_eq!(
+        universe.install_editor_fragments(second, &layout),
+        Err(EditorLayoutError::UnknownFragment)
+    );
+}
+
+#[test]
 fn empty_fragments_and_end_anchors_resolve_without_borrowing_a_neighbor() {
     let mut fragments = FragmentStore::new();
     let (empty_id, empty) = append(&mut fragments, b"", 1);

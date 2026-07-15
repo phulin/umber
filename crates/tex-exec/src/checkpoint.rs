@@ -277,6 +277,7 @@ pub enum EngineRestoreError<E> {
 #[derive(Debug)]
 pub enum EditorRestoreError {
     Fork(GenerationForkError),
+    Layout(tex_state::EditorLayoutError),
     RootRevisionMismatch,
     ChangedRootPrefix,
     RootRebind(SourceMapError),
@@ -288,6 +289,7 @@ impl fmt::Display for EditorRestoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Fork(error) => write!(f, "could not fork retained generation: {error}"),
+            Self::Layout(error) => write!(f, "could not install editor layout: {error}"),
             Self::RootRevisionMismatch => {
                 f.write_str("checkpoint root revision does not match the accepted source")
             }
@@ -355,6 +357,7 @@ impl crate::Executor {
         old_source: &str,
         source: &str,
         fragments: FragmentStore,
+        layout: &tex_state::EditorLayout,
         layout_cursor: LayoutCursor,
     ) -> Result<Duration, EditorRestoreError> {
         if checkpoint.root_content_hash
@@ -374,7 +377,9 @@ impl crate::Executor {
             .fork_at(&checkpoint.universe)
             .map_err(EditorRestoreError::Fork)?;
         let fork_latency = fork_started.elapsed();
-        restored_universe.install_editor_fragments(fragments);
+        restored_universe
+            .install_editor_fragments(fragments, layout)
+            .map_err(EditorRestoreError::Layout)?;
         let (summary, root_source) = restored_universe
             .rebind_root_editor_layout(&checkpoint.input, source.as_bytes(), checkpoint.root_anchor)
             .map_err(EditorRestoreError::RootRebind)?;

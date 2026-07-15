@@ -97,3 +97,11 @@ fn downstream_crate_cannot_bypass_universe_facade_through_raw_env_ref() {
         &["E0599", "no method named `env`"],
     );
 }
+
+#[test]
+fn downstream_crate_cannot_install_fragments_without_the_paired_layout() {
+    assert_live_boundary(
+        "editor-fragment-install-boundary-forbidden",
+        &["E0061", "argument #2 of type `&EditorLayout` is missing"],
+    );
+}

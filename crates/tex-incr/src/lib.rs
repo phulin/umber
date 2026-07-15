@@ -732,7 +732,7 @@ fn execute_revision(
     let mut universe = template.clone();
     universe.begin_retained_session()?;
     let mut input = InputStack::new(MemoryInput::new(source));
-    universe.install_editor_fragments(fragments.clone());
+    universe.install_editor_fragments(fragments.clone(), layout)?;
     universe.set_root_editor_content_hash(ContentHash::from_bytes(source.as_bytes()));
     input
         .install_root_layout_cursor(LayoutCursor::new(layout, fragments)?)
@@ -902,6 +902,7 @@ fn execute_advance(
         old_source,
         source,
         fragments.clone(),
+        layout,
         LayoutCursor::new(layout, fragments)?,
     )?;
     for (path, bytes) in registered_inputs {

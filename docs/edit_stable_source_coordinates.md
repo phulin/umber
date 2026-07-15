@@ -98,9 +98,11 @@ from the table at read time. A `SourcePos` inside `F1` resolves to a typed
 /// tex-state: session-scoped, append-only, immutable entries.
 pub struct FragmentStore {
     fragments: Vec<SourceFragment>,   // FragmentId -> entry
+    append_lineage: u64,              // fresh on every writable clone
 }
 
 pub struct SourceFragment {
+    id: FragmentId,                   // lineage tag + dense slot
     bytes: Option<Arc<[u8]>>,        // None once fully deleted (metadata kept)
     region_start: SourcePos,          // disjoint logical range, + end anchor
     byte_len: u64,
@@ -121,12 +123,15 @@ pub struct Piece {
 ```
 
 Positions and fragment ids are process-unique and never reused, extending
-the existing rollback invariant. The `FragmentStore` is owned by the
-session's retained root and shared read-only with every engine generation
-(an `Arc` snapshot installed at rebind; appends happen only between
-compiles, in `advance`). It therefore survives fork discard: a fragment
-minted for an edit stays resolvable no matter which substrate — scratch or
-converged — wins the revision, which fixes the dead-origin defect directly.
+the existing rollback invariant. A clone shares the immutable fragment rows
+in O(1) but receives a fresh append lineage, so sibling copy-on-write appends
+at the same dense slot mint different handles and reject one another rather
+than aliasing. The `FragmentStore` is owned by the session's retained root and
+shared with every engine generation as an `Arc` snapshot installed together
+with its validated layout at rebind. It therefore survives fork discard: a
+fragment minted for an edit stays resolvable no matter which substrate —
+scratch or converged — wins the revision, which fixes the dead-origin defect
+directly.
 
 Convergence also transfers the diagnostic graph reachable from each adopted
 artifact's `render_origins` through the `GenerationSubstrate` aggregate

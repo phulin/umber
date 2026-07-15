@@ -1552,10 +1552,17 @@ impl Universe {
             .ok_or(SourceMapError::UnknownSource)
     }
 
-    /// Installs the immutable session fragment snapshot for this compile.
-    pub fn install_editor_fragments(&mut self, fragments: crate::FragmentStore) {
+    /// Installs the immutable session fragment snapshot for this compile after
+    /// validating that the accepted layout belongs to the same lineage.
+    pub fn install_editor_fragments(
+        &mut self,
+        fragments: crate::FragmentStore,
+        layout: &crate::EditorLayout,
+    ) -> Result<(), crate::EditorLayoutError> {
+        layout.validate_store(&fragments)?;
         self.stores
             .install_source_fragments(fragments.metadata_snapshot());
+        Ok(())
     }
 
     /// Sets operational editor revision identity outside semantic state.
