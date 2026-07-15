@@ -281,6 +281,20 @@ impl LayeredFileStorage {
         Arc::make_mut(layer).insert(file)
     }
 
+    /// Replaces one user-layer binding.
+    ///
+    /// Session owners use this only before accepted history exists, or when
+    /// deliberately resetting that history while preserving the latest editor
+    /// root. Ordinary immutable registration continues to use [`Self::insert`].
+    pub(crate) fn replace_user(&mut self, file: VirtualFile) -> Result<(), ImmutableBindingError> {
+        let generation = Arc::make_mut(&mut self.generation);
+        Arc::make_mut(&mut generation.user).replace(file)
+    }
+
+    pub(crate) fn clear_layer(&mut self, kind: LayerKind) {
+        self.replace_layer(FileLayer::new(kind));
+    }
+
     /// Computes storage identity in explicit layer and canonical-path order.
     #[must_use]
     pub fn identity(&self) -> StorageIdentity {

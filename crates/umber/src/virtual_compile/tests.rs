@@ -812,6 +812,38 @@ fn cache_clear_keeps_user_files_and_drops_bindings() {
 }
 
 #[test]
+fn cache_clear_preserves_the_latest_accepted_editor_root() {
+    let original = "\\message{old}\\end";
+    let mut session = session(original);
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+    let old = original.find("old").expect("old message");
+    session
+        .apply_patch(SourcePatch {
+            next_revision: RevisionId::new(2),
+            base_revision: RevisionId::new(1),
+            expected_hash: session.content_hash().expect("accepted hash"),
+            range: old..old + 3,
+            replacement: "new".to_owned(),
+        })
+        .expect("patch");
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+
+    session.clear_distribution_cache().expect("clear cache");
+    let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+        panic!("latest root should compile after clearing the cache");
+    };
+    let terminal = String::from_utf8(output.terminal).expect("terminal UTF-8");
+    assert!(terminal.contains("new"));
+    assert!(!terminal.contains("old"));
+}
+
+#[test]
 fn persistent_session_accepts_multiple_revision_checked_patches() {
     let original = "\\shipout\\vbox{\\hrule height 1pt}\\end";
     let mut session = session(original);

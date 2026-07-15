@@ -11,16 +11,14 @@ use tex_lex::WorldInput;
 use tex_state::{FileContent, InputReadState};
 
 use super::path::RequestedFile;
-use super::{CompileError, FileKind, FileProvisioner, FileRequest, FileRequestKey, VirtualPath};
-
+use super::{CompileError, FileKind, FileProvisioner, FileRequest, FileRequestKey};
 pub(super) struct VirtualRunResolvers<'a> {
     input: VirtualFileResolver<'a>,
     font: VirtualFontResolver<'a>,
 }
 
 struct VirtualFileResolver<'a> {
-    user_files: &'a BTreeMap<VirtualPath, Vec<u8>>,
-    resolved_files: &'a FileProvisioner,
+    files: &'a FileProvisioner,
     misses: Vec<(u64, FileRequest)>,
     seen: BTreeSet<FileRequestKey>,
     fatal: Option<CompileError>,
@@ -28,17 +26,15 @@ struct VirtualFileResolver<'a> {
 
 impl<'a> VirtualRunResolvers<'a> {
     pub(super) fn new(
-        user_files: &'a BTreeMap<VirtualPath, Vec<u8>>,
-        resolved_files: &'a FileProvisioner,
+        files: &'a FileProvisioner,
         resolved_fonts: &'a BTreeMap<FontRequestKey, OpenTypeFont>,
         accepted_font_containers: AcceptedFontContainers,
         require_opentype: bool,
     ) -> Self {
         Self {
-            input: VirtualFileResolver::new(user_files, resolved_files),
+            input: VirtualFileResolver::new(files),
             font: VirtualFontResolver::new(
-                user_files,
-                resolved_files,
+                files,
                 resolved_fonts,
                 accepted_font_containers,
                 require_opentype,
@@ -63,13 +59,9 @@ impl<'a> VirtualRunResolvers<'a> {
 }
 
 impl<'a> VirtualFileResolver<'a> {
-    fn new(
-        user_files: &'a BTreeMap<VirtualPath, Vec<u8>>,
-        resolved_files: &'a FileProvisioner,
-    ) -> Self {
+    fn new(files: &'a FileProvisioner) -> Self {
         Self {
-            user_files,
-            resolved_files,
+            files,
             misses: Vec::new(),
             seen: BTreeSet::new(),
             fatal: None,
@@ -97,7 +89,7 @@ impl<'a> VirtualFileResolver<'a> {
 
         match requested {
             RequestedFile::UserOnly(path) => {
-                if !self.user_files.contains_key(&path) {
+                if !self.files.contains_user(&path) {
                     let failure = CompileError::UnavailableAbsoluteUserFile(path.to_string());
                     self.record_fatal(failure.clone());
                     return Err(failure.to_string());
@@ -105,10 +97,10 @@ impl<'a> VirtualFileResolver<'a> {
                 self.read_seeded(input, path.as_path())
             }
             RequestedFile::Remote { user_path, key } => {
-                if self.user_files.contains_key(&user_path) {
+                if self.files.contains_user(&user_path) {
                     return self.read_seeded(input, user_path.as_path());
                 }
-                if let Some(resolved) = self.resolved_files.get(&key) {
+                if let Some(resolved) = self.files.get(&key) {
                     return self.read_seeded(input, resolved.path().as_path());
                 }
                 if self.seen.insert(key.clone()) {
@@ -175,14 +167,13 @@ struct VirtualFontResolver<'a> {
 
 impl<'a> VirtualFontResolver<'a> {
     fn new(
-        user_files: &'a BTreeMap<VirtualPath, Vec<u8>>,
-        resolved_files: &'a FileProvisioner,
+        files: &'a FileProvisioner,
         resolved_fonts: &'a BTreeMap<FontRequestKey, OpenTypeFont>,
         accepted_font_containers: AcceptedFontContainers,
         require_opentype: bool,
     ) -> Self {
         Self {
-            files: VirtualFileResolver::new(user_files, resolved_files),
+            files: VirtualFileResolver::new(files),
             resolved_fonts,
             accepted_font_containers,
             require_opentype,

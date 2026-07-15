@@ -3,7 +3,8 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::{
-    FileContentId, FileOrigin, VfsLimitError, VfsLimitKind, VfsLimits, VirtualFile, VirtualPath,
+    FileContentId, FileOrigin, ImmutableBindingError, LayerKind, LayeredFileStorage, VfsLimitError,
+    VfsLimitKind, VfsLimits, VfsSnapshot, VirtualFile, VirtualPath,
 };
 
 #[cfg(test)]
@@ -394,8 +395,10 @@ impl std::error::Error for RetryError {}
 #[derive(Clone, Debug)]
 pub struct FileProvisioner {
     limits: VfsLimits,
-    files: BTreeMap<FileRequestKey, VirtualFile>,
-    paths: BTreeMap<VirtualPath, (FileRequestKey, Arc<[u8]>)>,
+    storage: LayeredFileStorage,
+    files: BTreeMap<FileRequestKey, VirtualPath>,
+    paths: BTreeMap<VirtualPath, FileRequestKey>,
+    user_bytes: usize,
     resolved_bytes: usize,
     expected: BTreeSet<FileRequestKey>,
     required: BTreeSet<FileRequestKey>,
@@ -406,13 +409,65 @@ impl FileProvisioner {
     pub fn new(limits: VfsLimits) -> Result<Self, VfsLimitError> {
         Ok(Self {
             limits: limits.validate()?,
+            storage: LayeredFileStorage::new(),
             files: BTreeMap::new(),
             paths: BTreeMap::new(),
+            user_bytes: 0,
             resolved_bytes: 0,
             expected: BTreeSet::new(),
             required: BTreeSet::new(),
             required_at_batch_start: 0,
         })
+    }
+
+    /// Registers or replaces an application-owned `/job` input atomically.
+    pub fn register_user(
+        &mut self,
+        path: VirtualPath,
+        bytes: Vec<u8>,
+    ) -> Result<ProvisionOutcome, UserRegistrationError> {
+        self.limits.check(VfsLimitKind::OneFileBytes, bytes.len())?;
+        let existing = self.storage.layer(LayerKind::User).get(&path);
+        let next_files =
+            self.storage.layer(LayerKind::User).len() + usize::from(existing.is_none());
+        self.limits.check(VfsLimitKind::UserFiles, next_files)?;
+        let replaced = existing.map_or(0, |file| file.bytes().len());
+        let next_bytes = self.limits.checked_replacement_total(
+            VfsLimitKind::UserBytes,
+            self.user_bytes,
+            replaced,
+            bytes.len(),
+        )?;
+        let incoming = VirtualFile::new(path, bytes, FileOrigin::User);
+        let outcome = if existing.is_some_and(|file| file == &incoming) {
+            ProvisionOutcome::AlreadyPresent
+        } else {
+            ProvisionOutcome::Inserted
+        };
+        self.storage.replace_user(incoming)?;
+        self.user_bytes = next_bytes;
+        Ok(outcome)
+    }
+
+    /// Captures one immutable exact-lookup view of all registered inputs.
+    #[must_use]
+    pub fn snapshot(&self) -> VfsSnapshot {
+        self.storage.snapshot()
+    }
+
+    #[must_use]
+    pub fn user_file_count(&self) -> usize {
+        self.storage.layer(LayerKind::User).len()
+    }
+
+    #[must_use]
+    pub fn contains_user(&self, path: &VirtualPath) -> bool {
+        self.storage.layer(LayerKind::User).get(path).is_some()
+    }
+
+    #[must_use]
+    pub const fn user_bytes(&self) -> usize {
+        self.user_bytes
     }
 
     pub fn expect(&mut self, batch: &FileRequestBatch) {
@@ -476,13 +531,18 @@ impl FileProvisioner {
                 actual: content_id,
             });
         }
-        if let Some(existing) = self.files.get(&response.request) {
-            if existing.path() == &path && existing.content_id() == content_id {
+        if let Some(existing_path) = self.files.get(&response.request) {
+            let existing = self
+                .storage
+                .layer(LayerKind::ResolvedResource)
+                .get(existing_path)
+                .expect("provisioned request paths remain registered");
+            if existing_path == &path && existing.content_id() == content_id {
                 return Ok(ProvisionOutcome::AlreadyPresent);
             }
             return Err(ProvisionError::Conflict {
                 request: Box::new(response.request),
-                existing_path: Box::new(existing.path().clone()),
+                existing_path: Box::new(existing_path.clone()),
                 incoming_path: Box::new(path),
                 existing: existing.content_id(),
                 incoming: content_id,
@@ -504,8 +564,13 @@ impl FileProvisioner {
             VfsLimitKind::ResolvedFiles,
             self.files.len().saturating_add(1),
         )?;
-        let shared = if let Some((existing_request, existing)) = self.paths.get(&path) {
-            let existing_id = FileContentId::for_bytes(existing);
+        let shared = if let Some(existing_request) = self.paths.get(&path) {
+            let existing = self
+                .storage
+                .layer(LayerKind::ResolvedResource)
+                .get(&path)
+                .expect("provisioned paths remain registered");
+            let existing_id = existing.content_id();
             if existing_id != content_id {
                 return Err(ProvisionError::PathConflict {
                     path: Box::new(path),
@@ -515,7 +580,7 @@ impl FileProvisioner {
                     incoming: content_id,
                 });
             }
-            Arc::clone(existing)
+            existing.shared_bytes()
         } else {
             let attempted = self
                 .resolved_bytes
@@ -529,13 +594,20 @@ impl FileProvisioner {
             self.resolved_bytes = attempted;
             Arc::from(response.bytes)
         };
-        self.paths
-            .entry(path.clone())
-            .or_insert_with(|| (response.request.clone(), Arc::clone(&shared)));
-        self.files.insert(
-            response.request.clone(),
-            VirtualFile::new(path, shared, FileOrigin::Resolved(response.request)),
-        );
+        if !self.paths.contains_key(&path) {
+            self.storage
+                .insert(
+                    LayerKind::ResolvedResource,
+                    VirtualFile::new(
+                        path.clone(),
+                        Arc::clone(&shared),
+                        FileOrigin::Resolved(response.request.clone()),
+                    ),
+                )
+                .expect("new resolved paths satisfy layer ownership");
+            self.paths.insert(path.clone(), response.request.clone());
+        }
+        self.files.insert(response.request, path);
         Ok(ProvisionOutcome::Inserted)
     }
 
@@ -554,11 +626,19 @@ impl FileProvisioner {
 
     #[must_use]
     pub fn get(&self, key: &FileRequestKey) -> Option<&VirtualFile> {
-        self.files.get(key)
+        let path = self.files.get(key)?;
+        self.storage.layer(LayerKind::ResolvedResource).get(path)
     }
 
     pub fn files(&self) -> impl Iterator<Item = (&FileRequestKey, &VirtualFile)> {
-        self.files.iter()
+        self.files.iter().map(|(key, path)| {
+            let file = self
+                .storage
+                .layer(LayerKind::ResolvedResource)
+                .get(path)
+                .expect("provisioned request paths remain registered");
+            (key, file)
+        })
     }
 
     #[must_use]
@@ -579,9 +659,40 @@ impl FileProvisioner {
     pub fn clear(&mut self) {
         self.files.clear();
         self.paths.clear();
+        self.storage.clear_layer(LayerKind::ResolvedResource);
         self.resolved_bytes = 0;
         self.expected.clear();
         self.required.clear();
         self.required_at_batch_start = 0;
+    }
+}
+
+/// A deterministic failure while registering an application user file.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum UserRegistrationError {
+    Limit(VfsLimitError),
+    Storage(ImmutableBindingError),
+}
+
+impl fmt::Display for UserRegistrationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Limit(error) => error.fmt(f),
+            Self::Storage(error) => error.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for UserRegistrationError {}
+
+impl From<VfsLimitError> for UserRegistrationError {
+    fn from(value: VfsLimitError) -> Self {
+        Self::Limit(value)
+    }
+}
+
+impl From<ImmutableBindingError> for UserRegistrationError {
+    fn from(value: ImmutableBindingError) -> Self {
+        Self::Storage(value)
     }
 }

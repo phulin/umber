@@ -25,6 +25,89 @@ fn state(registry: &FileProvisioner) -> Vec<(FileRequestKey, String, Vec<u8>)> {
 }
 
 #[test]
+fn user_registration_is_atomic_and_snapshots_retain_exact_generations() {
+    let limits = VfsLimits {
+        user_files: 1,
+        user_bytes: 4,
+        one_file_bytes: 4,
+        ..VfsLimits::default()
+    };
+    let mut registry = FileProvisioner::new(limits).expect("registry");
+    let main = VirtualPath::user("main.tex").expect("main path");
+    assert_eq!(
+        registry
+            .register_user(main.clone(), b"old".to_vec())
+            .expect("initial user file"),
+        ProvisionOutcome::Inserted
+    );
+    let retained = registry.snapshot();
+
+    registry
+        .register_user(main.clone(), b"new!".to_vec())
+        .expect("replacement at limit");
+    assert_eq!(registry.user_file_count(), 1);
+    assert_eq!(registry.user_bytes(), 4);
+    assert_eq!(
+        retained
+            .get(&main)
+            .expect("retained read")
+            .expect("retained main file")
+            .bytes(),
+        b"old"
+    );
+    assert_eq!(
+        registry
+            .snapshot()
+            .get(&main)
+            .expect("current read")
+            .expect("current main file")
+            .bytes(),
+        b"new!"
+    );
+
+    let other = VirtualPath::user("other.tex").expect("other path");
+    assert!(matches!(
+        registry.register_user(other.clone(), Vec::new()),
+        Err(UserRegistrationError::Limit(VfsLimitError::LimitExceeded {
+            kind: VfsLimitKind::UserFiles,
+            ..
+        }))
+    ));
+    assert!(!registry.snapshot().contains(&other).expect("current read"));
+}
+
+#[test]
+fn resolved_registration_and_clear_are_reflected_in_vfs_snapshots() {
+    let mut registry = FileProvisioner::new(VfsLimits::default()).expect("registry");
+    let user = VirtualPath::user("main.tex").expect("user path");
+    registry
+        .register_user(user.clone(), b"main".to_vec())
+        .expect("user file");
+    registry
+        .preload(response(
+            FileKind::TexInput,
+            "plain.tex",
+            "/texlive/plain.tex",
+            b"plain",
+        ))
+        .expect("resolved file");
+    let resolved = VirtualPath::distribution("/texlive/plain.tex").expect("resolved path");
+    let retained = registry.snapshot();
+    assert!(retained.contains(&user).expect("user read"));
+    assert!(retained.contains(&resolved).expect("resolved read"));
+
+    registry.clear();
+    let current = registry.snapshot();
+    assert!(current.contains(&user).expect("user read"));
+    assert!(!current.contains(&resolved).expect("resolved read"));
+    assert!(
+        retained
+            .contains(&resolved)
+            .expect("retained resolved read")
+    );
+}
+
+#[test]
 fn keys_include_domain_and_reject_cross_domain_kinds() {
     let tex = key(FileKind::TexInput, "shared.dat");
     let bib = FileRequestKey::for_domain(

@@ -19,7 +19,10 @@ pub use umber_vfs::{
     FileKind, FileRequest, FileRequestKey, RequestKeyError, ResolvedFile, ResourceDomain,
     VfsLimitError, VfsLimitKind, VfsLimits, VirtualPath, VirtualPathError,
 };
-use umber_vfs::{FileProvisioner, FileRequestBatch, ProvisionError, ProvisionOutcome};
+use umber_vfs::{
+    FileProvisioner, FileRequestBatch, ProvisionError, ProvisionOutcome, UserRegistrationError,
+    VfsSnapshot, VirtualRoot,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResourceRequest {
@@ -331,8 +334,6 @@ pub struct VirtualCompileSession {
     format: Option<Vec<u8>>,
     clock: JobClock,
     limits: SessionLimits,
-    user_files: BTreeMap<VirtualPath, Vec<u8>>,
-    user_bytes: usize,
     files: FileProvisioner,
     font_cached_bytes: usize,
     attempts: u32,
@@ -378,8 +379,6 @@ impl VirtualCompileSession {
             format: options.format,
             clock: options.clock,
             limits,
-            user_files: BTreeMap::new(),
-            user_bytes: 0,
             files: FileProvisioner::new(limits.vfs_limits()).map_err(map_vfs_limit)?,
             font_cached_bytes: 0,
             attempts: 0,
@@ -450,29 +449,9 @@ impl VirtualCompileSession {
             path: path.to_owned(),
             message: error.to_string(),
         })?;
-        let vfs_limits = self.limits.vfs_limits();
-        vfs_limits
-            .check(VfsLimitKind::OneFileBytes, bytes.len())
-            .map_err(map_vfs_limit)?;
-        let replaced = self.user_files.get(&path);
-        let file_count = self
-            .user_files
-            .len()
-            .saturating_add(usize::from(replaced.is_none()));
-        vfs_limits
-            .check(VfsLimitKind::UserFiles, file_count)
-            .map_err(map_vfs_limit)?;
-        let replaced = replaced.map_or(0, Vec::len);
-        let attempted = vfs_limits
-            .checked_replacement_total(
-                VfsLimitKind::UserBytes,
-                self.user_bytes,
-                replaced,
-                bytes.len(),
-            )
-            .map_err(map_vfs_limit)?;
-        self.user_files.insert(path.clone(), bytes.clone());
-        self.user_bytes = attempted;
+        self.files
+            .register_user(path.clone(), bytes.clone())
+            .map_err(map_user_registration)?;
         if let Some(session) = &mut self.incremental {
             session
                 .register_input_file(path.as_path(), bytes)
@@ -735,8 +714,7 @@ impl VirtualCompileSession {
             let progressed = awaiting.iter().any(|key| match key {
                 ResourceRequestKey::File(key) => {
                     self.files.get(key).is_some()
-                        || user_path_for_key(key)
-                            .is_ok_and(|path| self.user_files.contains_key(&path))
+                        || user_path_for_key(key).is_ok_and(|path| self.files.contains_user(&path))
                 }
                 ResourceRequestKey::Font(key) => self.resolved_fonts.contains_key(key),
             });
@@ -755,24 +733,21 @@ impl VirtualCompileSession {
 
     fn run_attempt(&mut self) -> Result<CompileAttemptResult, CompileError> {
         if self.incremental.is_none() {
-            let source = self
-                .user_files
+            let snapshot = self.files.snapshot();
+            let source = snapshot
                 .get(&self.main_path)
+                .map_err(|error| CompileError::World(error.to_string()))?
                 .ok_or_else(|| CompileError::MissingMainFile(self.main_path.to_string()))?;
-            let source = String::from_utf8(source.clone()).map_err(|_| {
+            let source = String::from_utf8(source.bytes().to_vec()).map_err(|_| {
                 CompileError::Incremental("the editable main file must be valid UTF-8".to_owned())
             })?;
             let mut world = World::memory_with_clock(self.clock);
-            for (path, bytes) in &self.user_files {
-                world
-                    .set_memory_file(path.as_path(), bytes.clone())
-                    .map_err(|error| CompileError::World(error.to_string()))?;
-            }
-            for (_, resolved) in self.files.files() {
-                world
-                    .set_memory_file(resolved.path().as_path(), resolved.bytes().to_vec())
-                    .map_err(|error| CompileError::World(error.to_string()))?;
-            }
+            seed_world_from_snapshot(
+                &mut world,
+                &snapshot,
+                self.files.user_file_count(),
+                self.files.len(),
+            )?;
             let mut template = if let Some(format) = &self.format {
                 Universe::from_format(world, format)
                     .map_err(|error| CompileError::Format(error.to_string()))?
@@ -802,7 +777,6 @@ impl VirtualCompileSession {
         }
 
         let mut resolvers = VirtualRunResolvers::new(
-            &self.user_files,
             &self.files,
             &self.resolved_fonts,
             self.accepted_font_containers,
@@ -974,14 +948,9 @@ impl VirtualCompileSession {
     pub fn clear_distribution_cache(&mut self) -> Result<(), CompileError> {
         if let Some(session) = &self.incremental {
             let latest = session.source().as_bytes().to_vec();
-            let replaced = self
-                .user_files
-                .insert(self.main_path.clone(), latest.clone())
-                .map_or(0, |bytes| bytes.len());
-            self.user_bytes = self
-                .user_bytes
-                .saturating_sub(replaced)
-                .saturating_add(latest.len());
+            self.files
+                .register_user(self.main_path.clone(), latest)
+                .map_err(map_user_registration)?;
         }
         self.files.clear();
         self.resolved_fonts.clear();
@@ -1122,6 +1091,39 @@ fn check_limit(resource: &'static str, attempted: usize, limit: usize) -> Result
         });
     }
     Ok(())
+}
+
+fn seed_world_from_snapshot(
+    world: &mut World,
+    snapshot: &VfsSnapshot,
+    user_files: usize,
+    resolved_files: usize,
+) -> Result<(), CompileError> {
+    for (root, limit) in [
+        (VirtualRoot::Job, user_files),
+        (VirtualRoot::Distribution, resolved_files),
+    ] {
+        for path in snapshot
+            .list_root(root, limit)
+            .map_err(|error| CompileError::World(error.to_string()))?
+        {
+            let file = snapshot
+                .get(&path)
+                .map_err(|error| CompileError::World(error.to_string()))?
+                .expect("enumerated VFS paths remain visible in their snapshot");
+            world
+                .set_memory_file(path.as_path(), file.bytes().to_vec())
+                .map_err(|error| CompileError::World(error.to_string()))?;
+        }
+    }
+    Ok(())
+}
+
+fn map_user_registration(error: UserRegistrationError) -> CompileError {
+    match error {
+        UserRegistrationError::Limit(error) => map_vfs_limit(error),
+        UserRegistrationError::Storage(error) => CompileError::World(error.to_string()),
+    }
 }
 
 fn map_vfs_limit(error: VfsLimitError) -> CompileError {
