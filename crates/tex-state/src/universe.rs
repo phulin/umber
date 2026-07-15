@@ -3471,6 +3471,44 @@ impl Universe {
         self.stores.font(id)
     }
 
+    /// Captures one font selection without its owner-bound runtime id.
+    pub fn detach_font(
+        &self,
+        id: FontId,
+    ) -> Result<crate::DetachedMemoValue, crate::MemoValueError> {
+        let payload = self
+            .stores
+            .encode_memo_font(id)
+            .map_err(|error| crate::MemoValueError::Codec(format!("{error:?}")))?;
+        Ok(crate::DetachedMemoValue::from_payload(
+            crate::MemoValueKind::Font,
+            payload,
+        ))
+    }
+
+    /// Imports a detached font through the aggregate owner boundary.
+    pub fn import_memo_font(
+        &mut self,
+        value: &crate::DetachedMemoValue,
+        limits: crate::MemoValueLimits,
+    ) -> Result<FontId, crate::MemoValueError> {
+        let payload = value.payload(crate::MemoValueKind::Font)?;
+        if payload.len() > limits.max_payload_bytes {
+            return Err(crate::MemoValueError::Oversized {
+                actual: payload.len(),
+                limit: limits.max_payload_bytes,
+            });
+        }
+        let rollback = self.capture_scoped_rollback();
+        match self.stores.import_memo_font(payload) {
+            Ok(id) => Ok(id),
+            Err(error) => {
+                self.rollback_scoped(rollback);
+                Err(crate::MemoValueError::Codec(format!("{error:?}")))
+            }
+        }
+    }
+
     #[must_use]
     pub fn font_by_source_identity(
         &self,

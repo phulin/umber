@@ -140,6 +140,7 @@ fn nested_node_graph_round_trips_across_owners_and_respects_budget_atomically() 
         children: child,
     }))]);
     let detached = source.detach_node_list(root).expect("node detachment");
+    let detached_box = source.detach_box(root).expect("box detachment");
 
     let mut target = Universe::new();
     let imported = target
@@ -148,6 +149,13 @@ fn nested_node_graph_round_trips_across_owners_and_respects_budget_atomically() 
     let left = source.engine_boundary_hash(77, |hash| hash.node_list(root));
     let right = target.engine_boundary_hash(77, |hash| hash.node_list(imported));
     assert_eq!(left, right);
+    let imported_box = target
+        .import_memo_box(&detached_box, MemoValueLimits::default())
+        .expect("box import");
+    assert_eq!(
+        source.engine_boundary_hash(78, |hash| hash.node_list(root)),
+        target.engine_boundary_hash(78, |hash| hash.node_list(imported_box))
+    );
 
     let before = target.snapshot().state_hash();
     assert!(matches!(
@@ -164,6 +172,21 @@ fn nested_node_graph_round_trips_across_owners_and_respects_budget_atomically() 
 }
 
 #[test]
+fn font_round_trips_without_reusing_its_runtime_id() {
+    let source = Universe::new();
+    let font = source.current_font();
+    let detached = source.detach_font(font).expect("font detachment");
+    let mut target = Universe::new();
+    let imported = target
+        .import_memo_font(&detached, MemoValueLimits::default())
+        .expect("font import");
+    assert_eq!(
+        source.engine_boundary_hash(79, |hash| hash.font(font)),
+        target.engine_boundary_hash(79, |hash| hash.font(imported))
+    );
+}
+
+#[test]
 fn malformed_node_payload_is_a_miss_without_partial_publication() {
     let malformed = DetachedMemoValue::new(MemoValueKind::Nodes, vec![1, 2, 3]);
     let mut target = Universe::new();
@@ -174,4 +197,40 @@ fn malformed_node_payload_is_a_miss_without_partial_publication() {
             .is_err()
     );
     assert_eq!(target.snapshot().state_hash(), before);
+}
+
+#[test]
+fn font_round_trip_uses_target_owner_and_semantic_identifier() {
+    use crate::font::{FontMetrics, LoadedFont};
+    use crate::scaled::Scaled;
+    use std::path::PathBuf;
+
+    let mut source = Universe::new();
+    let font = source.intern_font(LoadedFont::new(
+        "memo-font",
+        PathBuf::from("memo-font"),
+        ContentHash::from_bytes(b"font bytes").bytes(),
+        123,
+        Scaled::from_raw(10 << 16),
+        Scaled::from_raw(9 << 16),
+        vec![Scaled::from_raw(1); 7],
+        FontMetrics::default(),
+    ));
+    let selector = source.intern("memo-font-selector");
+    source.set_font_identifier_symbol(font, selector);
+    let detached = source.detach_font(font).expect("font detachment");
+
+    let mut target = Universe::new();
+    let imported = target
+        .import_memo_font(&detached, MemoValueLimits::default())
+        .expect("font import");
+    assert_eq!(target.font(imported), source.font(font));
+    assert_eq!(
+        target.resolve(
+            target
+                .font_identifier_symbol(imported)
+                .expect("imported font identifier"),
+        ),
+        "memo-font-selector"
+    );
 }

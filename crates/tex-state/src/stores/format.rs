@@ -280,6 +280,12 @@ struct MemoNodeBundle {
     root: FormatListKey,
 }
 
+#[derive(Deserialize, Serialize)]
+struct MemoFontBundle {
+    font: FormatFont,
+    identifier: Option<FormatName>,
+}
+
 fn capture_env_word(
     stores: &Stores,
     cell: crate::cell::CellId,
@@ -543,6 +549,50 @@ impl Stores {
             .get(&bundle.root)
             .copied()
             .ok_or(StoreFormatError::Invalid("memo root is missing"))
+    }
+
+    pub(crate) fn encode_memo_font(&self, id: FontId) -> Result<Vec<u8>, StoreFormatError> {
+        let id = self.resolve_stored_font(id);
+        let mut font = FormatFont::capture(&self.fonts, id);
+        let identifier = font.identifier.take().map(|raw| {
+            let symbol = self
+                .interner
+                .symbol_at_slot(raw)
+                .expect("font identifier symbol should be live");
+            FormatName {
+                active: self.interner.kind(symbol) == ControlSequenceKind::ActiveCharacter,
+                text: self.interner.resolve(symbol).to_owned(),
+            }
+        });
+        bincode::serialize(&MemoFontBundle { font, identifier })
+            .map_err(|error| StoreFormatError::Codec(error.to_string()))
+    }
+
+    pub(crate) fn import_memo_font(&mut self, bytes: &[u8]) -> Result<FontId, StoreFormatError> {
+        let bundle: MemoFontBundle = bincode::deserialize(bytes)
+            .map_err(|error| StoreFormatError::Codec(error.to_string()))?;
+        let font = bundle.font.restore();
+        let result = match bundle.identifier {
+            Some(name) => {
+                let symbol = if name.active {
+                    let mut chars = name.text.chars();
+                    let ch = chars
+                        .next()
+                        .ok_or(StoreFormatError::Invalid("empty active font identifier"))?;
+                    if chars.next().is_some() {
+                        return Err(StoreFormatError::Invalid(
+                            "multi-character active font identifier",
+                        ));
+                    }
+                    self.intern_active_character(ch)
+                } else {
+                    self.intern(&name.text)
+                };
+                self.try_intern_font_with_identifier(font, symbol)
+            }
+            None => self.try_intern_font(font),
+        };
+        result.map_err(|_| StoreFormatError::Invalid("memo font capacity"))
     }
 }
 
