@@ -626,6 +626,32 @@ fn get_x_or_protected_stops_before_protected_macro_expansion() {
 }
 
 #[test]
+fn get_x_or_protected_resumes_ordinary_macros_from_unexpanded_replay() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    crate::install_etex_expandable_primitives(&mut stores);
+    let macro_cs = stores.intern("ordinarymacro");
+    let empty = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[char_token('x')]);
+    stores.set_macro_meaning(
+        macro_cs,
+        MacroMeaning::new(MeaningFlags::EMPTY, empty, body),
+    );
+    let mut input = InputStack::new(MemoryInput::new("\\unexpanded{\\ordinarymacro}"));
+
+    assert_eq!(
+        crate::get_x_or_protected_with_context(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores),
+            &mut ExpansionContext::new("texput"),
+        )
+        .expect("command-demand expansion")
+        .map(crate::semantic_token),
+        Some(char_token('x'))
+    );
+}
+
+#[test]
 fn unexpanded_suppresses_macros_for_the_current_expansion_call() {
     let mut stores = Universe::new();
     install_expandable_primitives(&mut stores);

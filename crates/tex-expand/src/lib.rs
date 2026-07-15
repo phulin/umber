@@ -1242,7 +1242,10 @@ pub fn get_x_or_protected_with_context(
     stores: &mut tex_state::ExpansionContext<'_>,
     expansion: &mut ExpansionContext<'_>,
 ) -> Result<Option<TracedTokenWord>, ExpandError> {
-    match get_x_token_with_context_inner(input, stores, expansion, true, false, None) {
+    // Alignment lookahead is still TeX82 command demand: an ordinary macro
+    // returned by \the/\unexpanded must resume expansion here. e-TeX adds
+    // only the protected-macro stopping rule to that x-token path.
+    match get_x_token_with_context_inner(input, stores, expansion, true, true, None) {
         Ok(token) => Ok(token),
         Err(error) => Err(error.capture(input)),
     }
