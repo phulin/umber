@@ -465,13 +465,13 @@ impl RunCliOptions {
                 }
                 flag if flag.starts_with('-') => {
                     return Err(CliError::Usage(
-                        "run accepts one input path with supported output and engine options",
+                        "run accepts one input path with optional --show-fixtures and --dvi <path>",
                     ));
                 }
                 path => {
                     if input.is_some() {
                         return Err(CliError::Usage(
-                            "run accepts one input path with supported output and engine options",
+                            "run accepts one input path with optional --show-fixtures and --dvi <path>",
                         ));
                     }
                     input = Some(PathBuf::from(path));
