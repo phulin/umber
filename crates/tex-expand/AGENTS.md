@@ -27,6 +27,7 @@ Use this crate for behavior that is defined before stomach execution sees an une
 - `src/conditionals.rs`: conditional stack transitions and skipped-branch scanning for `\if...`, `\else`, `\or`, and `\fi`.
 - `src/dispatch.rs`: expandable token dispatch, context-aware primitive handling, and expansion result routing.
 - `src/lib.rs`: public crate API, core expansion loop types, concrete expansion context, localized input resolver, errors, and primitive installation.
+- `src/memo.rs`: bounded session-local macro-substitution and expansion-episode memoization with detached keys, provenance rebind, eviction, and counters.
 - `src/primitives.rs`: implementations for expandable primitive helpers such as `\expandafter`, `\csname`, and `\input` name scanning.
 - `src/pdf_strings.rs`: pdfTeX-compatible expanded byte-string conversion, escaping, hexadecimal decoding, and comparison.
 - `src/pdf_files.rs`: pdfTeX-compatible creation/file dates, virtual file enquiries, byte dumps, and MD5 hashing.

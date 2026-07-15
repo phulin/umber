@@ -78,6 +78,18 @@ macro_rules! dispatch_match {
                     macro_meaning,
                     &parameter_pattern,
                 )?;
+                if expansion.memo.is_some() {
+                    return Ok(crate::memo::memoized_macro_dispatch(
+                        input,
+                        stores,
+                        expansion,
+                        definition,
+                        macro_meaning,
+                        provenance,
+                        arguments,
+                        call_origin,
+                    ));
+                }
                 Ok(Dispatch::Push {
                     replay_kind: ExpansionReplayKind::MacroBody,
                     token_list: macro_meaning.replacement_text(),

@@ -647,6 +647,7 @@ impl LineNormalizationCache {
         };
         NormalizedLine {
             text: cached.text,
+            bytes_as_chars: line.bytes_as_chars,
             physical_start: line.start,
             physical_content_end: line.content_end,
             terminator_start: line.terminator_start,

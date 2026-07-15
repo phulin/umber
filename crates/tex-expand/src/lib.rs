@@ -58,6 +58,7 @@ pub mod scan_int;
 
 mod conditionals;
 mod dispatch;
+mod memo;
 mod pdf_files;
 mod pdf_random;
 mod pdf_regex;
@@ -69,6 +70,7 @@ mod tests;
 mod values;
 
 pub use dispatch::{dispatch, dispatch_expandable_opcode, dispatch_with_context};
+pub use memo::{ExpansionMemoConfig, ExpansionMemoStats};
 pub use scan_helpers::scan_optional_keyword_with_context;
 pub use values::{
     append_token_show_text, append_token_string_text, meaning_text, scan_the_text_with_context,
@@ -1043,6 +1045,7 @@ pub struct ExpansionContext<'a> {
     fuel_limit: u64,
     remaining_fuel: u64,
     fuel_scope_depth: u32,
+    memo: Option<memo::ExpansionMemoCache>,
 }
 
 /// Default number of expansion-loop steps available to one expansion request.
@@ -1065,6 +1068,7 @@ impl<'a> ExpansionContext<'a> {
             fuel_limit: DEFAULT_EXPANSION_FUEL,
             remaining_fuel: DEFAULT_EXPANSION_FUEL,
             fuel_scope_depth: 0,
+            memo: None,
         }
     }
 
@@ -1087,6 +1091,7 @@ impl<'a> ExpansionContext<'a> {
             fuel_limit: DEFAULT_EXPANSION_FUEL,
             remaining_fuel: DEFAULT_EXPANSION_FUEL,
             fuel_scope_depth: 0,
+            memo: None,
         }
     }
 
@@ -1129,6 +1134,26 @@ impl<'a> ExpansionContext<'a> {
     pub fn recording(mut self, recorder: &'a mut dyn ReadRecorder) -> Self {
         self.recorder = Some(recorder);
         self
+    }
+
+    /// Enables bounded session-local expansion memoization.
+    #[must_use]
+    pub fn memoizing(mut self, config: ExpansionMemoConfig) -> Self {
+        self.memo = Some(memo::ExpansionMemoCache::new(config));
+        self
+    }
+
+    /// Returns counters for the enabled memo layer.
+    #[must_use]
+    pub fn memo_stats(&self) -> Option<ExpansionMemoStats> {
+        self.memo.as_ref().map(memo::ExpansionMemoCache::stats)
+    }
+
+    /// Drops every retained expansion entry while keeping counters enabled.
+    pub fn clear_memoization(&mut self) {
+        if let Some(memo) = &mut self.memo {
+            memo.clear();
+        }
     }
 
     #[inline(always)]
@@ -1224,6 +1249,7 @@ impl<'a> ExpansionContext<'a> {
             fuel_limit: self.fuel_limit,
             remaining_fuel: self.remaining_fuel,
             fuel_scope_depth: self.fuel_scope_depth,
+            memo: self.memo.take(),
         };
         let output = operation(&mut nested);
         self.input_resolver = nested.input_resolver.take();
@@ -1232,6 +1258,7 @@ impl<'a> ExpansionContext<'a> {
         self.remaining_fuel = nested.remaining_fuel;
         self.recoverable_diagnostics
             .append(&mut nested.recoverable_diagnostics);
+        self.memo = nested.memo.take();
         output
     }
 
