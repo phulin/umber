@@ -50,6 +50,41 @@ fn layout_resolver_checks_fragments_before_engine_sources() {
     );
 }
 
+#[test]
+fn layout_resolver_resolves_arena_span_beyond_direct_fragment_space() {
+    let mut fragments = FragmentStore::new();
+    let (fragment, registration) = fragments
+        .testing_append_at(Arc::from(&b"ab"[..]), 9, 0x7fff_fffe)
+        .expect("boundary-crossing fragment appends");
+    let layout = EditorLayout::new(
+        "editor.tex",
+        LayoutGeneration::new(3),
+        vec![Piece::new(fragment, 0, 2)],
+        &fragments,
+    )
+    .expect("layout is valid");
+    let mut universe = Universe::new();
+    let span = registration.span(1, 2).expect("wide fragment span");
+    let origin = universe.source_span_origin(span);
+
+    assert!(
+        universe
+            .source_position(crate::SourceId::new(0), 1)
+            .is_err(),
+        "the stable editor source id must remain absent from the source map"
+    );
+    assert_eq!(
+        ProvenanceResolver::new(&universe).resolve_layout_origin(origin, &fragments, &layout),
+        LayoutResolvedOrigin::Current {
+            path: "editor.tex".into(),
+            doc_offset_lo: 1,
+            doc_offset_hi: 2,
+            line: 1,
+            column: 2,
+        }
+    );
+}
+
 fn universe_with_registered_source(bytes: &[u8]) -> (Universe, OriginId) {
     let mut universe = Universe::new();
     let registration = universe

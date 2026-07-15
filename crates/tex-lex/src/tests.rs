@@ -708,6 +708,53 @@ fn layout_cursor_hands_each_physical_line_its_fragment_registration() {
 }
 
 #[test]
+fn layout_cursor_scalar_crossing_direct_boundary_uses_fragment_span() {
+    let mut fragments = FragmentStore::new();
+    let (fragment, registration) = fragments
+        .testing_append_at(Arc::from(&b"ab"[..]), 1, 0x7fff_fffe)
+        .expect("boundary-crossing fragment appends");
+    let layout = EditorLayout::new(
+        "root.tex",
+        LayoutGeneration::new(1),
+        vec![Piece::new(fragment, 0, 2)],
+        &fragments,
+    )
+    .expect("layout is valid");
+    let mut input = InputStack::new(MemoryInput::new("ab"));
+    let stable_source = input
+        .install_root_layout_cursor(
+            LayoutCursor::new(&layout, &fragments).expect("layout cursor freezes"),
+        )
+        .expect("root source exists");
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+
+    let direct = input
+        .next_traced_token(&mut stores)
+        .expect("direct token succeeds")
+        .expect("direct token");
+    assert_eq!(
+        direct.origin(),
+        registration
+            .direct_origin(0, 1)
+            .expect("last direct origin")
+    );
+
+    let wide = input
+        .next_traced_token(&mut stores)
+        .expect("wide token succeeds")
+        .expect("wide token");
+    let OriginRecord::SourceSpan(span) = stores.origin(wide.origin()) else {
+        panic!("wide fragment scalar must use an arena source span");
+    };
+    assert_eq!(span, registration.span(1, 2).expect("wide fragment span"));
+    assert!(
+        stores.source_position(stable_source, 1).is_err(),
+        "the stable editor source id must remain absent from the source map"
+    );
+}
+
+#[test]
 fn layout_cursor_preserves_transformed_spans_and_synthetic_anchors() {
     let mut fragments = FragmentStore::new();
     let (first_id, first) = fragments

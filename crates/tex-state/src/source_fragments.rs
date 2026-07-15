@@ -239,6 +239,33 @@ impl FragmentStore {
         let byte_len =
             u64::try_from(bytes.len()).map_err(|_| SourceMapError::LogicalPositionExhausted)?;
         let (start, _) = LogicalPositionAllocator.reserve(byte_len)?;
+        self.append_at(bytes, minted_revision, byte_len, start)
+    }
+
+    /// Appends at an exact logical position for representation-boundary tests.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn testing_append_at(
+        &mut self,
+        bytes: Arc<[u8]>,
+        minted_revision: u64,
+        start: u64,
+    ) -> Result<(FragmentId, RegisteredSource), SourceMapError> {
+        let byte_len =
+            u64::try_from(bytes.len()).map_err(|_| SourceMapError::LogicalPositionExhausted)?;
+        start
+            .checked_add(byte_len)
+            .and_then(|anchor| anchor.checked_add(1))
+            .ok_or(SourceMapError::LogicalPositionExhausted)?;
+        self.append_at(bytes, minted_revision, byte_len, start)
+    }
+
+    fn append_at(
+        &mut self,
+        bytes: Arc<[u8]>,
+        minted_revision: u64,
+        byte_len: u64,
+        start: u64,
+    ) -> Result<(FragmentId, RegisteredSource), SourceMapError> {
         let slot = self.fragments.len;
         let id = FragmentId {
             lineage: self.append_lineage,

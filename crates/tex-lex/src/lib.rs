@@ -3435,12 +3435,17 @@ fn traced_ordinary_source_token(
     let backed_one_scalar =
         end.byte_offset.checked_sub(start.byte_offset) == u64::try_from(scalar.len_utf8()).ok();
     let origin = if backed_one_scalar {
-        if let Some(origin) =
-            registration.and_then(|source| source.direct_origin(start.byte_offset, end.byte_offset))
-        {
-            origin
-        } else {
-            stores.source_token_origin(start.source_id, start.byte_offset, end.byte_offset)
+        match registration {
+            Some(source) => source
+                .direct_origin(start.byte_offset, end.byte_offset)
+                .or_else(|| {
+                    source
+                        .span(start.byte_offset, end.byte_offset)
+                        .ok()
+                        .map(|span| stores.source_span_origin(span))
+                })
+                .unwrap_or(OriginId::UNKNOWN),
+            None => stores.source_token_origin(start.source_id, start.byte_offset, end.byte_offset),
         }
     } else {
         source_range_origin(stores, registration, start, end)

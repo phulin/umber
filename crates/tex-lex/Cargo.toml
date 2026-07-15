@@ -13,6 +13,7 @@ tex-state = { path = "../tex-state" }
 
 [dev-dependencies]
 tempfile.workspace = true
+tex-state = { path = "../tex-state", features = ["testing"] }
 
 [lints]
 workspace = true

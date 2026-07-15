@@ -292,7 +292,11 @@ session-cumulative: initial document + Σ line-expanded replacement lengths.
 A pathological character-at-a-time session re-mints one line per keystroke
 (~10^2 bytes); 10^5 keystrokes consume ~10^7 positions, two orders of
 magnitude below the boundary, before any host-side edit coalescing.
-Exhaustion degrades exactly as today: arena `SourceSpan` fallback, then
+Exhaustion degrades exactly as today: when a fragment position crosses the
+packed direct boundary, ordinary scalar delivery allocates the validated
+`SourceSpan` from the line's fragment registration. It does not look up the
+stable editor root `SourceId`, which deliberately has no source-map region.
+Only arena or logical-coordinate exhaustion then degrades to
 `OriginId::UNKNOWN` — never an abort, never a wrong location.
 
 Piece count grows by ≤2 per edit and is a layout-build, retained-diagnostic,
