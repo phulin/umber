@@ -249,6 +249,9 @@ pub enum ExpandablePrimitive {
     PdfEscapeName,
     PdfEscapeHex,
     PdfUnescapeHex,
+    PdfFileModificationDate,
+    PdfMdFiveSum,
+    PdfFileDump,
 }
 
 impl ExpandablePrimitive {
@@ -329,6 +332,9 @@ impl ExpandablePrimitive {
             Self::PdfEscapeName => 71,
             Self::PdfEscapeHex => 72,
             Self::PdfUnescapeHex => 73,
+            Self::PdfFileModificationDate => 74,
+            Self::PdfMdFiveSum => 75,
+            Self::PdfFileDump => 76,
         }
     }
 
@@ -409,6 +415,9 @@ impl ExpandablePrimitive {
             71 => Some(Self::PdfEscapeName),
             72 => Some(Self::PdfEscapeHex),
             73 => Some(Self::PdfUnescapeHex),
+            74 => Some(Self::PdfFileModificationDate),
+            75 => Some(Self::PdfMdFiveSum),
+            76 => Some(Self::PdfFileDump),
             _ => None,
         }
     }

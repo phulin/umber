@@ -72,6 +72,37 @@ fn memory_world_reads_and_records_hashes() {
 }
 
 #[test]
+fn memory_file_modification_metadata_is_pinned_with_the_input_record() {
+    let mut world = World::memory();
+    let date = FileModificationDate::with_offset(
+        JobClock {
+            time: 23 * 60 + 5,
+            second: 6,
+            day: 2,
+            month: 2,
+            year: 2024,
+        },
+        -5 * 60,
+    );
+    world
+        .set_memory_file("dated.tex", b"dated".to_vec())
+        .expect("seed file");
+    world
+        .set_memory_file_modification_date("dated.tex", date)
+        .expect("seed metadata");
+
+    let content = world.read_file("dated.tex").expect("read dated file");
+    assert_eq!(content.modification_date(), Some(date));
+    assert_eq!(
+        world
+            .recorded_input_content(content.record())
+            .expect("recorded content")
+            .modification_date(),
+        Some(date)
+    );
+}
+
+#[test]
 fn input_record_id_is_a_two_word_runtime_capability() {
     assert_eq!(core::mem::size_of::<InputRecordId>(), 16);
 }

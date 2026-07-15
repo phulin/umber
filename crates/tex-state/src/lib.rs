@@ -91,10 +91,10 @@ pub use universe::{
 };
 pub use world::{
     CommittedArtifact, ContentDomain, ContentHash, ContentIdentity, EffectPos, EffectRecord,
-    EffectRetrySafety, ExecutionTraceEvent, FileContent, InputRecord, InputRecordId, JobClock,
-    MemoryOutput, PrintSink, ReadTarget, RngState, ShellEscapePolicy, ShellEscapeRecord,
-    StreamBufState, StreamSlot, VerifiedArtifact, World, WorldCommitMode, WorldError,
-    WorldSnapshot,
+    EffectRetrySafety, ExecutionTraceEvent, FileContent, FileModificationDate, InputRecord,
+    InputRecordId, JobClock, MemoryOutput, PrintSink, ReadTarget, RngState, ShellEscapePolicy,
+    ShellEscapeRecord, StreamBufState, StreamSlot, VerifiedArtifact, World, WorldCommitMode,
+    WorldError, WorldSnapshot,
 };
 
 #[cfg(test)]

@@ -187,6 +187,8 @@ pub trait ExpansionState {
     fn paragraph_shape_dimension(&self, line: i32, width: bool) -> Scaled;
     fn report_bad_register_code(&mut self, _value: i32, _maximum: u16) {}
     fn report_missing_font_identifier(&mut self) {}
+    /// Records a recoverable diagnostic raised by an expandable primitive.
+    fn report_expansion_diagnostic(&mut self, _message: &str) {}
     fn int_param(&self, param: IntParam) -> i32;
     /// Emits the e-TeX `\scantokens` pseudo-file boundary when tracing is enabled.
     fn trace_scantokens_boundary(&mut self, _opening: bool) {}
@@ -4041,6 +4043,11 @@ impl ExpansionState for Universe {
         Self::report_missing_font_identifier(self);
     }
 
+    fn report_expansion_diagnostic(&mut self, message: &str) {
+        self.world_mut()
+            .write_text(PrintSink::TerminalAndLog, message);
+    }
+
     fn box_dimension(&self, index: u16, dimension: BoxDimension) -> Option<Scaled> {
         Self::box_dimension(self, index, dimension)
     }
@@ -4462,6 +4469,12 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn report_missing_font_identifier(&mut self) {
         self.universe.report_missing_font_identifier();
+    }
+
+    fn report_expansion_diagnostic(&mut self, message: &str) {
+        self.universe
+            .world_mut()
+            .write_text(PrintSink::TerminalAndLog, message);
     }
 
     fn box_dimension(&self, index: u16, dimension: BoxDimension) -> Option<Scaled> {

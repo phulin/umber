@@ -53,6 +53,7 @@ pub mod scan_int;
 
 mod conditionals;
 mod dispatch;
+mod pdf_files;
 mod pdf_strings;
 mod primitives;
 mod scan_helpers;
@@ -372,6 +373,26 @@ pub fn install_pdftex_expandable_primitives(stores: &mut Universe) {
             "pdfstrcmp",
             tex_state::meaning::ExpandablePrimitive::StringCompare,
         ),
+        (
+            "pdfcreationdate",
+            tex_state::meaning::ExpandablePrimitive::CreationDate,
+        ),
+        (
+            "pdffilemoddate",
+            tex_state::meaning::ExpandablePrimitive::PdfFileModificationDate,
+        ),
+        (
+            "pdffilesize",
+            tex_state::meaning::ExpandablePrimitive::FileSize,
+        ),
+        (
+            "pdfmdfivesum",
+            tex_state::meaning::ExpandablePrimitive::PdfMdFiveSum,
+        ),
+        (
+            "pdffiledump",
+            tex_state::meaning::ExpandablePrimitive::PdfFileDump,
+        ),
     ] {
         stores.install_primitive_meaning(name, Meaning::ExpandablePrimitive(primitive));
     }
@@ -576,6 +597,9 @@ pub enum ExpandableOpcode {
     PdfEscapeName,
     PdfEscapeHex,
     PdfUnescapeHex,
+    PdfFileModificationDate,
+    PdfMdFiveSum,
+    PdfFileDump,
     IfDefined,
     IfCsName,
     IfInCsName,
@@ -953,6 +977,16 @@ pub trait InputResolver {
             .map(|descriptor| descriptor.byte_len()))
     }
 
+    /// Resolves immutable file bytes and metadata for read-only enquiries.
+    fn input_file_content(
+        &mut self,
+        input: &mut dyn InputReadState,
+        name: &str,
+        request_index: u64,
+    ) -> Result<Option<FileContent>, String> {
+        self.open_stream_input(input, name, request_index)
+    }
+
     /// Resolves content for a TeX input stream such as `\openin`.
     ///
     /// Missing streams are not fatal in TeX, so the default converts any
@@ -1179,10 +1213,25 @@ impl<'a> ExpansionContext<'a> {
         name: &str,
     ) -> Result<Option<u64>, String> {
         let request_index = self.next_resolution_index();
-        self.input_resolver
-            .as_deref_mut()
-            .ok_or_else(|| "no input resolver is installed".to_owned())?
-            .input_file_size(input, name, request_index)
+        match self.input_resolver.as_deref_mut() {
+            Some(resolver) => resolver.input_file_size(input, name, request_index),
+            None => Ok(input
+                .read_input_file(Path::new(name))
+                .ok()
+                .map(|content| u64::try_from(content.bytes().len()).unwrap_or(u64::MAX))),
+        }
+    }
+
+    pub fn input_file_content(
+        &mut self,
+        input: &mut dyn InputReadState,
+        name: &str,
+    ) -> Result<Option<FileContent>, String> {
+        let request_index = self.next_resolution_index();
+        match self.input_resolver.as_deref_mut() {
+            Some(resolver) => resolver.input_file_content(input, name, request_index),
+            None => Ok(input.read_input_file(Path::new(name)).ok()),
+        }
     }
 
     pub fn open_stream_input(

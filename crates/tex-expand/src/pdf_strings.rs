@@ -51,7 +51,7 @@ pub(crate) fn execute_compare(
     Ok(render_bytes(stores, result, context))
 }
 
-fn scan_expanded_bytes(
+pub(crate) fn scan_expanded_bytes(
     input: &mut InputStack,
     stores: &mut tex_state::ExpansionContext<'_>,
     expansion: &mut ExpansionContext<'_>,
@@ -77,7 +77,7 @@ fn scan_expanded_bytes(
     Ok(bytes)
 }
 
-fn render_bytes(
+pub(crate) fn render_bytes(
     stores: &mut tex_state::ExpansionContext<'_>,
     bytes: &[u8],
     context: TracedTokenWord,

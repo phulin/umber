@@ -1066,6 +1066,7 @@ name = "tex-expand"
 version = "0.1.0"
 dependencies = [
  "ahash",
+ "md-5",
  "test-support",
  "tex-lex",
  "tex-state",

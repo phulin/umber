@@ -164,22 +164,29 @@ pub struct FileContent {
     path: PathBuf,
     bytes: Arc<[u8]>,
     hash: ContentHash,
+    modification_date: Option<FileModificationDate>,
 }
 
 impl FileContent {
     #[must_use]
     pub(crate) fn new(record: InputRecordId, path: PathBuf, bytes: Vec<u8>) -> Self {
-        Self::from_shared(record, path, bytes.into())
+        Self::from_shared(record, path, bytes.into(), None)
     }
 
     #[must_use]
-    fn from_shared(record: InputRecordId, path: PathBuf, bytes: Arc<[u8]>) -> Self {
+    fn from_shared(
+        record: InputRecordId,
+        path: PathBuf,
+        bytes: Arc<[u8]>,
+        modification_date: Option<FileModificationDate>,
+    ) -> Self {
         let hash = ContentHash::from_bytes(&bytes);
         Self {
             record,
             path,
             bytes,
             hash,
+            modification_date,
         }
     }
 
@@ -209,9 +216,40 @@ impl FileContent {
         self.hash
     }
 
+    /// Returns immutable modification metadata captured with this read.
+    #[must_use]
+    pub const fn modification_date(&self) -> Option<FileModificationDate> {
+        self.modification_date
+    }
+
     #[must_use]
     pub fn into_bytes(self) -> Vec<u8> {
         self.bytes.to_vec()
+    }
+}
+
+/// Host-neutral civil modification time attached to immutable file content.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct FileModificationDate {
+    pub clock: JobClock,
+    pub utc_offset_minutes: i16,
+}
+
+impl FileModificationDate {
+    #[must_use]
+    pub const fn utc(clock: JobClock) -> Self {
+        Self {
+            clock,
+            utc_offset_minutes: 0,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_offset(clock: JobClock, utc_offset_minutes: i16) -> Self {
+        Self {
+            clock,
+            utc_offset_minutes,
+        }
     }
 }
 
@@ -244,6 +282,7 @@ pub struct InputRecord {
     path: PathBuf,
     hash: ContentHash,
     len: usize,
+    modification_date: Option<FileModificationDate>,
 }
 
 impl InputRecord {
@@ -265,6 +304,11 @@ impl InputRecord {
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.len == 0
+    }
+
+    #[must_use]
+    pub const fn modification_date(&self) -> Option<FileModificationDate> {
+        self.modification_date
     }
 }
 
@@ -970,6 +1014,23 @@ impl World {
         Ok(())
     }
 
+    /// Attaches deterministic modification metadata to a seeded memory file.
+    pub fn set_memory_file_modification_date(
+        &mut self,
+        path: impl Into<PathBuf>,
+        date: FileModificationDate,
+    ) -> Result<(), WorldError> {
+        let WorldBackend::Memory(memory) = &mut self.backend else {
+            return Err(WorldError::new(
+                "set memory file modification date",
+                None,
+                "world is not memory-backed",
+            ));
+        };
+        memory.modification_dates.insert(path.into(), date);
+        Ok(())
+    }
+
     /// Adds one terminal input line to an in-memory world.
     ///
     /// The line should not include its trailing newline; real terminal reads
@@ -989,9 +1050,15 @@ impl World {
     /// Reads a file as bytes, records the hash, and returns both together.
     pub fn read_file(&mut self, path: impl AsRef<Path>) -> Result<FileContent, WorldError> {
         let path = path.as_ref();
-        let bytes: Arc<[u8]> = match self.pending_output_bytes(path)? {
-            Some(bytes) => Arc::from(bytes),
-            None => self.materialized_file_bytes(path)?,
+        let (bytes, modification_date): (Arc<[u8]>, _) = match self.pending_output_bytes(path)? {
+            Some(bytes) => (
+                Arc::from(bytes),
+                Some(FileModificationDate::utc(self.job_clock)),
+            ),
+            None => (
+                self.materialized_file_bytes(path)?,
+                self.materialized_file_modification_date(path),
+            ),
         };
         Ok(self.register_input_content(path, bytes))
     }
@@ -1020,7 +1087,7 @@ impl World {
 
     fn register_input_content(&mut self, path: &Path, bytes: Arc<[u8]>) -> FileContent {
         let record = self.allocate_input_record();
-        let content = FileContent::from_shared(record, path.to_owned(), bytes);
+        let content = FileContent::from_shared(record, path.to_owned(), bytes, modification_date);
         self.input_contents
             .entry(content.hash)
             .or_insert_with(|| content.bytes.clone());
@@ -1028,6 +1095,7 @@ impl World {
             path: content.path.clone(),
             hash: content.hash,
             len: content.bytes.len(),
+            modification_date: content.modification_date,
         });
         content
     }
@@ -1091,6 +1159,21 @@ impl World {
                         "not found in memory world",
                     )
                 }),
+        }
+    }
+
+    fn materialized_file_modification_date(&self, path: &Path) -> Option<FileModificationDate> {
+        match &self.backend {
+            WorldBackend::Real { .. } => std::fs::metadata(path)
+                .ok()?
+                .modified()
+                .ok()?
+                .duration_since(UNIX_EPOCH)
+                .ok()
+                .map(|duration| {
+                    FileModificationDate::utc(unix_seconds_to_job_clock(duration.as_secs()))
+                }),
+            WorldBackend::Memory(memory) => memory.modification_dates.get(path).copied(),
         }
     }
 
@@ -1307,6 +1390,7 @@ impl World {
             path: content.path,
             hash: content.hash,
             len: content.bytes.len(),
+            modification_date: content.modification_date,
         });
         Ok(Some(line))
     }
@@ -1319,6 +1403,7 @@ impl World {
             path: record.path.clone(),
             bytes,
             hash: record.hash,
+            modification_date: record.modification_date,
         })
     }
 
@@ -2223,6 +2308,7 @@ fn verify_artifact_identity(
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct MemoryBackend {
     files: BTreeMap<PathBuf, Arc<[u8]>>,
+    modification_dates: BTreeMap<PathBuf, FileModificationDate>,
     outputs: BTreeMap<PathBuf, Vec<u8>>,
     artifacts: BTreeMap<ContentHash, Vec<u8>>,
     terminal_output: Vec<u8>,

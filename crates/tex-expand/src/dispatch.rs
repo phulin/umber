@@ -273,22 +273,29 @@ macro_rules! dispatch_match {
                 ))
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::CreationDate) => {
-                let clock = expansion.job_clock;
-                let creation_date = format!(
-                    "D:{:04}{:02}{:02}{:02}{:02}{:02}Z",
-                    clock.year,
-                    clock.month,
-                    clock.day,
-                    clock.time.div_euclid(60),
-                    clock.time.rem_euclid(60),
-                    clock.second,
-                );
-                Ok(push_rendered_text(
+                Ok(crate::pdf_files::creation_date(
                     stores,
-                    ExpansionReplayKind::NumberOutput,
-                    &creation_date,
-                    call_origin,
+                    expansion,
+                    call_context,
                 ))
+            }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfFileModificationDate) => {
+                crate::pdf_files::execute(
+                    crate::pdf_files::PdfFileEnquiry::ModificationDate,
+                    input, stores, expansion, mode, call_context,
+                )
+            }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfMdFiveSum) => {
+                crate::pdf_files::execute(
+                    crate::pdf_files::PdfFileEnquiry::MdFiveSum,
+                    input, stores, expansion, mode, call_context,
+                )
+            }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfFileDump) => {
+                crate::pdf_files::execute(
+                    crate::pdf_files::PdfFileEnquiry::Dump,
+                    input, stores, expansion, mode, call_context,
+                )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Unexpanded) => {
                 let raw = crate::scan::scan_general_text_with_expanded_open(
@@ -1388,6 +1395,9 @@ pub fn dispatch_expandable_opcode(opcode: ExpandableOpcode) -> Result<(), Expand
         | ExpandableOpcode::PdfEscapeName
         | ExpandableOpcode::PdfEscapeHex
         | ExpandableOpcode::PdfUnescapeHex
+        | ExpandableOpcode::PdfFileModificationDate
+        | ExpandableOpcode::PdfMdFiveSum
+        | ExpandableOpcode::PdfFileDump
         | ExpandableOpcode::IfDefined
         | ExpandableOpcode::IfCsName
         | ExpandableOpcode::IfInCsName

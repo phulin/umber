@@ -412,11 +412,11 @@ mod tests {
         prepare_run_stores,
     };
     use tex_lex::{InputStack, MemoryInput};
-    use tex_state::World;
     use tex_state::macro_store::MacroMeaning;
     use tex_state::meaning::ExpandablePrimitive;
     use tex_state::meaning::MeaningFlags;
     use tex_state::token::{Catcode, Token};
+    use tex_state::{FileModificationDate, JobClock, World};
 
     #[test]
     fn source_derived_inventory_is_the_exact_pinned_158_name_set() {
@@ -666,6 +666,115 @@ mod tests {
         prepare_latex_run_stores(&mut latex);
         let strcmp = latex.intern("strcmp");
         assert_eq!(latex.meaning(strcmp), pdftex.meaning(pdfstrcmp));
+    }
+
+    fn seed_pdftex_file_facts(stores: &mut Universe) {
+        stores
+            .world_mut()
+            .set_memory_file("asset.bin", vec![0x00, 0x41, 0x7f, 0x80, 0xff, 0x0a])
+            .expect("seed virtual file");
+        stores
+            .world_mut()
+            .set_memory_file_modification_date(
+                "asset.bin",
+                FileModificationDate::with_offset(
+                    JobClock {
+                        time: 23 * 60 + 5,
+                        second: 6,
+                        day: 2,
+                        month: 2,
+                        year: 2024,
+                    },
+                    -5 * 60,
+                ),
+            )
+            .expect("seed virtual modification date");
+    }
+
+    #[test]
+    fn pdftex_virtual_file_enquiries_match_the_pinned_oracle() {
+        let output = expand_pdftex_characters(
+            concat!(
+                "\\pdfcreationdate|",
+                "\\pdffilemoddate{asset.bin}|",
+                "\\pdffilesize{asset.bin}|",
+                "\\pdfmdfivesum{abc}|",
+                "\\pdfmdfivesum{}|",
+                "\\pdfmdfivesum file {asset.bin}%",
+            ),
+            seed_pdftex_file_facts,
+        )
+        .into_iter()
+        .map(|(byte, _)| byte)
+        .collect::<Vec<_>>();
+        assert_eq!(
+            output,
+            concat!(
+                "D:19700101000000Z|",
+                "D:20240202230506-05'00'|",
+                "6|",
+                "900150983CD24FB0D6963F7D28E17F72|",
+                "D41D8CD98F00B204E9800998ECF8427E|",
+                "533D621634EC926267C997E4FADE6938",
+            )
+            .as_bytes()
+        );
+    }
+
+    #[test]
+    fn pdffiledump_matches_pdftex_offset_and_length_boundaries() {
+        let output = expand_pdftex_characters(
+            concat!(
+                "[\\pdffiledump{asset.bin}]|",
+                "[\\pdffiledump length 0 {asset.bin}]|",
+                "[\\pdffiledump length 3 {asset.bin}]|",
+                "[\\pdffiledump offset 2 {asset.bin}]|",
+                "[\\pdffiledump offset 2 length 2 {asset.bin}]|",
+                "[\\pdffiledump offset 99 length 2 {asset.bin}]|",
+                "[\\pdffiledump offset 2 length 99 {asset.bin}]%",
+            ),
+            seed_pdftex_file_facts,
+        )
+        .into_iter()
+        .map(|(byte, _)| byte)
+        .collect::<Vec<_>>();
+        assert_eq!(output, b"[]|[]|[00417F]|[]|[7F80]|[]|[7F80FF0A]");
+    }
+
+    #[test]
+    fn pdftex_missing_virtual_file_enquiries_expand_to_nothing() {
+        let output = expand_pdftex_characters(
+            concat!(
+                "[\\pdffilemoddate{missing}]|",
+                "[\\pdffilesize{missing}]|",
+                "[\\pdfmdfivesum file {missing}]|",
+                "[\\pdffiledump length 2 {missing}]%",
+            ),
+            |_| {},
+        )
+        .into_iter()
+        .map(|(byte, _)| byte)
+        .collect::<Vec<_>>();
+        assert_eq!(output, b"[]|[]|[]|[]");
+    }
+
+    #[test]
+    fn pdffiledump_reports_and_recovers_negative_ranges() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        seed_pdftex_file_facts(&mut stores);
+        let output = crate::run_memory_with_stores(
+            concat!(
+                "\\message{O=[\\pdffiledump offset -1 length 2 {asset.bin}]} ",
+                "\\message{L=[\\pdffiledump offset 1 length -2 {asset.bin}]}\\end",
+            ),
+            &mut stores,
+        )
+        .expect("recover negative dump ranges");
+        assert!(output.contains("! Bad file offset (-1)."), "{output}");
+        assert!(output.contains("! Bad dump length (-2)."), "{output}");
+        assert!(output.contains("O=[0041]"), "{output}");
+        assert!(output.contains("L=[]"), "{output}");
     }
 
     #[test]
