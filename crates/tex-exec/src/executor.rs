@@ -89,12 +89,19 @@ pub enum FontSource {
 /// Expansion scanners see this only through its concrete dereference to
 /// [`tex_expand::ExpansionContext`]; font resolution remains an execution-only
 /// operation and is invoked solely by `\font` assignment.
+pub(crate) struct PendingParagraphMemo {
+    pub(crate) key: tex_state::PureMemoKey,
+    pub(crate) effect_start: usize,
+    pub(crate) trace_origins: Vec<tex_state::token::OriginId>,
+}
+
 pub struct ExecutionContext<'a> {
     expansion: tex_expand::ExpansionContext<'a>,
     font_resolver: Option<&'a mut dyn FontResolver>,
     image_resolver: Option<&'a mut dyn PdfImageResolver>,
-    pub(crate) pending_paragraph_memo: Option<tex_state::PureMemoKey>,
+    pub(crate) pending_paragraph_memo: Option<PendingParagraphMemo>,
     pub(crate) bypass_paragraph_memo_once: bool,
+    pub(crate) paragraph_memo_barrier: bool,
 }
 
 impl<'a> ExecutionContext<'a> {
@@ -106,6 +113,7 @@ impl<'a> ExecutionContext<'a> {
             image_resolver: None,
             pending_paragraph_memo: None,
             bypass_paragraph_memo_once: false,
+            paragraph_memo_barrier: false,
         }
     }
 
@@ -121,6 +129,7 @@ impl<'a> ExecutionContext<'a> {
             image_resolver: None,
             pending_paragraph_memo: None,
             bypass_paragraph_memo_once: false,
+            paragraph_memo_barrier: false,
         }
     }
 
@@ -137,6 +146,7 @@ impl<'a> ExecutionContext<'a> {
             image_resolver: Some(image_resolver),
             pending_paragraph_memo: None,
             bypass_paragraph_memo_once: false,
+            paragraph_memo_barrier: false,
         }
     }
 
@@ -487,6 +497,7 @@ where
         if allow_text_spans
             && nest.current_mode() == crate::Mode::Vertical
             && execution.pending_paragraph_memo.is_none()
+            && !execution.paragraph_memo_barrier
             && stores.paragraph_memo_enabled()
         {
             if execution.bypass_paragraph_memo_once {
@@ -755,6 +766,13 @@ where
             DispatchAction::NotConsumed => {
                 return Ok(MainControlExit::NotConsumed { token });
             }
+        }
+        if before_mode == crate::Mode::Horizontal
+            && before_depth == 2
+            && nest.current_mode() == crate::Mode::Vertical
+            && nest.depth() == 1
+        {
+            execution.paragraph_memo_barrier = false;
         }
         if observe(
             nest,

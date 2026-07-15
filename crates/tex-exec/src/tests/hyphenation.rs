@@ -534,6 +534,105 @@ fn literal_paragraph_front_end_reuses_hlist_and_preserves_output() {
 }
 
 #[test]
+fn paragraph_front_end_replays_validated_count_mutations() {
+    fn run(enabled: bool) -> (i32, i32, Vec<u8>, tex_state::PureMemoStats) {
+        let mut stores = Universe::with_world(tex_state::World::memory());
+        tex_expand::install_expandable_primitives(&mut stores);
+        install_unexpandable_primitives(&mut stores);
+        if enabled {
+            stores.enable_pure_memo(tex_state::PureMemoConfig::default());
+            stores.enable_paragraph_memo();
+        }
+        let paragraph =
+            "\\count5=41 \\global\\count6=9 \\language=7 stateful paragraph text\\par\n";
+        let source = format!("{paragraph}{paragraph}{paragraph}{paragraph}\\vfill\\eject\\end");
+        let mut input = InputStack::new(MemoryInput::new(source));
+        let stats = Executor::new()
+            .run(&mut input, &mut stores)
+            .expect("stateful paragraph program");
+        let mut dvi = tex_out::dvi::DviStreamWriter::new(Vec::new());
+        for plan in &stats.dvi_pages {
+            dvi.write_page_plan(plan).expect("DVI page");
+        }
+        (
+            stores.count(5),
+            stores.count(6),
+            dvi.finish().expect("DVI finish"),
+            stores.pure_memo_stats(),
+        )
+    }
+
+    let (cold_local, cold_global, cold_dvi, _) = run(false);
+    let (memo_local, memo_global, memo_dvi, stats) = run(true);
+    assert_eq!((memo_local, memo_global), (cold_local, cold_global));
+    assert_eq!(memo_dvi, cold_dvi);
+    assert!(stats.paragraph_hits >= 1, "{stats:?}");
+    assert!(stats.paragraph_mutations_replayed >= 3, "{stats:?}");
+}
+
+#[test]
+fn grouped_paragraph_redo_preserves_local_and_global_assignment_scope() {
+    let mut stores = Universe::with_world(tex_state::World::memory());
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    stores.enable_pure_memo(tex_state::PureMemoConfig::default());
+    stores.enable_paragraph_memo();
+    let local = "{\\count5=41 grouped local text\\par}\n";
+    let global = "{\\global\\count6=9 grouped global text\\par}\n";
+    let source = format!("{local}{local}{local}{global}{global}{global}\\vfill\\eject\\end");
+    let mut input = InputStack::new(MemoryInput::new(source));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("grouped stateful paragraphs");
+    assert_eq!(
+        stores.count(5),
+        0,
+        "local replay must unwind with its group"
+    );
+    assert_eq!(stores.count(6), 9, "global replay must survive group exit");
+    let stats = stores.pure_memo_stats();
+    assert!(stats.paragraph_hits >= 2, "{stats:?}");
+    assert!(stats.paragraph_mutations_replayed >= 2, "{stats:?}");
+}
+
+#[test]
+fn effectful_paragraph_commands_remain_replay_barriers() {
+    let mut stores = Universe::with_world(tex_state::World::memory());
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    stores.enable_pure_memo(tex_state::PureMemoConfig::default());
+    stores.enable_paragraph_memo();
+    let paragraph = "\\message{visible}\\advance\\count7 by1 effectful paragraph text\\par\n";
+    let source = format!("{paragraph}{paragraph}{paragraph}\\vfill\\eject\\end");
+    let mut input = InputStack::new(MemoryInput::new(source));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("effectful paragraphs execute normally");
+    assert_eq!(stores.count(7), 3);
+    let stats = stores.pure_memo_stats();
+    assert_eq!(stats.paragraph_hits, 0);
+    assert!(stats.paragraph_barriers >= 3, "{stats:?}");
+}
+
+#[test]
+fn deterministic_message_effects_replay_in_original_order() {
+    let mut stores = Universe::with_world(tex_state::World::memory());
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    stores.enable_pure_memo(tex_state::PureMemoConfig::default());
+    stores.enable_paragraph_memo();
+    let paragraph = "\\message{visible}message paragraph text\\par\n";
+    let source = format!("{paragraph}{paragraph}{paragraph}");
+    let mut input = InputStack::new(MemoryInput::new(source));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("message paragraphs");
+    assert_eq!(terminal_effect_text(&stores).matches("visible").count(), 3);
+    let stats = stores.pure_memo_stats();
+    assert!(stats.paragraph_hits >= 1, "{stats:?}");
+}
+
+#[test]
 fn randomized_pretolerance_cache_differential_matches_disabled_kernel() {
     let mut disabled = Universe::new();
     let glue = disabled.intern_glue(tex_state::glue::GlueSpec {

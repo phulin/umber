@@ -244,6 +244,31 @@ dependency. Ordered group operations, `\aftergroup`, `\afterassignment`, box
 consumption, and local/global assignment semantics may never be collapsed into
 an unordered final-value map.
 
+The implemented paragraph redo subset records ordered count-register and
+integer-parameter writes, including their local/global scope and their old and
+new scalar values. A hit first simulates the complete log against current
+values, including read-after-write chains, and performs no mutation on a red
+precondition. Detached hlist import is also completed before any write. Only
+then are ordinary `Universe` setters invoked in order. This preserves local
+group restoration and global escape while avoiding a speculative snapshot,
+whose checkpoint-fold side effects would perturb convergence identity.
+Literal input and these explicitly recognized assignment commands share the
+same bounded raw semantic-token transition. Unsupported commands—including
+arithmetic assignment, token/glue/font/box mutation, input opens, generated
+input, deferred writes, output, and shipout—bar the entire
+paragraph rather than allowing a reusable suffix. Those families remain cold
+until their detached value and ordered replay forms are implemented; they are
+not silently treated as pure.
+
+Literal `\message`/`\errmessage` regions are the first virtual-effect class.
+Their ordered `StreamWrite` records are detached into sink, optional stream,
+and UTF-8 payload, then appended through the ordinary `World` write boundary
+on a hit. Stream open/close, deferred token writes, specials, PDF placeholders,
+and shell escape are rejected when publishing an entry. The prepared hlist
+stores one input-token ordinal per character or ligature source character;
+reuse resolves those ordinals against the current trace, so command operands
+and diagnostic arguments cannot shift rendered provenance.
+
 Values naming tokens, glue, macros, nodes, boxes, or fonts are stored as
 detached semantic references. Replaying into a scratch `Universe` imports or
 interns that content through one aggregate API. Old-generation handles never

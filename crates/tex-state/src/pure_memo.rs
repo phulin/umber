@@ -4,6 +4,7 @@
 //! formats, and semantic hashes. Disabled execution is one `Option` branch and
 //! uses no locks or atomics.
 
+use crate::env::banks::IntParam;
 use crate::glue::GlueSpec;
 use crate::{ContentHash, DetachedMemoValue};
 use std::collections::{HashMap, VecDeque};
@@ -37,7 +38,11 @@ pub struct PureMemoStats {
     pub paragraph_hits: u64,
     pub paragraph_inserts: u64,
     pub paragraph_commands_skipped: u64,
+    pub paragraph_mutations_replayed: u64,
     pub paragraph_imported_bytes: u64,
+    pub paragraph_validation_misses: u64,
+    pub paragraph_import_failures: u64,
+    pub paragraph_barriers: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -52,6 +57,30 @@ pub struct PureBreakPlan {
     pub breaks: Vec<PureBreakDecision>,
     pub demerits: i32,
     pub last_line_fill: Option<GlueSpec>,
+}
+
+#[derive(Clone, Debug)]
+pub struct PureParagraphEntry {
+    pub hlist: DetachedMemoValue,
+    pub mutations: Vec<PureParagraphMutation>,
+    pub effects: Vec<crate::DetachedVirtualEffect>,
+    pub origin_ordinals: Vec<u32>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PureParagraphMutation {
+    Count {
+        index: u16,
+        expected: i32,
+        value: i32,
+        global: bool,
+    },
+    IntParam {
+        param: IntParam,
+        expected: i32,
+        value: i32,
+        global: bool,
+    },
 }
 
 /// Strong key used to verify a compact candidate bucket.
@@ -82,7 +111,7 @@ struct Entry {
 #[derive(Clone, Debug)]
 enum PureMemoValue {
     Pretolerance(Option<PureBreakPlan>),
-    Paragraph(DetachedMemoValue),
+    Paragraph(PureParagraphEntry),
     Detached,
 }
 
@@ -103,6 +132,7 @@ struct PureMemoCache {
 pub struct PureMemoRuntime {
     cache: Option<PureMemoCache>,
     paragraph_front_ends: bool,
+    paragraph_recording: Option<Vec<PureParagraphMutation>>,
 }
 
 impl PureMemoRuntime {
@@ -162,7 +192,7 @@ impl PureMemoRuntime {
         hit
     }
 
-    pub(crate) fn lookup_paragraph(&mut self, key: PureMemoKey) -> Option<DetachedMemoValue> {
+    pub(crate) fn lookup_paragraph(&mut self, key: PureMemoKey) -> Option<PureParagraphEntry> {
         if !self.paragraph_front_ends {
             return None;
         }
@@ -185,13 +215,32 @@ impl PureMemoRuntime {
         hit
     }
 
-    pub(crate) fn insert_paragraph(&mut self, key: PureMemoKey, value: DetachedMemoValue) {
+    pub(crate) fn insert_paragraph(&mut self, key: PureMemoKey, value: PureParagraphEntry) {
         if !self.paragraph_front_ends {
             return;
         }
         let owned_bytes = value
+            .hlist
             .retained_bytes()
-            .saturating_sub(std::mem::size_of::<DetachedMemoValue>());
+            .saturating_sub(std::mem::size_of::<DetachedMemoValue>())
+            .saturating_add(
+                value
+                    .mutations
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<PureParagraphMutation>()),
+            )
+            .saturating_add(
+                value
+                    .effects
+                    .iter()
+                    .map(|effect| {
+                        effect.operation.capacity()
+                            + effect.payload.capacity()
+                            + std::mem::size_of::<crate::DetachedVirtualEffect>()
+                    })
+                    .sum::<usize>(),
+            )
+            .saturating_add(value.origin_ordinals.capacity().saturating_mul(4));
         let before = self.cache.as_ref().map_or(0, |cache| cache.stats.inserts);
         self.insert_value(key, PureMemoValue::Paragraph(value), owned_bytes);
         if let Some(cache) = &mut self.cache
@@ -201,7 +250,28 @@ impl PureMemoRuntime {
         }
     }
 
-    pub(crate) fn record_paragraph_hit(&mut self, commands: usize, imported_bytes: usize) {
+    pub(crate) fn begin_paragraph_recording(&mut self) {
+        if self.paragraph_front_ends_enabled() {
+            self.paragraph_recording = Some(Vec::new());
+        }
+    }
+
+    pub(crate) fn record_paragraph_mutation(&mut self, mutation: PureParagraphMutation) {
+        if let Some(recording) = &mut self.paragraph_recording {
+            recording.push(mutation);
+        }
+    }
+
+    pub(crate) fn finish_paragraph_recording(&mut self) -> Option<Vec<PureParagraphMutation>> {
+        self.paragraph_recording.take()
+    }
+
+    pub(crate) fn record_paragraph_hit(
+        &mut self,
+        commands: usize,
+        mutations: usize,
+        imported_bytes: usize,
+    ) {
         let Some(cache) = &mut self.cache else {
             return;
         };
@@ -209,10 +279,34 @@ impl PureMemoRuntime {
             .stats
             .paragraph_commands_skipped
             .saturating_add(commands as u64);
+        cache.stats.paragraph_mutations_replayed = cache
+            .stats
+            .paragraph_mutations_replayed
+            .saturating_add(mutations as u64);
         cache.stats.paragraph_imported_bytes = cache
             .stats
             .paragraph_imported_bytes
             .saturating_add(imported_bytes as u64);
+    }
+
+    pub(crate) fn record_paragraph_validation_miss(&mut self) {
+        if let Some(cache) = &mut self.cache {
+            cache.stats.paragraph_validation_misses =
+                cache.stats.paragraph_validation_misses.saturating_add(1);
+        }
+    }
+
+    pub(crate) fn record_paragraph_import_failure(&mut self) {
+        if let Some(cache) = &mut self.cache {
+            cache.stats.paragraph_import_failures =
+                cache.stats.paragraph_import_failures.saturating_add(1);
+        }
+    }
+
+    pub(crate) fn record_paragraph_barrier(&mut self) {
+        if let Some(cache) = &mut self.cache {
+            cache.stats.paragraph_barriers = cache.stats.paragraph_barriers.saturating_add(1);
+        }
     }
 
     pub(crate) fn insert_pretolerance(&mut self, key: PureMemoKey, plan: Option<PureBreakPlan>) {

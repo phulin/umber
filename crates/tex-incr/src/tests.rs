@@ -145,6 +145,61 @@ fn paragraph_front_end_hit_survives_prefix_shift_and_unrelated_register_write() 
     );
 }
 
+#[test]
+fn stateful_paragraph_redo_survives_a_later_prefix_edit() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let paragraph = "\\count5=41 \\language=7 stateful paragraph text\\par\n";
+    let source = format!("{paragraph}{paragraph}{paragraph}{paragraph}\\vfill\\eject\\end");
+    let mut session = Session::start(
+        universe,
+        "stateful-paragraph-redo",
+        RevisionId::new(1),
+        source.clone(),
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+    let before = session.pure_memo_stats();
+    assert!(before.paragraph_mutations_replayed > 0, "{before:?}");
+
+    let incremental = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: 0..0,
+                replacement: "\\count99=3 ".to_owned(),
+            },
+        )
+        .expect("prefix edit");
+    let after = session.pure_memo_stats();
+    assert!(
+        after.paragraph_mutations_replayed > before.paragraph_mutations_replayed,
+        "before={before:?} after={after:?}"
+    );
+
+    let edited = format!("\\count99=3 {source}");
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "stateful-paragraph-redo",
+        RevisionId::new(2),
+        edited,
+        usize::MAX,
+    )
+    .expect("cold comparison");
+    assert_eq!(
+        incremental.dvi_bytes().expect("incremental DVI"),
+        cold.cold()
+            .expect("cold edited revision")
+            .dvi_bytes()
+            .expect("cold DVI")
+    );
+}
+
 fn assert_semantic_edit_matches_cold(name: &str, original: &str, edited: &str) -> ReuseMetrics {
     let mut session = Session::start(template(), name, RevisionId::new(1), original, usize::MAX)
         .expect("incremental session");

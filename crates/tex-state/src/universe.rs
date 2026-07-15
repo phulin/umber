@@ -1634,7 +1634,7 @@ impl Universe {
     pub fn lookup_pure_paragraph(
         &mut self,
         key: crate::PureMemoKey,
-    ) -> Option<crate::DetachedMemoValue> {
+    ) -> Option<crate::PureParagraphEntry> {
         self.pure_memo.lookup_paragraph(key)
     }
 
@@ -1642,15 +1642,49 @@ impl Universe {
     pub fn insert_pure_paragraph(
         &mut self,
         key: crate::PureMemoKey,
-        value: crate::DetachedMemoValue,
+        value: crate::PureParagraphEntry,
     ) {
         self.pure_memo.insert_paragraph(key, value);
     }
 
     #[doc(hidden)]
-    pub fn record_pure_paragraph_hit(&mut self, commands: usize, imported_bytes: usize) {
+    pub fn begin_pure_paragraph_recording(&mut self) {
+        self.pure_memo.begin_paragraph_recording();
+    }
+
+    #[doc(hidden)]
+    pub fn finish_pure_paragraph_recording(&mut self) -> Option<Vec<crate::PureParagraphMutation>> {
+        self.pure_memo.finish_paragraph_recording()
+    }
+
+    fn record_pure_paragraph_mutation(&mut self, mutation: crate::PureParagraphMutation) {
+        self.pure_memo.record_paragraph_mutation(mutation);
+    }
+
+    #[doc(hidden)]
+    pub fn record_pure_paragraph_hit(
+        &mut self,
+        commands: usize,
+        mutations: usize,
+        imported_bytes: usize,
+    ) {
         self.pure_memo
-            .record_paragraph_hit(commands, imported_bytes);
+            .record_paragraph_hit(commands, mutations, imported_bytes);
+    }
+
+    #[doc(hidden)]
+    pub fn record_pure_paragraph_validation_miss(&mut self) {
+        self.pure_memo.record_paragraph_validation_miss();
+    }
+
+    #[doc(hidden)]
+    pub fn record_pure_paragraph_import_failure(&mut self) {
+        self.pure_memo.record_paragraph_import_failure();
+    }
+
+    #[doc(hidden)]
+    pub fn record_pure_paragraph_barrier(&mut self) {
+        self.pure_memo.record_paragraph_barrier();
     }
 
     #[doc(hidden)]
@@ -4341,8 +4375,15 @@ impl Universe {
     }
 
     pub fn set_count(&mut self, index: u16, value: i32) {
+        let expected = self.stores.count(index);
         self.stores.set_count(index, value);
         self.mark_cell_changed(DependencyBank::Count, u32::from(index));
+        self.record_pure_paragraph_mutation(crate::PureParagraphMutation::Count {
+            index,
+            expected,
+            value,
+            global: false,
+        });
     }
 
     #[must_use]
@@ -4351,8 +4392,15 @@ impl Universe {
     }
 
     pub fn set_count_global(&mut self, index: u16, value: i32) {
+        let expected = self.stores.count(index);
         self.stores.set_count_global(index, value);
         self.mark_cell_changed(DependencyBank::Count, u32::from(index));
+        self.record_pure_paragraph_mutation(crate::PureParagraphMutation::Count {
+            index,
+            expected,
+            value,
+            global: true,
+        });
     }
 
     pub fn set_dimen(&mut self, index: u16, value: Scaled) {
@@ -4897,13 +4945,27 @@ impl Universe {
     }
 
     pub fn set_int_param(&mut self, param: IntParam, value: i32) {
+        let expected = self.stores.int_param(param);
         self.stores.set_int_param(param, value);
         self.mark_cell_changed(DependencyBank::IntParam, u32::from(param.raw()));
+        self.record_pure_paragraph_mutation(crate::PureParagraphMutation::IntParam {
+            param,
+            expected,
+            value,
+            global: false,
+        });
     }
 
     pub fn set_int_param_global(&mut self, param: IntParam, value: i32) {
+        let expected = self.stores.int_param(param);
         self.stores.set_int_param_global(param, value);
         self.mark_cell_changed(DependencyBank::IntParam, u32::from(param.raw()));
+        self.record_pure_paragraph_mutation(crate::PureParagraphMutation::IntParam {
+            param,
+            expected,
+            value,
+            global: true,
+        });
     }
 
     #[must_use]

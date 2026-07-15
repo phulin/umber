@@ -4,7 +4,10 @@ use tex_lex::InputStack;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::token::{Catcode, Token, TracedTokenWord};
-use tex_state::{ContentHash, ExpansionState, MemoValueLimits, PureMemoKey, Universe};
+use tex_state::{
+    ContentHash, DetachedVirtualEffect, EffectRecord, ExpansionState, MemoValueLimits, PrintSink,
+    PureMemoKey, Universe,
+};
 
 use crate::{ExecError, ExecutionContext, ExecutionStats, ModeNest};
 
@@ -29,6 +32,8 @@ pub(crate) fn try_reuse_literal_paragraph(
     let mut traced = Vec::new();
     let mut semantic = Vec::new();
     let mut terminated = false;
+    let mut effect_argument_depth = 0usize;
+    let mut expects_effect_argument = false;
     for _ in 0..MAX_PREFLIGHT_TOKENS {
         let next = tex_expand::next_semantic_raw_token(
             input,
@@ -46,57 +51,215 @@ pub(crate) fn try_reuse_literal_paragraph(
             } => {
                 semantic.push(token);
             }
-            Token::Cs(symbol)
-                if matches!(
-                    stores.meaning(symbol),
-                    Meaning::UnexpandablePrimitive(
-                        UnexpandablePrimitive::Par | UnexpandablePrimitive::EndGraf
-                    )
-                ) =>
-            {
+            Token::Cs(symbol) => {
+                let meaning = stores.meaning(symbol);
                 semantic.push(token);
-                terminated = true;
-                break;
+                if effect_argument_depth == 0
+                    && matches!(
+                        meaning,
+                        Meaning::UnexpandablePrimitive(
+                            UnexpandablePrimitive::Par | UnexpandablePrimitive::EndGraf
+                        )
+                    )
+                {
+                    terminated = true;
+                    break;
+                }
+                if matches!(
+                    meaning,
+                    Meaning::UnexpandablePrimitive(
+                        UnexpandablePrimitive::Message | UnexpandablePrimitive::ErrMessage
+                    )
+                ) {
+                    expects_effect_argument = true;
+                    continue;
+                }
+                if !matches!(
+                    meaning,
+                    Meaning::CountRegister(_)
+                        | Meaning::IntParam(_)
+                        | Meaning::UnexpandablePrimitive(
+                            UnexpandablePrimitive::Count | UnexpandablePrimitive::Global
+                        )
+                ) {
+                    break;
+                }
+            }
+            Token::Char {
+                cat: Catcode::BeginGroup,
+                ..
+            } if expects_effect_argument || effect_argument_depth > 0 => {
+                semantic.push(token);
+                effect_argument_depth = effect_argument_depth.saturating_add(1);
+                expects_effect_argument = false;
+            }
+            Token::Char {
+                cat: Catcode::EndGroup,
+                ..
+            } if effect_argument_depth > 0 => {
+                semantic.push(token);
+                effect_argument_depth -= 1;
             }
             _ => break,
         }
     }
 
     let eligible = terminated
-        && matches!(semantic.first(), Some(Token::Char { cat, .. }) if *cat != Catcode::Space);
+        && semantic
+            .iter()
+            .any(|token| matches!(token, Token::Char { cat, .. } if *cat != Catcode::Space));
     if !eligible {
+        let boundary_only = traced.last().is_some_and(|last| {
+            matches!(
+                tex_expand::semantic_token(*last),
+                Token::Char {
+                    cat: Catcode::BeginGroup | Catcode::EndGroup,
+                    ..
+                }
+            ) && traced[..traced.len() - 1].iter().all(|token| {
+                matches!(
+                    tex_expand::semantic_token(*token),
+                    Token::Char {
+                        cat: Catcode::Space,
+                        ..
+                    }
+                )
+            })
+        });
         crate::push_traced_tokens(input, stores, traced);
-        execution.bypass_paragraph_memo_once = true;
+        if !boundary_only {
+            execution.paragraph_memo_barrier = true;
+            stores.record_pure_paragraph_barrier();
+        }
         return Ok(false);
     }
 
     let key = paragraph_key(stores, &semantic);
-    let Some(detached) = stores.lookup_pure_paragraph(key) else {
+    let Some(entry) = stores.lookup_pure_paragraph(key) else {
+        let trace_origins = traced.iter().map(|token| token.origin()).collect();
         crate::push_traced_tokens(input, stores, traced);
-        execution.pending_paragraph_memo = Some(key);
+        execution.pending_paragraph_memo = Some(crate::executor::PendingParagraphMemo {
+            key,
+            effect_start: stores.world().effect_records().len(),
+            trace_origins,
+        });
+        stores.begin_pure_paragraph_recording();
         return Ok(false);
     };
 
-    let imported_bytes = detached.retained_bytes();
-    let list = match stores.import_memo_node_list(&detached, MemoValueLimits::default()) {
+    if !validate_mutations(stores, &entry.mutations) {
+        stores.record_pure_paragraph_validation_miss();
+        let trace_origins = traced.iter().map(|token| token.origin()).collect();
+        crate::push_traced_tokens(input, stores, traced);
+        execution.pending_paragraph_memo = Some(crate::executor::PendingParagraphMemo {
+            key,
+            effect_start: stores.world().effect_records().len(),
+            trace_origins,
+        });
+        stores.begin_pure_paragraph_recording();
+        return Ok(false);
+    }
+    let imported_bytes = entry.hlist.retained_bytes();
+    let list = match stores.import_memo_node_list(&entry.hlist, MemoValueLimits::default()) {
         Ok(list) => list,
         Err(_) => {
+            stores.record_pure_paragraph_import_failure();
             stores.reject_pure_memo(key);
+            let trace_origins = traced.iter().map(|token| token.origin()).collect();
             crate::push_traced_tokens(input, stores, traced);
-            execution.pending_paragraph_memo = Some(key);
+            execution.pending_paragraph_memo = Some(crate::executor::PendingParagraphMemo {
+                key,
+                effect_start: stores.world().effect_records().len(),
+                trace_origins,
+            });
+            stores.begin_pure_paragraph_recording();
             return Ok(false);
         }
     };
+    replay_mutations(stores, &entry.mutations);
+    replay_effects(stores, &entry.effects);
     let mut nodes: Vec<_> = stores
         .nodes(list)
         .into_iter()
         .map(|node| node.to_owned())
         .collect();
-    rebind_literal_origins(&mut nodes, &traced);
+    rebind_literal_origins(&mut nodes, &traced, &entry.origin_ordinals);
     crate::assignments::install_reused_paragraph_hlist(nest, input, stores, nodes)?;
     stats.delivered_tokens = stats.delivered_tokens.saturating_add(traced.len());
-    stores.record_pure_paragraph_hit(traced.len(), imported_bytes);
+    stores.record_pure_paragraph_hit(traced.len(), entry.mutations.len(), imported_bytes);
     Ok(true)
+}
+
+fn validate_mutations(stores: &Universe, mutations: &[tex_state::PureParagraphMutation]) -> bool {
+    let mut current = std::collections::BTreeMap::<(u8, u16), i32>::new();
+    for mutation in mutations {
+        let (key, expected, value, initial) = match *mutation {
+            tex_state::PureParagraphMutation::Count {
+                index,
+                expected,
+                value,
+                ..
+            } => ((0, index), expected, value, stores.count(index)),
+            tex_state::PureParagraphMutation::IntParam {
+                param,
+                expected,
+                value,
+                ..
+            } => ((1, param.raw()), expected, value, stores.int_param(param)),
+        };
+        if current.get(&key).copied().unwrap_or(initial) != expected {
+            return false;
+        }
+        current.insert(key, value);
+    }
+    true
+}
+
+fn replay_mutations(stores: &mut Universe, mutations: &[tex_state::PureParagraphMutation]) {
+    for mutation in mutations {
+        match *mutation {
+            tex_state::PureParagraphMutation::Count {
+                index,
+                expected: _,
+                value,
+                global,
+            } => {
+                if global {
+                    stores.set_count_global(index, value);
+                } else {
+                    stores.set_count(index, value);
+                }
+            }
+            tex_state::PureParagraphMutation::IntParam {
+                param,
+                expected: _,
+                value,
+                global,
+            } => {
+                if global {
+                    stores.set_int_param_global(param, value);
+                } else {
+                    stores.set_int_param(param, value);
+                }
+            }
+        }
+    }
+}
+
+fn replay_effects(stores: &mut Universe, effects: &[DetachedVirtualEffect]) {
+    for effect in effects {
+        let Ok(text) = std::str::from_utf8(&effect.payload) else {
+            continue;
+        };
+        let sink = match effect.operation.as_str() {
+            "terminal" => PrintSink::Terminal,
+            "log" => PrintSink::Log,
+            "terminal-and-log" => PrintSink::TerminalAndLog,
+            "stream" => PrintSink::Stream(tex_state::StreamSlot::new(effect.stream.unwrap_or(0))),
+            _ => continue,
+        };
+        stores.world_mut().write_text(sink, text);
+    }
 }
 
 fn paragraph_key(stores: &Universe, tokens: &[Token]) -> PureMemoKey {
@@ -156,20 +319,22 @@ fn paragraph_key(stores: &Universe, tokens: &[Token]) -> PureMemoKey {
     )
 }
 
-fn rebind_literal_origins(nodes: &mut [tex_state::node::Node], traced: &[TracedTokenWord]) {
-    let mut origins =
-        traced
-            .iter()
-            .filter_map(|traced| match tex_expand::semantic_token(*traced) {
-                Token::Char { cat, .. } if cat != Catcode::Space => Some(traced.origin()),
-                _ => None,
-            });
+fn rebind_literal_origins(
+    nodes: &mut [tex_state::node::Node],
+    traced: &[TracedTokenWord],
+    ordinals: &[u32],
+) {
+    let mut ordinals = ordinals.iter().copied();
+    let origin_at = |ordinal: u32| {
+        usize::try_from(ordinal)
+            .ok()
+            .and_then(|ordinal| traced.get(ordinal))
+            .map_or(tex_state::token::OriginId::UNKNOWN, |token| token.origin())
+    };
     for node in nodes {
         match node {
             tex_state::node::Node::Char { origin, .. } => {
-                *origin = origins
-                    .next()
-                    .unwrap_or(tex_state::token::OriginId::UNKNOWN);
+                *origin = origin_at(ordinals.next().unwrap_or(u32::MAX));
             }
             tex_state::node::Node::Lig {
                 orig,
@@ -177,11 +342,9 @@ fn rebind_literal_origins(nodes: &mut [tex_state::node::Node], traced: &[TracedT
                 ..
             } => {
                 node_origins.clear();
-                node_origins.extend((0..orig.len()).map(|_| {
-                    origins
-                        .next()
-                        .unwrap_or(tex_state::token::OriginId::UNKNOWN)
-                }));
+                node_origins.extend(
+                    (0..orig.len()).map(|_| origin_at(ordinals.next().unwrap_or(u32::MAX))),
+                );
             }
             _ => {}
         }
@@ -193,11 +356,76 @@ pub(crate) fn publish_prepared_hlist(
     execution: &mut ExecutionContext<'_>,
     nodes: &[tex_state::node::Node],
 ) {
-    let Some(key) = execution.pending_paragraph_memo.take() else {
+    let Some(pending) = execution.pending_paragraph_memo.take() else {
         return;
     };
+    let mutations = stores.finish_pure_paragraph_recording().unwrap_or_default();
+    let Some(effects) = detach_effects(&stores.world().effect_records()[pending.effect_start..])
+    else {
+        return;
+    };
+    let origin_ordinals = paragraph_origin_ordinals(nodes, &pending.trace_origins);
     let list = stores.freeze_node_list(nodes);
     if let Ok(detached) = stores.detach_node_list(list) {
-        stores.insert_pure_paragraph(key, detached);
+        stores.insert_pure_paragraph(
+            pending.key,
+            tex_state::PureParagraphEntry {
+                hlist: detached,
+                mutations,
+                effects,
+                origin_ordinals,
+            },
+        );
     }
+}
+
+fn paragraph_origin_ordinals(
+    nodes: &[tex_state::node::Node],
+    trace_origins: &[tex_state::token::OriginId],
+) -> Vec<u32> {
+    let ordinal = |origin| {
+        trace_origins
+            .iter()
+            .position(|candidate| *candidate == origin)
+            .and_then(|index| u32::try_from(index).ok())
+            .unwrap_or(u32::MAX)
+    };
+    let mut ordinals = Vec::new();
+    for node in nodes {
+        match node {
+            tex_state::node::Node::Char { origin, .. } => ordinals.push(ordinal(*origin)),
+            tex_state::node::Node::Lig { origins, .. } => {
+                ordinals.extend(origins.iter().map(|origin| ordinal(*origin)));
+            }
+            _ => {}
+        }
+    }
+    ordinals
+}
+
+fn detach_effects(records: &[EffectRecord]) -> Option<Vec<DetachedVirtualEffect>> {
+    records
+        .iter()
+        .map(|record| match record {
+            EffectRecord::StreamWrite { sink, text } => {
+                let (operation, stream) = match sink {
+                    PrintSink::Terminal => ("terminal", None),
+                    PrintSink::Log => ("log", None),
+                    PrintSink::TerminalAndLog => ("terminal-and-log", None),
+                    PrintSink::Stream(stream) => ("stream", Some(stream.raw())),
+                };
+                Some(DetachedVirtualEffect {
+                    operation: operation.to_owned(),
+                    stream,
+                    payload: text.as_bytes().to_vec(),
+                })
+            }
+            EffectRecord::StreamOpen { .. }
+            | EffectRecord::StreamClose { .. }
+            | EffectRecord::DeferredWrite { .. }
+            | EffectRecord::Special { .. }
+            | EffectRecord::PdfObjectPlaceholder { .. }
+            | EffectRecord::ShellEscape(_) => None,
+        })
+        .collect()
 }
