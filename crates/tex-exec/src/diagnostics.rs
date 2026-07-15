@@ -43,7 +43,7 @@ pub(crate) fn report_illegal_case(stores: &mut Universe, token: Token, mode: Mod
         ),
     );
 }
-use crate::{ExecError, push_tokens};
+use crate::{ExecError, push_tokens, push_traced_tokens};
 use crate::{Mode, ModeNest};
 
 pub(crate) fn execute_show(input: &mut InputStack, stores: &mut Universe) -> Result<(), ExecError> {
@@ -530,13 +530,23 @@ pub(crate) fn execute_change_case(
 pub(crate) fn execute_ignorespaces(
     input: &mut InputStack,
     stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<(), ExecError> {
     loop {
-        let Some(token) = input.next_token(stores)? else {
+        // TeX82's `any_mode(ignore_spaces)` branch calls `get_x_token`, so a
+        // macro that initially expands to spaces is consumed through its first
+        // non-space token. Reading raw input here changes tabular widths and
+        // other layout whenever the whitespace comes from a macro argument.
+        let Some(token) = get_x_token_with_context(
+            input,
+            &mut tex_state::ExpansionContext::new(stores),
+            execution,
+        )?
+        else {
             return Ok(());
         };
-        if !is_space(token) {
-            push_tokens(input, stores, [token]);
+        if !is_space(tex_expand::semantic_token(token)) {
+            push_traced_tokens(input, stores, [token]);
             return Ok(());
         }
     }

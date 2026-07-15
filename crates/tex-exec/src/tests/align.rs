@@ -528,6 +528,30 @@ fn control_space_cell_ignores_following_source_blanks() {
 }
 
 #[test]
+fn macro_trailing_space_precedes_an_alignment_row_terminator() {
+    let stores = run_boxed_alignment_source(
+        "\\def\\address#1{\\def\\entry{#1}}\\address{\n A\n}\\halign{#\\cr\\ignorespaces\\entry\\cr}",
+    );
+    let rows = vlist_rows(&stores, box_zero_vlist(&stores));
+    let cell = row_cells(&stores, rows[0])[0];
+    let finite_spaces = stores
+        .nodes(cell.children)
+        .testing_decoded()
+        .iter()
+        .filter(|node| {
+            matches!(
+                node,
+                Node::Glue { spec, kind: GlueKind::Normal, .. }
+                    if stores.glue(*spec).stretch_order == Order::Normal
+            )
+        })
+        .count();
+
+    assert_eq!(cell_text(&stores, cell), "A");
+    assert_eq!(finite_spaces, 1);
+}
+
+#[test]
 fn control_space_preserves_sentence_factor_for_v_template_space() {
     let stores = run_boxed_alignment_source(
         "\\font\\t=cmtt10 \\def\\\\{\\char92{}}\\sfcode33=3000 \

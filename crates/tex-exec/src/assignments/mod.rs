@@ -1090,7 +1090,7 @@ fn execute_prefixed_command(
             }
             UnexpandablePrimitive::IgnoreSpaces => {
                 reject_all_prefixes(prefixes)?;
-                diagnostics::execute_ignorespaces(input, stores)?;
+                diagnostics::execute_ignorespaces(input, stores, execution)?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::InteractionMode => {
