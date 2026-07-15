@@ -244,3 +244,71 @@ fn model_version_validation_remains_typed_before_serialization() {
         Err(PdfModelError::UnsupportedVersion { major: 2, minor: 0 })
     );
 }
+
+#[test]
+fn pdf_writer_object_streams_parse_deterministically_at_levels_one_through_three() {
+    fn serialize(level: u8) -> Vec<u8> {
+        let mut pdf = Pdf::with_settings(Settings { pretty: false });
+        pdf.set_version(1, 5);
+        pdf.catalog(Ref::new(1)).pages(Ref::new(2));
+        pdf.stream(Ref::new(4), b"ordinary stream");
+
+        let mut objects = pdf.object_stream(Ref::new(6));
+        objects
+            .object(Ref::new(2))
+            .dict()
+            .pair(Name(b"Type"), Name(b"Pages"))
+            .pair(Name(b"Count"), 0)
+            .insert(Name(b"Kids"))
+            .array();
+        objects
+            .object(Ref::new(3))
+            .dict()
+            .pair(Name(b"Marker"), Str(b"compressed object"));
+        objects.finish_with_filter(Filter::FlateDecode, |data| {
+            deflate(data, level).expect("in-memory compression")
+        });
+
+        pdf.finish_with_xref_stream(Ref::new(7))
+    }
+
+    for level in 1..=3 {
+        let first = serialize(level);
+        assert_eq!(first, serialize(level));
+
+        let document = lopdf::Document::load_mem(&first).expect("lopdf parses object stream");
+        let pages = document
+            .get_object((2, 0))
+            .expect("type-2 xref resolves pages")
+            .as_dict()
+            .expect("pages dictionary");
+        assert_eq!(
+            pages
+                .get(b"Type")
+                .expect("pages type")
+                .as_name()
+                .expect("name"),
+            b"Pages"
+        );
+        let marker = document
+            .get_object((3, 0))
+            .expect("second compressed object resolves")
+            .as_dict()
+            .expect("marker dictionary");
+        assert_eq!(
+            marker
+                .get(b"Marker")
+                .expect("marker")
+                .as_str()
+                .expect("byte string"),
+            b"compressed object"
+        );
+        let ordinary = document
+            .get_object((4, 0))
+            .expect("ordinary stream resolves")
+            .as_stream()
+            .expect("ordinary stream object");
+        assert_eq!(ordinary.content, b"ordinary stream");
+        assert!(ordinary.dict.get(b"Filter").is_err());
+    }
+}

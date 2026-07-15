@@ -85,12 +85,19 @@ Compact, uncompressed output is the default. Options can request
 `pdf_writer`'s pretty layout or deterministic zlib/DEFLATE stream compression
 at levels 0--9; the adapter supplies compressed bytes and declares
 `/FlateDecode` through the crate's stream API. Automatic compression rejects
-streams that already declare `/Filter` or `/DecodeParms`. Object streams are
-a later policy over the same structural graph. None of these byte policies
+streams that already declare `/Filter` or `/DecodeParms`. Object streams are a
+later adapter policy over the same structural graph. The pinned local
+`pdf-writer` fork exposes an object-stream builder that serializes eligible
+non-stream values through `Obj`, registers their container and index, and emits
+matching type-2 entries from `finish_with_xref_stream`. Levels 1--3 can
+therefore select their eligible object set without any PDF syntax in `tex-out`;
+stream objects remain ordinary type-1 entries. None of these byte policies
 change semantic identity.
 
-The selected crate version is pinned in the workspace manifest and lockfile
-and upgraded only with deterministic-byte and fixture review. `pdf_writer`
+The selected 0.15.0 source fork is path-pinned in the workspace manifest and
+lockfile, retains both upstream licenses, and records its crates.io checksum
+and modifications in `vendor/pdf-writer/PROVENANCE.md`. It is upgraded only
+with deterministic-byte and fixture review. `pdf_writer`
 supports positive signed-32-bit references and signed-32-bit integers; the
 adapter preflights the broader detached types and returns typed range errors
 instead of entering a panicking crate path. All output remains private until
