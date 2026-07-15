@@ -3,8 +3,8 @@
 mod document;
 mod object;
 
-pub use document::PdfDocumentFragmentKind;
 use document::PdfDocumentFragments;
+pub use document::{PdfDocumentFragmentKind, PdfDocumentObjectIds};
 use object::PdfRawObjects;
 pub use object::{
     PdfRawObjectData, PdfRawObjectId, PdfRawObjectInitializeError, PdfRawObjectRecord,
@@ -439,6 +439,7 @@ pub(crate) struct PdfStateCursor {
     external_image_fingerprint: u64,
     raw_object_fingerprint: u64,
     document_fragment_fingerprint: u64,
+    document_objects: PdfDocumentObjectIds,
 }
 
 #[derive(Clone, Debug)]
@@ -475,6 +476,7 @@ pub(crate) struct PdfState {
     external_image_fingerprint: u64,
     raw_objects: PdfRawObjects,
     document_fragments: PdfDocumentFragments,
+    document_objects: PdfDocumentObjectIds,
 }
 
 impl Default for PdfState {
@@ -493,6 +495,7 @@ impl Default for PdfState {
             external_image_fingerprint: external_image_base_fingerprint(),
             raw_objects: PdfRawObjects::default(),
             document_fragments: PdfDocumentFragments::default(),
+            document_objects: PdfDocumentObjectIds::default(),
         }
     }
 }
@@ -531,6 +534,7 @@ impl PdfState {
             && self.external_images.is_empty()
             && self.raw_objects.is_empty()
             && self.document_fragments.is_empty()
+            && self.document_objects == PdfDocumentObjectIds::default()
     }
 
     pub(crate) fn ensure_page_capacity(&self, parameters: PdfOutputParameters) -> Result<(), ()> {
@@ -1006,6 +1010,34 @@ impl PdfState {
         self.document_fragments.values(kind)
     }
 
+    pub(crate) fn finalize_document_objects(
+        &mut self,
+        include_info: bool,
+    ) -> Result<PdfDocumentObjectIds, PdfObjectCapacityError> {
+        if self.document_objects.names().is_none()
+            && self
+                .document_fragments(PdfDocumentFragmentKind::Names)
+                .next()
+                .is_some()
+        {
+            let id = self.reserve_document_object()?;
+            self.document_objects.set_names(id);
+        }
+        if include_info && self.document_objects.info().is_none() {
+            let id = self.reserve_document_object()?;
+            self.document_objects.set_info(id);
+        }
+        Ok(self.document_objects)
+    }
+
+    fn reserve_document_object(&mut self) -> Result<u32, PdfObjectCapacityError> {
+        let id = (self.next_object <= MAX_OBJECT_ID)
+            .then_some(self.next_object)
+            .ok_or(PdfObjectCapacityError)?;
+        self.next_object += 1;
+        Ok(id)
+    }
+
     #[must_use]
     pub(crate) fn cursor(&self) -> PdfStateCursor {
         PdfStateCursor {
@@ -1021,6 +1053,7 @@ impl PdfState {
             external_image_fingerprint: self.external_image_fingerprint,
             raw_object_fingerprint: self.raw_objects.fingerprint(),
             document_fragment_fingerprint: self.document_fragments.fingerprint(),
+            document_objects: self.document_objects,
         }
     }
     #[must_use]
@@ -1053,6 +1086,7 @@ impl PdfState {
         self.external_image_fingerprint = cursor.external_image_fingerprint;
         self.raw_objects = snapshot.raw_objects;
         self.document_fragments = snapshot.document_fragments;
+        self.document_objects = cursor.document_objects;
     }
 
     pub(crate) fn set_match(
@@ -1099,6 +1133,14 @@ impl PdfState {
             hasher.u64(cursor.external_image_fingerprint);
             hasher.u64(cursor.raw_object_fingerprint);
             hasher.u64(cursor.document_fragment_fingerprint);
+            hasher.bool(cursor.document_objects.names().is_some());
+            if let Some(id) = cursor.document_objects.names() {
+                hasher.u32(id);
+            }
+            hasher.bool(cursor.document_objects.info().is_some());
+            if let Some(id) = cursor.document_objects.info() {
+                hasher.u32(id);
+            }
         })
     }
 }
@@ -1650,5 +1692,40 @@ mod tests {
         state.append_document_fragment(PdfDocumentFragmentKind::Catalog, first);
         state.append_document_fragment(PdfDocumentFragmentKind::Info, second);
         assert_eq!(state.hash_fragment(), appended_hash);
+    }
+
+    #[test]
+    fn final_document_objects_allocate_once_through_the_shared_ledger() {
+        let mut state = PdfState::default();
+        state.enable();
+        let token = PdfTokenParameter {
+            tokens: TokenListId::EMPTY,
+            semantic_id: 7,
+        };
+        let raw = state.reserve_raw_object().expect("raw object");
+        assert_eq!(raw.raw(), 3);
+        state.append_document_fragment(PdfDocumentFragmentKind::Names, token);
+        let before = state.snapshot();
+
+        let objects = state
+            .finalize_document_objects(true)
+            .expect("final dictionaries");
+        assert_eq!(objects.names(), Some(4));
+        assert_eq!(objects.info(), Some(5));
+        assert_eq!(state.next_object(), 6);
+        assert_eq!(
+            state
+                .finalize_document_objects(true)
+                .expect("repeated finalization"),
+            objects,
+            "finalization is idempotent"
+        );
+
+        state.rollback(before);
+        assert_eq!(state.next_object(), 4);
+        let replay = state
+            .finalize_document_objects(true)
+            .expect("replayed finalization");
+        assert_eq!(replay, objects);
     }
 }

@@ -268,6 +268,9 @@ fn execute_pdf_object(
     execution: &mut crate::ExecutionContext<'_>,
     immediate: bool,
 ) -> Result<(), ExecError> {
+    if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+        return Err(ExecError::PdfExtensionInDviMode("pdfobj"));
+    }
     if scan_optional_keyword_x(input, stores, execution, "reserveobjnum")? {
         stores
             .reserve_pdf_raw_object()
@@ -352,7 +355,7 @@ fn execute_pdf_document_fragment(
     let pdf_output = stores.int_param(IntParam::PDF_OUTPUT);
     if pdf_output <= 0 {
         if dvi_error {
-            return Err(ExecError::PdfNamesInDviMode);
+            return Err(ExecError::PdfExtensionInDviMode("pdfnames"));
         }
         stores.world_mut().write_text(
             tex_state::PrintSink::TerminalAndLog,
@@ -1497,14 +1500,21 @@ fn execute_prefixed_command(
             }
             UnexpandablePrimitive::PdfReferenceObject => {
                 reject_all_prefixes(prefixes)?;
+                if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+                    return Err(ExecError::PdfExtensionInDviMode("pdfrefobj"));
+                }
                 let object = scan_i32(input, stores, execution, command.traced)?;
                 let object = u32::try_from(object)
                     .ok()
                     .filter(|object| stores.pdf_raw_object(*object).is_some())
                     .ok_or(ExecError::PdfReferencedObjectNotFound)?;
-                stores
-                    .reference_pdf_raw_object(object)
-                    .map_err(|_| ExecError::PdfReferencedObjectNotFound)?;
+                crate::vertical::append_node_to_current_list(
+                    nest,
+                    stores,
+                    tex_state::node::Node::Whatsit(tex_state::node::Whatsit::PdfReferenceObject {
+                        object,
+                    }),
+                )?;
                 Ok(CommandOutcome::continue_only())
             }
             primitive @ (UnexpandablePrimitive::PdfInfo

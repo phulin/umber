@@ -1279,6 +1279,7 @@ name = "umber"
 version = "0.1.0"
 dependencies = [
  "lopdf",
+ "md-5 0.10.6",
  "parity-harness",
  "proptest",
  "sha2 0.10.9",

@@ -1,6 +1,6 @@
 use super::*;
 use crate::pdf::{
-    PdfIndirectObject, PdfModelError, PdfObject, PdfObjectId, PdfValue, PdfVersion,
+    PdfIndirectObject, PdfModelError, PdfObject, PdfObjectId, PdfTrailer, PdfValue, PdfVersion,
     UnvalidatedPdfDocument,
 };
 use std::collections::BTreeMap;
@@ -75,11 +75,11 @@ fn sample_input(order: &[u32]) -> UnvalidatedPdfDocument {
     UnvalidatedPdfDocument {
         version: PdfVersion::new(1, 4).expect("supported version"),
         catalog: id(1),
-        info: None,
         objects: order
             .iter()
             .map(|raw| objects.remove(raw).expect("test object"))
             .collect(),
+        trailer: Default::default(),
     }
 }
 
@@ -124,7 +124,7 @@ fn compact_serialization_is_deterministic_and_independently_parseable() {
 fn document_info_is_registered_in_the_pdf_writer_trailer() {
     let mut input = sample_input(&[1, 2, 3, 4, 5]);
     let info_id = id(6);
-    input.info = Some(info_id);
+    input.trailer.info = Some(info_id);
     input.objects.push(indirect(
         6,
         PdfValue::Dictionary(dictionary([
@@ -293,8 +293,8 @@ fn adapter_range_and_compression_errors_are_typed() {
     let high_id = UnvalidatedPdfDocument {
         version: sample.version(),
         catalog: sample.catalog(),
-        info: sample.info(),
         objects,
+        trailer: Default::default(),
     }
     .validate()
     .expect("high unreferenced id is structurally valid");
@@ -308,8 +308,8 @@ fn adapter_range_and_compression_errors_are_typed() {
     let high_integer = UnvalidatedPdfDocument {
         version: sample.version(),
         catalog: sample.catalog(),
-        info: sample.info(),
         objects,
+        trailer: Default::default(),
     }
     .validate()
     .expect("high integer is structurally valid");
@@ -342,6 +342,45 @@ fn adapter_range_and_compression_errors_are_typed() {
         }),
         Err(PdfSerializeError::ObjectStreamsRequirePdf15)
     );
+}
+
+#[test]
+fn raw_objects_and_trailer_extensions_keep_pdf_writer_framing() {
+    let sample = sample_document(&[1, 2, 3, 4, 5]);
+    let mut objects = sample.objects().cloned().collect::<Vec<_>>();
+    objects.push(PdfIndirectObject {
+        id: id(6),
+        object: PdfObject::Raw(b"<< /Extension true >>".to_vec()),
+    });
+    let document = UnvalidatedPdfDocument {
+        version: sample.version(),
+        catalog: sample.catalog(),
+        objects,
+        trailer: PdfTrailer {
+            info: None,
+            file_id: Some((vec![1; 16], vec![2; 16])),
+            raw_entries: b"/Custom 7".to_vec(),
+        },
+    }
+    .validate()
+    .expect("raw extension document validates");
+    let bytes = document.to_pdf_bytes().expect("raw extension serializes");
+
+    assert!(
+        bytes
+            .windows(b"6 0 obj\n<< /Extension true >>\nendobj".len())
+            .any(|window| window == b"6 0 obj\n<< /Extension true >>\nendobj")
+    );
+    let custom = bytes
+        .windows(b"/Custom 7".len())
+        .position(|window| window == b"/Custom 7")
+        .expect("custom trailer entry");
+    let id_entry = bytes
+        .windows(b"/ID[".len())
+        .position(|window| window == b"/ID[")
+        .expect("typed ID entry");
+    assert!(custom < id_entry, "raw trailer entries precede the file ID");
+    lopdf::Document::load_mem(&bytes).expect("independent parser accepts writer framing");
 }
 
 #[test]

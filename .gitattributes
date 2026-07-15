@@ -1,3 +1,4 @@
 *.dvi binary
 *.tfm binary
 scripts/pdftex-primitive-trace.patch -whitespace
+*.pdf binary

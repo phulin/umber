@@ -305,10 +305,20 @@ pub enum PdfValue {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PdfObject {
     Value(PdfValue),
+    /// One complete direct object body retained for pdfTeX compatibility.
+    Raw(Vec<u8>),
     Stream {
         dictionary: PdfDictionary,
         data: Vec<u8>,
     },
+}
+
+/// File-trailer extensions owned by the detached document model.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PdfTrailer {
+    pub info: Option<PdfObjectId>,
+    pub file_id: Option<(Vec<u8>, Vec<u8>)>,
+    pub raw_entries: Vec<u8>,
 }
 
 /// An identity paired with detached object content.
@@ -323,9 +333,8 @@ pub struct PdfIndirectObject {
 pub struct UnvalidatedPdfDocument {
     pub version: PdfVersion,
     pub catalog: PdfObjectId,
-    /// Optional document-information dictionary registered in the file trailer.
-    pub info: Option<PdfObjectId>,
     pub objects: Vec<PdfIndirectObject>,
+    pub trailer: PdfTrailer,
 }
 
 impl UnvalidatedPdfDocument {
@@ -359,11 +368,16 @@ impl PdfDocument {
 
     #[must_use]
     pub const fn info(&self) -> Option<PdfObjectId> {
-        self.0.info
+        self.0.trailer.info
     }
 
     pub fn objects(&self) -> impl ExactSizeIterator<Item = &PdfIndirectObject> {
         self.0.objects.iter()
+    }
+
+    #[must_use]
+    pub const fn trailer(&self) -> &PdfTrailer {
+        &self.0.trailer
     }
 
     /// Hashes a versioned canonical structural encoding, independent of input order.
@@ -373,15 +387,21 @@ impl PdfDocument {
         hasher.byte(self.version().major());
         hasher.byte(self.version().minor());
         hasher.u32(self.catalog().get());
-        hasher.byte(u8::from(self.info().is_some()));
-        if let Some(info) = self.info() {
-            hasher.u32(info.get());
-        }
         hasher.len(self.0.objects.len());
         for indirect in &self.0.objects {
             hasher.u32(indirect.id.get());
             hash_object(&indirect.object, &mut hasher);
         }
+        hasher.bool(self.0.trailer.info.is_some());
+        if let Some(info) = self.0.trailer.info {
+            hasher.u32(info.get());
+        }
+        hasher.bool(self.0.trailer.file_id.is_some());
+        if let Some((first, second)) = &self.0.trailer.file_id {
+            hasher.bytes(first);
+            hasher.bytes(second);
+        }
+        hasher.bytes(&self.0.trailer.raw_entries);
         PdfDocumentHash(hasher.finish())
     }
 }
@@ -431,9 +451,9 @@ pub enum PdfModelError {
     TooManyStreamBytes { actual: usize, limit: usize },
     ReservedStreamLength(PdfObjectId),
     CatalogNotDictionary(PdfObjectId),
+    InfoNotDictionary(PdfObjectId),
     CatalogTypeMissing(PdfObjectId),
     CatalogPagesMissing(PdfObjectId),
-    InfoNotDictionary(PdfObjectId),
     PagesRootNotDictionary(PdfObjectId),
     PagesTypeMissing(PdfObjectId),
     PagesKidsInvalid(PdfObjectId),
@@ -479,29 +499,35 @@ fn validate_document(
     if !ids.contains(&document.catalog) {
         return Err(PdfModelError::MissingObject(document.catalog));
     }
-    if let Some(info) = document.info {
-        if !ids.contains(&info) {
-            return Err(PdfModelError::MissingObject(info));
-        }
-        if object_dictionary(document, info).is_none() {
-            return Err(PdfModelError::InfoNotDictionary(info));
-        }
+    if let Some(info) = document.trailer.info
+        && !ids.contains(&info)
+    {
+        return Err(PdfModelError::MissingObject(info));
+    }
+    if let Some(info) = document.trailer.info
+        && object_dictionary(document, info).is_none()
+    {
+        return Err(PdfModelError::InfoNotDictionary(info));
     }
 
     let mut value_count = 0_usize;
     let mut stream_bytes = 0_usize;
     for indirect in &document.objects {
-        if let PdfObject::Stream { dictionary, data } = &indirect.object {
-            if dictionary.get(b"Length").is_some() {
-                return Err(PdfModelError::ReservedStreamLength(indirect.id));
+        match &indirect.object {
+            PdfObject::Stream { dictionary, data } => {
+                if dictionary.get(b"Length").is_some() {
+                    return Err(PdfModelError::ReservedStreamLength(indirect.id));
+                }
+                stream_bytes = stream_bytes.saturating_add(data.len());
             }
-            stream_bytes = stream_bytes.saturating_add(data.len());
-            if stream_bytes > limits.max_stream_bytes {
-                return Err(PdfModelError::TooManyStreamBytes {
-                    actual: stream_bytes,
-                    limit: limits.max_stream_bytes,
-                });
-            }
+            PdfObject::Raw(data) => stream_bytes = stream_bytes.saturating_add(data.len()),
+            PdfObject::Value(_) => {}
+        }
+        if stream_bytes > limits.max_stream_bytes {
+            return Err(PdfModelError::TooManyStreamBytes {
+                actual: stream_bytes,
+                limit: limits.max_stream_bytes,
+            });
         }
         validate_object_values(
             &indirect.object,
@@ -527,6 +553,7 @@ fn validate_object_values(
         PdfObject::Stream { dictionary, .. } => {
             stack.extend(dictionary.iter().map(|(_, value)| (value, 1)))
         }
+        PdfObject::Raw(_) => {}
     }
     while let Some((value, depth)) = stack.pop() {
         if depth > max_depth {
@@ -678,6 +705,10 @@ fn hash_object(object: &PdfObject, hasher: &mut CanonicalHasher) {
             hash_dictionary(dictionary, hasher);
             hasher.bytes(data);
         }
+        PdfObject::Raw(data) => {
+            hasher.byte(2);
+            hasher.bytes(data);
+        }
     }
 }
 
@@ -744,6 +775,10 @@ impl CanonicalHasher {
 
     fn byte(&mut self, value: u8) {
         self.0.update([value]);
+    }
+
+    fn bool(&mut self, value: bool) {
+        self.byte(u8::from(value));
     }
 
     fn u32(&mut self, value: u32) {

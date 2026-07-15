@@ -61,12 +61,12 @@ oracle-backed test. Every name in a missing row is missing.
 | PDF integer parameters | 38 | partial (output policy, metadata effects, and microtype/font configuration contract done) | `\pdfoutput`, `\pdfcompresslevel`, `\pdfobjcompresslevel`, `\pdfdecimaldigits`, `\pdfmovechars`, `\pdfimageresolution`, `\pdfpkresolution`, `\pdfuniqueresname`, `\pdfoptionpdfminorversion`, `\pdfoptionalwaysusepdfpagebox`, `\pdfoptionpdfinclusionerrorlevel`, `\pdfmajorversion`, `\pdfminorversion`, `\pdfforcepagebox`, `\pdfpagebox`, `\pdfinclusionerrorlevel`, `\pdfgamma`, `\pdfimagegamma`, `\pdfimagehicolor`, `\pdfimageapplygamma`, `\pdfadjustspacing`, `\pdfprotrudechars`, `\pdftracingfonts`, `\pdfadjustinterwordglue`, `\pdfprependkern`, `\pdfappendkern`, `\pdfgentounicode`, `\pdfdraftmode`, `\pdfinclusioncopyfonts`, `\pdfsuppresswarningdupdest`, `\pdfsuppresswarningdupmap`, `\pdfsuppresswarningpagegroup`, `\pdfinfoomitdate`, `\pdfsuppressptexinfo`, `\pdfomitcharset`, `\pdfomitinfodict`, `\pdfomitprocset`, `\pdfptexuseunderscore` |
 | PDF dimension parameters | 13 | done | `\pdfhorigin`, `\pdfvorigin`, `\pdfpagewidth`, `\pdfpageheight`, `\pdflinkmargin`, `\pdfdestmargin`, `\pdfthreadmargin`, `\pdffirstlineheight`, `\pdflastlinedepth`, `\pdfeachlineheight`, `\pdfeachlinedepth`, `\pdfignoreddimen`, `\pdfpxdimen` |
 | Font construction and primitive recovery | 3 | done | `\pdfprimitive`, `\letterspacefont`, `\pdfcopyfont` |
-| Read-only integer enquiries | 14 | partial (4 done) | `\pdftexversion`, `\pdfelapsedtime`, `\pdfshellescape`, `\pdfrandomseed` (done); `\pdflastobj`, `\pdflastxform`, `\pdflastximage`, `\pdflastximagepages`, `\pdflastannot`, `\pdflastxpos`, `\pdflastypos`, `\pdfretval`, `\pdflastximagecolordepth`, `\pdflastlink` |
+| Read-only integer enquiries | 14 | partial (5 done) | `\pdftexversion`, `\pdfelapsedtime`, `\pdfshellescape`, `\pdfrandomseed`, `\pdflastobj` (done); `\pdflastxform`, `\pdflastximage`, `\pdflastximagepages`, `\pdflastannot`, `\pdflastxpos`, `\pdflastypos`, `\pdfretval`, `\pdflastximagecolordepth`, `\pdflastlink` |
 | Expandable conversions and enquiries | 27 | partial (24 done) | `\expanded`, `\pdftexrevision`, `\pdftexbanner`, `\pdffontsize`, `\pdffontname`, `\pdffontobjnum`, `\leftmarginkern`, `\rightmarginkern`, `\pdfescapestring`, `\pdfescapename`, `\pdfescapehex`, `\pdfunescapehex`, `\pdfcreationdate`, `\pdffilemoddate`, `\pdffilesize`, `\pdfmdfivesum`, `\pdffiledump`, `\pdfstrcmp`, `\pdfmatch`, `\pdflastmatch`, `\pdfuniformdeviate`, `\pdfnormaldeviate`, `\pdfinsertht`, `\pdfximagebbox` (done); `\pdfpageref`, `\pdfxformname`, `\pdfcolorstackinit` |
 | Primitive-identity conditional | 1 | done | `\ifpdfprimitive` |
 | Horizontal-mode normalization | 1 | missing | `\quitvmode` |
 | Character codes and ligature control | 10 | done | `\lpcode`, `\rpcode`, `\efcode`, `\tagcode`, `\knbscode`, `\stbscode`, `\shbscode`, `\knbccode`, `\knaccode`, `\pdfnoligatures` |
-| PDF backend actions | 43 | partial (font expansion, font maps, subsetting, ToUnicode, and runtime controls done) | `\pdffontexpand`, `\pdfincludechars`, `\pdffontattr`, `\pdfmapfile`, `\pdfmapline`, `\pdfglyphtounicode`, `\pdfnobuiltintounicode`, `\pdfresettimer`, `\pdfsetrandomseed` (done); `\pdfliteral`, `\pdfcolorstack`, `\pdfsetmatrix`, `\pdfsave`, `\pdfrestore`, `\pdfobj`, `\pdfrefobj`, `\pdfxform`, `\pdfrefxform`, `\pdfximage`, `\pdfrefximage`, `\pdfannot`, `\pdfstartlink`, `\pdfendlink`, `\pdfoutline`, `\pdfdest`, `\pdfthread`, `\pdfstartthread`, `\pdfendthread`, `\pdfsavepos`, `\pdfsnaprefpoint`, `\pdfsnapy`, `\pdfsnapycomp`, `\pdfinfo`, `\pdfcatalog`, `\pdfnames`, `\pdftrailer`, `\pdftrailerid`, `\pdfinterwordspaceon`, `\pdfinterwordspaceoff`, `\pdffakespace`, `\pdfrunninglinkoff`, `\pdfrunninglinkon`, `\pdfspacefont` |
+| PDF backend actions | 43 | partial (15 done, 1 partial) | `\pdffontexpand`, `\pdfincludechars`, `\pdffontattr`, `\pdfmapfile`, `\pdfmapline`, `\pdfglyphtounicode`, `\pdfnobuiltintounicode`, `\pdfresettimer`, `\pdfsetrandomseed`, `\pdfobj`, `\pdfrefobj`, `\pdfinfo`, `\pdfnames`, `\pdftrailer`, `\pdftrailerid` (done); `\pdfcatalog` (raw dictionary fragments done; `openaction` pending); `\pdfliteral`, `\pdfcolorstack`, `\pdfsetmatrix`, `\pdfsave`, `\pdfrestore`, `\pdfxform`, `\pdfrefxform`, `\pdfximage`, `\pdfrefximage`, `\pdfannot`, `\pdfstartlink`, `\pdfendlink`, `\pdfoutline`, `\pdfdest`, `\pdfthread`, `\pdfstartthread`, `\pdfendthread`, `\pdfsavepos`, `\pdfsnaprefpoint`, `\pdfsnapy`, `\pdfsnapycomp`, `\pdfinterwordspaceon`, `\pdfinterwordspaceoff`, `\pdffakespace`, `\pdfrunninglinkoff`, `\pdfrunninglinkon`, `\pdfspacefont` |
 | Compatibility error policy | 1 | missing | `\ignoreprimitiveerror` |
 | Late expansion conditionals | 3 | done | `\ifincsname`, `\ifpdfabsnum`, `\ifpdfabsdim` |
 
@@ -227,6 +227,15 @@ each successful input record, and hermetic callers may seed it explicitly.
 Missing content or missing modification metadata expands to nothing. File dump
 offset and length default to zero, overlong ranges stop at EOF, and negative
 ranges report recoverable pdfTeX diagnostics before being coerced to zero.
+Raw PDF objects share the checkpointed page/font object ledger, so
+`\pdfobj reserveobjnum`, `useobjnum`, ordinary, immediate, stream, attribute,
+and file forms update `\pdflastobj` without a parallel counter. Referenced and
+immediate objects, document dictionary fragments, trailer fragments, and
+custom trailer IDs are lowered only through the `pdf_writer` adapter; raw
+syntax is confined to writer-framed object bodies or dictionary extension
+entries. Repeated info, catalog, names, trailer, and trailer-ID token lists are
+expanded when scanned and concatenated in source order. Final Names and Info
+dictionary identities are allocated idempotently from the same ledger.
 
 The generated-font and microtype slice implements independent copied and
 letterspaced font state, validated `\pdffontexpand` configuration, discrete

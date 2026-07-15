@@ -478,21 +478,20 @@ mod tests {
     fn pdf_objects_reserve_initialize_reference_and_report_last_object() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let output = crate::run_memory_with_stores(
+        crate::run_memory_with_stores(
             concat!(
-                "\\message{before=\\the\\pdflastobj}",
+                "\\pdfoutput=1",
                 "\\pdfobj reserveobjnum",
                 "\\pdfobj useobjnum 3 stream attr {/Subtype /XML} {payload}",
                 "\\pdfrefobj 3",
                 "\\immediate\\pdfobj {42}",
-                "\\message{after=\\the\\pdflastobj}\\end",
+                "\\end",
             ),
             &mut stores,
         )
         .expect("execute raw PDF objects");
 
-        assert!(output.contains("before=0"));
-        assert!(output.contains("after=4"));
+        assert_eq!(stores.pdf_last_object(), 4);
         let records = stores.pdf_raw_objects();
         assert_eq!(records.len(), 2);
         let first = records[0];
@@ -512,7 +511,7 @@ mod tests {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
         crate::run_memory_with_stores(
-            "\\pdfobj useobjnum 99 {fallback}\\message{last=\\the\\pdflastobj}\\end",
+            "\\pdfoutput=1\\pdfobj useobjnum 99 {fallback}\\message{last=\\the\\pdflastobj}\\end",
             &mut stores,
         )
         .expect("recover invalid useobjnum");
@@ -520,7 +519,7 @@ mod tests {
 
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let error = crate::run_memory_with_stores("\\pdfrefobj 99\\end", &mut stores)
+        let error = crate::run_memory_with_stores("\\pdfoutput=1\\pdfrefobj 99\\end", &mut stores)
             .expect_err("invalid reference must be fatal");
         assert!(
             error
@@ -530,12 +529,48 @@ mod tests {
 
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let error =
-            crate::run_memory_with_stores("\\immediate\\pdfobj reserveobjnum\\end", &mut stores)
-                .expect_err("immediate reservation must be fatal");
+        let error = crate::run_memory_with_stores(
+            "\\pdfoutput=1\\immediate\\pdfobj reserveobjnum\\end",
+            &mut stores,
+        )
+        .expect_err("immediate reservation must be fatal");
         assert!(error.to_string().contains(
             "pdfTeX error (ext1): `\\pdfobj reserveobjnum' cannot be used with \\immediate."
         ));
+    }
+
+    #[test]
+    fn pdfrefobj_is_applied_only_when_its_owning_list_ships() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        crate::run_memory_with_stores(
+            "\\pdfoutput=1\\pdfobj{x}\\setbox0=\\hbox{\\pdfrefobj 3}\\end",
+            &mut stores,
+        )
+        .expect("discarded reference box executes");
+        assert!(
+            !stores
+                .pdf_raw_object(3)
+                .expect("raw object 3")
+                .is_referenced()
+        );
+
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        crate::run_memory_with_stores(
+            concat!(
+                "\\pdfoutput=1\\pdfobj{x}",
+                "\\setbox0=\\hbox{\\pdfrefobj 3}\\shipout\\box0\\end",
+            ),
+            &mut stores,
+        )
+        .expect("shipped reference box executes");
+        assert!(
+            stores
+                .pdf_raw_object(3)
+                .expect("raw object 3")
+                .is_referenced()
+        );
     }
 
     #[test]
@@ -610,6 +645,20 @@ mod tests {
             error.to_string(),
             "pdfTeX error (\\pdfnames): not allowed in DVI mode (\\pdfoutput <= 0)."
         );
+
+        for (source, name) in [
+            ("\\pdfobj{x}\\end", "pdfobj"),
+            ("\\pdfrefobj 3\\end", "pdfrefobj"),
+        ] {
+            let mut stores = Universe::default();
+            prepare_pdftex_run_stores(&mut stores);
+            let error = crate::run_memory_with_stores(source, &mut stores)
+                .expect_err("object actions are forbidden in DVI mode");
+            assert_eq!(
+                error.to_string(),
+                format!("pdfTeX error (\\{name}): not allowed in DVI mode (\\pdfoutput <= 0).")
+            );
+        }
     }
 
     #[test]

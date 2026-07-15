@@ -293,6 +293,10 @@ impl Stores {
                 hasher.u8(*left_hyphen_min);
                 hasher.u8(*right_hyphen_min);
             }
+            Whatsit::PdfReferenceObject { object } => {
+                hasher.tag(17);
+                hasher.u32(*object);
+            }
         }
     }
 }

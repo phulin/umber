@@ -137,6 +137,9 @@ pub(super) enum FormatWhatsit {
         left_hyphen_min: u8,
         right_hyphen_min: u8,
     },
+    PdfReferenceObject {
+        object: u32,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -452,6 +455,7 @@ impl FormatWhatsit {
                 left_hyphen_min,
                 right_hyphen_min,
             },
+            Whatsit::PdfReferenceObject { object } => Self::PdfReferenceObject { object },
         }
     }
 
@@ -473,6 +477,7 @@ impl FormatWhatsit {
                 left_hyphen_min,
                 right_hyphen_min,
             },
+            Self::PdfReferenceObject { object } => Whatsit::PdfReferenceObject { object },
         })
     }
 }

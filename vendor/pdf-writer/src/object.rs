@@ -73,6 +73,24 @@ impl Sealed for f32 {
 
 impl Primitive for f32 {}
 
+/// An uninterpreted PDF object body serialized within writer-owned framing.
+///
+/// This escape hatch is intended for compatibility layers that accept raw PDF
+/// syntax. The caller is responsible for providing one complete direct object
+/// body and for ensuring its references are valid.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct Raw<'a>(pub &'a [u8]);
+
+impl Sealed for Raw<'_> {
+    const STARTS_WITH_DELIMITER: bool = false;
+
+    fn write(self, buf: &mut Buf) {
+        buf.extend(self.0);
+    }
+}
+
+impl Primitive for Raw<'_> {}
+
 /// A string object (any byte sequence).
 ///
 /// This is written as `(Thing)`.

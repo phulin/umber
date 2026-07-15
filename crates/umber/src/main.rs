@@ -267,7 +267,7 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
         resolvers
             .provide_pdf_font_programs(&mut stores)
             .map_err(CliError::PdfFontResource)?;
-        let pdf = umber::pdf_from_committed_artifacts(&stores, &run.committed_artifacts)?;
+        let pdf = umber::pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)?;
         driver_files.push(DriverFile::new(output.clone(), pdf));
     }
     if let Some(output) = &opts.html {

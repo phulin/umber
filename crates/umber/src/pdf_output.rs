@@ -1,13 +1,14 @@
 //! Detached PDF assembly from checkpointed shipout receipts.
 
+use md5::{Digest, Md5};
 use tex_arith::Scaled;
 use tex_expand::append_token_string_text;
 use tex_out::PageNode;
 use tex_out::pdf::{
     PdfContentRectangle, PdfContentTextRun, PdfDictionary, PdfIndirectObject, PdfModelError,
     PdfName, PdfNumber, PdfObject, PdfObjectCompression, PdfObjectId, PdfSerializationOptions,
-    PdfSerializeError, PdfStreamCompression, PdfValue, PdfVersion, UnvalidatedPdfDocument,
-    page_content,
+    PdfSerializeError, PdfStreamCompression, PdfTrailer, PdfValue, PdfVersion,
+    UnvalidatedPdfDocument, page_content,
 };
 use tex_out::positioned::{PositionedError, PositionedEvent};
 use tex_state::env::banks::{IntParam, TokParam};
@@ -15,7 +16,7 @@ use tex_state::ids::FontId;
 use tex_state::ids::TokenListId;
 use tex_state::{
     CommittedArtifact, ContentHash, PDF_CATALOG_OBJECT_ID, PDF_PAGES_OBJECT_ID,
-    PdfOutputParameters, Universe, WorldError,
+    PdfDocumentFragmentKind, PdfOutputParameters, Universe, WorldError,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -56,7 +57,7 @@ pub(crate) fn pk_font_request(
 
 /// Builds one deterministic PDF from the current checkpointed page ledger.
 pub fn pdf_from_committed_artifacts(
-    stores: &Universe,
+    stores: &mut Universe,
     artifacts: &[CommittedArtifact],
 ) -> Result<Vec<u8>, PdfBuildError> {
     pdf_from_committed_artifacts_at_dpi(stores, artifacts, DEFAULT_PDF_PK_RESOLUTION)
@@ -65,7 +66,7 @@ pub fn pdf_from_committed_artifacts(
 /// Builds a PDF using an explicit host bitmap-device DPI when
 /// `\pdfpkresolution` retains its zero sentinel.
 pub fn pdf_from_committed_artifacts_at_dpi(
-    stores: &Universe,
+    stores: &mut Universe,
     artifacts: &[CommittedArtifact],
     driver_dpi: i32,
 ) -> Result<Vec<u8>, PdfBuildError> {
@@ -77,18 +78,83 @@ pub fn pdf_from_committed_artifacts_at_dpi(
     let options = serialization_options(parameters)?;
     let catalog_id = object_id(PDF_CATALOG_OBJECT_ID)?;
     let pages_id = object_id(PDF_PAGES_OBJECT_ID)?;
-    let page_records = stores.pdf_pages();
-    let emit_info = stores.int_param(IntParam::PDF_OMIT_INFO_DICT) == 0;
+    let page_records = stores.pdf_pages().to_vec();
+    let font_usage = collect_font_usage(stores, artifacts, &page_records)?;
+    let include_info = stores.int_param(IntParam::PDF_OMIT_INFO_DICT) == 0;
+    let document_ids = stores
+        .finalize_pdf_document_objects(include_info)
+        .map_err(|_| PdfBuildError::ObjectCapacity)?;
     let mut next_object = stores.pdf_next_object_id();
-    let mut objects = Vec::with_capacity(2 + page_records.len() * 3 + usize::from(emit_info));
+    let mut objects =
+        Vec::with_capacity(2 + page_records.len() * 3 + stores.pdf_raw_objects().len() + 2);
     let mut kids = Vec::with_capacity(page_records.len());
     let mut emitted_fonts = std::collections::BTreeSet::new();
-    let font_usage = collect_font_usage(stores, artifacts, page_records)?;
 
     let mut catalog = PdfDictionary::new();
     catalog.insert("Type", PdfValue::Name("Catalog".into()))?;
     catalog.insert("Pages", PdfValue::Reference(pages_id))?;
+    if let Some(names) = document_ids.names() {
+        catalog.insert("Names", PdfValue::Reference(object_id(names)?))?;
+    }
+    catalog.set_raw_entries(document_fragment_bytes(
+        stores,
+        PdfDocumentFragmentKind::Catalog,
+    ));
     objects.push(indirect_dictionary(catalog_id, catalog));
+
+    if let Some(names) = document_ids.names() {
+        let mut dictionary = PdfDictionary::new();
+        dictionary.set_raw_entries(document_fragment_bytes(
+            stores,
+            PdfDocumentFragmentKind::Names,
+        ));
+        objects.push(indirect_dictionary(object_id(names)?, dictionary));
+    }
+
+    if let Some(info) = document_ids.info() {
+        let mut dictionary = document_info_dictionary(stores, parameters)?;
+        dictionary.set_raw_entries(document_fragment_bytes(
+            stores,
+            PdfDocumentFragmentKind::Info,
+        ));
+        objects.push(indirect_dictionary(object_id(info)?, dictionary));
+    }
+
+    let raw_records = stores.pdf_raw_objects().to_vec();
+    for record in raw_records {
+        if !record.is_immediate() && !record.is_referenced() {
+            continue;
+        }
+        let data = record
+            .data()
+            .ok_or(PdfBuildError::ReferencedRawObjectUninitialized(
+                record.id().raw(),
+            ))?;
+        let payload = token_list_bytes(stores, data.data());
+        let object = if data.is_stream() {
+            let mut dictionary = PdfDictionary::new();
+            if let Some(attr) = data.stream_attr() {
+                dictionary.set_raw_entries(token_list_bytes(stores, attr));
+            }
+            let stream_data = if data.is_file() {
+                let name = std::str::from_utf8(&payload)
+                    .map_err(|_| PdfBuildError::InvalidRawObjectFileName(record.id().raw()))?;
+                stores.world_mut().read_file(name)?.bytes().to_vec()
+            } else {
+                payload
+            };
+            PdfObject::Stream {
+                dictionary,
+                data: stream_data,
+            }
+        } else {
+            PdfObject::Raw(payload)
+        };
+        objects.push(PdfIndirectObject {
+            id: object_id(record.id().raw())?,
+            object,
+        });
+    }
 
     for (page_index, record) in page_records.iter().copied().enumerate() {
         let bytes = artifact_bytes(stores, artifacts, record.artifact())?;
@@ -299,19 +365,23 @@ pub fn pdf_from_committed_artifacts_at_dpi(
     ));
     objects.push(indirect_dictionary(pages_id, pages));
 
-    let info_id = emit_info.then(|| object_id(next_object)).transpose()?;
-    if let Some(info_id) = info_id {
-        objects.push(indirect_dictionary(
-            info_id,
-            document_info_dictionary(stores, parameters)?,
-        ));
-    }
+    let trailer_id = document_fragment_bytes(stores, PdfDocumentFragmentKind::TrailerId);
+    let file_id = if trailer_id.is_empty() {
+        None
+    } else {
+        let digest = Md5::digest(&trailer_id).to_vec();
+        Some((digest.clone(), digest))
+    };
 
     let document = UnvalidatedPdfDocument {
         version,
         catalog: catalog_id,
-        info: info_id,
         objects,
+        trailer: PdfTrailer {
+            info: document_ids.info().map(object_id).transpose()?,
+            file_id,
+            raw_entries: document_fragment_bytes(stores, PdfDocumentFragmentKind::Trailer),
+        },
     }
     .validate()?;
     Ok(document.to_pdf_bytes_with_options(options)?)
@@ -1083,6 +1153,14 @@ fn token_list_bytes(stores: &Universe, id: TokenListId) -> Vec<u8> {
     text.into_bytes()
 }
 
+fn document_fragment_bytes(stores: &Universe, kind: PdfDocumentFragmentKind) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for tokens in stores.pdf_document_fragments(kind) {
+        bytes.extend_from_slice(&token_list_bytes(stores, tokens));
+    }
+    bytes
+}
+
 fn scaled_to_bp_f32(value: Scaled, decimal_digits: i32) -> f32 {
     let scale = 10_f32.powi(decimal_digits);
     scaled_to_bp_coefficient(value, decimal_digits) as f32 / scale
@@ -1117,6 +1195,9 @@ pub enum PdfBuildError {
     InvalidObjectCompressionLevel(i32),
     PageGeometryOverflow,
     InvalidObjectId(u32),
+    ObjectCapacity,
+    ReferencedRawObjectUninitialized(u32),
+    InvalidRawObjectFileName(u32),
     TextRequiresFontResources,
     MissingPositionedFont(u32),
     MissingFontProgram(Vec<u8>),
@@ -1159,6 +1240,16 @@ impl std::fmt::Display for PdfBuildError {
             }
             Self::PageGeometryOverflow => f.write_str("pdfTeX page geometry arithmetic overflowed"),
             Self::InvalidObjectId(id) => write!(f, "invalid PDF object id {id}"),
+            Self::ObjectCapacity => f.write_str("pdfTeX error (obj): too many PDF objects."),
+            Self::ReferencedRawObjectUninitialized(id) => {
+                write!(
+                    f,
+                    "referenced PDF object {id} was reserved but never initialized"
+                )
+            }
+            Self::InvalidRawObjectFileName(id) => {
+                write!(f, "PDF stream object {id} has a non-UTF-8 file name")
+            }
             Self::TextRequiresFontResources => {
                 f.write_str("PDF text output requires embedded font resources")
             }
@@ -1328,14 +1419,14 @@ mod tests {
             .expect("retained test session starts");
         let before = stores.snapshot();
         let first_run = run_in(&mut stores, source);
-        let first = pdf_from_committed_artifacts(&stores, &first_run.committed_artifacts)
+        let first = pdf_from_committed_artifacts(&mut stores, &first_run.committed_artifacts)
             .expect("PDF assembles");
         let first_pages = stores.pdf_pages().to_vec();
         let first_hash = stores.snapshot().state_hash();
 
         stores.rollback(&before);
         let second_run = run_in(&mut stores, source);
-        let second = pdf_from_committed_artifacts(&stores, &second_run.committed_artifacts)
+        let second = pdf_from_committed_artifacts(&mut stores, &second_run.committed_artifacts)
             .expect("PDF replay assembles");
 
         assert_eq!(first, second);
@@ -1412,7 +1503,7 @@ mod tests {
             ),
             "{positioned:?}"
         );
-        let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+        let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
             .expect("text PDF assembles");
         let parsed = lopdf::Document::load_mem(&pdf).expect("lopdf parses output");
         assert_eq!(
@@ -1547,7 +1638,7 @@ mod tests {
                 "\\shipout\\hbox{\\f ABC}\\end",
             ),
         );
-        let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+        let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
             .expect("resident-font PDF assembles");
         assert!(
             pdf.windows(b"/BaseFont/Helvetica".len())
@@ -1587,7 +1678,7 @@ mod tests {
                 "\\shipout\\hbox{\\f A}\\end",
             ),
         );
-        let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+        let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
             .expect("subset PDF assembles");
         assert!(
             pdf.windows(b"/BaseFont/KMCZIW+CMR10".len())
@@ -1637,7 +1728,7 @@ mod tests {
                 "\\shipout\\hbox{\\f ABC}\\end",
             ),
         );
-        let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+        let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
             .expect("ToUnicode PDF assembles");
         assert!(
             pdf.windows(b"/ToUnicode".len())
@@ -1699,7 +1790,7 @@ mod tests {
                  \\pdfmapline{{=cmr10 CMR10 <<cmr10.pfb}}\\pdfglyphtounicode{{A}}{{0041}}\\shipout\\hbox{{\\f A}}\\end"
             );
             let run_result = run_in(&mut stores, &source);
-            let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+            let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
                 .expect("PDF assembles");
             assert!(
                 !pdf.windows(b"/ToUnicode".len())
@@ -1735,7 +1826,7 @@ mod tests {
                 "\\shipout\\hbox{\\f ABC}\\end",
             ),
         );
-        let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+        let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
             .expect("TrueType PDF assembles");
         assert!(
             pdf.windows(b"/Subtype/TrueType".len())
@@ -1800,7 +1891,7 @@ mod tests {
                 "\\shipout\\hbox{\\f ABC}\\end",
             ),
         );
-        let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+        let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
             .expect("subset TrueType PDF assembles");
         let parsed = lopdf::Document::load_mem(&pdf).expect("subset TrueType output parses");
         assert_eq!(
@@ -1841,11 +1932,11 @@ mod tests {
             month: 7,
             year: 2026,
         };
-        let (stores, run_result) = run_with_clock(
+        let (mut stores, run_result) = run_with_clock(
             "\\pdfoutput=1\\pdfcompresslevel=0\\shipout\\vbox{\\hrule width1pt height1pt}\\end",
             clock,
         );
-        let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+        let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
             .expect("PDF assembles");
         let parsed = lopdf::Document::load_mem(&pdf).expect("lopdf parses output");
         let info_id = parsed
@@ -1893,8 +1984,8 @@ mod tests {
             "\\shipout\\vbox{\\hrule width1pt height1pt}",
             "\\pdfinfoomitdate=1\\pdfsuppressptexinfo=1\\end",
         );
-        let (stores, run_result) = run(source);
-        let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+        let (mut stores, run_result) = run(source);
+        let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
             .expect("PDF assembles");
         let parsed = lopdf::Document::load_mem(&pdf).expect("lopdf parses output");
         let info_id = parsed
@@ -1913,11 +2004,11 @@ mod tests {
         assert!(!info.has(b"PTEX.Fullbanner"));
         assert!(!info.has(b"PTEX_Fullbanner"));
 
-        let (stores, run_result) = run(concat!(
+        let (mut stores, run_result) = run(concat!(
             "\\pdfoutput=1\\pdfcompresslevel=0\\pdfptexuseunderscore=1",
             "\\shipout\\vbox{\\hrule width1pt height1pt}\\end",
         ));
-        let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+        let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
             .expect("PDF assembles");
         let parsed = lopdf::Document::load_mem(&pdf).expect("lopdf parses output");
         let info_id = parsed
@@ -1934,12 +2025,12 @@ mod tests {
         assert!(info.has(b"PTEX_Fullbanner"));
         assert!(!info.has(b"PTEX.Fullbanner"));
 
-        let (stores, run_result) = run(concat!(
+        let (mut stores, run_result) = run(concat!(
             "\\pdfoutput=1\\pdfcompresslevel=0",
             "\\shipout\\vbox{\\hrule width1pt height1pt}",
             "\\pdfomitinfodict=-1\\end",
         ));
-        let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+        let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
             .expect("PDF assembles");
         let parsed = lopdf::Document::load_mem(&pdf).expect("lopdf parses output");
         assert!(!parsed.trailer.has(b"Info"));
@@ -1947,12 +2038,12 @@ mod tests {
 
     #[test]
     fn procset_policy_is_captured_at_each_shipout() {
-        let (stores, run_result) = run(concat!(
+        let (mut stores, run_result) = run(concat!(
             "\\pdfoutput=1\\pdfcompresslevel=0",
             "{\\pdfomitprocset=1\\shipout\\vbox{\\hrule width1pt height1pt}}",
             "\\shipout\\vbox{\\hrule width1pt height1pt}\\end",
         ));
-        let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+        let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
             .expect("PDF assembles");
         let parsed = lopdf::Document::load_mem(&pdf).expect("lopdf parses output");
         let pages = parsed.get_pages();
@@ -1975,11 +2066,11 @@ mod tests {
             assert_eq!(resources.has(b"ProcSet"), expected);
         }
 
-        let (stores, run_result) = run(concat!(
+        let (mut stores, run_result) = run(concat!(
             "\\pdfoutput=1\\pdfmajorversion=2\\pdfminorversion=0\\pdfcompresslevel=0",
             "\\shipout\\vbox{\\hrule width1pt height1pt}\\end",
         ));
-        let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+        let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
             .expect("PDF assembles");
         let parsed = lopdf::Document::load_mem(&pdf).expect("lopdf parses output");
         let page_id = parsed.get_pages()[&1];
@@ -2011,7 +2102,7 @@ mod tests {
 
     #[test]
     fn page_parameters_are_consumed_at_pdftex_scopes() {
-        let (stores, run_result) = run(concat!(
+        let (mut stores, run_result) = run(concat!(
             "\\pdfoutput=1\\pdfcompresslevel=0\\pdfdecimaldigits=3",
             "\\pdfpagesattr{/Lang (early)}",
             "\\pdfpagewidth=100bp\\pdfpageheight=200bp",
@@ -2026,7 +2117,7 @@ mod tests {
             "\\shipout\\vbox{\\hrule width3bp height4bp}",
             "\\pdfpagesattr{/Lang (final)}\\end",
         ));
-        let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+        let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
             .expect("PDF assembles");
         let parsed = lopdf::Document::load_mem(&pdf).expect("lopdf parses output");
         let pages = parsed.get_pages();
@@ -2096,7 +2187,7 @@ mod tests {
 
     #[test]
     fn raw_media_box_overrides_automatic_box_and_pk_mode_freezes() {
-        let (stores, run_result) = run(concat!(
+        let (mut stores, run_result) = run(concat!(
             "\\pdfoutput=1\\pdfcompresslevel=0\\pdfpkmode{first}",
             "\\pdfpagewidth=100bp\\pdfpageheight=200bp",
             "\\pdfpageattr{/MediaBox [1 2 3 4] /Rotate 90}",
@@ -2110,7 +2201,7 @@ mod tests {
             b"second"
         );
 
-        let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+        let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
             .expect("PDF assembles");
         assert_eq!(
             pdf.windows(b"/MediaBox".len())
@@ -2172,13 +2263,13 @@ mod tests {
 
     #[test]
     fn zero_page_dimensions_fall_back_to_box_plus_twice_the_origins() {
-        let (stores, run_result) = run(concat!(
+        let (mut stores, run_result) = run(concat!(
             "\\pdfoutput=1\\pdfcompresslevel=0\\pdfdecimaldigits=3",
             "\\pdfpagewidth=0pt\\pdfpageheight=0pt",
             "\\pdfhorigin=10bp\\pdfvorigin=20bp",
             "\\shipout\\vbox{\\hrule width1bp height2bp}\\end",
         ));
-        let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+        let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
             .expect("PDF assembles");
         let parsed = lopdf::Document::load_mem(&pdf).expect("lopdf parses output");
         let page_id = parsed.get_pages()[&1];
@@ -2214,14 +2305,14 @@ mod tests {
 
     #[test]
     fn fixed_policy_drives_version_compression_and_decimal_output() {
-        let (stores, run) = run(concat!(
+        let (mut stores, run) = run(concat!(
             "\\pdfoutput=1\\pdfmajorversion=1\\pdfminorversion=5",
             "\\pdfcompresslevel=0\\pdfobjcompresslevel=1\\pdfdecimaldigits=0",
             "\\shipout\\vbox{\\hrule width10pt height5pt}",
             "\\pdfcompresslevel=9\\pdfobjcompresslevel=0\\pdfdecimaldigits=4",
             "\\shipout\\vbox{\\hrule width10pt height5pt}\\end",
         ));
-        let bytes = pdf_from_committed_artifacts(&stores, &run.committed_artifacts)
+        let bytes = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
             .expect("fixed-policy PDF assembles");
 
         assert!(bytes.starts_with(b"%PDF-1.5"));
@@ -2260,12 +2351,12 @@ mod tests {
     #[test]
     fn object_compression_levels_one_through_three_emit_type_two_xrefs() {
         for level in 1..=3 {
-            let (stores, run) = run(&format!(
+            let (mut stores, run) = run(&format!(
                 "\\pdfoutput=1\\pdfminorversion=5\\pdfcompresslevel=6\\pdfobjcompresslevel={level}\\shipout\\vbox{{\\hrule width10pt height5pt}}\\end"
             ));
-            let first = pdf_from_committed_artifacts(&stores, &run.committed_artifacts)
+            let first = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
                 .expect("object-stream PDF assembles");
-            let second = pdf_from_committed_artifacts(&stores, &run.committed_artifacts)
+            let second = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
                 .expect("object-stream PDF repeats");
             assert_eq!(first, second);
             assert!(first.windows(12).any(|window| window == b"/Type/ObjStm"));
@@ -2291,8 +2382,141 @@ mod tests {
     }
 
     #[test]
+    fn raw_objects_and_document_fragments_lower_exclusively_through_pdf_writer() {
+        let mut world = tex_state::World::memory();
+        world
+            .set_memory_file("payload.bin", b"file payload".to_vec())
+            .expect("seed stream file");
+        let mut stores = Universe::with_world(world);
+        prepare_pdftex_run_stores(&mut stores);
+        let run_result = run_in(
+            &mut stores,
+            concat!(
+                "\\pdfoutput=1\\pdfminorversion=5\\pdfcompresslevel=0\\pdfobjcompresslevel=1",
+                "\\pdfobj{<< /Kind /Ordinary >>}\\pdfrefobj 3",
+                "\\immediate\\pdfobj stream attr {/Subtype /XML}{stream payload}",
+                "\\immediate\\pdfobj stream file {payload.bin}",
+                "\\pdfcatalog{/PageMode /UseNone}",
+                "\\pdfnames{/EmbeddedFiles << >>}",
+                "\\pdfinfo{/Title (Info)}",
+                "\\pdftrailer{/Custom true}",
+                "\\pdftrailerid{custom-id}",
+                "\\end",
+            ),
+        );
+        let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
+            .expect("raw PDF extensions assemble");
+        let parsed = lopdf::Document::load_mem(&pdf).expect("lopdf parses extension output");
+
+        let ordinary = parsed
+            .get_object((3, 0))
+            .expect("referenced ordinary object")
+            .as_dict()
+            .expect("ordinary raw dictionary");
+        assert_eq!(
+            ordinary
+                .get(b"Kind")
+                .expect("Kind")
+                .as_name()
+                .expect("Kind name"),
+            b"Ordinary"
+        );
+        let stream = parsed
+            .get_object((4, 0))
+            .expect("immediate stream")
+            .as_stream()
+            .expect("stream object");
+        assert_eq!(stream.content, b"stream payload");
+        assert_eq!(
+            stream
+                .dict
+                .get(b"Subtype")
+                .expect("Subtype")
+                .as_name()
+                .expect("Subtype name"),
+            b"XML"
+        );
+        assert_eq!(
+            parsed
+                .get_object((5, 0))
+                .expect("file stream")
+                .as_stream()
+                .expect("file stream object")
+                .content,
+            b"file payload"
+        );
+
+        let catalog = parsed.catalog().expect("catalog");
+        assert_eq!(
+            catalog
+                .get(b"PageMode")
+                .expect("PageMode")
+                .as_name()
+                .expect("PageMode name"),
+            b"UseNone"
+        );
+        let names_id = catalog
+            .get(b"Names")
+            .expect("Names")
+            .as_reference()
+            .expect("Names reference");
+        assert!(
+            parsed
+                .get_object(names_id)
+                .expect("Names object")
+                .as_dict()
+                .expect("Names dictionary")
+                .has(b"EmbeddedFiles")
+        );
+        let info_id = parsed
+            .trailer
+            .get(b"Info")
+            .expect("Info")
+            .as_reference()
+            .expect("Info reference");
+        assert_eq!(
+            parsed
+                .get_object(info_id)
+                .expect("Info object")
+                .as_dict()
+                .expect("Info dictionary")
+                .get(b"Title")
+                .expect("Title")
+                .as_str()
+                .expect("Title string"),
+            b"Info"
+        );
+        assert!(
+            parsed
+                .trailer
+                .get(b"Custom")
+                .expect("Custom")
+                .as_bool()
+                .expect("Custom boolean")
+        );
+        let expected_id = Md5::digest(b"custom-id").to_vec();
+        let ids = parsed
+            .trailer
+            .get(b"ID")
+            .expect("ID")
+            .as_array()
+            .expect("ID array");
+        assert_eq!(ids[0].as_str().expect("first ID string"), expected_id);
+        assert_eq!(ids[1].as_str().expect("second ID string"), expected_id);
+    }
+
+    #[test]
+    fn referenced_reserved_object_fails_before_pdf_writer_publication() {
+        let (mut stores, run_result) = run("\\pdfoutput=1\\pdfobj reserveobjnum\\pdfrefobj 3\\end");
+        assert!(matches!(
+            pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts),
+            Err(PdfBuildError::ReferencedRawObjectUninitialized(3))
+        ));
+    }
+
+    #[test]
     fn invalid_version_and_object_policy_recover_like_pdftex() {
-        let (stores, run) = run(concat!(
+        let (mut stores, run) = run(concat!(
             "\\pdfoutput=1\\pdfmajorversion=0\\pdfminorversion=12",
             "\\pdfobjcompresslevel=9\\pdfdecimaldigits=9",
             "\\shipout\\vbox{\\hrule width10pt height5pt}\\end",
@@ -2322,7 +2546,7 @@ mod tests {
             diagnostics.contains("Object streams disabled now"),
             "{diagnostics}"
         );
-        let bytes = pdf_from_committed_artifacts(&stores, &run.committed_artifacts)
+        let bytes = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
             .expect("recovered PDF assembles");
         assert!(bytes.starts_with(b"%PDF-1.4"));
         assert!(!bytes.windows(12).any(|window| window == b"/Type/ObjStm"));

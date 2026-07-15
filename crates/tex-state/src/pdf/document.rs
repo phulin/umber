@@ -19,6 +19,33 @@ pub enum PdfDocumentFragmentKind {
     TrailerId,
 }
 
+/// Canonical ledger identities allocated for final document dictionaries.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub struct PdfDocumentObjectIds {
+    names: Option<u32>,
+    info: Option<u32>,
+}
+
+impl PdfDocumentObjectIds {
+    #[must_use]
+    pub const fn names(self) -> Option<u32> {
+        self.names
+    }
+
+    #[must_use]
+    pub const fn info(self) -> Option<u32> {
+        self.info
+    }
+
+    pub(crate) fn set_names(&mut self, id: u32) {
+        self.names = Some(id);
+    }
+
+    pub(crate) fn set_info(&mut self, id: u32) {
+        self.info = Some(id);
+    }
+}
+
 impl PdfDocumentFragmentKind {
     const fn tag(self) -> u8 {
         match self {

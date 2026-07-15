@@ -33,7 +33,7 @@ use crate::page::{
     PageInsertion, PageInteger, PageMark, PageStateHashCursor,
 };
 use crate::pdf::{
-    PdfDocumentFragmentKind, PdfExternalImageId, PdfExternalImageMetadata,
+    PdfDocumentFragmentKind, PdfDocumentObjectIds, PdfExternalImageId, PdfExternalImageMetadata,
     PdfExternalImageRegistrationError, PdfFontResourceRecord, PdfObjectCapacityError,
     PdfOutputParameters, PdfPageParameters, PdfRawObjectData, PdfRawObjectId,
     PdfRawObjectInitializeError, PdfRawObjectRecord, PdfState, PdfStateCursor, PdfStateSnapshot,
@@ -2141,6 +2141,14 @@ impl Universe {
         kind: PdfDocumentFragmentKind,
     ) -> impl Iterator<Item = TokenListId> + '_ {
         self.pdf.document_fragments(kind)
+    }
+
+    /// Allocates final document dictionaries through the canonical PDF ledger.
+    pub fn finalize_pdf_document_objects(
+        &mut self,
+        include_info: bool,
+    ) -> Result<PdfDocumentObjectIds, PdfObjectCapacityError> {
+        self.pdf.finalize_document_objects(include_info)
     }
 
     fn current_pdf_output_parameters(&self) -> PdfOutputParameters {

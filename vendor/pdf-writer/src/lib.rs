@@ -196,8 +196,8 @@ pub use self::chunk::{Chunk, ObjectStream, Settings};
 pub use self::content::{Content, InlineImage};
 pub use self::object::{
     Array, Date, Dict, Filter, Finish, LanguageIdentifier, Name, Null, Obj, Primitive,
-    Rect, Ref, Rewrite, Str, Stream, TextStr, TextStrLike, TextStrWithLang, TypedArray,
-    TypedDict, Writer,
+    Raw, Rect, Ref, Rewrite, Str, Stream, TextStr, TextStrLike, TextStrWithLang,
+    TypedArray, TypedDict, Writer,
 };
 
 use std::fmt::{self, Debug, Formatter};
@@ -280,6 +280,15 @@ impl Pdf {
     /// is optional, but recommended. In PDF/A, this is required. PDF 1.1+.
     pub fn set_file_id(&mut self, id: (Vec<u8>, Vec<u8>)) {
         self.trailer_data.file_id = Some(id);
+    }
+
+    /// Append caller-supplied entries to the file trailer dictionary.
+    ///
+    /// The bytes must contain complete `name value` pairs without the
+    /// surrounding `<< >>`. Typed `/Size`, `/Root`, `/Info`, and `/ID` entries
+    /// are written first.
+    pub fn set_trailer_raw_entries(&mut self, entries: Vec<u8>) {
+        self.trailer_data.raw_entries = entries;
     }
 
     /// Start writing the document catalog. Required.
@@ -509,6 +518,7 @@ struct TrailerData {
     catalog_id: Option<Ref>,
     info_id: Option<Ref>,
     file_id: Option<(Vec<u8>, Vec<u8>)>,
+    raw_entries: Vec<u8>,
 }
 
 impl TrailerData {
@@ -522,6 +532,8 @@ impl TrailerData {
         if let Some(info_id) = self.info_id {
             dict.pair(Name(b"Info"), info_id);
         }
+
+        dict.raw_entries(&self.raw_entries);
 
         if let Some(file_id) = &self.file_id {
             let mut ids = dict.insert(Name(b"ID")).array();

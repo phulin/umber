@@ -503,6 +503,9 @@ pub enum Whatsit {
         class: String,
         payload: Vec<u8>,
     },
+    PdfReferenceObject {
+        object: u32,
+    },
     Language {
         language: u8,
         left_hyphen_min: u8,

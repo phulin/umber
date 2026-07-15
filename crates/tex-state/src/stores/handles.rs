@@ -372,6 +372,7 @@ impl Stores {
                 crate::node::Whatsit::OpenOut { .. }
                 | crate::node::Whatsit::CloseOut { .. }
                 | crate::node::Whatsit::Special { .. }
+                | crate::node::Whatsit::PdfReferenceObject { .. }
                 | crate::node::Whatsit::Language { .. },
             ) => {}
             Node::Kern { .. }

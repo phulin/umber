@@ -218,6 +218,11 @@ fn append_whatsit_effect(
         Whatsit::Special { class, payload } => {
             effects.push(PageEffect::Special { class, payload });
         }
+        Whatsit::PdfReferenceObject { object } => {
+            stores
+                .reference_pdf_raw_object(object)
+                .map_err(|_| ExecError::PdfReferencedObjectNotFound)?;
+        }
         Whatsit::OpenOut { .. }
         | Whatsit::CloseOut { .. }
         | Whatsit::DeferredWrite { .. }

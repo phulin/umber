@@ -4,7 +4,7 @@ use std::io::Write as _;
 
 use flate2::Compression;
 use flate2::write::ZlibEncoder;
-use pdf_writer::{Dict, Filter, Finish, Name, Null, Obj, Pdf, Ref, Settings, Str, XRefFilter};
+use pdf_writer::{Dict, Filter, Finish, Name, Null, Obj, Pdf, Raw, Ref, Settings, Str, XRefFilter};
 
 use super::{PdfDictionary, PdfDocument, PdfNumber, PdfObject, PdfObjectId, PdfValue};
 
@@ -77,6 +77,10 @@ impl PdfDocument {
             pretty: options.pretty,
         });
         pdf.set_version(self.version().major(), self.version().minor());
+        if let Some(file_id) = &self.trailer().file_id {
+            pdf.set_file_id(file_id.clone());
+        }
+        pdf.set_trailer_raw_entries(self.trailer().raw_entries.clone());
 
         for indirect in self.objects() {
             let reference = writer_ref(indirect.id)?;
@@ -89,7 +93,7 @@ impl PdfDocument {
                 catalog.finish();
                 continue;
             }
-            if Some(indirect.id) == self.info() {
+            if self.trailer().info == Some(indirect.id) {
                 let PdfObject::Value(PdfValue::Dictionary(dictionary)) = &indirect.object else {
                     unreachable!("validated PDF info object is a dictionary")
                 };
@@ -106,6 +110,12 @@ impl PdfDocument {
                     write_value(pdf.indirect(reference), value)?
                 }
                 PdfObject::Value(_) => {}
+                PdfObject::Raw(data)
+                    if matches!(options.object_compression, PdfObjectCompression::None) =>
+                {
+                    pdf.indirect(reference).primitive(Raw(data));
+                }
+                PdfObject::Raw(_) => {}
                 PdfObject::Stream { dictionary, data } => write_stream(
                     &mut pdf,
                     reference,
@@ -122,11 +132,19 @@ impl PdfDocument {
                 let (object_stream_id, xref_id) = auxiliary_refs(self)?;
                 let mut object_stream = pdf.object_stream(object_stream_id);
                 for indirect in self.objects() {
-                    if indirect.id == self.catalog() || Some(indirect.id) == self.info() {
+                    if indirect.id == self.catalog() || self.trailer().info == Some(indirect.id) {
                         continue;
                     }
-                    if let PdfObject::Value(value) = &indirect.object {
-                        write_value(object_stream.object(writer_ref(indirect.id)?), value)?;
+                    match &indirect.object {
+                        PdfObject::Value(value) => {
+                            write_value(object_stream.object(writer_ref(indirect.id)?), value)?;
+                        }
+                        PdfObject::Raw(data) => {
+                            object_stream
+                                .object(writer_ref(indirect.id)?)
+                                .primitive(Raw(data));
+                        }
+                        PdfObject::Stream { .. } => {}
                     }
                 }
                 match options.stream_compression {
@@ -221,6 +239,7 @@ fn validate_object_scalars(object: &PdfObject) -> Result<(), PdfSerializeError> 
         PdfObject::Stream { dictionary, .. } => {
             stack.extend(dictionary.iter().map(|(_, value)| value));
         }
+        PdfObject::Raw(_) => {}
     }
     while let Some(value) = stack.pop() {
         match value {

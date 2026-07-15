@@ -150,7 +150,7 @@ pub enum ExecError {
     PdfObjectCapacity,
     PdfReferencedObjectNotFound,
     PdfImmediateReservedObject,
-    PdfNamesInDviMode,
+    PdfExtensionInDviMode(&'static str),
     VSplitNeedsVBox,
     Box255NotVoidBeforeOutput,
     OutputRoutineBox255NotVoid,
@@ -309,8 +309,9 @@ impl fmt::Display for ExecError {
             Self::PdfImmediateReservedObject => f.write_str(
                 "pdfTeX error (ext1): `\\pdfobj reserveobjnum' cannot be used with \\immediate.",
             ),
-            Self::PdfNamesInDviMode => f.write_str(
-                "pdfTeX error (\\pdfnames): not allowed in DVI mode (\\pdfoutput <= 0).",
+            Self::PdfExtensionInDviMode(name) => write!(
+                f,
+                "pdfTeX error (\\{name}): not allowed in DVI mode (\\pdfoutput <= 0)."
             ),
             Self::VSplitNeedsVBox => write!(f, "\\vsplit needs a \\vbox"),
             Self::Box255NotVoidBeforeOutput => write!(f, "\\box255 is not void"),
@@ -389,7 +390,7 @@ impl std::error::Error for ExecError {
             | Self::PdfObjectCapacity
             | Self::PdfReferencedObjectNotFound
             | Self::PdfImmediateReservedObject
-            | Self::PdfNamesInDviMode
+            | Self::PdfExtensionInDviMode(_)
             | Self::VSplitNeedsVBox
             | Self::Box255NotVoidBeforeOutput
             | Self::OutputRoutineBox255NotVoid
@@ -464,7 +465,7 @@ impl ExecError {
             | Self::PdfObjectCapacity
             | Self::PdfReferencedObjectNotFound
             | Self::PdfImmediateReservedObject
-            | Self::PdfNamesInDviMode
+            | Self::PdfExtensionInDviMode(_)
             | Self::VSplitNeedsVBox
             | Self::Box255NotVoidBeforeOutput
             | Self::OutputRoutineBox255NotVoid

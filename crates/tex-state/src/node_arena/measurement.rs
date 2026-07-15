@@ -259,6 +259,7 @@ impl NodeStorage {
                 }
                 crate::node::Whatsit::CloseOut { .. }
                 | crate::node::Whatsit::DeferredWrite { .. }
+                | crate::node::Whatsit::PdfReferenceObject { .. }
                 | crate::node::Whatsit::Language { .. } => {}
             }
         }
@@ -345,6 +346,7 @@ impl NodeStorage {
                 }
                 crate::node::Whatsit::CloseOut { .. }
                 | crate::node::Whatsit::DeferredWrite { .. }
+                | crate::node::Whatsit::PdfReferenceObject { .. }
                 | crate::node::Whatsit::Language { .. } => {}
             }
         }
