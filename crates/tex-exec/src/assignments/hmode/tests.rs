@@ -100,6 +100,63 @@ fn sentence_space_factor_does_not_jump_after_an_uppercase_letter() {
 }
 
 #[test]
+fn flushing_a_character_run_appends_its_right_boundary_kern() {
+    use tex_fonts::metrics::CharTag;
+    use tex_fonts::{CharMetrics, FontMetrics, LigKernInstruction, LoadedFont};
+
+    let mut characters = vec![None; 256];
+    characters[usize::from(b'A')] = Some(CharMetrics {
+        width: Scaled::from_raw(Scaled::UNITY),
+        height: Scaled::from_raw(0),
+        depth: Scaled::from_raw(0),
+        italic_correction: Scaled::from_raw(0),
+        tag: CharTag::LigKern {
+            program_index: 0,
+            start_index: 0,
+        },
+    });
+    let boundary_kern = Scaled::from_raw(12_345);
+    let metrics = FontMetrics::new(
+        characters,
+        vec![LigKernInstruction {
+            skip_byte: 128,
+            next_char: 255,
+            command: Some(LigKernCommand::Kern(boundary_kern)),
+        }],
+        Some(255),
+        None,
+        Vec::new(),
+    );
+    metrics
+        .validate()
+        .expect("right-boundary test metrics should be valid");
+    let mut stores = Universe::new();
+    let font = stores.intern_font(LoadedFont::new(
+        "right-boundary-kern",
+        "right-boundary-kern.tfm",
+        [0; 32],
+        0,
+        Scaled::from_raw(10 * Scaled::UNITY),
+        Scaled::from_raw(10 * Scaled::UNITY),
+        vec![Scaled::from_raw(0); 7],
+        metrics,
+    ));
+    let mut nest = ModeNest::new();
+    nest.current_list_mut()
+        .begin_pending_hchars(font, 'A', OriginId::UNKNOWN);
+
+    flush_pending_hchars(&mut nest, &mut stores).expect("character run flushes");
+
+    assert!(matches!(
+        nest.current_list().nodes(),
+        [
+            Node::Char { font: actual_font, ch: 'A', .. },
+            Node::Kern { amount, kind: KernKind::Font },
+        ] if *actual_font == font && *amount == boundary_kern
+    ));
+}
+
+#[test]
 fn accent_delta_rounds_half_scaled_points_like_tex82() {
     assert_eq!(
         tex_state::scaled::text_accent_delta(

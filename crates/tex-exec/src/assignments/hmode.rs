@@ -85,12 +85,20 @@ fn flush_pending_hchar_run(nest: &mut ModeNest, stores: &mut Universe, insert_hy
         .then(|| boundary_command_node(stores, pending.first, true))
         .flatten()
         .map(|node| (pending.node_start, node));
+    let right_boundary_kern = (!no_boundary)
+        .then(|| right_boundary_kern(stores, &pending.current))
+        .flatten();
     let disc = literal_hyphen_disc(stores, &pending.current, insert_hyphen_discs);
     let list = nest.current_list_mut();
     let removed = list.take_pending_hchars();
     debug_assert_eq!(removed, Some(pending.clone()));
     list.set_no_boundary(false);
-    list.push_reconstituted(boundary, rechar_node(pending.current), disc, None);
+    list.push_reconstituted(
+        boundary,
+        rechar_node(pending.current),
+        disc,
+        right_boundary_kern,
+    );
 }
 
 pub(super) fn execute_hmode_material(
@@ -627,6 +635,17 @@ fn boundary_command_node(
             orig: vec![current.ch],
             origins: vec![current.origin],
         }),
+    }
+}
+
+fn right_boundary_kern(stores: &Universe, current: &PendingHRunChar) -> Option<Node> {
+    let code = font_code(current.ch).ok()?;
+    match stores.lig_kern_command(current.font, LigKernChar::Char(code), LigKernChar::Boundary)? {
+        LigKernCommand::Kern(amount) => Some(Node::Kern {
+            amount,
+            kind: KernKind::Font,
+        }),
+        LigKernCommand::Ligature(_) => None,
     }
 }
 
