@@ -415,11 +415,12 @@ fn append_whatsit_effect(
             height,
             depth,
         }),
-        Whatsit::PdfDestination {
-            identifier,
-            structure,
-            kind,
-        } => {
+        Whatsit::PdfDestination(destination) => {
+            let tex_state::node::PdfDestinationNode {
+                identifier,
+                structure,
+                kind,
+            } = *destination;
             if suppress_deferred_streams {
                 return Ok(());
             }
@@ -496,12 +497,13 @@ fn append_whatsit_effect(
                 margin: stores.dimen_param(DimenParam::PDF_DEST_MARGIN),
             }));
         }
-        Whatsit::PdfThread {
-            identifier,
-            dimensions,
-            attributes,
-            running,
-        } => {
+        Whatsit::PdfThread(thread) => {
+            let tex_state::node::PdfThreadNode {
+                identifier,
+                dimensions,
+                attributes,
+                running,
+            } = *thread;
             if suppress_deferred_streams {
                 return Ok(());
             }

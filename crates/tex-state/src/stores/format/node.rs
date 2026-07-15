@@ -581,27 +581,28 @@ impl FormatWhatsit {
                 height: height.raw(),
                 depth: depth.raw(),
             },
-            Whatsit::PdfDestination {
-                identifier,
-                structure,
-                kind,
-            } => {
+            Whatsit::PdfDestination(destination) => {
+                let crate::node::PdfDestinationNode {
+                    identifier,
+                    structure,
+                    kind,
+                } = destination.as_ref();
                 let (name_tokens, number) = match identifier {
                     crate::PdfActionIdentifier::Name(tokens) => (Some(tokens.raw()), None),
-                    crate::PdfActionIdentifier::Number(number) => (None, Some(number)),
+                    crate::PdfActionIdentifier::Number(number) => (None, Some(*number)),
                     crate::PdfActionIdentifier::Raw(_) => {
                         unreachable!("destinations use typed identifiers")
                     }
                 };
                 let (kind, zoom, dimensions) = match kind {
-                    crate::node::PdfDestinationKind::Xyz { zoom } => (0, zoom, None),
+                    crate::node::PdfDestinationKind::Xyz { zoom } => (0, *zoom, None),
                     crate::node::PdfDestinationKind::FitBoundingBoxHorizontal => (1, None, None),
                     crate::node::PdfDestinationKind::FitBoundingBoxVertical => (2, None, None),
                     crate::node::PdfDestinationKind::FitBoundingBox => (3, None, None),
                     crate::node::PdfDestinationKind::FitHorizontal => (4, None, None),
                     crate::node::PdfDestinationKind::FitVertical => (5, None, None),
                     crate::node::PdfDestinationKind::FitRectangle(dimensions) => {
-                        (6, None, Some(dimensions))
+                        (6, None, Some(*dimensions))
                     }
                     crate::node::PdfDestinationKind::Fit => (7, None, None),
                 };
@@ -609,7 +610,7 @@ impl FormatWhatsit {
                 Self::PdfDestination {
                     name_tokens,
                     number,
-                    structure,
+                    structure: *structure,
                     kind,
                     zoom,
                     width: dimensions.width.map(Scaled::raw),
@@ -617,15 +618,16 @@ impl FormatWhatsit {
                     depth: dimensions.depth.map(Scaled::raw),
                 }
             }
-            Whatsit::PdfThread {
-                identifier,
-                dimensions,
-                attributes,
-                running,
-            } => {
+            Whatsit::PdfThread(thread) => {
+                let crate::node::PdfThreadNode {
+                    identifier,
+                    dimensions,
+                    attributes,
+                    running,
+                } = thread.as_ref();
                 let (name_tokens, number) = match identifier {
                     crate::PdfActionIdentifier::Name(tokens) => (Some(tokens.raw()), None),
-                    crate::PdfActionIdentifier::Number(number) => (None, Some(number)),
+                    crate::PdfActionIdentifier::Number(number) => (None, Some(*number)),
                     crate::PdfActionIdentifier::Raw(_) => {
                         unreachable!("threads use typed identifiers")
                     }
@@ -637,7 +639,7 @@ impl FormatWhatsit {
                     height: dimensions.height.map(Scaled::raw),
                     depth: dimensions.depth.map(Scaled::raw),
                     attributes: attributes.raw(),
-                    running,
+                    running: *running,
                 }
             }
             Whatsit::PdfEndThread => Self::PdfEndThread,
@@ -754,11 +756,11 @@ impl FormatWhatsit {
                     7 => crate::node::PdfDestinationKind::Fit,
                     _ => return Err(StoreFormatError::Invalid("PDF destination kind")),
                 };
-                Whatsit::PdfDestination {
+                Whatsit::PdfDestination(Box::new(crate::node::PdfDestinationNode {
                     identifier,
                     structure,
                     kind,
-                }
+                }))
             }
             Self::PdfThread {
                 name_tokens,
@@ -776,7 +778,7 @@ impl FormatWhatsit {
                     (None, Some(number)) => crate::PdfActionIdentifier::Number(number),
                     _ => return Err(StoreFormatError::Invalid("PDF thread identifier")),
                 };
-                Whatsit::PdfThread {
+                Whatsit::PdfThread(Box::new(crate::node::PdfThreadNode {
                     identifier,
                     dimensions: crate::PdfAnnotationDimensions {
                         width: width.map(Scaled::from_raw),
@@ -785,7 +787,7 @@ impl FormatWhatsit {
                     },
                     attributes: token_list_id(stores, attributes)?,
                     running,
-                }
+                }))
             }
             Self::PdfEndThread => Whatsit::PdfEndThread,
         })

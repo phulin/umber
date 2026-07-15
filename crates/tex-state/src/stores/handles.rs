@@ -374,19 +374,16 @@ impl Stores {
             Node::Whatsit(crate::node::Whatsit::PdfSnapY { glue }) => {
                 self.assert_live_glue(*glue);
             }
-            Node::Whatsit(crate::node::Whatsit::PdfDestination {
-                identifier: crate::PdfActionIdentifier::Name(tokens),
-                ..
-            }) => self.assert_live_token_list(*tokens),
-            Node::Whatsit(crate::node::Whatsit::PdfThread {
-                identifier,
-                attributes,
-                ..
-            }) => {
-                if let crate::PdfActionIdentifier::Name(tokens) = identifier {
-                    self.assert_live_token_list(*tokens);
+            Node::Whatsit(crate::node::Whatsit::PdfDestination(destination)) => {
+                if let crate::PdfActionIdentifier::Name(tokens) = destination.identifier {
+                    self.assert_live_token_list(tokens);
                 }
-                self.assert_live_token_list(*attributes);
+            }
+            Node::Whatsit(crate::node::Whatsit::PdfThread(thread)) => {
+                if let crate::PdfActionIdentifier::Name(tokens) = thread.identifier {
+                    self.assert_live_token_list(tokens);
+                }
+                self.assert_live_token_list(thread.attributes);
             }
             Node::Whatsit(
                 crate::node::Whatsit::OpenOut { .. }
@@ -408,7 +405,6 @@ impl Stores {
                 | crate::node::Whatsit::PdfSnapYComp { .. }
                 | crate::node::Whatsit::PdfRefXForm { .. }
                 | crate::node::Whatsit::PdfRefXImage { .. }
-                | crate::node::Whatsit::PdfDestination { .. }
                 | crate::node::Whatsit::PdfEndThread
                 | crate::node::Whatsit::Language { .. },
             ) => {}

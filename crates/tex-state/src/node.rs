@@ -554,23 +554,31 @@ pub enum Whatsit {
         height: Scaled,
         depth: Scaled,
     },
-    PdfDestination {
-        identifier: crate::PdfActionIdentifier,
-        structure: Option<u32>,
-        kind: PdfDestinationKind,
-    },
-    PdfThread {
-        identifier: crate::PdfActionIdentifier,
-        dimensions: crate::PdfAnnotationDimensions,
-        attributes: TokenListId,
-        running: bool,
-    },
+    PdfDestination(Box<PdfDestinationNode>),
+    PdfThread(Box<PdfThreadNode>),
     PdfEndThread,
     Language {
         language: u8,
         left_hyphen_min: u8,
         right_hyphen_min: u8,
     },
+}
+
+/// Rare article-thread marker kept out of the hot inline node representation.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct PdfThreadNode {
+    pub identifier: crate::PdfActionIdentifier,
+    pub dimensions: crate::PdfAnnotationDimensions,
+    pub attributes: TokenListId,
+    pub running: bool,
+}
+
+/// Rare destination marker kept out of the hot inline node representation.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct PdfDestinationNode {
+    pub identifier: crate::PdfActionIdentifier,
+    pub structure: Option<u32>,
+    pub kind: PdfDestinationKind,
 }
 
 /// A page destination view, retained until final traversal resolves geometry.

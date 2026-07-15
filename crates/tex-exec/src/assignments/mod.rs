@@ -911,11 +911,13 @@ fn execute_pdf_destination(
     crate::vertical::append_node_to_current_list(
         nest,
         stores,
-        Node::Whatsit(tex_state::node::Whatsit::PdfDestination {
-            identifier,
-            structure,
-            kind,
-        }),
+        Node::Whatsit(tex_state::node::Whatsit::PdfDestination(Box::new(
+            tex_state::node::PdfDestinationNode {
+                identifier,
+                structure,
+                kind,
+            },
+        ))),
     )
 }
 
@@ -1011,12 +1013,14 @@ fn execute_pdf_thread(
     crate::vertical::append_node_to_current_list(
         nest,
         stores,
-        Node::Whatsit(tex_state::node::Whatsit::PdfThread {
-            identifier,
-            dimensions,
-            attributes,
-            running,
-        }),
+        Node::Whatsit(tex_state::node::Whatsit::PdfThread(Box::new(
+            tex_state::node::PdfThreadNode {
+                identifier,
+                dimensions,
+                attributes,
+                running,
+            },
+        ))),
     )
 }
 

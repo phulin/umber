@@ -387,11 +387,12 @@ impl Stores {
                 hasher.i32(height.raw());
                 hasher.i32(depth.raw());
             }
-            Whatsit::PdfDestination {
-                identifier,
-                structure,
-                kind,
-            } => {
+            Whatsit::PdfDestination(destination) => {
+                let crate::node::PdfDestinationNode {
+                    identifier,
+                    structure,
+                    kind,
+                } = destination.as_ref();
                 hasher.tag(23);
                 match identifier {
                     crate::PdfActionIdentifier::Name(tokens) => {
@@ -412,12 +413,13 @@ impl Stores {
                 }
                 hash_pdf_destination_kind(hasher, *kind);
             }
-            Whatsit::PdfThread {
-                identifier,
-                dimensions,
-                attributes,
-                running,
-            } => {
+            Whatsit::PdfThread(thread) => {
+                let crate::node::PdfThreadNode {
+                    identifier,
+                    dimensions,
+                    attributes,
+                    running,
+                } = thread.as_ref();
                 hasher.tag(24);
                 match identifier {
                     crate::PdfActionIdentifier::Name(tokens) => {
