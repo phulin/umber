@@ -121,9 +121,32 @@ pub struct ReuseMetrics {
     pub convergence_boundary: Option<BoundaryKey>,
     pub pages_reused: usize,
     pub pages_retyped: usize,
+    pub reexecuted_bytes: usize,
+    pub reexecuted_tokens: usize,
+    pub reexecuted_commands: usize,
+    pub reexecuted_paragraphs: usize,
+    pub same_history_attempts: usize,
+    pub same_history_hash_mismatches: usize,
+    pub same_history_stop: SameHistoryStop,
     pub restart_fork_latency: Duration,
     pub reexecution_latency: Duration,
     pub splice_latency: Duration,
+}
+
+/// Why identical-history suffix adoption did or did not stop re-execution.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SameHistoryStop {
+    /// A mapped schedule entry had the same folded history hash.
+    Matched,
+    /// The mapped named-boundary schedule differed from the accepted revision.
+    ScheduleDiverged,
+    /// Every comparable boundary had a different folded history hash.
+    HashesDiverged,
+    /// No old boundary after the restart anchor could be mapped and compared.
+    NoComparableBoundary,
+    /// This was a cold execution, so identical-history adoption was not attempted.
+    #[default]
+    NotAttempted,
 }
 
 /// Detached result of one accepted editor revision.
@@ -768,6 +791,13 @@ impl Session {
 
         let restart_fork_latency = advance.restart_fork_latency;
         let reexecution_latency = advance.reexecution_latency;
+        let reexecuted_bytes = advance.reexecuted_bytes;
+        let reexecuted_tokens = advance.reexecuted_tokens;
+        let reexecuted_commands = advance.reexecuted_commands;
+        let reexecuted_paragraphs = advance.reexecuted_paragraphs;
+        let same_history_attempts = advance.same_history_attempts;
+        let same_history_hash_mismatches = advance.same_history_hash_mismatches;
+        let same_history_stop = advance.same_history_stop;
         let splice_started = Timer::start();
         let (effects, artifacts, pages, mut history, pending_substrate, mut reuse) =
             if let Some(old_index) = advance.convergence_old_index {
@@ -840,6 +870,13 @@ impl Session {
                         convergence_boundary,
                         pages_reused: old_artifacts.len().saturating_sub(old_prefix),
                         pages_retyped: scratch_artifact_count,
+                        reexecuted_bytes,
+                        reexecuted_tokens,
+                        reexecuted_commands,
+                        reexecuted_paragraphs,
+                        same_history_attempts,
+                        same_history_hash_mismatches,
+                        same_history_stop,
                         restart_fork_latency,
                         reexecution_latency,
                         ..ReuseMetrics::default()
@@ -880,6 +917,13 @@ impl Session {
                         convergence_boundary: None,
                         pages_reused: 0,
                         pages_retyped,
+                        reexecuted_bytes,
+                        reexecuted_tokens,
+                        reexecuted_commands,
+                        reexecuted_paragraphs,
+                        same_history_attempts,
+                        same_history_hash_mismatches,
+                        same_history_stop,
                         restart_fork_latency,
                         reexecution_latency,
                         ..ReuseMetrics::default()
@@ -1076,6 +1120,10 @@ impl Session {
         Ok(self.output(
             ReuseMetrics {
                 pages_retyped: self.artifacts.len(),
+                reexecuted_bytes: run.executed_bytes,
+                reexecuted_tokens: run.executed_tokens,
+                reexecuted_commands: run.executed_commands,
+                reexecuted_paragraphs: run.executed_paragraphs,
                 ..ReuseMetrics::default()
             },
             retention,
@@ -1148,6 +1196,10 @@ struct RevisionRun {
     substrate: GenerationSubstrate,
     dumped_format: bool,
     expansion_stats: tex_lex::ExpansionStats,
+    executed_bytes: usize,
+    executed_tokens: usize,
+    executed_commands: usize,
+    executed_paragraphs: usize,
 }
 
 #[derive(Default)]
@@ -1195,6 +1247,8 @@ fn execute_revision(
     let ExecutionStats {
         dvi_pages,
         dumped_format,
+        delivered_tokens,
+        main_control_dispatches,
         ..
     } = executor.run_with_context_and_checkpoints(
         &mut input,
@@ -1207,6 +1261,11 @@ fn execute_revision(
     let artifacts = universe.world().committed_artifacts().to_vec();
     let output_bytes = universe.retained_output_bytes();
     let substrate = universe.freeze_generation();
+    let executed_paragraphs = sink
+        .records
+        .iter()
+        .filter(|record| record.key.boundary == EngineBoundary::OuterParagraphEnd)
+        .count();
     Ok(RevisionRun {
         history: sink.records,
         effects,
@@ -1216,6 +1275,10 @@ fn execute_revision(
         substrate,
         dumped_format,
         expansion_stats,
+        executed_bytes: source.len(),
+        executed_tokens: delivered_tokens,
+        executed_commands: main_control_dispatches,
+        executed_paragraphs,
     })
 }
 
@@ -1226,6 +1289,13 @@ struct AdvanceRun {
     artifacts: Vec<CommittedArtifact>,
     pages_through_stop: Vec<DviPagePlan>,
     convergence_old_index: Option<usize>,
+    reexecuted_bytes: usize,
+    reexecuted_tokens: usize,
+    reexecuted_commands: usize,
+    reexecuted_paragraphs: usize,
+    same_history_attempts: usize,
+    same_history_hash_mismatches: usize,
+    same_history_stop: SameHistoryStop,
     restart_fork_latency: Duration,
     reexecution_latency: Duration,
     dumped_format: bool,
@@ -1240,6 +1310,8 @@ struct ResumeSink {
     convergence_old_index: Option<usize>,
     schedule_diverged: bool,
     changed_new_range: std::ops::Range<usize>,
+    same_history_attempts: usize,
+    same_history_hash_mismatches: usize,
 }
 
 impl ResumeSink {
@@ -1275,6 +1347,8 @@ impl ResumeSink {
             convergence_old_index: None,
             schedule_diverged: false,
             changed_new_range: map.old.start..map.old.start + map.replacement_len,
+            same_history_attempts: 0,
+            same_history_hash_mismatches: 0,
         }
     }
 }
@@ -1304,8 +1378,11 @@ impl CheckpointSink for ResumeSink {
             return;
         }
         self.next_expected += 1;
+        self.same_history_attempts += 1;
         if actual.state_hash() == expected_hash {
             self.convergence_old_index = Some(old_index);
+        } else {
+            self.same_history_hash_mismatches += 1;
         }
     }
 }
@@ -1384,6 +1461,8 @@ fn execute_advance(
     let ExecutionStats {
         dvi_pages,
         dumped_format,
+        delivered_tokens,
+        main_control_dispatches,
         ..
     } = executor.resume_with_context_and_checkpoints(
         &mut input,
@@ -1392,6 +1471,26 @@ fn execute_advance(
         &mut sink,
     )?;
     let reexecution_latency = reexecution_started.elapsed();
+    let expansion_stats = input.expansion_stats();
+    let reexecuted_paragraphs = sink
+        .records
+        .iter()
+        .filter(|record| record.key.boundary == EngineBoundary::OuterParagraphEnd)
+        .count();
+    let reexecuted_through = sink
+        .records
+        .last()
+        .map_or(source.len(), |record| record.key.position);
+    let reexecuted_bytes = reexecuted_through.saturating_sub(anchor.key.position);
+    let same_history_stop = if sink.convergence_old_index.is_some() {
+        SameHistoryStop::Matched
+    } else if sink.schedule_diverged {
+        SameHistoryStop::ScheduleDiverged
+    } else if sink.same_history_attempts > 0 {
+        SameHistoryStop::HashesDiverged
+    } else {
+        SameHistoryStop::NoComparableBoundary
+    };
     let expansion_stats = input.expansion_stats();
     let effects = scratch.world().effect_records().to_vec();
     let artifacts = scratch.world().committed_artifacts().to_vec();
@@ -1404,6 +1503,13 @@ fn execute_advance(
         artifacts,
         pages_through_stop,
         convergence_old_index: sink.convergence_old_index,
+        reexecuted_bytes,
+        reexecuted_tokens: delivered_tokens,
+        reexecuted_commands: main_control_dispatches,
+        reexecuted_paragraphs,
+        same_history_attempts: sink.same_history_attempts,
+        same_history_hash_mismatches: sink.same_history_hash_mismatches,
+        same_history_stop,
         restart_fork_latency,
         reexecution_latency,
         dumped_format,

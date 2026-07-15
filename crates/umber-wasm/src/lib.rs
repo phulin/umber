@@ -102,6 +102,13 @@ export interface SourcePatch {
 export interface ReuseMetrics {
   pagesReused: number;
   pagesRetyped: number;
+  reexecutedBytes: number;
+  reexecutedTokens: number;
+  reexecutedCommands: number;
+  reexecutedParagraphs: number;
+  sameHistoryAttempts: number;
+  sameHistoryHashMismatches: number;
+  sameHistoryStop: "matched" | "schedule-diverged" | "hashes-diverged" | "no-comparable-boundary" | "not-attempted";
   restartForkMicroseconds: number;
   reexecutionMicroseconds: number;
   spliceMicroseconds: number;

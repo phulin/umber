@@ -632,6 +632,7 @@ where
             stores.world_mut().trace_execution("executor", message);
         }
         stats.delivered_tokens += 1;
+        stats.main_control_dispatches += 1;
         let action =
             match dispatch_delivered_token_with_context(nest, token, input, stores, execution) {
                 Ok(action) => action,

@@ -450,6 +450,44 @@ pub(crate) fn reuse_metrics(metrics: Option<umber::ReuseMetrics>) -> Result<JsVa
     set(&object, "pagesRetyped", &usize_value(metrics.pages_retyped))?;
     set(
         &object,
+        "reexecutedBytes",
+        &usize_value(metrics.reexecuted_bytes),
+    )?;
+    set(
+        &object,
+        "reexecutedTokens",
+        &usize_value(metrics.reexecuted_tokens),
+    )?;
+    set(
+        &object,
+        "reexecutedCommands",
+        &usize_value(metrics.reexecuted_commands),
+    )?;
+    set(
+        &object,
+        "reexecutedParagraphs",
+        &usize_value(metrics.reexecuted_paragraphs),
+    )?;
+    set(
+        &object,
+        "sameHistoryAttempts",
+        &usize_value(metrics.same_history_attempts),
+    )?;
+    set(
+        &object,
+        "sameHistoryHashMismatches",
+        &usize_value(metrics.same_history_hash_mismatches),
+    )?;
+    let stop = match metrics.same_history_stop {
+        umber::SameHistoryStop::Matched => "matched",
+        umber::SameHistoryStop::ScheduleDiverged => "schedule-diverged",
+        umber::SameHistoryStop::HashesDiverged => "hashes-diverged",
+        umber::SameHistoryStop::NoComparableBoundary => "no-comparable-boundary",
+        umber::SameHistoryStop::NotAttempted => "not-attempted",
+    };
+    set(&object, "sameHistoryStop", &JsValue::from_str(stop))?;
+    set(
+        &object,
         "restartForkMicroseconds",
         &JsValue::from_f64(metrics.restart_fork_latency.as_micros() as f64),
     )?;

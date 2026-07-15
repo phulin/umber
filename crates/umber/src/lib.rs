@@ -48,8 +48,7 @@ pub use tex_fonts::{
     FontProgramIdentity, FontPurposes, FontRequest, FontRequestKey, OpenTypeTag, ResolvedFont,
     VariationCoordinate, VariationSelection,
 };
-pub use tex_incr::ReuseMetrics;
-pub use tex_incr::{RenderedOutputId, RevisionId};
+pub use tex_incr::{RenderedOutputId, ReuseMetrics, RevisionId, SameHistoryStop};
 pub use umber_vfs::FileContentId;
 pub use virtual_compile::{
     AcceptedFinalization, CompileAttemptResult, CompileDiagnostic, CompileError, EngineMode,

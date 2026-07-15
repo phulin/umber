@@ -109,7 +109,7 @@ pub(super) fn run(mut args: impl Iterator<Item = String>) -> Result<(), WatchErr
                     announced = true;
                 } else if let Some(reuse) = session.reuse_metrics() {
                     eprintln!(
-                        "revision={next_revision} total_us={} fork_us={} reexecute_us={} splice_us={} dvi_write_us={} pages_reused={} pages_retyped={}",
+                        "revision={next_revision} total_us={} fork_us={} reexecute_us={} splice_us={} dvi_write_us={} pages_reused={} pages_retyped={} reexecuted_bytes={} reexecuted_tokens={} reexecuted_commands={} reexecuted_paragraphs={} same_history_attempts={} same_history_hash_mismatches={} same_history_stop={:?}",
                         total_started.elapsed().as_micros(),
                         reuse.restart_fork_latency.as_micros(),
                         reuse.reexecution_latency.as_micros(),
@@ -117,6 +117,13 @@ pub(super) fn run(mut args: impl Iterator<Item = String>) -> Result<(), WatchErr
                         dvi_latency.as_micros(),
                         reuse.pages_reused,
                         reuse.pages_retyped,
+                        reuse.reexecuted_bytes,
+                        reuse.reexecuted_tokens,
+                        reuse.reexecuted_commands,
+                        reuse.reexecuted_paragraphs,
+                        reuse.same_history_attempts,
+                        reuse.same_history_hash_mismatches,
+                        reuse.same_history_stop,
                     );
                 }
                 match wait_for_edit(&input, &candidate_source, poll, &interrupted)? {

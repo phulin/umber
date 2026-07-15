@@ -210,6 +210,11 @@ fn no_op_revision_converges_at_first_eligible_boundary() {
         cold.history.get(1).map(BoundaryRecord::key)
     );
     assert!(output.reuse.pages_reused > 0);
+    assert_eq!(output.reuse.same_history_stop, SameHistoryStop::Matched);
+    assert_eq!(output.reuse.same_history_attempts, 1);
+    assert_eq!(output.reuse.same_history_hash_mismatches, 0);
+    assert!(output.reuse.reexecuted_bytes > 0);
+    assert!(output.reuse.reexecuted_tokens > 0);
     assert_eq!(
         output.dvi_bytes().expect("incremental DVI"),
         cold.dvi_bytes().expect("cold DVI")
@@ -527,6 +532,10 @@ fn nonconvergent_advance_prunes_fully_replaced_fragment_bytes() {
         .expect("semantic edit succeeds");
 
     assert_eq!(output.reuse.convergence_boundary, None);
+    assert_ne!(output.reuse.same_history_stop, SameHistoryStop::Matched);
+    assert_eq!(output.reuse.pages_reused, 0);
+    assert!(output.reuse.reexecuted_bytes > 0);
+    assert!(output.reuse.reexecuted_tokens > 0);
     assert_eq!(session.fragments.bytes(initial), None);
     assert_eq!(session.fragments.source_bytes(), replacement.len());
 }
