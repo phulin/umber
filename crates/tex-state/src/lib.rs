@@ -29,10 +29,12 @@
 /// reservations.
 /// Version 20 aligns canonical PDF allocation order with pdfTeX, including
 /// user objects, pages, and final document dictionaries.
+/// Version 21 adds checkpointed pdfTeX color-stack allocation and traversal
+/// state.
 /// Hashes are
 /// comparable only when both this version and the named-boundary schedule
 /// match.
-pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 20;
+pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 21;
 
 pub mod cell;
 pub mod code_tables;
@@ -70,12 +72,13 @@ mod universe;
 pub use pdf::{
     PdfActionDestination, PdfActionIdentifier, PdfActionRecord, PdfActionSpec, PdfActionTarget,
     PdfActionWindow, PdfAnnotationData, PdfAnnotationDimensions, PdfAnnotationInitializeError,
-    PdfAnnotationRecord, PdfDocumentFragmentKind, PdfDocumentObjectIds, PdfExternalImageId,
-    PdfExternalImageIdError, PdfExternalImageMetadata, PdfExternalImageRegistrationError,
-    PdfFontConfiguration, PdfFontMapOperation, PdfFontResourceRecord, PdfGlyphToUnicode,
-    PdfLinkRecord, PdfObjectCapacityError, PdfOpenLink, PdfOutputParameters, PdfPageBox,
-    PdfPageRecord, PdfRawObjectData, PdfRawObjectId, PdfRawObjectInitializeError,
-    PdfRawObjectRecord,
+    PdfAnnotationRecord, PdfColorStackAction, PdfColorStackApplyError, PdfColorStackCapacityError,
+    PdfColorStackEmission, PdfColorStackMode, PdfColorStackTarget, PdfDocumentFragmentKind,
+    PdfDocumentObjectIds, PdfExternalImageId, PdfExternalImageIdError, PdfExternalImageMetadata,
+    PdfExternalImageRegistrationError, PdfFontConfiguration, PdfFontMapOperation,
+    PdfFontResourceRecord, PdfGlyphToUnicode, PdfLinkRecord, PdfObjectCapacityError, PdfOpenLink,
+    PdfOutputParameters, PdfPageBox, PdfPageRecord, PdfRawObjectData, PdfRawObjectId,
+    PdfRawObjectInitializeError, PdfRawObjectRecord,
 };
 pub mod world;
 

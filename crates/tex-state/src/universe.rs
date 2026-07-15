@@ -1922,6 +1922,33 @@ impl Universe {
         self.pdf.external_image(id)
     }
 
+    pub fn allocate_pdf_color_stack(
+        &mut self,
+        mode: crate::PdfColorStackMode,
+        restore_at_page_start: bool,
+        initial: Vec<u8>,
+    ) -> Result<u32, crate::PdfColorStackCapacityError> {
+        self.pdf
+            .allocate_color_stack(mode, restore_at_page_start, initial)
+    }
+
+    pub fn has_pdf_color_stack(&mut self, id: u32) -> bool {
+        self.pdf.has_color_stack(id)
+    }
+
+    pub fn apply_pdf_color_stack(
+        &mut self,
+        id: u32,
+        target: crate::PdfColorStackTarget,
+        action: &crate::PdfColorStackAction,
+    ) -> Result<crate::PdfColorStackEmission, crate::PdfColorStackApplyError> {
+        self.pdf.apply_color_stack(id, target, action)
+    }
+
+    pub fn pdf_page_color_stack_restorations(&mut self) -> Vec<crate::PdfColorStackEmission> {
+        self.pdf.page_color_stack_restorations()
+    }
+
     /// Records a parsed, host-neutral font-map mutation.
     pub fn push_pdf_font_map(&mut self, operation: crate::PdfFontMapOperation) {
         self.pdf.push_font_map(operation);

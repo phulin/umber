@@ -32,9 +32,65 @@ const PDF_STATE_DOMAIN: u64 = 0x7064_665f_7374_6174;
 const PDF_PAGE_DOMAIN: u64 = 0x7064_665f_7061_6765;
 const PDF_FONT_DOMAIN: u64 = 0x7064_665f_666f_6e74;
 const PDF_EXTERNAL_IMAGE_DOMAIN: u64 = 0x7064_665f_7869_6d67;
+const PDF_COLOR_STACK_DOMAIN: u64 = 0x7064_665f_636f_6c72;
 const FIRST_DYNAMIC_OBJECT: u32 = 1;
 const OBJECTS_PER_PAGE: u32 = 3;
 const MAX_OBJECT_ID: u32 = i32::MAX as u32;
+const MAX_COLOR_STACKS: usize = 32_768;
+
+/// How color-stack bytes are framed in a page content stream.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PdfColorStackMode {
+    Origin,
+    Page,
+    Direct,
+}
+
+/// Selects pdfTeX's deliberately independent page and form color-stack state.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PdfColorStackTarget {
+    Page,
+    Form,
+}
+
+/// A color-stack mutation retained on the whatsit until final traversal.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum PdfColorStackAction {
+    Set(Vec<u8>),
+    Push(Vec<u8>),
+    Pop,
+    Current,
+}
+
+/// Bytes emitted by a successful color-stack action or page restoration.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PdfColorStackEmission {
+    pub mode: PdfColorStackMode,
+    pub payload: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PdfColorStackRuntime {
+    current: Vec<u8>,
+    pushed: Vec<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PdfColorStack {
+    mode: PdfColorStackMode,
+    restore_at_page_start: bool,
+    page: PdfColorStackRuntime,
+    form: PdfColorStackRuntime,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PdfColorStackCapacityError;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PdfColorStackApplyError {
+    Unknown,
+    Underflow,
+}
 
 /// Typed identity assigned to an external-image object by pdfTeX's object table.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -473,6 +529,7 @@ pub(crate) struct PdfStateCursor {
     annotation_fingerprint: u64,
     link_fingerprint: u64,
     open_link_fingerprint: u64,
+    color_stack_fingerprint: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -486,6 +543,7 @@ pub(crate) struct PdfStateSnapshot {
     annotations: Arc<Vec<PdfAnnotationRecord>>,
     links: Arc<Vec<PdfLinkRecord>>,
     open_links: Arc<Vec<PdfOpenLink>>,
+    color_stacks: Arc<Vec<PdfColorStack>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -528,6 +586,8 @@ pub(crate) struct PdfState {
     link_fingerprint: u64,
     open_links: Arc<Vec<PdfOpenLink>>,
     open_link_fingerprint: u64,
+    color_stacks: Arc<Vec<PdfColorStack>>,
+    color_stack_fingerprint: u64,
 }
 
 impl Default for PdfState {
@@ -562,6 +622,8 @@ impl Default for PdfState {
             link_fingerprint: StateHasher::new(0x7064_665f_6c69_6e6b).finish(),
             open_links: Arc::new(Vec::new()),
             open_link_fingerprint: open_link_fingerprint(&[]),
+            color_stacks: Arc::new(Vec::new()),
+            color_stack_fingerprint: color_stack_fingerprint(&[]),
         }
     }
 }
@@ -630,6 +692,7 @@ impl PdfState {
             && self.annotations.is_empty()
             && self.links.is_empty()
             && self.open_links.is_empty()
+            && self.color_stacks.is_empty()
     }
 
     pub(crate) fn ensure_page_capacity(&self, parameters: PdfOutputParameters) -> Result<(), ()> {
@@ -1326,6 +1389,7 @@ impl PdfState {
             annotation_fingerprint: self.annotation_fingerprint,
             link_fingerprint: self.link_fingerprint,
             open_link_fingerprint: self.open_link_fingerprint,
+            color_stack_fingerprint: self.color_stack_fingerprint,
         }
     }
     #[must_use]
@@ -1340,6 +1404,7 @@ impl PdfState {
             annotations: Arc::clone(&self.annotations),
             links: Arc::clone(&self.links),
             open_links: Arc::clone(&self.open_links),
+            color_stacks: Arc::clone(&self.color_stacks),
         }
     }
 
@@ -1384,6 +1449,8 @@ impl PdfState {
         self.link_fingerprint = cursor.link_fingerprint;
         self.open_links = snapshot.open_links;
         self.open_link_fingerprint = cursor.open_link_fingerprint;
+        self.color_stacks = snapshot.color_stacks;
+        self.color_stack_fingerprint = cursor.color_stack_fingerprint;
     }
 
     pub(crate) fn set_match(
@@ -1452,8 +1519,136 @@ impl PdfState {
             if let Some(id) = cursor.document_objects.info() {
                 hasher.u32(id);
             }
+            hasher.u64(cursor.color_stack_fingerprint);
         })
     }
+
+    fn ensure_default_color_stack(&mut self) {
+        if !self.color_stacks.is_empty() {
+            return;
+        }
+        let initial = b"0 g 0 G".to_vec();
+        Arc::make_mut(&mut self.color_stacks).push(PdfColorStack {
+            mode: PdfColorStackMode::Direct,
+            restore_at_page_start: true,
+            page: PdfColorStackRuntime {
+                current: initial.clone(),
+                pushed: Vec::new(),
+            },
+            form: PdfColorStackRuntime {
+                current: initial,
+                pushed: Vec::new(),
+            },
+        });
+        self.color_stack_fingerprint = color_stack_fingerprint(&self.color_stacks);
+    }
+
+    pub(crate) fn allocate_color_stack(
+        &mut self,
+        mode: PdfColorStackMode,
+        restore_at_page_start: bool,
+        initial: Vec<u8>,
+    ) -> Result<u32, PdfColorStackCapacityError> {
+        self.ensure_default_color_stack();
+        if self.color_stacks.len() >= MAX_COLOR_STACKS {
+            return Err(PdfColorStackCapacityError);
+        }
+        let id = self.color_stacks.len() as u32;
+        Arc::make_mut(&mut self.color_stacks).push(PdfColorStack {
+            mode,
+            restore_at_page_start,
+            page: PdfColorStackRuntime {
+                current: initial.clone(),
+                pushed: Vec::new(),
+            },
+            form: PdfColorStackRuntime {
+                current: initial,
+                pushed: Vec::new(),
+            },
+        });
+        self.color_stack_fingerprint = color_stack_fingerprint(&self.color_stacks);
+        Ok(id)
+    }
+
+    pub(crate) fn has_color_stack(&mut self, id: u32) -> bool {
+        self.ensure_default_color_stack();
+        (id as usize) < self.color_stacks.len()
+    }
+
+    pub(crate) fn apply_color_stack(
+        &mut self,
+        id: u32,
+        target: PdfColorStackTarget,
+        action: &PdfColorStackAction,
+    ) -> Result<PdfColorStackEmission, PdfColorStackApplyError> {
+        self.ensure_default_color_stack();
+        let Some(stack) = Arc::make_mut(&mut self.color_stacks).get_mut(id as usize) else {
+            return Err(PdfColorStackApplyError::Unknown);
+        };
+        let runtime = match target {
+            PdfColorStackTarget::Page => &mut stack.page,
+            PdfColorStackTarget::Form => &mut stack.form,
+        };
+        match action {
+            PdfColorStackAction::Set(bytes) => runtime.current.clone_from(bytes),
+            PdfColorStackAction::Push(bytes) => {
+                runtime
+                    .pushed
+                    .push(std::mem::replace(&mut runtime.current, bytes.clone()));
+            }
+            PdfColorStackAction::Pop => {
+                runtime.current = runtime
+                    .pushed
+                    .pop()
+                    .ok_or(PdfColorStackApplyError::Underflow)?;
+            }
+            PdfColorStackAction::Current => {}
+        }
+        let emission = PdfColorStackEmission {
+            mode: stack.mode,
+            payload: runtime.current.clone(),
+        };
+        self.color_stack_fingerprint = color_stack_fingerprint(&self.color_stacks);
+        Ok(emission)
+    }
+
+    pub(crate) fn page_color_stack_restorations(&mut self) -> Vec<PdfColorStackEmission> {
+        self.ensure_default_color_stack();
+        self.color_stacks
+            .iter()
+            .enumerate()
+            .filter(|(id, stack)| {
+                stack.restore_at_page_start
+                    && !stack.page.current.is_empty()
+                    && !(*id == 0 && stack.page.current == b"0 g 0 G")
+            })
+            .map(|(_, stack)| PdfColorStackEmission {
+                mode: stack.mode,
+                payload: stack.page.current.clone(),
+            })
+            .collect()
+    }
+}
+
+fn color_stack_fingerprint(stacks: &[PdfColorStack]) -> u64 {
+    let mut hasher = StateHasher::new(PDF_COLOR_STACK_DOMAIN);
+    hasher.usize(stacks.len());
+    for stack in stacks {
+        hasher.u8(match stack.mode {
+            PdfColorStackMode::Origin => 0,
+            PdfColorStackMode::Page => 1,
+            PdfColorStackMode::Direct => 2,
+        });
+        hasher.bool(stack.restore_at_page_start);
+        for runtime in [&stack.page, &stack.form] {
+            hasher.bytes(&runtime.current);
+            hasher.usize(runtime.pushed.len());
+            for bytes in &runtime.pushed {
+                hasher.bytes(bytes);
+            }
+        }
+    }
+    hasher.finish()
 }
 
 fn external_image_base_fingerprint() -> u64 {
@@ -2387,5 +2582,42 @@ mod tests {
         state.rollback(initial);
         assert_eq!(state.hash_fragment(), initial_hash);
         assert_ne!(completed_hash, initial_hash);
+    }
+
+    #[test]
+    fn color_stacks_are_checkpointed_and_page_and_form_state_stay_independent() {
+        let mut state = PdfState::default();
+        let before_hash = state.hash_fragment();
+        let before = state.snapshot();
+        let id = state
+            .allocate_color_stack(PdfColorStackMode::Page, true, b"0 0 1 rg".to_vec())
+            .expect("color stack capacity");
+        assert_eq!(id, 1);
+        let allocated_hash = state.hash_fragment();
+        assert_ne!(allocated_hash, before_hash);
+
+        let page = state
+            .apply_color_stack(
+                id,
+                PdfColorStackTarget::Page,
+                &PdfColorStackAction::Push(b"1 0 0 rg".to_vec()),
+            )
+            .expect("page push");
+        assert_eq!(page.payload, b"1 0 0 rg");
+        let form = state
+            .apply_color_stack(id, PdfColorStackTarget::Form, &PdfColorStackAction::Current)
+            .expect("form current");
+        assert_eq!(form.payload, b"0 0 1 rg");
+        assert_eq!(
+            state.apply_color_stack(0, PdfColorStackTarget::Page, &PdfColorStackAction::Pop),
+            Err(PdfColorStackApplyError::Underflow)
+        );
+
+        state.rollback(before);
+        assert_eq!(
+            state.allocate_color_stack(PdfColorStackMode::Page, true, b"0 0 1 rg".to_vec()),
+            Ok(1)
+        );
+        assert_eq!(state.hash_fragment(), allocated_hash);
     }
 }
