@@ -1,0 +1,16 @@
+pdf-structure-v1
+version 1.4
+catalog /Catalog
+pages 2
+page 1
+media-box 0 0 71.731 71.731
+resources <</ProcSet [/PDF]>>
+beads [<</N <</N @0 /P page 2 /R [0 0 0 71.731] /V @0>> /P page 1 /R [0 0 0 71.731] /T <</F @0 /I <</Title <41727469636c65>>>>> /V <</N @0 /P page 2 /R [0 0 0 71.731] /V @0>>>>]
+page 2
+media-box 0 0 71.731 71.731
+resources <</ProcSet [/PDF]>>
+beads [<</N <</N @0 /P page 1 /R [0 0 0 71.731] /T <</F @1 /I <</Title <41727469636c65>>>>> /V @0>> /P page 2 /R [0 0 0 71.731] /V <</N @0 /P page 1 /R [0 0 0 71.731] /T <</F @1 /I <</Title <41727469636c65>>>>> /V @0>>>>]
+document-extensions
+names <</Dests <</Kids [<</Limits [<616c706861> <6d75>] /Names [<616c706861> <</D [page 1 /XYZ 0 71.731 null]>> <62657461> <</D [page 1 /FitV 0]>> <64656c7461> <</D [page 1 /FitR 0 69.738 4.981 74.72]>> <657461> <</D [page 1 /FitBV 0]>> <67616d6d61> <</D [page 1 /FitBH 71.731]>> <6d75> <</D [page 1 /FitH 71.731]>>]>> <</Limits [<6f6d656761> <7a657461>] /Names [<6f6d656761> <</D [page 2 /Fit]>> <7468657461> <</D [page 1 /FitB]>> <7a657461> <</D [page 1 /Fit]>>]>>] /Limits [<616c706861> <7a657461>]>>>>
+outlines <</Count 4 /First <</A <</D <616c706861> /S /GoTo>> /Count 2 /First <</A <</D [page 1 /Fit] /S /GoTo>> /Next <</A <</D <61727469636c65> /S /Thread>> /Parent @1 /Prev @2 /Title <41727469636c65>>> /Parent @1 /Title <46697273742070616765>>> /Last <</A <</D <61727469636c65> /S /Thread>> /Parent @1 /Prev <</A <</D [page 1 /Fit] /S /GoTo>> /Next @2 /Parent @1 /Title <46697273742070616765>>> /Title <41727469636c65>>> /Next <</A <</D [page 1 /Fit] /S /GoTo>> /Parent @0 /Prev @1 /Title <4e756d657269632064657374696e6174696f6e>>> /Parent @0 /Title <4e617669676174696f6e>>> /Last <</A <</D [page 1 /Fit] /S /GoTo>> /Parent @0 /Prev <</A <</D <616c706861> /S /GoTo>> /Count 2 /First <</A <</D [page 1 /Fit] /S /GoTo>> /Next <</A <</D <61727469636c65> /S /Thread>> /Parent @2 /Prev @3 /Title <41727469636c65>>> /Parent @2 /Title <46697273742070616765>>> /Last <</A <</D <61727469636c65> /S /Thread>> /Parent @2 /Prev <</A <</D [page 1 /Fit] /S /GoTo>> /Next @3 /Parent @2 /Title <46697273742070616765>>> /Title <41727469636c65>>> /Next @1 /Parent @0 /Title <4e617669676174696f6e>>> /Title <4e756d657269632064657374696e6174696f6e>>> /Type /Outlines>>
+threads [<</F <</N <</N @2 /P page 2 /R [0 0 0 71.731] /V @2>> /P page 1 /R [0 0 0 71.731] /T @1 /V <</N @2 /P page 2 /R [0 0 0 71.731] /V @2>>>> /I <</Title <41727469636c65>>>>>]

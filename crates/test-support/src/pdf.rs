@@ -54,10 +54,25 @@ pub fn normalize_structure(bytes: &[u8]) -> Result<String> {
         normalized.push_str(&canonical_object(&document, resources, 0)?);
         normalized.push('\n');
 
+        if let Ok(beads) = page.get(b"B") {
+            normalized.push_str("beads ");
+            normalized.push_str(&canonical_object(&document, beads, 0)?);
+            normalized.push('\n');
+        }
+
         let content = document
             .get_and_decode_page_content(page_id)
             .with_context(|| format!("failed to decode page {number} content"))?;
-        for operation in content.operations {
+        let omit_noop_wrapper = content.operations.len() == 2
+            && content.operations[0].operator == "q"
+            && content.operations[0].operands.is_empty()
+            && content.operations[1].operator == "Q"
+            && content.operations[1].operands.is_empty();
+        for operation in content
+            .operations
+            .into_iter()
+            .filter(|_| !omit_noop_wrapper)
+        {
             normalized.push_str("content");
             for operand in operation.operands {
                 normalized.push(' ');
@@ -97,6 +112,18 @@ fn append_document_extensions(document: &Document, normalized: &mut String) -> R
     }
     if let Ok(names) = catalog.get(b"Names") {
         extensions.push(format!("names {}", canonical_object(document, names, 0)?));
+    }
+    if let Ok(outlines) = catalog.get(b"Outlines") {
+        extensions.push(format!(
+            "outlines {}",
+            canonical_object(document, outlines, 0)?
+        ));
+    }
+    if let Ok(threads) = catalog.get(b"Threads") {
+        extensions.push(format!(
+            "threads {}",
+            canonical_object(document, threads, 0)?
+        ));
     }
 
     if let Ok(info) = document.trailer.get(b"Info") {
@@ -261,12 +288,37 @@ fn require_name(object: &Object, expected: &[u8]) -> Result<()> {
 }
 
 fn canonical_object(document: &Document, object: &Object, depth: usize) -> Result<String> {
+    canonical_object_inner(document, object, depth, &mut Vec::new())
+}
+
+fn canonical_object_inner(
+    document: &Document,
+    object: &Object,
+    depth: usize,
+    references: &mut Vec<ObjectId>,
+) -> Result<String> {
     if depth > 32 {
         bail!("PDF fixture object nesting exceeds 32 levels");
     }
-    let (_, object) = document
-        .dereference(object)
-        .context("failed to resolve PDF object reference")?;
+    if let Object::Reference(id) = object {
+        if let Some((number, _)) = document
+            .get_pages()
+            .into_iter()
+            .find(|(_, page_id)| page_id == id)
+        {
+            return Ok(format!("page {number}"));
+        }
+        if let Some(index) = references.iter().position(|existing| existing == id) {
+            return Ok(format!("@{index}"));
+        }
+        let object = document
+            .get_object(*id)
+            .context("failed to resolve PDF object reference")?;
+        references.push(*id);
+        let normalized = canonical_object_inner(document, object, depth + 1, references);
+        references.pop();
+        return normalized;
+    }
     Ok(match object {
         Object::Null => "null".to_owned(),
         Object::Boolean(value) => value.to_string(),
@@ -276,7 +328,7 @@ fn canonical_object(document: &Document, object: &Object, depth: usize) -> Resul
         Object::Array(values) => {
             let values = values
                 .iter()
-                .map(|value| canonical_object(document, value, depth + 1))
+                .map(|value| canonical_object_inner(document, value, depth + 1, references))
                 .collect::<Result<Vec<_>>>()?;
             format!("[{}]", values.join(" "))
         }
@@ -289,7 +341,7 @@ fn canonical_object(document: &Document, object: &Object, depth: usize) -> Resul
                     Ok(format!(
                         "/{} {}",
                         String::from_utf8_lossy(key),
-                        canonical_object(document, value, depth + 1)?
+                        canonical_object_inner(document, value, depth + 1, references)?
                     ))
                 })
                 .collect::<Result<Vec<_>>>()?;
@@ -312,7 +364,7 @@ fn canonical_object(document: &Document, object: &Object, depth: usize) -> Resul
                 )
             }
         }
-        Object::Reference(_) => unreachable!("references were dereferenced"),
+        Object::Reference(_) => unreachable!("references were handled above"),
     })
 }
 

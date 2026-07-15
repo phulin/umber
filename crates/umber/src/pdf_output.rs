@@ -1673,7 +1673,6 @@ fn build_destination_name_tree(
         level.push((id, min, max));
     }
     while level.len() > 1 {
-        let root_level = level.len() <= 6;
         let mut parent = Vec::new();
         for chunk in level.chunks(6) {
             let id = object_id(*next_object)?;
@@ -1685,7 +1684,7 @@ fn build_destination_name_tree(
             objects.push(PdfIndirectObject {
                 id,
                 object: PdfObject::DestinationNameTree(PdfDestinationNameTree {
-                    limits: (!root_level).then(|| (min.clone(), max.clone())),
+                    limits: Some((min.clone(), max.clone())),
                     children: PdfDestinationNameTreeChildren::Kids(
                         chunk.iter().map(|entry| entry.0).collect(),
                     ),
@@ -1696,13 +1695,6 @@ fn build_destination_name_tree(
         level = parent;
     }
     let root = level[0].0;
-    if let Some(PdfIndirectObject {
-        object: PdfObject::DestinationNameTree(tree),
-        ..
-    }) = objects.iter_mut().find(|object| object.id == root)
-    {
-        tree.limits = None;
-    }
     Ok((objects, Some(root)))
 }
 

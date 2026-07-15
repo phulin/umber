@@ -193,6 +193,37 @@ fn object_dictionary_pdf_replays_to_identical_bytes_and_state() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // Committed corpus fixture boundary.
+fn navigation_fixture_replays_graph_bytes_and_state() {
+    let source = fs::read_to_string(corpus_root().join("pdf/navigation_structures.tex"))
+        .expect("read navigation parity source");
+    let mut stores = Universe::default();
+    umber::prepare_pdftex_run_stores(&mut stores);
+    stores
+        .begin_retained_session()
+        .expect("retained navigation replay session starts");
+    let checkpoint = stores.snapshot();
+
+    umber::run_memory_with_stores(&source, &mut stores).expect("first navigation execution");
+    let first_artifacts = stores.world().committed_artifacts().to_vec();
+    let first = umber::pdf_from_committed_artifacts(&mut stores, &first_artifacts)
+        .expect("first navigation PDF finalization");
+    let first_hash = stores.snapshot().state_hash();
+    let structure = normalize_structure(&first).expect("normalize navigation graph");
+    for marker in ["names ", "outlines ", "threads ", "beads "] {
+        assert!(structure.contains(marker), "missing {marker} projection");
+    }
+
+    stores.rollback(&checkpoint);
+    umber::run_memory_with_stores(&source, &mut stores).expect("replayed navigation execution");
+    let replayed_artifacts = stores.world().committed_artifacts().to_vec();
+    let replayed = umber::pdf_from_committed_artifacts(&mut stores, &replayed_artifacts)
+        .expect("replayed navigation PDF finalization");
+    assert_eq!(replayed, first, "navigation rollback changed PDF bytes");
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // Committed corpus fixture boundary.
 fn form_xobject_fixture_replays_bytes_artifacts_positions_and_state() {
     let source = fs::read_to_string(corpus_root().join("pdf/form_xobjects.tex"))
         .expect("read Form XObject parity source");

@@ -1,0 +1,28 @@
+\catcode123=1 \catcode125=2
+\pdfoutput=1
+\pdfpagewidth=72pt \pdfpageheight=72pt
+\pdfhorigin=0pt \pdfvorigin=0pt
+\pdfcompresslevel=0 \pdfobjcompresslevel=0
+\pdfoutline goto name{alpha} count 2 {Navigation}
+\pdfoutline goto page 1 {/Fit} {First page}
+\pdfoutline thread name{article}{Article}
+\pdfoutline goto num 41 {Numeric destination}
+\shipout\vbox to72pt{
+  \pdfdest name{zeta} fit
+  \pdfdest name{alpha} xyz
+  \pdfdest name{mu} fith
+  \pdfdest name{beta} fitv
+  \pdfdest name{theta} fitb
+  \pdfdest name{gamma} fitbh
+  \pdfdest name{eta} fitbv
+  \pdfdest name{delta} fitr width5pt height3pt depth2pt
+  \pdfdest num 41 fit
+  \pdfthread attr{/I << /Title (Article) >>} name{article}
+  \vfil
+}
+\shipout\vbox to72pt{
+  \pdfthread name{article}
+  \pdfdest name{omega} fit
+  \vfil
+}
+\end
