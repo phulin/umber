@@ -233,6 +233,8 @@ pub enum ExpandablePrimitive {
     /// The full pinned pdfTeX engine banner.
     PdfTeXBanner,
     PdfFontSize,
+    LeftMarginKern,
+    RightMarginKern,
 }
 
 impl ExpandablePrimitive {
@@ -301,6 +303,8 @@ impl ExpandablePrimitive {
             Self::PdfTeXRevision => 59,
             Self::PdfTeXBanner => 60,
             Self::PdfFontSize => 61,
+            Self::LeftMarginKern => 62,
+            Self::RightMarginKern => 63,
         }
     }
 
@@ -369,6 +373,8 @@ impl ExpandablePrimitive {
             59 => Some(Self::PdfTeXRevision),
             60 => Some(Self::PdfTeXBanner),
             61 => Some(Self::PdfFontSize),
+            62 => Some(Self::LeftMarginKern),
+            63 => Some(Self::RightMarginKern),
             _ => None,
         }
     }

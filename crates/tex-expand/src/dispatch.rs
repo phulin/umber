@@ -398,6 +398,34 @@ macro_rules! dispatch_match {
                     call_origin,
                 ))
             }
+            Meaning::ExpandablePrimitive(
+                primitive @ (ExpandablePrimitive::LeftMarginKern
+                | ExpandablePrimitive::RightMarginKern),
+            ) => {
+                let index = scan_register_index_with_mode_and_context(
+                    input,
+                    stores,
+                    expansion,
+                    mode,
+                    call_context,
+                )?;
+                crate::record_dependency!(expansion, crate::ReadDependency::Cell {
+                    bank: crate::ReadBank::Box,
+                    index: u32::from(index),
+                });
+                let amount = margin_kern_enquiry(
+                    stores,
+                    index,
+                    primitive == ExpandablePrimitive::LeftMarginKern,
+                    call_context,
+                )?;
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::NumberOutput,
+                    &crate::values::format_scaled(amount),
+                    call_origin,
+                ))
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => $input_arm,
             Meaning::ExpandablePrimitive(ExpandablePrimitive::EndInput) => {
                 input.end_current_source_after_current_line();
@@ -905,6 +933,57 @@ macro_rules! dispatch_match {
             }
         }
     }};
+}
+
+fn margin_kern_enquiry(
+    stores: &impl ExpansionState,
+    index: u16,
+    left: bool,
+    context: TracedTokenWord,
+) -> Result<tex_state::scaled::Scaled, ExpandError> {
+    let Some(root) = stores.box_reg(index) else {
+        return Err(ExpandError::MarginKernExpectedHBox { context });
+    };
+    let Some(tex_state::node_arena::NodeRef::HList(box_node)) = stores.nodes(root).first() else {
+        return Err(ExpandError::MarginKernExpectedHBox { context });
+    };
+    let children = stores.nodes(box_node.children);
+    let expected = if left {
+        tex_state::node::KernKind::LeftMargin
+    } else {
+        tex_state::node::KernKind::RightMargin
+    };
+    let found = if left {
+        children
+            .iter()
+            .find(|node| !margin_kern_enquiry_skip(node, true))
+    } else {
+        children
+            .iter()
+            .rev()
+            .find(|node| !margin_kern_enquiry_skip(node, false))
+    };
+    Ok(match found {
+        Some(tex_state::node_arena::NodeRef::Kern { amount, kind }) if kind == expected => amount,
+        _ => tex_state::scaled::Scaled::from_raw(0),
+    })
+}
+
+fn margin_kern_enquiry_skip(node: &tex_state::node_arena::NodeRef<'_>, left: bool) -> bool {
+    matches!(
+        node,
+        tex_state::node_arena::NodeRef::Penalty(_)
+            | tex_state::node_arena::NodeRef::Mark { .. }
+            | tex_state::node_arena::NodeRef::Ins { .. }
+            | tex_state::node_arena::NodeRef::Whatsit(_)
+            | tex_state::node_arena::NodeRef::Direction(_)
+            | tex_state::node_arena::NodeRef::Adjust(_)
+    ) || matches!(
+        node,
+        tex_state::node_arena::NodeRef::Glue { kind, .. }
+            if (left && *kind == tex_state::node::GlueKind::LeftSkip)
+                || (!left && *kind == tex_state::node::GlueKind::RightSkip)
+    )
 }
 
 type InputOpenOperation = fn(

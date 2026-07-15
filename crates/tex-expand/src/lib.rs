@@ -289,6 +289,14 @@ pub fn install_pdftex_expandable_primitives(stores: &mut Universe) {
             "pdffontsize",
             tex_state::meaning::ExpandablePrimitive::PdfFontSize,
         ),
+        (
+            "leftmarginkern",
+            tex_state::meaning::ExpandablePrimitive::LeftMarginKern,
+        ),
+        (
+            "rightmarginkern",
+            tex_state::meaning::ExpandablePrimitive::RightMarginKern,
+        ),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
@@ -628,6 +636,9 @@ pub enum ExpandError {
         available: u16,
         context: TracedTokenWord,
     },
+    MarginKernExpectedHBox {
+        context: TracedTokenWord,
+    },
     InvalidConditionalRelation {
         context: TracedTokenWord,
     },
@@ -699,6 +710,9 @@ impl fmt::Display for ExpandError {
                 f,
                 "Font \\{font_name} has only {available} fontdimen parameters"
             ),
+            Self::MarginKernExpectedHBox { .. } => {
+                f.write_str("pdfTeX error (marginkern): a non-empty hbox expected")
+            }
             Self::InvalidConditionalRelation { context } => {
                 write!(
                     f,
@@ -744,6 +758,7 @@ impl std::error::Error for ExpandError {
             | Self::MissingFontIdentifier { .. }
             | Self::MathFamilyOutOfRange { .. }
             | Self::FontDimenOutOfRange { .. }
+            | Self::MarginKernExpectedHBox { .. }
             | Self::InvalidConditionalRelation { .. }
             | Self::IncompleteIf { .. }
             | Self::ExtraConditionalControl { .. }
@@ -774,6 +789,7 @@ impl ExpandError {
             | Self::MissingFontIdentifier { context }
             | Self::MathFamilyOutOfRange { context, .. }
             | Self::FontDimenOutOfRange { context, .. }
+            | Self::MarginKernExpectedHBox { context }
             | Self::InvalidConditionalRelation { context }
             | Self::IncompleteIf { context } => Some(context.origin()),
             Self::ScanInt(err) => err.primary_origin(),

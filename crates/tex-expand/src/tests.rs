@@ -12,7 +12,7 @@ use tex_state::ids::TokenListId;
 use tex_state::interner::Symbol;
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, UnexpandablePrimitive};
-use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign};
+use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, KernKind, Node, Sign};
 use tex_state::page::PageMark;
 use tex_state::provenance::{
     InsertedOrigin, InsertedOriginKind, MacroInvocationOrigin, OriginRecord, SynthesizedOrigin,
@@ -4516,6 +4516,94 @@ fn box_predicates_read_box_register_state() {
             &mut tex_state::ExpansionContext::new(&mut stores)
         ),
         "vhbx"
+    );
+}
+
+#[test]
+fn margin_kern_enquiries_find_named_kerns_inside_skip_glue() {
+    let mut stores = Universe::new();
+    let left = expandable_primitive(
+        &mut stores,
+        "leftmarginkern",
+        ExpandablePrimitive::LeftMarginKern,
+    );
+    let right = expandable_primitive(
+        &mut stores,
+        "rightmarginkern",
+        ExpandablePrimitive::RightMarginKern,
+    );
+    let zero = stores.intern_glue(GlueSpec::ZERO);
+    let children = stores.freeze_node_list(&[
+        Node::Glue {
+            spec: zero,
+            kind: GlueKind::LeftSkip,
+            leader: None,
+        },
+        Node::Kern {
+            amount: Scaled::from_raw(-5 * 65_536),
+            kind: KernKind::LeftMargin,
+        },
+        Node::Kern {
+            amount: Scaled::from_raw(-7 * 65_536),
+            kind: KernKind::RightMargin,
+        },
+        Node::Glue {
+            spec: zero,
+            kind: GlueKind::RightSkip,
+            leader: None,
+        },
+    ]);
+    let hbox = BoxNode::new(BoxNodeFields {
+        width: Scaled::from_raw(0),
+        height: Scaled::from_raw(0),
+        depth: Scaled::from_raw(0),
+        shift: Scaled::from_raw(0),
+        display: false,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children,
+    });
+    let root = stores.freeze_node_list(&[Node::HList(hbox)]);
+    stores.set_box_reg(1, root);
+    let input_tokens = stores.intern_token_list(&[
+        Token::Cs(left.symbol()),
+        char_token('1'),
+        Token::Cs(right.symbol()),
+        char_token('1'),
+    ]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list(input_tokens, TokenListReplayKind::Inserted);
+
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "-5.0pt-7.0pt"
+    );
+}
+
+#[test]
+fn margin_kern_enquiry_rejects_void_register() {
+    let mut stores = Universe::new();
+    let left = expandable_primitive(
+        &mut stores,
+        "leftmarginkern",
+        ExpandablePrimitive::LeftMarginKern,
+    );
+    let input_tokens = stores.intern_token_list(&[Token::Cs(left.symbol()), char_token('0')]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list(input_tokens, TokenListReplayKind::Inserted);
+
+    let error = get_x_token(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    )
+    .expect_err("void box register must be rejected");
+    assert_eq!(
+        error.to_string(),
+        "pdfTeX error (marginkern): a non-empty hbox expected"
     );
 }
 
