@@ -325,6 +325,33 @@ fn engine_snapshot_queries_are_backed_by_current_nest_level() {
 }
 
 #[test]
+fn outer_lastskip_uses_page_glue_only_when_the_contribution_list_is_empty() {
+    let executor = Executor::new();
+    let mut stores = Universe::new();
+    let page_glue = stores.intern_glue(GlueSpec {
+        width: tex_state::scaled::Scaled::from_raw(7 * tex_state::scaled::Scaled::UNITY),
+        ..GlueSpec::ZERO
+    });
+    stores.update_page_last_from_node(&Node::Glue {
+        spec: page_glue,
+        kind: tex_state::node::GlueKind::Normal,
+        leader: None,
+    });
+    let mut context = crate::ExecutionContext::new("texput");
+
+    crate::executor::sync_engine_state(&mut context, executor.nest(), &stores);
+    assert_eq!(context.engine.last_skip, stores.glue(page_glue));
+
+    stores.append_page_contribution(Node::Rule {
+        width: None,
+        height: None,
+        depth: None,
+    });
+    crate::executor::sync_engine_state(&mut context, executor.nest(), &stores);
+    assert_eq!(context.engine.last_skip, GlueSpec::ZERO);
+}
+
+#[test]
 fn dispatch_relax_continues_without_state_mutation() {
     let mut stores = Universe::new();
     let relax = stores.intern("relax");

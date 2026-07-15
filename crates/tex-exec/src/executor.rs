@@ -699,7 +699,8 @@ fn engine_state_snapshot(nest: &ModeNest, stores: &Universe) -> EngineStateSnaps
             Some(Node::Penalty(value)) => state.last_penalty = *value,
             Some(Node::Kern { amount, .. }) => state.last_kern = *amount,
             Some(Node::Glue { spec, .. }) => state.last_skip = stores.glue(*spec),
-            Some(_) | None => {
+            Some(_) => {}
+            None => {
                 state.last_penalty = stores.page_last_penalty();
                 state.last_kern = stores.page_last_kern();
                 state.last_skip = stores.page_last_skip();
