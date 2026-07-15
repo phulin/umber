@@ -1,8 +1,8 @@
 //! Macro-call argument matching.
 //!
 //! This is the TeX gullet scanner for macro parameter text. It consumes the
-//! call-site input, freezes matched arguments through `Universe`, and leaves body
-//! replay/substitution to the expansion-frame work.
+//! call-site input into transient packed buffers and leaves body replay and
+//! substitution to the expansion-frame work.
 
 use std::collections::VecDeque;
 use std::fmt;
@@ -150,10 +150,15 @@ struct PendingArgumentToken {
 }
 
 #[derive(Clone, Copy)]
-struct MacroCallContext<'a> {
+struct MacroCallContext {
     flags: MeaningFlags,
-    macro_name: &'a str,
     call_token: TracedTokenWord,
+}
+
+impl MacroCallContext {
+    fn macro_name(self, stores: &impl ExpansionState) -> String {
+        macro_name(stores, traced_semantic_token(self.call_token))
+    }
 }
 
 /// Matches one macro call into a single transient packed-token buffer.
@@ -174,7 +179,10 @@ pub(crate) fn match_macro_call_with_context(
     call_token: TracedTokenWord,
     meaning: MacroMeaning,
 ) -> Result<MatchedArguments, MacroCallError> {
-    let macro_name = macro_name(stores, traced_semantic_token(call_token));
+    let context = MacroCallContext {
+        flags: meaning.flags(),
+        call_token,
+    };
     let parameter_text = meaning.parameter_text();
     let pattern = match expansion.parameter_pattern_cache.get(&parameter_text) {
         Some(pattern) => Arc::clone(pattern),
@@ -186,15 +194,7 @@ pub(crate) fn match_macro_call_with_context(
             pattern
         }
     };
-    match_exact_tokens(
-        input,
-        stores,
-        expansion,
-        meaning.flags(),
-        &macro_name,
-        &pattern.leading,
-        call_token,
-    )?;
+    match_exact_tokens(input, stores, expansion, context, &pattern.leading)?;
 
     let mut matched = MatchedArguments {
         tokens: input.take_transient_token_buffer(),
@@ -203,25 +203,13 @@ pub(crate) fn match_macro_call_with_context(
     let result = (|| {
         for spec in &pattern.specs {
             let range = if spec.delimiter.is_empty() {
-                scan_undelimited_argument(
-                    input,
-                    stores,
-                    expansion,
-                    meaning.flags(),
-                    &macro_name,
-                    call_token,
-                    &mut matched.tokens,
-                )?
+                scan_undelimited_argument(input, stores, expansion, context, &mut matched.tokens)?
             } else {
                 scan_delimited_argument(
                     input,
                     stores,
                     expansion,
-                    MacroCallContext {
-                        flags: meaning.flags(),
-                        macro_name: &macro_name,
-                        call_token,
-                    },
+                    context,
                     spec,
                     &mut matched.tokens,
                 )?
@@ -275,16 +263,14 @@ fn match_exact_tokens(
     input: &mut InputStack,
     stores: &mut tex_state::ExpansionContext<'_>,
     expansion: &mut ExpansionContext<'_>,
-    flags: MeaningFlags,
-    macro_name: &str,
+    context: MacroCallContext,
     expected: &[Token],
-    call_context: TracedTokenWord,
 ) -> Result<(), MacroCallError> {
     for &expected_token in expected {
-        let token = next_checked_token(input, stores, expansion, flags, macro_name, call_context)?;
+        let token = next_checked_token(input, stores, expansion, context)?;
         if traced_semantic_token(token) != expected_token {
             return Err(MacroCallError::DoesNotMatchDefinition {
-                macro_name: macro_name.to_owned(),
+                macro_name: context.macro_name(stores),
                 context: token,
             });
         }
@@ -296,27 +282,17 @@ fn scan_undelimited_argument(
     input: &mut InputStack,
     stores: &mut tex_state::ExpansionContext<'_>,
     expansion: &mut ExpansionContext<'_>,
-    flags: MeaningFlags,
-    macro_name: &str,
-    call_context: TracedTokenWord,
+    context: MacroCallContext,
     tokens: &mut Vec<TracedTokenWord>,
 ) -> Result<MacroArgumentRange, MacroCallError> {
-    let mut token = next_checked_token(input, stores, expansion, flags, macro_name, call_context)?;
+    let mut token = next_checked_token(input, stores, expansion, context)?;
     while is_space_token(traced_semantic_token(token)) {
-        token = next_checked_token(input, stores, expansion, flags, macro_name, call_context)?;
+        token = next_checked_token(input, stores, expansion, context)?;
     }
 
     let start = tokens.len();
     if is_begin_group(traced_semantic_token(token)) {
-        scan_balanced_group(
-            input,
-            stores,
-            expansion,
-            flags,
-            macro_name,
-            call_context,
-            tokens,
-        )?;
+        scan_balanced_group(input, stores, expansion, context, tokens)?;
     } else {
         tokens.push(token);
     }
@@ -327,14 +303,12 @@ fn scan_balanced_group(
     input: &mut InputStack,
     stores: &mut tex_state::ExpansionContext<'_>,
     expansion: &mut ExpansionContext<'_>,
-    flags: MeaningFlags,
-    macro_name: &str,
-    call_context: TracedTokenWord,
+    context: MacroCallContext,
     tokens: &mut Vec<TracedTokenWord>,
 ) -> Result<(), MacroCallError> {
     let mut level = 1_u32;
     loop {
-        let token = next_checked_token(input, stores, expansion, flags, macro_name, call_context)?;
+        let token = next_checked_token(input, stores, expansion, context)?;
         match traced_semantic_token(token) {
             Token::Char {
                 cat: Catcode::BeginGroup,
@@ -362,7 +336,7 @@ fn scan_delimited_argument(
     input: &mut InputStack,
     stores: &mut tex_state::ExpansionContext<'_>,
     expansion: &mut ExpansionContext<'_>,
-    context: MacroCallContext<'_>,
+    context: MacroCallContext,
     spec: &ParameterSpec,
     argument: &mut Vec<TracedTokenWord>,
 ) -> Result<MacroArgumentRange, MacroCallError> {
@@ -372,27 +346,13 @@ fn scan_delimited_argument(
     let mut level = 0_u32;
 
     loop {
-        let scanned = next_or_pending_token(
-            input,
-            stores,
-            expansion,
-            context.macro_name,
-            context.call_token,
-            &mut pending,
-        )?;
+        let scanned = next_or_pending_token(input, stores, expansion, context, &mut pending)?;
         let token = traced_semantic_token(scanned.token);
         if level == 0 && token == delimiter[0] {
             let mut candidate = vec![scanned];
             let mut matched = true;
             for &expected in &delimiter[1..] {
-                let next = next_or_pending_token(
-                    input,
-                    stores,
-                    expansion,
-                    context.macro_name,
-                    context.call_token,
-                    &mut pending,
-                )?;
+                let next = next_or_pending_token(input, stores, expansion, context, &mut pending)?;
                 candidate.push(next);
                 if traced_semantic_token(next.token) != expected {
                     matched = false;
@@ -420,7 +380,7 @@ fn scan_delimited_argument(
             continue;
         }
 
-        check_argument_par(stores, context.flags, context.macro_name, scanned)?;
+        check_argument_par(stores, context, scanned)?;
         push_argument_token(argument, &mut level, scanned.token);
     }
 }
@@ -429,21 +389,14 @@ fn next_or_pending_token(
     input: &mut InputStack,
     stores: &mut tex_state::ExpansionContext<'_>,
     expansion: &mut ExpansionContext<'_>,
-    macro_name: &str,
-    call_context: TracedTokenWord,
+    context: MacroCallContext,
     pending: &mut VecDeque<PendingArgumentToken>,
 ) -> Result<PendingArgumentToken, MacroCallError> {
     if let Some(token) = pending.pop_front() {
         Ok(token)
     } else {
         Ok(PendingArgumentToken {
-            token: next_token_without_par_check(
-                input,
-                stores,
-                expansion,
-                macro_name,
-                call_context,
-            )?,
+            token: next_token_without_par_check(input, stores, expansion, context)?,
             allow_par: false,
         })
     }
@@ -451,16 +404,15 @@ fn next_or_pending_token(
 
 fn check_argument_par(
     stores: &impl ExpansionState,
-    flags: MeaningFlags,
-    macro_name: &str,
+    context: MacroCallContext,
     scanned: PendingArgumentToken,
 ) -> Result<(), MacroCallError> {
     if !scanned.allow_par
         && is_par_token(stores, traced_semantic_token(scanned.token))
-        && !flags.contains(MeaningFlags::LONG)
+        && !context.flags.contains(MeaningFlags::LONG)
     {
         return Err(MacroCallError::ParagraphEndedBeforeComplete {
-            macro_name: macro_name.to_owned(),
+            macro_name: context.macro_name(stores),
             context: scanned.token,
         });
     }
@@ -471,15 +423,15 @@ fn next_checked_token(
     input: &mut InputStack,
     stores: &mut tex_state::ExpansionContext<'_>,
     expansion: &mut ExpansionContext<'_>,
-    flags: MeaningFlags,
-    macro_name: &str,
-    call_context: TracedTokenWord,
+    context: MacroCallContext,
 ) -> Result<TracedTokenWord, MacroCallError> {
-    let token = next_token_without_par_check(input, stores, expansion, macro_name, call_context)?;
+    let token = next_token_without_par_check(input, stores, expansion, context)?;
 
-    if is_par_token(stores, traced_semantic_token(token)) && !flags.contains(MeaningFlags::LONG) {
+    if is_par_token(stores, traced_semantic_token(token))
+        && !context.flags.contains(MeaningFlags::LONG)
+    {
         return Err(MacroCallError::ParagraphEndedBeforeComplete {
-            macro_name: macro_name.to_owned(),
+            macro_name: context.macro_name(stores),
             context: token,
         });
     }
@@ -491,13 +443,12 @@ fn next_token_without_par_check(
     input: &mut InputStack,
     stores: &mut tex_state::ExpansionContext<'_>,
     expansion: &mut ExpansionContext<'_>,
-    macro_name: &str,
-    call_context: TracedTokenWord,
+    context: MacroCallContext,
 ) -> Result<TracedTokenWord, MacroCallError> {
     let token = crate::next_semantic_raw_token(input, stores)?.ok_or_else(|| {
         MacroCallError::EndOfInput {
-            macro_name: macro_name.to_owned(),
-            context: call_context,
+            macro_name: context.macro_name(stores),
+            context: context.call_token,
         }
     })?;
 
@@ -508,7 +459,7 @@ fn next_token_without_par_check(
             && flags.contains(MeaningFlags::OUTER)
         {
             return Err(MacroCallError::ForbiddenOuterToken {
-                macro_name: macro_name.to_owned(),
+                macro_name: context.macro_name(stores),
                 context: token,
             });
         }
