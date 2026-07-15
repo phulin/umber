@@ -34,6 +34,10 @@
 			"types": "./cm-fonts.d.ts",
 			"import": "./cm-fonts.js"
 		},
+		"./source-map": {
+			"types": "./source-map.d.ts",
+			"import": "./source-map.js"
+		},
 		"./plain.fmt": "./assets/plain.fmt",
 		"./plain-format.json": "./assets/plain-format.json",
 		"./cmu-serif.woff2": "./assets/cmu-serif-500-roman.woff2"

@@ -60,6 +60,8 @@ for (const required of [
 	"html-preview.d.ts",
 	"cm-fonts.js",
 	"cm-fonts.d.ts",
+	"source-map.js",
+	"source-map.d.ts",
 	"umber_wasm.js",
 	"umber_wasm.d.ts",
 	"THIRD_PARTY_NOTICES.md",

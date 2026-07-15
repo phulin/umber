@@ -1,7 +1,8 @@
 import { loadComputerModernTextFont } from "/package/cm-fonts.js";
 import { compile } from "/package/compile.js";
 import { HttpManifestResolver } from "/package/manifest-resolver.js";
-import initWasm, { contentHash } from "/package/umber_wasm.js";
+import { renderedSourceLocationFromPoint } from "/package/source-map.js";
+import initWasm, { CompilerSession, contentHash } from "/package/umber_wasm.js";
 import { compileInWorker } from "/package/worker-controller.js";
 
 const encode = (value) => new TextEncoder().encode(value);
@@ -110,6 +111,33 @@ async function integration() {
 	const generatedGeometry = await installAndMeasureGeneratedHtml(
 		htmlFirst.html,
 	);
+	const retained = new CompilerSession(htmlOptions);
+	retained.addUserFile("cmr10.tfm", cmr10);
+	retained.addUserFile("html.tex", htmlFiles.get("html.tex"));
+	const retainedMissing = retained.advance();
+	assert(
+		retainedMissing.kind === "need-resources",
+		"retained session did not request its HTML font",
+	);
+	retained.provideResources(
+		retainedMissing.required.map((request) => ({
+			...request,
+			container: "woff2",
+			bytes: htmlFont.woff2,
+			provenance: htmlFont.provenance,
+		})),
+	);
+	const retainedAttempt = retained.advance();
+	assert(
+		retainedAttempt.kind === "complete",
+		`retained HTML compile failed: ${JSON.stringify(retainedAttempt)}`,
+	);
+	const clickSource = assertClickToSource(
+		retained,
+		htmlFiles.get("html.tex"),
+		htmlFont.encoding,
+	);
+	retained.dispose();
 	globalThis.__umberGeneratedGeometry = (zoom = 1) =>
 		measureGeneratedHtml(zoom);
 
@@ -183,8 +211,32 @@ async function integration() {
 		maximumActive: cold.maximumActive,
 		plainDviBytes: plain.dvi.byteLength,
 		htmlBytes: htmlFirst.html.byteLength,
+		clickSource,
 		geometry: generatedGeometry,
 	};
+}
+
+function assertClickToSource(session, source, encoding) {
+	const iframe = document.querySelector("#generated-html-fixture");
+	const doc = iframe.contentDocument;
+	const text = doc.querySelector(".umber-run-text");
+	const node = text.firstChild;
+	const range = doc.createRange();
+	range.setStart(node, 0);
+	range.setEnd(node, 1);
+	const rect = range.getBoundingClientRect();
+	const location = renderedSourceLocationFromPoint(
+		session,
+		doc,
+		rect.left + Math.min(0.1, rect.width / 10),
+		rect.top + rect.height / 2,
+		{ encoding },
+	);
+	const expected = new TextDecoder().decode(source).indexOf("AV");
+	assert(location?.kind === "current", "click did not resolve current source");
+	assert(location.path === "/job/html.tex", "click resolved the wrong file");
+	assert(location.start === expected, "click resolved the wrong source offset");
+	return { path: location.path, start: location.start };
 }
 
 async function installAndMeasureGeneratedHtml(bytes) {

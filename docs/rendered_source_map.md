@@ -1,10 +1,11 @@
 # Rendered Source Map
 
-Status: phases 1-2 implemented. Accepted HTML is revision-stamped and the
+Status: phases 1-3 implemented. Accepted HTML is revision-stamped and the
 native `tex-incr`/`umber` query path uses a lazily built, session-cached
 per-page render source map with typed current, deleted, and stale-revision
-results. The typed WASM/DOM helper surface remains phase 3; no mapping tables
-cross into JavaScript.
+results. The WASM boundary exposes those typed results and the authored DOM
+helper converts browser caret positions into revision-bound queries; no mapping
+tables cross into JavaScript.
 
 Builds on the edit-stable fragment-backed coordinates of
 `edit_stable_source_coordinates.md` (umber2-hwtp): the map stores opaque
@@ -144,7 +145,13 @@ indexes using `data-umber-codes` and the font encoding tables the package
 already ships (`cm-fonts.js`). Encoding entries may map one code to multiple
 scalars, so this offset arithmetic must live beside the encoding data, not
 be re-derived by applications. This helper reads only attributes already in
-the HTML; it needs no exported tables.
+the HTML; it needs no exported tables. `renderedSourceKeyFromPoint` returns
+`{ page, event, unit, revision }`; `renderedSourceLocationFromPoint` passes that
+key through one `CompilerSession.renderedSourceLocation` call. OT1 is the
+default encoding, while callers rendering other supplied faces pass either one
+encoding or a map keyed by the HTML `data-umber-font` id. Offsets are counted
+in UTF-16 code units to match the DOM caret API, including encoding entries
+that expand one TeX code to multiple Unicode scalars.
 
 ### 2.5 Reverse mapping (future)
 
@@ -218,7 +225,7 @@ map layout must not preclude it (it does not).
    once; after an edit, a reused page's map resolves to current-document
    offsets; an edited-away unit reports `deleted`; a stale revision is
    rejected.
-3. **umber-wasm + js:** extend the typed query result, add the authored
+3. **umber-wasm + js (implemented):** extend the typed query result, add the authored
    `source-map.js` DOM helper and Node tests, extend the browser integration
    fixture with a click-to-source assertion.
 4. **Docs and budgets:** update `source_spans_and_provenance.md` §6.3,

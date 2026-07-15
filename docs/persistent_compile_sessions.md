@@ -89,9 +89,10 @@ HTML output identifies each page and positioned event with `data-umber-page`
 and `data-umber-event`; every page pairs its ordinal with the accepted
 `data-umber-revision`. A text event also exposes its source character codes,
 so a browser can translate a pointer hit into an optional text-unit index.
-The native session exposes the revision-checked lazy query below. Until the
-phase-3 WASM result adapter lands, the existing WASM compatibility method
-passes the current revision internally and exposes current locations only:
+The native session and `CompilerSession.renderedSourceLocation` expose the
+revision-checked lazy query below. The authored `source-map.js` companion reads
+the page revision and event metadata from canonical HTML and translates DOM
+caret offsets into the corresponding text unit before making this call:
 
 ```text
 rendered_source_location(page, event, unit?, dom_revision)

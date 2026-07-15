@@ -1,0 +1,102 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+	renderedSourceKeyFromPoint,
+	renderedSourceLocationFromPoint,
+} from "./source-map.js";
+
+function fixture({ codes = "0x41,0x42", offset = 0, font = "7" } = {}) {
+	const page = element({ umberPage: "2", umberRevision: "9" });
+	const run = element({
+		umberEvent: "4",
+		umberCodes: codes,
+		umberFont: font,
+	});
+	const text = element();
+	run.matches.set(".umber-page", page);
+	text.matches.set(".umber-run", run);
+	text.matches.set(".umber-run-text", text);
+	const node = { parentElement: text };
+	return {
+		document: {
+			caretPositionFromPoint(x, y) {
+				assert.deepEqual([x, y], [12, 34]);
+				return { offsetNode: node, offset };
+			},
+		},
+	};
+}
+
+function element(dataset = {}) {
+	return {
+		dataset,
+		matches: new Map(),
+		closest(selector) {
+			return this.matches.get(selector) ?? null;
+		},
+	};
+}
+
+test("maps OT1 caret offsets to revision-bound rendered units", () => {
+	const { document } = fixture({ offset: 1 });
+	assert.deepEqual(renderedSourceKeyFromPoint(document, 12, 34), {
+		page: 2,
+		event: 4,
+		unit: 1,
+		revision: 9,
+	});
+});
+
+test("uses UTF-16 lengths from the selected font encoding", () => {
+	const encoding = Array(256).fill(null);
+	encoding[1] = "𝒜";
+	encoding[2] = "fi";
+	encoding[3] = "Z";
+	const options = { encodings: new Map([["7", encoding]]) };
+	for (const [offset, unit] of [
+		[0, 0],
+		[1, 0],
+		[2, 1],
+		[3, 1],
+		[4, 2],
+		[5, 2],
+	]) {
+		const { document } = fixture({ codes: "0x01,0x02,0x03", offset });
+		assert.equal(
+			renderedSourceKeyFromPoint(document, 12, 34, options)?.unit,
+			unit,
+		);
+	}
+});
+
+test("preserves spaces as units and delegates one typed session query", () => {
+	const { document } = fixture({ codes: "0x41,space,0x42", offset: 1 });
+	const expected = {
+		kind: "deleted",
+		mintedRevision: 3,
+	};
+	const session = {
+		renderedSourceLocation(...arguments_) {
+			assert.deepEqual(arguments_, [2, 4, 1, 9]);
+			return expected;
+		},
+	};
+	assert.equal(
+		renderedSourceLocationFromPoint(session, document, 12, 34),
+		expected,
+	);
+});
+
+test("returns null outside canonical text and for invalid metadata", () => {
+	assert.equal(
+		renderedSourceKeyFromPoint({ caretPositionFromPoint: () => null }, 12, 34),
+		null,
+	);
+	const { document } = fixture({ codes: "bad", offset: 0 });
+	assert.equal(renderedSourceKeyFromPoint(document, 12, 34), null);
+	assert.throws(
+		() => renderedSourceKeyFromPoint({}, 12, 34),
+		/document\.caretPositionFromPoint is unavailable/,
+	);
+});

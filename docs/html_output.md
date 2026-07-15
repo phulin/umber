@@ -158,6 +158,13 @@ document language and page labels are explicit serializer options with stable
 defaults. Copy/paste fidelity is best-effort for mapped source text and is not
 a coordinate claim.
 
+The authored WASM package's `source-map.js` helper is the canonical bridge from
+a browser point to this metadata. It uses `caretPositionFromPoint`,
+`data-umber-codes`, and the selected font encoding to compute a text-unit
+ordinal, then includes the page's stamped revision in the query. The helper
+counts DOM UTF-16 offsets from the actual encoding entries, so a TeX code that
+maps to multiple Unicode scalars still names exactly one rendered unit.
+
 ## Specials and security
 
 Unknown specials are inert; malformed values in a recognized family are typed
