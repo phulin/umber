@@ -10,6 +10,9 @@ The explicit LaTeX format builder verifies this closure before every build.
 `tests/latex/` contains committed, compact LaTeX-DVI inputs used by explicit
 format and corpus gates. `format-equivalence.tex` must remain deterministic
 and is run both from source-initialized kernel state and the serialized format.
+The four base-class documents are run for three clean passes by
+`scripts/check-latex-corpus.sh`, which requires banner-normalized byte-identical
+DVI and exact `.aux`/`.toc`/`.lof`/`.lot`/`.out` file parity with TeX Live 2025.
 
 ## Corpus Layout
 

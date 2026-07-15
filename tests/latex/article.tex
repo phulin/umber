@@ -1,0 +1,27 @@
+\documentclass{article}
+\begin{document}
+\tableofcontents
+\section{Text and lists}\label{sec:text}
+Roman, \textbf{bold}, \emph{emphasized}, and \texttt{typewriter} text with a
+footnote.\footnote{A deterministic footnote.}
+\begin{enumerate}
+  \item First item.
+  \item Second item referring to Section~\ref{sec:math}.
+\end{enumerate}
+\begin{tabular}{l|r}
+Name & Value \\ \hline
+alpha & 1 \\
+beta & 2
+\end{tabular}
+\section{Math and floats}\label{sec:math}
+Inline $a^2+b^2=c^2$ and
+\[
+  \sum_{k=1}^{4} k = 10.
+\]
+\begin{figure}[ht]
+  \centering\rule{2cm}{1cm}
+  \caption{A rule figure.}\label{fig:rule}
+\end{figure}
+Figure~\ref{fig:rule} follows Section~\ref{sec:text}.
+\special{umber-latex-corpus article}
+\end{document}

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anyhow::{Result, bail};
-use refexec::{DviComparison, RefTex, RunOpts};
+use refexec::{DviComparison, RefTex, RunOpts, compare_dvi_bytes};
 
 fn main() -> ExitCode {
     match run_cli() {
@@ -19,13 +19,28 @@ fn main() -> ExitCode {
 }
 
 fn run_cli() -> Result<bool> {
-    let args = env::args_os().skip(1);
+    let mut args = env::args_os().skip(1).peekable();
+    if args.peek().and_then(|arg| arg.to_str()) == Some("--compare-existing-dvi") {
+        let _ = args.next();
+        let expected = args
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("missing reference DVI path"))?;
+        let actual = args
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("missing actual DVI path"))?;
+        if args.next().is_some() {
+            bail!("unexpected argument after actual DVI path");
+        }
+        return report_dvi_comparison(compare_dvi_bytes(
+            &std::fs::read(expected)?,
+            &std::fs::read(actual)?,
+        )?);
+    }
     let mut tex_file = None;
     let mut opts = RunOpts::default();
     let mut print_log = false;
     let mut compare_dvi = None;
 
-    let mut args = args.peekable();
     while let Some(arg) = args.next() {
         match arg.to_str() {
             Some("--dvi") => opts.dvi = true,
@@ -63,15 +78,7 @@ fn run_cli() -> Result<bool> {
 
     if let Some(actual_path) = compare_dvi {
         let actual = std::fs::read(&actual_path)?;
-        return match ref_tex.compare_dvi(&tex_file, &actual, &opts)? {
-            DviComparison::Equal => Ok(true),
-            DviComparison::Different(diff) => {
-                eprintln!("DVI mismatch at byte offset {}", diff.offset);
-                eprintln!("reference: {}", diff.expected_context);
-                eprintln!("actual:    {}", diff.actual_context);
-                Ok(false)
-            }
-        };
+        return report_dvi_comparison(ref_tex.compare_dvi(&tex_file, &actual, &opts)?);
     }
 
     let output = ref_tex.run(&tex_file, &opts)?;
@@ -88,8 +95,20 @@ fn run_cli() -> Result<bool> {
     Ok(output.success)
 }
 
+fn report_dvi_comparison(comparison: DviComparison) -> Result<bool> {
+    match comparison {
+        DviComparison::Equal => Ok(true),
+        DviComparison::Different(diff) => {
+            eprintln!("DVI mismatch at byte offset {}", diff.offset);
+            eprintln!("reference: {}", diff.expected_context);
+            eprintln!("actual:    {}", diff.actual_context);
+            Ok(false)
+        }
+    }
+}
+
 fn print_usage() {
     eprintln!(
-        "usage: refexec <file.tex> [--dvi] [--ini] [--print-log] [--extra-input path] [--compare-dvi path]"
+        "usage: refexec <file.tex> [--dvi] [--ini] [--print-log] [--extra-input path] [--compare-dvi path]\n       refexec --compare-existing-dvi <reference.dvi> <actual.dvi>"
     );
 }
