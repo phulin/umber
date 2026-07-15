@@ -1866,6 +1866,7 @@ struct ShippedBead {
     rect: ShippedAnnotationRect,
     attributes: Vec<u8>,
     title: Vec<u8>,
+    margin: Scaled,
 }
 
 fn thread_objects(
@@ -1878,6 +1879,7 @@ fn thread_objects(
     let mut page_beads = vec![Vec::new(); pages.len()];
     for (page_index, (page, record)) in pages.iter().zip(records).enumerate() {
         let mut boxes = BTreeMap::<u32, PositionedBox>::new();
+        let mut running_bead = None;
         for event in &page.events {
             match event {
                 PositionedEvent::Box(positioned) => {
@@ -1913,7 +1915,16 @@ fn thread_objects(
                         rect,
                         attributes: marker.attributes.clone(),
                         title,
+                        margin: marker.margin,
                     });
+                    running_bead = positioned.running.then_some(beads.len() - 1);
+                }
+                PositionedEvent::PdfEndThread { y, .. } => {
+                    if let Some(index) = running_bead.take() {
+                        beads[index].rect.bottom = y
+                            .checked_add(beads[index].margin)
+                            .ok_or(PdfBuildError::PageGeometryOverflow)?;
+                    }
                 }
                 _ => {}
             }

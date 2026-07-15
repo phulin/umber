@@ -340,6 +340,83 @@ fn stream_bytes_and_page_order_affect_semantic_identity() {
 }
 
 #[test]
+fn article_threads_use_typed_catalog_page_thread_and_bead_writers() {
+    let sample = sample_document(&[1, 2, 3, 4, 5]);
+    let mut objects = sample.objects().cloned().collect::<Vec<_>>();
+    let PdfObject::Value(PdfValue::Dictionary(catalog)) = &mut objects[0].object else {
+        panic!("catalog")
+    };
+    catalog
+        .insert("Threads", PdfValue::Reference(id(6)))
+        .expect("thread list key");
+    let PdfObject::Value(PdfValue::Dictionary(page)) = &mut objects[2].object else {
+        panic!("page")
+    };
+    page.insert("B", PdfValue::Array(vec![PdfValue::Reference(id(8))]))
+        .expect("page beads key");
+    objects.extend([
+        PdfIndirectObject {
+            id: id(6),
+            object: PdfObject::ThreadList(vec![id(7)]),
+        },
+        PdfIndirectObject {
+            id: id(7),
+            object: PdfObject::Thread(PdfThreadObject {
+                first_bead: id(8),
+                default_title: Some(b"(chapter)".to_vec()),
+                raw_entries: Vec::new(),
+            }),
+        },
+        PdfIndirectObject {
+            id: id(8),
+            object: PdfObject::Bead(PdfBeadObject {
+                thread: Some(id(7)),
+                previous: id(8),
+                next: id(8),
+                page: id(3),
+                rectangle: id(9),
+            }),
+        },
+        indirect(
+            9,
+            PdfValue::Array(vec![
+                PdfValue::Integer(1),
+                PdfValue::Integer(2),
+                PdfValue::Integer(3),
+                PdfValue::Integer(4),
+            ]),
+        ),
+    ]);
+    let document = UnvalidatedPdfDocument {
+        version: sample.version(),
+        catalog: sample.catalog(),
+        objects,
+        trailer: Default::default(),
+    }
+    .validate()
+    .expect("valid thread graph");
+    let bytes = document
+        .to_pdf_bytes_with_options(PdfSerializationOptions::default())
+        .expect("typed thread graph serializes");
+    for needle in [
+        b"/Threads 6 0 R".as_slice(),
+        b"/B[8 0 R]".as_slice(),
+        b"/F 8 0 R".as_slice(),
+        b"/T 7 0 R".as_slice(),
+        b"/V 8 0 R".as_slice(),
+        b"/N 8 0 R".as_slice(),
+        b"/P 3 0 R".as_slice(),
+        b"/R 9 0 R".as_slice(),
+    ] {
+        assert!(
+            bytes.windows(needle.len()).any(|window| window == needle),
+            "missing {}",
+            String::from_utf8_lossy(needle)
+        );
+    }
+}
+
+#[test]
 fn limits_and_writer_owned_stream_length_are_enforced() {
     let sample = sample_document(&[1, 2, 3, 4, 5]);
     let input = UnvalidatedPdfDocument {
