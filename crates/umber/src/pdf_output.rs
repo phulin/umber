@@ -2525,6 +2525,10 @@ mod tests {
         (stores, result)
     }
 
+    fn pt(value: i32) -> Scaled {
+        Scaled::from_raw(value * 65_536)
+    }
+
     fn run_with_clock(source: &str, clock: JobClock) -> (Universe, RunResult) {
         let mut stores = Universe::with_world(World::memory_with_clock(clock));
         prepare_pdftex_run_stores(&mut stores);
@@ -4172,10 +4176,7 @@ mod tests {
                 "\\shipout\\box0\\end",
             ),
         );
-        assert_eq!(
-            pdf_stores.pdf_last_position(),
-            (Scaled::from_raw(17 * 65_536), Scaled::from_raw(75 * 65_536)),
-        );
+        assert_eq!(pdf_stores.pdf_last_position(), (pt(17), pt(75)),);
 
         let (dvi_stores, _) = run(concat!(
             "\\pdfoutput=0",
@@ -4184,10 +4185,77 @@ mod tests {
         assert_eq!(
             dvi_stores.pdf_last_position(),
             (
-                Scaled::from_raw(7 * 65_536 + 4_736_286),
+                Scaled::from_raw(pt(7).raw() + 4_736_286),
                 Scaled::from_raw(-4_736_286),
             ),
         );
+    }
+
+    #[test]
+    fn pdf_save_position_observes_boxing_math_shifts_and_failed_shipout_commit() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        stores
+            .world_mut()
+            .set_memory_file(
+                "cmsy10.tfm",
+                include_bytes!("../../tex-fonts/tests/fixtures/cm/cmsy10.tfm").to_vec(),
+            )
+            .expect("seed symbol font");
+        stores
+            .world_mut()
+            .set_memory_file(
+                "cmex10.tfm",
+                include_bytes!("../../tex-fonts/tests/fixtures/cm/cmex10.tfm").to_vec(),
+            )
+            .expect("seed extension font");
+        let run = run_in(
+            &mut stores,
+            concat!(
+                "\\pdfoutput=1\\pdfpageheight=100pt",
+                "\\pdfhorigin=10pt\\pdfvorigin=20pt",
+                "\\font\\sym=cmsy10 \\font\\ext=cmex10 ",
+                "\\textfont2=\\sym\\scriptfont2=\\sym\\scriptscriptfont2=\\sym",
+                "\\textfont3=\\ext\\scriptfont3=\\ext\\scriptscriptfont3=\\ext",
+                "\\message{initial=(\\the\\pdflastxpos,\\the\\pdflastypos)}",
+                "\\setbox0=\\vbox{\\kern5pt\\hbox{\\kern7pt",
+                "\\lower3pt\\hbox{$\\pdfsavepos$}}}",
+                "\\message{boxed=(\\the\\pdflastxpos,\\the\\pdflastypos)}",
+                "\\shipout\\box0",
+                "\\message{shipped=(\\the\\pdflastxpos,\\the\\pdflastypos)}\\end",
+            ),
+        );
+        assert_eq!(run.committed_artifacts.len(), 1);
+        let artifact = tex_out::PageArtifact::from_bytes(run.committed_artifacts[0].bytes())
+            .expect("save-position artifact parses");
+        assert!(
+            artifact
+                .effects
+                .iter()
+                .any(|effect| matches!(effect, tex_out::PageEffect::PdfSavePosition)),
+            "math save-position effect missing: {:?}",
+            artifact.effects
+        );
+        assert_eq!(stores.pdf_last_position(), (pt(17), pt(72)));
+        let output = String::from_utf8_lossy(
+            stores
+                .world()
+                .memory_terminal_output()
+                .expect("terminal output"),
+        );
+        assert!(output.contains("initial=(0,0)"), "{output}");
+        assert!(output.contains("boxed=(0,0)"), "{output}");
+        let before = stores.pdf_last_position();
+        let error = try_run_in(
+            &mut stores,
+            "\\pdfoutput=1\\shipout\\hbox{\\pdfsavepos\\pdfsetmatrix{bad}}\\end",
+        )
+        .expect_err("malformed traversal fails after encountering savepos");
+        assert_eq!(
+            error.to_string(),
+            "pdfTeX error (\\pdfsetmatrix): Unrecognized format."
+        );
+        assert_eq!(stores.pdf_last_position(), before);
     }
 
     #[test]
@@ -4197,27 +4265,155 @@ mod tests {
             "\\shipout\\vbox{\\pdfsnaprefpoint\\kern6pt",
             "\\pdfsnapy 10pt plus10pt minus10pt\\pdfsavepos}\\end",
         ));
-        assert_eq!(snapped.pdf_last_position().1, Scaled::from_raw(90 * 65_536));
+        assert_eq!(snapped.pdf_last_position().1, pt(90));
 
         let (compensated, _) = run(concat!(
             "\\pdfoutput=1\\pdfpageheight=100pt\\pdfhorigin=0pt\\pdfvorigin=0pt",
             "\\shipout\\vbox{\\pdfsnaprefpoint\\kern6pt\\pdfsnapycomp500",
             "\\pdfsavepos\\pdfsnapy 10pt plus10pt minus10pt}\\end",
         ));
-        assert_eq!(
-            compensated.pdf_last_position().1,
-            Scaled::from_raw(92 * 65_536),
-        );
+        assert_eq!(compensated.pdf_last_position().1, pt(92),);
 
         let (horizontal, _) = run(concat!(
             "\\pdfoutput=1\\pdfpageheight=100pt\\pdfhorigin=0pt\\pdfvorigin=0pt",
             "\\shipout\\hbox{\\pdfsnaprefpoint\\kern6pt",
             "\\pdfsnapy 10pt plus10pt minus10pt\\pdfsavepos}\\end",
         ));
-        assert_eq!(
-            horizontal.pdf_last_position().0,
-            Scaled::from_raw(6 * 65_536)
+        assert_eq!(horizontal.pdf_last_position().0, pt(6));
+    }
+
+    #[test]
+    fn pdf_snap_y_honors_reference_flex_limits_orders_and_forward_ties() {
+        let cases = [
+            ("\\kern6pt\\pdfsnapy 10pt plus4pt", 94),
+            ("\\kern6pt\\pdfsnapy 10pt plus5pt", 90),
+            ("\\kern6pt\\pdfsnapy 10pt minus6pt", 94),
+            ("\\kern6pt\\pdfsnapy 10pt minus7pt", 100),
+            ("\\kern6pt\\pdfsnapy 10pt plus1fil", 90),
+            ("\\kern6pt\\pdfsnapy 10pt minus1fil", 100),
+            ("\\kern5pt\\pdfsnapy 10pt plus6pt minus6pt", 90),
+            (
+                "\\kern3pt\\pdfsnaprefpoint\\kern6pt\\pdfsnapy 10pt plus5pt",
+                87,
+            ),
+        ];
+        for (material, expected_y) in cases {
+            let source = format!(
+                concat!(
+                    "\\pdfoutput=1\\pdfpageheight=100pt",
+                    "\\pdfhorigin=0pt\\pdfvorigin=0pt",
+                    "\\shipout\\vbox{{\\pdfsnaprefpoint{material}\\pdfsavepos}}\\end",
+                ),
+                material = material,
+            );
+            let (stores, _) = run(&source);
+            assert_eq!(
+                stores.pdf_last_position().1,
+                pt(expected_y),
+                "material: {material}"
+            );
+        }
+
+        let (stores, _) = run(concat!(
+            "\\pdfoutput=1\\pdfpageheight=100pt\\pdfhorigin=0pt\\pdfvorigin=0pt",
+            "\\shipout\\vbox{\\kern3pt\\pdfsnaprefpoint}",
+            "\\shipout\\vbox{\\kern6pt\\pdfsnapy 10pt plus10pt minus10pt",
+            "\\pdfsavepos}\\end",
+        ));
+        assert_eq!(stores.pdf_snap_reference(), (pt(0), pt(3)));
+        assert_eq!(stores.pdf_last_position().1, pt(97));
+    }
+
+    #[test]
+    fn pdf_save_position_and_snap_reference_replay_exactly() {
+        let source = concat!(
+            "\\pdfoutput=1\\pdfpageheight=100pt\\pdfhorigin=0pt\\pdfvorigin=0pt",
+            "\\shipout\\vbox{\\kern3pt\\pdfsnaprefpoint\\kern6pt",
+            "\\pdfsnapycomp500\\pdfsavepos",
+            "\\pdfsnapy 10pt plus10pt minus10pt}\\end",
         );
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        stores
+            .begin_retained_session()
+            .expect("retained test session starts");
+        let before = stores.snapshot();
+        let first = run_in(&mut stores, source);
+        let first_artifact = first.committed_artifacts[0].bytes().to_vec();
+        let first_position = stores.pdf_last_position();
+        let first_reference = stores.pdf_snap_reference();
+        let first_hash = stores.snapshot().state_hash();
+
+        stores.rollback(&before);
+        let second = run_in(&mut stores, source);
+        assert_eq!(second.committed_artifacts[0].bytes(), first_artifact);
+        assert_eq!(stores.pdf_last_position(), first_position);
+        assert_eq!(stores.pdf_snap_reference(), first_reference);
+        assert_eq!(stores.snapshot().state_hash(), first_hash);
+        assert_eq!(first_position, (pt(0), pt(89)));
+        assert_eq!(first_reference, (pt(0), pt(3)));
+    }
+
+    #[test]
+    fn pdf_snap_y_compensation_clamps_and_dvi_plan_matches_equivalent_kern() {
+        for (ratio, expected_y) in [(-1, 94), (0, 94), (500, 92), (1000, 90), (1001, 90)] {
+            let source = format!(
+                concat!(
+                    "\\pdfoutput=1\\pdfpageheight=100pt",
+                    "\\pdfhorigin=0pt\\pdfvorigin=0pt",
+                    "\\shipout\\vbox{{\\pdfsnaprefpoint\\kern6pt",
+                    "\\pdfsnapycomp{ratio}\\pdfsavepos",
+                    "\\pdfsnapy 10pt plus10pt minus10pt}}\\end",
+                ),
+                ratio = ratio,
+            );
+            let (stores, _) = run(&source);
+            assert_eq!(
+                stores.pdf_last_position().1,
+                pt(expected_y),
+                "ratio {ratio}"
+            );
+        }
+
+        let (_, snapped) = run(concat!(
+            "\\pdfoutput=1\\pdfhorigin=0pt\\pdfvorigin=0pt",
+            "\\shipout\\vbox{\\pdfsnaprefpoint\\kern6pt",
+            "\\pdfsnapy 10pt plus10pt minus10pt\\hrule width1pt height1pt}\\end",
+        ));
+        let (_, explicit) = run(concat!(
+            "\\pdfoutput=1\\pdfhorigin=0pt\\pdfvorigin=0pt",
+            "\\shipout\\vbox{\\kern10pt\\hrule width1pt height1pt}\\end",
+        ));
+        let snapped_dvi = dvi_from_page_plans(&snapped.dvi_pages).expect("snapped DVI");
+        let explicit_dvi = dvi_from_page_plans(&explicit.dvi_pages).expect("explicit-kern DVI");
+        let snapped_file =
+            tex_out::dvi::disasm::DviFile::parse(&snapped_dvi).expect("snapped DVI parses");
+        let explicit_file =
+            tex_out::dvi::disasm::DviFile::parse(&explicit_dvi).expect("explicit-kern DVI parses");
+        let snapped_page = &snapped_file.pages[0];
+        let explicit_page = &explicit_file.pages[0];
+        assert_eq!(
+            &snapped_dvi[snapped_page.bop_offset..snapped_page.eop_end.expect("snapped eop")],
+            &explicit_dvi[explicit_page.bop_offset..explicit_page.eop_end.expect("explicit eop")],
+            "snapping emits the same DVI page program as its equivalent explicit kern"
+        );
+    }
+
+    #[test]
+    fn pdf_snap_y_rejects_negative_natural_glue_without_publishing() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let error = try_run_in(
+            &mut stores,
+            "\\pdfoutput=1\\shipout\\vbox{\\pdfsnapy -1pt plus2pt}\\end",
+        )
+        .expect_err("negative snap glue is fatal");
+        assert_eq!(
+            error.to_string(),
+            "pdfTeX error (\\pdfsnapy): negative glue"
+        );
+        assert_eq!(stores.pdf_last_position(), (pt(0), pt(0)));
+        assert!(stores.pdf_pages().is_empty());
     }
 
     #[test]
