@@ -1176,7 +1176,7 @@ mod tests {
     fn pk_font_provision_is_typed_hashed_and_rollback_owned() {
         let mut bytes = vec![247, 89, 0];
         bytes.extend_from_slice(&[0; 16]);
-        bytes.extend_from_slice(&[0xe0, 10, 65, 0, 0, 0, 3, 3, 2, 0, 1, 0b1010_1000]);
+        bytes.extend_from_slice(&[0xe0, 9, 65, 0, 0, 0, 3, 3, 2, 0, 1, 0b1010_1000]);
         bytes.push(245);
         let font = tex_fonts::PdfPkFont::parse(&bytes).expect("synthetic PK parses");
         let request = tex_fonts::PdfPkFontRequest::new(b"cmr10".to_vec(), 300, b"cx".to_vec());
