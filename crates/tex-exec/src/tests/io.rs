@@ -768,6 +768,35 @@ fn shipout_expands_write_against_barrier_state_and_stores_artifact() {
 }
 
 #[test]
+fn shipout_preserves_protected_macros_in_deferred_write_expansion() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\protected\\def\\p{expanded}\\shipout\\hbox{\\write16{\\p}}\\end",
+    ));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("shipout succeeds");
+
+    let bytes = stores
+        .world()
+        .read_artifact(stats.shipped_artifacts[0])
+        .expect("read artifact")
+        .expect("artifact stored");
+    let artifact = PageArtifact::from_bytes(&bytes).expect("artifact parses");
+    assert!(matches!(
+        artifact.effects.as_slice(),
+        [PageEffect::Write {
+            sink: EffectSink::TerminalAndLog,
+            text
+        }] if text == "\\p \n"
+    ));
+}
+
+#[test]
 fn shipout_reports_illegal_magnification_diagnostic() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

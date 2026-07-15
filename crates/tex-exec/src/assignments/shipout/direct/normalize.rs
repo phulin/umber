@@ -297,7 +297,7 @@ fn expand_write_tokens(
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(tokens, TokenListReplayKind::Inserted);
     let mut text = String::new();
-    while let Some(token) = get_x_token_with_context(
+    while let Some(token) = get_x_or_protected_with_context(
         &mut input,
         &mut tex_state::ExpansionContext::new(stores),
         expansion,
