@@ -32,7 +32,7 @@ use crate::page::{
     PageBreak, PageBuilderState, PageContents, PageDimension, PageFireUp, PageHashCache,
     PageInsertion, PageInteger, PageMark, PageStateHashCursor,
 };
-use crate::pdf::{PdfState, PdfStateCursor, PdfStateSnapshot};
+use crate::pdf::{PdfOutputParameters, PdfState, PdfStateCursor, PdfStateSnapshot};
 use crate::provenance::ProvenanceStats;
 use crate::provenance::{
     InsertedOriginKind, OriginListBuilder, OriginRecord, SynthesizedOriginKind, SyntheticOriginKind,
@@ -450,8 +450,9 @@ impl ShipoutTransaction<'_> {
         artifact: crate::world::VerifiedArtifact,
         effect_pos: EffectPos,
     ) -> Result<ContentHash, WorldError> {
+        let output_parameters = self.current_pdf_output_parameters();
         self.pdf
-            .ensure_page_capacity()
+            .ensure_page_capacity(output_parameters)
             .map_err(|()| WorldError::pdf_object_ids_exhausted())?;
         let hash_base = self.state_hash_base.clone();
         let hash = self.world.store_verified_artifact(&artifact)?;
@@ -460,7 +461,7 @@ impl ShipoutTransaction<'_> {
             self.stores.release_shipout_nodes(node_mark);
             self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
             self.page.set_integer(PageInteger::DeadCycles, 0);
-            self.pdf.commit_page(hash);
+            self.pdf.commit_page(hash, output_parameters);
             let (bytes, render_origins) = artifact.into_parts();
             self.world
                 .record_artifact_commit(hash, bytes, render_origins);
@@ -480,7 +481,7 @@ impl ShipoutTransaction<'_> {
         self.stores.release_shipout_nodes(node_mark);
         self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
         self.page.set_integer(PageInteger::DeadCycles, 0);
-        self.pdf.commit_page(hash);
+        self.pdf.commit_page(hash, output_parameters);
         let (bytes, render_origins) = artifact.into_parts();
         self.world
             .record_artifact_commit(hash, bytes, render_origins);
@@ -1693,6 +1694,23 @@ impl Universe {
     #[must_use]
     pub const fn pdf_next_object_id(&self) -> u32 {
         self.pdf.next_object()
+    }
+
+    /// Returns the output controls fixed by the first committed shipout.
+    #[must_use]
+    pub const fn fixed_pdf_output_parameters(&self) -> Option<PdfOutputParameters> {
+        self.pdf.output_parameters()
+    }
+
+    fn current_pdf_output_parameters(&self) -> PdfOutputParameters {
+        PdfOutputParameters {
+            output: self.int_param(IntParam::PDF_OUTPUT),
+            major_version: self.int_param(IntParam::PDF_MAJOR_VERSION),
+            minor_version: self.int_param(IntParam::PDF_MINOR_VERSION),
+            compress_level: self.int_param(IntParam::PDF_COMPRESS_LEVEL),
+            object_compress_level: self.int_param(IntParam::PDF_OBJ_COMPRESS_LEVEL),
+            decimal_digits: self.int_param(IntParam::PDF_DECIMAL_DIGITS),
+        }
     }
 
     /// Returns the current code-table generation vector.

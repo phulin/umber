@@ -18,11 +18,12 @@
 /// packed macro arguments, hashing their semantic token sequences without
 /// diagnostic origins.
 /// Version 12 adds the pdfTeX document ledger and committed page/object
-/// identities to checkpoint hashing.
+/// identities to checkpoint hashing. Version 13 adds the output controls
+/// frozen by the first shipped page.
 /// Hashes are
 /// comparable only when both this version and the named-boundary schedule
 /// match.
-pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 12;
+pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 13;
 
 pub mod cell;
 pub mod code_tables;
@@ -57,7 +58,7 @@ pub mod token;
 pub mod token_store;
 mod universe;
 
-pub use pdf::{PDF_CATALOG_OBJECT_ID, PDF_PAGES_OBJECT_ID, PdfPageRecord};
+pub use pdf::{PDF_CATALOG_OBJECT_ID, PDF_PAGES_OBJECT_ID, PdfOutputParameters, PdfPageRecord};
 pub mod world;
 
 pub use input::{

@@ -11,6 +11,17 @@ const FIRST_DYNAMIC_OBJECT: u32 = 3;
 const OBJECTS_PER_PAGE: u32 = 3;
 const MAX_OBJECT_ID: u32 = i32::MAX as u32;
 
+/// pdfTeX output controls frozen by the first shipped page.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct PdfOutputParameters {
+    pub output: i32,
+    pub major_version: i32,
+    pub minor_version: i32,
+    pub compress_level: i32,
+    pub object_compress_level: i32,
+    pub decimal_digits: i32,
+}
+
 /// Stable object identities assigned to one committed PDF page.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct PdfPageRecord {
@@ -44,6 +55,7 @@ pub(crate) struct PdfStateCursor {
     enabled: bool,
     next_object: u32,
     page_count: usize,
+    output_parameters: Option<PdfOutputParameters>,
     fingerprint: u64,
 }
 
@@ -56,6 +68,7 @@ pub(crate) struct PdfState {
     enabled: bool,
     next_object: u32,
     pages: Vec<PdfPageRecord>,
+    output_parameters: Option<PdfOutputParameters>,
     fingerprint: u64,
 }
 
@@ -65,6 +78,7 @@ impl Default for PdfState {
             enabled: false,
             next_object: FIRST_DYNAMIC_OBJECT,
             pages: Vec::new(),
+            output_parameters: None,
             fingerprint: base_fingerprint(false),
         }
     }
@@ -95,11 +109,13 @@ impl PdfState {
     }
     #[must_use]
     pub(crate) const fn is_format_empty(&self) -> bool {
-        self.pages.is_empty() && self.next_object == FIRST_DYNAMIC_OBJECT
+        self.pages.is_empty()
+            && self.next_object == FIRST_DYNAMIC_OBJECT
+            && self.output_parameters.is_none()
     }
 
-    pub(crate) fn ensure_page_capacity(&self) -> Result<(), ()> {
-        if !self.enabled {
+    pub(crate) fn ensure_page_capacity(&self, parameters: PdfOutputParameters) -> Result<(), ()> {
+        if !self.enabled || self.output_parameters.unwrap_or(parameters).output <= 0 {
             return Ok(());
         }
         let last = self
@@ -109,11 +125,22 @@ impl PdfState {
         (last <= MAX_OBJECT_ID).then_some(()).ok_or(())
     }
 
-    pub(crate) fn commit_page(&mut self, artifact: ContentHash) {
+    pub(crate) fn commit_page(&mut self, artifact: ContentHash, parameters: PdfOutputParameters) {
         if !self.enabled {
             return;
         }
-        self.ensure_page_capacity()
+        let parameters = match self.output_parameters {
+            Some(parameters) => parameters,
+            None => {
+                self.output_parameters = Some(parameters);
+                self.fingerprint = freeze_fingerprint(self.fingerprint, parameters);
+                parameters
+            }
+        };
+        if parameters.output <= 0 {
+            return;
+        }
+        self.ensure_page_capacity(parameters)
             .expect("PDF page object capacity was preflighted");
         let record = PdfPageRecord {
             artifact,
@@ -127,11 +154,17 @@ impl PdfState {
     }
 
     #[must_use]
+    pub(crate) const fn output_parameters(&self) -> Option<PdfOutputParameters> {
+        self.output_parameters
+    }
+
+    #[must_use]
     pub(crate) const fn cursor(&self) -> PdfStateCursor {
         PdfStateCursor {
             enabled: self.enabled,
             next_object: self.next_object,
             page_count: self.pages.len(),
+            output_parameters: self.output_parameters,
             fingerprint: self.fingerprint,
         }
     }
@@ -149,6 +182,7 @@ impl PdfState {
         self.pages.truncate(cursor.page_count);
         self.enabled = cursor.enabled;
         self.next_object = cursor.next_object;
+        self.output_parameters = cursor.output_parameters;
         self.fingerprint = cursor.fingerprint;
     }
 
@@ -159,6 +193,7 @@ impl PdfState {
             hasher.bool(cursor.enabled);
             hasher.u32(cursor.next_object);
             hasher.usize(cursor.page_count);
+            hash_output_parameters(hasher, cursor.output_parameters);
             hasher.u64(cursor.fingerprint);
         })
     }
@@ -168,6 +203,13 @@ fn base_fingerprint(enabled: bool) -> u64 {
     let mut hasher = StateHasher::new(PDF_STATE_DOMAIN);
     hasher.bool(enabled);
     hasher.u32(FIRST_DYNAMIC_OBJECT);
+    hasher.finish()
+}
+
+fn freeze_fingerprint(previous: u64, parameters: PdfOutputParameters) -> u64 {
+    let mut hasher = StateHasher::new(PDF_PAGE_DOMAIN);
+    hasher.u64(previous);
+    hash_output_parameters(&mut hasher, Some(parameters));
     hasher.finish()
 }
 
@@ -181,6 +223,18 @@ fn append_fingerprint(previous: u64, record: PdfPageRecord) -> u64 {
     hasher.finish()
 }
 
+fn hash_output_parameters(hasher: &mut StateHasher, parameters: Option<PdfOutputParameters>) {
+    hasher.bool(parameters.is_some());
+    if let Some(parameters) = parameters {
+        hasher.i32(parameters.output);
+        hasher.i32(parameters.major_version);
+        hasher.i32(parameters.minor_version);
+        hasher.i32(parameters.compress_level);
+        hasher.i32(parameters.object_compress_level);
+        hasher.i32(parameters.decimal_digits);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,10 +245,18 @@ mod tests {
         state.enable();
         let snapshot = state.snapshot();
         let hash = ContentHash::new([7; 32]);
-        state.commit_page(hash);
+        let parameters = PdfOutputParameters {
+            output: 1,
+            major_version: 1,
+            minor_version: 4,
+            compress_level: 9,
+            object_compress_level: 0,
+            decimal_digits: 3,
+        };
+        state.commit_page(hash, parameters);
         let first = (state.pages()[0], state.cursor());
         state.rollback(snapshot);
-        state.commit_page(hash);
+        state.commit_page(hash, parameters);
         assert_eq!((state.pages()[0], state.cursor()), first);
     }
 }

@@ -1,6 +1,7 @@
 use super::{
     FormatError, GenerationForkError, TakeUnboxResult, UnboxKind, Universe, utf8_scalar_len_at,
 };
+use crate::env::banks::IntParam;
 use crate::font::{MAX_FONT_DIMEN, NULL_FONT};
 use crate::glue::{GlueSpec, Order};
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
@@ -1839,6 +1840,7 @@ fn retained_shipout_rolls_back_logical_output_without_published_host_bytes() {
 fn pdf_page_allocation_replays_identical_object_ids_and_hashes() {
     let mut universe = Universe::new();
     universe.enable_pdf_output();
+    universe.set_int_param(IntParam::PDF_OUTPUT, 1);
     universe
         .begin_retained_session()
         .expect("retained session starts");
@@ -1875,6 +1877,51 @@ fn pdf_page_allocation_replays_identical_object_ids_and_hashes() {
     assert_eq!(replay_hash, first_hash);
     assert_eq!(universe.pdf_pages(), &[first_page]);
     assert_eq!(universe.snapshot().state_hash(), first_state_hash);
+}
+
+#[test]
+fn first_shipout_freezes_pdf_controls_and_dvi_mode_allocates_no_pdf_page() {
+    let mut universe = Universe::new();
+    universe.enable_pdf_output();
+    universe.set_int_param(IntParam::PDF_OUTPUT, 0);
+    universe.set_int_param(IntParam::PDF_MAJOR_VERSION, 1);
+    universe.set_int_param(IntParam::PDF_MINOR_VERSION, 7);
+    universe.set_int_param(IntParam::PDF_COMPRESS_LEVEL, 6);
+    universe.set_int_param(IntParam::PDF_OBJ_COMPRESS_LEVEL, 3);
+    universe.set_int_param(IntParam::PDF_DECIMAL_DIGITS, 4);
+    let before = universe.snapshot();
+
+    let effect_pos = universe.world().effect_pos();
+    universe
+        .begin_shipout()
+        .commit(
+            crate::VerifiedArtifact::new(b"DVI-mode page".to_vec()),
+            effect_pos,
+        )
+        .expect("DVI-mode shipout succeeds");
+
+    let fixed = universe
+        .fixed_pdf_output_parameters()
+        .expect("first shipout freezes controls");
+    assert_eq!(fixed.output, 0);
+    assert_eq!(fixed.major_version, 1);
+    assert_eq!(fixed.minor_version, 7);
+    assert_eq!(fixed.compress_level, 6);
+    assert_eq!(fixed.object_compress_level, 3);
+    assert_eq!(fixed.decimal_digits, 4);
+    assert!(universe.pdf_pages().is_empty());
+    assert_eq!(universe.pdf_next_object_id(), 3);
+
+    universe.set_int_param(IntParam::PDF_OUTPUT, 1);
+    assert_eq!(
+        universe.fixed_pdf_output_parameters(),
+        Some(fixed),
+        "later assignments do not change the fixed output policy"
+    );
+
+    universe.rollback(&before);
+    assert_eq!(universe.fixed_pdf_output_parameters(), None);
+    assert!(universe.pdf_pages().is_empty());
 }
 
 #[test]
