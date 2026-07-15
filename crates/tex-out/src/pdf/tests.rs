@@ -85,6 +85,34 @@ fn direct_literal_preserves_text_state_but_page_literal_closes_it() {
     assert!(content.contains("(B) Tj\nET\nPAGE"), "{content}");
 }
 
+#[test]
+fn color_stack_bytes_use_the_writer_owned_path_and_literal_modes() {
+    let bytes = ordered_page_content(&[
+        PdfContentOperation::ColorStack {
+            mode: crate::PdfLiteralMode::Page,
+            x: 99.0,
+            y: 99.0,
+            bytes: b"0 0 1 rg".to_vec(),
+        },
+        PdfContentOperation::ColorStack {
+            mode: crate::PdfLiteralMode::Origin,
+            x: 10.0,
+            y: 20.0,
+            bytes: b"1 0 0 rg".to_vec(),
+        },
+        PdfContentOperation::ColorStack {
+            mode: crate::PdfLiteralMode::Direct,
+            x: 30.0,
+            y: 40.0,
+            bytes: b"0 g".to_vec(),
+        },
+    ]);
+    assert_eq!(
+        String::from_utf8(bytes).expect("ASCII content"),
+        "0 0 1 rg\n1 0 0 1 10 20 cm\n1 0 0 rg\n0 g"
+    );
+}
+
 fn id(raw: u32) -> PdfObjectId {
     PdfObjectId::new(raw).expect("nonzero test object id")
 }

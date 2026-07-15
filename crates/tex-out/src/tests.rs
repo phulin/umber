@@ -697,6 +697,11 @@ fn sample_artifact() -> PageArtifact {
             },
             PageEffect::PdfSave,
             PageEffect::PdfRestore,
+            PageEffect::PdfColorStack {
+                mode: PdfLiteralMode::Page,
+                payload: b"0 0 1 rg".to_vec(),
+                page_start: true,
+            },
         ],
     }
     .validate()

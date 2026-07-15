@@ -3673,6 +3673,19 @@ mod tests {
     }
 
     #[test]
+    fn pdf_color_stack_allocation_does_not_change_dvi_bytes() {
+        let (_, plain) = run("\\pdfoutput=0\\shipout\\vbox{\\hrule width10pt height5pt}\\end");
+        let (_, allocated) = run(concat!(
+            "\\pdfoutput=0\\edef\\colors{\\pdfcolorstackinit page direct{0 g}}",
+            "\\shipout\\vbox{\\hrule width10pt height5pt}\\end",
+        ));
+        assert_eq!(
+            dvi_from_page_plans(&plain.dvi_pages).expect("plain DVI"),
+            dvi_from_page_plans(&allocated.dvi_pages).expect("allocated DVI"),
+        );
+    }
+
+    #[test]
     fn fixed_policy_drives_version_compression_and_decimal_output() {
         let (mut stores, run) = run(concat!(
             "\\pdfoutput=1\\pdfmajorversion=1\\pdfminorversion=5",
