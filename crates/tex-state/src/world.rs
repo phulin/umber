@@ -1164,15 +1164,22 @@ impl World {
 
     fn materialized_file_modification_date(&self, path: &Path) -> Option<FileModificationDate> {
         match &self.backend {
-            WorldBackend::Real { .. } => std::fs::metadata(path)
-                .ok()?
-                .modified()
-                .ok()?
-                .duration_since(UNIX_EPOCH)
-                .ok()
-                .map(|duration| {
-                    FileModificationDate::utc(unix_seconds_to_job_clock(duration.as_secs()))
-                }),
+            WorldBackend::Real { .. } => {
+                use chrono::{Datelike as _, Offset as _, Timelike as _};
+
+                let modified = std::fs::metadata(path).ok()?.modified().ok()?;
+                let local: chrono::DateTime<chrono::Local> = modified.into();
+                Some(FileModificationDate::with_offset(
+                    JobClock {
+                        time: i32::try_from(local.hour() * 60 + local.minute()).ok()?,
+                        second: i32::try_from(local.second()).ok()?,
+                        day: i32::try_from(local.day()).ok()?,
+                        month: i32::try_from(local.month()).ok()?,
+                        year: local.year(),
+                    },
+                    i16::try_from(local.offset().fix().local_minus_utc() / 60).ok()?,
+                ))
+            }
             WorldBackend::Memory(memory) => memory.modification_dates.get(path).copied(),
         }
     }

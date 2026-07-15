@@ -18,6 +18,7 @@ profiling-stats = []
 [dependencies]
 ahash.workspace = true
 bincode.workspace = true
+chrono.workspace = true
 serde.workspace = true
 tex-arith = { path = "../tex-arith" }
 tex-content = { path = "../tex-content" }
