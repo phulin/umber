@@ -44,6 +44,32 @@ fn keys_include_domain_and_reject_cross_domain_kinds() {
 }
 
 #[test]
+fn native_wire_names_round_trip_every_wasm_value() {
+    for domain in [
+        ResourceDomain::Tex,
+        ResourceDomain::Bibliography,
+        ResourceDomain::Generic,
+    ] {
+        assert_eq!(
+            ResourceDomain::from_wire_name(domain.wire_name()),
+            Some(domain)
+        );
+    }
+    for kind in [
+        FileKind::TexInput,
+        FileKind::Tfm,
+        FileKind::FormatImage,
+        FileKind::BibControl,
+        FileKind::BibData,
+        FileKind::BibConfiguration,
+        FileKind::XmlSchema,
+        FileKind::GenericAsset,
+    ] {
+        assert_eq!(FileKind::from_wire_name(kind.wire_name()), Some(kind));
+    }
+}
+
+#[test]
 fn batches_are_sorted_deduplicated_and_required_wins_over_hint() {
     let batch = FileRequestBatch::new(
         [
@@ -236,6 +262,26 @@ fn retry_requires_progress_on_required_requests_not_hints() {
         ))
         .expect("required");
     assert_eq!(registry.retry(), Ok(()));
+
+    let two_required = FileRequestBatch::new(
+        [
+            request(FileKind::TexInput, "one.tex"),
+            request(FileKind::TexInput, "two.tex"),
+        ],
+        [],
+    );
+    let mut registry = FileProvisioner::new(VfsLimits::default()).expect("registry");
+    registry.expect(&two_required);
+    registry
+        .provision(response(
+            FileKind::TexInput,
+            "one.tex",
+            "/texlive/one.tex",
+            b"one",
+        ))
+        .expect("one required");
+    assert_eq!(registry.retry(), Ok(()));
+    assert_eq!(registry.retry(), Err(RetryError::NoProgress));
 }
 
 #[test]

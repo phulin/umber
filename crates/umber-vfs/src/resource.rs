@@ -539,7 +539,7 @@ impl FileProvisioner {
         Ok(ProvisionOutcome::Inserted)
     }
 
-    pub fn retry(&self) -> Result<(), RetryError> {
+    pub fn retry(&mut self) -> Result<(), RetryError> {
         let remaining = self
             .required
             .iter()
@@ -548,6 +548,7 @@ impl FileProvisioner {
         if remaining == self.required_at_batch_start && remaining != 0 {
             return Err(RetryError::NoProgress);
         }
+        self.required_at_batch_start = remaining;
         Ok(())
     }
 
