@@ -110,6 +110,35 @@ fn pdftex_engine_option_reports_the_pinned_identity() {
 }
 
 #[wasm_bindgen_test]
+fn pdftex_return_value_reports_invalid_object_recovery() {
+    let session_options = options("main.tex");
+    set(&session_options, "engine", &JsValue::from_str("pdftex"));
+    let mut session = CompilerSession::new(session_options.unchecked_ref::<JsSessionOptions>())
+        .expect("pdfTeX session");
+    session
+        .add_user_file(
+            "main.tex",
+            &bytes(
+                b"\\pdfoutput=1\\message{r0=\\the\\pdfretval}\\pdfobj useobjnum 99{}\\message{r1=\\the\\pdfretval}\\end",
+            ),
+        )
+        .expect("add return-value source");
+    let complete = session
+        .compile_attempt()
+        .expect("complete return-value attempt");
+    assert_eq!(string_field(complete.as_ref(), "kind"), "complete");
+    let terminal = field(&field(complete.as_ref(), "output"), "terminal")
+        .as_string()
+        .expect("terminal text");
+    assert!(terminal.contains("r0=0"), "{terminal}");
+    assert!(
+        terminal.contains("invalid object number being ignored"),
+        "{terminal}"
+    );
+    assert!(terminal.contains("r1=-1"), "{terminal}");
+}
+
+#[wasm_bindgen_test]
 async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
     let session_options = options("main.tex");
     set(&session_options, "html", Object::new().as_ref());

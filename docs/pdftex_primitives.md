@@ -61,7 +61,7 @@ oracle-backed test. Every name in a missing row is missing.
 | PDF integer parameters | 38 | partial (output policy, metadata effects, and microtype/font configuration contract done) | `\pdfoutput`, `\pdfcompresslevel`, `\pdfobjcompresslevel`, `\pdfdecimaldigits`, `\pdfmovechars`, `\pdfimageresolution`, `\pdfpkresolution`, `\pdfuniqueresname`, `\pdfoptionpdfminorversion`, `\pdfoptionalwaysusepdfpagebox`, `\pdfoptionpdfinclusionerrorlevel`, `\pdfmajorversion`, `\pdfminorversion`, `\pdfforcepagebox`, `\pdfpagebox`, `\pdfinclusionerrorlevel`, `\pdfgamma`, `\pdfimagegamma`, `\pdfimagehicolor`, `\pdfimageapplygamma`, `\pdfadjustspacing`, `\pdfprotrudechars`, `\pdftracingfonts`, `\pdfadjustinterwordglue`, `\pdfprependkern`, `\pdfappendkern`, `\pdfgentounicode`, `\pdfdraftmode`, `\pdfinclusioncopyfonts`, `\pdfsuppresswarningdupdest`, `\pdfsuppresswarningdupmap`, `\pdfsuppresswarningpagegroup`, `\pdfinfoomitdate`, `\pdfsuppressptexinfo`, `\pdfomitcharset`, `\pdfomitinfodict`, `\pdfomitprocset`, `\pdfptexuseunderscore` |
 | PDF dimension parameters | 13 | done | `\pdfhorigin`, `\pdfvorigin`, `\pdfpagewidth`, `\pdfpageheight`, `\pdflinkmargin`, `\pdfdestmargin`, `\pdfthreadmargin`, `\pdffirstlineheight`, `\pdflastlinedepth`, `\pdfeachlineheight`, `\pdfeachlinedepth`, `\pdfignoreddimen`, `\pdfpxdimen` |
 | Font construction and primitive recovery | 3 | done | `\pdfprimitive`, `\letterspacefont`, `\pdfcopyfont` |
-| Read-only integer enquiries | 14 | partial (8 done) | `\pdftexversion`, `\pdfelapsedtime`, `\pdfshellescape`, `\pdfrandomseed`, `\pdflastobj`, `\pdflastxform`, `\pdflastxpos`, `\pdflastypos` (done); `\pdflastximage`, `\pdflastximagepages`, `\pdflastannot`, `\pdfretval`, `\pdflastximagecolordepth`, `\pdflastlink` |
+| Read-only integer enquiries | 14 | partial (9 done) | `\pdftexversion`, `\pdfelapsedtime`, `\pdfshellescape`, `\pdfrandomseed`, `\pdflastobj`, `\pdflastxform`, `\pdflastxpos`, `\pdflastypos`, `\pdfretval` (done); `\pdflastximage`, `\pdflastximagepages`, `\pdflastannot`, `\pdflastximagecolordepth`, `\pdflastlink` |
 | Expandable conversions and enquiries | 27 | partial (26 done) | `\expanded`, `\pdftexrevision`, `\pdftexbanner`, `\pdffontsize`, `\pdffontname`, `\pdffontobjnum`, `\leftmarginkern`, `\rightmarginkern`, `\pdfescapestring`, `\pdfescapename`, `\pdfescapehex`, `\pdfunescapehex`, `\pdfcreationdate`, `\pdffilemoddate`, `\pdffilesize`, `\pdfmdfivesum`, `\pdffiledump`, `\pdfstrcmp`, `\pdfmatch`, `\pdflastmatch`, `\pdfuniformdeviate`, `\pdfnormaldeviate`, `\pdfinsertht`, `\pdfximagebbox`, `\pdfcolorstackinit`, `\pdfxformname` (done); `\pdfpageref` |
 | Primitive-identity conditional | 1 | done | `\ifpdfprimitive` |
 | Horizontal-mode normalization | 1 | done | `\quitvmode` |
@@ -258,7 +258,12 @@ offset and length default to zero, overlong ranges stop at EOF, and negative
 ranges report recoverable pdfTeX diagnostics before being coerced to zero.
 Raw PDF objects share the checkpointed page/font object ledger, so
 `\pdfobj reserveobjnum`, `useobjnum`, ordinary, immediate, stream, attribute,
-and file forms update `\pdflastobj` without a parallel counter. Referenced and
+and file forms update `\pdflastobj` without a parallel counter. Valid object
+operations leave `\pdfretval` unchanged. It starts at zero and
+an invalid `\pdfobj useobjnum` sets the session-global value to sticky `-1`
+before allocating the fallback object. The value participates in checkpoint
+hashing and rollback, but format images intentionally omit it so a loaded
+session starts again at zero, matching pdfTeX 1.40.27. Referenced and
 immediate objects, document dictionary fragments, trailer fragments, and
 custom trailer IDs are lowered only through the `pdf_writer` adapter; raw
 syntax is confined to writer-framed object bodies or dictionary extension
