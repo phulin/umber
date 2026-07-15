@@ -303,6 +303,28 @@ Expansion episodes that open inputs, perform untracked relaxed interning,
 consume interactive input, or cross a barrier execute normally until those
 operations gain explicit replay semantics.
 
+The implemented expansion cache is session-local, bounded by entry count and
+retained bytes, and opt-in through `ExecutionContext`. Pure substitution stores
+a structural token/provenance plan and recreates current-call origins on every
+hit. The initial recursive episode boundary is deliberately narrower than the
+design maximum: it surrounds caller-owned frozen general-text expansion, uses
+dynamic changed-at dependencies plus an allocation-independent cross-Universe
+state projection, and rejects input opens, `\csname`, `\scantokens`,
+`\endinput`, unsupported provenance, and malformed entries atomically. Full-key
+verification handles candidate collisions. Cache-on/off execution tests compare
+final semantic state and effects; offset-shifting and allocation-distinct tests
+verify provenance rebinding.
+
+The optimized Gentle profile on 2026-07-15 measured 20 runs after two warm-ups.
+With memoization disabled the mean was 178.677 ms; with expansion memoization it
+was 186.083 ms, about 4.1% slower. Substitution nevertheless hit 12,979 of
+14,018 lookups (92.6%) and avoided 129,669 token substitutions, while retaining
+1,382,784 bytes in 1,024 entries with 15 evictions. The supported recursive
+episode boundary received no Gentle lookups. These are diagnostic observations,
+not latency gates. Together with the accepted-edit pure-query result below,
+they do not justify enabling either cache or adding paragraph/page/output replay
+machinery in the current release.
+
 ### Paragraph pipeline
 
 Paragraph completion is split into three independently reusable operations:
@@ -615,6 +637,20 @@ distributions differ.
 Each phase is independently useful and may stop if end-to-end measurements do
 not justify its complexity. Later phases depend on the correctness contracts of
 earlier phases, not merely on their API presence.
+
+### 2026-07-15 release decision
+
+The rollout stops after the detached-value, dependency, pure-query, and
+expansion phases. The only edit-level pure-query experiment was 31% slower
+because named-boundary convergence already skipped the unchanged suffix, and
+the high-hit-rate Gentle expansion experiment was 4.1% slower. All caches remain
+off by default, with no lock or atomic work on ordinary execution. Paragraph
+transactions, page-builder replay, output/shipout replay, and hierarchical trace
+composition are deferred rather than shipping an unmeasured high-risk state and
+effect replay surface. World-backed persistence is also deferred: session-local
+results have not demonstrated material end-to-end benefit. The retained bounded
+substrates remain available for future measured experiments without committing
+the editor session to their overhead.
 
 ## Related work
 
