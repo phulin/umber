@@ -736,6 +736,11 @@ impl Stores {
         self.tokens.get(id)
     }
 
+    pub(crate) fn token_list_semantic_id_value(&self, id: TokenListId) -> u64 {
+        let id = self.resolve_stored_token_list(id);
+        self.tokens.semantic_id(id).value()
+    }
+
     #[cfg(test)]
     pub(crate) fn testing_token_semantic_id(&self, id: TokenListId) -> TokenSemanticId {
         let id = self.resolve_stored_token_list(id);

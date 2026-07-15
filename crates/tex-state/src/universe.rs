@@ -32,7 +32,10 @@ use crate::page::{
     PageBreak, PageBuilderState, PageContents, PageDimension, PageFireUp, PageHashCache,
     PageInsertion, PageInteger, PageMark, PageStateHashCursor,
 };
-use crate::pdf::{PdfOutputParameters, PdfState, PdfStateCursor, PdfStateSnapshot};
+use crate::pdf::{
+    PdfOutputParameters, PdfPageParameters, PdfState, PdfStateCursor, PdfStateSnapshot,
+    PdfTokenParameter,
+};
 use crate::provenance::ProvenanceStats;
 use crate::provenance::{
     InsertedOriginKind, OriginListBuilder, OriginRecord, SynthesizedOriginKind, SyntheticOriginKind,
@@ -451,6 +454,8 @@ impl ShipoutTransaction<'_> {
         effect_pos: EffectPos,
     ) -> Result<ContentHash, WorldError> {
         let output_parameters = self.current_pdf_output_parameters();
+        let page_parameters = self.current_pdf_page_parameters();
+        let pk_mode = self.current_pdf_token_parameter(TokParam::PDF_PK_MODE);
         self.pdf
             .ensure_page_capacity(output_parameters)
             .map_err(|()| WorldError::pdf_object_ids_exhausted())?;
@@ -461,7 +466,8 @@ impl ShipoutTransaction<'_> {
             self.stores.release_shipout_nodes(node_mark);
             self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
             self.page.set_integer(PageInteger::DeadCycles, 0);
-            self.pdf.commit_page(hash, output_parameters);
+            self.pdf
+                .commit_page(hash, output_parameters, page_parameters, pk_mode);
             let (bytes, render_origins) = artifact.into_parts();
             self.world
                 .record_artifact_commit(hash, bytes, render_origins);
@@ -481,7 +487,8 @@ impl ShipoutTransaction<'_> {
         self.stores.release_shipout_nodes(node_mark);
         self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
         self.page.set_integer(PageInteger::DeadCycles, 0);
-        self.pdf.commit_page(hash, output_parameters);
+        self.pdf
+            .commit_page(hash, output_parameters, page_parameters, pk_mode);
         let (bytes, render_origins) = artifact.into_parts();
         self.world
             .record_artifact_commit(hash, bytes, render_origins);
@@ -1702,6 +1709,12 @@ impl Universe {
         self.pdf.output_parameters()
     }
 
+    /// Returns the PK mode consumed when PDF output was first initialized.
+    #[must_use]
+    pub const fn fixed_pdf_pk_mode(&self) -> Option<TokenListId> {
+        self.pdf.pk_mode()
+    }
+
     fn current_pdf_output_parameters(&self) -> PdfOutputParameters {
         PdfOutputParameters {
             output: self.int_param(IntParam::PDF_OUTPUT),
@@ -1712,6 +1725,25 @@ impl Universe {
             decimal_digits: self.int_param(IntParam::PDF_DECIMAL_DIGITS),
         }
         .normalized()
+    }
+
+    fn current_pdf_token_parameter(&self, parameter: TokParam) -> PdfTokenParameter {
+        let tokens = self.tok_param(parameter);
+        PdfTokenParameter {
+            tokens,
+            semantic_id: self.stores.token_list_semantic_id_value(tokens),
+        }
+    }
+
+    fn current_pdf_page_parameters(&self) -> PdfPageParameters {
+        PdfPageParameters {
+            h_origin: self.dimen_param(DimenParam::PDF_H_ORIGIN),
+            v_origin: self.dimen_param(DimenParam::PDF_V_ORIGIN),
+            width: self.dimen_param(DimenParam::PDF_PAGE_WIDTH),
+            height: self.dimen_param(DimenParam::PDF_PAGE_HEIGHT),
+            page_attr: self.current_pdf_token_parameter(TokParam::PDF_PAGE_ATTR),
+            resources: self.current_pdf_token_parameter(TokParam::PDF_PAGE_RESOURCES),
+        }
     }
 
     /// Returns the current code-table generation vector.

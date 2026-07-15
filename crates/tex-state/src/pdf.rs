@@ -1,6 +1,8 @@
 //! Checkpointed pdfTeX document allocation ledger.
 
 use crate::ContentHash;
+use crate::ids::TokenListId;
+use crate::scaled::Scaled;
 use crate::state_hash::{StateHashFragment, StateHasher};
 
 const PDF_STATE_DOMAIN: u64 = 0x7064_665f_7374_6174;
@@ -46,6 +48,22 @@ impl PdfOutputParameters {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct PdfTokenParameter {
+    pub(crate) tokens: TokenListId,
+    pub(crate) semantic_id: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct PdfPageParameters {
+    pub(crate) h_origin: Scaled,
+    pub(crate) v_origin: Scaled,
+    pub(crate) width: Scaled,
+    pub(crate) height: Scaled,
+    pub(crate) page_attr: PdfTokenParameter,
+    pub(crate) resources: PdfTokenParameter,
+}
+
 /// Stable object identities assigned to one committed PDF page.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct PdfPageRecord {
@@ -53,6 +71,7 @@ pub struct PdfPageRecord {
     resources_object: u32,
     contents_object: u32,
     page_object: u32,
+    parameters: PdfPageParameters,
 }
 
 impl PdfPageRecord {
@@ -72,6 +91,30 @@ impl PdfPageRecord {
     pub const fn page_object(self) -> u32 {
         self.page_object
     }
+    #[must_use]
+    pub const fn h_origin(self) -> Scaled {
+        self.parameters.h_origin
+    }
+    #[must_use]
+    pub const fn v_origin(self) -> Scaled {
+        self.parameters.v_origin
+    }
+    #[must_use]
+    pub const fn width(self) -> Scaled {
+        self.parameters.width
+    }
+    #[must_use]
+    pub const fn height(self) -> Scaled {
+        self.parameters.height
+    }
+    #[must_use]
+    pub const fn page_attr(self) -> TokenListId {
+        self.parameters.page_attr.tokens
+    }
+    #[must_use]
+    pub const fn resources(self) -> TokenListId {
+        self.parameters.resources.tokens
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -80,6 +123,7 @@ pub(crate) struct PdfStateCursor {
     next_object: u32,
     page_count: usize,
     output_parameters: Option<PdfOutputParameters>,
+    pk_mode: Option<PdfTokenParameter>,
     fingerprint: u64,
 }
 
@@ -93,6 +137,7 @@ pub(crate) struct PdfState {
     next_object: u32,
     pages: Vec<PdfPageRecord>,
     output_parameters: Option<PdfOutputParameters>,
+    pk_mode: Option<PdfTokenParameter>,
     fingerprint: u64,
 }
 
@@ -103,6 +148,7 @@ impl Default for PdfState {
             next_object: FIRST_DYNAMIC_OBJECT,
             pages: Vec::new(),
             output_parameters: None,
+            pk_mode: None,
             fingerprint: base_fingerprint(false),
         }
     }
@@ -136,6 +182,7 @@ impl PdfState {
         self.pages.is_empty()
             && self.next_object == FIRST_DYNAMIC_OBJECT
             && self.output_parameters.is_none()
+            && self.pk_mode.is_none()
     }
 
     pub(crate) fn ensure_page_capacity(&self, parameters: PdfOutputParameters) -> Result<(), ()> {
@@ -149,28 +196,39 @@ impl PdfState {
         (last <= MAX_OBJECT_ID).then_some(()).ok_or(())
     }
 
-    pub(crate) fn commit_page(&mut self, artifact: ContentHash, parameters: PdfOutputParameters) {
+    pub(crate) fn commit_page(
+        &mut self,
+        artifact: ContentHash,
+        output: PdfOutputParameters,
+        page: PdfPageParameters,
+        pk_mode: PdfTokenParameter,
+    ) {
         if !self.enabled {
             return;
         }
-        let parameters = match self.output_parameters {
+        let output = match self.output_parameters {
             Some(parameters) => parameters,
             None => {
-                self.output_parameters = Some(parameters);
-                self.fingerprint = freeze_fingerprint(self.fingerprint, parameters);
-                parameters
+                self.output_parameters = Some(output);
+                self.fingerprint = freeze_fingerprint(self.fingerprint, output);
+                output
             }
         };
-        if parameters.output <= 0 {
+        if output.output <= 0 {
             return;
         }
-        self.ensure_page_capacity(parameters)
+        if self.pk_mode.is_none() {
+            self.pk_mode = Some(pk_mode);
+            self.fingerprint = freeze_pk_mode_fingerprint(self.fingerprint, pk_mode);
+        }
+        self.ensure_page_capacity(output)
             .expect("PDF page object capacity was preflighted");
         let record = PdfPageRecord {
             artifact,
             resources_object: self.next_object,
             contents_object: self.next_object + 1,
             page_object: self.next_object + 2,
+            parameters: page,
         };
         self.next_object += OBJECTS_PER_PAGE;
         self.pages.push(record);
@@ -183,12 +241,21 @@ impl PdfState {
     }
 
     #[must_use]
+    pub(crate) const fn pk_mode(&self) -> Option<TokenListId> {
+        match self.pk_mode {
+            Some(mode) => Some(mode.tokens),
+            None => None,
+        }
+    }
+
+    #[must_use]
     pub(crate) const fn cursor(&self) -> PdfStateCursor {
         PdfStateCursor {
             enabled: self.enabled,
             next_object: self.next_object,
             page_count: self.pages.len(),
             output_parameters: self.output_parameters,
+            pk_mode: self.pk_mode,
             fingerprint: self.fingerprint,
         }
     }
@@ -207,6 +274,7 @@ impl PdfState {
         self.enabled = cursor.enabled;
         self.next_object = cursor.next_object;
         self.output_parameters = cursor.output_parameters;
+        self.pk_mode = cursor.pk_mode;
         self.fingerprint = cursor.fingerprint;
     }
 
@@ -244,6 +312,19 @@ fn append_fingerprint(previous: u64, record: PdfPageRecord) -> u64 {
     hasher.u32(record.resources_object);
     hasher.u32(record.contents_object);
     hasher.u32(record.page_object);
+    hasher.i32(record.parameters.h_origin.raw());
+    hasher.i32(record.parameters.v_origin.raw());
+    hasher.i32(record.parameters.width.raw());
+    hasher.i32(record.parameters.height.raw());
+    hasher.u64(record.parameters.page_attr.semantic_id);
+    hasher.u64(record.parameters.resources.semantic_id);
+    hasher.finish()
+}
+
+fn freeze_pk_mode_fingerprint(previous: u64, mode: PdfTokenParameter) -> u64 {
+    let mut hasher = StateHasher::new(PDF_PAGE_DOMAIN);
+    hasher.u64(previous);
+    hasher.u64(mode.semantic_id);
     hasher.finish()
 }
 
@@ -277,10 +358,22 @@ mod tests {
             object_compress_level: 0,
             decimal_digits: 3,
         };
-        state.commit_page(hash, parameters);
+        let token = PdfTokenParameter {
+            tokens: TokenListId::EMPTY,
+            semantic_id: 0,
+        };
+        let page = PdfPageParameters {
+            h_origin: Scaled::from_raw(10),
+            v_origin: Scaled::from_raw(20),
+            width: Scaled::from_raw(30),
+            height: Scaled::from_raw(40),
+            page_attr: token,
+            resources: token,
+        };
+        state.commit_page(hash, parameters, page, token);
         let first = (state.pages()[0], state.cursor());
         state.rollback(snapshot);
-        state.commit_page(hash, parameters);
+        state.commit_page(hash, parameters, page, token);
         assert_eq!((state.pages()[0], state.cursor()), first);
     }
 }
