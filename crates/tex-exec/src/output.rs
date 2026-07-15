@@ -89,6 +89,7 @@ fn fire_up_page(
         build_page(stores)?;
         return Ok(());
     }
+    stores.record_output_routine_execution();
     stores.set_page_integer(
         PageInteger::DeadCycles,
         dead_cycles

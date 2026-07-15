@@ -33,7 +33,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/assignments/pdf_actions.rs`: shared pdfTeX action scanner for catalog, link, and outline consumers.
 - `src/assignments/primitives.rs`: registration table for unexpandable primitive meanings.
 - `src/assignments/scanning.rs`: assignment classification and operand scanners for variables and definitions.
-- `src/assignments/shipout.rs`: `\shipout` transaction, commit, and publication orchestration.
+- `src/assignments/shipout.rs`: `\shipout` transaction, commit, publication orchestration, and finalized effect-free artifact reuse; deferred and host-effect paths remain explicit barriers.
 - `src/assignments/shipout/direct.rs`: fused fresh-page artifact and DVI emission over compact state node lists.
 - `src/assignments/shipout/direct/normalize.rs`: mutable pre-emission normalization for effects, math substitutions, and direction permutations.
 - `src/assignments/shipout/direct/materialize.rs`: localized owned-node replay support for repeated DVI leader payloads.

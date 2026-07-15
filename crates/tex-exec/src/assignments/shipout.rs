@@ -1,15 +1,21 @@
 use tex_lex::InputStack;
-use tex_state::env::banks::DimenParam;
-use tex_state::env::banks::IntParam;
+use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::node::Node;
 use tex_state::token::TracedTokenWord;
-use tex_state::{PrintSink, Universe};
+use tex_state::{
+    ContentHash, DetachedArtifact, MemoValueLimits, PrintSink, PureMemoKey, PureShipoutEntry,
+    Universe,
+};
 
 use super::scan_required_box_node;
 use crate::ExecError;
 use crate::dispatch::PreparedDviPage;
 
 mod direct;
+
+const SHIPOUT_EPISODE_DOMAIN: u32 = 4;
+const SHIPOUT_EPISODE_SCHEMA: u32 = 1;
+const SHIPOUT_ENV_HASH_DOMAIN: u64 = 0x7368_6970_656e_7601;
 
 // TeX82 map: `ship_out` consumes a box whose child list is visited by
 // `hlist_out`/`vlist_out`. Fresh pages use the direct two-phase emitter in
@@ -41,12 +47,88 @@ pub(crate) fn shipout_node(
         );
         return Ok(None);
     }
+    let cacheable = effect_free_shipout_graph(stores, &node)
+        && stores.world().effect_records().is_empty()
+        && (1..=32_768).contains(&stores.int_param(IntParam::MAG));
+    let key = cacheable.then(|| shipout_key(stores, &node));
+    let input_origins = if cacheable {
+        stores.node_memo_origins(&node).ok()
+    } else {
+        stores.record_pure_shipout_barrier();
+        None
+    };
+    if let (Some(key), Some(input_origins)) = (key, input_origins.as_ref())
+        && let Some(entry) = stores.lookup_pure_shipout(key)
+    {
+        let detached = entry.artifact.artifact(MemoValueLimits::default());
+        if let Ok(detached) = detached {
+            let render_origins = entry
+                .render_origin_ordinals
+                .iter()
+                .map(|node_origins| {
+                    node_origins
+                        .iter()
+                        .map(|ordinal| {
+                            usize::try_from(*ordinal)
+                                .ok()
+                                .and_then(|ordinal| input_origins.get(ordinal))
+                                .copied()
+                                .unwrap_or(tex_state::token::OriginId::UNKNOWN)
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            let imported_bytes = entry.artifact.retained_bytes();
+            stores.commit_replayed_artifact(detached.payload, render_origins)?;
+            stores.record_pure_shipout_hit(imported_bytes);
+            return Ok(None);
+        }
+        stores.reject_pure_memo(key);
+    }
+    let effect_start = stores.world().effect_records().len();
     let mut transaction = stores.begin_shipout();
     let staged = direct::stage_shipout(node, input, &mut transaction, execution)?;
     let retained_diagnostics = staged.retained_diagnostics.clone();
+    let artifact_bytes = staged.artifact.bytes().to_vec();
+    let artifact_origins = staged
+        .artifact
+        .render_origins_for_memo()
+        .iter()
+        .map(|origins| origins.to_vec())
+        .collect::<Vec<_>>();
     let hash = transaction.commit(staged.artifact, staged.effect_pos)?;
     for (sink, text) in retained_diagnostics {
         stores.world_mut().write_text(sink, &text);
+    }
+    if let (Some(key), Some(input_origins)) = (key, input_origins)
+        && stores.world().effect_records().len() == effect_start
+        && let Ok(artifact) = tex_state::DetachedMemoValue::from_artifact(&DetachedArtifact {
+            artifact_schema: 10,
+            payload: artifact_bytes,
+        })
+    {
+        let render_origin_ordinals = artifact_origins
+            .iter()
+            .map(|origins| {
+                origins
+                    .iter()
+                    .map(|origin| {
+                        input_origins
+                            .iter()
+                            .position(|candidate| candidate == origin)
+                            .and_then(|index| u32::try_from(index).ok())
+                            .unwrap_or(u32::MAX)
+                    })
+                    .collect()
+            })
+            .collect();
+        stores.insert_pure_shipout(
+            key,
+            PureShipoutEntry {
+                artifact,
+                render_origin_ordinals,
+            },
+        );
     }
     Ok(Some(PreparedDviPage {
         hash,
@@ -116,6 +198,72 @@ fn prepare_pdf_output_policy(stores: &mut Universe) -> Result<(), ExecError> {
         );
     }
     Ok(())
+}
+
+fn shipout_key(stores: &mut Universe, node: &Node) -> PureMemoKey {
+    let root = stores.freeze_node_list(std::slice::from_ref(node));
+    let environment = stores.engine_boundary_hash(SHIPOUT_ENV_HASH_DOMAIN, |hash| {
+        hash.node_list(root);
+        hash.i32(stores.int_param(IntParam::MAG));
+        hash.i32(stores.dimen_param(DimenParam::H_OFFSET).raw());
+        hash.i32(stores.dimen_param(DimenParam::V_OFFSET).raw());
+        for index in 0..10 {
+            hash.i32(stores.count(index));
+        }
+    });
+    let mut bytes = Vec::with_capacity(16);
+    bytes.extend_from_slice(&SHIPOUT_EPISODE_SCHEMA.to_le_bytes());
+    bytes.extend_from_slice(&environment.to_le_bytes());
+    PureMemoKey::new(
+        SHIPOUT_EPISODE_DOMAIN,
+        environment,
+        ContentHash::from_bytes(&bytes),
+    )
+}
+
+fn effect_free_shipout_graph(stores: &Universe, root: &Node) -> bool {
+    let mut nodes = vec![root.clone()];
+    while let Some(node) = nodes.pop() {
+        let children = match node {
+            Node::HList(box_node) | Node::VList(box_node) => Some(box_node.children),
+            Node::Glue {
+                leader:
+                    Some(
+                        tex_state::node::LeaderPayload::HList(box_node)
+                        | tex_state::node::LeaderPayload::VList(box_node),
+                    ),
+                ..
+            } => Some(box_node.children),
+            Node::Disc {
+                pre, post, replace, ..
+            } => {
+                nodes.extend(stores.nodes(pre).into_iter().map(|node| node.to_owned()));
+                nodes.extend(stores.nodes(post).into_iter().map(|node| node.to_owned()));
+                Some(replace)
+            }
+            Node::Whatsit(_)
+            | Node::Unset(_)
+            | Node::Ins { .. }
+            | Node::Direction(_)
+            | Node::MathNoad(_)
+            | Node::FractionNoad(_)
+            | Node::MathStyle(_)
+            | Node::MathChoice(_)
+            | Node::MathList(_)
+            | Node::Nonscript
+            | Node::Adjust(_) => return false,
+            _ => None,
+        };
+        if let Some(children) = children {
+            nodes.extend(
+                stores
+                    .nodes(children)
+                    .into_iter()
+                    .map(|node| node.to_owned()),
+            );
+        }
+    }
+    true
 }
 
 fn huge_shipout_box(node: &Node, stores: &Universe) -> bool {

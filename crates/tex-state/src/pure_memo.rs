@@ -49,6 +49,12 @@ pub struct PureMemoStats {
     pub page_contributions_skipped: u64,
     pub page_imported_bytes: u64,
     pub page_import_failures: u64,
+    pub shipout_lookups: u64,
+    pub shipout_hits: u64,
+    pub shipout_inserts: u64,
+    pub shipout_barriers: u64,
+    pub shipout_imported_bytes: u64,
+    pub output_routine_executions: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -78,6 +84,12 @@ pub struct PurePageEntry {
     pub transition: DetachedMemoValue,
     pub contributions: usize,
     pub origin_ordinals: Vec<u32>,
+}
+
+#[derive(Clone, Debug)]
+pub struct PureShipoutEntry {
+    pub artifact: DetachedMemoValue,
+    pub render_origin_ordinals: Vec<Vec<u32>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -126,6 +138,7 @@ enum PureMemoValue {
     Pretolerance(Option<PureBreakPlan>),
     Paragraph(PureParagraphEntry),
     Page(PurePageEntry),
+    Shipout(PureShipoutEntry),
     Detached,
 }
 
@@ -147,6 +160,7 @@ pub struct PureMemoRuntime {
     cache: Option<PureMemoCache>,
     paragraph_front_ends: bool,
     page_episodes: bool,
+    shipout_episodes: bool,
     paragraph_recording: Option<Vec<PureParagraphMutation>>,
 }
 
@@ -166,12 +180,21 @@ impl PureMemoRuntime {
         self.cache.is_some() && self.page_episodes
     }
 
+    #[must_use]
+    pub const fn shipout_episodes_enabled(&self) -> bool {
+        self.cache.is_some() && self.shipout_episodes
+    }
+
     pub fn enable_paragraph_front_ends(&mut self) {
         self.paragraph_front_ends = self.cache.is_some();
     }
 
     pub fn enable_page_episodes(&mut self) {
         self.page_episodes = self.cache.is_some();
+    }
+
+    pub fn enable_shipout_episodes(&mut self) {
+        self.shipout_episodes = self.cache.is_some();
     }
 
     pub(crate) fn enable(&mut self, config: PureMemoConfig) {
@@ -187,6 +210,7 @@ impl PureMemoRuntime {
         self.cache = None;
         self.paragraph_front_ends = false;
         self.page_episodes = false;
+        self.shipout_episodes = false;
     }
 
     pub(crate) fn lookup_pretolerance(
@@ -200,9 +224,10 @@ impl PureMemoRuntime {
             .get(&key)
             .and_then(|entry| match &entry.value {
                 PureMemoValue::Pretolerance(plan) => Some(plan.clone()),
-                PureMemoValue::Paragraph(_) | PureMemoValue::Page(_) | PureMemoValue::Detached => {
-                    None
-                }
+                PureMemoValue::Paragraph(_)
+                | PureMemoValue::Page(_)
+                | PureMemoValue::Shipout(_)
+                | PureMemoValue::Detached => None,
             });
         if hit.is_some() {
             cache.stats.hits = cache.stats.hits.saturating_add(1);
@@ -233,6 +258,7 @@ impl PureMemoRuntime {
                 PureMemoValue::Paragraph(value) => Some(value.clone()),
                 PureMemoValue::Pretolerance(_)
                 | PureMemoValue::Page(_)
+                | PureMemoValue::Shipout(_)
                 | PureMemoValue::Detached => None,
             });
         if hit.is_some() {
@@ -301,6 +327,75 @@ impl PureMemoRuntime {
     pub(crate) fn record_page_import_failure(&mut self) {
         if let Some(cache) = &mut self.cache {
             cache.stats.page_import_failures = cache.stats.page_import_failures.saturating_add(1);
+        }
+    }
+
+    pub(crate) fn lookup_shipout(&mut self, key: PureMemoKey) -> Option<PureShipoutEntry> {
+        if !self.shipout_episodes {
+            return None;
+        }
+        let cache = self.cache.as_mut()?;
+        cache.stats.lookups = cache.stats.lookups.saturating_add(1);
+        cache.stats.shipout_lookups = cache.stats.shipout_lookups.saturating_add(1);
+        let hit = cache
+            .entries
+            .get(&key)
+            .and_then(|entry| match &entry.value {
+                PureMemoValue::Shipout(value) => Some(value.clone()),
+                _ => None,
+            });
+        if hit.is_some() {
+            cache.stats.hits = cache.stats.hits.saturating_add(1);
+            cache.stats.shipout_hits = cache.stats.shipout_hits.saturating_add(1);
+        } else {
+            cache.stats.misses = cache.stats.misses.saturating_add(1);
+        }
+        hit
+    }
+
+    pub(crate) fn insert_shipout(&mut self, key: PureMemoKey, value: PureShipoutEntry) {
+        if !self.shipout_episodes {
+            return;
+        }
+        let owned_bytes = value
+            .artifact
+            .retained_bytes()
+            .saturating_sub(std::mem::size_of::<DetachedMemoValue>())
+            .saturating_add(
+                value
+                    .render_origin_ordinals
+                    .iter()
+                    .map(|origins| origins.capacity().saturating_mul(4))
+                    .sum::<usize>(),
+            );
+        let before = self.cache.as_ref().map_or(0, |cache| cache.stats.inserts);
+        self.insert_value(key, PureMemoValue::Shipout(value), owned_bytes);
+        if let Some(cache) = &mut self.cache
+            && cache.stats.inserts != before
+        {
+            cache.stats.shipout_inserts = cache.stats.shipout_inserts.saturating_add(1);
+        }
+    }
+
+    pub(crate) fn record_shipout_hit(&mut self, imported_bytes: usize) {
+        if let Some(cache) = &mut self.cache {
+            cache.stats.shipout_imported_bytes = cache
+                .stats
+                .shipout_imported_bytes
+                .saturating_add(imported_bytes as u64);
+        }
+    }
+
+    pub(crate) fn record_shipout_barrier(&mut self) {
+        if let Some(cache) = &mut self.cache {
+            cache.stats.shipout_barriers = cache.stats.shipout_barriers.saturating_add(1);
+        }
+    }
+
+    pub(crate) fn record_output_routine_execution(&mut self) {
+        if let Some(cache) = &mut self.cache {
+            cache.stats.output_routine_executions =
+                cache.stats.output_routine_executions.saturating_add(1);
         }
     }
 

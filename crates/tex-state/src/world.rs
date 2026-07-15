@@ -105,6 +105,13 @@ impl VerifiedArtifact {
         &self.bytes
     }
 
+    /// Diagnostic provenance captured before a memoized shipout commit.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn render_origins_for_memo(&self) -> &[Vec<OriginId>] {
+        &self.render_origins
+    }
+
     pub(crate) fn into_parts(self) -> (Vec<u8>, Vec<Vec<OriginId>>) {
         (self.bytes, self.render_origins)
     }

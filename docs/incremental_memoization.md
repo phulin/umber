@@ -502,6 +502,20 @@ transaction only after complete coverage exists for its environment, group,
 input, box-255, mark, insertion, stream, effect, nested shipout, and diagnostic
 behavior. Its transaction is validated and applied atomically.
 
+The release implementation deliberately retains that execution barrier for
+custom output routines: their invocation count is reported, and all state,
+input, diagnostics, and nested shipouts execute through the ordinary engine.
+The reusable boundary is placed later, after a shipout page has passed deferred
+expansion and normalization. Effect-free, already-normalized box graphs use a
+key over semantic node content, magnification, offsets, and the ten TeX page
+counters; their canonical artifact bytes and render-provenance ordinal recipe
+are detached. Replay publishes those bytes through the ordinary atomic shipout
+transaction. Deferred writes, stream operations, specials, math normalization,
+directions, insertions, shell escape, and other mutable lowering surfaces are
+counted barriers and always execute. This narrower boundary avoids treating
+arbitrary TeX execution or host effects as pure while removing repeated
+artifact lowering and DVI planning where the equivalence proof is complete.
+
 ### Shipout and output encoding
 
 Shipout-time deferred-write expansion remains a tracked execution episode.

@@ -132,6 +132,64 @@ fn page_episode_tracks_insertion_registers_and_detaches_insert_content() {
 }
 
 #[test]
+fn finalized_shipout_artifact_reuses_while_output_routine_still_executes() {
+    let source = "\\output={\\global\\advance\\count50 by1 \
+        \\shipout\\box255}\\topskip=0pt \
+        \\setbox0=\\hbox{\\vrule width1pt height1pt} \
+        \\copy0\\penalty-10000 \\copy0\\penalty-10000\\end";
+    let run = |memoized: bool| {
+        let mut stores = Universe::new();
+        tex_expand::install_expandable_primitives(&mut stores);
+        install_unexpandable_primitives(&mut stores);
+        if memoized {
+            stores.enable_pure_memo(tex_state::PureMemoConfig::default());
+            stores.enable_shipout_memo();
+        }
+        let mut input = InputStack::new(MemoryInput::new(source));
+        let stats = Executor::new()
+            .run(&mut input, &mut stores)
+            .expect("repeated output routine");
+        let mut writer = tex_out::dvi::DviStreamWriter::new(Vec::new());
+        for page in &stats.dvi_pages {
+            writer.write_page_plan(page).expect("DVI page");
+        }
+        (
+            writer.finish().expect("DVI finish"),
+            stores.count(50),
+            stores.pure_memo_stats(),
+        )
+    };
+
+    let (cold_dvi, cold_count, _) = run(false);
+    let (memo_dvi, memo_count, memo) = run(true);
+    assert_eq!(memo_dvi, cold_dvi);
+    assert_eq!(memo_count, cold_count);
+    assert_eq!(memo_count, 2, "output routine must execute on every page");
+    assert!(memo.shipout_hits >= 1, "{memo:?}");
+}
+
+#[test]
+fn deferred_write_shipouts_are_counted_barriers_and_expand_each_time() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    stores.enable_pure_memo(tex_state::PureMemoConfig::default());
+    stores.enable_shipout_memo();
+    let source = "\\setbox0=\\hbox{\\write16{p:\\the\\count1}} \
+        \\count1=1\\shipout\\copy0 \\count1=2\\shipout\\copy0\\end";
+    let mut input = InputStack::new(MemoryInput::new(source));
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("deferred writes execute");
+
+    assert_eq!(stats.shipped_artifacts.len(), 2);
+    assert_ne!(stats.shipped_artifacts[0], stats.shipped_artifacts[1]);
+    let memo = stores.pure_memo_stats();
+    assert!(memo.shipout_barriers >= 2, "{memo:?}");
+    assert_eq!(memo.shipout_hits, 0, "{memo:?}");
+}
+
+#[test]
 fn expansion_memo_preserves_execution_state_and_effects() {
     let source = r"\def\m#1{A#1B}
 \edef\first{\m{x}}\edef\second{\m{x}}

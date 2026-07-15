@@ -1594,6 +1594,11 @@ impl Universe {
         self.pure_memo.enable_page_episodes();
     }
 
+    /// Enables finalized effect-free shipout artifact reuse.
+    pub fn enable_shipout_memo(&mut self) {
+        self.pure_memo.enable_shipout_episodes();
+    }
+
     /// Disables the pure-query cache and releases every retained value.
     pub fn disable_pure_memo(&mut self) {
         self.pure_memo.disable();
@@ -1677,6 +1682,34 @@ impl Universe {
     #[doc(hidden)]
     pub fn record_pure_page_import_failure(&mut self) {
         self.pure_memo.record_page_import_failure();
+    }
+
+    #[doc(hidden)]
+    pub fn lookup_pure_shipout(
+        &mut self,
+        key: crate::PureMemoKey,
+    ) -> Option<crate::PureShipoutEntry> {
+        self.pure_memo.lookup_shipout(key)
+    }
+
+    #[doc(hidden)]
+    pub fn insert_pure_shipout(&mut self, key: crate::PureMemoKey, value: crate::PureShipoutEntry) {
+        self.pure_memo.insert_shipout(key, value);
+    }
+
+    #[doc(hidden)]
+    pub fn record_pure_shipout_hit(&mut self, imported_bytes: usize) {
+        self.pure_memo.record_shipout_hit(imported_bytes);
+    }
+
+    #[doc(hidden)]
+    pub fn record_pure_shipout_barrier(&mut self) {
+        self.pure_memo.record_shipout_barrier();
+    }
+
+    #[doc(hidden)]
+    pub fn record_output_routine_execution(&mut self) {
+        self.pure_memo.record_output_routine_execution();
     }
 
     #[doc(hidden)]
@@ -4837,6 +4870,35 @@ impl Universe {
             .encode_memo_node_list_with_origins(root)
             .map(|(_, origins)| origins)
             .map_err(|error| crate::MemoValueError::Codec(format!("{error:?}")))
+    }
+
+    /// Captures one shipout root's provenance sequence in detached-codec order.
+    #[doc(hidden)]
+    pub fn node_memo_origins(
+        &mut self,
+        node: &Node,
+    ) -> Result<Vec<OriginId>, crate::MemoValueError> {
+        let root = self.freeze_node_list(std::slice::from_ref(node));
+        self.stores
+            .encode_memo_node_list_with_origins(root)
+            .map(|(_, origins)| origins)
+            .map_err(|error| crate::MemoValueError::Codec(format!("{error:?}")))
+    }
+
+    /// Publishes already-verified artifact bytes through the ordinary shipout
+    /// transaction, preserving effect-prefix and dead-cycle semantics.
+    #[doc(hidden)]
+    pub fn commit_replayed_artifact(
+        &mut self,
+        bytes: Vec<u8>,
+        render_origins: Vec<Vec<OriginId>>,
+    ) -> Result<ContentHash, WorldError> {
+        let effect_pos = self.world.effect_pos();
+        let transaction = self.begin_shipout();
+        transaction.commit(
+            crate::VerifiedArtifact::new(bytes).with_render_origins(render_origins),
+            effect_pos,
+        )
     }
 
     /// Imports and atomically publishes a detached page-builder result root.
