@@ -16,7 +16,7 @@ Keep reusable test harness code here when multiple crates or integration tests n
 - `src/corpus.rs`: shared committed-corpus discovery and support-file copy helpers.
 - `src/dvi.rs`: shared DVI fixture setup and preamble-comment-normalized comparison helpers.
 - `src/lib.rs`: public fixture assertion/read helpers, TeX/reference log normalizers, and PL font parsing utilities.
-- `src/pdf.rs`: canonical minimal PDF catalog/page/resource/content structure normalizer.
+- `src/pdf.rs`: canonical PDF page/content plus document-object and dictionary structure normalizer.
 - `src/tests.rs`: crate self-test that reads the committed hello fixture.
 
 ## Boundaries

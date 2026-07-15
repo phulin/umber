@@ -1,0 +1,24 @@
+\catcode123=1 \catcode125=2
+\pdfoutput=1
+\pdfmajorversion=1
+\pdfminorversion=4
+\pdfcompresslevel=0
+\pdfobjcompresslevel=0
+\pdfpagewidth=10pt
+\pdfpageheight=5pt
+\pdfhorigin=0pt
+\pdfvorigin=0pt
+\pdfobj reserveobjnum
+\edef\reserved{\the\pdflastobj}
+\pdfobj useobjnum \reserved stream attr {/Subtype /XML} {stream payload}
+\immediate\pdfobj{<< /Kind /Immediate >>}
+\pdfcatalog{/PageMode /UseNone}
+\pdfcatalog{/ViewerPreferences << /HideToolbar true >>} openaction goto page 1 {/Fit}
+\pdfnames{/EmbeddedFiles << >>}
+\pdfinfo{/Title (Objects and dictionaries)}
+\pdfinfo{/Subject (Parity fixture)}
+\pdftrailer{/Custom true}
+\pdftrailerid{object-dictionary-fixture}
+\setbox0=\vbox{\pdfrefobj \reserved\hrule width 10pt height 5pt}
+\shipout\box0
+\end

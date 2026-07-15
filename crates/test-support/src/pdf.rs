@@ -1,7 +1,9 @@
-//! Canonical structure projection for hermetic minimal-PDF parity fixtures.
+//! Canonical structure projection for hermetic PDF parity fixtures.
+
+use std::collections::BTreeMap;
 
 use anyhow::{Context, Result, bail};
-use lopdf::{Document, Object};
+use lopdf::{Dictionary, Document, Object, ObjectId};
 use sha2::{Digest, Sha256};
 
 /// Parses a PDF and projects catalog, ordered pages, resources, media boxes,
@@ -66,7 +68,182 @@ pub fn normalize_structure(bytes: &[u8]) -> Result<String> {
             normalized.push('\n');
         }
     }
+    append_document_extensions(&document, &mut normalized)?;
     Ok(normalized)
+}
+
+fn append_document_extensions(document: &Document, normalized: &mut String) -> Result<()> {
+    let catalog = document.catalog().context("PDF has no catalog")?;
+    let pages_by_id = document
+        .get_pages()
+        .into_iter()
+        .map(|(number, id)| (id, number))
+        .collect::<BTreeMap<_, _>>();
+    let mut extensions = Vec::new();
+
+    let catalog_entries = selected_dictionary(
+        document,
+        catalog,
+        &[b"PageMode".as_slice(), b"ViewerPreferences".as_slice()],
+    )?;
+    if !catalog_entries.is_empty() {
+        extensions.push(format!("catalog-extensions {catalog_entries}"));
+    }
+    if let Ok(action) = catalog.get(b"OpenAction") {
+        extensions.push(format!(
+            "open-action {}",
+            canonical_action(document, action, &pages_by_id)?
+        ));
+    }
+    if let Ok(names) = catalog.get(b"Names") {
+        extensions.push(format!("names {}", canonical_object(document, names, 0)?));
+    }
+
+    if let Ok(info) = document.trailer.get(b"Info") {
+        let (_, info) = document
+            .dereference(info)
+            .context("failed to resolve Info dictionary")?;
+        let info = info.as_dict().context("Info is not a dictionary")?;
+        let selected = selected_dictionary(
+            document,
+            info,
+            &[b"Title".as_slice(), b"Subject".as_slice()],
+        )?;
+        if !selected.is_empty() {
+            extensions.push(format!("info {selected}"));
+        }
+    }
+
+    let trailer = selected_dictionary(document, &document.trailer, &[b"Custom".as_slice()])?;
+    if !trailer.is_empty() {
+        extensions.push(format!("trailer {trailer}"));
+    }
+
+    let mut user_objects = Vec::new();
+    for object in document.objects.values() {
+        match object {
+            Object::Dictionary(dictionary) if dictionary.has(b"Kind") => {
+                user_objects.push(format!(
+                    "object {}",
+                    canonical_dictionary(document, dictionary)?
+                ));
+            }
+            Object::Stream(stream) if stream.dict.has(b"Subtype") => {
+                let dictionary = canonical_dictionary_without(document, &stream.dict, b"Length")?;
+                let data = stream
+                    .decompressed_content()
+                    .context("failed to decode user PDF stream")?;
+                user_objects.push(format!("stream {dictionary} data <{}>", hex(&data)));
+            }
+            _ => {}
+        }
+    }
+    user_objects.sort();
+    extensions.extend(user_objects);
+
+    if !extensions.is_empty() {
+        normalized.push_str("document-extensions\n");
+        for extension in extensions {
+            normalized.push_str(&extension);
+            normalized.push('\n');
+        }
+    }
+    Ok(())
+}
+
+fn selected_dictionary(
+    document: &Document,
+    dictionary: &Dictionary,
+    keys: &[&[u8]],
+) -> Result<String> {
+    let entries = keys
+        .iter()
+        .filter_map(|key| dictionary.get(key).ok().map(|value| (*key, value)))
+        .map(|(key, value)| {
+            Ok(format!(
+                "/{} {}",
+                String::from_utf8_lossy(key),
+                canonical_object(document, value, 0)?
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(if entries.is_empty() {
+        String::new()
+    } else {
+        format!("<<{}>>", entries.join(" "))
+    })
+}
+
+fn canonical_dictionary(document: &Document, dictionary: &Dictionary) -> Result<String> {
+    canonical_dictionary_without(document, dictionary, b"")
+}
+
+fn canonical_dictionary_without(
+    document: &Document,
+    dictionary: &Dictionary,
+    omitted: &[u8],
+) -> Result<String> {
+    let mut entries = dictionary
+        .iter()
+        .filter(|(key, _)| key.as_slice() != omitted)
+        .collect::<Vec<_>>();
+    entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+    let entries = entries
+        .into_iter()
+        .map(|(key, value)| {
+            Ok(format!(
+                "/{} {}",
+                String::from_utf8_lossy(key),
+                canonical_object(document, value, 0)?
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(format!("<<{}>>", entries.join(" ")))
+}
+
+fn canonical_action(
+    document: &Document,
+    action: &Object,
+    pages_by_id: &BTreeMap<ObjectId, u32>,
+) -> Result<String> {
+    let (_, action) = document
+        .dereference(action)
+        .context("failed to resolve OpenAction")?;
+    let action = action.as_dict().context("OpenAction is not a dictionary")?;
+    let mut entries = action.iter().collect::<Vec<_>>();
+    entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+    let entries = entries
+        .into_iter()
+        .map(|(key, value)| {
+            let value = if key == b"D" {
+                canonical_action_destination(document, value, pages_by_id)?
+            } else {
+                canonical_object(document, value, 0)?
+            };
+            Ok(format!("/{} {value}", String::from_utf8_lossy(key)))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(format!("<<{}>>", entries.join(" ")))
+}
+
+fn canonical_action_destination(
+    document: &Document,
+    destination: &Object,
+    pages_by_id: &BTreeMap<ObjectId, u32>,
+) -> Result<String> {
+    let Object::Array(values) = destination else {
+        return canonical_object(document, destination, 0);
+    };
+    let values = values
+        .iter()
+        .map(|value| match value {
+            Object::Reference(id) if pages_by_id.contains_key(id) => {
+                Ok(format!("page {}", pages_by_id[id]))
+            }
+            _ => canonical_object(document, value, 0),
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(format!("[{}]", values.join(" ")))
 }
 
 fn require_name(object: &Object, expected: &[u8]) -> Result<()> {

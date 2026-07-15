@@ -185,7 +185,7 @@ first-write range recovery, warning text, and recovered version. Hermetic
 Umber tests pair that fixture with alias-cell, fatal setup, version header,
 object-stream/type-2-xref, decimal rounding, and DVI/PDF switching assertions.
 
-Committed `tests/corpus/pdf` minimal fixtures are regenerated only through
+Committed `tests/corpus/pdf` fixtures are regenerated only through
 `scripts/regen-fixtures.sh --area pdf` or its `--case pdf/<case>` form. The
 reference producer is pinned pdfTeX 1.40.27 with the repository's deterministic
 clock policy. Structural comparison
@@ -207,7 +207,18 @@ reproduce the committed Umber PDF
 bytes, repeat structural normalization against the committed pdfTeX PDF, and
 verify the raster attestation chain without launching pdfTeX or Poppler. A
 structural mismatch cannot be blessed by a visually similar page. Tests also
-run the complete committed DVI corpus byte-for-byte.
+run the complete committed DVI corpus byte-for-byte. The
+`object_dictionaries` case composes reserved, referenced, immediate, and stream
+objects with catalog, open-action, names, info, trailer, and trailer-ID input.
+Its retained-session regression rolls back and replays the source, requiring
+identical PDF bytes and finalized engine-state hashes.
+
+The normalized graph currently deliberately hides indirect-object numbers.
+That is appropriate for writer-layout differences, but it does not prove
+observable `\pdflastobj` numbering parity: Umber's eagerly reserved catalog and
+page-tree identities offset user object numbers from pdfTeX. The object parity
+gate therefore remains open until allocation order is aligned and a focused
+oracle asserts those numbers.
 
 ## Delivery gates
 

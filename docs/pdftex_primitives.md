@@ -242,7 +242,12 @@ structure, and forward-page identities are reserved immediately from that same
 checkpointed ledger in pdfTeX order. Duplicate handling and DVI-mode
 consumption match pdfTeX; finalization adds the typed catalog `/OpenAction`
 reference and writer-framed action object without folding it into raw catalog
-fragment bytes.
+fragment bytes. The pinned `object_dictionaries` PDF fixture composes these
+forms and document dictionaries, compares their normalized graph and exact
+rendering with pdfTeX, and requires byte-identical retained-snapshot replay.
+Exact user-visible object numbering is still gated separately: the current
+eager catalog/page-tree reservations offset `\pdflastobj` from pdfTeX and must
+be aligned before the object/dictionary parity issue can close.
 
 The generated-font and microtype slice implements independent copied and
 letterspaced font state, validated `\pdffontexpand` configuration, discrete
