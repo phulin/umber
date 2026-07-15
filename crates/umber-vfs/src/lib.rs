@@ -8,6 +8,7 @@ mod limits;
 mod resource;
 mod snapshot;
 mod storage;
+mod transaction;
 
 pub use file::{
     BuildId, FileContentId, FileOrigin, PathBindingId, ProducerId, StageId, VirtualFile,
@@ -21,6 +22,10 @@ pub use snapshot::{SnapshotError, SnapshotRetention, VfsSnapshot, VirtualRoot};
 pub use storage::{
     DISTRIBUTION_LAYER_PRECEDENCE, FileLayer, ImmutableBindingError, InsertOutcome,
     JOB_LAYER_PRECEDENCE, LayerKind, LayeredFileStorage, StorageIdentity,
+};
+pub use transaction::{
+    AcceptedBuild, BuildPlan, BuildTransaction, DeclaredReplacement, StageCommit, StageTransaction,
+    TransactionError, VirtualFs,
 };
 
 /// A canonical absolute path in Umber's virtual namespace.

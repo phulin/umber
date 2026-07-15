@@ -154,6 +154,20 @@ impl FileLayer {
     pub(crate) fn get(&self, path: &VirtualPath) -> Option<&VirtualFile> {
         self.files.get(path)
     }
+
+    pub(crate) fn replace(&mut self, file: VirtualFile) -> Result<(), ImmutableBindingError> {
+        validate_ownership(self.kind, &file)?;
+        self.files.insert(file.path().clone(), file);
+        Ok(())
+    }
+
+    pub(crate) fn reclassified(&self, kind: LayerKind) -> Result<Self, ImmutableBindingError> {
+        let mut layer = Self::new(kind);
+        for file in self.files.values().cloned() {
+            layer.replace(file)?;
+        }
+        Ok(layer)
+    }
 }
 
 fn validate_ownership(kind: LayerKind, file: &VirtualFile) -> Result<(), ImmutableBindingError> {
@@ -275,6 +289,17 @@ impl LayeredFileStorage {
 
     pub(crate) fn shared_generation(&self) -> Arc<StorageGeneration> {
         Arc::clone(&self.generation)
+    }
+
+    pub(crate) fn replace_layer(&mut self, layer: FileLayer) {
+        let generation = Arc::make_mut(&mut self.generation);
+        let target = match layer.kind() {
+            LayerKind::User => &mut generation.user,
+            LayerKind::ResolvedResource => &mut generation.resolved_resource,
+            LayerKind::AcceptedGenerated => &mut generation.accepted_generated,
+            LayerKind::PendingGenerated => &mut generation.pending_generated,
+        };
+        *target = Arc::new(layer);
     }
 }
 

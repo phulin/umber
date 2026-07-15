@@ -90,9 +90,13 @@ impl SessionLimits {
         VfsLimits {
             user_files: self.user_files,
             resolved_files: self.resolved_files,
+            stage_files: VfsLimits::HARD_MAX.stage_files,
+            generated_files: VfsLimits::HARD_MAX.generated_files,
             one_file_bytes: self.one_file_bytes,
             user_bytes: self.user_source_bytes,
             resolved_bytes: self.cached_file_bytes,
+            stage_bytes: VfsLimits::HARD_MAX.stage_bytes,
+            generated_bytes: VfsLimits::HARD_MAX.generated_bytes,
         }
     }
 }

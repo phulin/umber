@@ -1,8 +1,8 @@
 # Shared virtual filesystem
 
 Status: canonical paths, immutable files, layered storage, typed file requests,
-resource registration, file limits, and deterministic snapshots implemented;
-transactions proposed.
+resource registration, file limits, deterministic snapshots, and generated-file
+transactions implemented; compile-session migration remains in progress.
 
 This document defines `umber-vfs`, the host-neutral virtual filesystem shared
 by Umber's TeX driver, bibliography processing, native embeddings, and the
@@ -194,9 +194,9 @@ There are two transaction scopes:
   one requested document revision.
 
 ```rust
-pub struct VirtualFs { /* accepted state */ }
+pub struct VirtualFs { /* accepted state and validated VfsLimits */ }
 pub struct BuildTransaction<'a> { /* private build overlay */ }
-pub struct StageTransaction<'a> { /* one producer's write set */ }
+pub struct StageTransaction<'stage, 'build> { /* one producer's write set */ }
 
 impl VirtualFs {
     pub fn begin_build(&mut self, plan: BuildPlan) -> BuildTransaction<'_>;
@@ -204,26 +204,31 @@ impl VirtualFs {
 
 impl BuildTransaction<'_> {
     pub fn snapshot(&self) -> VfsSnapshot;
-    pub fn begin_stage(&mut self, producer: ProducerId) -> StageTransaction<'_>;
-    pub fn accept(self) -> AcceptedBuild;
+    pub fn begin_stage(&mut self, producer: ProducerId)
+        -> Result<StageTransaction<'_, '_>, TransactionError>;
+    pub fn accept(self) -> Result<AcceptedBuild, TransactionError>;
     pub fn discard(self);
 }
 ```
 
 A stage reads one snapshot. Its writes are private until the stage succeeds.
 Committing the stage appends a new overlay generation visible to the next
-stage in the same build. Failure or a missing-resource suspension discards the
-stage write set; it does not expose truncated files.
+stage in the same build. Stage ids are assigned monotonically within the build.
+Failure or a missing-resource suspension discards the stage write set; it does
+not expose truncated files. Snapshots issued by either transaction scope are
+explicitly made stale when that scope ends.
 
 Accepting the build atomically replaces the accepted generated layer and its
 metadata. Discarding it leaves the previous accepted build, editor revision,
 and outputs unchanged.
 
-Within one stage, an output stream may be opened, appended, and closed using
-the semantics required by `World`. The VFS stores no incomplete file after
-the stage ends. Two producers writing the same path in one build require an
-explicit replacement declared by the build plan; an undeclared collision is a
-typed error.
+Stage writes accept complete byte buffers; engine adapters may buffer output
+streams using the semantics required by `World`, but only closed complete
+files enter the stage write set. The VFS stores no incomplete file after the
+stage ends. One producer may rewrite its own path in a later stage. A different
+producer may replace that path only when the build plan declares the exact
+path, prior producer, and replacing producer; an undeclared collision is a
+typed error and publishes none of the colliding stage's writes.
 
 ## Reads, writes, and stage adapters
 
@@ -339,16 +344,22 @@ composable `VfsLimits` value:
 pub struct VfsLimits {
     pub user_files: usize,
     pub resolved_files: usize,
+    pub stage_files: usize,
+    pub generated_files: usize,
     pub one_file_bytes: usize,
     pub user_bytes: usize,
     pub resolved_bytes: usize,
+    pub stage_bytes: usize,
+    pub generated_bytes: usize,
 }
 ```
 
-Generated-file count and byte limits join this value when stage and build
-transactions are implemented. Today `VirtualCompileSession::SessionLimits`
-preserves its public compatibility fields but delegates file hard-ceiling,
-replacement, and provisioning checks to `VfsLimits` and `FileProvisioner`.
+Generated-file count and byte limits are enforced independently for a private
+stage write set and for the complete pending build overlay. Today
+`VirtualCompileSession::SessionLimits` preserves its public compatibility
+fields but delegates file hard-ceiling, replacement, and provisioning checks
+to `VfsLimits` and `FileProvisioner`; later compile-session transaction
+migration will expose appropriately composed generated-output limits.
 
 Limits use checked arithmetic and are enforced before allocation where the
 declared size is known, during bounded stream growth, at stage commit, and at
@@ -453,8 +464,9 @@ byte-identical generated files and DVI.
 4. **Complete in `umber-vfs`.** Add cheap retained snapshots, exact lookup,
    accepted-output invalidation, stale-clone protection, and bounded lexical
    enumeration.
-5. Add build transactions over the accepted and pending generated layers;
-   migrate persistent compile-session atomicity to them.
+5. **Complete in `umber-vfs`.** Add producer-scoped stage transactions and
+   multi-stage build transactions over the accepted and pending generated
+   layers. Persistent compile-session migration remains in later phases.
 6. Adapt the existing TeX resolver and memory-output collector to VFS
    snapshots and stage transactions without changing public compile behavior.
 7. Add the bibliography resource kinds and adapters defined in
