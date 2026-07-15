@@ -406,6 +406,14 @@ impl Stores {
         &self,
         root: NodeListId,
     ) -> Result<Vec<u8>, StoreFormatError> {
+        self.encode_memo_node_list_with_origins(root)
+            .map(|(bytes, _)| bytes)
+    }
+
+    pub(crate) fn encode_memo_node_list_with_origins(
+        &self,
+        root: NodeListId,
+    ) -> Result<(Vec<u8>, Vec<crate::token::OriginId>), StoreFormatError> {
         let names = (0..self.interner.len())
             .map(|raw| {
                 let symbol = self
@@ -443,6 +451,7 @@ impl Stores {
         let mut visiting = std::collections::BTreeSet::new();
         let mut survivor_roots = std::collections::BTreeMap::new();
         let mut node_lists = Vec::new();
+        let mut origins = Vec::new();
         capture_node_list(
             self,
             root,
@@ -450,9 +459,10 @@ impl Stores {
             &mut visiting,
             &mut survivor_roots,
             &mut node_lists,
+            Some(&mut origins),
         )?;
         let root = FormatListKey::capture(self, root, &mut survivor_roots);
-        bincode::serialize(&MemoNodeBundle {
+        let bytes = bincode::serialize(&MemoNodeBundle {
             names,
             token_lists,
             glue,
@@ -460,7 +470,8 @@ impl Stores {
             node_lists,
             root,
         })
-        .map_err(|error| StoreFormatError::Codec(error.to_string()))
+        .map_err(|error| StoreFormatError::Codec(error.to_string()))?;
+        Ok((bytes, origins))
     }
 
     pub(crate) fn import_memo_node_list(
@@ -469,6 +480,17 @@ impl Stores {
         max_nodes: usize,
         max_tokens: usize,
         max_string_bytes: usize,
+    ) -> Result<NodeListId, StoreFormatError> {
+        self.import_memo_node_list_with_origins(bytes, max_nodes, max_tokens, max_string_bytes, &[])
+    }
+
+    pub(crate) fn import_memo_node_list_with_origins(
+        &mut self,
+        bytes: &[u8],
+        max_nodes: usize,
+        max_tokens: usize,
+        max_string_bytes: usize,
+        origins: &[crate::token::OriginId],
     ) -> Result<NodeListId, StoreFormatError> {
         let bundle: MemoNodeBundle = bincode::deserialize(bytes)
             .map_err(|error| StoreFormatError::Codec(error.to_string()))?;
@@ -554,11 +576,12 @@ impl Stores {
             token_lists: &token_ids,
         };
         let mut node_ids = std::collections::BTreeMap::new();
+        let mut origins = origins.iter().copied();
         for list in bundle.node_lists {
             let nodes = list
                 .nodes
                 .into_iter()
-                .map(|node| node.restore(&content_ids, &node_ids))
+                .map(|node| node.restore_with_origins(&content_ids, &node_ids, &mut origins))
                 .collect::<Result<Vec<_>, _>>()?;
             let id = self.freeze_node_list(&nodes);
             node_ids.insert(list.key, id);
@@ -696,6 +719,7 @@ impl StoreFormat {
                 &mut visiting,
                 &mut survivor_roots,
                 &mut node_lists,
+                None,
             )?;
         }
         let mut env: Vec<FormatEnvEntry> = env_words
@@ -1282,6 +1306,7 @@ fn capture_node_list(
     visiting: &mut std::collections::BTreeSet<NodeListId>,
     survivor_roots: &mut std::collections::BTreeMap<crate::ids::SurvivorRootId, u32>,
     out: &mut Vec<FormatNodeList>,
+    mut origins: Option<&mut Vec<crate::token::OriginId>>,
 ) -> Result<(), StoreFormatError> {
     enum Visit {
         Enter(NodeListId),
@@ -1315,7 +1340,15 @@ fn capture_node_list(
                 let nodes = stores
                     .nodes(id)
                     .iter()
-                    .map(|node| FormatNode::capture(stores, node.to_owned(), survivor_roots))
+                    .map(|node| match origins.as_deref_mut() {
+                        Some(origins) => FormatNode::capture_with_origins(
+                            stores,
+                            node.to_owned(),
+                            survivor_roots,
+                            origins,
+                        ),
+                        None => FormatNode::capture(stores, node.to_owned(), survivor_roots),
+                    })
                     .collect();
                 out.push(FormatNodeList {
                     key: FormatListKey::capture(stores, id, survivor_roots),

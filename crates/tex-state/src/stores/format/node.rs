@@ -310,6 +310,23 @@ impl FormatNode {
         }
     }
 
+    pub(super) fn capture_with_origins(
+        stores: &Stores,
+        node: Node,
+        roots: &mut SurvivorRoots,
+        origins: &mut Vec<crate::token::OriginId>,
+    ) -> Self {
+        match &node {
+            Node::Char { origin, .. } => origins.push(*origin),
+            Node::Lig {
+                origins: ligature_origins,
+                ..
+            } => origins.extend(ligature_origins.iter().copied()),
+            _ => {}
+        }
+        Self::capture(stores, node, roots)
+    }
+
     pub(super) fn capture(stores: &Stores, node: Node, roots: &mut SurvivorRoots) -> Self {
         match node {
             Node::Char { font, ch, .. } => Self::Char {
@@ -395,18 +412,32 @@ impl FormatNode {
         content_ids: &FormatContentIds<'_>,
         ids: &NodeIds,
     ) -> Result<Node, StoreFormatError> {
+        self.restore_with_origins(content_ids, ids, &mut std::iter::empty())
+    }
+
+    pub(super) fn restore_with_origins(
+        self,
+        content_ids: &FormatContentIds<'_>,
+        ids: &NodeIds,
+        origins: &mut impl Iterator<Item = crate::token::OriginId>,
+    ) -> Result<Node, StoreFormatError> {
         Ok(match self {
             Self::Char { font, ch } => Node::Char {
                 font: font_id(content_ids, font)?,
                 ch,
-                origin: crate::token::OriginId::UNKNOWN,
+                origin: origins.next().unwrap_or(crate::token::OriginId::UNKNOWN),
             },
-            Self::Lig { font, ch, orig } => Node::Lig {
-                font: font_id(content_ids, font)?,
-                ch,
-                origins: vec![crate::token::OriginId::UNKNOWN; orig.len()],
-                orig,
-            },
+            Self::Lig { font, ch, orig } => {
+                let node_origins = (0..orig.len())
+                    .map(|_| origins.next().unwrap_or(crate::token::OriginId::UNKNOWN))
+                    .collect();
+                Node::Lig {
+                    font: font_id(content_ids, font)?,
+                    ch,
+                    origins: node_origins,
+                    orig,
+                }
+            }
             Self::Kern { amount, kind } => Node::Kern { amount, kind },
             Self::Glue { spec, kind, leader } => Node::Glue {
                 spec: glue_id(content_ids, spec)?,

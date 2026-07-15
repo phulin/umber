@@ -22,6 +22,116 @@ fn unsupported_typesetting_diagnostic_names_control_sequence() {
 }
 
 #[test]
+fn detached_page_episode_replays_before_output_fire_up() {
+    fn page_input(stores: &mut Universe, perturb_allocations: bool) -> OriginId {
+        if perturb_allocations {
+            let _ = stores.intern_token_list(&[Token::Char {
+                ch: 'X',
+                cat: Catcode::Other,
+            }]);
+            let _ = stores.source_origin(tex_state::input::SourceId::new(99), 9, 1, 10);
+        }
+        let origin = stores.source_origin(tex_state::input::SourceId::new(1), 4, 1, 5);
+        let mark = stores.intern_token_list(&[Token::Char {
+            ch: 'M',
+            cat: Catcode::Other,
+        }]);
+        stores.append_page_contribution(Node::Mark {
+            class: 0,
+            tokens: mark,
+        });
+        stores.append_page_contribution(Node::Char {
+            font: tex_state::font::NULL_FONT,
+            ch: 'A',
+            origin,
+        });
+        stores.append_page_contribution(Node::Rule {
+            width: Some(Scaled::from_raw(10)),
+            height: Some(Scaled::from_raw(20)),
+            depth: Some(Scaled::from_raw(3)),
+        });
+        origin
+    }
+
+    let mut first = Universe::new();
+    first.enable_pure_memo(tex_state::PureMemoConfig::default());
+    first.enable_page_memo();
+    page_input(&mut first, false);
+    crate::page_builder::build_page(&mut first).expect("cold page episode");
+    let expected = first.page_memo_fingerprint();
+    let runtime = first.take_pure_memo_runtime();
+
+    let mut second = Universe::new();
+    let current_origin = page_input(&mut second, true);
+    second.install_pure_memo_runtime(runtime);
+    crate::page_builder::build_page(&mut second).expect("replayed page episode");
+
+    let memo = second.pure_memo_stats();
+    assert_eq!(second.page_memo_fingerprint(), expected);
+    assert!(
+        second
+            .current_page_nodes()
+            .iter()
+            .any(|node| matches!(node, Node::Char { origin, .. } if *origin == current_origin))
+    );
+    assert!(memo.page_hits >= 1, "{memo:?}");
+    assert!(memo.page_contributions_skipped >= 2, "{memo:?}");
+}
+
+#[test]
+fn page_episode_tracks_insertion_registers_and_detaches_insert_content() {
+    const CLASS: u16 = 7;
+    fn insertion_input(stores: &mut Universe, count: i32, perturb_allocations: bool) {
+        stores.set_count(CLASS, count);
+        stores.set_dimen(CLASS, Scaled::from_raw(1_000_000));
+        if perturb_allocations {
+            let _ = stores.freeze_node_list(&[Node::Penalty(123)]);
+        }
+        let content = stores.freeze_node_list(&[Node::Rule {
+            width: Some(Scaled::from_raw(10)),
+            height: Some(Scaled::from_raw(20)),
+            depth: Some(Scaled::from_raw(3)),
+        }]);
+        stores.append_page_contribution(Node::Ins {
+            class: CLASS,
+            size: Scaled::from_raw(23),
+            split_top_skip: stores.glue_param(GlueParam::SPLIT_TOP_SKIP),
+            split_max_depth: Scaled::from_raw(100),
+            floating_penalty: 17,
+            content,
+        });
+    }
+
+    let mut first = Universe::new();
+    first.enable_pure_memo(tex_state::PureMemoConfig::default());
+    first.enable_page_memo();
+    insertion_input(&mut first, 1_000, false);
+    crate::page_builder::build_page(&mut first).expect("cold insertion episode");
+    let expected = first.page_memo_fingerprint();
+    let runtime = first.take_pure_memo_runtime();
+
+    let mut same = Universe::new();
+    insertion_input(&mut same, 1_000, true);
+    same.install_pure_memo_runtime(runtime);
+    crate::page_builder::build_page(&mut same).expect("replayed insertion episode");
+    let after_hit = same.pure_memo_stats();
+    assert_eq!(same.page_memo_fingerprint(), expected);
+    assert_eq!(after_hit.page_hits, 1, "{after_hit:?}");
+
+    let runtime = same.take_pure_memo_runtime();
+    let mut changed = Universe::new();
+    insertion_input(&mut changed, 500, true);
+    changed.install_pure_memo_runtime(runtime);
+    crate::page_builder::build_page(&mut changed).expect("changed insertion episode");
+    let after_miss = changed.pure_memo_stats();
+    assert_eq!(after_miss.page_hits, after_hit.page_hits, "{after_miss:?}");
+    assert!(
+        after_miss.page_lookups > after_hit.page_lookups,
+        "{after_miss:?}"
+    );
+}
+
+#[test]
 fn expansion_memo_preserves_execution_state_and_effects() {
     let source = r"\def\m#1{A#1B}
 \edef\first{\m{x}}\edef\second{\m{x}}

@@ -57,7 +57,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/output.rs`: output-routine fire-up, `\box255` packaging, held-over material, deadcycle handling, and final `\end` page cleanup.
 - `src/paragraph_memo.rs`: bounded paragraph trace preflight, narrow front-end validation keys, ordered count/integer-parameter redo, detached hlist import, provenance rebinding, barrier classification, and telemetry.
 - `src/packing_params.rs`: execution-side snapshots of packing-related integer and dimension parameters before calling pure `tex-typeset` kernels.
-- `src/page_builder.rs`: TeX.web page-builder accounting for outer vertical contributions, break costs, and pending fire-up records.
+- `src/page_builder.rs`: TeX.web page-builder accounting, insertion splitting, pending fire-up records, and detached page-episode reuse up to the output-routine barrier.
 - `src/splitting.rs`: shared vertical split helpers for insertion and `\vsplit` remainder pruning/repacking.
 - `src/transaction.rs`: lifetime-bound recursive execution transactions that restore mode and Universe roots unless explicitly committed.
 - `src/tests.rs`: crate-internal test harness module and shared imports.

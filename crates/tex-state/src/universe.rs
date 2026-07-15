@@ -35,7 +35,7 @@ use crate::node::Node;
 use crate::node_arena::{NodeList, NodeListBuilder};
 use crate::page::{
     PageBreak, PageBuilderState, PageContents, PageDimension, PageFireUp, PageHashCache,
-    PageInsertion, PageInteger, PageMark, PageStateHashCursor,
+    PageInsertion, PageInteger, PageMark, PageMemoState, PageStateHashCursor,
 };
 use crate::pdf::{
     PdfDocumentFragmentKind, PdfDocumentObjectIds, PdfExternalImageId, PdfExternalImageMetadata,
@@ -531,6 +531,12 @@ struct ScopedRollback {
     page: PageBuilderState,
     pdf: PdfStateSnapshot,
     state_hash_base: StateHashBase,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct PageMemoWire {
+    state: PageMemoState,
+    detached_nodes: Vec<u8>,
 }
 
 /// Opaque allocation mark for one in-progress box-register construction.
@@ -1583,6 +1589,11 @@ impl Universe {
         self.pure_memo.enable_paragraph_front_ends();
     }
 
+    /// Enables detached page-builder episode reuse in the session cache.
+    pub fn enable_page_memo(&mut self) {
+        self.pure_memo.enable_page_episodes();
+    }
+
     /// Disables the pure-query cache and releases every retained value.
     pub fn disable_pure_memo(&mut self) {
         self.pure_memo.disable();
@@ -1645,6 +1656,27 @@ impl Universe {
         value: crate::PureParagraphEntry,
     ) {
         self.pure_memo.insert_paragraph(key, value);
+    }
+
+    #[doc(hidden)]
+    pub fn lookup_pure_page(&mut self, key: crate::PureMemoKey) -> Option<crate::PurePageEntry> {
+        self.pure_memo.lookup_page(key)
+    }
+
+    #[doc(hidden)]
+    pub fn insert_pure_page(&mut self, key: crate::PureMemoKey, value: crate::PurePageEntry) {
+        self.pure_memo.insert_page(key, value);
+    }
+
+    #[doc(hidden)]
+    pub fn record_pure_page_hit(&mut self, contributions: usize, imported_bytes: usize) {
+        self.pure_memo
+            .record_page_hit(contributions, imported_bytes);
+    }
+
+    #[doc(hidden)]
+    pub fn record_pure_page_import_failure(&mut self) {
+        self.pure_memo.record_page_import_failure();
     }
 
     #[doc(hidden)]
@@ -2277,6 +2309,14 @@ impl Universe {
                 |id, hasher| self.stores.hash_token_list_semantic(id, hasher),
             );
         })
+    }
+
+    /// Canonical allocation-independent identity of the complete live page root.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn page_memo_fingerprint(&self) -> u64 {
+        self.hash_page_state(&mut PageHashCache::default())
+            .fingerprint()
     }
 
     fn assert_valid_snapshot(&self, snapshot: &Snapshot) {
@@ -4759,6 +4799,102 @@ impl Universe {
         self.page.prepend_contributions(nodes);
         self.dependencies
             .mark_changed(DependencyKey::Page(DependencyPageField::Contributions));
+    }
+
+    /// Detaches the complete result root of one page-builder episode.
+    #[doc(hidden)]
+    pub fn detach_page_memo_transition(
+        &mut self,
+    ) -> Result<(crate::DetachedMemoValue, Vec<OriginId>), crate::MemoValueError> {
+        let (nodes, state) = self.page.memo_parts();
+        let root = self.freeze_node_list(&nodes);
+        let (payload, origins) = self
+            .stores
+            .encode_memo_node_list_with_origins(root)
+            .map_err(|error| crate::MemoValueError::Codec(format!("{error:?}")))?;
+        let detached_nodes =
+            crate::DetachedMemoValue::from_payload(crate::MemoValueKind::Nodes, payload)
+                .to_bytes()?;
+        let semantic_payload = bincode::serialize(&PageMemoWire {
+            state,
+            detached_nodes,
+        })
+        .map_err(|error| crate::MemoValueError::Codec(error.to_string()))?;
+        let transition =
+            crate::DetachedMemoValue::from_page_transition(&crate::DetachedPageTransition {
+                transition_schema: 1,
+                semantic_payload,
+            })?;
+        Ok((transition, origins))
+    }
+
+    /// Captures the current page graph's provenance sequence in detached-codec order.
+    #[doc(hidden)]
+    pub fn page_memo_origins(&mut self) -> Result<Vec<OriginId>, crate::MemoValueError> {
+        let (nodes, _) = self.page.memo_parts();
+        let root = self.freeze_node_list(&nodes);
+        self.stores
+            .encode_memo_node_list_with_origins(root)
+            .map(|(_, origins)| origins)
+            .map_err(|error| crate::MemoValueError::Codec(format!("{error:?}")))
+    }
+
+    /// Imports and atomically publishes a detached page-builder result root.
+    #[doc(hidden)]
+    pub fn import_page_memo_transition(
+        &mut self,
+        value: &crate::DetachedMemoValue,
+        limits: crate::MemoValueLimits,
+        origins: &[OriginId],
+    ) -> Result<(), crate::MemoValueError> {
+        let transition = value.page_transition(limits)?;
+        if transition.transition_schema != 1 {
+            return Err(crate::MemoValueError::Invalid(
+                "unsupported page transition schema",
+            ));
+        }
+        let wire: PageMemoWire = bincode::deserialize(&transition.semantic_payload)
+            .map_err(|error| crate::MemoValueError::Codec(error.to_string()))?;
+        let detached = crate::DetachedMemoValue::from_bytes(&wire.detached_nodes, limits)?;
+        let rollback = self.capture_scoped_rollback();
+        let payload = detached.payload(crate::MemoValueKind::Nodes)?;
+        let imported = match self.stores.import_memo_node_list_with_origins(
+            payload,
+            limits.max_nodes,
+            limits.max_tokens,
+            limits.max_string_bytes,
+            origins,
+        ) {
+            Ok(imported) => imported,
+            Err(error) => {
+                self.rollback_scoped(rollback);
+                return Err(crate::MemoValueError::Codec(format!("{error:?}")));
+            }
+        };
+        let nodes = self
+            .nodes(imported)
+            .into_iter()
+            .map(|node| node.to_owned())
+            .collect();
+        if let Err(error) = self.page.install_memo_parts(nodes, wire.state) {
+            self.rollback_scoped(rollback);
+            return Err(error);
+        }
+        self.dependencies
+            .mark_changed(DependencyKey::Page(DependencyPageField::Contributions));
+        self.dependencies
+            .mark_changed(DependencyKey::Page(DependencyPageField::CurrentPage));
+        for dimension in 0..8 {
+            self.dependencies
+                .mark_changed(DependencyKey::PageDimension(dimension));
+        }
+        self.dependencies
+            .mark_changed(DependencyKey::Page(DependencyPageField::Insertions));
+        self.dependencies
+            .mark_changed(DependencyKey::Page(DependencyPageField::BreakState));
+        self.dependencies
+            .mark_changed(DependencyKey::Page(DependencyPageField::FireUp));
+        Ok(())
     }
 
     #[must_use]

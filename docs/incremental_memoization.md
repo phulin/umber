@@ -479,6 +479,17 @@ Mark reads performed during expansion and mark updates performed at page fire
 are typed dependencies and mutations. A changed mark invalidates only queries
 that observe it or page transitions that consume it.
 
+The implemented page layer keys the canonical allocation-independent page
+root together with the narrow builder environment (`vsize`, `maxdepth`,
+`topskip`, vertical-discard policy, and the count/dimen/skip/box tuple for each
+observed insertion class). A successful cold transition detaches the complete
+contribution, current-page, discard, insertion, break, and fire-up result as one
+node graph plus scalar state. Replay imports that graph before atomically
+replacing the page root. Character and ligature provenance is stored as input
+ordinals and rebound to the current revision during import. Any diagnostic or
+other world effect bars publication. Output-routine execution remains outside
+the entry and therefore executes normally after a replayed fire-up boundary.
+
 ### Page numbers and output routines
 
 A page number is ordinarily an environment register, not an implicit global

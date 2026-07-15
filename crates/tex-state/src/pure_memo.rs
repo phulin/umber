@@ -43,6 +43,12 @@ pub struct PureMemoStats {
     pub paragraph_validation_misses: u64,
     pub paragraph_import_failures: u64,
     pub paragraph_barriers: u64,
+    pub page_lookups: u64,
+    pub page_hits: u64,
+    pub page_inserts: u64,
+    pub page_contributions_skipped: u64,
+    pub page_imported_bytes: u64,
+    pub page_import_failures: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -64,6 +70,13 @@ pub struct PureParagraphEntry {
     pub hlist: DetachedMemoValue,
     pub mutations: Vec<PureParagraphMutation>,
     pub effects: Vec<crate::DetachedVirtualEffect>,
+    pub origin_ordinals: Vec<u32>,
+}
+
+#[derive(Clone, Debug)]
+pub struct PurePageEntry {
+    pub transition: DetachedMemoValue,
+    pub contributions: usize,
     pub origin_ordinals: Vec<u32>,
 }
 
@@ -112,6 +125,7 @@ struct Entry {
 enum PureMemoValue {
     Pretolerance(Option<PureBreakPlan>),
     Paragraph(PureParagraphEntry),
+    Page(PurePageEntry),
     Detached,
 }
 
@@ -132,6 +146,7 @@ struct PureMemoCache {
 pub struct PureMemoRuntime {
     cache: Option<PureMemoCache>,
     paragraph_front_ends: bool,
+    page_episodes: bool,
     paragraph_recording: Option<Vec<PureParagraphMutation>>,
 }
 
@@ -146,8 +161,17 @@ impl PureMemoRuntime {
         self.cache.is_some() && self.paragraph_front_ends
     }
 
+    #[must_use]
+    pub const fn page_episodes_enabled(&self) -> bool {
+        self.cache.is_some() && self.page_episodes
+    }
+
     pub fn enable_paragraph_front_ends(&mut self) {
         self.paragraph_front_ends = self.cache.is_some();
+    }
+
+    pub fn enable_page_episodes(&mut self) {
+        self.page_episodes = self.cache.is_some();
     }
 
     pub(crate) fn enable(&mut self, config: PureMemoConfig) {
@@ -162,6 +186,7 @@ impl PureMemoRuntime {
     pub(crate) fn disable(&mut self) {
         self.cache = None;
         self.paragraph_front_ends = false;
+        self.page_episodes = false;
     }
 
     pub(crate) fn lookup_pretolerance(
@@ -175,7 +200,9 @@ impl PureMemoRuntime {
             .get(&key)
             .and_then(|entry| match &entry.value {
                 PureMemoValue::Pretolerance(plan) => Some(plan.clone()),
-                PureMemoValue::Paragraph(_) | PureMemoValue::Detached => None,
+                PureMemoValue::Paragraph(_) | PureMemoValue::Page(_) | PureMemoValue::Detached => {
+                    None
+                }
             });
         if hit.is_some() {
             cache.stats.hits = cache.stats.hits.saturating_add(1);
@@ -204,7 +231,9 @@ impl PureMemoRuntime {
             .get(&key)
             .and_then(|entry| match &entry.value {
                 PureMemoValue::Paragraph(value) => Some(value.clone()),
-                PureMemoValue::Pretolerance(_) | PureMemoValue::Detached => None,
+                PureMemoValue::Pretolerance(_)
+                | PureMemoValue::Page(_)
+                | PureMemoValue::Detached => None,
             });
         if hit.is_some() {
             cache.stats.hits = cache.stats.hits.saturating_add(1);
@@ -213,6 +242,66 @@ impl PureMemoRuntime {
             cache.stats.misses = cache.stats.misses.saturating_add(1);
         }
         hit
+    }
+
+    pub(crate) fn lookup_page(&mut self, key: PureMemoKey) -> Option<PurePageEntry> {
+        if !self.page_episodes {
+            return None;
+        }
+        let cache = self.cache.as_mut()?;
+        cache.stats.lookups = cache.stats.lookups.saturating_add(1);
+        cache.stats.page_lookups = cache.stats.page_lookups.saturating_add(1);
+        let hit = cache
+            .entries
+            .get(&key)
+            .and_then(|entry| match &entry.value {
+                PureMemoValue::Page(value) => Some(value.clone()),
+                _ => None,
+            });
+        if hit.is_some() {
+            cache.stats.hits = cache.stats.hits.saturating_add(1);
+            cache.stats.page_hits = cache.stats.page_hits.saturating_add(1);
+        } else {
+            cache.stats.misses = cache.stats.misses.saturating_add(1);
+        }
+        hit
+    }
+
+    pub(crate) fn insert_page(&mut self, key: PureMemoKey, value: PurePageEntry) {
+        if !self.page_episodes {
+            return;
+        }
+        let owned_bytes = value
+            .transition
+            .retained_bytes()
+            .saturating_sub(std::mem::size_of::<DetachedMemoValue>())
+            .saturating_add(value.origin_ordinals.capacity().saturating_mul(4));
+        let before = self.cache.as_ref().map_or(0, |cache| cache.stats.inserts);
+        self.insert_value(key, PureMemoValue::Page(value), owned_bytes);
+        if let Some(cache) = &mut self.cache
+            && cache.stats.inserts != before
+        {
+            cache.stats.page_inserts = cache.stats.page_inserts.saturating_add(1);
+        }
+    }
+
+    pub(crate) fn record_page_hit(&mut self, contributions: usize, imported_bytes: usize) {
+        if let Some(cache) = &mut self.cache {
+            cache.stats.page_contributions_skipped = cache
+                .stats
+                .page_contributions_skipped
+                .saturating_add(contributions as u64);
+            cache.stats.page_imported_bytes = cache
+                .stats
+                .page_imported_bytes
+                .saturating_add(imported_bytes as u64);
+        }
+    }
+
+    pub(crate) fn record_page_import_failure(&mut self) {
+        if let Some(cache) = &mut self.cache {
+            cache.stats.page_import_failures = cache.stats.page_import_failures.saturating_add(1);
+        }
     }
 
     pub(crate) fn insert_paragraph(&mut self, key: PureMemoKey, value: PureParagraphEntry) {

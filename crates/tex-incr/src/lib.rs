@@ -375,6 +375,7 @@ impl Session {
         let mut template = template;
         let mut pure_memo = template.take_pure_memo_runtime();
         pure_memo.enable_paragraph_front_ends();
+        pure_memo.enable_page_episodes();
         Ok(Self {
             template,
             pure_memo,

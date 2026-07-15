@@ -10,6 +10,7 @@ use crate::glue::GlueSpec;
 use crate::ids::{GlueId, TokenListId};
 use crate::node::Node;
 use crate::scaled::Scaled;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 
@@ -171,7 +172,7 @@ impl PageContents {
 }
 
 /// A recorded best page break.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct PageBreak {
     index: usize,
 }
@@ -189,7 +190,7 @@ impl PageBreak {
 }
 
 /// A pending call to the future output-routine fire-up implementation.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct PageFireUp {
     best_break: PageBreak,
     best_size: Scaled,
@@ -223,7 +224,7 @@ impl PageFireUp {
 }
 
 /// Per-class insertion status while the current page is being built.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum PageInsertionStatus {
     Inserting,
     SplitUp {
@@ -233,7 +234,7 @@ pub enum PageInsertionStatus {
 }
 
 /// TeX.web page insertion record for one insertion class.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct PageInsertion {
     class: u16,
     status: PageInsertionStatus,
@@ -328,6 +329,30 @@ pub(crate) struct PageBuilderState {
     mark_classes: Arc<BTreeMap<u16, MarkClassState>>,
 }
 
+/// Handle-free scalar half of a detached page-builder transition. Node, glue,
+/// token-list, and font handles travel in one ordinary detached node graph.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct PageMemoState {
+    pub(crate) contribution_len: usize,
+    pub(crate) current_page_len: usize,
+    pub(crate) page_discards_len: usize,
+    pub(crate) split_discards_len: usize,
+    pub(crate) has_last_glue: bool,
+    pub(crate) dimensions: [Scaled; 8],
+    pub(crate) page_max_depth: Scaled,
+    pub(crate) contents: u8,
+    pub(crate) last_penalty: i32,
+    pub(crate) last_kern: Scaled,
+    pub(crate) last_node_type: i32,
+    pub(crate) insert_penalties: i32,
+    pub(crate) dead_cycles: i32,
+    pub(crate) least_page_cost: i32,
+    pub(crate) best_page_break: Option<PageBreak>,
+    pub(crate) best_size: Scaled,
+    pub(crate) fire_up: Option<PageFireUp>,
+    pub(crate) insertions: Vec<PageInsertion>,
+}
+
 impl Default for PageBuilderState {
     fn default() -> Self {
         Self {
@@ -367,6 +392,146 @@ impl Default for PageBuilderState {
 }
 
 impl PageBuilderState {
+    pub(crate) fn memo_parts(&self) -> (Vec<Node>, PageMemoState) {
+        let mut nodes = Vec::with_capacity(
+            self.contribution.len()
+                + self.current_page.len()
+                + self.page_discards.len()
+                + self.split_discards.len()
+                + usize::from(self.last_glue.is_some()),
+        );
+        nodes.extend(self.contribution.iter().cloned());
+        nodes.extend(self.current_page.iter().cloned());
+        nodes.extend(self.page_discards.iter().cloned());
+        nodes.extend(self.split_discards.iter().cloned());
+        if let Some(spec) = self.last_glue {
+            nodes.push(Node::Glue {
+                spec,
+                kind: crate::node::GlueKind::Normal,
+                leader: None,
+            });
+        }
+        let dimensions = [
+            self.page_goal,
+            self.page_total,
+            self.page_stretch,
+            self.page_fil_stretch,
+            self.page_fill_stretch,
+            self.page_filll_stretch,
+            self.page_shrink,
+            self.page_depth,
+        ];
+        let state = PageMemoState {
+            contribution_len: self.contribution.len(),
+            current_page_len: self.current_page.len(),
+            page_discards_len: self.page_discards.len(),
+            split_discards_len: self.split_discards.len(),
+            has_last_glue: self.last_glue.is_some(),
+            dimensions,
+            page_max_depth: self.page_max_depth,
+            contents: match self.contents {
+                PageContents::Empty => 0,
+                PageContents::InsertsOnly => 1,
+                PageContents::BoxThere => 2,
+            },
+            last_penalty: self.last_penalty,
+            last_kern: self.last_kern,
+            last_node_type: self.last_node_type,
+            insert_penalties: self.insert_penalties,
+            dead_cycles: self.dead_cycles,
+            least_page_cost: self.least_page_cost,
+            best_page_break: self.best_page_break,
+            best_size: self.best_size,
+            fire_up: self.fire_up,
+            insertions: self.insertions.as_ref().clone(),
+        };
+        (nodes, state)
+    }
+
+    pub(crate) fn install_memo_parts(
+        &mut self,
+        nodes: Vec<Node>,
+        state: PageMemoState,
+    ) -> Result<(), crate::MemoValueError> {
+        let ordinary_len = state
+            .contribution_len
+            .checked_add(state.current_page_len)
+            .and_then(|len| len.checked_add(state.page_discards_len))
+            .and_then(|len| len.checked_add(state.split_discards_len))
+            .ok_or(crate::MemoValueError::Invalid(
+                "page transition lengths overflow",
+            ))?;
+        let expected_len = ordinary_len
+            .checked_add(usize::from(state.has_last_glue))
+            .ok_or(crate::MemoValueError::Invalid(
+                "page transition lengths overflow",
+            ))?;
+        if nodes.len() != expected_len {
+            return Err(crate::MemoValueError::Invalid(
+                "page transition node lengths do not match",
+            ));
+        }
+        let contents = match state.contents {
+            0 => PageContents::Empty,
+            1 => PageContents::InsertsOnly,
+            2 => PageContents::BoxThere,
+            _ => {
+                return Err(crate::MemoValueError::Invalid(
+                    "invalid page contents state",
+                ));
+            }
+        };
+        let mut cursor = 0;
+        let take = |cursor: &mut usize, len: usize| {
+            let start = *cursor;
+            *cursor += len;
+            start..*cursor
+        };
+        let contribution =
+            VecDeque::from(nodes[take(&mut cursor, state.contribution_len)].to_vec());
+        let current_nodes = nodes[take(&mut cursor, state.current_page_len)].to_vec();
+        let page_discards = nodes[take(&mut cursor, state.page_discards_len)].to_vec();
+        let split_discards = nodes[take(&mut cursor, state.split_discards_len)].to_vec();
+        let last_glue = if state.has_last_glue {
+            match &nodes[cursor] {
+                Node::Glue { spec, .. } => Some(*spec),
+                _ => return Err(crate::MemoValueError::Invalid("invalid last-glue sentinel")),
+            }
+        } else {
+            None
+        };
+        let mut current_page = PageNodeSequence::default();
+        for node in current_nodes {
+            current_page.push(node);
+        }
+        self.contribution = Arc::new(contribution);
+        self.current_page = current_page;
+        self.page_discards = Arc::new(page_discards);
+        self.split_discards = Arc::new(split_discards);
+        self.page_goal = state.dimensions[0];
+        self.page_total = state.dimensions[1];
+        self.page_stretch = state.dimensions[2];
+        self.page_fil_stretch = state.dimensions[3];
+        self.page_fill_stretch = state.dimensions[4];
+        self.page_filll_stretch = state.dimensions[5];
+        self.page_shrink = state.dimensions[6];
+        self.page_depth = state.dimensions[7];
+        self.page_max_depth = state.page_max_depth;
+        self.contents = contents;
+        self.last_glue = last_glue;
+        self.last_penalty = state.last_penalty;
+        self.last_kern = state.last_kern;
+        self.last_node_type = state.last_node_type;
+        self.insert_penalties = state.insert_penalties;
+        self.dead_cycles = state.dead_cycles;
+        self.least_page_cost = state.least_page_cost;
+        self.best_page_break = state.best_page_break;
+        self.best_size = state.best_size;
+        self.fire_up = state.fire_up;
+        self.insertions = Arc::new(state.insertions);
+        Ok(())
+    }
+
     pub(crate) fn retained_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
             .saturating_add(
