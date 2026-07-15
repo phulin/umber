@@ -106,10 +106,17 @@ impl Lowerer<'_> {
                     }
                     run.character(
                         *font_id,
-                        *ch,
-                        PositionedSourceRef {
-                            node_ordinal,
-                            source_index: 0,
+                        CharacterUnit {
+                            source_code: *ch,
+                            physical_code: Some(
+                                u8::try_from(*ch).map_err(|_| {
+                                    PositionedError::CharacterOutOfRange { ch: *ch }
+                                })?,
+                            ),
+                            source: PositionedSourceRef {
+                                node_ordinal,
+                                source_index: 0,
+                            },
                         },
                         self.cur_h,
                         base_line,
@@ -120,6 +127,7 @@ impl Lowerer<'_> {
                 }
                 PageNode::Lig {
                     font_id,
+                    ch,
                     source,
                     width,
                     ..
@@ -131,14 +139,22 @@ impl Lowerer<'_> {
                     for (source_index, code) in source.iter().enumerate() {
                         run.character(
                             *font_id,
-                            *code,
-                            PositionedSourceRef {
-                                node_ordinal,
-                                source_index: u16::try_from(source_index).map_err(|_| {
-                                    PositionedError::TextRunTooLong {
-                                        limit: self.limits.max_run_units,
-                                    }
-                                })?,
+                            CharacterUnit {
+                                source_code: *code,
+                                physical_code: (source_index == 0)
+                                    .then(|| u8::try_from(*ch))
+                                    .transpose()
+                                    .map_err(|_| PositionedError::CharacterOutOfRange {
+                                        ch: *ch,
+                                    })?,
+                                source: PositionedSourceRef {
+                                    node_ordinal,
+                                    source_index: u16::try_from(source_index).map_err(|_| {
+                                        PositionedError::TextRunTooLong {
+                                            limit: self.limits.max_run_units,
+                                        }
+                                    })?,
+                                },
                             },
                             self.cur_h,
                             base_line,
@@ -495,21 +511,31 @@ struct RunBuilder {
     baseline: Option<Scaled>,
     units: Vec<TextUnit>,
     positions: Vec<Scaled>,
+    physical_codes: Vec<Option<u8>>,
     sources: Vec<Option<PositionedSourceRef>>,
     pending_space: Option<Scaled>,
+}
+
+struct CharacterUnit {
+    source_code: u32,
+    physical_code: Option<u8>,
+    source: PositionedSourceRef,
 }
 
 impl RunBuilder {
     fn character(
         &mut self,
         font_id: u32,
-        ch: u32,
-        source: PositionedSourceRef,
+        character: CharacterUnit,
         x: Scaled,
         baseline: Scaled,
         limits: PositionedLimits,
     ) -> Result<(), PositionedError> {
-        let code = u8::try_from(ch).map_err(|_| PositionedError::CharacterOutOfRange { ch })?;
+        let code = u8::try_from(character.source_code).map_err(|_| {
+            PositionedError::CharacterOutOfRange {
+                ch: character.source_code,
+            }
+        })?;
         debug_assert!(self.font_id.is_none_or(|current| current == font_id));
         if self.font_id.is_none() {
             self.font_id = Some(font_id);
@@ -517,13 +543,20 @@ impl RunBuilder {
             self.baseline = Some(baseline);
         }
         self.resolve_pending_space(limits)?;
-        self.add_unit(TextUnit::Code(code), x, Some(source), limits)
+        self.add_unit(
+            TextUnit::Code(code),
+            x,
+            character.physical_code,
+            Some(character.source),
+            limits,
+        )
     }
 
     fn add_unit(
         &mut self,
         unit: TextUnit,
         position: Scaled,
+        physical_code: Option<u8>,
         source: Option<PositionedSourceRef>,
         limits: PositionedLimits,
     ) -> Result<(), PositionedError> {
@@ -534,6 +567,7 @@ impl RunBuilder {
         }
         self.units.push(unit);
         self.positions.push(position);
+        self.physical_codes.push(physical_code);
         self.sources.push(source);
         Ok(())
     }
@@ -551,7 +585,7 @@ impl RunBuilder {
 
     fn resolve_pending_space(&mut self, limits: PositionedLimits) -> Result<(), PositionedError> {
         if let Some(position) = self.pending_space.take() {
-            self.add_unit(TextUnit::Space, position, None, limits)?;
+            self.add_unit(TextUnit::Space, position, None, None, limits)?;
         }
         Ok(())
     }
@@ -562,6 +596,7 @@ impl RunBuilder {
         {
             let units = std::mem::take(&mut self.units);
             let positions = std::mem::take(&mut self.positions);
+            let physical_codes = std::mem::take(&mut self.physical_codes);
             let sources = std::mem::take(&mut self.sources);
             self.pending_space = None;
             lowerer.push(PositionedEvent::TextRun(PositionedTextRun {
@@ -570,6 +605,7 @@ impl RunBuilder {
                 font_id,
                 units,
                 positions,
+                physical_codes,
                 sources,
             }))?;
         }

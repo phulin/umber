@@ -124,6 +124,11 @@ pub fn compare_page(
                 cursor += 1;
             }
             PositionedEvent::TextRun(actual) => {
+                let first_code_x = actual
+                    .units
+                    .iter()
+                    .position(|unit| matches!(unit, TextUnit::Code(_)))
+                    .map(|index| actual.positions[index]);
                 let wanted_codes = actual
                     .units
                     .iter()
@@ -147,7 +152,10 @@ pub fn compare_page(
                     if *font_id != actual.font_id {
                         return mismatch(positioned, ordinal, "DVI text font differs");
                     }
-                    if first && (*x != actual.x || *baseline != actual.baseline) {
+                    if first
+                        && (*x != first_code_x.expect("nonempty code sequence has an anchor")
+                            || *baseline != actual.baseline)
+                    {
                         return mismatch(
                             positioned,
                             ordinal,
@@ -155,7 +163,9 @@ pub fn compare_page(
                                 "text anchor differs: DVI=({}, {}), HTML=({}, {})",
                                 x.raw(),
                                 baseline.raw(),
-                                actual.x.raw(),
+                                first_code_x
+                                    .expect("nonempty code sequence has an anchor")
+                                    .raw(),
                                 actual.baseline.raw()
                             ),
                         );

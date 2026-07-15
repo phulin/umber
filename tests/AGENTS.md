@@ -134,6 +134,9 @@ and signed-nonzero Type-1 CharSet omission. The `pk_bitmap_300` and
 resolution-dependent Type3 font output. PK assets are exact-name runtime
 resources; fixture regeneration may locate and pin a missing asset, but Umber
 must never invoke a font generator or ambient fallback.
+The `embedded_tagged_spacing` case pins ordered fake-space controls, a custom
+fallback font selection, physical ligature output, nested font changes, and
+cross-page state together with exact Poppler extraction and raster parity.
 
 `tests/corpus/e2e` receives gitignored final-DVI oracles for Story, Gentle,
 TRIP, and e-TRIP. Their Cargo integration tests run Umber directly in process

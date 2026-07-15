@@ -104,6 +104,11 @@ fn text_runs_keep_exact_unit_anchors_and_baseline() {
         vec![sp(0), sp(22), sp(22), sp(22), sp(52), sp(62)]
     );
     assert_eq!(runs[1].positions, vec![sp(89)]);
+    assert_eq!(
+        runs[0].physical_codes,
+        vec![Some(b'A'), Some(11), None, None, None, Some(b'B')]
+    );
+    assert_eq!(runs[1].physical_codes, vec![Some(b'C')]);
 }
 
 #[test]
@@ -206,6 +211,7 @@ fn current_output_font_flows_into_leading_glue_in_a_nested_box() {
         vec![TextUnit::Space, TextUnit::Code(b'B')]
     );
     assert_eq!(nested_run.positions, vec![sp(20), sp(27)]);
+    compare_page(&page, &positioned).expect("leading browser space preserves DVI glyph anchor");
 }
 
 #[test]

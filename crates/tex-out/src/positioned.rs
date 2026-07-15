@@ -76,6 +76,9 @@ pub struct PositionedTextRun {
     pub units: Vec<TextUnit>,
     /// Exact horizontal TeX coordinates aligned with `units`.
     pub positions: Vec<Scaled>,
+    /// Physical PDF/DVI character codes aligned with `units`. A ligature has
+    /// one code on its first source unit and `None` on the remaining units.
+    pub physical_codes: Vec<Option<u8>>,
     /// Artifact-node addresses aligned with `units`; spaces have no source.
     pub sources: Vec<Option<PositionedSourceRef>>,
 }

@@ -162,6 +162,7 @@ fn stage_font_resources(case: &str, directory: &Path) -> Result<()> {
     }
     match case {
         "embedded_type1"
+        | "embedded_tagged_spacing"
         | "embedded_subset_type1"
         | "embedded_subset_omit"
         | "embedded_subset_controls_negative" => {
@@ -179,6 +180,19 @@ fn stage_font_resources(case: &str, directory: &Path) -> Result<()> {
             }
             fs::copy(committed, directory.join("cmr10.pfb"))
                 .context("failed to stage cmr10.pfb")?;
+            if case == "embedded_tagged_spacing" {
+                fs::copy(
+                    corpus_root().join("pdf/tagged_spacing.enc"),
+                    directory.join("tagged_spacing.enc"),
+                )
+                .context("failed to stage tagged-spacing encoding")?;
+                let tfm = locate_kpse_resource("pdftexspace.tfm")?;
+                let pfb = locate_kpse_resource("pdftexspace.pfb")?;
+                fs::copy(tfm, directory.join("customspace.tfm"))
+                    .context("failed to stage custom space TFM")?;
+                fs::copy(pfb, directory.join("pdftexspace.pfb"))
+                    .context("failed to stage custom space Type-1 program")?;
+            }
         }
         "embedded_truetype" | "embedded_subset_truetype" => {
             let woff2 = fs::read(root.join("crates/umber-wasm/assets/cmu-serif-500-roman.woff2"))
@@ -198,6 +212,18 @@ fn stage_font_resources(case: &str, directory: &Path) -> Result<()> {
         _ => {}
     }
     Ok(())
+}
+
+fn locate_kpse_resource(name: &str) -> Result<PathBuf> {
+    let output = Command::new("kpsewhich")
+        .arg(name)
+        .output()
+        .with_context(|| format!("failed to locate {name} with kpsewhich"))?;
+    let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    if !output.status.success() || !path.is_file() {
+        bail!("kpsewhich did not locate {name}");
+    }
+    Ok(path)
 }
 
 fn locate_tool(variable: &str, fallback: &str) -> Result<PathBuf> {

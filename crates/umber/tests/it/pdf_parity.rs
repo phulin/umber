@@ -134,6 +134,7 @@ fn object_dictionary_pdf_replays_to_identical_bytes_and_state() {
 fn committed_embedded_font_fixtures_match_bytes_structure_and_attestations() {
     for case in [
         "embedded_type1",
+        "embedded_tagged_spacing",
         "embedded_truetype",
         "embedded_subset_type1",
         "embedded_subset_truetype",
@@ -170,6 +171,7 @@ fn check_embedded_font_case(case: &str) {
     } else if matches!(
         case,
         "embedded_type1"
+            | "embedded_tagged_spacing"
             | "embedded_subset_type1"
             | "embedded_subset_omit"
             | "embedded_subset_controls_negative"
@@ -179,6 +181,22 @@ fn check_embedded_font_case(case: &str) {
             temp.path().join("cmr10.pfb"),
         )
         .expect("stage committed Type1 program");
+        if case == "embedded_tagged_spacing" {
+            fs::copy(
+                corpus_root().join("pdf/tagged_spacing.enc"),
+                temp.path().join("tagged_spacing.enc"),
+            )
+            .expect("stage tagged-spacing encoding");
+            // Umber's fallback is its pdf_writer-built Type-3 space font, but
+            // the explicit reference map line still participates in resource
+            // discovery. Any valid staged Type-1 program satisfies that
+            // discovery without changing the generated fallback object.
+            fs::copy(
+                corpus_root().join("pdf/embedded_type1.pfb"),
+                temp.path().join("pdftexspace.pfb"),
+            )
+            .expect("stage fallback map resource");
+        }
     } else {
         let woff2 = include_bytes!("../../../umber-wasm/assets/cmu-serif-500-roman.woff2");
         let program = tex_fonts::PdfTrueTypeProgram::from_woff2(woff2)
@@ -241,6 +259,14 @@ fn check_embedded_font_case(case: &str) {
             assert!(!reference_structure.contains("/ToUnicode"));
             assert!(!reference_structure.contains("/CharSet"));
         }
+        "embedded_tagged_spacing" => {
+            assert!(actual_structure.contains("/Subtype /Type3"));
+            assert!(actual_structure.contains("/Name /customspace"));
+            assert!(actual_structure.contains("/Differences [32 /space]"));
+            assert!(actual_structure.contains("content /UmberSpace 10 Tf"));
+            assert!(actual_structure.contains("content <0b> Tj"));
+            assert!(reference_structure.contains("PdfTeX-Space"));
+        }
         "pk_bitmap_300" => {
             assert!(actual_structure.contains("/Subtype /Type3"));
             assert!(actual_structure.contains("/FontMatrix [0.024 0 0 0.024 0 0]"));
@@ -256,7 +282,7 @@ fn check_embedded_font_case(case: &str) {
         _ => {}
     }
     let expected_extract = read_binary_fixture("pdf", case, "extract");
-    if case.starts_with("embedded_subset_") {
+    if case.starts_with("embedded_subset_") || case == "embedded_tagged_spacing" {
         assert!(
             !expected_extract.trim_ascii().is_empty(),
             "pinned Poppler extraction for {case} is empty"

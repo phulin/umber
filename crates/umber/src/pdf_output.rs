@@ -312,6 +312,7 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                     };
                     debug_assert_eq!(page_fonts.get(&resource.resource_number()), Some(&font_id));
                     debug_assert_eq!(run.units.len(), run.positions.len());
+                    debug_assert_eq!(run.units.len(), run.physical_codes.len());
                     let baseline = scaled_to_bp_f32(
                         page_height
                             .checked_sub(run.baseline)
@@ -323,11 +324,18 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                     let explicit_space = font_has_explicit_space(stores, font.name.as_bytes());
                     let mut segment = Vec::new();
                     let mut segment_x = None;
-                    for (unit, position) in run.units.iter().zip(&run.positions) {
+                    for ((unit, position), physical_code) in run
+                        .units
+                        .iter()
+                        .zip(&run.positions)
+                        .zip(&run.physical_codes)
+                    {
                         match unit {
-                            tex_out::positioned::TextUnit::Code(code) => {
-                                segment_x.get_or_insert(*position);
-                                segment.push(*code);
+                            tex_out::positioned::TextUnit::Code(_) => {
+                                if let Some(code) = physical_code {
+                                    segment_x.get_or_insert(*position);
+                                    segment.push(*code);
+                                }
                             }
                             tex_out::positioned::TextUnit::Space => {
                                 if !segment.is_empty() {
@@ -565,11 +573,13 @@ fn collect_font_usage(
             let codes = usage.entry(resource.object_number()).or_default();
             let explicit_space =
                 interword_space_enabled && font_has_explicit_space(stores, font.name.as_bytes());
-            codes.extend(run.units.iter().filter_map(|unit| match unit {
-                tex_out::positioned::TextUnit::Code(code) => Some(*code),
-                tex_out::positioned::TextUnit::Space if explicit_space => Some(b' '),
-                tex_out::positioned::TextUnit::Space => None,
-            }));
+            codes.extend(run.units.iter().zip(&run.physical_codes).filter_map(
+                |(unit, physical_code)| match unit {
+                    tex_out::positioned::TextUnit::Code(_) => *physical_code,
+                    tex_out::positioned::TextUnit::Space if explicit_space => Some(b' '),
+                    tex_out::positioned::TextUnit::Space => None,
+                },
+            ));
             let live_font = stores
                 .font_by_source_identity(font.semantic_identity)
                 .ok_or_else(|| PdfBuildError::MissingLiveFont(font.name.clone()))?;

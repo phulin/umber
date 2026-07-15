@@ -1,0 +1,17 @@
+\catcode123=1 \catcode125=2
+\pdfoutput=1
+\pdfcompresslevel=0
+\pdfobjcompresslevel=0
+\pdfhorigin=0pt
+\pdfvorigin=0pt
+\pdfpagewidth=120pt
+\pdfpageheight=24pt
+\font\f=cmr10
+\font\g=cmr10 scaled 900
+\pdfmapline{=cmr10 CMR10 <tagged_spacing.enc <<cmr10.pfb}
+\pdfmapline{=customspace PdfTeX-Space <pdftexspace.pfb}
+\pdfspacefont{customspace}
+\shipout\vbox{\pdfinterwordspaceoff\pdfinterwordspaceon
+  \hbox{\f A B C\pdffakespace D\hbox{\g ff A}}}
+\shipout\vbox{\hbox{\f B C}\pdfinterwordspaceoff}
+\end

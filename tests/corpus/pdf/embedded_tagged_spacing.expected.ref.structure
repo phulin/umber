@@ -1,0 +1,46 @@
+pdf-structure-v1
+version 1.4
+catalog /Catalog
+pages 2
+page 1
+media-box 0 0 119.552 23.91
+resources <</Font <</F1 <</BaseFont /CMR10 /Encoding <</Differences [11 /ff 65 /A /B /C /D] /Type /Encoding>> /FirstChar 11 /FontDescriptor <</Ascent 694 /CapHeight 683 /Descent -194 /Flags 4 /FontBBox [-40 -250 1009 750] /FontFile stream <</Length 35172 /Length1 4275 /Length2 30897 /Length3 0>> bytes 35172 sha256 d6de3cfa2bc3e619d7c9d1acc7fd5a1df7f98510c5383a91943b0e2beade6d46 /FontName /CMR10 /ItalicAngle 0 /StemV 69 /Type /FontDescriptor /XHeight 431>> /LastChar 68 /Subtype /Type1 /Type /Font /Widths [583.3 555.6 555.6 833.3 833.3 277.8 305.6 500 500 500 500 500 750 444.4 500 722.2 777.8 500 902.8 1013.9 777.8 277.8 277.8 500 833.3 500 833.3 777.8 277.8 388.9 388.9 500 777.8 277.8 333.3 277.8 500 500 500 500 500 500 500 500 500 500 500 277.8 277.8 277.8 777.8 472.2 472.2 777.8 750 708.3 722.2 763.9]>> /F3 <</BaseFont /MUQHVU+PdfTeX-Space /FirstChar 32 /FontDescriptor <</Ascent 0 /CapHeight 0 /CharSet <2f7370616365> /Descent 0 /Flags 4 /FontBBox [0 -290 333 1127] /FontFile stream <</Length 2566 /Length1 1144 /Length2 1422 /Length3 0>> bytes 2566 sha256 d2fb636fd7cf791e5c167001b2d90c95eb5fb3028dddb1c43279bb26fbd3df52 /FontName /MUQHVU+PdfTeX-Space /ItalicAngle 0 /StemV 0 /Type /FontDescriptor /XHeight 500>> /LastChar 32 /Subtype /Type1 /Type /Font /Widths [333]>>>> /ProcSet [/PDF /Text]>>
+content BT
+content /F1 9.963 Tf
+content 0 17.103 Td
+content [<41>] TJ
+content /F3 9.963 Tf
+content <20> Tj
+content /F1 9.963 Tf
+content 10.793 0 Td
+content [<42>] TJ
+content /F3 9.963 Tf
+content <20> Tj
+content /F1 9.963 Tf
+content 10.378 0 Td
+content [<43>] TJ
+content /F3 9.963 Tf
+content [<20>] TJ
+content /F1 9.963 Tf
+content [333 <44>] TJ
+content /F1 8.966 Tf
+content [<0b>] TJ
+content /F3 9.963 Tf
+content <20> Tj
+content /F1 8.966 Tf
+content 23.024 0 Td
+content [<41>] TJ
+content ET
+page 2
+media-box 0 0 119.552 23.91
+resources <</Font <</F1 <</BaseFont /CMR10 /Encoding <</Differences [11 /ff 65 /A /B /C /D] /Type /Encoding>> /FirstChar 11 /FontDescriptor <</Ascent 694 /CapHeight 683 /Descent -194 /Flags 4 /FontBBox [-40 -250 1009 750] /FontFile stream <</Length 35172 /Length1 4275 /Length2 30897 /Length3 0>> bytes 35172 sha256 d6de3cfa2bc3e619d7c9d1acc7fd5a1df7f98510c5383a91943b0e2beade6d46 /FontName /CMR10 /ItalicAngle 0 /StemV 69 /Type /FontDescriptor /XHeight 431>> /LastChar 68 /Subtype /Type1 /Type /Font /Widths [583.3 555.6 555.6 833.3 833.3 277.8 305.6 500 500 500 500 500 750 444.4 500 722.2 777.8 500 902.8 1013.9 777.8 277.8 277.8 500 833.3 500 833.3 777.8 277.8 388.9 388.9 500 777.8 277.8 333.3 277.8 500 500 500 500 500 500 500 500 500 500 500 277.8 277.8 277.8 777.8 472.2 472.2 777.8 750 708.3 722.2 763.9]>> /F3 <</BaseFont /MUQHVU+PdfTeX-Space /FirstChar 32 /FontDescriptor <</Ascent 0 /CapHeight 0 /CharSet <2f7370616365> /Descent 0 /Flags 4 /FontBBox [0 -290 333 1127] /FontFile stream <</Length 2566 /Length1 1144 /Length2 1422 /Length3 0>> bytes 2566 sha256 d2fb636fd7cf791e5c167001b2d90c95eb5fb3028dddb1c43279bb26fbd3df52 /FontName /MUQHVU+PdfTeX-Space /ItalicAngle 0 /StemV 0 /Type /FontDescriptor /XHeight 500>> /LastChar 32 /Subtype /Type1 /Type /Font /Widths [333]>>>> /ProcSet [/PDF /Text]>>
+content BT
+content /F1 9.963 Tf
+content 0 17.103 Td
+content [<42>] TJ
+content /F3 9.963 Tf
+content <20> Tj
+content /F1 9.963 Tf
+content 10.378 0 Td
+content [<43>] TJ
+content ET
