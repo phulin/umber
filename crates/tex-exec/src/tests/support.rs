@@ -13,7 +13,15 @@ pub(super) fn install_expandable(
 }
 
 pub(super) fn terminal_effect_text(stores: &Universe) -> String {
-    let mut output = String::new();
+    // Shipout materializes prior terminal effects in the memory backend and
+    // removes them from the rollback-capable live effect suffix. Tests need
+    // the complete terminal transcript across that commit boundary.
+    let mut output = stores
+        .world()
+        .memory_terminal_output()
+        .map_or_else(String::new, |bytes| {
+            String::from_utf8_lossy(bytes).into_owned()
+        });
     for record in stores.world().effect_records() {
         if let EffectRecord::StreamWrite { sink, text } = record
             && matches!(

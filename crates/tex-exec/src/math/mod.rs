@@ -552,7 +552,10 @@ fn dispatch_math_primitive(
     let token = tex_expand::semantic_token(traced);
     let origin = traced.origin();
     match primitive {
-        UnexpandablePrimitive::Par | UnexpandablePrimitive::EndGraf => {
+        UnexpandablePrimitive::Par
+        | UnexpandablePrimitive::EndGraf
+        | UnexpandablePrimitive::End
+        | UnexpandablePrimitive::Dump => {
             insert_dollar_sign(traced, input, stores);
             Ok(DispatchAction::Continue)
         }

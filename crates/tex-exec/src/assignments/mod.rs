@@ -139,6 +139,17 @@ pub(crate) fn execute_unexpandable_with_context(
         PrefixedCommand::Primitive(UnexpandablePrimitive::End | UnexpandablePrimitive::Dump)
     ) {
         reject_all_prefixes(prefixes)?;
+        match nest.current_mode() {
+            crate::Mode::Horizontal => {
+                head_for_vmode(command.traced, input, stores);
+                return Ok(DispatchAction::Continue);
+            }
+            crate::Mode::RestrictedHorizontal => {
+                off_save_alignment(command.traced, input, stores)?;
+                return Ok(DispatchAction::Continue);
+            }
+            _ => {}
+        }
         return Ok(DispatchAction::End);
     }
     if command.command == PrefixedCommand::Primitive(UnexpandablePrimitive::Immediate) {

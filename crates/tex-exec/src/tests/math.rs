@@ -142,6 +142,22 @@ fn vertical_skip_in_math_inserts_math_shift_and_retries() {
 }
 
 #[test]
+fn end_in_math_inserts_math_shift_and_retries() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(r"$x\end"));
+    let mut executor = Executor::new();
+
+    let stats = executor
+        .run(&mut input, &mut stores)
+        .expect("end exits math before ending the job");
+
+    assert_ne!(executor.nest().current_mode(), Mode::Math);
+    assert_eq!(stats.shipped_artifacts.len(), 1);
+}
+
+#[test]
 fn math_mode_builds_noads_styles_choices_and_mu_nodes() {
     let (stores, executor) = run_math_source(
         r"$a_b^c\mathbin+\mathop{x}\limits_y\overline{z}\mskip3mu\mkern2mu\nonscript\displaystyle\mathchoice{d}{t}{s}{u}",
