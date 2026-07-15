@@ -40,6 +40,8 @@ pub(super) fn lower(
         box_stack: Vec::new(),
         pdf_save_positions: Vec::new(),
         diagnostics: Vec::new(),
+        last_saved_position: None,
+        snap_reference: crate::snapping::initial_reference(&page.effects),
     };
     match kind {
         BoxKind::Horizontal => out.hlist(root, 1)?,
@@ -59,6 +61,8 @@ pub(super) fn lower(
         fonts: page.fonts.clone(),
         events: out.events,
         diagnostics: out.diagnostics,
+        last_saved_position: out.last_saved_position,
+        snap_reference: out.snap_reference,
     })
 }
 
@@ -74,6 +78,8 @@ struct Lowerer<'a> {
     box_stack: Vec<u32>,
     pdf_save_positions: Vec<(Scaled, Scaled)>,
     diagnostics: Vec<String>,
+    last_saved_position: Option<(Scaled, Scaled)>,
+    snap_reference: (Scaled, Scaled),
 }
 
 impl Lowerer<'_> {
@@ -221,7 +227,7 @@ impl Lowerer<'_> {
                 }
                 PageNode::WhatsitAnchor { effect_index } => {
                     run.flush(self)?;
-                    self.special(*effect_index, depth)?;
+                    self.special_h(*effect_index, depth)?;
                 }
                 PageNode::Penalty(_)
                 | PageNode::Disc { .. }
@@ -247,7 +253,7 @@ impl Lowerer<'_> {
         let mut cur_g = Scaled::from_raw(0);
         let mut cur_glue = Scaled::from_raw(0);
 
-        for child in &this_box.children {
+        for (index, child) in this_box.children.iter().enumerate() {
             match child {
                 PageNode::HList(box_node) | PageNode::VList(box_node) => {
                     self.box_in_vlist(box_node, matches!(child, PageNode::VList(_)), depth + 1)?;
@@ -269,7 +275,14 @@ impl Lowerer<'_> {
                     self.vleaders(this_box, *kind, leader, height, left_edge, top_edge, depth)?;
                 }
                 PageNode::Kern { amount, .. } => self.cur_v = add(self.cur_v, *amount)?,
-                PageNode::WhatsitAnchor { effect_index } => self.special(*effect_index, depth)?,
+                PageNode::WhatsitAnchor { effect_index } => self.special_v(
+                    *effect_index,
+                    &this_box.children[index + 1..],
+                    this_box,
+                    cur_g,
+                    cur_glue,
+                    depth,
+                )?,
                 PageNode::Char { .. }
                 | PageNode::Lig { .. }
                 | PageNode::Penalty(_)
@@ -406,78 +419,127 @@ impl Lowerer<'_> {
         Ok(())
     }
 
-    fn special(&mut self, effect_index: u32, depth: usize) -> Result<(), PositionedError> {
+    fn special_h(&mut self, effect_index: u32, depth: usize) -> Result<(), PositionedError> {
+        self.special_position(effect_index, false, &[], None, depth)
+    }
+
+    fn special_v(
+        &mut self,
+        effect_index: u32,
+        following: &[PageNode],
+        this_box: &BoxNode,
+        cur_g: Scaled,
+        cur_glue: Scaled,
+        depth: usize,
+    ) -> Result<(), PositionedError> {
+        self.special_position(
+            effect_index,
+            true,
+            following,
+            Some((this_box, cur_g, cur_glue)),
+            depth,
+        )
+    }
+
+    fn special_position(
+        &mut self,
+        effect_index: u32,
+        vertical: bool,
+        following: &[PageNode],
+        glue_state: Option<(&BoxNode, Scaled, Scaled)>,
+        depth: usize,
+    ) -> Result<(), PositionedError> {
         let effect = self
             .effects
             .get(effect_index as usize)
             .ok_or(PositionedError::MissingEffect { effect_index })?;
-        match effect {
-            PageEffect::Special { class, payload } => {
-                self.push(PositionedEvent::Special(PositionedSpecial {
+        if matches!(effect, PageEffect::PdfSavePosition) {
+            self.last_saved_position = Some((self.cur_h, self.cur_v));
+        } else if matches!(effect, PageEffect::PdfSnapRefPoint) {
+            self.snap_reference = (self.cur_h, self.cur_v);
+        } else if let PageEffect::PdfSnapY { spec } = effect {
+            if vertical
+                && let Some(delta) =
+                    crate::snapping::correction(self.cur_v, self.snap_reference.1, *spec)
+            {
+                self.cur_v = add(self.cur_v, delta)?;
+            }
+        } else if let PageEffect::PdfSnapYComp { ratio } = effect {
+            if vertical
+                && let Some((this_box, cur_g, cur_glue)) = glue_state
+                && let Some(delta) = predict_snap_correction(
+                    following,
+                    self.effects,
+                    this_box,
+                    self.cur_v,
+                    self.snap_reference,
+                    cur_g,
+                    cur_glue,
+                )?
+            {
+                self.cur_v = add(self.cur_v, crate::snapping::compensate(delta, *ratio))?;
+            }
+        } else if let PageEffect::PdfAccessibility(control) = effect {
+            self.push(PositionedEvent::PdfAccessibility(
+                PositionedPdfAccessibility {
                     x: self.cur_h,
                     y: self.cur_v,
-                    class: class.clone(),
-                    payload: payload.clone(),
-                }))?;
-            }
-            PageEffect::PdfAccessibility(control) => {
-                self.push(PositionedEvent::PdfAccessibility(
-                    PositionedPdfAccessibility {
-                        x: self.cur_h,
-                        y: self.cur_v,
-                        control: *control,
-                    },
-                ))?;
-            }
-            PageEffect::PdfAnnotation(marker) => {
-                self.push(PositionedEvent::PdfAnnotation(PositionedPdfAnnotation {
-                    x: self.cur_h,
-                    y: self.cur_v,
-                    containing_box: *self
-                        .box_stack
-                        .last()
-                        .expect("positioned effects are nested in a box"),
-                    depth: u32::try_from(depth).map_err(|_| PositionedError::NestingTooDeep {
-                        limit: self.limits.max_depth,
-                    })?,
-                    marker: *marker,
-                }))?;
-            }
+                    control: *control,
+                },
+            ))?;
+        } else if let PageEffect::PdfAnnotation(marker) = effect {
+            self.push(PositionedEvent::PdfAnnotation(PositionedPdfAnnotation {
+                x: self.cur_h,
+                y: self.cur_v,
+                containing_box: *self
+                    .box_stack
+                    .last()
+                    .expect("positioned effects are nested in a box"),
+                depth: u32::try_from(depth).map_err(|_| PositionedError::NestingTooDeep {
+                    limit: self.limits.max_depth,
+                })?,
+                marker: *marker,
+            }))?;
+        } else if let PageEffect::Special { class, payload } = effect {
+            self.push(PositionedEvent::Special(PositionedSpecial {
+                x: self.cur_h,
+                y: self.cur_v,
+                class: class.clone(),
+                payload: payload.clone(),
+            }))?;
+        } else if matches!(
+            effect,
             PageEffect::PdfLiteral { .. }
-            | PageEffect::PdfColorStack {
-                page_start: false, ..
-            }
-            | PageEffect::PdfSetMatrix { .. }
-            | PageEffect::PdfSave
-            | PageEffect::PdfRestore => {
-                match effect {
-                    PageEffect::PdfSave => self.pdf_save_positions.push((self.cur_h, self.cur_v)),
-                    PageEffect::PdfRestore => match self.pdf_save_positions.pop() {
-                        None => self
-                            .diagnostics
-                            .push("\\pdfrestore: missing \\pdfsave".to_owned()),
-                        Some((x, y)) if x != self.cur_h || y != self.cur_v => {
-                            self.diagnostics.push(format!(
-                                "Misplaced \\pdfrestore by ({}sp, {}sp)",
-                                i64::from(self.cur_h.raw()) - i64::from(x.raw()),
-                                i64::from(self.cur_v.raw()) - i64::from(y.raw())
-                            ));
-                        }
-                        Some(_) => {}
-                    },
-                    _ => {}
+                | PageEffect::PdfColorStack {
+                    page_start: false,
+                    ..
                 }
-                self.push(PositionedEvent::PdfGraphics(PositionedPdfGraphics {
-                    x: self.cur_h,
-                    y: self.cur_v,
-                    effect: effect.clone(),
-                }))?;
+                | PageEffect::PdfSetMatrix { .. }
+                | PageEffect::PdfSave
+                | PageEffect::PdfRestore
+        ) {
+            match effect {
+                PageEffect::PdfSave => self.pdf_save_positions.push((self.cur_h, self.cur_v)),
+                PageEffect::PdfRestore => match self.pdf_save_positions.pop() {
+                    None => self
+                        .diagnostics
+                        .push("\\pdfrestore: missing \\pdfsave".to_owned()),
+                    Some((x, y)) if x != self.cur_h || y != self.cur_v => {
+                        self.diagnostics.push(format!(
+                            "Misplaced \\pdfrestore by ({}sp, {}sp)",
+                            i64::from(self.cur_h.raw()) - i64::from(x.raw()),
+                            i64::from(self.cur_v.raw()) - i64::from(y.raw())
+                        ))
+                    }
+                    Some(_) => {}
+                },
+                _ => {}
             }
-            PageEffect::PdfColorStack {
-                page_start: true, ..
-            } => {}
-            PageEffect::OpenOut { .. } | PageEffect::CloseOut { .. } | PageEffect::Write { .. } => {
-            }
+            self.push(PositionedEvent::PdfGraphics(PositionedPdfGraphics {
+                x: self.cur_h,
+                y: self.cur_v,
+                effect: effect.clone(),
+            }))?;
         }
         Ok(())
     }
@@ -748,6 +810,57 @@ fn glue_width(
         cur_g,
     )
     .map_err(|_| PositionedError::PositionOverflow)
+}
+
+fn predict_snap_correction(
+    following: &[PageNode],
+    effects: &[PageEffect],
+    this_box: &BoxNode,
+    mut current: Scaled,
+    mut reference: (Scaled, Scaled),
+    mut cur_g: Scaled,
+    mut cur_glue: Scaled,
+) -> Result<Option<Scaled>, PositionedError> {
+    for child in following {
+        match child {
+            PageNode::HList(node) | PageNode::VList(node) => {
+                current = add(current, add(node.height, node.depth)?)?;
+            }
+            PageNode::Rule { height, depth, .. } => {
+                current = add(
+                    current,
+                    add(
+                        height.unwrap_or(Scaled::from_raw(0)),
+                        depth.unwrap_or(Scaled::from_raw(0)),
+                    )?,
+                )?;
+            }
+            PageNode::Glue { spec, .. } => {
+                current = add(
+                    current,
+                    glue_width(this_box, *spec, &mut cur_glue, &mut cur_g)?,
+                )?;
+            }
+            PageNode::Kern { amount, .. } => current = add(current, *amount)?,
+            PageNode::WhatsitAnchor { effect_index } => {
+                let effect =
+                    effects
+                        .get(*effect_index as usize)
+                        .ok_or(PositionedError::MissingEffect {
+                            effect_index: *effect_index,
+                        })?;
+                match effect {
+                    PageEffect::PdfSnapRefPoint => reference.1 = current,
+                    PageEffect::PdfSnapY { spec } => {
+                        return Ok(crate::snapping::correction(current, reference.1, *spec));
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(None)
 }
 
 #[derive(Clone, Copy)]

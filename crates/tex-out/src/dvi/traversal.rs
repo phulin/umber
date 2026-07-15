@@ -675,7 +675,7 @@ impl<W: std::io::Write> DviWriter<W> {
         let mut cur_g = Scaled::from_raw(0);
         let mut cur_glue = Scaled::from_raw(0);
 
-        for child in &this_box.children {
+        for (index, child) in this_box.children.iter().enumerate() {
             match child {
                 PageNode::HList(box_node) | PageNode::VList(box_node) => {
                     self.output_box_in_vlist(
@@ -720,7 +720,14 @@ impl<W: std::io::Write> DviWriter<W> {
                     self.cur_v = add_scaled(self.cur_v, *amount)?;
                 }
                 PageNode::WhatsitAnchor { effect_index } => {
-                    self.out_what(effects, *effect_index)?;
+                    self.out_what_v(
+                        effects,
+                        *effect_index,
+                        &this_box.children[index + 1..],
+                        this_box,
+                        cur_g,
+                        cur_glue,
+                    )?;
                 }
                 PageNode::Char { .. }
                 | PageNode::Lig { .. }
@@ -906,6 +913,46 @@ impl<W: std::io::Write> DviWriter<W> {
         Ok(())
     }
 
+    fn out_what_v(
+        &mut self,
+        effects: &[PageEffect],
+        effect_index: u32,
+        following: &[PageNode],
+        this_box: &BoxNode,
+        cur_g: Scaled,
+        cur_glue: Scaled,
+    ) -> Result<(), DviError> {
+        let effect = effects
+            .get(effect_index as usize)
+            .ok_or(DviError::MissingEffect { effect_index })?;
+        match effect {
+            PageEffect::PdfSnapRefPoint => self.snap_reference = (self.cur_h, self.cur_v),
+            PageEffect::PdfSnapY { spec } => {
+                if let Some(delta) =
+                    crate::snapping::correction(self.cur_v, self.snap_reference.1, *spec)
+                {
+                    self.cur_v = add_scaled(self.cur_v, delta)?;
+                }
+            }
+            PageEffect::PdfSnapYComp { ratio } => {
+                if let Some(delta) = predict_snap_correction(
+                    following,
+                    effects,
+                    this_box,
+                    self.cur_v,
+                    self.snap_reference,
+                    cur_g,
+                    cur_glue,
+                )? {
+                    self.cur_v =
+                        add_scaled(self.cur_v, crate::snapping::compensate(delta, *ratio))?;
+                }
+            }
+            _ => self.out_what(effects, effect_index)?,
+        }
+        Ok(())
+    }
+
     fn trace_box(&mut self, vertical: bool, node: &BoxNode) -> Result<(), DviError> {
         if let Some(trace) = &mut self.coordinate_trace {
             trace.push(DviCoordinateEvent::Box {
@@ -953,4 +1000,62 @@ impl<W: std::io::Write> DviWriter<W> {
         self.raw(payload);
         Ok(())
     }
+}
+
+fn predict_snap_correction(
+    following: &[PageNode],
+    effects: &[PageEffect],
+    this_box: &BoxNode,
+    mut current: Scaled,
+    mut reference: (Scaled, Scaled),
+    mut cur_g: Scaled,
+    mut cur_glue: Scaled,
+) -> Result<Option<Scaled>, DviError> {
+    for child in following {
+        match child {
+            PageNode::HList(node) | PageNode::VList(node) => {
+                current = add_scaled(current, add_scaled(node.height, node.depth)?)?;
+            }
+            PageNode::Rule { height, depth, .. } => {
+                current = add_scaled(
+                    current,
+                    add_scaled(
+                        height.unwrap_or(Scaled::from_raw(0)),
+                        depth.unwrap_or(Scaled::from_raw(0)),
+                    )?,
+                )?;
+            }
+            PageNode::Glue { spec, .. } => {
+                current = add_scaled(
+                    current,
+                    adjusted_glue_width(
+                        *spec,
+                        this_box.glue_sign,
+                        this_box.glue_order,
+                        this_box.glue_set,
+                        &mut cur_glue,
+                        &mut cur_g,
+                    )?,
+                )?;
+            }
+            PageNode::Kern { amount, .. } => current = add_scaled(current, *amount)?,
+            PageNode::WhatsitAnchor { effect_index } => {
+                let effect =
+                    effects
+                        .get(*effect_index as usize)
+                        .ok_or(DviError::MissingEffect {
+                            effect_index: *effect_index,
+                        })?;
+                match effect {
+                    PageEffect::PdfSnapRefPoint => reference.1 = current,
+                    PageEffect::PdfSnapY { spec } => {
+                        return Ok(crate::snapping::correction(current, reference.1, *spec));
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(None)
 }

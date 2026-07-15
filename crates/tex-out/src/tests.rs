@@ -702,6 +702,14 @@ fn sample_artifact() -> PageArtifact {
                 payload: b"0 0 1 rg".to_vec(),
                 page_start: true,
             },
+            PageEffect::PdfSavePosition,
+            PageEffect::PdfSnapState {
+                x: Scaled::from_raw(3),
+                y: Scaled::from_raw(4),
+            },
+            PageEffect::PdfSnapRefPoint,
+            PageEffect::PdfSnapY { spec: glue },
+            PageEffect::PdfSnapYComp { ratio: 500 },
         ],
     }
     .validate()

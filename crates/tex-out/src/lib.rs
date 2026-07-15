@@ -35,6 +35,7 @@ pub mod html;
 mod model;
 pub mod pdf;
 pub mod positioned;
+mod snapping;
 
 #[cfg(test)]
 mod tests;

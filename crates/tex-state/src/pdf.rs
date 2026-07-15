@@ -2655,4 +2655,33 @@ mod tests {
         );
         assert_eq!(state.hash_fragment(), allocated_hash);
     }
+
+    #[test]
+    fn saved_positions_and_snap_reference_rollback_and_replay_exactly() {
+        let mut state = PdfState::default();
+        let before = state.snapshot();
+        state.publish_traversal_positions(
+            Some((Scaled::from_raw(17), Scaled::from_raw(-23))),
+            (Scaled::from_raw(31), Scaled::from_raw(47)),
+        );
+        let changed = state.hash_fragment();
+        assert_eq!(
+            state.last_position(),
+            (Scaled::from_raw(17), Scaled::from_raw(-23))
+        );
+        assert_eq!(
+            state.snap_reference(),
+            (Scaled::from_raw(31), Scaled::from_raw(47))
+        );
+        state.rollback(before.clone());
+        assert_eq!(
+            state.last_position(),
+            (Scaled::from_raw(0), Scaled::from_raw(0))
+        );
+        state.publish_traversal_positions(
+            Some((Scaled::from_raw(17), Scaled::from_raw(-23))),
+            (Scaled::from_raw(31), Scaled::from_raw(47)),
+        );
+        assert_eq!(state.hash_fragment(), changed);
+    }
 }

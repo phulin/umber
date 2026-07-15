@@ -41,6 +41,8 @@ pub struct PositionedPage {
     pub fonts: Vec<FontResource>,
     pub events: Vec<PositionedEvent>,
     pub diagnostics: Vec<String>,
+    pub last_saved_position: Option<(Scaled, Scaled)>,
+    pub snap_reference: (Scaled, Scaled),
 }
 
 /// Ordered page event. Event order remains significant at equal coordinates.

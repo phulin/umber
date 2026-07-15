@@ -109,7 +109,27 @@ pub(super) fn stage_shipout(
     let artifact_bytes = encoder
         .finish(&emission.fonts, &overlay.effects)
         .map_err(invalid_artifact)?;
-    let dvi_plan = dvi.finish(&emission.fonts).map_err(invalid_artifact)?;
+    let streamed_dvi_plan = dvi.finish(&emission.fonts).map_err(invalid_artifact)?;
+    let artifact = tex_out::PageArtifact::from_bytes(&artifact_bytes).map_err(invalid_artifact)?;
+    let positioned = tex_out::positioned::lower_page(&artifact, 0).map_err(invalid_artifact)?;
+    let snapping = overlay.effects.iter().any(|effect| {
+        matches!(
+            effect,
+            PageEffect::PdfSnapRefPoint
+                | PageEffect::PdfSnapY { .. }
+                | PageEffect::PdfSnapYComp { .. }
+        )
+    });
+    let dvi_plan = if snapping {
+        DviPagePlan::compile(&artifact).map_err(invalid_artifact)?
+    } else {
+        streamed_dvi_plan
+    };
+    let last_position = positioned
+        .last_saved_position
+        .map(|position| saved_position(stores, &root, position))
+        .transpose()?;
+    stores.publish_pdf_traversal_positions(last_position, positioned.snap_reference);
 
     let input_summary = input.publication_summary(stores);
     stores.set_input_summary(input_summary);
@@ -120,6 +140,55 @@ pub(super) fn stage_shipout(
         dvi_plan,
         effect_pos,
     })
+}
+
+fn saved_position(
+    stores: &Universe,
+    root: &PageBoxNode,
+    position: (tex_state::scaled::Scaled, tex_state::scaled::Scaled),
+) -> Result<(tex_state::scaled::Scaled, tex_state::scaled::Scaled), ExecError> {
+    const DVI_ONE_INCH: i32 = 4_736_286;
+    if stores.int_param(IntParam::PDF_OUTPUT) > 0 {
+        let h_origin = stores.dimen_param(DimenParam::PDF_H_ORIGIN);
+        let v_origin = stores.dimen_param(DimenParam::PDF_V_ORIGIN);
+        let configured_height = stores.dimen_param(DimenParam::PDF_PAGE_HEIGHT);
+        let page_height = if configured_height.raw() == 0 {
+            root.height
+                .checked_add(root.depth)
+                .and_then(|height| height.checked_add(v_origin))
+                .and_then(|height| height.checked_add(v_origin))
+                .ok_or(ExecError::ArithmeticOverflow)?
+        } else {
+            configured_height
+        };
+        Ok((
+            position
+                .0
+                .checked_add(h_origin)
+                .ok_or(ExecError::ArithmeticOverflow)?,
+            page_height
+                .checked_sub(position.1)
+                .and_then(|value| value.checked_sub(v_origin))
+                .ok_or(ExecError::ArithmeticOverflow)?,
+        ))
+    } else {
+        let inch = tex_state::scaled::Scaled::from_raw(DVI_ONE_INCH);
+        let page_height = root
+            .height
+            .checked_add(root.depth)
+            .and_then(|height| height.checked_add(stores.dimen_param(DimenParam::V_OFFSET)))
+            .ok_or(ExecError::ArithmeticOverflow)?;
+        Ok((
+            position
+                .0
+                .checked_add(inch)
+                .ok_or(ExecError::ArithmeticOverflow)?,
+            page_height
+                .checked_sub(position.1)
+                .and_then(|value| value.checked_sub(inch))
+                .ok_or(ExecError::ArithmeticOverflow)?,
+        ))
+    }
 }
 
 fn invalid_artifact(error: impl ToString) -> ExecError {

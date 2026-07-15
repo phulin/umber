@@ -861,6 +861,34 @@ mod tests {
         assert!(output.contains("pdfTeX warning (\\pdfcatalog)"));
         assert!(output.contains("continued"));
         assert_eq!(stores.pdf_catalog_open_action(), None);
+
+    }
+
+    #[test]
+    fn saved_position_and_snapping_names_have_exact_pdftex_identity() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        for (name, expected) in [
+            ("pdfsavepos", UnexpandablePrimitive::PdfSavePos),
+            ("pdfsnaprefpoint", UnexpandablePrimitive::PdfSnapRefPoint),
+            ("pdfsnapy", UnexpandablePrimitive::PdfSnapY),
+            ("pdfsnapycomp", UnexpandablePrimitive::PdfSnapYComp),
+        ] {
+            let symbol = stores.intern(name);
+            assert_eq!(
+                stores.meaning(symbol),
+                Meaning::UnexpandablePrimitive(expected)
+            );
+        }
+        for (name, expected) in [
+            ("pdflastxpos", InternalInteger::PdfLastXPos),
+            ("pdflastypos", InternalInteger::PdfLastYPos),
+        ] {
+            let symbol = stores.intern(name);
+            assert_eq!(stores.meaning(symbol), Meaning::InternalInteger(expected));
+        }
+        let nonexistent_alias = stores.intern("pdfsnaptorefpoint");
+        assert_eq!(stores.meaning(nonexistent_alias), Meaning::Undefined);
     }
 
     #[test]

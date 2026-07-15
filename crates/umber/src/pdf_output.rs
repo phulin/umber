@@ -4156,6 +4156,71 @@ mod tests {
     }
 
     #[test]
+    fn pdf_save_position_publishes_only_after_pdf_and_dvi_shipout() {
+        let mut pdf_stores = Universe::default();
+        prepare_pdftex_run_stores(&mut pdf_stores);
+        assert_eq!(
+            pdf_stores.pdf_last_position(),
+            (Scaled::from_raw(0), Scaled::from_raw(0))
+        );
+        let _ = run_in(
+            &mut pdf_stores,
+            concat!(
+                "\\pdfoutput=1\\pdfpageheight=100pt",
+                "\\pdfhorigin=10pt\\pdfvorigin=20pt",
+                "\\setbox0=\\vbox{\\kern5pt\\hbox{\\kern7pt\\pdfsavepos}}",
+                "\\shipout\\box0\\end",
+            ),
+        );
+        assert_eq!(
+            pdf_stores.pdf_last_position(),
+            (Scaled::from_raw(17 * 65_536), Scaled::from_raw(75 * 65_536)),
+        );
+
+        let (dvi_stores, _) = run(concat!(
+            "\\pdfoutput=0",
+            "\\shipout\\vbox{\\kern5pt\\hbox{\\kern7pt\\pdfsavepos}}\\end",
+        ));
+        assert_eq!(
+            dvi_stores.pdf_last_position(),
+            (
+                Scaled::from_raw(7 * 65_536 + 4_736_286),
+                Scaled::from_raw(-4_736_286),
+            ),
+        );
+    }
+
+    #[test]
+    fn pdf_snap_y_and_compensation_move_only_vertical_traversal() {
+        let (snapped, _) = run(concat!(
+            "\\pdfoutput=1\\pdfpageheight=100pt\\pdfhorigin=0pt\\pdfvorigin=0pt",
+            "\\shipout\\vbox{\\pdfsnaprefpoint\\kern6pt",
+            "\\pdfsnapy 10pt plus10pt minus10pt\\pdfsavepos}\\end",
+        ));
+        assert_eq!(snapped.pdf_last_position().1, Scaled::from_raw(90 * 65_536));
+
+        let (compensated, _) = run(concat!(
+            "\\pdfoutput=1\\pdfpageheight=100pt\\pdfhorigin=0pt\\pdfvorigin=0pt",
+            "\\shipout\\vbox{\\pdfsnaprefpoint\\kern6pt\\pdfsnapycomp500",
+            "\\pdfsavepos\\pdfsnapy 10pt plus10pt minus10pt}\\end",
+        ));
+        assert_eq!(
+            compensated.pdf_last_position().1,
+            Scaled::from_raw(92 * 65_536),
+        );
+
+        let (horizontal, _) = run(concat!(
+            "\\pdfoutput=1\\pdfpageheight=100pt\\pdfhorigin=0pt\\pdfvorigin=0pt",
+            "\\shipout\\hbox{\\pdfsnaprefpoint\\kern6pt",
+            "\\pdfsnapy 10pt plus10pt minus10pt\\pdfsavepos}\\end",
+        ));
+        assert_eq!(
+            horizontal.pdf_last_position().0,
+            Scaled::from_raw(6 * 65_536)
+        );
+    }
+
+    #[test]
     fn pdf_graphics_reports_matrix_and_save_restore_failures_at_traversal() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);

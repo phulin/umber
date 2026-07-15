@@ -233,6 +233,7 @@ struct DviWriter<W: Write> {
     cur_s: i32,
     font_definition_sites: Option<Vec<plan::FontDefinitionSite>>,
     coordinate_trace: Option<Vec<coordinates::DviCoordinateEvent>>,
+    snap_reference: (Scaled, Scaled),
 }
 
 impl<W: Write> DviWriter<W> {
@@ -261,6 +262,7 @@ impl<W: Write> DviWriter<W> {
             cur_s: -1,
             font_definition_sites: None,
             coordinate_trace: None,
+            snap_reference: (Scaled::from_raw(0), Scaled::from_raw(0)),
         }
     }
 

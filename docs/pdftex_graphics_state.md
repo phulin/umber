@@ -210,6 +210,15 @@ reference state, compensation remainder, and resulting movements must be in
 the checkpointed execution/artifact model so reuse cannot omit or duplicate a
 grid adjustment. There is no `\pdfsnaptorefpoint` alias to install.
 
+Umber encodes saved-position and snapping nodes as anchored `PageEffect`s. The
+shared positioned traversal publishes the last raw save point and final grid
+reference after a successful walk; the executor then converts the save point
+to pdfTeX's PDF- or DVI-specific page coordinates. Pages containing snapping
+controls compile their DVI plan from the committed artifact so fresh and
+replayed output use the same same-list lookahead. No PDF syntax is emitted for
+these effects; PDF serialization continues through the vendored `pdf_writer`
+adapter.
+
 ## Timer and random state
 
 These controls are already implemented by `umber2-kbz0.9.5`; the graphics

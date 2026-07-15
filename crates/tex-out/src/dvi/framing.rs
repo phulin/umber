@@ -79,6 +79,7 @@ impl<W: std::io::Write> DviWriter<W> {
         // the page reference point includes both dimension parameters before
         // hlist_out/vlist_out performs its normal traversal.
         self.cur_h = page.job.h_offset;
+        self.snap_reference = crate::snapping::initial_reference(&page.effects);
         match node {
             PageNode::HList(box_node) => {
                 // tex.web ship_out: cur_v := height(p) + v_offset.
