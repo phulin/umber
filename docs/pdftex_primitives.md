@@ -1,109 +1,157 @@
-# pdfTeX 1.40.27 primitives
+# pdfTeX 1.40.27 Primitive Checklist
 
-This document is the complete source-derived inventory of the 158 primitive
-control sequences added by pdfTeX on top of TeX82 and original e-TeX. Beads is
-the source of truth for implementation progress; this file fixes the upstream
-boundary and the delivery priority.
+This document inventories the primitive control sequences added by pdfTeX on
+top of TeX82 and the original e-TeX change file. Beads is the source of truth
+for implementation progress; this document fixes the upstream boundary and
+the completeness gate.
 
-## Priority rule
+## Upstream boundary and method
 
-**High priority** means the primitive executed in at least one of the 100
-literal-random, source-available arXiv papers recorded in
-`scripts/pdftex-arxiv-sample-100.tsv`. The trace ran each source with pdfTeX
-1.40.27 and retained the primitives reached before errors in the 24 incomplete
-runs. This identifies practical demand; it is not a claim that an unobserved
-primitive is unused everywhere.
-
-**Deferred** means the primitive was not in the 54 `\pdf...` names selected by
-that trace. Deferred primitives remain part of the compatibility target, but
-they do not block the high-priority digital-document milestone.
-
-## Upstream boundary
-
-The authoritative source is `texk/web2c/pdftexdir/pdftex.web` at TeX Live
-commit `1664cf0ab3f6ce3b80db649bc6723f54ab12016c`. It declares pdfTeX
-3.141592653-2.6-1.40.27 and has SHA-256
+The authoritative source is `texk/web2c/pdftexdir/pdftex.web` at official
+TeX Live source commit
+[`1664cf0ab3f6ce3b80db649bc6723f54ab12016c`](https://github.com/TeX-Live/texlive-source/blob/1664cf0ab3f6ce3b80db649bc6723f54ab12016c/texk/web2c/pdftexdir/pdftex.web).
+That file declares pdfTeX 3.141592653-2.6-1.40.27 and has SHA-256
 `5a105669acc1b49aedb7560d4d15cb2e23467cb16d895eb0031c8dd9fea32f04`.
-The inventory is the unique names registered by `primitive(...)` in that file
-minus the names registered by the matching TeX82 `tex.web` and original e-TeX
-`etex.ch`.
+The repository's local parity oracle and committed corpus metadata pin the
+same engine version (TeX Live 2025).
 
-| Layer | Primitive names |
-| --- | ---: |
-| TeX82 prerequisite | 325 |
-| Original e-TeX prerequisite | 66 |
-| pdfTeX layer inventoried here | 158 |
-| Total in pdfTeX mode | 549 |
+The inventory takes the unique names registered by `primitive(...)` in that
+file, then subtracts the unique names registered by the matching TeX82
+`tex.web` and original e-TeX `etex.ch`. This is intentionally a source-level
+engine inventory: it includes obsolete compatibility controls and internal
+aliases that a manual organized by user-facing features can omit.
 
-## High priority (54)
+| Layer | Registered names | Exact names currently installed by Umber |
+| --- | ---: | ---: |
+| TeX82 prerequisite | 325 | 325 |
+| Original e-TeX prerequisite | 66 | 66 |
+| pdfTeX layer | 158 | 2 |
+| Total | 549 | 393 |
 
-The observed-paper count is out of 100. An incomplete paper still contributes
-the primitives it executed before stopping.
+The prerequisite count is nominal control-sequence coverage; its behavioral
+gates remain the TeX and e-TeX corpora. The two implemented pdfTeX-layer names
+are `\expanded` and `\ifincsname`. The other 156 exact names are missing.
+Umber also exposes the engine-neutral names `\creationdate`, `\filesize`,
+`\shellescape`, and `\strcmp`; these are implementation reuse candidates for
+the corresponding `\pdf...` aliases, not exact-name coverage.
 
-| Primitive | Papers | Primitive | Papers |
-| --- | ---: | --- | ---: |
-| `\pdfshellescape` | 100 | `\pdfstrcmp` | 100 |
-| `\pdfoutput` | 94 | `\pdfmajorversion` | 92 |
-| `\pdflastobj` | 91 | `\pdflastannot` | 90 |
-| `\pdflastlink` | 90 | `\pdfpageheight` | 87 |
-| `\pdfpagewidth` | 87 | `\pdftexversion` | 86 |
-| `\pdfhorigin` | 83 | `\pdfvorigin` | 83 |
-| `\pdfcolorstack` | 63 | `\pdflastximage` | 63 |
-| `\pdfrefximage` | 63 | `\pdfximage` | 63 |
-| `\pdfrestore` | 61 | `\pdfsave` | 61 |
-| `\pdfsetmatrix` | 60 | `\pdftexrevision` | 57 |
-| `\pdfoptionpdfminorversion` | 51 | `\pdfdraftmode` | 50 |
-| `\pdflinkmargin` | 50 | `\pdfinfo` | 49 |
-| `\pdfcatalog` | 47 | `\pdfdest` | 47 |
-| `\pdfendlink` | 39 | `\pdfstartlink` | 39 |
-| `\pdfobj` | 32 | `\pdfpageresources` | 31 |
-| `\pdfliteral` | 20 | `\pdfmatch` | 18 |
-| `\pdfadjustspacing` | 16 | `\pdffontexpand` | 16 |
-| `\pdfprotrudechars` | 16 | `\pdflastxform` | 10 |
-| `\pdfrefxform` | 10 | `\pdfxform` | 10 |
-| `\pdfgentounicode` | 6 | `\pdfglyphtounicode` | 6 |
-| `\pdfcolorstackinit` | 4 | `\pdfcompresslevel` | 3 |
-| `\pdfdecimaldigits` | 3 | `\pdffontattr` | 3 |
-| `\pdfoutline` | 3 | `\pdflastxpos` | 2 |
-| `\pdflastypos` | 2 | `\pdfnobuiltintounicode` | 2 |
-| `\pdfsavepos` | 2 | `\pdfadjustinterwordglue` | 1 |
-| `\pdfappendkern` | 1 | `\pdffontsize` | 1 |
-| `\pdfmapline` | 1 | `\pdfprependkern` | 1 |
+## Source-derived checklist
 
-## Deferred (104)
+The families and order below follow the registration blocks in the pinned
+source. **Done** means the exact name and observable pdfTeX behavior have an
+oracle-backed test. Every name in a missing row is missing.
 
-The lists retain the registration-family ordering from the pinned source.
+| Family (source registration block) | Count | Status | Primitive names |
+| --- | ---: | --- | --- |
+| PDF token-list parameters | 4 | missing | `\pdfpagesattr`, `\pdfpageattr`, `\pdfpageresources`, `\pdfpkmode` |
+| PDF integer parameters | 38 | missing | `\pdfoutput`, `\pdfcompresslevel`, `\pdfobjcompresslevel`, `\pdfdecimaldigits`, `\pdfmovechars`, `\pdfimageresolution`, `\pdfpkresolution`, `\pdfuniqueresname`, `\pdfoptionpdfminorversion`, `\pdfoptionalwaysusepdfpagebox`, `\pdfoptionpdfinclusionerrorlevel`, `\pdfmajorversion`, `\pdfminorversion`, `\pdfforcepagebox`, `\pdfpagebox`, `\pdfinclusionerrorlevel`, `\pdfgamma`, `\pdfimagegamma`, `\pdfimagehicolor`, `\pdfimageapplygamma`, `\pdfadjustspacing`, `\pdfprotrudechars`, `\pdftracingfonts`, `\pdfadjustinterwordglue`, `\pdfprependkern`, `\pdfappendkern`, `\pdfgentounicode`, `\pdfdraftmode`, `\pdfinclusioncopyfonts`, `\pdfsuppresswarningdupdest`, `\pdfsuppresswarningdupmap`, `\pdfsuppresswarningpagegroup`, `\pdfinfoomitdate`, `\pdfsuppressptexinfo`, `\pdfomitcharset`, `\pdfomitinfodict`, `\pdfomitprocset`, `\pdfptexuseunderscore` |
+| PDF dimension parameters | 13 | missing | `\pdfhorigin`, `\pdfvorigin`, `\pdfpagewidth`, `\pdfpageheight`, `\pdflinkmargin`, `\pdfdestmargin`, `\pdfthreadmargin`, `\pdffirstlineheight`, `\pdflastlinedepth`, `\pdfeachlineheight`, `\pdfeachlinedepth`, `\pdfignoreddimen`, `\pdfpxdimen` |
+| Font construction and primitive recovery | 3 | missing | `\letterspacefont`, `\pdfcopyfont`, `\pdfprimitive` |
+| Read-only integer enquiries | 14 | missing | `\pdftexversion`, `\pdflastobj`, `\pdflastxform`, `\pdflastximage`, `\pdflastximagepages`, `\pdflastannot`, `\pdflastxpos`, `\pdflastypos`, `\pdfretval`, `\pdflastximagecolordepth`, `\pdfelapsedtime`, `\pdfshellescape`, `\pdfrandomseed`, `\pdflastlink` |
+| Expandable conversions and enquiries | 27 | partial (1 done) | `\expanded` (done); `\pdftexrevision`, `\pdftexbanner`, `\pdffontname`, `\pdffontobjnum`, `\pdffontsize`, `\pdfpageref`, `\leftmarginkern`, `\rightmarginkern`, `\pdfxformname`, `\pdfescapestring`, `\pdfescapename`, `\pdfescapehex`, `\pdfunescapehex`, `\pdfcreationdate`, `\pdffilemoddate`, `\pdffilesize`, `\pdfmdfivesum`, `\pdffiledump`, `\pdfmatch`, `\pdflastmatch`, `\pdfstrcmp`, `\pdfcolorstackinit`, `\pdfuniformdeviate`, `\pdfnormaldeviate`, `\pdfinsertht`, `\pdfximagebbox` |
+| Primitive-identity conditional | 1 | missing | `\ifpdfprimitive` |
+| Horizontal-mode normalization | 1 | missing | `\quitvmode` |
+| Character codes and ligature control | 10 | missing | `\lpcode`, `\rpcode`, `\efcode`, `\tagcode`, `\knbscode`, `\stbscode`, `\shbscode`, `\knbccode`, `\knaccode`, `\pdfnoligatures` |
+| PDF backend actions | 43 | missing | `\pdfliteral`, `\pdfcolorstack`, `\pdfsetmatrix`, `\pdfsave`, `\pdfrestore`, `\pdfobj`, `\pdfrefobj`, `\pdfxform`, `\pdfrefxform`, `\pdfximage`, `\pdfrefximage`, `\pdfannot`, `\pdfstartlink`, `\pdfendlink`, `\pdfoutline`, `\pdfdest`, `\pdfthread`, `\pdfstartthread`, `\pdfendthread`, `\pdfsavepos`, `\pdfsnaprefpoint`, `\pdfsnapy`, `\pdfsnapycomp`, `\pdfinfo`, `\pdfcatalog`, `\pdfnames`, `\pdfincludechars`, `\pdffontattr`, `\pdfmapfile`, `\pdfmapline`, `\pdftrailer`, `\pdftrailerid`, `\pdfresettimer`, `\pdfsetrandomseed`, `\pdffontexpand`, `\pdfglyphtounicode`, `\pdfnobuiltintounicode`, `\pdfinterwordspaceon`, `\pdfinterwordspaceoff`, `\pdffakespace`, `\pdfrunninglinkoff`, `\pdfrunninglinkon`, `\pdfspacefont` |
+| Compatibility error policy | 1 | missing | `\ignoreprimitiveerror` |
+| Late expansion conditionals | 3 | partial (1 done) | `\ifincsname` (done); `\ifpdfabsnum`, `\ifpdfabsdim` |
 
-| Family | Count | Primitive names |
-| --- | ---: | --- |
-| PDF token-list parameters | 3 | `\pdfpagesattr`, `\pdfpageattr`, `\pdfpkmode` |
-| PDF integer parameters | 26 | `\pdfobjcompresslevel`, `\pdfmovechars`, `\pdfimageresolution`, `\pdfpkresolution`, `\pdfuniqueresname`, `\pdfoptionalwaysusepdfpagebox`, `\pdfoptionpdfinclusionerrorlevel`, `\pdfminorversion`, `\pdfforcepagebox`, `\pdfpagebox`, `\pdfinclusionerrorlevel`, `\pdfgamma`, `\pdfimagegamma`, `\pdfimagehicolor`, `\pdfimageapplygamma`, `\pdftracingfonts`, `\pdfinclusioncopyfonts`, `\pdfsuppresswarningdupdest`, `\pdfsuppresswarningdupmap`, `\pdfsuppresswarningpagegroup`, `\pdfinfoomitdate`, `\pdfsuppressptexinfo`, `\pdfomitcharset`, `\pdfomitinfodict`, `\pdfomitprocset`, `\pdfptexuseunderscore` |
-| PDF dimension parameters | 8 | `\pdfdestmargin`, `\pdfthreadmargin`, `\pdffirstlineheight`, `\pdflastlinedepth`, `\pdfeachlineheight`, `\pdfeachlinedepth`, `\pdfignoreddimen`, `\pdfpxdimen` |
-| Font construction and primitive recovery | 3 | `\letterspacefont`, `\pdfcopyfont`, `\pdfprimitive` |
-| Read-only integer enquiries | 5 | `\pdflastximagepages`, `\pdfretval`, `\pdflastximagecolordepth`, `\pdfelapsedtime`, `\pdfrandomseed` |
-| Expandable conversions and enquiries | 22 | `\expanded`, `\pdftexbanner`, `\pdffontname`, `\pdffontobjnum`, `\pdfpageref`, `\leftmarginkern`, `\rightmarginkern`, `\pdfxformname`, `\pdfescapestring`, `\pdfescapename`, `\pdfescapehex`, `\pdfunescapehex`, `\pdfcreationdate`, `\pdffilemoddate`, `\pdffilesize`, `\pdfmdfivesum`, `\pdffiledump`, `\pdflastmatch`, `\pdfuniformdeviate`, `\pdfnormaldeviate`, `\pdfinsertht`, `\pdfximagebbox` |
-| Primitive-identity conditional | 1 | `\ifpdfprimitive` |
-| Horizontal-mode normalization | 1 | `\quitvmode` |
-| Character codes and ligature control | 10 | `\lpcode`, `\rpcode`, `\efcode`, `\tagcode`, `\knbscode`, `\stbscode`, `\shbscode`, `\knbccode`, `\knaccode`, `\pdfnoligatures` |
-| PDF backend actions | 21 | `\pdfrefobj`, `\pdfannot`, `\pdfthread`, `\pdfstartthread`, `\pdfendthread`, `\pdfsnaprefpoint`, `\pdfsnapy`, `\pdfsnapycomp`, `\pdfnames`, `\pdfincludechars`, `\pdfmapfile`, `\pdftrailer`, `\pdftrailerid`, `\pdfresettimer`, `\pdfsetrandomseed`, `\pdfinterwordspaceon`, `\pdfinterwordspaceoff`, `\pdffakespace`, `\pdfrunninglinkoff`, `\pdfrunninglinkon`, `\pdfspacefont` |
-| Compatibility error policy | 1 | `\ignoreprimitiveerror` |
-| Late expansion conditionals | 3 | `\ifincsname`, `\ifpdfabsnum`, `\ifpdfabsdim` |
+Counts in the table sum to 158. No primitive is complete merely because its
+name is installed: assignments must group correctly, expandable results and
+diagnostics must match the pinned oracle, and node/effect state must survive
+checkpoint, restore, semantic hashing, and format serialization where
+applicable.
 
-The family counts sum to 158 across the two priority sections. Exact-name
-registration alone is not completion: assignments must group correctly,
-expandable results and diagnostics must match the pinned oracle, PDF effects
-must serialize deterministically, and relevant state must survive checkpoint,
-restore, hashing, and format serialization.
+## Compatibility and alias decisions
 
-## Delivery gates
+The implementation should preserve exact pdfTeX spellings even when a shared
+engine-neutral implementation exists. In particular, `\pdfcreationdate`,
+`\pdffilesize`, `\pdfshellescape`, and `\pdfstrcmp` should initially be aliases
+over Umber's existing neutral facilities, with pdfTeX-compatible results and
+error behavior. `\pdfoptionpdfminorversion`,
+`\pdfoptionpdfinclusionerrorlevel`, and `\pdfoptionalwaysusepdfpagebox` are
+legacy aliases for their current parameter counterparts and should share one
+state cell per pair.
 
-The high-priority epic is complete when all 54 observed primitives have
-oracle-backed behavior, representative digital-document sources complete,
-normalized PDF structure and rendered pages match pdfTeX, DVI remains stable,
-and the native/WASM gates pass.
+Potential compatibility/no-op controls are `\pdfmovechars`, the image gamma
+controls, `\pdfignoreddimen`, `\pdfpkmode`, and warning-suppression or omission
+knobs. They may be implemented as accepted state only where the pinned oracle
+demonstrates that output is unaffected. Silently accepting a primitive whose
+value or diagnostics remain observable is not parity.
 
-The deferred epic owns the other 104 primitives and the final 158-name source
-audit. It should not block the high-priority milestone unless a supposedly
-deferred primitive is discovered to be a real dependency of the practical
-corpus; such a primitive moves to high priority with the trace or fixture that
-demonstrates the dependency.
+## Beads epic decomposition
+
+Create an epic titled **Implement the complete pdfTeX 1.40.27 primitive
+layer**. Its acceptance criteria are: all 158 exact names are visible only in
+the pdfTeX engine mode; every row above is done; focused reference fixtures
+cover success, grouping, expansion, diagnostics, and mode errors; a
+source-derived name-set test prevents omissions; DVI mode remains byte-stable;
+PDF-mode fixtures match normalized pdfTeX structure and rendered pages; and
+the full workspace, LaTeX, WASM, TRIP, and e-TRIP gates pass.
+
+Create these child issues in dependency order; each issue should update this
+checklist and include focused pdfTeX-oracle fixtures:
+
+1. **Define pdfTeX engine mode and generated primitive inventory gate.** Add
+   exact-name visibility, version identity, source-set comparison, and mode
+   selection. This blocks every other issue.
+2. **Design and implement the deterministic PDF artifact backend.** Add
+   checkpointed object identities, page/resource dictionaries, deterministic
+   serialization, normalized structural comparison, and rendering fixtures.
+   This blocks backend-producing primitives.
+3. **Add checkpointed pdfTeX parameter banks and format serialization.** Add
+   typed integer, dimension, and token-list storage, grouping, semantic
+   hashing, and format round trips. This depends on issue 1.
+4. **Implement PDF page attributes, geometry, and origin parameters.** Cover
+   the 4 token lists and 13 dimensions, with page-boundary behavior. Depends
+   on issues 2 and 3.
+5. **Implement PDF output, version, compression, and legacy aliases.** Cover
+   output mode, major/minor version, compression, decimal digits, page box,
+   and the three `\pdfoption...` aliases. Depends on issue 3.
+6. **Implement PDF image, inclusion, and draft configuration parameters.**
+   Cover resolution, gamma, inclusion policy, copy-fonts, draft mode, and
+   unique resource names. Depends on issue 3.
+7. **Implement PDF microtype and font-output configuration parameters.**
+   Cover adjustment, protrusion, kern insertion, tracing, ToUnicode, PK
+   resolution, and character-set omission. Depends on issue 3.
+8. **Implement PDF metadata and warning-policy configuration parameters.**
+   Cover date/info/procset omission, duplicate warnings, pTeX information,
+   underscore policy, and compatibility-only parameter behavior. Depends on
+   issue 3.
+9. **Implement pdfTeX identity, utility conversions, and conditionals.** Cover
+   version/banner, primitive recovery, absolute comparisons, escape/unescape,
+   files, hashes, regex, timer, random, shell status, and neutral aliases.
+10. **Implement pdfTeX character-code tables and font enquiries.** Cover the
+   nine code tables, margin kerns, font name/object/size, inclusion height,
+   image bounding boxes, and `\pdfnoligatures`.
+11. **Implement letterspaced/copied fonts and expansion/protrusion.** Cover
+   `\letterspacefont`, `\pdfcopyfont`, `\pdffontexpand`, protrusion parameters,
+   and paragraph/line-breaking integration.
+12. **Implement PDF graphics state, literals, color stacks, and positions.**
+   Cover literal/matrix/save/restore, color stacks, save position, snapping,
+   and last-position enquiries. Depends on issue 2.
+13. **Implement PDF objects and document dictionaries.** Cover object/refobj,
+   info/catalog/names/trailer/trailer ID, compression/version parameters, and
+   last-object enquiry. Depends on issue 2.
+14. **Implement PDF forms and external images.** Cover xform/ximage creation,
+   references, names, image metadata, page-box/inclusion controls, and last
+   enquiries. Depends on issues 2 and 13.
+15. **Implement PDF annotations and link lifecycles.** Cover annotations,
+    link start/end, margins, running-link controls, and last enquiries.
+    Depends on issues 2 and 13.
+16. **Implement PDF destinations, outlines, and article threads.** Cover
+    destination and outline actions plus thread start/end and margins.
+    Depends on issues 2 and 13.
+17. **Implement PDF font maps, embedding, and ToUnicode controls.** Cover font
+    attributes/maps, included characters, glyph mapping, built-in ToUnicode,
+    and related omission controls. Depends on issues 10, 11, and 13.
+18. **Implement PDF tagged-spacing and accessibility controls.** Cover
+    fake/interword spaces, space fonts, character tag and boundary codes, and
+    structure-sensitive output fixtures. Depends on issues 10, 11, and 17.
+19. **Implement pdfTeX mode normalization and compatibility controls.** Cover
+    `\quitvmode`, `\ignoreprimitiveerror`, and every compatibility/no-op
+    candidate with oracle evidence. Depends on issues 5 through 9.
+20. **Close the pdfTeX 1.40.27 full-parity gate.** Run the source-set audit,
+    primitive micro-corpus, representative pdfTeX package/LaTeX corpus, PDF
+    structural/rendering comparison, DVI regression, workspace tests, and
+    WASM gates. Depends on all implementation issues.
