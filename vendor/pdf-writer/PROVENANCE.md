@@ -12,3 +12,8 @@ objects, builds true PDF object streams through `Obj`, and emits type-2 entries
 from `Pdf::finish_with_xref_stream`. The extension is intentionally contained
 in the upstream crate so all PDF object, xref, stream-dictionary, trailer, and
 framing syntax remains authored by `pdf_writer`.
+
+Umber additionally carries a minimal typed `Content::inline_image` builder for
+the `BI` dictionary, `ID` binary payload, and `EI` terminator. Upstream 0.15.0
+contains an explicit inline-image TODO; keeping the extension here prevents
+Type-3 PK glyph procedures from hand-authoring PDF framing downstream.

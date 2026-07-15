@@ -955,7 +955,101 @@ impl Content {
     }
 }
 
-// TODO: Inline images. Also check clause 6.1.10 of PDF/A-2 spec.
+/// Writer for the dictionary and data of an inline image.
+pub struct InlineImage<'a, 'data> {
+    content: &'a mut Content,
+    width: i32,
+    height: i32,
+    data: &'data [u8],
+    image_mask: bool,
+    bits_per_component: Option<i32>,
+    decode: Option<[f32; 2]>,
+    finished: bool,
+}
+
+impl Content {
+    /// Starts a typed inline image (`BI` ... `ID` ... `EI`). Width and height
+    /// are required and must be positive. Call [`InlineImage::finish`] after
+    /// setting the remaining dictionary entries.
+    pub fn inline_image<'a, 'data>(
+        &'a mut self,
+        width: i32,
+        height: i32,
+        data: &'data [u8],
+    ) -> InlineImage<'a, 'data> {
+        assert!(width > 0, "inline image width must be positive");
+        assert!(height > 0, "inline image height must be positive");
+        InlineImage {
+            content: self,
+            width,
+            height,
+            data,
+            image_mask: false,
+            bits_per_component: None,
+            decode: None,
+            finished: false,
+        }
+    }
+}
+
+impl InlineImage<'_, '_> {
+    /// Writes `/IM true`, selecting an image mask instead of a color image.
+    pub fn image_mask(&mut self) -> &mut Self {
+        self.image_mask = true;
+        self
+    }
+
+    /// Writes the `/BPC` entry. The PDF inline-image range is 1 through 16.
+    pub fn bits_per_component(&mut self, bits: i32) -> &mut Self {
+        assert!((1..=16).contains(&bits), "inline image bits must be 1..=16");
+        self.bits_per_component = Some(bits);
+        self
+    }
+
+    /// Writes a two-number `/D` decode array.
+    pub fn decode(&mut self, decode: [f32; 2]) -> &mut Self {
+        self.decode = Some(decode);
+        self
+    }
+
+    /// Completes the dictionary and writes the exact binary payload framing.
+    pub fn finish(&mut self) {
+        assert!(!self.finished, "inline image was already finished");
+        self.finished = true;
+        let content = &mut *self.content;
+        let width = self.width;
+        let height = self.height;
+        let data = self.data;
+        let image_mask = self.image_mask;
+        let bits_per_component = self.bits_per_component;
+        let decode = self.decode;
+        content.buf.extend(b"\nBI");
+        inline_image_pair(content, b"W", width);
+        inline_image_pair(content, b"H", height);
+        if image_mask {
+            inline_image_pair(content, b"IM", true);
+        }
+        if let Some(bits) = bits_per_component {
+            inline_image_pair(content, b"BPC", bits);
+        }
+        if let Some(values) = decode {
+            content.buf.extend(b"\n/D ");
+            Obj::direct(&mut content.buf, 0, content.settings, false)
+                .array()
+                .items(values);
+        }
+        content.buf.extend(b"\nID\n");
+        content.buf.extend(data);
+        content.buf.extend(b"\nEI");
+    }
+}
+
+fn inline_image_pair<T: Primitive>(content: &mut Content, key: &'static [u8], value: T) {
+    content.buf.push(b'\n');
+    Obj::direct(&mut content.buf, 0, content.settings, false).primitive(Name(key));
+    content.buf.push(b' ');
+    Obj::direct(&mut content.buf, 0, content.settings, false).primitive(value);
+}
 
 /// XObjects.
 impl Content {
@@ -1744,6 +1838,21 @@ mod tests {
         assert_eq!(
             content.finish().into_vec(),
             b"q\n1 2 3 4 re\nf\n[7 2] 4 d\n/MyImage Do\n2 3.5 /MyPattern scn\nQ"
+        );
+    }
+
+    #[test]
+    fn test_inline_image_dictionary_and_binary_framing() {
+        let mut content = Content::new();
+        content
+            .inline_image(3, 2, &[0xa0, 0x40])
+            .image_mask()
+            .bits_per_component(1)
+            .decode([1.0, 0.0])
+            .finish();
+        assert_eq!(
+            content.finish().into_vec(),
+            b"\nBI\n/W 3\n/H 2\n/IM true\n/BPC 1\n/D [1 0]\nID\n\xa0@\nEI"
         );
     }
 

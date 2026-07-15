@@ -193,7 +193,7 @@ pub mod types {
 pub use self::buf::{Buf, Limits};
 use self::chunk::XRefEntry;
 pub use self::chunk::{Chunk, ObjectStream, Settings};
-pub use self::content::Content;
+pub use self::content::{Content, InlineImage};
 pub use self::object::{
     Array, Date, Dict, Filter, Finish, LanguageIdentifier, Name, Null, Obj, Primitive,
     Rect, Ref, Rewrite, Str, Stream, TextStr, TextStrLike, TextStrWithLang, TypedArray,
