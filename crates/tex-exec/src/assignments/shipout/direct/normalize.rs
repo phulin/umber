@@ -267,7 +267,10 @@ fn append_whatsit_effect(
                 payload,
             });
         }
-        Whatsit::PdfSetMatrix { payload } => effects.push(PageEffect::PdfSetMatrix { payload }),
+        Whatsit::PdfSetMatrix { payload } => {
+            validate_pdf_matrix(&payload)?;
+            effects.push(PageEffect::PdfSetMatrix { payload });
+        }
         Whatsit::PdfSave => effects.push(PageEffect::PdfSave),
         Whatsit::PdfRestore => effects.push(PageEffect::PdfRestore),
         Whatsit::OpenOut { .. }
@@ -276,6 +279,26 @@ fn append_whatsit_effect(
         | Whatsit::Language { .. } => {}
     }
     Ok(())
+}
+
+fn validate_pdf_matrix(payload: &[u8]) -> Result<(), ExecError> {
+    let valid = std::str::from_utf8(payload).ok().is_some_and(|text| {
+        let mut fields = text.split_ascii_whitespace();
+        let four_finite = (0..4).all(|_| {
+            fields
+                .next()
+                .and_then(|field| field.parse::<f64>().ok())
+                .is_some_and(f64::is_finite)
+        });
+        four_finite && fields.next().is_none()
+    });
+    if valid {
+        Ok(())
+    } else {
+        Err(ExecError::InvalidShipoutArtifact(
+            "pdfTeX error (\\pdfsetmatrix): Unrecognized format.".to_owned(),
+        ))
+    }
 }
 
 fn lower_pdf_literal_mode(mode: tex_state::node::PdfLiteralMode) -> tex_out::PdfLiteralMode {

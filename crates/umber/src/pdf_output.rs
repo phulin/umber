@@ -4055,11 +4055,17 @@ mod tests {
 
     #[test]
     fn pdf_graphics_reports_matrix_and_save_restore_failures_at_traversal() {
-        let (stores, run_result) = run("\\pdfoutput=1\\shipout\\hbox{\\pdfsetmatrix{1 0 0}}\\end");
-        assert!(matches!(
-            pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts),
-            Err(PdfBuildError::InvalidMatrix(_))
-        ));
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let error = try_run_in(
+            &mut stores,
+            "\\pdfoutput=1\\shipout\\hbox{\\pdfsetmatrix{1 0 0}}\\end",
+        )
+        .expect_err("malformed matrix fails during shipout");
+        assert_eq!(
+            error.to_string(),
+            "pdfTeX error (\\pdfsetmatrix): Unrecognized format."
+        );
 
         let (_stores, restore_run) = run("\\pdfoutput=1\\shipout\\hbox{\\pdfrestore}\\end");
         let artifact =
