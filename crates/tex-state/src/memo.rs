@@ -42,6 +42,7 @@ pub enum MemoValueKind {
 pub struct MemoValueLimits {
     pub max_payload_bytes: usize,
     pub max_tokens: usize,
+    pub max_nodes: usize,
     pub max_string_bytes: usize,
 }
 
@@ -50,6 +51,7 @@ impl Default for MemoValueLimits {
         Self {
             max_payload_bytes: 64 * 1024 * 1024,
             max_tokens: 4 * 1024 * 1024,
+            max_nodes: 4 * 1024 * 1024,
             max_string_bytes: 16 * 1024 * 1024,
         }
     }
@@ -99,6 +101,20 @@ impl DetachedMemoValue {
             payload: payload.into(),
             integrity,
         }
+    }
+
+    pub(crate) fn from_payload(kind: MemoValueKind, payload: Vec<u8>) -> Self {
+        Self::new(kind, payload)
+    }
+
+    pub(crate) fn payload(&self, expected: MemoValueKind) -> Result<&[u8], MemoValueError> {
+        if self.kind != expected {
+            return Err(MemoValueError::Kind {
+                expected,
+                found: self.kind,
+            });
+        }
+        Ok(&self.payload)
     }
 
     #[must_use]

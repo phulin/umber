@@ -100,3 +100,78 @@ fn glue_and_macro_round_trip_semantically() {
         }
     );
 }
+
+#[test]
+fn nested_node_graph_round_trips_across_owners_and_respects_budget_atomically() {
+    use crate::node::{BoxNode, BoxNodeFields, GlueKind, Node};
+    use crate::scaled::{GlueSetRatio, Scaled};
+
+    let mut source = Universe::new();
+    let tokens = source.intern_token_list(&[Token::Char {
+        ch: 'm',
+        cat: Catcode::Letter,
+    }]);
+    let glue = source.intern_glue(GlueSpec {
+        width: Scaled::from_raw(7),
+        ..GlueSpec::ZERO
+    });
+    let child = source.freeze_node_list(&[
+        Node::Char {
+            font: source.current_font(),
+            ch: 'x',
+            origin: crate::token::OriginId::UNKNOWN,
+        },
+        Node::Glue {
+            spec: glue,
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+        Node::Mark { class: 2, tokens },
+    ]);
+    let root = source.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+        width: Scaled::from_raw(20),
+        height: Scaled::from_raw(5),
+        depth: Scaled::from_raw(1),
+        shift: Scaled::from_raw(0),
+        display: false,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: crate::node::Sign::Normal,
+        glue_order: Order::Normal,
+        children: child,
+    }))]);
+    let detached = source.detach_node_list(root).expect("node detachment");
+
+    let mut target = Universe::new();
+    let imported = target
+        .import_memo_node_list(&detached, MemoValueLimits::default())
+        .expect("node import");
+    let left = source.engine_boundary_hash(77, |hash| hash.node_list(root));
+    let right = target.engine_boundary_hash(77, |hash| hash.node_list(imported));
+    assert_eq!(left, right);
+
+    let before = target.snapshot().state_hash();
+    assert!(matches!(
+        target.import_memo_node_list(
+            &detached,
+            MemoValueLimits {
+                max_nodes: 1,
+                ..MemoValueLimits::default()
+            }
+        ),
+        Err(MemoValueError::Codec(_))
+    ));
+    assert_eq!(target.snapshot().state_hash(), before);
+}
+
+#[test]
+fn malformed_node_payload_is_a_miss_without_partial_publication() {
+    let malformed = DetachedMemoValue::new(MemoValueKind::Nodes, vec![1, 2, 3]);
+    let mut target = Universe::new();
+    let before = target.snapshot().state_hash();
+    assert!(
+        target
+            .import_memo_node_list(&malformed, MemoValueLimits::default())
+            .is_err()
+    );
+    assert_eq!(target.snapshot().state_hash(), before);
+}

@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 type SurvivorRoots = BTreeMap<SurvivorRootId, u32>;
-type NodeIds = Vec<(FormatListKey, NodeListId)>;
+type NodeIds = BTreeMap<FormatListKey, NodeListId>;
 
 pub(super) struct FormatContentIds<'a> {
     pub fonts: &'a [FontId],
@@ -992,8 +992,8 @@ fn key(stores: &Stores, id: NodeListId, roots: &mut SurvivorRoots) -> FormatList
 }
 
 fn list_id(ids: &NodeIds, key: FormatListKey) -> Result<NodeListId, StoreFormatError> {
-    ids.iter()
-        .find_map(|(stored, id)| (*stored == key).then_some(*id))
+    ids.get(&key)
+        .copied()
         .ok_or(StoreFormatError::Invalid("node child precedes dependency"))
 }
 

@@ -270,6 +270,16 @@ struct FormatNodeList {
     nodes: Vec<FormatNode>,
 }
 
+#[derive(Deserialize, Serialize)]
+struct MemoNodeBundle {
+    names: Vec<FormatName>,
+    token_lists: Vec<Vec<FormatToken>>,
+    glue: Vec<FormatGlue>,
+    fonts: Vec<FormatFont>,
+    node_lists: Vec<FormatNodeList>,
+    root: FormatListKey,
+}
+
 fn capture_env_word(
     stores: &Stores,
     cell: crate::cell::CellId,
@@ -384,6 +394,155 @@ impl Stores {
         format.validate_references()?;
         format.validate_font_state()?;
         install_frozen_sections(format, core, non_node, node_lists.semantic_ids)
+    }
+
+    pub(crate) fn encode_memo_node_list(
+        &self,
+        root: NodeListId,
+    ) -> Result<Vec<u8>, StoreFormatError> {
+        let names = (0..self.interner.len())
+            .map(|raw| {
+                let symbol = self
+                    .interner
+                    .symbol_at_slot(raw as u32)
+                    .expect("captured interner slot should be live");
+                FormatName {
+                    active: self.interner.kind(symbol) == ControlSequenceKind::ActiveCharacter,
+                    text: self.interner.resolve(symbol).to_owned(),
+                }
+            })
+            .collect();
+        let token_mark = self.tokens.watermark();
+        let token_lists = (0..token_mark.spans)
+            .map(|raw| {
+                self.tokens
+                    .get(self.resolve_stored_token_list(TokenListId::new(raw)))
+                    .iter()
+                    .copied()
+                    .map(|token| FormatToken::capture(self, token))
+                    .collect()
+            })
+            .collect();
+        let glue_mark = self.glue.watermark();
+        let glue = (0..glue_mark.specs)
+            .map(|raw| {
+                FormatGlue::capture(self.glue.get(self.resolve_stored_glue(GlueId::new(raw))))
+            })
+            .collect();
+        let font_mark = self.fonts.watermark();
+        let fonts = (0..font_mark.len)
+            .map(|raw| FormatFont::capture(&self.fonts, self.resolve_stored_font(FontId::new(raw))))
+            .collect();
+        let mut seen = std::collections::BTreeSet::new();
+        let mut visiting = std::collections::BTreeSet::new();
+        let mut survivor_roots = std::collections::BTreeMap::new();
+        let mut node_lists = Vec::new();
+        capture_node_list(
+            self,
+            root,
+            &mut seen,
+            &mut visiting,
+            &mut survivor_roots,
+            &mut node_lists,
+        )?;
+        let root = FormatListKey::capture(self, root, &mut survivor_roots);
+        bincode::serialize(&MemoNodeBundle {
+            names,
+            token_lists,
+            glue,
+            fonts,
+            node_lists,
+            root,
+        })
+        .map_err(|error| StoreFormatError::Codec(error.to_string()))
+    }
+
+    pub(crate) fn import_memo_node_list(
+        &mut self,
+        bytes: &[u8],
+        max_nodes: usize,
+    ) -> Result<NodeListId, StoreFormatError> {
+        let bundle: MemoNodeBundle = bincode::deserialize(bytes)
+            .map_err(|error| StoreFormatError::Codec(error.to_string()))?;
+        let node_count = bundle
+            .node_lists
+            .iter()
+            .try_fold(0usize, |total, list| total.checked_add(list.nodes.len()));
+        if node_count.is_none_or(|count| count > max_nodes) {
+            return Err(StoreFormatError::Invalid("memo node budget exceeded"));
+        }
+
+        let mut symbols = Vec::with_capacity(bundle.names.len());
+        let mut symbol_ids = Vec::with_capacity(bundle.names.len());
+        for name in bundle.names {
+            let id = if name.active {
+                let mut chars = name.text.chars();
+                let ch = chars
+                    .next()
+                    .ok_or(StoreFormatError::Invalid("empty active name"))?;
+                if chars.next().is_some() {
+                    return Err(StoreFormatError::Invalid("multi-character active name"));
+                }
+                self.intern_active_character(ch)
+            } else {
+                self.intern(&name.text)
+            };
+            symbols.push(id.symbol());
+            symbol_ids.push(id);
+        }
+
+        let mut token_ids = Vec::with_capacity(bundle.token_lists.len());
+        for tokens in bundle.token_lists {
+            let tokens = tokens
+                .into_iter()
+                .map(|token| token.restore_mapped(&symbols))
+                .collect::<Result<Vec<_>, _>>()?;
+            token_ids.push(self.intern_token_list(&tokens));
+        }
+        let mut glue_ids = Vec::with_capacity(bundle.glue.len());
+        for glue in bundle.glue {
+            glue_ids.push(self.intern_glue(glue.restore()?));
+        }
+        let mut font_ids = Vec::with_capacity(bundle.fonts.len());
+        for (raw, font) in bundle.fonts.into_iter().enumerate() {
+            if raw == 0 {
+                font_ids.push(NULL_FONT);
+                continue;
+            }
+            let identifier = font.identifier;
+            let id = match identifier {
+                Some(symbol) => {
+                    let symbol = symbol_ids
+                        .get(symbol as usize)
+                        .copied()
+                        .ok_or(StoreFormatError::Invalid("font identifier symbol"))?;
+                    self.try_intern_font_with_identifier(font.restore(), symbol)
+                }
+                None => self.try_intern_font(font.restore()),
+            }
+            .map_err(|_| StoreFormatError::Invalid("memo font capacity"))?;
+            font_ids.push(id);
+        }
+
+        let content_ids = FormatContentIds {
+            fonts: &font_ids,
+            glue: &glue_ids,
+            token_lists: &token_ids,
+        };
+        let mut node_ids = std::collections::BTreeMap::new();
+        for list in bundle.node_lists {
+            let nodes = list
+                .nodes
+                .into_iter()
+                .map(|node| node.restore(&content_ids, &node_ids))
+                .collect::<Result<Vec<_>, _>>()?;
+            let id = self.freeze_node_list(&nodes);
+            node_ids.insert(list.key, id);
+        }
+        node_ids
+            .get(&bundle.root)
+            .copied()
+            .ok_or(StoreFormatError::Invalid("memo root is missing"))
     }
 }
 
@@ -665,7 +824,7 @@ impl StoreFormat {
             glue: &glue_ids,
             token_lists: &token_ids,
         };
-        let mut node_ids = Vec::with_capacity(self.node_lists.len());
+        let mut node_ids = std::collections::BTreeMap::new();
         for list in self.node_lists {
             let nodes = list
                 .nodes
@@ -675,7 +834,7 @@ impl StoreFormat {
             let semantic_id = stores.compute_and_seal_node_semantic_id(&nodes);
             record_transitional_format_work(|work| work.semantic_reseals += 1);
             let id = stores.nodes.append_with_semantic_id(&nodes, semantic_id);
-            node_ids.push((list.key, id));
+            node_ids.insert(list.key, id);
         }
         if !has_frozen_non_node {
             for entry in self.code_tables {
@@ -1137,7 +1296,6 @@ impl FormatToken {
         }
     }
 
-    #[cfg(test)]
     fn restore_mapped(self, symbols: &[Symbol]) -> Result<Token, StoreFormatError> {
         Ok(match self {
             Self::Char { ch, cat } => Token::Char {
@@ -1169,7 +1327,6 @@ impl FormatGlue {
         }
     }
 
-    #[cfg(test)]
     fn restore(self) -> Result<GlueSpec, StoreFormatError> {
         Ok(GlueSpec {
             width: Scaled::from_raw(self.width),

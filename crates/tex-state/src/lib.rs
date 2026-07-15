@@ -92,12 +92,12 @@ pub use pdf::{
 };
 pub mod world;
 
-pub use font::PdfFontCode;
 pub use dependency::{
     ChangedAt, DependencyBank, DependencyCodeTable, DependencyEngineField, DependencyFontField,
     DependencyKey, DependencyPageField, DependencyRegion, DependencyRuntime, DependencyTracker,
     DependencyValidation, DependencyValue, DependencyWorldField, ObservedDependency,
 };
+pub use font::PdfFontCode;
 pub use input::{
     ConditionFrameSummary, ConditionFrameToken, ConditionKind, ConditionLimb, InputFrameSummary,
     InputSummary, LexerState, MACRO_ARGUMENT_SLOTS, MacroArgumentRange, MacroArguments,

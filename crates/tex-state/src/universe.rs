@@ -3741,6 +3741,104 @@ impl Universe {
         self.stores.finish_node_list(builder)
     }
 
+    /// Captures a handle-free, provenance-free node graph for memo retention.
+    pub fn detach_node_list(
+        &self,
+        id: NodeListId,
+    ) -> Result<crate::DetachedMemoValue, crate::MemoValueError> {
+        self.detach_node_value(id, crate::MemoValueKind::Nodes)
+    }
+
+    /// Captures one box-root list as a detached memo value.
+    pub fn detach_box(
+        &self,
+        id: NodeListId,
+    ) -> Result<crate::DetachedMemoValue, crate::MemoValueError> {
+        if self.nodes(id).len() != 1
+            || !matches!(
+                self.nodes(id).first(),
+                Some(crate::node_arena::NodeRef::HList(_) | crate::node_arena::NodeRef::VList(_))
+            )
+        {
+            return Err(crate::MemoValueError::Invalid(
+                "memo box root is not one box",
+            ));
+        }
+        self.detach_node_value(id, crate::MemoValueKind::Box)
+    }
+
+    fn detach_node_value(
+        &self,
+        id: NodeListId,
+        kind: crate::MemoValueKind,
+    ) -> Result<crate::DetachedMemoValue, crate::MemoValueError> {
+        let payload = self
+            .stores
+            .encode_memo_node_list(id)
+            .map_err(|error| crate::MemoValueError::Codec(format!("{error:?}")))?;
+        Ok(crate::DetachedMemoValue::from_payload(kind, payload))
+    }
+
+    /// Atomically imports a detached node graph into this Universe owner.
+    pub fn import_memo_node_list(
+        &mut self,
+        value: &crate::DetachedMemoValue,
+        limits: crate::MemoValueLimits,
+    ) -> Result<NodeListId, crate::MemoValueError> {
+        self.import_memo_node_value(value, crate::MemoValueKind::Nodes, limits, false)
+    }
+
+    /// Atomically imports and verifies a detached single-box root.
+    pub fn import_memo_box(
+        &mut self,
+        value: &crate::DetachedMemoValue,
+        limits: crate::MemoValueLimits,
+    ) -> Result<NodeListId, crate::MemoValueError> {
+        self.import_memo_node_value(value, crate::MemoValueKind::Box, limits, true)
+    }
+
+    fn import_memo_node_value(
+        &mut self,
+        value: &crate::DetachedMemoValue,
+        kind: crate::MemoValueKind,
+        limits: crate::MemoValueLimits,
+        require_box: bool,
+    ) -> Result<NodeListId, crate::MemoValueError> {
+        let payload = value.payload(kind)?;
+        if payload.len() > limits.max_payload_bytes {
+            return Err(crate::MemoValueError::Oversized {
+                actual: payload.len(),
+                limit: limits.max_payload_bytes,
+            });
+        }
+        let rollback = self.capture_scoped_rollback();
+        match self.stores.import_memo_node_list(payload, limits.max_nodes) {
+            Ok(id)
+                if !require_box
+                    || (self.nodes(id).len() == 1
+                        && matches!(
+                            self.nodes(id).first(),
+                            Some(
+                                crate::node_arena::NodeRef::HList(_)
+                                    | crate::node_arena::NodeRef::VList(_)
+                            )
+                        )) =>
+            {
+                Ok(id)
+            }
+            Ok(_) => {
+                self.rollback_scoped(rollback);
+                Err(crate::MemoValueError::Invalid(
+                    "memo box root is not one box",
+                ))
+            }
+            Err(error) => {
+                self.rollback_scoped(rollback);
+                Err(crate::MemoValueError::Codec(format!("{error:?}")))
+            }
+        }
+    }
+
     #[must_use]
     pub fn nodes(&self, id: NodeListId) -> NodeList<'_> {
         self.stores.nodes(id)
