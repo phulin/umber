@@ -26,7 +26,9 @@ pub use pdf_encoding::{PdfEncoding, PdfEncodingError};
 pub use pdf_map::{
     PdfFontMapDirective, PdfFontMapEntry, PdfFontMapError, PdfFontMapFile, PdfFontMapProgram,
 };
-pub use pdf_truetype::{PdfTrueTypeProgram, PdfTrueTypeProgramError, PdfTrueTypeProgramIdentity};
+pub use pdf_truetype::{
+    PdfTrueTypeProgram, PdfTrueTypeProgramError, PdfTrueTypeProgramIdentity, PdfTrueTypeSubsetError,
+};
 pub use tfm::{
     CharacterTag, ExtensibleRecipe, FontParameter, FontParameterKind, FontParameters, Header,
     LigKernAction, LigKernStep, Ligature, LigatureDeletes, ParseError, TfmFont, TfmTable,

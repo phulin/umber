@@ -382,6 +382,14 @@ fn pdf_font_objects(
         None
     };
     let type1 = subset_type1.as_ref().or(type1);
+    let subset_truetype = if subset_requested {
+        truetype
+            .map(|program| program.subset(&glyph_names))
+            .transpose()?
+    } else {
+        None
+    };
+    let truetype = subset_truetype.as_ref().or(truetype);
     let mut dictionary = PdfDictionary::new();
     dictionary.insert("Type", PdfValue::Name("Font".into()))?;
     dictionary.insert(
@@ -886,6 +894,7 @@ pub enum PdfBuildError {
     MissingBuiltinGlyphName { font: String, code: u8 },
     TrueTypeSubsetRequiresEncoding(String),
     Type1Subset(tex_fonts::PdfType1SubsetError),
+    TrueTypeSubset(tex_fonts::PdfTrueTypeSubsetError),
     MissingLiveFont(String),
     UnsupportedSpecial(String),
     World(WorldError),
@@ -946,6 +955,7 @@ impl std::fmt::Display for PdfBuildError {
                 "subset TrueType font {name:?} requires an explicit PDF encoding"
             ),
             Self::Type1Subset(error) => error.fmt(f),
+            Self::TrueTypeSubset(error) => error.fmt(f),
             Self::MissingLiveFont(name) => {
                 write!(f, "PDF artifact font {name:?} has no live metric source")
             }
@@ -995,6 +1005,12 @@ impl From<tex_fonts::PdfType1SubsetError> for PdfBuildError {
     }
 }
 
+impl From<tex_fonts::PdfTrueTypeSubsetError> for PdfBuildError {
+    fn from(value: tex_fonts::PdfTrueTypeSubsetError) -> Self {
+        Self::TrueTypeSubset(value)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1036,6 +1052,23 @@ mod tests {
         prepare_pdftex_run_stores(&mut stores);
         let result = run_in(&mut stores, source);
         (stores, result)
+    }
+
+    fn provide_abc_encoding(stores: &mut Universe) {
+        let mut encoding = b"/FixtureEncoding [".to_vec();
+        for code in 0..256 {
+            let name = match code {
+                65 => "A",
+                66 => "B",
+                67 => "C",
+                _ => ".notdef",
+            };
+            encoding.extend_from_slice(format!("/{name} ").as_bytes());
+        }
+        encoding.extend_from_slice(b"] def");
+        stores
+            .provide_pdf_encoding(b"fixture.enc".to_vec(), &encoding)
+            .expect("provide detached encoding");
     }
 
     #[test]
@@ -1474,6 +1507,71 @@ mod tests {
                 .as_i64()
                 .expect("integer Length1") as usize,
             embedded.content.len()
+        );
+    }
+
+    #[test]
+    fn subset_truetype_uses_named_glyph_closure_and_simple_pdf_encoding() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        stores
+            .world_mut()
+            .set_memory_file(
+                "cmr10.tfm",
+                include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm").to_vec(),
+            )
+            .expect("seed TFM");
+        let logical_name = b"cmu-serif-500-roman.woff2".to_vec();
+        stores
+            .provide_pdf_truetype_program(
+                logical_name,
+                include_bytes!("../../umber-wasm/assets/cmu-serif-500-roman.woff2"),
+            )
+            .expect("decode committed WOFF2");
+        provide_abc_encoding(&mut stores);
+        let full_len = stores
+            .pdf_truetype_program(b"cmu-serif-500-roman.woff2")
+            .expect("full TrueType program")
+            .bytes()
+            .len();
+        let run_result = run_in(
+            &mut stores,
+            concat!(
+                "\\pdfoutput=1\\pdfcompresslevel=0",
+                "\\font\\f=cmr10 ",
+                "\\pdfmapline{=cmr10 CMUSerif <fixture.enc <cmu-serif-500-roman.woff2}",
+                "\\shipout\\hbox{\\f ABC}\\end",
+            ),
+        );
+        let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+            .expect("subset TrueType PDF assembles");
+        let parsed = lopdf::Document::load_mem(&pdf).expect("subset TrueType output parses");
+        assert_eq!(
+            parsed
+                .extract_text(&[1])
+                .expect("extract subset text")
+                .trim(),
+            "ABC"
+        );
+        let embedded = parsed
+            .objects
+            .values()
+            .filter_map(|object| object.as_stream().ok())
+            .find(|stream| stream.content.starts_with(&[0, 1, 0, 0]))
+            .expect("subset SFNT embedded");
+        assert!(embedded.content.len() < full_len / 4);
+        let face = ttf_parser::Face::parse(&embedded.content, 0).expect("subset SFNT parses");
+        for name in ["A", "B", "C"] {
+            assert!(
+                (0..face.number_of_glyphs())
+                    .map(ttf_parser::GlyphId)
+                    .any(|glyph| face.glyph_name(glyph) == Some(name))
+            );
+        }
+        assert!(
+            !(0..face.number_of_glyphs())
+                .map(ttf_parser::GlyphId)
+                .any(|glyph| face.glyph_name(glyph) == Some("D"))
         );
     }
 

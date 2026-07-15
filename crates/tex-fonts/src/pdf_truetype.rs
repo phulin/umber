@@ -1,6 +1,7 @@
 //! Validated, PDF-ready TrueType font programs.
 
 use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct PdfTrueTypeProgramIdentity([u8; 32]);
@@ -66,6 +67,27 @@ impl PdfTrueTypeProgram {
         Self::parse(&decoded)
     }
 
+    /// Builds a compact PDF-oriented SFNT containing the requested named
+    /// glyphs and the composite-glyph closure computed by `subsetter`.
+    pub fn subset(&self, glyph_names: &BTreeSet<Vec<u8>>) -> Result<Self, PdfTrueTypeSubsetError> {
+        let face = ttf_parser::Face::parse(&self.bytes, 0)
+            .map_err(|_| PdfTrueTypeSubsetError::InvalidSfnt)?;
+        let mut remapper = subsetter::GlyphRemapper::new();
+        for name in glyph_names {
+            let glyph = (0..face.number_of_glyphs())
+                .map(ttf_parser::GlyphId)
+                .find(|glyph| {
+                    face.glyph_name(*glyph)
+                        .is_some_and(|value| value.as_bytes() == name)
+                })
+                .ok_or_else(|| PdfTrueTypeSubsetError::MissingGlyphName(name.clone()))?;
+            remapper.remap(glyph.0);
+        }
+        let bytes = subsetter::subset(&self.bytes, 0, &remapper)
+            .map_err(|_| PdfTrueTypeSubsetError::SubsetFailed)?;
+        Self::parse(&bytes).map_err(|_| PdfTrueTypeSubsetError::InvalidSubset)
+    }
+
     #[must_use]
     pub const fn identity(&self) -> PdfTrueTypeProgramIdentity {
         self.identity
@@ -108,6 +130,29 @@ impl PdfTrueTypeProgram {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PdfTrueTypeSubsetError {
+    InvalidSfnt,
+    MissingGlyphName(Vec<u8>),
+    SubsetFailed,
+    InvalidSubset,
+}
+
+impl std::fmt::Display for PdfTrueTypeSubsetError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingGlyphName(name) => write!(
+                f,
+                "TrueType font has no glyph named {:?}",
+                String::from_utf8_lossy(name)
+            ),
+            other => write!(f, "cannot subset TrueType font program: {other:?}"),
+        }
+    }
+}
+
+impl std::error::Error for PdfTrueTypeSubsetError {}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PdfTrueTypeProgramError {
     InvalidSfnt,
@@ -144,5 +189,27 @@ mod tests {
         assert!(program.bytes().starts_with(&[0, 1, 0, 0]));
         assert!(program.ascent() > 0);
         assert!(program.bbox()[2] > program.bbox()[0]);
+    }
+
+    #[test]
+    fn subsets_committed_truetype_to_named_glyph_closure() {
+        let bytes = include_bytes!("../../umber-wasm/assets/cmu-serif-500-roman.woff2");
+        let program = PdfTrueTypeProgram::from_woff2(bytes).expect("committed WOFF2");
+        let names = [b"A".to_vec(), b"B".to_vec(), b"C".to_vec()]
+            .into_iter()
+            .collect();
+        let subset = program.subset(&names).expect("named subset");
+        assert!(subset.bytes().len() < program.bytes().len() / 4);
+        let face = ttf_parser::Face::parse(subset.bytes(), 0).expect("subset SFNT parses");
+        assert!(
+            (0..face.number_of_glyphs())
+                .map(ttf_parser::GlyphId)
+                .any(|glyph| face.glyph_name(glyph) == Some("A"))
+        );
+        assert!(
+            !(0..face.number_of_glyphs())
+                .map(ttf_parser::GlyphId)
+                .any(|glyph| face.glyph_name(glyph) == Some("D"))
+        );
     }
 }
