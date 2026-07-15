@@ -91,7 +91,7 @@ fn every_key_variant_is_independently_invalidated_and_backdated() {
 
 #[test]
 fn region_deduplication_and_nested_query_order_are_deterministic() {
-    let tracker = DependencyTracker::default();
+    let mut tracker = DependencyTracker::default();
     let mut region = DependencyRegion::default();
     let parent = DependencyKey::Meaning(12);
     let child = DependencyKey::Query {
@@ -135,4 +135,49 @@ fn disabled_runtime_does_not_retain_reads_or_allocate_a_region() {
     runtime.record(DependencyKey::Meaning(1), DependencyValue::Integer(2));
     assert_eq!(runtime.finish_region().len(), 1);
     assert!(!runtime.is_recording());
+}
+
+#[test]
+fn universe_facade_records_and_invalidates_across_rollback() {
+    let key = DependencyKey::World {
+        field: DependencyWorldField::Rng,
+        index: 0,
+    };
+    let mut universe = crate::Universe::new();
+    universe.begin_dependency_region();
+    universe.record_dependency(key, DependencyValue::Unsigned(7));
+    let observations = universe.finish_dependency_region();
+    assert_eq!(observations.len(), 1);
+    assert_eq!(observations[0].changed_at, ChangedAt::NEVER);
+
+    let snapshot = universe.snapshot();
+    universe.mark_dependency_changed(key);
+    let after_write = universe.dependency_changed_at(key);
+    assert!(after_write > ChangedAt::NEVER);
+    universe.rollback(&snapshot);
+    assert!(universe.dependency_changed_at(key) > after_write);
+}
+
+#[test]
+fn aggregate_region_validates_after_change_and_restore() {
+    let key = DependencyKey::Cell {
+        bank: DependencyBank::Count,
+        index: 12,
+    };
+    let mut universe = crate::Universe::new();
+    universe.begin_dependency_region();
+    universe.record_dependency(key, DependencyValue::Integer(5));
+    let mut observations = universe.finish_dependency_region();
+
+    universe.mark_dependency_changed(key);
+    assert!(universe.validate_dependencies(&mut observations, |_| { DependencyValue::Integer(5) }));
+    assert_eq!(
+        observations[0].changed_at,
+        universe.dependency_changed_at(key)
+    );
+
+    universe.mark_dependency_changed(key);
+    assert!(
+        !universe.validate_dependencies(&mut observations, |_| { DependencyValue::Integer(6) })
+    );
 }

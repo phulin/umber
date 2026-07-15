@@ -265,6 +265,10 @@ impl DependencyRuntime {
         self.tracker.mark_changed(key)
     }
 
+    pub fn invalidate_all(&mut self) {
+        self.tracker.invalidate_all();
+    }
+
     #[must_use]
     pub const fn tracker(&self) -> &DependencyTracker {
         &self.tracker
@@ -279,17 +283,36 @@ impl DependencyTracker {
 
     /// Marks a fact after its aggregate mutation barrier has run.
     pub fn mark_changed(&mut self, key: DependencyKey) -> ChangedAt {
+        let Some(changed_at) = self.changed.get_mut(&key) else {
+            return ChangedAt::NEVER;
+        };
         self.revision = self
             .revision
             .checked_add(1)
             .expect("dependency revision exhausted");
         let stamp = ChangedAt(self.revision);
-        self.changed.insert(key, stamp);
+        *changed_at = stamp;
         stamp
     }
 
+    /// Advances every fact observed by this runtime after an aggregate restore.
+    pub fn invalidate_all(&mut self) {
+        if self.changed.is_empty() {
+            return;
+        }
+        self.revision = self
+            .revision
+            .checked_add(1)
+            .expect("dependency revision exhausted");
+        let stamp = ChangedAt(self.revision);
+        for changed_at in self.changed.values_mut() {
+            *changed_at = stamp;
+        }
+    }
+
     #[must_use]
-    pub fn observe(&self, key: DependencyKey, value: DependencyValue) -> ObservedDependency {
+    pub fn observe(&mut self, key: DependencyKey, value: DependencyValue) -> ObservedDependency {
+        self.changed.entry(key).or_insert(ChangedAt::NEVER);
         ObservedDependency {
             key,
             changed_at: self.changed_at(key),

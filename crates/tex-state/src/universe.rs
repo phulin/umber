@@ -7,6 +7,9 @@
 //! grow a partial rollback API beside the store tuple.
 
 use crate::code_tables::{CodeTableGenerations, DelCode, LcCode, MathCode, SfCode, UcCode};
+use crate::dependency::{
+    ChangedAt, DependencyKey, DependencyRuntime, DependencyValue, ObservedDependency,
+};
 #[cfg(test)]
 use crate::env::Env;
 use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
@@ -1013,6 +1016,8 @@ pub struct Universe {
     state_hash_projection_cache: StateHashProjectionCache,
     next_snapshot_serial: u64,
     fork_origin: Option<ForkOrigin>,
+    /// Operational memo metadata; excluded from snapshots and semantic hashes.
+    dependencies: DependencyRuntime,
 }
 
 /// Canonical semantic hasher for executor-owned state at a named boundary.
@@ -1135,6 +1140,7 @@ impl Clone for Universe {
             state_hash_projection_cache: self.state_hash_projection_cache.clone(),
             next_snapshot_serial: self.next_snapshot_serial,
             fork_origin: self.fork_origin,
+            dependencies: self.dependencies.clone(),
         }
     }
 }
@@ -1194,6 +1200,7 @@ impl Universe {
             state_hash_projection_cache: StateHashProjectionCache::default(),
             next_snapshot_serial: 0,
             fork_origin: None,
+            dependencies: DependencyRuntime::default(),
         }
     }
 
@@ -1243,6 +1250,45 @@ impl Universe {
         self.primitive_meanings_by_index
             .get(usize::from(frozen.primitive_index()?))
             .copied()
+    }
+
+    /// Begins recording semantic reads for one computation region.
+    pub fn begin_dependency_region(&mut self) {
+        self.dependencies.begin_region();
+    }
+
+    /// Records a detached semantic read when a region is active.
+    #[inline(always)]
+    pub fn record_dependency(&mut self, key: DependencyKey, value: DependencyValue) {
+        self.dependencies.record(key, value);
+    }
+
+    /// Finishes the active dependency region in deterministic key order.
+    pub fn finish_dependency_region(&mut self) -> Vec<ObservedDependency> {
+        self.dependencies.finish_region()
+    }
+
+    /// Marks one observable fact after its aggregate mutation barrier.
+    pub fn mark_dependency_changed(&mut self, key: DependencyKey) -> ChangedAt {
+        self.dependencies.mark_changed(key)
+    }
+
+    /// Returns the current changed-at stamp for validation.
+    #[must_use]
+    pub fn dependency_changed_at(&self, key: DependencyKey) -> ChangedAt {
+        self.dependencies.tracker().changed_at(key)
+    }
+
+    /// Validates a recorded region through the aggregate state boundary.
+    /// Current semantic values are requested only for keys whose stamps moved.
+    pub fn validate_dependencies(
+        &self,
+        observations: &mut [ObservedDependency],
+        read_current: impl FnMut(DependencyKey) -> DependencyValue,
+    ) -> bool {
+        self.dependencies
+            .tracker()
+            .validate_region(observations, read_current)
     }
 
     /// Projects executor-owned roots into the same allocation-independent
@@ -1430,6 +1476,7 @@ impl Universe {
             state_hash_projection_cache: StateHashProjectionCache::default(),
             next_snapshot_serial: 0,
             fork_origin: None,
+            dependencies: DependencyRuntime::default(),
         })
     }
 
@@ -1494,6 +1541,7 @@ impl Universe {
         self.pdf.rollback(rollback.pdf);
         self.state_hash_base = rollback.state_hash_base;
         self.state_hash_projection_cache.clear();
+        self.dependencies.invalidate_all();
     }
 
     fn checkpoint_from_hash_base(&mut self, hash_base: StateHashBase) -> Snapshot {
@@ -1593,6 +1641,7 @@ impl Universe {
         self.pdf.rollback(snapshot.pdf.clone());
         self.state_hash_base = snapshot.state_hash_base.clone();
         self.state_hash_projection_cache.clear();
+        self.dependencies.invalidate_all();
     }
 
     fn rollback_generation_fork(&mut self, snapshot: &Snapshot) {
@@ -1606,6 +1655,7 @@ impl Universe {
         self.pdf.rollback(snapshot.pdf.clone());
         self.state_hash_base = snapshot.state_hash_base.clone();
         self.state_hash_projection_cache.clear();
+        self.dependencies.invalidate_all();
     }
 
     fn state_hash_slice(
