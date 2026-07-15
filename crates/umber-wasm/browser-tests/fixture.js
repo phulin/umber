@@ -60,8 +60,8 @@ async function integration() {
 
 	const cold = await fetch("/stats").then((response) => response.json());
 	assert(
-		cold.objectRequests === 4,
-		`expected 4 cold objects, got ${cold.objectRequests}`,
+		cold.objectRequests === 3,
+		`expected 3 cold DVI objects, got ${cold.objectRequests}`,
 	);
 	assert(cold.maximumActive >= 2, "TFM/object downloads were not concurrent");
 	const second = await compileInWorker(
@@ -74,7 +74,7 @@ async function integration() {
 		"warm DVI length changed",
 	);
 	const warm = await fetch("/stats").then((response) => response.json());
-	assert(warm.objectRequests === 4, "warm IndexedDB run fetched an object");
+	assert(warm.objectRequests === 3, "warm IndexedDB run fetched an object");
 
 	await initWasm();
 	const cmr10 = new Uint8Array(
