@@ -64,6 +64,25 @@ fn pdf_font_output_actions_record_host_neutral_checkpointed_state() {
 }
 
 #[test]
+fn pdf_glyph_to_unicode_rejects_non_scalar_diagnostics() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    let primitive = stores.intern("pdfglyphtounicode");
+    stores.set_meaning(
+        primitive,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfGlyphToUnicode),
+    );
+    let mut input = InputStack::new(MemoryInput::new("\\pdfglyphtounicode{A}{D800}\\end"));
+    let error = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect_err("surrogate is not a Unicode scalar");
+    assert_eq!(
+        error.to_string(),
+        "pdfTeX error (\\pdfglyphtounicode): Unicode value is not a scalar value"
+    );
+}
+
+#[test]
 fn duplicate_pdf_map_warning_uses_pdftex_positive_only_suppression() {
     let mut stores = stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);

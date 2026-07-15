@@ -1421,6 +1421,17 @@ mod tests {
     }
 
     #[test]
+    fn unicode_style_glyph_names_use_pdftex_builtin_inference() {
+        assert_eq!(
+            inferred_glyph_unicode(b"uni00410066.alt"),
+            Some(vec![0x41, 0x66])
+        );
+        assert_eq!(inferred_glyph_unicode(b"u1F600"), Some(vec![0x1f600]));
+        assert_eq!(inferred_glyph_unicode(b"A"), None);
+        assert_eq!(inferred_glyph_unicode(b"uniD800"), None);
+    }
+
+    #[test]
     fn no_builtin_and_nonpositive_generation_omit_to_unicode() {
         for control in [
             "\\pdfgentounicode=-1",
