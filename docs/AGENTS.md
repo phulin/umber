@@ -57,6 +57,10 @@ maps each family to its short-reference-manual contract and conformance gate.
 inventory, records exact-name coverage above TeX82/e-TeX, and defines the
 dependency-ordered completeness plan for the PDF engine layer.
 
+`pdf_backend.md` defines the deterministic PDF ledger, detached structural
+model, canonical writer, checkpoint identity, and structural/rendering parity
+contracts.
+
 `latex_dvi.md` defines the supported LaTeX-DVI engine identity, extension
 inventory, pinned distribution boundary, parity contract, and explicit
 non-goals such as pdfLaTeX identity and PDF output.
