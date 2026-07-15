@@ -67,7 +67,8 @@ pub(crate) fn combine(prev: u64, slice: u64) -> u64 {
 /// A deterministic field-by-field state hasher.
 #[derive(Clone, Debug)]
 pub(crate) struct StateHasher {
-    state: u64,
+    states: [u64; 4],
+    lanes: u8,
 }
 
 /// Domain-separated fingerprint for semantic data that is immutable after
@@ -160,7 +161,21 @@ impl StateHasher {
     #[must_use]
     pub(crate) const fn new(domain: u64) -> Self {
         Self {
-            state: INITIAL_STATE ^ domain,
+            states: [INITIAL_STATE ^ domain, 0, 0, 0],
+            lanes: 1,
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn new_quad(domains: [u64; 4]) -> Self {
+        Self {
+            states: [
+                INITIAL_STATE ^ domains[0],
+                INITIAL_STATE ^ domains[1],
+                INITIAL_STATE ^ domains[2],
+                INITIAL_STATE ^ domains[3],
+            ],
+            lanes: 4,
         }
     }
 
@@ -213,16 +228,31 @@ impl StateHasher {
 
     #[must_use]
     pub(crate) fn finish(self) -> u64 {
-        splitmix64(self.state)
+        splitmix64(self.states[0])
+    }
+
+    #[must_use]
+    pub(crate) fn finish_quad(self) -> [u64; 4] {
+        assert_eq!(self.lanes, 4, "quad finish requires four hash lanes");
+        self.states.map(splitmix64)
     }
 
     fn mix(&mut self, value: u64) {
-        self.state ^= value.wrapping_add(MIX_INCREMENT);
-        self.state = self
-            .state
-            .rotate_left(27)
-            .wrapping_mul(STREAM_MULTIPLIER)
-            .wrapping_add(STREAM_INCREMENT);
+        if self.lanes == 1 {
+            self.states[0] ^= value.wrapping_add(MIX_INCREMENT);
+            self.states[0] = self.states[0]
+                .rotate_left(27)
+                .wrapping_mul(STREAM_MULTIPLIER)
+                .wrapping_add(STREAM_INCREMENT);
+            return;
+        }
+        for state in &mut self.states {
+            *state ^= value.wrapping_add(MIX_INCREMENT);
+            *state = state
+                .rotate_left(27)
+                .wrapping_mul(STREAM_MULTIPLIER)
+                .wrapping_add(STREAM_INCREMENT);
+        }
     }
 }
 
@@ -231,4 +261,29 @@ fn splitmix64(mut value: u64) -> u64 {
     value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
     value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
     value ^ (value >> 31)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StateHasher;
+
+    #[test]
+    fn quad_projection_matches_four_independent_projections() {
+        let domains = [11, 22, 33, 44];
+        let write = |hasher: &mut StateHasher| {
+            hasher.tag(7);
+            hasher.bool(true);
+            hasher.u16(65_000);
+            hasher.i32(-123_456);
+            hasher.bytes(b"one semantic traversal");
+        };
+        let expected = domains.map(|domain| {
+            let mut hasher = StateHasher::new(domain);
+            write(&mut hasher);
+            hasher.finish()
+        });
+        let mut combined = StateHasher::new_quad(domains);
+        write(&mut combined);
+        assert_eq!(combined.finish_quad(), expected);
+    }
 }

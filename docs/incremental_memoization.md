@@ -360,13 +360,16 @@ Migrating marks, insertions, and adjustments remain explicit outputs of line
 materialization and inputs to page building.
 
 The first measured pure-query implementation caches only the pretolerance
-`BreakPlan`. It uses four independently domain-separated semantic projections
-of the prepared hlist plus canonical framing of every `LineBreakParams` and
-`LineShape` field. The compact 64-bit projection selects a bucket; a 256-bit
-content identity verifies the candidate. Values contain only break positions,
-demerits, and detached last-line glue. Hyphenation, post-line materialization,
+`BreakPlan`. It computes four independently domain-separated semantic
+projections of the prepared hlist in one traversal, then canonically frames
+every `LineBreakParams` and `LineShape` field. The compact 64-bit projection
+selects a bucket; a 256-bit content identity verifies the candidate. The
+session-local hot path retains a typed plan containing only break positions,
+demerits, and detached last-line glue; schema encoding is reserved for a future
+persistence boundary rather than paid on every hit. Hyphenation,
+post-line materialization,
 packing diagnostics, math lowering, and DVI planning remain ordinary execution
-until their complete explicit keys show an end-to-end benefit.
+until their complete explicit keys are implemented by their owning phase.
 
 The cache runtime is owned by the long-lived editor session and lent to each
 scratch execution attempt, so accepted revisions reuse it without including it
@@ -386,9 +389,12 @@ cross-revision ownership measured 1.397 ms disabled and 2.025 ms enabled
 this edit workload a win. Existing named-boundary
 convergence skips the unchanged second paragraph, leaving only a strong-key
 miss on the edited paragraph. The layer therefore remains off by default.
-Edit-level layout caching should be reconsidered only after paragraph-front-end
-reuse creates prepared-hlist hits that restart convergence does not already
-eliminate.
+After the typed-plan and one-pass-key redesign, a short 20-sample rerun measured
+2.048 ms disabled and 2.072 ms enabled at the point estimates, with overlapping
+wide intervals and no detected difference. This removes the demonstrated
+hot-path regression but does not establish a win. The epic nevertheless
+continues into paragraph-front-end reuse; measurements select default
+enablement at the release gate rather than stopping implementation phases.
 
 The shipout profile was also rechecked before widening the cache boundary:
 1,024-node ordinary lowering measured 269.75 us and deferred-math shipout

@@ -1,10 +1,13 @@
 use super::*;
-use crate::{DetachedArtifact, MemoValueError};
-
-fn value(bytes: &[u8]) -> Result<DetachedMemoValue, MemoValueError> {
-    DetachedMemoValue::from_artifact(&DetachedArtifact {
-        artifact_schema: 1,
-        payload: bytes.to_vec(),
+fn plan(position: usize) -> Option<PureBreakPlan> {
+    Some(PureBreakPlan {
+        breaks: vec![PureBreakDecision {
+            position,
+            penalty: 0,
+            hyphenated: false,
+        }],
+        demerits: 100,
+        last_line_fill: None,
     })
 }
 
@@ -14,17 +17,14 @@ fn forced_candidate_collision_compares_strong_key() {
     runtime.enable(PureMemoConfig::default());
     let left = PureMemoKey::new(1, 7, ContentHash::from_bytes(b"left"));
     let right = PureMemoKey::new(1, 7, ContentHash::from_bytes(b"right"));
-    runtime.insert(left, value(b"left-value").expect("left value"));
+    runtime.insert_pretolerance(left, plan(3));
 
-    assert!(runtime.lookup(right).is_none());
-    assert_eq!(
-        runtime.lookup(left).expect("verified hit").integrity(),
-        value(b"left-value").expect("comparison value").integrity()
-    );
+    assert!(runtime.lookup_pretolerance(right).is_none());
+    assert_eq!(runtime.lookup_pretolerance(left), Some(plan(3)));
 }
 
 #[test]
-fn eviction_and_disable_release_detached_values() {
+fn eviction_and_disable_release_typed_values() {
     let mut runtime = PureMemoRuntime::default();
     runtime.enable(PureMemoConfig {
         max_entries: 1,
@@ -32,10 +32,10 @@ fn eviction_and_disable_release_detached_values() {
     });
     let first = PureMemoKey::new(1, 1, ContentHash::from_bytes(b"first"));
     let second = PureMemoKey::new(1, 2, ContentHash::from_bytes(b"second"));
-    runtime.insert(first, value(b"first").expect("first value"));
+    runtime.insert_pretolerance(first, plan(1));
     let charged = runtime.stats().retained_bytes;
     assert!(charged > 0);
-    runtime.insert(second, value(b"second").expect("second value"));
+    runtime.insert_pretolerance(second, plan(2));
     assert_eq!(runtime.stats().retained_entries, 1);
     assert_eq!(runtime.stats().evictions, 1);
     runtime.disable();

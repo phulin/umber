@@ -4,6 +4,7 @@
 //! formats, and semantic hashes. Disabled execution is one `Option` branch and
 //! uses no locks or atomics.
 
+use crate::glue::GlueSpec;
 use crate::{ContentHash, DetachedMemoValue};
 use std::collections::{HashMap, VecDeque};
 
@@ -34,6 +35,20 @@ pub struct PureMemoStats {
     pub retained_bytes: usize,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PureBreakDecision {
+    pub position: usize,
+    pub penalty: i32,
+    pub hyphenated: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PureBreakPlan {
+    pub breaks: Vec<PureBreakDecision>,
+    pub demerits: i32,
+    pub last_line_fill: Option<GlueSpec>,
+}
+
 /// Strong key used to verify a compact candidate bucket.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct PureMemoKey {
@@ -55,8 +70,14 @@ impl PureMemoKey {
 
 #[derive(Clone, Debug)]
 struct Entry {
-    value: DetachedMemoValue,
+    value: PureMemoValue,
     charge: usize,
+}
+
+#[derive(Clone, Debug)]
+enum PureMemoValue {
+    Pretolerance(Option<PureBreakPlan>),
+    Detached,
 }
 
 #[derive(Clone, Debug)]
@@ -96,29 +117,58 @@ impl PureMemoRuntime {
         self.cache = None;
     }
 
-    pub(crate) fn lookup(&mut self, key: PureMemoKey) -> Option<DetachedMemoValue> {
+    pub(crate) fn lookup_pretolerance(
+        &mut self,
+        key: PureMemoKey,
+    ) -> Option<Option<PureBreakPlan>> {
         let cache = self.cache.as_mut()?;
         cache.stats.lookups = cache.stats.lookups.saturating_add(1);
-        let hit = cache.entries.get(&key).map(|entry| entry.value.clone());
+        let hit = cache
+            .entries
+            .get(&key)
+            .and_then(|entry| match &entry.value {
+                PureMemoValue::Pretolerance(plan) => Some(plan.clone()),
+                PureMemoValue::Detached => None,
+            });
         if hit.is_some() {
             cache.stats.hits = cache.stats.hits.saturating_add(1);
+        } else if matches!(
+            cache.entries.get(&key).map(|entry| &entry.value),
+            Some(PureMemoValue::Detached)
+        ) {
+            cache.stats.malformed = cache.stats.malformed.saturating_add(1);
+            cache.remove(key, false);
+            cache.stats.misses = cache.stats.misses.saturating_add(1);
         } else {
             cache.stats.misses = cache.stats.misses.saturating_add(1);
         }
         hit
     }
 
-    pub(crate) fn insert(&mut self, key: PureMemoKey, value: DetachedMemoValue) {
+    pub(crate) fn insert_pretolerance(&mut self, key: PureMemoKey, plan: Option<PureBreakPlan>) {
+        let owned_bytes = plan.as_ref().map_or(0, |plan| {
+            plan.breaks
+                .capacity()
+                .saturating_mul(std::mem::size_of::<PureBreakDecision>())
+        });
+        self.insert_value(key, PureMemoValue::Pretolerance(plan), owned_bytes);
+    }
+
+    pub(crate) fn insert_detached(&mut self, key: PureMemoKey, value: DetachedMemoValue) {
+        let owned_bytes = value
+            .retained_bytes()
+            .saturating_sub(std::mem::size_of::<DetachedMemoValue>());
+        self.insert_value(key, PureMemoValue::Detached, owned_bytes);
+    }
+
+    fn insert_value(&mut self, key: PureMemoKey, value: PureMemoValue, owned_bytes: usize) {
         let Some(cache) = self.cache.as_mut() else {
             return;
         };
-        let payload_bytes = value
-            .retained_bytes()
-            .saturating_sub(std::mem::size_of::<DetachedMemoValue>());
         // Charge the map key and FIFO key as well as the entry and owned payload.
         let charge = std::mem::size_of::<Entry>()
             .saturating_add(std::mem::size_of::<PureMemoKey>().saturating_mul(2))
-            .saturating_add(payload_bytes);
+            .saturating_add(owned_bytes);
         if cache.config.max_entries == 0 || charge > cache.config.max_retained_bytes {
             return;
         }

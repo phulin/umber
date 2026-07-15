@@ -3,10 +3,7 @@ use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::font::PdfFontCode;
 use tex_state::node::{BoxNode, Direction, GlueKind, KernKind, Node};
 use tex_state::scaled::Scaled;
-use tex_state::{
-    ContentHash, DetachedMemoValue, DetachedPureKernelPlan, MemoValueLimits, ParagraphShapeLine,
-    PenaltyArrayKind, PureMemoKey, Universe,
-};
+use tex_state::{ContentHash, ParagraphShapeLine, PenaltyArrayKind, PureMemoKey, Universe};
 use tex_typeset::PackSpec;
 use tex_typeset::linebreak::{
     LineBreakParams, LineBreakResult, LineDimensions, LineMaterializer, LineShape, LineShapeEntry,
@@ -473,11 +470,14 @@ pub(crate) fn break_hlist(
 ) -> LineBreakResult {
     let first = cached_pretolerance_plan(stores, &hlist, &line_params);
     if let Some(first) = first {
-        first.with_nodes(hlist)
+        tex_typeset::linebreak::plan_with_nodes(first, hlist)
     } else {
         let mut hyphenated = super::hyphenation::hyphenated_hlist(stores, &hlist);
         super::hmode::reshape_open_type_runs(stores, &mut hyphenated);
-        line_break_hyphenated(stores, &hyphenated, &line_params).with_nodes(hyphenated)
+        tex_typeset::linebreak::plan_with_nodes(
+            line_break_hyphenated(stores, &hyphenated, &line_params),
+            hyphenated,
+        )
     }
 }
 
@@ -494,14 +494,8 @@ pub fn cached_pretolerance_plan(
         return try_line_break_without_hyphenation(stores, hlist, line_params);
     }
     let key = pretolerance_memo_key(stores, hlist, line_params);
-    match stores.lookup_pure_memo(key) {
-        Some(value) => match decode_pretolerance_plan(&value) {
-            Ok(plan) => plan,
-            Err(()) => {
-                stores.reject_pure_memo(key);
-                compute_and_cache_pretolerance(stores, key, hlist, line_params)
-            }
-        },
+    match stores.lookup_pure_pretolerance(key) {
+        Some(plan) => plan,
         None => compute_and_cache_pretolerance(stores, key, hlist, line_params),
     }
 }
@@ -522,9 +516,7 @@ fn compute_and_cache_pretolerance(
     params: &LineBreakParams,
 ) -> Option<tex_typeset::linebreak::BreakPlan> {
     let plan = try_line_break_without_hyphenation(stores, hlist, params);
-    if let Ok(value) = encode_pretolerance_plan(plan.as_ref()) {
-        stores.insert_pure_memo(key, value);
-    }
+    stores.insert_pure_pretolerance(key, plan.clone());
     plan
 }
 
@@ -533,8 +525,8 @@ fn pretolerance_memo_key(
     hlist: &[Node],
     params: &LineBreakParams,
 ) -> PureMemoKey {
-    let node_hashes = PRETOLERANCE_HASH_DOMAINS
-        .map(|domain| stores.engine_boundary_hash(domain, |hash| hash.nodes(hlist)));
+    let node_hashes =
+        stores.engine_boundary_hashes(PRETOLERANCE_HASH_DOMAINS, |hash| hash.nodes(hlist));
     let mut bytes = Vec::with_capacity(256);
     bytes.extend_from_slice(&PRETOLERANCE_PLAN_SCHEMA.to_le_bytes());
     for hash in node_hashes {
@@ -599,129 +591,6 @@ fn encode_glue_spec(spec: tex_state::glue::GlueSpec, out: &mut Vec<u8>) {
     out.push(spec.stretch_order as u8);
     out.extend_from_slice(&spec.shrink.raw().to_le_bytes());
     out.push(spec.shrink_order as u8);
-}
-
-fn encode_pretolerance_plan(
-    plan: Option<&tex_typeset::linebreak::BreakPlan>,
-) -> Result<DetachedMemoValue, tex_state::MemoValueError> {
-    let mut payload = Vec::new();
-    match plan {
-        None => payload.push(0),
-        Some(plan) => {
-            payload.push(1);
-            payload.extend_from_slice(&plan.demerits.to_le_bytes());
-            payload.extend_from_slice(&(plan.breaks.len() as u64).to_le_bytes());
-            for decision in &plan.breaks {
-                payload.extend_from_slice(&(decision.position as u64).to_le_bytes());
-                payload.extend_from_slice(&decision.penalty.to_le_bytes());
-                payload.push(u8::from(decision.hyphenated));
-            }
-            match plan.last_line_fill {
-                Some(spec) => {
-                    payload.push(1);
-                    encode_glue_spec(spec, &mut payload);
-                }
-                None => payload.push(0),
-            }
-        }
-    }
-    DetachedMemoValue::from_pure_kernel_plan(&DetachedPureKernelPlan {
-        kernel: "line-break-pretolerance".to_owned(),
-        plan_schema: PRETOLERANCE_PLAN_SCHEMA,
-        payload,
-    })
-}
-
-fn decode_pretolerance_plan(
-    value: &DetachedMemoValue,
-) -> Result<Option<tex_typeset::linebreak::BreakPlan>, ()> {
-    let detached = value
-        .pure_kernel_plan(MemoValueLimits::default())
-        .map_err(|_| ())?;
-    if detached.kernel != "line-break-pretolerance"
-        || detached.plan_schema != PRETOLERANCE_PLAN_SCHEMA
-    {
-        return Err(());
-    }
-    let mut input = detached.payload.as_slice();
-    match take_u8(&mut input)? {
-        0 if input.is_empty() => Ok(None),
-        1 => {
-            let demerits = take_i32(&mut input)?;
-            let count = usize::try_from(take_u64(&mut input)?).map_err(|_| ())?;
-            if count > input.len() / 13 {
-                return Err(());
-            }
-            let mut breaks = Vec::with_capacity(count);
-            for _ in 0..count {
-                breaks.push(tex_typeset::linebreak::BreakDecision {
-                    position: usize::try_from(take_u64(&mut input)?).map_err(|_| ())?,
-                    penalty: take_i32(&mut input)?,
-                    hyphenated: match take_u8(&mut input)? {
-                        0 => false,
-                        1 => true,
-                        _ => return Err(()),
-                    },
-                });
-            }
-            let last_line_fill = match take_u8(&mut input)? {
-                0 => None,
-                1 => Some(decode_glue_spec(&mut input)?),
-                _ => return Err(()),
-            };
-            if !input.is_empty() {
-                return Err(());
-            }
-            Ok(Some(tex_typeset::linebreak::BreakPlan {
-                breaks,
-                demerits,
-                last_line_fill,
-            }))
-        }
-        _ => Err(()),
-    }
-}
-
-fn decode_glue_spec(input: &mut &[u8]) -> Result<tex_state::glue::GlueSpec, ()> {
-    Ok(tex_state::glue::GlueSpec {
-        width: Scaled::from_raw(take_i32(input)?),
-        stretch: Scaled::from_raw(take_i32(input)?),
-        stretch_order: decode_glue_order(take_u8(input)?)?,
-        shrink: Scaled::from_raw(take_i32(input)?),
-        shrink_order: decode_glue_order(take_u8(input)?)?,
-    })
-}
-
-fn decode_glue_order(raw: u8) -> Result<tex_state::glue::Order, ()> {
-    match raw {
-        0 => Ok(tex_state::glue::Order::Normal),
-        1 => Ok(tex_state::glue::Order::Fil),
-        2 => Ok(tex_state::glue::Order::Fill),
-        3 => Ok(tex_state::glue::Order::Filll),
-        _ => Err(()),
-    }
-}
-
-fn take_u8(input: &mut &[u8]) -> Result<u8, ()> {
-    let (&value, rest) = input.split_first().ok_or(())?;
-    *input = rest;
-    Ok(value)
-}
-
-fn take_i32(input: &mut &[u8]) -> Result<i32, ()> {
-    let bytes = take_array::<4>(input)?;
-    Ok(i32::from_le_bytes(bytes))
-}
-
-fn take_u64(input: &mut &[u8]) -> Result<u64, ()> {
-    let bytes = take_array::<8>(input)?;
-    Ok(u64::from_le_bytes(bytes))
-}
-
-fn take_array<const N: usize>(input: &mut &[u8]) -> Result<[u8; N], ()> {
-    let (bytes, rest) = input.split_at_checked(N).ok_or(())?;
-    *input = rest;
-    bytes.try_into().map_err(|_| ())
 }
 
 fn extract_migrating_material(stores: &Universe, nodes: &mut Vec<Node>, migrated: &mut Vec<Node>) {

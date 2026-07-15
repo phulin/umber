@@ -1361,16 +1361,25 @@ impl Universe {
     }
 
     #[doc(hidden)]
-    pub fn lookup_pure_memo(
+    pub fn lookup_pure_pretolerance(
         &mut self,
         key: crate::PureMemoKey,
-    ) -> Option<crate::DetachedMemoValue> {
-        self.pure_memo.lookup(key)
+    ) -> Option<Option<crate::PureBreakPlan>> {
+        self.pure_memo.lookup_pretolerance(key)
+    }
+
+    #[doc(hidden)]
+    pub fn insert_pure_pretolerance(
+        &mut self,
+        key: crate::PureMemoKey,
+        plan: Option<crate::PureBreakPlan>,
+    ) {
+        self.pure_memo.insert_pretolerance(key, plan);
     }
 
     #[doc(hidden)]
     pub fn insert_pure_memo(&mut self, key: crate::PureMemoKey, value: crate::DetachedMemoValue) {
-        self.pure_memo.insert(key, value);
+        self.pure_memo.insert_detached(key, value);
     }
 
     #[doc(hidden)]
@@ -1416,6 +1425,32 @@ impl Universe {
             started.elapsed(),
         );
         fingerprint
+    }
+
+    /// Projects executor-owned roots into four domain-separated fingerprints
+    /// while traversing the semantic input only once.
+    #[must_use]
+    pub fn engine_boundary_hashes(
+        &self,
+        domains: [u64; 4],
+        build: impl FnOnce(&mut EngineBoundaryHasher<'_>),
+    ) -> [u64; 4] {
+        let mut projection = EngineBoundaryHasher {
+            stores: &self.stores,
+            hasher: StateHasher::new_quad(domains),
+            visits: 0,
+        };
+        #[cfg(feature = "profiling-stats")]
+        let started = std::time::Instant::now();
+        build(&mut projection);
+        let fingerprints = projection.hasher.finish_quad();
+        #[cfg(feature = "profiling-stats")]
+        crate::measurement::record_state_hash_component(
+            StateHashComponent::Mode,
+            projection.visits,
+            started.elapsed(),
+        );
+        fingerprints
     }
 
     /// Serializes the allocation-independent semantic engine state.

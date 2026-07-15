@@ -146,30 +146,13 @@ fn hanging_applies(line_no: usize, hang_after: i32) -> bool {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct BreakDecision {
-    pub position: usize,
-    pub penalty: i32,
-    pub hyphenated: bool,
-}
+pub use tex_state::{PureBreakDecision as BreakDecision, PureBreakPlan as BreakPlan};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct LineBreakResult {
     pub breaks: Vec<BreakDecision>,
     pub demerits: i32,
     pub nodes: Vec<Node>,
-    pub last_line_fill: Option<GlueSpec>,
-}
-
-/// The result of choosing line breaks, independent of paragraph ownership.
-///
-/// Keeping the plan separate lets execution move the selected original or
-/// hyphenated node list into post-line-breaking instead of cloning it while
-/// reconstructing the winning route.
-#[derive(Clone, Debug, PartialEq)]
-pub struct BreakPlan {
-    pub breaks: Vec<BreakDecision>,
-    pub demerits: i32,
     pub last_line_fill: Option<GlueSpec>,
 }
 
@@ -205,21 +188,22 @@ where
     H: HyphenationHook<S>,
 {
     if let Some(plan) = try_line_break_without_hyphenation(state, nodes, &params) {
-        return plan.with_nodes(nodes.to_vec());
+        return plan_with_nodes(plan, nodes.to_vec());
     }
 
     let hyphenated = hyphenation.hyphenate(nodes);
-    line_break_hyphenated(state, &hyphenated, &params).with_nodes(hyphenated)
+    plan_with_nodes(
+        line_break_hyphenated(state, &hyphenated, &params),
+        hyphenated,
+    )
 }
 
-impl BreakPlan {
-    pub fn with_nodes(self, nodes: Vec<Node>) -> LineBreakResult {
-        LineBreakResult {
-            breaks: self.breaks,
-            demerits: self.demerits,
-            nodes,
-            last_line_fill: self.last_line_fill,
-        }
+pub fn plan_with_nodes(plan: BreakPlan, nodes: Vec<Node>) -> LineBreakResult {
+    LineBreakResult {
+        breaks: plan.breaks,
+        demerits: plan.demerits,
+        nodes,
+        last_line_fill: plan.last_line_fill,
     }
 }
 
