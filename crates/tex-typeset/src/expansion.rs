@@ -286,6 +286,10 @@ mod tests {
         Scaled::from_raw(value)
     }
 
+    fn spec(stretch: i32, shrink: i32, step: i32) -> FontExpansionSpec {
+        FontExpansionSpec::new(stretch, shrink, step, true).expect("valid expansion specification")
+    }
+
     #[test]
     fn specification_clamps_and_floors_limits_to_the_step() {
         let spec = FontExpansionSpec::new(1_500, 700, 30, true).expect("valid spec");
@@ -307,33 +311,33 @@ mod tests {
     fn paragraph_rejects_only_conflicting_nonzero_limits() {
         let mut paragraph = ParagraphExpansion::default();
         paragraph
-            .observe(FontExpansionSpec::new(100, 0, 10, true).unwrap())
-            .unwrap();
+            .observe(spec(100, 0, 10))
+            .expect("compatible stretch specification");
         paragraph
-            .observe(FontExpansionSpec::new(0, 50, 10, true).unwrap())
-            .unwrap();
+            .observe(spec(0, 50, 10))
+            .expect("compatible shrink specification");
         assert_eq!(
-            paragraph.observe(FontExpansionSpec::new(100, 50, 20, true).unwrap()),
+            paragraph.observe(spec(100, 50, 20)),
             Err(FontExpansionError::DifferentStep)
         );
 
         let mut paragraph = ParagraphExpansion::default();
         paragraph
-            .observe(FontExpansionSpec::new(100, 50, 10, true).unwrap())
-            .unwrap();
+            .observe(spec(100, 50, 10))
+            .expect("initial paragraph specification");
         assert_eq!(
-            paragraph.observe(FontExpansionSpec::new(200, 50, 10, true).unwrap()),
+            paragraph.observe(spec(200, 50, 10)),
             Err(FontExpansionError::DifferentStretchLimit)
         );
         assert_eq!(
-            paragraph.observe(FontExpansionSpec::new(100, 100, 10, true).unwrap()),
+            paragraph.observe(spec(100, 100, 10)),
             Err(FontExpansionError::DifferentShrinkLimit)
         );
     }
 
     #[test]
     fn metric_capacity_uses_endpoint_rounding_then_efcode() {
-        let spec = FontExpansionSpec::new(100, 50, 10, true).unwrap();
+        let spec = spec(100, 50, 10);
         assert_eq!(
             ExpansionCapacity::for_metric(sp(65_536), spec, 800),
             ExpansionCapacity {
@@ -349,7 +353,7 @@ mod tests {
 
     #[test]
     fn final_ratio_and_discrete_glyph_selection_match_pdftex_steps() {
-        let spec = FontExpansionSpec::new(100, 50, 10, true).unwrap();
+        let spec = spec(100, 50, 10);
         assert_eq!(
             line_expansion_ratio(
                 sp(500),

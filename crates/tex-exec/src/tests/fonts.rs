@@ -118,8 +118,16 @@ fn pdftex_generated_fonts_match_copy_and_letterspace_state() {
     );
     assert!(stores.pdf_font_ligatures_disabled(spaced));
     assert_eq!(
-        stores.font_char_metrics(spaced, b'A').unwrap().width.raw()
-            - stores.font_char_metrics(base, b'A').unwrap().width.raw(),
+        stores
+            .font_char_metrics(spaced, b'A')
+            .expect("letterspaced A remains present")
+            .width
+            .raw()
+            - stores
+                .font_char_metrics(base, b'A')
+                .expect("source A remains present")
+                .width
+                .raw(),
         78_643
     );
     let source = match stores.font(spaced).construction() {
@@ -157,8 +165,14 @@ fn letterspaced_shipout_flattens_virtual_packets_onto_the_source_font() {
     let base = font_meaning(&stores, "base");
     let spaced = font_meaning(&stores, "spaced");
     let base_id = base.raw() - 1;
-    let source_width = stores.font_char_metrics(base, b'A').unwrap().width;
-    let spaced_width = stores.font_char_metrics(spaced, b'A').unwrap().width;
+    let source_width = stores
+        .font_char_metrics(base, b'A')
+        .expect("source A remains present")
+        .width;
+    let spaced_width = stores
+        .font_char_metrics(spaced, b'A')
+        .expect("letterspaced A remains present")
+        .width;
     let left = Scaled::from_raw(39_322);
     let right = spaced_width
         .checked_sub(source_width)

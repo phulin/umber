@@ -236,9 +236,11 @@ fn round_scaled_ratio(value: Scaled, numerator: i32, denominator: i32) -> Scaled
     } else {
         -((-product + denominator / 2) / denominator)
     };
-    Scaled::from_raw(
-        i32::try_from(rounded).unwrap_or_else(|_| if rounded < 0 { i32::MIN } else { i32::MAX }),
-    )
+    Scaled::from_raw(i32::try_from(rounded).unwrap_or(if rounded < 0 {
+        i32::MIN
+    } else {
+        i32::MAX
+    }))
 }
 
 #[cfg(test)]

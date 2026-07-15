@@ -41,7 +41,12 @@ fn generated_fonts_preserve_source_ancestry_and_pdftex_rounding() {
     assert_eq!(letterspaced.name(), "test+100ls");
     assert_eq!(letterspaced.parameters()[1].raw(), 4 * Scaled::UNITY);
     assert_eq!(
-        letterspaced.metrics().character(b'A').unwrap().width.raw(),
+        letterspaced
+            .metrics()
+            .character(b'A')
+            .expect("letterspaced character remains present")
+            .width
+            .raw(),
         500_000 + 78_643
     );
     let FontConstruction::Letterspaced {

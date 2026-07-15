@@ -159,7 +159,7 @@ fn maximum_fontdimen_is_distinct_grouped_rollback_safe_and_format_stable() {
         .set_font_dimen(font, MAX_FONT_DIMEN, Scaled::from_raw(44))
         .expect("maximum fontdimen is format-visible");
     let bytes = universe.dump_format().expect("boundary format encodes");
-    let restored =
+    let mut restored =
         Universe::from_format(World::memory(), &bytes).expect("boundary format restores");
     let restored_identifier = restored.intern("boundaryfont");
     let Meaning::Font(restored_font) = restored.meaning(restored_identifier) else {
@@ -2653,7 +2653,7 @@ fn generated_fonts_rollback_replay_and_format_with_source_links() {
     assert_eq!(universe.font_by_source_identity(source), Some(base));
     let generated_hash = universe.snapshot().state_hash();
     let format = universe.dump_format().expect("generated font format");
-    let mut restored =
+    let restored =
         Universe::from_format(World::memory(), &format).expect("restore generated fonts");
     assert_eq!(restored.dump_format().expect("canonical redump"), format);
     assert_eq!(
