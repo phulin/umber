@@ -1115,7 +1115,7 @@ impl ExpansionMode for DriverExpansionMode {
         stores: &mut tex_state::ExpansionContext<'_>,
         expansion: &mut ExpansionContext<'_>,
     ) -> Result<Option<TracedTokenWord>, ExpandError> {
-        get_x_token_with_context(input, stores, expansion)
+        get_command_token_with_context(input, stores, expansion)
     }
 
     fn dispatch_raw_token(
@@ -1713,7 +1713,7 @@ pub(crate) fn get_x_token_without_input_open(
         let token = read.token();
         let traced = read.traced_token();
 
-        if read.suppress_expansion() {
+        if read.suppress_expansion() && !read.expand_for_command_demand() {
             if intercept_suppressed_alignment_token(input, stores, traced) {
                 continue;
             }

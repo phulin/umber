@@ -652,6 +652,37 @@ fn get_x_or_protected_resumes_ordinary_macros_from_unexpanded_replay() {
 }
 
 #[test]
+fn keyword_scanner_resumes_a_macro_from_unexpanded_replay() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    crate::install_etex_expandable_primitives(&mut stores);
+    let keyword_cs = stores.intern("keyword");
+    let empty = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[
+        char_token('w'),
+        char_token('i'),
+        char_token('d'),
+        char_token('t'),
+        char_token('h'),
+    ]);
+    stores.set_macro_meaning(
+        keyword_cs,
+        MacroMeaning::new(MeaningFlags::EMPTY, empty, body),
+    );
+    let mut input = InputStack::new(MemoryInput::new("\\unexpanded{\\keyword}"));
+
+    assert!(
+        crate::scan_optional_keyword_with_context(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores),
+            &mut ExpansionContext::new("texput"),
+            "width",
+        )
+        .expect("keyword command demand")
+    );
+}
+
+#[test]
 fn unexpanded_suppresses_macros_for_the_current_expansion_call() {
     let mut stores = Universe::new();
     install_expandable_primitives(&mut stores);
