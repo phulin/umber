@@ -34,6 +34,14 @@ pub struct PureMemoStats {
     pub malformed: u64,
     pub retained_entries: usize,
     pub retained_bytes: usize,
+    pub pretolerance_retained_bytes: usize,
+    pub paragraph_retained_bytes: usize,
+    pub page_retained_bytes: usize,
+    pub shipout_retained_bytes: usize,
+    pub pretolerance_evictions: u64,
+    pub paragraph_evictions: u64,
+    pub page_evictions: u64,
+    pub shipout_evictions: u64,
     pub paragraph_lookups: u64,
     pub paragraph_hits: u64,
     pub paragraph_inserts: u64,
@@ -131,6 +139,7 @@ impl PureMemoKey {
 struct Entry {
     value: PureMemoValue,
     charge: usize,
+    referenced: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -146,7 +155,7 @@ enum PureMemoValue {
 struct PureMemoCache {
     config: PureMemoConfig,
     entries: HashMap<PureMemoKey, Entry>,
-    insertion_order: VecDeque<PureMemoKey>,
+    clock: VecDeque<PureMemoKey>,
     stats: PureMemoStats,
 }
 
@@ -201,7 +210,7 @@ impl PureMemoRuntime {
         self.cache = Some(PureMemoCache {
             config,
             entries: HashMap::new(),
-            insertion_order: VecDeque::new(),
+            clock: VecDeque::new(),
             stats: PureMemoStats::default(),
         });
     }
@@ -221,9 +230,12 @@ impl PureMemoRuntime {
         cache.stats.lookups = cache.stats.lookups.saturating_add(1);
         let hit = cache
             .entries
-            .get(&key)
+            .get_mut(&key)
             .and_then(|entry| match &entry.value {
-                PureMemoValue::Pretolerance(plan) => Some(plan.clone()),
+                PureMemoValue::Pretolerance(plan) => {
+                    entry.referenced = true;
+                    Some(plan.clone())
+                }
                 PureMemoValue::Paragraph(_)
                 | PureMemoValue::Page(_)
                 | PureMemoValue::Shipout(_)
@@ -253,9 +265,12 @@ impl PureMemoRuntime {
         cache.stats.paragraph_lookups = cache.stats.paragraph_lookups.saturating_add(1);
         let hit = cache
             .entries
-            .get(&key)
+            .get_mut(&key)
             .and_then(|entry| match &entry.value {
-                PureMemoValue::Paragraph(value) => Some(value.clone()),
+                PureMemoValue::Paragraph(value) => {
+                    entry.referenced = true;
+                    Some(value.clone())
+                }
                 PureMemoValue::Pretolerance(_)
                 | PureMemoValue::Page(_)
                 | PureMemoValue::Shipout(_)
@@ -279,9 +294,12 @@ impl PureMemoRuntime {
         cache.stats.page_lookups = cache.stats.page_lookups.saturating_add(1);
         let hit = cache
             .entries
-            .get(&key)
+            .get_mut(&key)
             .and_then(|entry| match &entry.value {
-                PureMemoValue::Page(value) => Some(value.clone()),
+                PureMemoValue::Page(value) => {
+                    entry.referenced = true;
+                    Some(value.clone())
+                }
                 _ => None,
             });
         if hit.is_some() {
@@ -339,9 +357,12 @@ impl PureMemoRuntime {
         cache.stats.shipout_lookups = cache.stats.shipout_lookups.saturating_add(1);
         let hit = cache
             .entries
-            .get(&key)
+            .get_mut(&key)
             .and_then(|entry| match &entry.value {
-                PureMemoValue::Shipout(value) => Some(value.clone()),
+                PureMemoValue::Shipout(value) => {
+                    entry.referenced = true;
+                    Some(value.clone())
+                }
                 _ => None,
             });
         if hit.is_some() {
@@ -521,6 +542,10 @@ impl PureMemoRuntime {
             return;
         }
         if let Some(entry) = cache.entries.get_mut(&key) {
+            let old_kind = entry.value.kind();
+            cache
+                .stats
+                .remove_kind_charge(old_kind, entry.charge, false);
             cache.stats.retained_bytes = cache
                 .stats
                 .retained_bytes
@@ -528,12 +553,23 @@ impl PureMemoRuntime {
                 .saturating_add(charge);
             entry.value = value;
             entry.charge = charge;
+            entry.referenced = true;
+            cache.stats.add_kind_charge(entry.value.kind(), charge);
         } else {
-            cache.entries.insert(key, Entry { value, charge });
-            cache.insertion_order.push_back(key);
+            let kind = value.kind();
+            cache.entries.insert(
+                key,
+                Entry {
+                    value,
+                    charge,
+                    referenced: false,
+                },
+            );
+            cache.clock.push_back(key);
             cache.stats.inserts = cache.stats.inserts.saturating_add(1);
             cache.stats.retained_entries = cache.stats.retained_entries.saturating_add(1);
             cache.stats.retained_bytes = cache.stats.retained_bytes.saturating_add(charge);
+            cache.stats.add_kind_charge(kind, charge);
         }
         cache.evict_to_budget();
     }
@@ -559,9 +595,17 @@ impl PureMemoCache {
         while self.stats.retained_entries > self.config.max_entries
             || self.stats.retained_bytes > self.config.max_retained_bytes
         {
-            let Some(key) = self.insertion_order.pop_front() else {
+            let Some(key) = self.clock.pop_front() else {
                 break;
             };
+            let Some(entry) = self.entries.get_mut(&key) else {
+                continue;
+            };
+            if entry.referenced {
+                entry.referenced = false;
+                self.clock.push_back(key);
+                continue;
+            }
             self.remove(key, true);
         }
     }
@@ -572,8 +616,65 @@ impl PureMemoCache {
         };
         self.stats.retained_entries = self.stats.retained_entries.saturating_sub(1);
         self.stats.retained_bytes = self.stats.retained_bytes.saturating_sub(entry.charge);
+        self.stats
+            .remove_kind_charge(entry.value.kind(), entry.charge, eviction);
         if eviction {
             self.stats.evictions = self.stats.evictions.saturating_add(1);
+        } else {
+            self.clock.retain(|candidate| *candidate != key);
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum PureMemoKind {
+    Pretolerance,
+    Paragraph,
+    Page,
+    Shipout,
+}
+
+impl PureMemoValue {
+    fn kind(&self) -> PureMemoKind {
+        match self {
+            Self::Pretolerance(_) | Self::Detached => PureMemoKind::Pretolerance,
+            Self::Paragraph(_) => PureMemoKind::Paragraph,
+            Self::Page(_) => PureMemoKind::Page,
+            Self::Shipout(_) => PureMemoKind::Shipout,
+        }
+    }
+}
+
+impl PureMemoStats {
+    fn add_kind_charge(&mut self, kind: PureMemoKind, charge: usize) {
+        let retained = match kind {
+            PureMemoKind::Pretolerance => &mut self.pretolerance_retained_bytes,
+            PureMemoKind::Paragraph => &mut self.paragraph_retained_bytes,
+            PureMemoKind::Page => &mut self.page_retained_bytes,
+            PureMemoKind::Shipout => &mut self.shipout_retained_bytes,
+        };
+        *retained = retained.saturating_add(charge);
+    }
+
+    fn remove_kind_charge(&mut self, kind: PureMemoKind, charge: usize, eviction: bool) {
+        let (retained, evictions) = match kind {
+            PureMemoKind::Pretolerance => (
+                &mut self.pretolerance_retained_bytes,
+                &mut self.pretolerance_evictions,
+            ),
+            PureMemoKind::Paragraph => (
+                &mut self.paragraph_retained_bytes,
+                &mut self.paragraph_evictions,
+            ),
+            PureMemoKind::Page => (&mut self.page_retained_bytes, &mut self.page_evictions),
+            PureMemoKind::Shipout => (
+                &mut self.shipout_retained_bytes,
+                &mut self.shipout_evictions,
+            ),
+        };
+        *retained = retained.saturating_sub(charge);
+        if eviction {
+            *evictions = evictions.saturating_add(1);
         }
     }
 }

@@ -111,6 +111,7 @@ impl BoundaryRecord {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RetentionMetrics {
     pub checkpoint_root_bytes: usize,
+    pub memo_result_bytes: usize,
     pub diagnostic_bytes: usize,
     pub output_bytes: usize,
     pub protected_overage_bytes: usize,
@@ -442,6 +443,7 @@ impl Session {
     #[must_use]
     pub fn retention_metrics(&self) -> Option<RetentionMetrics> {
         self.accepted_retention.map(|mut retention| {
+            retention.memo_result_bytes = self.pure_memo.stats().retained_bytes;
             retention.diagnostic_bytes = self.diagnostic_retained_bytes();
             retention.output_bytes = retention
                 .output_bytes
@@ -1049,6 +1051,7 @@ impl Session {
             diagnostic_bytes,
             output_bytes,
         );
+        retention.memo_result_bytes = self.pure_memo.stats().retained_bytes;
         let pruned_oldest_revision = oldest_retained_revision(&history, revision);
         if pruned_oldest_revision > oldest_revision
             && fragments.prune_for_layout(&layout, revision.raw(), pruned_oldest_revision.raw()) > 0
@@ -1125,13 +1128,14 @@ impl Session {
         }
         let substrate_bytes = run.substrate.charged_bytes();
         let diagnostic_bytes = self.diagnostic_retained_bytes();
-        let (history, retention) = prune_history(
+        let (history, mut retention) = prune_history(
             run.history,
             self.checkpoint_budget,
             substrate_bytes,
             diagnostic_bytes,
             run.output_bytes,
         );
+        retention.memo_result_bytes = self.pure_memo.stats().retained_bytes;
         self.history = history;
         self.effects = run.effects;
         self.artifacts = run.artifacts;
@@ -1755,6 +1759,7 @@ fn prune_history(
                 history,
                 RetentionMetrics {
                     checkpoint_root_bytes,
+                    memo_result_bytes: 0,
                     diagnostic_bytes,
                     output_bytes,
                     protected_overage_bytes: overage,
@@ -1785,6 +1790,7 @@ fn prune_history(
                 history,
                 RetentionMetrics {
                     checkpoint_root_bytes,
+                    memo_result_bytes: 0,
                     diagnostic_bytes,
                     output_bytes,
                     protected_overage_bytes: charged.saturating_sub(budget),

@@ -41,3 +41,28 @@ fn eviction_and_disable_release_typed_values() {
     runtime.disable();
     assert_eq!(runtime.stats().retained_bytes, 0);
 }
+
+#[test]
+fn deterministic_clock_retains_a_recent_hit_and_reports_kind_bytes() {
+    let mut runtime = PureMemoRuntime::default();
+    runtime.enable(PureMemoConfig {
+        max_entries: 2,
+        max_retained_bytes: usize::MAX,
+    });
+    let first = PureMemoKey::new(1, 1, ContentHash::from_bytes(b"first"));
+    let second = PureMemoKey::new(1, 2, ContentHash::from_bytes(b"second"));
+    let third = PureMemoKey::new(1, 3, ContentHash::from_bytes(b"third"));
+    runtime.insert_pretolerance(first, plan(1));
+    runtime.insert_pretolerance(second, plan(2));
+    assert_eq!(runtime.lookup_pretolerance(first), Some(plan(1)));
+    runtime.insert_pretolerance(third, plan(3));
+
+    assert_eq!(runtime.lookup_pretolerance(first), Some(plan(1)));
+    assert!(runtime.lookup_pretolerance(second).is_none());
+    assert_eq!(runtime.lookup_pretolerance(third), Some(plan(3)));
+    let stats = runtime.stats();
+    assert_eq!(stats.retained_entries, 2);
+    assert_eq!(stats.evictions, 1);
+    assert_eq!(stats.pretolerance_evictions, 1);
+    assert_eq!(stats.pretolerance_retained_bytes, stats.retained_bytes);
+}

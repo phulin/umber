@@ -75,6 +75,13 @@ fn pure_memo_runtime_survives_accepted_revisions() {
     session.cold().expect("cold revision");
     let after_cold = session.pure_memo_stats();
     assert!(after_cold.retained_entries > 0);
+    assert_eq!(
+        session
+            .retention_metrics()
+            .expect("cold retention")
+            .memo_result_bytes,
+        after_cold.retained_bytes
+    );
 
     let digit = source.find("width1pt").expect("first width") + "width".len();
     session
@@ -91,6 +98,13 @@ fn pure_memo_runtime_survives_accepted_revisions() {
     let after_edit = session.pure_memo_stats();
     assert!(after_edit.lookups > after_cold.lookups);
     assert!(after_edit.hits > after_cold.hits);
+    assert_eq!(
+        session
+            .retention_metrics()
+            .expect("edited retention")
+            .memo_result_bytes,
+        after_edit.retained_bytes
+    );
 }
 
 #[test]
