@@ -22,7 +22,9 @@ use crate::input::TracedTokenList;
 use crate::interner::{
     ControlSequenceKind, Interner, InternerError, InternerMark, Symbol, SymbolId, SymbolReference,
 };
-use crate::macro_store::{MacroDefinitionProvenance, MacroMeaning, MacroStore, MacroStoreMark};
+use crate::macro_store::{
+    MacroDefinitionProvenance, MacroMeaning, MacroParameterPattern, MacroStore, MacroStoreMark,
+};
 use crate::math::MathFontSize;
 use crate::meaning::Meaning;
 use crate::node::Node;
@@ -519,8 +521,10 @@ impl Stores {
                 provenance.replacement_origins(),
             );
         }
+        let parameter_pattern =
+            MacroParameterPattern::from_tokens(self.tokens(macro_meaning.parameter_text()));
         self.macros
-            .intern_with_provenance(macro_meaning, provenance)
+            .intern_with_provenance(macro_meaning, parameter_pattern, provenance)
     }
 
     /// Reads a live frozen macro definition.
@@ -528,6 +532,16 @@ impl Stores {
     pub fn macro_definition(&self, id: MacroDefinitionId) -> MacroMeaning {
         self.assert_live_macro_definition(id);
         self.macros.get(id)
+    }
+
+    /// Reads the pre-parsed parameter structure for a live macro definition.
+    #[must_use]
+    pub fn macro_definition_parameter_pattern(
+        &self,
+        id: MacroDefinitionId,
+    ) -> MacroParameterPattern {
+        self.assert_live_macro_definition(id);
+        self.macros.parameter_pattern(id)
     }
 
     /// Reads diagnostic provenance for a macro definition, degrading to

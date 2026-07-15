@@ -6,12 +6,11 @@
 
 use std::collections::VecDeque;
 use std::fmt;
-use std::sync::Arc;
 
 use tex_lex::{InputStack, LexError, MACRO_ARGUMENT_SLOTS, MacroArguments};
 use tex_state::ExpansionState;
 use tex_state::MacroArgumentRange;
-use tex_state::macro_store::MacroMeaning;
+use tex_state::macro_store::{MacroMeaning, MacroParameterPattern};
 use tex_state::meaning::{Meaning, MeaningFlags};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
@@ -132,17 +131,6 @@ impl MacroCallError {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct ParameterSpec {
-    delimiter: Vec<Token>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ParameterPattern {
-    leading: Vec<Token>,
-    specs: Vec<ParameterSpec>,
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct PendingArgumentToken {
     token: TracedTokenWord,
@@ -153,6 +141,11 @@ struct PendingArgumentToken {
 struct MacroCallContext {
     flags: MeaningFlags,
     call_token: TracedTokenWord,
+}
+
+#[derive(Clone, Copy)]
+struct ParameterDelimiter<'a> {
+    tokens: &'a [Token],
 }
 
 impl MacroCallContext {
@@ -169,7 +162,8 @@ pub fn match_macro_call(
     meaning: MacroMeaning,
 ) -> Result<MatchedArguments, MacroCallError> {
     let mut expansion = ExpansionContext::new("texput");
-    match_macro_call_with_context(input, stores, &mut expansion, call_token, meaning)
+    let pattern = MacroParameterPattern::from_tokens(stores.tokens(meaning.parameter_text()));
+    match_macro_call_with_context(input, stores, &mut expansion, call_token, meaning, &pattern)
 }
 
 pub(crate) fn match_macro_call_with_context(
@@ -178,31 +172,22 @@ pub(crate) fn match_macro_call_with_context(
     expansion: &mut ExpansionContext<'_>,
     call_token: TracedTokenWord,
     meaning: MacroMeaning,
+    pattern: &MacroParameterPattern,
 ) -> Result<MatchedArguments, MacroCallError> {
     let context = MacroCallContext {
         flags: meaning.flags(),
         call_token,
     };
-    let parameter_text = meaning.parameter_text();
-    let pattern = match expansion.parameter_pattern_cache.get(&parameter_text) {
-        Some(pattern) => Arc::clone(pattern),
-        None => {
-            let pattern = Arc::new(parse_parameter_text(stores.tokens(parameter_text)));
-            expansion
-                .parameter_pattern_cache
-                .insert(parameter_text, Arc::clone(&pattern));
-            pattern
-        }
-    };
-    match_exact_tokens(input, stores, expansion, context, &pattern.leading)?;
+    match_exact_tokens(input, stores, expansion, context, pattern.leading())?;
 
     let mut matched = MatchedArguments {
         tokens: input.take_transient_token_buffer(),
         ..MatchedArguments::default()
     };
     let result = (|| {
-        for spec in &pattern.specs {
-            let range = if spec.delimiter.is_empty() {
+        for parameter in 0..pattern.parameter_count() {
+            let delimiter = pattern.delimiter(parameter);
+            let range = if delimiter.is_empty() {
                 scan_undelimited_argument(input, stores, expansion, context, &mut matched.tokens)?
             } else {
                 scan_delimited_argument(
@@ -210,7 +195,7 @@ pub(crate) fn match_macro_call_with_context(
                     stores,
                     expansion,
                     context,
-                    spec,
+                    ParameterDelimiter { tokens: delimiter },
                     &mut matched.tokens,
                 )?
             };
@@ -225,38 +210,6 @@ pub(crate) fn match_macro_call_with_context(
             Err(error)
         }
     }
-}
-
-fn parse_parameter_text(tokens: &[Token]) -> ParameterPattern {
-    let mut leading = Vec::new();
-    let mut specs = Vec::new();
-    let mut current: Option<ParameterSpec> = None;
-
-    for &token in tokens {
-        match token {
-            Token::Param(_slot) => {
-                if let Some(spec) = current.take() {
-                    specs.push(spec);
-                }
-                current = Some(ParameterSpec {
-                    delimiter: Vec::new(),
-                });
-            }
-            _ => {
-                if let Some(spec) = current.as_mut() {
-                    spec.delimiter.push(token);
-                } else {
-                    leading.push(token);
-                }
-            }
-        }
-    }
-
-    if let Some(spec) = current {
-        specs.push(spec);
-    }
-
-    ParameterPattern { leading, specs }
 }
 
 fn match_exact_tokens(
@@ -337,10 +290,9 @@ fn scan_delimited_argument(
     stores: &mut tex_state::ExpansionContext<'_>,
     expansion: &mut ExpansionContext<'_>,
     context: MacroCallContext,
-    spec: &ParameterSpec,
+    delimiter: ParameterDelimiter<'_>,
     argument: &mut Vec<TracedTokenWord>,
 ) -> Result<MacroArgumentRange, MacroCallError> {
-    let delimiter = &spec.delimiter;
     let start = argument.len();
     let mut pending = VecDeque::new();
     let mut level = 0_u32;
@@ -348,10 +300,10 @@ fn scan_delimited_argument(
     loop {
         let scanned = next_or_pending_token(input, stores, expansion, context, &mut pending)?;
         let token = traced_semantic_token(scanned.token);
-        if level == 0 && token == delimiter[0] {
+        if level == 0 && token == delimiter.tokens[0] {
             let mut candidate = vec![scanned];
             let mut matched = true;
-            for &expected in &delimiter[1..] {
+            for &expected in &delimiter.tokens[1..] {
                 let next = next_or_pending_token(input, stores, expansion, context, &mut pending)?;
                 candidate.push(next);
                 if traced_semantic_token(next.token) != expected {

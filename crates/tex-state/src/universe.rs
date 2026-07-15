@@ -118,6 +118,10 @@ pub trait ExpansionState {
     }
     fn meaning(&self, symbol: Symbol) -> Meaning;
     fn macro_definition(&self, id: MacroDefinitionId) -> MacroMeaning;
+    fn macro_definition_parameter_pattern(
+        &self,
+        id: MacroDefinitionId,
+    ) -> crate::macro_store::MacroParameterPattern;
     fn macro_definition_provenance(&self, id: MacroDefinitionId) -> MacroDefinitionProvenance;
     fn macro_meaning(&self, symbol: Symbol) -> Option<MacroMeaning>;
     fn intern_relaxed_control_sequence(&mut self, name: &str) -> Symbol;
@@ -1786,6 +1790,14 @@ impl Universe {
     }
 
     #[must_use]
+    pub fn macro_definition_parameter_pattern(
+        &self,
+        id: MacroDefinitionId,
+    ) -> crate::macro_store::MacroParameterPattern {
+        self.stores.macro_definition_parameter_pattern(id)
+    }
+
+    #[must_use]
     pub fn macro_definition_provenance(&self, id: MacroDefinitionId) -> MacroDefinitionProvenance {
         self.stores.macro_definition_provenance(id)
     }
@@ -3361,6 +3373,13 @@ impl ExpansionState for Universe {
         Self::macro_definition(self, id)
     }
 
+    fn macro_definition_parameter_pattern(
+        &self,
+        id: MacroDefinitionId,
+    ) -> crate::macro_store::MacroParameterPattern {
+        Self::macro_definition_parameter_pattern(self, id)
+    }
+
     fn macro_definition_provenance(&self, id: MacroDefinitionId) -> MacroDefinitionProvenance {
         Self::macro_definition_provenance(self, id)
     }
@@ -3741,6 +3760,13 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn macro_definition(&self, id: MacroDefinitionId) -> MacroMeaning {
         self.universe.macro_definition(id)
+    }
+
+    fn macro_definition_parameter_pattern(
+        &self,
+        id: MacroDefinitionId,
+    ) -> crate::macro_store::MacroParameterPattern {
+        self.universe.macro_definition_parameter_pattern(id)
     }
 
     fn macro_definition_provenance(&self, id: MacroDefinitionId) -> MacroDefinitionProvenance {

@@ -6,10 +6,8 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;
-use std::sync::Arc;
 #[cfg(feature = "profiling-stats")]
 use std::time::Instant;
 
@@ -803,7 +801,6 @@ pub struct ExpansionContext<'a> {
     pub(crate) recorder: Option<&'a mut dyn ReadRecorder>,
     resolution_index: u64,
     meaning_site_cache: Box<[Option<MeaningSiteCacheEntry>; MEANING_SITE_CACHE_LEN]>,
-    parameter_pattern_cache: HashMap<TokenListId, Arc<args::ParameterPattern>>,
     last_macro_replay_site: Option<MacroReplaySite>,
 }
 
@@ -817,7 +814,6 @@ impl<'a> ExpansionContext<'a> {
             recorder: None,
             resolution_index: 0,
             meaning_site_cache: Box::new([None; MEANING_SITE_CACHE_LEN]),
-            parameter_pattern_cache: HashMap::new(),
             last_macro_replay_site: None,
         }
     }
@@ -834,7 +830,6 @@ impl<'a> ExpansionContext<'a> {
             recorder: None,
             resolution_index: 0,
             meaning_site_cache: Box::new([None; MEANING_SITE_CACHE_LEN]),
-            parameter_pattern_cache: HashMap::new(),
             last_macro_replay_site: None,
         }
     }
@@ -928,7 +923,6 @@ impl<'a> ExpansionContext<'a> {
             recorder: self.recorder.take(),
             resolution_index: self.resolution_index,
             meaning_site_cache: Box::new([None; MEANING_SITE_CACHE_LEN]),
-            parameter_pattern_cache: HashMap::new(),
             last_macro_replay_site: None,
         };
         let output = operation(&mut nested);

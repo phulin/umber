@@ -346,7 +346,7 @@ impl StoreFormat {
                 stores.resolve_stored_token_list(TokenListId::new(definition.parameter_text)),
                 stores.resolve_stored_token_list(TokenListId::new(definition.replacement_text)),
             );
-            if stores.macros.intern_with_provenance(meaning, None).raw() as usize != raw {
+            if stores.intern_macro(meaning).raw() as usize != raw {
                 return Err(StoreFormatError::Invalid("macro order"));
             }
         }

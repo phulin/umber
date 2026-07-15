@@ -6,10 +6,81 @@
 //! definition is stored beside the semantic definition and is not part of
 //! [`MacroMeaning`].
 
+use std::sync::Arc;
+
 use crate::identity::{IdentityAllocator, IdentityMark};
 use crate::ids::{MacroDefinitionId, OriginListId, TokenListId};
 use crate::meaning::MeaningFlags;
-use crate::token::OriginId;
+use crate::token::{OriginId, Token};
+
+const MACRO_PARAMETER_SLOTS: usize = 9;
+
+/// Allocation-free index of parameter markers in frozen macro parameter text.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct MacroParameterPattern {
+    tokens: Arc<[Token]>,
+    offsets: [u32; MACRO_PARAMETER_SLOTS],
+    count: u8,
+}
+
+impl MacroParameterPattern {
+    pub fn from_tokens(tokens: &[Token]) -> Self {
+        let mut offsets = [0; MACRO_PARAMETER_SLOTS];
+        let mut count = 0_usize;
+        for (index, token) in tokens.iter().enumerate() {
+            if matches!(token, Token::Param(_)) {
+                assert!(
+                    count < MACRO_PARAMETER_SLOTS,
+                    "macro has more than nine parameters"
+                );
+                offsets[count] = u32::try_from(index).expect("token list length exceeds u32");
+                count += 1;
+            }
+        }
+        Self {
+            tokens: Arc::from(tokens),
+            offsets,
+            count: count as u8,
+        }
+    }
+
+    #[must_use]
+    pub const fn parameter_count(&self) -> usize {
+        self.count as usize
+    }
+
+    #[must_use]
+    pub fn leading_end(&self, token_count: usize) -> usize {
+        if self.count == 0 {
+            token_count
+        } else {
+            self.offsets[0] as usize
+        }
+    }
+
+    #[must_use]
+    pub fn delimiter_bounds(&self, parameter: usize, token_count: usize) -> (usize, usize) {
+        assert!(parameter < self.parameter_count());
+        let start = self.offsets[parameter] as usize + 1;
+        let end = if parameter + 1 < self.parameter_count() {
+            self.offsets[parameter + 1] as usize
+        } else {
+            token_count
+        };
+        (start, end)
+    }
+
+    #[must_use]
+    pub fn leading(&self) -> &[Token] {
+        &self.tokens[..self.leading_end(self.tokens.len())]
+    }
+
+    #[must_use]
+    pub fn delimiter(&self, parameter: usize) -> &[Token] {
+        let (start, end) = self.delimiter_bounds(parameter, self.tokens.len());
+        &self.tokens[start..end]
+    }
+}
 
 /// Public macro meaning aggregate used at the Universe boundary.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -117,6 +188,7 @@ pub(crate) struct MacroStoreMark {
 #[derive(Debug)]
 pub struct MacroStore {
     definitions: Vec<MacroMeaning>,
+    parameter_patterns: Vec<MacroParameterPattern>,
     provenance: Vec<Option<MacroDefinitionProvenance>>,
     identities: IdentityAllocator,
 }
@@ -125,6 +197,7 @@ impl Clone for MacroStore {
     fn clone(&self) -> Self {
         Self {
             definitions: self.definitions.clone(),
+            parameter_patterns: self.parameter_patterns.clone(),
             provenance: self.provenance.clone(),
             identities: self.identities.fork(),
         }
@@ -136,6 +209,7 @@ impl MacroStore {
     pub(crate) fn new() -> Self {
         Self {
             definitions: Vec::new(),
+            parameter_patterns: Vec::new(),
             provenance: Vec::new(),
             identities: IdentityAllocator::new(0),
         }
@@ -144,6 +218,7 @@ impl MacroStore {
     pub(crate) fn intern_with_provenance(
         &mut self,
         meaning: MacroMeaning,
+        parameter_pattern: MacroParameterPattern,
         provenance: Option<MacroDefinitionProvenance>,
     ) -> MacroDefinitionId {
         let id = MacroDefinitionId::from_identity(
@@ -152,6 +227,7 @@ impl MacroStore {
                 .expect("macro definition table exceeds u32 entries"),
         );
         self.definitions.push(meaning);
+        self.parameter_patterns.push(parameter_pattern);
         self.provenance.push(provenance);
         id
     }
@@ -163,6 +239,12 @@ impl MacroStore {
             .get(id.raw() as usize)
             .copied()
             .expect("macro definition id is not live")
+    }
+
+    #[must_use]
+    pub(crate) fn parameter_pattern(&self, id: MacroDefinitionId) -> MacroParameterPattern {
+        assert!(self.contains(id), "macro definition id is not live");
+        self.parameter_patterns[id.raw() as usize].clone()
     }
 
     #[must_use]
@@ -210,6 +292,7 @@ impl MacroStore {
             .rollback(mark.identities)
             .expect("macro-store mark is not an ancestor");
         self.definitions.truncate(definitions);
+        self.parameter_patterns.truncate(definitions);
         self.provenance.truncate(definitions);
     }
 }

@@ -67,6 +67,8 @@ macro_rules! dispatch_match {
         match meaning {
             Meaning::Macro { definition, .. } => {
                 let macro_meaning = stores.macro_definition(definition);
+                let parameter_pattern =
+                    stores.macro_definition_parameter_pattern(definition);
                 let provenance = stores.macro_definition_provenance(definition);
                 let arguments = args::match_macro_call_with_context(
                     input,
@@ -74,6 +76,7 @@ macro_rules! dispatch_match {
                     expansion,
                     call_context,
                     macro_meaning,
+                    &parameter_pattern,
                 )?;
                 Ok(Dispatch::Push {
                     replay_kind: ExpansionReplayKind::MacroBody,

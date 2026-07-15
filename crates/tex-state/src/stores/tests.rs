@@ -888,6 +888,35 @@ fn macro_meaning_round_trips_through_stores_boundary() {
 }
 
 #[test]
+fn macro_definition_precomputes_parameter_delimiter_ranges() {
+    let mut stores = Stores::new();
+    let params = stores.intern_token_list(&[
+        Token::Char {
+            ch: 'a',
+            cat: Catcode::Letter,
+        },
+        Token::param(1),
+        Token::Char {
+            ch: ',',
+            cat: Catcode::Other,
+        },
+        Token::param(2),
+        Token::Char {
+            ch: ';',
+            cat: Catcode::Other,
+        },
+    ]);
+    let body = stores.intern_token_list(&[]);
+    let definition = stores.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, params, body));
+
+    let pattern = stores.macro_definition_parameter_pattern(definition);
+    assert_eq!(pattern.parameter_count(), 2);
+    assert_eq!(pattern.leading_end(5), 1);
+    assert_eq!(pattern.delimiter_bounds(0, 5), (2, 3));
+    assert_eq!(pattern.delimiter_bounds(1, 5), (4, 5));
+}
+
+#[test]
 fn separately_created_identical_macro_bodies_share_token_list_identity() {
     let mut stores = Stores::new();
     let a = stores.intern("a");
