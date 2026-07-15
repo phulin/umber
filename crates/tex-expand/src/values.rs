@@ -1050,8 +1050,11 @@ fn token_list_text(stores: &impl ExpansionState, token_list: TokenListId) -> Str
 /// receive that space when the character's current catcode is `letter`, and
 /// active characters receive neither an escape nor a trailing space.
 pub fn append_token_show_text(stores: &impl ExpansionState, token: Token, text: &mut String) {
-    if let Token::Char { ch, .. } = token {
+    if let Token::Char { ch, cat } = token {
         append_tex_print_char(ch, text);
+        if cat == Catcode::Parameter {
+            append_tex_print_char(ch, text);
+        }
     } else {
         text.push_str(&token_text(stores, token));
     }
@@ -1075,8 +1078,11 @@ pub fn append_token_show_text(stores: &impl ExpansionState, token: Token, text: 
 /// Unlike ordinary diagnostic display, character tokens remain raw; control
 /// sequence spelling and its separator still follow `show_token_list`.
 pub fn append_token_string_text(stores: &impl ExpansionState, token: Token, text: &mut String) {
-    if let Token::Char { ch, .. } = token {
+    if let Token::Char { ch, cat } = token {
         text.push(ch);
+        if cat == Catcode::Parameter {
+            text.push(ch);
+        }
     } else {
         append_token_show_text(stores, token, text);
     }

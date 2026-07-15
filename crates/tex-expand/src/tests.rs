@@ -1091,7 +1091,7 @@ fn unexpanded_accepts_a_control_sequence_with_begin_group_meaning() {
 fn detokenize_outputs_space_and_other_character_tokens() {
     let mut stores = Universe::new();
     crate::install_etex_expandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\detokenize{a \\word!}%"));
+    let mut input = InputStack::new(MemoryInput::new("\\detokenize{a \\word!#1}%"));
     let mut output = Vec::new();
     while let Some(token) = get_x_token(
         &mut input,
@@ -1111,7 +1111,7 @@ fn detokenize_outputs_space_and_other_character_tokens() {
         .collect();
     // e-TeX short reference manual section 3.1 requires a separating space
     // after each control word, including the final control word.
-    assert_eq!(rendered, "a \\word !");
+    assert_eq!(rendered, "a \\word !##1");
     assert!(output.iter().all(|token| matches!(
         token,
         Token::Char {
@@ -2738,7 +2738,14 @@ fn meaning_renders_macro_text_and_output_catcodes() {
     let meaning = expandable_primitive(&mut stores, "meaning", ExpandablePrimitive::Meaning);
     let macro_cs = stores.intern("m");
     let params = stores.intern_token_list(&[Token::param(1)]);
-    let body = stores.intern_token_list(&[char_token('a'), Token::param(1)]);
+    let body = stores.intern_token_list(&[
+        char_token('a'),
+        Token::param(1),
+        Token::Char {
+            ch: '#',
+            cat: Catcode::Parameter,
+        },
+    ]);
     stores.set_macro_meaning(
         macro_cs,
         MacroMeaning::new(MeaningFlags::EMPTY, params, body),
@@ -2760,7 +2767,7 @@ fn meaning_renders_macro_text_and_output_catcodes() {
         })
         .collect::<String>();
 
-    assert_eq!(text, "macro:#1->a#1");
+    assert_eq!(text, "macro:#1->a#1##");
     assert!(tokens.iter().all(|token| matches!(
         token,
         Token::Char {
