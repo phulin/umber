@@ -147,7 +147,8 @@ stage_format() {
 
 run_format_reuse_self_test() {
   local temp
-  temp="$(mktemp -d "${TMPDIR:-/tmp}/umber-latex-parity-self-test.XXXXXX")"
+  mkdir -p "$scratch_parent"
+  temp="$(mktemp -d "${scratch_parent}/self-test.XXXXXX")"
   trap "rm -rf '$temp'" EXIT
   local count_file="${temp}/builder-count"
   local stub_builder="${temp}/format-builder"
