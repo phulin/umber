@@ -17,6 +17,7 @@ use tex_state::node::{BoxNode, BoxNodeFields, KernKind, Node, Sign};
 use tex_state::provenance::ProvenanceStats;
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+use tex_state::{DependencyKey, DependencyRuntime, DependencyValue};
 use tex_state::{EditorLayout, FragmentStore, LayoutGeneration, Piece, Universe};
 
 const GROUP_SIZES: [usize; 3] = [4, 64, 512];
@@ -39,9 +40,50 @@ const ALLOCATION_LIST_LEN: usize = 1_024;
 const PAGE_QUEUE_LEN: usize = 65_536;
 const TOKEN_PROJECTION_SIZES: [usize; 3] = [64, 1_024, 16_384];
 const EDIT_STABLE_PIECE_COUNTS: [usize; 5] = [64, 256, 1_024, 4_096, 16_384];
+const DEPENDENCY_READS: usize = 4_096;
 
 const HASH_MIX_INCREMENT: u64 = 0x9e37_79b9_7f4a_7c15;
 const HASH_INITIAL_STATE: u64 = 0x6a09_e667_f3bc_c909;
+
+fn dependency_recording(c: &mut Criterion) {
+    let key = DependencyKey::Meaning(7);
+    let value = DependencyValue::Integer(42);
+    let mut group = c.benchmark_group("dependency_recording");
+    group.throughput(Throughput::Elements(DEPENDENCY_READS as u64));
+
+    group.bench_function("disabled", |b| {
+        b.iter(|| {
+            let mut runtime = DependencyRuntime::default();
+            for _ in 0..DEPENDENCY_READS {
+                runtime.record(key, value.clone());
+            }
+            black_box(runtime);
+        });
+    });
+    group.bench_function("enabled_deduplicated", |b| {
+        b.iter(|| {
+            let mut runtime = DependencyRuntime::default();
+            runtime.begin_region();
+            for _ in 0..DEPENDENCY_READS {
+                runtime.record(key, value.clone());
+            }
+            black_box(runtime.finish_region());
+        });
+    });
+    group.bench_function("interleaved_pair", |b| {
+        b.iter(|| {
+            let mut disabled = DependencyRuntime::default();
+            let mut enabled = DependencyRuntime::default();
+            enabled.begin_region();
+            for _ in 0..DEPENDENCY_READS {
+                disabled.record(key, value.clone());
+                enabled.record(key, value.clone());
+            }
+            black_box((disabled, enabled.finish_region()));
+        });
+    });
+    group.finish();
+}
 
 fn page_contribution_queue(c: &mut Criterion) {
     c.bench_function("page_contribution_queue/drain_65536", |b| {
@@ -885,11 +927,7 @@ fn edit_stable_source_coordinates(c: &mut Criterion) {
             &piece_count,
             |b, _| {
                 b.iter(|| {
-                    black_box(resolver.resolve_layout_origin(
-                        deleted_origin,
-                        &fragments,
-                        &layout,
-                    ));
+                    black_box(resolver.resolve_layout_origin(deleted_origin, &fragments, &layout));
                 });
             },
         );
@@ -1285,6 +1323,7 @@ fn space_token() -> Token {
 
 criterion_group!(
     benches,
+    dependency_recording,
     allocation_node_append,
     allocation_graph_transfer,
     deep_journal_box_locality,

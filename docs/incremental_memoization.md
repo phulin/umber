@@ -531,6 +531,24 @@ baseline also checks changed paragraph content, page-number reads, marks,
 deferred writes, page-count changes, output routines, and insertions against a
 fresh cold execution.
 
+### Dependency-recorder baseline
+
+The state-layer recorder has an explicit disabled branch and no lock or atomic.
+An optimized arm64 macOS run on 2026-07-15 interleaved disabled and enabled
+recording over 4,096 reads per sample. One committed Criterion command
+`cargo bench --manifest-path benchmarks/tex-state/Cargo.toml --bench
+state_budgets -- dependency_recording --warm-up-time 1 --measurement-time 2
+--sample-size 20` measured a median 2.546 us for the disabled batch (0.622
+ns/read), 42.871 us for enabled deterministic deduplication (10.47 ns/read),
+and 51.807 us for the paired interleaved batch. The separate `dependency_gate`
+uses `black_box` at the aggregate facade to prevent specialization of the
+known-disabled state. Twelve rotated samples over 2,000,000 reads measured a
+0.683 ns/read control, 0.949 ns/read disabled facade, a 0.266 ns/read
+incremental disabled cost, and 49.446 ns/read enabled cost over a rotating
+32-key set. These are diagnostic observations, not latency gates; later query
+layers must repeat the paired end-to-end comparison because their key
+distributions differ.
+
 ## Implementation sequence
 
 1. **Contract correction and baseline.** Reclassify folded hashes as
