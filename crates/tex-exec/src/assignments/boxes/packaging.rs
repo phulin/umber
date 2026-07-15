@@ -56,8 +56,19 @@ pub(super) fn scan_box_value(
     execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
 ) -> Result<Option<ScannedBoxValue>, ExecError> {
-    let traced = next_non_space_traced_x(input, stores, execution)?
-        .ok_or(ExecError::MissingTracedToken { context })?;
+    // TeX82's scan_box starts with get_x_token's "next non-blank non-relax"
+    // loop (tex.web §1076).  This matters for format code that deliberately
+    // leaves a compatibility hook equal to \relax before the real box command.
+    let traced = loop {
+        let traced = next_non_space_traced_x(input, stores, execution)?
+            .ok_or(ExecError::MissingTracedToken { context })?;
+        let Token::Cs(symbol) = tex_expand::semantic_token(traced) else {
+            break traced;
+        };
+        if stores.meaning(symbol) != Meaning::Relax {
+            break traced;
+        }
+    };
     let token = tex_expand::semantic_token(traced);
     let Token::Cs(symbol) = token else {
         return recover_missing_box(input, stores, traced);

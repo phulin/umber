@@ -245,6 +245,23 @@ fn setbox_missing_box_is_recoverable_and_replays_the_rejected_command() {
 }
 
 #[test]
+fn setbox_skips_relax_before_the_box_command() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\setbox0=\\relax\\relax\\hbox{A}\\count0=7",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("TeX skips relax commands while demanding a box");
+
+    assert!(stores.box_reg(0).is_some());
+    assert_eq!(stores.count(0), 7);
+    assert!(!terminal_effect_text(&stores).contains("A <box> was supposed to be here"));
+}
+
+#[test]
 fn extra_endgroup_is_recoverable() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
