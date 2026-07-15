@@ -2374,7 +2374,8 @@ fn raster_image_streams(
     let mut streams = streams?;
     if metadata.format == PdfRasterFormat::Png
         && metadata.bits_per_component == 16
-        && parameters.image_hicolor == 0
+        && (parameters.image_hicolor == 0
+            || (parameters.major_version == 1 && parameters.minor_version < 5))
     {
         let samples = match streams.1 {
             PdfImageFilter::FlatePngPredictor { .. } => png_opaque_samples(bytes, metadata)?,
@@ -3922,50 +3923,64 @@ mod tests {
     }
 
     #[test]
-    fn png_gamma_controls_transform_samples_when_enabled() {
-        let png = test_gamma_png(&[0, 128, 64], 50_000);
+    fn png_gamma_controls_match_the_pinned_pdftex_sample_oracle() {
+        let source_samples = [
+            0, 0, 1, 17, 34, 51, 68, 85, 102, 119, 136, 153, 170, 187, 204, 221, 238, 255,
+        ];
+        let png = test_gamma_png(&source_samples, 50_000);
         let source = tex_state::PdfExternalImageSource {
             identity: ContentHash::from_bytes(&png),
             metadata: PdfExternalImageMetadata::Raster(tex_state::PdfRasterImageMetadata {
                 format: PdfRasterFormat::Png,
-                width: 2,
+                width: 17,
                 height: 1,
                 bits_per_component: 8,
                 color_space: PdfRasterColorSpace::Gray,
                 alpha: false,
                 png_color_type: Some(0),
             }),
-            natural_width: Scaled::from_raw(2 * 65_536),
+            natural_width: Scaled::from_raw(17 * 65_536),
             natural_height: Scaled::from_raw(65_536),
             bytes: png.into(),
         };
-        let mut stores = Universe::default();
-        prepare_pdftex_run_stores(&mut stores);
-        let result = run_with_image(
-            &mut stores,
-            concat!(
-                "\\pdfoutput=1 \\pdfgamma=1000 \\pdfimagegamma=2200 ",
-                "\\pdfimageapplygamma=1 \\pdfximage \"gamma.png\"",
-                "\\shipout\\hbox{\\pdfrefximage\\pdflastximage}\\end",
+        for (apply, expected) in [
+            (0, source_samples[1..].to_vec()),
+            (
+                1,
+                vec![
+                    0, 0, 1, 5, 10, 18, 28, 41, 56, 73, 92, 113, 137, 163, 192, 222, 255,
+                ],
             ),
-            source,
-        );
-        let pdf = pdf_from_committed_artifacts(&mut stores, &result.committed_artifacts)
-            .expect("lower gamma-corrected PNG");
-        let parsed = lopdf::Document::load_mem(&pdf).expect("parse gamma PDF");
-        let image = parsed
-            .get_object((1, 0))
-            .expect("gamma image")
-            .as_stream()
-            .expect("gamma stream");
-        assert_eq!(
-            image.decompressed_content().expect("corrected samples"),
-            vec![64, 16]
-        );
+        ] {
+            let mut stores = Universe::default();
+            prepare_pdftex_run_stores(&mut stores);
+            let tex = format!(
+                concat!(
+                    "\\pdfoutput=1 \\pdfgamma=1000 \\pdfimagegamma=2200 ",
+                    "\\pdfimageapplygamma={apply} \\pdfximage \"gamma.png\"",
+                    "\\shipout\\hbox{{\\pdfrefximage\\pdflastximage}}\\end",
+                ),
+                apply = apply,
+            );
+            let result = run_with_image(&mut stores, &tex, source.clone());
+            let pdf = pdf_from_committed_artifacts(&mut stores, &result.committed_artifacts)
+                .expect("lower gamma-controlled PNG");
+            let parsed = lopdf::Document::load_mem(&pdf).expect("parse gamma PDF");
+            let image = parsed
+                .get_object((1, 0))
+                .expect("gamma image")
+                .as_stream()
+                .expect("gamma stream");
+            assert_eq!(
+                image.decompressed_content().expect("controlled samples"),
+                expected,
+                "\\pdfimageapplygamma={apply}",
+            );
+        }
     }
 
     #[test]
-    fn png_hicolor_control_reduces_sixteen_bit_samples() {
+    fn png_hicolor_control_and_pdf_version_match_pdftex_sixteen_bit_policy() {
         let mut png = test_gamma_png(&[0, 0x12, 0x34], 100_000);
         png[24] = 16;
         let metadata = tex_state::PdfRasterImageMetadata {
@@ -3979,17 +3994,36 @@ mod tests {
         };
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let mut parameters = output_parameters(&stores);
-        parameters.image_hicolor = 0;
-        parameters.image_apply_gamma = 0;
+        for (hicolor, minor_version, expected_bits, expected_samples) in [
+            (0, 5, 8, vec![0x12]),
+            (1, 4, 8, vec![0x12]),
+            (1, 5, 16, vec![0x12, 0x34]),
+        ] {
+            let mut parameters = output_parameters(&stores);
+            parameters.minor_version = minor_version;
+            parameters.image_hicolor = hicolor;
+            parameters.image_apply_gamma = 0;
 
-        let (samples, filter, bits, color_space, alpha) =
-            raster_image_streams(&png, metadata, parameters).expect("reduce 16-bit PNG");
-        assert_eq!(filter, PdfImageFilter::Flate);
-        assert_eq!(bits, 8);
-        assert_eq!(color_space, PdfImageColorSpace::DeviceGray);
-        assert!(alpha.is_none());
-        assert_eq!(inflate(&samples).expect("inflate reduced samples"), [0x12]);
+            let (samples, filter, bits, color_space, alpha) =
+                raster_image_streams(&png, metadata, parameters).expect("transform 16-bit PNG");
+            assert_eq!(color_space, PdfImageColorSpace::DeviceGray);
+            assert!(alpha.is_none());
+            assert_eq!(
+                bits, expected_bits,
+                "hicolor={hicolor}, PDF 1.{minor_version}"
+            );
+            let samples = match filter {
+                PdfImageFilter::Flate => inflate(&samples).expect("inflate transformed samples"),
+                PdfImageFilter::FlatePngPredictor { .. } => {
+                    png_opaque_samples(&png, metadata).expect("decode retained samples")
+                }
+                PdfImageFilter::Dct => panic!("PNG cannot use DCT"),
+            };
+            assert_eq!(
+                samples, expected_samples,
+                "hicolor={hicolor}, PDF 1.{minor_version}",
+            );
+        }
     }
 
     #[test]
