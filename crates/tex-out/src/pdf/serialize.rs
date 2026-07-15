@@ -11,9 +11,10 @@ use pdf_writer::{
 
 use super::{
     PdfAnnotationAction, PdfAnnotationObject, PdfAnnotationType, PdfDestinationActionKind,
-    PdfDestinationPage, PdfDestinationStructure, PdfDestinationTarget, PdfDictionary, PdfDocument,
-    PdfImageColorSpace, PdfImageFilter, PdfImageXObject, PdfNumber, PdfObject, PdfObjectId,
-    PdfValue,
+    PdfDestinationNameTree, PdfDestinationNameTreeChildren, PdfDestinationPage,
+    PdfDestinationStructure, PdfDestinationTarget, PdfDestinationView, PdfDictionary, PdfDocument,
+    PdfExplicitDestination, PdfImageColorSpace, PdfImageFilter, PdfImageXObject, PdfNumber,
+    PdfObject, PdfObjectId, PdfValue,
 };
 
 /// Deterministic stream encoding selected at final serialization.
@@ -153,6 +154,25 @@ impl PdfDocument {
                 PdfObject::Annotation(annotation) => {
                     write_annotation(&mut pdf, reference, annotation)?;
                 }
+                PdfObject::Destination(destination) => {
+                    write_destination(pdf.destination(reference), destination)?;
+                }
+                PdfObject::NamedDestination(destination) => {
+                    let mut named = pdf.named_destination(reference);
+                    write_destination(named.destination(), destination)?;
+                    named.finish();
+                }
+                PdfObject::DestinationNameTree(tree) => {
+                    write_destination_name_tree(pdf.name_tree(reference), tree)?;
+                }
+                PdfObject::Names(names) => {
+                    let mut writer = pdf.names(reference);
+                    if let Some(destinations) = names.destinations {
+                        writer.destinations_ref(writer_ref(destinations)?);
+                    }
+                    writer.raw_entries(&names.raw_entries);
+                    writer.finish();
+                }
                 PdfObject::Stream { dictionary, data } => write_stream(
                     &mut pdf,
                     reference,
@@ -206,7 +226,11 @@ impl PdfDocument {
                         PdfObject::Stream { .. }
                         | PdfObject::FormXObject { .. }
                         | PdfObject::ImageXObject { .. }
-                        | PdfObject::Annotation(_) => {}
+                        | PdfObject::Annotation(_)
+                        | PdfObject::Destination(_)
+                        | PdfObject::NamedDestination(_)
+                        | PdfObject::DestinationNameTree(_)
+                        | PdfObject::Names(_) => {}
                     }
                 }
                 match options.stream_compression {
@@ -285,6 +309,74 @@ fn write_image_xobject(
     Ok(())
 }
 
+fn write_destination(
+    destination: pdf_writer::writers::Destination<'_>,
+    value: &PdfExplicitDestination,
+) -> Result<(), PdfSerializeError> {
+    let destination = destination.page(writer_ref(value.page)?);
+    match &value.view {
+        PdfDestinationView::Xyz { left, top, zoom } => destination.xyz(
+            number_as_f32(*left),
+            number_as_f32(*top),
+            zoom.map(number_as_f32),
+        ),
+        PdfDestinationView::FitBoundingBoxHorizontal { top } => {
+            destination.fit_bounding_box_horizontal(number_as_f32(*top));
+        }
+        PdfDestinationView::FitBoundingBoxVertical { left } => {
+            destination.fit_bounding_box_vertical(number_as_f32(*left));
+        }
+        PdfDestinationView::FitBoundingBox => destination.fit_bounding_box(),
+        PdfDestinationView::FitHorizontal { top } => {
+            destination.fit_horizontal(number_as_f32(*top));
+        }
+        PdfDestinationView::FitVertical { left } => {
+            destination.fit_vertical(number_as_f32(*left));
+        }
+        PdfDestinationView::FitRectangle {
+            left,
+            bottom,
+            right,
+            top,
+        } => destination.fit_rect(Rect::new(
+            number_as_f32(*left),
+            number_as_f32(*bottom),
+            number_as_f32(*right),
+            number_as_f32(*top),
+        )),
+        PdfDestinationView::Fit => destination.fit(),
+    }
+    Ok(())
+}
+
+fn write_destination_name_tree(
+    mut writer: pdf_writer::writers::NameTree<'_, Ref>,
+    tree: &PdfDestinationNameTree,
+) -> Result<(), PdfSerializeError> {
+    if let Some((min, max)) = &tree.limits {
+        writer.limits(Str(min), Str(max));
+    }
+    match &tree.children {
+        PdfDestinationNameTreeChildren::Names(entries) => {
+            let mut names = writer.names();
+            for (name, id) in entries {
+                names.insert(Str(name), writer_ref(*id)?);
+            }
+            names.finish();
+        }
+        PdfDestinationNameTreeChildren::Kids(ids) => {
+            writer.kids().items(
+                ids.iter()
+                    .copied()
+                    .map(writer_ref)
+                    .collect::<Result<Vec<_>, _>>()?,
+            );
+        }
+    }
+    writer.finish();
+    Ok(())
+}
+
 fn validate_serialization_inputs(
     document: &PdfDocument,
     options: PdfSerializationOptions,
@@ -347,7 +439,11 @@ fn validate_object_scalars(object: &PdfObject) -> Result<(), PdfSerializeError> 
         }
         PdfObject::Raw(_) => {}
         PdfObject::Annotation(_) => {}
-        PdfObject::ImageXObject { .. } => {}
+        PdfObject::ImageXObject { .. }
+        | PdfObject::Destination(_)
+        | PdfObject::NamedDestination(_)
+        | PdfObject::DestinationNameTree(_)
+        | PdfObject::Names(_) => {}
     }
     while let Some(value) = stack.pop() {
         match value {

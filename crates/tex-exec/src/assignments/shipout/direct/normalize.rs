@@ -6,6 +6,7 @@ pub(super) struct PageOverlay {
     pub(super) effects: Vec<PageEffect>,
     pub(super) math: Vec<MathSubstitution>,
     pub(super) directions: Vec<DirectionPermutation>,
+    pub(super) diagnostics: Vec<(PrintSink, String)>,
     color_target: tex_state::PdfColorStackTarget,
 }
 
@@ -64,6 +65,7 @@ pub(super) fn normalize_page(
         effects,
         math: Vec::new(),
         directions: Vec::new(),
+        diagnostics: Vec::new(),
         color_target,
     };
     normalize_list(stores, expansion, root, false, 1, &mut overlay)?;
@@ -195,6 +197,7 @@ fn normalize_index(
             stores,
             expansion,
             &mut overlay.effects,
+            &mut overlay.diagnostics,
             whatsit,
             suppress_deferred_streams,
             overlay.color_target,
@@ -227,6 +230,7 @@ fn append_whatsit_effect(
     stores: &mut Universe,
     expansion: &mut tex_expand::ExpansionContext<'_>,
     effects: &mut Vec<PageEffect>,
+    diagnostics: &mut Vec<(PrintSink, String)>,
     whatsit: Whatsit,
     suppress_deferred_streams: bool,
     color_target: tex_state::PdfColorStackTarget,
@@ -405,8 +409,13 @@ fn append_whatsit_effect(
             let definition = stores
                 .define_pdf_destination(identity.clone(), structure)
                 .map_err(|_| ExecError::PdfObjectCapacity)?;
-            if definition.duplicate {
-                super::super::super::warn_pdf_destination_duplicate(stores, &identity);
+            if definition.duplicate
+                && stores.int_param(IntParam::PDF_SUPPRESS_WARNING_DUP_DEST) <= 0
+            {
+                diagnostics.push((
+                    PrintSink::TerminalAndLog,
+                    super::super::super::pdf_destination_duplicate_warning(&identity),
+                ));
             }
             let identifier = match identity {
                 tex_state::PdfDestinationIdentity::Name(name) => {

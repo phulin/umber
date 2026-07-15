@@ -1870,10 +1870,14 @@ impl PdfState {
             self.document_objects.set_pages(id);
         }
         if self.document_objects.names().is_none()
-            && self
+            && (self
                 .document_fragments(PdfDocumentFragmentKind::Names)
                 .next()
                 .is_some()
+                || self
+                    .destinations(false)
+                    .iter()
+                    .any(|record| matches!(record.identity(), PdfDestinationIdentity::Name(_))))
         {
             let id = self.reserve_document_object()?;
             self.document_objects.set_names(id);

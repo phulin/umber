@@ -43,7 +43,11 @@ pub(crate) fn shipout_node(
     }
     let mut transaction = stores.begin_shipout();
     let staged = direct::stage_shipout(node, input, &mut transaction, execution)?;
+    let retained_diagnostics = staged.retained_diagnostics.clone();
     let hash = transaction.commit(staged.artifact, staged.effect_pos)?;
+    for (sink, text) in retained_diagnostics {
+        stores.world_mut().write_text(sink, &text);
+    }
     Ok(Some(PreparedDviPage {
         hash,
         plan: staged.dvi_plan,

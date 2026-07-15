@@ -7,11 +7,12 @@ use tex_out::PageNode;
 use tex_out::pdf::{
     PdfAnnotationAction, PdfAnnotationObject, PdfAnnotationType, PdfContentOperation,
     PdfContentRectangle, PdfContentTextRun, PdfDestinationAction, PdfDestinationActionKind,
-    PdfDestinationPage, PdfDestinationStructure, PdfDestinationTarget, PdfDictionary,
-    PdfImageColorSpace, PdfImageFilter, PdfImageXObject, PdfIndirectObject, PdfModelError, PdfName,
-    PdfNumber, PdfObject, PdfObjectCompression, PdfObjectId, PdfSerializationOptions,
-    PdfSerializeError, PdfStreamCompression, PdfTrailer, PdfValue, PdfVersion,
-    UnvalidatedPdfDocument, ordered_page_content, page_content,
+    PdfDestinationNameTree, PdfDestinationNameTreeChildren, PdfDestinationPage,
+    PdfDestinationStructure, PdfDestinationTarget, PdfDestinationView, PdfDictionary,
+    PdfExplicitDestination, PdfImageColorSpace, PdfImageFilter, PdfImageXObject, PdfIndirectObject,
+    PdfModelError, PdfName, PdfNamesObject, PdfNumber, PdfObject, PdfObjectCompression,
+    PdfObjectId, PdfSerializationOptions, PdfSerializeError, PdfStreamCompression, PdfTrailer,
+    PdfValue, PdfVersion, UnvalidatedPdfDocument, ordered_page_content, page_content,
 };
 use tex_out::positioned::{
     BoxKind, PositionedBox, PositionedError, PositionedEvent, PositionedPage,
@@ -105,6 +106,13 @@ pub fn pdf_from_committed_artifacts_at_dpi(
     let page_records = stores.pdf_pages().to_vec();
     let font_usage = collect_font_usage(stores, artifacts, &page_records)?;
     let positioned_pages = positioned_pages(stores, artifacts, &page_records)?;
+    let shipped_destinations = lower_page_destinations(
+        stores,
+        artifacts,
+        &page_records,
+        &positioned_pages,
+        parameters.decimal_digits,
+    )?;
     let page_link_margins = page_records
         .iter()
         .map(|record| record.link_margin())
@@ -127,6 +135,12 @@ pub fn pdf_from_committed_artifacts_at_dpi(
             .expect("PDF finalization allocates the page tree"),
     )?;
     let mut next_object = stores.pdf_next_object_id();
+    let destination_output = destination_objects(
+        stores,
+        &page_records,
+        shipped_destinations,
+        &mut next_object,
+    )?;
     let mut objects =
         Vec::with_capacity(2 + page_records.len() * 3 + stores.pdf_raw_objects().len() + 2);
     let mut kids = Vec::with_capacity(page_records.len());
@@ -162,39 +176,19 @@ pub fn pdf_from_committed_artifacts_at_dpi(
             id: object_id(action.id())?,
             object: PdfObject::Raw(pdf_action_bytes(stores, action, &page_records)?),
         });
-        if let Some(target) = action.target_object()
-            && matches!(
-                action.spec(),
-                PdfActionSpec::GoTo(PdfActionDestination {
-                    target: PdfActionTarget::Destination(_),
-                    ..
-                }) | PdfActionSpec::Thread(PdfActionDestination {
-                    target: PdfActionTarget::Destination(_),
-                    ..
-                })
-            )
-        {
-            objects.push(PdfIndirectObject {
-                id: object_id(target)?,
-                object: PdfObject::Raw(pdf_action_placeholder(action, &page_records)?),
-            });
-        }
-        if let Some(structure) = action.structure_object() {
-            objects.push(PdfIndirectObject {
-                id: object_id(structure)?,
-                object: PdfObject::Raw(b"null".to_vec()),
-            });
-        }
     }
 
     if let Some(names) = document_ids.names() {
-        let mut dictionary = PdfDictionary::new();
-        dictionary.set_raw_entries(document_fragment_bytes(
-            stores,
-            PdfDocumentFragmentKind::Names,
-        ));
-        objects.push(indirect_dictionary(object_id(names)?, dictionary));
+        objects.push(PdfIndirectObject {
+            id: object_id(names)?,
+            object: PdfObject::Names(PdfNamesObject {
+                destinations: destination_output.name_tree_root,
+                raw_entries: document_fragment_bytes(stores, PdfDocumentFragmentKind::Names),
+            }),
+        });
     }
+    objects.extend(destination_output.destinations);
+    objects.extend(destination_output.name_tree);
 
     if let Some(info) = document_ids.info() {
         let mut dictionary = document_info_dictionary(stores, parameters)?;
@@ -1219,6 +1213,335 @@ fn positioned_pages(
             )?)
         })
         .collect()
+}
+
+#[derive(Clone, Debug)]
+struct ShippedDestination {
+    object: u32,
+    target: PdfObjectId,
+    view: PdfDestinationView,
+}
+
+fn lower_page_destinations(
+    stores: &Universe,
+    artifacts: &[CommittedArtifact],
+    records: &[tex_state::PdfPageRecord],
+    pages: &[PositionedPage],
+    decimal_digits: i32,
+) -> Result<Vec<ShippedDestination>, PdfBuildError> {
+    let mut seen = BTreeSet::new();
+    let mut result = Vec::new();
+    for (page, record) in pages.iter().zip(records) {
+        let bytes = artifact_bytes(stores, artifacts, record.artifact())?;
+        let artifact = tex_out::PageArtifact::from_bytes(&bytes)?;
+        let (_, page_height) = pdf_page_extents(&artifact, *record)?;
+        let page_object = object_id(record.page_object())?;
+        let mut boxes = BTreeMap::new();
+        for event in &page.events {
+            match event {
+                PositionedEvent::Box(positioned_box) => {
+                    boxes.insert(positioned_box.id, *positioned_box);
+                }
+                PositionedEvent::PdfDestination(destination) => {
+                    if !seen.insert(destination.marker.object) {
+                        continue;
+                    }
+                    let target = destination
+                        .marker
+                        .structure
+                        .map(object_id)
+                        .transpose()?
+                        .unwrap_or(page_object);
+                    let x = destination
+                        .x
+                        .checked_add(record.h_origin())
+                        .ok_or(PdfBuildError::PageGeometryOverflow)?;
+                    let y = page_height
+                        .checked_sub(destination.y)
+                        .and_then(|value| value.checked_sub(record.v_origin()))
+                        .ok_or(PdfBuildError::PageGeometryOverflow)?;
+                    let number = |value| scaled_to_bp_number(value, decimal_digits);
+                    let view = match destination.marker.kind {
+                        tex_out::PdfDestinationKind::Xyz { zoom } => PdfDestinationView::Xyz {
+                            left: number(x)?,
+                            top: number(y)?,
+                            zoom: zoom
+                                .map(|zoom| PdfNumber::new(i64::from(zoom), 3))
+                                .transpose()?,
+                        },
+                        tex_out::PdfDestinationKind::FitBoundingBoxHorizontal => {
+                            PdfDestinationView::FitBoundingBoxHorizontal { top: number(y)? }
+                        }
+                        tex_out::PdfDestinationKind::FitBoundingBoxVertical => {
+                            PdfDestinationView::FitBoundingBoxVertical { left: number(x)? }
+                        }
+                        tex_out::PdfDestinationKind::FitBoundingBox => {
+                            PdfDestinationView::FitBoundingBox
+                        }
+                        tex_out::PdfDestinationKind::FitHorizontal => {
+                            PdfDestinationView::FitHorizontal { top: number(y)? }
+                        }
+                        tex_out::PdfDestinationKind::FitVertical => {
+                            PdfDestinationView::FitVertical { left: number(x)? }
+                        }
+                        tex_out::PdfDestinationKind::FitRectangle {
+                            width,
+                            height,
+                            depth,
+                        } => {
+                            let positioned_box = boxes[&destination.containing_box];
+                            let margin = destination.marker.margin;
+                            let left = destination
+                                .x
+                                .checked_sub(margin)
+                                .and_then(|value| value.checked_add(record.h_origin()))
+                                .ok_or(PdfBuildError::PageGeometryOverflow)?;
+                            let right = destination
+                                .x
+                                .checked_add(width.unwrap_or_else(|| {
+                                    positioned_box
+                                        .x
+                                        .checked_add(positioned_box.width)
+                                        .and_then(|right| right.checked_sub(destination.x))
+                                        .unwrap_or(Scaled::from_raw(0))
+                                }))
+                                .and_then(|value| value.checked_add(margin))
+                                .and_then(|value| value.checked_add(record.h_origin()))
+                                .ok_or(PdfBuildError::PageGeometryOverflow)?;
+                            let top_tex = height.map_or(positioned_box.y, |height| {
+                                destination.y.checked_sub(height).unwrap_or(destination.y)
+                            });
+                            let bottom_tex = depth.map_or(
+                                positioned_box
+                                    .y
+                                    .checked_add(positioned_box.height)
+                                    .unwrap_or(positioned_box.y),
+                                |depth| destination.y.checked_add(depth).unwrap_or(destination.y),
+                            );
+                            let top = page_height
+                                .checked_sub(top_tex)
+                                .and_then(|value| value.checked_sub(record.v_origin()))
+                                .and_then(|value| value.checked_add(margin))
+                                .ok_or(PdfBuildError::PageGeometryOverflow)?;
+                            let bottom = page_height
+                                .checked_sub(bottom_tex)
+                                .and_then(|value| value.checked_sub(record.v_origin()))
+                                .and_then(|value| value.checked_sub(margin))
+                                .ok_or(PdfBuildError::PageGeometryOverflow)?;
+                            PdfDestinationView::FitRectangle {
+                                left: number(left)?,
+                                bottom: number(bottom)?,
+                                right: number(right)?,
+                                top: number(top)?,
+                            }
+                        }
+                        tex_out::PdfDestinationKind::Fit => PdfDestinationView::Fit,
+                    };
+                    result.push(ShippedDestination {
+                        object: destination.marker.object,
+                        target,
+                        view,
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(result)
+}
+
+fn destination_objects(
+    stores: &Universe,
+    pages: &[tex_state::PdfPageRecord],
+    shipped: Vec<ShippedDestination>,
+    next_object: &mut u32,
+) -> Result<DestinationObjects, PdfBuildError> {
+    let first_page = pages
+        .first()
+        .map(|page| object_id(page.page_object()))
+        .transpose()?;
+    let shipped = shipped
+        .into_iter()
+        .map(|value| (value.object, value))
+        .collect::<BTreeMap<_, _>>();
+    let mut objects = Vec::new();
+    let mut names = Vec::new();
+    for record in stores.pdf_destinations(false) {
+        let explicit = if let Some(value) = shipped.get(&record.object()) {
+            PdfExplicitDestination {
+                page: value.target,
+                view: value.view.clone(),
+            }
+        } else if let Some(page) = first_page {
+            PdfExplicitDestination {
+                page,
+                view: PdfDestinationView::Fit,
+            }
+        } else {
+            continue;
+        };
+        let named = match record.identity() {
+            tex_state::PdfDestinationIdentity::Name(name) => {
+                names.push((decode_pdf_string(name), object_id(record.object())?));
+                true
+            }
+            tex_state::PdfDestinationIdentity::Number(_) => false,
+        };
+        objects.push(PdfIndirectObject {
+            id: object_id(record.object())?,
+            object: if named {
+                PdfObject::NamedDestination(explicit)
+            } else {
+                PdfObject::Destination(explicit)
+            },
+        });
+    }
+    for record in stores.pdf_destinations(true) {
+        let Some(value) = shipped.get(&record.object()) else {
+            continue;
+        };
+        objects.push(PdfIndirectObject {
+            id: object_id(record.object())?,
+            object: PdfObject::Destination(PdfExplicitDestination {
+                page: value.target,
+                view: value.view.clone(),
+            }),
+        });
+    }
+    names.sort_by(|left, right| left.0.cmp(&right.0));
+    let (tree, root) = build_destination_name_tree(names, next_object)?;
+    Ok(DestinationObjects {
+        destinations: objects,
+        name_tree: tree,
+        name_tree_root: root,
+    })
+}
+
+struct DestinationObjects {
+    destinations: Vec<PdfIndirectObject>,
+    name_tree: Vec<PdfIndirectObject>,
+    name_tree_root: Option<PdfObjectId>,
+}
+
+fn decode_pdf_string(source: &[u8]) -> Vec<u8> {
+    if source.len() >= 2 && source[0] == b'<' && source[source.len() - 1] == b'>' {
+        let hex = &source[1..source.len() - 1];
+        if hex.iter().all(u8::is_ascii_hexdigit) {
+            let mut result = Vec::with_capacity(hex.len().div_ceil(2));
+            for pair in hex.chunks(2) {
+                let high = (pair[0] as char).to_digit(16).expect("hex digit") as u8;
+                let low = pair.get(1).map_or(0, |byte| {
+                    (*byte as char).to_digit(16).expect("hex digit") as u8
+                });
+                result.push((high << 4) | low);
+            }
+            return result;
+        }
+    }
+    let body = if source.len() >= 2 && source[0] == b'(' && source[source.len() - 1] == b')' {
+        &source[1..source.len() - 1]
+    } else {
+        source
+    };
+    let mut result = Vec::with_capacity(body.len());
+    let mut index = 0;
+    while index < body.len() {
+        if body[index] != b'\\' {
+            result.push(body[index]);
+            index += 1;
+            continue;
+        }
+        index += 1;
+        let Some(&escaped) = body.get(index) else {
+            break;
+        };
+        if escaped.is_ascii_digit() && escaped < b'8' {
+            let mut value = 0_u16;
+            let mut count = 0;
+            while count < 3 && index < body.len() && matches!(body[index], b'0'..=b'7') {
+                value = value * 8 + u16::from(body[index] - b'0');
+                index += 1;
+                count += 1;
+            }
+            result.push(value as u8);
+            continue;
+        }
+        match escaped {
+            b'n' => result.push(b'\n'),
+            b'r' => result.push(b'\r'),
+            b't' => result.push(b'\t'),
+            b'b' => result.push(8),
+            b'f' => result.push(12),
+            b'\n' => {}
+            b'\r' => {
+                if body.get(index + 1) == Some(&b'\n') {
+                    index += 1;
+                }
+            }
+            byte => result.push(byte),
+        }
+        index += 1;
+    }
+    result
+}
+
+fn build_destination_name_tree(
+    names: Vec<(Vec<u8>, PdfObjectId)>,
+    next_object: &mut u32,
+) -> Result<(Vec<PdfIndirectObject>, Option<PdfObjectId>), PdfBuildError> {
+    if names.is_empty() {
+        return Ok((Vec::new(), None));
+    }
+    let mut objects = Vec::new();
+    let mut level = Vec::new();
+    for chunk in names.chunks(6) {
+        let id = object_id(*next_object)?;
+        *next_object = next_object
+            .checked_add(1)
+            .ok_or(PdfBuildError::ObjectCapacity)?;
+        let min = chunk.first().expect("nonempty chunk").0.clone();
+        let max = chunk.last().expect("nonempty chunk").0.clone();
+        objects.push(PdfIndirectObject {
+            id,
+            object: PdfObject::DestinationNameTree(PdfDestinationNameTree {
+                limits: Some((min.clone(), max.clone())),
+                children: PdfDestinationNameTreeChildren::Names(chunk.to_vec()),
+            }),
+        });
+        level.push((id, min, max));
+    }
+    while level.len() > 1 {
+        let root_level = level.len() <= 6;
+        let mut parent = Vec::new();
+        for chunk in level.chunks(6) {
+            let id = object_id(*next_object)?;
+            *next_object = next_object
+                .checked_add(1)
+                .ok_or(PdfBuildError::ObjectCapacity)?;
+            let min = chunk.first().expect("nonempty chunk").1.clone();
+            let max = chunk.last().expect("nonempty chunk").2.clone();
+            objects.push(PdfIndirectObject {
+                id,
+                object: PdfObject::DestinationNameTree(PdfDestinationNameTree {
+                    limits: (!root_level).then(|| (min.clone(), max.clone())),
+                    children: PdfDestinationNameTreeChildren::Kids(
+                        chunk.iter().map(|entry| entry.0).collect(),
+                    ),
+                }),
+            });
+            parent.push((id, min, max));
+        }
+        level = parent;
+    }
+    let root = level[0].0;
+    if let Some(PdfIndirectObject {
+        object: PdfObject::DestinationNameTree(tree),
+        ..
+    }) = objects.iter_mut().find(|object| object.id == root)
+    {
+        tree.limits = None;
+    }
+    Ok((objects, Some(root)))
 }
 
 fn lower_page_annotations(
@@ -3144,18 +3467,6 @@ fn write_pdf_string(bytes: &[u8], out: &mut Vec<u8>) {
         out.push(byte);
     }
     out.push(b')');
-}
-
-fn pdf_action_placeholder(
-    action: PdfActionRecord,
-    pages: &[tex_state::PdfPageRecord],
-) -> Result<Vec<u8>, PdfBuildError> {
-    if matches!(action.spec(), PdfActionSpec::GoTo(_)) {
-        let page = pages.first().ok_or(PdfBuildError::OpenActionHasNoPage)?;
-        Ok(format!("[{} 0 R /Fit]", page.page_object()).into_bytes())
-    } else {
-        Ok(b"null".to_vec())
-    }
 }
 
 fn indirect_dictionary(id: PdfObjectId, dictionary: PdfDictionary) -> PdfIndirectObject {
@@ -6093,6 +6404,38 @@ mod tests {
             pdf.windows(b"DEFERRED-TWO".len())
                 .any(|w| w == b"DEFERRED-TWO")
         );
+    }
+
+    #[test]
+    fn pdf_destinations_emit_typed_arrays_dictionaries_and_six_way_name_tree() {
+        let (mut stores, run) = run(concat!(
+            "\\pdfoutput=1\\pdfcompresslevel=0",
+            "\\shipout\\vbox{",
+            "\\pdfdest name{z} fit \\pdfdest name{a} xyz zoom 0 ",
+            "\\pdfdest name{m} fith \\pdfdest name{b} fitv ",
+            "\\pdfdest name{q} fitb \\pdfdest name{c} fitbh ",
+            "\\pdfdest name{x} fitbv \\pdfdest name{d} fitr width 2pt height 3pt depth 1pt ",
+            "\\pdfdest num 42 fit}",
+            "\\end",
+        ));
+        let pdf = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
+            .expect("destination PDF assembles");
+        let parsed = lopdf::Document::load_mem(&pdf).expect("destination PDF parses");
+        assert_eq!(parsed.get_pages().len(), 1);
+        for marker in [
+            b"/Dests".as_slice(),
+            b"/Names",
+            b"/Kids",
+            b"/Limits",
+            b"/FitR",
+            b"/XYZ",
+        ] {
+            assert!(
+                pdf.windows(marker.len()).any(|window| window == marker),
+                "missing {:?}",
+                String::from_utf8_lossy(marker)
+            );
+        }
     }
 
     #[test]

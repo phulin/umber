@@ -926,16 +926,24 @@ pub(crate) fn warn_pdf_destination_duplicate(
     if stores.int_param(IntParam::PDF_SUPPRESS_WARNING_DUP_DEST) > 0 {
         return;
     }
+    let warning = pdf_destination_duplicate_warning(identity);
+    stores
+        .world_mut()
+        .write_text(tex_state::PrintSink::TerminalAndLog, &warning);
+}
+
+pub(crate) fn pdf_destination_duplicate_warning(
+    identity: &tex_state::PdfDestinationIdentity,
+) -> String {
     let identity = match identity {
         tex_state::PdfDestinationIdentity::Name(name) => {
             format!("name{{{}}}", String::from_utf8_lossy(name))
         }
         tex_state::PdfDestinationIdentity::Number(number) => format!("num{number}"),
     };
-    stores.world_mut().write_text(
-        tex_state::PrintSink::TerminalAndLog,
-        &format!("\npdfTeX warning (ext4): destination with the same identifier ({identity}) has been already used, duplicate ignored\n"),
-    );
+    format!(
+        "\npdfTeX warning (ext4): destination with the same identifier ({identity}) has been already used, duplicate ignored\n"
+    )
 }
 
 fn execute_pdf_start_link(

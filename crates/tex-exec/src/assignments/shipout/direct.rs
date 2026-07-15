@@ -28,6 +28,7 @@ pub(super) struct StagedShipout {
     pub(super) artifact: VerifiedArtifact,
     pub(super) dvi_plan: DviPagePlan,
     pub(super) effect_pos: tex_state::EffectPos,
+    pub(super) retained_diagnostics: Vec<(PrintSink, String)>,
 }
 
 pub(super) fn stage_form(
@@ -231,11 +232,13 @@ pub(super) fn stage_shipout(
     let input_summary = input.publication_summary(stores);
     stores.set_input_summary(input_summary);
     let effect_pos = stores.world().effect_pos();
+    let retained_diagnostics = overlay.diagnostics.clone();
     Ok(StagedShipout {
         artifact: VerifiedArtifact::new(artifact_bytes)
             .with_render_origins(emission.render_origins),
         dvi_plan,
         effect_pos,
+        retained_diagnostics,
     })
 }
 

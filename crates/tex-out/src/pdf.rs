@@ -465,6 +465,14 @@ pub enum PdfValue {
 pub enum PdfObject {
     Value(PdfValue),
     Annotation(PdfAnnotationObject),
+    /// A typed page destination array.
+    Destination(PdfExplicitDestination),
+    /// A typed named-destination dictionary containing `/D`.
+    NamedDestination(PdfExplicitDestination),
+    /// One typed node in the catalog destination name tree.
+    DestinationNameTree(PdfDestinationNameTree),
+    /// The indirect catalog `/Names` dictionary.
+    Names(PdfNamesObject),
     /// One complete direct object body retained for pdfTeX compatibility.
     Raw(Vec<u8>),
     Stream {
@@ -483,6 +491,59 @@ pub enum PdfObject {
         image: PdfImageXObject,
         data: Vec<u8>,
     },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PdfExplicitDestination {
+    pub page: PdfObjectId,
+    pub view: PdfDestinationView,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PdfDestinationView {
+    Xyz {
+        left: PdfNumber,
+        top: PdfNumber,
+        zoom: Option<PdfNumber>,
+    },
+    FitBoundingBoxHorizontal {
+        top: PdfNumber,
+    },
+    FitBoundingBoxVertical {
+        left: PdfNumber,
+    },
+    FitBoundingBox,
+    FitHorizontal {
+        top: PdfNumber,
+    },
+    FitVertical {
+        left: PdfNumber,
+    },
+    FitRectangle {
+        left: PdfNumber,
+        bottom: PdfNumber,
+        right: PdfNumber,
+        top: PdfNumber,
+    },
+    Fit,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PdfDestinationNameTree {
+    pub limits: Option<(Vec<u8>, Vec<u8>)>,
+    pub children: PdfDestinationNameTreeChildren,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PdfDestinationNameTreeChildren {
+    Names(Vec<(Vec<u8>, PdfObjectId)>),
+    Kids(Vec<PdfObjectId>),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PdfNamesObject {
+    pub destinations: Option<PdfObjectId>,
+    pub raw_entries: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -786,7 +847,12 @@ fn validate_document(
             PdfObject::ImageXObject { data, .. } => {
                 stream_bytes = stream_bytes.saturating_add(data.len());
             }
-            PdfObject::Value(_) | PdfObject::Annotation(_) => {}
+            PdfObject::Value(_)
+            | PdfObject::Annotation(_)
+            | PdfObject::Destination(_)
+            | PdfObject::NamedDestination(_)
+            | PdfObject::DestinationNameTree(_)
+            | PdfObject::Names(_) => {}
         }
         if stream_bytes > limits.max_stream_bytes {
             return Err(PdfModelError::TooManyStreamBytes {
@@ -841,6 +907,34 @@ fn validate_object_values(
                 {
                     return Err(PdfModelError::MissingObject(id));
                 }
+            }
+        }
+        PdfObject::Destination(destination) | PdfObject::NamedDestination(destination) => {
+            if !ids.contains(&destination.page) {
+                return Err(PdfModelError::MissingObject(destination.page));
+            }
+        }
+        PdfObject::DestinationNameTree(tree) => match &tree.children {
+            PdfDestinationNameTreeChildren::Names(entries) => {
+                for (_, id) in entries {
+                    if !ids.contains(id) {
+                        return Err(PdfModelError::MissingObject(*id));
+                    }
+                }
+            }
+            PdfDestinationNameTreeChildren::Kids(kids) => {
+                for id in kids {
+                    if !ids.contains(id) {
+                        return Err(PdfModelError::MissingObject(*id));
+                    }
+                }
+            }
+        },
+        PdfObject::Names(names) => {
+            if let Some(id) = names.destinations
+                && !ids.contains(&id)
+            {
+                return Err(PdfModelError::MissingObject(id));
             }
         }
     }
@@ -1071,6 +1165,93 @@ fn hash_object(object: &PdfObject, hasher: &mut CanonicalHasher) {
             hasher.u32(image.soft_mask.map_or(0, PdfObjectId::get));
             hasher.bytes(data);
         }
+        PdfObject::Destination(destination) | PdfObject::NamedDestination(destination) => {
+            hasher.byte(if matches!(object, PdfObject::Destination(_)) {
+                5
+            } else {
+                6
+            });
+            hasher.u32(destination.page.get());
+            hash_destination_view(&destination.view, hasher);
+        }
+        PdfObject::DestinationNameTree(tree) => {
+            hasher.byte(7);
+            hasher.bool(tree.limits.is_some());
+            if let Some((min, max)) = &tree.limits {
+                hasher.bytes(min);
+                hasher.bytes(max);
+            }
+            match &tree.children {
+                PdfDestinationNameTreeChildren::Names(entries) => {
+                    hasher.byte(0);
+                    hasher.len(entries.len());
+                    for (name, id) in entries {
+                        hasher.bytes(name);
+                        hasher.u32(id.get());
+                    }
+                }
+                PdfDestinationNameTreeChildren::Kids(kids) => {
+                    hasher.byte(1);
+                    hasher.len(kids.len());
+                    for id in kids {
+                        hasher.u32(id.get());
+                    }
+                }
+            }
+        }
+        PdfObject::Names(names) => {
+            hasher.byte(8);
+            hasher.u32(names.destinations.map_or(0, PdfObjectId::get));
+            hasher.bytes(&names.raw_entries);
+        }
+    }
+}
+
+fn hash_destination_view(view: &PdfDestinationView, hasher: &mut CanonicalHasher) {
+    let number = |value: &PdfNumber, hasher: &mut CanonicalHasher| {
+        hasher.i64(value.coefficient());
+        hasher.byte(value.decimal_places());
+    };
+    match view {
+        PdfDestinationView::Xyz { left, top, zoom } => {
+            hasher.byte(0);
+            number(left, hasher);
+            number(top, hasher);
+            hasher.bool(zoom.is_some());
+            if let Some(zoom) = zoom {
+                number(zoom, hasher);
+            }
+        }
+        PdfDestinationView::FitBoundingBoxHorizontal { top } => {
+            hasher.byte(1);
+            number(top, hasher);
+        }
+        PdfDestinationView::FitBoundingBoxVertical { left } => {
+            hasher.byte(2);
+            number(left, hasher);
+        }
+        PdfDestinationView::FitBoundingBox => hasher.byte(3),
+        PdfDestinationView::FitHorizontal { top } => {
+            hasher.byte(4);
+            number(top, hasher);
+        }
+        PdfDestinationView::FitVertical { left } => {
+            hasher.byte(5);
+            number(left, hasher);
+        }
+        PdfDestinationView::FitRectangle {
+            left,
+            bottom,
+            right,
+            top,
+        } => {
+            hasher.byte(6);
+            number(left, hasher);
+            number(bottom, hasher);
+            number(right, hasher);
+            number(top, hasher);
+        }
+        PdfDestinationView::Fit => hasher.byte(7),
     }
 }
 

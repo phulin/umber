@@ -435,6 +435,11 @@ impl Chunk {
         self.indirect(id).dict().typed()
     }
 
+    /// Start writing an indirect catalog `/Names` dictionary.
+    pub fn names(&mut self, id: Ref) -> Names<'_> {
+        self.indirect(id).start()
+    }
+
     /// Start writing an indirect article-thread reference array.
     pub fn thread_list(&mut self, id: Ref) -> ThreadList<'_> {
         self.indirect(id).start()

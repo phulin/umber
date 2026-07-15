@@ -2247,6 +2247,12 @@ pub struct Names<'a> {
 writer!(Names: |obj| Self { dict: obj.dict() });
 
 impl Names<'_> {
+    /// Reference an indirect `/Dests` name-tree root.
+    pub fn destinations_ref(&mut self, id: Ref) -> &mut Self {
+        self.pair(Name(b"Dests"), id);
+        self
+    }
+
     /// Start writing the `/Dests` attribute to provide associations for
     /// [destinations](Destination).
     pub fn destinations(&mut self) -> NameTree<'_, Ref> {
