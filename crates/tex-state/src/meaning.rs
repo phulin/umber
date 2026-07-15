@@ -454,7 +454,7 @@ impl ExpandablePrimitive {
 }
 
 /// Unexpandable primitive opcodes represented directly in meaning words.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum UnexpandablePrimitive {
     Def,
     Edef,
@@ -695,6 +695,10 @@ pub enum UnexpandablePrimitive {
     PdfNames,
     PdfTrailer,
     PdfTrailerId,
+    PdfInterwordSpaceOn,
+    PdfInterwordSpaceOff,
+    PdfFakeSpace,
+    PdfSpaceFont,
 }
 
 impl UnexpandablePrimitive {
@@ -939,6 +943,11 @@ impl UnexpandablePrimitive {
             Self::PdfNames => 235,
             Self::PdfTrailer => 236,
             Self::PdfTrailerId => 237,
+            // 238..=246 are reserved by the accepted PDF form/image slice.
+            Self::PdfInterwordSpaceOn => 247,
+            Self::PdfInterwordSpaceOff => 248,
+            Self::PdfFakeSpace => 249,
+            Self::PdfSpaceFont => 250,
         }
     }
 
@@ -1183,6 +1192,10 @@ impl UnexpandablePrimitive {
             235 => Some(Self::PdfNames),
             236 => Some(Self::PdfTrailer),
             237 => Some(Self::PdfTrailerId),
+            247 => Some(Self::PdfInterwordSpaceOn),
+            248 => Some(Self::PdfInterwordSpaceOff),
+            249 => Some(Self::PdfFakeSpace),
+            250 => Some(Self::PdfSpaceFont),
             _ => None,
         }
     }

@@ -168,6 +168,7 @@ pub fn compare_page(
                     return mismatch(positioned, ordinal, "browser-shaped source codes differ");
                 }
             }
+            PositionedEvent::PdfAccessibility(_) => {}
         }
     }
     if cursor != dvi.len() {

@@ -751,6 +751,7 @@ fn write_page(
                 css_px(out, event.y, page.mag);
                 out.push_str("\"></span>\n");
             }
+            PositionedEvent::PdfAccessibility(_) => {}
         }
         check_html_size(out, options)?;
     }

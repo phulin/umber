@@ -1859,6 +1859,15 @@ impl Universe {
         self.pdf.pages()
     }
 
+    pub fn set_pdf_space_font_name(&mut self, name: Vec<u8>) {
+        self.pdf.set_space_font_name(name);
+    }
+
+    #[must_use]
+    pub fn pdf_space_font_name(&self, id: u32) -> Option<&[u8]> {
+        self.pdf.space_font_name(id)
+    }
+
     #[must_use]
     pub const fn pdf_next_object_id(&self) -> u32 {
         self.pdf.next_object()
@@ -2207,6 +2216,7 @@ impl Universe {
             page_attr: self.current_pdf_token_parameter(TokParam::PDF_PAGE_ATTR),
             resources: self.current_pdf_token_parameter(TokParam::PDF_PAGE_RESOURCES),
             omit_procset: self.int_param(IntParam::PDF_OMIT_PROCSET),
+            space_font_name: self.pdf.current_space_font_name_id(),
         }
     }
 

@@ -47,6 +47,7 @@ pub use model::{
     ArtifactValidationError, ArtifactValidationLimits, BoxNode, DEFAULT_BANNER, DiscKind,
     EffectSink, FontResource, FontResourceConstruction, GlueKind, GlueOrder, GlueSetRatio,
     GlueSign, GlueSpec, JobInfo, KernKind, LeaderPayload, OpenTypeFontResource, PageArtifact,
-    PageArtifactBuilder, PageEffect, PageNode, PageToken, TokenCatcode, UnvalidatedPageArtifact,
+    PageArtifactBuilder, PageEffect, PageNode, PageToken, PdfAccessibilityEffect, TokenCatcode,
+    UnvalidatedPageArtifact,
 };
 pub use tex_content::{ContentDomain, ContentHash, ContentIdentity};

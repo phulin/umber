@@ -338,7 +338,9 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                 PositionedEvent::Special(special) => {
                     return Err(PdfBuildError::UnsupportedSpecial(special.class));
                 }
-                PositionedEvent::Box(_) | PositionedEvent::TextRun(_) => {}
+                PositionedEvent::Box(_)
+                | PositionedEvent::TextRun(_)
+                | PositionedEvent::PdfAccessibility(_) => {}
             }
         }
 
@@ -1650,6 +1652,62 @@ mod tests {
         assert_eq!(stores.pdf_pages()[0].resources_object(), 1);
         assert_eq!(stores.pdf_pages()[0].page_object(), 2);
         assert_eq!(stores.pdf_pages()[0].contents_object(), 3);
+    }
+
+    #[test]
+    fn accessibility_whatsits_survive_shipout_and_artifact_round_trip() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        stores
+            .world_mut()
+            .set_memory_file(
+                "cmr10.tfm",
+                include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm").to_vec(),
+            )
+            .expect("seed metrics");
+        let run = run_in(
+            &mut stores,
+            concat!(
+                "\\pdfoutput=1 ",
+                "\\font\\a=cmr10 \\a ",
+                "\\shipout\\hbox{A\\pdfinterwordspaceon B\\pdffakespace ",
+                "C\\pdfinterwordspaceoff D}",
+                "\\end",
+            ),
+        );
+        let artifact = tex_out::PageArtifact::from_bytes(run.committed_artifacts[0].bytes())
+            .expect("artifact round trip");
+        assert_eq!(
+            artifact
+                .effects
+                .iter()
+                .filter_map(|effect| match effect {
+                    tex_out::PageEffect::PdfAccessibility(control) => Some(*control),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            vec![
+                tex_out::PdfAccessibilityEffect::InterwordSpaceOn,
+                tex_out::PdfAccessibilityEffect::FakeSpace,
+                tex_out::PdfAccessibilityEffect::InterwordSpaceOff,
+            ]
+        );
+        let positioned = tex_out::positioned::lower_page(&artifact, 0).expect("positioned page");
+        assert_eq!(
+            positioned
+                .events
+                .iter()
+                .filter_map(|event| match event {
+                    PositionedEvent::PdfAccessibility(control) => Some(control.control),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            vec![
+                tex_out::PdfAccessibilityEffect::InterwordSpaceOn,
+                tex_out::PdfAccessibilityEffect::FakeSpace,
+                tex_out::PdfAccessibilityEffect::InterwordSpaceOff,
+            ]
+        );
     }
 
     #[test]

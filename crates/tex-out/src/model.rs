@@ -378,6 +378,15 @@ pub enum PageEffect {
     CloseOut { stream: u8 },
     Write { sink: EffectSink, text: String },
     Special { class: String, payload: Vec<u8> },
+    PdfAccessibility(PdfAccessibilityEffect),
+}
+
+/// Ordered PDF-only accessibility control retained at its shipped position.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PdfAccessibilityEffect {
+    InterwordSpaceOn,
+    InterwordSpaceOff,
+    FakeSpace,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -468,7 +477,9 @@ fn validate_artifact(
                 sink: EffectSink::Stream(stream),
                 ..
             } => Some(*stream),
-            PageEffect::Write { .. } | PageEffect::Special { .. } => None,
+            PageEffect::Write { .. }
+            | PageEffect::Special { .. }
+            | PageEffect::PdfAccessibility(_) => None,
         };
         if stream.is_some_and(|stream| stream >= 16) {
             return Err(ArtifactValidationError::InvalidStream {

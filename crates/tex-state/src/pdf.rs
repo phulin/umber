@@ -375,6 +375,7 @@ pub(crate) struct PdfPageParameters {
     pub(crate) resources: PdfTokenParameter,
     /// Raw `\pdfomitprocset` value captured when this page is shipped.
     pub(crate) omit_procset: i32,
+    pub(crate) space_font_name: u32,
 }
 
 /// Stable object identities assigned to one committed PDF page.
@@ -432,6 +433,10 @@ impl PdfPageRecord {
     pub const fn omit_procset(self) -> i32 {
         self.parameters.omit_procset
     }
+    #[must_use]
+    pub const fn space_font_name_id(self) -> u32 {
+        self.parameters.space_font_name
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -452,6 +457,9 @@ pub(crate) struct PdfStateCursor {
     catalog_open_action: Option<PdfActionRecord>,
     action_fingerprint: u64,
     page_reservation_fingerprint: u64,
+    space_font_name_count: usize,
+    current_space_font_name: u32,
+    space_font_name_fingerprint: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -494,10 +502,15 @@ pub(crate) struct PdfState {
     action_fingerprint: u64,
     page_reservations: Arc<Vec<PdfPageReservation>>,
     page_reservation_fingerprint: u64,
+    space_font_names: Vec<Vec<u8>>,
+    space_font_name_lookup: BTreeMap<Vec<u8>, u32>,
+    current_space_font_name: u32,
+    space_font_name_fingerprint: u64,
 }
 
 impl Default for PdfState {
     fn default() -> Self {
+        let default_space_font = b"pdftexspace".to_vec();
         Self {
             enabled: false,
             next_object: FIRST_DYNAMIC_OBJECT,
@@ -517,6 +530,10 @@ impl Default for PdfState {
             action_fingerprint: StateHasher::new(0x7064_665f_6163_746e).finish(),
             page_reservations: Arc::new(Vec::new()),
             page_reservation_fingerprint: StateHasher::new(0x7064_665f_7067_7273).finish(),
+            space_font_names: vec![default_space_font.clone()],
+            space_font_name_lookup: BTreeMap::from([(default_space_font.clone(), 0)]),
+            current_space_font_name: 0,
+            space_font_name_fingerprint: space_font_name_fingerprint(&default_space_font),
         }
     }
 }
@@ -540,6 +557,28 @@ impl PdfState {
     pub(crate) fn pages(&self) -> &[PdfPageRecord] {
         &self.pages
     }
+    pub(crate) fn set_space_font_name(&mut self, name: Vec<u8>) {
+        let id = if let Some(&id) = self.space_font_name_lookup.get(&name) {
+            id
+        } else {
+            let id = u32::try_from(self.space_font_names.len())
+                .expect("PDF space-font name count fits u32");
+            self.space_font_names.push(name.clone());
+            self.space_font_name_lookup.insert(name, id);
+            id
+        };
+        self.current_space_font_name = id;
+        self.space_font_name_fingerprint =
+            space_font_name_fingerprint(&self.space_font_names[id as usize]);
+    }
+    #[must_use]
+    pub(crate) const fn current_space_font_name_id(&self) -> u32 {
+        self.current_space_font_name
+    }
+    #[must_use]
+    pub(crate) fn space_font_name(&self, id: u32) -> Option<&[u8]> {
+        self.space_font_names.get(id as usize).map(Vec::as_slice)
+    }
     #[must_use]
     pub(crate) const fn next_object(&self) -> u32 {
         self.next_object
@@ -558,6 +597,8 @@ impl PdfState {
             && self.document_objects == PdfDocumentObjectIds::default()
             && self.catalog_open_action.is_none()
             && self.page_reservations.is_empty()
+            && self.space_font_names.len() == 1
+            && self.current_space_font_name == 0
     }
 
     pub(crate) fn ensure_page_capacity(&self, parameters: PdfOutputParameters) -> Result<(), ()> {
@@ -1153,6 +1194,9 @@ impl PdfState {
             catalog_open_action: self.catalog_open_action,
             action_fingerprint: self.action_fingerprint,
             page_reservation_fingerprint: self.page_reservation_fingerprint,
+            space_font_name_count: self.space_font_names.len(),
+            current_space_font_name: self.current_space_font_name,
+            space_font_name_fingerprint: self.space_font_name_fingerprint,
         }
     }
     #[must_use]
@@ -1191,6 +1235,17 @@ impl PdfState {
         self.action_fingerprint = cursor.action_fingerprint;
         self.page_reservations = snapshot.page_reservations;
         self.page_reservation_fingerprint = cursor.page_reservation_fingerprint;
+        self.space_font_names.truncate(cursor.space_font_name_count);
+        self.space_font_name_lookup.clear();
+        self.space_font_name_lookup.extend(
+            self.space_font_names
+                .iter()
+                .cloned()
+                .enumerate()
+                .map(|(index, name)| (name, index as u32)),
+        );
+        self.current_space_font_name = cursor.current_space_font_name;
+        self.space_font_name_fingerprint = cursor.space_font_name_fingerprint;
     }
 
     pub(crate) fn set_match(
@@ -1239,6 +1294,7 @@ impl PdfState {
             hasher.u64(cursor.document_fragment_fingerprint);
             hasher.u64(cursor.action_fingerprint);
             hasher.u64(cursor.page_reservation_fingerprint);
+            hasher.u64(cursor.space_font_name_fingerprint);
             hasher.bool(cursor.document_objects.pages().is_some());
             if let Some(id) = cursor.document_objects.pages() {
                 hasher.u32(id);
@@ -1431,6 +1487,12 @@ fn base_fingerprint(enabled: bool) -> u64 {
     hasher.finish()
 }
 
+fn space_font_name_fingerprint(name: &[u8]) -> u64 {
+    let mut hasher = StateHasher::new(0x7064_665f_7370_666e);
+    hasher.bytes(name);
+    hasher.finish()
+}
+
 fn freeze_fingerprint(previous: u64, parameters: PdfOutputParameters) -> u64 {
     let mut hasher = StateHasher::new(PDF_PAGE_DOMAIN);
     hasher.u64(previous);
@@ -1452,6 +1514,7 @@ fn append_fingerprint(previous: u64, record: PdfPageRecord) -> u64 {
     hasher.u64(record.parameters.page_attr.semantic_id);
     hasher.u64(record.parameters.resources.semantic_id);
     hasher.i32(record.parameters.omit_procset);
+    hasher.u32(record.parameters.space_font_name);
     hasher.finish()
 }
 
@@ -1587,6 +1650,7 @@ mod tests {
             page_attr: token,
             resources: token,
             omit_procset: 0,
+            space_font_name: 0,
         };
         state.commit_page(hash, parameters, page, token);
         let first = (state.pages()[0], state.cursor());
@@ -1819,6 +1883,39 @@ mod tests {
     }
 
     #[test]
+    fn space_font_names_are_interned_checkpointed_and_page_addressable() {
+        let mut state = PdfState::default();
+        assert_eq!(state.space_font_name(0), Some(b"pdftexspace".as_slice()));
+        assert!(state.is_format_empty());
+        let initial = state.snapshot();
+        let initial_hash = state.hash_fragment();
+
+        state.set_space_font_name(b"fixture-space".to_vec());
+        let selected = state.current_space_font_name_id();
+        assert_eq!(selected, 1);
+        assert_eq!(
+            state.space_font_name(selected),
+            Some(b"fixture-space".as_slice())
+        );
+        let selected_hash = state.hash_fragment();
+        assert_ne!(selected_hash, initial_hash);
+        state.set_space_font_name(b"fixture-space".to_vec());
+        assert_eq!(state.current_space_font_name_id(), selected);
+        assert_eq!(state.space_font_names.len(), 2);
+
+        state.rollback(initial.clone());
+        assert_eq!(state.current_space_font_name_id(), 0);
+        assert_eq!(state.space_font_name(selected), None);
+        assert_eq!(state.hash_fragment(), initial_hash);
+
+        state.set_space_font_name(b"fixture-space".to_vec());
+        assert_eq!(state.current_space_font_name_id(), selected);
+        assert_eq!(state.hash_fragment(), selected_hash);
+        state.rollback(initial);
+        assert!(state.is_format_empty());
+    }
+
+    #[test]
     fn mixed_resource_allocation_is_collision_free_and_replays_exactly() {
         let mut pk_bytes = vec![247, 89, 0];
         pk_bytes.extend_from_slice(&[0; 16]);
@@ -1854,6 +1951,7 @@ mod tests {
             page_attr: token,
             resources: token,
             omit_procset: 0,
+            space_font_name: 0,
         };
         let exercise = |state: &mut PdfState| {
             state.provide_pk_font(pk_request.clone(), pk_font.clone());
@@ -1999,6 +2097,7 @@ mod tests {
                 page_attr: token,
                 resources: token,
                 omit_procset: 0,
+                space_font_name: 0,
             },
             token,
         );

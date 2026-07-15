@@ -108,6 +108,40 @@ fn meaning_variants_round_trip() {
 }
 
 #[test]
+fn pdf_accessibility_operands_are_unique_and_follow_parallel_reservations() {
+    let expected = [
+        (247, UnexpandablePrimitive::PdfInterwordSpaceOn),
+        (248, UnexpandablePrimitive::PdfInterwordSpaceOff),
+        (249, UnexpandablePrimitive::PdfFakeSpace),
+        (250, UnexpandablePrimitive::PdfSpaceFont),
+    ];
+    for (operand, primitive) in expected {
+        assert_eq!(primitive.operand(), operand);
+        assert_eq!(
+            UnexpandablePrimitive::from_operand(operand),
+            Some(primitive)
+        );
+        round_trip(Meaning::UnexpandablePrimitive(primitive));
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    for operand in 0..=250 {
+        if let Some(primitive) = UnexpandablePrimitive::from_operand(operand) {
+            assert_eq!(primitive.operand(), operand);
+            assert!(
+                seen.insert(primitive),
+                "duplicate primitive at operand {operand}"
+            );
+        }
+    }
+    // 238..=246 belong to the accepted form/image branch. They may be absent
+    // until that branch merges, but this slice must never claim them.
+    for reserved in 238..=246 {
+        assert!(expected.iter().all(|(operand, _)| *operand != reserved));
+    }
+}
+
+#[test]
 fn unknown_meaning_exposes_raw_parts_without_public_fields() {
     let flags = MeaningFlags::from_bits(0xa5);
     let word = Meaning::Unknown(RawMeaning::testing_new_with_flags(200, flags, 42)).encode();

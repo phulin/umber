@@ -620,7 +620,7 @@ fn anchor_for_whatsit(
         Whatsit::OpenOut { .. } | Whatsit::CloseOut { .. } | Whatsit::DeferredWrite { .. } => {
             !suppress_deferred_streams
         }
-        Whatsit::Special { .. } => true,
+        Whatsit::Special { .. } | Whatsit::PdfAccessibility(_) => true,
     };
     if !anchored {
         return Ok(None);

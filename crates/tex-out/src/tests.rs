@@ -2,7 +2,8 @@ use crate::{
     ArtifactCodecLimits, ArtifactValidationError, ArtifactValidationLimits, BoxNode,
     CodecLimitKind, ContentHash, DiscKind, EffectSink, FontResource, GlueKind, GlueOrder,
     GlueSetRatio, GlueSign, GlueSpec, JobInfo, KernKind, LeaderPayload, OpenTypeFontResource,
-    PageArtifact, PageEffect, PageNode, PageToken, ParseError, SerializeError, TokenCatcode,
+    PageArtifact, PageEffect, PageNode, PageToken, ParseError, PdfAccessibilityEffect,
+    SerializeError, TokenCatcode,
 };
 use tex_arith::Scaled;
 
@@ -222,7 +223,7 @@ fn rejects_unknown_version() {
 #[test]
 fn rejects_pre_content_identity_v2_artifact_version() {
     let mut bytes = sample_artifact().to_bytes().expect("artifact serializes");
-    assert_eq!(bytes[4], 14);
+    assert_eq!(bytes[4], 15);
     bytes[4] = 11;
 
     assert_eq!(
@@ -684,6 +685,9 @@ fn sample_artifact() -> PageArtifact {
                 path: "job.aux".to_owned(),
             },
             PageEffect::CloseOut { stream: 2 },
+            PageEffect::PdfAccessibility(PdfAccessibilityEffect::InterwordSpaceOn),
+            PageEffect::PdfAccessibility(PdfAccessibilityEffect::FakeSpace),
+            PageEffect::PdfAccessibility(PdfAccessibilityEffect::InterwordSpaceOff),
         ],
     }
     .validate()

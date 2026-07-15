@@ -49,6 +49,7 @@ pub enum PositionedEvent {
     TextRun(PositionedTextRun),
     Rule(PositionedRule),
     Special(PositionedSpecial),
+    PdfAccessibility(PositionedPdfAccessibility),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -106,6 +107,13 @@ pub struct PositionedSpecial {
     pub y: Scaled,
     pub class: String,
     pub payload: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PositionedPdfAccessibility {
+    pub x: Scaled,
+    pub y: Scaled,
+    pub control: crate::PdfAccessibilityEffect,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

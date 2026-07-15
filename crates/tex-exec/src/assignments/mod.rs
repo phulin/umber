@@ -5,8 +5,8 @@ use tex_expand::scan::{
     scan_toks_expanded_with_driver,
 };
 use tex_expand::{
-    DriverExpansionMode, ExpandError, get_command_token_with_context, get_x_token_with_context,
-    scan_dimen, scan_glue, scan_int, scan_optional_keyword_with_context,
+    DriverExpansionMode, ExpandError, append_token_string_text, get_command_token_with_context,
+    get_x_token_with_context, scan_dimen, scan_glue, scan_int, scan_optional_keyword_with_context,
 };
 use tex_lex::{InputStack, LexError, TokenListReplayKind};
 use tex_state::code_tables::{DelCode, LcCode, MathCode, SfCode, UcCode};
@@ -387,6 +387,55 @@ fn execute_pdf_document_fragment(
                 .map_err(|_| ExecError::PdfObjectCapacity)?;
         }
     }
+    Ok(())
+}
+
+fn execute_pdf_accessibility_control(
+    primitive: UnexpandablePrimitive,
+    context: TracedTokenWord,
+    nest: &mut ModeNest,
+    input: &mut InputStack,
+    stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
+    let (name, control) = match primitive {
+        UnexpandablePrimitive::PdfInterwordSpaceOn => (
+            "pdfinterwordspaceon",
+            Some(tex_state::node::PdfAccessibilityControl::InterwordSpaceOn),
+        ),
+        UnexpandablePrimitive::PdfInterwordSpaceOff => (
+            "pdfinterwordspaceoff",
+            Some(tex_state::node::PdfAccessibilityControl::InterwordSpaceOff),
+        ),
+        UnexpandablePrimitive::PdfFakeSpace => (
+            "pdffakespace",
+            Some(tex_state::node::PdfAccessibilityControl::FakeSpace),
+        ),
+        UnexpandablePrimitive::PdfSpaceFont => ("pdfspacefont", None),
+        _ => unreachable!("accessibility helper called for another primitive"),
+    };
+    if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+        return Err(ExecError::PdfExtensionInDviMode(name));
+    }
+    if let Some(control) = control {
+        crate::vertical::append_node_to_current_list(
+            nest,
+            stores,
+            Node::Whatsit(tex_state::node::Whatsit::PdfAccessibility(control)),
+        )?;
+        return Ok(());
+    }
+    let tokens = scan_general_text_expanded_with_driver(
+        input,
+        &mut tex_state::ExpansionContext::new(stores),
+        execution,
+        context,
+    )?;
+    let mut name = String::new();
+    for &token in stores.tokens(tokens) {
+        append_token_string_text(stores, token, &mut name);
+    }
+    stores.set_pdf_space_font_name(name.into_bytes());
     Ok(())
 }
 
@@ -1538,6 +1587,21 @@ fn execute_prefixed_command(
             | UnexpandablePrimitive::PdfTrailerId) => {
                 reject_all_prefixes(prefixes)?;
                 execute_pdf_document_fragment(primitive, command.traced, input, stores, execution)?;
+                Ok(CommandOutcome::continue_only())
+            }
+            primitive @ (UnexpandablePrimitive::PdfInterwordSpaceOn
+            | UnexpandablePrimitive::PdfInterwordSpaceOff
+            | UnexpandablePrimitive::PdfFakeSpace
+            | UnexpandablePrimitive::PdfSpaceFont) => {
+                reject_all_prefixes(prefixes)?;
+                execute_pdf_accessibility_control(
+                    primitive,
+                    command.traced,
+                    nest,
+                    input,
+                    stores,
+                    execution,
+                )?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::Global

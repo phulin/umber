@@ -506,11 +506,20 @@ pub enum Whatsit {
     PdfReferenceObject {
         object: u32,
     },
+    PdfAccessibility(PdfAccessibilityControl),
     Language {
         language: u8,
         left_hyphen_min: u8,
         right_hyphen_min: u8,
     },
+}
+
+/// Ordered PDF text-accessibility controls interpreted during page traversal.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum PdfAccessibilityControl {
+    InterwordSpaceOn,
+    InterwordSpaceOff,
+    FakeSpace,
 }
 
 impl Node {

@@ -223,6 +223,19 @@ fn append_whatsit_effect(
                 .reference_pdf_raw_object(object)
                 .map_err(|_| ExecError::PdfReferencedObjectNotFound)?;
         }
+        Whatsit::PdfAccessibility(control) => {
+            effects.push(PageEffect::PdfAccessibility(match control {
+                tex_state::node::PdfAccessibilityControl::InterwordSpaceOn => {
+                    tex_out::PdfAccessibilityEffect::InterwordSpaceOn
+                }
+                tex_state::node::PdfAccessibilityControl::InterwordSpaceOff => {
+                    tex_out::PdfAccessibilityEffect::InterwordSpaceOff
+                }
+                tex_state::node::PdfAccessibilityControl::FakeSpace => {
+                    tex_out::PdfAccessibilityEffect::FakeSpace
+                }
+            }));
+        }
         Whatsit::OpenOut { .. }
         | Whatsit::CloseOut { .. }
         | Whatsit::DeferredWrite { .. }

@@ -6,7 +6,8 @@ use crate::math::{
     NoadKind,
 };
 use crate::node::{
-    BoxNode, DiscKind, GlueKind, KernKind, LeaderPayload, Node, Sign, UnsetKind, UnsetNode, Whatsit,
+    BoxNode, DiscKind, GlueKind, KernKind, LeaderPayload, Node, PdfAccessibilityControl, Sign,
+    UnsetKind, UnsetNode, Whatsit,
 };
 use crate::scaled::{GlueSetRatio, Scaled};
 use crate::stores::Stores;
@@ -140,6 +141,7 @@ pub(super) enum FormatWhatsit {
     PdfReferenceObject {
         object: u32,
     },
+    PdfAccessibility(PdfAccessibilityControl),
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -456,6 +458,7 @@ impl FormatWhatsit {
                 right_hyphen_min,
             },
             Whatsit::PdfReferenceObject { object } => Self::PdfReferenceObject { object },
+            Whatsit::PdfAccessibility(control) => Self::PdfAccessibility(control),
         }
     }
 
@@ -478,6 +481,7 @@ impl FormatWhatsit {
                 right_hyphen_min,
             },
             Self::PdfReferenceObject { object } => Whatsit::PdfReferenceObject { object },
+            Self::PdfAccessibility(control) => Whatsit::PdfAccessibility(control),
         })
     }
 }

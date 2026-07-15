@@ -2,7 +2,7 @@ use tex_arith::Scaled;
 
 use crate::{
     BoxNode, ContentHash, FontResource, GlueKind, GlueOrder, GlueSetRatio, GlueSign, GlueSpec,
-    JobInfo, KernKind, PageNode, UnvalidatedPageArtifact,
+    JobInfo, KernKind, PageEffect, PageNode, PdfAccessibilityEffect, UnvalidatedPageArtifact,
 };
 
 use super::{PositionedEvent, TextUnit, lower_page};
@@ -99,6 +99,55 @@ fn text_runs_keep_exact_anchor_and_baseline_but_not_glyph_positions() {
     assert_eq!(runs[1].x, sp(89));
     assert_eq!(runs[1].baseline, sp(70));
     assert_eq!(runs[1].units, vec![TextUnit::Code(b'C')]);
+}
+
+#[test]
+fn pdf_accessibility_effects_keep_order_and_exact_anchor() {
+    let root = PageNode::HList(box_node(
+        100,
+        40,
+        10,
+        vec![
+            PageNode::Kern {
+                amount: sp(17),
+                kind: KernKind::Explicit,
+            },
+            PageNode::WhatsitAnchor { effect_index: 0 },
+            PageNode::WhatsitAnchor { effect_index: 1 },
+            PageNode::WhatsitAnchor { effect_index: 2 },
+        ],
+    ));
+    let mut page = page(PageNode::HList(box_node(100, 40, 10, Vec::new())));
+    page.testing_mut().root = root;
+    page.testing_mut().effects = vec![
+        PageEffect::PdfAccessibility(PdfAccessibilityEffect::InterwordSpaceOn),
+        PageEffect::PdfAccessibility(PdfAccessibilityEffect::FakeSpace),
+        PageEffect::PdfAccessibility(PdfAccessibilityEffect::InterwordSpaceOff),
+    ];
+    let positioned = lower_page(&page, 2).expect("lower page");
+    let controls = positioned
+        .events
+        .iter()
+        .filter_map(|event| match event {
+            PositionedEvent::PdfAccessibility(control) => Some(control),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(controls.len(), 3);
+    assert_eq!(controls[0].x, sp(17));
+    assert_eq!(controls[0].y, sp(40));
+    assert_eq!(
+        controls
+            .iter()
+            .map(|control| control.control)
+            .collect::<Vec<_>>(),
+        vec![
+            PdfAccessibilityEffect::InterwordSpaceOn,
+            PdfAccessibilityEffect::FakeSpace,
+            PdfAccessibilityEffect::InterwordSpaceOff,
+        ]
+    );
+    compare_page(&page, &positioned).expect("PDF-only effects do not alter DVI coordinates");
 }
 
 #[test]

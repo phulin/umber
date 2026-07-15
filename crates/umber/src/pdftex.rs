@@ -385,6 +385,16 @@ pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
         ("pdfnames", UnexpandablePrimitive::PdfNames),
         ("pdftrailer", UnexpandablePrimitive::PdfTrailer),
         ("pdftrailerid", UnexpandablePrimitive::PdfTrailerId),
+        (
+            "pdfinterwordspaceon",
+            UnexpandablePrimitive::PdfInterwordSpaceOn,
+        ),
+        (
+            "pdfinterwordspaceoff",
+            UnexpandablePrimitive::PdfInterwordSpaceOff,
+        ),
+        ("pdffakespace", UnexpandablePrimitive::PdfFakeSpace),
+        ("pdfspacefont", UnexpandablePrimitive::PdfSpaceFont),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
@@ -504,6 +514,48 @@ mod tests {
         assert!(!first.is_immediate());
         assert_eq!(records[1].id().raw(), 2);
         assert!(records[1].is_immediate());
+    }
+
+    #[test]
+    fn pdf_accessibility_controls_scan_globally_and_reject_dvi_mode() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        crate::run_memory_with_stores(
+            concat!(
+                "\\pdfoutput=1",
+                "\\def\\spacename{fixture}",
+                "{\\pdfspacefont{\\spacename-space}}",
+                "\\shipout\\hbox{a\\pdfinterwordspaceon b\\pdffakespace",
+                "\\pdfinterwordspaceoff c}",
+                "\\end",
+            ),
+            &mut stores,
+        )
+        .expect("execute PDF accessibility controls");
+        let page = stores.pdf_pages()[0];
+        assert_eq!(
+            stores.pdf_space_font_name(page.space_font_name_id()),
+            Some(b"fixture-space".as_slice())
+        );
+
+        for primitive in [
+            "\\pdfinterwordspaceon",
+            "\\pdfinterwordspaceoff",
+            "\\pdffakespace",
+            "\\pdfspacefont{fixture}",
+        ] {
+            let mut stores = Universe::default();
+            prepare_pdftex_run_stores(&mut stores);
+            let error = crate::run_memory_with_stores(
+                &format!("\\pdfoutput=0{primitive}\\end"),
+                &mut stores,
+            )
+            .expect_err("PDF-only accessibility primitive must fail in DVI mode");
+            assert!(
+                error.to_string().contains("not allowed in DVI mode"),
+                "{primitive}: {error}"
+            );
+        }
     }
 
     #[test]

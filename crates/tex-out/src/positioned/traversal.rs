@@ -6,7 +6,8 @@ use crate::{BoxNode, GlueKind, KernKind, LeaderPayload, PageArtifact, PageEffect
 
 use super::{
     BoxKind, PositionedBox, PositionedError, PositionedEvent, PositionedLimits, PositionedPage,
-    PositionedRule, PositionedSourceRef, PositionedSpecial, PositionedTextRun, TextUnit,
+    PositionedPdfAccessibility, PositionedRule, PositionedSourceRef, PositionedSpecial,
+    PositionedTextRun, TextUnit,
 };
 
 const LEADER_ROUNDING_COMPENSATION: Scaled = Scaled::from_raw(10);
@@ -348,13 +349,26 @@ impl Lowerer<'_> {
             .effects
             .get(effect_index as usize)
             .ok_or(PositionedError::MissingEffect { effect_index })?;
-        if let PageEffect::Special { class, payload } = effect {
-            self.push(PositionedEvent::Special(PositionedSpecial {
-                x: self.cur_h,
-                y: self.cur_v,
-                class: class.clone(),
-                payload: payload.clone(),
-            }))?;
+        match effect {
+            PageEffect::Special { class, payload } => {
+                self.push(PositionedEvent::Special(PositionedSpecial {
+                    x: self.cur_h,
+                    y: self.cur_v,
+                    class: class.clone(),
+                    payload: payload.clone(),
+                }))?;
+            }
+            PageEffect::PdfAccessibility(control) => {
+                self.push(PositionedEvent::PdfAccessibility(
+                    PositionedPdfAccessibility {
+                        x: self.cur_h,
+                        y: self.cur_v,
+                        control: *control,
+                    },
+                ))?;
+            }
+            PageEffect::OpenOut { .. } | PageEffect::CloseOut { .. } | PageEffect::Write { .. } => {
+            }
         }
         Ok(())
     }

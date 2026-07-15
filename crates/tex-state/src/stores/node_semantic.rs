@@ -297,6 +297,14 @@ impl Stores {
                 hasher.tag(17);
                 hasher.u32(*object);
             }
+            Whatsit::PdfAccessibility(control) => {
+                hasher.tag(18);
+                hasher.u8(match control {
+                    crate::node::PdfAccessibilityControl::InterwordSpaceOn => 0,
+                    crate::node::PdfAccessibilityControl::InterwordSpaceOff => 1,
+                    crate::node::PdfAccessibilityControl::FakeSpace => 2,
+                });
+            }
         }
     }
 }

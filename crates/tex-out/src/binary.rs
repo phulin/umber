@@ -1,13 +1,14 @@
 use crate::{
     BoxNode, ContentHash, DiscKind, EffectSink, FontResource, FontResourceConstruction, GlueKind,
     GlueOrder, GlueSetRatio, GlueSign, GlueSpec, KernKind, LeaderPayload, PageArtifact, PageEffect,
-    PageNode, PageToken, TokenCatcode, UnvalidatedPageArtifact,
+    PageNode, PageToken, PdfAccessibilityEffect, TokenCatcode, UnvalidatedPageArtifact,
 };
 use std::fmt;
 use tex_arith::Scaled;
 
 const MAGIC: &[u8; 4] = b"UMPG";
-const VERSION: u8 = 14;
+const VERSION: u8 = 15;
+const FONT_CONSTRUCTION_VERSION: u8 = 14;
 const OPENTYPE_FONT_VERSION: u8 = 13;
 const LEGACY_VERSION: u8 = 12;
 
@@ -42,6 +43,7 @@ mod wire {
         pub const CLOSE_OUT: u8 = 1;
         pub const WRITE: u8 = 2;
         pub const SPECIAL: u8 = 3;
+        pub const PDF_ACCESSIBILITY: u8 = 4;
     }
 
     pub mod token {
@@ -234,7 +236,11 @@ pub(crate) fn from_bytes(
     };
     reader.expect_magic()?;
     let version = reader.u8()?;
-    if version != VERSION && version != OPENTYPE_FONT_VERSION && version != LEGACY_VERSION {
+    if version != VERSION
+        && version != FONT_CONSTRUCTION_VERSION
+        && version != OPENTYPE_FONT_VERSION
+        && version != LEGACY_VERSION
+    {
         return Err(ParseError::UnsupportedVersion(version));
     }
     let mag = reader.i32()?;
@@ -247,7 +253,7 @@ pub(crate) fn from_bytes(
         *value = reader.i32()?;
     }
     let root = reader.node()?;
-    let effects = reader.effects()?;
+    let effects = reader.effects(version)?;
     reader.finish()?;
     Ok(UnvalidatedPageArtifact {
         job: crate::JobInfo {
@@ -809,10 +815,10 @@ impl<'a> V10PageDecoder<'a> {
             });
         }
         let mut scan = Reader::new(bytes, limits);
-        let (job, fonts, counts) = scan.header()?;
+        let (version, job, fonts, counts) = scan.header()?;
         let root_start = scan.offset;
         scan.skip_node()?;
-        let effects = scan.effects()?;
+        let effects = scan.effects(version)?;
         scan.finish()?;
 
         let mut reader = Reader::new_at(bytes, limits, root_start);
@@ -1412,6 +1418,14 @@ impl Writer {
                     self.str(class);
                     self.bytes(payload);
                 }
+                PageEffect::PdfAccessibility(control) => {
+                    self.u8(wire::effect::PDF_ACCESSIBILITY);
+                    self.u8(match control {
+                        PdfAccessibilityEffect::InterwordSpaceOn => 0,
+                        PdfAccessibilityEffect::InterwordSpaceOff => 1,
+                        PdfAccessibilityEffect::FakeSpace => 2,
+                    });
+                }
             }
         }
     }
@@ -1685,10 +1699,14 @@ impl Reader<'_> {
         }
     }
 
-    fn header(&mut self) -> Result<(crate::JobInfo, Vec<FontResource>, [i32; 10]), ParseError> {
+    fn header(&mut self) -> Result<(u8, crate::JobInfo, Vec<FontResource>, [i32; 10]), ParseError> {
         self.expect_magic()?;
         let version = self.u8()?;
-        if version != VERSION && version != OPENTYPE_FONT_VERSION && version != LEGACY_VERSION {
+        if version != VERSION
+            && version != FONT_CONSTRUCTION_VERSION
+            && version != OPENTYPE_FONT_VERSION
+            && version != LEGACY_VERSION
+        {
             return Err(ParseError::UnsupportedVersion(version));
         }
         let job = crate::JobInfo {
@@ -1702,7 +1720,7 @@ impl Reader<'_> {
         for value in &mut counts {
             *value = self.i32()?;
         }
-        Ok((job, fonts, counts))
+        Ok((version, job, fonts, counts))
     }
 
     fn expect_magic(&mut self) -> Result<(), ParseError> {
@@ -1831,7 +1849,7 @@ impl Reader<'_> {
     }
 
     fn fonts(&mut self, version: u8) -> Result<Vec<FontResource>, ParseError> {
-        let len = self.collection_len(if version >= VERSION {
+        let len = self.collection_len(if version >= FONT_CONSTRUCTION_VERSION {
             125
         } else if version >= OPENTYPE_FONT_VERSION {
             53
@@ -1885,7 +1903,7 @@ impl Reader<'_> {
             } else {
                 None
             };
-            let (semantic_identity, construction) = if version >= VERSION {
+            let (semantic_identity, construction) = if version >= FONT_CONSTRUCTION_VERSION {
                 let semantic_identity = tex_fonts::FontSourceIdentity::from_bytes(self.identity()?);
                 let tag = self.u8()?;
                 let construction = match tag {
@@ -1957,7 +1975,7 @@ impl Reader<'_> {
             .map_err(|_| ParseError::UnexpectedEof)
     }
 
-    fn effects(&mut self) -> Result<Vec<PageEffect>, ParseError> {
+    fn effects(&mut self, version: u8) -> Result<Vec<PageEffect>, ParseError> {
         let len = self.collection_len(2)?;
         let mut effects = Vec::with_capacity(len);
         for _ in 0..len {
@@ -1976,6 +1994,19 @@ impl Reader<'_> {
                     class: self.str()?,
                     payload: self.bytes()?,
                 },
+                wire::effect::PDF_ACCESSIBILITY if version >= VERSION => {
+                    PageEffect::PdfAccessibility(match self.u8()? {
+                        0 => PdfAccessibilityEffect::InterwordSpaceOn,
+                        1 => PdfAccessibilityEffect::InterwordSpaceOff,
+                        2 => PdfAccessibilityEffect::FakeSpace,
+                        tag => {
+                            return Err(ParseError::InvalidTag {
+                                kind: "PDF accessibility effect",
+                                tag,
+                            });
+                        }
+                    })
+                }
                 tag => {
                     return Err(ParseError::InvalidTag {
                         kind: "effect",

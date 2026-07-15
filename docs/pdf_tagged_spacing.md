@@ -29,6 +29,11 @@ The character controls `\tagcode`, `\knbscode`, `\stbscode`, `\shbscode`,
 semantics. This work reuses those font identities and does not introduce a
 second character-code store.
 
+The unexpandable meaning operands for this slice are `247..=250`. Operands
+`238..=246` are reserved by the accepted PDF form/image slice developed in
+parallel; they must not be reused while that dependency awaits canonical
+integration.
+
 ## Architecture
 
 Execution appends typed accessibility whatsits after flushing pending
