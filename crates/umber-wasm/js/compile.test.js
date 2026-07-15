@@ -71,7 +71,7 @@ test("performs successful multi-round retries and always disposes", async () => 
 		async resolve(requests) {
 			calls.push(requests.map(({ kind, name }) => `${kind}:${name}`));
 			return requests.map((request, index) => ({
-				request,
+				...request,
 				virtualPath: `/texlive/${request.name}`,
 				bytes: new Uint8Array([index, 0, calls.length]),
 			}));
@@ -137,9 +137,54 @@ test("drives file and font resources through one client-owned resolver API", asy
 	assert.equal(wasm.CompilerSession.instances[0].resolved[0].type, "font");
 });
 
+test("forwards shared Rust resource wire values without a JavaScript kind table", async () => {
+	const request = {
+		type: "file",
+		domain: "bibliography",
+		kind: "bib-data",
+		name: "references.bib",
+		originalName: "references",
+	};
+	let forwarded;
+	const wasm = bindings(
+		[
+			{ kind: "need-resources", required: [request], prefetchHints: [] },
+			{ kind: "complete", output: output() },
+		],
+		{
+			provideResources(responses) {
+				forwarded = responses;
+			},
+		},
+	);
+	const response = {
+		...request,
+		virtualPath: "/texlive/bib/references.bib",
+		bytes: new Uint8Array([0, 255]),
+	};
+	await compile(
+		{ mainPath: "main.tex" },
+		new Map(),
+		{
+			async resolve() {
+				return [response];
+			},
+		},
+		undefined,
+		wasm,
+	);
+	assert.deepEqual(forwarded, [response]);
+});
+
 test("rejects no progress, unresolved keys, and engine diagnostics actionably", async (t) => {
 	await t.test("no progress", async () => {
-		const wasm = bindings([need("tex", "required.tex")]);
+		const wasm = bindings([
+			need("tex", "required.tex"),
+			{
+				kind: "error",
+				diagnostic: { code: "no-progress", message: "retry made no progress" },
+			},
+		]);
 		await assert.rejects(
 			compile(
 				{ mainPath: "main.tex" },
@@ -148,7 +193,9 @@ test("rejects no progress, unresolved keys, and engine diagnostics actionably", 
 					async resolve() {
 						return [
 							{
-								request: { kind: "tex", name: "hint.tex" },
+								type: "file",
+								kind: "tex",
+								name: "hint.tex",
 								virtualPath: "/texlive/hint.tex",
 								bytes: new Uint8Array(),
 							},
@@ -168,6 +215,10 @@ test("rejects no progress, unresolved keys, and engine diagnostics actionably", 
 		const wasm = bindings([
 			need("tex", "required.tex"),
 			need("tex", "required.tex"),
+			{
+				kind: "error",
+				diagnostic: { code: "no-progress", message: "retry made no progress" },
+			},
 		]);
 		await assert.rejects(
 			compile(
@@ -177,7 +228,7 @@ test("rejects no progress, unresolved keys, and engine diagnostics actionably", 
 					async resolve(requests) {
 						return [
 							{
-								request: requests[0],
+								...requests[0],
 								virtualPath: "/texlive/required.tex",
 								bytes: new Uint8Array([1]),
 							},
@@ -243,7 +294,7 @@ test("enforces attempt, file, and byte ceilings outside custom resolvers", async
 				{
 					async resolve(requests) {
 						return requests.map((request) => ({
-							request,
+							...request,
 							virtualPath: "/texlive/a.tex",
 							bytes: new Uint8Array(),
 						}));
@@ -296,7 +347,14 @@ test("enforces attempt, file, and byte ceilings outside custom resolvers", async
 	});
 
 	await t.test("resolved files", async () => {
-		const wasm = bindings([need("tex", "a.tex")]);
+		const error = Object.assign(new Error("resolved files requires 2"), {
+			code: "limit",
+		});
+		const wasm = bindings([need("tex", "a.tex")], {
+			provideResources() {
+				throw error;
+			},
+		});
 		await assert.rejects(
 			compile(
 				{ mainPath: "main.tex", limits: { resolvedFiles: 1 } },
@@ -305,12 +363,14 @@ test("enforces attempt, file, and byte ceilings outside custom resolvers", async
 					async resolve(requests) {
 						return [
 							{
-								request: requests[0],
+								...requests[0],
 								virtualPath: "/texlive/a.tex",
 								bytes: new Uint8Array(),
 							},
 							{
-								request: { kind: "tex", name: "hint.tex" },
+								type: "file",
+								kind: "tex",
+								name: "hint.tex",
 								virtualPath: "/texlive/hint.tex",
 								bytes: new Uint8Array(),
 							},
@@ -325,7 +385,14 @@ test("enforces attempt, file, and byte ceilings outside custom resolvers", async
 	});
 
 	await t.test("resolved bytes", async () => {
-		const wasm = bindings([need("tex", "a.tex")]);
+		const error = Object.assign(new Error("cached file bytes requires 2"), {
+			code: "limit",
+		});
+		const wasm = bindings([need("tex", "a.tex")], {
+			provideResources() {
+				throw error;
+			},
+		});
 		await assert.rejects(
 			compile(
 				{ mainPath: "main.tex", limits: { cachedFileBytes: 1 } },
@@ -334,7 +401,7 @@ test("enforces attempt, file, and byte ceilings outside custom resolvers", async
 					async resolve(requests) {
 						return [
 							{
-								request: requests[0],
+								...requests[0],
 								virtualPath: "/texlive/a.tex",
 								bytes: new Uint8Array(2),
 							},
@@ -372,7 +439,7 @@ test("enforces attempt, file, and byte ceilings outside custom resolvers", async
 			{
 				async resolve(requests) {
 					return requests.map((request) => ({
-						request,
+						...request,
 						virtualPath: "/texlive/path/a.tex",
 						bytes: new Uint8Array([1]),
 					}));
@@ -408,7 +475,12 @@ test("observes abort before attempts and after an in-flight fetch", async (t) =>
 
 	await t.test("during fetch", async () => {
 		const controller = new AbortController();
-		const wasm = bindings([need("tex", "a.tex")]);
+		let provisioned = false;
+		const wasm = bindings([need("tex", "a.tex")], {
+			provideResources() {
+				provisioned = true;
+			},
+		});
 		await assert.rejects(
 			compile(
 				{ mainPath: "main.tex" },
@@ -426,5 +498,6 @@ test("observes abort before attempts and after an in-flight fetch", async (t) =>
 			/stop during fetch/,
 		);
 		assert.equal(wasm.CompilerSession.instances[0].disposed, true);
+		assert.equal(provisioned, false);
 	});
 });

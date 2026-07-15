@@ -144,6 +144,7 @@ fn compile_output(output: MemoryRunOutput) -> Result<JsValue, JsValue> {
 }
 
 fn diagnostic(error: CompileError) -> Result<JsValue, JsValue> {
+    let code = compile_error_code(&error);
     let diagnostic = match error {
         CompileError::Diagnostic(diagnostic) => diagnostic,
         error => CompileDiagnostic {
@@ -154,6 +155,7 @@ fn diagnostic(error: CompileError) -> Result<JsValue, JsValue> {
         },
     };
     let object = Object::new();
+    set(&object, "code", &JsValue::from_str(code))?;
     set(&object, "message", &JsValue::from_str(&diagnostic.message))?;
     if let Some(file) = diagnostic.file {
         set(&object, "file", &JsValue::from_str(&file))?;
@@ -165,6 +167,21 @@ fn diagnostic(error: CompileError) -> Result<JsValue, JsValue> {
         set(&object, "column", &usize_value(column))?;
     }
     Ok(object.into())
+}
+
+pub(crate) const fn compile_error_code(error: &CompileError) -> &'static str {
+    match error {
+        CompileError::HardLimitExceeded { .. } | CompileError::LimitExceeded { .. } => "limit",
+        CompileError::AttemptLimit { .. } => "attempt-limit",
+        CompileError::NoProgress => "no-progress",
+        CompileError::ConflictingResolvedBinding(_)
+        | CompileError::DistributionPathCollision(_) => "conflicting-resource",
+        CompileError::UnexpectedResourceResponse(_) => "unexpected-resource",
+        CompileError::InvalidVirtualPath { .. }
+        | CompileError::FileProvision(_)
+        | CompileError::Font(_) => "invalid-resource",
+        _ => "compile",
+    }
 }
 
 fn typed_array(bytes: &[u8]) -> JsValue {

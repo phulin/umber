@@ -117,6 +117,7 @@ export interface CompileOutput {
 }
 
 export interface Diagnostic {
+  code: string;
   message: string;
   file?: string;
   line?: number;
@@ -195,7 +196,7 @@ impl CompilerSession {
     pub fn add_user_file(&mut self, path: &str, bytes: &Uint8Array) -> Result<(), JsValue> {
         self.session_mut()?
             .add_user_file(path, bytes.to_vec())
-            .map_err(boundary_error)
+            .map_err(compile_boundary_error)
     }
 
     #[wasm_bindgen(js_name = addHtmlFont)]
@@ -203,7 +204,7 @@ impl CompilerSession {
         let font = options::parse_html_font(font.as_ref())?;
         self.session_mut()?
             .add_html_font(font)
-            .map_err(boundary_error)
+            .map_err(compile_boundary_error)
     }
 
     #[wasm_bindgen(js_name = provideResolvedFile)]
@@ -213,18 +214,20 @@ impl CompilerSession {
         #[allow(non_snake_case)] virtualPath: &str,
         bytes: &Uint8Array,
     ) -> Result<(), JsValue> {
-        let request = parse_request_key(request.as_ref())?;
+        let request = parse_request_key(request.as_ref())
+            .map_err(|error| tag_js_error(error, "invalid-resource"))?;
         self.session_mut()?
             .provide_resolved_file(request, virtualPath, bytes.to_vec())
-            .map_err(boundary_error)
+            .map_err(compile_boundary_error)
     }
 
     #[wasm_bindgen(js_name = provideResources)]
     pub fn provide_resources(&mut self, responses: &Array) -> Result<(), JsValue> {
-        let responses = parse_resource_responses(responses.as_ref())?;
+        let responses = parse_resource_responses(responses.as_ref())
+            .map_err(|error| tag_js_error(error, "invalid-resource"))?;
         self.session_mut()?
             .provide_resources(responses)
-            .map_err(boundary_error)
+            .map_err(compile_boundary_error)
     }
 
     #[wasm_bindgen(js_name = compileAttempt)]
@@ -243,14 +246,14 @@ impl CompilerSession {
         let patch = options::parse_source_patch(patch.as_ref())?;
         self.session_mut()?
             .apply_patch(patch)
-            .map_err(boundary_error)
+            .map_err(compile_boundary_error)
     }
 
     #[wasm_bindgen(js_name = clearDistributionCache)]
     pub fn clear_distribution_cache(&mut self) -> Result<(), JsValue> {
         self.session_mut()?
             .clear_distribution_cache()
-            .map_err(boundary_error)
+            .map_err(compile_boundary_error)
     }
 
     pub fn dispose(&mut self) {
@@ -348,6 +351,17 @@ impl CompilerSession {
 
 fn boundary_error(error: impl std::fmt::Display) -> JsValue {
     js_error(&error.to_string())
+}
+
+fn compile_boundary_error(error: umber::CompileError) -> JsValue {
+    let value = js_sys::Error::new(&error.to_string());
+    tag_js_error(value.into(), result::compile_error_code(&error))
+}
+
+fn tag_js_error(value: JsValue, code: &str) -> JsValue {
+    js_sys::Reflect::set(&value, &JsValue::from_str("code"), &JsValue::from_str(code))
+        .expect("Error objects accept a code property");
+    value
 }
 
 fn js_error(message: &str) -> JsValue {

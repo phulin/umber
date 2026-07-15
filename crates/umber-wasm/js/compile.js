@@ -34,9 +34,6 @@ export async function compile(options, userFiles, resolver, signal, bindings) {
 	const CompilerSession = await compilerClass(bindings);
 	throwIfAborted(signal);
 	const session = new CompilerSession(options);
-	const provided = new Map();
-	const providedPaths = new Map();
-	let providedBytes = 0;
 	try {
 		addUserFiles(session, userFiles, limits);
 		addHtmlFonts(session, options?.html?.fonts);
@@ -49,7 +46,7 @@ export async function compile(options, userFiles, resolver, signal, bindings) {
 			if (attempt?.kind === "complete") return attempt.output;
 			if (attempt?.kind === "error") {
 				throw new CompileFacadeError(
-					"compile",
+					attempt.diagnostic?.code ?? "compile",
 					attempt.diagnostic?.message ?? "compile failed",
 					{
 						diagnostic: attempt.diagnostic,
@@ -64,13 +61,6 @@ export async function compile(options, userFiles, resolver, signal, bindings) {
 				throw new CompileFacadeError(
 					"invalid-binding",
 					"compileAttempt returned an invalid result",
-				);
-			}
-			const requested = new Set(attempt.required.map(resourceKey));
-			if (requested.size === 0) {
-				throw new CompileFacadeError(
-					"no-progress",
-					"compile requested no resources",
 				);
 			}
 			throwIfAborted(signal);
@@ -97,69 +87,14 @@ export async function compile(options, userFiles, resolver, signal, bindings) {
 					"resolver must return an iterable",
 				);
 			}
-			let progressed = false;
-			const accepted = [];
-			for (const download of downloads) {
-				const validated = validateResourceResponse(download, limits);
-				const key = resourceKey(validated);
-				const previous = provided.get(key);
-				if (
-					previous !== undefined &&
-					!equalResourceResponse(previous, validated)
-				) {
-					throw new CompileFacadeError(
-						"conflicting-download",
-						`${key} resolved to conflicting bytes`,
-					);
-				}
-				if (previous === undefined) {
-					if (provided.size + 1 > limits.resolvedFiles) {
-						throw limitError(
-							"resolved files",
-							limits.resolvedFiles,
-							provided.size + 1,
-						);
-					}
-					const previousPath =
-						validated.type === "file"
-							? providedPaths.get(validated.virtualPath)
-							: undefined;
-					if (
-						validated.type === "file" &&
-						previousPath !== undefined &&
-						!equalBytes(previousPath, validated.bytes)
-					) {
-						throw new CompileFacadeError(
-							"conflicting-download",
-							`${validated.virtualPath} resolved to conflicting bytes`,
-						);
-					}
-					if (previousPath === undefined) {
-						providedBytes = checkedAdd(
-							providedBytes,
-							validated.bytes.byteLength,
-						);
-						if (providedBytes > limits.cachedFileBytes) {
-							throw limitError(
-								"cached file bytes",
-								limits.cachedFileBytes,
-								providedBytes,
-							);
-						}
-					}
-					accepted.push(validated);
-					provided.set(key, validated);
-					if (validated.type === "file") {
-						providedPaths.set(validated.virtualPath, validated.bytes);
-					}
-					if (requested.has(key)) progressed = true;
-				}
-			}
-			if (accepted.length > 0) session.provideResources(accepted);
-			if (!progressed) {
+			const responses = [...downloads];
+			try {
+				session.provideResources(responses);
+			} catch (error) {
 				throw new CompileFacadeError(
-					"no-progress",
-					`resolver did not provide any of: ${[...requested].join(", ")}`,
+					error?.code ?? "resource",
+					errorMessage(error),
+					{ cause: error },
 				);
 			}
 		}
@@ -236,123 +171,6 @@ function addUserFiles(session, userFiles, limits) {
 	}
 }
 
-function validateResourceResponse(download, limits) {
-	if (!download || typeof download !== "object") {
-		throw new CompileFacadeError(
-			"invalid-resolver",
-			"resolver returned a non-object download",
-		);
-	}
-	const response = normalizeResourceResponse(download);
-	resourceKey(response);
-	if (response.type === "file" && typeof response.virtualPath !== "string") {
-		throw new CompileFacadeError(
-			"invalid-resolver",
-			"resolved virtualPath must be a string",
-		);
-	}
-	requireBytes(response.bytes, "resolved bytes");
-	if (response.bytes.byteLength > limits.oneFileBytes) {
-		throw limitError(
-			"one resolved file bytes",
-			limits.oneFileBytes,
-			response.bytes.byteLength,
-		);
-	}
-	if (response.type === "font") {
-		if (response.container !== "woff2") {
-			throw new CompileFacadeError(
-				"invalid-resolver",
-				"WASM fonts must use WOFF2",
-			);
-		}
-		for (const field of ["objectSha256", "programIdentity"]) {
-			if (
-				response[field] !== undefined &&
-				!/^[0-9a-f]{64}$/.test(response[field])
-			) {
-				throw new CompileFacadeError(
-					"invalid-resolver",
-					`${field} must be 64 lowercase hex digits`,
-				);
-			}
-		}
-		if (
-			response.provenance !== undefined &&
-			typeof response.provenance !== "string"
-		) {
-			throw new CompileFacadeError(
-				"invalid-resolver",
-				"font provenance must be a string",
-			);
-		}
-	}
-	return response;
-}
-
-function normalizeResourceResponse(response) {
-	if (response.type === "file" || response.type === "font") return response;
-	if (response.request !== undefined) {
-		return {
-			type: "file",
-			...response.request,
-			virtualPath: response.virtualPath,
-			bytes: response.bytes,
-		};
-	}
-	return response;
-}
-
-function resourceKey(request) {
-	if (request?.type === "font") {
-		if (
-			typeof request.logicalName !== "string" ||
-			request.logicalName.length === 0 ||
-			!Number.isSafeInteger(request.faceIndex) ||
-			request.faceIndex < 0 ||
-			!Array.isArray(request.variations) ||
-			!Array.isArray(request.features)
-		) {
-			throw new CompileFacadeError(
-				"invalid-resolver",
-				"invalid font request key",
-			);
-		}
-		const variations = request.variations
-			.map(({ tag, value }) => `${tag}:${value}`)
-			.join(",");
-		const features = request.features
-			.map(({ tag, enabled }) => `${tag}:${enabled}`)
-			.join(",");
-		return `font:${request.logicalName}:${request.faceIndex}:${variations}:${features}`;
-	}
-	if (
-		!request ||
-		request.type !== "file" ||
-		(request.kind !== "tex" && request.kind !== "tfm") ||
-		typeof request.name !== "string" ||
-		request.name.length === 0
-	) {
-		throw new CompileFacadeError(
-			"invalid-resolver",
-			"invalid file request key",
-		);
-	}
-	return `${request.kind}:${request.name}`;
-}
-
-function equalResourceResponse(left, right) {
-	if (left.type !== right.type || !equalBytes(left.bytes, right.bytes))
-		return false;
-	if (left.type === "file") return left.virtualPath === right.virtualPath;
-	return (
-		left.container === right.container &&
-		left.objectSha256 === right.objectSha256 &&
-		left.programIdentity === right.programIdentity &&
-		left.provenance === right.provenance
-	);
-}
-
 function validateResolver(resolver) {
 	if (!resolver || typeof resolver.resolve !== "function") {
 		throw new CompileFacadeError(
@@ -415,9 +233,4 @@ function abortReason(signal) {
 
 function errorMessage(error) {
 	return error instanceof Error ? error.message : String(error);
-}
-
-function equalBytes(left, right) {
-	if (left.byteLength !== right.byteLength) return false;
-	return left.every((byte, index) => byte === right[index]);
 }

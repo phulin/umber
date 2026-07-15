@@ -278,6 +278,81 @@ fn errors_are_typed_and_invalid_boundary_values_throw() {
 }
 
 #[wasm_bindgen_test]
+fn resource_batches_use_rust_validation_and_retry_state() {
+    let mut stalled_session = session("main.tex");
+    stalled_session
+        .add_user_file("main.tex", &bytes(b"\\input remote \\end"))
+        .expect("main source");
+    let missing = stalled_session.advance().expect("resource request");
+    assert_eq!(string_field(missing.as_ref(), "kind"), "need-resources");
+
+    stalled_session
+        .provide_resources(&Array::new())
+        .expect("empty partial batch reaches Rust");
+    let stalled = stalled_session.advance().expect("typed no-progress result");
+    assert_eq!(string_field(stalled.as_ref(), "kind"), "error");
+    assert_eq!(
+        string_field(&field(stalled.as_ref(), "diagnostic"), "code"),
+        "no-progress"
+    );
+
+    let mut fresh = session("main.tex");
+    fresh
+        .add_user_file("main.tex", &bytes(b"\\input remote \\end"))
+        .expect("main source");
+    let missing = fresh.advance().expect("resource request");
+    let request: Object = Array::from(&field(missing.as_ref(), "required"))
+        .get(0)
+        .unchecked_into();
+    let first = file_response(&request, "/texlive/remote.tex", b"first");
+    let conflict = file_response(&request, "/texlive/remote.tex", b"second");
+    let batch = Array::of2(&first, &conflict);
+    let error = fresh
+        .provide_resources(&batch)
+        .expect_err("conflicting batch must fail atomically");
+    assert_eq!(string_field(&error, "code"), "conflicting-resource");
+    assert_eq!(fresh.resolved_file_count().expect("count"), 0);
+
+    let invalid = file_response(&request, "/texlive/../escape.tex", b"first");
+    let error = fresh
+        .provide_resources(&Array::of1(&invalid))
+        .expect_err("invalid path");
+    assert_eq!(string_field(&error, "code"), "invalid-resource");
+    assert_eq!(fresh.resolved_file_count().expect("count"), 0);
+
+    let malformed = Object::new();
+    set(&malformed, "type", &JsValue::from_str("unknown"));
+    let error = fresh
+        .provide_resources(&Array::of1(&malformed))
+        .expect_err("invalid response representation");
+    assert_eq!(string_field(&error, "code"), "invalid-resource");
+    assert_eq!(fresh.resolved_file_count().expect("count"), 0);
+
+    fresh
+        .provide_resources(&Array::of1(&first))
+        .expect("valid response");
+    fresh
+        .provide_resources(&Array::of1(&first))
+        .expect("exact duplicate is idempotent");
+    assert_eq!(fresh.resolved_file_count().expect("count"), 1);
+
+    let limited_options = options("main.tex");
+    let limits = Object::new();
+    set(&limits, "oneFileBytes", &JsValue::from_f64(1.0));
+    set(&limited_options, "limits", limits.as_ref());
+    let mut limited = CompilerSession::new(limited_options.unchecked_ref()).expect("limited");
+    limited
+        .add_user_file("main.tex", &bytes(b""))
+        .expect("empty main source");
+    let oversized = file_response(&request, "/texlive/remote.tex", b"xx");
+    let error = limited
+        .provide_resources(&Array::of1(&oversized))
+        .expect_err("oversized response");
+    assert_eq!(string_field(&error, "code"), "limit");
+    assert_eq!(limited.resolved_file_count().expect("count"), 0);
+}
+
+#[wasm_bindgen_test]
 fn committed_plain_format_loads_and_rejects_incompatible_bytes() {
     assert_eq!(package_version(), env!("CARGO_PKG_VERSION"));
     assert_eq!(format_schema_version(), 7);
@@ -452,6 +527,13 @@ fn rendered_queries_track_length_changes_before_a_reused_page() {
 fn session(main_path: &str) -> CompilerSession {
     let options = options(main_path);
     CompilerSession::new(options.unchecked_ref::<JsSessionOptions>()).expect("construct session")
+}
+
+fn file_response(request: &Object, path: &str, contents: &[u8]) -> Object {
+    let response = Object::assign(&Object::new(), request);
+    set(&response, "virtualPath", &JsValue::from_str(path));
+    set(&response, "bytes", bytes(contents).as_ref());
+    response
 }
 
 fn provide_requested_html_font(session: &mut CompilerSession) {
