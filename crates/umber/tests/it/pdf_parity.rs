@@ -227,6 +227,7 @@ fn form_xobject_fixture_replays_bytes_artifacts_positions_and_state() {
     );
     assert_eq!(first_artifacts[1].snap_reference(), (pt(0), pt(10)));
     assert_eq!(first_artifacts[2].last_position(), Some((pt(1), pt(2))));
+    assert_eq!(stores.pdf_snap_reference(), (pt(0), pt(5)));
     let first_pages = stores.world().committed_artifacts().to_vec();
     let first = umber::pdf_from_committed_artifacts(&mut stores, &first_pages)
         .expect("first form PDF finalization");

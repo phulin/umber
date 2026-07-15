@@ -100,7 +100,15 @@ fn stage_form_inner(
         .finish(&emission.fonts, &overlay.effects)
         .map_err(invalid_artifact)?;
     let artifact = tex_out::PageArtifact::from_bytes(&bytes).map_err(invalid_artifact)?;
-    let positioned = tex_out::positioned::lower_page(&artifact, 0).map_err(invalid_artifact)?;
+    let positioned =
+        tex_out::positioned::lower_page(&artifact, 0).map_err(|error| match error {
+            tex_out::positioned::PositionedError::UnmatchedPdfSaves { count } => {
+                ExecError::InvalidShipoutArtifact(format!(
+                    "pdfTeX error: {count} unmatched \\pdfsave after form shipout"
+                ))
+            }
+            error => invalid_artifact(error),
+        })?;
     let total = root
         .height
         .checked_add(root.depth)

@@ -89,12 +89,13 @@ are deduplicated, and cycles are rejected. `/Type /XObject`, `/Subtype /Form`,
 
 The committed `pdf/form_xobjects` corpus pins decoded Form dictionaries and
 streams, nested h/v/math placement, reuse, attributes/resources, exact Umber
-bytes, and Poppler raster parity. The `tex_exec/pdf_form_state` and
-`pdf_form_diagnostics` INITEX oracles pin allocation, enquiries, box
-consumption, saved positions, snapping, lazy publication, and the void-box
-diagnostic; the hermetic PDF integration test replays the committed source from
-a retained checkpoint and requires identical artifacts, coordinates, bytes,
-and state hash.
+bytes, and Poppler raster parity. The `tex_exec/pdf_form_state`,
+`pdf_form_diagnostics`, and `pdf_form_traversal_diagnostics` INITEX oracles pin
+allocation, enquiries, box consumption, saved positions, snapping, lazy
+publication, void-box recovery, and failed form-shipout diagnostics; the
+hermetic PDF integration test replays the committed source from a retained
+checkpoint and requires identical artifacts, coordinates, bytes, and state
+hash.
 
 ## Literals
 

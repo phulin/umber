@@ -646,6 +646,9 @@ mod tests {
         assert!(
             diagnostic.contains("pdfTeX error (ext1): \\pdfxform cannot be used with a void box.")
         );
+        let traversal_diagnostic =
+            test_support::read_fixture("tex_exec", "pdf_form_traversal_diagnostics", "ref");
+        assert!(traversal_diagnostic.contains("1 unmatched \\pdfsave after form ship"));
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
         let error = crate::run_memory_with_stores(

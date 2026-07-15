@@ -4431,17 +4431,12 @@ mod tests {
         let before = stores.pdf_last_position();
         let error = try_run_in(
             &mut stores,
-            concat!(
-                "\\pdfoutput=1",
-                "\\setbox0=\\hbox{\\pdfcolorstack0 push {1 g}",
-                "\\pdfsavepos\\pdfsetmatrix{bad}}",
-                "\\pdfxform0\\pdfrefxform1\\end",
-            ),
+            include_str!("../../../tests/corpus/tex_exec/pdf_form_traversal_diagnostics.tex"),
         )
         .expect_err("malformed form traversal must fail transactionally");
         assert_eq!(
             error.to_string(),
-            "pdfTeX error (\\pdfsetmatrix): Unrecognized format."
+            "pdfTeX error: 1 unmatched \\pdfsave after form shipout"
         );
         assert!(stores.pdf_form_artifact(1).is_none());
         assert_eq!(stores.pdf_last_position(), before);

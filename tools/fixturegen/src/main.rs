@@ -218,6 +218,7 @@ fn regenerate_tex_exec_case(case: &str) -> Result<()> {
             | "pdf_microtype_effects"
             | "pdf_form_state"
             | "pdf_form_diagnostics"
+            | "pdf_form_traversal_diagnostics"
     ) {
         opts.ini = true;
     }
