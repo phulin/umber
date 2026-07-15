@@ -223,7 +223,7 @@ fn rejects_unknown_version() {
 #[test]
 fn rejects_pre_content_identity_v2_artifact_version() {
     let mut bytes = sample_artifact().to_bytes().expect("artifact serializes");
-    assert_eq!(bytes[4], 17);
+    assert_eq!(bytes[4], 18);
     bytes[4] = 11;
 
     assert_eq!(

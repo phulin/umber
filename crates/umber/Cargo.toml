@@ -30,6 +30,7 @@ md-5.workspace = true
 tex-state = { path = "../tex-state" }
 umber-vfs = { path = "../umber-vfs" }
 lopdf = { version = "=0.43.0", default-features = false }
+flate2.workspace = true
 
 [dev-dependencies]
 parity-harness = { path = "../../tools/parity-harness" }

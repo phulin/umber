@@ -482,7 +482,7 @@ fn execute_pdf_ximage(
     let source = execution
         .open_pdf_image(&mut stores.input_open_context(), &request)
         .map_err(|message| ExecError::PdfImageOpen { name, message })?;
-    let dimensions = scaled_image_dimensions(source, width, height, depth);
+    let dimensions = scaled_image_dimensions(&source, width, height, depth);
     stores
         .allocate_pdf_external_image(source, dimensions)
         .map_err(|_| ExecError::PdfObjectCapacity)?;
@@ -490,7 +490,7 @@ fn execute_pdf_ximage(
 }
 
 fn scaled_image_dimensions(
-    source: tex_state::PdfExternalImageSource,
+    source: &tex_state::PdfExternalImageSource,
     width: Option<Scaled>,
     height: Option<Scaled>,
     depth: Option<Scaled>,

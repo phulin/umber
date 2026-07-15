@@ -71,6 +71,13 @@ pub enum PdfContentOperation {
         y: f32,
         name: Vec<u8>,
     },
+    ImageXObject {
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        name: Vec<u8>,
+    },
 }
 
 /// One PK-derived monochrome Type-3 glyph procedure.
@@ -235,6 +242,19 @@ pub fn ordered_page_content(operations: &[PdfContentOperation]) -> Vec<u8> {
                 end_pdf_text(&mut content, &mut in_text);
                 content.save_state();
                 content.transform([1.0, 0.0, 0.0, 1.0, *x, *y]);
+                content.x_object(Name(name));
+                content.restore_state();
+            }
+            PdfContentOperation::ImageXObject {
+                x,
+                y,
+                width,
+                height,
+                name,
+            } => {
+                end_pdf_text(&mut content, &mut in_text);
+                content.save_state();
+                content.transform([*width, 0.0, 0.0, *height, *x, *y]);
                 content.x_object(Name(name));
                 content.restore_state();
             }
@@ -458,6 +478,35 @@ pub enum PdfObject {
         bbox: [PdfNumber; 4],
         matrix: [PdfNumber; 6],
     },
+    /// A typed raster image serialized through `pdf_writer::ImageXObject`.
+    ImageXObject {
+        image: PdfImageXObject,
+        data: Vec<u8>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PdfImageColorSpace {
+    DeviceGray,
+    DeviceRgb,
+    DeviceCmyk,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PdfImageFilter {
+    Dct,
+    Flate,
+    FlatePngPredictor { colors: u8 },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PdfImageXObject {
+    pub width: u32,
+    pub height: u32,
+    pub bits_per_component: u8,
+    pub color_space: PdfImageColorSpace,
+    pub filter: PdfImageFilter,
+    pub soft_mask: Option<PdfObjectId>,
 }
 
 /// A detached annotation serialized through `pdf_writer`'s typed builder.
@@ -734,6 +783,9 @@ fn validate_document(
                 stream_bytes = stream_bytes.saturating_add(data.len());
             }
             PdfObject::Raw(data) => stream_bytes = stream_bytes.saturating_add(data.len()),
+            PdfObject::ImageXObject { data, .. } => {
+                stream_bytes = stream_bytes.saturating_add(data.len());
+            }
             PdfObject::Value(_) | PdfObject::Annotation(_) => {}
         }
         if stream_bytes > limits.max_stream_bytes {
@@ -767,6 +819,13 @@ fn validate_object_values(
             stack.extend(dictionary.iter().map(|(_, value)| (value, 1)))
         }
         PdfObject::Raw(_) => {}
+        PdfObject::ImageXObject { image, .. } => {
+            if let Some(mask) = image.soft_mask
+                && !ids.contains(&mask)
+            {
+                return Err(PdfModelError::MissingObject(mask));
+            }
+        }
         PdfObject::Annotation(annotation) => {
             if let Some(PdfAnnotationAction::Destination(action)) = &annotation.action {
                 if let PdfDestinationTarget::Page {
@@ -987,6 +1046,27 @@ fn hash_object(object: &PdfObject, hasher: &mut CanonicalHasher) {
             });
             hasher.bytes(&annotation.raw_entries);
             hash_annotation_action(annotation.action.as_ref(), hasher);
+        }
+        PdfObject::ImageXObject { image, data } => {
+            hasher.byte(4);
+            hasher.u32(image.width);
+            hasher.u32(image.height);
+            hasher.byte(image.bits_per_component);
+            hasher.byte(match image.color_space {
+                PdfImageColorSpace::DeviceGray => 0,
+                PdfImageColorSpace::DeviceRgb => 1,
+                PdfImageColorSpace::DeviceCmyk => 2,
+            });
+            match image.filter {
+                PdfImageFilter::Dct => hasher.byte(0),
+                PdfImageFilter::Flate => hasher.byte(1),
+                PdfImageFilter::FlatePngPredictor { colors } => {
+                    hasher.byte(2);
+                    hasher.byte(colors);
+                }
+            }
+            hasher.u32(image.soft_mask.map_or(0, PdfObjectId::get));
+            hasher.bytes(data);
         }
     }
 }

@@ -2084,7 +2084,9 @@ mod tests {
         stores
             .register_pdf_external_image(
                 tex_state::PdfExternalImageId::new(8).expect("raster image id"),
-                tex_state::PdfExternalImageMetadata::Raster,
+                tex_state::PdfExternalImageMetadata::Raster(
+                    tex_state::PdfRasterImageMetadata::placeholder(),
+                ),
             )
             .expect("register raster metadata");
 
@@ -2144,7 +2146,9 @@ mod tests {
         stores
             .register_pdf_external_image(
                 tex_state::PdfExternalImageId::new(7).expect("PDF image id"),
-                tex_state::PdfExternalImageMetadata::Raster,
+                tex_state::PdfExternalImageMetadata::Raster(
+                    tex_state::PdfRasterImageMetadata::placeholder(),
+                ),
             )
             .expect("register image metadata");
         for index in [0, 5, -1] {

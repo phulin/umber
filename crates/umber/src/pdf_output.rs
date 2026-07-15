@@ -8,9 +8,10 @@ use tex_out::pdf::{
     PdfAnnotationAction, PdfAnnotationObject, PdfAnnotationType, PdfContentOperation,
     PdfContentRectangle, PdfContentTextRun, PdfDestinationAction, PdfDestinationActionKind,
     PdfDestinationPage, PdfDestinationStructure, PdfDestinationTarget, PdfDictionary,
-    PdfIndirectObject, PdfModelError, PdfName, PdfNumber, PdfObject, PdfObjectCompression,
-    PdfObjectId, PdfSerializationOptions, PdfSerializeError, PdfStreamCompression, PdfTrailer,
-    PdfValue, PdfVersion, UnvalidatedPdfDocument, ordered_page_content, page_content,
+    PdfImageColorSpace, PdfImageFilter, PdfImageXObject, PdfIndirectObject, PdfModelError, PdfName,
+    PdfNumber, PdfObject, PdfObjectCompression, PdfObjectId, PdfSerializationOptions,
+    PdfSerializeError, PdfStreamCompression, PdfTrailer, PdfValue, PdfVersion,
+    UnvalidatedPdfDocument, ordered_page_content, page_content,
 };
 use tex_out::positioned::{
     BoxKind, PositionedBox, PositionedError, PositionedEvent, PositionedPage,
@@ -21,10 +22,12 @@ use tex_state::ids::TokenListId;
 use tex_state::{
     CommittedArtifact, ContentHash, PdfActionDestination, PdfActionIdentifier, PdfActionRecord,
     PdfActionSpec, PdfActionTarget, PdfActionWindow, PdfAnnotationDimensions,
-    PdfDocumentFragmentKind, PdfLinkRecord, PdfOutputParameters, Universe, WorldError,
+    PdfDocumentFragmentKind, PdfExternalImageMetadata, PdfLinkRecord, PdfOutputParameters,
+    PdfRasterColorSpace, PdfRasterFormat, Universe, WorldError,
 };
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::io::{Read, Write};
 
 pub(crate) const DEFAULT_PDF_PK_RESOLUTION: i32 = 600;
 
@@ -238,6 +241,49 @@ pub fn pdf_from_committed_artifacts_at_dpi(
         });
     }
 
+    for image in stores.pdf_external_images() {
+        let PdfExternalImageMetadata::Raster(metadata) = image.metadata() else {
+            continue;
+        };
+        let (color_data, filter, bits, color_space, alpha_data) =
+            raster_image_streams(image.bytes(), metadata)?;
+        objects.push(PdfIndirectObject {
+            id: object_id(image.id().raw())?,
+            object: PdfObject::ImageXObject {
+                image: PdfImageXObject {
+                    width: metadata.width,
+                    height: metadata.height,
+                    bits_per_component: bits,
+                    color_space,
+                    filter,
+                    soft_mask: image.mask_object().map(object_id).transpose()?,
+                },
+                data: color_data,
+            },
+        });
+        if let Some(alpha_data) = alpha_data {
+            let mask = image.mask_object().ok_or(PdfBuildError::InvalidPng)?;
+            objects.push(PdfIndirectObject {
+                id: object_id(mask)?,
+                object: PdfObject::ImageXObject {
+                    image: PdfImageXObject {
+                        width: metadata.width,
+                        height: metadata.height,
+                        bits_per_component: if metadata.png_color_type == Some(3) {
+                            8
+                        } else {
+                            metadata.bits_per_component
+                        },
+                        color_space: PdfImageColorSpace::DeviceGray,
+                        filter: PdfImageFilter::Flate,
+                        soft_mask: None,
+                    },
+                    data: alpha_data,
+                },
+            });
+        }
+    }
+
     for (page_index, record) in page_records.iter().copied().enumerate() {
         let bytes = artifact_bytes(stores, artifacts, record.artifact())?;
         let artifact = tex_out::PageArtifact::from_bytes(&bytes)?;
@@ -245,6 +291,7 @@ pub fn pdf_from_committed_artifacts_at_dpi(
         let (page_width, page_height) = pdf_page_extents(&artifact, record)?;
         let mut content_operations = Vec::new();
         let mut page_forms = BTreeMap::<u32, PdfObjectId>::new();
+        let mut page_images = BTreeMap::<Vec<u8>, PdfObjectId>::new();
         let mut has_pdf_graphics = false;
         let mut page_fonts = std::collections::BTreeMap::new();
         let mut fallback_space_on_page = false;
@@ -544,6 +591,40 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                                 name: format!("Fm{}", form.resource()).into_bytes(),
                             }
                         }
+                        tex_out::PageEffect::PdfRefXImage {
+                            object,
+                            width,
+                            height,
+                            depth,
+                        } => {
+                            let id = tex_state::PdfExternalImageId::new(object)
+                                .map_err(|_| PdfBuildError::MissingRasterImage(object))?;
+                            let image = stores
+                                .pdf_external_image_record(id)
+                                .ok_or(PdfBuildError::MissingRasterImage(object))?;
+                            if !matches!(image.metadata(), PdfExternalImageMetadata::Raster(_)) {
+                                return Err(PdfBuildError::UnsupportedPdfPageImage(object));
+                            }
+                            let name = format!("Im{object}").into_bytes();
+                            page_images.insert(name.clone(), object_id(object)?);
+                            let y = page_height
+                                .checked_sub(graphics.y)
+                                .and_then(|value| value.checked_sub(record.v_origin()))
+                                .and_then(|value| value.checked_sub(depth))
+                                .ok_or(PdfBuildError::PageGeometryOverflow)?;
+                            PdfContentOperation::ImageXObject {
+                                x,
+                                y: scaled_to_bp_f32(y, parameters.decimal_digits),
+                                width: scaled_to_bp_f32(width, parameters.decimal_digits),
+                                height: scaled_to_bp_f32(
+                                    height
+                                        .checked_add(depth)
+                                        .ok_or(PdfBuildError::PageGeometryOverflow)?,
+                                    parameters.decimal_digits,
+                                ),
+                                name,
+                            }
+                        }
                         _ => unreachable!("positioned PDF graphics event contains PDF effect"),
                     };
                     content_operations.push(operation);
@@ -580,11 +661,17 @@ pub fn pdf_from_committed_artifacts_at_dpi(
             }
             resources.insert("Font", PdfValue::Dictionary(fonts))?;
         }
-        if !page_forms.is_empty() {
+        if !page_forms.is_empty() || !page_images.is_empty() {
             let mut xobjects = PdfDictionary::new();
             for (resource, object) in page_forms {
                 xobjects.insert(
                     format!("Fm{resource}").as_str(),
+                    PdfValue::Reference(object),
+                )?;
+            }
+            for (name, object) in page_images {
+                xobjects.insert(
+                    std::str::from_utf8(&name).expect("generated image resource name is ASCII"),
                     PdfValue::Reference(object),
                 )?;
             }
@@ -2168,6 +2255,268 @@ fn artifact_bytes(
         .ok_or(PdfBuildError::MissingArtifact(hash))
 }
 
+type RasterStreams = (
+    Vec<u8>,
+    PdfImageFilter,
+    u8,
+    PdfImageColorSpace,
+    Option<Vec<u8>>,
+);
+
+fn raster_image_streams(
+    bytes: &[u8],
+    metadata: tex_state::PdfRasterImageMetadata,
+) -> Result<RasterStreams, PdfBuildError> {
+    if metadata.width == 0 || metadata.height == 0 {
+        return Err(PdfBuildError::InvalidRasterDimensions);
+    }
+    let color_space = match metadata.color_space {
+        PdfRasterColorSpace::Gray => PdfImageColorSpace::DeviceGray,
+        PdfRasterColorSpace::Rgb => PdfImageColorSpace::DeviceRgb,
+        PdfRasterColorSpace::Cmyk => PdfImageColorSpace::DeviceCmyk,
+    };
+    match metadata.format {
+        PdfRasterFormat::Jpeg => Ok((
+            bytes.to_vec(),
+            PdfImageFilter::Dct,
+            metadata.bits_per_component,
+            color_space,
+            None,
+        )),
+        PdfRasterFormat::Png if metadata.png_color_type == Some(3) => {
+            let (color, alpha) = png_indexed_streams(bytes, metadata)?;
+            Ok((
+                color,
+                PdfImageFilter::Flate,
+                8,
+                PdfImageColorSpace::DeviceRgb,
+                alpha,
+            ))
+        }
+        PdfRasterFormat::Png if metadata.alpha => {
+            let (color, alpha) = png_alpha_streams(bytes, metadata)?;
+            Ok((
+                color,
+                PdfImageFilter::Flate,
+                metadata.bits_per_component,
+                color_space,
+                Some(alpha),
+            ))
+        }
+        PdfRasterFormat::Png => Ok((
+            png_idat(bytes)?,
+            PdfImageFilter::FlatePngPredictor {
+                colors: raster_color_components(metadata.color_space),
+            },
+            metadata.bits_per_component,
+            color_space,
+            None,
+        )),
+    }
+}
+
+fn raster_color_components(color_space: PdfRasterColorSpace) -> u8 {
+    match color_space {
+        PdfRasterColorSpace::Gray => 1,
+        PdfRasterColorSpace::Rgb => 3,
+        PdfRasterColorSpace::Cmyk => 4,
+    }
+}
+
+fn png_idat(bytes: &[u8]) -> Result<Vec<u8>, PdfBuildError> {
+    let mut cursor = 8usize;
+    let mut data = Vec::new();
+    while cursor.checked_add(12).is_some_and(|end| end <= bytes.len()) {
+        let length = u32::from_be_bytes([
+            bytes[cursor],
+            bytes[cursor + 1],
+            bytes[cursor + 2],
+            bytes[cursor + 3],
+        ]) as usize;
+        let end = cursor
+            .checked_add(12)
+            .and_then(|value| value.checked_add(length))
+            .ok_or(PdfBuildError::InvalidPng)?;
+        if end > bytes.len() {
+            return Err(PdfBuildError::InvalidPng);
+        }
+        if &bytes[cursor + 4..cursor + 8] == b"IDAT" {
+            data.extend_from_slice(&bytes[cursor + 8..cursor + 8 + length]);
+        }
+        cursor = end;
+    }
+    (!data.is_empty())
+        .then_some(data)
+        .ok_or(PdfBuildError::InvalidPng)
+}
+
+fn png_alpha_streams(
+    bytes: &[u8],
+    metadata: tex_state::PdfRasterImageMetadata,
+) -> Result<(Vec<u8>, Vec<u8>), PdfBuildError> {
+    if !matches!(metadata.bits_per_component, 8 | 16) {
+        return Err(PdfBuildError::InvalidPng);
+    }
+    let color_components = usize::from(raster_color_components(metadata.color_space));
+    let component_bytes = usize::from(metadata.bits_per_component / 8);
+    let pixel_bytes = (color_components + 1) * component_bytes;
+    let width = usize::try_from(metadata.width).map_err(|_| PdfBuildError::InvalidPng)?;
+    let row_bytes = width
+        .checked_mul(pixel_bytes)
+        .ok_or(PdfBuildError::InvalidPng)?;
+    let height = usize::try_from(metadata.height).map_err(|_| PdfBuildError::InvalidPng)?;
+    let compressed = png_idat(bytes)?;
+    let mut decoder = flate2::read::ZlibDecoder::new(compressed.as_slice());
+    let mut filtered = Vec::new();
+    decoder
+        .read_to_end(&mut filtered)
+        .map_err(|_| PdfBuildError::InvalidPng)?;
+    if filtered.len() != (row_bytes + 1).saturating_mul(height) {
+        return Err(PdfBuildError::InvalidPng);
+    }
+    let mut previous = vec![0u8; row_bytes];
+    let mut current = vec![0u8; row_bytes];
+    let mut color = Vec::with_capacity(row_bytes * height);
+    let mut alpha = Vec::with_capacity(width * component_bytes * height);
+    for row in filtered.chunks_exact(row_bytes + 1) {
+        unfilter_png_row(row[0], &row[1..], &previous, &mut current, pixel_bytes)?;
+        for pixel in current.chunks_exact(pixel_bytes) {
+            color.extend_from_slice(&pixel[..color_components * component_bytes]);
+            alpha.extend_from_slice(&pixel[color_components * component_bytes..]);
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    Ok((zlib(&color)?, zlib(&alpha)?))
+}
+
+fn png_indexed_streams(
+    bytes: &[u8],
+    metadata: tex_state::PdfRasterImageMetadata,
+) -> Result<(Vec<u8>, Option<Vec<u8>>), PdfBuildError> {
+    let palette = png_chunk(bytes, b"PLTE").ok_or(PdfBuildError::InvalidPng)?;
+    if palette.len() % 3 != 0 || !matches!(metadata.bits_per_component, 1 | 2 | 4 | 8) {
+        return Err(PdfBuildError::InvalidPng);
+    }
+    let transparency = png_chunk(bytes, b"tRNS");
+    let width = usize::try_from(metadata.width).map_err(|_| PdfBuildError::InvalidPng)?;
+    let height = usize::try_from(metadata.height).map_err(|_| PdfBuildError::InvalidPng)?;
+    let row_bytes = width
+        .checked_mul(usize::from(metadata.bits_per_component))
+        .and_then(|bits| bits.checked_add(7))
+        .map(|bits| bits / 8)
+        .ok_or(PdfBuildError::InvalidPng)?;
+    let compressed = png_idat(bytes)?;
+    let mut decoder = flate2::read::ZlibDecoder::new(compressed.as_slice());
+    let mut filtered = Vec::new();
+    decoder
+        .read_to_end(&mut filtered)
+        .map_err(|_| PdfBuildError::InvalidPng)?;
+    if filtered.len() != (row_bytes + 1).saturating_mul(height) {
+        return Err(PdfBuildError::InvalidPng);
+    }
+    let mut previous = vec![0u8; row_bytes];
+    let mut current = vec![0u8; row_bytes];
+    let mut color = Vec::with_capacity(width * height * 3);
+    let mut alpha = transparency.map(|_| Vec::with_capacity(width * height));
+    let bits = metadata.bits_per_component;
+    let mask = (1u16 << bits) - 1;
+    for row in filtered.chunks_exact(row_bytes + 1) {
+        unfilter_png_row(row[0], &row[1..], &previous, &mut current, 1)?;
+        for pixel in 0..width {
+            let bit = pixel * usize::from(bits);
+            let shift = 8 - usize::from(bits) - (bit % 8);
+            let index = usize::from((u16::from(current[bit / 8]) >> shift) & mask);
+            let start = index.checked_mul(3).ok_or(PdfBuildError::InvalidPng)?;
+            color.extend_from_slice(
+                palette
+                    .get(start..start + 3)
+                    .ok_or(PdfBuildError::InvalidPng)?,
+            );
+            if let Some(alpha) = &mut alpha {
+                alpha.push(
+                    transparency
+                        .and_then(|values| values.get(index))
+                        .copied()
+                        .unwrap_or(255),
+                );
+            }
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    Ok((zlib(&color)?, alpha.map(|data| zlib(&data)).transpose()?))
+}
+
+fn png_chunk<'a>(bytes: &'a [u8], wanted: &[u8; 4]) -> Option<&'a [u8]> {
+    let mut cursor = 8usize;
+    while cursor + 12 <= bytes.len() {
+        let length = u32::from_be_bytes([
+            bytes[cursor],
+            bytes[cursor + 1],
+            bytes[cursor + 2],
+            bytes[cursor + 3],
+        ]) as usize;
+        let end = cursor.checked_add(length + 12)?;
+        if end > bytes.len() {
+            return None;
+        }
+        if &bytes[cursor + 4..cursor + 8] == wanted {
+            return Some(&bytes[cursor + 8..cursor + 8 + length]);
+        }
+        cursor = end;
+    }
+    None
+}
+
+fn unfilter_png_row(
+    filter: u8,
+    source: &[u8],
+    previous: &[u8],
+    target: &mut [u8],
+    bytes_per_pixel: usize,
+) -> Result<(), PdfBuildError> {
+    for index in 0..source.len() {
+        let left = index.checked_sub(bytes_per_pixel).map_or(0, |i| target[i]);
+        let up = previous[index];
+        let upper_left = index
+            .checked_sub(bytes_per_pixel)
+            .map_or(0, |i| previous[i]);
+        target[index] = source[index].wrapping_add(match filter {
+            0 => 0,
+            1 => left,
+            2 => up,
+            3 => ((u16::from(left) + u16::from(up)) / 2) as u8,
+            4 => paeth(left, up, upper_left),
+            _ => return Err(PdfBuildError::InvalidPng),
+        });
+    }
+    Ok(())
+}
+
+fn paeth(left: u8, up: u8, upper_left: u8) -> u8 {
+    let left = i32::from(left);
+    let up = i32::from(up);
+    let upper_left = i32::from(upper_left);
+    let estimate = left + up - upper_left;
+    let left_distance = (estimate - left).abs();
+    let up_distance = (estimate - up).abs();
+    let upper_left_distance = (estimate - upper_left).abs();
+    if left_distance <= up_distance && left_distance <= upper_left_distance {
+        left as u8
+    } else if up_distance <= upper_left_distance {
+        up as u8
+    } else {
+        upper_left as u8
+    }
+}
+
+fn zlib(bytes: &[u8]) -> Result<Vec<u8>, PdfBuildError> {
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder
+        .write_all(bytes)
+        .map_err(|_| PdfBuildError::InvalidPng)?;
+    encoder.finish().map_err(|_| PdfBuildError::InvalidPng)
+}
+
 fn output_parameters(stores: &Universe) -> PdfOutputParameters {
     stores.fixed_pdf_output_parameters().unwrap_or_else(|| {
         PdfOutputParameters {
@@ -2500,6 +2849,10 @@ pub enum PdfBuildError {
     TrueTypeSubset(tex_fonts::PdfTrueTypeSubsetError),
     MissingLiveFont(String),
     UnsupportedSpecial(String),
+    MissingRasterImage(u32),
+    UnsupportedPdfPageImage(u32),
+    InvalidRasterDimensions,
+    InvalidPng,
     InvalidMatrix(Vec<u8>),
     World(WorldError),
     Parse(tex_out::ParseError),
@@ -2615,6 +2968,14 @@ impl std::fmt::Display for PdfBuildError {
             Self::UnsupportedSpecial(class) => {
                 write!(f, "PDF output does not support special class {class:?}")
             }
+            Self::MissingRasterImage(object) => write!(f, "PDF image object {object} is missing"),
+            Self::UnsupportedPdfPageImage(object) => {
+                write!(f, "PDF-page image object {object} is not lowered yet")
+            }
+            Self::InvalidRasterDimensions => {
+                f.write_str("registered raster image has zero width or height")
+            }
+            Self::InvalidPng => f.write_str("registered PNG image data is invalid"),
             Self::InvalidMatrix(payload) => write!(
                 f,
                 "invalid \\pdfsetmatrix payload {:?}; expected exactly four finite numbers",
@@ -2679,6 +3040,303 @@ mod tests {
     use tex_exec::ExecutionContext;
     use tex_lex::{InputStack, MemoryInput};
     use tex_state::{JobClock, World};
+
+    struct StaticImageResolver {
+        source: tex_state::PdfExternalImageSource,
+    }
+
+    impl tex_exec::PdfImageResolver for StaticImageResolver {
+        fn open_image(
+            &mut self,
+            _input: &mut dyn tex_state::InputReadState,
+            _request: &tex_exec::PdfImageRequest,
+            _request_index: u64,
+        ) -> Result<tex_state::PdfExternalImageSource, String> {
+            Ok(self.source.clone())
+        }
+    }
+
+    fn run_with_image(
+        stores: &mut Universe,
+        source: &str,
+        image: tex_state::PdfExternalImageSource,
+    ) -> RunResult {
+        let mut input = InputStack::new(MemoryInput::new(source));
+        let mut input_resolver = RejectingMemoryInputResolver;
+        let mut font_resolver = DirectFontResolver;
+        let mut image_resolver = StaticImageResolver { source: image };
+        let context = ExecutionContext::with_resource_resolvers(
+            "pdf-test",
+            &mut input_resolver,
+            &mut font_resolver,
+            &mut image_resolver,
+        );
+        run_input_collecting_artifacts(&mut input, stores, context).expect("image page ships")
+    }
+
+    fn test_png(color_type: u8, scanline: &[u8]) -> Vec<u8> {
+        fn chunk(kind: &[u8; 4], data: &[u8], target: &mut Vec<u8>) {
+            target.extend_from_slice(&(data.len() as u32).to_be_bytes());
+            target.extend_from_slice(kind);
+            target.extend_from_slice(data);
+            target.extend_from_slice(&[0; 4]);
+        }
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        let mut header = Vec::new();
+        header.extend_from_slice(&2u32.to_be_bytes());
+        header.extend_from_slice(&1u32.to_be_bytes());
+        header.extend_from_slice(&[8, color_type, 0, 0, 0]);
+        chunk(b"IHDR", &header, &mut png);
+        chunk(b"IDAT", &zlib(scanline).expect("compress PNG"), &mut png);
+        chunk(b"IEND", &[], &mut png);
+        png
+    }
+
+    fn test_indexed_png() -> Vec<u8> {
+        fn chunk(kind: &[u8; 4], data: &[u8], target: &mut Vec<u8>) {
+            target.extend_from_slice(&(data.len() as u32).to_be_bytes());
+            target.extend_from_slice(kind);
+            target.extend_from_slice(data);
+            target.extend_from_slice(&[0; 4]);
+        }
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        let mut header = Vec::new();
+        header.extend_from_slice(&2u32.to_be_bytes());
+        header.extend_from_slice(&1u32.to_be_bytes());
+        header.extend_from_slice(&[1, 3, 0, 0, 0]);
+        chunk(b"IHDR", &header, &mut png);
+        chunk(b"PLTE", &[255, 0, 0, 0, 0, 255], &mut png);
+        chunk(b"tRNS", &[32, 224], &mut png);
+        chunk(
+            b"IDAT",
+            &zlib(&[0, 0b0100_0000]).expect("compress indexed PNG"),
+            &mut png,
+        );
+        chunk(b"IEND", &[], &mut png);
+        png
+    }
+
+    #[test]
+    fn raster_png_ximage_is_reused_and_emitted_through_typed_xobjects() {
+        let png = test_png(2, &[0, 255, 0, 0, 0, 0, 255]);
+        let image = tex_state::PdfExternalImageSource {
+            identity: ContentHash::from_bytes(&png),
+            metadata: PdfExternalImageMetadata::Raster(tex_state::PdfRasterImageMetadata {
+                format: PdfRasterFormat::Png,
+                width: 2,
+                height: 1,
+                bits_per_component: 8,
+                color_space: PdfRasterColorSpace::Rgb,
+                alpha: false,
+                png_color_type: Some(2),
+            }),
+            natural_width: Scaled::from_raw(2 * 65_536),
+            natural_height: Scaled::from_raw(65_536),
+            bytes: png.into(),
+        };
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let result = run_with_image(
+            &mut stores,
+            concat!(
+                "\\pdfoutput=1 \\pdfcompresslevel=0 ",
+                "\\pdfximage width 20pt height 10pt \"pixel.png\"",
+                "\\setbox0=\\hbox{\\pdfrefximage\\pdflastximage\\kern5pt",
+                "\\pdfrefximage\\pdflastximage}",
+                "\\shipout\\box0\\end",
+            ),
+            image,
+        );
+        let pdf = pdf_from_committed_artifacts(&mut stores, &result.committed_artifacts)
+            .expect("lower raster image");
+        let parsed = lopdf::Document::load_mem(&pdf).expect("parse raster PDF");
+        let stream = parsed
+            .get_object((1, 0))
+            .expect("image object")
+            .as_stream()
+            .expect("image stream");
+        assert_eq!(
+            stream
+                .dict
+                .get(b"Subtype")
+                .expect("image subtype")
+                .as_name()
+                .expect("subtype name"),
+            b"Image"
+        );
+        assert_eq!(
+            stream
+                .dict
+                .get(b"Width")
+                .expect("image width")
+                .as_i64()
+                .expect("integer width"),
+            2
+        );
+        let page_id = parsed.get_pages()[&1];
+        let content = parsed.get_page_content(page_id).expect("page content");
+        assert_eq!(
+            content
+                .windows(7)
+                .filter(|window| *window == b"/Im1 Do")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn rgba_png_ximage_uses_a_typed_soft_mask() {
+        let png = test_png(6, &[0, 255, 0, 0, 64, 0, 0, 255, 192]);
+        let image = tex_state::PdfExternalImageSource {
+            identity: ContentHash::from_bytes(&png),
+            metadata: PdfExternalImageMetadata::Raster(tex_state::PdfRasterImageMetadata {
+                format: PdfRasterFormat::Png,
+                width: 2,
+                height: 1,
+                bits_per_component: 8,
+                color_space: PdfRasterColorSpace::Rgb,
+                alpha: true,
+                png_color_type: Some(6),
+            }),
+            natural_width: Scaled::from_raw(2 * 65_536),
+            natural_height: Scaled::from_raw(65_536),
+            bytes: png.into(),
+        };
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let result = run_with_image(
+            &mut stores,
+            "\\pdfoutput=1 \\pdfximage \"alpha.png\"\\shipout\\hbox{\\pdfrefximage\\pdflastximage}\\end",
+            image,
+        );
+        let pdf = pdf_from_committed_artifacts(&mut stores, &result.committed_artifacts)
+            .expect("lower alpha image");
+        let parsed = lopdf::Document::load_mem(&pdf).expect("parse alpha PDF");
+        let image = parsed
+            .get_object((1, 0))
+            .expect("image object")
+            .as_stream()
+            .expect("image stream");
+        assert_eq!(
+            image
+                .dict
+                .get(b"SMask")
+                .expect("soft-mask reference")
+                .as_reference()
+                .expect("indirect mask"),
+            (2, 0)
+        );
+        let mask = parsed
+            .get_object((2, 0))
+            .expect("mask object")
+            .as_stream()
+            .expect("mask stream");
+        assert_eq!(
+            mask.dict
+                .get(b"ColorSpace")
+                .expect("mask color space")
+                .as_name()
+                .expect("color-space name"),
+            b"DeviceGray"
+        );
+        assert_eq!(
+            mask.decompressed_content().expect("alpha samples"),
+            vec![64, 192]
+        );
+    }
+
+    #[test]
+    fn indexed_png_expands_palette_and_transparency() {
+        let png = test_indexed_png();
+        let image = tex_state::PdfExternalImageSource {
+            identity: ContentHash::from_bytes(&png),
+            metadata: PdfExternalImageMetadata::Raster(tex_state::PdfRasterImageMetadata {
+                format: PdfRasterFormat::Png,
+                width: 2,
+                height: 1,
+                bits_per_component: 1,
+                color_space: PdfRasterColorSpace::Rgb,
+                alpha: true,
+                png_color_type: Some(3),
+            }),
+            natural_width: Scaled::from_raw(2 * 65_536),
+            natural_height: Scaled::from_raw(65_536),
+            bytes: png.into(),
+        };
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let result = run_with_image(
+            &mut stores,
+            "\\pdfoutput=1 \\pdfximage \"indexed.png\"\\shipout\\hbox{\\pdfrefximage\\pdflastximage}\\end",
+            image,
+        );
+        let pdf = pdf_from_committed_artifacts(&mut stores, &result.committed_artifacts)
+            .expect("lower indexed image");
+        let parsed = lopdf::Document::load_mem(&pdf).expect("parse indexed-image PDF");
+        let color = parsed
+            .get_object((1, 0))
+            .expect("color image")
+            .as_stream()
+            .expect("color stream");
+        assert_eq!(
+            color.decompressed_content().expect("color samples"),
+            vec![255, 0, 0, 0, 0, 255]
+        );
+        let alpha = parsed
+            .get_object((2, 0))
+            .expect("alpha image")
+            .as_stream()
+            .expect("alpha stream");
+        assert_eq!(
+            alpha.decompressed_content().expect("alpha samples"),
+            vec![32, 224]
+        );
+    }
+
+    #[test]
+    fn jpeg_bytes_are_preserved_behind_a_typed_dct_filter() {
+        let jpeg = vec![0xff, 0xd8, 0xff, 0xd9];
+        let image = tex_state::PdfExternalImageSource {
+            identity: ContentHash::from_bytes(&jpeg),
+            metadata: PdfExternalImageMetadata::Raster(tex_state::PdfRasterImageMetadata {
+                format: PdfRasterFormat::Jpeg,
+                width: 1,
+                height: 1,
+                bits_per_component: 8,
+                color_space: PdfRasterColorSpace::Rgb,
+                alpha: false,
+                png_color_type: None,
+            }),
+            natural_width: Scaled::from_raw(65_536),
+            natural_height: Scaled::from_raw(65_536),
+            bytes: jpeg.clone().into(),
+        };
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let result = run_with_image(
+            &mut stores,
+            "\\pdfoutput=1 \\pdfximage \"pixel.jpg\"\\shipout\\hbox{\\pdfrefximage\\pdflastximage}\\end",
+            image,
+        );
+        let pdf = pdf_from_committed_artifacts(&mut stores, &result.committed_artifacts)
+            .expect("lower JPEG image");
+        let parsed = lopdf::Document::load_mem(&pdf).expect("parse JPEG PDF");
+        let stream = parsed
+            .get_object((1, 0))
+            .expect("JPEG object")
+            .as_stream()
+            .expect("JPEG stream");
+        assert_eq!(
+            stream
+                .dict
+                .get(b"Filter")
+                .expect("JPEG filter")
+                .as_name()
+                .expect("filter name"),
+            b"DCTDecode"
+        );
+        assert_eq!(stream.content, jpeg);
+    }
 
     fn positioned_fixture(events: Vec<PositionedEvent>, page_index: u32) -> PositionedPage {
         PositionedPage {

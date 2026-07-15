@@ -11,6 +11,7 @@ use tex_lex::WorldInput;
 use tex_state::scaled::Scaled;
 use tex_state::{
     FileContent, InputReadState, PdfExternalImageMetadata, PdfExternalImageSource, PdfPageBox,
+    PdfRasterColorSpace, PdfRasterFormat, PdfRasterImageMetadata,
 };
 
 use super::path::RequestedFile;
@@ -105,16 +106,44 @@ fn parse_image(
     if bytes.starts_with(b"%PDF-") {
         return parse_pdf_image(content, request);
     }
-    let (width, height) = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
-        if bytes.len() < 24 || &bytes[12..16] != b"IHDR" {
+    let metadata = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        if bytes.len() < 29 || &bytes[12..16] != b"IHDR" {
             return Err("invalid PNG header".to_owned());
         }
-        (
-            u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]),
-            u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]),
-        )
+        let color_type = bytes[25];
+        let (color_space, alpha) = match color_type {
+            0 => (PdfRasterColorSpace::Gray, false),
+            2 => (PdfRasterColorSpace::Rgb, false),
+            3 => (PdfRasterColorSpace::Rgb, png_has_chunk(bytes, b"tRNS")),
+            4 => (PdfRasterColorSpace::Gray, true),
+            6 => (PdfRasterColorSpace::Rgb, true),
+            _ => return Err(format!("unsupported PNG color type {color_type}")),
+        };
+        PdfRasterImageMetadata {
+            format: PdfRasterFormat::Png,
+            width: u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]),
+            height: u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]),
+            bits_per_component: bytes[24],
+            color_space,
+            alpha,
+            png_color_type: Some(color_type),
+        }
     } else if bytes.starts_with(&[0xff, 0xd8]) {
-        jpeg_dimensions(bytes)?
+        let (width, height, bits, components) = jpeg_dimensions(bytes)?;
+        PdfRasterImageMetadata {
+            format: PdfRasterFormat::Jpeg,
+            width,
+            height,
+            bits_per_component: bits,
+            color_space: match components {
+                1 => PdfRasterColorSpace::Gray,
+                3 => PdfRasterColorSpace::Rgb,
+                4 => PdfRasterColorSpace::Cmyk,
+                _ => return Err(format!("unsupported JPEG component count {components}")),
+            },
+            alpha: false,
+            png_color_type: None,
+        }
     } else {
         return Err("image type is not PDF, PNG, or JPEG".to_owned());
     };
@@ -123,9 +152,10 @@ fn parse_image(
     }
     Ok(PdfExternalImageSource {
         identity: content.hash(),
-        metadata: PdfExternalImageMetadata::Raster,
-        natural_width: pixels_to_scaled(width),
-        natural_height: pixels_to_scaled(height),
+        metadata: PdfExternalImageMetadata::Raster(metadata),
+        natural_width: pixels_to_scaled(metadata.width),
+        natural_height: pixels_to_scaled(metadata.height),
+        bytes: content.shared_bytes(),
     })
 }
 
@@ -162,7 +192,31 @@ fn parse_pdf_image(
         metadata: PdfExternalImageMetadata::PdfPage { page_box },
         natural_width: page_box.right - page_box.left,
         natural_height: page_box.top - page_box.bottom,
+        bytes: content.shared_bytes(),
     })
+}
+
+fn png_has_chunk(bytes: &[u8], wanted: &[u8; 4]) -> bool {
+    let mut cursor = 8usize;
+    while cursor + 12 <= bytes.len() {
+        let length = u32::from_be_bytes([
+            bytes[cursor],
+            bytes[cursor + 1],
+            bytes[cursor + 2],
+            bytes[cursor + 3],
+        ]) as usize;
+        if &bytes[cursor + 4..cursor + 8] == wanted {
+            return true;
+        }
+        let Some(next) = cursor.checked_add(length + 12) else {
+            return false;
+        };
+        if next > bytes.len() {
+            return false;
+        }
+        cursor = next;
+    }
+    false
 }
 
 fn inherited_box(
@@ -195,7 +249,7 @@ fn inherited_box(
     }
 }
 
-fn jpeg_dimensions(bytes: &[u8]) -> Result<(u32, u32), String> {
+fn jpeg_dimensions(bytes: &[u8]) -> Result<(u32, u32, u8, u8), String> {
     let mut cursor = 2;
     while cursor + 4 <= bytes.len() {
         if bytes[cursor] != 0xff {
@@ -224,6 +278,8 @@ fn jpeg_dimensions(bytes: &[u8]) -> Result<(u32, u32), String> {
             return Ok((
                 u32::from(u16::from_be_bytes([bytes[cursor + 5], bytes[cursor + 6]])),
                 u32::from(u16::from_be_bytes([bytes[cursor + 3], bytes[cursor + 4]])),
+                bytes[cursor + 2],
+                bytes[cursor + 7],
             ));
         }
         cursor += length;

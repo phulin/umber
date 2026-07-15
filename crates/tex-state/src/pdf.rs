@@ -137,16 +137,56 @@ pub struct PdfPageBox {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum PdfExternalImageMetadata {
     PdfPage { page_box: PdfPageBox },
-    Raster,
+    Raster(PdfRasterImageMetadata),
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PdfRasterFormat {
+    Jpeg,
+    Png,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PdfRasterColorSpace {
+    Gray,
+    Rgb,
+    Cmyk,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct PdfRasterImageMetadata {
+    pub format: PdfRasterFormat,
+    pub width: u32,
+    pub height: u32,
+    pub bits_per_component: u8,
+    pub color_space: PdfRasterColorSpace,
+    pub alpha: bool,
+    pub png_color_type: Option<u8>,
+}
+
+impl PdfRasterImageMetadata {
+    #[must_use]
+    pub const fn placeholder() -> Self {
+        Self {
+            format: PdfRasterFormat::Png,
+            width: 0,
+            height: 0,
+            bits_per_component: 8,
+            color_space: PdfRasterColorSpace::Gray,
+            alpha: false,
+            png_color_type: Some(0),
+        }
+    }
 }
 
 /// Detached, host-validated image facts returned to the engine scanner.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct PdfExternalImageSource {
     pub identity: ContentHash,
     pub metadata: PdfExternalImageMetadata,
     pub natural_width: Scaled,
     pub natural_height: Scaled,
+    pub bytes: Arc<[u8]>,
 }
 
 /// Final dimensions recorded by `\pdfximage` after optional scaling.
@@ -165,7 +205,7 @@ impl PdfExternalImageMetadata {
             (Self::PdfPage { page_box }, 2) => Some(page_box.bottom),
             (Self::PdfPage { page_box }, 3) => Some(page_box.right),
             (Self::PdfPage { page_box }, 4) => Some(page_box.top),
-            (Self::Raster, 1..=4) => Some(Scaled::from_raw(0)),
+            (Self::Raster(_), 1..=4) => Some(Scaled::from_raw(0)),
             (_, _) => None,
         }
     }
@@ -247,30 +287,42 @@ impl PdfPageGroupSelector {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct PdfExternalImageRecord {
     id: PdfExternalImageId,
     identity: ContentHash,
     metadata: PdfExternalImageMetadata,
     dimensions: PdfExternalImageDimensions,
+    bytes: Arc<[u8]>,
+    mask_object: Option<u32>,
 }
 
 impl PdfExternalImageRecord {
     #[must_use]
-    pub const fn id(self) -> PdfExternalImageId {
+    pub const fn id(&self) -> PdfExternalImageId {
         self.id
     }
     #[must_use]
-    pub const fn identity(self) -> ContentHash {
+    pub const fn identity(&self) -> ContentHash {
         self.identity
     }
     #[must_use]
-    pub const fn metadata(self) -> PdfExternalImageMetadata {
+    pub const fn metadata(&self) -> PdfExternalImageMetadata {
         self.metadata
     }
     #[must_use]
-    pub const fn dimensions(self) -> PdfExternalImageDimensions {
+    pub const fn dimensions(&self) -> PdfExternalImageDimensions {
         self.dimensions
+    }
+
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    #[must_use]
+    pub const fn mask_object(&self) -> Option<u32> {
+        self.mask_object
     }
 }
 
@@ -1449,6 +1501,8 @@ impl PdfState {
                         height: Scaled::from_raw(0),
                         depth: Scaled::from_raw(0),
                     },
+                    bytes: Arc::from([]),
+                    mask_object: None,
                 },
             ),
         }
@@ -1475,7 +1529,7 @@ impl PdfState {
         self.external_images
             .binary_search_by_key(&id, |record| record.id)
             .ok()
-            .map(|index| self.external_images[index])
+            .map(|index| self.external_images[index].clone())
     }
 
     pub(crate) fn allocate_external_image(
@@ -1483,20 +1537,38 @@ impl PdfState {
         source: PdfExternalImageSource,
         dimensions: PdfExternalImageDimensions,
     ) -> Result<PdfExternalImageRecord, PdfObjectCapacityError> {
+        let needs_mask = matches!(
+            source.metadata,
+            PdfExternalImageMetadata::Raster(PdfRasterImageMetadata { alpha: true, .. })
+        );
+        self.next_object
+            .checked_add(u32::from(needs_mask))
+            .filter(|last| *last <= MAX_OBJECT_ID)
+            .ok_or(PdfObjectCapacityError)?;
         let raw = self.reserve_document_object()?;
+        let mask_object = needs_mask
+            .then(|| self.reserve_document_object())
+            .transpose()?;
         let record = PdfExternalImageRecord {
             id: PdfExternalImageId(raw),
             identity: source.identity,
             metadata: source.metadata,
             dimensions,
+            bytes: source.bytes,
+            mask_object,
         };
-        Arc::make_mut(&mut self.external_images).push(record);
+        Arc::make_mut(&mut self.external_images).push(record.clone());
         self.external_image_fingerprint = external_image_fingerprint(&self.external_images);
         Ok(record)
     }
 
     pub(crate) fn last_external_image(&self) -> Option<PdfExternalImageRecord> {
-        self.external_images.last().copied()
+        self.external_images.last().cloned()
+    }
+
+    #[must_use]
+    pub(crate) fn external_images(&self) -> &[PdfExternalImageRecord] {
+        &self.external_images
     }
     pub(crate) fn reserve_raw_object(&mut self) -> Result<PdfRawObjectId, PdfObjectCapacityError> {
         let raw = (self.next_object <= MAX_OBJECT_ID)
@@ -2165,11 +2237,28 @@ fn external_image_fingerprint(images: &[PdfExternalImageRecord]) -> u64 {
                 hasher.i32(page_box.right.raw());
                 hasher.i32(page_box.top.raw());
             }
-            PdfExternalImageMetadata::Raster => hasher.u8(1),
+            PdfExternalImageMetadata::Raster(metadata) => {
+                hasher.u8(1);
+                hasher.u8(metadata.format as u8);
+                hasher.u32(metadata.width);
+                hasher.u32(metadata.height);
+                hasher.u8(metadata.bits_per_component);
+                hasher.u8(metadata.color_space as u8);
+                hasher.bool(metadata.alpha);
+                hasher.bool(metadata.png_color_type.is_some());
+                if let Some(color_type) = metadata.png_color_type {
+                    hasher.u8(color_type);
+                }
+            }
         }
         hasher.i32(record.dimensions.width.raw());
         hasher.i32(record.dimensions.height.raw());
         hasher.i32(record.dimensions.depth.raw());
+        hasher.bytes(&record.bytes);
+        hasher.bool(record.mask_object.is_some());
+        if let Some(mask) = record.mask_object {
+            hasher.u32(mask);
+        }
     }
     hasher.finish()
 }
@@ -2732,7 +2821,10 @@ mod tests {
         assert_eq!(metadata.bbox_coordinate(4), Some(Scaled::from_raw(50)));
         assert_eq!(metadata.bbox_coordinate(5), None);
         assert_eq!(
-            state.register_external_image(id, PdfExternalImageMetadata::Raster),
+            state.register_external_image(
+                id,
+                PdfExternalImageMetadata::Raster(PdfRasterImageMetadata::placeholder()),
+            ),
             Err(PdfExternalImageRegistrationError::Duplicate(id))
         );
 
@@ -2745,7 +2837,8 @@ mod tests {
         assert_eq!(state.hash_fragment(), registered_hash);
 
         assert_eq!(
-            PdfExternalImageMetadata::Raster.bbox_coordinate(3),
+            PdfExternalImageMetadata::Raster(PdfRasterImageMetadata::placeholder())
+                .bbox_coordinate(3),
             Some(Scaled::from_raw(0))
         );
     }
@@ -2757,9 +2850,10 @@ mod tests {
         let snapshot = state.snapshot();
         let source = PdfExternalImageSource {
             identity: ContentHash::new([19; 32]),
-            metadata: PdfExternalImageMetadata::Raster,
+            metadata: PdfExternalImageMetadata::Raster(PdfRasterImageMetadata::placeholder()),
             natural_width: Scaled::from_raw(640),
             natural_height: Scaled::from_raw(480),
+            bytes: Arc::from([1, 2, 3]),
         };
         let dimensions = PdfExternalImageDimensions {
             width: Scaled::from_raw(320),
@@ -2768,7 +2862,7 @@ mod tests {
         };
 
         let allocated = state
-            .allocate_external_image(source, dimensions)
+            .allocate_external_image(source.clone(), dimensions)
             .expect("allocate image");
         let record = state.last_external_image().expect("last image");
         assert_eq!(allocated.id().raw(), 1);
@@ -2995,7 +3089,7 @@ mod tests {
             state
                 .register_external_image(
                     PdfExternalImageId::new(99).expect("image identity"),
-                    PdfExternalImageMetadata::Raster,
+                    PdfExternalImageMetadata::Raster(PdfRasterImageMetadata::placeholder()),
                 )
                 .expect("image metadata");
             let font = state

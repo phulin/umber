@@ -4,7 +4,7 @@ use std::io::Write as _;
 
 use flate2::Compression;
 use flate2::write::ZlibEncoder;
-use pdf_writer::types::{ActionType, AnnotationType};
+use pdf_writer::types::{ActionType, AnnotationType, Predictor};
 use pdf_writer::{
     Dict, Filter, Finish, Name, Null, Obj, Pdf, Raw, Rect, Ref, Settings, Str, XRefFilter,
 };
@@ -12,7 +12,8 @@ use pdf_writer::{
 use super::{
     PdfAnnotationAction, PdfAnnotationObject, PdfAnnotationType, PdfDestinationActionKind,
     PdfDestinationPage, PdfDestinationStructure, PdfDestinationTarget, PdfDictionary, PdfDocument,
-    PdfNumber, PdfObject, PdfObjectId, PdfValue,
+    PdfImageColorSpace, PdfImageFilter, PdfImageXObject, PdfNumber, PdfObject, PdfObjectId,
+    PdfValue,
 };
 
 /// Deterministic stream encoding selected at final serialization.
@@ -164,6 +165,9 @@ impl PdfDocument {
                     *matrix,
                     options.stream_compression,
                 )?,
+                PdfObject::ImageXObject { image, data } => {
+                    write_image_xobject(&mut pdf, reference, *image, data)?
+                }
             }
         }
 
@@ -191,8 +195,10 @@ impl PdfDocument {
                                 .object(writer_ref(indirect.id)?)
                                 .primitive(Raw(data));
                         }
-                        PdfObject::Stream { .. } | PdfObject::FormXObject { .. } => {}
-                        PdfObject::Annotation(_) => {}
+                        PdfObject::Stream { .. }
+                        | PdfObject::FormXObject { .. }
+                        | PdfObject::ImageXObject { .. }
+                        | PdfObject::Annotation(_) => {}
                     }
                 }
                 match options.stream_compression {
@@ -225,6 +231,50 @@ impl PdfDocument {
             }
         }
     }
+}
+
+fn write_image_xobject(
+    pdf: &mut Pdf,
+    reference: Ref,
+    image: PdfImageXObject,
+    data: &[u8],
+) -> Result<(), PdfSerializeError> {
+    let width = i32::try_from(image.width)
+        .map_err(|_| PdfSerializeError::IntegerOutOfRange(i64::from(image.width)))?;
+    let height = i32::try_from(image.height)
+        .map_err(|_| PdfSerializeError::IntegerOutOfRange(i64::from(image.height)))?;
+    let mut writer = pdf.image_xobject(reference, data);
+    writer
+        .width(width)
+        .height(height)
+        .bits_per_component(i32::from(image.bits_per_component))
+        .color_space_name(Name(match image.color_space {
+            PdfImageColorSpace::DeviceGray => b"DeviceGray",
+            PdfImageColorSpace::DeviceRgb => b"DeviceRGB",
+            PdfImageColorSpace::DeviceCmyk => b"DeviceCMYK",
+        }));
+    match image.filter {
+        PdfImageFilter::Dct => {
+            writer.filter(Filter::DctDecode);
+        }
+        PdfImageFilter::Flate => {
+            writer.filter(Filter::FlateDecode);
+        }
+        PdfImageFilter::FlatePngPredictor { colors } => {
+            writer.filter(Filter::FlateDecode);
+            writer
+                .decode_parms()
+                .predictor(Predictor::PngOptimum)
+                .colors(i32::from(colors))
+                .bits_per_component(i32::from(image.bits_per_component))
+                .columns(width);
+        }
+    }
+    if let Some(mask) = image.soft_mask {
+        writer.s_mask(writer_ref(mask)?);
+    }
+    writer.finish();
+    Ok(())
 }
 
 fn validate_serialization_inputs(
@@ -289,6 +339,7 @@ fn validate_object_scalars(object: &PdfObject) -> Result<(), PdfSerializeError> 
         }
         PdfObject::Raw(_) => {}
         PdfObject::Annotation(_) => {}
+        PdfObject::ImageXObject { .. } => {}
     }
     while let Some(value) = stack.pop() {
         match value {

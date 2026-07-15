@@ -80,8 +80,9 @@ pub use pdf::{
     PdfExternalImageSource, PdfFontConfiguration, PdfFontMapOperation, PdfFontResourceRecord,
     PdfFormArtifact, PdfFormColorRollback, PdfFormRecord, PdfGlyphToUnicode, PdfLinkRecord,
     PdfObjectCapacityError, PdfOpenLink, PdfOutputParameters, PdfPageBox, PdfPageGroupInclusion,
-    PdfPageGroupSelector, PdfPageGroupWarning, PdfPageRecord, PdfRawObjectData, PdfRawObjectId,
-    PdfRawObjectInitializeError, PdfRawObjectRecord,
+    PdfPageGroupSelector, PdfPageGroupWarning, PdfPageRecord, PdfRasterColorSpace, PdfRasterFormat,
+    PdfRasterImageMetadata, PdfRawObjectData, PdfRawObjectId, PdfRawObjectInitializeError,
+    PdfRawObjectRecord,
 };
 pub mod world;
 
