@@ -395,18 +395,18 @@ where
                 );
                 match dispatched {
                     Ok(dispatch) => crate::push_dispatch_result(input, stores, dispatch),
-                    Err(ExpandError::MacroCall(
-                        crate::args::MacroCallError::DoesNotMatchDefinition { .. },
-                    )) => continue,
-                    Err(ExpandError::MacroCall(crate::args::MacroCallError::EndOfInput {
-                        ..
-                    })) => {
-                        return Err(ScanToksError::EndOfInputInReplacementText { context });
-                    }
-                    Err(error) => {
-                        record_undefined_diagnostic(error, diagnostics)?;
-                        continue;
-                    }
+                    Err(error) => match expansion.recover_macro_mismatch(error) {
+                        Ok(()) => continue,
+                        Err(ExpandError::MacroCall(crate::args::MacroCallError::EndOfInput {
+                            ..
+                        })) => {
+                            return Err(ScanToksError::EndOfInputInReplacementText { context });
+                        }
+                        Err(error) => {
+                            record_undefined_diagnostic(error, diagnostics)?;
+                            continue;
+                        }
+                    },
                 }
                 if input.source_depth() < source_depth {
                     // Preserve the defining scanner's nested-source seam: the

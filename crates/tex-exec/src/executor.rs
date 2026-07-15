@@ -17,6 +17,23 @@ use crate::output;
 use crate::vertical::is_outer_vertical;
 use crate::{DispatchAction, ExecError, ExecutionStats, ModeNest, assignments};
 
+fn report_recoverable_expansion_diagnostics(
+    execution: &mut crate::ExecutionContext<'_>,
+    stores: &mut Universe,
+) {
+    for diagnostic in execution.take_recoverable_diagnostics() {
+        match diagnostic {
+            tex_expand::RecoverableExpansionDiagnostic::MacroDoesNotMatchDefinition {
+                macro_name,
+                ..
+            } => stores.world_mut().write_text(
+                tex_state::PrintSink::TerminalAndLog,
+                &format!("\n! Use of {macro_name} doesn't match its definition.\n"),
+            ),
+        }
+    }
+}
+
 /// Object-safe host boundary used only by the `\font` assignment.
 pub trait FontResolver {
     fn open_font(
@@ -379,6 +396,7 @@ where
 {
     let mut macro_text = Vec::new();
     loop {
+        report_recoverable_expansion_diagnostics(execution, stores);
         if should_stop(input, stores) {
             return Ok(MainControlExit::Stopped);
         }
@@ -430,11 +448,9 @@ where
                     }
                     tex_expand::ExpandError::MacroCall(
                         tex_expand::args::MacroCallError::DoesNotMatchDefinition {
-                            macro_name,
-                            context,
+                            macro_name, ..
                         },
                     ) => {
-                        crate::push_traced_tokens(input, stores, [context]);
                         stores.world_mut().write_text(
                             tex_state::PrintSink::TerminalAndLog,
                             &format!("\n! Use of {macro_name} doesn't match its definition.\n"),
@@ -502,12 +518,8 @@ where
                     continue;
                 }
                 Err(tex_expand::ExpandError::MacroCall(
-                    tex_expand::args::MacroCallError::DoesNotMatchDefinition {
-                        macro_name,
-                        context,
-                    },
+                    tex_expand::args::MacroCallError::DoesNotMatchDefinition { macro_name, .. },
                 )) => {
-                    crate::push_traced_tokens(input, stores, [context]);
                     stores.world_mut().write_text(
                         tex_state::PrintSink::TerminalAndLog,
                         &format!("\n! Use of {macro_name} doesn't match its definition.\n"),

@@ -527,6 +527,16 @@ pub enum Dispatch {
     },
 }
 
+/// A TeX error that expansion reports and recovers from without aborting the
+/// enclosing scanner. The driver owns presentation of these diagnostics.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RecoverableExpansionDiagnostic {
+    MacroDoesNotMatchDefinition {
+        macro_name: String,
+        context: TracedTokenWord,
+    },
+}
+
 /// Errors raised by `get_x_token`.
 #[derive(Debug)]
 pub enum ExpandError {
@@ -821,6 +831,7 @@ pub struct ExpansionContext<'a> {
     meaning_site_cache: Box<[Option<MeaningSiteCacheEntry>; MEANING_SITE_CACHE_LEN]>,
     last_macro_replay_site: Option<MacroReplaySite>,
     csname_depth: u32,
+    recoverable_diagnostics: Vec<RecoverableExpansionDiagnostic>,
 }
 
 impl<'a> ExpansionContext<'a> {
@@ -836,6 +847,7 @@ impl<'a> ExpansionContext<'a> {
             meaning_site_cache: Box::new([None; MEANING_SITE_CACHE_LEN]),
             last_macro_replay_site: None,
             csname_depth: 0,
+            recoverable_diagnostics: Vec::new(),
         }
     }
 
@@ -854,6 +866,7 @@ impl<'a> ExpansionContext<'a> {
             meaning_site_cache: Box::new([None; MEANING_SITE_CACHE_LEN]),
             last_macro_replay_site: None,
             csname_depth: 0,
+            recoverable_diagnostics: Vec::new(),
         }
     }
 
@@ -953,12 +966,41 @@ impl<'a> ExpansionContext<'a> {
             meaning_site_cache: Box::new([None; MEANING_SITE_CACHE_LEN]),
             last_macro_replay_site: None,
             csname_depth: self.csname_depth,
+            recoverable_diagnostics: Vec::new(),
         };
         let output = operation(&mut nested);
         self.input_resolver = nested.input_resolver.take();
         self.recorder = nested.recorder.take();
         self.resolution_index = nested.resolution_index;
+        self.recoverable_diagnostics
+            .append(&mut nested.recoverable_diagnostics);
         output
+    }
+
+    /// Drains recoverable TeX diagnostics accumulated by nested expansion.
+    pub fn take_recoverable_diagnostics(
+        &mut self,
+    ) -> impl Iterator<Item = RecoverableExpansionDiagnostic> + '_ {
+        self.recoverable_diagnostics.drain(..)
+    }
+
+    fn recover_macro_mismatch(&mut self, error: ExpandError) -> Result<(), ExpandError> {
+        match error {
+            ExpandError::MacroCall(args::MacroCallError::DoesNotMatchDefinition {
+                macro_name,
+                context,
+            }) => {
+                self.recoverable_diagnostics.push(
+                    RecoverableExpansionDiagnostic::MacroDoesNotMatchDefinition {
+                        macro_name,
+                        context,
+                    },
+                );
+                Ok(())
+            }
+            ExpandError::Captured { error, .. } => self.recover_macro_mismatch(*error),
+            error => Err(error),
+        }
     }
 
     #[inline(always)]
@@ -1048,14 +1090,14 @@ pub trait ExpansionMode {
         stores: &mut tex_state::ExpansionContext<'_>,
         expansion: &mut ExpansionContext<'_>,
     ) -> Result<(), ExpandError> {
-        let dispatch = self.dispatch_raw_token(target, input, stores, expansion)?;
-        push_dispatch_result(input, stores, dispatch);
+        let dispatched = self.dispatch_raw_token(target, input, stores, expansion);
+        let result = dispatched.map(|dispatch| push_dispatch_result(input, stores, dispatch));
         // TeX's `back_input` cancels the first `get_token` delivery before
         // the saved token is read again. Without this, a brace held by
         // `\expandafter` changes `align_state` twice.
         input.undo_alignment_delivery(classify_alignment_token(stores, saved).0);
         push_inserted_token(input, stores, saved, InsertedOriginKind::ExpandAfter);
-        Ok(())
+        result
     }
 }
 
@@ -1361,13 +1403,13 @@ fn get_x_token_with_context_inner(
             dispatch_with_context(token, read.origin(), input, stores, expansion, meaning);
         let dispatched = match dispatched {
             Ok(dispatched) => dispatched,
-            Err(ExpandError::MacroCall(args::MacroCallError::DoesNotMatchDefinition {
-                ..
-            })) => continue,
-            Err(ExpandError::MacroCall(args::MacroCallError::EndOfInput { .. })) => {
-                return Ok(None);
-            }
-            Err(error) => return Err(error),
+            Err(error) => match expansion.recover_macro_mismatch(error) {
+                Ok(()) => continue,
+                Err(ExpandError::MacroCall(args::MacroCallError::EndOfInput { .. })) => {
+                    return Ok(None);
+                }
+                Err(error) => return Err(error),
+            },
         };
         match dispatched {
             Dispatch::Continue => {}
@@ -1743,13 +1785,13 @@ pub(crate) fn get_x_token_without_input_open(
         );
         let dispatched = match dispatched {
             Ok(dispatched) => dispatched,
-            Err(ExpandError::MacroCall(args::MacroCallError::DoesNotMatchDefinition {
-                ..
-            })) => continue,
-            Err(ExpandError::MacroCall(args::MacroCallError::EndOfInput { .. })) => {
-                return Ok(None);
-            }
-            Err(error) => return Err(error),
+            Err(error) => match expansion.recover_macro_mismatch(error) {
+                Ok(()) => continue,
+                Err(ExpandError::MacroCall(args::MacroCallError::EndOfInput { .. })) => {
+                    return Ok(None);
+                }
+                Err(error) => return Err(error),
+            },
         };
         match dispatched {
             Dispatch::Continue => {}

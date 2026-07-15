@@ -274,6 +274,82 @@ fn collect_protected_expansion(
 }
 
 #[test]
+fn compulsory_macro_token_mismatch_is_consumed_and_reported() {
+    let mut stores = Universe::new();
+    let macro_symbol = stores.intern("bad");
+    let parameters = stores.intern_token_list(&[char_token('?')]);
+    let body = stores.intern_token_list(&[]);
+    stores.set_macro_meaning(
+        macro_symbol,
+        MacroMeaning::new(MeaningFlags::EMPTY, parameters, body),
+    );
+    let input_tokens = stores.intern_token_list(&[
+        Token::Cs(macro_symbol.symbol()),
+        char_token('!'),
+        char_token('O'),
+        char_token('K'),
+    ]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list(input_tokens, TokenListReplayKind::Inserted);
+    let mut context = ExpansionContext::new("texput");
+
+    let first = crate::get_x_token_with_context(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut context,
+    )
+    .expect("TeX recovers from a compulsory-token mismatch");
+
+    assert_eq!(first.map(crate::semantic_token), Some(char_token('O')));
+    let diagnostics = context.take_recoverable_diagnostics().collect::<Vec<_>>();
+    assert!(matches!(
+        diagnostics.as_slice(),
+        [crate::RecoverableExpansionDiagnostic::MacroDoesNotMatchDefinition {
+            macro_name,
+            context,
+        }] if macro_name == "\\bad" && crate::semantic_token(*context) == char_token('!')
+    ));
+}
+
+#[test]
+fn expandafter_replays_saved_token_when_target_macro_mismatches() {
+    let mut stores = Universe::new();
+    let expandafter =
+        expandable_primitive(&mut stores, "expandafter", ExpandablePrimitive::ExpandAfter);
+    let bad = stores.intern("bad");
+    let parameters = stores.intern_token_list(&[char_token('?')]);
+    let body = stores.intern_token_list(&[]);
+    stores.set_macro_meaning(
+        bad,
+        MacroMeaning::new(MeaningFlags::EMPTY, parameters, body),
+    );
+    let input_tokens = stores.intern_token_list(&[
+        Token::Cs(expandafter.symbol()),
+        char_token('S'),
+        Token::Cs(bad.symbol()),
+        char_token('!'),
+        char_token('T'),
+    ]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list(input_tokens, TokenListReplayKind::Inserted);
+    let mut context = ExpansionContext::new("texput");
+    let mut expanded = Vec::new();
+
+    while let Some(token) = crate::get_x_token_with_context(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut context,
+    )
+    .expect("TeX recovers inside expandafter")
+    {
+        expanded.push(crate::semantic_token(token));
+    }
+
+    assert_eq!(expanded, [char_token('S'), char_token('T')]);
+    assert_eq!(context.take_recoverable_diagnostics().count(), 1);
+}
+
+#[test]
 fn prepared_and_input_driven_expansion_share_dispatch_semantics() {
     let source = "\\m\\p\\noexpand\\m\\iftrue T\\else F\\fi\\csname relaxed\\endcsname";
 
