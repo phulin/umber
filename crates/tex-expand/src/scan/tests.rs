@@ -1,4 +1,7 @@
-use super::{ScanToksError, scan_toks, scan_toks_expanded, scan_toks_expanded_with_driver};
+use super::{
+    MacroScanDiagnostic, ScanToksError, scan_toks, scan_toks_expanded,
+    scan_toks_expanded_with_driver,
+};
 use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
 use tex_state::Universe;
 use tex_state::macro_store::MacroMeaning;
@@ -66,6 +69,37 @@ fn expanded_definition_preserves_protected_macro_tokens() {
         stores.tokens(scanned.replacement_text()),
         &[Token::Cs(protected.symbol())]
     );
+}
+
+#[test]
+fn expanded_definition_records_and_discards_undefined_control_sequences() {
+    let mut stores = Universe::new();
+    let missing = stores.intern("missing");
+    let mut input = InputStack::new(MemoryInput::new("{a\\missing b}"));
+    let context =
+        TracedTokenWord::pack(Token::Cs(stores.intern("edef").symbol()), OriginId::UNKNOWN);
+
+    let scanned = scan_toks_expanded_with_driver(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        MeaningFlags::EMPTY,
+        context,
+        &mut ExpansionContext::new("texput"),
+    )
+    .expect("undefined expansion is recoverable inside an expanded definition");
+
+    assert_eq!(
+        stores.tokens(scanned.replacement_text()),
+        &[
+            char_token('a', Catcode::Letter),
+            char_token('b', Catcode::Letter),
+        ]
+    );
+    assert!(matches!(
+        scanned.diagnostics(),
+        [MacroScanDiagnostic::UndefinedControlSequence { name, .. }] if name == "missing"
+    ));
+    assert_eq!(stores.meaning(missing), Meaning::Undefined);
 }
 
 #[test]

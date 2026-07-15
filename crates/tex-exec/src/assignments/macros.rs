@@ -62,6 +62,16 @@ pub(super) fn execute_def(
         )?
     }
     .with_definition_origin(target.origin);
+    for diagnostic in scanned.diagnostics() {
+        match diagnostic {
+            MacroScanDiagnostic::UndefinedControlSequence { name, .. } => {
+                stores.world_mut().write_text(
+                    tex_state::PrintSink::TerminalAndLog,
+                    &format!("\n! Undefined control sequence \\{name}.\n"),
+                );
+            }
+        }
+    }
     if apply_globaldefs(global, stores) {
         stores.set_macro_meaning_global_with_provenance(
             target.symbol,

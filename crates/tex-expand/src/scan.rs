@@ -24,10 +24,19 @@ use crate::{
 };
 
 /// Result of scanning a macro definition without assigning it.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScannedMacro {
     meaning: MacroMeaning,
     provenance: MacroDefinitionProvenance,
+    diagnostics: Vec<MacroScanDiagnostic>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MacroScanDiagnostic {
+    UndefinedControlSequence {
+        name: String,
+        context: TracedTokenWord,
+    },
 }
 
 struct ScannedParameterText {
@@ -37,20 +46,22 @@ struct ScannedParameterText {
 
 impl ScannedMacro {
     #[must_use]
-    pub const fn meaning(self) -> MacroMeaning {
+    pub const fn meaning(&self) -> MacroMeaning {
         self.meaning
     }
 
     #[must_use]
-    pub const fn provenance(self) -> MacroDefinitionProvenance {
+    pub const fn provenance(&self) -> MacroDefinitionProvenance {
         self.provenance
     }
 
     #[must_use]
-    pub const fn with_definition_origin(
-        self,
-        definition_origin: tex_state::token::OriginId,
-    ) -> Self {
+    pub fn diagnostics(&self) -> &[MacroScanDiagnostic] {
+        &self.diagnostics
+    }
+
+    #[must_use]
+    pub fn with_definition_origin(self, definition_origin: tex_state::token::OriginId) -> Self {
         Self {
             provenance: MacroDefinitionProvenance::new(
                 definition_origin,
@@ -62,12 +73,12 @@ impl ScannedMacro {
     }
 
     #[must_use]
-    pub const fn parameter_text(self) -> TokenListId {
+    pub const fn parameter_text(&self) -> TokenListId {
         self.meaning.parameter_text()
     }
 
     #[must_use]
-    pub const fn replacement_text(self) -> TokenListId {
+    pub const fn replacement_text(&self) -> TokenListId {
         self.meaning.replacement_text()
     }
 }
@@ -212,6 +223,7 @@ pub fn scan_toks(
             parameter_text.text.origin_list(),
             replacement_text.origin_list(),
         ),
+        diagnostics: Vec::new(),
     })
 }
 
@@ -244,6 +256,7 @@ pub fn scan_toks_expanded(
             scanned.provenance().parameter_origins(),
             replacement_text.origin_list(),
         ),
+        diagnostics: scanned.diagnostics,
     })
 }
 
@@ -257,8 +270,9 @@ pub fn scan_toks_expanded_with_driver(
 where
 {
     let parameter_text = scan_parameter_text(input, stores, context)?;
+    let mut diagnostics = Vec::new();
     let replacement_text =
-        scan_expanded_replacement_with_driver(input, stores, context, expansion)?;
+        scan_expanded_replacement_with_driver(input, stores, context, expansion, &mut diagnostics)?;
     let replacement_text = append_hash_brace(stores, replacement_text, parameter_text.hash_brace);
     Ok(ScannedMacro {
         meaning: MacroMeaning::new(
@@ -271,6 +285,7 @@ where
             parameter_text.text.origin_list(),
             replacement_text.origin_list(),
         ),
+        diagnostics,
     })
 }
 
@@ -279,6 +294,7 @@ fn scan_expanded_replacement_with_driver(
     stores: &mut tex_state::ExpansionContext<'_>,
     context: TracedTokenWord,
     expansion: &mut ExpansionContext<'_>,
+    diagnostics: &mut Vec<MacroScanDiagnostic>,
 ) -> Result<TracedTokenList, ScanToksError>
 where
 {
@@ -327,27 +343,39 @@ where
             let meaning = expansion.resolve_meaning(input, stores, symbol);
             if meaning == Meaning::ExpandablePrimitive(ExpandablePrimitive::Unexpanded) {
                 expansion.record_meaning(symbol, meaning);
-                let dispatch = crate::dispatch::dispatch_with_context(
+                let dispatch = match crate::dispatch::dispatch_with_context(
                     traced_semantic_token(raw),
                     raw.origin(),
                     input,
                     stores,
                     expansion,
                     meaning,
-                )?;
+                ) {
+                    Ok(dispatch) => dispatch,
+                    Err(error) => {
+                        record_undefined_diagnostic(error, diagnostics)?;
+                        continue;
+                    }
+                };
                 crate::push_dispatch_result(input, stores, dispatch);
                 continue;
             }
             if meaning == Meaning::ExpandablePrimitive(ExpandablePrimitive::Expanded) {
                 expansion.record_meaning(symbol, meaning);
-                let dispatch = crate::dispatch::dispatch_with_context(
+                let dispatch = match crate::dispatch::dispatch_with_context(
                     traced_semantic_token(raw),
                     raw.origin(),
                     input,
                     stores,
                     expansion,
                     meaning,
-                )?;
+                ) {
+                    Ok(dispatch) => dispatch,
+                    Err(error) => {
+                        record_undefined_diagnostic(error, diagnostics)?;
+                        continue;
+                    }
+                };
                 crate::push_dispatch_result(input, stores, dispatch);
                 continue;
             }
@@ -375,26 +403,41 @@ where
                     })) => {
                         return Err(ScanToksError::EndOfInputInReplacementText { context });
                     }
-                    Err(error) => return Err(error.into()),
+                    Err(error) => {
+                        record_undefined_diagnostic(error, diagnostics)?;
+                        continue;
+                    }
                 }
                 if input.source_depth() < source_depth {
                     // Preserve the defining scanner's nested-source seam: the
                     // first expanded token remains available below the
                     // recovery-inserted closing brace.
-                    let Some(traced) =
-                        crate::get_x_or_protected_with_context(input, stores, expansion)?
-                    else {
-                        return Err(ScanToksError::EndOfInputInReplacementText { context });
-                    };
+                    let traced =
+                        match crate::get_x_or_protected_with_context(input, stores, expansion) {
+                            Ok(Some(traced)) => traced,
+                            Ok(None) => {
+                                return Err(ScanToksError::EndOfInputInReplacementText { context });
+                            }
+                            Err(error) => {
+                                record_undefined_diagnostic(error, diagnostics)?;
+                                continue;
+                            }
+                        };
                     unread_token(input, stores, traced);
                     return Ok(finish_traced_list(stores, &mut builder, &mut origins));
                 }
                 continue;
             }
         }
-        let expanded = crate::get_x_or_protected_from_prepared_with_context(
+        let expanded = match crate::get_x_or_protected_from_prepared_with_context(
             prepared, input, stores, expansion,
-        )?;
+        ) {
+            Ok(expanded) => expanded,
+            Err(error) => {
+                record_undefined_diagnostic(error, diagnostics)?;
+                continue;
+            }
+        };
         let Some(traced) = expanded else {
             return Err(ScanToksError::EndOfInputInReplacementText { context });
         };
@@ -478,6 +521,31 @@ where
             }
             _ => push_scanned_token(&mut builder, &mut origins, traced, token),
         }
+    }
+}
+
+fn record_undefined_diagnostic(
+    error: ExpandError,
+    diagnostics: &mut Vec<MacroScanDiagnostic>,
+) -> Result<(), ScanToksError> {
+    let (name, context) = take_undefined_control_sequence(error).map_err(ScanToksError::Expand)?;
+    diagnostics.push(MacroScanDiagnostic::UndefinedControlSequence { name, context });
+    Ok(())
+}
+
+fn take_undefined_control_sequence(
+    error: ExpandError,
+) -> Result<(String, TracedTokenWord), ExpandError> {
+    match error {
+        ExpandError::UndefinedControlSequence { name, context } => Ok((name, context)),
+        ExpandError::Captured { error, site } => match take_undefined_control_sequence(*error) {
+            Ok(undefined) => Ok(undefined),
+            Err(error) => Err(ExpandError::Captured {
+                error: Box::new(error),
+                site,
+            }),
+        },
+        error => Err(error),
     }
 }
 

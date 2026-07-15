@@ -1,7 +1,8 @@
 //! Assignment primitives owned by main control.
 
 use tex_expand::scan::{
-    scan_general_text_expanded_with_driver, scan_toks, scan_toks_expanded_with_driver,
+    MacroScanDiagnostic, scan_general_text_expanded_with_driver, scan_toks,
+    scan_toks_expanded_with_driver,
 };
 use tex_expand::{
     DriverExpansionMode, ExpandError, get_command_token_with_context, get_x_token_with_context,

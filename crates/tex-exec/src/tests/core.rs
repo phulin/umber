@@ -616,6 +616,24 @@ fn dispatch_undefined_control_sequence_reports_and_continues() {
 }
 
 #[test]
+fn edef_reports_undefined_control_sequence_and_completes_definition() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\edef\\foo{a\\missing b}\\message{RESULT=\\foo}\\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("undefined control sequence in edef is recoverable");
+
+    let output = support::terminal_effect_text(&stores);
+    assert!(output.contains("Undefined control sequence \\missing"));
+    assert!(output.contains("RESULT=ab"));
+}
+
+#[test]
 fn execution_error_capture_retains_macro_trace_after_frame_pop() {
     let mut stores = Universe::new();
     let body = stores.intern_token_list(&[]);
