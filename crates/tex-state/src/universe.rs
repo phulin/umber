@@ -1575,6 +1575,14 @@ impl Universe {
         self.pure_memo.enable(config);
     }
 
+    /// Enables effect-free paragraph-front-end entries in the pure memo runtime.
+    ///
+    /// This is separate from pure-kernel memoization so callers can measure and
+    /// release the broader executor optimization independently.
+    pub fn enable_paragraph_memo(&mut self) {
+        self.pure_memo.enable_paragraph_front_ends();
+    }
+
     /// Disables the pure-query cache and releases every retained value.
     pub fn disable_pure_memo(&mut self) {
         self.pure_memo.disable();
@@ -1600,6 +1608,11 @@ impl Universe {
         self.pure_memo.is_enabled()
     }
 
+    #[must_use]
+    pub const fn paragraph_memo_enabled(&self) -> bool {
+        self.pure_memo.paragraph_front_ends_enabled()
+    }
+
     #[doc(hidden)]
     pub fn lookup_pure_pretolerance(
         &mut self,
@@ -1615,6 +1628,29 @@ impl Universe {
         plan: Option<crate::PureBreakPlan>,
     ) {
         self.pure_memo.insert_pretolerance(key, plan);
+    }
+
+    #[doc(hidden)]
+    pub fn lookup_pure_paragraph(
+        &mut self,
+        key: crate::PureMemoKey,
+    ) -> Option<crate::DetachedMemoValue> {
+        self.pure_memo.lookup_paragraph(key)
+    }
+
+    #[doc(hidden)]
+    pub fn insert_pure_paragraph(
+        &mut self,
+        key: crate::PureMemoKey,
+        value: crate::DetachedMemoValue,
+    ) {
+        self.pure_memo.insert_paragraph(key, value);
+    }
+
+    #[doc(hidden)]
+    pub fn record_pure_paragraph_hit(&mut self, commands: usize, imported_bytes: usize) {
+        self.pure_memo
+            .record_paragraph_hit(commands, imported_bytes);
     }
 
     #[doc(hidden)]

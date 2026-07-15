@@ -93,6 +93,8 @@ pub struct ExecutionContext<'a> {
     expansion: tex_expand::ExpansionContext<'a>,
     font_resolver: Option<&'a mut dyn FontResolver>,
     image_resolver: Option<&'a mut dyn PdfImageResolver>,
+    pub(crate) pending_paragraph_memo: Option<tex_state::PureMemoKey>,
+    pub(crate) bypass_paragraph_memo_once: bool,
 }
 
 impl<'a> ExecutionContext<'a> {
@@ -102,6 +104,8 @@ impl<'a> ExecutionContext<'a> {
             expansion: tex_expand::ExpansionContext::new(job_name),
             font_resolver: None,
             image_resolver: None,
+            pending_paragraph_memo: None,
+            bypass_paragraph_memo_once: false,
         }
     }
 
@@ -115,6 +119,8 @@ impl<'a> ExecutionContext<'a> {
             expansion: tex_expand::ExpansionContext::with_input_resolver(job_name, input_resolver),
             font_resolver: Some(font_resolver),
             image_resolver: None,
+            pending_paragraph_memo: None,
+            bypass_paragraph_memo_once: false,
         }
     }
 
@@ -129,6 +135,8 @@ impl<'a> ExecutionContext<'a> {
             expansion: tex_expand::ExpansionContext::with_input_resolver(job_name, input_resolver),
             font_resolver: Some(font_resolver),
             image_resolver: Some(image_resolver),
+            pending_paragraph_memo: None,
+            bypass_paragraph_memo_once: false,
         }
     }
 
@@ -474,6 +482,20 @@ where
         report_recoverable_expansion_diagnostics(execution, stores);
         if should_stop(input, stores) {
             return Ok(MainControlExit::Stopped);
+        }
+
+        if allow_text_spans
+            && nest.current_mode() == crate::Mode::Vertical
+            && execution.pending_paragraph_memo.is_none()
+            && stores.paragraph_memo_enabled()
+        {
+            if execution.bypass_paragraph_memo_once {
+                execution.bypass_paragraph_memo_once = false;
+            } else if crate::paragraph_memo::try_reuse_literal_paragraph(
+                nest, input, stores, execution, stats,
+            )? {
+                continue;
+            }
         }
 
         if allow_text_spans

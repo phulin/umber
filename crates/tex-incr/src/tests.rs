@@ -93,6 +93,58 @@ fn pure_memo_runtime_survives_accepted_revisions() {
     assert!(after_edit.hits > after_cold.hits);
 }
 
+#[test]
+fn paragraph_front_end_hit_survives_prefix_shift_and_unrelated_register_write() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let paragraph = "stable literal paragraph text";
+    let source =
+        format!("{paragraph}\\par\n{paragraph}\\par\n{paragraph}\\par\n\\vfill\\eject\\end");
+    let mut session = Session::start(
+        universe,
+        "paragraph-prefix-shift",
+        RevisionId::new(1),
+        source.clone(),
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+    let before = session.pure_memo_stats();
+    assert!(before.paragraph_hits >= 1);
+
+    let inserted = "\\count77=123 ";
+    let incremental = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: 0..0,
+                replacement: inserted.to_owned(),
+            },
+        )
+        .expect("prefix edit");
+    let after = session.pure_memo_stats();
+    assert!(after.paragraph_hits > before.paragraph_hits);
+
+    let edited = format!("{inserted}{source}");
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-prefix-shift",
+        RevisionId::new(2),
+        edited,
+        usize::MAX,
+    )
+    .expect("cold comparison");
+    let cold_output = cold.cold().expect("cold edited revision");
+    assert_eq!(
+        incremental.dvi_bytes().expect("incremental DVI"),
+        cold_output.dvi_bytes().expect("cold DVI")
+    );
+}
+
 fn assert_semantic_edit_matches_cold(name: &str, original: &str, edited: &str) -> ReuseMetrics {
     let mut session = Session::start(template(), name, RevisionId::new(1), original, usize::MAX)
         .expect("incremental session");

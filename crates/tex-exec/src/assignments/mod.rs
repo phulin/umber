@@ -68,6 +68,7 @@ pub(crate) use paragraph::apply_line_expansion as test_apply_line_expansion;
 #[cfg(test)]
 pub(crate) use paragraph::break_hlist as test_break_hlist;
 pub use paragraph::cached_pretolerance_plan;
+pub(crate) use paragraph::install_reused_paragraph_hlist;
 #[cfg(test)]
 pub(crate) use paragraph::test_pretolerance_memo_key;
 use paragraph::*;

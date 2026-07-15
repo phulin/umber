@@ -55,6 +55,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/mode/tests.rs`: mode-summary root sharing, restoration, and copy-on-write isolation tests.
 - `src/node_dump.rs`: TeX-style node-list dumping used by diagnostic output.
 - `src/output.rs`: output-routine fire-up, `\box255` packaging, held-over material, deadcycle handling, and final `\end` page cleanup.
+- `src/paragraph_memo.rs`: bounded effect-free literal paragraph trace preflight, narrow front-end validation keys, detached hlist import, provenance rebinding, and telemetry.
 - `src/packing_params.rs`: execution-side snapshots of packing-related integer and dimension parameters before calling pure `tex-typeset` kernels.
 - `src/page_builder.rs`: TeX.web page-builder accounting for outer vertical contributions, break costs, and pending fire-up records.
 - `src/splitting.rs`: shared vertical split helpers for insertion and `\vsplit` remainder pruning/repacking.

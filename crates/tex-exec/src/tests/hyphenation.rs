@@ -463,7 +463,7 @@ fn enabled_pretolerance_memo_preserves_end_to_end_state_effects_and_dvi() {
         Vec<EffectRecord>,
         tex_state::PureMemoStats,
     ) {
-        let mut stores = Universe::with_world(tex_state::World::memory());
+        let mut stores = stores_with_fonts();
         tex_expand::install_expandable_primitives(&mut stores);
         install_unexpandable_primitives(&mut stores);
         if enabled {
@@ -497,6 +497,40 @@ fn enabled_pretolerance_memo_preserves_end_to_end_state_effects_and_dvi() {
         memo.misses >= 2,
         "the initial and language-mutated paragraphs must miss"
     );
+}
+
+#[test]
+fn literal_paragraph_front_end_reuses_hlist_and_preserves_output() {
+    fn run(enabled: bool) -> (Vec<u8>, u64, tex_state::PureMemoStats) {
+        let mut stores = Universe::with_world(tex_state::World::memory());
+        tex_expand::install_expandable_primitives(&mut stores);
+        install_unexpandable_primitives(&mut stores);
+        if enabled {
+            stores.enable_pure_memo(tex_state::PureMemoConfig::default());
+            stores.enable_paragraph_memo();
+        }
+        let source = "\\font\\tenrm=cmr10 \\tenrm repeated literal paragraph text\\par\nrepeated literal paragraph text\\par\nrepeated literal paragraph text\\par\n\\vfill\\eject\\end";
+        let mut input = InputStack::new(MemoryInput::new(source));
+        let stats = Executor::new()
+            .run(&mut input, &mut stores)
+            .expect("literal paragraph program");
+        let mut dvi = tex_out::dvi::DviStreamWriter::new(Vec::new());
+        for plan in &stats.dvi_pages {
+            dvi.write_page_plan(plan).expect("DVI page");
+        }
+        let bytes = dvi.finish().expect("DVI finish");
+        let hash = stores.snapshot().state_hash();
+        (bytes, hash, stores.pure_memo_stats())
+    }
+
+    let (cold_dvi, cold_hash, _) = run(false);
+    let (memo_dvi, memo_hash, stats) = run(true);
+    assert_eq!(memo_dvi, cold_dvi);
+    assert_eq!(memo_hash, cold_hash);
+    assert_eq!(stats.paragraph_hits, 1, "{stats:?}");
+    assert_eq!(stats.paragraph_inserts, 1, "{stats:?}");
+    assert!(stats.paragraph_commands_skipped > 20);
+    assert!(stats.paragraph_imported_bytes > 0);
 }
 
 #[test]

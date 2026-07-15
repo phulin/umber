@@ -19,6 +19,7 @@ mod node_dump;
 mod output;
 mod packing_params;
 mod page_builder;
+mod paragraph_memo;
 mod splitting;
 mod transaction;
 mod vertical;

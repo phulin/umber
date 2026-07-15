@@ -355,6 +355,22 @@ nested shipout/output routine, and a supported detached input transition. A
 hit imports the prepared hlist and advances input; line breaking and page
 building still execute.
 
+The implemented first safe subset is a bounded semantic-token preflight for
+literal outer paragraphs. It accepts only letter/other/space deliveries ending
+in the live `\par`/`\endgraf` meaning, so every command, expansion, assignment,
+effect, input open, nested mode, math fragment, and recovery path is an explicit
+barrier. Its strong key combines the semantic token trace with the current font
+and metrics, space glues, indentation, language/minima, group facts, and the
+exact `\sfcode` values used by the trace; page state and unrelated registers are
+deliberately absent. On a hit it imports a provenance-free prepared hlist,
+rebinds character and ligature origins from the current trace, and then runs
+ordinary paragraph start, line breaking, vertical contribution, and page
+building. A miss replays the already-tokenized trace and records the prepared
+pre-linebreak hlist at `\par`, keeping cold execution authoritative. The cache
+is separately enabled from pure-kernel memoization, bounded by the same
+session-local runtime, and reports paragraph lookups, hits, inserts, commands
+skipped, imported bytes, and total retention.
+
 The second implementation allows semantic redo and virtual effects. The third
 composes repeated command/expansion children beneath the paragraph trace node.
 

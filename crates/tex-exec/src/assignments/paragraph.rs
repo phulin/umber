@@ -36,10 +36,11 @@ pub(super) fn execute_paragraph_command(
                 // even though there is no horizontal list to finish. LaTeX
                 // relies on this to clear a list's one-line `\parshape`
                 // before starting nested verbatim paragraphs.
+                execution.pending_paragraph_memo = None;
                 normal_paragraph(nest, stores);
                 build_page_if_outer_vertical(nest, stores)
             } else {
-                end_paragraph(nest, stores)
+                end_paragraph_with_memo(nest, stores, execution)
             }
         }
         UnexpandablePrimitive::Indent => start_paragraph(nest, input, stores, true),
@@ -169,6 +170,36 @@ pub(crate) fn end_paragraph(nest: &mut ModeNest, stores: &mut Universe) -> Resul
         true,
     )?;
     Ok(())
+}
+
+fn end_paragraph_with_memo(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
+    if nest.current_mode() == Mode::Horizontal {
+        flush_pending_hchars(nest, stores)?;
+        crate::paragraph_memo::publish_prepared_hlist(
+            stores,
+            execution,
+            nest.current_list().nodes(),
+        );
+    } else {
+        execution.pending_paragraph_memo = None;
+    }
+    end_paragraph(nest, stores)
+}
+
+pub(crate) fn install_reused_paragraph_hlist(
+    nest: &mut ModeNest,
+    input: &mut InputStack,
+    stores: &mut Universe,
+    nodes: Vec<Node>,
+) -> Result<(), ExecError> {
+    start_paragraph(nest, input, stores, true)?;
+    let _ = nest.current_list_mut().take_nodes();
+    nest.current_list_mut().append(nodes);
+    end_paragraph(nest, stores)
 }
 
 pub(crate) struct ParagraphBreakResult {

@@ -33,6 +33,11 @@ pub struct PureMemoStats {
     pub malformed: u64,
     pub retained_entries: usize,
     pub retained_bytes: usize,
+    pub paragraph_lookups: u64,
+    pub paragraph_hits: u64,
+    pub paragraph_inserts: u64,
+    pub paragraph_commands_skipped: u64,
+    pub paragraph_imported_bytes: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -77,6 +82,7 @@ struct Entry {
 #[derive(Clone, Debug)]
 enum PureMemoValue {
     Pretolerance(Option<PureBreakPlan>),
+    Paragraph(DetachedMemoValue),
     Detached,
 }
 
@@ -96,12 +102,22 @@ struct PureMemoCache {
 #[derive(Clone, Debug, Default)]
 pub struct PureMemoRuntime {
     cache: Option<PureMemoCache>,
+    paragraph_front_ends: bool,
 }
 
 impl PureMemoRuntime {
     #[must_use]
     pub const fn is_enabled(&self) -> bool {
         self.cache.is_some()
+    }
+
+    #[must_use]
+    pub const fn paragraph_front_ends_enabled(&self) -> bool {
+        self.cache.is_some() && self.paragraph_front_ends
+    }
+
+    pub fn enable_paragraph_front_ends(&mut self) {
+        self.paragraph_front_ends = self.cache.is_some();
     }
 
     pub(crate) fn enable(&mut self, config: PureMemoConfig) {
@@ -115,6 +131,7 @@ impl PureMemoRuntime {
 
     pub(crate) fn disable(&mut self) {
         self.cache = None;
+        self.paragraph_front_ends = false;
     }
 
     pub(crate) fn lookup_pretolerance(
@@ -128,7 +145,7 @@ impl PureMemoRuntime {
             .get(&key)
             .and_then(|entry| match &entry.value {
                 PureMemoValue::Pretolerance(plan) => Some(plan.clone()),
-                PureMemoValue::Detached => None,
+                PureMemoValue::Paragraph(_) | PureMemoValue::Detached => None,
             });
         if hit.is_some() {
             cache.stats.hits = cache.stats.hits.saturating_add(1);
@@ -143,6 +160,59 @@ impl PureMemoRuntime {
             cache.stats.misses = cache.stats.misses.saturating_add(1);
         }
         hit
+    }
+
+    pub(crate) fn lookup_paragraph(&mut self, key: PureMemoKey) -> Option<DetachedMemoValue> {
+        if !self.paragraph_front_ends {
+            return None;
+        }
+        let cache = self.cache.as_mut()?;
+        cache.stats.lookups = cache.stats.lookups.saturating_add(1);
+        cache.stats.paragraph_lookups = cache.stats.paragraph_lookups.saturating_add(1);
+        let hit = cache
+            .entries
+            .get(&key)
+            .and_then(|entry| match &entry.value {
+                PureMemoValue::Paragraph(value) => Some(value.clone()),
+                PureMemoValue::Pretolerance(_) | PureMemoValue::Detached => None,
+            });
+        if hit.is_some() {
+            cache.stats.hits = cache.stats.hits.saturating_add(1);
+            cache.stats.paragraph_hits = cache.stats.paragraph_hits.saturating_add(1);
+        } else {
+            cache.stats.misses = cache.stats.misses.saturating_add(1);
+        }
+        hit
+    }
+
+    pub(crate) fn insert_paragraph(&mut self, key: PureMemoKey, value: DetachedMemoValue) {
+        if !self.paragraph_front_ends {
+            return;
+        }
+        let owned_bytes = value
+            .retained_bytes()
+            .saturating_sub(std::mem::size_of::<DetachedMemoValue>());
+        let before = self.cache.as_ref().map_or(0, |cache| cache.stats.inserts);
+        self.insert_value(key, PureMemoValue::Paragraph(value), owned_bytes);
+        if let Some(cache) = &mut self.cache
+            && cache.stats.inserts != before
+        {
+            cache.stats.paragraph_inserts = cache.stats.paragraph_inserts.saturating_add(1);
+        }
+    }
+
+    pub(crate) fn record_paragraph_hit(&mut self, commands: usize, imported_bytes: usize) {
+        let Some(cache) = &mut self.cache else {
+            return;
+        };
+        cache.stats.paragraph_commands_skipped = cache
+            .stats
+            .paragraph_commands_skipped
+            .saturating_add(commands as u64);
+        cache.stats.paragraph_imported_bytes = cache
+            .stats
+            .paragraph_imported_bytes
+            .saturating_add(imported_bytes as u64);
     }
 
     pub(crate) fn insert_pretolerance(&mut self, key: PureMemoKey, plan: Option<PureBreakPlan>) {
