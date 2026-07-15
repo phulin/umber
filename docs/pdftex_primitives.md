@@ -76,6 +76,13 @@ diagnostics must match the pinned oracle, and node/effect state must survive
 checkpoint, restore, semantic hashing, and format serialization where
 applicable.
 
+The source-derived graphics-state, literal, color-stack, saved-position,
+snapping, timer, and random contracts are fixed in
+`pdftex_graphics_state.md`. In particular, the pinned source has
+`\pdfsnaprefpoint`, `\pdfsnapy`, and `\pdfsnapycomp`; it has no
+`\pdfsnaptorefpoint` primitive. Timer and random behavior is shared with the
+completed utility implementation rather than duplicated in the PDF driver.
+
 The parameter-state slice uses reserved cells in the existing typed integer,
 dimension, and token-list banks. pdfTeX mode initializes the cells to the
 pinned INITEX defaults; other engine modes leave them untouched. Of the three
