@@ -1415,6 +1415,17 @@ pub(crate) fn intercept_alignment_token(
     if !input.has_active_alignment() {
         return false;
     }
+    let (delivery, terminator) = classify_alignment_token(stores, traced);
+    input.intercept_alignment_token(traced, delivery, terminator, stores.execution_group_depth())
+}
+
+fn classify_alignment_token(
+    stores: &impl ExpansionState,
+    traced: TracedTokenWord,
+) -> (
+    tex_lex::AlignmentTokenDelivery,
+    Option<tex_lex::AlignmentTerminator>,
+) {
     let token = semantic_token(traced);
     let meaning = match token {
         Token::Cs(symbol) => Some(stores.meaning(symbol)),
@@ -1465,7 +1476,7 @@ pub(crate) fn intercept_alignment_token(
             _ => None,
         }
     };
-    input.intercept_alignment_token(traced, delivery, terminator, stores.execution_group_depth())
+    (delivery, terminator)
 }
 
 /// Canonical TeX `get_next`-style raw semantic delivery.
@@ -1545,7 +1556,7 @@ fn intercept_suppressed_alignment_token(
 
 pub fn back_input<I>(
     input: &mut InputStack,
-    _stores: &mut tex_state::ExpansionContext<'_>,
+    stores: &mut tex_state::ExpansionContext<'_>,
     tokens: I,
 ) where
     I: IntoIterator<Item = TracedTokenWord>,
@@ -1556,7 +1567,7 @@ pub fn back_input<I>(
     let Some(first) = traced.next() else {
         return;
     };
-    input.back_input_alignment_token(first);
+    input.undo_alignment_delivery(classify_alignment_token(stores, first).0);
     let Some(second) = traced.next() else {
         if let Some((list, replay_kind, index)) = input.current_token_list_frame()
             && matches!(
@@ -1564,7 +1575,7 @@ pub fn back_input<I>(
                 TokenListReplayKind::MacroBody | TokenListReplayKind::MacroArgument
             )
             && index > 0
-            && _stores.tokens(list).get(index - 1).copied() == Some(semantic_token(first))
+            && stores.tokens(list).get(index - 1).copied() == Some(semantic_token(first))
             && input.rewind_current_token_list_frame()
         {
             return;
@@ -1578,13 +1589,13 @@ pub fn back_input<I>(
         return;
     };
 
-    input.back_input_alignment_token(second);
+    input.undo_alignment_delivery(classify_alignment_token(stores, second).0);
     let (lower, _) = traced.size_hint();
     let mut buffer = input.take_transient_token_buffer();
     buffer.reserve(lower.saturating_add(2));
     buffer.extend([first, second]);
     for token in traced {
-        input.back_input_alignment_token(token);
+        input.undo_alignment_delivery(classify_alignment_token(stores, token).0);
         buffer.push(token);
     }
     input.push_transient_tokens(buffer, TokenListReplayKind::Inserted);

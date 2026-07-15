@@ -7,6 +7,7 @@ use ahash::AHashMap;
 use tex_lex::MacroArguments;
 use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
 use tex_state::glue::{GlueSpec, Order};
+use tex_state::ids::TokenListId;
 use tex_state::interner::Symbol;
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, UnexpandablePrimitive};
@@ -704,6 +705,38 @@ fn back_input_clears_one_shot_noexpand_suppression() {
         .map(crate::semantic_token),
         Some(char_token('x'))
     );
+}
+
+#[test]
+fn back_input_reverses_alignment_delivery_for_brace_aliases() {
+    let mut stores = Universe::new();
+    let egroup = stores.intern("egroup");
+    stores.set_meaning(
+        egroup,
+        Meaning::CharToken {
+            ch: '}',
+            cat: Catcode::EndGroup,
+        },
+    );
+    let mut input = InputStack::new(MemoryInput::new("\\egroup"));
+    input.begin_alignment();
+    input.set_alignment_state(0);
+    input.begin_alignment_cell(None, TokenListId::EMPTY, 0);
+
+    let token = crate::get_x_token(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    )
+    .expect("brace alias delivery")
+    .expect("brace alias token");
+    assert!(input.alignment_cell_below_base_depth());
+
+    crate::back_input(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        [token],
+    );
+    assert!(input.alignment_cell_at_base_depth());
 }
 
 #[test]

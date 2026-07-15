@@ -1759,20 +1759,32 @@ impl InputStack {
     /// Reverses the alignment brace accounting for a token that was consumed
     /// in a context where TeX explicitly cancels `get_next`'s adjustment.
     pub fn undo_alignment_token_delivery(&mut self, traced: TracedTokenWord) {
-        let Some(alignment) = self.alignment_inputs.last_mut() else {
-            return;
-        };
-        match traced.token() {
+        let delivery = match traced.token() {
             Some(Token::Char {
                 cat: Catcode::BeginGroup,
                 ..
-            }) => alignment.align_state -= 1,
+            }) => AlignmentTokenDelivery::LeftBrace,
             Some(Token::Char {
                 cat: Catcode::EndGroup,
                 ..
-            }) => alignment.align_state += 1,
+            }) => AlignmentTokenDelivery::RightBrace,
             Some(Token::Char { .. } | Token::Cs(_) | Token::Param(_) | Token::Frozen(_)) | None => {
+                AlignmentTokenDelivery::Other
             }
+        };
+        self.undo_alignment_delivery(delivery);
+    }
+
+    /// Reverses an alignment delivery after the expansion layer has resolved
+    /// control-sequence character aliases such as `\bgroup` and `\egroup`.
+    pub fn undo_alignment_delivery(&mut self, delivery: AlignmentTokenDelivery) {
+        let Some(alignment) = self.alignment_inputs.last_mut() else {
+            return;
+        };
+        match delivery {
+            AlignmentTokenDelivery::Other => {}
+            AlignmentTokenDelivery::LeftBrace => alignment.align_state -= 1,
+            AlignmentTokenDelivery::RightBrace => alignment.align_state += 1,
         }
     }
 

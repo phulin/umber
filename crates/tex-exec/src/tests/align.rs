@@ -759,6 +759,17 @@ fn alignment_brace_depth_uses_character_alias_meanings() {
 }
 
 #[test]
+fn alignment_brace_depth_survives_grouped_char_material() {
+    let stores = run_boxed_alignment_source(
+        "\\let\\bgroup={\\let\\egroup=}\\def\\symbol{\\bgroup\\char36\\egroup}\\halign{#\\cr \\symbol\\cr y\\cr}",
+    );
+    let rows = vlist_rows(&stores, box_zero_vlist(&stores));
+
+    assert_eq!(rows.len(), 2);
+    assert_eq!(cell_text(&stores, row_cells(&stores, rows[1])[0]), "y");
+}
+
+#[test]
 fn expanded_text_scanning_preserves_alignment_brace_depth() {
     let stores = run_boxed_alignment_source("\\halign{#\\cr x\\expanded{}\\cr}");
     let rows = vlist_rows(&stores, box_zero_vlist(&stores));
