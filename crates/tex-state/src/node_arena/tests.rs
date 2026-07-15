@@ -284,6 +284,26 @@ fn ligature_and_character_fonts_share_the_same_dense_identity() {
 }
 
 #[test]
+fn margin_kern_sides_round_trip_in_compact_nodes() {
+    let mut arena = NodeArena::new();
+    let nodes = [
+        Node::Kern {
+            amount: scaled(-123),
+            kind: KernKind::LeftMargin,
+        },
+        Node::Kern {
+            amount: scaled(456),
+            kind: KernKind::RightMargin,
+        },
+    ];
+    let list = arena.append(&nodes);
+
+    assert_eq!(arena.get_epoch(list), &nodes);
+    assert_eq!(arena.storage.testing_sidecar_lengths(), [0; 13]);
+    assert_eq!(arena.storage.testing_tags(), vec![2, 2]);
+}
+
+#[test]
 fn byte_char_runs_stop_at_fonts_unicode_ligatures_and_other_nodes() {
     let mut arena = NodeArena::new();
     let f1 = FontId::testing_new(1);

@@ -21,6 +21,30 @@ fn page_artifact_round_trips() {
 }
 
 #[test]
+fn margin_kern_sides_round_trip() {
+    let mut artifact = sample_artifact();
+    let PageNode::VList(root) = &mut artifact.testing_mut().root else {
+        unreachable!("sample root is a vlist");
+    };
+    root.children = vec![
+        PageNode::Kern {
+            amount: Scaled::from_raw(-123),
+            kind: KernKind::LeftMargin,
+        },
+        PageNode::Kern {
+            amount: Scaled::from_raw(456),
+            kind: KernKind::RightMargin,
+        },
+    ];
+
+    let bytes = artifact.to_bytes().expect("artifact serializes");
+    assert_eq!(
+        PageArtifact::from_bytes(&bytes).expect("artifact parses"),
+        artifact
+    );
+}
+
+#[test]
 fn streamed_v10_builder_is_byte_identical_to_owned_encoding() {
     let page = sample_artifact();
     let (root, vertical) = match &page.root {

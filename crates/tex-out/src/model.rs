@@ -294,6 +294,8 @@ pub enum KernKind {
     Explicit,
     Font,
     Accent,
+    LeftMargin,
+    RightMargin,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

@@ -110,6 +110,20 @@ fn dump_node(
             KernKind::Mu => {
                 let _ = writeln!(out, "\\mkern{}mu", format_scaled_without_unit(*amount));
             }
+            KernKind::LeftMargin => {
+                let _ = writeln!(
+                    out,
+                    "\\kern {} (left margin)",
+                    format_scaled_without_unit(*amount)
+                );
+            }
+            KernKind::RightMargin => {
+                let _ = writeln!(
+                    out,
+                    "\\kern {} (right margin)",
+                    format_scaled_without_unit(*amount)
+                );
+            }
         },
         Node::Glue { spec, kind, leader } => {
             if let Some(leader) = leader {

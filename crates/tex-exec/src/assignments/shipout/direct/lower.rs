@@ -79,6 +79,8 @@ pub(super) fn lower_kern_kind(kind: StateKernKind) -> PageKernKind {
         StateKernKind::Font => PageKernKind::Font,
         StateKernKind::Accent => PageKernKind::Accent,
         StateKernKind::Mu => PageKernKind::Explicit,
+        StateKernKind::LeftMargin => PageKernKind::LeftMargin,
+        StateKernKind::RightMargin => PageKernKind::RightMargin,
     }
 }
 

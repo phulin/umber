@@ -7,7 +7,8 @@ use std::fmt;
 use tex_arith::Scaled;
 
 const MAGIC: &[u8; 4] = b"UMPG";
-const VERSION: u8 = 13;
+const VERSION: u8 = 14;
+const OPENTYPE_FONT_VERSION: u8 = 13;
 const LEGACY_VERSION: u8 = 12;
 
 mod wire {
@@ -226,7 +227,7 @@ pub(crate) fn from_bytes(
     };
     reader.expect_magic()?;
     let version = reader.u8()?;
-    if version != VERSION && version != LEGACY_VERSION {
+    if version != VERSION && version != OPENTYPE_FONT_VERSION && version != LEGACY_VERSION {
         return Err(ParseError::UnsupportedVersion(version));
     }
     let mag = reader.i32()?;
@@ -1646,7 +1647,7 @@ impl Reader<'_> {
     fn header(&mut self) -> Result<(crate::JobInfo, Vec<FontResource>, [i32; 10]), ParseError> {
         self.expect_magic()?;
         let version = self.u8()?;
-        if version != VERSION && version != LEGACY_VERSION {
+        if version != VERSION && version != OPENTYPE_FONT_VERSION && version != LEGACY_VERSION {
             return Err(ParseError::UnsupportedVersion(version));
         }
         let job = crate::JobInfo {
@@ -1789,7 +1790,11 @@ impl Reader<'_> {
     }
 
     fn fonts(&mut self, version: u8) -> Result<Vec<FontResource>, ParseError> {
-        let len = self.collection_len(if version >= VERSION { 53 } else { 52 })?;
+        let len = self.collection_len(if version >= OPENTYPE_FONT_VERSION {
+            53
+        } else {
+            52
+        })?;
         let mut fonts = Vec::with_capacity(len);
         for _ in 0..len {
             let font_id = self.u32()?;
@@ -1798,7 +1803,7 @@ impl Reader<'_> {
             let tfm_checksum = self.u32()?;
             let design_size = self.scaled()?;
             let at_size = self.scaled()?;
-            let opentype = if version >= VERSION {
+            let opentype = if version >= OPENTYPE_FONT_VERSION {
                 match self.u8()? {
                     0 => None,
                     1 => {
@@ -2575,6 +2580,8 @@ fn kern_kind_tag(kind: KernKind) -> u8 {
         KernKind::Explicit => 0,
         KernKind::Font => 1,
         KernKind::Accent => 2,
+        KernKind::LeftMargin => 3,
+        KernKind::RightMargin => 4,
     }
 }
 
@@ -2583,6 +2590,8 @@ fn parse_kern_kind(tag: u8) -> Result<KernKind, ParseError> {
         0 => Ok(KernKind::Explicit),
         1 => Ok(KernKind::Font),
         2 => Ok(KernKind::Accent),
+        3 => Ok(KernKind::LeftMargin),
+        4 => Ok(KernKind::RightMargin),
         tag => Err(ParseError::InvalidTag {
             kind: "kern kind",
             tag,

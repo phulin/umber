@@ -445,7 +445,7 @@ impl NodeStorage {
             },
             2 => NodeRef::Kern {
                 amount: Scaled::from_raw(payload as u32 as i32),
-                kind: decode_kern(((payload >> 32) & 3) as u8),
+                kind: decode_kern(((payload >> 32) & 7) as u8),
             },
             3 => NodeRef::Glue {
                 spec: GlueId::new(payload as u32),

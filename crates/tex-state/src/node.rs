@@ -426,6 +426,10 @@ pub enum KernKind {
     Font,
     Accent,
     Mu,
+    /// pdfTeX character protrusion at the left edge of a finalized line.
+    LeftMargin,
+    /// pdfTeX character protrusion at the right edge of a finalized line.
+    RightMargin,
 }
 
 /// The source of a glue node.
