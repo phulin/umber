@@ -24,6 +24,8 @@ format_output_dir="${target_dir}/latex-parity/format"
 receipt="${target_dir}/latex-parity/last-run-format-receipt.txt"
 active_receipt="$receipt"
 triage_dir="${target_dir}/latex-parity/triage"
+failures_report="${target_dir}/latex-parity/last-run-failures.txt"
+non_dvi_report="${target_dir}/latex-parity/last-run-non-dvi.txt"
 
 usage() {
   cat <<'EOF'
@@ -33,7 +35,7 @@ Options:
   --format PATH       Reuse an existing pregenerated Umber latex.fmt.
   --case NAME         Run one derived case name or repository-relative path.
   --offline           Do not fetch the pinned upstream LaTeX2e snapshot.
-  --keep-work         Preserve successful reference and Umber work directories.
+  --keep-work         Preserve all reference and Umber work directories.
   --self-test-format-reuse
                       Test the build-once/stage-identically invariant only.
 
@@ -220,8 +222,7 @@ done
 texfonts="${texmf_dist}/fonts/tfm/public/cm:${texmf_dist}/fonts/tfm/public/latex-fonts:${texmf_dist}/fonts/tfm/public/amsfonts/cmextra:${texmf_dist}/fonts/tfm/public/amsfonts/euler:${texmf_dist}/fonts/tfm/public/amsfonts/symbols:${texmf_dist}/fonts/tfm/public/amsfonts/cyrillic:${texmf_dist}/fonts/tfm/jknappen/ec"
 work_root="$(mktemp -d "${TMPDIR:-/tmp}/umber-latex-parity.XXXXXX")"
 cleanup() {
-  local status=$?
-  if [[ $status -eq 0 && $keep_work -eq 0 ]]; then
+  if [[ $keep_work -eq 0 ]]; then
     rm -rf "$work_root"
   else
     printf 'LaTeX parity work directory: %s\n' "$work_root" >&2
@@ -315,8 +316,9 @@ run_one_case() {
 selected=0
 dvi_selected=0
 failed=0
-failures="${work_root}/failures.txt"
-non_dvi="${work_root}/non-dvi.txt"
+mkdir -p "$(dirname "$failures_report")"
+failures="${failures_report}.$$"
+non_dvi="${non_dvi_report}.$$"
 : > "$failures"
 : > "$non_dvi"
 while IFS= read -r path; do
@@ -336,6 +338,9 @@ while IFS= read -r path; do
     failed=$((failed + 1))
     printf '%s\t%s\n' "$case_name" "$path" >> "$failures"
   fi
+  if [[ $keep_work -eq 0 ]]; then
+    rm -rf "${work_root:?}/${case_name}"
+  fi
 done < "$case_list"
 
 [[ $selected -gt 0 ]] || fail "no manifest case matched '${case_filter:-the suite}'"
@@ -352,10 +357,13 @@ if [[ -z "$case_filter" ]]; then
 fi
 printf 'LaTeX format reuse: %s cases restored sha256:%s (builder invocations: %s)\n' \
   "$dvi_selected" "$format_sha256" "$format_build_count"
+mv "$failures" "$failures_report"
+mv "$non_dvi" "$non_dvi_report"
 printf 'LaTeX DVI census: %s candidates, %s classic DVI cases, %s non-DVI configurations (%s)\n' \
-  "$selected" "$dvi_selected" "$((selected - dvi_selected))" "$non_dvi"
+  "$selected" "$dvi_selected" "$((selected - dvi_selected))" "$non_dvi_report"
 mv "$active_receipt" "$receipt"
 if [[ $failed -gt 0 ]]; then
-  printf 'LaTeX DVI parity failures: %s of %s; list: %s\n' "$failed" "$dvi_selected" "$failures" >&2
+  printf 'LaTeX DVI parity failures: %s of %s; list: %s\n' \
+    "$failed" "$dvi_selected" "$failures_report" >&2
   exit 1
 fi

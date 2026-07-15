@@ -222,11 +222,17 @@ runs loads the local copy with `--format latex.fmt`. The persistent
 `target/latex-parity/last-run-format-receipt.txt` records the builder count,
 source identity, and all 286 per-case identities; the fast self-test asserts
 one build and three identical restores. The runner continues after individual
-engine or DVI failures and writes complete `failures.txt` and `non-dvi.txt`
-census lists in its reported work directory. Reference and Umber cases have a
-60-second timeout so one recovery loop cannot stall the census without
-misclassifying the slower tools cases under full-corpus load; set
-`UMBER_LATEX_CASE_TIMEOUT_SECONDS` to tune that explicit tier locally.
+engine or DVI failures and writes complete persistent census lists to
+`target/latex-parity/last-run-failures.txt` and
+`target/latex-parity/last-run-non-dvi.txt`. Unless `--keep-work` is explicit,
+each isolated reference/Umber pair is removed as soon as its result and compact
+triage artifacts have been recorded, and the scratch root is removed on both
+success and failure. This bounds temporary format-copy storage to one active
+case instead of retaining all 286 copies after an expected census failure.
+Reference and Umber cases have a 60-second timeout so one recovery loop cannot
+stall the census without misclassifying the slower tools cases under
+full-corpus load; set `UMBER_LATEX_CASE_TIMEOUT_SECONDS` to tune that explicit
+tier locally.
 
 Acceptance ignores transcript and process-status differences when an
 intentional diagnostic still leaves a DVI. It removes stale DVI before every
