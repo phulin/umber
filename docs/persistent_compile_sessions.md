@@ -86,7 +86,8 @@ method succeeds after disposal.
 ## Rendered-source queries
 
 HTML output identifies each page and positioned event with `data-umber-page`
-and `data-umber-event`. A text event also exposes its source character codes,
+and `data-umber-event`; every page pairs its ordinal with the accepted
+`data-umber-revision`. A text event also exposes its source character codes,
 so a browser can translate a pointer hit into an optional text-unit index.
 The native and WASM sessions expose the same lazy query:
 

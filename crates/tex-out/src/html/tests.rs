@@ -38,6 +38,7 @@ fn manifest_reuses_one_retained_object_and_program_derived_family() {
     let html = String::from_utf8(output.html).expect("UTF-8 HTML");
     assert!(html.contains("umber-font-090909090909090909090909"));
     assert!(html.contains("fonts/sha256-"));
+    assert_eq!(html.matches("data-umber-revision=\"1\"").count(), 2);
 }
 
 struct Resolver {
@@ -83,18 +84,18 @@ impl HtmlFontResolver for Resolver {
 #[test]
 fn serialization_is_deterministic_exact_and_escaped() {
     let page = page();
+    let options = HtmlOptions {
+        revision: 42,
+        ..HtmlOptions::default()
+    };
     let mut first_resolver = Resolver { missing_b: false };
-    let first = write_html(
-        std::slice::from_ref(&page),
-        &mut first_resolver,
-        &HtmlOptions::default(),
-    )
-    .expect("first HTML");
+    let first =
+        write_html(std::slice::from_ref(&page), &mut first_resolver, &options).expect("first HTML");
     let mut second_resolver = Resolver { missing_b: false };
-    let second =
-        write_html(&[page], &mut second_resolver, &HtmlOptions::default()).expect("second HTML");
+    let second = write_html(&[page], &mut second_resolver, &options).expect("second HTML");
     assert_eq!(first, second);
     let html = String::from_utf8(first.html).expect("UTF-8 HTML");
+    assert!(html.contains("data-umber-page=\"1\" data-umber-revision=\"42\""));
     assert!(html.contains("data-umber-x-sp=\"17\""));
     assert!(html.contains("data-umber-baseline-sp=\"53\""));
     assert!(html.contains("A&lt;&amp;B"));

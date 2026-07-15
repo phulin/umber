@@ -67,6 +67,8 @@ pub enum AssetMode {
 pub struct HtmlOptions {
     pub title: String,
     pub language: String,
+    /// Accepted editor revision whose page/event ordinals this HTML describes.
+    pub revision: u64,
     pub asset_mode: AssetMode,
     pub max_pages: usize,
     pub max_html_bytes: usize,
@@ -83,6 +85,7 @@ impl Default for HtmlOptions {
         Self {
             title: "Umber document".to_owned(),
             language: "und".to_owned(),
+            revision: 1,
             asset_mode: AssetMode::Embedded,
             max_pages: 16_384,
             max_html_bytes: 256 * 1024 * 1024,
@@ -548,6 +551,8 @@ fn write_page(
     out.push_str(&page.page_index.to_string());
     out.push_str("\" data-umber-page=\"");
     out.push_str(&page.page_index.to_string());
+    out.push_str("\" data-umber-revision=\"");
+    out.push_str(&options.revision.to_string());
     out.push('"');
     attr_sp(out, "width", page.width);
     attr_sp(out, "height", page.height);

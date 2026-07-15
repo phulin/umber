@@ -142,12 +142,14 @@ and committed artifact at `\font` load and shipout respectively.
 
 Each page is an isolated fixed-size `section` with `position: relative`,
 `contain: strict`, and `overflow: hidden`. Events are absolute children in
-artifact traversal order. Each run is a zero-layout SVG whose `text` element
-receives the exact projected `x` and `y` baseline. The baseline is retained in
-metadata and marked by a transparent one-CSS-pixel SVG geometry probe; the
-probe is `aria-hidden`, does not paint, and works around Firefox returning no
-rectangle for zero-area SVG elements. Rules use exact projected rectangles.
-Printing uses the same fixed page boxes and does not reflow lines.
+artifact traversal order. Its `data-umber-page` ordinal is immediately paired
+with `data-umber-revision`, the accepted editor revision whose deterministic
+page and event ordinals the HTML describes. Each run is a zero-layout SVG whose
+`text` element receives the exact projected `x` and `y` baseline. The baseline
+is retained in metadata and marked by a transparent one-CSS-pixel SVG geometry
+probe; the probe is `aria-hidden`, does not paint, and works around Firefox
+returning no rectangle for zero-area SVG elements. Rules use exact projected
+rectangles. Printing uses the same fixed page boxes and does not reflow lines.
 
 Visible runs are selectable and carry `aria-hidden="true"`. A separate
 artifact-order accessibility layer contains escaped semantic text in normal

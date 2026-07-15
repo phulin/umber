@@ -455,6 +455,7 @@ fn requested_html_and_dvi_share_one_committed_compile() {
     };
     assert!(!output.dvi.is_empty());
     let html = String::from_utf8(output.html.expect("HTML output")).expect("HTML UTF-8");
+    assert!(html.contains("data-umber-page=\"1\" data-umber-revision=\"1\""));
     assert!(html.contains("data-umber-baseline-sp"));
     assert!(html.contains(">A</text>"));
     assert!(output.html_assets.is_empty());
@@ -506,6 +507,7 @@ fn requested_html_and_dvi_share_one_committed_compile() {
         panic!("patched HTML compile should complete");
     };
     let html = String::from_utf8(output.html.expect("patched HTML output")).expect("HTML UTF-8");
+    assert!(html.contains("data-umber-page=\"1\" data-umber-revision=\"2\""));
     let (page, event) = rendered_text_address(&html, b'B');
     let location = session
         .rendered_source_location(page, event, Some(0))

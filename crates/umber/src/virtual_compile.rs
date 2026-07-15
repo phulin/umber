@@ -1005,6 +1005,7 @@ impl VirtualCompileSession {
                 responses: &self.font_responses,
             };
             let html_options = tex_out::html::HtmlOptions {
+                revision: accepted.revision.raw(),
                 max_html_bytes: remaining,
                 max_total_asset_bytes: remaining,
                 max_asset_bytes: remaining,
