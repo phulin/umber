@@ -68,6 +68,30 @@ fn scans_fontdimen_as_an_internal_dimension() {
 }
 
 #[test]
+fn decimal_factor_multiplies_fontdimen_unit() {
+    let mut stores = Universe::new();
+    let fontdimen = stores.intern("fontdimen");
+    stores.set_meaning(
+        fontdimen,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::FontDimen),
+    );
+    let font = stores.intern("testfont");
+    stores.set_meaning(font, Meaning::Font(tex_state::font::NULL_FONT));
+    stores
+        .set_font_dimen(tex_state::font::NULL_FONT, 6, Scaled::from_raw(655_361))
+        .expect("font parameter should be writable");
+
+    let (value, diagnostic, next) = scan_with_stores(
+        ".5\\fontdimen6\\testfont!",
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    );
+
+    assert_eq!(value, 327_680);
+    assert_eq!(diagnostic, None);
+    assert_eq!(next, Some(char_token('!', Catcode::Other)));
+}
+
+#[test]
 fn negative_integer_scales_an_internal_dimension_unit() {
     let scanned = super::convert_font_relative_unit(-3, 0, Scaled::from_raw(7))
         .expect("internal dimension conversion");

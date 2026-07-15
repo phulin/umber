@@ -1172,6 +1172,55 @@ where
                 expression,
             )));
         }
+        match meaning {
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::FontDimen) => {
+                let value = crate::values::scan_font_dimen(input, stores, expansion, mode, first)
+                    .map_err(ScanDimenError::Expand)?;
+                *consume_trailing_space = false;
+                return Ok(UnitScan::Scanned(ScannedUnit::Internal(value)));
+            }
+            Meaning::UnexpandablePrimitive(
+                primitive @ (UnexpandablePrimitive::FontCharWd
+                | UnexpandablePrimitive::FontCharHt
+                | UnexpandablePrimitive::FontCharDp
+                | UnexpandablePrimitive::FontCharIc),
+            ) => {
+                let value = crate::values::scan_font_char_dimension(
+                    input, stores, expansion, mode, first, primitive,
+                )?;
+                *consume_trailing_space = false;
+                return Ok(UnitScan::Scanned(ScannedUnit::Internal(value)));
+            }
+            Meaning::UnexpandablePrimitive(
+                primitive @ (UnexpandablePrimitive::ParShapeLength
+                | UnexpandablePrimitive::ParShapeIndent
+                | UnexpandablePrimitive::ParShapeDimen),
+            ) => {
+                let value = crate::values::scan_parshape_dimension(
+                    input, stores, expansion, mode, first, primitive,
+                )?;
+                *consume_trailing_space = false;
+                return Ok(UnitScan::Scanned(ScannedUnit::Internal(value)));
+            }
+            Meaning::UnexpandablePrimitive(
+                primitive
+                @ (UnexpandablePrimitive::GlueStretch | UnexpandablePrimitive::GlueShrink),
+            ) => {
+                let scanned = crate::scan_glue::scan_glue_with_mode_and_context(
+                    input, stores, expansion, mode, false, first,
+                )
+                .map_err(|error| ScanDimenError::Expand(error.into()))?;
+                let spec = stores.glue(scanned.id());
+                let value = if primitive == UnexpandablePrimitive::GlueStretch {
+                    spec.stretch
+                } else {
+                    spec.shrink
+                };
+                *consume_trailing_space = false;
+                return Ok(UnitScan::Scanned(ScannedUnit::Internal(value)));
+            }
+            _ => {}
+        }
         let internal = match meaning {
             Meaning::DimenRegister(index) => Some(stores.dimen(index)),
             Meaning::DimenParam(index) => {
@@ -1182,6 +1231,15 @@ where
                 Some(stores.glue(stores.glue_param(GlueParam::new(index))).width)
             }
             Meaning::PageDimension(dimension) => Some(stores.page_dimension(dimension)),
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PrevDepth) => {
+                Some(expansion.engine.prev_depth)
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastKern) => {
+                Some(expansion.engine.last_kern)
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastSkip) => {
+                Some(expansion.engine.last_skip.width)
+            }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
                 let index = scan_register_index(input, stores, expansion, mode, first)?;
                 Some(stores.dimen(index))
