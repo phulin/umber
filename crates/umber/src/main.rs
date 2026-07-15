@@ -7,6 +7,7 @@ use tex_lex::{InputStack, Lexer, WorldInput};
 use tex_state::env::banks::IntParam;
 use tex_state::token::Token;
 use tex_state::{FormatError, Universe, World, WorldError};
+use umber::EngineMode as RunEngine;
 use umber::{DriverFile, EngineSession, FileSessionResolvers, PlannedFinalization};
 
 mod expand_dump;
@@ -84,6 +85,7 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
         match opts.engine {
             RunEngine::Tex82 => umber::prepare_run_stores(&mut stores),
             RunEngine::ETex => umber::prepare_etex_run_stores(&mut stores),
+            RunEngine::PdfTex => umber::prepare_pdftex_run_stores(&mut stores),
             RunEngine::Latex => umber::prepare_latex_run_stores(&mut stores),
         }
         stores
@@ -92,6 +94,7 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
         match opts.engine {
             RunEngine::Tex82 => {}
             RunEngine::ETex => tex_exec::install_etex_unexpandable_primitives(&mut stores),
+            RunEngine::PdfTex => umber::install_pdftex_format_primitives(&mut stores),
             RunEngine::Latex => {
                 tex_exec::install_etex_unexpandable_primitives(&mut stores);
                 tex_expand::install_latex_expandable_primitives(&mut stores);
@@ -332,14 +335,6 @@ struct RunCliOptions {
     profiling_stats: bool,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-enum RunEngine {
-    #[default]
-    Tex82,
-    ETex,
-    Latex,
-}
-
 impl RunCliOptions {
     fn parse(args: impl Iterator<Item = String>) -> Result<Self, CliError> {
         let mut input = None;
@@ -362,17 +357,19 @@ impl RunCliOptions {
                 }
                 "--etex" => {
                     if engine != RunEngine::Tex82 {
-                        return Err(CliError::Usage(
-                            "run accepts only one of --etex and --latex",
-                        ));
+                        return Err(CliError::Usage("run accepts only one engine mode flag"));
                     }
                     engine = RunEngine::ETex;
                 }
+                "--pdftex" => {
+                    if engine != RunEngine::Tex82 {
+                        return Err(CliError::Usage("run accepts only one engine mode flag"));
+                    }
+                    engine = RunEngine::PdfTex;
+                }
                 "--latex" => {
                     if engine != RunEngine::Tex82 {
-                        return Err(CliError::Usage(
-                            "run accepts only one of --etex and --latex",
-                        ));
+                        return Err(CliError::Usage("run accepts only one engine mode flag"));
                     }
                     engine = RunEngine::Latex;
                 }

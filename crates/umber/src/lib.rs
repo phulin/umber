@@ -18,6 +18,7 @@ use tex_state::{
 mod html_output;
 mod input_search;
 mod memory_output;
+mod pdftex;
 mod virtual_compile;
 
 pub const PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -28,6 +29,7 @@ pub use memory_output::{
     MemoryOutputCollectionError, MemoryOutputFile, MemoryRunOutput, collect_final_memory_output,
     collect_final_memory_output_from_commits, collect_final_memory_output_from_plans,
 };
+pub use pdftex::PDFTEX_PRIMITIVE_NAMES;
 pub use tex_fonts::{
     AcceptedFontContainers, FeatureSetting, FontContainer, FontFeaturePolicy, FontObjectIdentity,
     FontProgramIdentity, FontPurposes, FontRequest, FontRequestKey, OpenTypeTag, ResolvedFont,
@@ -37,7 +39,7 @@ pub use tex_incr::ReuseMetrics;
 pub use tex_incr::{RenderedOutputId, RevisionId};
 pub use umber_vfs::FileContentId;
 pub use virtual_compile::{
-    CompileAttemptResult, CompileDiagnostic, CompileError, FileKind, FileRequest, FileRequestKey,
+    CompileAttemptResult, CompileDiagnostic, CompileError, EngineMode, FileKind, FileRequest, FileRequestKey,
     NeedResources, RenderedSourceLocation, RenderedSourceResult, RequestKeyError, ResolvedFile,
     ResourceDomain, ResourceRequest, ResourceResponse, RetentionMetrics, SessionLimits,
     SessionOptions, SessionWebFont, SourcePatch, VfsLimitError, VfsLimitKind, VfsLimits,
@@ -362,6 +364,18 @@ pub fn prepare_etex_run_stores(stores: &mut Universe) {
     prepare_run_stores(stores);
     tex_expand::install_etex_expandable_primitives(stores);
     tex_exec::install_etex_unexpandable_primitives(stores);
+}
+
+/// Installs the primitive/state setup used by `umber run --pdftex`.
+pub fn prepare_pdftex_run_stores(stores: &mut Universe) {
+    prepare_etex_run_stores(stores);
+    pdftex::install_pdftex_layer(stores);
+}
+
+/// Restores driver-selected pdfTeX meanings after loading a format image.
+pub fn install_pdftex_format_primitives(stores: &mut Universe) {
+    tex_exec::install_etex_unexpandable_primitives(stores);
+    pdftex::install_pdftex_layer(stores);
 }
 
 /// Installs the primitive/state setup used by supported LaTeX-DVI runs.

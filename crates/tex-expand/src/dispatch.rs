@@ -368,6 +368,22 @@ macro_rules! dispatch_match {
                     call_origin,
                 ))
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfTeXRevision) => {
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::NumberOutput,
+                    ".27",
+                    call_origin,
+                ))
+            }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfTeXBanner) => {
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::NumberOutput,
+                    "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025)",
+                    call_origin,
+                ))
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => $input_arm,
             Meaning::ExpandablePrimitive(ExpandablePrimitive::EndInput) => {
                 input.end_current_source_after_current_line();
@@ -1154,6 +1170,8 @@ pub fn dispatch_expandable_opcode(opcode: ExpandableOpcode) -> Result<(), Expand
         | ExpandableOpcode::Scantokens
         | ExpandableOpcode::ETeXVersion
         | ExpandableOpcode::ETeXRevision
+        | ExpandableOpcode::PdfTeXRevision
+        | ExpandableOpcode::PdfTeXBanner
         | ExpandableOpcode::IfDefined
         | ExpandableOpcode::IfCsName
         | ExpandableOpcode::IfInCsName

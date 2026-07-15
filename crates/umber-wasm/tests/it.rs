@@ -84,6 +84,32 @@ fn complete_output_uses_strings_and_uint8arrays() {
 }
 
 #[wasm_bindgen_test]
+fn pdftex_engine_option_reports_the_pinned_identity() {
+    let session_options = options("main.tex");
+    set(&session_options, "engine", &JsValue::from_str("pdftex"));
+    let mut session = CompilerSession::new(session_options.unchecked_ref::<JsSessionOptions>())
+        .expect("pdfTeX session");
+    session
+        .add_user_file(
+            "main.tex",
+            &bytes(b"\\message{engine=\\the\\pdftexversion\\pdftexrevision}\\end"),
+        )
+        .expect("add identity source");
+    let complete = session
+        .compile_attempt()
+        .expect("complete identity attempt");
+    assert_eq!(string_field(complete.as_ref(), "kind"), "complete");
+    let terminal = field(&field(complete.as_ref(), "output"), "terminal")
+        .as_string()
+        .expect("terminal text");
+    assert!(terminal.contains("engine=140.27"));
+
+    let invalid = options("main.tex");
+    set(&invalid, "engine", &JsValue::from_str("pdfelatex"));
+    assert!(CompilerSession::new(invalid.unchecked_ref::<JsSessionOptions>()).is_err());
+}
+
+#[wasm_bindgen_test]
 async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
     let session_options = options("main.tex");
     set(&session_options, "html", Object::new().as_ref());

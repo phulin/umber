@@ -25,12 +25,23 @@ aliases that a manual organized by user-facing features can omit.
 | --- | ---: | ---: |
 | TeX82 prerequisite | 325 | 325 |
 | Original e-TeX prerequisite | 66 | 66 |
-| pdfTeX layer | 158 | 2 |
-| Total | 549 | 393 |
+| pdfTeX layer | 158 | 158 in pdfTeX mode |
+| Total | 549 | 549 in pdfTeX mode |
 
 The prerequisite count is nominal control-sequence coverage; its behavioral
-gates remain the TeX and e-TeX corpora. The two implemented pdfTeX-layer names
-are `\expanded` and `\ifincsname`. The other 156 exact names are missing.
+gates remain the TeX and e-TeX corpora. `umber run --pdftex` and the native or
+WASM session option `engine: "pdftex"` select this layer and its truthful
+1.40.27 identity. All 158 names are registered in that mode; names whose
+semantics remain in later checklist issues fail explicitly as unsupported
+rather than behaving like `\relax`.
+
+The two already implemented pdfTeX-layer names are `\expanded` and
+`\ifincsname`; the other 156 exact names still lack their final semantics.
+There are two intentional pre-existing visibility overlaps: e-TeX mode keeps
+`\ifincsname`, and the supported LaTeX-DVI contract keeps `\expanded` (and
+inherits `\ifincsname` through e-TeX). The source-set gate therefore requires
+all 158 names in pdfTeX mode and isolates the other 156 from earlier modes,
+without changing either established contract.
 Umber also exposes the engine-neutral names `\creationdate`, `\filesize`,
 `\shellescape`, and `\strcmp`; these are implementation reuse candidates for
 the corresponding `\pdf...` aliases, not exact-name coverage.

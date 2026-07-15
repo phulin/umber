@@ -10,7 +10,8 @@ use tex_state::{ContentHash, JobClock, Universe, World};
 
 use crate::{
     MemoryOutputCollectionError, MemoryRunOutput, memory_output::publish_auxiliary_outputs,
-    prepare_run_stores,
+    install_pdftex_format_primitives, prepare_etex_run_stores, prepare_latex_run_stores,
+    prepare_pdftex_run_stores, prepare_run_stores,
 };
 
 mod path;
@@ -126,6 +127,7 @@ pub struct SessionOptions {
     pub main_path: String,
     pub job_name: Option<String>,
     pub format: Option<Vec<u8>>,
+    pub engine: EngineMode,
     pub clock: JobClock,
     pub limits: SessionLimits,
     /// Request embedded standalone HTML in addition to DVI.
@@ -140,10 +142,64 @@ impl Default for SessionOptions {
             main_path: "/job/main.tex".to_owned(),
             job_name: None,
             format: None,
+            engine: EngineMode::Tex82,
             clock: JobClock::DEFAULT,
             limits: SessionLimits::default(),
             html: false,
             accepted_font_containers: AcceptedFontContainers::WASM,
+        }
+    }
+}
+
+/// The engine compatibility contract selected for a composed session.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum EngineMode {
+    #[default]
+    Tex82,
+    ETex,
+    PdfTex,
+    Latex,
+}
+
+impl EngineMode {
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Tex82 => "tex82",
+            Self::ETex => "etex",
+            Self::PdfTex => "pdftex",
+            Self::Latex => "latex",
+        }
+    }
+
+    #[must_use]
+    pub const fn version(self) -> &'static str {
+        match self {
+            Self::Tex82 => "3.141592653",
+            Self::ETex => "2.6",
+            Self::PdfTex => "1.40.27",
+            Self::Latex => "1",
+        }
+    }
+
+    fn prepare_fresh(self, stores: &mut Universe) {
+        match self {
+            Self::Tex82 => prepare_run_stores(stores),
+            Self::ETex => prepare_etex_run_stores(stores),
+            Self::PdfTex => prepare_pdftex_run_stores(stores),
+            Self::Latex => prepare_latex_run_stores(stores),
+        }
+    }
+
+    fn install_after_format(self, stores: &mut Universe) {
+        match self {
+            Self::Tex82 => {}
+            Self::ETex => tex_exec::install_etex_unexpandable_primitives(stores),
+            Self::PdfTex => install_pdftex_format_primitives(stores),
+            Self::Latex => {
+                tex_exec::install_etex_unexpandable_primitives(stores);
+                tex_expand::install_latex_expandable_primitives(stores);
+            }
         }
     }
 }
@@ -345,6 +401,7 @@ pub struct VirtualCompileSession {
     main_path: VirtualPath,
     job_name: String,
     format: Option<Vec<u8>>,
+    engine: EngineMode,
     clock: JobClock,
     limits: SessionLimits,
     files: FileProvisioner,
@@ -448,6 +505,7 @@ impl VirtualCompileSession {
             main_path,
             job_name,
             format: options.format,
+            engine: options.engine,
             clock: options.clock,
             limits,
             files: FileProvisioner::new(limits.vfs_limits()).map_err(map_vfs_limit)?,
@@ -839,12 +897,14 @@ impl VirtualCompileSession {
                 CompileError::Incremental("the editable main file must be valid UTF-8".to_owned())
             })?;
             let world = World::memory_with_clock(self.clock);
-            let template = if let Some(format) = &self.format {
-                Universe::from_format(world, format)
-                    .map_err(|error| CompileError::Format(error.to_string()))?
+            let mut template = if let Some(format) = &self.format {
+                let mut template = Universe::from_format(world, format)
+                    .map_err(|error| CompileError::Format(error.to_string()))?;
+                self.engine.install_after_format(&mut template);
+                template
             } else {
                 let mut template = Universe::with_world(world);
-                prepare_run_stores(&mut template);
+                self.engine.prepare_fresh(&mut template);
                 template
             };
             Some(Box::new(

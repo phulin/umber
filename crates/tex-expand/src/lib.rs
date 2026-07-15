@@ -267,6 +267,35 @@ pub fn install_latex_expandable_primitives(stores: &mut Universe) {
     }
 }
 
+/// Installs the implemented expandable identity surface of pdfTeX 1.40.27.
+///
+/// The remaining pdfTeX-layer names are registered by the driver as explicit
+/// unsupported placeholders until their owning parity issues replace them.
+pub fn install_pdftex_expandable_primitives(stores: &mut Universe) {
+    for (name, primitive) in [
+        (
+            "expanded",
+            tex_state::meaning::ExpandablePrimitive::Expanded,
+        ),
+        (
+            "pdftexrevision",
+            tex_state::meaning::ExpandablePrimitive::PdfTeXRevision,
+        ),
+        (
+            "pdftexbanner",
+            tex_state::meaning::ExpandablePrimitive::PdfTeXBanner,
+        ),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
+    }
+    let version = stores.intern("pdftexversion");
+    stores.set_meaning(
+        version,
+        Meaning::InternalInteger(tex_state::meaning::InternalInteger::PdfTeXVersion),
+    );
+}
+
 /// Records state reads performed by expansion.
 ///
 /// Recorder implementations are erased behind [`ExpansionContext`]. Ordinary
@@ -449,6 +478,8 @@ pub enum ExpandableOpcode {
     Scantokens,
     ETeXVersion,
     ETeXRevision,
+    PdfTeXRevision,
+    PdfTeXBanner,
     IfDefined,
     IfCsName,
     IfInCsName,

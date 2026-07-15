@@ -721,6 +721,7 @@ where
             Ok(ScannedInt::new(line, token))
         }
         Meaning::InternalInteger(InternalInteger::ETeXVersion) => Ok(ScannedInt::new(2, token)),
+        Meaning::InternalInteger(InternalInteger::PdfTeXVersion) => Ok(ScannedInt::new(140, token)),
         Meaning::InternalInteger(InternalInteger::CurrentGroupLevel) => {
             crate::record_dependency!(
                 expansion,

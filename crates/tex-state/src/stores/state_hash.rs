@@ -1545,6 +1545,7 @@ fn hash_internal_integer(integer: InternalInteger, hasher: &mut StateHasher) {
         InternalInteger::Badness => hasher.tag(0),
         InternalInteger::InputLineNumber => hasher.tag(1),
         InternalInteger::ETeXVersion => hasher.tag(2),
+        InternalInteger::PdfTeXVersion => hasher.tag(9),
         InternalInteger::CurrentGroupLevel => hasher.tag(3),
         InternalInteger::CurrentGroupType => hasher.tag(4),
         InternalInteger::CurrentIfLevel => hasher.tag(5),

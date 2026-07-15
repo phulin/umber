@@ -584,6 +584,12 @@ where
             "2",
             cause_origin,
         )),
+        Meaning::InternalInteger(InternalInteger::PdfTeXVersion) => Ok(push_rendered_text(
+            stores,
+            ExpansionReplayKind::TheOutput,
+            "140",
+            cause_origin,
+        )),
         Meaning::InternalInteger(InternalInteger::CurrentGroupLevel) => Ok(push_rendered_text(
             stores,
             ExpansionReplayKind::TheOutput,
@@ -800,7 +806,9 @@ pub(crate) fn record_meaning_value_dependency(
             crate::record_dependency!(expansion, ReadDependency::InputLine);
             None
         }
-        Meaning::InternalInteger(InternalInteger::ETeXVersion) => None,
+        Meaning::InternalInteger(InternalInteger::ETeXVersion | InternalInteger::PdfTeXVersion) => {
+            None
+        }
         Meaning::InternalInteger(InternalInteger::CurrentGroupLevel) => {
             crate::record_dependency!(
                 expansion,

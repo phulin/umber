@@ -63,6 +63,7 @@ export interface SessionOptions {
   mainPath: string;
   jobName?: string;
   format?: Uint8Array;
+  engine?: "tex82" | "etex" | "pdftex" | "latex";
   clock?: { year: number; month: number; day: number; minutes: number };
   limits?: Partial<SessionLimits>;
   html?: { fonts: HtmlFontInput[] };

@@ -14,7 +14,7 @@ the manifest's validated content-addressed object name.
 ## Directory map
 
 - `src/lib.rs`: exported persistent `CompilerSession`, low-level `advance`/`provideResources`/`applyPatch` boundary, revision metrics, and TypeScript surface.
-- `src/options.rs`: strict conversion of JavaScript options plus shared-VFS typed resource responses, domain/kind wire values, and request keys.
+- `src/options.rs`: strict conversion of JavaScript options (including engine mode) plus shared-VFS typed resource responses, domain/kind wire values, and request keys.
 - `src/result.rs`: binary-safe conversion of native typed resource batches and completed attempts to discriminated JS results.
 - `tests/it.rs`: wasm-bindgen boundary and lifecycle tests.
 - `assets/plain-source.lock`: exact TeX Live 2025 Plain, hyphenation, and TFM source identities.

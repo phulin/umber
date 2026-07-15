@@ -1,6 +1,6 @@
 use js_sys::{Array, Reflect, Uint8Array};
 use umber::{
-    FeatureSetting, FileContentId, FileKind, FileRequestKey, FontContainer, FontFeaturePolicy,
+    EngineMode, FeatureSetting, FileContentId, FileKind, FileRequestKey, FontContainer, FontFeaturePolicy,
     FontObjectIdentity, FontProgramIdentity, FontRequestKey, OpenTypeTag, ResolvedFile,
     ResolvedFont, ResourceDomain, ResourceResponse, SessionLimits, SessionOptions, SessionWebFont,
     SourcePatch, VariationCoordinate, VariationSelection,
@@ -17,6 +17,19 @@ pub(crate) fn parse_options(value: &JsValue) -> Result<SessionOptions, JsValue> 
     };
     options.job_name = optional_string(value, "jobName")?;
     options.format = optional_bytes(value, "format")?;
+    if let Some(engine) = optional_string(value, "engine")? {
+        options.engine = match engine.as_str() {
+            "tex82" => EngineMode::Tex82,
+            "etex" => EngineMode::ETex,
+            "pdftex" => EngineMode::PdfTex,
+            "latex" => EngineMode::Latex,
+            _ => {
+                return Err(js_error(
+                    "engine must be 'tex82', 'etex', 'pdftex', or 'latex'",
+                ));
+            }
+        };
+    }
     options.html = !field(value, "html")?.is_undefined() && !field(value, "html")?.is_null();
     if let Some(clock) = optional_object(value, "clock")? {
         options.clock.year = integer::<i32>(&clock, "year")?;

@@ -112,6 +112,8 @@ pub enum InternalInteger {
     InputLineNumber,
     /// e-TeX major version number.
     ETeXVersion,
+    /// pdfTeX's numeric release identity (`1.40.x` -> `140`).
+    PdfTeXVersion,
     CurrentGroupLevel,
     CurrentGroupType,
     CurrentIfLevel,
@@ -127,6 +129,7 @@ impl InternalInteger {
             Self::Badness => 0,
             Self::InputLineNumber => 1,
             Self::ETeXVersion => 2,
+            Self::PdfTeXVersion => 9,
             Self::CurrentGroupLevel => 3,
             Self::CurrentGroupType => 4,
             Self::CurrentIfLevel => 5,
@@ -142,6 +145,7 @@ impl InternalInteger {
             0 => Some(Self::Badness),
             1 => Some(Self::InputLineNumber),
             2 => Some(Self::ETeXVersion),
+            9 => Some(Self::PdfTeXVersion),
             3 => Some(Self::CurrentGroupLevel),
             4 => Some(Self::CurrentGroupType),
             5 => Some(Self::CurrentIfLevel),
@@ -224,6 +228,10 @@ pub enum ExpandablePrimitive {
     CreationDate,
     /// e-TeX's enquiry for expansion inside a live `\csname` scan.
     IfInCsName,
+    /// The catcode-12 pdfTeX patch-level suffix (`.27`).
+    PdfTeXRevision,
+    /// The full pinned pdfTeX engine banner.
+    PdfTeXBanner,
 }
 
 impl ExpandablePrimitive {
@@ -289,6 +297,8 @@ impl ExpandablePrimitive {
             Self::ShellEscape => 56,
             Self::CreationDate => 57,
             Self::IfInCsName => 58,
+            Self::PdfTeXRevision => 59,
+            Self::PdfTeXBanner => 60,
         }
     }
 
@@ -354,6 +364,8 @@ impl ExpandablePrimitive {
             56 => Some(Self::ShellEscape),
             57 => Some(Self::CreationDate),
             58 => Some(Self::IfInCsName),
+            59 => Some(Self::PdfTeXRevision),
+            60 => Some(Self::PdfTeXBanner),
             _ => None,
         }
     }
@@ -571,6 +583,8 @@ pub enum UnexpandablePrimitive {
     End,
     Dump,
     SetLanguage,
+    /// A registered pdfTeX name whose semantics belong to a later parity issue.
+    PdfTeXUnimplemented,
 }
 
 impl UnexpandablePrimitive {
@@ -786,6 +800,7 @@ impl UnexpandablePrimitive {
             Self::DisplayWidowPenalties => 206,
             Self::PageDiscards => 207,
             Self::SplitDiscards => 208,
+            Self::PdfTeXUnimplemented => 209,
         }
     }
 
@@ -1001,6 +1016,7 @@ impl UnexpandablePrimitive {
             206 => Some(Self::DisplayWidowPenalties),
             207 => Some(Self::PageDiscards),
             208 => Some(Self::SplitDiscards),
+            209 => Some(Self::PdfTeXUnimplemented),
             _ => None,
         }
     }
