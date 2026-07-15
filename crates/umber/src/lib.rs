@@ -37,9 +37,9 @@ pub use tex_incr::RevisionId;
 pub use tex_incr::{RetentionMetrics, ReuseMetrics};
 pub use virtual_compile::{
     CompileAttemptResult, CompileDiagnostic, CompileError, FileKind, FileRequest, FileRequestKey,
-    NeedResources, RenderedSourceLocation, ResolvedFile, ResourceRequest, ResourceResponse,
-    SessionLimits, SessionOptions, SessionWebFont, SourcePatch, VirtualCompileSession, VirtualPath,
-    VirtualPathError,
+    NeedResources, RenderedSourceLocation, RenderedSourceResult, ResolvedFile, ResourceRequest,
+    ResourceResponse, SessionLimits, SessionOptions, SessionWebFont, SourcePatch,
+    VirtualCompileSession, VirtualPath, VirtualPathError,
 };
 
 /// The only checkpoint policy supported by composed engine sessions.

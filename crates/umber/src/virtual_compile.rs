@@ -267,6 +267,14 @@ pub struct RenderedSourceLocation {
     pub column: u32,
 }
 
+/// Revision-checked result of a rendered-source query.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RenderedSourceResult {
+    Current(RenderedSourceLocation),
+    Deleted { minted_revision: u64 },
+    StaleRevision { accepted: tex_incr::RevisionId },
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CompileAttemptResult {
     NeedResources(NeedResources),
@@ -603,24 +611,34 @@ impl VirtualCompileSession {
         page: u32,
         event: u32,
         unit: Option<u32>,
-    ) -> Result<Option<RenderedSourceLocation>, CompileError> {
+        revision: tex_incr::RevisionId,
+    ) -> Result<Option<RenderedSourceResult>, CompileError> {
         if self.accepted_output.is_none() {
             return Ok(None);
         }
         let Some(session) = self.incremental.as_ref() else {
             return Ok(None);
         };
-        let revision = session.revision();
         session
-            .rendered_source_location(page, event, unit)
+            .rendered_source_location(page, event, unit, revision)
             .map(|location| {
-                location.map(|location| RenderedSourceLocation {
-                    revision,
-                    path: location.path,
-                    start: location.start,
-                    end: location.end,
-                    line: location.line,
-                    column: location.column,
+                location.map(|result| match result {
+                    tex_incr::RenderedSourceResult::Current(location) => {
+                        RenderedSourceResult::Current(RenderedSourceLocation {
+                            revision,
+                            path: location.path,
+                            start: location.start,
+                            end: location.end,
+                            line: location.line,
+                            column: location.column,
+                        })
+                    }
+                    tex_incr::RenderedSourceResult::Deleted { minted_revision } => {
+                        RenderedSourceResult::Deleted { minted_revision }
+                    }
+                    tex_incr::RenderedSourceResult::StaleRevision { accepted } => {
+                        RenderedSourceResult::StaleRevision { accepted }
+                    }
                 })
             })
             .map_err(|error| CompileError::Incremental(error.to_string()))

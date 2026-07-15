@@ -8,6 +8,13 @@ const CMR10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.
 const CMSY10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmsy10.tfm");
 const CMEX10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmex10.tfm");
 
+fn current_render_location(result: Option<RenderedSourceResult>) -> RenderedSourceLocation {
+    match result.expect("mapped source") {
+        RenderedSourceResult::Current(location) => location,
+        other => panic!("expected current rendered source, got {other:?}"),
+    }
+}
+
 fn session(main: &str) -> VirtualCompileSession {
     let mut session = VirtualCompileSession::new(SessionOptions::default()).expect("session");
     session
@@ -462,10 +469,11 @@ fn requested_html_and_dvi_share_one_committed_compile() {
 
     let (page, event) = rendered_text_address(&html, b'A');
     let retention_before = session.retention_metrics().expect("accepted retention");
-    let location = session
-        .rendered_source_location(page, event, Some(0))
-        .expect("source query")
-        .expect("mapped source");
+    let location = current_render_location(
+        session
+            .rendered_source_location(page, event, Some(0), RevisionId::new(1))
+            .expect("source query"),
+    );
     let retention_after = session.retention_metrics().expect("live retention");
     assert!(retention_after.diagnostic_bytes > retention_before.diagnostic_bytes);
     let source = b"\\font\\tenrm=cmr10\\relax \\tenrm \\shipout\\hbox{A}\\end";
@@ -477,13 +485,13 @@ fn requested_html_and_dvi_share_one_committed_compile() {
     assert_eq!((location.line, location.column), (1, start as u32 + 1));
     assert!(
         session
-            .rendered_source_location(0, event, Some(0))
+            .rendered_source_location(0, event, Some(0), RevisionId::new(1))
             .expect("invalid page query")
             .is_none()
     );
     assert!(
         session
-            .rendered_source_location(page, event, Some(u32::MAX))
+            .rendered_source_location(page, event, Some(u32::MAX), RevisionId::new(1))
             .expect("invalid unit query")
             .is_none()
     );
@@ -499,7 +507,7 @@ fn requested_html_and_dvi_share_one_committed_compile() {
         .expect("glyph patch");
     assert!(
         session
-            .rendered_source_location(1, event, Some(0))
+            .rendered_source_location(1, event, Some(0), RevisionId::new(1))
             .expect("query while patch pending")
             .is_none()
     );
@@ -509,10 +517,19 @@ fn requested_html_and_dvi_share_one_committed_compile() {
     let html = String::from_utf8(output.html.expect("patched HTML output")).expect("HTML UTF-8");
     assert!(html.contains("data-umber-page=\"1\" data-umber-revision=\"2\""));
     let (page, event) = rendered_text_address(&html, b'B');
-    let location = session
-        .rendered_source_location(page, event, Some(0))
-        .expect("patched source query")
-        .expect("patched source mapping");
+    assert_eq!(
+        session
+            .rendered_source_location(page, event, Some(0), RevisionId::new(1))
+            .expect("stale source query"),
+        Some(RenderedSourceResult::StaleRevision {
+            accepted: RevisionId::new(2),
+        })
+    );
+    let location = current_render_location(
+        session
+            .rendered_source_location(page, event, Some(0), RevisionId::new(2))
+            .expect("patched source query"),
+    );
     assert_eq!(location.revision, RevisionId::new(2));
     assert_eq!(location.path, "/job/main.tex");
     assert_eq!(
@@ -553,10 +570,11 @@ fn rendered_source_location_survives_paragraph_line_breaking() {
     let html = String::from_utf8(output.html.expect("HTML output")).expect("HTML UTF-8");
     assert!(html.matches("class=\"umber-run\"").count() >= 2);
     let (page, event) = rendered_text_address(&html, b'B');
-    let location = session
-        .rendered_source_location(page, event, Some(0))
-        .expect("source query")
-        .expect("mapped source");
+    let location = current_render_location(
+        session
+            .rendered_source_location(page, event, Some(0), RevisionId::new(1))
+            .expect("source query"),
+    );
     let start = source.iter().position(|byte| *byte == b'B').expect("B");
     assert_eq!(location.revision, RevisionId::new(1));
     assert_eq!(location.path, "/job/main.tex");
@@ -603,10 +621,11 @@ fn rendered_source_location_survives_math_layout() {
     };
     let html = String::from_utf8(output.html.expect("HTML output")).expect("HTML UTF-8");
     let (page, event) = rendered_text_address(&html, b'A');
-    let location = session
-        .rendered_source_location(page, event, Some(0))
-        .expect("source query")
-        .expect("mapped source");
+    let location = current_render_location(
+        session
+            .rendered_source_location(page, event, Some(0), RevisionId::new(1))
+            .expect("source query"),
+    );
     let start = source
         .windows(3)
         .position(|bytes| bytes == b"$A$")

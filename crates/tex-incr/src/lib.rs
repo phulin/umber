@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -17,7 +18,6 @@ use tex_exec::{
 use tex_expand::InputResolver;
 use tex_lex::{InputSource, InputStack, LayoutCursor, LayoutCursorError, MemoryInput, WorldInput};
 use tex_out::dvi::{DviError, DviPagePlan, DviStreamWriter};
-use tex_out::positioned::PositionedEvent;
 use tex_state::token::OriginId;
 use tex_state::{
     CommittedArtifact, ContentHash, EditorLayout, EditorLayoutError, EffectRecord, FragmentStore,
@@ -134,6 +134,70 @@ pub struct AcceptedOutput {
     pub retention: RetentionMetrics,
 }
 
+/// Typed result of resolving an accepted rendered event against a DOM revision.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RenderedSourceResult {
+    Current(tex_state::ResolvedSourceLocation),
+    Deleted { minted_revision: u64 },
+    StaleRevision { accepted: RevisionId },
+}
+
+#[derive(Debug)]
+struct PageRenderMap {
+    event_units: Vec<u32>,
+    origins: Vec<OriginId>,
+}
+
+impl PageRenderMap {
+    fn retained_bytes(&self) -> usize {
+        self.event_units
+            .capacity()
+            .saturating_mul(size_of::<u32>())
+            .saturating_add(
+                self.origins
+                    .capacity()
+                    .saturating_mul(size_of::<OriginId>()),
+            )
+    }
+
+    fn origin(&self, event: u32, unit: Option<u32>) -> Option<OriginId> {
+        let event = usize::try_from(event).ok()?;
+        let start = *self.event_units.get(event)? as usize;
+        let end = *self.event_units.get(event.checked_add(1)?)? as usize;
+        let origins = self.origins.get(start..end)?;
+        let origin = match unit {
+            Some(unit) => *origins.get(usize::try_from(unit).ok()?)?,
+            None => origins
+                .iter()
+                .copied()
+                .find(|origin| *origin != OriginId::UNKNOWN)?,
+        };
+        (origin != OriginId::UNKNOWN).then_some(origin)
+    }
+}
+
+#[derive(Debug, Default)]
+struct RenderMapCache {
+    pages: Vec<Option<PageRenderMap>>,
+    #[cfg(test)]
+    page_lowerings: Vec<usize>,
+}
+
+impl RenderMapCache {
+    fn retained_bytes(&self) -> usize {
+        self.pages
+            .capacity()
+            .saturating_mul(size_of::<Option<PageRenderMap>>())
+            .saturating_add(
+                self.pages
+                    .iter()
+                    .flatten()
+                    .map(PageRenderMap::retained_bytes)
+                    .sum::<usize>(),
+            )
+    }
+}
+
 impl AcceptedOutput {
     pub fn dvi_bytes(&self) -> Result<Vec<u8>, DviError> {
         let mut writer = DviStreamWriter::new(Vec::new());
@@ -162,6 +226,7 @@ pub struct Session {
     checkpoint_budget: usize,
     registered_inputs: BTreeMap<PathBuf, Vec<u8>>,
     accepted_retention: Option<RetentionMetrics>,
+    render_maps: RefCell<RenderMapCache>,
 }
 
 impl Session {
@@ -219,6 +284,7 @@ impl Session {
             checkpoint_budget,
             registered_inputs: BTreeMap::new(),
             accepted_retention: None,
+            render_maps: RefCell::default(),
         })
     }
 
@@ -307,7 +373,13 @@ impl Session {
         page: u32,
         event: u32,
         unit: Option<u32>,
-    ) -> Result<Option<tex_state::ResolvedSourceLocation>, SessionError> {
+        revision: RevisionId,
+    ) -> Result<Option<RenderedSourceResult>, SessionError> {
+        if revision != self.revision {
+            return Ok(Some(RenderedSourceResult::StaleRevision {
+                accepted: self.revision,
+            }));
+        }
         match self.rendered_source_origin(page, event, unit)? {
             Some(LayoutResolvedOrigin::Current {
                 path,
@@ -315,13 +387,15 @@ impl Session {
                 doc_offset_hi,
                 line,
                 column,
-            }) => Ok(Some(tex_state::ResolvedSourceLocation {
-                path,
-                start: doc_offset_lo,
-                end: doc_offset_hi,
-                line,
-                column,
-            })),
+            }) => Ok(Some(RenderedSourceResult::Current(
+                tex_state::ResolvedSourceLocation {
+                    path,
+                    start: doc_offset_lo,
+                    end: doc_offset_hi,
+                    line,
+                    column,
+                },
+            ))),
             Some(LayoutResolvedOrigin::Foreign) => {
                 let Some(origin) = self.rendered_origin(page, event, unit)? else {
                     return Ok(None);
@@ -330,11 +404,14 @@ impl Session {
                     .substrate
                     .as_ref()
                     .ok_or(SessionError::MissingAcceptedSubstrate)?;
-                Ok(substrate.resolve_origin_with_generated_path(origin, &self.source_path))
+                Ok(substrate
+                    .resolve_origin_with_generated_path(origin, &self.source_path)
+                    .map(RenderedSourceResult::Current))
             }
-            Some(LayoutResolvedOrigin::Deleted { .. } | LayoutResolvedOrigin::Unknown) | None => {
-                Ok(None)
+            Some(LayoutResolvedOrigin::Deleted { minted_revision }) => {
+                Ok(Some(RenderedSourceResult::Deleted { minted_revision }))
             }
+            Some(LayoutResolvedOrigin::Unknown) | None => Ok(None),
         }
     }
 
@@ -371,29 +448,39 @@ impl Session {
         let Some(artifact) = self.artifacts.get(page_index) else {
             return Ok(None);
         };
-        let page_artifact = tex_out::PageArtifact::from_bytes(artifact.bytes())
-            .map_err(|error| SessionError::RenderSource(error.to_string()))?;
-        let positioned = tex_out::positioned::lower_page(&page_artifact, page)
-            .map_err(|error| SessionError::RenderSource(error.to_string()))?;
-        let Some(PositionedEvent::TextRun(run)) = positioned.events.get(event as usize) else {
-            return Ok(None);
+        let mut maps = self.render_maps.borrow_mut();
+        if maps.pages.len() <= page_index {
+            maps.pages.resize_with(page_index + 1, || None);
+            #[cfg(test)]
+            maps.page_lowerings.resize(page_index + 1, 0);
+        }
+        if maps.pages[page_index].is_none() {
+            maps.pages[page_index] = Some(build_page_render_map(artifact, page)?);
+            #[cfg(test)]
+            {
+                maps.page_lowerings[page_index] += 1;
+            }
+        }
+        Ok(maps.pages[page_index]
+            .as_ref()
+            .and_then(|map| map.origin(event, unit)))
+    }
+
+    fn clear_render_maps(&self) {
+        *self.render_maps.borrow_mut() = RenderMapCache::default();
+    }
+
+    #[cfg(test)]
+    fn page_lowerings(&self, page: u32) -> usize {
+        let Some(index) = page.checked_sub(1).map(|page| page as usize) else {
+            return 0;
         };
-        let source = match unit {
-            Some(unit) => run.sources.get(unit as usize).copied().flatten(),
-            None => run.sources.iter().flatten().copied().next(),
-        };
-        let Some(source) = source else {
-            return Ok(None);
-        };
-        let Some(origin) = artifact
-            .render_origins()
-            .get(source.node_ordinal as usize)
-            .and_then(|origins| origins.get(source.source_index as usize))
+        self.render_maps
+            .borrow()
+            .page_lowerings
+            .get(index)
             .copied()
-        else {
-            return Ok(None);
-        };
-        Ok(Some(origin))
+            .unwrap_or(0)
     }
 
     /// Consumes the rollback-capable session and materializes its accepted
@@ -449,6 +536,7 @@ impl Session {
         appended_fragment: &mut Option<tex_state::FragmentId>,
     ) -> Result<AcceptedOutput, SessionError> {
         self.validate_edit(next_revision, &edit)?;
+        self.clear_render_maps();
         let old_source = self.source.clone();
         let old_history = self.history.clone();
         let old_effects = self.effects.clone();
@@ -697,6 +785,7 @@ impl Session {
     }
 
     fn accept_cold(&mut self, mut run: RevisionRun) -> Result<AcceptedOutput, SessionError> {
+        self.clear_render_maps();
         for record in &mut run.history {
             record.revision = self.revision;
         }
@@ -741,7 +830,45 @@ impl Session {
         self.fragments
             .retained_bytes()
             .saturating_add(self.layout.retained_bytes())
+            .saturating_add(self.render_maps.borrow().retained_bytes())
     }
+}
+
+fn build_page_render_map(
+    artifact: &CommittedArtifact,
+    page: u32,
+) -> Result<PageRenderMap, SessionError> {
+    let page_artifact = tex_out::PageArtifact::from_bytes(artifact.bytes())
+        .map_err(|error| SessionError::RenderSource(error.to_string()))?;
+    let positioned = tex_out::positioned::lower_page(&page_artifact, page)
+        .map_err(|error| SessionError::RenderSource(error.to_string()))?;
+    let mut event_units = Vec::with_capacity(positioned.events.len().saturating_add(1));
+    let mut origins = Vec::new();
+    event_units.push(0);
+    for event in positioned.events {
+        if let tex_out::positioned::PositionedEvent::TextRun(run) = event {
+            for source in run.sources {
+                origins.push(
+                    source
+                        .and_then(|source| {
+                            artifact
+                                .render_origins()
+                                .get(source.node_ordinal as usize)
+                                .and_then(|origins| origins.get(source.source_index as usize))
+                                .copied()
+                        })
+                        .unwrap_or(OriginId::UNKNOWN),
+                );
+            }
+        }
+        event_units.push(u32::try_from(origins.len()).map_err(|_| {
+            SessionError::RenderSource("rendered source map exceeds u32 capacity".to_owned())
+        })?);
+    }
+    Ok(PageRenderMap {
+        event_units,
+        origins,
+    })
 }
 
 struct RevisionRun {

@@ -89,20 +89,27 @@ HTML output identifies each page and positioned event with `data-umber-page`
 and `data-umber-event`; every page pairs its ordinal with the accepted
 `data-umber-revision`. A text event also exposes its source character codes,
 so a browser can translate a pointer hit into an optional text-unit index.
-The native and WASM sessions expose the same lazy query:
+The native session exposes the revision-checked lazy query below. Until the
+phase-3 WASM result adapter lands, the existing WASM compatibility method
+passes the current revision internally and exposes current locations only:
 
 ```text
-rendered_source_location(page, event, unit?)
-    -> { revision, path, start, end, line, column } | none
+rendered_source_location(page, event, unit?, dom_revision)
+    -> Current { revision, path, start, end, line, column }
+     | Deleted { minted_revision }
+     | StaleRevision { accepted }
+     | none
 ```
 
 Pages are numbered from one and events and units from zero. Omitting `unit`
 selects the first source-backed unit in the text event, which is sufficient
 for coarse run-level navigation. A precise SVG text hit can supply the glyph
-or character unit. Invalid page/event/unit values and synthetic output return
-`none`; they are not compile errors. While a patch is pending, no query is
-served, so a returned location always names the same accepted revision as the
-rendered HTML.
+or character unit. The caller passes the revision stamped on the page; a
+mismatch is returned as typed `StaleRevision` before page data is touched.
+Invalid page/event/unit values and synthetic output return `none`; they are
+not compile errors. An origin whose fragment was removed from the current
+editor layout returns typed `Deleted`. While a patch is pending, no query is
+served.
 
 The engine does not serialize an eager source map into HTML or page artifact
 bytes. Text and math characters plus ligature nodes retain compact
@@ -110,16 +117,19 @@ diagnostic-only origin ids through ligaturing, hyphenation, math layout,
 packing, and line breaking. Shipout attaches
 an in-process origin sidecar aligned with artifact-node preorder, while the
 positioned-page lowering records which node and original character produced
-each text unit. On a click, the session parses and positions only the selected
-page, follows that address into the sidecar, and resolves the opaque origin
-against the accepted source substrate. Paths, byte ranges, lines, and columns
-are therefore computed only on demand.
+each text unit. On the first click into a page, the session parses and
+positions that page once, joins event units to the sidecar, and retains only
+compact event prefix sums plus opaque origin ids. Later queries are O(1) map
+lookups followed by layout-aware resolution. The cache is query-only Rust
+state, is discarded on the next accept or rollback, and is never copied into
+accepted snapshots. Paths, byte ranges, lines, and columns are computed only
+on demand.
 
-The first successful current-document query may lazily allocate the accepted
-layout's line-start index. That index remains operational, diagnostic-only
-state: it does not affect semantic state, snapshot identity, or snapshot
-capture complexity, and live session retention telemetry charges it after the
-query.
+The first page query allocates its compact page map, and the first successful
+current-document query may allocate the accepted layout's line-start index.
+Both remain operational, diagnostic-only state: they do not affect semantic
+state, snapshot identity, or snapshot capture complexity, and live session
+retention telemetry charges them after the query.
 
 Origin columns and artifact sidecars are excluded from semantic node hashes,
 artifact bytes, and artifact content identity. Reused committed pages retain

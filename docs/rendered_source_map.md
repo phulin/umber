@@ -1,8 +1,9 @@
 # Rendered Source Map
 
-Status: proposed design. Replaces the recompute-per-query
-`renderedSourceLocation` path with a lazily built, session-cached per-page
-render source map. The WASM boundary stays query-only: no mapping tables
+Status: phases 1-2 implemented. Accepted HTML is revision-stamped and the
+native `tex-incr`/`umber` query path uses a lazily built, session-cached
+per-page render source map with typed current, deleted, and stale-revision
+results. The typed WASM/DOM helper surface remains phase 3; no mapping tables
 cross into JavaScript.
 
 Builds on the edit-stable fragment-backed coordinates of
@@ -83,8 +84,10 @@ for the lifetime of the accepted output it describes and is dropped with it
 at the next accept or rollback. A unit whose source text was edited away
 resolves to typed `Deleted`, never to an offset in an old snapshot.
 
-Memory: four bytes per renderable source character plus one `u32` per event,
-for queried pages only, charged to retained-output accounting when built.
+Memory: four bytes per renderable source character plus one `u32` per event
+boundary, for queried pages only, charged to live retained-output accounting
+when built. The detached accepted output retains its point-in-time metrics;
+the session getter includes maps constructed by subsequent queries.
 The full positioned event list from the one-time lowering pass is *not*
 retained — only the compact columns. Runs of consecutive direct origins
 (ordinary text) may later be run-length encoded; that is an optimization,
@@ -206,7 +209,7 @@ map layout must not preclude it (it does not).
 1. **tex-out:** add the `data-umber-revision` stamp beside
    `data-umber-page`. Existing HTML byte output changes only by the one
    attribute.
-2. **tex-incr / umber:** add the lazy `PageRenderMap` cache (build on first
+2. **tex-incr / umber (implemented):** add the lazy `PageRenderMap` cache (build on first
    query per page from one deserialize + lower pass joined with
    `render_origins`; drop on accept/rollback), route
    `rendered_source_location` through it and the layout-aware resolver, and

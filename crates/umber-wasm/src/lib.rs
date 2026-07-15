@@ -292,11 +292,23 @@ impl CompilerSession {
         event: u32,
         unit: Option<u32>,
     ) -> Result<Option<JsRenderedSourceLocation>, JsValue> {
-        self.session_ref()?
-            .rendered_source_location(page, event, unit)
+        let session = self.session_ref()?;
+        let Some(revision) = session.revision() else {
+            return Ok(None);
+        };
+        match session
+            .rendered_source_location(page, event, unit, revision)
             .map_err(boundary_error)?
-            .map(result::rendered_source_location)
-            .transpose()
+        {
+            Some(umber::RenderedSourceResult::Current(location)) => {
+                result::rendered_source_location(location).map(Some)
+            }
+            Some(
+                umber::RenderedSourceResult::Deleted { .. }
+                | umber::RenderedSourceResult::StaleRevision { .. },
+            )
+            | None => Ok(None),
+        }
     }
 
     #[wasm_bindgen(getter, js_name = reuseMetrics)]

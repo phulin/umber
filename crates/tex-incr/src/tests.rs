@@ -52,21 +52,39 @@ fn live_retention_charges_line_index_built_after_acceptance() {
         })
         .expect("source-backed text event");
     session
-        .rendered_source_location(1, event, Some(0))
+        .rendered_source_location(1, event, Some(0), RevisionId::new(1))
         .expect("source query")
         .expect("mapped source");
+    session
+        .rendered_source_location(1, event, Some(0), RevisionId::new(1))
+        .expect("repeated source query")
+        .expect("mapped source");
+    assert_eq!(session.page_lowerings(1), 1);
 
     let after = session.retention_metrics().expect("live retention");
-    let line_index_bytes = after.diagnostic_bytes - before.diagnostic_bytes;
-    assert!(line_index_bytes > 0);
+    let query_cache_bytes = after.diagnostic_bytes - before.diagnostic_bytes;
+    assert!(query_cache_bytes > 0);
     assert_eq!(
         after.protected_overage_bytes - before.protected_overage_bytes,
-        line_index_bytes
+        query_cache_bytes
     );
     assert_eq!(
         accepted.retention, before,
         "accepted output is point-in-time"
     );
+
+    session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(text.as_bytes()),
+                range: 0..text.len(),
+                replacement: "\\input missing\\end".to_owned(),
+            },
+        )
+        .expect_err("missing input rolls the attempted revision back");
+    assert_eq!(session.page_lowerings(1), 0, "rollback drops page maps");
 }
 
 #[test]
@@ -231,10 +249,6 @@ fn convergent_adopted_char_artifact_keeps_current_and_deleted_provenance() {
                 .is_some()
         })
         .expect("char text event");
-    let origin = session
-        .rendered_origin(1, event, None)
-        .expect("render lookup")
-        .expect("char render origin");
     assert_eq!(
         session
             .rendered_source_origin(1, event, None)
@@ -249,33 +263,85 @@ fn convergent_adopted_char_artifact_keeps_current_and_deleted_provenance() {
     );
 
     let revision_two = session.source.clone();
-    let char_line_start = revision_two
-        .find("\\shipout\\hbox{\\char65}")
-        .expect("char line");
-    let char_line_end = revision_two[char_line_start..]
-        .find("\\shipout\\hbox{B}")
-        .map(|offset| char_line_start + offset)
-        .expect("second shipout");
-    let char_line = revision_two[char_line_start..char_line_end].to_owned();
-    let second = session
+    let inserted = " longer";
+    let insert_at = revision_two.find('\n').expect("comment newline");
+    let third = session
         .advance(
             RevisionId::new(3),
             Edit {
                 base_revision: RevisionId::new(2),
                 expected_hash: ContentHash::from_bytes(revision_two.as_bytes()),
+                range: insert_at..insert_at,
+                replacement: inserted.to_owned(),
+            },
+        )
+        .expect("earlier insertion converges");
+    assert!(third.reuse.pages_reused > 0);
+    assert_eq!(session.page_lowerings(1), 0, "accept drops old page maps");
+    let b_event = (0..32)
+        .find(|&event| {
+            session
+                .rendered_origin(2, event, None)
+                .expect("render lookup")
+                .is_some()
+        })
+        .expect("reused B text event");
+    let b_origin = session
+        .rendered_origin(2, b_event, None)
+        .expect("render lookup")
+        .expect("B render origin");
+    let b_offset = session.source.find("{B}").expect("B box") + 1;
+    assert_eq!(
+        session
+            .rendered_source_location(2, b_event, None, RevisionId::new(3))
+            .expect("render source lookup"),
+        Some(RenderedSourceResult::Current(
+            tex_state::ResolvedSourceLocation {
+                path: "<editor>".to_owned(),
+                start: b_offset as u64,
+                end: (b_offset + 1) as u64,
+                line: 2,
+                column: (b_offset - session.source.find('\n').expect("newline")) as u32,
+            }
+        ))
+    );
+
+    let revision_three = session.source.clone();
+    let char_line_start = revision_three
+        .find("\\shipout\\hbox{\\char65}")
+        .expect("char line");
+    let char_line_end = revision_three[char_line_start..]
+        .find("\\shipout\\hbox{B}")
+        .map(|offset| char_line_start + offset)
+        .expect("second shipout");
+    let char_line = revision_three[char_line_start..char_line_end].to_owned();
+    let fourth = session
+        .advance(
+            RevisionId::new(4),
+            Edit {
+                base_revision: RevisionId::new(3),
+                expected_hash: ContentHash::from_bytes(revision_three.as_bytes()),
                 range: char_line_start..char_line_end,
                 replacement: char_line,
             },
         )
         .expect("equivalent char edit converges");
-    assert!(second.reuse.convergence_boundary.is_some());
+    assert!(fourth.reuse.convergence_boundary.is_some());
+    assert!(fourth.reuse.pages_reused > 0);
+    assert_eq!(session.page_lowerings(2), 0, "accept drops old page maps");
     assert_eq!(
         session
             .substrate
             .as_ref()
             .expect("retained substrate")
-            .resolve_layout_origin(origin, &session.fragments, &session.layout),
+            .resolve_layout_origin(b_origin, &session.fragments, &session.layout),
         LayoutResolvedOrigin::Deleted { minted_revision: 1 }
+    );
+    assert_eq!(
+        session
+            .rendered_source_location(2, b_event, None, RevisionId::new(4))
+            .expect("deleted render source lookup"),
+        Some(RenderedSourceResult::Deleted { minted_revision: 1 })
     );
 }
 
