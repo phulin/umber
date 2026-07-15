@@ -84,10 +84,10 @@ fn complete_output_uses_strings_and_uint8arrays() {
 
 #[wasm_bindgen_test]
 async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
-    let options = options("main.tex");
-    set(&options, "html", Object::new().as_ref());
-    let mut session =
-        CompilerSession::new(options.unchecked_ref::<JsSessionOptions>()).expect("HTML session");
+    let session_options = options("main.tex");
+    set(&session_options, "html", Object::new().as_ref());
+    let mut session = CompilerSession::new(session_options.unchecked_ref::<JsSessionOptions>())
+        .expect("HTML session");
     let tfm = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
     session
         .add_user_file("cmr10.tfm", &bytes(tfm))
