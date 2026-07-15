@@ -69,11 +69,12 @@ mod universe;
 
 pub use pdf::{
     PdfActionDestination, PdfActionIdentifier, PdfActionRecord, PdfActionSpec, PdfActionTarget,
-    PdfActionWindow, PdfDocumentFragmentKind, PdfDocumentObjectIds, PdfExternalImageId,
+    PdfActionWindow, PdfAnnotationData, PdfAnnotationDimensions, PdfAnnotationInitializeError,
+    PdfAnnotationRecord, PdfDocumentFragmentKind, PdfDocumentObjectIds, PdfExternalImageId,
     PdfExternalImageIdError, PdfExternalImageMetadata, PdfExternalImageRegistrationError,
     PdfFontConfiguration, PdfFontMapOperation, PdfFontResourceRecord, PdfGlyphToUnicode,
-    PdfObjectCapacityError, PdfOutputParameters, PdfPageBox, PdfPageRecord, PdfRawObjectData,
-    PdfRawObjectId, PdfRawObjectInitializeError, PdfRawObjectRecord,
+    PdfLinkRecord, PdfObjectCapacityError, PdfOutputParameters, PdfPageBox, PdfPageRecord,
+    PdfRawObjectData, PdfRawObjectId, PdfRawObjectInitializeError, PdfRawObjectRecord,
 };
 pub mod world;
 

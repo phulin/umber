@@ -217,6 +217,12 @@ pub trait ExpansionState {
     fn pdf_last_object(&self) -> u32 {
         0
     }
+    fn pdf_last_annotation(&self) -> u32 {
+        0
+    }
+    fn pdf_last_link(&self) -> u32 {
+        0
+    }
     fn pdf_uniform_deviate(&mut self, _bound: i32) -> i32 {
         0
     }
@@ -2132,6 +2138,69 @@ impl Universe {
     #[must_use]
     pub fn pdf_last_object(&self) -> u32 {
         self.pdf.last_raw_object()
+    }
+
+    #[must_use]
+    pub fn pdf_last_annotation(&self) -> u32 {
+        self.pdf.last_annotation()
+    }
+
+    #[must_use]
+    pub fn pdf_last_link(&self) -> u32 {
+        self.pdf.last_link()
+    }
+
+    pub fn reserve_pdf_annotation(
+        &mut self,
+    ) -> Result<crate::PdfAnnotationRecord, PdfObjectCapacityError> {
+        self.pdf.reserve_annotation()
+    }
+
+    pub fn initialize_pdf_annotation(
+        &mut self,
+        object: u32,
+        data: crate::PdfAnnotationData,
+    ) -> Result<crate::PdfAnnotationRecord, crate::PdfAnnotationInitializeError> {
+        let semantic_id = self.stores.token_list_semantic_id_value(data.entries);
+        self.pdf.initialize_annotation(object, data, semantic_id)
+    }
+
+    pub fn create_pdf_annotation(
+        &mut self,
+        data: crate::PdfAnnotationData,
+    ) -> Result<crate::PdfAnnotationRecord, PdfObjectCapacityError> {
+        let record = self.pdf.reserve_annotation()?;
+        Ok(self
+            .initialize_pdf_annotation(record.object(), data)
+            .expect("fresh annotation reservation initializes"))
+    }
+
+    #[must_use]
+    pub fn pdf_annotations(&self) -> &[crate::PdfAnnotationRecord] {
+        self.pdf.annotations()
+    }
+
+    pub fn create_pdf_link(
+        &mut self,
+        dimensions: crate::PdfAnnotationDimensions,
+        attributes: TokenListId,
+        action: crate::PdfActionSpec,
+    ) -> Result<crate::PdfLinkRecord, PdfObjectCapacityError> {
+        let attributes_semantic_id = self.stores.token_list_semantic_id_value(attributes);
+        let action_semantic_id =
+            action.fingerprint(|tokens| self.stores.token_list_semantic_id_value(tokens));
+        self.pdf.create_link(
+            dimensions,
+            attributes,
+            action,
+            attributes_semantic_id,
+            action_semantic_id,
+        )
+    }
+
+    #[must_use]
+    pub fn pdf_links(&self) -> &[crate::PdfLinkRecord] {
+        self.pdf.links()
     }
 
     /// Appends expanded tokens to one document-level PDF dictionary destination.
@@ -4287,6 +4356,14 @@ impl ExpansionState for Universe {
         Self::pdf_last_object(self)
     }
 
+    fn pdf_last_annotation(&self) -> u32 {
+        Self::pdf_last_annotation(self)
+    }
+
+    fn pdf_last_link(&self) -> u32 {
+        Self::pdf_last_link(self)
+    }
+
     fn pdf_uniform_deviate(&mut self, bound: i32) -> i32 {
         Self::pdf_uniform_deviate(self, bound)
     }
@@ -4761,6 +4838,14 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn pdf_last_object(&self) -> u32 {
         self.universe.pdf_last_object()
+    }
+
+    fn pdf_last_annotation(&self) -> u32 {
+        self.universe.pdf_last_annotation()
+    }
+
+    fn pdf_last_link(&self) -> u32 {
+        self.universe.pdf_last_link()
     }
 
     fn pdf_uniform_deviate(&mut self, bound: i32) -> i32 {

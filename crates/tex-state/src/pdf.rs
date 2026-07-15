@@ -1,12 +1,17 @@
 //! Checkpointed pdfTeX document allocation ledger.
 
 mod action;
+mod annotation;
 mod document;
 mod object;
 
 pub use action::{
     PdfActionDestination, PdfActionIdentifier, PdfActionRecord, PdfActionSpec, PdfActionTarget,
     PdfActionWindow,
+};
+pub use annotation::{
+    PdfAnnotationData, PdfAnnotationDimensions, PdfAnnotationInitializeError, PdfAnnotationRecord,
+    PdfLinkRecord,
 };
 use document::PdfDocumentFragments;
 pub use document::{PdfDocumentFragmentKind, PdfDocumentObjectIds};
@@ -460,6 +465,8 @@ pub(crate) struct PdfStateCursor {
     space_font_name_count: usize,
     current_space_font_name: u32,
     space_font_name_fingerprint: u64,
+    annotation_fingerprint: u64,
+    link_fingerprint: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -470,6 +477,8 @@ pub(crate) struct PdfStateSnapshot {
     raw_objects: PdfRawObjects,
     document_fragments: PdfDocumentFragments,
     page_reservations: Arc<Vec<PdfPageReservation>>,
+    annotations: Arc<Vec<PdfAnnotationRecord>>,
+    links: Arc<Vec<PdfLinkRecord>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -506,6 +515,10 @@ pub(crate) struct PdfState {
     space_font_name_lookup: BTreeMap<Vec<u8>, u32>,
     current_space_font_name: u32,
     space_font_name_fingerprint: u64,
+    annotations: Arc<Vec<PdfAnnotationRecord>>,
+    annotation_fingerprint: u64,
+    links: Arc<Vec<PdfLinkRecord>>,
+    link_fingerprint: u64,
 }
 
 impl Default for PdfState {
@@ -534,6 +547,10 @@ impl Default for PdfState {
             space_font_name_lookup: BTreeMap::from([(default_space_font.clone(), 0)]),
             current_space_font_name: 0,
             space_font_name_fingerprint: space_font_name_fingerprint(&default_space_font),
+            annotations: Arc::new(Vec::new()),
+            annotation_fingerprint: annotation_fingerprint(&[]),
+            links: Arc::new(Vec::new()),
+            link_fingerprint: StateHasher::new(0x7064_665f_6c69_6e6b).finish(),
         }
     }
 }
@@ -599,6 +616,8 @@ impl PdfState {
             && self.page_reservations.is_empty()
             && self.space_font_names.len() == 1
             && self.current_space_font_name == 0
+            && self.annotations.is_empty()
+            && self.links.is_empty()
     }
 
     pub(crate) fn ensure_page_capacity(&self, parameters: PdfOutputParameters) -> Result<(), ()> {
@@ -780,6 +799,80 @@ impl PdfState {
                     .any(|prior| prior.object_number == record.object_number))
                 .then_some(record)
             })
+    }
+
+    pub(crate) fn reserve_annotation(
+        &mut self,
+    ) -> Result<PdfAnnotationRecord, PdfObjectCapacityError> {
+        let object = self.reserve_document_object()?;
+        let record = PdfAnnotationRecord::reserved(object);
+        Arc::make_mut(&mut self.annotations).push(record);
+        self.annotation_fingerprint =
+            append_annotation_reservation_fingerprint(self.annotation_fingerprint, object);
+        Ok(record)
+    }
+
+    pub(crate) fn initialize_annotation(
+        &mut self,
+        object: u32,
+        data: PdfAnnotationData,
+        entries_semantic_id: u64,
+    ) -> Result<PdfAnnotationRecord, PdfAnnotationInitializeError> {
+        let records = Arc::make_mut(&mut self.annotations);
+        let record = records
+            .iter_mut()
+            .find(|record| record.object() == object)
+            .ok_or(PdfAnnotationInitializeError(object))?;
+        record
+            .initialize(data)
+            .map_err(|()| PdfAnnotationInitializeError(object))?;
+        self.annotation_fingerprint = append_annotation_data_fingerprint(
+            self.annotation_fingerprint,
+            object,
+            data.dimensions,
+            entries_semantic_id,
+        );
+        Ok(*record)
+    }
+
+    #[must_use]
+    pub(crate) fn annotations(&self) -> &[PdfAnnotationRecord] {
+        &self.annotations
+    }
+
+    #[must_use]
+    pub(crate) fn last_annotation(&self) -> u32 {
+        self.annotations.last().map_or(0, |record| record.object())
+    }
+
+    pub(crate) fn create_link(
+        &mut self,
+        dimensions: PdfAnnotationDimensions,
+        attributes: TokenListId,
+        action: PdfActionSpec,
+        attributes_semantic_id: u64,
+        action_semantic_id: u64,
+    ) -> Result<PdfLinkRecord, PdfObjectCapacityError> {
+        let object = self.reserve_document_object()?;
+        let record = PdfLinkRecord::new(object, dimensions, attributes, action);
+        Arc::make_mut(&mut self.links).push(record);
+        self.link_fingerprint = append_link_fingerprint(
+            self.link_fingerprint,
+            record,
+            attributes_semantic_id,
+            action_semantic_id,
+        );
+        Ok(record)
+    }
+
+    #[must_use]
+    pub(crate) fn links(&self) -> &[PdfLinkRecord] {
+        &self.links
+    }
+
+    #[must_use]
+    pub(crate) fn last_link(&self) -> u32 {
+        self.links.last().map_or(0, |record| record.object())
     }
 
     #[must_use]
@@ -1197,6 +1290,8 @@ impl PdfState {
             space_font_name_count: self.space_font_names.len(),
             current_space_font_name: self.current_space_font_name,
             space_font_name_fingerprint: self.space_font_name_fingerprint,
+            annotation_fingerprint: self.annotation_fingerprint,
+            link_fingerprint: self.link_fingerprint,
         }
     }
     #[must_use]
@@ -1208,6 +1303,8 @@ impl PdfState {
             raw_objects: self.raw_objects.clone(),
             document_fragments: self.document_fragments.clone(),
             page_reservations: Arc::clone(&self.page_reservations),
+            annotations: Arc::clone(&self.annotations),
+            links: Arc::clone(&self.links),
         }
     }
 
@@ -1246,6 +1343,10 @@ impl PdfState {
         );
         self.current_space_font_name = cursor.current_space_font_name;
         self.space_font_name_fingerprint = cursor.space_font_name_fingerprint;
+        self.annotations = snapshot.annotations;
+        self.annotation_fingerprint = cursor.annotation_fingerprint;
+        self.links = snapshot.links;
+        self.link_fingerprint = cursor.link_fingerprint;
     }
 
     pub(crate) fn set_match(
@@ -1295,6 +1396,8 @@ impl PdfState {
             hasher.u64(cursor.action_fingerprint);
             hasher.u64(cursor.page_reservation_fingerprint);
             hasher.u64(cursor.space_font_name_fingerprint);
+            hasher.u64(cursor.annotation_fingerprint);
+            hasher.u64(cursor.link_fingerprint);
             hasher.bool(cursor.document_objects.pages().is_some());
             if let Some(id) = cursor.document_objects.pages() {
                 hasher.u32(id);
@@ -1327,6 +1430,57 @@ fn page_reservation_fingerprint(reservations: &[PdfPageReservation]) -> u64 {
         hasher.u32(reservation.object);
     }
     hasher.finish()
+}
+
+fn annotation_fingerprint(_records: &[PdfAnnotationRecord]) -> u64 {
+    StateHasher::new(0x7064_665f_616e_6e6f).finish()
+}
+
+fn append_annotation_reservation_fingerprint(previous: u64, object: u32) -> u64 {
+    let mut hasher = StateHasher::new(0x7064_665f_616e_6e6f);
+    hasher.u64(previous);
+    hasher.u8(0);
+    hasher.u32(object);
+    hasher.finish()
+}
+
+fn append_annotation_data_fingerprint(
+    previous: u64,
+    object: u32,
+    dimensions: PdfAnnotationDimensions,
+    entries_semantic_id: u64,
+) -> u64 {
+    let mut hasher = StateHasher::new(0x7064_665f_616e_6e6f);
+    hasher.u64(previous);
+    hasher.u8(1);
+    hasher.u32(object);
+    hash_annotation_dimensions(&mut hasher, dimensions);
+    hasher.u64(entries_semantic_id);
+    hasher.finish()
+}
+
+fn append_link_fingerprint(
+    previous: u64,
+    record: PdfLinkRecord,
+    attributes_semantic_id: u64,
+    action_semantic_id: u64,
+) -> u64 {
+    let mut hasher = StateHasher::new(0x7064_665f_6c69_6e6b);
+    hasher.u64(previous);
+    hasher.u32(record.object());
+    hash_annotation_dimensions(&mut hasher, record.dimensions());
+    hasher.u64(attributes_semantic_id);
+    hasher.u64(action_semantic_id);
+    hasher.finish()
+}
+
+fn hash_annotation_dimensions(hasher: &mut StateHasher, dimensions: PdfAnnotationDimensions) {
+    for value in [dimensions.width, dimensions.height, dimensions.depth] {
+        hasher.bool(value.is_some());
+        if let Some(value) = value {
+            hasher.i32(value.raw());
+        }
+    }
 }
 
 fn external_image_fingerprint(images: &[PdfExternalImageRecord]) -> u64 {
@@ -1548,6 +1702,70 @@ fn hash_output_parameters(hasher: &mut StateHasher, parameters: Option<PdfOutput
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn annotation_and_link_objects_are_typed_hashed_and_rollback_safe() {
+        let mut state = PdfState::default();
+        state.enable();
+        let base = state.snapshot();
+        let base_hash = state.hash_fragment();
+
+        let reserved = state.reserve_annotation().expect("reserve annotation");
+        assert_eq!(reserved.object(), 1);
+        assert_eq!(reserved.data(), None);
+        assert_eq!(state.last_annotation(), 1);
+        let dimensions = PdfAnnotationDimensions {
+            width: Some(Scaled::from_raw(10)),
+            height: None,
+            depth: Some(Scaled::from_raw(2)),
+        };
+        let annotation = state
+            .initialize_annotation(
+                reserved.object(),
+                PdfAnnotationData {
+                    dimensions,
+                    entries: TokenListId::EMPTY,
+                },
+                17,
+            )
+            .expect("initialize annotation");
+        assert_eq!(
+            annotation.data().expect("initialized").dimensions,
+            dimensions
+        );
+        assert!(
+            state
+                .initialize_annotation(
+                    reserved.object(),
+                    PdfAnnotationData {
+                        dimensions,
+                        entries: TokenListId::EMPTY,
+                    },
+                    17,
+                )
+                .is_err(),
+            "useobjnum cannot initialize an annotation twice"
+        );
+
+        let link = state
+            .create_link(
+                PdfAnnotationDimensions::RUNNING,
+                TokenListId::EMPTY,
+                PdfActionSpec::User(TokenListId::EMPTY),
+                19,
+                23,
+            )
+            .expect("create link");
+        assert_eq!(link.object(), 2);
+        assert_eq!(state.last_link(), 2);
+        assert_ne!(state.hash_fragment(), base_hash);
+
+        state.rollback(base);
+        assert_eq!(state.next_object(), 1);
+        assert_eq!(state.last_annotation(), 0);
+        assert_eq!(state.last_link(), 0);
+        assert_eq!(state.hash_fragment(), base_hash);
+    }
 
     #[test]
     fn font_configuration_preserves_pdftex_thresholds_and_pk_resolution() {

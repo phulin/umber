@@ -658,6 +658,18 @@ where
             &stores.pdf_last_object().to_string(),
             cause_origin,
         )),
+        Meaning::InternalInteger(InternalInteger::PdfLastAnnot) => Ok(push_rendered_text(
+            stores,
+            ExpansionReplayKind::TheOutput,
+            &stores.pdf_last_annotation().to_string(),
+            cause_origin,
+        )),
+        Meaning::InternalInteger(InternalInteger::PdfLastLink) => Ok(push_rendered_text(
+            stores,
+            ExpansionReplayKind::TheOutput,
+            &stores.pdf_last_link().to_string(),
+            cause_origin,
+        )),
         Meaning::InternalInteger(InternalInteger::CurrentGroupLevel) => Ok(push_rendered_text(
             stores,
             ExpansionReplayKind::TheOutput,
@@ -914,6 +926,14 @@ pub(crate) fn record_meaning_value_dependency(
             None
         }
         Meaning::InternalInteger(InternalInteger::PdfLastObject) => {
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Engine(ReadEngineField::PdfObjects)
+            );
+            None
+        }
+        Meaning::InternalInteger(InternalInteger::PdfLastAnnot)
+        | Meaning::InternalInteger(InternalInteger::PdfLastLink) => {
             crate::record_dependency!(
                 expansion,
                 ReadDependency::Engine(ReadEngineField::PdfObjects)

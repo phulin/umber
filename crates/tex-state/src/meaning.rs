@@ -104,7 +104,7 @@ pub enum Meaning {
 }
 
 /// Read-only internal integer quantities.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum InternalInteger {
     /// Badness of the most recent glue setting.
     Badness,
@@ -118,6 +118,8 @@ pub enum InternalInteger {
     PdfRandomSeed,
     PdfShellEscape,
     PdfLastObject,
+    PdfLastAnnot,
+    PdfLastLink,
     CurrentGroupLevel,
     CurrentGroupType,
     CurrentIfLevel,
@@ -138,6 +140,9 @@ impl InternalInteger {
             Self::PdfRandomSeed => 11,
             Self::PdfShellEscape => 12,
             Self::PdfLastObject => 13,
+            // 14..=16 are reserved by the PDF form/image branch.
+            Self::PdfLastAnnot => 17,
+            Self::PdfLastLink => 18,
             Self::CurrentGroupLevel => 3,
             Self::CurrentGroupType => 4,
             Self::CurrentIfLevel => 5,
@@ -158,6 +163,8 @@ impl InternalInteger {
             11 => Some(Self::PdfRandomSeed),
             12 => Some(Self::PdfShellEscape),
             13 => Some(Self::PdfLastObject),
+            17 => Some(Self::PdfLastAnnot),
+            18 => Some(Self::PdfLastLink),
             3 => Some(Self::CurrentGroupLevel),
             4 => Some(Self::CurrentGroupType),
             5 => Some(Self::CurrentIfLevel),
@@ -699,6 +706,11 @@ pub enum UnexpandablePrimitive {
     PdfInterwordSpaceOff,
     PdfFakeSpace,
     PdfSpaceFont,
+    PdfAnnot,
+    PdfStartLink,
+    PdfEndLink,
+    PdfRunningLinkOn,
+    PdfRunningLinkOff,
 }
 
 impl UnexpandablePrimitive {
@@ -948,6 +960,12 @@ impl UnexpandablePrimitive {
             Self::PdfInterwordSpaceOff => 248,
             Self::PdfFakeSpace => 249,
             Self::PdfSpaceFont => 250,
+            // 251..=254 are reserved by the PDF form/image branches.
+            Self::PdfAnnot => 255,
+            Self::PdfStartLink => 256,
+            Self::PdfEndLink => 257,
+            Self::PdfRunningLinkOn => 258,
+            Self::PdfRunningLinkOff => 259,
         }
     }
 
@@ -1196,6 +1214,11 @@ impl UnexpandablePrimitive {
             248 => Some(Self::PdfInterwordSpaceOff),
             249 => Some(Self::PdfFakeSpace),
             250 => Some(Self::PdfSpaceFont),
+            255 => Some(Self::PdfAnnot),
+            256 => Some(Self::PdfStartLink),
+            257 => Some(Self::PdfEndLink),
+            258 => Some(Self::PdfRunningLinkOn),
+            259 => Some(Self::PdfRunningLinkOff),
             _ => None,
         }
     }

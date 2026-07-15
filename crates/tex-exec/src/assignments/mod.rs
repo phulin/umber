@@ -1611,7 +1611,12 @@ fn execute_prefixed_command(
             | UnexpandablePrimitive::Immediate
             | UnexpandablePrimitive::End
             | UnexpandablePrimitive::Dump => unreachable!("prefixes are accumulated first"),
-            UnexpandablePrimitive::PdfTeXUnimplemented => {
+            UnexpandablePrimitive::PdfTeXUnimplemented
+            | UnexpandablePrimitive::PdfAnnot
+            | UnexpandablePrimitive::PdfStartLink
+            | UnexpandablePrimitive::PdfEndLink
+            | UnexpandablePrimitive::PdfRunningLinkOn
+            | UnexpandablePrimitive::PdfRunningLinkOff => {
                 unreachable!("unsupported pdfTeX placeholders return before prefix handling")
             }
         },

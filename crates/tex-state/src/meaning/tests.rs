@@ -1,5 +1,6 @@
 use super::{
-    ExpandablePrimitive, Meaning, MeaningFlags, OPERAND_MASK, RawMeaning, UnexpandablePrimitive,
+    ExpandablePrimitive, InternalInteger, Meaning, MeaningFlags, OPERAND_MASK, RawMeaning,
+    UnexpandablePrimitive,
 };
 use crate::ids::{FontId, MacroDefinitionId};
 use crate::page::{PageDimension, PageInteger};
@@ -138,6 +139,62 @@ fn pdf_accessibility_operands_are_unique_and_follow_parallel_reservations() {
     // until that branch merges, but this slice must never claim them.
     for reserved in 238..=246 {
         assert!(expected.iter().all(|(operand, _)| *operand != reserved));
+    }
+}
+
+#[test]
+fn complete_primitive_codecs_are_unique_through_annotation_reservations() {
+    let annotations = [
+        (255, UnexpandablePrimitive::PdfAnnot),
+        (256, UnexpandablePrimitive::PdfStartLink),
+        (257, UnexpandablePrimitive::PdfEndLink),
+        (258, UnexpandablePrimitive::PdfRunningLinkOn),
+        (259, UnexpandablePrimitive::PdfRunningLinkOff),
+    ];
+    for (operand, primitive) in annotations {
+        assert_eq!(primitive.operand(), operand);
+        assert_eq!(
+            UnexpandablePrimitive::from_operand(operand),
+            Some(primitive)
+        );
+        round_trip(Meaning::UnexpandablePrimitive(primitive));
+    }
+
+    let mut unexpandable = std::collections::HashSet::new();
+    for operand in 0..=259 {
+        if let Some(primitive) = UnexpandablePrimitive::from_operand(operand) {
+            assert_eq!(primitive.operand(), operand);
+            assert!(
+                unexpandable.insert(primitive),
+                "duplicate unexpandable primitive at operand {operand}"
+            );
+        }
+    }
+    for reserved in 251..=254 {
+        assert_eq!(UnexpandablePrimitive::from_operand(reserved), None);
+    }
+
+    let internals = [
+        (17, InternalInteger::PdfLastAnnot),
+        (18, InternalInteger::PdfLastLink),
+    ];
+    for (operand, integer) in internals {
+        assert_eq!(integer.operand(), operand);
+        assert_eq!(InternalInteger::from_operand(operand), Some(integer));
+        round_trip(Meaning::InternalInteger(integer));
+    }
+    let mut internal = std::collections::HashSet::new();
+    for operand in 0..=18 {
+        if let Some(integer) = InternalInteger::from_operand(operand) {
+            assert_eq!(integer.operand(), operand);
+            assert!(
+                internal.insert(integer),
+                "duplicate internal integer at operand {operand}"
+            );
+        }
+    }
+    for reserved in 14..=16 {
+        assert_eq!(InternalInteger::from_operand(reserved), None);
     }
 }
 
