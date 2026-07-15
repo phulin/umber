@@ -31,6 +31,40 @@ pub enum PdfFontCode {
     Knac,
 }
 
+/// Validated global `\pdffontexpand` settings attached to a base font.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct FontExpansion {
+    pub stretch: u16,
+    pub shrink: u16,
+    pub step: u8,
+    pub auto_expand: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FontExpansionConfigError {
+    ExpandedBase,
+    DifferentStep,
+    DifferentStretch,
+    DifferentShrink,
+    DifferentAutoExpand,
+}
+
+impl std::fmt::Display for FontExpansionConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::ExpandedBase => "cannot expand an expanded font",
+            Self::DifferentStep => "font has been expanded with different expansion step",
+            Self::DifferentStretch => "font has been expanded with different stretch limit",
+            Self::DifferentShrink => "font has been expanded with different shrink limit",
+            Self::DifferentAutoExpand => {
+                "font has been expanded with different auto expansion value"
+            }
+        })
+    }
+}
+
+impl std::error::Error for FontExpansionConfigError {}
+
 /// Largest TeX font-parameter number representable in a fontdimen cell key.
 pub const MAX_FONT_DIMEN: u32 = 1 << 17;
 
@@ -58,6 +92,7 @@ pub(crate) struct FontStoreMark {
     pub(crate) len: u32,
     identifier_writes_len: u32,
     semantic_seal_writes_len: u32,
+    expansion_writes_len: u32,
     identities: IdentityMark,
 }
 
@@ -90,6 +125,8 @@ pub(crate) struct FontStore {
     identifier_writes: Vec<FontId>,
     semantic_sealed: Vec<bool>,
     semantic_seal_writes: Vec<FontId>,
+    expansion_specs: Vec<Option<FontExpansion>>,
+    expansion_writes: Vec<(FontId, Option<FontExpansion>)>,
     by_key: BTreeMap<FontKey, FontId>,
     /// Append-only derived fragments keyed by semantic content. Rollback only
     /// truncates the live slot-to-fragment mapping, so a later equivalent load
@@ -109,6 +146,8 @@ impl Clone for FontStore {
             identifier_writes: self.identifier_writes.clone(),
             semantic_sealed: self.semantic_sealed.clone(),
             semantic_seal_writes: self.semantic_seal_writes.clone(),
+            expansion_specs: self.expansion_specs.clone(),
+            expansion_writes: self.expansion_writes.clone(),
             by_key: self.by_key.clone(),
             hash_fragments: self.hash_fragments.clone(),
             hash_fragments_by_key: self.hash_fragments_by_key.clone(),
@@ -141,6 +180,8 @@ impl FontStore {
             identifier_writes: Vec::new(),
             semantic_sealed: vec![false],
             semantic_seal_writes: Vec::new(),
+            expansion_specs: vec![None],
+            expansion_writes: Vec::new(),
             by_key: BTreeMap::new(),
             hash_fragments: vec![hash_fragment],
             hash_fragments_by_key: BTreeMap::from([(hash_fragment_key, 0)]),
@@ -182,6 +223,7 @@ impl FontStore {
         self.fonts.push(font);
         self.identifiers.push(None);
         self.semantic_sealed.push(false);
+        self.expansion_specs.push(None);
         self.font_hash_fragments.push(hash_fragment);
         self.complete_hash_fragments
             .push(complete_font_hash_fragment(
@@ -266,6 +308,45 @@ impl FontStore {
             .expect("font id is not live in this Universe timeline")
     }
 
+    pub(crate) fn expansion(&self, id: FontId) -> Option<FontExpansion> {
+        assert!(
+            self.contains(id),
+            "font id is not live in this Universe timeline"
+        );
+        self.expansion_specs[id.raw() as usize]
+    }
+
+    pub(crate) fn set_expansion(
+        &mut self,
+        id: FontId,
+        expansion: FontExpansion,
+    ) -> Result<(), FontExpansionConfigError> {
+        if matches!(
+            self.get(id).construction(),
+            FontConstruction::Expanded { .. }
+        ) {
+            return Err(FontExpansionConfigError::ExpandedBase);
+        }
+        if let Some(existing) = self.expansion(id) {
+            if existing.step != expansion.step {
+                return Err(FontExpansionConfigError::DifferentStep);
+            }
+            if existing.stretch != expansion.stretch {
+                return Err(FontExpansionConfigError::DifferentStretch);
+            }
+            if existing.shrink != expansion.shrink {
+                return Err(FontExpansionConfigError::DifferentShrink);
+            }
+            if existing.auto_expand != expansion.auto_expand {
+                return Err(FontExpansionConfigError::DifferentAutoExpand);
+            }
+            return Ok(());
+        }
+        self.expansion_writes.push((id, None));
+        self.expansion_specs[id.raw() as usize] = Some(expansion);
+        Ok(())
+    }
+
     #[must_use]
     pub(crate) fn by_source_identity(&self, identity: FontSourceIdentity) -> Option<FontId> {
         self.fonts.iter().enumerate().find_map(|(raw, font)| {
@@ -329,6 +410,8 @@ impl FontStore {
                 .expect("font identifier write log exceeds u32 entries"),
             semantic_seal_writes_len: u32::try_from(self.semantic_seal_writes.len())
                 .expect("font semantic-seal write log exceeds u32 entries"),
+            expansion_writes_len: u32::try_from(self.expansion_writes.len())
+                .expect("font expansion write log exceeds u32 entries"),
             identities: self.identities.watermark(),
         }
     }
@@ -351,9 +434,21 @@ impl FontStore {
         self.identifier_writes
             .truncate(mark.identifier_writes_len as usize);
         self.truncate_semantic_seals_to(mark.semantic_seal_writes_len as usize);
+        for (id, previous) in self.expansion_writes[mark.expansion_writes_len as usize..]
+            .iter()
+            .rev()
+            .copied()
+        {
+            if id.raw() < mark.len {
+                self.expansion_specs[id.raw() as usize] = previous;
+            }
+        }
+        self.expansion_writes
+            .truncate(mark.expansion_writes_len as usize);
         self.fonts.truncate(mark.len as usize);
         self.identifiers.truncate(mark.len as usize);
         self.semantic_sealed.truncate(mark.len as usize);
+        self.expansion_specs.truncate(mark.len as usize);
         self.font_hash_fragments.truncate(mark.len as usize);
         self.complete_hash_fragments.truncate(mark.len as usize);
         self.by_key.retain(|_, id| id.raw() < mark.len);
@@ -372,7 +467,12 @@ impl FontStore {
     pub(crate) fn testing_state_hash(&self, hasher: &mut impl std::hash::Hasher) {
         use std::hash::Hash as _;
 
-        for (font, identifier) in self.fonts.iter().zip(&self.identifiers) {
+        for ((font, identifier), expansion) in self
+            .fonts
+            .iter()
+            .zip(&self.identifiers)
+            .zip(&self.expansion_specs)
+        {
             font.name().hash(hasher);
             font.content_hash().hash(hasher);
             font.checksum().hash(hasher);
@@ -387,6 +487,7 @@ impl FontStore {
             }
             font.metrics().hash(hasher);
             identifier.hash(hasher);
+            expansion.hash(hasher);
         }
     }
 }
@@ -466,6 +567,38 @@ impl Default for FontStore {
 mod tests {
     use super::*;
     use crate::state_hash::StateHasher;
+
+    #[test]
+    fn expansion_configuration_is_idempotent_and_rollback_owned() {
+        let mut fonts = FontStore::new();
+        let mark = fonts.watermark();
+        let expansion = FontExpansion {
+            stretch: 20,
+            shrink: 10,
+            step: 5,
+            auto_expand: true,
+        };
+        fonts
+            .set_expansion(NULL_FONT, expansion)
+            .expect("first expansion config is accepted");
+        fonts
+            .set_expansion(NULL_FONT, expansion)
+            .expect("identical expansion config is idempotent");
+        assert_eq!(fonts.expansion(NULL_FONT), Some(expansion));
+        assert_eq!(
+            fonts.set_expansion(
+                NULL_FONT,
+                FontExpansion {
+                    step: 10,
+                    ..expansion
+                }
+            ),
+            Err(FontExpansionConfigError::DifferentStep)
+        );
+
+        fonts.truncate_to(mark);
+        assert_eq!(fonts.expansion(NULL_FONT), None);
+    }
 
     const TEST_DOMAIN: u64 = 0x666f_6e74_5f74_6573;
 

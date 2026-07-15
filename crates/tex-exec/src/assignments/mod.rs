@@ -59,6 +59,8 @@ pub(crate) use hyphenation::test_hyphenated_word as test_hyphenated_hlist;
 use hyphenation::*;
 use macros::*;
 #[cfg(test)]
+pub(crate) use paragraph::apply_line_expansion as test_apply_line_expansion;
+#[cfg(test)]
 pub(crate) use paragraph::break_hlist as test_break_hlist;
 use paragraph::*;
 pub(crate) use paragraph::{
@@ -111,10 +113,7 @@ pub(crate) fn execute_unexpandable_with_context(
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<DispatchAction, ExecError> {
-    if matches!(
-        primitive,
-        UnexpandablePrimitive::PdfTeXUnimplemented | UnexpandablePrimitive::PdfFontExpand
-    ) {
+    if primitive == UnexpandablePrimitive::PdfTeXUnimplemented {
         return Err(ExecError::UnsupportedCommand {
             token: tex_expand::semantic_token(traced),
             opcode: primitive.operand() as u8,
@@ -660,6 +659,10 @@ fn execute_prefixed_command(
                     stores,
                     execution,
                 )?;
+                Ok(CommandOutcome::assigned())
+            }
+            UnexpandablePrimitive::PdfFontExpand => {
+                execute_pdf_font_expand(prefixes, command.traced, input, stores, execution)?;
                 Ok(CommandOutcome::assigned())
             }
             UnexpandablePrimitive::TextFont
@@ -1346,8 +1349,7 @@ fn execute_prefixed_command(
             | UnexpandablePrimitive::Immediate
             | UnexpandablePrimitive::End
             | UnexpandablePrimitive::Dump => unreachable!("prefixes are accumulated first"),
-            UnexpandablePrimitive::PdfTeXUnimplemented
-            | UnexpandablePrimitive::PdfFontExpand => {
+            UnexpandablePrimitive::PdfTeXUnimplemented => {
                 unreachable!("unsupported pdfTeX placeholders return before prefix handling")
             }
         },

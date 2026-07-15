@@ -290,6 +290,20 @@ impl LoadedFont {
         Ok(generated)
     }
 
+    /// Creates one of pdfTeX's lazily materialized expanded font instances.
+    ///
+    /// Expansion changes horizontal glyph metrics, italic corrections, and
+    /// font kerns. Vertical metrics and font parameters remain unchanged.
+    #[must_use]
+    pub fn expanded(&self, ratio: i16) -> Self {
+        debug_assert!((-500..=1000).contains(&i32::from(ratio)));
+        let source = self.source_identity();
+        let mut generated = self.clone();
+        generated.metrics = generated.metrics.with_expansion_ratio(ratio);
+        generated.construction = FontConstruction::Expanded { source, ratio };
+        generated
+    }
+
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
@@ -526,6 +540,27 @@ impl FontMetrics {
             self.left_boundary_program,
             self.extensible_recipes.clone(),
         ))
+    }
+
+    fn with_expansion_ratio(&self, ratio: i16) -> Self {
+        let mut characters = self.characters.clone();
+        for metrics in characters.iter_mut().flatten() {
+            metrics.width = scale_expanded_metric(metrics.width, ratio);
+            metrics.italic_correction = scale_expanded_metric(metrics.italic_correction, ratio);
+        }
+        let mut lig_kern_program = self.lig_kern_program.clone();
+        for instruction in &mut lig_kern_program {
+            if let Some(LigKernCommand::Kern(kern)) = &mut instruction.command {
+                *kern = scale_expanded_metric(*kern, ratio);
+            }
+        }
+        Self::new(
+            characters,
+            lig_kern_program,
+            self.right_boundary_char,
+            self.left_boundary_program,
+            self.extensible_recipes.clone(),
+        )
     }
 
     /// Validates all shape and reference invariants needed by metric queries.
@@ -795,6 +830,10 @@ fn round_scaled_ratio(value: Scaled, numerator: i32, denominator: i32) -> Scaled
         -((-product + denominator / 2) / denominator)
     };
     Scaled::from_raw(i32::try_from(rounded).expect("bounded letterspace ratio fits i32"))
+}
+
+fn scale_expanded_metric(value: Scaled, ratio: i16) -> Scaled {
+    round_scaled_ratio(value, 1000 + i32::from(ratio), 1000)
 }
 
 impl Default for FontMetrics {

@@ -93,6 +93,7 @@ struct FormatFont {
     left_boundary_program: Option<u16>,
     extensible_recipes: Vec<tex_fonts::metrics::ExtensibleRecipe>,
     identifier: Option<u32>,
+    expansion: Option<crate::font::FontExpansion>,
     construction: FormatFontConstruction,
 }
 
@@ -376,6 +377,7 @@ impl StoreFormat {
         }
         for (raw, font) in self.fonts.into_iter().enumerate() {
             let identifier = font.identifier;
+            let expansion = font.expansion;
             let id = if raw == 0 {
                 NULL_FONT
             } else {
@@ -395,6 +397,12 @@ impl StoreFormat {
                     .and_then(|symbol| stores.interner.resolve_stored(symbol))
                     .ok_or(StoreFormatError::Invalid("font identifier symbol"))?;
                 stores.set_resolved_font_identifier(id, symbol);
+            }
+            if let Some(expansion) = expansion {
+                stores
+                    .fonts
+                    .set_expansion(id, expansion)
+                    .map_err(|_| StoreFormatError::Invalid("font expansion configuration"))?;
             }
         }
         let mut node_ids = std::collections::BTreeMap::new();
@@ -775,6 +783,7 @@ impl FormatFont {
             left_boundary_program: font.metrics().left_boundary_program(),
             extensible_recipes: font.metrics().extensible_recipes().to_vec(),
             identifier: fonts.identifier(id).map(crate::interner::SymbolId::raw),
+            expansion: fonts.expansion(id),
             construction: match font.construction() {
                 tex_fonts::FontConstruction::Loaded => FormatFontConstruction::Loaded,
                 tex_fonts::FontConstruction::Copied { source } => FormatFontConstruction::Copied {

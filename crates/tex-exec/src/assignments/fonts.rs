@@ -103,9 +103,15 @@ pub(super) fn execute_generated_font_definition(
         && matches!(
             stores.font(source).construction(),
             tex_fonts::FontConstruction::Letterspaced { .. }
+                | tex_fonts::FontConstruction::Expanded { .. }
         )
     {
-        return Err(ExecError::CannotCopyFont("cannot copy a letterspaced font"));
+        return Err(ExecError::CannotCopyFont(
+            match stores.font(source).construction() {
+                tex_fonts::FontConstruction::Expanded { .. } => "cannot copy an expanded font",
+                _ => "cannot copy a letterspaced font",
+            },
+        ));
     }
 
     let id = match primitive {
@@ -137,6 +143,33 @@ pub(super) fn execute_generated_font_definition(
     } else {
         stores.set_meaning(target, meaning);
     }
+    Ok(())
+}
+
+pub(super) fn execute_pdf_font_expand(
+    prefixes: Prefixes,
+    context: TracedTokenWord,
+    input: &mut InputStack,
+    stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
+    reject_all_prefixes(prefixes)?;
+    let font = scan_font_selector(input, stores, execution)?;
+    skip_optional_equals_x(input, stores, execution)?;
+    let stretch = scan_i32(input, stores, execution, context)?;
+    let shrink = scan_i32(input, stores, execution, context)?;
+    let step = scan_i32(input, stores, execution, context)?;
+    let auto_expand = scan_optional_keyword_x(input, stores, execution, "autoexpand")?;
+    let spec = tex_typeset::expansion::FontExpansionSpec::new(stretch, shrink, step, auto_expand)?;
+    stores.configure_font_expansion(
+        font,
+        tex_state::font::FontExpansion {
+            stretch: spec.stretch() as u16,
+            shrink: spec.shrink() as u16,
+            step: spec.step() as u8,
+            auto_expand: spec.auto_expand(),
+        },
+    )?;
     Ok(())
 }
 

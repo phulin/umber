@@ -9,12 +9,12 @@ use crate::code_tables::{
 };
 use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use crate::env::{Env, EnvSnapshot};
-use crate::font::PdfFontCode;
 use crate::font::{
     CharMetrics, CharTag, ExtensibleRecipe, FontMetrics, FontMetricsValidationError,
     FontSourceIdentity, FontStore, FontStoreMark, LigKernChar, LigKernCommand, LigKernIter,
     LoadedFont, MissingCharacter, NULL_FONT, complete_font_hash_fragment,
 };
+use crate::font::{FontExpansion, FontExpansionConfigError, PdfFontCode};
 
 fn pdf_font_code_bank(table: PdfFontCode) -> crate::cell::BankTag {
     use crate::cell::BankTag;
@@ -1193,6 +1193,62 @@ impl Stores {
         let id = self.try_intern_font_with_identifier(font, symbol)?;
         if no_ligatures {
             self.env.set_pdf_no_ligatures_global(id);
+        }
+        Ok(id)
+    }
+
+    pub fn configure_font_expansion(
+        &mut self,
+        font: FontId,
+        expansion: FontExpansion,
+    ) -> Result<(), FontExpansionConfigError> {
+        self.assert_live_font(font);
+        self.fonts.set_expansion(font, expansion)
+    }
+
+    #[must_use]
+    pub fn font_expansion(&self, font: FontId) -> Option<FontExpansion> {
+        self.assert_live_font(font);
+        self.fonts.expansion(font)
+    }
+
+    pub fn try_expanded_font(
+        &mut self,
+        source: FontId,
+        ratio: i16,
+    ) -> Result<FontId, FontParameterError> {
+        self.assert_live_font(source);
+        if ratio == 0 {
+            return Ok(source);
+        }
+        let generated = self.font(source).expanded(ratio);
+        if let Some(existing) = self.font_by_source_identity(generated.source_identity()) {
+            return Ok(existing);
+        }
+        let hyphen_char = self.font_hyphen_char(source);
+        let skew_char = self.font_skew_char(source);
+        let mut codes = Vec::with_capacity(9 * 256);
+        for table in [
+            PdfFontCode::Lp,
+            PdfFontCode::Rp,
+            PdfFontCode::Ef,
+            PdfFontCode::Tag,
+            PdfFontCode::Knbs,
+            PdfFontCode::Stbs,
+            PdfFontCode::Shbs,
+            PdfFontCode::Knbc,
+            PdfFontCode::Knac,
+        ] {
+            for code in u8::MIN..=u8::MAX {
+                codes.push((table, code, self.pdf_font_code(table, source, code)));
+            }
+        }
+        let id = self.try_intern_font(generated)?;
+        self.env.set_font_hyphen_char_global(id, hyphen_char);
+        self.env.set_font_skew_char_global(id, skew_char);
+        for (table, code, value) in codes {
+            self.env
+                .set_pdf_font_code_global(pdf_font_code_bank(table), id, code, value);
         }
         Ok(id)
     }

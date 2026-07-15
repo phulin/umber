@@ -54,6 +54,19 @@ fn generated_fonts_preserve_source_ancestry_and_pdftex_rounding() {
     };
     assert_eq!(*ancestry, copied.source_identity());
     assert_ne!(source.source_identity(), copied.source_identity());
+
+    let expanded = source.expanded(100);
+    let expanded_metrics = expanded
+        .metrics()
+        .character(b'A')
+        .expect("expanded character remains present");
+    assert_eq!(expanded_metrics.width.raw(), 550_000);
+    assert_eq!(expanded_metrics.height.raw(), 0);
+    assert_eq!(expanded.parameters(), source.parameters());
+    assert!(matches!(
+        expanded.construction(),
+        FontConstruction::Expanded { ratio: 100, .. }
+    ));
 }
 
 #[test]

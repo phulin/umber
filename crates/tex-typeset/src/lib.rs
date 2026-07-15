@@ -92,6 +92,19 @@ impl TypesetState for Universe {
             _ => None,
         }
     }
+
+    fn font_expansion_spec(&self, font: FontId) -> Option<expansion::FontExpansionSpec> {
+        let configured = Universe::font_expansion(self, font)?;
+        Some(
+            expansion::FontExpansionSpec::new(
+                i32::from(configured.stretch),
+                i32::from(configured.shrink),
+                i32::from(configured.step),
+                configured.auto_expand,
+            )
+            .expect("live font expansion settings are validated"),
+        )
+    }
 }
 
 /// TeX.web section 108 `badness` function.

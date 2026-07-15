@@ -4,6 +4,70 @@ use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::scaled::Scaled;
 
 #[test]
+fn pdf_font_expand_materializes_scaled_line_fonts() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let primitive = stores.intern("pdffontexpand");
+    stores.set_meaning(
+        primitive,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfFontExpand),
+    );
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\base=cmr10 \\pdffontexpand\\base 100 50 10 autoexpand \\end",
+    ));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("font expansion configuration executes");
+
+    let base = font_meaning(&stores, "base");
+    stores.set_pdf_font_code(tex_state::PdfFontCode::Ef, base, b'A', 1000);
+    let source_width = stores
+        .font_char_metrics(base, b'A')
+        .expect("cmr10 contains A")
+        .width;
+    let mut nodes = vec![tex_state::node::Node::Char {
+        font: base,
+        ch: 'A',
+        origin: tex_state::token::OriginId::UNKNOWN,
+    }];
+    let target = Scaled::from_raw(source_width.raw() + source_width.raw() / 10);
+    crate::assignments::test_apply_line_expansion(&mut stores, &mut nodes, target)
+        .expect("line expansion materializes a generated font");
+
+    let tex_state::node::Node::Char { font: expanded, .. } = nodes[0] else {
+        panic!("expanded line retains a character node")
+    };
+    assert_ne!(expanded, base);
+    assert_eq!(
+        stores
+            .font_char_metrics(expanded, b'A')
+            .expect("expanded A remains present")
+            .width,
+        target
+    );
+    assert!(matches!(
+        stores.font(expanded).construction(),
+        tex_fonts::FontConstruction::Expanded { ratio: 100, .. }
+    ));
+
+    stores.set_input_summary(tex_state::InputSummary::default());
+    let format = stores.dump_format().expect("font expansion format dumps");
+    let restored = Universe::from_format(tex_state::World::memory(), &format)
+        .expect("font expansion format restores");
+    let restored_base = font_meaning(&restored, "base");
+    assert_eq!(
+        restored.font_expansion(restored_base),
+        Some(tex_state::font::FontExpansion {
+            stretch: 100,
+            shrink: 50,
+            step: 10,
+            auto_expand: true,
+        })
+    );
+}
+
+#[test]
 fn pdftex_generated_fonts_match_copy_and_letterspace_state() {
     let mut stores = stores_with_fonts();
     stores.set_int_param_global(tex_state::env::banks::IntParam::DEFAULT_HYPHEN_CHAR, 45);

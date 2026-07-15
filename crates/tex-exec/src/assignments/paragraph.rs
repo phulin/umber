@@ -1,6 +1,7 @@
 use tex_lex::{InputStack, TokenListReplayKind};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
-use tex_state::node::{BoxNode, Direction, GlueKind, Node};
+use tex_state::font::PdfFontCode;
+use tex_state::node::{BoxNode, Direction, GlueKind, KernKind, Node};
 use tex_state::scaled::Scaled;
 use tex_state::{ParagraphShapeLine, PenaltyArrayKind, Universe};
 use tex_typeset::PackSpec;
@@ -243,6 +244,9 @@ fn break_current_paragraph(
     let mut level = nest.pop()?;
     let hlist = crate::math::finish_math_lists_owned(stores, level.list_mut().take_nodes(), true);
     let line_params = line_break_params(stores, &params);
+    if line_params.pdf_adjust_spacing > 1 {
+        tex_typeset::linebreak::validate_paragraph_expansion(stores, &hlist)?;
+    }
     let mut decisions = break_hlist(stores, hlist, line_params);
     if let Some(spec) = decisions.last_line_fill {
         let spec = stores.intern_glue(spec);
@@ -272,10 +276,14 @@ fn break_current_paragraph(
     let total_lines = decisions.breaks.len();
     let pdf_line_dimensions = pdf_line_dimensions(stores);
     let protrudes_chars = stores.pdf_font_configuration().protrudes_chars();
+    let adjusts_spacing = stores.pdf_font_configuration().adjusts_spacing();
     let mut materializer = LineMaterializer::new(decisions.nodes, decisions.breaks, post_params);
     let mut line_nodes = Vec::new();
     let mut migrated = Vec::new();
     while let Some(mut broken) = materializer.materialize_next(stores, line_nodes) {
+        if adjusts_spacing {
+            apply_line_expansion(stores, &mut broken.nodes, broken.dimensions.width)?;
+        }
         if protrudes_chars {
             tex_typeset::protrusion::insert_margin_kerns(stores, &mut broken.nodes);
         }
@@ -309,6 +317,77 @@ fn break_current_paragraph(
         last_line,
         active_directions,
     })
+}
+
+pub(crate) fn apply_line_expansion(
+    stores: &mut Universe,
+    nodes: &mut [Node],
+    target: Scaled,
+) -> Result<(), ExecError> {
+    let line_ratio = tex_typeset::linebreak::plan_line_expansion(stores, nodes, target);
+    if line_ratio == 0 {
+        return Ok(());
+    }
+    for node in nodes.iter_mut() {
+        let Some((font, code)) = glyph_identity(node) else {
+            continue;
+        };
+        let Some(configured) = stores.font_expansion(font) else {
+            continue;
+        };
+        let spec = tex_typeset::expansion::FontExpansionSpec::new(
+            i32::from(configured.stretch),
+            i32::from(configured.shrink),
+            i32::from(configured.step),
+            configured.auto_expand,
+        )
+        .expect("live font expansion settings are validated");
+        let efcode = stores.pdf_font_code(PdfFontCode::Ef, font, code);
+        let ratio = spec.discrete_ratio(line_ratio, efcode);
+        let expanded = stores.try_expanded_font(font, ratio)?;
+        match node {
+            Node::Char { font, .. } | Node::Lig { font, .. } => *font = expanded,
+            _ => unreachable!("glyph identity restricts expansion substitution"),
+        }
+    }
+    for index in 1..nodes.len().saturating_sub(1) {
+        if !matches!(
+            nodes[index],
+            Node::Kern {
+                kind: KernKind::Font,
+                ..
+            }
+        ) {
+            continue;
+        }
+        let (Some((left_font, left)), Some((right_font, right))) = (
+            glyph_identity(&nodes[index - 1]),
+            glyph_identity(&nodes[index + 1]),
+        ) else {
+            continue;
+        };
+        if left_font != right_font {
+            continue;
+        }
+        if let Some(tex_fonts::LigKernCommand::Kern(amount)) = stores.lig_kern_command(
+            left_font,
+            tex_fonts::LigKernChar::Char(left),
+            tex_fonts::LigKernChar::Char(right),
+        ) && let Node::Kern { amount: kern, .. } = &mut nodes[index]
+        {
+            *kern = amount;
+        }
+    }
+    Ok(())
+}
+
+fn glyph_identity(node: &Node) -> Option<(tex_state::ids::FontId, u8)> {
+    match node {
+        Node::Char { font, ch, .. } | Node::Lig { font, ch, .. } => {
+            u8::try_from(u32::from(*ch)).ok().map(|code| (*font, code))
+        }
+        _ => None,
+    }
 }
 
 #[derive(Clone, Copy)]

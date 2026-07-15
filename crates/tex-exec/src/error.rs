@@ -31,6 +31,7 @@ pub enum ExecError {
     },
     FontParameter(FontParameterError),
     FontExpansion(tex_typeset::expansion::FontExpansionError),
+    FontExpansionConfig(tex_state::font::FontExpansionConfigError),
     CannotCopyFont(&'static str),
     EmptyModeNestSummary,
     CannotPopBaseMode,
@@ -167,6 +168,9 @@ impl fmt::Display for ExecError {
             }
             Self::FontParameter(err) => write!(f, "{err:?}"),
             Self::FontExpansion(err) => write!(f, "pdfTeX error (font expansion): {err}"),
+            Self::FontExpansionConfig(err) => {
+                write!(f, "pdfTeX error (font expansion): {err}")
+            }
             Self::CannotCopyFont(reason) => {
                 write!(f, "pdfTeX error (\\pdfcopyfont): {reason}")
             }
@@ -352,6 +356,7 @@ impl std::error::Error for ExecError {
             | Self::TerminalReadEof
             | Self::FontParameter(_)
             | Self::FontExpansion(_)
+            | Self::FontExpansionConfig(_)
             | Self::CannotCopyFont(_)
             | Self::UnimplementedTypesetting { .. }
             | Self::UnsupportedShipoutNode { .. }
@@ -401,6 +406,7 @@ impl ExecError {
             | Self::FontOpen { .. }
             | Self::FontParameter(_)
             | Self::FontExpansion(_)
+            | Self::FontExpansionConfig(_)
             | Self::CannotCopyFont(_)
             | Self::EmptyModeNestSummary
             | Self::CannotPopBaseMode
@@ -544,5 +550,11 @@ impl From<FontParameterError> for ExecError {
 impl From<tex_typeset::expansion::FontExpansionError> for ExecError {
     fn from(value: tex_typeset::expansion::FontExpansionError) -> Self {
         Self::FontExpansion(value)
+    }
+}
+
+impl From<tex_state::font::FontExpansionConfigError> for ExecError {
+    fn from(value: tex_state::font::FontExpansionConfigError) -> Self {
+        Self::FontExpansionConfig(value)
     }
 }

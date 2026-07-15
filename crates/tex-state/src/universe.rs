@@ -2400,6 +2400,27 @@ impl Universe {
             .try_letterspace_font_with_identifier(source, symbol, amount, no_ligatures)
     }
 
+    pub fn configure_font_expansion(
+        &mut self,
+        font: FontId,
+        expansion: crate::font::FontExpansion,
+    ) -> Result<(), crate::font::FontExpansionConfigError> {
+        self.stores.configure_font_expansion(font, expansion)
+    }
+
+    #[must_use]
+    pub fn font_expansion(&self, font: FontId) -> Option<crate::font::FontExpansion> {
+        self.stores.font_expansion(font)
+    }
+
+    pub fn try_expanded_font(
+        &mut self,
+        source: FontId,
+        ratio: i16,
+    ) -> Result<FontId, FontParameterError> {
+        self.stores.try_expanded_font(source, ratio)
+    }
+
     #[must_use]
     pub fn font(&self, id: FontId) -> &LoadedFont {
         self.stores.font(id)
