@@ -17,6 +17,8 @@ use tex_state::{
     PdfOutputParameters, Universe, WorldError,
 };
 
+use std::collections::{BTreeMap, BTreeSet};
+
 /// Builds one deterministic PDF from the current checkpointed page ledger.
 pub fn pdf_from_committed_artifacts(
     stores: &Universe,
@@ -36,6 +38,7 @@ pub fn pdf_from_committed_artifacts(
     let mut objects = Vec::with_capacity(2 + page_records.len() * 3 + usize::from(emit_info));
     let mut kids = Vec::with_capacity(page_records.len());
     let mut emitted_fonts = std::collections::BTreeSet::new();
+    let font_usage = collect_font_usage(stores, artifacts, page_records)?;
 
     let mut catalog = PdfDictionary::new();
     catalog.insert("Type", PdfValue::Name("Catalog".into()))?;
@@ -92,16 +95,33 @@ pub fn pdf_from_committed_artifacts(
                                         .checked_add(1)
                                         .ok_or(PdfBuildError::InvalidObjectId(u32::MAX))?,
                                 )?;
+                                let live_font = stores
+                                    .font_by_source_identity(font.semantic_identity)
+                                    .ok_or_else(|| {
+                                        PdfBuildError::MissingLiveFont(font.name.clone())
+                                    })?;
+                                let wants_to_unicode =
+                                    stores.pdf_font_configuration().generates_to_unicode()
+                                        && !stores.pdf_builtin_to_unicode_disabled(live_font);
+                                let to_unicode_id = wants_to_unicode
+                                    .then(|| object_id(next_object.saturating_add(2)))
+                                    .transpose()?;
                                 next_object = next_object
-                                    .checked_add(2)
+                                    .checked_add(if wants_to_unicode { 3 } else { 2 })
                                     .ok_or(PdfBuildError::InvalidObjectId(u32::MAX))?;
                                 objects.extend(pdf_font_objects(
                                     stores,
-                                    id,
-                                    descriptor_id,
-                                    program_id,
+                                    PdfFontObjectIds {
+                                        font: id,
+                                        descriptor: descriptor_id,
+                                        program: program_id,
+                                        to_unicode: to_unicode_id,
+                                    },
                                     font,
                                     &resource_name,
+                                    font_usage.get(&resource.object_number()).ok_or_else(|| {
+                                        PdfBuildError::MissingFontUsage(font.name.clone())
+                                    })?,
                                 )?);
                             }
                             id
@@ -226,26 +246,64 @@ pub fn pdf_from_committed_artifacts(
     Ok(document.to_pdf_bytes_with_options(options)?)
 }
 
+fn collect_font_usage(
+    stores: &Universe,
+    artifacts: &[CommittedArtifact],
+    page_records: &[tex_state::PdfPageRecord],
+) -> Result<BTreeMap<u32, BTreeSet<u8>>, PdfBuildError> {
+    let mut usage = BTreeMap::<u32, BTreeSet<u8>>::new();
+    for (page_index, record) in page_records.iter().copied().enumerate() {
+        let bytes = artifact_bytes(stores, artifacts, record.artifact())?;
+        let artifact = tex_out::PageArtifact::from_bytes(&bytes)?;
+        let positioned = tex_out::positioned::lower_page(&artifact, page_index as u32)?;
+        for event in &positioned.events {
+            let PositionedEvent::TextRun(run) = event else {
+                continue;
+            };
+            let font = positioned
+                .fonts
+                .iter()
+                .find(|font| font.font_id == run.font_id)
+                .ok_or(PdfBuildError::MissingPositionedFont(run.font_id))?;
+            let resource = stores
+                .pdf_font_resource_by_identity(font.semantic_identity)
+                .ok_or_else(|| PdfBuildError::MissingFontResource(font.name.clone()))?;
+            let codes = usage.entry(resource.object_number()).or_default();
+            codes.extend(run.units.iter().map(|unit| match unit {
+                tex_out::positioned::TextUnit::Code(code) => *code,
+                tex_out::positioned::TextUnit::Space => b' ',
+            }));
+            let live_font = stores
+                .font_by_source_identity(font.semantic_identity)
+                .ok_or_else(|| PdfBuildError::MissingLiveFont(font.name.clone()))?;
+            codes.extend(stores.included_pdf_font_chars(live_font));
+        }
+    }
+    Ok(usage)
+}
+
+#[derive(Clone, Copy)]
+struct PdfFontObjectIds {
+    font: PdfObjectId,
+    descriptor: PdfObjectId,
+    program: PdfObjectId,
+    to_unicode: Option<PdfObjectId>,
+}
+
 fn pdf_font_objects(
     stores: &Universe,
-    id: PdfObjectId,
-    descriptor_id: PdfObjectId,
-    program_id: PdfObjectId,
+    ids: PdfFontObjectIds,
     font: &tex_out::FontResource,
     resource_name: &[u8],
+    used_codes: &BTreeSet<u8>,
 ) -> Result<Vec<PdfIndirectObject>, PdfBuildError> {
     let mapped = stores
         .resolved_pdf_font_map_lines()
         .into_iter()
         .find(|entry| entry.tex_name == font.name.as_bytes());
-    if mapped
+    let subset_requested = mapped
         .as_ref()
-        .is_some_and(|entry| entry.program == tex_fonts::PdfFontMapProgram::Subset)
-    {
-        return Err(PdfBuildError::SubsetFontRequiresSubsetting(
-            font.name.clone(),
-        ));
-    }
+        .is_some_and(|entry| entry.program == tex_fonts::PdfFontMapProgram::Subset);
     let program_name = mapped.as_ref().and_then(|entry| entry.font_file.as_deref());
     let resident = mapped
         .as_ref()
@@ -277,7 +335,53 @@ fn pdf_font_objects(
     let base_font = mapped
         .as_ref()
         .and_then(|entry| entry.postscript_name.as_deref())
-        .unwrap_or(font.name.as_bytes());
+        .unwrap_or(font.name.as_bytes())
+        .to_vec();
+    let encoding = mapped
+        .as_ref()
+        .and_then(|entry| entry.encoding_files.first())
+        .map(|encoding_name| {
+            stores
+                .pdf_encoding(encoding_name)
+                .ok_or_else(|| PdfBuildError::MissingEncoding(encoding_name.clone()))
+        })
+        .transpose()?;
+    let glyph_names: BTreeSet<Vec<u8>> = if subset_requested {
+        used_codes
+            .iter()
+            .map(|code| {
+                if let Some(encoding) = encoding {
+                    Ok(encoding.glyph_names()[usize::from(*code)].clone())
+                } else if let Some(program) = type1 {
+                    program.builtin_glyph_name(*code).ok_or_else(|| {
+                        PdfBuildError::MissingBuiltinGlyphName {
+                            font: font.name.clone(),
+                            code: *code,
+                        }
+                    })
+                } else {
+                    Err(PdfBuildError::TrueTypeSubsetRequiresEncoding(
+                        font.name.clone(),
+                    ))
+                }
+            })
+            .collect::<Result<_, _>>()?
+    } else {
+        BTreeSet::new()
+    };
+    let subset_tag =
+        subset_requested.then(|| tex_fonts::pdftex_subset_tag(&glyph_names, &base_font));
+    let subset_font_name = subset_tag
+        .map(|tag| [tag.as_slice(), b"+", base_font.as_slice()].concat())
+        .unwrap_or_else(|| base_font.clone());
+    let subset_type1 = if subset_requested {
+        type1
+            .map(|program| program.subset(&glyph_names, &subset_font_name))
+            .transpose()?
+    } else {
+        None
+    };
+    let type1 = subset_type1.as_ref().or(type1);
     let mut dictionary = PdfDictionary::new();
     dictionary.insert("Type", PdfValue::Name("Font".into()))?;
     dictionary.insert(
@@ -285,34 +389,34 @@ fn pdf_font_objects(
         PdfValue::Name(if is_truetype { "TrueType" } else { "Type1" }.into()),
     )?;
     dictionary.insert("Name", PdfValue::Name(PdfName::new(resource_name)))?;
-    dictionary.insert("BaseFont", PdfValue::Name(PdfName::new(base_font)))?;
-    if let Some(encoding_name) = mapped
-        .as_ref()
-        .and_then(|entry| entry.encoding_files.first())
-    {
-        let encoding = stores
-            .pdf_encoding(encoding_name)
-            .ok_or_else(|| PdfBuildError::MissingEncoding(encoding_name.clone()))?;
-        let mut differences = Vec::with_capacity(257);
-        differences.push(PdfValue::Integer(0));
-        differences.extend(
-            encoding
-                .glyph_names()
-                .iter()
-                .map(|name| PdfValue::Name(PdfName::new(name.clone()))),
-        );
+    dictionary.insert(
+        "BaseFont",
+        PdfValue::Name(PdfName::new(subset_font_name.clone())),
+    )?;
+    if let Some(encoding) = encoding {
+        let differences = encoding_differences(encoding, used_codes, subset_requested);
         let mut encoding_dictionary = PdfDictionary::new();
         encoding_dictionary.insert("Type", PdfValue::Name("Encoding".into()))?;
         encoding_dictionary.insert("Differences", PdfValue::Array(differences))?;
         dictionary.insert("Encoding", PdfValue::Dictionary(encoding_dictionary))?;
     }
-    dictionary.insert("FirstChar", PdfValue::Integer(0))?;
-    dictionary.insert("LastChar", PdfValue::Integer(255))?;
+    let first_char = if subset_requested {
+        i64::from(*used_codes.first().expect("emitted font has used codes"))
+    } else {
+        0
+    };
+    let last_char = if subset_requested {
+        i64::from(*used_codes.last().expect("emitted font has used codes"))
+    } else {
+        255
+    };
+    dictionary.insert("FirstChar", PdfValue::Integer(first_char))?;
+    dictionary.insert("LastChar", PdfValue::Integer(last_char))?;
     let font_id = stores
         .font_by_source_identity(font.semantic_identity)
         .ok_or(PdfBuildError::MissingLiveFont(font.name.clone()))?;
     let denominator = i64::from(font.at_size.raw()).max(1);
-    let widths = (0u8..=255)
+    let widths = (first_char as u8..=last_char as u8)
         .map(|code| {
             let width = stores
                 .font_char_metrics(font_id, code)
@@ -321,14 +425,26 @@ fn pdf_font_objects(
         })
         .collect();
     dictionary.insert("Widths", PdfValue::Array(widths))?;
-    if resident {
-        return Ok(vec![indirect_dictionary(id, dictionary)]);
+    let to_unicode = ids
+        .to_unicode
+        .map(|to_unicode_id| {
+            to_unicode_stream(stores, font, used_codes, encoding, type1, to_unicode_id)
+        })
+        .transpose()?;
+    if let Some((to_unicode_id, _)) = &to_unicode {
+        dictionary.insert("ToUnicode", PdfValue::Reference(*to_unicode_id))?;
     }
-    dictionary.insert("FontDescriptor", PdfValue::Reference(descriptor_id))?;
+    if resident {
+        return Ok(vec![indirect_dictionary(ids.font, dictionary)]);
+    }
+    dictionary.insert("FontDescriptor", PdfValue::Reference(ids.descriptor))?;
 
     let mut descriptor = PdfDictionary::new();
     descriptor.insert("Type", PdfValue::Name("FontDescriptor".into()))?;
-    descriptor.insert("FontName", PdfValue::Name(PdfName::new(base_font)))?;
+    descriptor.insert(
+        "FontName",
+        PdfValue::Name(PdfName::new(subset_font_name.clone())),
+    )?;
     let scale_metric =
         |value: Scaled| (i64::from(value.raw()) * 1000 + denominator / 2) / denominator;
     let tfm_ascent = (0u8..=255)
@@ -388,9 +504,17 @@ fn pdf_font_objects(
     descriptor.insert("XHeight", PdfValue::Integer(x_height))?;
     descriptor.insert(
         if is_truetype { "FontFile2" } else { "FontFile" },
-        PdfValue::Reference(program_id),
+        PdfValue::Reference(ids.program),
     )?;
     descriptor.set_raw_entries(stores.pdf_font_attribute(font_id).to_vec());
+    if subset_requested && !is_truetype && stores.int_param(IntParam::PDF_OMIT_CHARSET) == 0 {
+        let charset = glyph_names
+            .iter()
+            .filter(|name| name.as_slice() != b".notdef")
+            .flat_map(|name| std::iter::once(b'/').chain(name.iter().copied()))
+            .collect();
+        descriptor.insert("CharSet", PdfValue::String(charset))?;
+    }
 
     let mut stream = PdfDictionary::new();
     let data = if let Some(program) = truetype {
@@ -404,17 +528,157 @@ fn pdf_font_objects(
         stream.insert("Length3", PdfValue::Integer(i64::from(length3)))?;
         program.bytes().to_vec()
     };
-    Ok(vec![
-        indirect_dictionary(id, dictionary),
-        indirect_dictionary(descriptor_id, descriptor),
+    let mut objects = vec![
+        indirect_dictionary(ids.font, dictionary),
+        indirect_dictionary(ids.descriptor, descriptor),
         PdfIndirectObject {
-            id: program_id,
+            id: ids.program,
             object: PdfObject::Stream {
                 dictionary: stream,
                 data,
             },
         },
-    ])
+    ];
+    if let Some((_, stream)) = to_unicode {
+        objects.push(stream);
+    }
+    Ok(objects)
+}
+
+fn encoding_differences(
+    encoding: &tex_fonts::PdfEncoding,
+    used_codes: &BTreeSet<u8>,
+    subset: bool,
+) -> Vec<PdfValue> {
+    if !subset {
+        let mut differences = Vec::with_capacity(257);
+        differences.push(PdfValue::Integer(0));
+        differences.extend(
+            encoding
+                .glyph_names()
+                .iter()
+                .map(|name| PdfValue::Name(PdfName::new(name.clone()))),
+        );
+        return differences;
+    }
+    let mut differences = Vec::new();
+    let mut previous = None;
+    for &code in used_codes {
+        if previous != Some(code.wrapping_sub(1)) {
+            differences.push(PdfValue::Integer(i64::from(code)));
+        }
+        differences.push(PdfValue::Name(PdfName::new(
+            encoding.glyph_names()[usize::from(code)].clone(),
+        )));
+        previous = Some(code);
+    }
+    differences
+}
+
+fn to_unicode_stream(
+    stores: &Universe,
+    font: &tex_out::FontResource,
+    used_codes: &BTreeSet<u8>,
+    encoding: Option<&tex_fonts::PdfEncoding>,
+    type1: Option<&tex_fonts::PdfType1Program>,
+    id: PdfObjectId,
+) -> Result<(PdfObjectId, PdfIndirectObject), PdfBuildError> {
+    let mut mappings = Vec::new();
+    for &code in used_codes {
+        let owned_glyph;
+        let glyph = if let Some(encoding) = encoding {
+            encoding.glyph_names()[usize::from(code)].as_slice()
+        } else if let Some(type1) = type1 {
+            owned_glyph = type1.builtin_glyph_name(code).ok_or_else(|| {
+                PdfBuildError::MissingBuiltinGlyphName {
+                    font: font.name.clone(),
+                    code,
+                }
+            })?;
+            owned_glyph.as_slice()
+        } else {
+            continue;
+        };
+        let unicode = stores
+            .pdf_glyph_to_unicode(font.name.as_bytes(), glyph)
+            .map(ToOwned::to_owned)
+            .or_else(|| {
+                stores
+                    .has_pdf_glyph_to_unicode_mappings()
+                    .then(|| inferred_glyph_unicode(glyph))
+                    .flatten()
+            });
+        if let Some(unicode) = unicode {
+            mappings.push((code, unicode));
+        }
+    }
+    let data = build_to_unicode_cmap(&font.name, &mappings);
+    Ok((
+        id,
+        PdfIndirectObject {
+            id,
+            object: PdfObject::Stream {
+                dictionary: PdfDictionary::new(),
+                data,
+            },
+        },
+    ))
+}
+
+fn inferred_glyph_unicode(name: &[u8]) -> Option<Vec<u32>> {
+    let name = name.split(|byte| *byte == b'.').next()?;
+    if let Some(hex) = name.strip_prefix(b"uni")
+        && !hex.is_empty()
+        && hex.len() % 4 == 0
+        && hex.iter().all(u8::is_ascii_hexdigit)
+    {
+        return hex
+            .chunks(4)
+            .map(|chunk| {
+                std::str::from_utf8(chunk)
+                    .ok()
+                    .and_then(|text| u32::from_str_radix(text, 16).ok())
+                    .filter(|value| char::from_u32(*value).is_some())
+            })
+            .collect();
+    }
+    if let Some(hex) = name.strip_prefix(b"u")
+        && (4..=6).contains(&hex.len())
+        && hex.iter().all(u8::is_ascii_hexdigit)
+    {
+        return std::str::from_utf8(hex)
+            .ok()
+            .and_then(|text| u32::from_str_radix(text, 16).ok())
+            .filter(|value| char::from_u32(*value).is_some())
+            .map(|value| vec![value]);
+    }
+    None
+}
+
+fn build_to_unicode_cmap(font_name: &str, mappings: &[(u8, Vec<u32>)]) -> Vec<u8> {
+    let mut cmap = format!(
+        "/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n/CIDSystemInfo << /Registry (TeX) /Ordering (glyphs) /Supplement 0 >> def\n/CMapName /TeX-{font_name}-0 def\n/CMapType 2 def\n1 begincodespacerange\n<00> <FF>\nendcodespacerange\n"
+    )
+    .into_bytes();
+    for chunk in mappings.chunks(100) {
+        cmap.extend_from_slice(format!("{} beginbfchar\n", chunk.len()).as_bytes());
+        for (code, unicode) in chunk {
+            cmap.extend_from_slice(format!("<{code:02X}> <").as_bytes());
+            for scalar in unicode {
+                let mut encoded = [0; 2];
+                for unit in char::from_u32(*scalar)
+                    .expect("validated Unicode scalar")
+                    .encode_utf16(&mut encoded)
+                {
+                    cmap.extend_from_slice(format!("{unit:04X}").as_bytes());
+                }
+            }
+            cmap.extend_from_slice(b">\n");
+        }
+        cmap.extend_from_slice(b"endbfchar\n");
+    }
+    cmap.extend_from_slice(b"endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n");
+    cmap
 }
 
 fn document_info_dictionary(
@@ -617,8 +881,11 @@ pub enum PdfBuildError {
     MissingPositionedFont(u32),
     MissingFontProgram(Vec<u8>),
     MissingFontResource(String),
+    MissingFontUsage(String),
     MissingEncoding(Vec<u8>),
-    SubsetFontRequiresSubsetting(String),
+    MissingBuiltinGlyphName { font: String, code: u8 },
+    TrueTypeSubsetRequiresEncoding(String),
+    Type1Subset(tex_fonts::PdfType1SubsetError),
     MissingLiveFont(String),
     UnsupportedSpecial(String),
     World(WorldError),
@@ -662,15 +929,23 @@ impl std::fmt::Display for PdfBuildError {
             Self::MissingFontResource(name) => {
                 write!(f, "PDF font {name:?} has no checkpointed resource identity")
             }
+            Self::MissingFontUsage(name) => {
+                write!(f, "PDF font {name:?} has no committed glyph-use projection")
+            }
             Self::MissingEncoding(name) => write!(
                 f,
                 "PDF encoding resource {:?} was not supplied",
                 String::from_utf8_lossy(name)
             ),
-            Self::SubsetFontRequiresSubsetting(name) => write!(
+            Self::MissingBuiltinGlyphName { font, code } => write!(
                 f,
-                "PDF font {name:?} requests subset embedding; subset construction is deferred to umber2-kbz0.17.3"
+                "PDF font {font:?} has no built-in glyph name for character code {code}"
             ),
+            Self::TrueTypeSubsetRequiresEncoding(name) => write!(
+                f,
+                "subset TrueType font {name:?} requires an explicit PDF encoding"
+            ),
+            Self::Type1Subset(error) => error.fmt(f),
             Self::MissingLiveFont(name) => {
                 write!(f, "PDF artifact font {name:?} has no live metric source")
             }
@@ -711,6 +986,12 @@ impl From<PdfModelError> for PdfBuildError {
 impl From<PdfSerializeError> for PdfBuildError {
     fn from(value: PdfSerializeError) -> Self {
         Self::Serialize(value)
+    }
+}
+
+impl From<tex_fonts::PdfType1SubsetError> for PdfBuildError {
+    fn from(value: tex_fonts::PdfType1SubsetError) -> Self {
+        Self::Type1Subset(value)
     }
 }
 
@@ -1004,7 +1285,7 @@ mod tests {
     }
 
     #[test]
-    fn subset_map_entry_is_deferred_without_silently_embedding_full_program() {
+    fn subset_map_entry_embeds_only_used_and_included_type1_glyphs() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
         stores
@@ -1014,28 +1295,127 @@ mod tests {
                 include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm").to_vec(),
             )
             .expect("seed TFM");
-        let pfb = [
-            &[0x80, 1, 1, 0, 0, 0, b'a'][..],
-            &[0x80, 2, 1, 0, 0, 0, b'b'],
-            &[0x80, 3],
-        ]
-        .concat();
+        let pfb = include_bytes!("../../../tests/corpus/pdf/embedded_type1.pfb");
         stores
-            .provide_pdf_type1_program(b"cmr10.pfb".to_vec(), &pfb)
-            .expect("synthetic PFB");
+            .provide_pdf_type1_program(b"cmr10.pfb".to_vec(), pfb)
+            .expect("committed PFB");
         let run_result = run_in(
             &mut stores,
             concat!(
                 "\\pdfoutput=1\\font\\f=cmr10 ",
                 "\\pdfmapline{=cmr10 CMR10 <cmr10.pfb}",
+                "\\pdfincludechars\\f{C}",
                 "\\shipout\\hbox{\\f A}\\end",
             ),
         );
-        let error = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
-            .expect_err("subset path must not emit the complete program");
+        let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+            .expect("subset PDF assembles");
         assert!(
-            matches!(error, PdfBuildError::SubsetFontRequiresSubsetting(name) if name == "cmr10")
+            pdf.windows(b"/BaseFont/KMCZIW+CMR10".len())
+                .any(|window| { window == b"/BaseFont/KMCZIW+CMR10" })
         );
+        assert!(
+            pdf.windows(b"/CharSet(/A/C)".len())
+                .any(|window| { window == b"/CharSet(/A/C)" })
+        );
+        let parsed = lopdf::Document::load_mem(&pdf).expect("subset parses");
+        let embedded = parsed
+            .objects
+            .values()
+            .filter_map(|object| object.as_stream().ok())
+            .find(|stream| stream.dict.has(b"Length2"))
+            .expect("subset FontFile stream");
+        let full = tex_fonts::PdfType1Program::from_pfb(pfb).expect("full PFB decodes");
+        assert!(embedded.content.len() < full.bytes().len());
+    }
+
+    #[test]
+    fn explicit_glyph_mappings_emit_to_unicode_and_extract_exact_text() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        stores
+            .world_mut()
+            .set_memory_file(
+                "cmr10.tfm",
+                include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm").to_vec(),
+            )
+            .expect("seed TFM");
+        stores
+            .provide_pdf_type1_program(
+                b"cmr10.pfb".to_vec(),
+                include_bytes!("../../../tests/corpus/pdf/embedded_type1.pfb"),
+            )
+            .expect("committed PFB");
+        let run_result = run_in(
+            &mut stores,
+            concat!(
+                "\\pdfoutput=1\\pdfcompresslevel=0\\pdfgentounicode=1 ",
+                "\\font\\f=cmr10 ",
+                "\\pdfmapline{=cmr10 CMR10 <cmr10.pfb}",
+                "\\pdfglyphtounicode{A}{0041}",
+                "\\pdfglyphtounicode{B}{0066 0066}",
+                "\\pdfglyphtounicode{C}{1F600}",
+                "\\shipout\\hbox{\\f ABC}\\end",
+            ),
+        );
+        let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+            .expect("ToUnicode PDF assembles");
+        assert!(
+            pdf.windows(b"/ToUnicode".len())
+                .any(|window| window == b"/ToUnicode")
+        );
+        assert!(
+            pdf.windows(b"<41> <0041>".len())
+                .any(|window| window == b"<41> <0041>")
+        );
+        assert!(
+            pdf.windows(b"<42> <00660066>".len())
+                .any(|window| { window == b"<42> <00660066>" })
+        );
+        assert!(
+            pdf.windows(b"<43> <D83DDE00>".len())
+                .any(|window| { window == b"<43> <D83DDE00>" })
+        );
+        let parsed = lopdf::Document::load_mem(&pdf).expect("ToUnicode PDF parses");
+        assert_eq!(
+            parsed.extract_text(&[1]).expect("text extracts").trim(),
+            "Aff😀"
+        );
+    }
+
+    #[test]
+    fn no_builtin_and_nonpositive_generation_omit_to_unicode() {
+        for control in [
+            "\\pdfgentounicode=-1",
+            "\\pdfgentounicode=1\\pdfnobuiltintounicode\\f",
+        ] {
+            let mut stores = Universe::default();
+            prepare_pdftex_run_stores(&mut stores);
+            stores
+                .world_mut()
+                .set_memory_file(
+                    "cmr10.tfm",
+                    include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm").to_vec(),
+                )
+                .expect("seed TFM");
+            stores
+                .provide_pdf_type1_program(
+                    b"cmr10.pfb".to_vec(),
+                    include_bytes!("../../../tests/corpus/pdf/embedded_type1.pfb"),
+                )
+                .expect("committed PFB");
+            let source = format!(
+                "\\pdfoutput=1\\font\\f=cmr10 {control} \\
+                 \\pdfmapline{{=cmr10 CMR10 <<cmr10.pfb}}\\pdfglyphtounicode{{A}}{{0041}}\\shipout\\hbox{{\\f A}}\\end"
+            );
+            let run_result = run_in(&mut stores, &source);
+            let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+                .expect("PDF assembles");
+            assert!(
+                !pdf.windows(b"/ToUnicode".len())
+                    .any(|window| window == b"/ToUnicode")
+            );
+        }
     }
 
     #[test]
