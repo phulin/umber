@@ -1103,7 +1103,12 @@ impl Universe {
         if checksum != format_checksum(mode_byte, payload) {
             return Err(FormatError::Checksum);
         }
-        let stores = Stores::decode_format(payload).map_err(map_store_format_error)?;
+        let mut stores = Stores::decode_format(payload).map_err(map_store_format_error)?;
+        let clock = world.job_clock();
+        install_job_clock_params(
+            &mut |param, value| stores.set_int_param(param, value),
+            clock,
+        );
         let input_summary = InputSummary::default();
         let page = PageBuilderState::default();
         let input_fragment = hash_input_summary_fragment(&stores, &world, &input_summary);

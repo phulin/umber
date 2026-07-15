@@ -1658,6 +1658,35 @@ fn job_clock_initializes_tex_clock_parameters_once() {
 }
 
 #[test]
+fn format_load_refreshes_tex_clock_parameters_for_the_new_job() {
+    let format_clock = JobClock {
+        time: 721,
+        second: 37,
+        day: 8,
+        month: 7,
+        year: 2026,
+    };
+    let format = Universe::with_world(World::memory_with_clock(format_clock))
+        .dump_format()
+        .expect("format encodes");
+    let job_clock = JobClock {
+        time: 15,
+        second: 0,
+        day: 1,
+        month: 11,
+        year: 2024,
+    };
+
+    let restored = Universe::from_format(World::memory_with_clock(job_clock), &format)
+        .expect("format restores for a new job");
+
+    assert_eq!(restored.int_param(crate::env::banks::IntParam::TIME), 15);
+    assert_eq!(restored.int_param(crate::env::banks::IntParam::DAY), 1);
+    assert_eq!(restored.int_param(crate::env::banks::IntParam::MONTH), 11);
+    assert_eq!(restored.int_param(crate::env::banks::IntParam::YEAR), 2024);
+}
+
+#[test]
 fn rollback_restores_world_inputs_stream_buffers_and_rng() {
     let mut universe = Universe::new();
     universe
