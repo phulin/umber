@@ -843,6 +843,13 @@ fn execute_prefixed_command(
                         | UnexpandablePrimitive::VFilNeg
                 ) {
                     match nest.current_mode() {
+                        crate::Mode::Horizontal => {
+                            // TeX82's `hmode+vskip` case goes through
+                            // `head_for_vmode`, ending the paragraph before
+                            // the vertical glue is scanned and appended.
+                            head_for_vmode(command.traced, input, stores);
+                            return Ok(CommandOutcome::continue_only());
+                        }
                         crate::Mode::RestrictedHorizontal => {
                             // TeX.web §1091 `head_for_vmode` invokes
                             // off_save, which closes the hbox and retries the

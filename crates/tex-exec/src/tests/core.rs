@@ -2517,6 +2517,39 @@ fn vertical_skip_in_hbox_closes_box_and_retries_in_outer_mode() {
 }
 
 #[test]
+fn vertical_skip_in_horizontal_mode_ends_the_paragraph_before_appending_glue() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\setbox0=\\vbox{\\noindent\\kern1pt\\vskip2pt\\kern3pt}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("unrestricted horizontal vskip uses head_for_vmode");
+
+    let box0 = stores.box_reg(0).expect("vbox exists");
+    let [Node::VList(outer)] = stores.nodes(box0).testing_decoded() else {
+        panic!("register 0 should hold a vbox");
+    };
+    let children = stores.nodes(outer.children).testing_decoded();
+    assert!(matches!(children.first(), Some(Node::HList(_))));
+    assert!(children.windows(2).any(|nodes| {
+        matches!(
+            nodes,
+            [
+                Node::HList(_),
+                Node::Glue {
+                    spec,
+                    kind: tex_state::node::GlueKind::Normal,
+                    ..
+                }
+            ] if stores.glue(*spec).width.raw() == 2 * Scaled::UNITY
+        )
+    }));
+}
+
+#[test]
 fn delete_last_outer_vertical_empty_matches_tex_error_asymmetry() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
