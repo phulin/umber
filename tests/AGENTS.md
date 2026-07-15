@@ -13,6 +13,9 @@ and is run both from source-initialized kernel state and the serialized format.
 The four base-class documents are run for three clean passes by
 `scripts/check-latex-corpus.sh`, which requires banner-normalized byte-identical
 DVI and exact `.aux`/`.toc`/`.lof`/`.lot`/`.out` file parity with TeX Live 2025.
+Their union of format-loaded TeX/TFM inputs must exactly match
+`latex-runtime.lock`; `scripts/build-wasm-latex-bundle.sh` publishes that same
+typed closure and the generated native format through the WASM manifest.
 
 ## Corpus Layout
 

@@ -6,6 +6,10 @@ All accepted source paths are normalized relative POSIX paths. Reject symlinks, 
 
 Object names are derived solely from SHA-256. Manifest serialization uses ordered maps and one trailing newline. Dependency entries are hints and must refer to valid logical keys, but are not required to be transitively complete.
 
+TeX lookup objects include the standard `.tex`, `.ltx`, `.sty`, `.cls`,
+`.clo`, `.cfg`, `.def`, `.fd`, and `.dfu` source families plus `.tfm` metrics;
+all source-family extensions use the manifest's `tex:` request kind.
+
 ## File map
 
 - `src/lib.rs`: publication orchestration and public configuration/schema.

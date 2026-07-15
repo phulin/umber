@@ -135,7 +135,13 @@ fn digest_entries(entries: &[(String, PathBuf)]) -> Result<String> {
 
 fn kind_for(path: &Path) -> Option<&'static str> {
     match path.extension().and_then(OsStr::to_str) {
-        Some(extension) if extension.eq_ignore_ascii_case("tex") => Some("tex"),
+        Some(extension)
+            if ["tex", "ltx", "sty", "cls", "clo", "cfg", "def", "fd", "dfu"]
+                .iter()
+                .any(|supported| extension.eq_ignore_ascii_case(supported)) =>
+        {
+            Some("tex")
+        }
         Some(extension) if extension.eq_ignore_ascii_case("tfm") => Some("tfm"),
         _ => None,
     }

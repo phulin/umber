@@ -5,10 +5,19 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 texmf_dist="${UMBER_TEXMF_DIST:-/usr/local/texlive/2025/texmf-dist}"
 reference_latex="${UMBER_REF_LATEX:-$(command -v latex || true)}"
 source_date_epoch="$(awk '$1 == "source_date_epoch" { print $2 }' "${repo_root}/tests/latex-source.lock")"
+runtime_lock="${repo_root}/tests/latex-runtime.lock"
 
 fail() {
   printf 'check-latex-corpus.sh: %s\n' "$*" >&2
   exit 1
+}
+
+sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
 }
 
 [[ -x "$reference_latex" ]] || fail "missing reference LaTeX; set UMBER_REF_LATEX"
@@ -35,6 +44,23 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
+
+expected_runtime="${tmp_root}/expected-runtime.inputs"
+actual_runtime="${tmp_root}/actual-runtime.inputs"
+: > "$expected_runtime"
+: > "$actual_runtime"
+while read -r record kind relative expected_bytes expected_hash extra; do
+  [[ -z "${record:-}" || "$record" == \#* ]] && continue
+  [[ "$record" == source ]] || continue
+  [[ -z "${extra:-}" ]] || fail "invalid runtime closure entry for $relative"
+  source="${texmf_dist}/${relative}"
+  [[ -f "$source" ]] || fail "missing pinned runtime input: $source"
+  actual_bytes="$(wc -c < "$source" | tr -d ' ')"
+  [[ "$actual_bytes" == "$expected_bytes" ]] || fail "runtime length mismatch for $relative"
+  [[ "$(sha256 "$source")" == "$expected_hash" ]] || fail "runtime hash mismatch for $relative"
+  printf '%s\t%s\n' "$expected_bytes" "$source" >> "$expected_runtime"
+done < "$runtime_lock"
+LC_ALL=C sort -u -o "$expected_runtime" "$expected_runtime"
 
 compare_auxiliary_files() {
   local reference_dir="$1"
@@ -71,6 +97,7 @@ for source in tests/latex/article.tex tests/latex/report.tex tests/latex/book.te
       cd "$umber_dir"
       env SOURCE_DATE_EPOCH="$source_date_epoch" TEXINPUTS="$texinputs" TEXFONTS="$texfonts" \
         "$umber_bin" run --latex document.tex --format latex.fmt --dvi document.dvi \
+          --input-records-out document.inputs \
           > document.stdout 2> document.stderr
     ) || fail "Umber failed for ${case_name}, pass ${pass}"
     if grep -q '^! ' "${umber_dir}/document.stdout"; then
@@ -83,5 +110,11 @@ for source in tests/latex/article.tex tests/latex/report.tex tests/latex/book.te
     "${reference_dir}/document.dvi" "${umber_dir}/document.dvi" || \
     fail "DVI mismatch for ${case_name}"
   compare_auxiliary_files "$reference_dir" "$umber_dir"
+  awk -F '\t' -v prefix="${texmf_dist}/" 'index($2, prefix) == 1' \
+    "${umber_dir}/document.inputs" >> "$actual_runtime"
   printf 'LaTeX corpus parity: %s (3 passes)\n' "$case_name"
 done
+
+LC_ALL=C sort -u -o "$actual_runtime" "$actual_runtime"
+cmp "$expected_runtime" "$actual_runtime" || fail "base-corpus runtime closure changed"
+printf 'LaTeX runtime closure: exact (%s pinned inputs)\n' "$(wc -l < "$actual_runtime" | tr -d ' ')"

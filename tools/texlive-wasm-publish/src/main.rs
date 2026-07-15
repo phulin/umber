@@ -5,13 +5,23 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use texlive_wasm_publish::{PublishConfig, publish};
+use texlive_wasm_publish::{PublishConfig, publish, tree_sha256};
 
 fn main() -> Result<()> {
     let mut arguments = env::args_os().skip(1);
     let Some(config_path) = arguments.next() else {
-        bail!("usage: texlive-wasm-publish CONFIG.json OUTPUT-DIRECTORY");
+        bail!("usage: texlive-wasm-publish CONFIG.json OUTPUT-DIRECTORY | --tree-sha256 ROOT");
     };
+    if config_path == "--tree-sha256" {
+        let Some(root) = arguments.next() else {
+            bail!("missing ROOT after --tree-sha256");
+        };
+        if arguments.next().is_some() {
+            bail!("unexpected argument after --tree-sha256 ROOT");
+        }
+        println!("{}", tree_sha256(Path::new(&root))?);
+        return Ok(());
+    }
     let Some(output_path) = arguments.next() else {
         bail!("usage: texlive-wasm-publish CONFIG.json OUTPUT-DIRECTORY");
     };

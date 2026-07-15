@@ -1,0 +1,33 @@
+# Exact TeX Live 2025 inputs opened by the format-loaded LaTeX base corpus.
+# Fields: source <kind> <texmf-dist-relative-path> <bytes> <sha256>.
+distribution texlive-2025
+source tfm fonts/tfm/public/cm/cmbx10.tfm 1328 ae296e8e41b2b0f73e9a17fdc42c743b9ddcc58d23c30acaa3411206f7824780
+source tfm fonts/tfm/public/cm/cmbx12.tfm 1324 0eb2f13840155007c2d3c59b074322a3aa7358b9643aa314f3146468ae7f0806
+source tfm fonts/tfm/public/cm/cmex10.tfm 992 0890bccea1dd4d27f001ac30e86c63af35bc803e0557c35aafb1903c8d208e92
+source tfm fonts/tfm/public/cm/cmmi10.tfm 1528 e442c5487f84df70218ff37f775c87060856f5b6e04c011b6cadbbadfcf46645
+source tfm fonts/tfm/public/cm/cmmi5.tfm 1508 8839e40838381a0a3c976bdd5becf72afd60bde5a965c3d9b985c3479c6cf75e
+source tfm fonts/tfm/public/cm/cmmi6.tfm 1512 ab6ecb4aaba9ca1b4259b1d1f64309a785bbaeb09183fd79a066b7764a448a28
+source tfm fonts/tfm/public/cm/cmmi7.tfm 1528 ce55681703aae565f17286d800ea9780223132589bdbaeda1751b869aba26a38
+source tfm fonts/tfm/public/cm/cmmi8.tfm 1520 65af8c1e162a952cab8e93c834fcf43ce09b508e6c16e512ebb673cd850b0d41
+source tfm fonts/tfm/public/cm/cmr10.tfm 1296 87f2d8981927644cbecaf3d639e96e348ea4e7be49d8804468bd8ba9ff3f5244
+source tfm fonts/tfm/public/cm/cmr12.tfm 1288 1ce8af37ed38e93940829d3540e494eaaddc5201758d036b9074467e70a738dc
+source tfm fonts/tfm/public/cm/cmr17.tfm 1292 86b6e8a52aae6ad1655e32099e12bd2904b158aba4c8afb74143266d2d9cd18f
+source tfm fonts/tfm/public/cm/cmr5.tfm 1220 581be818f67bd11a1792d05e129abe3ea30c5cbdfce3bed8da7c5fb50f5ba95b
+source tfm fonts/tfm/public/cm/cmr6.tfm 1300 106afa9172f0c00e58b9f5cbc72b302a18aaeeaddf50caca145af9cc0b81afd2
+source tfm fonts/tfm/public/cm/cmr7.tfm 1300 28f9f4d237bdae4babef4a59d90f17686a09d6f9df0b2c3c23b2ba15f20eee82
+source tfm fonts/tfm/public/cm/cmr8.tfm 1292 4c5ae243ac0aa254e7ec7f0602cc2a4351e5011ff0cb6dc150a5f6de19585de6
+source tfm fonts/tfm/public/cm/cmsl10.tfm 1508 dcbfc25c5aac16dc2b820e089a00aedef20a1af6d8d3c2efa54f6f17a985d33f
+source tfm fonts/tfm/public/cm/cmsy10.tfm 1124 0ca13d421ac7133271aed7c935099ecf3d1d08ac9e15f81acb34a16564ab8a46
+source tfm fonts/tfm/public/cm/cmsy5.tfm 1112 6b7dc18cba9ca8996d7b146f1ed78d9227577b26248083310fec227692198ca5
+source tfm fonts/tfm/public/cm/cmsy6.tfm 1116 137eb9f38f661c66309614066a7b5d63d8969d33aba0c9efee9f844a4ce65b50
+source tfm fonts/tfm/public/cm/cmsy7.tfm 1120 4f59bbf683e947c807158641621982dc83f55fec042fea7963d8ce9f9da98256
+source tfm fonts/tfm/public/cm/cmsy8.tfm 1120 84c37f07ca360c41ad0a0fba7387d279d72457c69bdae03653208c683d8de6bc
+source tfm fonts/tfm/public/cm/cmti10.tfm 1480 46a66e937f809c4fbe317947b583a14b408aca41ecb835eca3be46391190432a
+source tfm fonts/tfm/public/cm/cmtt10.tfm 768 11f3331c958b696fd484fe45c28285622617a2593d7a34511a1d6b279e1578a2
+source tex tex/latex/base/article.cls 20144 44171ebeb4bbfd734a0fff29351073a0b51ed7407cd09dbd7a4530c669d3f833
+source tex tex/latex/base/bk10.clo 8288 06835bf7589e050c5e21100ca39a118f2027fbe2c4d2ae79a3b52fbd2981fdd6
+source tex tex/latex/base/book.cls 23268 53d9f87705424867adcb8d6e65c2b278df26a052b72adedb444b59acc9c9402d
+source tex tex/latex/base/letter.cls 13728 3986cac0a5b5264c8fe12e826cebce4d93fdd425dd2ac5faed6e077d7cf1bf49
+source tex tex/latex/base/report.cls 23203 91b6beec64fa747dd2494eae31148334956e1e1feb7afbaa43fc7e79b5782008
+source tex tex/latex/base/size10.clo 8448 ae73585b23be32320e6dba47659ebc7300922fd87abdc50eb1eb81cf7faaac4e
+source tex tex/latex/l3backend/l3backend-dvips.def 35454 3ffeb954071101c10422995800913dec324c06acc25f1d151bf56d849f1ad511

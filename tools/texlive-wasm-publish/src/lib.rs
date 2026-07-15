@@ -162,12 +162,12 @@ fn load_format(config: &FormatConfig) -> Result<(String, ManifestFormat, Vec<u8>
     if metadata.schema != 1 || metadata.engine != "umber" {
         bail!("format metadata must describe schema 1 for engine umber");
     }
-	if metadata.engine_version.is_empty()
-		|| metadata.format_schema == 0
-		|| metadata.source_distribution.is_empty()
-	{
-		bail!("format compatibility metadata is incomplete");
-	}
+    if metadata.engine_version.is_empty()
+        || metadata.format_schema == 0
+        || metadata.source_distribution.is_empty()
+    {
+        bail!("format compatibility metadata is incomplete");
+    }
     if metadata.name.is_empty()
         || !metadata
             .name

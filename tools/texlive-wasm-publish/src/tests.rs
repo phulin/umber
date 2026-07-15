@@ -44,6 +44,7 @@ fn fixture_publication_is_byte_stable_and_content_addressed() -> Result<()> {
     fs::create_dir_all(&first)?;
     fs::create_dir_all(&second)?;
     write(&first, "tex/plain/base/plain.tex", b"first plain\n")?;
+    write(&first, "tex/latex/base/article.cls", b"class bytes\n")?;
     write(&first, "fonts/tfm/public/cm/cmr10.tfm", b"tfm bytes")?;
     write(&second, "other/plain.tex", b"shadowed plain\n")?;
     write(&second, "tex/extra.tex", b"extra\n")?;
@@ -73,10 +74,11 @@ fn fixture_publication_is_byte_stable_and_content_addressed() -> Result<()> {
         Some(b"first plain\n".as_slice())
     );
     assert!(manifest.files.contains_key("tex:other/plain.tex"));
+    assert!(manifest.files.contains_key("tex:article.cls"));
     assert_eq!(plain.dependencies, ["tfm:cmr10.tfm"]);
     let format = manifest.formats.get("plain").expect("plain format");
     assert_eq!(format.engine, "umber");
-    assert_eq!(format.format_schema, 4);
+    assert_eq!(format.format_schema, 6);
     assert_eq!(
         objects_a.get(&format.object).map(Vec::len),
         Some(format.bytes as usize)
