@@ -31,7 +31,10 @@ pub use tfm::{
     CharacterTag, ExtensibleRecipe, FontParameter, FontParameterKind, FontParameters, Header,
     LigKernAction, LigKernStep, Ligature, LigatureDeletes, ParseError, TfmFont, TfmTable,
 };
-pub use type1::{PdfType1Program, PdfType1ProgramError, PdfType1ProgramIdentity};
+pub use type1::{
+    PdfType1Program, PdfType1ProgramError, PdfType1ProgramIdentity, PdfType1SubsetError,
+    pdftex_subset_tag,
+};
 
 #[cfg(test)]
 mod tests;

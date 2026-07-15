@@ -533,7 +533,7 @@ dependencies = [
  "indexmap",
  "itoa",
  "log",
- "md-5",
+ "md-5 0.11.0",
  "nom",
  "rand 0.10.2",
  "rangemap",
@@ -542,6 +542,16 @@ dependencies = [
  "thiserror 2.0.18",
  "ttf-parser",
  "weezl",
+]
+
+[[package]]
+name = "md-5"
+version = "0.10.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d89e7ee0cfbedfc4da3340218492196241d89eefb6dab27de5df917a6d2e78cf"
+dependencies = [
+ "cfg-if",
+ "digest 0.10.7",
 ]
 
 [[package]]
@@ -1050,6 +1060,7 @@ dependencies = [
 name = "tex-fonts"
 version = "0.1.0"
 dependencies = [
+ "md-5 0.10.6",
  "serde",
  "sha2 0.10.9",
  "tex-arith",
