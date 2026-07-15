@@ -793,6 +793,29 @@ fn execute_prefixed_command(
                     ensure_horizontal_for_character(nest, input, stores)?;
                     return Ok(CommandOutcome::continue_only());
                 }
+                if matches!(
+                    primitive,
+                    UnexpandablePrimitive::UnVBox | UnexpandablePrimitive::UnVCopy
+                ) {
+                    match nest.current_mode() {
+                        crate::Mode::Horizontal => {
+                            // TeX82's `hmode+un_vbox` case goes through
+                            // `head_for_vmode`: end the paragraph, then retry
+                            // the vertical unboxing command.
+                            head_for_vmode(command.traced, input, stores);
+                            return Ok(CommandOutcome::continue_only());
+                        }
+                        crate::Mode::RestrictedHorizontal => {
+                            off_save_alignment(command.traced, input, stores)?;
+                            return Ok(CommandOutcome::continue_only());
+                        }
+                        crate::Mode::Math | crate::Mode::DisplayMath => {
+                            crate::math::insert_dollar_sign(command.traced, input, stores);
+                            return Ok(CommandOutcome::continue_only());
+                        }
+                        _ => {}
+                    }
+                }
                 execute_box_list_command(
                     primitive,
                     command.traced,

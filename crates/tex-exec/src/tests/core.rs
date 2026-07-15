@@ -1753,6 +1753,37 @@ fn uncopy_primitives_unbox_without_clearing_registers() {
 }
 
 #[test]
+fn vertical_unbox_in_horizontal_mode_ends_the_paragraph_before_splicing() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\setbox0=\\vbox{\\hbox{\\kern1pt}}\\setbox1=\\vbox{\\noindent\\kern2pt\\unvbox0}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("horizontal vertical-unbox recovery executes");
+
+    let box1 = stores.box_reg(1).expect("outer vbox exists");
+    let [tex_state::node::Node::VList(outer)] = stores.nodes(box1).testing_decoded() else {
+        panic!("register 1 should hold a vbox");
+    };
+    let children = stores.nodes(outer.children).testing_decoded();
+    assert!(
+        children
+            .iter()
+            .filter(|node| matches!(node, tex_state::node::Node::HList(_)))
+            .count()
+            >= 2,
+        "the paragraph line and unboxed vertical child remain sibling vlist nodes"
+    );
+    assert!(
+        stores.box_reg(0).is_none(),
+        "the retried unvbox is destructive"
+    );
+}
+
+#[test]
 fn destructive_unbox_shares_nested_survivor_children_without_epoch_clone() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
