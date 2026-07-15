@@ -458,9 +458,12 @@ cells[i] = new
   `OriginId(0)`, rolled-back ids, missing origin-list spans, and absent source
   metadata as unknown provenance rather than reporting a secondary error.
 - Raw `OriginId`s are valid only while their append-only provenance records
-  remain live. Any diagnostic that must survive speculative/replayed execution
-  rollback must be rendered to text before rolling back past its provenance
-  watermark. Expansion backtraces follow persistent parent-linked invocation
+  remain live. A convergence splice preserves adopted artifact origins through
+  the validated `GenerationSubstrate` facade, which imports only their
+  reachable diagnostic records (and owns scratch-only resolved source
+  locations). Other diagnostics that must survive speculative/replayed
+  execution rollback must be rendered to text before rolling back past their
+  provenance watermark. Expansion backtraces follow persistent parent-linked invocation
   records from the head captured when an error crosses the lexer, expansion,
   or execution boundary; they are not reconstructed from mutable
   current-location state or stored beside individual tokens.

@@ -13,7 +13,9 @@ use crate::macro_store::MacroMeaning;
 use crate::meaning::{Meaning, MeaningFlags, RawMeaning};
 use crate::node::{BoxNode, BoxNodeFields, GlueKind, KernKind, LeaderPayload, Node, Sign};
 use crate::page::{PageDimension, PageInteger};
-use crate::provenance::{InsertedOriginKind, OriginRecord, SourceOrigin, SyntheticOriginKind};
+use crate::provenance::{
+    InsertedOriginKind, OriginRecord, SourceOrigin, SynthesizedOriginKind, SyntheticOriginKind,
+};
 use crate::scaled::{GlueSetRatio, Scaled};
 use crate::source_map::{SourceDescriptor, SourceMapError};
 use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
@@ -938,6 +940,45 @@ fn generation_fork_detaches_the_accepted_artifact_prefix() {
         substrate.world().committed_artifacts(),
         [artifact] if artifact.bytes() == b"accepted page"
     ));
+}
+
+#[test]
+fn generation_retains_related_fork_diagnostic_graph_and_foreign_location() {
+    let mut universe = Universe::new();
+    let anchor = universe.snapshot();
+    let mut substrate = universe.freeze_generation();
+    let mut fork = substrate.fork_at(&anchor).expect("related fork");
+    fork.register_source(
+        SourceId::new(0),
+        SourceDescriptor::generated(Arc::from(&b"abc"[..])),
+    )
+    .expect("scratch source registration");
+    let source = fork.source_range_origin(SourceId::new(0), 0, 3);
+    let derived = fork.synthesized_origin(SynthesizedOriginKind::ValueRendering, source);
+
+    substrate
+        .retain_artifact_origins_from_fork(&fork, &[derived], "scratch.tex")
+        .expect("related diagnostics retained");
+    assert_eq!(
+        substrate
+            .resolve_origin_with_generated_path(derived, "ignored.tex")
+            .expect("owned scratch location"),
+        crate::ResolvedSourceLocation {
+            path: "scratch.tex".to_owned(),
+            start: 0,
+            end: 3,
+            line: 1,
+            column: 1,
+        }
+    );
+
+    let unrelated = Universe::new();
+    assert_eq!(
+        substrate
+            .retain_artifact_origins_from_fork(&unrelated, &[derived], "scratch.tex")
+            .expect_err("unrelated universe rejected"),
+        GenerationForkError::UnrelatedFork
+    );
 }
 
 #[test]

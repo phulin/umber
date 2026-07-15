@@ -504,6 +504,20 @@ impl Session {
                     record.revision = next_revision;
                     history.push(record);
                 }
+                let adopted_origins = advance.artifacts[..scratch_artifact_count]
+                    .iter()
+                    .flat_map(|artifact| artifact.render_origins())
+                    .flat_map(|origins| origins.iter())
+                    .copied()
+                    .collect::<Vec<_>>();
+                self.substrate
+                    .as_mut()
+                    .ok_or(SessionError::MissingAcceptedSubstrate)?
+                    .retain_artifact_origins_from_fork(
+                        &advance.scratch,
+                        &adopted_origins,
+                        &self.source_path,
+                    )?;
                 let convergence_boundary = history.get(restart_index + 1).map(BoundaryRecord::key);
                 (
                     effects,

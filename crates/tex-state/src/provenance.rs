@@ -11,6 +11,7 @@ use crate::input::{SourceId, TokenListReplayKind};
 use crate::source_map::{SourceMapStats, SourceSpan};
 use crate::token::{OriginId, Token, TracedTokenWord};
 use crate::world::InputRecordId;
+use std::collections::HashSet;
 use std::mem;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -743,6 +744,49 @@ impl ProvenanceStore {
         self.records.push(record);
         self.record_keys.append(key, slot);
         OriginId::arena(key).expect("global packed provenance key is representable")
+    }
+
+    /// Retains the arena-record graph reachable from diagnostic roots in a
+    /// related fork. Process-global arena keys make the imported records
+    /// addressable by the artifact's existing `OriginId`s.
+    pub(crate) fn retain_origin_graph_from(&mut self, fork: &Self, roots: &[OriginId]) {
+        let mut pending = roots.to_vec();
+        let mut imported = Vec::new();
+        let mut seen = HashSet::with_capacity(roots.len());
+        while let Some(origin) = pending.pop() {
+            let crate::token::OriginEncoding::Arena(key) = origin.decode() else {
+                continue;
+            };
+            if self.record_keys.slot(key).is_some() || !seen.insert(key) {
+                continue;
+            }
+            let Some(slot) = fork.record_keys.slot(key) else {
+                continue;
+            };
+            let record = fork.records[slot as usize];
+            match record {
+                OriginRecord::MacroInvocation(invocation) => {
+                    pending.push(invocation.invocation());
+                    pending.push(invocation.definition_origin());
+                    pending.push(invocation.parent_invocation());
+                }
+                OriginRecord::Inserted(inserted) => pending.push(inserted.parent()),
+                OriginRecord::Synthesized(synthesized) => pending.push(synthesized.parent()),
+                OriginRecord::UnknownBootstrap
+                | OriginRecord::Source(_)
+                | OriginRecord::SourceSpan(_)
+                | OriginRecord::Synthetic(_) => {}
+            }
+            imported.push((key, record));
+        }
+        imported.sort_unstable_by_key(|(key, _)| *key);
+        self.records.reserve(imported.len());
+        for (key, record) in imported {
+            let slot = u32::try_from(self.records.len())
+                .expect("global origin key capacity bounds provenance record slots");
+            self.records.push(record);
+            self.record_keys.append(key, slot);
+        }
     }
 
     /// Allocates an origin-list span, saturating capacity overflow to empty.

@@ -1,5 +1,7 @@
 use super::*;
 
+const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+
 fn template() -> Universe {
     let mut universe = Universe::with_world(tex_state::World::memory());
     tex_exec::install_unexpandable_primitives(&mut universe);
@@ -150,6 +152,93 @@ fn convergent_old_substrate_resolves_new_fragment_origins() {
             ..
         }
     ));
+}
+
+#[test]
+fn convergent_adopted_char_artifact_keeps_current_and_deleted_provenance() {
+    let original =
+        "\\font\\tenrm=cmr10\\relax\\tenrm %a\n\\shipout\\hbox{\\char65}\\shipout\\hbox{B}\\end";
+    let mut session = Session::start(
+        template(),
+        "scratch-char-origin",
+        RevisionId::new(1),
+        original,
+        usize::MAX,
+    )
+    .expect("session starts");
+    session
+        .register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("font fixture registers");
+    session.cold().expect("cold execution succeeds");
+
+    let first = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(original.as_bytes()),
+                range: original.find("%a").expect("comment") + 1
+                    ..original.find("%a").expect("comment") + 2,
+                replacement: "b".to_owned(),
+            },
+        )
+        .expect("comment edit converges");
+    assert_eq!(first.reuse.pages_retyped, 1);
+    assert_eq!(first.reuse.pages_reused, 1);
+    let event = (0..32)
+        .find(|&event| {
+            session
+                .rendered_origin(1, event, None)
+                .expect("render lookup")
+                .is_some()
+        })
+        .expect("char text event");
+    let origin = session
+        .rendered_origin(1, event, None)
+        .expect("render lookup")
+        .expect("char render origin");
+    assert_eq!(
+        session
+            .rendered_source_origin(1, event, None)
+            .expect("render source lookup"),
+        Some(LayoutResolvedOrigin::Current {
+            path: "<editor>".to_owned(),
+            doc_offset_lo: 47,
+            doc_offset_hi: 52,
+            line: 2,
+            column: 15,
+        })
+    );
+
+    let revision_two = session.source.clone();
+    let char_line_start = revision_two
+        .find("\\shipout\\hbox{\\char65}")
+        .expect("char line");
+    let char_line_end = revision_two[char_line_start..]
+        .find("\\shipout\\hbox{B}")
+        .map(|offset| char_line_start + offset)
+        .expect("second shipout");
+    let char_line = revision_two[char_line_start..char_line_end].to_owned();
+    let second = session
+        .advance(
+            RevisionId::new(3),
+            Edit {
+                base_revision: RevisionId::new(2),
+                expected_hash: ContentHash::from_bytes(revision_two.as_bytes()),
+                range: char_line_start..char_line_end,
+                replacement: char_line,
+            },
+        )
+        .expect("equivalent char edit converges");
+    assert!(second.reuse.convergence_boundary.is_some());
+    assert_eq!(
+        session
+            .substrate
+            .as_ref()
+            .expect("retained substrate")
+            .resolve_layout_origin(origin, &session.fragments, &session.layout),
+        LayoutResolvedOrigin::Deleted { minted_revision: 1 }
+    );
 }
 
 #[test]

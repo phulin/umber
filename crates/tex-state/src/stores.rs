@@ -222,6 +222,11 @@ impl Clone for Stores {
 }
 
 impl Stores {
+    pub(crate) fn retain_diagnostic_origins_from(&mut self, fork: &Self, roots: &[OriginId]) {
+        self.provenance
+            .retain_origin_graph_from(&fork.provenance, roots);
+    }
+
     pub(crate) fn install_source_fragments(&mut self, fragments: FragmentStore) {
         self.source_fragments = fragments;
     }

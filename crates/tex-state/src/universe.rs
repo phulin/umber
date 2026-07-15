@@ -57,6 +57,7 @@ use crate::world::{
     ShellEscapePolicy, ShellEscapeRecord, StreamBufState, StreamSlot, World, WorldCommitMode,
     WorldError, WorldSnapshot, WorldStateHashCursor, install_job_clock_params,
 };
+use std::collections::HashMap;
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -308,6 +309,7 @@ pub struct Snapshot {
 pub struct GenerationSubstrate {
     universe: Universe,
     charged_bytes: usize,
+    retained_origin_locations: HashMap<OriginId, crate::ResolvedSourceLocation>,
 }
 
 /// Rejection from the narrow validated generation-fork/retarget operations.
@@ -506,16 +508,12 @@ impl GenerationSubstrate {
     /// Freezes one completed mutable timeline as an accepted generation.
     #[must_use]
     pub fn new(universe: Universe) -> Self {
-        let charged_bytes = universe
-            .stores
-            .generation_retained_bytes()
-            .saturating_add(std::mem::size_of::<Universe>())
-            .saturating_add(universe.input_summary.retained_bytes())
-            .saturating_add(universe.page.retained_bytes())
-            .saturating_add(universe.world.generation_retained_bytes());
+        let retained_origin_locations = HashMap::new();
+        let charged_bytes = generation_charged_bytes(&universe, &retained_origin_locations);
         Self {
             universe,
             charged_bytes,
+            retained_origin_locations,
         }
     }
 
@@ -539,6 +537,7 @@ impl GenerationSubstrate {
     ) -> Option<crate::ResolvedSourceLocation> {
         crate::ProvenanceResolver::new(&self.universe)
             .resolve_origin_with_generated_path(origin, generated_path)
+            .or_else(|| self.retained_origin_locations.get(&origin).cloned())
     }
 
     /// Resolves one retained origin against the session's current editor layout.
@@ -549,8 +548,46 @@ impl GenerationSubstrate {
         fragments: &crate::FragmentStore,
         layout: &crate::EditorLayout,
     ) -> crate::LayoutResolvedOrigin {
-        crate::ProvenanceResolver::new(&self.universe)
-            .resolve_layout_origin(origin, fragments, layout)
+        let resolved = crate::ProvenanceResolver::new(&self.universe)
+            .resolve_layout_origin(origin, fragments, layout);
+        if resolved == crate::LayoutResolvedOrigin::Unknown
+            && self.retained_origin_locations.contains_key(&origin)
+        {
+            crate::LayoutResolvedOrigin::Foreign
+        } else {
+            resolved
+        }
+    }
+
+    /// Retains only the diagnostic origin graph needed by artifacts adopted
+    /// from a related scratch fork. Semantic state and source stores remain on
+    /// the accepted generation.
+    pub fn retain_artifact_origins_from_fork(
+        &mut self,
+        fork: &Universe,
+        roots: &[OriginId],
+        generated_path: &str,
+    ) -> Result<(), GenerationForkError> {
+        let origin = fork.fork_origin.ok_or(GenerationForkError::UnrelatedFork)?;
+        if origin.source_owner != self.universe.owner.snapshot_owner() {
+            return Err(GenerationForkError::UnrelatedFork);
+        }
+        let resolver = crate::ProvenanceResolver::new(fork);
+        for &root in roots {
+            if let Some(location) =
+                resolver.resolve_origin_with_generated_path(root, generated_path)
+            {
+                self.retained_origin_locations
+                    .entry(root)
+                    .or_insert(location);
+            }
+        }
+        self.universe
+            .stores
+            .retain_diagnostic_origins_from(&fork.stores, roots);
+        self.charged_bytes =
+            generation_charged_bytes(&self.universe, &self.retained_origin_locations);
+        Ok(())
     }
 
     #[doc(hidden)]
@@ -628,6 +665,30 @@ impl GenerationSubstrate {
         world.export_retained_effects()?;
         Ok(world)
     }
+}
+
+fn generation_charged_bytes(
+    universe: &Universe,
+    retained_origin_locations: &HashMap<OriginId, crate::ResolvedSourceLocation>,
+) -> usize {
+    universe
+        .stores
+        .generation_retained_bytes()
+        .saturating_add(std::mem::size_of::<Universe>())
+        .saturating_add(universe.input_summary.retained_bytes())
+        .saturating_add(universe.page.retained_bytes())
+        .saturating_add(universe.world.generation_retained_bytes())
+        .saturating_add(
+            retained_origin_locations
+                .capacity()
+                .saturating_mul(std::mem::size_of::<(OriginId, crate::ResolvedSourceLocation)>()),
+        )
+        .saturating_add(
+            retained_origin_locations
+                .values()
+                .map(|location| location.path.capacity())
+                .sum::<usize>(),
+        )
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -32,8 +32,9 @@ follow:
 - **Dead origins on adopted scratch output.** In the convergence branch the
   session keeps the *old* accepted substrate and adopts the scratch window's
   pages. Those pages' origins reference the region registered on the
-  discarded fork, which the retained substrate never saw; they degrade to
-  unknown instead of resolving.
+  discarded fork, which the retained substrate never saw. Direct fragment
+  positions remain session-live, but scratch-only arena wrappers around those
+  positions would degrade to unknown without explicit adoption.
 - **Retained memory scales with revisions.** Each revision's rebind pins one
   full-document `Arc<[u8]>` for as long as any live region, checkpoint, or
   reused page can reference it.
@@ -126,6 +127,14 @@ session's retained root and shared read-only with every engine generation
 compiles, in `advance`). It therefore survives fork discard: a fragment
 minted for an edit stays resolvable no matter which substrate — scratch or
 converged — wins the revision, which fixes the dead-origin defect directly.
+
+Convergence also transfers the diagnostic graph reachable from each adopted
+artifact's `render_origins` through the `GenerationSubstrate` aggregate
+facade. Arena keys are process-global, so artifacts keep their existing ids;
+only missing scratch records are appended to the retained provenance index.
+Scratch-only engine sources are captured as owned resolved locations. This is
+diagnostic-only retention: semantic state, source stores, checkpoints, and
+artifact identity are unchanged, and raw substores never cross the facade.
 
 Engine-registered sources (World input files, non-editor generated sources)
 keep today's substrate-owned, watermark-rolled-back regions unchanged. The
