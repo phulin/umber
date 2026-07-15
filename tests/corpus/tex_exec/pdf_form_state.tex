@@ -1,0 +1,27 @@
+\catcode123=1 \catcode125=2
+\newlinechar=10
+\pdfoutput=1
+\pdfpagewidth=30pt
+\pdfpageheight=30pt
+\pdfhorigin=0pt
+\pdfvorigin=0pt
+\message{initial=\the\pdflastxform}
+\setbox0=\hbox to8pt{\kern2pt\pdfsavepos\vrule width6pt height3pt depth2pt}
+\immediate\pdfxform attr {/OC 7} resources {/ExtGState <<>>} 0
+\count10=\pdflastxform
+\message{h-form=\the\pdflastxform/\pdfxformname\pdflastxform/\the\pdflastxpos,\the\pdflastypos/void=\ifvoid0 yes\else no\fi}
+\setbox0=\vbox to10pt{\kern2pt\pdfsnaprefpoint\kern3pt\pdfsnapy 4pt plus4pt minus4pt\pdfsavepos\vskip0pt plus1fil}
+\immediate\pdfxform0
+\count11=\pdflastxform
+\message{v-form=\the\pdflastxform/\the\pdflastxpos,\the\pdflastypos}
+\setbox0=\hbox{\kern1pt$\pdfsavepos$\pdfrefxform\count10}
+\immediate\pdfxform0
+\count12=\pdflastxform
+\message{math-form=\the\pdflastxform/\the\pdflastxpos,\the\pdflastypos}
+\setbox0=\hbox{\kern3pt\pdfsavepos\pdfrefxform\count10}
+\pdfxform0
+\count13=\pdflastxform
+\message{lazy-before=\the\pdflastxform/\the\pdflastxpos,\the\pdflastypos}
+\shipout\vbox to30pt{\kern5pt\pdfsnaprefpoint\hbox{\pdfrefxform\count13\pdfrefxform\count13}\vskip0pt plus1fil}
+\message{lazy-after=\the\pdflastxform/\pdfxformname\count13/\the\pdflastxpos,\the\pdflastypos}
+\end

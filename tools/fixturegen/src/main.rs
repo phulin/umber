@@ -216,6 +216,8 @@ fn regenerate_tex_exec_case(case: &str) -> Result<()> {
             | "pdf_metadata_config"
             | "pdf_font_config"
             | "pdf_microtype_effects"
+            | "pdf_form_state"
+            | "pdf_form_diagnostics"
     ) {
         opts.ini = true;
     }

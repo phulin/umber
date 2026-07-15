@@ -178,9 +178,11 @@ pub fn ordered_page_content(operations: &[PdfContentOperation]) -> Vec<u8> {
         match operation {
             PdfContentOperation::Rectangle(rectangle) => {
                 end_pdf_text(&mut content, &mut in_text);
+                content.save_state();
                 content
                     .rect(rectangle.x, rectangle.y, rectangle.width, rectangle.height)
                     .fill_nonzero();
+                content.restore_state();
             }
             PdfContentOperation::Text(run) => {
                 if !in_text {
@@ -231,8 +233,8 @@ pub fn ordered_page_content(operations: &[PdfContentOperation]) -> Vec<u8> {
             }
             PdfContentOperation::FormXObject { x, y, name } => {
                 end_pdf_text(&mut content, &mut in_text);
-                set_origin(&mut content, &mut origin, *x, *y);
                 content.save_state();
+                content.transform([1.0, 0.0, 0.0, 1.0, *x, *y]);
                 content.x_object(Name(name));
                 content.restore_state();
             }

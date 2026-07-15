@@ -570,7 +570,7 @@ mod tests {
         crate::run_memory_with_stores("\\setbox0=\\hbox{}\\pdfxform0\\end", &mut stores)
             .expect("form allocation continues after the failed reserved identity");
         let form = stores
-            .pdf_form(2)
+            .pdf_form(3)
             .expect("second object and resource are retained");
         assert_eq!(form.resource(), 2);
 
@@ -599,6 +599,64 @@ mod tests {
         crate::run_memory_with_stores(source, &mut stores).expect("replayed form run");
         assert_eq!(stores.pdf_last_form(), 1);
         assert_eq!(stores.testing_state_hash(), first_hash);
+    }
+
+    #[test]
+    fn pdf_form_state_and_diagnostics_match_the_pinned_initex_oracle() {
+        let reference = test_support::read_fixture("tex_exec", "pdf_form_state", "ref");
+        let expected = [
+            "initial=0",
+            "h-form=1/1/131072,131072/void=yes",
+            "v-form=3/0,262144",
+            "math-form=5/65536,131072",
+            "lazy-before=7/65536,131072",
+            "lazy-after=7/4/196608,131072",
+        ];
+        for line in expected {
+            assert!(
+                reference.contains(line),
+                "oracle missing {line:?}: {reference}"
+            );
+        }
+
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let output = crate::run_memory_with_stores(
+            include_str!("../../../tests/corpus/tex_exec/pdf_form_state.tex"),
+            &mut stores,
+        )
+        .expect("execute pinned form-state fixture");
+        let terminal = stores.world().memory_terminal_output().unwrap_or_default();
+        let observed = format!("{}{}", String::from_utf8_lossy(terminal), output);
+        for line in expected {
+            assert!(
+                observed.contains(line),
+                "Umber missing {line:?}: {observed}"
+            );
+        }
+        assert_eq!(
+            stores
+                .pdf_forms()
+                .map(|form| (form.object(), form.resource()))
+                .collect::<Vec<_>>(),
+            [(1, 1), (3, 2), (5, 3), (7, 4)]
+        );
+
+        let diagnostic = test_support::read_fixture("tex_exec", "pdf_form_diagnostics", "ref");
+        assert!(
+            diagnostic.contains("pdfTeX error (ext1): \\pdfxform cannot be used with a void box.")
+        );
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let error = crate::run_memory_with_stores(
+            include_str!("../../../tests/corpus/tex_exec/pdf_form_diagnostics.tex"),
+            &mut stores,
+        )
+        .expect_err("void form fixture must fail");
+        assert_eq!(
+            error.to_string(),
+            "pdfTeX error (ext1): \\pdfxform cannot be used with a void box"
+        );
     }
 
     #[test]

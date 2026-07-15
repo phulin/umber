@@ -140,6 +140,10 @@ cross-page state together with exact Poppler extraction and raster parity.
 The `annotations_running` case pins general annotation geometry, two-page
 running-link continuation, per-page link margins, unique annotation ownership,
 and `/Annots` encounter order against pdfTeX 1.40.27.
+The `form_xobjects` case pins nested Form XObject dictionaries and decoded
+streams, attributes/resources, h/v/math placement, reuse, saved positions and
+form-local snapping. Its exact-byte and retained-session replay gates consume
+the same committed source.
 
 `tests/corpus/e2e` receives gitignored final-DVI oracles for Story, Gentle,
 TRIP, and e-TRIP. Their Cargo integration tests run Umber directly in process

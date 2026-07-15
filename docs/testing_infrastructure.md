@@ -94,6 +94,9 @@ preamble-comment-only comparison detects a change.
 `tests/corpus/pdf` commits minimal primitive-only sources, pinned reference
 PDFs, deterministic Umber PDFs, normalized catalog/page/resource/content
 structure, exact 72-dpi grayscale PGM renders, and renderer/hash attestations.
+The `form_xobjects` case additionally canonicalizes decoded Form XObject
+dictionaries and content operations, pins nested h/v/math placement and reuse,
+and drives retained-session artifact/position/snap replay coverage.
 Regenerate it only with `scripts/regen-fixtures.sh --area pdf` or
 `scripts/regen-fixtures.sh --case pdf/<case>`.
 

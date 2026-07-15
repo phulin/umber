@@ -54,8 +54,13 @@ internal-integer operand 16 and `\pdfxformname` uses expandable operand 84.
 
 ## Form XObjects
 
-`\pdfxform` reserves its canonical object and resource identities before it
-scans optional `attr`, optional `resources`, and a box-register number. A
+`\pdfxform` reserves its canonical Form XObject and resource-dictionary object
+identities before it scans optional `attr`, optional `resources`, and a
+box-register number. Consequently the observable form handles advance through
+the shared ledger as 1, 3, 5, ... when no other objects intervene, while
+`\pdfxformname` reports the independent sequential resource name 1, 2, 3, ... .
+The typed backend may inline the resource dictionary, but its reserved ledger
+identity remains observable and checkpointed. A
 nonvoid box is consumed with ordinary same-level assignment semantics and its
 dimensions, immutable node root, expanded attributes, and expanded resources
 are retained checkpointably. `\pdfrefxform` validates the object and appends a
@@ -81,6 +86,15 @@ are deduplicated, and cycles are rejected. `/Type /XObject`, `/Subtype /Form`,
 `/BBox`, identity `/Matrix`, `/FormType 1`, attributes, resources, streams, and
 `Do` placement are all written through typed APIs in the vendored
 `pdf_writer`; no backend-owned raw PDF framing is permitted.
+
+The committed `pdf/form_xobjects` corpus pins decoded Form dictionaries and
+streams, nested h/v/math placement, reuse, attributes/resources, exact Umber
+bytes, and Poppler raster parity. The `tex_exec/pdf_form_state` and
+`pdf_form_diagnostics` INITEX oracles pin allocation, enquiries, box
+consumption, saved positions, snapping, lazy publication, and the void-box
+diagnostic; the hermetic PDF integration test replays the committed source from
+a retained checkpoint and requires identical artifacts, coordinates, bytes,
+and state hash.
 
 ## Literals
 

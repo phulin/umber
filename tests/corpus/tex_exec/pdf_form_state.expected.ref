@@ -1,0 +1,9 @@
+success: true
+stdout:
+initial=0 h-form=1/1/131072,131072/void=yes
+v-form=3/0,262144 math-form=5/65536,131072 lazy-before=7/65536,131072
+lazy-after=7/4/196608,131072
+log:
+initial=0 h-form=1/1/131072,131072/void=yes
+v-form=3/0,262144 math-form=5/65536,131072 lazy-before=7/65536,131072
+lazy-after=7/4/196608,131072

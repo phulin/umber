@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Context, Result, bail};
-use lopdf::{Dictionary, Document, Object, ObjectId};
+use lopdf::{Dictionary, Document, Object, ObjectId, content::Content};
 use sha2::{Digest, Sha256};
 
 /// Parses a PDF and projects catalog, ordered pages, resources, media boxes,
@@ -128,7 +128,9 @@ fn append_document_extensions(document: &Document, normalized: &mut String) -> R
                     canonical_dictionary(document, dictionary)?
                 ));
             }
-            Object::Stream(stream) if stream.dict.has(b"Subtype") => {
+            Object::Stream(stream)
+                if stream.dict.has(b"Subtype") && !is_form_xobject(&stream.dict) =>
+            {
                 let dictionary = canonical_dictionary_without(document, &stream.dict, b"Length")?;
                 let data = stream
                     .decompressed_content()
@@ -294,20 +296,55 @@ fn canonical_object(document: &Document, object: &Object, depth: usize) -> Resul
             format!("<<{}>>", entries.join(" "))
         }
         Object::Stream(stream) => {
-            let dictionary = canonical_object(
-                document,
-                &Object::Dictionary(stream.dict.clone()),
-                depth + 1,
-            )?;
-            format!(
-                "stream {} bytes {} sha256 {:x}",
-                dictionary,
-                stream.content.len(),
-                Sha256::digest(&stream.content)
-            )
+            if is_form_xobject(&stream.dict) {
+                canonical_form_stream(document, stream, depth + 1)?
+            } else {
+                let dictionary = canonical_object(
+                    document,
+                    &Object::Dictionary(stream.dict.clone()),
+                    depth + 1,
+                )?;
+                format!(
+                    "stream {} bytes {} sha256 {:x}",
+                    dictionary,
+                    stream.content.len(),
+                    Sha256::digest(&stream.content)
+                )
+            }
         }
         Object::Reference(_) => unreachable!("references were dereferenced"),
     })
+}
+
+fn is_form_xobject(dictionary: &Dictionary) -> bool {
+    dictionary
+        .get(b"Subtype")
+        .ok()
+        .and_then(|value| value.as_name().ok())
+        == Some(b"Form".as_slice())
+}
+
+fn canonical_form_stream(
+    document: &Document,
+    stream: &lopdf::Stream,
+    depth: usize,
+) -> Result<String> {
+    let dictionary = canonical_dictionary_without(document, &stream.dict, b"Length")?;
+    let bytes = stream
+        .decompressed_content()
+        .context("failed to decode Form XObject stream")?;
+    let content = Content::decode(&bytes).context("failed to parse Form XObject content")?;
+    let mut normalized = format!("form-stream {dictionary}");
+    for operation in content.operations {
+        normalized.push_str(" content");
+        for operand in operation.operands {
+            normalized.push(' ');
+            normalized.push_str(&canonical_object(document, &operand, depth)?);
+        }
+        normalized.push(' ');
+        normalized.push_str(&operation.operator);
+    }
+    Ok(normalized)
 }
 
 fn canonical_number(object: &Object) -> Result<String> {

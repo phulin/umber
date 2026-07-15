@@ -192,6 +192,68 @@ fn object_dictionary_pdf_replays_to_identical_bytes_and_state() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // Committed corpus fixture boundary.
+fn form_xobject_fixture_replays_bytes_artifacts_positions_and_state() {
+    let source = fs::read_to_string(corpus_root().join("pdf/form_xobjects.tex"))
+        .expect("read Form XObject parity source");
+    let mut stores = Universe::default();
+    umber::prepare_pdftex_run_stores(&mut stores);
+    stores
+        .begin_retained_session()
+        .expect("retained form replay session starts");
+    let checkpoint = stores.snapshot();
+
+    umber::run_memory_with_stores(&source, &mut stores).expect("first form execution");
+    assert_eq!(
+        stores
+            .pdf_forms()
+            .map(|form| (form.object(), form.resource()))
+            .collect::<Vec<_>>(),
+        [(1, 1), (3, 2), (5, 3)]
+    );
+    let first_artifacts = [1, 3, 5].map(|object| {
+        stores
+            .pdf_form_artifact(object)
+            .expect("referenced form was traversed")
+            .clone()
+    });
+    assert_eq!(
+        first_artifacts[0].last_position(),
+        Some((tex_state::scaled::Scaled::from_raw(0), pt(2)))
+    );
+    assert_eq!(
+        first_artifacts[1].last_position(),
+        Some((tex_state::scaled::Scaled::from_raw(0), pt(6)))
+    );
+    assert_eq!(first_artifacts[1].snap_reference(), (pt(0), pt(10)));
+    assert_eq!(first_artifacts[2].last_position(), Some((pt(1), pt(2))));
+    let first_pages = stores.world().committed_artifacts().to_vec();
+    let first = umber::pdf_from_committed_artifacts(&mut stores, &first_pages)
+        .expect("first form PDF finalization");
+    let first_hash = stores.snapshot().state_hash();
+
+    stores.rollback(&checkpoint);
+    umber::run_memory_with_stores(&source, &mut stores).expect("replayed form execution");
+    let replay_pages = stores.world().committed_artifacts().to_vec();
+    let replayed = umber::pdf_from_committed_artifacts(&mut stores, &replay_pages)
+        .expect("replayed form PDF finalization");
+    assert_eq!(replayed, first, "form rollback replay changed PDF bytes");
+    for (object, expected) in [1, 3, 5].into_iter().zip(first_artifacts) {
+        let actual = stores
+            .pdf_form_artifact(object)
+            .expect("replayed form artifact exists");
+        assert_eq!(actual.bytes(), expected.bytes());
+        assert_eq!(actual.last_position(), expected.last_position());
+        assert_eq!(actual.snap_reference(), expected.snap_reference());
+    }
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
+}
+
+fn pt(value: i32) -> tex_state::scaled::Scaled {
+    tex_state::scaled::Scaled::from_raw(value * 65_536)
+}
+
+#[test]
 #[allow(clippy::disallowed_methods)] // Hermetic CLI fixture boundary.
 fn committed_embedded_font_fixtures_match_bytes_structure_and_attestations() {
     for case in [

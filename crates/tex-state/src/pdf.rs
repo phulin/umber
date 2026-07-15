@@ -1352,11 +1352,15 @@ impl PdfState {
     }
 
     pub(crate) fn reserve_form(&mut self) -> Result<(u32, u32), PdfObjectCapacityError> {
-        let object = (self.next_object <= MAX_OBJECT_ID)
+        let object = (self.next_object < MAX_OBJECT_ID)
             .then_some(self.next_object)
             .ok_or(PdfObjectCapacityError)?;
         let resource = self.next_form_resource;
-        self.next_object += 1;
+        // pdfTeX reserves the Form XObject followed by its resource dictionary
+        // in the shared object ledger. The latter may be represented inline by
+        // the typed backend, but its identity remains observable through the
+        // next form/object number and must therefore stay reserved.
+        self.next_object += 2;
         self.next_form_resource = self
             .next_form_resource
             .checked_add(1)

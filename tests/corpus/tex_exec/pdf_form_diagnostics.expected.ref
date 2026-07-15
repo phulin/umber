@@ -1,0 +1,8 @@
+success: false
+stdout:
+! pdfTeX error (ext1): \pdfxform cannot be used with a void box.
+!  ==> Fatal error occurred, no output PDF file produced!
+log:
+! pdfTeX error (ext1): \pdfxform cannot be used with a void box.
+
+!  ==> Fatal error occurred, no output PDF file produced!

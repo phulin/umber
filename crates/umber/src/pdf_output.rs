@@ -531,12 +531,16 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                             let form = stores
                                 .pdf_form(object)
                                 .ok_or(PdfBuildError::ReferencedFormNotFound(object))?;
+                            let y = page_height
+                                .checked_sub(graphics.y)
+                                .and_then(|value| value.checked_sub(form.depth()))
+                                .ok_or(PdfBuildError::PageGeometryOverflow)?;
                             let form_id = object_id(form.object())?;
                             referenced_forms.insert(form.object());
                             page_forms.insert(form.resource(), form_id);
                             PdfContentOperation::FormXObject {
                                 x,
-                                y,
+                                y: scaled_to_bp_f32(y, parameters.decimal_digits),
                                 name: format!("Fm{}", form.resource()).into_bytes(),
                             }
                         }
@@ -740,9 +744,13 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                             }
                             nested_forms.insert(nested.resource(), object_id(object)?);
                             pending_forms.push_back(object);
+                            let y = total_height
+                                .checked_sub(graphics.y)
+                                .and_then(|value| value.checked_sub(nested.depth()))
+                                .ok_or(PdfBuildError::PageGeometryOverflow)?;
                             PdfContentOperation::FormXObject {
                                 x,
-                                y,
+                                y: scaled_to_bp_f32(y, parameters.decimal_digits),
                                 name: format!("Fm{}", nested.resource()).into_bytes(),
                             }
                         }
@@ -853,6 +861,13 @@ pub fn pdf_from_committed_artifacts_at_dpi(
         let mut resources = PdfDictionary::new();
         if let Some(tokens) = form.resources() {
             resources.set_raw_entries(token_list_bytes(stores, tokens));
+        }
+        let omit_procset = stores.int_param(IntParam::PDF_OMIT_PROCSET);
+        if omit_procset < 0 || (omit_procset == 0 && parameters.major_version < 2) {
+            resources.insert(
+                "ProcSet",
+                PdfValue::Array(vec![PdfValue::Name("PDF".into())]),
+            )?;
         }
         if !nested_forms.is_empty() {
             let mut xobjects = PdfDictionary::new();
@@ -4341,7 +4356,7 @@ mod tests {
             "\\setbox0=\\hbox{\\kern10pt\\pdfsavepos\\vrule width2pt height3pt}",
             "\\pdfxform0",
             "\\setbox1=\\hbox{\\pdfrefxform1}",
-            "\\pdfxform1\\pdfrefxform2\\end",
+            "\\pdfxform1\\pdfrefxform3\\end",
         ));
         assert_eq!(stores.pdf_last_position(), (pt(10), Scaled::from_raw(0)));
         let pdf = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
@@ -4362,10 +4377,10 @@ mod tests {
             "\\pdfoutput=1\\pdfcompresslevel=0",
             "\\setbox0=\\hbox{\\pdfcolorstack0 push {1 g}}\\pdfxform0",
             "\\setbox1=\\hbox{\\pdfcolorstack0 current}\\pdfxform1",
-            "\\pdfrefxform1\\pdfrefxform2\\end",
+            "\\pdfrefxform1\\pdfrefxform3\\end",
         ));
         let second = stores
-            .pdf_form_artifact(2)
+            .pdf_form_artifact(3)
             .expect("second form staged after the first");
         let artifact =
             tex_out::PageArtifact::from_bytes(second.bytes()).expect("parse form artifact");
