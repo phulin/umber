@@ -2,6 +2,7 @@
 
 pub mod metrics;
 pub mod opentype;
+pub mod pdf_map;
 pub mod tfm;
 
 pub use metrics::{
@@ -17,6 +18,9 @@ pub use opentype::{
     FontProgramIdentity, FontPurposes, FontRequest, FontRequestKey, FontSelectionError,
     FontWireError, OpenTypeFont, OpenTypeMetrics, OpenTypeTag, ResolvedFont, ShapingTables,
     VariationCoordinate, VariationSelection, WritingDirection,
+};
+pub use pdf_map::{
+    PdfFontMapDirective, PdfFontMapEntry, PdfFontMapError, PdfFontMapFile, PdfFontMapProgram,
 };
 pub use tfm::{
     CharacterTag, ExtensibleRecipe, FontParameter, FontParameterKind, FontParameters, Header,
