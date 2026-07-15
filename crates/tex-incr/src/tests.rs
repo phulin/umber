@@ -554,6 +554,52 @@ fn multi_page_baseline_distinguishes_comment_and_semantic_edits() {
 }
 
 #[test]
+fn edit_before_earliest_retained_checkpoint_falls_back_to_cold_execution() {
+    let original = multi_page_source(8);
+    let mut session = Session::start(
+        template(),
+        "missing-prefix-fallback",
+        RevisionId::new(1),
+        original.clone(),
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+    session.history.remove(0);
+    assert!(session.history[0].key.position > 0);
+
+    let width = original.find("width 10pt").expect("first page width") + "width ".len();
+    let accepted = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(original.as_bytes()),
+                range: width..width + 2,
+                replacement: "11".to_owned(),
+            },
+        )
+        .expect("edit falls back to a full execution");
+    assert_eq!(accepted.reuse.restart_boundary, None);
+    assert_eq!(accepted.reuse.pages_reused, 0);
+
+    let edited = session.source().to_owned();
+    let mut cold = Session::start(
+        template(),
+        "missing-prefix-fallback",
+        RevisionId::new(2),
+        edited,
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    let cold = cold.cold().expect("cold comparison executes");
+    assert_eq!(
+        accepted.dvi_bytes().expect("incremental DVI"),
+        cold.dvi_bytes().expect("cold DVI")
+    );
+}
+
+#[test]
 fn unchanged_unicode_crlf_span_identity_survives_multiple_surrounding_edits() {
     let original = "% α\r\n% keep\r\n% ω\r\n\\end";
     let keep = original.find("keep").expect("keep span");

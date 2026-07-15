@@ -310,6 +310,11 @@ impl FileSessionResolvers {
         }
         Ok(())
     }
+
+    /// Borrows the input and font resolvers for an incremental editor session.
+    pub fn resolvers(&mut self) -> (&mut dyn InputResolver, &mut dyn FontResolver) {
+        (&mut self.input, &mut self.font)
+    }
 }
 
 struct FileInputResolver(TexInputSearchPath);

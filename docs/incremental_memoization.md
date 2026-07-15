@@ -715,6 +715,17 @@ snapshots in that run. The explicit 1,000-edit incremental-versus-cold tier,
 the complete workspace test/check gate, and Story, Gentle, TRIP, and e-TRIP
 parity all passed.
 
+A later long-document edit stress measurement inserted 1,792 words into one
+paragraph 19.66% through Gentle. The output grew to 98 pages, invalidating the
+remaining 84-page suffix. Five interleaved optimized samples measured 3.986
+seconds mean with memoization disabled, 7.304 seconds with memoization enabled,
+and 2.875 seconds for a cold edited compile. Thus memoization was 83% slower
+than disabled incremental execution and 154% slower than cold on the means.
+Only 385 of 7,140 lookups hit; the 64 MiB cache retained 67,008,455 bytes and
+evicted 6,475 entries. This confirms that the current hierarchy does not pay
+for itself when a large changed paragraph shifts pagination through the rest of
+the document; the opt-in default remains appropriate.
+
 ### Dependency-recorder baseline
 
 The state-layer recorder has an explicit disabled branch and no lock or atomic.

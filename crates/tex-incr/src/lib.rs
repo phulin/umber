@@ -786,11 +786,28 @@ impl Session {
         )?;
         let restart_index = select_restart(&old_history, &old_source, &next, &edit);
         let map = EditMap::new(edit.range.clone(), edit.replacement.len());
+        self.substrate
+            .as_ref()
+            .ok_or(SessionError::MissingAcceptedSubstrate)?
+            .world()
+            .validate_recorded_inputs()?;
+        let Some(restart_index) = restart_index else {
+            let run = execute_revision(
+                &self.template,
+                &mut self.pure_memo,
+                &self.job_name,
+                &next,
+                &self.fragments,
+                &next_layout,
+                input_resolver,
+                font_resolver,
+            )?;
+            return self.accept_full_reexecution(next_revision, next, next_layout, run);
+        };
         let substrate = self
             .substrate
             .as_ref()
             .ok_or(SessionError::MissingAcceptedSubstrate)?;
-        substrate.world().validate_recorded_inputs()?;
         let advance = execute_advance(
             &self.template,
             &mut self.pure_memo,
@@ -959,6 +976,14 @@ impl Session {
         for record in &mut history {
             record.revision = next_revision;
         }
+        let retained_substrate = match &pending_substrate {
+            PendingSubstrate::Retained { .. } => self
+                .substrate
+                .as_ref()
+                .ok_or(SessionError::MissingAcceptedSubstrate)?,
+            PendingSubstrate::Replaced(substrate) => substrate,
+        };
+        let history = retain_restorable_history(history, retained_substrate)?;
         let content_hash = ContentHash::from_bytes(next.as_bytes());
         Ok(PendingRevision {
             session_output_id: self.output_id,
@@ -1126,6 +1151,7 @@ impl Session {
         for record in &mut run.history {
             record.revision = self.revision;
         }
+        run.history = retain_restorable_history(run.history, &run.substrate)?;
         let substrate_bytes = run.substrate.charged_bytes();
         let diagnostic_bytes = self.diagnostic_retained_bytes();
         let (history, mut retention) = prune_history(
@@ -1157,6 +1183,59 @@ impl Session {
         ))
     }
 
+    fn accept_full_reexecution(
+        &mut self,
+        next_revision: RevisionId,
+        next_source: String,
+        next_layout: EditorLayout,
+        mut run: RevisionRun,
+    ) -> Result<AcceptedOutput, SessionError> {
+        for record in &mut run.history {
+            record.revision = next_revision;
+        }
+        run.history = retain_restorable_history(run.history, &run.substrate)?;
+        let substrate_bytes = run.substrate.charged_bytes();
+        let diagnostic_bytes = self
+            .fragments
+            .retained_bytes()
+            .saturating_add(next_layout.retained_bytes());
+        let (history, mut retention) = prune_history(
+            run.history,
+            self.checkpoint_budget,
+            substrate_bytes,
+            diagnostic_bytes,
+            run.output_bytes,
+        );
+        retention.memo_result_bytes = self.pure_memo.stats().retained_bytes;
+        let reuse = ReuseMetrics {
+            pages_retyped: run.artifacts.len(),
+            reexecuted_bytes: run.executed_bytes,
+            reexecuted_tokens: run.executed_tokens,
+            reexecuted_commands: run.executed_commands,
+            reexecuted_paragraphs: run.executed_paragraphs,
+            ..ReuseMetrics::default()
+        };
+
+        self.revision = next_revision;
+        self.source = next_source;
+        self.layout = next_layout;
+        self.content_hash = ContentHash::from_bytes(self.source.as_bytes());
+        self.history = history;
+        self.effects = run.effects;
+        self.artifacts = run.artifacts;
+        self.dvi_pages = run.dvi_pages;
+        self.substrate = Some(run.substrate);
+        self.fragments
+            .prune_for_layout(&self.layout, next_revision.raw(), next_revision.raw());
+        retention.diagnostic_bytes = self.diagnostic_retained_bytes();
+        retention.protected_overage_bytes = retention
+            .checkpoint_root_bytes
+            .saturating_add(retention.diagnostic_bytes)
+            .saturating_sub(self.checkpoint_budget);
+        self.accepted_retention = Some(retention);
+        Ok(self.output(reuse, retention))
+    }
+
     fn output(&self, reuse: ReuseMetrics, retention: RetentionMetrics) -> AcceptedOutput {
         AcceptedOutput {
             revision: self.revision,
@@ -1175,6 +1254,24 @@ impl Session {
             .retained_bytes()
             .saturating_add(self.layout.retained_bytes())
     }
+}
+
+fn retain_restorable_history(
+    history: Vec<BoundaryRecord>,
+    substrate: &GenerationSubstrate,
+) -> Result<Vec<BoundaryRecord>, SessionError> {
+    let mut retained = Vec::with_capacity(history.len());
+    for record in history {
+        match record.checkpoint.validate_retained_by(substrate) {
+            Ok(()) => retained.push(record),
+            Err(GenerationForkError::InvalidatedSnapshot) => {}
+            Err(error) => return Err(SessionError::Fork(error)),
+        }
+    }
+    if retained.is_empty() {
+        return Err(SessionError::MissingAcceptedSubstrate);
+    }
+    Ok(retained)
 }
 
 fn build_page_render_map(
@@ -1649,7 +1746,7 @@ fn replace_layout_range(
     )?)
 }
 
-fn select_restart(history: &[BoundaryRecord], old: &str, new: &str, edit: &Edit) -> usize {
+fn select_restart(history: &[BoundaryRecord], old: &str, new: &str, edit: &Edit) -> Option<usize> {
     history
         .iter()
         .enumerate()
@@ -1659,7 +1756,7 @@ fn select_restart(history: &[BoundaryRecord], old: &str, new: &str, edit: &Edit)
                 && old.as_bytes().get(..record.key.position)
                     == new.as_bytes().get(..record.key.position)
         })
-        .map_or(0, |(index, _)| index)
+        .map(|(index, _)| index)
 }
 
 struct DirectInputResolver;

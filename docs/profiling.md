@@ -38,6 +38,30 @@ bounded observation instead of retaining snapshots across iterations:
 GENTLE_PROFILE_ITERATIONS=200 scripts/profile-gentle.sh --checkpoints
 ```
 
+Pass `--incremental-edit` to measure a fixed semantic prose edit 20% through
+`gentle.tex`. The runner interleaves memo-disabled incremental execution,
+memo-enabled incremental execution, and a cold compile of the edited document;
+it reports latency and reuse/memo telemetry and requires both incremental modes
+to produce the cold compile's exact DVI bytes:
+
+```bash
+cargo run --profile profiling -p umber --bin gentle-profile -- \
+  --repo-root /path/to/umber2 --incremental-edit --iterations 5 --warmups 1
+```
+
+The fixed edit inserts 1,792 words into one paragraph beginning 19.66% through
+the source. It deliberately changes both line and page breaking: the pinned
+document grows from 97 to 98 pages, so the later 84-page suffix cannot be
+adopted. A five-sample optimized run on 2026-07-15 measured 3.986 seconds mean
+(2.940 seconds median) with memoization disabled, 7.304 seconds mean (7.222
+seconds median) with memoization enabled, and 2.875 seconds mean (2.740 seconds
+median) for a cold compile of the edited document. Memoization was therefore
+83% slower by the means and 146% slower by the medians. It made 7,140 lookups
+but only 385 hits, reached 67,008,455 retained bytes, and evicted 6,475 entries.
+Both incremental modes produced the cold compile's exact 98-page, 278,000-byte
+DVI. This is an intentional page-divergence stress case, not the expected case
+for suffix reuse.
+
 The runner requires the same external inputs as Gentle conformance. Populate
 them with `scripts/setup-conformance-tests.sh` if necessary.
 

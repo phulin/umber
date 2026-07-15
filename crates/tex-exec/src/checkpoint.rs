@@ -44,6 +44,15 @@ pub struct EngineCheckpoint {
 }
 
 impl EngineCheckpoint {
+    /// Verifies that this checkpoint still names restorable roots in `substrate`.
+    #[doc(hidden)]
+    pub fn validate_retained_by(
+        &self,
+        substrate: &GenerationSubstrate,
+    ) -> Result<(), GenerationForkError> {
+        substrate.validate_checkpoint_snapshot(&self.universe)
+    }
+
     #[must_use]
     pub const fn schema_version(&self) -> u32 {
         self.schema_version
