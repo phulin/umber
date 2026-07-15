@@ -474,8 +474,11 @@ pub fn prepare_pdftex_run_stores(stores: &mut Universe) {
 
 /// Restores driver-selected pdfTeX meanings after loading a format image.
 pub fn install_pdftex_format_primitives(stores: &mut Universe) {
-    tex_exec::install_etex_unexpandable_primitives(stores);
-    pdftex::install_pdftex_layer(stores);
+    tex_expand::register_expandable_primitives(stores);
+    tex_expand::register_etex_expandable_primitives(stores);
+    tex_exec::register_unexpandable_primitives(stores);
+    tex_exec::register_etex_unexpandable_primitives(stores);
+    pdftex::register_pdftex_layer(stores);
     stores.enable_pdf_output();
 }
 

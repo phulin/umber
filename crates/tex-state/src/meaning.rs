@@ -237,6 +237,14 @@ pub enum ExpandablePrimitive {
     RightMarginKern,
     PdfFontName,
     PdfFontObjectNumber,
+    /// Accesses the immutable original primitive table.
+    PdfPrimitive,
+    /// Tests current meaning against the same-spelling original primitive.
+    IfPdfPrimitive,
+    /// Compares absolute integer magnitudes.
+    IfPdfAbsNum,
+    /// Compares absolute dimension magnitudes.
+    IfPdfAbsDim,
 }
 
 impl ExpandablePrimitive {
@@ -309,6 +317,10 @@ impl ExpandablePrimitive {
             Self::RightMarginKern => 63,
             Self::PdfFontName => 64,
             Self::PdfFontObjectNumber => 65,
+            Self::PdfPrimitive => 66,
+            Self::IfPdfPrimitive => 67,
+            Self::IfPdfAbsNum => 68,
+            Self::IfPdfAbsDim => 69,
         }
     }
 
@@ -381,6 +393,10 @@ impl ExpandablePrimitive {
             63 => Some(Self::RightMarginKern),
             64 => Some(Self::PdfFontName),
             65 => Some(Self::PdfFontObjectNumber),
+            66 => Some(Self::PdfPrimitive),
+            67 => Some(Self::IfPdfPrimitive),
+            68 => Some(Self::IfPdfAbsNum),
+            69 => Some(Self::IfPdfAbsDim),
             _ => None,
         }
     }

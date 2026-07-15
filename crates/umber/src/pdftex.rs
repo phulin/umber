@@ -315,6 +315,10 @@ const PDFTEX_TOK_PARAMETERS: &[(&str, TokParam)] = &[
 
 pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
     for &name in PDFTEX_PRIMITIVE_NAMES {
+        if name == "ifincsname" {
+            // pdfTeX inherits this exact primitive from its e-TeX layer.
+            continue;
+        }
         let symbol = stores.intern(name);
         stores.set_meaning(
             symbol,
@@ -364,6 +368,26 @@ pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
     }
     tex_expand::install_pdftex_expandable_primitives(stores);
+    for &name in PDFTEX_PRIMITIVE_NAMES {
+        let symbol = stores.intern(name);
+        stores.register_primitive_meaning(name, stores.meaning(symbol));
+    }
+}
+
+/// Reconstructs pdfTeX's original primitive table after a format load without
+/// replacing live meanings restored from the format image.
+pub(crate) fn register_pdftex_layer(stores: &mut Universe) {
+    let mut pristine = Universe::default();
+    tex_expand::install_etex_expandable_primitives(&mut pristine);
+    install_pdftex_layer(&mut pristine);
+    for &name in PDFTEX_PRIMITIVE_NAMES {
+        stores.register_primitive_meaning(
+            name,
+            pristine
+                .primitive_meaning(name)
+                .expect("the pristine pdfTeX layer registers every inventory name"),
+        );
+    }
 }
 
 pub(crate) fn initialize_pdftex_parameter_defaults(stores: &mut Universe) {
@@ -482,6 +506,108 @@ mod tests {
             output,
             "140.27|This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025)",
         );
+    }
+
+    #[test]
+    fn pdftex_identity_expansion_uses_pdftex_character_catcodes() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let mut input = InputStack::new(MemoryInput::new(
+            "\\the\\pdftexversion\\pdftexrevision|\\pdftexbanner%",
+        ));
+        let mut context = tex_state::ExpansionContext::new(&mut stores);
+        while let Some(token) =
+            tex_expand::get_x_token(&mut input, &mut context).expect("identity expansion")
+        {
+            match tex_expand::semantic_token(token) {
+                Token::Char {
+                    ch: ' ',
+                    cat: Catcode::Space,
+                }
+                | Token::Char {
+                    cat: Catcode::Other,
+                    ..
+                } => {}
+                token => panic!("identity emitted a non-pdfTeX character token {token:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn primitive_identity_and_absolute_conditionals_match_pdftex() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let output = crate::run_memory_with_stores(
+            concat!(
+                "\\ifpdfprimitive\\count\\message{count-original}\\else\\message{count-bad}\\fi ",
+                "\\let\\countalias=\\count ",
+                "\\ifpdfprimitive\\countalias\\message{alias-bad}\\else\\message{alias-false}\\fi ",
+                "\\ifpdfprimitive\\undefinedname\\message{undefined-bad}\\else\\message{undefined-false}\\fi ",
+                "{\\def\\count{shadow}",
+                "\\ifpdfprimitive\\count\\message{shadow-bad}\\else\\message{shadow-false}\\fi ",
+                "\\pdfprimitive\\count0=12\\message{local-count=\\the\\pdfprimitive\\count0}}",
+                "\\pdfprimitive\\count0=37 ",
+                "\\ifpdfprimitive\\count\\message{restored}\\else\\message{restore-bad}\\fi ",
+                "\\def\\pdftexrevision{shadow-revision}",
+                "\\edef\\result{A\\pdfprimitive\\pdftexrevision B\\pdfprimitive\\undefinedname C}",
+                "\\message{result=\\result/count=\\the\\count0} ",
+                "\\ifpdfabsnum -3>2\\message{num-gt}\\else\\message{num-bad}\\fi ",
+                "\\ifpdfabsnum 2<-3\\message{num-lt}\\else\\message{num-bad}\\fi ",
+                "\\ifpdfabsnum -3=3\\message{num-eq}\\else\\message{num-bad}\\fi ",
+                "\\ifpdfabsdim -3pt>2pt\\message{dim-gt}\\else\\message{dim-bad}\\fi ",
+                "\\ifpdfabsdim 2pt<-3pt\\message{dim-lt}\\else\\message{dim-bad}\\fi ",
+                "\\ifpdfabsdim -3pt=3pt\\message{dim-eq}\\else\\message{dim-bad}\\fi ",
+                "\\end",
+            ),
+            &mut stores,
+        )
+        .expect("pdfTeX primitive utility execution");
+
+        for marker in [
+            "count-original",
+            "alias-false",
+            "undefined-false",
+            "shadow-false",
+            "restored",
+            "local-count=12",
+            "result=A.27BC/count=37",
+            "num-gt",
+            "num-lt",
+            "num-eq",
+            "dim-gt",
+            "dim-lt",
+            "dim-eq",
+        ] {
+            assert!(output.contains(marker), "missing {marker}: {output}");
+        }
+        assert!(!output.contains("-bad"), "{output}");
+    }
+
+    #[test]
+    fn primitive_registry_reconstructs_after_format_load_without_unshadowing() {
+        let mut source = Universe::default();
+        prepare_pdftex_run_stores(&mut source);
+        let count = source.intern("count");
+        let revision = source.intern("pdftexrevision");
+        source.set_meaning(count, Meaning::Relax);
+        source.set_meaning(revision, Meaning::Relax);
+        let format = source.dump_format().expect("dump shadowed format");
+        let mut loaded = Universe::from_format(World::default(), &format).expect("load format");
+        crate::install_pdftex_format_primitives(&mut loaded);
+
+        let output = crate::run_memory_with_stores(
+            concat!(
+                "\\ifpdfprimitive\\count\\message{count-bad}\\else\\message{count-shadowed}\\fi ",
+                "\\pdfprimitive\\count0=41 ",
+                "\\edef\\x{\\pdfprimitive\\pdftexrevision}",
+                "\\message{x=\\x/count=\\the\\pdfprimitive\\count0}\\end",
+            ),
+            &mut loaded,
+        )
+        .expect("run restored primitive registry");
+        assert!(output.contains("count-shadowed"), "{output}");
+        assert!(output.contains("x=.27/count=41"), "{output}");
+        assert!(!output.contains("count-bad"), "{output}");
     }
 
     #[test]

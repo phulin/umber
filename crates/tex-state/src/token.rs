@@ -4,11 +4,25 @@ use crate::interner::Symbol;
 
 /// Inaccessible TeX82 control tokens used only by engine-owned input replay.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct FrozenToken(u8);
+pub struct FrozenToken(u16);
 
 impl FrozenToken {
     pub(crate) const END_TEMPLATE: Self = Self(0);
     pub(crate) const END_V: Self = Self(1);
+    const PRIMITIVE_BASE: u16 = 2;
+
+    pub(crate) const fn primitive(index: u16) -> Self {
+        Self(Self::PRIMITIVE_BASE + index)
+    }
+
+    #[must_use]
+    pub const fn primitive_index(self) -> Option<u16> {
+        if self.0 >= Self::PRIMITIVE_BASE {
+            Some(self.0 - Self::PRIMITIVE_BASE)
+        } else {
+            None
+        }
+    }
 }
 
 /// TeX category codes, shared by lexing and token storage.
@@ -73,6 +87,10 @@ impl Token {
     #[must_use]
     pub(crate) const fn frozen_endv() -> Self {
         Self::Frozen(FrozenToken::END_V)
+    }
+
+    pub(crate) const fn frozen_primitive(index: u16) -> Self {
+        Self::Frozen(FrozenToken::primitive(index))
     }
 
     /// Whether this is TeX82's inaccessible `frozen_end_template` token.
@@ -212,9 +230,7 @@ impl TracedTokenWord {
                 debug_assert!(slot < 16);
                 (Self::KIND_PARAM, u32::from(slot))
             }
-            Token::Frozen(FrozenToken::END_TEMPLATE) => (Self::KIND_FROZEN, 0),
-            Token::Frozen(FrozenToken::END_V) => (Self::KIND_FROZEN, 1),
-            Token::Frozen(_) => unreachable!("invalid frozen token payload"),
+            Token::Frozen(token) => (Self::KIND_FROZEN, u32::from(token.0)),
         };
         Self(
             (kind << Self::KIND_SHIFT)
@@ -248,11 +264,9 @@ impl TracedTokenWord {
                 1..=9 => Some(Token::Param(payload as u8)),
                 _ => None,
             },
-            Self::KIND_FROZEN => match payload {
-                0 => Some(Token::Frozen(FrozenToken::END_TEMPLATE)),
-                1 => Some(Token::Frozen(FrozenToken::END_V)),
-                _ => None,
-            },
+            Self::KIND_FROZEN if payload <= u16::MAX as u32 => {
+                Some(Token::Frozen(FrozenToken(payload as u16)))
+            }
             _ => None,
         }
     }

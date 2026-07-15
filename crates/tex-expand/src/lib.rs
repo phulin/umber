@@ -69,6 +69,16 @@ pub use values::{
 /// Installs the expandable TeX82 primitives currently implemented by this
 /// crate into the provided state facade.
 pub fn install_expandable_primitives(stores: &mut Universe) {
+    configure_expandable_primitives(stores, true);
+}
+
+/// Reconstructs TeX82's immutable primitive lookup table without replacing
+/// live meanings restored from a format.
+pub fn register_expandable_primitives(stores: &mut Universe) {
+    configure_expandable_primitives(stores, false);
+}
+
+fn configure_expandable_primitives(stores: &mut Universe, install: bool) {
     for (name, primitive) in [
         (
             "expandafter",
@@ -136,14 +146,27 @@ pub fn install_expandable_primitives(stores: &mut Universe) {
         ("or", tex_state::meaning::ExpandablePrimitive::Or),
         ("fi", tex_state::meaning::ExpandablePrimitive::Fi),
     ] {
-        let symbol = stores.intern(name);
-        stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
+        let meaning = Meaning::ExpandablePrimitive(primitive);
+        stores.register_primitive_meaning(name, meaning);
+        if install {
+            let symbol = stores.intern(name);
+            stores.set_meaning(symbol, meaning);
+        }
     }
 }
 
 /// Installs expandable primitives that exist only in e-TeX extended mode.
 pub fn install_etex_expandable_primitives(stores: &mut Universe) {
     stores.set_int_param_global(tex_state::env::banks::IntParam::ETEX_EXTENDED_MODE, 1);
+    configure_etex_expandable_primitives(stores, true);
+}
+
+/// Reconstructs e-TeX's immutable primitive lookup table after format load.
+pub fn register_etex_expandable_primitives(stores: &mut Universe) {
+    configure_etex_expandable_primitives(stores, false);
+}
+
+fn configure_etex_expandable_primitives(stores: &mut Universe, install: bool) {
     for (name, primitive) in [
         (
             "unexpanded",
@@ -199,8 +222,12 @@ pub fn install_etex_expandable_primitives(stores: &mut Universe) {
             tex_state::meaning::ExpandablePrimitive::SplitBotMarks,
         ),
     ] {
-        let symbol = stores.intern(name);
-        stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
+        let meaning = Meaning::ExpandablePrimitive(primitive);
+        stores.register_primitive_meaning(name, meaning);
+        if install {
+            let symbol = stores.intern(name);
+            stores.set_meaning(symbol, meaning);
+        }
     }
     for (name, value) in [
         (
@@ -232,8 +259,12 @@ pub fn install_etex_expandable_primitives(stores: &mut Universe) {
             tex_state::meaning::InternalInteger::LastNodeType,
         ),
     ] {
-        let symbol = stores.intern(name);
-        stores.set_meaning(symbol, Meaning::InternalInteger(value));
+        let meaning = Meaning::InternalInteger(value);
+        stores.register_primitive_meaning(name, meaning);
+        if install {
+            let symbol = stores.intern(name);
+            stores.set_meaning(symbol, meaning);
+        }
     }
 }
 
@@ -262,8 +293,7 @@ pub fn install_latex_expandable_primitives(stores: &mut Universe) {
             tex_state::meaning::ExpandablePrimitive::CreationDate,
         ),
     ] {
-        let symbol = stores.intern(name);
-        stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
+        stores.install_primitive_meaning(name, Meaning::ExpandablePrimitive(primitive));
     }
 }
 
@@ -305,13 +335,27 @@ pub fn install_pdftex_expandable_primitives(stores: &mut Universe) {
             "rightmarginkern",
             tex_state::meaning::ExpandablePrimitive::RightMarginKern,
         ),
+        (
+            "pdfprimitive",
+            tex_state::meaning::ExpandablePrimitive::PdfPrimitive,
+        ),
+        (
+            "ifpdfprimitive",
+            tex_state::meaning::ExpandablePrimitive::IfPdfPrimitive,
+        ),
+        (
+            "ifpdfabsnum",
+            tex_state::meaning::ExpandablePrimitive::IfPdfAbsNum,
+        ),
+        (
+            "ifpdfabsdim",
+            tex_state::meaning::ExpandablePrimitive::IfPdfAbsDim,
+        ),
     ] {
-        let symbol = stores.intern(name);
-        stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
+        stores.install_primitive_meaning(name, Meaning::ExpandablePrimitive(primitive));
     }
-    let version = stores.intern("pdftexversion");
-    stores.set_meaning(
-        version,
+    stores.install_primitive_meaning(
+        "pdftexversion",
         Meaning::InternalInteger(tex_state::meaning::InternalInteger::PdfTeXVersion),
     );
 }
@@ -503,6 +547,10 @@ pub enum ExpandableOpcode {
     PdfTeXBanner,
     PdfFontName,
     PdfFontObjectNumber,
+    PdfPrimitive,
+    IfPdfPrimitive,
+    IfPdfAbsNum,
+    IfPdfAbsDim,
     IfDefined,
     IfCsName,
     IfInCsName,
@@ -1152,6 +1200,15 @@ pub trait ExpansionMode {
         expansion: &mut ExpansionContext<'_>,
     ) -> Result<Dispatch, ExpandError>;
 
+    fn dispatch_known_meaning(
+        &mut self,
+        token: TracedTokenWord,
+        meaning: Meaning,
+        input: &mut InputStack,
+        stores: &mut tex_state::ExpansionContext<'_>,
+        expansion: &mut ExpansionContext<'_>,
+    ) -> Result<Dispatch, ExpandError>;
+
     fn dispatch_inverted_raw_token(
         &mut self,
         token: TracedTokenWord,
@@ -1200,6 +1257,24 @@ impl ExpansionMode for RestrictedExpansionMode {
         expansion: &mut ExpansionContext<'_>,
     ) -> Result<Dispatch, ExpandError> {
         dispatch_one_raw_token_with_context(token, input, stores, expansion)
+    }
+
+    fn dispatch_known_meaning(
+        &mut self,
+        token: TracedTokenWord,
+        meaning: Meaning,
+        input: &mut InputStack,
+        stores: &mut tex_state::ExpansionContext<'_>,
+        expansion: &mut ExpansionContext<'_>,
+    ) -> Result<Dispatch, ExpandError> {
+        dispatch::dispatch_without_input_open(
+            semantic_token(token),
+            token.origin(),
+            input,
+            stores,
+            expansion,
+            meaning,
+        )
     }
 
     fn dispatch_inverted_raw_token(
@@ -1253,6 +1328,24 @@ impl ExpansionMode for DriverExpansionMode {
         };
         let meaning = expansion.resolve_meaning(input, stores, symbol);
         expansion.record_meaning(symbol, meaning);
+        dispatch::dispatch_with_context(
+            semantic_token(token),
+            token.origin(),
+            input,
+            stores,
+            expansion,
+            meaning,
+        )
+    }
+
+    fn dispatch_known_meaning(
+        &mut self,
+        token: TracedTokenWord,
+        meaning: Meaning,
+        input: &mut InputStack,
+        stores: &mut tex_state::ExpansionContext<'_>,
+        expansion: &mut ExpansionContext<'_>,
+    ) -> Result<Dispatch, ExpandError> {
         dispatch::dispatch_with_context(
             semantic_token(token),
             token.origin(),
@@ -1467,6 +1560,22 @@ fn get_x_token_with_context_inner(
                 stores.frozen_endv_token(),
                 read.origin(),
             )));
+        }
+
+        if let Some(meaning) = stores.frozen_primitive_meaning(token) {
+            let dispatched =
+                dispatch_with_context(token, read.origin(), input, stores, expansion, meaning);
+            match dispatched {
+                Ok(Dispatch::Continue) => continue,
+                Ok(Dispatch::Deliver(delivered) | Dispatch::DeliverNoExpand(delivered)) => {
+                    return Ok(Some(delivered));
+                }
+                Ok(push @ (Dispatch::Push { .. } | Dispatch::PushTransient { .. })) => {
+                    apply_dispatch_push(input, push);
+                    continue;
+                }
+                Err(error) => return Err(error.capture(input)),
+            }
         }
 
         if read.suppress_expansion() && !(command_demand && read.expand_for_command_demand()) {

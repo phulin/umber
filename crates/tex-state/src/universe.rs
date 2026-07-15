@@ -121,6 +121,18 @@ pub trait ExpansionState {
         None
     }
     fn meaning(&self, symbol: Symbol) -> Meaning;
+    /// Original engine primitive meaning registered for a control-sequence
+    /// spelling, independent of the sequence's current (possibly shadowed)
+    /// meaning.
+    fn primitive_meaning(&self, _name: &str) -> Option<Meaning> {
+        None
+    }
+    fn primitive_token(&self, _name: &str) -> Option<Token> {
+        None
+    }
+    fn frozen_primitive_meaning(&self, _token: Token) -> Option<Meaning> {
+        None
+    }
     fn macro_definition(&self, id: MacroDefinitionId) -> MacroMeaning;
     fn macro_definition_parameter_pattern(
         &self,
@@ -877,6 +889,12 @@ pub struct Universe {
     editor_content_hash: Option<ContentHash>,
     page: PageBuilderState,
     pdf: PdfState,
+    /// Driver-selected immutable primitive table. This is engine-mode
+    /// metadata, not groupable or format semantic state; format drivers
+    /// reconstruct it after loading.
+    primitive_meanings: HashMap<String, Meaning>,
+    primitive_meanings_by_index: Vec<Meaning>,
+    primitive_indices: HashMap<String, u16>,
     state_hash_base: StateHashBase,
     state_hash_projection_cache: StateHashProjectionCache,
     next_snapshot_serial: u64,
@@ -996,6 +1014,9 @@ impl Clone for Universe {
             editor_content_hash: self.editor_content_hash,
             page: self.page.clone(),
             pdf: self.pdf.clone(),
+            primitive_meanings: self.primitive_meanings.clone(),
+            primitive_meanings_by_index: self.primitive_meanings_by_index.clone(),
+            primitive_indices: self.primitive_indices.clone(),
             state_hash_base,
             state_hash_projection_cache: self.state_hash_projection_cache.clone(),
             next_snapshot_serial: self.next_snapshot_serial,
@@ -1053,11 +1074,62 @@ impl Universe {
             editor_content_hash: None,
             page,
             pdf,
+            primitive_meanings: HashMap::new(),
+            primitive_meanings_by_index: Vec::new(),
+            primitive_indices: HashMap::new(),
             state_hash_base,
             state_hash_projection_cache: StateHashProjectionCache::default(),
             next_snapshot_serial: 0,
             fork_origin: None,
         }
+    }
+
+    /// Registers an original primitive meaning without changing the live
+    /// control sequence. Used to reconstruct engine identity after format
+    /// loading, where the current meaning may intentionally be shadowed.
+    pub fn register_primitive_meaning(&mut self, name: &str, meaning: Meaning) {
+        match self.primitive_meanings.insert(name.to_owned(), meaning) {
+            Some(previous) => assert_eq!(
+                previous, meaning,
+                "primitive {name} was registered with conflicting meanings"
+            ),
+            None => {
+                let index = u16::try_from(self.primitive_meanings_by_index.len())
+                    .expect("primitive registry exceeds frozen-token capacity");
+                self.primitive_meanings_by_index.push(meaning);
+                self.primitive_indices.insert(name.to_owned(), index);
+            }
+        }
+    }
+
+    /// Registers and installs one primitive meaning.
+    pub fn install_primitive_meaning(&mut self, name: &str, meaning: Meaning) {
+        self.register_primitive_meaning(name, meaning);
+        let symbol = self.intern(name);
+        self.set_meaning(symbol, meaning);
+    }
+
+    #[must_use]
+    pub fn primitive_meaning(&self, name: &str) -> Option<Meaning> {
+        self.primitive_meanings.get(name).copied()
+    }
+
+    #[must_use]
+    pub fn primitive_token(&self, name: &str) -> Option<Token> {
+        self.primitive_indices
+            .get(name)
+            .copied()
+            .map(Token::frozen_primitive)
+    }
+
+    #[must_use]
+    pub fn frozen_primitive_meaning(&self, token: Token) -> Option<Meaning> {
+        let Token::Frozen(frozen) = token else {
+            return None;
+        };
+        self.primitive_meanings_by_index
+            .get(usize::from(frozen.primitive_index()?))
+            .copied()
     }
 
     /// Projects executor-owned roots into the same allocation-independent
@@ -1177,6 +1249,9 @@ impl Universe {
             editor_content_hash: None,
             page,
             pdf,
+            primitive_meanings: HashMap::new(),
+            primitive_meanings_by_index: Vec::new(),
+            primitive_indices: HashMap::new(),
             state_hash_base,
             state_hash_projection_cache: StateHashProjectionCache::default(),
             next_snapshot_serial: 0,
@@ -4175,6 +4250,18 @@ impl ExpansionState for ExpansionContext<'_> {
     fn meaning(&self, symbol: Symbol) -> Meaning {
         self.universe
             .meaning(self.universe.stores.resolve_stored_symbol(symbol))
+    }
+
+    fn primitive_meaning(&self, name: &str) -> Option<Meaning> {
+        self.universe.primitive_meaning(name)
+    }
+
+    fn primitive_token(&self, name: &str) -> Option<Token> {
+        self.universe.primitive_token(name)
+    }
+
+    fn frozen_primitive_meaning(&self, token: Token) -> Option<Meaning> {
+        self.universe.frozen_primitive_meaning(token)
     }
 
     fn macro_definition(&self, id: MacroDefinitionId) -> MacroMeaning {

@@ -454,6 +454,32 @@ macro_rules! dispatch_match {
                     call_origin,
                 ))
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfPrimitive) => {
+                let Some(target) = crate::next_semantic_raw_token(input, stores)? else {
+                    return Err(ExpandError::MissingTokenAfterPrimitive {
+                        opcode: ExpandableOpcode::PdfPrimitive,
+                        context: call_context,
+                    });
+                };
+                let Token::Cs(symbol) = crate::semantic_token(target) else {
+                    return Ok(Dispatch::Continue);
+                };
+                let name = stores.resolve(symbol).to_owned();
+                let Some(original) = stores.primitive_meaning(&name) else {
+                    return Ok(Dispatch::Continue);
+                };
+                if matches!(original, Meaning::ExpandablePrimitive(_)) {
+                    mode.dispatch_known_meaning(target, original, input, stores, expansion)
+                } else {
+                    let frozen = stores
+                        .primitive_token(&name)
+                        .expect("a registered primitive has a frozen token");
+                    Ok(Dispatch::Deliver(TracedTokenWord::pack(
+                        frozen,
+                        target.origin(),
+                    )))
+                }
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => $input_arm,
             Meaning::ExpandablePrimitive(ExpandablePrimitive::EndInput) => {
                 input.end_current_source_after_current_line();
@@ -641,6 +667,25 @@ macro_rules! dispatch_match {
                     frame_token,
                 )
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::IfPdfAbsNum) => {
+                let frame_token = begin_if_evaluation(input, call_context, ConditionMetadata::new(22, $invert));
+                let left = scan_int::scan_int_with_mode_and_context(
+                    input, stores, expansion, mode, call_context,
+                )?.value();
+                let left = absolute_magnitude(left);
+                let relation = scan_conditional_relation_with_mode_and_context(
+                    input, stores, expansion, mode, call_context,
+                )?;
+                let right = scan_int::scan_int_with_mode_and_context(
+                    input, stores, expansion, mode, call_context,
+                )?.value();
+                let right = absolute_magnitude(right);
+                complete_if_evaluation(
+                    input, stores, expansion,
+                    compare_ordered(left, relation, right) ^ $invert,
+                    frame_token,
+                )
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfDim) => {
                 let frame_token = begin_if_evaluation(input, call_context, ConditionMetadata::new(4, $invert));
                 let left = scan_dimen::scan_dimen_with_mode_and_context(
@@ -668,6 +713,27 @@ macro_rules! dispatch_match {
                 complete_if_evaluation(
                     input,
                     stores, expansion,
+                    compare_ordered(left, relation, right) ^ $invert,
+                    frame_token,
+                )
+            }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::IfPdfAbsDim) => {
+                let frame_token = begin_if_evaluation(input, call_context, ConditionMetadata::new(23, $invert));
+                let left = scan_dimen::scan_dimen_with_mode_and_context(
+                    input, stores, expansion, mode,
+                    scan_dimen::ScanDimenOptions::STANDARD, call_context,
+                )?.value().raw();
+                let left = absolute_magnitude(left);
+                let relation = scan_conditional_relation_with_mode_and_context(
+                    input, stores, expansion, mode, call_context,
+                )?;
+                let right = scan_dimen::scan_dimen_with_mode_and_context(
+                    input, stores, expansion, mode,
+                    scan_dimen::ScanDimenOptions::STANDARD, call_context,
+                )?.value().raw();
+                let right = absolute_magnitude(right);
+                complete_if_evaluation(
+                    input, stores, expansion,
                     compare_ordered(left, relation, right) ^ $invert,
                     frame_token,
                 )
@@ -848,6 +914,27 @@ macro_rules! dispatch_match {
                     stores, expansion,
                     defined ^ $invert,
                     frame_token,
+                )
+            }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::IfPdfPrimitive) => {
+                let frame_token = begin_if_evaluation(input, call_context, ConditionMetadata::new(21, $invert));
+                let Some(target) = crate::next_semantic_raw_token(input, stores)? else {
+                    return Err(ExpandError::MissingTokenAfterPrimitive {
+                        opcode: ExpandableOpcode::IfPdfPrimitive,
+                        context: call_context,
+                    });
+                };
+                let primitive = match crate::semantic_token(target) {
+                    Token::Cs(symbol) => {
+                        let current = stores.meaning(symbol);
+                        expansion.record_meaning(symbol, current);
+                        stores.primitive_meaning(stores.resolve(symbol)) == Some(current)
+                            && current != Meaning::Undefined
+                    }
+                    _ => false,
+                };
+                complete_if_evaluation(
+                    input, stores, expansion, primitive ^ $invert, frame_token,
                 )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfCsName) => {
@@ -1264,6 +1351,9 @@ fn is_boolean_conditional(primitive: ExpandablePrimitive) -> bool {
             | ExpandablePrimitive::IfCsName
             | ExpandablePrimitive::IfInCsName
             | ExpandablePrimitive::IfFontChar
+            | ExpandablePrimitive::IfPdfPrimitive
+            | ExpandablePrimitive::IfPdfAbsNum
+            | ExpandablePrimitive::IfPdfAbsDim
     )
 }
 
@@ -1295,6 +1385,10 @@ pub fn dispatch_expandable_opcode(opcode: ExpandableOpcode) -> Result<(), Expand
         | ExpandableOpcode::PdfTeXBanner
         | ExpandableOpcode::PdfFontName
         | ExpandableOpcode::PdfFontObjectNumber
+        | ExpandableOpcode::PdfPrimitive
+        | ExpandableOpcode::IfPdfPrimitive
+        | ExpandableOpcode::IfPdfAbsNum
+        | ExpandableOpcode::IfPdfAbsDim
         | ExpandableOpcode::IfDefined
         | ExpandableOpcode::IfCsName
         | ExpandableOpcode::IfInCsName

@@ -51,12 +51,19 @@ where
         });
     };
     let semantic = crate::semantic_token(token);
-    let Token::Cs(symbol) = semantic else {
-        return Err(ExpandError::UnsupportedTheTarget { context: token });
+    let mut live_symbol = None;
+    let meaning = match semantic {
+        Token::Cs(symbol) => {
+            live_symbol = Some(symbol);
+            let meaning = stores.meaning(symbol);
+            expansion.record_meaning(symbol, meaning);
+            meaning
+        }
+        Token::Frozen(_) => stores
+            .frozen_primitive_meaning(semantic)
+            .ok_or(ExpandError::UnsupportedTheTarget { context: token })?,
+        _ => return Err(ExpandError::UnsupportedTheTarget { context: token }),
     };
-
-    let meaning = stores.meaning(symbol);
-    expansion.record_meaning(symbol, meaning);
     record_meaning_value_dependency(expansion, meaning);
     match meaning {
         Meaning::UnexpandablePrimitive(primitive) => match primitive {
@@ -724,7 +731,7 @@ where
                 macro_invocation: OriginId::UNKNOWN,
             })
         }
-        _ => match stores.resolve(symbol) {
+        _ => match live_symbol.map_or("", |symbol| stores.resolve(symbol)) {
             "count" => {
                 let index = scan_helpers::scan_register_index_with_mode_and_context(
                     input, stores, expansion, mode, token,

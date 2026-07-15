@@ -115,8 +115,9 @@ fn frozen_alignment_tokens_round_trip_as_distinct_non_symbol_tokens() {
 #[test]
 fn packed_token_decode_rejects_unrepresentable_payloads() {
     let origin = OriginId::from_raw(99);
-    let bad_frozen =
-        TracedTokenWord::from_raw((3_u64 << 62) | (2_u64 << 32) | u64::from(origin.raw()));
+    let bad_frozen = TracedTokenWord::from_raw(
+        (3_u64 << 62) | (u64::from(u16::MAX) + 1) << 32 | u64::from(origin.raw()),
+    );
     let bad_param_zero = TracedTokenWord::from_raw(2_u64 << 62);
     let bad_param_ten = TracedTokenWord::from_raw((2_u64 << 62) | (10_u64 << 32));
     let bad_char_scalar = TracedTokenWord::from_raw(0x11_0000_u64 << 36);

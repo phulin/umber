@@ -69,7 +69,10 @@ pub(crate) use paragraph::{
     interrupt_paragraph_for_display, make_indent_box, normal_paragraph,
 };
 use pdf_fonts::*;
-pub use primitives::{install_etex_unexpandable_primitives, install_unexpandable_primitives};
+pub use primitives::{
+    install_etex_unexpandable_primitives, install_unexpandable_primitives,
+    register_etex_unexpandable_primitives, register_unexpandable_primitives,
+};
 use scanning::*;
 pub(crate) use scanning::{
     is_assignment_target_meaning, next_non_space_traced_x, next_non_space_x, scan_glue_id,

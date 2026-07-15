@@ -95,6 +95,19 @@ fn pdf_font_enquiries_reject_nullfont() {
     );
 }
 
+#[test]
+fn pdftex_absolute_conditionals_handle_signed_minimum_without_overflow() {
+    assert_eq!(
+        crate::conditionals::absolute_magnitude(i32::MIN),
+        2_147_483_648
+    );
+    assert_eq!(
+        crate::conditionals::absolute_magnitude(i32::MAX),
+        2_147_483_647
+    );
+    assert_eq!(crate::conditionals::absolute_magnitude(-1), 1);
+}
+
 #[cfg(feature = "profiling-stats")]
 #[test]
 fn macro_site_meaning_cache_is_expansion_owned_and_guarded() {

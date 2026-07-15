@@ -18,6 +18,11 @@ pub(crate) struct ConditionMetadata {
     inverted: bool,
 }
 
+/// Returns a magnitude without overflowing on the signed minimum.
+pub(crate) const fn absolute_magnitude(value: i32) -> u32 {
+    value.unsigned_abs()
+}
+
 impl ConditionMetadata {
     pub(crate) const fn new(if_type: u8, inverted: bool) -> Self {
         Self { if_type, inverted }
@@ -498,7 +503,10 @@ fn skipped_conditional_control(
             | ExpandablePrimitive::IfEof
             | ExpandablePrimitive::IfDefined
             | ExpandablePrimitive::IfCsName
-            | ExpandablePrimitive::IfFontChar,
+            | ExpandablePrimitive::IfFontChar
+            | ExpandablePrimitive::IfPdfPrimitive
+            | ExpandablePrimitive::IfPdfAbsNum
+            | ExpandablePrimitive::IfPdfAbsDim,
         ) => Ok(Some(ConditionalPrimitive::If)),
         Meaning::ExpandablePrimitive(ExpandablePrimitive::Else) => {
             Ok(Some(ConditionalPrimitive::Else))

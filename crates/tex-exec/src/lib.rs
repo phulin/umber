@@ -24,7 +24,9 @@ mod transaction;
 mod vertical;
 
 pub use assignments::{
-    install_etex_unexpandable_primitives, install_unexpandable_primitives, try_execute_assignment,
+    install_etex_unexpandable_primitives, install_unexpandable_primitives,
+    register_etex_unexpandable_primitives, register_unexpandable_primitives,
+    try_execute_assignment,
 };
 pub use checkpoint::{
     CheckpointSink, ENGINE_CHECKPOINT_SCHEMA_VERSION, EditorRestoreError, EngineBoundary,

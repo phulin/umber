@@ -108,6 +108,9 @@ pub(crate) fn dispatch_delivered_token_with_context(
         Token::Char { .. } => {
             return dispatch_character_token(nest, traced, input, stores, execution);
         }
+        Token::Frozen(_) if stores.frozen_primitive_meaning(token).is_some() => stores
+            .frozen_primitive_meaning(token)
+            .expect("guard established frozen primitive meaning"),
         Token::Param(_) | Token::Frozen(_) => {
             return Ok(DispatchAction::NotConsumed);
         }

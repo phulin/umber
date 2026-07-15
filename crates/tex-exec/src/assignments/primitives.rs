@@ -3,6 +3,16 @@ use tex_state::meaning::InternalInteger;
 use tex_state::page::{PageDimension, PageInteger};
 
 pub fn install_unexpandable_primitives(stores: &mut Universe) {
+    configure_unexpandable_primitives(stores, true);
+}
+
+/// Reconstructs TeX82's original primitive table without replacing meanings
+/// restored from a format.
+pub fn register_unexpandable_primitives(stores: &mut Universe) {
+    configure_unexpandable_primitives(stores, false);
+}
+
+fn configure_unexpandable_primitives(stores: &mut Universe, install: bool) {
     for (name, primitive) in [
         ("def", UnexpandablePrimitive::Def),
         ("edef", UnexpandablePrimitive::Edef),
@@ -10,7 +20,6 @@ pub fn install_unexpandable_primitives(stores: &mut Universe) {
         ("xdef", UnexpandablePrimitive::Xdef),
         ("let", UnexpandablePrimitive::Let),
         ("futurelet", UnexpandablePrimitive::FutureLet),
-        ("globaldefs", UnexpandablePrimitive::GlobalDefs),
         ("global", UnexpandablePrimitive::Global),
         ("begingroup", UnexpandablePrimitive::BeginGroup),
         ("endgroup", UnexpandablePrimitive::EndGroup),
@@ -182,52 +191,79 @@ pub fn install_unexpandable_primitives(stores: &mut Universe) {
         ("end", UnexpandablePrimitive::End),
         ("dump", UnexpandablePrimitive::Dump),
     ] {
-        let symbol = stores.intern(name);
-        stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+        configure_primitive(
+            stores,
+            install,
+            name,
+            Meaning::UnexpandablePrimitive(primitive),
+        );
     }
-    let relax = stores.intern("relax");
-    stores.set_meaning(relax, Meaning::Relax);
+    configure_primitive(stores, install, "relax", Meaning::Relax);
     let nullfont = stores.intern("nullfont");
-    stores.set_meaning(nullfont, Meaning::Font(tex_state::font::NULL_FONT));
-    stores.set_font_identifier_symbol(tex_state::font::NULL_FONT, nullfont);
-    stores.set_current_font_selector_global(nullfont, tex_state::font::NULL_FONT);
-    install_parameter_meanings(stores);
-    install_page_meanings(stores);
-    let badness = stores.intern("badness");
-    stores.set_meaning(badness, Meaning::InternalInteger(InternalInteger::Badness));
-    let inputlineno = stores.intern("inputlineno");
-    stores.set_meaning(
-        inputlineno,
+    configure_primitive(
+        stores,
+        install,
+        "nullfont",
+        Meaning::Font(tex_state::font::NULL_FONT),
+    );
+    if install {
+        stores.set_font_identifier_symbol(tex_state::font::NULL_FONT, nullfont);
+        stores.set_current_font_selector_global(nullfont, tex_state::font::NULL_FONT);
+    }
+    configure_parameter_meanings(stores, install);
+    configure_page_meanings(stores, install);
+    configure_primitive(
+        stores,
+        install,
+        "badness",
+        Meaning::InternalInteger(InternalInteger::Badness),
+    );
+    configure_primitive(
+        stores,
+        install,
+        "inputlineno",
         Meaning::InternalInteger(InternalInteger::InputLineNumber),
     );
 }
 
-fn install_parameter_meanings(stores: &mut Universe) {
-    for &(name, index) in INT_PARAMS {
+fn configure_primitive(stores: &mut Universe, install: bool, name: &str, meaning: Meaning) {
+    stores.register_primitive_meaning(name, meaning);
+    if install {
         let symbol = stores.intern(name);
-        stores.set_meaning(symbol, Meaning::IntParam(index));
+        stores.set_meaning(symbol, meaning);
+    }
+}
+
+fn configure_parameter_meanings(stores: &mut Universe, install: bool) {
+    for &(name, index) in INT_PARAMS {
+        configure_primitive(stores, install, name, Meaning::IntParam(index));
     }
     for &(name, index) in DIMEN_PARAMS {
-        let symbol = stores.intern(name);
-        stores.set_meaning(symbol, Meaning::DimenParam(index));
+        configure_primitive(stores, install, name, Meaning::DimenParam(index));
     }
     for &(name, index) in GLUE_PARAMS {
-        let symbol = stores.intern(name);
-        stores.set_meaning(symbol, Meaning::GlueParam(index));
+        configure_primitive(stores, install, name, Meaning::GlueParam(index));
     }
     for &(name, index) in MU_GLUE_PARAMS {
-        let symbol = stores.intern(name);
-        stores.set_meaning(symbol, Meaning::MuGlueParam(index));
+        configure_primitive(stores, install, name, Meaning::MuGlueParam(index));
     }
     for &(name, index) in TOK_PARAMS {
-        let symbol = stores.intern(name);
-        stores.set_meaning(symbol, Meaning::TokParam(index));
+        configure_primitive(stores, install, name, Meaning::TokParam(index));
     }
 }
 
 /// Installs unexpandable primitives that exist only in e-TeX extended mode.
 pub fn install_etex_unexpandable_primitives(stores: &mut Universe) {
     stores.set_int_param_global(IntParam::ETEX_EXTENDED_MODE, 1);
+    configure_etex_unexpandable_primitives(stores, true);
+}
+
+/// Reconstructs e-TeX's original primitive table after format load.
+pub fn register_etex_unexpandable_primitives(stores: &mut Universe) {
+    configure_etex_unexpandable_primitives(stores, false);
+}
+
+fn configure_etex_unexpandable_primitives(stores: &mut Universe, install: bool) {
     for (name, primitive) in [
         ("protected", UnexpandablePrimitive::Protected),
         ("readline", UnexpandablePrimitive::ReadLine),
@@ -271,14 +307,23 @@ pub fn install_etex_unexpandable_primitives(stores: &mut Universe) {
         ("pagediscards", UnexpandablePrimitive::PageDiscards),
         ("splitdiscards", UnexpandablePrimitive::SplitDiscards),
     ] {
-        let symbol = stores.intern(name);
-        stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+        configure_primitive(
+            stores,
+            install,
+            name,
+            Meaning::UnexpandablePrimitive(primitive),
+        );
     }
-    let everyeof = stores.intern("everyeof");
-    stores.set_meaning(everyeof, Meaning::TokParam(TokParam::EVERY_EOF.raw()));
-    let tracing_scantokens = stores.intern("tracingscantokens");
-    stores.set_meaning(
-        tracing_scantokens,
+    configure_primitive(
+        stores,
+        install,
+        "everyeof",
+        Meaning::TokParam(TokParam::EVERY_EOF.raw()),
+    );
+    configure_primitive(
+        stores,
+        install,
+        "tracingscantokens",
         Meaning::IntParam(IntParam::TRACING_SCAN_TOKENS.raw()),
     );
     for (name, parameter) in [
@@ -292,19 +337,16 @@ pub fn install_etex_unexpandable_primitives(stores: &mut Universe) {
         ("lastlinefit", IntParam::LAST_LINE_FIT),
         ("savinghyphcodes", IntParam::SAVING_HYPH_CODES),
     ] {
-        let symbol = stores.intern(name);
-        stores.set_meaning(symbol, Meaning::IntParam(parameter.raw()));
+        configure_primitive(stores, install, name, Meaning::IntParam(parameter.raw()));
     }
 }
 
-fn install_page_meanings(stores: &mut Universe) {
+fn configure_page_meanings(stores: &mut Universe, install: bool) {
     for &(name, dimension) in PAGE_DIMENSIONS {
-        let symbol = stores.intern(name);
-        stores.set_meaning(symbol, Meaning::PageDimension(dimension));
+        configure_primitive(stores, install, name, Meaning::PageDimension(dimension));
     }
     for &(name, integer) in PAGE_INTEGERS {
-        let symbol = stores.intern(name);
-        stores.set_meaning(symbol, Meaning::PageInteger(integer));
+        configure_primitive(stores, install, name, Meaning::PageInteger(integer));
     }
 }
 
