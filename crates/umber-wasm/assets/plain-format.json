@@ -1,13 +1,13 @@
 {
   "schema": 1,
   "name": "plain",
-  "object": "sha256-63ef26336ec710434edfd8fb05dbe79ed6bec8268ccde80b6b48c42322b01966",
-  "sha256": "63ef26336ec710434edfd8fb05dbe79ed6bec8268ccde80b6b48c42322b01966",
-  "bytes": 476255,
+  "object": "sha256-50fa921b8d0c825a4fc8918a220f2114b477d0ad1dedb1eda5cc01232b1076a7",
+  "sha256": "50fa921b8d0c825a4fc8918a220f2114b477d0ad1dedb1eda5cc01232b1076a7",
+  "bytes": 471887,
   "engine": "umber",
   "engineVersion": "0.1.0",
-  "formatSchema": 6,
+  "formatSchema": 7,
   "sourceDistribution": "texlive-2025",
-  "sourceManifestSha256": "26a7d63b002c1e48536f02e786e8a179fc73b67dd68959aa3e44e679dbf3a05a",
+  "sourceManifestSha256": "10abad8b5cc5facf0a33ab174a787f1be3c447fa487490427d347905c6d35599",
   "sourceDateEpoch": 0
 }

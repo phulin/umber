@@ -279,7 +279,7 @@ fn errors_are_typed_and_invalid_boundary_values_throw() {
 #[wasm_bindgen_test]
 fn committed_plain_format_loads_and_rejects_incompatible_bytes() {
     assert_eq!(package_version(), env!("CARGO_PKG_VERSION"));
-    assert_eq!(format_schema_version(), 6);
+    assert_eq!(format_schema_version(), 7);
     let format = include_bytes!("../assets/plain.fmt");
     let mut plain = session_with_format("main.tex", format);
     plain
