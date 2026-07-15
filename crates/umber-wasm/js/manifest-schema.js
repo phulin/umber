@@ -1,7 +1,7 @@
 const KEY_PATTERN = /^(tex|tfm):(.+)$/;
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 const FORMAT_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
-const MAX_OBJECT_BYTES = 64 * 1024 * 1024;
+const MAX_OBJECT_BYTES = 128 * 1024 * 1024;
 
 export class ManifestResolverError extends Error {
 	constructor(code, message, options) {

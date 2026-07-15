@@ -337,7 +337,7 @@ test("bounds manifest responses and declared object sizes", async () => {
 		(error) => error.code === "manifest-length",
 	);
 
-	manifest.files["tex:plain.tex"].bytes = 64 * 1024 * 1024 + 1;
+	manifest.files["tex:plain.tex"].bytes = 128 * 1024 * 1024 + 1;
 	assert.throws(
 		() =>
 			new HttpManifestResolver(manifest, {
@@ -345,6 +345,18 @@ test("bounds manifest responses and declared object sizes", async () => {
 				crypto: webcrypto,
 			}),
 		/invalid byte length/,
+	);
+});
+
+test("accepts a pinned LaTeX-scale format object", () => {
+	const { manifest } = fixture();
+	manifest.formats.plain.bytes = 74_240_748;
+	assert.equal(
+		new HttpManifestResolver(manifest, {
+			fetch: () => {},
+			crypto: webcrypto,
+		}).formatMetadata("plain").bytes,
+		74_240_748,
 	);
 });
 

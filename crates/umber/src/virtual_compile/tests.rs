@@ -704,6 +704,12 @@ fn user_and_distribution_limits_fail_atomically() {
 }
 
 #[test]
+fn default_session_limit_accepts_the_pinned_latex_format() {
+    assert!(SessionLimits::default().one_file_bytes >= 74_240_748);
+    assert!(SessionLimits::default().validate().is_ok());
+}
+
+#[test]
 fn canonical_distribution_path_allows_identical_alias_keys() {
     let mut session = session("\\end");
     let short = FileRequestKey::new(FileKind::TexInput, "plain").expect("short key");
