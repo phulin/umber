@@ -80,6 +80,7 @@ pub struct PdfRawObjectRecord {
     id: PdfRawObjectId,
     data: Option<PdfRawObjectData>,
     immediate: bool,
+    referenced: bool,
 }
 
 impl PdfRawObjectRecord {
@@ -96,6 +97,11 @@ impl PdfRawObjectRecord {
     #[must_use]
     pub const fn is_immediate(self) -> bool {
         self.immediate
+    }
+
+    #[must_use]
+    pub const fn is_referenced(self) -> bool {
+        self.referenced
     }
 }
 
@@ -157,6 +163,7 @@ impl PdfRawObjects {
             id,
             data: None,
             immediate: false,
+            referenced: false,
         });
         state.last_object = id.raw();
         state.fingerprint = fingerprint(state);
@@ -179,6 +186,20 @@ impl PdfRawObjects {
         state.records[index].data = Some(data);
         state.records[index].immediate = immediate;
         state.last_object = id.raw();
+        state.fingerprint = fingerprint(state);
+        Ok(())
+    }
+
+    pub(crate) fn reference(
+        &mut self,
+        id: PdfRawObjectId,
+    ) -> Result<(), PdfRawObjectInitializeError> {
+        let state = Arc::make_mut(&mut self.0);
+        let index = state
+            .records
+            .binary_search_by_key(&id, |record| record.id)
+            .map_err(|_| PdfRawObjectInitializeError::NotFound(id))?;
+        state.records[index].referenced = true;
         state.fingerprint = fingerprint(state);
         Ok(())
     }
@@ -207,6 +228,7 @@ fn fingerprint(state: &PdfRawObjectState) -> u64 {
             hasher.u64(data.data.semantic_id);
         }
         hasher.bool(record.immediate);
+        hasher.bool(record.referenced);
     }
     hasher.finish()
 }

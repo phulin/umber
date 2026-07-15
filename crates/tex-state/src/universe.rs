@@ -2106,6 +2106,14 @@ impl Universe {
         self.pdf.raw_object(PdfRawObjectId::from_allocated(raw))
     }
 
+    pub fn reference_pdf_raw_object(
+        &mut self,
+        raw: u32,
+    ) -> Result<(), PdfRawObjectInitializeError> {
+        self.pdf
+            .reference_raw_object(PdfRawObjectId::from_allocated(raw))
+    }
+
     #[must_use]
     pub fn pdf_raw_objects(&self) -> &[PdfRawObjectRecord] {
         self.pdf.raw_objects()

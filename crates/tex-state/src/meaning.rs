@@ -688,6 +688,8 @@ pub enum UnexpandablePrimitive {
     PdfTeXUnimplemented,
     PdfResetTimer,
     PdfSetRandomSeed,
+    PdfObject,
+    PdfReferenceObject,
 }
 
 impl UnexpandablePrimitive {
@@ -925,6 +927,8 @@ impl UnexpandablePrimitive {
             Self::PdfNoBuiltinToUnicode => 228,
             Self::PdfResetTimer => 229,
             Self::PdfSetRandomSeed => 230,
+            Self::PdfObject => 231,
+            Self::PdfReferenceObject => 232,
         }
     }
 
@@ -1162,6 +1166,8 @@ impl UnexpandablePrimitive {
             228 => Some(Self::PdfNoBuiltinToUnicode),
             229 => Some(Self::PdfResetTimer),
             230 => Some(Self::PdfSetRandomSeed),
+            231 => Some(Self::PdfObject),
+            232 => Some(Self::PdfReferenceObject),
             _ => None,
         }
     }

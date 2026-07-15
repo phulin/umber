@@ -147,6 +147,9 @@ pub enum ExecError {
     PdfOutputModeChanged,
     PdfVersionChanged,
     PdfDraftModeChanged,
+    PdfObjectCapacity,
+    PdfReferencedObjectNotFound,
+    PdfImmediateReservedObject,
     VSplitNeedsVBox,
     Box255NotVoidBeforeOutput,
     OutputRoutineBox255NotVoid,
@@ -298,6 +301,13 @@ impl fmt::Display for ExecError {
                 f,
                 "pdfTeX error (setup): \\pdfdraftmode can only be changed before anything is written to the output"
             ),
+            Self::PdfObjectCapacity => f.write_str("pdfTeX error (obj): too many PDF objects."),
+            Self::PdfReferencedObjectNotFound => {
+                f.write_str("pdfTeX error (ext1): cannot find referenced object.")
+            }
+            Self::PdfImmediateReservedObject => f.write_str(
+                "pdfTeX error (ext1): `\\pdfobj reserveobjnum' cannot be used with \\immediate.",
+            ),
             Self::VSplitNeedsVBox => write!(f, "\\vsplit needs a \\vbox"),
             Self::Box255NotVoidBeforeOutput => write!(f, "\\box255 is not void"),
             Self::OutputRoutineBox255NotVoid => {
@@ -372,6 +382,9 @@ impl std::error::Error for ExecError {
             | Self::PdfOutputModeChanged
             | Self::PdfVersionChanged
             | Self::PdfDraftModeChanged
+            | Self::PdfObjectCapacity
+            | Self::PdfReferencedObjectNotFound
+            | Self::PdfImmediateReservedObject
             | Self::VSplitNeedsVBox
             | Self::Box255NotVoidBeforeOutput
             | Self::OutputRoutineBox255NotVoid
@@ -443,6 +456,9 @@ impl ExecError {
             | Self::PdfOutputModeChanged
             | Self::PdfVersionChanged
             | Self::PdfDraftModeChanged
+            | Self::PdfObjectCapacity
+            | Self::PdfReferencedObjectNotFound
+            | Self::PdfImmediateReservedObject
             | Self::VSplitNeedsVBox
             | Self::Box255NotVoidBeforeOutput
             | Self::OutputRoutineBox255NotVoid

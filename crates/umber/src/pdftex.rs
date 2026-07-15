@@ -378,6 +378,8 @@ pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
     for (name, primitive) in [
         ("pdfresettimer", UnexpandablePrimitive::PdfResetTimer),
         ("pdfsetrandomseed", UnexpandablePrimitive::PdfSetRandomSeed),
+        ("pdfobj", UnexpandablePrimitive::PdfObject),
+        ("pdfrefobj", UnexpandablePrimitive::PdfReferenceObject),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
@@ -463,6 +465,70 @@ mod tests {
             "the registered inventory must not contain duplicates",
         );
         assert_eq!(PDFTEX_PRIMITIVE_NAMES, source_names);
+    }
+
+    #[test]
+    fn pdf_objects_reserve_initialize_reference_and_report_last_object() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let output = crate::run_memory_with_stores(
+            concat!(
+                "\\message{before=\\the\\pdflastobj}",
+                "\\pdfobj reserveobjnum",
+                "\\pdfobj useobjnum 3 stream attr {/Subtype /XML} {payload}",
+                "\\pdfrefobj 3",
+                "\\immediate\\pdfobj {42}",
+                "\\message{after=\\the\\pdflastobj}\\end",
+            ),
+            &mut stores,
+        )
+        .expect("execute raw PDF objects");
+
+        assert!(output.contains("before=0"));
+        assert!(output.contains("after=4"));
+        let records = stores.pdf_raw_objects();
+        assert_eq!(records.len(), 2);
+        let first = records[0];
+        let first_data = first.data().expect("initialized reserved object");
+        assert_eq!(first.id().raw(), 3);
+        assert!(first_data.is_stream());
+        assert!(!first_data.is_file());
+        assert!(first_data.stream_attr().is_some());
+        assert!(first.is_referenced());
+        assert!(!first.is_immediate());
+        assert_eq!(records[1].id().raw(), 4);
+        assert!(records[1].is_immediate());
+    }
+
+    #[test]
+    fn pdf_objects_match_reference_errors_and_useobjnum_recovery() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        crate::run_memory_with_stores(
+            "\\pdfobj useobjnum 99 {fallback}\\message{last=\\the\\pdflastobj}\\end",
+            &mut stores,
+        )
+        .expect("recover invalid useobjnum");
+        assert_eq!(stores.pdf_last_object(), 3);
+
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let error = crate::run_memory_with_stores("\\pdfrefobj 99\\end", &mut stores)
+            .expect_err("invalid reference must be fatal");
+        assert!(
+            error
+                .to_string()
+                .contains("pdfTeX error (ext1): cannot find referenced object.")
+        );
+
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let error =
+            crate::run_memory_with_stores("\\immediate\\pdfobj reserveobjnum\\end", &mut stores)
+                .expect_err("immediate reservation must be fatal");
+        assert!(error.to_string().contains(
+            "pdfTeX error (ext1): `\\pdfobj reserveobjnum' cannot be used with \\immediate."
+        ));
     }
 
     #[test]

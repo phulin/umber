@@ -245,6 +245,10 @@ fn execute_immediate(
             execute_immediate_write(traced, input, stores, execution)?;
             Ok(CommandOutcome::continue_only())
         }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfObject) => {
+            execute_pdf_object(traced, input, stores, execution, true)?;
+            Ok(CommandOutcome::continue_only())
+        }
         _ => {
             // TeX.web's `do_extension` treats `\immediate` as a one-token
             // lookahead: only openout, write, and closeout are executed here.
@@ -255,6 +259,73 @@ fn execute_immediate(
             Ok(CommandOutcome::continue_only())
         }
     }
+}
+
+fn execute_pdf_object(
+    context: TracedTokenWord,
+    input: &mut InputStack,
+    stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
+    immediate: bool,
+) -> Result<(), ExecError> {
+    if scan_optional_keyword_x(input, stores, execution, "reserveobjnum")? {
+        stores
+            .reserve_pdf_raw_object()
+            .map_err(|_| ExecError::PdfObjectCapacity)?;
+        return if immediate {
+            Err(ExecError::PdfImmediateReservedObject)
+        } else {
+            Ok(())
+        };
+    }
+
+    let use_object_number = scan_optional_keyword_x(input, stores, execution, "useobjnum")?;
+    let requested = if use_object_number {
+        let raw = scan_i32(input, stores, execution, context)?;
+        u32::try_from(raw).ok().and_then(|raw| {
+            stores
+                .pdf_raw_object(raw)
+                .filter(|record| record.data().is_none())
+                .map(|record| record.id())
+        })
+    } else {
+        None
+    };
+    let id = match requested {
+        Some(id) => id,
+        None => {
+            if use_object_number {
+                stores.world_mut().write_text(
+                    tex_state::PrintSink::TerminalAndLog,
+                    "\npdfTeX warning (\\pdfobj): invalid object number being ignored\n",
+                );
+            }
+            stores
+                .reserve_pdf_raw_object()
+                .map_err(|_| ExecError::PdfObjectCapacity)?
+        }
+    };
+    let stream = scan_optional_keyword_x(input, stores, execution, "stream")?;
+    let stream_attr = if stream && scan_optional_keyword_x(input, stores, execution, "attr")? {
+        Some(scan_general_text_expanded_with_driver(
+            input,
+            &mut tex_state::ExpansionContext::new(stores),
+            execution,
+            context,
+        )?)
+    } else {
+        None
+    };
+    let file = scan_optional_keyword_x(input, stores, execution, "file")?;
+    let data = scan_general_text_expanded_with_driver(
+        input,
+        &mut tex_state::ExpansionContext::new(stores),
+        execution,
+        context,
+    )?;
+    stores
+        .initialize_pdf_raw_object(id, stream, stream_attr, file, data, immediate)
+        .map_err(|_| ExecError::PdfReferencedObjectNotFound)
 }
 
 pub(crate) fn execute_assignment_meaning(
@@ -1372,6 +1443,23 @@ fn execute_prefixed_command(
                 reject_all_prefixes(prefixes)?;
                 let seed = scan_i32(input, stores, execution, command.traced)?;
                 stores.world_mut().set_pdf_random_seed(seed);
+                Ok(CommandOutcome::continue_only())
+            }
+            UnexpandablePrimitive::PdfObject => {
+                reject_all_prefixes(prefixes)?;
+                execute_pdf_object(command.traced, input, stores, execution, false)?;
+                Ok(CommandOutcome::continue_only())
+            }
+            UnexpandablePrimitive::PdfReferenceObject => {
+                reject_all_prefixes(prefixes)?;
+                let object = scan_i32(input, stores, execution, command.traced)?;
+                let object = u32::try_from(object)
+                    .ok()
+                    .filter(|object| stores.pdf_raw_object(*object).is_some())
+                    .ok_or(ExecError::PdfReferencedObjectNotFound)?;
+                stores
+                    .reference_pdf_raw_object(object)
+                    .map_err(|_| ExecError::PdfReferencedObjectNotFound)?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::Global

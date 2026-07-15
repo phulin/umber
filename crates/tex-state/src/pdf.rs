@@ -966,6 +966,13 @@ impl PdfState {
         self.raw_objects.record(id)
     }
 
+    pub(crate) fn reference_raw_object(
+        &mut self,
+        id: PdfRawObjectId,
+    ) -> Result<(), PdfRawObjectInitializeError> {
+        self.raw_objects.reference(id)
+    }
+
     #[must_use]
     pub(crate) fn raw_objects(&self) -> &[PdfRawObjectRecord] {
         self.raw_objects.records()
