@@ -1441,16 +1441,24 @@ fn classify_alignment_token(
             .map(|symbol| stores.meaning(symbol)),
         Token::Char { .. } | Token::Param(_) | Token::Frozen(_) => None,
     };
-    let has_catcode_meaning = |expected| {
-        matches!(token, Token::Char { cat, .. } if cat == expected)
-            || matches!(meaning, Some(Meaning::CharToken { cat, .. }) if cat == expected)
-    };
-    // TeX's get_next updates align_state from cur_cmd, after control-sequence
-    // meaning lookup. Character-command aliases therefore balance templates
-    // exactly like literal braces.
-    let delivery = if has_catcode_meaning(Catcode::BeginGroup) {
+    // tex.web updates align_state only in the character-token branch of
+    // get_next. Control-sequence aliases such as \bgroup and \egroup still
+    // delimit semantic groups, but they do not change alignment brace depth.
+    let delivery = if matches!(
+        token,
+        Token::Char {
+            cat: Catcode::BeginGroup,
+            ..
+        }
+    ) {
         tex_lex::AlignmentTokenDelivery::LeftBrace
-    } else if has_catcode_meaning(Catcode::EndGroup) {
+    } else if matches!(
+        token,
+        Token::Char {
+            cat: Catcode::EndGroup,
+            ..
+        }
+    ) {
         tex_lex::AlignmentTokenDelivery::RightBrace
     } else {
         tex_lex::AlignmentTokenDelivery::Other

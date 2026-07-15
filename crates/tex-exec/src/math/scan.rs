@@ -494,19 +494,23 @@ fn scan_required_math_group(
     execution: &mut crate::ExecutionContext<'_>,
     context: &'static str,
 ) -> Result<tex_state::ids::NodeListId, ExecError> {
-    let Some(opener) = next_non_space_x(input, stores, execution)? else {
+    let Some(opener) = assignments::next_non_space_traced_x(input, stores, execution)? else {
         stores.world_mut().write_text(
             tex_state::PrintSink::TerminalAndLog,
             &format!("\n! Missing {{ inserted while scanning {context}.\n"),
         );
         return Ok(stores.freeze_node_list(&[]));
     };
-    if !assignments::has_catcode_meaning(stores, opener, Catcode::BeginGroup) {
+    if !assignments::has_catcode_meaning(
+        stores,
+        tex_expand::semantic_token(opener),
+        Catcode::BeginGroup,
+    ) {
         stores.world_mut().write_text(
             tex_state::PrintSink::TerminalAndLog,
             &format!("\n! Missing {{ inserted while scanning {context}.\n"),
         );
-        crate::push_tokens(input, stores, [opener]);
+        crate::push_traced_tokens(input, stores, [opener]);
         return Ok(stores.freeze_node_list(&[]));
     }
     scan_math_group_after_open(nest, input, stores, execution)
@@ -652,26 +656,6 @@ pub(super) fn scan_mu_dimen(
     )
     .map_err(ExpandError::from)?;
     Ok(scanned.value())
-}
-
-fn next_non_space_x(
-    input: &mut InputStack,
-    stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_>,
-) -> Result<Option<Token>, ExecError> {
-    loop {
-        let Some(token) = get_x_token_with_context(
-            input,
-            &mut tex_state::ExpansionContext::new(stores),
-            execution,
-        )?
-        .map(tex_expand::semantic_token) else {
-            return Ok(None);
-        };
-        if !assignments::is_space(token) {
-            return Ok(Some(token));
-        }
-    }
 }
 
 fn next_non_space_traced_x(

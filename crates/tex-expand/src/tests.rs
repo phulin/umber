@@ -708,7 +708,7 @@ fn back_input_clears_one_shot_noexpand_suppression() {
 }
 
 #[test]
-fn back_input_reverses_alignment_delivery_for_brace_aliases() {
+fn control_sequence_brace_aliases_do_not_change_alignment_depth() {
     let mut stores = Universe::new();
     let egroup = stores.intern("egroup");
     stores.set_meaning(
@@ -729,7 +729,7 @@ fn back_input_reverses_alignment_delivery_for_brace_aliases() {
     )
     .expect("brace alias delivery")
     .expect("brace alias token");
-    assert!(input.alignment_cell_below_base_depth());
+    assert!(input.alignment_cell_at_base_depth());
 
     crate::back_input(
         &mut input,

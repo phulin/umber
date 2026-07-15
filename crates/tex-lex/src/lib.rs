@@ -1822,8 +1822,7 @@ impl InputStack {
         self.undo_alignment_delivery(delivery);
     }
 
-    /// Reverses an alignment delivery after the expansion layer has resolved
-    /// control-sequence character aliases such as `\bgroup` and `\egroup`.
+    /// Reverses alignment brace accounting for a token that will be read again.
     pub fn undo_alignment_delivery(&mut self, delivery: AlignmentTokenDelivery) {
         let Some(alignment) = self.alignment_inputs.last_mut() else {
             return;

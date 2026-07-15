@@ -747,15 +747,13 @@ fn preamble_recognizes_alignment_tab_alias_by_meaning() {
 }
 
 #[test]
-fn alignment_brace_depth_uses_character_alias_meanings() {
+fn alignment_brace_depth_ignores_control_sequence_aliases() {
     let stores = run_boxed_alignment_source(
-        "\\let\\bgroup={\\let\\egroup=}\\halign{#\\cr \\bgroup x}\\cr {y\\egroup\\cr}",
+        "\\let\\bgroup={\\let\\egroup=}\\halign{$\\displaystyle{#}$\\cr \\mathop\\bgroup\\let\\close\\egroup x\\close\\cr y\\cr}",
     );
     let rows = vlist_rows(&stores, box_zero_vlist(&stores));
 
     assert_eq!(rows.len(), 2);
-    assert_eq!(cell_text(&stores, row_cells(&stores, rows[0])[0]), "x");
-    assert_eq!(cell_text(&stores, row_cells(&stores, rows[1])[0]), "y");
 }
 
 #[test]
