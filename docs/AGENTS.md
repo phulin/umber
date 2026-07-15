@@ -11,10 +11,6 @@ When documenting tests or parity workflow, point fixture changes to `scripts/reg
 `profiling.md` documents the persistent in-process Gentle profiler, its
 Samply wrapper, prerequisites, and measured boundary.
 
-`dvi_artifact_fast_path.md` defines committed-byte receipts, the validated
-borrowed/indexed version-10 artifact view, replay invariants, and the measured
-gate for considering a flat artifact version.
-
 `testing_policy.md` is forward-looking guidance for test design and placement.
 `testing_infrastructure.md` inventories the current test commands, budgets,
 fixtures, corpora, and harnesses; update it when those implementation facts
@@ -39,22 +35,15 @@ including store ownership, reclamation, hashing, rollout, and validation.
 
 `source_spans_and_provenance.md` specifies the compact source-map, source-span, and derived-provenance design plus its phased migration plan.
 
-`math_layout_arena.md` specifies the contiguous, span-backed Appendix G math
-conversion result and its pure lowering boundary.
-
 `node_word_arena.md` is the authoritative compact node-word arena document: it
 combines measurements with the representation, sidecar ownership, migration,
 validation, and conditional adoption design. Do not create a separate
 `node_word_layout.md` whose encoding or rollback rules could drift.
 
-`wasm_mvp.md` specifies the proposed browser WebAssembly package, including
-the restart-on-fetch driver protocol, hosted TeX Live manifest, cache and
-resource limits, binding API, and MVP verification boundary.
-
-`wasm_resource_acquisition.md` specifies the long-term typed, batched resource
-state machine above the file-only WASM MVP, including concurrent frontend
-acquisition, required-versus-hint semantics, client-owned distribution,
-OpenType font reuse, caching, and native parity.
+`wasm_resource_acquisition.md` specifies the implemented typed, batched
+resource state machine and the remaining OpenType rollout, including
+required-versus-hint semantics, client-owned distribution, font reuse,
+caching, and native parity.
 
 `web_font_bundles.md` specifies the OpenType-first native/WASM font-resource
 model: OTF/TTF native containers, WOFF2 browser containers, canonical program

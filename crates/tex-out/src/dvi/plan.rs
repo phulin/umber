@@ -299,7 +299,7 @@ impl DviPagePlan {
         })
     }
 
-    /// Validates and compiles canonical v10 bytes without materializing the
+    /// Validates and compiles canonical artifact bytes without materializing the
     /// complete recursive page tree.
     pub fn compile_v10(bytes: &[u8]) -> Result<Self, DviError> {
         let mut decoder = V10PageDecoder::new(bytes, ArtifactCodecLimits::default())?;

@@ -255,7 +255,7 @@ pub(crate) fn from_bytes(
     })
 }
 
-/// Incremental decoder for a canonical v10 page artifact.
+/// Incremental decoder for the canonical page artifact wire layout.
 ///
 /// Metadata and effects are retained, but the root list is decoded one direct
 /// child at a time so replay never constructs an owned whole-page node tree.
@@ -268,7 +268,7 @@ pub(crate) struct V10PageDecoder<'a> {
     validated_nodes: usize,
 }
 
-/// Canonical v10 encoder fed one detached root child at a time.
+/// Canonical artifact encoder fed one detached root child at a time.
 ///
 /// This is the fresh-shipout counterpart of [`V10PageDecoder`]: callers may
 /// lower, encode, and release each direct page child without retaining a

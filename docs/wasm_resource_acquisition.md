@@ -1,9 +1,8 @@
 # Asynchronous WASM Resource Acquisition
 
-Status: long-term implementation plan. The current restart-on-fetch MVP remains
-specified by [wasm_mvp.md](wasm_mvp.md); this document defines its intended
-generalization into a typed, batched resource state machine for compilation
-inputs and OpenType fonts.
+Status: partially implemented contract and active rollout plan. Typed,
+batched file/OpenType resource acquisition is implemented by the persistent
+compile session; the remaining OpenType rollout is tracked by `umber2-y2ei`.
 
 ## Goals
 
