@@ -12,7 +12,7 @@ use tex_state::{FileContent, InputReadState, InputSummary, TokenListReplayKind, 
 
 use crate::checkpoint::{CheckpointSink, EngineBoundary, EngineSession, NoopCheckpointSink};
 use crate::dispatch::{dispatch_delivered_token_with_context, unimplemented_typesetting};
-use crate::mode::IGNORE_DEPTH;
+use crate::mode::ignored_depth;
 use crate::output;
 use crate::vertical::is_outer_vertical;
 use crate::{DispatchAction, ExecError, ExecutionStats, ModeNest, assignments};
@@ -689,7 +689,7 @@ fn engine_state_snapshot(nest: &ModeNest, stores: &Universe) -> EngineStateSnaps
         mode: nest.current_mode().engine_mode(),
         is_inner_mode: nest.current_mode().is_inner(),
         space_factor: list.space_factor(),
-        prev_depth: list.prev_depth().unwrap_or(IGNORE_DEPTH),
+        prev_depth: list.prev_depth().unwrap_or_else(|| ignored_depth(stores)),
         prev_graf: nest.enclosing_vertical_prev_graf(),
         par_shape_len: stores.paragraph_shape_len().min(i32::MAX as usize) as i32,
         ..EngineStateSnapshot::default()

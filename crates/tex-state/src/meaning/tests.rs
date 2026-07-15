@@ -143,7 +143,7 @@ fn pdf_accessibility_operands_are_unique_and_follow_parallel_reservations() {
 }
 
 #[test]
-fn complete_primitive_codecs_are_unique_through_annotation_reservations() {
+fn complete_primitive_codecs_are_unique_through_compatibility_reservations() {
     let annotations = [
         (255, UnexpandablePrimitive::PdfAnnot),
         (256, UnexpandablePrimitive::PdfStartLink),
@@ -173,6 +173,17 @@ fn complete_primitive_codecs_are_unique_through_annotation_reservations() {
     for reserved in 251..=254 {
         assert_eq!(UnexpandablePrimitive::from_operand(reserved), None);
     }
+    for reserved in 260..=264 {
+        assert_eq!(UnexpandablePrimitive::from_operand(reserved), None);
+    }
+    assert_eq!(UnexpandablePrimitive::QuitVMode.operand(), 265);
+    assert_eq!(
+        UnexpandablePrimitive::from_operand(265),
+        Some(UnexpandablePrimitive::QuitVMode)
+    );
+    round_trip(Meaning::UnexpandablePrimitive(
+        UnexpandablePrimitive::QuitVMode,
+    ));
 
     let internals = [
         (17, InternalInteger::PdfLastAnnot),

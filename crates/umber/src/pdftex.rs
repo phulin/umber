@@ -228,6 +228,7 @@ const PDFTEX_INT_PARAMETER_MEANINGS: &[(&str, IntParam)] = &[
     ("pdfomitinfodict", IntParam::PDF_OMIT_INFO_DICT),
     ("pdfomitprocset", IntParam::PDF_OMIT_PROCSET),
     ("pdfptexuseunderscore", IntParam::PDF_PTEX_USE_UNDERSCORE),
+    ("ignoreprimitiveerror", IntParam::IGNORE_PRIMITIVE_ERROR),
 ];
 
 const PDFTEX_INT_PARAMETER_DEFAULTS: &[(IntParam, i32)] = &[
@@ -268,6 +269,7 @@ const PDFTEX_INT_PARAMETER_DEFAULTS: &[(IntParam, i32)] = &[
     (IntParam::PDF_OMIT_INFO_DICT, 0),
     (IntParam::PDF_OMIT_PROCSET, 0),
     (IntParam::PDF_PTEX_USE_UNDERSCORE, 0),
+    (IntParam::IGNORE_PRIMITIVE_ERROR, 0),
 ];
 
 const PDFTEX_DIMEN_PARAMETERS: &[(&str, DimenParam, i32)] = &[
@@ -374,6 +376,7 @@ pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
         ("pdfsnapycomp", UnexpandablePrimitive::PdfSnapYComp),
         ("pdfxform", UnexpandablePrimitive::PdfXForm),
         ("pdfrefxform", UnexpandablePrimitive::PdfRefXForm),
+        ("quitvmode", UnexpandablePrimitive::QuitVMode),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
@@ -2273,6 +2276,7 @@ mod tests {
         stores.set_int_param(IntParam::PDF_COMPRESS_LEVEL, 5);
         stores.set_int_param(IntParam::PDF_OPTION_ALWAYS_USE_PDF_PAGE_BOX, 2);
         stores.set_int_param(IntParam::PDF_OPTION_INCLUSION_ERROR_LEVEL, 3);
+        stores.set_int_param(IntParam::IGNORE_PRIMITIVE_ERROR, 1);
         stores.set_dimen_param(DimenParam::PDF_PAGE_WIDTH, Scaled::from_raw(12_345));
         let first_tokens = stores.intern_token_list(&[
             Token::Char {
@@ -2302,6 +2306,7 @@ mod tests {
         stores.set_int_param(IntParam::PDF_COMPRESS_LEVEL, 2);
         stores.set_int_param(IntParam::PDF_OPTION_ALWAYS_USE_PDF_PAGE_BOX, 4);
         stores.set_int_param(IntParam::PDF_OPTION_INCLUSION_ERROR_LEVEL, 5);
+        stores.set_int_param(IntParam::IGNORE_PRIMITIVE_ERROR, 2);
         stores.set_dimen_param(DimenParam::PDF_PAGE_WIDTH, Scaled::from_raw(54_321));
         let second_tokens = stores.intern_token_list(&[Token::Char {
             ch: 'x',
@@ -2323,6 +2328,7 @@ mod tests {
             stores.int_param(IntParam::PDF_OPTION_INCLUSION_ERROR_LEVEL),
             3
         );
+        assert_eq!(stores.int_param(IntParam::IGNORE_PRIMITIVE_ERROR), 1);
         assert_eq!(
             stores.dimen_param(DimenParam::PDF_PAGE_WIDTH),
             Scaled::from_raw(12_345)
@@ -2344,6 +2350,7 @@ mod tests {
             loaded.int_param(IntParam::PDF_OPTION_INCLUSION_ERROR_LEVEL),
             3
         );
+        assert_eq!(loaded.int_param(IntParam::IGNORE_PRIMITIVE_ERROR), 1);
         assert_eq!(
             loaded.dimen_param(DimenParam::PDF_PAGE_WIDTH),
             Scaled::from_raw(12_345)
@@ -2352,6 +2359,115 @@ mod tests {
             token_list_text(&loaded, loaded.tok_param(TokParam::PDF_PAGE_ATTR)),
             "first"
         );
+    }
+
+    #[test]
+    fn mode_and_primitive_error_controls_match_the_pinned_initex_oracle() {
+        let reference = test_support::read_fixture("tex_exec", "pdf_compatibility_controls", "ref");
+        let expected = [
+            "default-ignore=0 local-ignore=3 restored-ignore=0",
+            "hmode-quit=no-op",
+            "mmode-quit=no-op",
+            "vmode-quit=horizontal",
+            "ignored error: Infinite glue shrinkage found in box being split",
+        ];
+        for line in expected {
+            assert!(
+                reference.contains(line),
+                "oracle missing {line:?}: {reference}"
+            );
+        }
+
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let output = crate::run_memory_with_stores(
+            include_str!("../../../tests/corpus/tex_exec/pdf_compatibility_controls.tex"),
+            &mut stores,
+        )
+        .expect("execute mode/error compatibility fixture");
+        let terminal = stores.world().memory_terminal_output().unwrap_or_default();
+        let observed = format!("{}{}", String::from_utf8_lossy(terminal), output);
+        for line in expected {
+            assert!(
+                observed.contains(line),
+                "Umber missing {line:?}: {observed}"
+            );
+        }
+        assert_eq!(stores.int_param(IntParam::IGNORE_PRIMITIVE_ERROR), 1);
+        assert_eq!(UnexpandablePrimitive::QuitVMode.operand(), 265);
+    }
+
+    #[test]
+    fn pdfmovechars_warns_and_resets_only_when_a_new_pdf_font_is_used() {
+        let reference = test_support::read_fixture("tex_exec", "pdf_move_chars_warning", "ref");
+        for expected in [
+            "pdfTeX warning: Primitive \\pdfmovechars is obsolete.",
+            "after-first=0",
+            "after-second=1",
+        ] {
+            assert!(
+                reference.contains(expected),
+                "oracle missing {expected:?}: {reference}"
+            );
+        }
+
+        const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+        let mut stores = Universe::default();
+        stores
+            .world_mut()
+            .set_memory_file("cmr10.tfm", CMR10.to_vec())
+            .expect("seed cmr10");
+        prepare_pdftex_run_stores(&mut stores);
+        let output = crate::run_memory_with_stores(
+            include_str!("../../../tests/corpus/tex_exec/pdf_move_chars_warning.tex"),
+            &mut stores,
+        )
+        .expect("execute obsolete pdfmovechars fixture");
+        let terminal = stores.world().memory_terminal_output().unwrap_or_default();
+        let observed = format!("{}{}", String::from_utf8_lossy(terminal), output);
+        for expected in [
+            "pdfTeX warning: Primitive \\pdfmovechars is obsolete.",
+            "after-first=0",
+            "after-second=1",
+        ] {
+            assert!(
+                observed.contains(expected),
+                "Umber missing {expected:?}: {observed}"
+            );
+        }
+        assert_eq!(stores.int_param(IntParam::PDF_MOVE_CHARS), 1);
+    }
+
+    #[test]
+    fn pdfignoreddimen_is_the_live_prevdepth_and_line_override_sentinel() {
+        let reference = test_support::read_fixture("tex_exec", "pdf_ignored_dimen_effects", "ref");
+        let expected = [
+            "initial-prevdepth=12.0pt",
+            "matching-line=0.0pt/0.0pt",
+            "active-line=12.0pt/12.0pt",
+        ];
+        for line in expected {
+            assert!(
+                reference.contains(line),
+                "oracle missing {line:?}: {reference}"
+            );
+        }
+
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let output = crate::run_memory_with_stores(
+            include_str!("../../../tests/corpus/tex_exec/pdf_ignored_dimen_effects.tex"),
+            &mut stores,
+        )
+        .expect("execute live ignored-dimension fixture");
+        let terminal = stores.world().memory_terminal_output().unwrap_or_default();
+        let observed = format!("{}{}", String::from_utf8_lossy(terminal), output);
+        for line in expected {
+            assert!(
+                observed.contains(line),
+                "Umber missing {line:?}: {observed}"
+            );
+        }
     }
 
     fn token_list_text(stores: &Universe, id: TokenListId) -> String {

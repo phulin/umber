@@ -15,6 +15,19 @@ use crate::ExecError;
 /// TeX's sentinel depth used before any vertical-list box has established a baseline.
 pub const IGNORE_DEPTH: Scaled = Scaled::from_raw(-65_536_000);
 
+/// Returns the engine's live ignored-depth sentinel.
+///
+/// TeX82 and original e-TeX use the fixed `IGNORE_DEPTH` constant. pdfTeX
+/// exposes that value as the assignable `\pdfignoreddimen` parameter and
+/// consults the live cell at every prevdepth initialization and comparison.
+pub(crate) fn ignored_depth(stores: &Universe) -> Scaled {
+    if stores.primitive_meaning("pdfignoreddimen").is_some() {
+        stores.dimen_param(tex_state::env::banks::DimenParam::PDF_IGNORED_DIMEN)
+    } else {
+        IGNORE_DEPTH
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ParagraphParams {
     pub left_skip: GlueId,

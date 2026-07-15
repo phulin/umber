@@ -297,7 +297,7 @@ fn execute_cell(
     nest.push(cell_mode(kind));
     if kind == AlignmentKind::VAlign {
         nest.current_list_mut()
-            .set_prev_depth(crate::mode::IGNORE_DEPTH);
+            .set_prev_depth(crate::mode::ignored_depth(stores));
     }
     let mut column = start.column;
     let mut span_count = 1u16;

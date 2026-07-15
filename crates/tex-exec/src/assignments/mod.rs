@@ -1158,6 +1158,7 @@ fn execute_prefixed_command(
             | UnexpandablePrimitive::EndGraf
             | UnexpandablePrimitive::Indent
             | UnexpandablePrimitive::NoIndent
+            | UnexpandablePrimitive::QuitVMode
             | UnexpandablePrimitive::ParShape
             | UnexpandablePrimitive::InterLinePenalties
             | UnexpandablePrimitive::ClubPenalties

@@ -16,7 +16,7 @@ use tex_typeset::{INF_BAD, PackSpec, VpackParams};
 
 use crate::assignments::{self, shipout_node};
 use crate::executor::{MainControlExit, run_main_control_until};
-use crate::mode::IGNORE_DEPTH;
+use crate::mode::ignored_depth;
 use crate::packing_params::vpack;
 use crate::page_builder::build_page;
 use crate::splitting::{natural_vlist_size, prune_page_top, vpack_natural};
@@ -423,7 +423,8 @@ fn run_output_routine_inner(
 ) -> Result<(), ExecError> {
     stores.enter_group_with_kind(GroupKind::Output);
     nest.push(Mode::InternalVertical);
-    nest.current_list_mut().set_prev_depth(IGNORE_DEPTH);
+    nest.current_list_mut()
+        .set_prev_depth(ignored_depth(stores));
     let output_frame = delimited_output_tokens(stores, output);
     let output_replay = input.push_token_list(output_frame, TokenListReplayKind::OutputRoutine);
     *replay = Some(output_replay);

@@ -1,0 +1,13 @@
+success: true
+stdout:
+default-ignore=0 local-ignore=3 restored-ignore=0 hmode-quit=no-op
+mmode-quit=no-op vmode-quit=horizontal
+ignored error: Infinite glue shrinkage found in box being split
+Underfull \vbox (badness 10000) detected at line 15
+log:
+default-ignore=0 local-ignore=3 restored-ignore=0 hmode-quit=no-op
+mmode-quit=no-op vmode-quit=horizontal
+ignored error: Infinite glue shrinkage found in box being split
+Underfull \vbox (badness 10000) detected at line 15
+
+\vbox(30.0+0.0)x0.0

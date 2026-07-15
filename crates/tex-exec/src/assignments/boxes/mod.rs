@@ -378,7 +378,7 @@ pub(super) fn execute_hrule(
     )?;
     append_vertical_contribution(nest, stores, node);
     nest.current_list_mut()
-        .set_prev_depth(crate::mode::IGNORE_DEPTH);
+        .set_prev_depth(crate::mode::ignored_depth(stores));
     Ok(())
 }
 

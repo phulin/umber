@@ -1,0 +1,16 @@
+\catcode`\{=1
+\catcode`\}=2
+\newlinechar=10
+\scrollmode
+\message{default-ignore=\the\ignoreprimitiveerror}
+{\ignoreprimitiveerror=3\message{local-ignore=\the\ignoreprimitiveerror}}
+\message{restored-ignore=\the\ignoreprimitiveerror}
+\setbox0=\hbox{\quitvmode}
+\ifdim\wd0=0pt \message{hmode-quit=no-op}\else\message{hmode-quit=material}\fi
+\setbox1=\hbox{$\quitvmode$}
+\ifdim\wd1=0pt \message{mmode-quit=no-op}\else\message{mmode-quit=material}\fi
+\setbox2=\vbox{\quitvmode\ifhmode\message{vmode-quit=horizontal}\else\message{vmode-quit=vertical}\fi\par}
+\ignoreprimitiveerror=1
+\setbox3=\vbox{\hrule height10pt\vskip0pt minus 1fil\hrule height10pt}
+\setbox4=\vsplit3 to30pt
+\end

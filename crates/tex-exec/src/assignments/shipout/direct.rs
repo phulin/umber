@@ -91,11 +91,7 @@ fn stage_form_inner(
             1,
         )
     })?;
-    for &font in &emission.live_fonts {
-        stores
-            .ensure_pdf_font_resource(font)
-            .map_err(|_| ExecError::ArithmeticOverflow)?;
-    }
+    ensure_pdf_font_resources(stores, &emission.live_fonts)?;
     let bytes = encoder
         .finish(&emission.fonts, &overlay.effects)
         .map_err(invalid_artifact)?;
@@ -205,11 +201,7 @@ pub(super) fn stage_shipout(
         "normalization and emission must anchor identical effects"
     );
     if stores.int_param(IntParam::PDF_OUTPUT) > 0 {
-        for &font in &emission.live_fonts {
-            stores
-                .ensure_pdf_font_resource(font)
-                .map_err(|_| ExecError::ArithmeticOverflow)?;
-        }
+        ensure_pdf_font_resources(stores, &emission.live_fonts)?;
     }
     let artifact_bytes = encoder
         .finish(&emission.fonts, &overlay.effects)
@@ -245,6 +237,26 @@ pub(super) fn stage_shipout(
         dvi_plan,
         effect_pos,
     })
+}
+
+fn ensure_pdf_font_resources(stores: &mut Universe, fonts: &[FontId]) -> Result<(), ExecError> {
+    for &font in fonts {
+        let first_use = stores.pdf_font_resource(font).is_none();
+        stores
+            .ensure_pdf_font_resource(font)
+            .map_err(|_| ExecError::ArithmeticOverflow)?;
+        if first_use && stores.int_param(IntParam::PDF_MOVE_CHARS) > 0 {
+            stores.world_mut().write_text(
+                PrintSink::TerminalAndLog,
+                "\npdfTeX warning: Primitive \\pdfmovechars is obsolete.\n",
+            );
+            // pdfTeX performs a direct parameter write here. A local positive
+            // assignment therefore restores its saved outer value at group
+            // exit, while an ordinary/global value remains zero thereafter.
+            stores.set_int_param(IntParam::PDF_MOVE_CHARS, 0);
+        }
+    }
+    Ok(())
 }
 
 fn saved_position(

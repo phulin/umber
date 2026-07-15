@@ -4,7 +4,7 @@ use tex_state::glue::GlueSpec;
 use tex_state::node::{GlueKind, Node};
 use tex_state::scaled::Scaled;
 
-use crate::mode::IGNORE_DEPTH;
+use crate::mode::ignored_depth;
 use crate::page_builder::build_page;
 use crate::{ExecError, Mode, ModeNest, assignments};
 
@@ -32,7 +32,7 @@ pub(crate) fn append_node_to_vertical_list(
         return Ok(());
     };
     if let Some(prev_depth) = nest.current_list().prev_depth()
-        && prev_depth.raw() > IGNORE_DEPTH.raw()
+        && prev_depth.raw() > ignored_depth(stores).raw()
     {
         let baseline = stores.glue(stores.glue_param(GlueParam::BASELINE_SKIP));
         let requested = baseline

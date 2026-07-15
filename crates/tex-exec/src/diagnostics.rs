@@ -10,7 +10,7 @@ use tex_state::page::{PageContents, PageDimension};
 use tex_state::token::{Catcode, Token, TracedTokenWord};
 use tex_state::{PrintSink, Universe};
 
-use crate::mode::IGNORE_DEPTH;
+use crate::mode::ignored_depth;
 use crate::node_dump::{DumpConfig, dump_node_list, dump_node_slice};
 
 pub(crate) fn report_extra_conditional(stores: &mut Universe, name: &str) {
@@ -316,7 +316,7 @@ pub(crate) fn execute_showlists(stores: &mut Universe, nest: &ModeNest) {
             Mode::Vertical | Mode::InternalVertical => {
                 text.push_str("prevdepth ");
                 match level.list().prev_depth() {
-                    Some(depth) if depth.raw() > IGNORE_DEPTH.raw() => {
+                    Some(depth) if depth.raw() > ignored_depth(stores).raw() => {
                         text.push_str(&crate::node_dump::format_scaled_for_diagnostics(depth));
                     }
                     _ => text.push_str("ignored"),
@@ -472,6 +472,13 @@ since the offensive shrinkability has been made finite.\n",
 }
 
 pub(crate) fn report_split_infinite_shrinkage(stores: &mut Universe) {
+    if stores.int_param(IntParam::IGNORE_PRIMITIVE_ERROR) & 1 != 0 {
+        write_diagnostic(
+            stores,
+            "\nignored error: Infinite glue shrinkage found in box being split\n",
+        );
+        return;
+    }
     write_diagnostic(
         stores,
         "\n! Infinite glue shrinkage found in box being split.\n\

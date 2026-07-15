@@ -219,8 +219,14 @@ fn regenerate_tex_exec_case(case: &str) -> Result<()> {
             | "pdf_form_state"
             | "pdf_form_diagnostics"
             | "pdf_form_traversal_diagnostics"
+            | "pdf_compatibility_controls"
+            | "pdf_move_chars_warning"
+            | "pdf_ignored_dimen_effects"
     ) {
         opts.ini = true;
+    }
+    if case == "pdf_compatibility_controls" {
+        opts.etex = true;
     }
     let output = RefTex::locate()?.run(&source_path("tex_exec", case), &opts)?;
     write_text_fixture("tex_exec", case, "ref", &format_micro_reference(&output))

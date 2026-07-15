@@ -1,0 +1,23 @@
+success: true
+stdout:
+initial-prevdepth=12.0pt
+Underfull \hbox (badness 10000) in paragraph at lines 6--6
+[]
+matching-line=0.0pt/0.0pt
+Underfull \hbox (badness 10000) in paragraph at lines 8--8
+[]
+active-line=12.0pt/12.0pt
+log:
+initial-prevdepth=12.0pt
+Underfull \hbox (badness 10000) in paragraph at lines 6--6
+[]
+
+\hbox(0.0+0.0)x100.0
+
+matching-line=0.0pt/0.0pt
+Underfull \hbox (badness 10000) in paragraph at lines 8--8
+[]
+
+\hbox(0.0+0.0)x100.0
+
+active-line=12.0pt/12.0pt

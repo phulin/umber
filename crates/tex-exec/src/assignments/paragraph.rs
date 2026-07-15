@@ -13,7 +13,7 @@ use tex_typeset::linebreak::{
 
 use super::boxes::hpack_owned_with_overfull_rule;
 use super::*;
-use crate::mode::{IGNORE_DEPTH, ParagraphParams};
+use crate::mode::{ParagraphParams, ignored_depth};
 use crate::vertical::{
     append_migrated_contribution, append_node_to_current_list, append_vertical_contribution,
     build_page_if_outer_vertical,
@@ -44,6 +44,13 @@ pub(super) fn execute_paragraph_command(
         }
         UnexpandablePrimitive::Indent => start_paragraph(nest, input, stores, true),
         UnexpandablePrimitive::NoIndent => start_paragraph(nest, input, stores, false),
+        UnexpandablePrimitive::QuitVMode => {
+            if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
+                start_paragraph(nest, input, stores, true)
+            } else {
+                Ok(())
+            }
+        }
         UnexpandablePrimitive::ParShape => {
             assign_parshape(input, stores, execution, context, global)
         }
@@ -58,7 +65,8 @@ pub(super) fn execute_paragraph_command(
         }
         UnexpandablePrimitive::PrevGraf => assign_prevgraf(nest, input, stores, execution, context),
         UnexpandablePrimitive::NoInterlineSkip => {
-            nest.current_list_mut().set_prev_depth(IGNORE_DEPTH);
+            nest.current_list_mut()
+                .set_prev_depth(ignored_depth(stores));
             Ok(())
         }
         _ => unreachable!("caller restricts paragraph commands"),

@@ -591,6 +591,7 @@ fn dispatch_math_primitive(
             }
             Ok(DispatchAction::Continue)
         }
+        UnexpandablePrimitive::QuitVMode => Ok(DispatchAction::Continue),
         UnexpandablePrimitive::MoveLeft | UnexpandablePrimitive::MoveRight => {
             // These shifts are vertical-list commands. TeX's illegal-case
             // dispatch in math mode ignores the command without scanning its

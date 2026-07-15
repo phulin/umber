@@ -243,6 +243,11 @@ impl IntParam {
     /// pdfTeX keeps this separate from `\pdfinclusionerrorlevel` and
     /// transfers it only while scanning an external image.
     pub const PDF_OPTION_INCLUSION_ERROR_LEVEL: Self = Self::new(108);
+    /// pdfTeX/e-TeX bitmask controlling explicitly ignorable primitive errors.
+    ///
+    /// Bit 1 suppresses the ordinary error recovery for infinite shrinkage
+    /// encountered by `\vsplit` while retaining a one-line diagnostic.
+    pub const IGNORE_PRIMITIVE_ERROR: Self = Self::new(109);
 
     /// Current hyphenation language.
     pub const LANGUAGE: Self = Self::new(50);

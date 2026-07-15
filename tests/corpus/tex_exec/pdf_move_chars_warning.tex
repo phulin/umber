@@ -1,0 +1,14 @@
+\catcode`\{=1
+\catcode`\}=2
+\newlinechar=10
+\pdfoutput=1
+\pdfcompresslevel=0
+\pdfobjcompresslevel=0
+\font\tenrm=cmr10
+\pdfmovechars=2
+\shipout\hbox{\tenrm A}
+\immediate\write16{after-first=\the\pdfmovechars}
+\pdfmovechars=1
+\shipout\hbox{\tenrm B}
+\immediate\write16{after-second=\the\pdfmovechars}
+\end

@@ -1,0 +1,19 @@
+success: true
+stdout:
+[0{/usr/local/texlive/2025/texmf-var/fonts/map/pd
+ftex/updmap/pdftex.map}
+pdfTeX warning: Primitive \pdfmovechars is obsolete.
+]
+after-first=0
+[0]
+after-second=1
+xmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb>
+log:
+[0{/usr/local/texlive/2025/texmf-var/fonts/map/pd
+ftex/updmap/pdftex.map}
+pdfTeX warning: Primitive \pdfmovechars is obsolete.
+]
+after-first=0
+[0]
+after-second=1
+

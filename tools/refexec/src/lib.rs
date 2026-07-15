@@ -28,6 +28,8 @@ mod imp {
     pub struct RunOpts {
         pub dvi: bool,
         pub ini: bool,
+        /// Enables e-TeX's extended primitive table for INITEX observations.
+        pub etex: bool,
         pub extra_inputs: Vec<PathBuf>,
     }
 
@@ -131,6 +133,9 @@ mod imp {
             }
             if opts.ini {
                 command.arg("-ini");
+            }
+            if opts.etex && self.engine == TexEngine::PdfTex {
+                command.arg("-etex");
             }
             command.env("SOURCE_DATE_EPOCH", source_date_epoch());
             command.env("FORCE_SOURCE_DATE", force_source_date());

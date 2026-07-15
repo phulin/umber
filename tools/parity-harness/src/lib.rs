@@ -554,6 +554,7 @@ fn run_reference_dvi(
         &RunOpts {
             dvi: true,
             ini: true,
+            etex: false,
             extra_inputs: Vec::new(),
         },
     )?;
@@ -640,6 +641,7 @@ fn run_reference_trace(
         &RunOpts {
             dvi: true,
             ini: true,
+            etex: false,
             extra_inputs: Vec::new(),
         },
     )?;
