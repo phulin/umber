@@ -315,7 +315,9 @@ impl Env {
     /// Leaves the innermost group and reports whether meaning cells were
     /// restored or compacted while crossing the boundary.
     #[must_use]
-    pub(crate) fn leave_group_observing_meanings(&mut self) -> (Vec<Token>, bool) {
+    pub(crate) fn leave_group_observing_meanings(
+        &mut self,
+    ) -> (Vec<Token>, bool, Vec<crate::cell::CellId>) {
         self.leave_group_unchecked()
     }
 
@@ -337,7 +339,7 @@ impl Env {
     pub(crate) fn leave_group_with_kind_observing_meanings(
         &mut self,
         expected: GroupKind,
-    ) -> Result<(Vec<Token>, bool), GroupMismatch> {
+    ) -> Result<(Vec<Token>, bool, Vec<crate::cell::CellId>), GroupMismatch> {
         let Some(actual) = self.innermost_group_kind() else {
             return Err(GroupMismatch::new_no_group(expected));
         };
@@ -347,7 +349,7 @@ impl Env {
         Ok(self.leave_group_unchecked())
     }
 
-    fn leave_group_unchecked(&mut self) -> (Vec<Token>, bool) {
+    fn leave_group_unchecked(&mut self) -> (Vec<Token>, bool, Vec<crate::cell::CellId>) {
         let Some(boundary) = self.group_boundaries.pop() else {
             panic!("leave_group without matching group marker");
         };
@@ -360,6 +362,18 @@ impl Env {
             .expect("leave_group without matching group marker");
         let marker_index = marker_pos.raw() as usize;
         let group_end = self.journal.len();
+        let mut changed_cells = (marker_index + 1..group_end)
+            .filter_map(|index| match self.journal.entry(index) {
+                Entry::Undo(rec) => Some(rec.cell()),
+                Entry::BoxUndo(id) => Some(crate::cell::CellId::new(
+                    BankTag::Box,
+                    u32::from(self.journal.box_undo(id).index()),
+                )),
+                Entry::Marker(_) => None,
+            })
+            .collect::<Vec<_>>();
+        changed_cells.sort_unstable();
+        changed_cells.dedup();
         let has_globals =
             (marker_index + 1..group_end).any(|index| match self.journal.entry(index) {
                 Entry::Undo(rec) => rec.cell().is_global(),
@@ -397,7 +411,7 @@ impl Env {
         // exit must start a fresh epoch or the enclosing undo slice can be
         // corrupted by a later write to the same restored cell.
         self.epoch.bump();
-        (payloads, meaning_changed)
+        (payloads, meaning_changed, changed_cells)
     }
 
     fn leave_group_with_globals(

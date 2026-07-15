@@ -4,6 +4,7 @@
 //! `Universe` for checkpointing and rollback so the whole timeline tuple is
 //! restored atomically.
 
+use crate::cell::CellId;
 use crate::code_tables::{
     CodeTableGenerations, CodeTables, CodeTablesSnapshot, DelCode, LcCode, MathCode, SfCode, UcCode,
 };
@@ -1706,10 +1707,24 @@ impl Stores {
 
     /// Leaves the innermost TeX group and returns its `\aftergroup` payloads.
     #[must_use]
+    #[cfg(test)]
     pub fn leave_group(&mut self) -> Vec<Token> {
+        self.leave_group_observing_dependencies().0
+    }
+
+    pub(crate) fn leave_group_observing_dependencies(
+        &mut self,
+    ) -> (
+        Vec<Token>,
+        Vec<CellId>,
+        CodeTableGenerations,
+        CodeTableGenerations,
+    ) {
         self.account_current_group_box_refs();
-        let (payloads, meaning_changed) = self.env.leave_group_observing_meanings();
+        let (payloads, meaning_changed, changed_cells) = self.env.leave_group_observing_meanings();
+        let code_before = self.code_tables.generations();
         self.code_tables.leave_group();
+        let code_after = self.code_tables.generations();
         if meaning_changed {
             self.bump_meaning_generation();
             #[cfg(feature = "profiling-stats")]
@@ -1717,14 +1732,21 @@ impl Stores {
                 crate::measurement::MeaningCacheInvalidation::GroupExit,
             );
         }
-        payloads
+        (payloads, changed_cells, code_before, code_after)
     }
 
-    /// Leaves the innermost TeX group after checking its boundary kind.
-    pub fn leave_group_with_kind(
+    pub(crate) fn leave_group_with_kind_observing_dependencies(
         &mut self,
         expected: GroupKind,
-    ) -> Result<Vec<Token>, GroupMismatch> {
+    ) -> Result<
+        (
+            Vec<Token>,
+            Vec<CellId>,
+            CodeTableGenerations,
+            CodeTableGenerations,
+        ),
+        GroupMismatch,
+    > {
         let Some(actual) = self.env.innermost_group_kind() else {
             return Err(GroupMismatch::new_no_group(expected));
         };
@@ -1732,10 +1754,12 @@ impl Stores {
             return Err(GroupMismatch::new(expected, actual));
         }
         self.account_current_group_box_refs();
-        let (payloads, meaning_changed) = self
+        let (payloads, meaning_changed, changed_cells) = self
             .env
             .leave_group_with_kind_observing_meanings(expected)?;
+        let code_before = self.code_tables.generations();
         self.code_tables.leave_group();
+        let code_after = self.code_tables.generations();
         if meaning_changed {
             self.bump_meaning_generation();
             #[cfg(feature = "profiling-stats")]
@@ -1743,7 +1767,7 @@ impl Stores {
                 crate::measurement::MeaningCacheInvalidation::GroupExit,
             );
         }
-        Ok(payloads)
+        Ok((payloads, changed_cells, code_before, code_after))
     }
 
     /// Stores the token to insert after the next assignment.

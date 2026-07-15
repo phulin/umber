@@ -6,6 +6,7 @@
 
 use crate::world::ContentHash;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 /// A monotonically increasing revision at which an observable fact changed.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -258,7 +259,13 @@ pub enum DependencyValidation {
 #[derive(Clone, Debug, Default)]
 pub struct DependencyTracker {
     revision: u64,
-    changed: BTreeMap<DependencyKey, ChangedAt>,
+    changed: Arc<BTreeMap<DependencyKey, ChangedAt>>,
+}
+
+/// O(1) rollback root for changed-at metadata.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct DependencyTrackerSnapshot {
+    changed: Arc<BTreeMap<DependencyKey, ChangedAt>>,
 }
 
 /// Optional recording state installed around one interpreter computation.
@@ -313,6 +320,16 @@ impl DependencyRuntime {
         self.tracker.invalidate_all();
     }
 
+    pub(crate) fn snapshot_tracker(&self) -> DependencyTrackerSnapshot {
+        DependencyTrackerSnapshot {
+            changed: Arc::clone(&self.tracker.changed),
+        }
+    }
+
+    pub(crate) fn restore_tracker(&mut self, snapshot: &DependencyTrackerSnapshot) {
+        self.tracker.restore(snapshot);
+    }
+
     #[must_use]
     pub const fn tracker(&self) -> &DependencyTracker {
         &self.tracker
@@ -321,7 +338,9 @@ impl DependencyRuntime {
 
 impl DependencyTracker {
     pub fn track(&mut self, key: DependencyKey) -> ChangedAt {
-        *self.changed.entry(key).or_insert(ChangedAt::NEVER)
+        *Arc::make_mut(&mut self.changed)
+            .entry(key)
+            .or_insert(ChangedAt::NEVER)
     }
 
     #[must_use]
@@ -331,7 +350,7 @@ impl DependencyTracker {
 
     /// Marks a fact after its aggregate mutation barrier has run.
     pub fn mark_changed(&mut self, key: DependencyKey) -> ChangedAt {
-        let Some(changed_at) = self.changed.get_mut(&key) else {
+        let Some(changed_at) = Arc::make_mut(&mut self.changed).get_mut(&key) else {
             return ChangedAt::NEVER;
         };
         self.revision = self
@@ -353,19 +372,53 @@ impl DependencyTracker {
             .checked_add(1)
             .expect("dependency revision exhausted");
         let stamp = ChangedAt(self.revision);
-        for changed_at in self.changed.values_mut() {
+        for changed_at in Arc::make_mut(&mut self.changed).values_mut() {
             *changed_at = stamp;
         }
     }
 
     #[must_use]
     pub fn observe(&mut self, key: DependencyKey, value: DependencyValue) -> ObservedDependency {
-        self.changed.entry(key).or_insert(ChangedAt::NEVER);
+        Arc::make_mut(&mut self.changed)
+            .entry(key)
+            .or_insert(ChangedAt::NEVER);
         ObservedDependency {
             key,
             changed_at: self.changed_at(key),
             value,
         }
+    }
+
+    fn restore(&mut self, snapshot: &DependencyTrackerSnapshot) {
+        if Arc::ptr_eq(&self.changed, &snapshot.changed) {
+            return;
+        }
+        let mut restored = (*snapshot.changed).clone();
+        let changed_keys = self
+            .changed
+            .iter()
+            .filter_map(|(&key, &stamp)| {
+                (snapshot.changed.get(&key).copied() != Some(stamp)).then_some(key)
+            })
+            .chain(
+                snapshot
+                    .changed
+                    .keys()
+                    .copied()
+                    .filter(|key| !self.changed.contains_key(key)),
+            )
+            .collect::<Vec<_>>();
+        if !changed_keys.is_empty() {
+            self.revision = self
+                .revision
+                .checked_add(1)
+                .expect("dependency revision exhausted");
+            let stamp = ChangedAt(self.revision);
+            for key in changed_keys {
+                restored.insert(key, stamp);
+            }
+        }
+        self.changed = Arc::new(restored);
     }
 
     /// Validates one observation, reading the current value only on a stamp miss.

@@ -214,6 +214,16 @@ Dependencies are deduplicated deterministically within a region. Nested query
 hits become dependencies on the child query's changed-at result rather than
 copying the entire child read set into every parent.
 
+Changed-at metadata is operational rollback state. Its key map is an immutable
+shared root, so checkpoints and accepted-generation clones retain it in O(1).
+Rollback restores that root while a monotonic clock remints only facts touched
+on the abandoned branch; unrelated stamps remain valid. Group exit obtains the
+deduplicated environment cells actually present in the popped journal slice,
+marks only those restored facts, and marks only code-table generations whose
+roots changed. Group level and group kind are the two unconditional group-exit
+facts. The broad `World` mutation escape hatch remains a conservative cold-path
+fallback; capability-specific World mutations keep their narrow keys.
+
 The disabled recorder path remains one predictable optional branch at facade
 boundaries. Measurements decide whether very hot reads use per-cell
 instrumentation, coarser bank generations, or explicit query parameters.

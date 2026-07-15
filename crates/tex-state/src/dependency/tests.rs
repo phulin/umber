@@ -159,6 +159,64 @@ fn universe_facade_records_and_invalidates_across_rollback() {
 }
 
 #[test]
+fn group_exit_invalidates_only_restored_facts() {
+    let restored = DependencyKey::Cell {
+        bank: DependencyBank::Count,
+        index: 12,
+    };
+    let unrelated = DependencyKey::Cell {
+        bank: DependencyBank::Count,
+        index: 13,
+    };
+    let mut universe = crate::Universe::new();
+    universe.track_dependency(unrelated);
+    universe.enter_group();
+    universe.set_count(12, 7);
+    // Recording after the local assignment is the case that broad group-exit
+    // invalidation used to cover and a write-time stamp alone cannot cover.
+    let restored_stamp = universe.track_dependency(restored);
+    let unrelated_stamp = universe.dependency_changed_at(unrelated);
+    let _ = universe.leave_group();
+    assert!(universe.dependency_changed_at(restored) > restored_stamp);
+    assert_eq!(universe.dependency_changed_at(unrelated), unrelated_stamp);
+
+    let mut restored_observation = ObservedDependency {
+        key: restored,
+        changed_at: restored_stamp,
+        value: DependencyValue::Integer(7),
+    };
+    assert!(
+        !universe.validate_dependencies(std::slice::from_mut(&mut restored_observation), |_| {
+            DependencyValue::Integer(0)
+        })
+    );
+}
+
+#[test]
+fn rollback_preserves_unrelated_stamps_and_clone_ancestry() {
+    let changed = DependencyKey::Meaning(1);
+    let unrelated = DependencyKey::Meaning(2);
+    let mut universe = crate::Universe::new();
+    let changed_before = universe.track_dependency(changed);
+    let unrelated_before = universe.track_dependency(unrelated);
+    let snapshot = universe.snapshot();
+    universe.mark_dependency_changed(changed);
+    universe.rollback(&snapshot);
+    assert!(universe.dependency_changed_at(changed) > changed_before);
+    assert_eq!(universe.dependency_changed_at(unrelated), unrelated_before);
+
+    let fork = universe.clone();
+    assert_eq!(
+        fork.dependency_changed_at(changed),
+        universe.dependency_changed_at(changed)
+    );
+    assert_eq!(
+        fork.dependency_changed_at(unrelated),
+        universe.dependency_changed_at(unrelated)
+    );
+}
+
+#[test]
 fn aggregate_region_validates_after_change_and_restore() {
     let key = DependencyKey::Cell {
         bank: DependencyBank::Count,

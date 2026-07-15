@@ -6,11 +6,12 @@
 //! public timeline tuple lives here so future World/effect/input state cannot
 //! grow a partial rollback API beside the store tuple.
 
+use crate::cell::{BankTag, CellId};
 use crate::code_tables::{CodeTableGenerations, DelCode, LcCode, MathCode, SfCode, UcCode};
 use crate::dependency::{
     ChangedAt, DependencyBank, DependencyCodeTable, DependencyEngineField, DependencyFontField,
-    DependencyKey, DependencyPageField, DependencyRuntime, DependencyValue, DependencyWorldField,
-    ObservedDependency,
+    DependencyKey, DependencyPageField, DependencyRuntime, DependencyTrackerSnapshot,
+    DependencyValue, DependencyWorldField, ObservedDependency,
 };
 #[cfg(test)]
 use crate::env::Env;
@@ -469,6 +470,7 @@ pub struct Snapshot {
     pdf: PdfStateSnapshot,
     exact_store_identity: Option<ContentHash>,
     exact_page_identity: Option<ContentHash>,
+    dependency_tracker: DependencyTrackerSnapshot,
     state_hash: u64,
     state_hash_base: StateHashBase,
 }
@@ -533,6 +535,7 @@ struct ScopedRollback {
     page: PageBuilderState,
     pdf: PdfStateSnapshot,
     state_hash_base: StateHashBase,
+    dependency_tracker: DependencyTrackerSnapshot,
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -2058,6 +2061,7 @@ impl Universe {
             page: self.page.clone(),
             pdf: self.pdf.snapshot(),
             state_hash_base: self.state_hash_base.clone(),
+            dependency_tracker: self.dependencies.snapshot_tracker(),
         }
     }
 
@@ -2076,7 +2080,8 @@ impl Universe {
         self.pdf.rollback(rollback.pdf);
         self.state_hash_base = rollback.state_hash_base;
         self.state_hash_projection_cache.clear();
-        self.dependencies.invalidate_all();
+        self.dependencies
+            .restore_tracker(&rollback.dependency_tracker);
     }
 
     fn checkpoint_from_hash_base(&mut self, hash_base: StateHashBase) -> Snapshot {
@@ -2148,6 +2153,7 @@ impl Universe {
             pdf: self.pdf.snapshot(),
             exact_store_identity,
             exact_page_identity,
+            dependency_tracker: self.dependencies.snapshot_tracker(),
             state_hash,
             state_hash_base: next_hash_base,
         }
@@ -2191,7 +2197,8 @@ impl Universe {
         self.pdf.rollback(snapshot.pdf.clone());
         self.state_hash_base = snapshot.state_hash_base.clone();
         self.state_hash_projection_cache.clear();
-        self.dependencies.invalidate_all();
+        self.dependencies
+            .restore_tracker(&snapshot.dependency_tracker);
     }
 
     fn rollback_generation_fork(&mut self, snapshot: &Snapshot) {
@@ -2205,7 +2212,8 @@ impl Universe {
         self.pdf.rollback(snapshot.pdf.clone());
         self.state_hash_base = snapshot.state_hash_base.clone();
         self.state_hash_projection_cache.clear();
-        self.dependencies.invalidate_all();
+        self.dependencies
+            .restore_tracker(&snapshot.dependency_tracker);
     }
 
     fn state_hash_slice(
@@ -4461,9 +4469,10 @@ impl Universe {
 
     #[must_use]
     pub fn leave_group(&mut self) -> Vec<Token> {
-        let tokens = self.stores.leave_group();
+        let (tokens, changed_cells, code_before, code_after) =
+            self.stores.leave_group_observing_dependencies();
         self.retarget_hash_base_after_group_compaction();
-        self.dependencies.invalidate_all();
+        self.mark_group_exit_dependencies(&changed_cells, code_before, code_after);
         tokens
     }
 
@@ -4471,10 +4480,98 @@ impl Universe {
         &mut self,
         expected: GroupKind,
     ) -> Result<Vec<Token>, GroupMismatch> {
-        let tokens = self.stores.leave_group_with_kind(expected)?;
+        let (tokens, changed_cells, code_before, code_after) = self
+            .stores
+            .leave_group_with_kind_observing_dependencies(expected)?;
         self.retarget_hash_base_after_group_compaction();
-        self.dependencies.invalidate_all();
+        self.mark_group_exit_dependencies(&changed_cells, code_before, code_after);
         Ok(tokens)
+    }
+
+    fn mark_group_exit_dependencies(
+        &mut self,
+        changed_cells: &[CellId],
+        code_before: CodeTableGenerations,
+        code_after: CodeTableGenerations,
+    ) {
+        let dependency_cell = |bank, index| DependencyKey::Cell { bank, index };
+        for &cell in changed_cells {
+            let index = cell.index();
+            let key = match cell.bank() {
+                BankTag::Meaning => DependencyKey::Meaning(index),
+                BankTag::Count => dependency_cell(DependencyBank::Count, index),
+                BankTag::Dimen => dependency_cell(DependencyBank::Dimen, index),
+                BankTag::Skip => dependency_cell(DependencyBank::Skip, index),
+                BankTag::Toks => dependency_cell(DependencyBank::Toks, index),
+                BankTag::Box => dependency_cell(DependencyBank::Box, index),
+                BankTag::Muskip => dependency_cell(DependencyBank::Muskip, index),
+                BankTag::IntParam => dependency_cell(DependencyBank::IntParam, index),
+                BankTag::DimenParam => dependency_cell(DependencyBank::DimenParam, index),
+                BankTag::GlueParam => dependency_cell(DependencyBank::GlueParam, index),
+                BankTag::TokParam => dependency_cell(DependencyBank::TokParam, index),
+                BankTag::CurrentFont => dependency_cell(DependencyBank::CurrentFont, index),
+                BankTag::MathFamilyFont => dependency_cell(DependencyBank::MathFamilyFont, index),
+                BankTag::FontDimen
+                | BankTag::FontParamLen
+                | BankTag::FontHyphenChar
+                | BankTag::FontSkewChar => {
+                    let font = index >> 17;
+                    let slot = index & ((1 << 17) - 1);
+                    let field = match cell.bank() {
+                        BankTag::FontDimen => DependencyFontField::Parameter,
+                        BankTag::FontParamLen => DependencyFontField::ParameterCount,
+                        BankTag::FontHyphenChar => DependencyFontField::HyphenChar,
+                        BankTag::FontSkewChar => DependencyFontField::SkewChar,
+                        _ => unreachable!(),
+                    };
+                    DependencyKey::Font {
+                        field,
+                        font,
+                        index: if matches!(field, DependencyFontField::Parameter) {
+                            slot
+                        } else {
+                            0
+                        },
+                    }
+                }
+            };
+            self.dependencies.mark_changed(key);
+        }
+        for (table, changed) in [
+            (
+                DependencyCodeTable::Catcode,
+                code_before.catcode != code_after.catcode,
+            ),
+            (
+                DependencyCodeTable::Lccode,
+                code_before.lccode != code_after.lccode,
+            ),
+            (
+                DependencyCodeTable::Uccode,
+                code_before.uccode != code_after.uccode,
+            ),
+            (
+                DependencyCodeTable::Sfcode,
+                code_before.sfcode != code_after.sfcode,
+            ),
+            (
+                DependencyCodeTable::Mathcode,
+                code_before.mathcode != code_after.mathcode,
+            ),
+            (
+                DependencyCodeTable::Delcode,
+                code_before.delcode != code_after.delcode,
+            ),
+        ] {
+            if changed {
+                self.dependencies
+                    .mark_changed(DependencyKey::CodeGeneration(table));
+            }
+        }
+        self.dependencies
+            .mark_changed(DependencyKey::Engine(DependencyEngineField::GroupLevel));
+        self.dependencies
+            .mark_changed(DependencyKey::Engine(DependencyEngineField::GroupType));
     }
 
     pub fn set_afterassignment(&mut self, token: Token) {
