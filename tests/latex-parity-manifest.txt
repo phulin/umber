@@ -5,7 +5,9 @@
 # every .lvt in the declared scopes whose same-stem standard .tlg records a
 # shipped DVI box. The exact pinned tree yields 295 candidates, of which the
 # pinned classic LaTeX executable actually emits 286 DVIs; the other nine log
-# variants ship only under a different test configuration.
+# variants ship only under a different test configuration. Explicit `skip`
+# records retain reference-DVI cases in the census while excluding cases whose
+# required non-LaTeX engine layer is outside Umber's supported parity target.
 snapshot release-2024-11-01-PL2
 commit 08926fa6af2c978cbd19f14597252877619f6338
 archive_url https://github.com/latex3/latex2e/archive/08926fa6af2c978cbd19f14597252877619f6338.tar.gz
@@ -16,6 +18,7 @@ source_date_epoch 1730419200
 selection standard-tlg-shipout
 expected_cases 295
 expected_dvi_cases 286
+skip base/testfiles/sx172785.lvt unsupported-pdftex-primitives:pdfprotrudechars,rpcode
 scope base
 scope required/tools
 scope required/graphics

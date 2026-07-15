@@ -11,7 +11,10 @@ The explicit LaTeX format builder verifies this closure before every build.
 archive rather than individual support or test files. Setup derives the DVI
 cohort from same-stem standard `.tlg` shipout markers in the declared package
 scopes, then the live reference run distinguishes actual classic-LaTeX DVI
-cases from alternate test configurations. `scripts/setup-latex-parity-tests.sh`
+cases from alternate test configurations. Explicit manifest `skip` records
+must name a concrete unsupported engine layer and remain visible in the census
+summary; they are not expected-failure aliases for TeX/e-TeX/LaTeX bugs.
+`scripts/setup-latex-parity-tests.sh`
 owns acquisition under gitignored `third_party/latex2e-parity/`; do not copy or
 modify individual upstream LPPL files in the repository.
 

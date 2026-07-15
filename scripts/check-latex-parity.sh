@@ -28,6 +28,7 @@ active_receipt="$receipt"
 triage_dir="${target_dir}/latex-parity/triage"
 failures_report="${target_dir}/latex-parity/last-run-failures.txt"
 non_dvi_report="${target_dir}/latex-parity/last-run-non-dvi.txt"
+skipped_report="${target_dir}/latex-parity/last-run-skipped.txt"
 scratch_parent="${target_dir}/latex-parity/work"
 
 usage() {
@@ -91,6 +92,19 @@ absolute_file() {
   local directory
   directory="$(cd "$(dirname "$path")" && pwd)"
   printf '%s/%s\n' "$directory" "$(basename "$path")"
+}
+
+case_skip_reason() {
+  local path="$1"
+  awk -v path="$path" '
+    $1 == "skip" && $2 == path {
+      $1 = ""
+      $2 = ""
+      sub(/^[[:space:]]+/, "")
+      print
+      exit
+    }
+  ' "$manifest"
 }
 
 reap_abandoned_work_roots() {
@@ -410,17 +424,26 @@ run_one_case() {
 selected=0
 dvi_selected=0
 failed=0
+skipped_count=0
 mkdir -p "$(dirname "$failures_report")"
 failures="${failures_report}.$$"
 non_dvi="${non_dvi_report}.$$"
+skipped="${skipped_report}.$$"
 : > "$failures"
 : > "$non_dvi"
+: > "$skipped"
 while IFS= read -r path; do
   [[ -n "$path" ]] || continue
   case_name="${path%.lvt}"
   case_name="${case_name//\//--}"
   [[ -z "$case_filter" || "$case_name" == "$case_filter" || "$path" == "$case_filter" ]] || continue
   selected=$((selected + 1))
+  skip_reason="$(case_skip_reason "$path")"
+  if [[ -n "$skip_reason" ]]; then
+    skipped_count=$((skipped_count + 1))
+    printf '%s\t%s\t%s\n' "$case_name" "$path" "$skip_reason" >> "$skipped"
+    continue
+  fi
   status=0
   run_one_case "$path" "$case_name" || status=$?
   if [[ $status -eq 2 ]]; then
@@ -446,15 +469,17 @@ if [[ $dvi_selected -gt 0 ]]; then
 fi
 if [[ -z "$case_filter" ]]; then
   expected_dvi_cases="$(awk '$1 == "expected_dvi_cases" { print $2 }' "$manifest")"
-  [[ "$dvi_selected" == "$expected_dvi_cases" ]] || \
-    fail "derived $dvi_selected classic LaTeX DVI cases; expected $expected_dvi_cases"
+  [[ "$((dvi_selected + skipped_count))" == "$expected_dvi_cases" ]] || \
+    fail "derived $dvi_selected tested plus $skipped_count skipped classic LaTeX DVI cases; expected $expected_dvi_cases"
 fi
 printf 'LaTeX format reuse: %s cases restored sha256:%s (builder invocations: %s)\n' \
   "$dvi_selected" "$format_sha256" "$format_build_count"
 mv "$failures" "$failures_report"
 mv "$non_dvi" "$non_dvi_report"
-printf 'LaTeX DVI census: %s candidates, %s classic DVI cases, %s non-DVI configurations (%s)\n' \
-  "$selected" "$dvi_selected" "$((selected - dvi_selected))" "$non_dvi_report"
+mv "$skipped" "$skipped_report"
+printf 'LaTeX DVI census: %s candidates, %s tested classic DVI cases, %s skipped unsupported cases (%s), %s non-DVI configurations (%s)\n' \
+  "$selected" "$dvi_selected" "$skipped_count" "$skipped_report" \
+  "$((selected - dvi_selected - skipped_count))" "$non_dvi_report"
 mv "$active_receipt" "$receipt"
 if [[ $failed -gt 0 ]]; then
   printf 'LaTeX DVI parity: %s exact, %s failures of %s; list: %s\n' \
