@@ -104,6 +104,30 @@ fn run_boxed_alignment_source(source: &str) -> Universe {
     run_alignment_source(&format!("\\setbox0=\\vbox{{{source}}}"))
 }
 
+#[test]
+fn stored_verbatim_delimiter_closes_inside_alignment_cell() {
+    let stores = run_boxed_alignment_source(
+        r"\let\bgroup={\let\egroup=}
+          \def\sverb#1{\def\tempa##1#1{\leavevmode\null##1\egroup}\tempa}
+          \def\verb{\relax\ifmmode\hbox\fi\bgroup\sverb}
+          \def\author#1{\gdef\stored{#1}}
+          \author{E-mail: \verb|{jennie,xianmo,yuliang}@example|}
+          \halign{#\cr\stored\crcr}",
+    );
+
+    let output = support::terminal_effect_text(&stores);
+    assert!(!output.contains("Misplaced \\crcr"), "{output}");
+    assert!(!output.contains("Extra }, or forgotten $"), "{output}");
+}
+
+#[test]
+fn lowercase_raw_text_closer_restores_alignment_brace_depth() {
+    let stores = run_boxed_alignment_source(r"\halign{#\cr \lowercase{ABC}\cr}");
+
+    let output = support::terminal_effect_text(&stores);
+    assert!(!output.contains("Misplaced \\cr"), "{output}");
+}
+
 fn nested_shipout_checkpoints(source: &str) -> Vec<EngineCheckpoint> {
     let mut stores = support::stores_with_fonts();
     let mut input = InputStack::new(MemoryInput::new(format!(
@@ -604,6 +628,18 @@ fn futurelet_undefined_recovery_stays_inside_alignment_cell_driver() {
     assert!(
         support::terminal_effect_text(&stores).contains("Undefined control sequence \\missing")
     );
+}
+
+#[test]
+fn futurelet_brace_lookahead_restores_alignment_depth_before_replay() {
+    let stores = run_boxed_alignment_source(
+        r"\def\consume#1{\global\count0=7}
+          \halign{#\cr \futurelet\next\consume{X}\cr}",
+    );
+
+    assert_eq!(stores.count(0), 7);
+    let output = support::terminal_effect_text(&stores);
+    assert!(!output.contains("Misplaced \\cr"), "{output}");
 }
 
 #[test]

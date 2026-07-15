@@ -564,7 +564,10 @@ fn scan_balanced_raw_text(
     }
     let mut depth = 1usize;
     let mut tokens = Vec::new();
-    while let Some(token) = input.next_token(stores)? {
+    while let Some(traced) =
+        tex_expand::next_semantic_raw_token(input, &mut tex_state::ExpansionContext::new(stores))?
+    {
+        let token = tex_expand::semantic_token(traced);
         if is_begin_group(token) {
             depth += 1;
             tokens.push(token);

@@ -47,7 +47,9 @@ pub(crate) fn scan_preamble(
         );
         crate::push_tokens(input, stores, [opener]);
     }
-    stores.enter_group_with_kind(GroupKind::Simple);
+    // TeX.web `init_align` enters an align_group before scanning the
+    // preamble. A second align_group is then installed for the first entry.
+    stores.enter_group_with_kind(GroupKind::Align);
     // TeX82 resets the global scanner sentinel after scan_spec has consumed
     // the alignment opener and before copying the preamble.
     input.set_alignment_state(-1_000_000);

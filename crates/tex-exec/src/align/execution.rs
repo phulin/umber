@@ -163,7 +163,7 @@ fn align_peek(
                 "\n! Missing } inserted while finishing alignment.\n",
             );
             leave_group(input, stores, tex_state::GroupKind::Align)?;
-            leave_group(input, stores, tex_state::GroupKind::Simple)?;
+            leave_group(input, stores, tex_state::GroupKind::Align)?;
             return Ok(None);
         };
         let semantic = tex_expand::semantic_token(token);
@@ -175,7 +175,7 @@ fn align_peek(
             // fin_align unsaves the fresh entry level, then the level created
             // by scan_spec for the whole alignment.
             leave_group(input, stores, tex_state::GroupKind::Align)?;
-            leave_group(input, stores, tex_state::GroupKind::Simple)?;
+            leave_group(input, stores, tex_state::GroupKind::Align)?;
             return Ok(None);
         }
         // WEB changes an extra alignment tab to a row-ending \cr. A source

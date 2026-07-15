@@ -129,7 +129,11 @@ pub(super) fn execute_futurelet(
     } else {
         stores.set_meaning(target, meaning);
     }
-    push_traced_tokens(input, stores, [first, second]);
+    tex_expand::back_input(
+        input,
+        &mut tex_state::ExpansionContext::new(stores),
+        [first, second],
+    );
     Ok(())
 }
 
