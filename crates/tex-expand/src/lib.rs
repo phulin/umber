@@ -53,6 +53,7 @@ pub mod scan_int;
 
 mod conditionals;
 mod dispatch;
+mod pdf_strings;
 mod primitives;
 mod scan_helpers;
 #[cfg(test)]
@@ -351,6 +352,26 @@ pub fn install_pdftex_expandable_primitives(stores: &mut Universe) {
             "ifpdfabsdim",
             tex_state::meaning::ExpandablePrimitive::IfPdfAbsDim,
         ),
+        (
+            "pdfescapestring",
+            tex_state::meaning::ExpandablePrimitive::PdfEscapeString,
+        ),
+        (
+            "pdfescapename",
+            tex_state::meaning::ExpandablePrimitive::PdfEscapeName,
+        ),
+        (
+            "pdfescapehex",
+            tex_state::meaning::ExpandablePrimitive::PdfEscapeHex,
+        ),
+        (
+            "pdfunescapehex",
+            tex_state::meaning::ExpandablePrimitive::PdfUnescapeHex,
+        ),
+        (
+            "pdfstrcmp",
+            tex_state::meaning::ExpandablePrimitive::StringCompare,
+        ),
     ] {
         stores.install_primitive_meaning(name, Meaning::ExpandablePrimitive(primitive));
     }
@@ -551,6 +572,10 @@ pub enum ExpandableOpcode {
     IfPdfPrimitive,
     IfPdfAbsNum,
     IfPdfAbsDim,
+    PdfEscapeString,
+    PdfEscapeName,
+    PdfEscapeHex,
+    PdfUnescapeHex,
     IfDefined,
     IfCsName,
     IfInCsName,

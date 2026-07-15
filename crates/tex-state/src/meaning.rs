@@ -245,6 +245,10 @@ pub enum ExpandablePrimitive {
     IfPdfAbsNum,
     /// Compares absolute dimension magnitudes.
     IfPdfAbsDim,
+    PdfEscapeString,
+    PdfEscapeName,
+    PdfEscapeHex,
+    PdfUnescapeHex,
 }
 
 impl ExpandablePrimitive {
@@ -321,6 +325,10 @@ impl ExpandablePrimitive {
             Self::IfPdfPrimitive => 67,
             Self::IfPdfAbsNum => 68,
             Self::IfPdfAbsDim => 69,
+            Self::PdfEscapeString => 70,
+            Self::PdfEscapeName => 71,
+            Self::PdfEscapeHex => 72,
+            Self::PdfUnescapeHex => 73,
         }
     }
 
@@ -397,6 +405,10 @@ impl ExpandablePrimitive {
             67 => Some(Self::IfPdfPrimitive),
             68 => Some(Self::IfPdfAbsNum),
             69 => Some(Self::IfPdfAbsDim),
+            70 => Some(Self::PdfEscapeString),
+            71 => Some(Self::PdfEscapeName),
+            72 => Some(Self::PdfEscapeHex),
+            73 => Some(Self::PdfUnescapeHex),
             _ => None,
         }
     }

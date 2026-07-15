@@ -413,7 +413,9 @@ mod tests {
     };
     use tex_lex::{InputStack, MemoryInput};
     use tex_state::World;
+    use tex_state::macro_store::MacroMeaning;
     use tex_state::meaning::ExpandablePrimitive;
+    use tex_state::meaning::MeaningFlags;
     use tex_state::token::{Catcode, Token};
 
     #[test]
@@ -531,6 +533,139 @@ mod tests {
                 token => panic!("identity emitted a non-pdfTeX character token {token:?}"),
             }
         }
+    }
+
+    fn expand_pdftex_characters(
+        source: &str,
+        configure: impl FnOnce(&mut Universe),
+    ) -> Vec<(u8, Catcode)> {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        configure(&mut stores);
+        let mut input = InputStack::new(MemoryInput::new(source));
+        let mut context = tex_state::ExpansionContext::new(&mut stores);
+        let mut output = Vec::new();
+        while let Some(token) =
+            tex_expand::get_x_token(&mut input, &mut context).expect("pdfTeX string expansion")
+        {
+            let Token::Char { ch, cat } = tex_expand::semantic_token(token) else {
+                panic!("string primitive emitted non-character token {token:?}");
+            };
+            output.push((u8::try_from(u32::from(ch)).expect("pdfTeX byte token"), cat));
+        }
+        output
+    }
+
+    fn pdftex_bytes(source: &str) -> Vec<u8> {
+        expand_pdftex_characters(source, |_| {})
+            .into_iter()
+            .map(|(byte, _)| byte)
+            .collect()
+    }
+
+    #[test]
+    fn pdftex_string_escapes_match_the_pinned_byte_oracle() {
+        assert_eq!(
+            pdftex_bytes("\\pdfescapestring{Text (1)\\pdfunescapehex{5C7F80}}%"),
+            b"Text\\040\\(1\\)\\\\\\177\\200"
+        );
+        assert_eq!(
+            pdftex_bytes("\\pdfescapename{Text \\pdfunescapehex{28292F23255B5D7B7D007F80FF}}%"),
+            b"Text#20#28#29#2F#23#25#5B#5D#7B#7D#7F#80#FF"
+        );
+        assert_eq!(
+            pdftex_bytes("\\pdfescapehex{Az \\pdfunescapehex{007F80FF}}%"),
+            b"417A20007F80FF"
+        );
+    }
+
+    #[test]
+    fn pdftex_unescapehex_ignores_junk_and_pads_an_odd_nibble() {
+        assert_eq!(
+            pdftex_bytes("\\pdfescapehex{\\pdfunescapehex{4g1!42zF}}%"),
+            b"4142F0"
+        );
+    }
+
+    #[test]
+    fn pdftex_string_results_use_space_and_other_catcodes() {
+        for (byte, catcode) in expand_pdftex_characters("\\pdfunescapehex{20412800FF}%", |_| {}) {
+            assert_eq!(
+                catcode,
+                if byte == b' ' {
+                    Catcode::Space
+                } else {
+                    Catcode::Other
+                },
+                "byte {byte:02X}"
+            );
+        }
+    }
+
+    #[test]
+    fn pdftex_string_scanning_expands_macros_and_spells_control_sequences() {
+        assert_eq!(
+            expand_pdftex_characters(
+                "\\pdfescapehex{\\value\\noexpand\\foobar\\noexpand\\!}%",
+                |stores| {
+                    let value = stores.intern("value");
+                    let body = stores.intern_token_list(&[
+                        Token::Char {
+                            ch: 'A',
+                            cat: Catcode::Letter,
+                        },
+                        Token::Char {
+                            ch: 'z',
+                            cat: Catcode::Letter,
+                        },
+                    ]);
+                    stores.set_macro_meaning(
+                        value,
+                        MacroMeaning::new(MeaningFlags::EMPTY, TokenListId::EMPTY, body),
+                    );
+                },
+            )
+            .into_iter()
+            .map(|(byte, _)| byte)
+            .collect::<Vec<_>>(),
+            b"417A5C666F6F626172205C21"
+        );
+        assert_eq!(
+            expand_pdftex_characters(
+                "\\pdfescapehex{\\noexpand\\foobar\\noexpand\\!}%",
+                |stores| stores.set_int_param_global(IntParam::ESCAPE_CHAR, -1),
+            )
+            .into_iter()
+            .map(|(byte, _)| byte)
+            .collect::<Vec<_>>(),
+            b"666F6F6261722021"
+        );
+    }
+
+    #[test]
+    fn pdfstrcmp_uses_unsigned_pdftex_byte_ordering() {
+        assert_eq!(
+            pdftex_bytes(concat!(
+                "\\pdfstrcmp{a}{aa},",
+                "\\pdfstrcmp{aa}{a},",
+                "\\pdfstrcmp{same}{same},",
+                "\\pdfstrcmp{\\pdfunescapehex{80}}{\\pdfunescapehex{7F}},",
+                "\\pdfstrcmp{\\noexpand\\a}{\\noexpand\\b}%",
+            )),
+            b"-1,1,0,1,-1"
+        );
+
+        let mut pdftex = Universe::default();
+        prepare_pdftex_run_stores(&mut pdftex);
+        let pdfstrcmp = pdftex.intern("pdfstrcmp");
+        assert_eq!(
+            pdftex.meaning(pdfstrcmp),
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::StringCompare)
+        );
+        let mut latex = Universe::default();
+        prepare_latex_run_stores(&mut latex);
+        let strcmp = latex.intern("strcmp");
+        assert_eq!(latex.meaning(strcmp), pdftex.meaning(pdfstrcmp));
     }
 
     #[test]

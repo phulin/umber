@@ -236,7 +236,31 @@ macro_rules! dispatch_match {
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::FileSize) => $filesize_arm,
             Meaning::ExpandablePrimitive(ExpandablePrimitive::StringCompare) => {
-                execute_string_compare_primitive(
+                crate::pdf_strings::execute_compare(
+                    input, stores, expansion, mode, call_context,
+                )
+            }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfEscapeString) => {
+                crate::pdf_strings::execute_conversion(
+                    crate::pdf_strings::PdfStringConversion::EscapeString,
+                    input, stores, expansion, mode, call_context,
+                )
+            }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfEscapeName) => {
+                crate::pdf_strings::execute_conversion(
+                    crate::pdf_strings::PdfStringConversion::EscapeName,
+                    input, stores, expansion, mode, call_context,
+                )
+            }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfEscapeHex) => {
+                crate::pdf_strings::execute_conversion(
+                    crate::pdf_strings::PdfStringConversion::EscapeHex,
+                    input, stores, expansion, mode, call_context,
+                )
+            }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfUnescapeHex) => {
+                crate::pdf_strings::execute_conversion(
+                    crate::pdf_strings::PdfStringConversion::UnescapeHex,
                     input, stores, expansion, mode, call_context,
                 )
             }
@@ -1173,35 +1197,6 @@ fn execute_filesize_primitive(
     }
 }
 
-fn execute_string_compare_primitive(
-    input: &mut InputStack,
-    stores: &mut tex_state::ExpansionContext<'_>,
-    expansion: &mut ExpansionContext<'_>,
-    mode: &mut dyn ExpansionMode,
-    context: TracedTokenWord,
-) -> Result<Dispatch, ExpandError> {
-    let mut strings = [String::new(), String::new()];
-    for string in &mut strings {
-        let text = crate::scan::scan_general_text_expanded_with_expanded_open(
-            input, stores, expansion, mode, context,
-        )?;
-        for &token in stores.tokens(text.token_list()) {
-            crate::append_token_string_text(stores, token, string);
-        }
-    }
-    let result = match strings[0].as_bytes().cmp(strings[1].as_bytes()) {
-        std::cmp::Ordering::Less => "-1",
-        std::cmp::Ordering::Equal => "0",
-        std::cmp::Ordering::Greater => "1",
-    };
-    Ok(push_rendered_text(
-        stores,
-        ExpansionReplayKind::NumberOutput,
-        result,
-        context.origin(),
-    ))
-}
-
 #[allow(clippy::too_many_arguments)]
 fn dispatch_core(
     token: Token,
@@ -1389,6 +1384,10 @@ pub fn dispatch_expandable_opcode(opcode: ExpandableOpcode) -> Result<(), Expand
         | ExpandableOpcode::IfPdfPrimitive
         | ExpandableOpcode::IfPdfAbsNum
         | ExpandableOpcode::IfPdfAbsDim
+        | ExpandableOpcode::PdfEscapeString
+        | ExpandableOpcode::PdfEscapeName
+        | ExpandableOpcode::PdfEscapeHex
+        | ExpandableOpcode::PdfUnescapeHex
         | ExpandableOpcode::IfDefined
         | ExpandableOpcode::IfCsName
         | ExpandableOpcode::IfInCsName
