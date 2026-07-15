@@ -27,6 +27,15 @@ const CORPUS_TFMS: &[&str] = &[
 
 pub fn run_cli() -> Result<bool> {
     let options = Options::parse(env::args_os().skip(1))?;
+    if let Some((expected, actual)) = &options.compare_existing_dvi {
+        compare_dvi_files(
+            expected,
+            actual,
+            &options.triage_dir,
+            &options.comparison_label,
+        )?;
+        return Ok(true);
+    }
     if options.self_test {
         run_self_test(&options.triage_dir)?;
         return Ok(true);
@@ -131,6 +140,8 @@ pub fn run_named_external_document(
         keep_triage: true,
         self_test: false,
         write_reference_fixture: None,
+        compare_existing_dvi: None,
+        comparison_label: "dvi-comparison".to_string(),
         repo_root,
     };
     if run_e2e(&options)? {
@@ -205,6 +216,8 @@ struct Options {
     keep_triage: bool,
     self_test: bool,
     write_reference_fixture: Option<PathBuf>,
+    compare_existing_dvi: Option<(PathBuf, PathBuf)>,
+    comparison_label: String,
 }
 
 impl Options {
@@ -219,6 +232,8 @@ impl Options {
             keep_triage: false,
             self_test: false,
             write_reference_fixture: None,
+            compare_existing_dvi: None,
+            comparison_label: "dvi-comparison".to_string(),
         };
 
         let mut args = args.peekable();
@@ -243,6 +258,17 @@ impl Options {
                     options.doc_filter = Some(value.to_string_lossy().into_owned());
                 }
                 Some("--keep-triage") => options.keep_triage = true,
+                Some("--compare-existing-dvi") => {
+                    let expected = next_path(&mut args, "--compare-existing-dvi")?;
+                    let actual = next_path(&mut args, "--compare-existing-dvi")?;
+                    options.compare_existing_dvi = Some((expected, actual));
+                }
+                Some("--label") => {
+                    let value = args
+                        .next()
+                        .ok_or_else(|| anyhow!("missing value after --label"))?;
+                    options.comparison_label = value.to_string_lossy().into_owned();
+                }
                 Some("--self-test") => options.self_test = true,
                 Some("--write-reference-fixture") => {
                     options.write_reference_fixture =
@@ -1085,7 +1111,7 @@ fn synthetic_page(bytes: &mut Vec<u8>, count0: i32, previous: i32, body: &[u8]) 
 
 fn print_usage() {
     eprintln!(
-        "usage: parity-harness [--manifest path] [--corpus-dir dir] [--triage-dir dir] [--umber-bin path] [--doc name] [--keep-triage] [--self-test] [--write-reference-fixture path]"
+        "usage: parity-harness [--manifest path] [--corpus-dir dir] [--triage-dir dir] [--umber-bin path] [--doc name] [--keep-triage] [--self-test] [--write-reference-fixture path]\n       parity-harness --compare-existing-dvi expected.dvi actual.dvi [--label name] [--triage-dir dir]"
     );
 }
 
