@@ -8,6 +8,8 @@ case_list="${repo_root}/third_party/latex2e-parity/dvi-cases.txt"
 texmf_dist="${UMBER_TEXMF_DIST:-/usr/local/texlive/2025/texmf-dist}"
 texmf_var="${UMBER_TEXMF_VAR:-}"
 reference_latex="${UMBER_REF_LATEX:-$(command -v latex || true)}"
+reference_kpsewhich="${UMBER_REF_KPSEWHICH:-$(command -v kpsewhich || true)}"
+reference_dvitype="${UMBER_REF_DVITYPE:-$(command -v dvitype || true)}"
 format_builder="${UMBER_LATEX_FORMAT_BUILDER:-${repo_root}/scripts/build-latex-format.sh}"
 format_file=""
 case_filter=""
@@ -208,6 +210,10 @@ else
   "${repo_root}/scripts/setup-latex-parity-tests.sh"
 fi
 [[ -x "$reference_latex" ]] || fail "missing reference LaTeX; set UMBER_REF_LATEX"
+[[ -x "$reference_kpsewhich" ]] || \
+  fail "missing reference kpsewhich; set UMBER_REF_KPSEWHICH"
+[[ -x "$reference_dvitype" ]] || \
+  fail "missing reference DVItype; set UMBER_REF_DVITYPE"
 [[ "$case_timeout_seconds" =~ ^[1-9][0-9]*$ ]] || \
   fail "UMBER_LATEX_CASE_TIMEOUT_SECONDS must be a positive integer"
 command -v perl >/dev/null 2>&1 || fail "Perl is required for per-case timeouts"
@@ -216,7 +222,7 @@ reference_version="$($reference_latex --version | sed -n '1p')"
   fail "reference LaTeX is not from pinned TeX Live 2025: $reference_version"
 [[ -d "$texmf_dist" ]] || fail "missing pinned texmf-dist root: $texmf_dist"
 if [[ -z "$texmf_var" ]]; then
-  texmf_var="$(kpsewhich -var-value=TEXMFVAR)"
+  texmf_var="$("$reference_kpsewhich" -var-value=TEXMFVAR)"
 fi
 
 cd "$repo_root"
@@ -322,6 +328,21 @@ run_one_case() {
   # the reference run so Umber sees the same generated font metrics without
   # requiring recursive kpathsea path syntax in its explicit host resolver.
   local case_texfonts="$texfonts"
+  local reference_font resolved_tfm resolved_dir
+  while IFS= read -r reference_font; do
+    resolved_tfm="$("$reference_kpsewhich" "${reference_font}.tfm" || true)"
+    if [[ ! -f "$resolved_tfm" ]]; then
+      case_error "$case_name" "could not resolve reference font ${reference_font}.tfm"
+      return 1
+    fi
+    resolved_dir="${resolved_tfm%/*}"
+    if [[ ":${case_texfonts}:" != *":${resolved_dir}:"* ]]; then
+      case_texfonts+=":${resolved_dir}"
+    fi
+  done < <(
+    "$reference_dvitype" -output-level=1 "${reference_dir}/document.dvi" 2>/dev/null |
+      sed -n 's/^[0-9][0-9]*: fntdef[1-4] [0-9][0-9]*: \(.*\)---loaded at size.*$/\1/p'
+  )
   if [[ -d "${texmf_var}/fonts/tfm" ]]; then
     local generated_tfm generated_dir
     while IFS= read -r generated_tfm; do
