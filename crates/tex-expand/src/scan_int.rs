@@ -740,6 +740,16 @@ where
             );
             Ok(ScannedInt::new(stores.pdf_shell_escape_status(), token))
         }
+        Meaning::InternalInteger(InternalInteger::PdfLastObject) => {
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Engine(ReadEngineField::PdfObjects)
+            );
+            Ok(ScannedInt::new(
+                i32::try_from(stores.pdf_last_object()).unwrap_or(i32::MAX),
+                token,
+            ))
+        }
         Meaning::InternalInteger(InternalInteger::CurrentGroupLevel) => {
             crate::record_dependency!(
                 expansion,

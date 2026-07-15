@@ -96,6 +96,42 @@ fn pdf_font_enquiries_reject_nullfont() {
 }
 
 #[test]
+fn pdf_last_object_reads_the_checkpointed_canonical_ledger() {
+    let mut stores = Universe::new();
+    stores.enable_pdf_output();
+    crate::install_expandable_primitives(&mut stores);
+    crate::install_pdftex_expandable_primitives(&mut stores);
+
+    for (expected, reserve) in [("0", false), ("3", true)] {
+        if reserve {
+            assert_eq!(
+                stores
+                    .reserve_pdf_raw_object()
+                    .expect("reserve raw object")
+                    .raw(),
+                3
+            );
+        }
+        let mut input = InputStack::new(MemoryInput::new("\\the\\pdflastobj"));
+        let token = get_x_token(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores),
+        )
+        .expect("last-object expansion")
+        .expect("one digit");
+        assert_eq!(token, char_token(expected.chars().next().expect("digit")));
+        assert_eq!(
+            get_x_token(
+                &mut input,
+                &mut tex_state::ExpansionContext::new(&mut stores)
+            )
+            .expect("end of expansion"),
+            None
+        );
+    }
+}
+
+#[test]
 fn pdftex_absolute_conditionals_handle_signed_minimum_without_overflow() {
     assert_eq!(
         crate::conditionals::absolute_magnitude(i32::MIN),

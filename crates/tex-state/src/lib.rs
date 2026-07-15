@@ -23,10 +23,11 @@
 /// per-font character-code and ligature-suppression state. Version 15 adds
 /// checkpointed PDF font resource and indirect-object identities. Version 16
 /// adds typed external-image metadata used by pdfTeX page-box enquiries.
+/// Version 17 adds reserved and initialized raw PDF object records.
 /// Hashes are
 /// comparable only when both this version and the named-boundary schedule
 /// match.
-pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 16;
+pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 17;
 
 pub mod cell;
 pub mod code_tables;
@@ -65,7 +66,8 @@ pub use pdf::{
     PDF_CATALOG_OBJECT_ID, PDF_PAGES_OBJECT_ID, PdfExternalImageId, PdfExternalImageIdError,
     PdfExternalImageMetadata, PdfExternalImageRegistrationError, PdfFontConfiguration,
     PdfFontMapOperation, PdfFontResourceRecord, PdfGlyphToUnicode, PdfObjectCapacityError,
-    PdfOutputParameters, PdfPageBox, PdfPageRecord,
+    PdfOutputParameters, PdfPageBox, PdfPageRecord, PdfRawObjectData, PdfRawObjectId,
+    PdfRawObjectInitializeError, PdfRawObjectRecord,
 };
 pub mod world;
 

@@ -1,5 +1,12 @@
 //! Checkpointed pdfTeX document allocation ledger.
 
+mod object;
+
+use object::PdfRawObjects;
+pub use object::{
+    PdfRawObjectData, PdfRawObjectId, PdfRawObjectInitializeError, PdfRawObjectRecord,
+};
+
 use std::sync::Arc;
 
 use crate::ContentHash;
@@ -427,6 +434,7 @@ pub(crate) struct PdfStateCursor {
     fingerprint: u64,
     match_fingerprint: u64,
     external_image_fingerprint: u64,
+    raw_object_fingerprint: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -434,6 +442,7 @@ pub(crate) struct PdfStateSnapshot {
     cursor: PdfStateCursor,
     match_state: Arc<PdfMatchState>,
     external_images: Arc<Vec<PdfExternalImageRecord>>,
+    raw_objects: PdfRawObjects,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -459,6 +468,7 @@ pub(crate) struct PdfState {
     match_state: Arc<PdfMatchState>,
     external_images: Arc<Vec<PdfExternalImageRecord>>,
     external_image_fingerprint: u64,
+    raw_objects: PdfRawObjects,
 }
 
 impl Default for PdfState {
@@ -475,6 +485,7 @@ impl Default for PdfState {
             match_state: Arc::new(PdfMatchState::default()),
             external_images: Arc::new(Vec::new()),
             external_image_fingerprint: external_image_base_fingerprint(),
+            raw_objects: PdfRawObjects::default(),
         }
     }
 }
@@ -511,6 +522,7 @@ impl PdfState {
             && self.font_operations.is_empty()
             && self.font_resources.is_empty()
             && self.external_images.is_empty()
+            && self.raw_objects.is_empty()
     }
 
     pub(crate) fn ensure_page_capacity(&self, parameters: PdfOutputParameters) -> Result<(), ()> {
@@ -930,6 +942,40 @@ impl PdfState {
             .map(|index| self.external_images[index].metadata)
     }
 
+    pub(crate) fn reserve_raw_object(&mut self) -> Result<PdfRawObjectId, PdfObjectCapacityError> {
+        let raw = (self.next_object <= MAX_OBJECT_ID)
+            .then_some(self.next_object)
+            .ok_or(PdfObjectCapacityError)?;
+        let id = PdfRawObjectId::from_allocated(raw);
+        self.next_object += 1;
+        self.raw_objects.reserve(id);
+        Ok(id)
+    }
+
+    pub(crate) fn initialize_raw_object(
+        &mut self,
+        id: PdfRawObjectId,
+        data: PdfRawObjectData,
+        immediate: bool,
+    ) -> Result<(), PdfRawObjectInitializeError> {
+        self.raw_objects.initialize(id, data, immediate)
+    }
+
+    #[must_use]
+    pub(crate) fn raw_object(&self, id: PdfRawObjectId) -> Option<PdfRawObjectRecord> {
+        self.raw_objects.record(id)
+    }
+
+    #[must_use]
+    pub(crate) fn raw_objects(&self) -> &[PdfRawObjectRecord] {
+        self.raw_objects.records()
+    }
+
+    #[must_use]
+    pub(crate) fn last_raw_object(&self) -> u32 {
+        self.raw_objects.last_object()
+    }
+
     #[must_use]
     pub(crate) fn cursor(&self) -> PdfStateCursor {
         PdfStateCursor {
@@ -943,6 +989,7 @@ impl PdfState {
             fingerprint: self.fingerprint,
             match_fingerprint: self.match_state.fingerprint,
             external_image_fingerprint: self.external_image_fingerprint,
+            raw_object_fingerprint: self.raw_objects.fingerprint(),
         }
     }
     #[must_use]
@@ -951,6 +998,7 @@ impl PdfState {
             cursor: self.cursor(),
             match_state: Arc::clone(&self.match_state),
             external_images: Arc::clone(&self.external_images),
+            raw_objects: self.raw_objects.clone(),
         }
     }
 
@@ -971,6 +1019,7 @@ impl PdfState {
         self.match_state = snapshot.match_state;
         self.external_images = snapshot.external_images;
         self.external_image_fingerprint = cursor.external_image_fingerprint;
+        self.raw_objects = snapshot.raw_objects;
     }
 
     pub(crate) fn set_match(
@@ -1015,6 +1064,7 @@ impl PdfState {
             hasher.u64(cursor.fingerprint);
             hasher.u64(cursor.match_fingerprint);
             hasher.u64(cursor.external_image_fingerprint);
+            hasher.u64(cursor.raw_object_fingerprint);
         })
     }
 }
@@ -1474,5 +1524,49 @@ mod tests {
             PdfExternalImageMetadata::Raster.bbox_coordinate(3),
             Some(Scaled::from_raw(0))
         );
+    }
+
+    #[test]
+    fn raw_object_reservation_initialization_and_rollback_share_one_ledger() {
+        let mut state = PdfState::default();
+        state.enable();
+        let initial = state.snapshot();
+        let initial_hash = state.hash_fragment();
+
+        let first = state.reserve_raw_object().expect("reserve raw object");
+        assert_eq!(first.raw(), 3);
+        assert_eq!(state.last_raw_object(), 3);
+        assert_eq!(state.next_object(), 4);
+        assert_eq!(state.raw_object(first).expect("reserved").data(), None);
+        let tokens = PdfTokenParameter {
+            tokens: TokenListId::EMPTY,
+            semantic_id: 17,
+        };
+        let data = PdfRawObjectData::new(true, Some(tokens), false, tokens);
+        state
+            .initialize_raw_object(first, data, true)
+            .expect("initialize reservation");
+        let record = state.raw_object(first).expect("initialized");
+        assert_eq!(record.data(), Some(data));
+        assert!(record.is_immediate());
+        assert!(!state.is_format_empty());
+        assert_eq!(
+            state.initialize_raw_object(first, data, false),
+            Err(PdfRawObjectInitializeError::AlreadyInitialized(first))
+        );
+        let allocated_hash = state.hash_fragment();
+        assert_ne!(allocated_hash, initial_hash);
+
+        state.rollback(initial);
+        assert_eq!(state.raw_object(first), None);
+        assert_eq!(state.last_raw_object(), 0);
+        assert_eq!(state.next_object(), 3);
+        assert_eq!(state.hash_fragment(), initial_hash);
+        let replay = state.reserve_raw_object().expect("replay reservation");
+        state
+            .initialize_raw_object(replay, data, true)
+            .expect("replay initialization");
+        assert_eq!(replay, first);
+        assert_eq!(state.hash_fragment(), allocated_hash);
     }
 }

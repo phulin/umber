@@ -35,7 +35,8 @@ use crate::page::{
 use crate::pdf::{
     PdfExternalImageId, PdfExternalImageMetadata, PdfExternalImageRegistrationError,
     PdfFontResourceRecord, PdfObjectCapacityError, PdfOutputParameters, PdfPageParameters,
-    PdfState, PdfStateCursor, PdfStateSnapshot, PdfTokenParameter,
+    PdfRawObjectData, PdfRawObjectId, PdfRawObjectInitializeError, PdfRawObjectRecord, PdfState,
+    PdfStateCursor, PdfStateSnapshot, PdfTokenParameter,
 };
 use crate::provenance::ProvenanceStats;
 use crate::provenance::{
@@ -210,6 +211,9 @@ pub trait ExpansionState {
         0
     }
     fn pdf_shell_escape_status(&self) -> i32 {
+        0
+    }
+    fn pdf_last_object(&self) -> u32 {
         0
     }
     fn pdf_uniform_deviate(&mut self, _bound: i32) -> i32 {
@@ -2073,6 +2077,45 @@ impl Universe {
         self.pdf.font_resources()
     }
 
+    /// Reserves the next identity in the canonical PDF object ledger.
+    pub fn reserve_pdf_raw_object(&mut self) -> Result<PdfRawObjectId, PdfObjectCapacityError> {
+        self.pdf.reserve_raw_object()
+    }
+
+    /// Initializes a previously reserved raw object without changing its ID.
+    pub fn initialize_pdf_raw_object(
+        &mut self,
+        id: PdfRawObjectId,
+        stream: bool,
+        stream_attr: Option<TokenListId>,
+        file: bool,
+        data: TokenListId,
+        immediate: bool,
+    ) -> Result<(), PdfRawObjectInitializeError> {
+        let stream_attr = stream_attr.map(|tokens| self.pdf_token_parameter(tokens));
+        let data = self.pdf_token_parameter(data);
+        self.pdf.initialize_raw_object(
+            id,
+            PdfRawObjectData::new(stream, stream_attr, file, data),
+            immediate,
+        )
+    }
+
+    #[must_use]
+    pub fn pdf_raw_object(&self, raw: u32) -> Option<PdfRawObjectRecord> {
+        self.pdf.raw_object(PdfRawObjectId::from_allocated(raw))
+    }
+
+    #[must_use]
+    pub fn pdf_raw_objects(&self) -> &[PdfRawObjectRecord] {
+        self.pdf.raw_objects()
+    }
+
+    #[must_use]
+    pub fn pdf_last_object(&self) -> u32 {
+        self.pdf.last_raw_object()
+    }
+
     fn current_pdf_output_parameters(&self) -> PdfOutputParameters {
         PdfOutputParameters {
             output: self.int_param(IntParam::PDF_OUTPUT),
@@ -2095,6 +2138,11 @@ impl Universe {
 
     fn current_pdf_token_parameter(&self, parameter: TokParam) -> PdfTokenParameter {
         let tokens = self.tok_param(parameter);
+        self.pdf_token_parameter(tokens)
+    }
+
+    fn pdf_token_parameter(&self, tokens: TokenListId) -> PdfTokenParameter {
+        let _ = self.tokens(tokens);
         PdfTokenParameter {
             tokens,
             semantic_id: self.stores.token_list_semantic_id_value(tokens),
@@ -4176,6 +4224,10 @@ impl ExpansionState for Universe {
         Self::pdf_shell_escape_status(self)
     }
 
+    fn pdf_last_object(&self) -> u32 {
+        Self::pdf_last_object(self)
+    }
+
     fn pdf_uniform_deviate(&mut self, bound: i32) -> i32 {
         Self::pdf_uniform_deviate(self, bound)
     }
@@ -4646,6 +4698,10 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn pdf_shell_escape_status(&self) -> i32 {
         self.universe.pdf_shell_escape_status()
+    }
+
+    fn pdf_last_object(&self) -> u32 {
+        self.universe.pdf_last_object()
     }
 
     fn pdf_uniform_deviate(&mut self, bound: i32) -> i32 {

@@ -426,6 +426,10 @@ pub fn install_pdftex_expandable_primitives(stores: &mut Universe) {
         "pdftexversion",
         Meaning::InternalInteger(tex_state::meaning::InternalInteger::PdfTeXVersion),
     );
+    stores.install_primitive_meaning(
+        "pdflastobj",
+        Meaning::InternalInteger(tex_state::meaning::InternalInteger::PdfLastObject),
+    );
 }
 
 /// Records state reads performed by expansion.
@@ -509,6 +513,7 @@ pub enum ReadEngineField {
     PdfShellEscape,
     PageInsertions,
     PdfExternalImages,
+    PdfObjects,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

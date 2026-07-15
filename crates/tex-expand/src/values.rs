@@ -652,6 +652,12 @@ where
             &stores.pdf_shell_escape_status().to_string(),
             cause_origin,
         )),
+        Meaning::InternalInteger(InternalInteger::PdfLastObject) => Ok(push_rendered_text(
+            stores,
+            ExpansionReplayKind::TheOutput,
+            &stores.pdf_last_object().to_string(),
+            cause_origin,
+        )),
         Meaning::InternalInteger(InternalInteger::CurrentGroupLevel) => Ok(push_rendered_text(
             stores,
             ExpansionReplayKind::TheOutput,
@@ -904,6 +910,13 @@ pub(crate) fn record_meaning_value_dependency(
             crate::record_dependency!(
                 expansion,
                 ReadDependency::Engine(ReadEngineField::PdfShellEscape)
+            );
+            None
+        }
+        Meaning::InternalInteger(InternalInteger::PdfLastObject) => {
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Engine(ReadEngineField::PdfObjects)
             );
             None
         }

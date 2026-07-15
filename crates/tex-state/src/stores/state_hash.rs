@@ -1582,6 +1582,7 @@ fn hash_internal_integer(integer: InternalInteger, hasher: &mut StateHasher) {
         InternalInteger::PdfElapsedTime => hasher.tag(10),
         InternalInteger::PdfRandomSeed => hasher.tag(11),
         InternalInteger::PdfShellEscape => hasher.tag(12),
+        InternalInteger::PdfLastObject => hasher.tag(13),
         InternalInteger::CurrentGroupLevel => hasher.tag(3),
         InternalInteger::CurrentGroupType => hasher.tag(4),
         InternalInteger::CurrentIfLevel => hasher.tag(5),
