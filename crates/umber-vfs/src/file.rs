@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use tex_content::{ContentDomain, ContentIdentity};
 
-use crate::VirtualPath;
+use crate::{FileRequestKey, VirtualPath};
 
 /// Stable identity of exact immutable VFS file bytes.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -21,6 +21,16 @@ impl FileContentId {
     #[must_use]
     pub const fn identity(self) -> ContentIdentity {
         self.0
+    }
+
+    #[must_use]
+    pub const fn from_identity_bytes(bytes: [u8; 32]) -> Self {
+        Self(ContentIdentity::new(bytes))
+    }
+
+    #[must_use]
+    pub const fn bytes(self) -> [u8; 32] {
+        self.0.bytes()
     }
 }
 
@@ -85,13 +95,11 @@ numeric_id!(BuildId, "Stable identity of a pending or accepted build.");
 numeric_id!(StageId, "Stable identity of one stage within a build.");
 
 /// Provenance retained with immutable file bytes.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum FileOrigin {
     User,
-    /// A host-provided resource accepted by a domain resolver.
-    ///
-    /// The typed request key is added by the resource-registration layer.
-    Resolved,
+    /// A host-provided resource accepted for this exact typed request.
+    Resolved(FileRequestKey),
     Generated {
         producer: ProducerId,
         build: BuildId,
@@ -150,8 +158,8 @@ impl VirtualFile {
     }
 
     #[must_use]
-    pub const fn origin(&self) -> FileOrigin {
-        self.origin
+    pub fn origin(&self) -> &FileOrigin {
+        &self.origin
     }
 }
 

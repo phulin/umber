@@ -136,8 +136,8 @@ impl FileLayer {
                 return Err(ImmutableBindingError::OriginConflict {
                     layer: self.kind,
                     path: file.path().clone(),
-                    existing: existing.origin(),
-                    incoming: file.origin(),
+                    existing: existing.origin().clone(),
+                    incoming: file.origin().clone(),
                 });
             }
             return Ok(InsertOutcome::AlreadyPresent);
@@ -155,7 +155,7 @@ fn validate_ownership(kind: LayerKind, file: &VirtualFile) -> Result<(), Immutab
     let origin_matches = matches!(
         (kind, file.origin()),
         (LayerKind::User, FileOrigin::User)
-            | (LayerKind::ResolvedResource, FileOrigin::Resolved)
+            | (LayerKind::ResolvedResource, FileOrigin::Resolved(_))
             | (
                 LayerKind::AcceptedGenerated | LayerKind::PendingGenerated,
                 FileOrigin::Generated { .. }
@@ -164,7 +164,7 @@ fn validate_ownership(kind: LayerKind, file: &VirtualFile) -> Result<(), Immutab
     if !origin_matches {
         return Err(ImmutableBindingError::WrongOrigin {
             layer: kind,
-            origin: file.origin(),
+            origin: file.origin().clone(),
         });
     }
 
@@ -279,10 +279,17 @@ impl Default for LayeredFileStorage {
     }
 }
 
-fn encode_origin(origin: FileOrigin, bytes: &mut Vec<u8>) {
+fn encode_origin(origin: &FileOrigin, bytes: &mut Vec<u8>) {
     match origin {
         FileOrigin::User => bytes.push(1),
-        FileOrigin::Resolved => bytes.push(2),
+        FileOrigin::Resolved(request) => {
+            bytes.push(2);
+            bytes.push(request.domain() as u8);
+            bytes.push(request.kind() as u8);
+            let name = request.name().as_bytes();
+            bytes.extend_from_slice(&(name.len() as u64).to_le_bytes());
+            bytes.extend_from_slice(name);
+        }
         FileOrigin::Generated {
             producer,
             build,

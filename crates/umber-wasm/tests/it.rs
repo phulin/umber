@@ -23,6 +23,7 @@ fn typed_attempts_preserve_binary_inputs_and_clear_cached_allocations() {
     let files = Array::from(&field(missing.as_ref(), "required"));
     assert_eq!(files.length(), 1);
     let request = files.get(0);
+    assert_eq!(string_field(&request, "domain"), "tex");
     assert_eq!(string_field(&request, "kind"), "tex");
     assert_eq!(string_field(&request, "name"), "remote.tex");
     assert_eq!(string_field(&request, "originalName"), "remote");

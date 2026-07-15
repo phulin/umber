@@ -374,6 +374,7 @@ fn font_batches_accept_partial_unordered_responses_and_reject_conflicts() {
             request: file.key().clone(),
             virtual_path: "/texlive/fonts/tfm/public/cm/cmr10.tfm".to_owned(),
             bytes: CMR10.to_vec(),
+            expected_digest: None,
         })])
         .expect("TFM response");
     assert!(matches!(
@@ -422,6 +423,7 @@ fn invalid_mixed_batch_publishes_nothing() {
                     request: file.key().clone(),
                     virtual_path: "/texlive/fonts/tfm/public/cm/cmr10.tfm".to_owned(),
                     bytes: CMR10.to_vec(),
+                    expected_digest: None,
                 }),
                 ResourceResponse::Font(invalid_font),
             ])

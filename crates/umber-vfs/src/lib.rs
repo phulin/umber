@@ -4,10 +4,17 @@ use std::fmt;
 use std::path::Path;
 
 mod file;
+mod limits;
+mod resource;
 mod storage;
 
 pub use file::{
     BuildId, FileContentId, FileOrigin, PathBindingId, ProducerId, StageId, VirtualFile,
+};
+pub use limits::{VfsLimitError, VfsLimitKind, VfsLimits};
+pub use resource::{
+    FileKind, FileProvisioner, FileRequest, FileRequestBatch, FileRequestKey, ProvisionError,
+    ProvisionOutcome, RequestKeyError, ResolvedFile, ResourceDomain, RetryError,
 };
 pub use storage::{
     DISTRIBUTION_LAYER_PRECEDENCE, FileLayer, ImmutableBindingError, InsertOutcome,

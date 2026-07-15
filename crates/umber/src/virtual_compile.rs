@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::Path;
-use std::sync::Arc;
 
 use tex_fonts::{
     AcceptedFontContainers, FontLimits, FontRequest, FontRequestKey, OpenTypeFont, ResolvedFont,
@@ -14,78 +13,13 @@ use crate::{MemoryOutputFile, MemoryRunOutput, prepare_run_stores};
 mod path;
 mod resolvers;
 
-use path::{normalize_request_name, user_path_for_key};
+use path::user_path_for_key;
 use resolvers::VirtualRunResolvers;
-pub use umber_vfs::{VirtualPath, VirtualPathError};
-
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub enum FileKind {
-    TexInput,
-    Tfm,
-}
-
-impl FileKind {
-    const fn extension(self) -> &'static str {
-        match self {
-            Self::TexInput => "tex",
-            Self::Tfm => "tfm",
-        }
-    }
-}
-
-impl fmt::Display for FileKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::TexInput => f.write_str("TeX input"),
-            Self::Tfm => f.write_str("TFM"),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct FileRequestKey {
-    kind: FileKind,
-    normalized_name: String,
-}
-
-impl FileRequestKey {
-    pub fn new(kind: FileKind, name: &str) -> Result<Self, VirtualPathError> {
-        Ok(Self::from_normalized(
-            kind,
-            normalize_request_name(kind, name)?,
-        ))
-    }
-
-    fn from_normalized(kind: FileKind, normalized_name: String) -> Self {
-        Self {
-            kind,
-            normalized_name,
-        }
-    }
-
-    #[must_use]
-    pub const fn kind(&self) -> FileKind {
-        self.kind
-    }
-
-    #[must_use]
-    pub fn name(&self) -> &str {
-        &self.normalized_name
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FileRequest {
-    key: FileRequestKey,
-    original_name: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ResolvedFile {
-    pub request: FileRequestKey,
-    pub virtual_path: String,
-    pub bytes: Vec<u8>,
-}
+pub use umber_vfs::{
+    FileKind, FileRequest, FileRequestKey, RequestKeyError, ResolvedFile, ResourceDomain,
+    VfsLimitError, VfsLimitKind, VfsLimits, VirtualPath, VirtualPathError,
+};
+use umber_vfs::{FileProvisioner, FileRequestBatch, ProvisionError, ProvisionOutcome};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResourceRequest {
@@ -105,18 +39,6 @@ pub struct NeedResources {
     pub prefetch_hints: Vec<ResourceRequest>,
 }
 
-impl FileRequest {
-    #[must_use]
-    pub const fn key(&self) -> &FileRequestKey {
-        &self.key
-    }
-
-    #[must_use]
-    pub fn original_name(&self) -> &str {
-        &self.original_name
-    }
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SessionLimits {
     pub attempts: u32,
@@ -131,41 +53,21 @@ pub struct SessionLimits {
 impl SessionLimits {
     pub const HARD_MAX: Self = Self {
         attempts: 128,
-        user_files: 4096,
-        resolved_files: 4096,
-        one_file_bytes: 128 * 1024 * 1024,
-        cached_file_bytes: 256 * 1024 * 1024,
-        user_source_bytes: 64 * 1024 * 1024,
+        user_files: VfsLimits::HARD_MAX.user_files,
+        resolved_files: VfsLimits::HARD_MAX.resolved_files,
+        one_file_bytes: VfsLimits::HARD_MAX.one_file_bytes,
+        cached_file_bytes: VfsLimits::HARD_MAX.resolved_bytes,
+        user_source_bytes: VfsLimits::HARD_MAX.user_bytes,
         output_bytes: 256 * 1024 * 1024,
     };
 
     fn validate(self) -> Result<Self, CompileError> {
+        self.vfs_limits().validate().map_err(map_vfs_limit)?;
         for (resource, attempted, hard) in [
             (
                 "compile attempts",
                 self.attempts as usize,
                 Self::HARD_MAX.attempts as usize,
-            ),
-            ("user files", self.user_files, Self::HARD_MAX.user_files),
-            (
-                "resolved files",
-                self.resolved_files,
-                Self::HARD_MAX.resolved_files,
-            ),
-            (
-                "one file bytes",
-                self.one_file_bytes,
-                Self::HARD_MAX.one_file_bytes,
-            ),
-            (
-                "cached file bytes",
-                self.cached_file_bytes,
-                Self::HARD_MAX.cached_file_bytes,
-            ),
-            (
-                "user source bytes",
-                self.user_source_bytes,
-                Self::HARD_MAX.user_source_bytes,
             ),
             (
                 "returned output bytes",
@@ -182,6 +84,16 @@ impl SessionLimits {
             }
         }
         Ok(self)
+    }
+
+    const fn vfs_limits(self) -> VfsLimits {
+        VfsLimits {
+            user_files: self.user_files,
+            resolved_files: self.resolved_files,
+            one_file_bytes: self.one_file_bytes,
+            user_bytes: self.user_source_bytes,
+            resolved_bytes: self.cached_file_bytes,
+        }
     }
 }
 
@@ -317,6 +229,7 @@ pub enum CompileError {
     NoProgress,
     ConflictingResolvedBinding(String),
     UnexpectedResourceResponse(String),
+    FileProvision(ProvisionError),
     Font(String),
     DistributionPathCollision(String),
     Format(String),
@@ -369,6 +282,7 @@ impl fmt::Display for CompileError {
             Self::UnexpectedResourceResponse(name) => {
                 write!(f, "resource response {name} was not requested")
             }
+            Self::FileProvision(error) => error.fmt(f),
             Self::Font(message) => write!(f, "font resource rejected: {message}"),
             Self::DistributionPathCollision(path) => {
                 write!(
@@ -393,12 +307,6 @@ impl fmt::Display for CompileError {
 impl std::error::Error for CompileError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct CachedFile {
-    virtual_path: VirtualPath,
-    bytes: Arc<[u8]>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 struct FontResponseFingerprint {
     container: tex_fonts::FontContainer,
     object: tex_fonts::FontObjectIdentity,
@@ -421,9 +329,8 @@ pub struct VirtualCompileSession {
     limits: SessionLimits,
     user_files: BTreeMap<VirtualPath, Vec<u8>>,
     user_bytes: usize,
-    resolved_files: BTreeMap<FileRequestKey, CachedFile>,
-    resolved_paths: BTreeMap<VirtualPath, Arc<[u8]>>,
-    cached_bytes: usize,
+    files: FileProvisioner,
+    font_cached_bytes: usize,
     attempts: u32,
     awaiting: Option<BTreeSet<ResourceRequestKey>>,
     font_requests: BTreeMap<FontRequestKey, FontRequest>,
@@ -449,7 +356,10 @@ impl VirtualCompileSession {
             }
         })?;
         if let Some(format) = &options.format {
-            check_limit("format image bytes", format.len(), limits.one_file_bytes)?;
+            limits
+                .vfs_limits()
+                .check(VfsLimitKind::OneFileBytes, format.len())
+                .map_err(map_vfs_limit)?;
         }
         let job_name = options.job_name.unwrap_or_else(|| {
             Path::new(main_path.as_str())
@@ -466,9 +376,8 @@ impl VirtualCompileSession {
             limits,
             user_files: BTreeMap::new(),
             user_bytes: 0,
-            resolved_files: BTreeMap::new(),
-            resolved_paths: BTreeMap::new(),
-            cached_bytes: 0,
+            files: FileProvisioner::new(limits.vfs_limits()).map_err(map_vfs_limit)?,
+            font_cached_bytes: 0,
             attempts: 0,
             awaiting: None,
             font_requests: BTreeMap::new(),
@@ -537,32 +446,27 @@ impl VirtualCompileSession {
             path: path.to_owned(),
             message: error.to_string(),
         })?;
-        check_limit(
-            "one user file bytes",
-            bytes.len(),
-            self.limits.one_file_bytes,
-        )?;
+        let vfs_limits = self.limits.vfs_limits();
+        vfs_limits
+            .check(VfsLimitKind::OneFileBytes, bytes.len())
+            .map_err(map_vfs_limit)?;
         let replaced = self.user_files.get(&path);
         let file_count = self
             .user_files
             .len()
             .saturating_add(usize::from(replaced.is_none()));
-        check_limit("user files", file_count, self.limits.user_files)?;
+        vfs_limits
+            .check(VfsLimitKind::UserFiles, file_count)
+            .map_err(map_vfs_limit)?;
         let replaced = replaced.map_or(0, Vec::len);
-        let attempted = self
-            .user_bytes
-            .checked_sub(replaced)
-            .and_then(|total| total.checked_add(bytes.len()))
-            .ok_or(CompileError::LimitExceeded {
-                resource: "user source bytes",
-                limit: self.limits.user_source_bytes,
-                attempted: usize::MAX,
-            })?;
-        check_limit(
-            "user source bytes",
-            attempted,
-            self.limits.user_source_bytes,
-        )?;
+        let attempted = vfs_limits
+            .checked_replacement_total(
+                VfsLimitKind::UserBytes,
+                self.user_bytes,
+                replaced,
+                bytes.len(),
+            )
+            .map_err(map_vfs_limit)?;
         self.user_files.insert(path.clone(), bytes.clone());
         self.user_bytes = attempted;
         if let Some(session) = &mut self.incremental {
@@ -679,44 +583,51 @@ impl VirtualCompileSession {
         virtual_path: &str,
         bytes: Vec<u8>,
     ) -> Result<(), CompileError> {
-        self.provide_file_inner(request, virtual_path, bytes)
+        self.provide_file_inner(
+            ResolvedFile {
+                request,
+                virtual_path: virtual_path.to_owned(),
+                bytes,
+                expected_digest: None,
+            },
+            false,
+            true,
+        )
     }
 
     pub fn provide_resources(
         &mut self,
         responses: Vec<ResourceResponse>,
     ) -> Result<(), CompileError> {
-        let mut staged_files = self.resolved_files.clone();
-        let mut staged_paths = self.resolved_paths.clone();
+        let mut staged_files = self.files.clone();
         let mut staged_fonts = self.resolved_fonts.clone();
         let mut staged_font_responses = self.font_responses.clone();
-        let original_files = std::mem::replace(&mut self.resolved_files, staged_files);
-        let original_paths = std::mem::replace(&mut self.resolved_paths, staged_paths);
+        let original_files = std::mem::replace(&mut self.files, staged_files);
         let original_fonts = std::mem::replace(&mut self.resolved_fonts, staged_fonts);
         let original_font_responses =
             std::mem::replace(&mut self.font_responses, staged_font_responses);
-        let original_cached_bytes = self.cached_bytes;
+        let original_font_cached_bytes = self.font_cached_bytes;
         let result = responses
             .into_iter()
             .try_for_each(|response| match response {
-                ResourceResponse::File(file) => {
-                    self.provide_file_inner(file.request, &file.virtual_path, file.bytes)
-                }
+                ResourceResponse::File(file) => self.provide_file_inner(file, true, false),
                 ResourceResponse::Font(font) => self.provide_resolved_font(font),
             });
         if result.is_err() {
-            staged_files = std::mem::replace(&mut self.resolved_files, original_files);
-            staged_paths = std::mem::replace(&mut self.resolved_paths, original_paths);
+            staged_files = std::mem::replace(&mut self.files, original_files);
             staged_fonts = std::mem::replace(&mut self.resolved_fonts, original_fonts);
             staged_font_responses =
                 std::mem::replace(&mut self.font_responses, original_font_responses);
-            drop((
-                staged_files,
-                staged_paths,
-                staged_fonts,
-                staged_font_responses,
-            ));
-            self.cached_bytes = original_cached_bytes;
+            drop((staged_files, staged_fonts, staged_font_responses));
+            self.font_cached_bytes = original_font_cached_bytes;
+        } else if let Some(session) = &mut self.incremental {
+            for (request, file) in self.files.files() {
+                if original_files.get(request).is_none() {
+                    session
+                        .register_input_file(file.path().as_path(), file.bytes().to_vec())
+                        .map_err(|error| CompileError::Incremental(error.to_string()))?;
+                }
+            }
         }
         result
     }
@@ -744,7 +655,7 @@ impl VirtualCompileSession {
         let font = OpenTypeFont::parse(request, response, FontLimits::default())
             .map_err(|error| CompileError::Font(error.to_string()))?;
         let attempted = self
-            .cached_bytes
+            .cached_file_bytes()
             .checked_add(font.transport_bytes.len())
             .ok_or(CompileError::LimitExceeded {
                 resource: "cached resource bytes",
@@ -756,86 +667,50 @@ impl VirtualCompileSession {
             attempted,
             self.limits.cached_file_bytes,
         )?;
+        let font_bytes = font.transport_bytes.len();
         self.resolved_fonts.insert(key.clone(), font);
-        self.font_responses.insert(key, fingerprint);
-        self.cached_bytes = attempted;
+        self.font_responses.insert(key.clone(), fingerprint);
+        self.font_cached_bytes = self
+            .font_cached_bytes
+            .checked_add(font_bytes)
+            .expect("combined cache limit checked overflow");
         Ok(())
     }
 
     fn provide_file_inner(
         &mut self,
-        request: FileRequestKey,
-        virtual_path: &str,
-        bytes: Vec<u8>,
+        response: ResolvedFile,
+        require_expected: bool,
+        register_incremental: bool,
     ) -> Result<(), CompileError> {
-        let virtual_path = VirtualPath::distribution(virtual_path).map_err(|error| {
-            CompileError::InvalidVirtualPath {
-                path: virtual_path.to_owned(),
-                message: error.to_string(),
-            }
-        })?;
-        check_limit(
-            "one resolved file bytes",
-            bytes.len(),
-            self.limits.one_file_bytes,
-        )?;
-
-        if let Some(existing) = self.resolved_files.get(&request) {
-            if existing.virtual_path == virtual_path && existing.bytes.as_ref() == bytes {
-                return Ok(());
-            }
-            return Err(CompileError::ConflictingResolvedBinding(
-                request.name().to_owned(),
-            ));
+        let request = response.request.clone();
+        let mut staged = self.files.clone();
+        let outcome = if require_expected {
+            staged.provision(response)
+        } else {
+            staged.preload(response)
         }
-        let shared_bytes = if let Some(existing) = self.resolved_paths.get(&virtual_path) {
-            if existing.as_ref() != bytes {
-                return Err(CompileError::DistributionPathCollision(
-                    virtual_path.to_string(),
-                ));
-            }
-            Arc::clone(existing)
-        } else {
-            Arc::from(bytes)
-        };
-
+        .map_err(map_provision)?;
+        let attempted = staged
+            .resolved_bytes()
+            .checked_add(self.font_cached_bytes)
+            .ok_or(CompileError::LimitExceeded {
+                resource: "cached resource bytes",
+                limit: self.limits.cached_file_bytes,
+                attempted: usize::MAX,
+            })?;
         check_limit(
-            "resolved files",
-            self.resolved_files.len().saturating_add(1),
-            self.limits.resolved_files,
-        )?;
-        let added_bytes = if self.resolved_paths.contains_key(&virtual_path) {
-            0
-        } else {
-            shared_bytes.len()
-        };
-        let attempted =
-            self.cached_bytes
-                .checked_add(added_bytes)
-                .ok_or(CompileError::LimitExceeded {
-                    resource: "cached file bytes",
-                    limit: self.limits.cached_file_bytes,
-                    attempted: usize::MAX,
-                })?;
-        check_limit(
-            "cached file bytes",
+            "cached resource bytes",
             attempted,
             self.limits.cached_file_bytes,
         )?;
-
-        self.resolved_paths
-            .insert(virtual_path.clone(), Arc::clone(&shared_bytes));
-        self.resolved_files.insert(
-            request,
-            CachedFile {
-                virtual_path: virtual_path.clone(),
-                bytes: Arc::clone(&shared_bytes),
-            },
-        );
-        self.cached_bytes = attempted;
-        if let Some(session) = &mut self.incremental {
+        self.files = staged;
+        if register_incremental
+            && outcome == ProvisionOutcome::Inserted
+            && let (Some(session), Some(file)) = (&mut self.incremental, self.files.get(&request))
+        {
             session
-                .register_input_file(virtual_path.as_path(), shared_bytes.to_vec())
+                .register_input_file(file.path().as_path(), file.bytes().to_vec())
                 .map_err(|error| CompileError::Incremental(error.to_string()))?;
         }
         Ok(())
@@ -855,7 +730,7 @@ impl VirtualCompileSession {
         if let Some(awaiting) = &self.awaiting {
             let progressed = awaiting.iter().any(|key| match key {
                 ResourceRequestKey::File(key) => {
-                    self.resolved_files.contains_key(key)
+                    self.files.get(key).is_some()
                         || user_path_for_key(key)
                             .is_ok_and(|path| self.user_files.contains_key(&path))
                 }
@@ -889,9 +764,9 @@ impl VirtualCompileSession {
                     .set_memory_file(path.as_path(), bytes.clone())
                     .map_err(|error| CompileError::World(error.to_string()))?;
             }
-            for resolved in self.resolved_files.values() {
+            for (_, resolved) in self.files.files() {
                 world
-                    .set_memory_file(resolved.virtual_path.as_path(), resolved.bytes.to_vec())
+                    .set_memory_file(resolved.path().as_path(), resolved.bytes().to_vec())
                     .map_err(|error| CompileError::World(error.to_string()))?;
             }
             let mut template = if let Some(format) = &self.format {
@@ -924,7 +799,7 @@ impl VirtualCompileSession {
 
         let mut resolvers = VirtualRunResolvers::new(
             &self.user_files,
-            &self.resolved_files,
+            &self.files,
             &self.resolved_fonts,
             self.accepted_font_containers,
             self.html,
@@ -944,6 +819,8 @@ impl VirtualCompileSession {
         let (file_misses, font_misses, fatal) = resolvers.finish();
 
         if !file_misses.is_empty() || !font_misses.is_empty() {
+            self.files
+                .expect(&FileRequestBatch::new(file_misses.clone(), []));
             for request in &font_misses {
                 self.font_requests
                     .entry(request.key.clone())
@@ -961,7 +838,7 @@ impl VirtualCompileSession {
                     .iter()
                     .map(|request| match request {
                         ResourceRequest::File(request) => {
-                            ResourceRequestKey::File(request.key.clone())
+                            ResourceRequestKey::File(request.key().clone())
                         }
                         ResourceRequest::Font(request) => {
                             ResourceRequestKey::Font(request.key.clone())
@@ -1102,12 +979,11 @@ impl VirtualCompileSession {
                 .saturating_sub(replaced)
                 .saturating_add(latest.len());
         }
-        self.resolved_files.clear();
-        self.resolved_paths.clear();
+        self.files.clear();
         self.resolved_fonts.clear();
         self.font_responses.clear();
         self.font_requests.clear();
-        self.cached_bytes = 0;
+        self.font_cached_bytes = 0;
         self.awaiting = None;
         self.incremental = None;
         self.accepted_output = None;
@@ -1123,12 +999,14 @@ impl VirtualCompileSession {
 
     #[must_use]
     pub fn resolved_file_count(&self) -> usize {
-        self.resolved_files.len()
+        self.files.len()
     }
 
     #[must_use]
-    pub const fn cached_file_bytes(&self) -> usize {
-        self.cached_bytes
+    pub fn cached_file_bytes(&self) -> usize {
+        self.files
+            .resolved_bytes()
+            .saturating_add(self.font_cached_bytes)
     }
 }
 
@@ -1136,7 +1014,7 @@ fn resource_sort_key(request: &ResourceRequest) -> (u8, String) {
     match request {
         ResourceRequest::File(request) => (
             0,
-            format!("{:?}:{}", request.key.kind(), request.key.name()),
+            format!("{:?}:{}", request.key().kind(), request.key().name()),
         ),
         ResourceRequest::Font(request) => (1, request.key.logical_name().to_owned()),
     }
@@ -1240,6 +1118,51 @@ fn check_limit(resource: &'static str, attempted: usize, limit: usize) -> Result
         });
     }
     Ok(())
+}
+
+fn map_vfs_limit(error: VfsLimitError) -> CompileError {
+    match error {
+        VfsLimitError::HardLimitExceeded {
+            kind,
+            hard,
+            attempted,
+        } => CompileError::HardLimitExceeded {
+            resource: kind.description(),
+            hard,
+            attempted,
+        },
+        VfsLimitError::LimitExceeded {
+            kind,
+            limit,
+            attempted,
+        } => CompileError::LimitExceeded {
+            resource: kind.description(),
+            limit,
+            attempted,
+        },
+    }
+}
+
+fn map_provision(error: ProvisionError) -> CompileError {
+    match error {
+        ProvisionError::Limit(error) => map_vfs_limit(error),
+        ProvisionError::Conflict { request, .. } => {
+            CompileError::ConflictingResolvedBinding(request.name().to_owned())
+        }
+        ProvisionError::PathConflict { path, .. } => {
+            CompileError::DistributionPathCollision(path.to_string())
+        }
+        ProvisionError::UnexpectedRequest(request) => {
+            CompileError::UnexpectedResourceResponse(request.name().to_owned())
+        }
+        ProvisionError::InvalidPath { path, message, .. } => CompileError::InvalidVirtualPath {
+            path,
+            message: message.to_owned(),
+        },
+        error @ (ProvisionError::KindMismatch { .. } | ProvisionError::DigestMismatch { .. }) => {
+            CompileError::FileProvision(error)
+        }
+    }
 }
 
 #[cfg(test)]

@@ -11,9 +11,11 @@ use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(typescript_custom_section)]
 const TYPESCRIPT_TYPES: &str = r#"
-export type FileKind = "tex" | "tfm";
+export type ResourceDomain = "tex" | "bibliography" | "generic";
+export type FileKind = "tex" | "tfm" | "format" | "bib-control" | "bib-data" | "bib-configuration" | "xml-schema" | "asset";
 
 export interface FileRequestKey {
+  domain: ResourceDomain;
   kind: FileKind;
   name: string;
 }
@@ -37,7 +39,7 @@ export interface FontRequest extends FontRequestKey {
 
 export type ResourceRequest = FileRequest | FontRequest;
 export type ResourceResponse =
-  | (FileRequestKey & { type: "file"; virtualPath: string; bytes: Uint8Array })
+  | (FileRequestKey & { type: "file"; virtualPath: string; bytes: Uint8Array; expectedContentId?: string })
   | (FontRequestKey & {
       type: "font";
       container: "woff2";

@@ -36,11 +36,16 @@ fn resource_requests(requests: Vec<ResourceRequest>) -> Result<Array, JsValue> {
         match request {
             ResourceRequest::File(request) => {
                 set(&object, "type", &JsValue::from_str("file"))?;
-                let kind = match request.key().kind() {
-                    umber::FileKind::TexInput => "tex",
-                    umber::FileKind::Tfm => "tfm",
-                };
-                set(&object, "kind", &JsValue::from_str(kind))?;
+                set(
+                    &object,
+                    "domain",
+                    &JsValue::from_str(request.key().domain().wire_name()),
+                )?;
+                set(
+                    &object,
+                    "kind",
+                    &JsValue::from_str(request.key().kind().wire_name()),
+                )?;
                 set(&object, "name", &JsValue::from_str(request.key().name()))?;
                 set(
                     &object,

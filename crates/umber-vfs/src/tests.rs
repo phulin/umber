@@ -4,9 +4,9 @@ use std::sync::Arc;
 use proptest::prelude::*;
 
 use super::{
-    BuildId, DISTRIBUTION_LAYER_PRECEDENCE, FileOrigin, ImmutableBindingError, InsertOutcome,
-    JOB_LAYER_PRECEDENCE, LayerKind, LayeredFileStorage, ProducerId, StageId, VirtualFile,
-    VirtualPath, VirtualPathError,
+    BuildId, DISTRIBUTION_LAYER_PRECEDENCE, FileKind, FileOrigin, FileRequestKey,
+    ImmutableBindingError, InsertOutcome, JOB_LAYER_PRECEDENCE, LayerKind, LayeredFileStorage,
+    ProducerId, StageId, VirtualFile, VirtualPath, VirtualPathError,
 };
 
 fn user_file(path: &str, bytes: &[u8]) -> VirtualFile {
@@ -18,10 +18,11 @@ fn user_file(path: &str, bytes: &[u8]) -> VirtualFile {
 }
 
 fn resolved_file(path: &str, bytes: &[u8]) -> VirtualFile {
+    let request = FileRequestKey::new(FileKind::TexInput, "plain.tex").expect("request");
     VirtualFile::new(
         VirtualPath::distribution(path).expect("distribution path"),
         Arc::<[u8]>::from(bytes),
-        FileOrigin::Resolved,
+        FileOrigin::Resolved(request),
     )
 }
 
@@ -203,7 +204,7 @@ fn virtual_files_share_bytes_and_separate_content_from_path_binding_identity() {
     assert_eq!(first.bytes(), b"identical");
     assert_eq!(first.content_id(), second.content_id());
     assert_ne!(first.binding_id(), second.binding_id());
-    assert_eq!(first.origin(), FileOrigin::User);
+    assert_eq!(first.origin(), &FileOrigin::User);
     assert_eq!(first.path().as_str(), "/job/a.tex");
     assert_eq!(first.clone(), first);
 }
@@ -266,7 +267,9 @@ fn layers_reject_wrong_roots_and_origins() {
         storage.insert(LayerKind::User, wrong_origin),
         Err(ImmutableBindingError::WrongOrigin {
             layer: LayerKind::User,
-            origin: FileOrigin::Resolved,
+            origin: FileOrigin::Resolved(
+                FileRequestKey::new(FileKind::TexInput, "plain.tex").expect("request")
+            ),
         })
     );
 

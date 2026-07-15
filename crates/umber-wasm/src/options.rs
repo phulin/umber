@@ -1,9 +1,9 @@
 use js_sys::{Array, Reflect, Uint8Array};
 use umber::{
-    FeatureSetting, FileKind, FileRequestKey, FontContainer, FontFeaturePolicy, FontObjectIdentity,
-    FontProgramIdentity, FontRequestKey, OpenTypeTag, ResolvedFile, ResolvedFont, ResourceResponse,
-    SessionLimits, SessionOptions, SessionWebFont, SourcePatch, VariationCoordinate,
-    VariationSelection,
+    FeatureSetting, FileContentId, FileKind, FileRequestKey, FontContainer, FontFeaturePolicy,
+    FontObjectIdentity, FontProgramIdentity, FontRequestKey, OpenTypeTag, ResolvedFile,
+    ResolvedFont, ResourceDomain, ResourceResponse, SessionLimits, SessionOptions, SessionWebFont,
+    SourcePatch, VariationCoordinate, VariationSelection,
 };
 use wasm_bindgen::{JsCast, JsValue};
 
@@ -103,12 +103,18 @@ fn parse_content_hash(value: &str) -> Result<tex_state::ContentHash, JsValue> {
 
 pub(crate) fn parse_request_key(value: &JsValue) -> Result<FileRequestKey, JsValue> {
     require_object(value, "file request key")?;
-    let kind = match required_string(value, "kind")?.as_str() {
-        "tex" => FileKind::TexInput,
-        "tfm" => FileKind::Tfm,
-        _ => return Err(js_error("file request kind must be 'tex' or 'tfm'")),
-    };
-    FileRequestKey::new(kind, &required_string(value, "name")?).map_err(crate::boundary_error)
+    let kind_name = required_string(value, "kind")?;
+    let kind = FileKind::from_wire_name(&kind_name)
+        .ok_or_else(|| js_error("file request kind is not recognized"))?;
+    let domain = optional_string(value, "domain")?
+        .map(|domain| {
+            ResourceDomain::from_wire_name(&domain)
+                .ok_or_else(|| js_error("file request domain is not recognized"))
+        })
+        .transpose()?
+        .unwrap_or_else(|| kind.domain());
+    FileRequestKey::for_domain(domain, kind, &required_string(value, "name")?)
+        .map_err(crate::boundary_error)
 }
 
 pub(crate) fn parse_resource_responses(value: &JsValue) -> Result<Vec<ResourceResponse>, JsValue> {
@@ -124,6 +130,9 @@ pub(crate) fn parse_resource_responses(value: &JsValue) -> Result<Vec<ResourceRe
                     request: parse_request_key(&response)?,
                     virtual_path: required_string(&response, "virtualPath")?,
                     bytes: required_bytes(&response, "bytes")?,
+                    expected_digest: optional_string(&response, "expectedContentId")?
+                        .map(|digest| parse_digest(&digest).map(FileContentId::from_identity_bytes))
+                        .transpose()?,
                 })),
                 "font" => Ok(ResourceResponse::Font(parse_resolved_font(&response)?)),
                 _ => Err(js_error("resource response type must be 'file' or 'font'")),

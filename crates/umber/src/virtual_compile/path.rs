@@ -14,7 +14,7 @@ pub(crate) enum RequestedFile {
 impl RequestedFile {
     pub(crate) fn parse(kind: FileKind, name: &str) -> Result<Self, VirtualPathError> {
         if name.starts_with('/') {
-            let normalized = with_default_extension(name, kind.extension())?;
+            let normalized = with_default_extension(name, extension(kind))?;
             let path = VirtualPath::user(&format!("/{normalized}"))?;
             return Ok(Self::UserOnly(path));
         }
@@ -23,22 +23,19 @@ impl RequestedFile {
         if normalized.is_empty() {
             return Err(VirtualPathError::new("path does not name a file"));
         }
-        let normalized = with_default_extension(&normalized.join("/"), kind.extension())?;
+        let normalized = with_default_extension(&normalized.join("/"), extension(kind))?;
         let user_path = VirtualPath::user(&normalized)?;
-        let key = FileRequestKey::from_normalized(kind, normalized);
+        let key = FileRequestKey::new(kind, &normalized)
+            .expect("TeX-normalized relative names are valid VFS request keys");
         Ok(Self::Remote { user_path, key })
     }
 }
 
-pub(crate) fn normalize_request_name(
-    kind: FileKind,
-    name: &str,
-) -> Result<String, VirtualPathError> {
-    match RequestedFile::parse(kind, name)? {
-        RequestedFile::Remote { key, .. } => Ok(key.name().to_owned()),
-        RequestedFile::UserOnly(_) => Err(VirtualPathError::new(
-            "remote request keys must be relative names",
-        )),
+fn extension(kind: FileKind) -> &'static str {
+    match kind {
+        FileKind::TexInput => "tex",
+        FileKind::Tfm => "tfm",
+        _ => unreachable!("the TeX resolver only accepts TeX file kinds"),
     }
 }
 

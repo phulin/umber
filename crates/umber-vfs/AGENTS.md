@@ -24,6 +24,9 @@ resource-registration, and accounting boundaries are specified in
 - `Cargo.toml`: package metadata, test dependency, and workspace lints.
 - `src/lib.rs`: canonical virtual path API and crate exports.
 - `src/file.rs`: immutable shared file values, provenance, and identities.
+- `src/limits.rs`: checked file-count and byte limits shared by all VFS clients.
+- `src/resource.rs`: typed resource requests, deterministic batches, and atomic provisioning.
+- `src/resource/tests.rs`: request, registration, conflict, limit, and retry tests.
 - `src/storage.rs`: deterministic ownership layers and conflict handling.
 - `src/tests.rs`: focused identity, storage, canonicalization, and property tests.
 

@@ -11,7 +11,7 @@ use tex_lex::WorldInput;
 use tex_state::{FileContent, InputReadState};
 
 use super::path::RequestedFile;
-use super::{CachedFile, CompileError, FileKind, FileRequest, FileRequestKey, VirtualPath};
+use super::{CompileError, FileKind, FileProvisioner, FileRequest, FileRequestKey, VirtualPath};
 
 pub(super) struct VirtualRunResolvers<'a> {
     input: VirtualFileResolver<'a>,
@@ -20,7 +20,7 @@ pub(super) struct VirtualRunResolvers<'a> {
 
 struct VirtualFileResolver<'a> {
     user_files: &'a BTreeMap<VirtualPath, Vec<u8>>,
-    resolved_files: &'a BTreeMap<FileRequestKey, CachedFile>,
+    resolved_files: &'a FileProvisioner,
     misses: Vec<(u64, FileRequest)>,
     seen: BTreeSet<FileRequestKey>,
     fatal: Option<CompileError>,
@@ -29,7 +29,7 @@ struct VirtualFileResolver<'a> {
 impl<'a> VirtualRunResolvers<'a> {
     pub(super) fn new(
         user_files: &'a BTreeMap<VirtualPath, Vec<u8>>,
-        resolved_files: &'a BTreeMap<FileRequestKey, CachedFile>,
+        resolved_files: &'a FileProvisioner,
         resolved_fonts: &'a BTreeMap<FontRequestKey, OpenTypeFont>,
         accepted_font_containers: AcceptedFontContainers,
         require_opentype: bool,
@@ -65,7 +65,7 @@ impl<'a> VirtualRunResolvers<'a> {
 impl<'a> VirtualFileResolver<'a> {
     fn new(
         user_files: &'a BTreeMap<VirtualPath, Vec<u8>>,
-        resolved_files: &'a BTreeMap<FileRequestKey, CachedFile>,
+        resolved_files: &'a FileProvisioner,
     ) -> Self {
         Self {
             user_files,
@@ -109,16 +109,11 @@ impl<'a> VirtualFileResolver<'a> {
                     return self.read_seeded(input, user_path.as_path());
                 }
                 if let Some(resolved) = self.resolved_files.get(&key) {
-                    return self.read_seeded(input, resolved.virtual_path.as_path());
+                    return self.read_seeded(input, resolved.path().as_path());
                 }
                 if self.seen.insert(key.clone()) {
-                    self.misses.push((
-                        request_index,
-                        FileRequest {
-                            key,
-                            original_name: original_name.to_owned(),
-                        },
-                    ));
+                    self.misses
+                        .push((request_index, FileRequest::new(key, original_name)));
                 }
                 Err(format!("{kind} file {original_name} is not cached"))
             }
@@ -181,7 +176,7 @@ struct VirtualFontResolver<'a> {
 impl<'a> VirtualFontResolver<'a> {
     fn new(
         user_files: &'a BTreeMap<VirtualPath, Vec<u8>>,
-        resolved_files: &'a BTreeMap<FileRequestKey, CachedFile>,
+        resolved_files: &'a FileProvisioner,
         resolved_fonts: &'a BTreeMap<FontRequestKey, OpenTypeFont>,
         accepted_font_containers: AcceptedFontContainers,
         require_opentype: bool,
