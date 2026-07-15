@@ -126,11 +126,16 @@ test("fetches concurrently, deduplicates hashes, and binds every lookup key", as
 	assert.equal(calls.length, 2, "plain and alias share one content hash");
 	assert.ok(calls.every(({ options }) => options.signal === undefined));
 	assert.deepEqual(
-		downloads.map(({ request }) => request),
+		downloads.map(({ type, domain, kind, name }) => ({
+			type,
+			domain,
+			kind,
+			name,
+		})),
 		[
-			{ kind: "tex", name: "plain.tex" },
-			{ kind: "tex", name: "alias.tex" },
-			{ kind: "tfm", name: "cmr10.tfm" },
+			{ type: "file", domain: "tex", kind: "tex", name: "plain.tex" },
+			{ type: "file", domain: "tex", kind: "tex", name: "alias.tex" },
+			{ type: "file", domain: "tex", kind: "tfm", name: "cmr10.tfm" },
 		],
 	);
 	assert.equal(downloads[0].bytes, downloads[1].bytes);
@@ -384,7 +389,7 @@ test("failed speculative hints are ignored and retried if actually requested", a
 		{ kind: "tex", name: "plain.tex" },
 	]);
 	assert.deepEqual(
-		downloads.map(({ request }) => request.name),
+		downloads.map(({ name }) => name),
 		["plain.tex", "cmr10.tfm"],
 	);
 	await assert.rejects(

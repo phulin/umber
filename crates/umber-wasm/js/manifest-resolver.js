@@ -126,7 +126,9 @@ export class HttpManifestResolver {
 										provenance: job.entry.provenance,
 									}
 								: {
-										request: decodeKey(job.key),
+										type: "file",
+										domain: "tex",
+										...decodeKey(job.key),
 										virtualPath: job.entry.virtualPath,
 										bytes,
 									},
