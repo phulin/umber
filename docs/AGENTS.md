@@ -61,6 +61,10 @@ dependency-ordered completeness plan for the PDF engine layer.
 model, canonical writer, checkpoint identity, and structural/rendering parity
 contracts.
 
+`pdftex_font_microtype.md` defines immutable copied/letterspaced/expanded font
+identity, expansion and protrusion arithmetic, line-material ownership, margin
+enquiries, and the detached `pdf_writer` resource boundary.
+
 `latex_dvi.md` defines the supported LaTeX-DVI engine identity, extension
 inventory, pinned distribution boundary, parity contract, and explicit
 non-goals such as pdfLaTeX identity and PDF output.
