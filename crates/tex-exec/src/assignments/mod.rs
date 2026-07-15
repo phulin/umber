@@ -36,6 +36,7 @@ mod hmode;
 mod hyphenation;
 mod macros;
 mod paragraph;
+mod pdf_actions;
 mod pdf_fonts;
 mod primitives;
 mod scanning;
@@ -372,6 +373,19 @@ fn execute_pdf_document_fragment(
     )?;
     if pdf_output > 0 {
         stores.append_pdf_document_fragment(kind, tokens);
+    }
+    if primitive == UnexpandablePrimitive::PdfCatalog
+        && scan_optional_keyword_x(input, stores, execution, "openaction")?
+    {
+        if pdf_output > 0 && stores.pdf_catalog_open_action().is_some() {
+            return Err(ExecError::PdfDuplicateOpenAction);
+        }
+        let action = pdf_actions::scan_pdf_action(context, input, stores, execution)?;
+        if pdf_output > 0 {
+            stores
+                .set_pdf_catalog_open_action(action)
+                .map_err(|_| ExecError::PdfObjectCapacity)?;
+        }
     }
     Ok(())
 }

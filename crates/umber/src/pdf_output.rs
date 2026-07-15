@@ -16,7 +16,8 @@ use tex_state::ids::FontId;
 use tex_state::ids::TokenListId;
 use tex_state::{
     CommittedArtifact, ContentHash, PDF_CATALOG_OBJECT_ID, PDF_PAGES_OBJECT_ID,
-    PdfDocumentFragmentKind, PdfOutputParameters, Universe, WorldError,
+    PdfActionDestination, PdfActionIdentifier, PdfActionRecord, PdfActionSpec, PdfActionTarget,
+    PdfActionWindow, PdfDocumentFragmentKind, PdfOutputParameters, Universe, WorldError,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -96,11 +97,45 @@ pub fn pdf_from_committed_artifacts_at_dpi(
     if let Some(names) = document_ids.names() {
         catalog.insert("Names", PdfValue::Reference(object_id(names)?))?;
     }
+    let open_action = stores.pdf_catalog_open_action();
+    if let Some(action) = open_action {
+        catalog.insert("OpenAction", PdfValue::Reference(object_id(action.id())?))?;
+    }
     catalog.set_raw_entries(document_fragment_bytes(
         stores,
         PdfDocumentFragmentKind::Catalog,
     ));
     objects.push(indirect_dictionary(catalog_id, catalog));
+
+    if let Some(action) = open_action {
+        objects.push(PdfIndirectObject {
+            id: object_id(action.id())?,
+            object: PdfObject::Raw(pdf_action_bytes(stores, action, &page_records)?),
+        });
+        if let Some(target) = action.target_object()
+            && matches!(
+                action.spec(),
+                PdfActionSpec::GoTo(PdfActionDestination {
+                    target: PdfActionTarget::Destination(_),
+                    ..
+                }) | PdfActionSpec::Thread(PdfActionDestination {
+                    target: PdfActionTarget::Destination(_),
+                    ..
+                })
+            )
+        {
+            objects.push(PdfIndirectObject {
+                id: object_id(target)?,
+                object: PdfObject::Raw(pdf_action_placeholder(action, &page_records)?),
+            });
+        }
+        if let Some(structure) = action.structure_object() {
+            objects.push(PdfIndirectObject {
+                id: object_id(structure)?,
+                object: PdfObject::Raw(b"null".to_vec()),
+            });
+        }
+    }
 
     if let Some(names) = document_ids.names() {
         let mut dictionary = PdfDictionary::new();
@@ -1102,6 +1137,162 @@ fn object_id(raw: u32) -> Result<PdfObjectId, PdfBuildError> {
     PdfObjectId::new(raw).ok_or(PdfBuildError::InvalidObjectId(raw))
 }
 
+fn pdf_action_bytes(
+    stores: &Universe,
+    record: PdfActionRecord,
+    pages: &[tex_state::PdfPageRecord],
+) -> Result<Vec<u8>, PdfBuildError> {
+    let mut out = Vec::new();
+    match record.spec() {
+        PdfActionSpec::User(tokens) => return Ok(token_list_bytes(stores, tokens)),
+        PdfActionSpec::GoTo(action) => {
+            out.extend_from_slice(b"<< ");
+            write_action_destination(stores, record, action, pages, true, &mut out)?;
+        }
+        PdfActionSpec::Thread(action) => {
+            out.extend_from_slice(b"<< ");
+            write_action_destination(stores, record, action, pages, false, &mut out)?;
+        }
+    }
+    out.extend_from_slice(b" >>");
+    Ok(out)
+}
+
+fn write_action_destination(
+    stores: &Universe,
+    record: PdfActionRecord,
+    action: PdfActionDestination,
+    pages: &[tex_state::PdfPageRecord],
+    goto: bool,
+    out: &mut Vec<u8>,
+) -> Result<(), PdfBuildError> {
+    if let Some(file) = action.file {
+        out.extend_from_slice(b"/F ");
+        write_file_string(&token_list_bytes(stores, file), out);
+        out.push(b' ');
+        match action.window {
+            PdfActionWindow::New => out.extend_from_slice(b"/NewWindow true "),
+            PdfActionWindow::Same => out.extend_from_slice(b"/NewWindow false "),
+            PdfActionWindow::Unspecified => {}
+        }
+    }
+    match action.target {
+        PdfActionTarget::Page { number, view } => {
+            if action.file.is_some() {
+                out.extend_from_slice(b"/S /GoToR /D [");
+                out.extend_from_slice((number - 1).to_string().as_bytes());
+            } else {
+                let page = pages
+                    .get((number - 1) as usize)
+                    .ok_or(PdfBuildError::OpenActionPageNotFound(number))?;
+                out.extend_from_slice(b"/S /GoTo /D [");
+                out.extend_from_slice(page.page_object().to_string().as_bytes());
+                out.extend_from_slice(b" 0 R");
+            }
+            out.push(b' ');
+            out.extend_from_slice(&token_list_bytes(stores, view));
+            out.push(b']');
+        }
+        PdfActionTarget::Destination(identifier) => {
+            if goto {
+                out.extend_from_slice(if action.file.is_some() {
+                    b"/S /GoToR /D ".as_slice()
+                } else {
+                    b"/S /GoTo /D ".as_slice()
+                });
+            } else {
+                out.extend_from_slice(b"/S /Thread /D ");
+            }
+            write_action_identifier(
+                stores,
+                identifier,
+                action.file.is_some(),
+                record.target_object(),
+                out,
+            );
+        }
+    }
+    if let Some(structure) = action.structure {
+        out.extend_from_slice(b" /SD ");
+        if action.file.is_some() {
+            match structure {
+                PdfActionIdentifier::Raw(tokens) => {
+                    out.extend_from_slice(&token_list_bytes(stores, tokens));
+                }
+                _ => unreachable!("external structure identifier is raw"),
+            }
+        } else {
+            out.extend_from_slice(
+                record
+                    .structure_object()
+                    .expect("internal structure object")
+                    .to_string()
+                    .as_bytes(),
+            );
+            out.extend_from_slice(b" 0 R");
+        }
+    }
+    Ok(())
+}
+
+fn write_action_identifier(
+    stores: &Universe,
+    identifier: PdfActionIdentifier,
+    external: bool,
+    target_object: Option<u32>,
+    out: &mut Vec<u8>,
+) {
+    match identifier {
+        PdfActionIdentifier::Name(tokens) => {
+            write_pdf_string(&token_list_bytes(stores, tokens), out)
+        }
+        PdfActionIdentifier::Number(number) if external => {
+            out.extend_from_slice(number.to_string().as_bytes());
+        }
+        PdfActionIdentifier::Number(_) => {
+            out.extend_from_slice(
+                target_object
+                    .expect("internal target object")
+                    .to_string()
+                    .as_bytes(),
+            );
+            out.extend_from_slice(b" 0 R");
+        }
+        PdfActionIdentifier::Raw(_) => unreachable!("raw identifier is structure-only"),
+    }
+}
+
+fn write_file_string(bytes: &[u8], out: &mut Vec<u8>) {
+    if bytes.first() == Some(&b'(') && bytes.last() == Some(&b')') {
+        out.extend_from_slice(bytes);
+    } else {
+        write_pdf_string(bytes, out);
+    }
+}
+
+fn write_pdf_string(bytes: &[u8], out: &mut Vec<u8>) {
+    out.push(b'(');
+    for &byte in bytes {
+        if matches!(byte, b'\\' | b'(' | b')') {
+            out.push(b'\\');
+        }
+        out.push(byte);
+    }
+    out.push(b')');
+}
+
+fn pdf_action_placeholder(
+    action: PdfActionRecord,
+    pages: &[tex_state::PdfPageRecord],
+) -> Result<Vec<u8>, PdfBuildError> {
+    if matches!(action.spec(), PdfActionSpec::GoTo(_)) {
+        let page = pages.first().ok_or(PdfBuildError::OpenActionHasNoPage)?;
+        Ok(format!("[{} 0 R /Fit]", page.page_object()).into_bytes())
+    } else {
+        Ok(b"null".to_vec())
+    }
+}
+
 fn indirect_dictionary(id: PdfObjectId, dictionary: PdfDictionary) -> PdfIndirectObject {
     PdfIndirectObject {
         id,
@@ -1196,6 +1387,8 @@ pub enum PdfBuildError {
     PageGeometryOverflow,
     InvalidObjectId(u32),
     ObjectCapacity,
+    OpenActionPageNotFound(u32),
+    OpenActionHasNoPage,
     ReferencedRawObjectUninitialized(u32),
     InvalidRawObjectFileName(u32),
     TextRequiresFontResources,
@@ -1241,6 +1434,12 @@ impl std::fmt::Display for PdfBuildError {
             Self::PageGeometryOverflow => f.write_str("pdfTeX page geometry arithmetic overflowed"),
             Self::InvalidObjectId(id) => write!(f, "invalid PDF object id {id}"),
             Self::ObjectCapacity => f.write_str("pdfTeX error (obj): too many PDF objects."),
+            Self::OpenActionPageNotFound(page) => {
+                write!(f, "PDF open action references missing page {page}")
+            }
+            Self::OpenActionHasNoPage => {
+                f.write_str("PDF open action destination requires at least one page")
+            }
             Self::ReferencedRawObjectUninitialized(id) => {
                 write!(
                     f,
@@ -2503,6 +2702,108 @@ mod tests {
             .expect("ID array");
         assert_eq!(ids[0].as_str().expect("first ID string"), expected_id);
         assert_eq!(ids[1].as_str().expect("second ID string"), expected_id);
+    }
+
+    #[test]
+    fn catalog_openaction_uses_canonical_object_ids_and_pdf_writer_catalog_reference() {
+        let (mut stores, run_result) = run(concat!(
+            "\\pdfoutput=1\\pdfcompresslevel=0\\pdfobjcompresslevel=0",
+            "\\pdfcatalog{/PageMode /UseNone} openaction goto page 1 {/Fit}",
+            "\\pdfobj{(raw)}\\pdfrefobj 5",
+            "\\shipout\\vbox{\\hrule width1pt height1pt}\\end",
+        ));
+        let action = stores
+            .pdf_catalog_open_action()
+            .expect("open action record");
+        assert_eq!(action.id(), 3);
+        assert_eq!(action.target_object(), Some(4));
+        assert_eq!(stores.pdf_raw_objects()[0].id().raw(), 5);
+        assert_eq!(stores.pdf_pages()[0].resources_object(), 6);
+        assert_eq!(stores.pdf_pages()[0].contents_object(), 7);
+        assert_eq!(stores.pdf_pages()[0].page_object(), 4);
+
+        let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
+            .expect("open action PDF assembles");
+        let parsed = lopdf::Document::load_mem(&pdf).expect("lopdf parses open action PDF");
+        let catalog = parsed.catalog().expect("catalog");
+        assert_eq!(
+            catalog
+                .get(b"OpenAction")
+                .expect("OpenAction")
+                .as_reference()
+                .expect("action reference"),
+            (3, 0)
+        );
+        let action = parsed
+            .get_object((3, 0))
+            .expect("action object")
+            .as_dict()
+            .expect("action dictionary");
+        assert_eq!(
+            action
+                .get(b"S")
+                .expect("action subtype")
+                .as_name()
+                .expect("subtype name"),
+            b"GoTo"
+        );
+        let destination = action
+            .get(b"D")
+            .expect("action destination")
+            .as_array()
+            .expect("destination array");
+        assert_eq!(
+            destination[0]
+                .as_reference()
+                .expect("destination page reference"),
+            (4, 0)
+        );
+        assert_eq!(destination[1].as_name().expect("destination view"), b"Fit");
+    }
+
+    #[test]
+    fn catalog_openaction_serializes_user_and_remote_action_forms() {
+        for (source, expected_subtype) in [
+            (
+                "\\pdfcatalog{} openaction user{<< /S /Named /N /Print >>}",
+                b"Named".as_slice(),
+            ),
+            (
+                "\\pdfcatalog{} openaction goto file{other.pdf} page 2 {/FitH 20} newwindow",
+                b"GoToR".as_slice(),
+            ),
+            (
+                "\\pdfcatalog{} openaction thread file{other.pdf} name{article}",
+                b"Thread".as_slice(),
+            ),
+        ] {
+            let (mut stores, run_result) = run(&format!(
+                "\\pdfoutput=1\\pdfcompresslevel=0{source}\\shipout\\hbox{{}}\\end"
+            ));
+            let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
+                .expect("action PDF assembles");
+            let parsed = lopdf::Document::load_mem(&pdf).expect("lopdf parses action PDF");
+            let action_id = parsed
+                .catalog()
+                .expect("catalog")
+                .get(b"OpenAction")
+                .expect("OpenAction")
+                .as_reference()
+                .expect("action reference");
+            let action = parsed
+                .get_object(action_id)
+                .expect("action object")
+                .as_dict()
+                .expect("action dictionary");
+            assert_eq!(
+                action
+                    .get(b"S")
+                    .expect("action subtype")
+                    .as_name()
+                    .expect("subtype name"),
+                expected_subtype
+            );
+        }
     }
 
     #[test]

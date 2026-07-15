@@ -151,6 +151,13 @@ pub enum ExecError {
     PdfReferencedObjectNotFound,
     PdfImmediateReservedObject,
     PdfExtensionInDviMode(&'static str),
+    PdfDuplicateOpenAction,
+    PdfActionTypeMissing,
+    PdfActionOnlyGoto(&'static str),
+    PdfActionIdentifierTypeMissing,
+    PdfActionPositiveIdentifier(&'static str),
+    PdfActionGotoFileNum,
+    PdfActionWindowRequiresGotoFile,
     VSplitNeedsVBox,
     Box255NotVoidBeforeOutput,
     OutputRoutineBox255NotVoid,
@@ -313,6 +320,26 @@ impl fmt::Display for ExecError {
                 f,
                 "pdfTeX error (\\{name}): not allowed in DVI mode (\\pdfoutput <= 0)."
             ),
+            Self::PdfDuplicateOpenAction => {
+                f.write_str("pdfTeX error (ext1): duplicate of openaction")
+            }
+            Self::PdfActionTypeMissing => f.write_str("pdfTeX error (ext1): action type missing"),
+            Self::PdfActionOnlyGoto(option) => write!(
+                f,
+                "pdfTeX error (ext1): only GoTo action can be used with `{option}'"
+            ),
+            Self::PdfActionIdentifierTypeMissing => {
+                f.write_str("pdfTeX error (ext1): identifier type missing")
+            }
+            Self::PdfActionPositiveIdentifier(kind) => {
+                write!(f, "pdfTeX error (ext1): {kind} must be positive")
+            }
+            Self::PdfActionGotoFileNum => f.write_str(
+                "pdfTeX error (ext1): `goto' option cannot be used with both `file' and `num'",
+            ),
+            Self::PdfActionWindowRequiresGotoFile => f.write_str(
+                "pdfTeX error (ext1): `newwindow'/`nonewwindow' must be used with `goto' and `file' option",
+            ),
             Self::VSplitNeedsVBox => write!(f, "\\vsplit needs a \\vbox"),
             Self::Box255NotVoidBeforeOutput => write!(f, "\\box255 is not void"),
             Self::OutputRoutineBox255NotVoid => {
@@ -391,6 +418,13 @@ impl std::error::Error for ExecError {
             | Self::PdfReferencedObjectNotFound
             | Self::PdfImmediateReservedObject
             | Self::PdfExtensionInDviMode(_)
+            | Self::PdfDuplicateOpenAction
+            | Self::PdfActionTypeMissing
+            | Self::PdfActionOnlyGoto(_)
+            | Self::PdfActionIdentifierTypeMissing
+            | Self::PdfActionPositiveIdentifier(_)
+            | Self::PdfActionGotoFileNum
+            | Self::PdfActionWindowRequiresGotoFile
             | Self::VSplitNeedsVBox
             | Self::Box255NotVoidBeforeOutput
             | Self::OutputRoutineBox255NotVoid
@@ -466,6 +500,13 @@ impl ExecError {
             | Self::PdfReferencedObjectNotFound
             | Self::PdfImmediateReservedObject
             | Self::PdfExtensionInDviMode(_)
+            | Self::PdfDuplicateOpenAction
+            | Self::PdfActionTypeMissing
+            | Self::PdfActionOnlyGoto(_)
+            | Self::PdfActionIdentifierTypeMissing
+            | Self::PdfActionPositiveIdentifier(_)
+            | Self::PdfActionGotoFileNum
+            | Self::PdfActionWindowRequiresGotoFile
             | Self::VSplitNeedsVBox
             | Self::Box255NotVoidBeforeOutput
             | Self::OutputRoutineBox255NotVoid

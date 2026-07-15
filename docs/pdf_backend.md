@@ -84,6 +84,14 @@ image, form, and graphics-state resources are referenced rather than copied.
 Future primitive issues may add object kinds without adding a second PDF
 state store.
 
+Catalog open actions are distinct from verbatim catalog extension entries.
+The engine retains a typed shared action specification and reserves the action
+plus any internal destination, structure, or forward-page identity at scan
+time. A forward page later consumes its preassigned page-dictionary identity
+while allocating only its resource and content objects. These reservations are
+part of snapshots and semantic hashes, so rollback and replay reproduce both
+the action and the nonsequential page-object ordering used by pdfTeX.
+
 ## Canonical serialization with `pdf_writer`
 
 The implemented adapter pins `pdf-writer` 0.15.0 and emits deterministic PDF

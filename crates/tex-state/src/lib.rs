@@ -63,8 +63,9 @@ pub mod token_store;
 mod universe;
 
 pub use pdf::{
-    PDF_CATALOG_OBJECT_ID, PDF_PAGES_OBJECT_ID, PdfDocumentFragmentKind, PdfDocumentObjectIds,
-    PdfExternalImageId, PdfExternalImageIdError, PdfExternalImageMetadata,
+    PDF_CATALOG_OBJECT_ID, PDF_PAGES_OBJECT_ID, PdfActionDestination, PdfActionIdentifier,
+    PdfActionRecord, PdfActionSpec, PdfActionTarget, PdfActionWindow, PdfDocumentFragmentKind,
+    PdfDocumentObjectIds, PdfExternalImageId, PdfExternalImageIdError, PdfExternalImageMetadata,
     PdfExternalImageRegistrationError, PdfFontConfiguration, PdfFontMapOperation,
     PdfFontResourceRecord, PdfGlyphToUnicode, PdfObjectCapacityError, PdfOutputParameters,
     PdfPageBox, PdfPageRecord, PdfRawObjectData, PdfRawObjectId, PdfRawObjectInitializeError,

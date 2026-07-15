@@ -1,8 +1,13 @@
 //! Checkpointed pdfTeX document allocation ledger.
 
+mod action;
 mod document;
 mod object;
 
+pub use action::{
+    PdfActionDestination, PdfActionIdentifier, PdfActionRecord, PdfActionSpec, PdfActionTarget,
+    PdfActionWindow,
+};
 use document::PdfDocumentFragments;
 pub use document::{PdfDocumentFragmentKind, PdfDocumentObjectIds};
 use object::PdfRawObjects;
@@ -90,6 +95,12 @@ impl PdfExternalImageMetadata {
 struct PdfExternalImageRecord {
     id: PdfExternalImageId,
     metadata: PdfExternalImageMetadata,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct PdfPageReservation {
+    number: u32,
+    object: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -440,6 +451,9 @@ pub(crate) struct PdfStateCursor {
     raw_object_fingerprint: u64,
     document_fragment_fingerprint: u64,
     document_objects: PdfDocumentObjectIds,
+    catalog_open_action: Option<PdfActionRecord>,
+    action_fingerprint: u64,
+    page_reservation_fingerprint: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -449,6 +463,7 @@ pub(crate) struct PdfStateSnapshot {
     external_images: Arc<Vec<PdfExternalImageRecord>>,
     raw_objects: PdfRawObjects,
     document_fragments: PdfDocumentFragments,
+    page_reservations: Arc<Vec<PdfPageReservation>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -477,6 +492,10 @@ pub(crate) struct PdfState {
     raw_objects: PdfRawObjects,
     document_fragments: PdfDocumentFragments,
     document_objects: PdfDocumentObjectIds,
+    catalog_open_action: Option<PdfActionRecord>,
+    action_fingerprint: u64,
+    page_reservations: Arc<Vec<PdfPageReservation>>,
+    page_reservation_fingerprint: u64,
 }
 
 impl Default for PdfState {
@@ -496,6 +515,10 @@ impl Default for PdfState {
             raw_objects: PdfRawObjects::default(),
             document_fragments: PdfDocumentFragments::default(),
             document_objects: PdfDocumentObjectIds::default(),
+            catalog_open_action: None,
+            action_fingerprint: StateHasher::new(0x7064_665f_6163_746e).finish(),
+            page_reservations: Arc::new(Vec::new()),
+            page_reservation_fingerprint: StateHasher::new(0x7064_665f_7067_7273).finish(),
         }
     }
 }
@@ -535,16 +558,23 @@ impl PdfState {
             && self.raw_objects.is_empty()
             && self.document_fragments.is_empty()
             && self.document_objects == PdfDocumentObjectIds::default()
+            && self.catalog_open_action.is_none()
+            && self.page_reservations.is_empty()
     }
 
     pub(crate) fn ensure_page_capacity(&self, parameters: PdfOutputParameters) -> Result<(), ()> {
         if !self.enabled || self.output_parameters.unwrap_or(parameters).output <= 0 {
             return Ok(());
         }
-        let last = self
-            .next_object
-            .checked_add(OBJECTS_PER_PAGE - 1)
-            .ok_or(())?;
+        let object_count = if self
+            .reserved_page_object((self.pages.len() + 1) as u32)
+            .is_some()
+        {
+            2
+        } else {
+            OBJECTS_PER_PAGE
+        };
+        let last = self.next_object.checked_add(object_count - 1).ok_or(())?;
         (last <= MAX_OBJECT_ID).then_some(()).ok_or(())
     }
 
@@ -575,14 +605,21 @@ impl PdfState {
         }
         self.ensure_page_capacity(output)
             .expect("PDF page object capacity was preflighted");
+        let page_number =
+            u32::try_from(self.pages.len() + 1).expect("page count fits PDF object cap");
+        let reserved_page = self.reserved_page_object(page_number);
         let record = PdfPageRecord {
             artifact,
             resources_object: self.next_object,
             contents_object: self.next_object + 1,
-            page_object: self.next_object + 2,
+            page_object: reserved_page.unwrap_or(self.next_object + 2),
             parameters: page,
         };
-        self.next_object += OBJECTS_PER_PAGE;
+        self.next_object += if reserved_page.is_some() {
+            2
+        } else {
+            OBJECTS_PER_PAGE
+        };
         self.pages.push(record);
         self.fingerprint = append_fingerprint(self.fingerprint, record);
     }
@@ -1010,6 +1047,59 @@ impl PdfState {
         self.document_fragments.values(kind)
     }
 
+    pub(crate) fn set_catalog_open_action(
+        &mut self,
+        spec: PdfActionSpec,
+        fingerprint: u64,
+    ) -> Result<PdfActionRecord, PdfObjectCapacityError> {
+        debug_assert!(self.catalog_open_action.is_none());
+        let allocation_count = 1
+            + usize::from(spec.needs_target_object())
+            + usize::from(spec.needs_structure_object());
+        self.next_object
+            .checked_add(u32::try_from(allocation_count - 1).expect("small action allocation"))
+            .filter(|last| *last <= MAX_OBJECT_ID)
+            .ok_or(PdfObjectCapacityError)?;
+        let id = self.reserve_document_object()?;
+        let target_object = spec
+            .needs_target_object()
+            .then(|| self.reserve_document_object())
+            .transpose()?;
+        let structure_object = spec
+            .needs_structure_object()
+            .then(|| self.reserve_document_object())
+            .transpose()?;
+        let record = PdfActionRecord::new(id, spec, target_object, structure_object);
+        if let PdfActionSpec::GoTo(PdfActionDestination {
+            file: None,
+            target: PdfActionTarget::Page { number, .. },
+            ..
+        }) = spec
+        {
+            Arc::make_mut(&mut self.page_reservations).push(PdfPageReservation {
+                number,
+                object: target_object.expect("internal page action reserves its page object"),
+            });
+            self.page_reservation_fingerprint =
+                page_reservation_fingerprint(&self.page_reservations);
+        }
+        self.catalog_open_action = Some(record);
+        self.action_fingerprint = fingerprint;
+        Ok(record)
+    }
+
+    #[must_use]
+    pub(crate) const fn catalog_open_action(&self) -> Option<PdfActionRecord> {
+        self.catalog_open_action
+    }
+
+    fn reserved_page_object(&self, number: u32) -> Option<u32> {
+        self.page_reservations
+            .iter()
+            .find(|reservation| reservation.number == number)
+            .map(|reservation| reservation.object)
+    }
+
     pub(crate) fn finalize_document_objects(
         &mut self,
         include_info: bool,
@@ -1054,6 +1144,9 @@ impl PdfState {
             raw_object_fingerprint: self.raw_objects.fingerprint(),
             document_fragment_fingerprint: self.document_fragments.fingerprint(),
             document_objects: self.document_objects,
+            catalog_open_action: self.catalog_open_action,
+            action_fingerprint: self.action_fingerprint,
+            page_reservation_fingerprint: self.page_reservation_fingerprint,
         }
     }
     #[must_use]
@@ -1064,6 +1157,7 @@ impl PdfState {
             external_images: Arc::clone(&self.external_images),
             raw_objects: self.raw_objects.clone(),
             document_fragments: self.document_fragments.clone(),
+            page_reservations: Arc::clone(&self.page_reservations),
         }
     }
 
@@ -1087,6 +1181,10 @@ impl PdfState {
         self.raw_objects = snapshot.raw_objects;
         self.document_fragments = snapshot.document_fragments;
         self.document_objects = cursor.document_objects;
+        self.catalog_open_action = cursor.catalog_open_action;
+        self.action_fingerprint = cursor.action_fingerprint;
+        self.page_reservations = snapshot.page_reservations;
+        self.page_reservation_fingerprint = cursor.page_reservation_fingerprint;
     }
 
     pub(crate) fn set_match(
@@ -1133,6 +1231,8 @@ impl PdfState {
             hasher.u64(cursor.external_image_fingerprint);
             hasher.u64(cursor.raw_object_fingerprint);
             hasher.u64(cursor.document_fragment_fingerprint);
+            hasher.u64(cursor.action_fingerprint);
+            hasher.u64(cursor.page_reservation_fingerprint);
             hasher.bool(cursor.document_objects.names().is_some());
             if let Some(id) = cursor.document_objects.names() {
                 hasher.u32(id);
@@ -1147,6 +1247,16 @@ impl PdfState {
 
 fn external_image_base_fingerprint() -> u64 {
     StateHasher::new(PDF_EXTERNAL_IMAGE_DOMAIN).finish()
+}
+
+fn page_reservation_fingerprint(reservations: &[PdfPageReservation]) -> u64 {
+    let mut hasher = StateHasher::new(0x7064_665f_7067_7273);
+    hasher.usize(reservations.len());
+    for reservation in reservations {
+        hasher.u32(reservation.number);
+        hasher.u32(reservation.object);
+    }
+    hasher.finish()
 }
 
 fn external_image_fingerprint(images: &[PdfExternalImageRecord]) -> u64 {
@@ -1727,5 +1837,78 @@ mod tests {
             .finalize_document_objects(true)
             .expect("replayed finalization");
         assert_eq!(replay, objects);
+    }
+
+    #[test]
+    fn catalog_page_action_reserves_and_replays_the_target_page_identity() {
+        let mut state = PdfState::default();
+        state.enable();
+        let initial = state.snapshot();
+        let initial_hash = state.hash_fragment();
+        let action = PdfActionSpec::GoTo(PdfActionDestination {
+            file: None,
+            structure: None,
+            target: PdfActionTarget::Page {
+                number: 1,
+                view: TokenListId::EMPTY,
+            },
+            window: PdfActionWindow::Unspecified,
+        });
+        let record = state
+            .set_catalog_open_action(action, action.fingerprint(|_| 17))
+            .expect("reserve action and page target");
+        assert_eq!(record.id(), 3);
+        assert_eq!(record.target_object(), Some(4));
+        assert_eq!(state.next_object(), 5);
+
+        let parameters = PdfOutputParameters {
+            output: 1,
+            major_version: 1,
+            minor_version: 4,
+            compress_level: 0,
+            object_compress_level: 0,
+            decimal_digits: 3,
+            gamma: 0,
+            image_gamma: 0,
+            image_hicolor: 0,
+            image_apply_gamma: 0,
+            draft_mode: 0,
+            inclusion_copy_fonts: 0,
+            pk_resolution: 0,
+            unique_resource_names: 0,
+        };
+        let token = PdfTokenParameter {
+            tokens: TokenListId::EMPTY,
+            semantic_id: 17,
+        };
+        state.commit_page(
+            ContentHash::new([4; 32]),
+            parameters,
+            PdfPageParameters {
+                h_origin: Scaled::from_raw(0),
+                v_origin: Scaled::from_raw(0),
+                width: Scaled::from_raw(1),
+                height: Scaled::from_raw(1),
+                page_attr: token,
+                resources: token,
+                omit_procset: 0,
+            },
+            token,
+        );
+        assert_eq!(state.pages()[0].resources_object(), 5);
+        assert_eq!(state.pages()[0].contents_object(), 6);
+        assert_eq!(state.pages()[0].page_object(), 4);
+        let completed_hash = state.hash_fragment();
+
+        state.rollback(initial.clone());
+        assert_eq!(state.catalog_open_action(), None);
+        assert_eq!(state.hash_fragment(), initial_hash);
+        let replay = state
+            .set_catalog_open_action(action, action.fingerprint(|_| 17))
+            .expect("replay action reservation");
+        assert_eq!(replay, record);
+        state.rollback(initial);
+        assert_eq!(state.hash_fragment(), initial_hash);
+        assert_ne!(completed_hash, initial_hash);
     }
 }

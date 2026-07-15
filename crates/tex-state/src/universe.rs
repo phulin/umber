@@ -2143,6 +2143,20 @@ impl Universe {
         self.pdf.document_fragments(kind)
     }
 
+    #[must_use]
+    pub fn pdf_catalog_open_action(&self) -> Option<crate::PdfActionRecord> {
+        self.pdf.catalog_open_action()
+    }
+
+    pub fn set_pdf_catalog_open_action(
+        &mut self,
+        spec: crate::PdfActionSpec,
+    ) -> Result<crate::PdfActionRecord, PdfObjectCapacityError> {
+        let fingerprint =
+            spec.fingerprint(|tokens| self.stores.token_list_semantic_id_value(tokens));
+        self.pdf.set_catalog_open_action(spec, fingerprint)
+    }
+
     /// Allocates final document dictionaries through the canonical PDF ledger.
     pub fn finalize_pdf_document_objects(
         &mut self,

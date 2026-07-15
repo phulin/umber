@@ -662,6 +662,59 @@ mod tests {
     }
 
     #[test]
+    fn pdfcatalog_openaction_scans_expanded_actions_and_rejects_duplicates() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        crate::run_memory_with_stores(
+            concat!(
+                "\\pdfoutput=1\\def\\view{/FitH 10}",
+                "\\pdfcatalog{/PageMode /UseNone} openaction goto page 1 {\\view}",
+                "\\end",
+            ),
+            &mut stores,
+        )
+        .expect("open action scans");
+        let action = stores.pdf_catalog_open_action().expect("catalog action");
+        assert_eq!(action.id(), 3);
+        let tex_state::PdfActionSpec::GoTo(destination) = action.spec() else {
+            panic!("expected GoTo action");
+        };
+        let tex_state::PdfActionTarget::Page { number, view } = destination.target else {
+            panic!("expected page target");
+        };
+        assert_eq!(number, 1);
+        assert_eq!(token_list_text(&stores, view), "/FitH 10");
+
+        let error = crate::run_memory_with_stores(
+            "\\pdfcatalog{} openaction user{<< /S /Named >>}\\end",
+            &mut stores,
+        )
+        .expect_err("duplicate open action is fatal before rescanning");
+        assert_eq!(
+            error.to_string(),
+            "pdfTeX error (ext1): duplicate of openaction"
+        );
+    }
+
+    #[test]
+    fn pdfcatalog_openaction_is_consumed_without_allocation_in_dvi_mode() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let output = crate::run_memory_with_stores(
+            concat!(
+                "\\pdfcatalog{} openaction goto file{other.pdf} page 2 {/Fit} newwindow",
+                "\\pdfcatalog{} openaction user{<< /S /Named /N /Print >>}",
+                "\\message{continued}\\end",
+            ),
+            &mut stores,
+        )
+        .expect("DVI mode consumes repeated ignored open actions");
+        assert!(output.contains("pdfTeX warning (\\pdfcatalog)"));
+        assert!(output.contains("continued"));
+        assert_eq!(stores.pdf_catalog_open_action(), None);
+    }
+
+    #[test]
     fn pdftex_layer_is_visible_only_in_pdftex_mode() {
         for (prepare, intentional_overlaps) in [
             (prepare_run_stores as fn(&mut Universe), &[][..]),

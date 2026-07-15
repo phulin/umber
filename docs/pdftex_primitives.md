@@ -66,7 +66,7 @@ oracle-backed test. Every name in a missing row is missing.
 | Primitive-identity conditional | 1 | done | `\ifpdfprimitive` |
 | Horizontal-mode normalization | 1 | missing | `\quitvmode` |
 | Character codes and ligature control | 10 | done | `\lpcode`, `\rpcode`, `\efcode`, `\tagcode`, `\knbscode`, `\stbscode`, `\shbscode`, `\knbccode`, `\knaccode`, `\pdfnoligatures` |
-| PDF backend actions | 43 | partial (15 done, 1 partial) | `\pdffontexpand`, `\pdfincludechars`, `\pdffontattr`, `\pdfmapfile`, `\pdfmapline`, `\pdfglyphtounicode`, `\pdfnobuiltintounicode`, `\pdfresettimer`, `\pdfsetrandomseed`, `\pdfobj`, `\pdfrefobj`, `\pdfinfo`, `\pdfnames`, `\pdftrailer`, `\pdftrailerid` (done); `\pdfcatalog` (raw dictionary fragments done; `openaction` pending); `\pdfliteral`, `\pdfcolorstack`, `\pdfsetmatrix`, `\pdfsave`, `\pdfrestore`, `\pdfxform`, `\pdfrefxform`, `\pdfximage`, `\pdfrefximage`, `\pdfannot`, `\pdfstartlink`, `\pdfendlink`, `\pdfoutline`, `\pdfdest`, `\pdfthread`, `\pdfstartthread`, `\pdfendthread`, `\pdfsavepos`, `\pdfsnaprefpoint`, `\pdfsnapy`, `\pdfsnapycomp`, `\pdfinterwordspaceon`, `\pdfinterwordspaceoff`, `\pdffakespace`, `\pdfrunninglinkoff`, `\pdfrunninglinkon`, `\pdfspacefont` |
+| PDF backend actions | 43 | partial (16 done) | `\pdffontexpand`, `\pdfincludechars`, `\pdffontattr`, `\pdfmapfile`, `\pdfmapline`, `\pdfglyphtounicode`, `\pdfnobuiltintounicode`, `\pdfresettimer`, `\pdfsetrandomseed`, `\pdfobj`, `\pdfrefobj`, `\pdfinfo`, `\pdfcatalog`, `\pdfnames`, `\pdftrailer`, `\pdftrailerid` (done); `\pdfliteral`, `\pdfcolorstack`, `\pdfsetmatrix`, `\pdfsave`, `\pdfrestore`, `\pdfxform`, `\pdfrefxform`, `\pdfximage`, `\pdfrefximage`, `\pdfannot`, `\pdfstartlink`, `\pdfendlink`, `\pdfoutline`, `\pdfdest`, `\pdfthread`, `\pdfstartthread`, `\pdfendthread`, `\pdfsavepos`, `\pdfsnaprefpoint`, `\pdfsnapy`, `\pdfsnapycomp`, `\pdfinterwordspaceon`, `\pdfinterwordspaceoff`, `\pdffakespace`, `\pdfrunninglinkoff`, `\pdfrunninglinkon`, `\pdfspacefont` |
 | Compatibility error policy | 1 | missing | `\ignoreprimitiveerror` |
 | Late expansion conditionals | 3 | done | `\ifincsname`, `\ifpdfabsnum`, `\ifpdfabsdim` |
 
@@ -235,7 +235,14 @@ custom trailer IDs are lowered only through the `pdf_writer` adapter; raw
 syntax is confined to writer-framed object bodies or dictionary extension
 entries. Repeated info, catalog, names, trailer, and trailer-ID token lists are
 expanded when scanned and concatenated in source order. Final Names and Info
-dictionary identities are allocated idempotently from the same ledger.
+dictionary identities are allocated idempotently from the same ledger. The
+optional `\pdfcatalog ... openaction` suffix is scanned into a typed action
+model shared with the later link and outline slices. Its action, destination,
+structure, and forward-page identities are reserved immediately from that same
+checkpointed ledger in pdfTeX order. Duplicate handling and DVI-mode
+consumption match pdfTeX; finalization adds the typed catalog `/OpenAction`
+reference and writer-framed action object without folding it into raw catalog
+fragment bytes.
 
 The generated-font and microtype slice implements independent copied and
 letterspaced font state, validated `\pdffontexpand` configuration, discrete
