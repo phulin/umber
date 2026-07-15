@@ -2,7 +2,7 @@ use super::*;
 use serde::{Deserialize, Serialize};
 
 mod node;
-use node::FormatNode;
+use node::{FormatContentIds, FormatNode};
 
 mod frozen_core;
 mod frozen_env;
@@ -530,12 +530,25 @@ impl StoreFormat {
         non_node: Option<frozen_non_node::DecodedFrozenNonNode>,
     ) -> Result<Stores, StoreFormatError> {
         let mut stores = Stores::new();
+        let has_frozen_core = frozen.is_some();
         if let Some(frozen) = frozen {
             stores.interner = frozen.interner;
             stores.tokens = frozen.tokens;
             stores.macros = frozen.macros;
             stores.glue = frozen.glue;
+        }
+        let symbol_ids = if has_frozen_core {
+            (0..self.names.len())
+                .map(|raw| {
+                    stores
+                        .interner
+                        .symbol_at_slot(raw as u32)
+                        .map(|symbol| symbol.symbol())
+                        .ok_or(StoreFormatError::Invalid("frozen symbol mapping"))
+                })
+                .collect::<Result<Vec<_>, _>>()?
         } else {
+            let mut symbol_ids = Vec::with_capacity(self.names.len());
             for (raw, name) in self.names.into_iter().enumerate() {
                 let symbol = if name.active {
                     let mut chars = name.text.chars();
@@ -553,16 +566,30 @@ impl StoreFormat {
                 if symbol.raw() as usize != raw {
                     return Err(StoreFormatError::Invalid("non-canonical symbol order"));
                 }
+                symbol_ids.push(symbol.symbol());
             }
+            symbol_ids
+        };
+        let token_ids = if has_frozen_core {
+            (0..self.token_lists.len())
+                .map(|raw| stores.resolve_stored_token_list(TokenListId::new(raw as u32)))
+                .collect::<Vec<_>>()
+        } else {
+            let mut token_ids = vec![TokenListId::EMPTY];
             for (raw, tokens) in self.token_lists.into_iter().enumerate().skip(1) {
                 let tokens = tokens
                     .into_iter()
-                    .map(|token| token.restore(&stores.interner))
+                    .map(|token| token.restore_mapped(&symbol_ids))
                     .collect::<Result<Vec<_>, _>>()?;
-                if stores.intern_token_list(&tokens).raw() as usize != raw {
+                let id = stores.intern_token_list(&tokens);
+                if id.raw() as usize != raw {
                     return Err(StoreFormatError::Invalid("non-canonical token-list order"));
                 }
+                token_ids.push(id);
             }
+            token_ids
+        };
+        if !has_frozen_core {
             for (raw, definition) in self.macros.into_iter().enumerate() {
                 let meaning = MacroMeaning::new(
                     crate::meaning::MeaningFlags::from_bits(definition.flags),
@@ -573,20 +600,34 @@ impl StoreFormat {
                     return Err(StoreFormatError::Invalid("macro order"));
                 }
             }
+        }
+        let glue_ids = if has_frozen_core {
+            (0..self.glue.len())
+                .map(|raw| stores.resolve_stored_glue(GlueId::new(raw as u32)))
+                .collect::<Vec<_>>()
+        } else {
+            let mut glue_ids = vec![GlueId::ZERO];
             for (raw, glue) in self.glue.into_iter().enumerate().skip(1) {
-                if stores.glue.intern(glue.restore()?).raw() as usize != raw {
+                let id = stores.glue.intern(glue.restore()?);
+                if id.raw() as usize != raw {
                     return Err(StoreFormatError::Invalid("non-canonical glue order"));
                 }
+                glue_ids.push(id);
             }
-        }
+            glue_ids
+        };
         let has_frozen_non_node = non_node.is_some();
-        if let Some(non_node) = non_node {
+        let font_ids = if let Some(non_node) = non_node {
             stores.fonts = non_node.fonts;
             stores.code_tables = non_node.code_tables;
             stores.hyphenation = non_node.hyphenation.into();
             stores.prepared_mag = non_node.prepared_mag;
             stores.last_loaded_font = non_node.last_loaded_font;
+            (0..self.fonts.len())
+                .map(|raw| stores.resolve_stored_font(FontId::new(raw as u32)))
+                .collect::<Vec<_>>()
         } else {
+            let mut font_ids = Vec::with_capacity(self.fonts.len());
             for (raw, font) in self.fonts.into_iter().enumerate() {
                 let identifier = font.identifier;
                 let expansion = font.expansion;
@@ -602,9 +643,9 @@ impl StoreFormat {
                     id
                 };
                 if let Some(symbol) = identifier {
-                    let symbol = stores
-                        .interner
-                        .symbol_at_slot(symbol)
+                    let symbol = symbol_ids
+                        .get(symbol as usize)
+                        .copied()
                         .and_then(|symbol| stores.interner.resolve_stored(symbol))
                         .ok_or(StoreFormatError::Invalid("font identifier symbol"))?;
                     stores.set_resolved_font_identifier(id, symbol);
@@ -615,14 +656,21 @@ impl StoreFormat {
                         .set_expansion(id, expansion)
                         .map_err(|_| StoreFormatError::Invalid("font expansion configuration"))?;
                 }
+                font_ids.push(id);
             }
-        }
+            font_ids
+        };
+        let content_ids = FormatContentIds {
+            fonts: &font_ids,
+            glue: &glue_ids,
+            token_lists: &token_ids,
+        };
         let mut node_ids = Vec::with_capacity(self.node_lists.len());
         for list in self.node_lists {
             let nodes = list
                 .nodes
                 .into_iter()
-                .map(|node| node.restore(&stores, &node_ids))
+                .map(|node| node.restore(&content_ids, &node_ids))
                 .collect::<Result<Vec<_>, _>>()?;
             let semantic_id = stores.compute_and_seal_node_semantic_id(&nodes);
             record_transitional_format_work(|work| work.semantic_reseals += 1);
@@ -647,8 +695,8 @@ impl StoreFormat {
             let word = match (cell.bank(), entry.value) {
                 (crate::cell::BankTag::Box, FormatEnvValue::Box(key)) => {
                     let id = node_ids
-                        .iter()
-                        .find_map(|(stored, id)| (*stored == key).then_some(*id))
+                        .get(&key)
+                        .copied()
                         .ok_or(StoreFormatError::Invalid("missing box node list"))?;
                     NodeListId::encode_box_word(Some(stores.prepare_box_value(id)))
                 }
@@ -681,6 +729,9 @@ fn install_frozen_sections(
     non_node: frozen_non_node::DecodedFrozenNonNode,
     semantic_ids: Vec<crate::node_arena::NodeSemanticId>,
 ) -> Result<Stores, StoreFormatError> {
+    let font_count = format.fonts.len();
+    let glue_count = format.glue.len();
+    let token_list_count = format.token_lists.len();
     let mut stores = Stores::new();
     stores.interner = frozen.interner;
     stores.tokens = frozen.tokens;
@@ -691,14 +742,27 @@ fn install_frozen_sections(
     stores.hyphenation = format.hyphenation.into();
     stores.prepared_mag = non_node.prepared_mag;
     stores.last_loaded_font = non_node.last_loaded_font;
+    let font_ids = (0..font_count)
+        .map(|raw| stores.resolve_stored_font(FontId::new(raw as u32)))
+        .collect::<Vec<_>>();
+    let glue_ids = (0..glue_count)
+        .map(|raw| stores.resolve_stored_glue(GlueId::new(raw as u32)))
+        .collect::<Vec<_>>();
+    let token_ids = (0..token_list_count)
+        .map(|raw| stores.resolve_stored_token_list(TokenListId::new(raw as u32)))
+        .collect::<Vec<_>>();
+    let content_ids = FormatContentIds {
+        fonts: &font_ids,
+        glue: &glue_ids,
+        token_lists: &token_ids,
+    };
 
     if semantic_ids.len() != format.node_lists.len() {
         return Err(StoreFormatError::Invalid("frozen node identity count"));
     }
-    let expected_semantic_ids = semantic_ids.clone();
     let root = stores.survivors.reserve_frozen_root();
     let mut next_start = 0_u32;
-    let node_ids: Vec<_> = format
+    let node_ids: std::collections::BTreeMap<_, _> = format
         .node_lists
         .iter()
         .map(|list| {
@@ -713,26 +777,27 @@ fn install_frozen_sections(
         .collect::<Result<_, StoreFormatError>>()?;
     let mut storage = crate::node_arena::NodeStorage::default();
     let mut spans = Vec::with_capacity(format.node_lists.len());
-    for ((list, expected_id), (_, id)) in format
-        .node_lists
-        .into_iter()
-        .zip(semantic_ids)
-        .zip(node_ids.iter().copied())
-    {
+    let mut verified_ids = Vec::with_capacity(format.node_lists.len());
+    for (list, expected_id) in format.node_lists.into_iter().zip(semantic_ids) {
+        let id = node_ids
+            .get(&list.key)
+            .copied()
+            .ok_or(StoreFormatError::Invalid("missing frozen node list"))?;
         let nodes = list
             .nodes
             .into_iter()
-            .map(|node| node.restore(&stores, &node_ids))
+            .map(|node| node.restore(&content_ids, &node_ids))
             .collect::<Result<Vec<_>, _>>()?;
         let (start, len) = storage.append(&nodes);
         if start != id.start() || len != id.len() {
             return Err(StoreFormatError::Invalid("frozen node span metadata"));
         }
         spans.push((start, len, expected_id));
+        verified_ids.push((id, expected_id));
     }
     stores.survivors.publish_frozen_root(root, storage, spans);
-    for ((_, id), expected_id) in node_ids.iter().zip(expected_semantic_ids) {
-        let nodes = stores.nodes(*id).to_vec();
+    for (id, expected_id) in verified_ids {
+        let nodes = stores.nodes(id).to_vec();
         if stores.compute_node_semantic_id(&nodes) != expected_id {
             return Err(StoreFormatError::Invalid("frozen node semantic identity"));
         }
@@ -745,8 +810,8 @@ fn install_frozen_sections(
         let word = match (cell.bank(), entry.value) {
             (crate::cell::BankTag::Box, FormatEnvValue::Box(key)) => {
                 let id = node_ids
-                    .iter()
-                    .find_map(|(stored, id)| (*stored == key).then_some(*id))
+                    .get(&key)
+                    .copied()
                     .ok_or(StoreFormatError::Invalid("missing box node list"))?;
                 NodeListId::encode_box_word(Some(stores.prepare_box_value(id)))
             }
@@ -1073,15 +1138,16 @@ impl FormatToken {
     }
 
     #[cfg(test)]
-    fn restore(self, interner: &crate::interner::Interner) -> Result<Token, StoreFormatError> {
+    fn restore_mapped(self, symbols: &[Symbol]) -> Result<Token, StoreFormatError> {
         Ok(match self {
             Self::Char { ch, cat } => Token::Char {
                 ch,
                 cat: catcode(cat)?,
             },
             Self::Cs(raw) => Token::Cs(
-                interner
-                    .symbol_at_slot(raw)
+                symbols
+                    .get(raw as usize)
+                    .copied()
                     .ok_or(StoreFormatError::Invalid("token symbol is not live"))?,
             ),
             Self::Param(slot) => Token::Param(slot),

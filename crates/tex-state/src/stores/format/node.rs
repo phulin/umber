@@ -18,6 +18,12 @@ use std::collections::BTreeMap;
 type SurvivorRoots = BTreeMap<SurvivorRootId, u32>;
 type NodeIds = Vec<(FormatListKey, NodeListId)>;
 
+pub(super) struct FormatContentIds<'a> {
+    pub fonts: &'a [FontId],
+    pub glue: &'a [GlueId],
+    pub token_lists: &'a [TokenListId],
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) enum FormatNode {
     Char {
@@ -384,22 +390,26 @@ impl FormatNode {
         }
     }
 
-    pub(super) fn restore(self, stores: &Stores, ids: &NodeIds) -> Result<Node, StoreFormatError> {
+    pub(super) fn restore(
+        self,
+        content_ids: &FormatContentIds<'_>,
+        ids: &NodeIds,
+    ) -> Result<Node, StoreFormatError> {
         Ok(match self {
             Self::Char { font, ch } => Node::Char {
-                font: font_id(stores, font)?,
+                font: font_id(content_ids, font)?,
                 ch,
                 origin: crate::token::OriginId::UNKNOWN,
             },
             Self::Lig { font, ch, orig } => Node::Lig {
-                font: font_id(stores, font)?,
+                font: font_id(content_ids, font)?,
                 ch,
                 origins: vec![crate::token::OriginId::UNKNOWN; orig.len()],
                 orig,
             },
             Self::Kern { amount, kind } => Node::Kern { amount, kind },
             Self::Glue { spec, kind, leader } => Node::Glue {
-                spec: glue_id(stores, spec)?,
+                spec: glue_id(content_ids, spec)?,
                 kind,
                 leader: leader.map(|leader| leader.restore(ids)).transpose()?,
             },
@@ -429,7 +439,7 @@ impl FormatNode {
             },
             Self::Mark { class, tokens } => Node::Mark {
                 class,
-                tokens: token_list_id(stores, tokens)?,
+                tokens: token_list_id(content_ids, tokens)?,
             },
             Self::Ins {
                 class,
@@ -441,12 +451,12 @@ impl FormatNode {
             } => Node::Ins {
                 class,
                 size,
-                split_top_skip: glue_id(stores, split_top_skip)?,
+                split_top_skip: glue_id(content_ids, split_top_skip)?,
                 split_max_depth,
                 floating_penalty,
                 content: list_id(ids, content)?,
             },
-            Self::Whatsit(whatsit) => Node::Whatsit(whatsit.restore(stores)?),
+            Self::Whatsit(whatsit) => Node::Whatsit(whatsit.restore(content_ids)?),
             Self::MathOn(value) => Node::MathOn(value),
             Self::MathOff(value) => Node::MathOff(value),
             Self::Direction(direction) => Node::Direction(direction),
@@ -720,13 +730,13 @@ impl FormatWhatsit {
         }
     }
 
-    fn restore(self, stores: &Stores) -> Result<Whatsit, StoreFormatError> {
+    fn restore(self, content: &FormatContentIds<'_>) -> Result<Whatsit, StoreFormatError> {
         Ok(match self {
             Self::OpenOut { slot, path } => Whatsit::OpenOut { slot, path },
             Self::CloseOut { slot } => Whatsit::CloseOut { slot },
             Self::DeferredWrite { sink, tokens } => Whatsit::DeferredWrite {
                 sink,
-                tokens: token_list_id(stores, tokens)?,
+                tokens: token_list_id(content, tokens)?,
             },
             Self::Special { class, payload } => Whatsit::Special { class, payload },
             Self::PdfLiteral { mode, payload } => Whatsit::PdfLiteral {
@@ -735,7 +745,7 @@ impl FormatWhatsit {
             },
             Self::DeferredPdfLiteral { mode, tokens } => Whatsit::DeferredPdfLiteral {
                 mode: pdf_literal_mode(mode)?,
-                tokens: token_list_id(stores, tokens)?,
+                tokens: token_list_id(content, tokens)?,
             },
             Self::PdfSetMatrix { payload } => Whatsit::PdfSetMatrix { payload },
             Self::PdfSave => Whatsit::PdfSave,
@@ -757,7 +767,7 @@ impl FormatWhatsit {
             Self::PdfSavePos => Whatsit::PdfSavePos,
             Self::PdfSnapRefPoint => Whatsit::PdfSnapRefPoint,
             Self::PdfSnapY { glue } => Whatsit::PdfSnapY {
-                glue: glue_id(stores, glue)?,
+                glue: glue_id(content, glue)?,
             },
             Self::PdfSnapYComp { ratio } => Whatsit::PdfSnapYComp { ratio },
             Self::Language {
@@ -809,7 +819,7 @@ impl FormatWhatsit {
             } => {
                 let identifier = match (name_tokens, number) {
                     (Some(tokens), None) => {
-                        crate::PdfActionIdentifier::Name(token_list_id(stores, tokens)?)
+                        crate::PdfActionIdentifier::Name(token_list_id(content, tokens)?)
                     }
                     (None, Some(number)) => crate::PdfActionIdentifier::Number(number),
                     _ => return Err(StoreFormatError::Invalid("PDF destination identifier")),
@@ -847,7 +857,7 @@ impl FormatWhatsit {
             } => {
                 let identifier = match (name_tokens, number) {
                     (Some(tokens), None) => {
-                        crate::PdfActionIdentifier::Name(token_list_id(stores, tokens)?)
+                        crate::PdfActionIdentifier::Name(token_list_id(content, tokens)?)
                     }
                     (None, Some(number)) => crate::PdfActionIdentifier::Number(number),
                     _ => return Err(StoreFormatError::Invalid("PDF thread identifier")),
@@ -859,7 +869,7 @@ impl FormatWhatsit {
                         height: height.map(Scaled::from_raw),
                         depth: depth.map(Scaled::from_raw),
                     },
-                    attributes: token_list_id(stores, attributes)?,
+                    attributes: token_list_id(content, attributes)?,
                     running,
                 }))
             }
@@ -987,23 +997,29 @@ fn list_id(ids: &NodeIds, key: FormatListKey) -> Result<NodeListId, StoreFormatE
         .ok_or(StoreFormatError::Invalid("node child precedes dependency"))
 }
 
-fn font_id(stores: &Stores, raw: u32) -> Result<FontId, StoreFormatError> {
-    stores
+fn font_id(content: &FormatContentIds<'_>, raw: u32) -> Result<FontId, StoreFormatError> {
+    content
         .fonts
-        .resolve_stored(FontId::new(raw))
+        .get(raw as usize)
+        .copied()
         .ok_or(StoreFormatError::Invalid("node font reference"))
 }
 
-fn glue_id(stores: &Stores, raw: u32) -> Result<GlueId, StoreFormatError> {
-    stores
+fn glue_id(content: &FormatContentIds<'_>, raw: u32) -> Result<GlueId, StoreFormatError> {
+    content
         .glue
-        .resolve_stored(GlueId::new(raw))
+        .get(raw as usize)
+        .copied()
         .ok_or(StoreFormatError::Invalid("node glue reference"))
 }
 
-fn token_list_id(stores: &Stores, raw: u32) -> Result<TokenListId, StoreFormatError> {
-    stores
-        .tokens
-        .resolve_stored(TokenListId::new(raw))
+fn token_list_id(
+    content: &FormatContentIds<'_>,
+    raw: u32,
+) -> Result<TokenListId, StoreFormatError> {
+    content
+        .token_lists
+        .get(raw as usize)
+        .copied()
         .ok_or(StoreFormatError::Invalid("node token-list reference"))
 }
