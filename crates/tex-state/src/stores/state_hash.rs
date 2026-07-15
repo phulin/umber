@@ -1195,6 +1195,22 @@ impl Stores {
             }
             Whatsit::PdfSave => hasher.tag(21),
             Whatsit::PdfRestore => hasher.tag(22),
+            Whatsit::PdfColorStack { id, action } => {
+                hasher.tag(23);
+                hasher.u32(*id);
+                match action {
+                    crate::PdfColorStackAction::Set(payload) => {
+                        hasher.u8(0);
+                        hasher.bytes(payload);
+                    }
+                    crate::PdfColorStackAction::Push(payload) => {
+                        hasher.u8(1);
+                        hasher.bytes(payload);
+                    }
+                    crate::PdfColorStackAction::Pop => hasher.u8(2),
+                    crate::PdfColorStackAction::Current => hasher.u8(3),
+                }
+            }
             Whatsit::Language {
                 language,
                 left_hyphen_min,

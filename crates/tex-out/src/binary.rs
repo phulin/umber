@@ -51,7 +51,8 @@ mod wire {
         pub const PDF_SET_MATRIX: u8 = 6;
         pub const PDF_SAVE: u8 = 7;
         pub const PDF_RESTORE: u8 = 8;
-        // Tags 9..=15 are reserved by independently developed artifact effects.
+        pub const PDF_COLOR_STACK: u8 = 9;
+        // Tags 10..=15 are reserved by independently developed artifact effects.
         pub const PDF_ANNOTATION: u8 = 16;
     }
 
@@ -1473,6 +1474,20 @@ impl Writer {
                 }
                 PageEffect::PdfSave => self.u8(wire::effect::PDF_SAVE),
                 PageEffect::PdfRestore => self.u8(wire::effect::PDF_RESTORE),
+                PageEffect::PdfColorStack {
+                    mode,
+                    payload,
+                    page_start,
+                } => {
+                    self.u8(wire::effect::PDF_COLOR_STACK);
+                    self.u8(match mode {
+                        PdfLiteralMode::Origin => 0,
+                        PdfLiteralMode::Page => 1,
+                        PdfLiteralMode::Direct => 2,
+                    });
+                    self.u8(u8::from(*page_start));
+                    self.bytes(payload);
+                }
             }
         }
     }
@@ -2104,6 +2119,30 @@ impl Reader<'_> {
                 },
                 wire::effect::PDF_SAVE if version >= PRE_ANNOTATION_VERSION => PageEffect::PdfSave,
                 wire::effect::PDF_RESTORE if version >= PRE_ANNOTATION_VERSION => PageEffect::PdfRestore,
+                wire::effect::PDF_COLOR_STACK if version >= PRE_ANNOTATION_VERSION => PageEffect::PdfColorStack {
+                    mode: match self.u8()? {
+                        0 => PdfLiteralMode::Origin,
+                        1 => PdfLiteralMode::Page,
+                        2 => PdfLiteralMode::Direct,
+                        tag => {
+                            return Err(ParseError::InvalidTag {
+                                kind: "PDF color stack mode",
+                                tag,
+                            });
+                        }
+                    },
+                    page_start: match self.u8()? {
+                        0 => false,
+                        1 => true,
+                        tag => {
+                            return Err(ParseError::InvalidTag {
+                                kind: "boolean",
+                                tag,
+                            });
+                        }
+                    },
+                    payload: self.bytes()?,
+                },
                 tag => {
                     return Err(ParseError::InvalidTag {
                         kind: "effect",

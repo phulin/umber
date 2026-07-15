@@ -530,6 +530,10 @@ pub enum Whatsit {
     },
     PdfSave,
     PdfRestore,
+    PdfColorStack {
+        id: u32,
+        action: crate::PdfColorStackAction,
+    },
     Language {
         language: u8,
         left_hyphen_min: u8,

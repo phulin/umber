@@ -262,6 +262,14 @@ impl NodeStorage {
                     logical += payload.len() as u64;
                     retained += payload.capacity() as u64;
                 }
+                crate::node::Whatsit::PdfColorStack { action, .. } => {
+                    if let crate::PdfColorStackAction::Set(payload)
+                    | crate::PdfColorStackAction::Push(payload) = action
+                    {
+                        logical += payload.len() as u64;
+                        retained += payload.capacity() as u64;
+                    }
+                }
                 crate::node::Whatsit::CloseOut { .. }
                 | crate::node::Whatsit::DeferredWrite { .. }
                 | crate::node::Whatsit::PdfReferenceObject { .. }

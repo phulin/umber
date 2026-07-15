@@ -47,6 +47,12 @@ pub enum PdfContentOperation {
         y: f32,
         bytes: Vec<u8>,
     },
+    ColorStack {
+        mode: crate::PdfLiteralMode,
+        x: f32,
+        y: f32,
+        bytes: Vec<u8>,
+    },
     SetMatrix {
         x: f32,
         y: f32,
@@ -189,6 +195,15 @@ pub fn ordered_page_content(operations: &[PdfContentOperation]) -> Vec<u8> {
                     set_origin(&mut content, &mut origin, *x, *y);
                 }
                 content.verbatim_operations(bytes);
+            }
+            PdfContentOperation::ColorStack { mode, x, y, bytes } => {
+                if *mode != crate::PdfLiteralMode::Direct {
+                    end_pdf_text(&mut content, &mut in_text);
+                }
+                if *mode == crate::PdfLiteralMode::Origin {
+                    set_origin(&mut content, &mut origin, *x, *y);
+                }
+                content.color_stack_operations(bytes);
             }
             PdfContentOperation::SetMatrix { x, y, matrix } => {
                 end_pdf_text(&mut content, &mut in_text);

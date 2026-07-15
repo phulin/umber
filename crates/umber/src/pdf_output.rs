@@ -511,6 +511,14 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                         }
                         tex_out::PageEffect::PdfSave => PdfContentOperation::Save { x, y },
                         tex_out::PageEffect::PdfRestore => PdfContentOperation::Restore { x, y },
+                        tex_out::PageEffect::PdfColorStack { mode, payload, .. } => {
+                            PdfContentOperation::ColorStack {
+                                mode,
+                                x,
+                                y,
+                                bytes: payload,
+                            }
+                        }
                         _ => unreachable!("positioned PDF graphics event contains PDF effect"),
                     };
                     content_operations.push(operation);
@@ -4071,6 +4079,67 @@ mod tests {
         let literal = pdf.windows(5).position(|w| w == b"0.1 g").expect("literal");
         let restore = pdf.windows(2).position(|w| w == b"Q\n").expect("typed Q");
         assert!(q < cm && cm < literal && literal < restore);
+    }
+
+    #[test]
+    fn pdf_color_stacks_mutate_at_traversal_and_restore_on_the_next_page() {
+        let (stores, run) = run(concat!(
+            "\\pdfoutput=1\\pdfcompresslevel=0",
+            "\\edef\\colors{\\pdfcolorstackinit page page{0 0 1 rg}}",
+            "\\shipout\\vbox{\\pdfcolorstack\\colors push{1 0 0 rg}",
+            "\\hrule width10pt height5pt}",
+            "\\shipout\\vbox{\\pdfcolorstack\\colors pop",
+            "\\hrule width10pt height5pt}\\end",
+        ));
+        let first = tex_out::PageArtifact::from_bytes(run.committed_artifacts[0].bytes())
+            .expect("first artifact");
+        assert!(matches!(
+            &first.effects[0],
+            tex_out::PageEffect::PdfColorStack { mode: tex_out::PdfLiteralMode::Page, payload, page_start: true }
+                if payload == b"0 0 1 rg"
+        ));
+        assert!(first.effects.iter().any(|effect| matches!(
+            effect,
+            tex_out::PageEffect::PdfColorStack { payload, page_start: false, .. }
+                if payload == b"1 0 0 rg"
+        )));
+        let second = tex_out::PageArtifact::from_bytes(run.committed_artifacts[1].bytes())
+            .expect("second artifact");
+        assert!(matches!(
+            &second.effects[0],
+            tex_out::PageEffect::PdfColorStack { payload, page_start: true, .. }
+                if payload == b"1 0 0 rg"
+        ));
+        assert!(second.effects.iter().any(|effect| matches!(
+            effect,
+            tex_out::PageEffect::PdfColorStack { payload, page_start: false, .. }
+                if payload == b"0 0 1 rg"
+        )));
+
+        let pdf = pdf_from_committed_artifacts(&stores, &run.committed_artifacts)
+            .expect("color stack PDF assembles");
+        assert!(pdf.windows(8).any(|window| window == b"1 0 0 rg"));
+    }
+
+    #[test]
+    fn pdf_color_stack_diagnostics_recover_to_default_and_ignore_underflow() {
+        let (stores, run) = run(concat!(
+            "\\pdfoutput=1",
+            "\\shipout\\vbox{\\pdfcolorstack-1 current",
+            "\\pdfcolorstack999 current\\pdfcolorstack0 pop",
+            "\\pdfcolorstack0 missing\\hrule width1pt height1pt}\\end",
+        ));
+        assert_eq!(run.committed_artifacts.len(), 1);
+        let diagnostics = String::from_utf8_lossy(
+            stores
+                .world()
+                .memory_terminal_output()
+                .expect("terminal output"),
+        );
+        assert!(diagnostics.contains("Invalid negative color stack number"));
+        assert!(diagnostics.contains("Unknown color stack number 999"));
+        assert!(diagnostics.contains("pop empty color page stack 0"));
+        assert!(diagnostics.contains("Color stack action is missing"));
     }
 
     #[test]

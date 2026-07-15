@@ -1425,7 +1425,8 @@ fn execute_prefixed_command(
             UnexpandablePrimitive::PdfLiteral
             | UnexpandablePrimitive::PdfSetMatrix
             | UnexpandablePrimitive::PdfSave
-            | UnexpandablePrimitive::PdfRestore => {
+            | UnexpandablePrimitive::PdfRestore
+            | UnexpandablePrimitive::PdfColorStack => {
                 reject_all_prefixes(prefixes)?;
                 execute_pdf_graphics(primitive, command.traced, nest, input, stores, execution)?;
                 Ok(CommandOutcome::continue_only())

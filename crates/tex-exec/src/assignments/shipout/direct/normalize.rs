@@ -24,6 +24,14 @@ pub(super) fn normalize_page(
     stores: &mut Universe,
     expansion: &mut tex_expand::ExpansionContext<'_>,
 ) -> Result<PageOverlay, ExecError> {
+    let mut effects = effects;
+    for restoration in stores.pdf_page_color_stack_restorations() {
+        effects.push(PageEffect::PdfColorStack {
+            mode: lower_color_stack_mode(restoration.mode),
+            payload: restoration.payload,
+            page_start: true,
+        });
+    }
     let pending_effect_count = effects.len();
     let mut overlay = PageOverlay {
         pending_effect_count,
@@ -273,6 +281,31 @@ fn append_whatsit_effect(
         }
         Whatsit::PdfSave => effects.push(PageEffect::PdfSave),
         Whatsit::PdfRestore => effects.push(PageEffect::PdfRestore),
+        Whatsit::PdfColorStack { id, action } => {
+            match stores.apply_pdf_color_stack(id, tex_state::PdfColorStackTarget::Page, &action) {
+                Ok(emission) => effects.push(PageEffect::PdfColorStack {
+                    mode: lower_color_stack_mode(emission.mode),
+                    payload: emission.payload,
+                    page_start: false,
+                }),
+                Err(tex_state::PdfColorStackApplyError::Underflow) => {
+                    stores.world_mut().write_text(
+                        tex_state::PrintSink::TerminalAndLog,
+                        &format!("pop empty color page stack {id}\n"),
+                    );
+                    // Preserve the artifact anchor correspondence without writing
+                    // any content-stream bytes for the failed pop.
+                    effects.push(PageEffect::PdfColorStack {
+                        mode: tex_out::PdfLiteralMode::Direct,
+                        payload: Vec::new(),
+                        page_start: false,
+                    });
+                }
+                Err(tex_state::PdfColorStackApplyError::Unknown) => {
+                    unreachable!("validated color stack id")
+                }
+            }
+        }
         Whatsit::OpenOut { .. }
         | Whatsit::CloseOut { .. }
         | Whatsit::DeferredWrite { .. }
@@ -306,6 +339,14 @@ fn lower_pdf_literal_mode(mode: tex_state::node::PdfLiteralMode) -> tex_out::Pdf
         tex_state::node::PdfLiteralMode::Origin => tex_out::PdfLiteralMode::Origin,
         tex_state::node::PdfLiteralMode::Page => tex_out::PdfLiteralMode::Page,
         tex_state::node::PdfLiteralMode::Direct => tex_out::PdfLiteralMode::Direct,
+    }
+}
+
+fn lower_color_stack_mode(mode: tex_state::PdfColorStackMode) -> tex_out::PdfLiteralMode {
+    match mode {
+        tex_state::PdfColorStackMode::Origin => tex_out::PdfLiteralMode::Origin,
+        tex_state::PdfColorStackMode::Page => tex_out::PdfLiteralMode::Page,
+        tex_state::PdfColorStackMode::Direct => tex_out::PdfLiteralMode::Direct,
     }
 }
 

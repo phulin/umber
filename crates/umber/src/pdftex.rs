@@ -367,6 +367,7 @@ pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
         ("pdfsetmatrix", UnexpandablePrimitive::PdfSetMatrix),
         ("pdfsave", UnexpandablePrimitive::PdfSave),
         ("pdfrestore", UnexpandablePrimitive::PdfRestore),
+        ("pdfcolorstack", UnexpandablePrimitive::PdfColorStack),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
@@ -967,6 +968,39 @@ mod tests {
             .into_iter()
             .map(|(byte, _)| byte)
             .collect()
+    }
+
+    #[test]
+    fn pdf_color_stack_init_is_expandable_global_and_scans_both_page_keywords() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let mut input = InputStack::new(MemoryInput::new(concat!(
+            "\\pdfcolorstackinit{A}|",
+            "\\pdfcolorstackinit page direct{B}|",
+            "\\pdfcolorstackinit page page{C}%",
+        )));
+        let mut context = tex_state::ExpansionContext::new(&mut stores);
+        let mut output = String::new();
+        while let Some(token) =
+            tex_expand::get_x_token(&mut input, &mut context).expect("color stack expansion")
+        {
+            let Token::Char { ch, .. } = tex_expand::semantic_token(token) else {
+                panic!("color stack init emitted non-character token");
+            };
+            output.push(ch);
+        }
+        assert_eq!(output, "1|2|3");
+        assert_eq!(
+            stores
+                .apply_pdf_color_stack(
+                    3,
+                    tex_state::PdfColorStackTarget::Page,
+                    &tex_state::PdfColorStackAction::Current,
+                )
+                .expect("allocated stack")
+                .mode,
+            tex_state::PdfColorStackMode::Page,
+        );
     }
 
     #[test]

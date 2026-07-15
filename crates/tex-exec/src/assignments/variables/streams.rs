@@ -230,6 +230,41 @@ pub(in crate::assignments) fn execute_pdf_graphics(
         }
         UnexpandablePrimitive::PdfSave => Node::Whatsit(Whatsit::PdfSave),
         UnexpandablePrimitive::PdfRestore => Node::Whatsit(Whatsit::PdfRestore),
+        UnexpandablePrimitive::PdfColorStack => {
+            let scanned_id = scan_i32(input, stores, execution, context)?;
+            let id = if scanned_id < 0 {
+                stores.world_mut().write_text(
+                    PrintSink::TerminalAndLog,
+                    "Invalid negative color stack number\n",
+                );
+                0
+            } else if !stores.has_pdf_color_stack(scanned_id as u32) {
+                stores.world_mut().write_text(
+                    PrintSink::TerminalAndLog,
+                    &format!("Unknown color stack number {scanned_id}\n"),
+                );
+                0
+            } else {
+                scanned_id as u32
+            };
+            let action = if scan_optional_keyword_x(input, stores, execution, "set")? {
+                let tokens = scan_balanced_expanded_text(input, stores, execution, context)?;
+                tex_state::PdfColorStackAction::Set(tex_byte_text(&tokens_text(stores, &tokens)))
+            } else if scan_optional_keyword_x(input, stores, execution, "push")? {
+                let tokens = scan_balanced_expanded_text(input, stores, execution, context)?;
+                tex_state::PdfColorStackAction::Push(tex_byte_text(&tokens_text(stores, &tokens)))
+            } else if scan_optional_keyword_x(input, stores, execution, "pop")? {
+                tex_state::PdfColorStackAction::Pop
+            } else if scan_optional_keyword_x(input, stores, execution, "current")? {
+                tex_state::PdfColorStackAction::Current
+            } else {
+                stores
+                    .world_mut()
+                    .write_text(PrintSink::TerminalAndLog, "Color stack action is missing\n");
+                return Ok(());
+            };
+            Node::Whatsit(Whatsit::PdfColorStack { id, action })
+        }
         _ => unreachable!("caller restricts PDF graphics primitive"),
     };
     append_node_to_current_list(nest, stores, node)

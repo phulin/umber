@@ -73,6 +73,12 @@ impl Content {
         self
     }
 
+    /// Append pdfTeX color-stack operations while retaining content-stream
+    /// framing ownership in this writer.
+    pub fn color_stack_operations(&mut self, bytes: &[u8]) -> &mut Self {
+        self.verbatim_operations(bytes)
+    }
+
     /// Start writing an arbitrary operation.
     #[inline]
     pub fn op<'a>(&'a mut self, operator: &'a str) -> Operation<'a> {

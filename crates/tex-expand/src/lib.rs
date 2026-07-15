@@ -419,6 +419,10 @@ pub fn install_pdftex_expandable_primitives(stores: &mut Universe) {
             "pdfximagebbox",
             tex_state::meaning::ExpandablePrimitive::PdfXImageBBox,
         ),
+        (
+            "pdfcolorstackinit",
+            tex_state::meaning::ExpandablePrimitive::PdfColorStackInit,
+        ),
     ] {
         stores.install_primitive_meaning(name, Meaning::ExpandablePrimitive(primitive));
     }
@@ -642,6 +646,7 @@ pub enum ExpandableOpcode {
     PdfNormalDeviate,
     PdfInsertHeight,
     PdfXImageBBox,
+    PdfColorStackInit,
     IfDefined,
     IfCsName,
     IfInCsName,

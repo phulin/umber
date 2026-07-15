@@ -188,6 +188,14 @@ pub trait ExpansionState {
     fn page_mark_class(&self, mark: PageMark, class: u16) -> TokenListId;
     fn page_insertion_height(&self, class: u16) -> Option<Scaled>;
     fn pdf_external_image(&self, id: PdfExternalImageId) -> Option<PdfExternalImageMetadata>;
+    fn allocate_pdf_color_stack(
+        &mut self,
+        _mode: crate::PdfColorStackMode,
+        _restore_at_page_start: bool,
+        _initial: Vec<u8>,
+    ) -> Result<u32, crate::PdfColorStackCapacityError> {
+        Err(crate::PdfColorStackCapacityError)
+    }
     fn penalty_array_value(&self, kind: PenaltyArrayKind, index: i32) -> i32;
     fn paragraph_shape_dimension(&self, line: i32, width: bool) -> Scaled;
     fn report_bad_register_code(&mut self, _value: i32, _maximum: u16) {}
@@ -4350,6 +4358,15 @@ impl ExpansionState for Universe {
         Self::pdf_external_image(self, id)
     }
 
+    fn allocate_pdf_color_stack(
+        &mut self,
+        mode: crate::PdfColorStackMode,
+        restore_at_page_start: bool,
+        initial: Vec<u8>,
+    ) -> Result<u32, crate::PdfColorStackCapacityError> {
+        Self::allocate_pdf_color_stack(self, mode, restore_at_page_start, initial)
+    }
+
     fn penalty_array_value(&self, kind: PenaltyArrayKind, index: i32) -> i32 {
         Self::penalty_array_value(self, kind, index)
     }
@@ -4830,6 +4847,16 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn pdf_external_image(&self, id: PdfExternalImageId) -> Option<PdfExternalImageMetadata> {
         self.universe.pdf_external_image(id)
+    }
+
+    fn allocate_pdf_color_stack(
+        &mut self,
+        mode: crate::PdfColorStackMode,
+        restore_at_page_start: bool,
+        initial: Vec<u8>,
+    ) -> Result<u32, crate::PdfColorStackCapacityError> {
+        self.universe
+            .allocate_pdf_color_stack(mode, restore_at_page_start, initial)
     }
 
     fn penalty_array_value(&self, kind: PenaltyArrayKind, index: i32) -> i32 {

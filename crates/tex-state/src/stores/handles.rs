@@ -385,6 +385,7 @@ impl Stores {
                 | crate::node::Whatsit::PdfSetMatrix { .. }
                 | crate::node::Whatsit::PdfSave
                 | crate::node::Whatsit::PdfRestore
+                | crate::node::Whatsit::PdfColorStack { .. }
                 | crate::node::Whatsit::Language { .. },
             ) => {}
             Node::Kern { .. }

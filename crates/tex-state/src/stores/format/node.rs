@@ -146,6 +146,11 @@ pub(super) enum FormatWhatsit {
     },
     PdfSave,
     PdfRestore,
+    PdfColorStack {
+        id: u32,
+        action: u8,
+        payload: Vec<u8>,
+    },
     Language {
         language: u8,
         left_hyphen_min: u8,
@@ -482,6 +487,19 @@ impl FormatWhatsit {
             Whatsit::PdfSetMatrix { payload } => Self::PdfSetMatrix { payload },
             Whatsit::PdfSave => Self::PdfSave,
             Whatsit::PdfRestore => Self::PdfRestore,
+            Whatsit::PdfColorStack { id, action } => {
+                let (action, payload) = match action {
+                    crate::PdfColorStackAction::Set(payload) => (0, payload),
+                    crate::PdfColorStackAction::Push(payload) => (1, payload),
+                    crate::PdfColorStackAction::Pop => (2, Vec::new()),
+                    crate::PdfColorStackAction::Current => (3, Vec::new()),
+                };
+                Self::PdfColorStack {
+                    id,
+                    action,
+                    payload,
+                }
+            }
             Whatsit::Language {
                 language,
                 left_hyphen_min,
@@ -520,6 +538,20 @@ impl FormatWhatsit {
             Self::PdfSetMatrix { payload } => Whatsit::PdfSetMatrix { payload },
             Self::PdfSave => Whatsit::PdfSave,
             Self::PdfRestore => Whatsit::PdfRestore,
+            Self::PdfColorStack {
+                id,
+                action,
+                payload,
+            } => Whatsit::PdfColorStack {
+                id,
+                action: match action {
+                    0 => crate::PdfColorStackAction::Set(payload),
+                    1 => crate::PdfColorStackAction::Push(payload),
+                    2 => crate::PdfColorStackAction::Pop,
+                    3 => crate::PdfColorStackAction::Current,
+                    _ => return Err(StoreFormatError::Invalid("PDF color stack action")),
+                },
+            },
             Self::Language {
                 language,
                 left_hyphen_min,

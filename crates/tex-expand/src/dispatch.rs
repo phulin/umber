@@ -567,6 +567,49 @@ macro_rules! dispatch_match {
                     call_origin,
                 ))
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfColorStackInit) => {
+                let restore_at_page_start = scan_optional_keyword_with_mode_and_context(
+                    input, stores, expansion, mode, "page",
+                )?;
+                let color_mode = if scan_optional_keyword_with_mode_and_context(
+                    input, stores, expansion, mode, "direct",
+                )? {
+                    tex_state::PdfColorStackMode::Direct
+                } else if scan_optional_keyword_with_mode_and_context(
+                    input, stores, expansion, mode, "page",
+                )? {
+                    tex_state::PdfColorStackMode::Page
+                } else {
+                    tex_state::PdfColorStackMode::Origin
+                };
+                let scanned = crate::scan::scan_general_text_expanded_with_expanded_open(
+                    input, stores, expansion, mode, call_context,
+                )?;
+                let mut initial = Vec::new();
+                for &token in stores.tokens(scanned.token_list()) {
+                    let rendered = crate::token_text(stores, token);
+                    for ch in rendered.chars() {
+                        if let Ok(byte) = u8::try_from(ch as u32) {
+                            initial.push(byte);
+                        } else {
+                            let mut encoded = [0; 4];
+                            initial.extend_from_slice(ch.encode_utf8(&mut encoded).as_bytes());
+                        }
+                    }
+                }
+                let id = stores
+                    .allocate_pdf_color_stack(color_mode, restore_at_page_start, initial)
+                    .unwrap_or_else(|_| {
+                        stores.report_expansion_diagnostic("Too many color stacks\n");
+                        0
+                    });
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::NumberOutput,
+                    &id.to_string(),
+                    call_origin,
+                ))
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfPrimitive) => {
                 let Some(target) = crate::next_semantic_raw_token(input, stores)? else {
                     return Err(ExpandError::MissingTokenAfterPrimitive {
@@ -1486,6 +1529,7 @@ pub fn dispatch_expandable_opcode(opcode: ExpandableOpcode) -> Result<(), Expand
         | ExpandableOpcode::PdfNormalDeviate
         | ExpandableOpcode::PdfInsertHeight
         | ExpandableOpcode::PdfXImageBBox
+        | ExpandableOpcode::PdfColorStackInit
         | ExpandableOpcode::IfDefined
         | ExpandableOpcode::IfCsName
         | ExpandableOpcode::IfInCsName

@@ -389,6 +389,11 @@ pub enum PageEffect {
     },
     PdfSave,
     PdfRestore,
+    PdfColorStack {
+        mode: PdfLiteralMode,
+        payload: Vec<u8>,
+        page_start: bool,
+    },
 }
 
 /// Ordered PDF-only accessibility control retained at its shipped position.
@@ -511,6 +516,7 @@ fn validate_artifact(
             | PageEffect::PdfSetMatrix { .. }
             | PageEffect::PdfSave
             | PageEffect::PdfRestore => None,
+            PageEffect::PdfColorStack { .. } => None,
         };
         if stream.is_some_and(|stream| stream >= 16) {
             return Err(ArtifactValidationError::InvalidStream {

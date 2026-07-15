@@ -444,6 +444,9 @@ impl Lowerer<'_> {
                 }))?;
             }
             PageEffect::PdfLiteral { .. }
+            | PageEffect::PdfColorStack {
+                page_start: false, ..
+            }
             | PageEffect::PdfSetMatrix { .. }
             | PageEffect::PdfSave
             | PageEffect::PdfRestore => {
@@ -470,6 +473,9 @@ impl Lowerer<'_> {
                     effect: effect.clone(),
                 }))?;
             }
+            PageEffect::PdfColorStack {
+                page_start: true, ..
+            } => {}
             PageEffect::OpenOut { .. } | PageEffect::CloseOut { .. } | PageEffect::Write { .. } => {
             }
         }

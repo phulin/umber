@@ -631,6 +631,7 @@ fn anchor_for_whatsit(
         | Whatsit::PdfSetMatrix { .. }
         | Whatsit::PdfSave
         | Whatsit::PdfRestore => true,
+        Whatsit::PdfColorStack { .. } => true,
     };
     if !anchored {
         return Ok(None);

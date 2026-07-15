@@ -258,6 +258,7 @@ pub enum ExpandablePrimitive {
     PdfFontObjectNumber,
     PdfInsertHeight,
     PdfXImageBBox,
+    PdfColorStackInit,
     /// Accesses the immutable original primitive table.
     PdfPrimitive,
     /// Tests current meaning against the same-spelling original primitive.
@@ -366,6 +367,7 @@ impl ExpandablePrimitive {
             Self::PdfNormalDeviate => 80,
             Self::PdfInsertHeight => 81,
             Self::PdfXImageBBox => 82,
+            Self::PdfColorStackInit => 83,
         }
     }
 
@@ -455,6 +457,7 @@ impl ExpandablePrimitive {
             80 => Some(Self::PdfNormalDeviate),
             81 => Some(Self::PdfInsertHeight),
             82 => Some(Self::PdfXImageBBox),
+            83 => Some(Self::PdfColorStackInit),
             _ => None,
         }
     }
@@ -695,6 +698,7 @@ pub enum UnexpandablePrimitive {
     PdfSetMatrix,
     PdfSave,
     PdfRestore,
+    PdfColorStack,
     /// A registered pdfTeX name whose semantics belong to a later parity issue.
     PdfTeXUnimplemented,
     PdfResetTimer,
@@ -963,7 +967,8 @@ impl UnexpandablePrimitive {
             Self::PdfSetMatrix => 239,
             Self::PdfSave => 240,
             Self::PdfRestore => 241,
-            // 242..=246 are reserved by the accepted PDF graphics/form slice.
+            Self::PdfColorStack => 242,
+            // 243..=246 are reserved by the accepted PDF graphics/form slice.
             Self::PdfInterwordSpaceOn => 247,
             Self::PdfInterwordSpaceOff => 248,
             Self::PdfFakeSpace => 249,
@@ -1222,6 +1227,7 @@ impl UnexpandablePrimitive {
             239 => Some(Self::PdfSetMatrix),
             240 => Some(Self::PdfSave),
             241 => Some(Self::PdfRestore),
+            242 => Some(Self::PdfColorStack),
             247 => Some(Self::PdfInterwordSpaceOn),
             248 => Some(Self::PdfInterwordSpaceOff),
             249 => Some(Self::PdfFakeSpace),
