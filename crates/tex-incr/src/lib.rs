@@ -26,6 +26,10 @@ use tex_state::{
     LayoutResolvedOrigin, Piece, Universe, WorldError,
 };
 
+mod episode;
+
+pub use episode::TransientTokenEpisode;
+
 /// Monotonic identity of an immutable editor buffer.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct RevisionId(u64);

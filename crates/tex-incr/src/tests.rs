@@ -1,5 +1,8 @@
 use super::*;
 
+use tex_state::input::SourceId;
+use tex_state::token::{Catcode, Token, TracedTokenWord};
+
 const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
 
 fn template() -> Universe {
@@ -18,6 +21,38 @@ fn source(label: &str) -> String {
 
 fn persistent_source(value: usize) -> String {
     format!("\\shipout\\vbox{{\\hrule height 1pt width {value}pt}}\\count0={value}\\end")
+}
+
+#[test]
+fn transient_episode_publishes_durable_content_only_once() {
+    let mut universe = Universe::new();
+    let origin = universe.source_origin(SourceId::new(1), 0, 1, 1);
+    let words = vec![TracedTokenWord::pack(
+        Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        },
+        origin,
+    )];
+    let mut episode = TransientTokenEpisode::new(words);
+    let before = universe.provenance_stats();
+
+    assert_eq!(episode.published(), None);
+    let first = episode.publish(&mut universe);
+    let after_first = universe.provenance_stats();
+    let second = episode.publish(&mut universe);
+
+    assert_eq!(first, second);
+    assert_eq!(episode.published(), Some(first));
+    assert_eq!(universe.provenance_stats(), after_first);
+    assert_eq!(
+        after_first.origin_list_spans(),
+        before.origin_list_spans() + 1
+    );
+    assert_eq!(
+        after_first.origin_list_entries(),
+        before.origin_list_entries() + 1
+    );
 }
 
 #[test]

@@ -103,6 +103,14 @@ transient content lazily when an episode is recorded — once per distinct
 episode, not per call. Transient frames deliberately have no durable identity
 until that moment.
 
+`tex_incr::TransientTokenEpisode` is the publication boundary for that future
+recorder. It owns an immutable packed-token snapshot without touching either
+permanent store. `publish` calls `finish_traced_token_list` only on its first
+explicit recording request and returns the cached durable pair thereafter.
+The type is deliberately not `Clone`: its cached handles belong to the state
+timeline that accepted the episode. Expansion does not construct or publish
+these records, so eager interning cannot leak back into the hot path.
+
 ## What does not change
 
 Token store internals, semantic ids, watermark rollback, stored-list replay
