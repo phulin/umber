@@ -981,22 +981,9 @@ impl World {
     /// Reads a file as bytes, records the hash, and returns both together.
     pub fn read_file(&mut self, path: impl AsRef<Path>) -> Result<FileContent, WorldError> {
         let path = path.as_ref();
-        let bytes: Arc<[u8]> = match &self.backend {
-            WorldBackend::Real { .. } => Arc::from(std::fs::read(path).map_err(|err| {
-                WorldError::new("read file", Some(path.to_owned()), err.to_string())
-            })?),
-            WorldBackend::Memory(memory) => memory
-                .outputs
-                .get(path)
-                .map(|bytes| Arc::from(bytes.as_slice()))
-                .or_else(|| memory.files.get(path).cloned())
-                .ok_or_else(|| {
-                    WorldError::new(
-                        "read file",
-                        Some(path.to_owned()),
-                        "not found in memory world",
-                    )
-                })?,
+        let bytes: Arc<[u8]> = match self.pending_output_bytes(path)? {
+            Some(bytes) => Arc::from(bytes),
+            None => self.materialized_file_bytes(path)?,
         };
         let record = self.allocate_input_record();
         let content = FileContent::from_shared(record, path.to_owned(), bytes);
@@ -1009,6 +996,68 @@ impl World {
             len: content.bytes.len(),
         });
         Ok(content)
+    }
+
+    /// Replays the uncommitted stream suffix for one path without publishing
+    /// it to the host. TeX may close an immediate output and read it again in
+    /// the same job (LaTeX does this with its main aux file), while retained
+    /// sessions must still keep speculative writes rollback-safe.
+    fn pending_output_bytes(&self, path: &Path) -> Result<Option<Vec<u8>>, WorldError> {
+        let mut active = self.committed_write_streams.clone();
+        let mut bytes = None;
+
+        for effect in self.effects.iter() {
+            match effect {
+                EffectRecord::StreamOpen { slot, target } => {
+                    active[slot.index()] = Some(target.clone());
+                    if target.path() == path {
+                        bytes = Some(Vec::new());
+                    }
+                }
+                EffectRecord::StreamClose { slot } => active[slot.index()] = None,
+                EffectRecord::StreamWrite {
+                    sink: PrintSink::Stream(slot),
+                    text,
+                } if active[slot.index()]
+                    .as_ref()
+                    .is_some_and(|target| target.path() == path) =>
+                {
+                    if bytes.is_none() {
+                        bytes = Some(self.materialized_file_bytes(path)?.to_vec());
+                    }
+                    bytes
+                        .as_mut()
+                        .expect("pending output bytes were initialized")
+                        .extend_from_slice(text.as_bytes());
+                }
+                EffectRecord::StreamWrite { .. }
+                | EffectRecord::DeferredWrite { .. }
+                | EffectRecord::Special { .. }
+                | EffectRecord::PdfObjectPlaceholder { .. }
+                | EffectRecord::ShellEscape(_) => {}
+            }
+        }
+        Ok(bytes)
+    }
+
+    fn materialized_file_bytes(&self, path: &Path) -> Result<Arc<[u8]>, WorldError> {
+        match &self.backend {
+            WorldBackend::Real { .. } => Ok(Arc::from(std::fs::read(path).map_err(|err| {
+                WorldError::new("read file", Some(path.to_owned()), err.to_string())
+            })?)),
+            WorldBackend::Memory(memory) => memory
+                .outputs
+                .get(path)
+                .map(|bytes| Arc::from(bytes.as_slice()))
+                .or_else(|| memory.files.get(path).cloned())
+                .ok_or_else(|| {
+                    WorldError::new(
+                        "read file",
+                        Some(path.to_owned()),
+                        "not found in memory world",
+                    )
+                }),
+        }
     }
 
     /// Writes a complete host file through the world I/O boundary.

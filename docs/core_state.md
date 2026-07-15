@@ -639,7 +639,10 @@ Nothing in the engine touches the OS directly. A single `World` object owns:
   commands append these `World` records at execution time and rely on the
   final job commit unless a shipout commits them earlier; non-immediate
   `\openout`, `\write`, and `\closeout` reach `World` only when their whatsit
-  nodes are shipped.
+  nodes are shipped. File reads replay the pending stream-effect suffix over
+  any materialized prefix, so a closed immediate output is readable within
+  the same TeX job without leaking speculative bytes to the host; rollback
+  removes that read view together with the effect suffix.
 - **Handle-bearing effects** enter the log through aggregate admission.
   In particular, `Universe::record_deferred_write` validates the unexpanded
   `TokenListId` against its owning live token-store timeline before `World`

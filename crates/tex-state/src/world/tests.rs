@@ -558,7 +558,7 @@ fn real_output_does_not_materialize_before_commit() {
 }
 
 #[test]
-fn committed_memory_output_is_readable_as_same_job_input() {
+fn buffered_memory_output_is_readable_as_same_job_input_and_rolls_back() {
     let mut world = World::memory();
     let slot = StreamSlot::new(10);
     let before = world.snapshot();
@@ -567,7 +567,11 @@ fn committed_memory_output_is_readable_as_same_job_input() {
     world.write_text(PrintSink::Stream(slot), "first\nsecond\n");
     world.close_out(slot);
 
-    assert!(world.read_file("same-job.tex").is_err());
+    let content = world
+        .read_file("same-job.tex")
+        .expect("buffered output is readable before host commit");
+    assert_eq!(content.bytes(), b"first\nsecond\n");
+    assert_eq!(world.memory_output("same-job.tex"), None);
     world.rollback(&before);
     assert!(world.read_file("same-job.tex").is_err());
 
@@ -582,6 +586,24 @@ fn committed_memory_output_is_readable_as_same_job_input() {
         .read_file("same-job.tex")
         .expect("committed output is readable");
     assert_eq!(content.bytes(), b"first\nsecond\n");
+}
+
+#[test]
+fn buffered_real_output_is_readable_without_materializing_on_the_host() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let output = temp_dir.path().join("same-job.aux");
+    let mut world = World::real();
+    let slot = StreamSlot::new(10);
+
+    world.open_out(slot, &output);
+    world.write_text(PrintSink::Stream(slot), "auxiliary\n");
+    world.close_out(slot);
+
+    let content = world
+        .read_file(&output)
+        .expect("buffered real output is visible within the job");
+    assert_eq!(content.bytes(), b"auxiliary\n");
+    assert!(!output.exists());
 }
 
 #[test]
