@@ -127,6 +127,7 @@ fn configured_version_and_pretty_policy_are_deterministic() {
     let options = PdfSerializationOptions {
         pretty: true,
         stream_compression: PdfStreamCompression::None,
+        object_compression: PdfObjectCompression::None,
     };
     let first = document
         .to_pdf_bytes_with_options(options)
@@ -145,6 +146,7 @@ fn deterministic_flate_streams_are_declared_and_decode_exactly() {
     let options = PdfSerializationOptions {
         pretty: false,
         stream_compression: PdfStreamCompression::Flate { level: 9 },
+        object_compression: PdfObjectCompression::None,
     };
     let first = document
         .to_pdf_bytes_with_options(options)
@@ -211,8 +213,17 @@ fn adapter_range_and_compression_errors_are_typed() {
         sample.to_pdf_bytes_with_options(PdfSerializationOptions {
             pretty: false,
             stream_compression: PdfStreamCompression::Flate { level: 10 },
+            object_compression: PdfObjectCompression::None,
         }),
         Err(PdfSerializeError::InvalidCompressionLevel(10))
+    );
+    assert_eq!(
+        sample.to_pdf_bytes_with_options(PdfSerializationOptions {
+            pretty: false,
+            stream_compression: PdfStreamCompression::None,
+            object_compression: PdfObjectCompression::ObjectStreams { level: 4 },
+        }),
+        Err(PdfSerializeError::InvalidObjectCompressionLevel(4))
     );
 }
 
@@ -232,6 +243,7 @@ fn automatic_compression_rejects_existing_filter_policy() {
         document.to_pdf_bytes_with_options(PdfSerializationOptions {
             pretty: false,
             stream_compression: PdfStreamCompression::Flate { level: 6 },
+            object_compression: PdfObjectCompression::None,
         }),
         Err(PdfSerializeError::CompressionFilterConflict(id(4)))
     );
@@ -239,10 +251,56 @@ fn automatic_compression_rejects_existing_filter_policy() {
 
 #[test]
 fn model_version_validation_remains_typed_before_serialization() {
+    assert!(PdfVersion::new(2, 0).is_ok());
     assert_eq!(
-        PdfVersion::new(2, 0),
-        Err(PdfModelError::UnsupportedVersion { major: 2, minor: 0 })
+        PdfVersion::new(0, 0),
+        Err(PdfModelError::UnsupportedVersion { major: 0, minor: 0 })
     );
+}
+
+#[test]
+fn adapter_emits_real_object_streams_for_levels_one_through_three() {
+    let mut input = sample_input(&[1, 2, 3, 4, 5]);
+    input.version = PdfVersion::new(1, 5).expect("object stream PDF version");
+    let document = input.validate().expect("valid object stream document");
+
+    for level in 1..=3 {
+        let options = PdfSerializationOptions {
+            pretty: false,
+            stream_compression: PdfStreamCompression::Flate { level: 6 },
+            object_compression: PdfObjectCompression::ObjectStreams { level },
+        };
+        let first = document
+            .to_pdf_bytes_with_options(options)
+            .expect("object-stream PDF");
+        assert_eq!(
+            first,
+            document
+                .to_pdf_bytes_with_options(options)
+                .expect("repeat object-stream PDF")
+        );
+        assert!(first.windows(12).any(|window| window == b"/Type/ObjStm"));
+        assert!(first.windows(10).any(|window| window == b"/Type/XRef"));
+
+        let parsed = lopdf::Document::load_mem(&first).expect("lopdf parses type-2 xrefs");
+        assert_eq!(parsed.get_pages().len(), 1);
+        assert!(
+            parsed
+                .get_object((2, 0))
+                .expect("compressed pages object")
+                .as_dict()
+                .is_ok()
+        );
+        let content = parsed
+            .get_object((4, 0))
+            .expect("ordinary content stream")
+            .as_stream()
+            .expect("content remains a stream");
+        assert_eq!(
+            content.decompressed_content().expect("content flate data"),
+            b"q\n10 20 30 40 re\nS\nQ\n"
+        );
+    }
 }
 
 #[test]

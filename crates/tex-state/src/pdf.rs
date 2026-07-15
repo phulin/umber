@@ -22,6 +22,30 @@ pub struct PdfOutputParameters {
     pub decimal_digits: i32,
 }
 
+impl PdfOutputParameters {
+    /// Applies pdfTeX's first-PDF-write recovery and clamping policy.
+    #[must_use]
+    pub fn normalized(self) -> Self {
+        let major_version = self.major_version.max(1);
+        let minor_version = if (0..=9).contains(&self.minor_version) {
+            self.minor_version
+        } else {
+            4
+        };
+        let mut object_compress_level = self.object_compress_level.clamp(0, 3);
+        if major_version == 1 && minor_version < 5 {
+            object_compress_level = 0;
+        }
+        Self {
+            major_version,
+            minor_version,
+            object_compress_level,
+            decimal_digits: self.decimal_digits.clamp(0, 4),
+            ..self
+        }
+    }
+}
+
 /// Stable object identities assigned to one committed PDF page.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct PdfPageRecord {

@@ -3,14 +3,14 @@
 use tex_arith::Scaled;
 use tex_out::pdf::{
     PdfContentRectangle, PdfDictionary, PdfIndirectObject, PdfModelError, PdfNumber, PdfObject,
-    PdfObjectId, PdfSerializationOptions, PdfSerializeError, PdfStreamCompression, PdfValue,
-    PdfVersion, UnvalidatedPdfDocument, filled_rectangle_content,
+    PdfObjectCompression, PdfObjectId, PdfSerializationOptions, PdfSerializeError,
+    PdfStreamCompression, PdfValue, PdfVersion, UnvalidatedPdfDocument, filled_rectangle_content,
 };
 use tex_out::positioned::{PositionedError, PositionedEvent};
 use tex_state::env::banks::IntParam;
 use tex_state::{
-    CommittedArtifact, ContentHash, PDF_CATALOG_OBJECT_ID, PDF_PAGES_OBJECT_ID, Universe,
-    WorldError,
+    CommittedArtifact, ContentHash, PDF_CATALOG_OBJECT_ID, PDF_PAGES_OBJECT_ID,
+    PdfOutputParameters, Universe, WorldError,
 };
 
 /// Builds one deterministic PDF from the current checkpointed page ledger.
@@ -18,11 +18,12 @@ pub fn pdf_from_committed_artifacts(
     stores: &Universe,
     artifacts: &[CommittedArtifact],
 ) -> Result<Vec<u8>, PdfBuildError> {
-    if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+    let parameters = output_parameters(stores);
+    if parameters.output <= 0 {
         return Err(PdfBuildError::PdfOutputDisabled);
     }
-    let version = pdf_version(stores)?;
-    let options = serialization_options(stores)?;
+    let version = pdf_version(parameters)?;
+    let options = serialization_options(parameters)?;
     let catalog_id = object_id(PDF_CATALOG_OBJECT_ID)?;
     let pages_id = object_id(PDF_PAGES_OBJECT_ID)?;
     let page_records = stores.pdf_pages();
@@ -44,15 +45,16 @@ pub fn pdf_from_committed_artifacts(
         for event in positioned.events {
             match event {
                 PositionedEvent::Rule(rule) => rectangles.push(PdfContentRectangle {
-                    x: scaled_to_bp_f32(rule.x),
+                    x: scaled_to_bp_f32(rule.x, parameters.decimal_digits),
                     y: scaled_to_bp_f32(
                         page_height
                             .checked_sub(rule.y)
                             .and_then(|value| value.checked_sub(rule.height))
                             .ok_or(PositionedError::PositionOverflow)?,
+                        parameters.decimal_digits,
                     ),
-                    width: scaled_to_bp_f32(rule.width),
-                    height: scaled_to_bp_f32(rule.height),
+                    width: scaled_to_bp_f32(rule.width, parameters.decimal_digits),
+                    height: scaled_to_bp_f32(rule.height, parameters.decimal_digits),
                 }),
                 PositionedEvent::TextRun(run) if !run.units.is_empty() => {
                     return Err(PdfBuildError::TextRequiresFontResources);
@@ -90,8 +92,8 @@ pub fn pdf_from_committed_artifacts(
             PdfValue::Array(vec![
                 PdfValue::Integer(0),
                 PdfValue::Integer(0),
-                PdfValue::Number(scaled_to_bp_number(page_width)?),
-                PdfValue::Number(scaled_to_bp_number(page_height)?),
+                PdfValue::Number(scaled_to_bp_number(page_width, parameters.decimal_digits)?),
+                PdfValue::Number(scaled_to_bp_number(page_height, parameters.decimal_digits)?),
             ]),
         )?;
         page.insert("Resources", PdfValue::Reference(resources_id))?;
@@ -128,24 +130,46 @@ fn artifact_bytes(
         .ok_or(PdfBuildError::MissingArtifact(hash))
 }
 
-fn pdf_version(stores: &Universe) -> Result<PdfVersion, PdfBuildError> {
-    let major = u8::try_from(stores.int_param(IntParam::PDF_MAJOR_VERSION))
+fn output_parameters(stores: &Universe) -> PdfOutputParameters {
+    stores.fixed_pdf_output_parameters().unwrap_or_else(|| {
+        PdfOutputParameters {
+            output: stores.int_param(IntParam::PDF_OUTPUT),
+            major_version: stores.int_param(IntParam::PDF_MAJOR_VERSION),
+            minor_version: stores.int_param(IntParam::PDF_MINOR_VERSION),
+            compress_level: stores.int_param(IntParam::PDF_COMPRESS_LEVEL),
+            object_compress_level: stores.int_param(IntParam::PDF_OBJ_COMPRESS_LEVEL),
+            decimal_digits: stores.int_param(IntParam::PDF_DECIMAL_DIGITS),
+        }
+        .normalized()
+    })
+}
+
+fn pdf_version(parameters: PdfOutputParameters) -> Result<PdfVersion, PdfBuildError> {
+    let major = u8::try_from(parameters.major_version)
         .map_err(|_| PdfBuildError::InvalidVersionParameters)?;
-    let minor = u8::try_from(stores.int_param(IntParam::PDF_MINOR_VERSION))
+    let minor = u8::try_from(parameters.minor_version)
         .map_err(|_| PdfBuildError::InvalidVersionParameters)?;
     Ok(PdfVersion::new(major, minor)?)
 }
 
-fn serialization_options(stores: &Universe) -> Result<PdfSerializationOptions, PdfBuildError> {
-    let level = stores.int_param(IntParam::PDF_COMPRESS_LEVEL);
+fn serialization_options(
+    parameters: PdfOutputParameters,
+) -> Result<PdfSerializationOptions, PdfBuildError> {
+    let level = parameters.compress_level;
     let stream_compression = match level {
-        0 => PdfStreamCompression::None,
+        ..=0 => PdfStreamCompression::None,
         1..=9 => PdfStreamCompression::Flate { level: level as u8 },
         _ => return Err(PdfBuildError::InvalidCompressionLevel(level)),
+    };
+    let object_compression = match parameters.object_compress_level {
+        0 => PdfObjectCompression::None,
+        level @ 1..=3 => PdfObjectCompression::ObjectStreams { level: level as u8 },
+        level => return Err(PdfBuildError::InvalidObjectCompressionLevel(level)),
     };
     Ok(PdfSerializationOptions {
         pretty: false,
         stream_compression,
+        object_compression,
     })
 }
 
@@ -168,19 +192,23 @@ fn positive_extent(value: Scaled) -> Scaled {
     }
 }
 
-fn scaled_to_bp_f32(value: Scaled) -> f32 {
-    scaled_to_bp_milli(value) as f32 / 1_000.0
+fn scaled_to_bp_f32(value: Scaled, decimal_digits: i32) -> f32 {
+    let scale = 10_f32.powi(decimal_digits);
+    scaled_to_bp_coefficient(value, decimal_digits) as f32 / scale
 }
 
-fn scaled_to_bp_number(value: Scaled) -> Result<PdfNumber, PdfModelError> {
-    PdfNumber::new(scaled_to_bp_milli(value), 3)
+fn scaled_to_bp_number(value: Scaled, decimal_digits: i32) -> Result<PdfNumber, PdfModelError> {
+    PdfNumber::new(
+        scaled_to_bp_coefficient(value, decimal_digits),
+        decimal_digits as u8,
+    )
 }
 
-fn scaled_to_bp_milli(value: Scaled) -> i64 {
-    const SCALE: i128 = 1_000;
+fn scaled_to_bp_coefficient(value: Scaled, decimal_digits: i32) -> i64 {
+    let scale = 10_i128.pow(decimal_digits as u32);
     const NUMERATOR: i128 = 7_200;
     const DENOMINATOR: i128 = 7_227 * 65_536;
-    let numerator = i128::from(value.raw()) * NUMERATOR * SCALE;
+    let numerator = i128::from(value.raw()) * NUMERATOR * scale;
     let rounded = if numerator >= 0 {
         (numerator + DENOMINATOR / 2) / DENOMINATOR
     } else {
@@ -195,6 +223,7 @@ pub enum PdfBuildError {
     MissingArtifact(ContentHash),
     InvalidVersionParameters,
     InvalidCompressionLevel(i32),
+    InvalidObjectCompressionLevel(i32),
     InvalidObjectId(u32),
     TextRequiresFontResources,
     UnsupportedSpecial(String),
@@ -219,6 +248,9 @@ impl std::fmt::Display for PdfBuildError {
             }
             Self::InvalidCompressionLevel(level) => {
                 write!(f, "invalid \\pdfcompresslevel {level}; expected 0..=9")
+            }
+            Self::InvalidObjectCompressionLevel(level) => {
+                write!(f, "invalid \\pdfobjcompresslevel {level}; expected 0..=3")
             }
             Self::InvalidObjectId(id) => write!(f, "invalid PDF object id {id}"),
             Self::TextRequiresFontResources => {
@@ -335,5 +367,110 @@ mod tests {
             dvi_from_page_plans(&dvi_run.dvi_pages).expect("DVI assembles"),
             dvi_from_page_plans(&pdf_run.dvi_pages).expect("DVI assembles"),
         );
+    }
+
+    #[test]
+    fn fixed_policy_drives_version_compression_and_decimal_output() {
+        let (stores, run) = run(concat!(
+            "\\pdfoutput=1\\pdfmajorversion=1\\pdfminorversion=5",
+            "\\pdfcompresslevel=0\\pdfobjcompresslevel=1\\pdfdecimaldigits=0",
+            "\\shipout\\vbox{\\hrule width10pt height5pt}",
+            "\\pdfminorversion=7\\pdfcompresslevel=9",
+            "\\pdfobjcompresslevel=0\\pdfdecimaldigits=4",
+            "\\shipout\\vbox{\\hrule width10pt height5pt}\\end",
+        ));
+        let bytes = pdf_from_committed_artifacts(&stores, &run.committed_artifacts)
+            .expect("fixed-policy PDF assembles");
+
+        assert!(bytes.starts_with(b"%PDF-1.5"));
+        assert!(bytes.windows(12).any(|window| window == b"/Type/ObjStm"));
+        let parsed = lopdf::Document::load_mem(&bytes).expect("fixed-policy PDF parses");
+        assert_eq!(parsed.get_pages().len(), 2);
+        let contents = parsed
+            .get_object((4, 0))
+            .expect("first contents")
+            .as_stream()
+            .expect("contents stream");
+        assert!(contents.dict.get(b"Filter").is_err());
+        assert!(
+            String::from_utf8_lossy(
+                stores
+                    .world()
+                    .memory_terminal_output()
+                    .expect("memory terminal output")
+            )
+            .contains("PDF version cannot be changed after data is written")
+        );
+    }
+
+    #[test]
+    fn object_compression_levels_one_through_three_emit_type_two_xrefs() {
+        for level in 1..=3 {
+            let (stores, run) = run(&format!(
+                "\\pdfoutput=1\\pdfminorversion=5\\pdfcompresslevel=6\\pdfobjcompresslevel={level}\\shipout\\vbox{{\\hrule width10pt height5pt}}\\end"
+            ));
+            let first = pdf_from_committed_artifacts(&stores, &run.committed_artifacts)
+                .expect("object-stream PDF assembles");
+            let second = pdf_from_committed_artifacts(&stores, &run.committed_artifacts)
+                .expect("object-stream PDF repeats");
+            assert_eq!(first, second);
+            assert!(first.windows(12).any(|window| window == b"/Type/ObjStm"));
+            assert!(first.windows(10).any(|window| window == b"/Type/XRef"));
+
+            let parsed = lopdf::Document::load_mem(&first).expect("object-stream PDF parses");
+            assert_eq!(parsed.get_pages().len(), 1);
+            let contents = parsed
+                .get_object((4, 0))
+                .expect("ordinary content stream")
+                .as_stream()
+                .expect("contents stream");
+            assert_eq!(
+                contents
+                    .dict
+                    .get(b"Filter")
+                    .expect("flate filter")
+                    .as_name()
+                    .expect("filter name"),
+                b"FlateDecode"
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_version_and_object_policy_recover_like_pdftex() {
+        let (stores, run) = run(concat!(
+            "\\pdfoutput=1\\pdfmajorversion=0\\pdfminorversion=12",
+            "\\pdfobjcompresslevel=9\\pdfdecimaldigits=9",
+            "\\shipout\\vbox{\\hrule width10pt height5pt}\\end",
+        ));
+        let fixed = stores
+            .fixed_pdf_output_parameters()
+            .expect("shipout freezes recovered values");
+        assert_eq!(fixed.major_version, 1);
+        assert_eq!(fixed.minor_version, 4);
+        assert_eq!(fixed.object_compress_level, 0);
+        assert_eq!(fixed.decimal_digits, 4);
+        let diagnostics = String::from_utf8_lossy(
+            stores
+                .world()
+                .memory_terminal_output()
+                .expect("memory terminal output"),
+        );
+        assert!(
+            diagnostics.contains("pdfTeX error (invalid pdfmajorversion)"),
+            "{diagnostics}"
+        );
+        assert!(
+            diagnostics.contains("pdfTeX error (invalid pdfminorversion)"),
+            "{diagnostics}"
+        );
+        assert!(
+            diagnostics.contains("Object streams disabled now"),
+            "{diagnostics}"
+        );
+        let bytes = pdf_from_committed_artifacts(&stores, &run.committed_artifacts)
+            .expect("recovered PDF assembles");
+        assert!(bytes.starts_with(b"%PDF-1.4"));
+        assert!(!bytes.windows(12).any(|window| window == b"/Type/ObjStm"));
     }
 }

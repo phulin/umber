@@ -1,5 +1,6 @@
 use tex_lex::InputStack;
 use tex_state::env::banks::DimenParam;
+use tex_state::env::banks::IntParam;
 use tex_state::node::Node;
 use tex_state::token::TracedTokenWord;
 use tex_state::{PrintSink, Universe};
@@ -32,6 +33,7 @@ pub(crate) fn shipout_node(
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<Option<PreparedDviPage>, ExecError> {
+    report_pdf_output_policy_diagnostics(stores);
     if huge_shipout_box(&node, stores) {
         stores.world_mut().write_text(
             PrintSink::TerminalAndLog,
@@ -46,6 +48,64 @@ pub(crate) fn shipout_node(
         hash,
         plan: staged.dvi_plan,
     }))
+}
+
+fn report_pdf_output_policy_diagnostics(stores: &mut Universe) {
+    let current_output = stores.int_param(IntParam::PDF_OUTPUT);
+    if let Some(fixed) = stores.fixed_pdf_output_parameters() {
+        if current_output != fixed.output {
+            stores.world_mut().write_text(
+                PrintSink::TerminalAndLog,
+                "\n! pdfTeX error (setup): \\pdfoutput can only be changed before anything is written to the output.\n",
+            );
+        }
+        let current_major = stores.int_param(IntParam::PDF_MAJOR_VERSION);
+        let current_minor = stores.int_param(IntParam::PDF_MINOR_VERSION);
+        if fixed.output > 0
+            && (current_major != fixed.major_version || current_minor != fixed.minor_version)
+        {
+            stores.world_mut().write_text(
+                PrintSink::TerminalAndLog,
+                "\n! pdfTeX error (setup): PDF version cannot be changed after data is written to the PDF file.\n",
+            );
+        }
+        return;
+    }
+    if current_output <= 0 {
+        return;
+    }
+
+    let major = stores.int_param(IntParam::PDF_MAJOR_VERSION);
+    if major < 1 {
+        stores.world_mut().write_text(
+            PrintSink::TerminalAndLog,
+            "\n! pdfTeX error (invalid pdfmajorversion).\nThe pdfmajorversion must be 1 or greater.\nI changed this to 1.\n",
+        );
+        stores.set_int_param(IntParam::PDF_MAJOR_VERSION, 1);
+    }
+    let minor = stores.int_param(IntParam::PDF_MINOR_VERSION);
+    if !(0..=9).contains(&minor) {
+        stores.world_mut().write_text(
+            PrintSink::TerminalAndLog,
+            "\n! pdfTeX error (invalid pdfminorversion).\nThe pdfminorversion must be between 0 and 9.\nI changed this to 4.\n",
+        );
+        stores.set_int_param(IntParam::PDF_MINOR_VERSION, 4);
+    }
+
+    let major = stores.int_param(IntParam::PDF_MAJOR_VERSION);
+    let minor = stores.int_param(IntParam::PDF_MINOR_VERSION);
+    if stores
+        .int_param(IntParam::PDF_OBJ_COMPRESS_LEVEL)
+        .clamp(0, 3)
+        > 0
+        && major == 1
+        && minor < 5
+    {
+        stores.world_mut().write_text(
+            PrintSink::TerminalAndLog,
+            "\npdfTeX warning (Object streams): \\pdfobjcompresslevel > 0 requires PDF-1.5 or greater. Object streams disabled now.\n",
+        );
+    }
 }
 
 fn huge_shipout_box(node: &Node, stores: &Universe) -> bool {

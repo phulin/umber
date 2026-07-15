@@ -10,7 +10,9 @@ use sha2::{Digest, Sha256};
 
 mod serialize;
 
-pub use serialize::{PdfSerializationOptions, PdfSerializeError, PdfStreamCompression};
+pub use serialize::{
+    PdfObjectCompression, PdfSerializationOptions, PdfSerializeError, PdfStreamCompression,
+};
 
 /// One filled rectangle in PDF user-space points.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -66,7 +68,7 @@ pub struct PdfVersion {
 impl PdfVersion {
     /// Creates a supported `1.x` PDF version.
     pub fn new(major: u8, minor: u8) -> Result<Self, PdfModelError> {
-        if major == 1 && minor <= 7 {
+        if (1..=9).contains(&major) && minor <= 9 {
             Ok(Self { major, minor })
         } else {
             Err(PdfModelError::UnsupportedVersion { major, minor })

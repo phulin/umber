@@ -1711,6 +1711,7 @@ impl Universe {
             object_compress_level: self.int_param(IntParam::PDF_OBJ_COMPRESS_LEVEL),
             decimal_digits: self.int_param(IntParam::PDF_DECIMAL_DIGITS),
         }
+        .normalized()
     }
 
     /// Returns the current code-table generation vector.

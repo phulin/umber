@@ -4,7 +4,7 @@ use std::io::Write as _;
 
 use flate2::Compression;
 use flate2::write::ZlibEncoder;
-use pdf_writer::{Dict, Filter, Finish, Name, Null, Obj, Pdf, Ref, Settings, Str};
+use pdf_writer::{Dict, Filter, Finish, Name, Null, Obj, Pdf, Ref, Settings, Str, XRefFilter};
 
 use super::{PdfDictionary, PdfDocument, PdfNumber, PdfObject, PdfObjectId, PdfValue};
 
@@ -18,6 +18,16 @@ pub enum PdfStreamCompression {
     Flate { level: u8 },
 }
 
+/// Object-stream policy corresponding to `\pdfobjcompresslevel`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum PdfObjectCompression {
+    /// Write all indirect values as ordinary type-1 objects.
+    #[default]
+    None,
+    /// Place eligible non-stream objects in a true object stream.
+    ObjectStreams { level: u8 },
+}
+
 /// Byte-format policy applied without changing document semantic identity.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct PdfSerializationOptions {
@@ -25,6 +35,8 @@ pub struct PdfSerializationOptions {
     pub pretty: bool,
     /// Encoding policy for stream payloads.
     pub stream_compression: PdfStreamCompression,
+    /// Encoding policy for eligible non-stream indirect values.
+    pub object_compression: PdfObjectCompression,
 }
 
 /// Typed failure raised before any private output buffer is returned.
@@ -33,6 +45,8 @@ pub enum PdfSerializeError {
     ObjectIdOutOfRange(PdfObjectId),
     IntegerOutOfRange(i64),
     InvalidCompressionLevel(u8),
+    InvalidObjectCompressionLevel(u8),
+    ObjectIdSpaceExhausted,
     CompressionFilterConflict(PdfObjectId),
     Compression(std::io::ErrorKind),
 }
@@ -76,7 +90,12 @@ impl PdfDocument {
             }
 
             match &indirect.object {
-                PdfObject::Value(value) => write_value(pdf.indirect(reference), value)?,
+                PdfObject::Value(value)
+                    if matches!(options.object_compression, PdfObjectCompression::None) =>
+                {
+                    write_value(pdf.indirect(reference), value)?
+                }
+                PdfObject::Value(_) => {}
                 PdfObject::Stream { dictionary, data } => write_stream(
                     &mut pdf,
                     reference,
@@ -87,7 +106,48 @@ impl PdfDocument {
             }
         }
 
-        Ok(pdf.finish())
+        match options.object_compression {
+            PdfObjectCompression::None => Ok(pdf.finish()),
+            PdfObjectCompression::ObjectStreams { .. } => {
+                let (object_stream_id, xref_id) = auxiliary_refs(self)?;
+                let mut object_stream = pdf.object_stream(object_stream_id);
+                for indirect in self.objects() {
+                    if indirect.id == self.catalog() {
+                        continue;
+                    }
+                    if let PdfObject::Value(value) = &indirect.object {
+                        write_value(object_stream.object(writer_ref(indirect.id)?), value)?;
+                    }
+                }
+                match options.stream_compression {
+                    PdfStreamCompression::None => object_stream.finish(),
+                    PdfStreamCompression::Flate { level } => {
+                        object_stream.finish_with_filter(
+                            Filter::FlateDecode,
+                            |data| match deflate(data, level) {
+                                Ok(bytes) => bytes,
+                                Err(_) => unreachable!("writing zlib data to Vec cannot fail"),
+                            },
+                        );
+                    }
+                }
+                Ok(match options.stream_compression {
+                    PdfStreamCompression::None => pdf.finish_with_xref_stream(xref_id),
+                    PdfStreamCompression::Flate { level } => pdf
+                        .finish_with_xref_stream_and_filter(xref_id, |data| {
+                            (
+                                match deflate(data, level) {
+                                    Ok(bytes) => bytes,
+                                    Err(_) => {
+                                        unreachable!("writing zlib data to Vec cannot fail")
+                                    }
+                                },
+                                XRefFilter::Single(Filter::FlateDecode),
+                            )
+                        }),
+                })
+            }
+        }
     }
 }
 
@@ -99,6 +159,11 @@ fn validate_serialization_inputs(
         && level > 9
     {
         return Err(PdfSerializeError::InvalidCompressionLevel(level));
+    }
+    if let PdfObjectCompression::ObjectStreams { level } = options.object_compression
+        && !(1..=3).contains(&level)
+    {
+        return Err(PdfSerializeError::InvalidObjectCompressionLevel(level));
     }
     for indirect in document.objects() {
         writer_ref(indirect.id)?;
@@ -113,6 +178,22 @@ fn validate_serialization_inputs(
         }
     }
     Ok(())
+}
+
+fn auxiliary_refs(document: &PdfDocument) -> Result<(Ref, Ref), PdfSerializeError> {
+    let last = document
+        .objects()
+        .last()
+        .map_or(0, |object| object.id.get());
+    let object_stream = last
+        .checked_add(1)
+        .and_then(PdfObjectId::new)
+        .ok_or(PdfSerializeError::ObjectIdSpaceExhausted)?;
+    let xref = last
+        .checked_add(2)
+        .and_then(PdfObjectId::new)
+        .ok_or(PdfSerializeError::ObjectIdSpaceExhausted)?;
+    Ok((writer_ref(object_stream)?, writer_ref(xref)?))
 }
 
 fn validate_object_scalars(object: &PdfObject) -> Result<(), PdfSerializeError> {
