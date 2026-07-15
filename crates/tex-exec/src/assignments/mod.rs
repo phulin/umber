@@ -913,13 +913,15 @@ fn execute_prefixed_command(
                         | UnexpandablePrimitive::HFill
                         | UnexpandablePrimitive::HSs
                         | UnexpandablePrimitive::HFilNeg
+                        | UnexpandablePrimitive::VRule
                 ) && matches!(
                     nest.current_mode(),
                     crate::Mode::Vertical | crate::Mode::InternalVertical
                 ) {
-                    // Horizontal infinite glue is a head-for-hmode command in
-                    // vertical mode. Back it up so `new_graf` and `every_par`
-                    // happen before the glue reaches the paragraph list.
+                    // Horizontal infinite glue and \vrule are head-for-hmode
+                    // commands in vertical mode. Back the command up so
+                    // `new_graf` and `every_par` finish before any operands
+                    // are scanned into the paragraph list.
                     push_traced_tokens(input, stores, [command.traced]);
                     ensure_horizontal_for_character(nest, input, stores)?;
                     return Ok(CommandOutcome::continue_only());

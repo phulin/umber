@@ -2545,6 +2545,38 @@ fn vertical_hrule_uses_defaults_and_sets_prevdepth_ignore_sentinel() {
 }
 
 #[test]
+fn vertical_vrule_runs_everypar_before_scanning_rule_dimensions() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\vsize=1000pt \\everypar{\\hangindent=30pt}\\vrule width0pt X\\par",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("vertical rule starts a paragraph");
+
+    let rule = stores
+        .current_page_nodes()
+        .iter()
+        .find_map(|node| match node {
+            Node::HList(line) => stores
+                .nodes(line.children)
+                .testing_decoded()
+                .iter()
+                .find_map(|child| match child {
+                    Node::Rule { width, .. } => Some(*width),
+                    _ => None,
+                }),
+            _ => None,
+        })
+        .expect("paragraph line should contain the vertical rule");
+    assert_eq!(rule.map(Scaled::raw), Some(0));
+    assert!(!terminal_effect_text(&stores).contains("Missing number"));
+}
+
+#[test]
 fn hrule_in_restricted_horizontal_mode_reports_and_is_ignored() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
