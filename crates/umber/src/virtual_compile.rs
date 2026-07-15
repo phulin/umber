@@ -14,9 +14,9 @@ use crate::{MemoryOutputFile, MemoryRunOutput, prepare_run_stores};
 mod path;
 mod resolvers;
 
-pub use path::{VirtualPath, VirtualPathError};
 use path::{normalize_request_name, user_path_for_key};
 use resolvers::VirtualRunResolvers;
+pub use umber_vfs::{VirtualPath, VirtualPathError};
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum FileKind {
@@ -856,7 +856,8 @@ impl VirtualCompileSession {
             let progressed = awaiting.iter().any(|key| match key {
                 ResourceRequestKey::File(key) => {
                     self.resolved_files.contains_key(key)
-                        || self.user_files.contains_key(&user_path_for_key(key))
+                        || user_path_for_key(key)
+                            .is_ok_and(|path| self.user_files.contains_key(&path))
                 }
                 ResourceRequestKey::Font(key) => self.resolved_fonts.contains_key(key),
             });

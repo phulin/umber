@@ -27,7 +27,7 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/memory_output.rs`: exact committed terminal/log/DVI/aux collection for successful memory-backed runs with aggregate output limits.
 - `src/memory_output/tests.rs`: final-commit idempotence, output accounting, and memory-boundary tests.
 - `src/virtual_compile.rs`: host-neutral persistent compile session, revision-checked root patches, typed file/OpenType resource retries, atomic response registration, retained immutable resources, and resource accounting.
-- `src/virtual_compile/path.rs`: POSIX-like `/job` and `/texlive` path validation plus logical TeX/TFM request normalization.
+- `src/virtual_compile/path.rs`: logical TeX/TFM request normalization over `umber-vfs` canonical paths.
 - `src/virtual_compile/resolvers.rs`: World-backed input/font resolvers with typed missing-file and logical OpenType-font side state.
 - `src/virtual_compile/tests.rs`: native retry, path, precedence, limits, format, effect-isolation, font batching, and DVI coverage.
 - `src/main.rs`: `umber` binary entry point, CLI argument parsing, `lex-dump`/`expand-dump`/`run` dispatch, token formatting, and real-run file resolvers.

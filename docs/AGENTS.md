@@ -61,8 +61,8 @@ deferred compatibility sets.
 inventory, pinned distribution boundary, parity contract, and explicit
 non-goals such as pdfLaTeX identity and PDF output.
 
-`umber_vfs.md` defines the proposed host-neutral shared virtual filesystem,
-including canonical paths, immutable input layers, generated-file
+`umber_vfs.md` defines the partially implemented host-neutral shared virtual
+filesystem, including canonical paths, immutable input layers, generated-file
 transactions, typed resource registration, build atomicity, native/WASM
 parity, migration, and validation.
 

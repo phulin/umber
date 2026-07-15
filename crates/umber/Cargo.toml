@@ -26,6 +26,7 @@ tex-incr = { path = "../tex-incr" }
 tex-out = { path = "../tex-out" }
 sha2.workspace = true
 tex-state = { path = "../tex-state" }
+umber-vfs = { path = "../umber-vfs" }
 
 [dev-dependencies]
 tex-arith = { path = "../tex-arith" }

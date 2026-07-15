@@ -1,6 +1,6 @@
 # Shared virtual filesystem
 
-Status: proposed design contract.
+Status: canonical path boundary implemented; storage and transactions proposed.
 
 This document defines `umber-vfs`, the host-neutral virtual filesystem shared
 by Umber's TeX driver, bibliography processing, native embeddings, and the
@@ -59,7 +59,7 @@ distribution selection.
 
 ## Crate boundary
 
-The new crate has no dependency on `umber`, the TeX execution crates, or the
+The crate has no dependency on `umber`, the TeX execution crates, or the
 bibliography crates. Higher layers adapt its exact-path and transactional APIs
 to their own lookup rules.
 
@@ -401,8 +401,9 @@ byte-identical generated files and DVI.
 
 ## Migration plan
 
-1. Add `umber-vfs` with the current `VirtualPath` behavior and exhaustive
-   parity tests.
+1. **Complete.** Add `umber-vfs` with the current `VirtualPath` behavior and
+   exhaustive parity tests. `umber` consumes and re-exports this public path
+   API; TeX request-name and extension policy remains in the driver.
 2. Move file request keys, resolved-file validation, immutable byte ownership,
    and file-related limits out of `umber::VirtualCompileSession`.
 3. Adapt the existing TeX resolver and memory-output collector to VFS
