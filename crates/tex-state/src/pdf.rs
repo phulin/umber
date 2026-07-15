@@ -31,6 +31,7 @@ impl std::error::Error for PdfObjectCapacityError {}
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct PdfFontResourceRecord {
     font: FontId,
+    source_identity: tex_fonts::FontSourceIdentity,
     resource_number: u32,
     object_number: u32,
     tfm_content_hash: [u8; 32],
@@ -476,6 +477,7 @@ impl PdfState {
     pub(crate) fn ensure_font_resource(
         &mut self,
         font: FontId,
+        source_identity: tex_fonts::FontSourceIdentity,
         tfm_content_hash: [u8; 32],
         program_identity: Option<[u8; 32]>,
     ) -> Result<PdfFontResourceRecord, PdfObjectCapacityError> {
@@ -491,7 +493,11 @@ impl PdfState {
             record.tfm_content_hash == tfm_content_hash
                 && record.program_identity == program_identity
         }) {
-            let alias = PdfFontResourceRecord { font, ..record };
+            let alias = PdfFontResourceRecord {
+                font,
+                source_identity,
+                ..record
+            };
             self.font_resources.push(alias);
             self.fingerprint = append_font_resource_fingerprint(self.fingerprint, alias);
             return Ok(alias);
@@ -501,6 +507,7 @@ impl PdfState {
         }
         let record = PdfFontResourceRecord {
             font,
+            source_identity,
             resource_number: font.raw(),
             object_number: self.next_object,
             tfm_content_hash,
@@ -517,6 +524,16 @@ impl PdfState {
             .iter()
             .copied()
             .find(|record| record.font == font)
+    }
+
+    pub(crate) fn font_resource_by_identity(
+        &self,
+        identity: tex_fonts::FontSourceIdentity,
+    ) -> Option<PdfFontResourceRecord> {
+        self.font_resources
+            .iter()
+            .copied()
+            .find(|record| record.source_identity == identity)
     }
 
     pub(crate) fn font_resources(&self) -> impl Iterator<Item = PdfFontResourceRecord> + '_ {
@@ -744,6 +761,7 @@ fn append_font_resource_fingerprint(previous: u64, record: PdfFontResourceRecord
     hasher.u64(previous);
     hasher.tag(5);
     hasher.u32(record.font.raw());
+    hasher.bytes(&record.source_identity.bytes());
     hasher.u32(record.resource_number);
     hasher.u32(record.object_number);
     hasher.bytes(&record.tfm_content_hash);

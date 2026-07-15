@@ -1841,16 +1841,25 @@ impl Universe {
     ) -> Result<PdfFontResourceRecord, PdfObjectCapacityError> {
         let loaded = self.font(font);
         let tfm_content_hash = loaded.content_hash();
+        let source_identity = loaded.source_identity();
         let program_identity = loaded
             .opentype()
             .map(|selection| selection.program_identity.bytes());
         self.pdf
-            .ensure_font_resource(font, tfm_content_hash, program_identity)
+            .ensure_font_resource(font, source_identity, tfm_content_hash, program_identity)
     }
 
     #[must_use]
     pub fn pdf_font_resource(&self, font: FontId) -> Option<PdfFontResourceRecord> {
         self.pdf.font_resource(font)
+    }
+
+    #[must_use]
+    pub fn pdf_font_resource_by_identity(
+        &self,
+        identity: tex_fonts::FontSourceIdentity,
+    ) -> Option<PdfFontResourceRecord> {
+        self.pdf.font_resource_by_identity(identity)
     }
 
     pub fn pdf_font_resources(&self) -> impl Iterator<Item = PdfFontResourceRecord> + '_ {

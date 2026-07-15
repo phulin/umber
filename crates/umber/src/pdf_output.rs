@@ -76,11 +76,8 @@ pub fn pdf_from_committed_artifacts(
                         .iter()
                         .find(|font| font.font_id == run.font_id)
                         .ok_or(PdfBuildError::MissingPositionedFont(run.font_id))?;
-                    let live_font = stores
-                        .font_by_source_identity(font.semantic_identity)
-                        .ok_or(PdfBuildError::MissingLiveFont(font.name.clone()))?;
                     let resource = stores
-                        .pdf_font_resource(live_font)
+                        .pdf_font_resource_by_identity(font.semantic_identity)
                         .ok_or(PdfBuildError::MissingFontResource(font.name.clone()))?;
                     let resource_name = format!("F{}", resource.resource_number()).into_bytes();
                     let font_id = match page_fonts.get(&resource.resource_number()).copied() {

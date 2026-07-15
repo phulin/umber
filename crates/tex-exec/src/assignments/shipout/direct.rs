@@ -8,7 +8,7 @@ use tex_out::{
     JobInfo, KernKind as PageKernKind, LeaderPayload as PageLeaderPayload, PageEffect, PageNode,
     PageToken, TokenCatcode, V10ArtifactBuilder, V10NodeListWriter,
 };
-use tex_state::env::banks::DimenParam;
+use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::glue::Order;
 use tex_state::ids::{FontId, NodeListId, TokenListId};
 use tex_state::node::{
@@ -75,6 +75,7 @@ pub(super) fn stage_shipout(
         DviPagePlanBuilder::new(job, counts, &root, vertical).map_err(invalid_artifact)?;
     let mut emission = EmissionState {
         fonts: Vec::new(),
+        live_fonts: Vec::new(),
         font_slots: Vec::new(),
         // The artifact root is a synthetic box header preceding its children.
         render_origins: vec![Vec::new()],
@@ -98,13 +99,12 @@ pub(super) fn stage_shipout(
         Some(overlay.effects.len()),
         "normalization and emission must anchor identical effects"
     );
-    for resource in &emission.fonts {
-        let font = stores
-            .font_by_source_identity(resource.semantic_identity)
-            .expect("emitted font resource remains live through shipout");
-        stores
-            .ensure_pdf_font_resource(font)
-            .map_err(|_| ExecError::ArithmeticOverflow)?;
+    if stores.int_param(IntParam::PDF_OUTPUT) > 0 {
+        for &font in &emission.live_fonts {
+            stores
+                .ensure_pdf_font_resource(font)
+                .map_err(|_| ExecError::ArithmeticOverflow)?;
+        }
     }
     let artifact_bytes = encoder
         .finish(&emission.fonts, &overlay.effects)
@@ -136,6 +136,7 @@ use normalize::{PageOverlay, normalize_page};
 
 struct EmissionState {
     fonts: Vec<FontResource>,
+    live_fonts: Vec<FontId>,
     font_slots: Vec<Option<u32>>,
     anchor: u32,
     render_origins: Vec<Vec<OriginId>>,
@@ -858,6 +859,7 @@ fn register_font_resource(stores: &Universe, font: FontId, emission: &mut Emissi
         semantic_identity: loaded.source_identity(),
         construction,
     });
+    emission.live_fonts.push(font);
     emission.font_slots[slot] = Some(id);
     id
 }

@@ -1208,7 +1208,7 @@ impl Stores {
 
     #[must_use]
     pub fn font_expansion(&self, font: FontId) -> Option<FontExpansion> {
-        self.assert_live_font(font);
+        let font = self.resolve_stored_font(font);
         self.fonts.expansion(font)
     }
 
