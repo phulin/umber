@@ -419,6 +419,24 @@ impl Session {
         input_resolver: &mut dyn InputResolver,
         font_resolver: &mut dyn tex_exec::FontResolver,
     ) -> Result<AcceptedOutput, SessionError> {
+        self.cold_with_optional_image_resolver(input_resolver, font_resolver, None)
+    }
+
+    pub fn cold_with_resource_resolvers(
+        &mut self,
+        input_resolver: &mut dyn InputResolver,
+        font_resolver: &mut dyn tex_exec::FontResolver,
+        image_resolver: &mut dyn tex_exec::PdfImageResolver,
+    ) -> Result<AcceptedOutput, SessionError> {
+        self.cold_with_optional_image_resolver(input_resolver, font_resolver, Some(image_resolver))
+    }
+
+    fn cold_with_optional_image_resolver(
+        &mut self,
+        input_resolver: &mut dyn InputResolver,
+        font_resolver: &mut dyn tex_exec::FontResolver,
+        image_resolver: Option<&mut dyn tex_exec::PdfImageResolver>,
+    ) -> Result<AcceptedOutput, SessionError> {
         let run = execute_revision(
             &self.template,
             &self.job_name,
@@ -427,6 +445,7 @@ impl Session {
             &self.layout,
             input_resolver,
             font_resolver,
+            image_resolver,
         )?;
         self.accept_cold(run)
     }
@@ -610,6 +629,24 @@ impl Session {
         self.accept_pending(pending)
     }
 
+    pub fn advance_with_resource_resolvers(
+        &mut self,
+        next_revision: RevisionId,
+        edit: Edit,
+        input_resolver: &mut dyn InputResolver,
+        font_resolver: &mut dyn tex_exec::FontResolver,
+        image_resolver: &mut dyn tex_exec::PdfImageResolver,
+    ) -> Result<AcceptedOutput, SessionError> {
+        let pending = self.prepare_advance_with_resource_resolvers(
+            next_revision,
+            edit,
+            input_resolver,
+            font_resolver,
+            image_resolver,
+        )?;
+        self.accept_pending(pending)
+    }
+
     /// Executes an edit into private candidate state without changing the
     /// accepted revision. The caller may validate all downstream output and
     /// either atomically accept the candidate or drop it.
@@ -619,6 +656,40 @@ impl Session {
         edit: Edit,
         input_resolver: &mut dyn InputResolver,
         font_resolver: &mut dyn tex_exec::FontResolver,
+    ) -> Result<PendingRevision, SessionError> {
+        self.prepare_advance_with_optional_image_resolver(
+            next_revision,
+            edit,
+            input_resolver,
+            font_resolver,
+            None,
+        )
+    }
+
+    pub fn prepare_advance_with_resource_resolvers(
+        &mut self,
+        next_revision: RevisionId,
+        edit: Edit,
+        input_resolver: &mut dyn InputResolver,
+        font_resolver: &mut dyn tex_exec::FontResolver,
+        image_resolver: &mut dyn tex_exec::PdfImageResolver,
+    ) -> Result<PendingRevision, SessionError> {
+        self.prepare_advance_with_optional_image_resolver(
+            next_revision,
+            edit,
+            input_resolver,
+            font_resolver,
+            Some(image_resolver),
+        )
+    }
+
+    fn prepare_advance_with_optional_image_resolver(
+        &mut self,
+        next_revision: RevisionId,
+        edit: Edit,
+        input_resolver: &mut dyn InputResolver,
+        font_resolver: &mut dyn tex_exec::FontResolver,
+        image_resolver: Option<&mut dyn tex_exec::PdfImageResolver>,
     ) -> Result<PendingRevision, SessionError> {
         self.validate_edit(next_revision, &edit)?;
         self.clear_render_maps();
@@ -664,6 +735,7 @@ impl Session {
             &map,
             input_resolver,
             font_resolver,
+            image_resolver,
             &self.registered_inputs,
         )?;
 
@@ -1053,6 +1125,7 @@ impl CheckpointSink for HistorySink {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_revision(
     template: &Universe,
     job_name: &str,
@@ -1061,6 +1134,7 @@ fn execute_revision(
     layout: &EditorLayout,
     input_resolver: &mut dyn InputResolver,
     font_resolver: &mut dyn tex_exec::FontResolver,
+    image_resolver: Option<&mut dyn tex_exec::PdfImageResolver>,
 ) -> Result<RevisionRun, SessionError> {
     let mut universe = template.clone();
     universe.begin_retained_session()?;
@@ -1072,7 +1146,15 @@ fn execute_revision(
         .expect("new editor input has a root source");
     let mut executor = Executor::new();
     let mut sink = HistorySink::default();
-    let mut context = ExecutionContext::with_resolvers(job_name, input_resolver, font_resolver);
+    let mut context = match image_resolver {
+        Some(image_resolver) => ExecutionContext::with_resource_resolvers(
+            job_name,
+            input_resolver,
+            font_resolver,
+            image_resolver,
+        ),
+        None => ExecutionContext::with_resolvers(job_name, input_resolver, font_resolver),
+    };
     let ExecutionStats { dvi_pages, .. } = executor.run_with_context_and_checkpoints(
         &mut input,
         &mut universe,
@@ -1221,6 +1303,7 @@ fn execute_advance(
     map: &EditMap,
     input_resolver: &mut dyn InputResolver,
     font_resolver: &mut dyn tex_exec::FontResolver,
+    image_resolver: Option<&mut dyn tex_exec::PdfImageResolver>,
     registered_inputs: &BTreeMap<PathBuf, Vec<u8>>,
 ) -> Result<AdvanceRun, SessionError> {
     let anchor = &old_history[restart];
@@ -1242,7 +1325,15 @@ fn execute_advance(
         scratch.world_mut().set_memory_file(path, bytes.clone())?;
     }
     let mut sink = ResumeSink::new(old_history, restart, map);
-    let mut context = ExecutionContext::with_resolvers(job_name, input_resolver, font_resolver);
+    let mut context = match image_resolver {
+        Some(image_resolver) => ExecutionContext::with_resource_resolvers(
+            job_name,
+            input_resolver,
+            font_resolver,
+            image_resolver,
+        ),
+        None => ExecutionContext::with_resolvers(job_name, input_resolver, font_resolver),
+    };
     let reexecution_started = Timer::start();
     let ExecutionStats { dvi_pages, .. } = executor.resume_with_context_and_checkpoints(
         &mut input,

@@ -374,10 +374,21 @@ pub enum TokenCatcode {
 /// One committed side-effect payload associated with the page.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PageEffect {
-    OpenOut { stream: u8, path: String },
-    CloseOut { stream: u8 },
-    Write { sink: EffectSink, text: String },
-    Special { class: String, payload: Vec<u8> },
+    OpenOut {
+        stream: u8,
+        path: String,
+    },
+    CloseOut {
+        stream: u8,
+    },
+    Write {
+        sink: EffectSink,
+        text: String,
+    },
+    Special {
+        class: String,
+        payload: Vec<u8>,
+    },
     PdfAccessibility(PdfAccessibilityEffect),
     PdfAnnotation(PdfAnnotationEffect),
     PdfLiteral {

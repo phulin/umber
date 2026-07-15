@@ -29,9 +29,9 @@ sha2.workspace = true
 md-5.workspace = true
 tex-state = { path = "../tex-state" }
 umber-vfs = { path = "../umber-vfs" }
+lopdf = { version = "=0.43.0", default-features = false }
 
 [dev-dependencies]
-lopdf = { version = "=0.43.0", default-features = false }
 parity-harness = { path = "../../tools/parity-harness" }
 proptest.workspace = true
 tempfile.workspace = true

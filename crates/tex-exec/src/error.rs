@@ -153,6 +153,10 @@ pub enum ExecError {
     PdfImmediateReservedObject,
     PdfExtensionInDviMode(&'static str),
     PdfDuplicateOpenAction,
+    PdfImageOpen {
+        name: String,
+        message: String,
+    },
     PdfActionTypeMissing,
     PdfActionOnlyGoto(&'static str),
     PdfActionIdentifierTypeMissing,
@@ -329,6 +333,9 @@ impl fmt::Display for ExecError {
             Self::PdfDuplicateOpenAction => {
                 f.write_str("pdfTeX error (ext1): duplicate of openaction")
             }
+            Self::PdfImageOpen { name, message } => {
+                write!(f, "pdfTeX error (ext5): cannot read image file {name}: {message}")
+            }
             Self::PdfActionTypeMissing => f.write_str("pdfTeX error (ext1): action type missing"),
             Self::PdfActionOnlyGoto(option) => write!(
                 f,
@@ -432,6 +439,7 @@ impl std::error::Error for ExecError {
             | Self::PdfImmediateReservedObject
             | Self::PdfExtensionInDviMode(_)
             | Self::PdfDuplicateOpenAction
+            | Self::PdfImageOpen { .. }
             | Self::PdfActionTypeMissing
             | Self::PdfActionOnlyGoto(_)
             | Self::PdfActionIdentifierTypeMissing
@@ -517,6 +525,7 @@ impl ExecError {
             | Self::PdfImmediateReservedObject
             | Self::PdfExtensionInDviMode(_)
             | Self::PdfDuplicateOpenAction
+            | Self::PdfImageOpen { .. }
             | Self::PdfActionTypeMissing
             | Self::PdfActionOnlyGoto(_)
             | Self::PdfActionIdentifierTypeMissing

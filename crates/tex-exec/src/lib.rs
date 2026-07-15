@@ -34,7 +34,10 @@ pub use checkpoint::{
 };
 pub use dispatch::{DispatchAction, ExecutionStats, dispatch_delivered_token};
 pub use error::ExecError;
-pub use executor::{ExecutionContext, Executor, FontResolver, FontSource};
+pub use executor::{
+    ExecutionContext, Executor, FontResolver, FontSource, PdfImagePageBox, PdfImageRequest,
+    PdfImageResolver,
+};
 pub use mode::{
     AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec, Mode, ModeLevelSummary, ModeList,
     ModeNest, ModeNestSummary,

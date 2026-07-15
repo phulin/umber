@@ -1293,8 +1293,8 @@ dependencies = [
  "tex-lex",
  "tex-out",
  "tex-state",
- "umber-vfs",
  "ttf-parser",
+ "umber-vfs",
 ]
 
 [[package]]

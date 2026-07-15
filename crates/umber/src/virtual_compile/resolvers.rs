@@ -1,14 +1,17 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use tex_exec::FontResolver;
+use tex_exec::{FontResolver, PdfImagePageBox, PdfImageRequest, PdfImageResolver};
 use tex_expand::InputResolver;
 use tex_fonts::{
     AcceptedFontContainers, FontFeaturePolicy, FontPurposes, FontRequest, FontRequestKey,
     OpenTypeFont, VariationSelection,
 };
 use tex_lex::WorldInput;
-use tex_state::{FileContent, InputReadState};
+use tex_state::scaled::Scaled;
+use tex_state::{
+    FileContent, InputReadState, PdfExternalImageMetadata, PdfExternalImageSource, PdfPageBox,
+};
 
 use super::path::RequestedFile;
 use super::{CompileError, FileKind, FileRequest, FileRequestKey, VirtualPath};
@@ -16,6 +19,7 @@ use umber_vfs::VfsSnapshot;
 pub(super) struct VirtualRunResolvers<'a> {
     input: VirtualFileResolver<'a>,
     font: VirtualFontResolver<'a>,
+    image: VirtualImageResolver<'a>,
 }
 
 struct VirtualFileResolver<'a> {
@@ -43,23 +47,196 @@ impl<'a> VirtualRunResolvers<'a> {
                 accepted_font_containers,
                 require_opentype,
             ),
+            image: VirtualImageResolver {
+                files: VirtualFileResolver::new(snapshot, resolved_paths),
+            },
         }
     }
 
-    pub(super) fn resolvers(&mut self) -> (&mut dyn InputResolver, &mut dyn FontResolver) {
-        (&mut self.input, &mut self.font)
+    pub(super) fn resolvers(
+        &mut self,
+    ) -> (
+        &mut dyn InputResolver,
+        &mut dyn FontResolver,
+        &mut dyn PdfImageResolver,
+    ) {
+        (&mut self.input, &mut self.font, &mut self.image)
     }
 
     pub(super) fn finish(self) -> (Vec<FileRequest>, Vec<FontRequest>, Option<CompileError>) {
         let mut misses = self.input.misses;
         misses.extend(self.font.files.misses);
+        misses.extend(self.image.files.misses);
         misses.sort_by_key(|(request_index, _)| *request_index);
         (
             misses.into_iter().map(|(_, request)| request).collect(),
             self.font.font_misses.into_values().collect(),
-            self.input.fatal.or(self.font.files.fatal),
+            self.input
+                .fatal
+                .or(self.font.files.fatal)
+                .or(self.image.files.fatal),
         )
     }
+}
+
+struct VirtualImageResolver<'a> {
+    files: VirtualFileResolver<'a>,
+}
+
+impl PdfImageResolver for VirtualImageResolver<'_> {
+    fn open_image(
+        &mut self,
+        input: &mut dyn InputReadState,
+        request: &PdfImageRequest,
+        request_index: u64,
+    ) -> Result<PdfExternalImageSource, String> {
+        let content = self
+            .files
+            .open(input, FileKind::Image, &request.name, request_index)?;
+        parse_image(&content, request)
+    }
+}
+
+fn parse_image(
+    content: &FileContent,
+    request: &PdfImageRequest,
+) -> Result<PdfExternalImageSource, String> {
+    let bytes = content.bytes();
+    if bytes.starts_with(b"%PDF-") {
+        return parse_pdf_image(content, request);
+    }
+    let (width, height) = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        if bytes.len() < 24 || &bytes[12..16] != b"IHDR" {
+            return Err("invalid PNG header".to_owned());
+        }
+        (
+            u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]),
+            u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]),
+        )
+    } else if bytes.starts_with(&[0xff, 0xd8]) {
+        jpeg_dimensions(bytes)?
+    } else {
+        return Err("image type is not PDF, PNG, or JPEG".to_owned());
+    };
+    if request.page != 1 {
+        return Err("raster images have only page 1".to_owned());
+    }
+    Ok(PdfExternalImageSource {
+        identity: content.hash(),
+        metadata: PdfExternalImageMetadata::Raster,
+        natural_width: pixels_to_scaled(width),
+        natural_height: pixels_to_scaled(height),
+    })
+}
+
+fn parse_pdf_image(
+    content: &FileContent,
+    request: &PdfImageRequest,
+) -> Result<PdfExternalImageSource, String> {
+    let document = lopdf::Document::load_mem(content.bytes()).map_err(|error| error.to_string())?;
+    let page_id = document
+        .get_pages()
+        .get(&request.page)
+        .copied()
+        .ok_or_else(|| format!("page {} does not exist", request.page))?;
+    let keys: &[&[u8]] = match request.page_box {
+        PdfImagePageBox::Media => &[b"MediaBox"],
+        PdfImagePageBox::Crop => &[b"CropBox", b"MediaBox"],
+        PdfImagePageBox::Bleed => &[b"BleedBox", b"CropBox", b"MediaBox"],
+        PdfImagePageBox::Trim => &[b"TrimBox", b"CropBox", b"MediaBox"],
+        PdfImagePageBox::Art => &[b"ArtBox", b"CropBox", b"MediaBox"],
+    };
+    let coordinates = keys
+        .iter()
+        .find_map(|key| inherited_box(&document, page_id, key).transpose())
+        .transpose()?
+        .ok_or_else(|| "selected PDF page box is missing".to_owned())?;
+    let page_box = PdfPageBox {
+        left: pdf_points_to_scaled(coordinates[0]),
+        bottom: pdf_points_to_scaled(coordinates[1]),
+        right: pdf_points_to_scaled(coordinates[2]),
+        top: pdf_points_to_scaled(coordinates[3]),
+    };
+    Ok(PdfExternalImageSource {
+        identity: content.hash(),
+        metadata: PdfExternalImageMetadata::PdfPage { page_box },
+        natural_width: page_box.right - page_box.left,
+        natural_height: page_box.top - page_box.bottom,
+    })
+}
+
+fn inherited_box(
+    document: &lopdf::Document,
+    mut id: lopdf::ObjectId,
+    key: &[u8],
+) -> Result<Option<[f64; 4]>, String> {
+    loop {
+        let dictionary = document
+            .get_dictionary(id)
+            .map_err(|error| error.to_string())?;
+        if let Ok(value) = dictionary.get(key) {
+            let (_, value) = document
+                .dereference(value)
+                .map_err(|error| error.to_string())?;
+            let values = value.as_array().map_err(|error| error.to_string())?;
+            if values.len() != 4 {
+                return Err("PDF page box must contain four numbers".to_owned());
+            }
+            let mut result = [0.0; 4];
+            for (slot, value) in result.iter_mut().zip(values) {
+                *slot = f64::from(value.as_float().map_err(|error| error.to_string())?);
+            }
+            return Ok(Some(result));
+        }
+        let Ok(parent) = dictionary.get(b"Parent") else {
+            return Ok(None);
+        };
+        id = parent.as_reference().map_err(|error| error.to_string())?;
+    }
+}
+
+fn jpeg_dimensions(bytes: &[u8]) -> Result<(u32, u32), String> {
+    let mut cursor = 2;
+    while cursor + 4 <= bytes.len() {
+        if bytes[cursor] != 0xff {
+            cursor += 1;
+            continue;
+        }
+        let marker = bytes[cursor + 1];
+        cursor += 2;
+        if marker == 0xd9 || marker == 0xda {
+            break;
+        }
+        if (0xd0..=0xd7).contains(&marker) || marker == 0x01 {
+            continue;
+        }
+        if cursor + 2 > bytes.len() {
+            break;
+        }
+        let length = usize::from(u16::from_be_bytes([bytes[cursor], bytes[cursor + 1]]));
+        if length < 2 || cursor + length > bytes.len() {
+            return Err("invalid JPEG marker length".to_owned());
+        }
+        if matches!(marker, 0xc0..=0xc3 | 0xc5..=0xc7 | 0xc9..=0xcb | 0xcd..=0xcf) {
+            if length < 7 {
+                return Err("invalid JPEG frame header".to_owned());
+            }
+            return Ok((
+                u32::from(u16::from_be_bytes([bytes[cursor + 5], bytes[cursor + 6]])),
+                u32::from(u16::from_be_bytes([bytes[cursor + 3], bytes[cursor + 4]])),
+            ));
+        }
+        cursor += length;
+    }
+    Err("JPEG has no supported frame header".to_owned())
+}
+
+fn pixels_to_scaled(pixels: u32) -> Scaled {
+    pdf_points_to_scaled(f64::from(pixels))
+}
+
+fn pdf_points_to_scaled(points: f64) -> Scaled {
+    Scaled::from_raw((points * 72.27 / 72.0 * 65_536.0).round() as i32)
 }
 
 impl<'a> VirtualFileResolver<'a> {

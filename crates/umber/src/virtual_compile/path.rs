@@ -35,6 +35,7 @@ fn extension(kind: FileKind) -> &'static str {
     match kind {
         FileKind::TexInput => "tex",
         FileKind::Tfm => "tfm",
+        FileKind::Image => "",
         _ => unreachable!("the TeX resolver only accepts TeX file kinds"),
     }
 }
@@ -71,7 +72,7 @@ fn with_default_extension(path: &str, extension: &str) -> Result<String, Virtual
     let Some(last) = components.last() else {
         return Err(VirtualPathError::new("path does not name a file"));
     };
-    if Path::new(last).extension().is_none() {
+    if !extension.is_empty() && Path::new(last).extension().is_none() {
         let extended = format!("{last}.{extension}");
         let prefix = &components[..components.len() - 1];
         return Ok(if prefix.is_empty() {

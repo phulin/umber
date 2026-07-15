@@ -1215,3 +1215,38 @@ fn patch_can_request_and_pin_a_new_resource_before_acceptance() {
     ));
     assert_eq!(session.revision(), Some(RevisionId::new(2)));
 }
+
+#[test]
+fn pdfximage_uses_typed_image_retry_and_accepts_png_metadata() {
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        engine: EngineMode::PdfTex,
+        ..SessionOptions::default()
+    })
+    .expect("session");
+    session
+        .add_user_file(
+            "main.tex",
+            b"\\pdfoutput=1 \\pdfximage width 20pt height 10pt depth 2pt \"figure.png\"\\message{IMAGE=\\the\\pdflastximage}\\end"
+                .to_vec(),
+        )
+        .expect("main file");
+
+    let requested = requests(session.compile_attempt());
+    assert_eq!(requested.len(), 1);
+    assert_eq!(requested[0].key().kind(), FileKind::Image);
+    assert_eq!(requested[0].key().name(), "figure.png");
+
+    let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+    png.extend_from_slice(&13_u32.to_be_bytes());
+    png.extend_from_slice(b"IHDR");
+    png.extend_from_slice(&40_u32.to_be_bytes());
+    png.extend_from_slice(&20_u32.to_be_bytes());
+    png.extend_from_slice(&[8, 2, 0, 0, 0]);
+    session
+        .provide_resolved_file(requested[0].key().clone(), "/texlive/figure.png", png)
+        .expect("provide PNG");
+    let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+        panic!("retried image compile should complete");
+    };
+    assert!(String::from_utf8_lossy(&output.terminal).contains("IMAGE=1"));
+}

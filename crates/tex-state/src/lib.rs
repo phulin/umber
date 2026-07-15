@@ -75,12 +75,13 @@ pub use pdf::{
     PdfActionWindow, PdfAnnotationData, PdfAnnotationDimensions, PdfAnnotationInitializeError,
     PdfAnnotationRecord, PdfColorStackAction, PdfColorStackApplyError, PdfColorStackCapacityError,
     PdfColorStackEmission, PdfColorStackMode, PdfColorStackTarget, PdfDocumentFragmentKind,
-    PdfDocumentObjectIds, PdfExternalImageId, PdfExternalImageIdError, PdfExternalImageMetadata,
-    PdfExternalImageRegistrationError, PdfFontConfiguration, PdfFontMapOperation,
-    PdfFontResourceRecord, PdfFormArtifact, PdfFormColorRollback, PdfFormRecord, PdfGlyphToUnicode,
-    PdfLinkRecord, PdfObjectCapacityError, PdfOpenLink, PdfOutputParameters, PdfPageBox,
-    PdfPageGroupInclusion, PdfPageGroupSelector, PdfPageGroupWarning, PdfPageRecord,
-    PdfRawObjectData, PdfRawObjectId, PdfRawObjectInitializeError, PdfRawObjectRecord,
+    PdfDocumentObjectIds, PdfExternalImageDimensions, PdfExternalImageId, PdfExternalImageIdError,
+    PdfExternalImageMetadata, PdfExternalImageRecord, PdfExternalImageRegistrationError,
+    PdfExternalImageSource, PdfFontConfiguration, PdfFontMapOperation, PdfFontResourceRecord,
+    PdfFormArtifact, PdfFormColorRollback, PdfFormRecord, PdfGlyphToUnicode, PdfLinkRecord,
+    PdfObjectCapacityError, PdfOpenLink, PdfOutputParameters, PdfPageBox, PdfPageGroupInclusion,
+    PdfPageGroupSelector, PdfPageGroupWarning, PdfPageRecord, PdfRawObjectData, PdfRawObjectId,
+    PdfRawObjectInitializeError, PdfRawObjectRecord,
 };
 pub mod world;
 

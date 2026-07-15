@@ -9,8 +9,8 @@ use tex_out::html::{HtmlFontKey, HtmlFontResolver, WebFont};
 use tex_state::{ContentHash, JobClock, Universe, World};
 
 use crate::{
-    MemoryOutputCollectionError, MemoryRunOutput, memory_output::publish_auxiliary_outputs,
-    install_pdftex_format_primitives, prepare_etex_run_stores, prepare_latex_run_stores,
+    MemoryOutputCollectionError, MemoryRunOutput, install_pdftex_format_primitives,
+    memory_output::publish_auxiliary_outputs, prepare_etex_run_stores, prepare_latex_run_stores,
     prepare_pdftex_run_stores, prepare_run_stores,
 };
 
@@ -897,7 +897,7 @@ impl VirtualCompileSession {
                 CompileError::Incremental("the editable main file must be valid UTF-8".to_owned())
             })?;
             let world = World::memory_with_clock(self.clock);
-            let mut template = if let Some(format) = &self.format {
+            let template = if let Some(format) = &self.format {
                 let mut template = Universe::from_format(world, format)
                     .map_err(|error| CompileError::Format(error.to_string()))?;
                 self.engine.install_after_format(&mut template);
@@ -952,17 +952,18 @@ impl VirtualCompileSession {
             self.accepted_font_containers,
             self.html,
         );
-        let (input_resolver, font_resolver) = resolvers.resolvers();
+        let (input_resolver, font_resolver, image_resolver) = resolvers.resolvers();
         let execution = if let Some((next_revision, edit)) = &self.pending_patch {
             CandidateExecution::Pending(
                 self.incremental
                     .as_mut()
                     .expect("incremental session was initialized")
-                    .prepare_advance_with_resolvers(
+                    .prepare_advance_with_resource_resolvers(
                         *next_revision,
                         edit.clone(),
                         input_resolver,
                         font_resolver,
+                        image_resolver,
                     )
                     .map(Box::new),
             )
@@ -971,7 +972,7 @@ impl VirtualCompileSession {
                 .take()
                 .expect("initial execution owns a private incremental session");
             let accepted = session
-                .cold_with_resolvers(input_resolver, font_resolver)
+                .cold_with_resource_resolvers(input_resolver, font_resolver, image_resolver)
                 .map(Box::new);
             CandidateExecution::Initial { session, accepted }
         };

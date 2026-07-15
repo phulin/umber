@@ -6,8 +6,8 @@ use crate::{BoxNode, GlueKind, KernKind, LeaderPayload, PageArtifact, PageEffect
 
 use super::{
     BoxKind, PositionedBox, PositionedBoxEnd, PositionedError, PositionedEvent, PositionedLimits,
-    PositionedPage, PositionedPdfAccessibility, PositionedPdfAnnotation, PositionedRule,
-    PositionedPdfGraphics, PositionedSourceRef, PositionedSpecial, PositionedTextRun, TextUnit,
+    PositionedPage, PositionedPdfAccessibility, PositionedPdfAnnotation, PositionedPdfGraphics,
+    PositionedRule, PositionedSourceRef, PositionedSpecial, PositionedTextRun, TextUnit,
 };
 
 const LEADER_ROUNDING_COMPENSATION: Scaled = Scaled::from_raw(10);

@@ -143,7 +143,7 @@ fn pdf_accessibility_operands_are_unique_and_follow_parallel_reservations() {
 }
 
 #[test]
-fn complete_primitive_codecs_are_unique_through_compatibility_reservations() {
+fn complete_primitive_codecs_are_unique_through_image_and_compatibility_registrations() {
     let annotations = [
         (255, UnexpandablePrimitive::PdfAnnot),
         (256, UnexpandablePrimitive::PdfStartLink),
@@ -152,6 +152,18 @@ fn complete_primitive_codecs_are_unique_through_compatibility_reservations() {
         (259, UnexpandablePrimitive::PdfRunningLinkOff),
     ];
     for (operand, primitive) in annotations {
+        assert_eq!(primitive.operand(), operand);
+        assert_eq!(
+            UnexpandablePrimitive::from_operand(operand),
+            Some(primitive)
+        );
+        round_trip(Meaning::UnexpandablePrimitive(primitive));
+    }
+    let images = [
+        (253, UnexpandablePrimitive::PdfXImage),
+        (254, UnexpandablePrimitive::PdfRefXImage),
+    ];
+    for (operand, primitive) in images {
         assert_eq!(primitive.operand(), operand);
         assert_eq!(
             UnexpandablePrimitive::from_operand(operand),
@@ -170,9 +182,6 @@ fn complete_primitive_codecs_are_unique_through_compatibility_reservations() {
             );
         }
     }
-    for reserved in 251..=254 {
-        assert_eq!(UnexpandablePrimitive::from_operand(reserved), None);
-    }
     for reserved in 260..=264 {
         assert_eq!(UnexpandablePrimitive::from_operand(reserved), None);
     }
@@ -184,10 +193,10 @@ fn complete_primitive_codecs_are_unique_through_compatibility_reservations() {
     round_trip(Meaning::UnexpandablePrimitive(
         UnexpandablePrimitive::QuitVMode,
     ));
-
     let internals = [
         (17, InternalInteger::PdfLastAnnot),
         (18, InternalInteger::PdfLastLink),
+        (21, InternalInteger::PdfLastXImage),
     ];
     for (operand, integer) in internals {
         assert_eq!(integer.operand(), operand);
@@ -195,7 +204,10 @@ fn complete_primitive_codecs_are_unique_through_compatibility_reservations() {
         round_trip(Meaning::InternalInteger(integer));
     }
     let mut internal = std::collections::HashSet::new();
-    for operand in 0..=18 {
+    for reserved in 19..=20 {
+        assert_eq!(InternalInteger::from_operand(reserved), None);
+    }
+    for operand in 0..=21 {
         if let Some(integer) = InternalInteger::from_operand(operand) {
             assert_eq!(integer.operand(), operand);
             assert!(

@@ -791,6 +791,16 @@ where
                 token,
             ))
         }
+        Meaning::InternalInteger(InternalInteger::PdfLastXImage) => {
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Engine(ReadEngineField::PdfObjects)
+            );
+            Ok(ScannedInt::new(
+                i32::try_from(stores.pdf_last_ximage()).unwrap_or(i32::MAX),
+                token,
+            ))
+        }
         Meaning::InternalInteger(InternalInteger::CurrentGroupLevel) => {
             crate::record_dependency!(
                 expansion,

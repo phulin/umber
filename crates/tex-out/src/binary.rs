@@ -1,8 +1,8 @@
 use crate::{
     BoxNode, ContentHash, DiscKind, EffectSink, FontResource, FontResourceConstruction, GlueKind,
     GlueOrder, GlueSetRatio, GlueSign, GlueSpec, KernKind, LeaderPayload, PageArtifact, PageEffect,
-    PageNode, PageToken, PdfAccessibilityEffect, PdfAnnotationEffect, TokenCatcode,
-    PdfLiteralMode, UnvalidatedPageArtifact,
+    PageNode, PageToken, PdfAccessibilityEffect, PdfAnnotationEffect, PdfLiteralMode, TokenCatcode,
+    UnvalidatedPageArtifact,
 };
 use std::fmt;
 use tex_arith::Scaled;
@@ -2132,49 +2132,57 @@ impl Reader<'_> {
                         }
                     })
                 }
-                wire::effect::PDF_LITERAL if version >= PRE_ANNOTATION_VERSION => PageEffect::PdfLiteral {
-                    mode: match self.u8()? {
-                        0 => PdfLiteralMode::Origin,
-                        1 => PdfLiteralMode::Page,
-                        2 => PdfLiteralMode::Direct,
-                        tag => {
-                            return Err(ParseError::InvalidTag {
-                                kind: "PDF literal mode",
-                                tag,
-                            });
-                        }
-                    },
-                    payload: self.bytes()?,
-                },
-                wire::effect::PDF_SET_MATRIX if version >= PRE_ANNOTATION_VERSION => PageEffect::PdfSetMatrix {
-                    payload: self.bytes()?,
-                },
+                wire::effect::PDF_LITERAL if version >= PRE_ANNOTATION_VERSION => {
+                    PageEffect::PdfLiteral {
+                        mode: match self.u8()? {
+                            0 => PdfLiteralMode::Origin,
+                            1 => PdfLiteralMode::Page,
+                            2 => PdfLiteralMode::Direct,
+                            tag => {
+                                return Err(ParseError::InvalidTag {
+                                    kind: "PDF literal mode",
+                                    tag,
+                                });
+                            }
+                        },
+                        payload: self.bytes()?,
+                    }
+                }
+                wire::effect::PDF_SET_MATRIX if version >= PRE_ANNOTATION_VERSION => {
+                    PageEffect::PdfSetMatrix {
+                        payload: self.bytes()?,
+                    }
+                }
                 wire::effect::PDF_SAVE if version >= PRE_ANNOTATION_VERSION => PageEffect::PdfSave,
-                wire::effect::PDF_RESTORE if version >= PRE_ANNOTATION_VERSION => PageEffect::PdfRestore,
-                wire::effect::PDF_COLOR_STACK if version >= PRE_ANNOTATION_VERSION => PageEffect::PdfColorStack {
-                    mode: match self.u8()? {
-                        0 => PdfLiteralMode::Origin,
-                        1 => PdfLiteralMode::Page,
-                        2 => PdfLiteralMode::Direct,
-                        tag => {
-                            return Err(ParseError::InvalidTag {
-                                kind: "PDF color stack mode",
-                                tag,
-                            });
-                        }
-                    },
-                    page_start: match self.u8()? {
-                        0 => false,
-                        1 => true,
-                        tag => {
-                            return Err(ParseError::InvalidTag {
-                                kind: "boolean",
-                                tag,
-                            });
-                        }
-                    },
-                    payload: self.bytes()?,
-                },
+                wire::effect::PDF_RESTORE if version >= PRE_ANNOTATION_VERSION => {
+                    PageEffect::PdfRestore
+                }
+                wire::effect::PDF_COLOR_STACK if version >= PRE_ANNOTATION_VERSION => {
+                    PageEffect::PdfColorStack {
+                        mode: match self.u8()? {
+                            0 => PdfLiteralMode::Origin,
+                            1 => PdfLiteralMode::Page,
+                            2 => PdfLiteralMode::Direct,
+                            tag => {
+                                return Err(ParseError::InvalidTag {
+                                    kind: "PDF color stack mode",
+                                    tag,
+                                });
+                            }
+                        },
+                        page_start: match self.u8()? {
+                            0 => false,
+                            1 => true,
+                            tag => {
+                                return Err(ParseError::InvalidTag {
+                                    kind: "boolean",
+                                    tag,
+                                });
+                            }
+                        },
+                        payload: self.bytes()?,
+                    }
+                }
                 wire::effect::PDF_SAVE_POSITION => PageEffect::PdfSavePosition,
                 wire::effect::PDF_SNAP_STATE => PageEffect::PdfSnapState {
                     x: self.scaled()?,
@@ -2185,12 +2193,14 @@ impl Reader<'_> {
                     spec: self.glue_spec()?,
                 },
                 wire::effect::PDF_SNAP_Y_COMP => PageEffect::PdfSnapYComp { ratio: self.u16()? },
-                wire::effect::PDF_REF_XFORM if version >= PRE_ANNOTATION_VERSION => PageEffect::PdfRefXForm {
-                    object: self.u32()?,
-                    width: self.scaled()?,
-                    height: self.scaled()?,
-                    depth: self.scaled()?,
-                },
+                wire::effect::PDF_REF_XFORM if version >= PRE_ANNOTATION_VERSION => {
+                    PageEffect::PdfRefXForm {
+                        object: self.u32()?,
+                        width: self.scaled()?,
+                        height: self.scaled()?,
+                        depth: self.scaled()?,
+                    }
+                }
                 tag => {
                     return Err(ParseError::InvalidTag {
                         kind: "effect",

@@ -20,7 +20,9 @@ use tex_state::node::Node;
 use tex_state::provenance::InsertedOriginKind;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
-use tex_state::{ExpansionState, GroupKind, InteractionMode, PdfDocumentFragmentKind, Universe};
+use tex_state::{
+    ExpansionState, GroupKind, InputOpenState, InteractionMode, PdfDocumentFragmentKind, Universe,
+};
 use tex_state::{PdfAnnotationData, PdfAnnotationDimensions};
 
 use crate::{
@@ -120,7 +122,10 @@ pub(crate) fn execute_unexpandable_with_context(
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<DispatchAction, ExecError> {
-    if primitive == UnexpandablePrimitive::PdfTeXUnimplemented {
+    if matches!(
+        primitive,
+        UnexpandablePrimitive::PdfTeXUnimplemented | UnexpandablePrimitive::PdfRefXImage
+    ) {
         return Err(ExecError::UnsupportedCommand {
             token: tex_expand::semantic_token(traced),
             opcode: primitive.operand() as u8,
@@ -422,6 +427,154 @@ fn execute_pdf_form(
         stores.set_pdf_form_artifact(form.object(), artifact);
     }
     Ok(())
+}
+
+fn execute_pdf_ximage(
+    context: TracedTokenWord,
+    input: &mut InputStack,
+    stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
+    if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+        return Err(ExecError::PdfExtensionInDviMode("pdfximage"));
+    }
+    let mut page = 1_u32;
+    let mut page_box = crate::PdfImagePageBox::Crop;
+    let mut width = None;
+    let mut height = None;
+    let mut depth = None;
+    loop {
+        if scan_optional_keyword_x(input, stores, execution, "attr")? {
+            let _ = scan_general_text_expanded_with_driver(
+                input,
+                &mut tex_state::ExpansionContext::new(stores),
+                execution,
+                context,
+            )?;
+        } else if scan_optional_keyword_x(input, stores, execution, "page")? {
+            page = u32::try_from(scan_i32(input, stores, execution, context)?)
+                .ok()
+                .filter(|page| *page > 0)
+                .unwrap_or(1);
+        } else if scan_optional_keyword_x(input, stores, execution, "mediabox")? {
+            page_box = crate::PdfImagePageBox::Media;
+        } else if scan_optional_keyword_x(input, stores, execution, "cropbox")? {
+            page_box = crate::PdfImagePageBox::Crop;
+        } else if scan_optional_keyword_x(input, stores, execution, "bleedbox")? {
+            page_box = crate::PdfImagePageBox::Bleed;
+        } else if scan_optional_keyword_x(input, stores, execution, "trimbox")? {
+            page_box = crate::PdfImagePageBox::Trim;
+        } else if scan_optional_keyword_x(input, stores, execution, "artbox")? {
+            page_box = crate::PdfImagePageBox::Art;
+        } else if scan_optional_keyword_x(input, stores, execution, "width")? {
+            width = Some(scan_scaled(input, stores, execution, context)?);
+        } else if scan_optional_keyword_x(input, stores, execution, "height")? {
+            height = Some(scan_scaled(input, stores, execution, context)?);
+        } else if scan_optional_keyword_x(input, stores, execution, "depth")? {
+            depth = Some(scan_scaled(input, stores, execution, context)?);
+        } else {
+            break;
+        }
+    }
+    let name = scan_pdf_image_name(input, stores, execution)?;
+    let request = crate::PdfImageRequest {
+        name: name.clone(),
+        page,
+        page_box,
+    };
+    let source = execution
+        .open_pdf_image(&mut stores.input_open_context(), &request)
+        .map_err(|message| ExecError::PdfImageOpen { name, message })?;
+    let dimensions = scaled_image_dimensions(source, width, height, depth);
+    stores
+        .allocate_pdf_external_image(source, dimensions)
+        .map_err(|_| ExecError::PdfObjectCapacity)?;
+    Ok(())
+}
+
+fn scaled_image_dimensions(
+    source: tex_state::PdfExternalImageSource,
+    width: Option<Scaled>,
+    height: Option<Scaled>,
+    depth: Option<Scaled>,
+) -> tex_state::PdfExternalImageDimensions {
+    let natural_width = source.natural_width;
+    let natural_height = source.natural_height;
+    let (width, height) = match (width, height) {
+        (Some(width), Some(height)) => (width, height),
+        (Some(width), None) if natural_width.raw() != 0 => (
+            width,
+            Scaled::from_raw(
+                (i64::from(natural_height.raw()) * i64::from(width.raw())
+                    / i64::from(natural_width.raw())) as i32,
+            ),
+        ),
+        (None, Some(height)) if natural_height.raw() != 0 => (
+            Scaled::from_raw(
+                (i64::from(natural_width.raw()) * i64::from(height.raw())
+                    / i64::from(natural_height.raw())) as i32,
+            ),
+            height,
+        ),
+        (Some(width), None) => (width, natural_height),
+        (None, Some(height)) => (natural_width, height),
+        (None, None) => (natural_width, natural_height),
+    };
+    tex_state::PdfExternalImageDimensions {
+        width,
+        height,
+        depth: depth.unwrap_or_else(|| Scaled::from_raw(0)),
+    }
+}
+
+fn scan_pdf_image_name(
+    input: &mut InputStack,
+    stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<String, ExecError> {
+    let Some(first) = next_non_space_traced_x(input, stores, execution)? else {
+        return Err(ExecError::MissingToken {
+            context: "\\pdfximage",
+        });
+    };
+    let quoted = matches!(
+        tex_expand::semantic_token(first),
+        Token::Char { ch: '"', .. }
+    );
+    let mut name = String::new();
+    if !quoted {
+        append_pdf_image_name(&mut name, tex_expand::semantic_token(first))?;
+    }
+    while let Some(traced) = get_x_token_with_context(
+        input,
+        &mut tex_state::ExpansionContext::new(stores),
+        execution,
+    )? {
+        match tex_expand::semantic_token(traced) {
+            Token::Char { ch: '"', .. } if quoted => break,
+            Token::Char {
+                cat: Catcode::Space,
+                ..
+            } if !quoted => break,
+            token @ Token::Char { .. } => append_pdf_image_name(&mut name, token)?,
+            Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => {
+                push_traced_tokens(input, stores, [traced]);
+                break;
+            }
+        }
+    }
+    Ok(name)
+}
+
+fn append_pdf_image_name(name: &mut String, token: Token) -> Result<(), ExecError> {
+    if let Token::Char { ch, .. } = token {
+        name.push(ch);
+        Ok(())
+    } else {
+        Err(ExecError::MissingToken {
+            context: "\\pdfximage",
+        })
+    }
 }
 
 fn execute_pdf_document_fragment(
@@ -1855,6 +2008,11 @@ fn execute_prefixed_command(
                 )?;
                 Ok(CommandOutcome::continue_only())
             }
+            UnexpandablePrimitive::PdfXImage => {
+                reject_all_prefixes(prefixes)?;
+                execute_pdf_ximage(command.traced, input, stores, execution)?;
+                Ok(CommandOutcome::continue_only())
+            }
             primitive @ (UnexpandablePrimitive::PdfInfo
             | UnexpandablePrimitive::PdfCatalog
             | UnexpandablePrimitive::PdfNames
@@ -1910,7 +2068,7 @@ fn execute_prefixed_command(
             | UnexpandablePrimitive::Immediate
             | UnexpandablePrimitive::End
             | UnexpandablePrimitive::Dump => unreachable!("prefixes are accumulated first"),
-            UnexpandablePrimitive::PdfTeXUnimplemented => {
+            UnexpandablePrimitive::PdfTeXUnimplemented | UnexpandablePrimitive::PdfRefXImage => {
                 unreachable!("unsupported pdfTeX placeholders return before prefix handling")
             }
         },

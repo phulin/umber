@@ -53,13 +53,14 @@ pub enum FileKind {
     BibConfiguration = 6,
     XmlSchema = 7,
     GenericAsset = 8,
+    Image = 9,
 }
 
 impl FileKind {
     #[must_use]
     pub const fn domain(self) -> ResourceDomain {
         match self {
-            Self::TexInput | Self::Tfm | Self::FormatImage => ResourceDomain::Tex,
+            Self::TexInput | Self::Tfm | Self::FormatImage | Self::Image => ResourceDomain::Tex,
             Self::BibControl | Self::BibData | Self::BibConfiguration | Self::XmlSchema => {
                 ResourceDomain::Bibliography
             }
@@ -78,6 +79,7 @@ impl FileKind {
             Self::BibConfiguration => "bib-configuration",
             Self::XmlSchema => "xml-schema",
             Self::GenericAsset => "asset",
+            Self::Image => "image",
         }
     }
 
@@ -92,6 +94,7 @@ impl FileKind {
             "bib-configuration" => Some(Self::BibConfiguration),
             "xml-schema" => Some(Self::XmlSchema),
             "asset" => Some(Self::GenericAsset),
+            "image" => Some(Self::Image),
             _ => None,
         }
     }
@@ -108,6 +111,7 @@ impl fmt::Display for FileKind {
             Self::BibConfiguration => "bibliography configuration",
             Self::XmlSchema => "XML schema",
             Self::GenericAsset => "generic asset",
+            Self::Image => "image",
         })
     }
 }

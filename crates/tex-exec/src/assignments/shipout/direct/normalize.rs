@@ -1,4 +1,5 @@
 use super::*;
+use tex_lex::MemoryInput;
 
 pub(super) struct PageOverlay {
     pub(super) pending_effect_count: usize,

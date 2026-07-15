@@ -123,6 +123,7 @@ pub enum InternalInteger {
     PdfLastXPos,
     PdfLastYPos,
     PdfLastXForm,
+    PdfLastXImage,
     CurrentGroupLevel,
     CurrentGroupType,
     CurrentIfLevel,
@@ -148,6 +149,7 @@ impl InternalInteger {
             Self::PdfLastXForm => 16,
             Self::PdfLastAnnot => 17,
             Self::PdfLastLink => 18,
+            Self::PdfLastXImage => 21,
             Self::CurrentGroupLevel => 3,
             Self::CurrentGroupType => 4,
             Self::CurrentIfLevel => 5,
@@ -173,6 +175,7 @@ impl InternalInteger {
             16 => Some(Self::PdfLastXForm),
             17 => Some(Self::PdfLastAnnot),
             18 => Some(Self::PdfLastLink),
+            21 => Some(Self::PdfLastXImage),
             3 => Some(Self::CurrentGroupLevel),
             4 => Some(Self::CurrentGroupType),
             5 => Some(Self::CurrentIfLevel),
@@ -738,6 +741,8 @@ pub enum UnexpandablePrimitive {
     PdfRunningLinkOff,
     /// Starts a paragraph only when TeX is currently in vertical mode.
     QuitVMode,
+    PdfXImage,
+    PdfRefXImage,
 }
 
 impl UnexpandablePrimitive {
@@ -997,7 +1002,8 @@ impl UnexpandablePrimitive {
             Self::PdfSpaceFont => 250,
             Self::PdfXForm => 251,
             Self::PdfRefXForm => 252,
-            // 253..=254 are reserved by the PDF image branch.
+            Self::PdfXImage => 253,
+            Self::PdfRefXImage => 254,
             Self::PdfAnnot => 255,
             Self::PdfStartLink => 256,
             Self::PdfEndLink => 257,
@@ -1264,6 +1270,8 @@ impl UnexpandablePrimitive {
             250 => Some(Self::PdfSpaceFont),
             251 => Some(Self::PdfXForm),
             252 => Some(Self::PdfRefXForm),
+            253 => Some(Self::PdfXImage),
+            254 => Some(Self::PdfRefXImage),
             255 => Some(Self::PdfAnnot),
             256 => Some(Self::PdfStartLink),
             257 => Some(Self::PdfEndLink),

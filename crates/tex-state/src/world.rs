@@ -1253,7 +1253,7 @@ impl World {
                 self.materialized_file_modification_date(path),
             ),
         };
-        Ok(self.register_input_content(path, bytes))
+        Ok(self.register_input_content(path, bytes, modification_date))
     }
 
     /// Registers immutable bytes supplied by a driver-owned resolver as one
@@ -1271,14 +1271,22 @@ impl World {
         if let WorldBackend::Memory(memory) = &mut self.backend {
             memory.files.insert(path.to_owned(), Arc::clone(&supplied));
         }
-        let bytes = match pending {
-            Some(bytes) => Arc::from(bytes),
-            None => supplied,
+        let (bytes, modification_date) = match pending {
+            Some(bytes) => (
+                Arc::from(bytes),
+                Some(FileModificationDate::utc(self.job_clock)),
+            ),
+            None => (supplied, self.materialized_file_modification_date(path)),
         };
-        Ok(self.register_input_content(path, bytes))
+        Ok(self.register_input_content(path, bytes, modification_date))
     }
 
-    fn register_input_content(&mut self, path: &Path, bytes: Arc<[u8]>) -> FileContent {
+    fn register_input_content(
+        &mut self,
+        path: &Path,
+        bytes: Arc<[u8]>,
+        modification_date: Option<FileModificationDate>,
+    ) -> FileContent {
         let record = self.allocate_input_record();
         let content = FileContent::from_shared(record, path.to_owned(), bytes, modification_date);
         self.input_contents

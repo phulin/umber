@@ -44,6 +44,33 @@ pub trait FontResolver {
     ) -> Result<FontSource, String>;
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum PdfImagePageBox {
+    #[default]
+    Crop,
+    Media,
+    Bleed,
+    Trim,
+    Art,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PdfImageRequest {
+    pub name: String,
+    pub page: u32,
+    pub page_box: PdfImagePageBox,
+}
+
+/// Host boundary for loading and validating `\pdfximage` resources.
+pub trait PdfImageResolver {
+    fn open_image(
+        &mut self,
+        input: &mut dyn InputReadState,
+        request: &PdfImageRequest,
+        request_index: u64,
+    ) -> Result<tex_state::PdfExternalImageSource, String>;
+}
+
 /// Font inputs selected atomically by the host before TFM-dependent layout.
 pub struct FontSource {
     pub metrics: FileContent,
@@ -58,6 +85,7 @@ pub struct FontSource {
 pub struct ExecutionContext<'a> {
     expansion: tex_expand::ExpansionContext<'a>,
     font_resolver: Option<&'a mut dyn FontResolver>,
+    image_resolver: Option<&'a mut dyn PdfImageResolver>,
 }
 
 impl<'a> ExecutionContext<'a> {
@@ -66,6 +94,7 @@ impl<'a> ExecutionContext<'a> {
         Self {
             expansion: tex_expand::ExpansionContext::new(job_name),
             font_resolver: None,
+            image_resolver: None,
         }
     }
 
@@ -78,6 +107,21 @@ impl<'a> ExecutionContext<'a> {
         Self {
             expansion: tex_expand::ExpansionContext::with_input_resolver(job_name, input_resolver),
             font_resolver: Some(font_resolver),
+            image_resolver: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_resource_resolvers(
+        job_name: &'a str,
+        input_resolver: &'a mut dyn InputResolver,
+        font_resolver: &'a mut dyn FontResolver,
+        image_resolver: &'a mut dyn PdfImageResolver,
+    ) -> Self {
+        Self {
+            expansion: tex_expand::ExpansionContext::with_input_resolver(job_name, input_resolver),
+            font_resolver: Some(font_resolver),
+            image_resolver: Some(image_resolver),
         }
     }
 
@@ -104,6 +148,18 @@ impl<'a> ExecutionContext<'a> {
                 })
                 .map_err(|error| error.to_string()),
         }
+    }
+
+    pub(crate) fn open_pdf_image(
+        &mut self,
+        input: &mut dyn InputReadState,
+        request: &PdfImageRequest,
+    ) -> Result<tex_state::PdfExternalImageSource, String> {
+        let request_index = self.expansion.next_resolution_index();
+        self.image_resolver
+            .as_deref_mut()
+            .ok_or_else(|| format!("PDF image {} has no host resolver", request.name))?
+            .open_image(input, request, request_index)
     }
 }
 

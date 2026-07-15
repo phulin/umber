@@ -5,8 +5,8 @@ use tex_arith::Scaled;
 use tex_expand::append_token_string_text;
 use tex_out::PageNode;
 use tex_out::pdf::{
-    PdfAnnotationAction, PdfAnnotationObject, PdfAnnotationType, PdfContentRectangle,
-    PdfContentOperation, PdfContentTextRun, PdfDestinationAction, PdfDestinationActionKind,
+    PdfAnnotationAction, PdfAnnotationObject, PdfAnnotationType, PdfContentOperation,
+    PdfContentRectangle, PdfContentTextRun, PdfDestinationAction, PdfDestinationActionKind,
     PdfDestinationPage, PdfDestinationStructure, PdfDestinationTarget, PdfDictionary,
     PdfIndirectObject, PdfModelError, PdfName, PdfNumber, PdfObject, PdfObjectCompression,
     PdfObjectId, PdfSerializationOptions, PdfSerializeError, PdfStreamCompression, PdfTrailer,
@@ -381,18 +381,18 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                                 if !segment.is_empty() {
                                     content_operations.push(PdfContentOperation::Text(
                                         PdfContentTextRun {
-                                        x: scaled_to_bp_f32(
-                                            segment_x
-                                                .take()
-                                                .expect("nonempty segment has an anchor")
-                                                .checked_add(record.h_origin())
-                                                .ok_or(PdfBuildError::PageGeometryOverflow)?,
-                                            parameters.decimal_digits,
-                                        ),
-                                        baseline,
-                                        font_name: resource_name.clone(),
-                                        font_size,
-                                        bytes: std::mem::take(&mut segment),
+                                            x: scaled_to_bp_f32(
+                                                segment_x
+                                                    .take()
+                                                    .expect("nonempty segment has an anchor")
+                                                    .checked_add(record.h_origin())
+                                                    .ok_or(PdfBuildError::PageGeometryOverflow)?,
+                                                parameters.decimal_digits,
+                                            ),
+                                            baseline,
+                                            font_name: resource_name.clone(),
+                                            font_size,
+                                            bytes: std::mem::take(&mut segment),
                                         },
                                     ));
                                 }
@@ -412,16 +412,16 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                                     };
                                     content_operations.push(PdfContentOperation::Text(
                                         PdfContentTextRun {
-                                        x: scaled_to_bp_f32(
-                                            position
-                                                .checked_add(record.h_origin())
-                                                .ok_or(PdfBuildError::PageGeometryOverflow)?,
-                                            parameters.decimal_digits,
-                                        ),
-                                        baseline,
-                                        font_name,
-                                        font_size: space_size,
-                                        bytes: vec![b' '],
+                                            x: scaled_to_bp_f32(
+                                                position
+                                                    .checked_add(record.h_origin())
+                                                    .ok_or(PdfBuildError::PageGeometryOverflow)?,
+                                                parameters.decimal_digits,
+                                            ),
+                                            baseline,
+                                            font_name,
+                                            font_size: space_size,
+                                            bytes: vec![b' '],
                                         },
                                     ));
                                 }
@@ -853,7 +853,11 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                 PositionedEvent::Special(special) => {
                     return Err(PdfBuildError::UnsupportedSpecial(special.class));
                 }
-                PositionedEvent::Box(_) | PositionedEvent::TextRun(_) => {}
+                PositionedEvent::Box(_)
+                | PositionedEvent::BoxEnd(_)
+                | PositionedEvent::PdfAccessibility(_)
+                | PositionedEvent::PdfAnnotation(_)
+                | PositionedEvent::TextRun(_) => {}
             }
         }
         let mut dictionary = PdfDictionary::new();
@@ -1205,7 +1209,8 @@ fn lower_page_annotations(
                 PositionedEvent::TextRun(_)
                 | PositionedEvent::Rule(_)
                 | PositionedEvent::Special(_)
-                | PositionedEvent::PdfAccessibility(_) => {}
+                | PositionedEvent::PdfAccessibility(_)
+                | PositionedEvent::PdfGraphics(_) => {}
             }
         }
         result.push(shipped);

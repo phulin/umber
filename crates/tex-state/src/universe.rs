@@ -240,6 +240,9 @@ pub trait ExpansionState {
     fn pdf_last_form(&self) -> u32 {
         0
     }
+    fn pdf_last_ximage(&self) -> u32 {
+        0
+    }
     fn pdf_uniform_deviate(&mut self, _bound: i32) -> i32 {
         0
     }
@@ -2127,6 +2130,19 @@ impl Universe {
         self.pdf.pk_font(request)
     }
 
+    pub fn allocate_pdf_external_image(
+        &mut self,
+        source: crate::PdfExternalImageSource,
+        dimensions: crate::PdfExternalImageDimensions,
+    ) -> Result<crate::PdfExternalImageRecord, PdfObjectCapacityError> {
+        self.pdf.allocate_external_image(source, dimensions)
+    }
+
+    #[must_use]
+    pub fn pdf_last_external_image(&self) -> Option<crate::PdfExternalImageRecord> {
+        self.pdf.last_external_image()
+    }
+
     /// Lazily reserves the page-resource name and font-dictionary object used
     /// by enquiries and by the first shipped page containing this font.
     pub fn ensure_pdf_font_resource(
@@ -2344,6 +2360,13 @@ impl Universe {
     /// after the logical link's first segment.
     pub fn reserve_pdf_link_continuation(&mut self) -> Result<u32, PdfObjectCapacityError> {
         self.pdf.reserve_link_continuation()
+    }
+
+    #[must_use]
+    pub fn pdf_last_ximage(&self) -> u32 {
+        self.pdf
+            .last_external_image()
+            .map_or(0, |record| record.id().raw())
     }
 
     /// Appends expanded tokens to one document-level PDF dictionary destination.
@@ -4529,6 +4552,10 @@ impl ExpansionState for Universe {
         Self::pdf_last_form(self)
     }
 
+    fn pdf_last_ximage(&self) -> u32 {
+        Self::pdf_last_ximage(self)
+    }
+
     fn pdf_uniform_deviate(&mut self, bound: i32) -> i32 {
         Self::pdf_uniform_deviate(self, bound)
     }
@@ -5033,6 +5060,10 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn pdf_last_form(&self) -> u32 {
         self.universe.pdf_last_form()
+    }
+
+    fn pdf_last_ximage(&self) -> u32 {
+        self.universe.pdf_last_ximage()
     }
 
     fn pdf_uniform_deviate(&mut self, bound: i32) -> i32 {

@@ -390,6 +390,7 @@ pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
         ("pdflastxpos", InternalInteger::PdfLastXPos),
         ("pdflastypos", InternalInteger::PdfLastYPos),
         ("pdflastxform", InternalInteger::PdfLastXForm),
+        ("pdflastximage", InternalInteger::PdfLastXImage),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::InternalInteger(integer));
@@ -422,6 +423,8 @@ pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
             "pdfrunninglinkoff",
             UnexpandablePrimitive::PdfRunningLinkOff,
         ),
+        ("pdfximage", UnexpandablePrimitive::PdfXImage),
+        ("pdfrefximage", UnexpandablePrimitive::PdfRefXImage),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
@@ -1021,7 +1024,6 @@ mod tests {
         assert!(output.contains("pdfTeX warning (\\pdfcatalog)"));
         assert!(output.contains("continued"));
         assert_eq!(stores.pdf_catalog_open_action(), None);
-
     }
 
     #[test]
