@@ -4,7 +4,7 @@ use tex_lex::{
 use tex_state::ExpansionState;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::provenance::InsertedOriginKind;
-use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+use tex_state::token::{OriginId, Token, TracedTokenWord};
 
 use crate::{
     Dispatch, ExpandError, ExpandableOpcode, ExpansionContext, ExpansionMode,
@@ -616,36 +616,26 @@ pub(crate) fn ifx_operands_equal(
     left: IfxOperand,
     right: IfxOperand,
 ) -> bool {
-    let left_is_control_sequence = matches!(
-        left.token,
-        Token::Cs(_)
-            | Token::Char {
-                cat: Catcode::Active,
-                ..
-            }
-    );
-    let right_is_control_sequence = matches!(
-        right.token,
-        Token::Cs(_)
-            | Token::Char {
-                cat: Catcode::Active,
-                ..
-            }
-    );
-    if left_is_control_sequence || right_is_control_sequence {
-        return left_is_control_sequence
-            && right_is_control_sequence
-            && meanings_ifx_equal(
-                stores,
-                left.meaning.expect("control sequence meaning"),
-                right.meaning.expect("control sequence meaning"),
-            );
+    match (left.meaning, right.meaning) {
+        (Some(left), Some(right)) => meanings_ifx_equal(stores, left, right),
+        (Some(left), None) => raw_token_ifx_meaning(right.token)
+            .is_some_and(|right| meanings_ifx_equal(stores, left, right)),
+        (None, Some(right)) => raw_token_ifx_meaning(left.token)
+            .is_some_and(|left| meanings_ifx_equal(stores, left, right)),
+        (None, None) => left.token == right.token,
     }
-    match (left.token, right.token) {
-        (Token::Char { .. } | Token::Param(_), Token::Char { .. } | Token::Param(_)) => {
-            left.token == right.token
-        }
-        _ => false,
+}
+
+/// Returns the command-and-character meaning TeX82 uses for an unbound token.
+///
+/// In `tex.web`'s `ifx` branch, TeX first compares `cur_cmd` and then compares
+/// `cur_chr` for non-macros. Consequently a control sequence `\let` to a
+/// character compares equal to the raw character token; token provenance is
+/// irrelevant once both command meanings have been obtained.
+fn raw_token_ifx_meaning(token: Token) -> Option<Meaning> {
+    match token {
+        Token::Char { ch, cat } => Some(Meaning::CharToken { ch, cat }),
+        Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => None,
     }
 }
 

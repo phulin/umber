@@ -3893,6 +3893,43 @@ fn ifx_compares_an_active_character_with_a_control_sequence_alias_by_meaning() {
 }
 
 #[test]
+fn ifx_compares_a_character_with_a_control_sequence_alias_by_meaning() {
+    let mut stores = Universe::new();
+    let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
+    let ifx = expandable_primitive(&mut stores, "ifx", ExpandablePrimitive::IfX);
+    let alias = stores.intern("punctuation");
+    stores.set_meaning(
+        alias,
+        Meaning::CharToken {
+            ch: ',',
+            cat: Catcode::Other,
+        },
+    );
+    let list = stores.intern_token_list(&[
+        Token::Cs(ifx.symbol()),
+        Token::Cs(alias.symbol()),
+        Token::Char {
+            ch: ',',
+            cat: Catcode::Other,
+        },
+        char_token('y'),
+        Token::Cs(else_cs.symbol()),
+        char_token('n'),
+        Token::Cs(fi.symbol()),
+    ]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list(list, TokenListReplayKind::Inserted);
+
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "y"
+    );
+}
+
+#[test]
 fn ifx_uses_meaning_word_equality_for_non_macros_without_expansion() {
     let mut stores = Universe::new();
     let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
@@ -3923,6 +3960,13 @@ fn ifx_uses_meaning_word_equality_for_non_macros_without_expansion() {
         Token::Cs(else_cs.symbol()),
         char_token('y'),
         Token::Cs(fi.symbol()),
+        Token::Cs(ifx.symbol()),
+        Token::Cs(first.symbol()),
+        char_token('a'),
+        char_token('n'),
+        Token::Cs(else_cs.symbol()),
+        char_token('y'),
+        Token::Cs(fi.symbol()),
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
@@ -3932,7 +3976,7 @@ fn ifx_uses_meaning_word_equality_for_non_macros_without_expansion() {
             &mut input,
             &mut tex_state::ExpansionContext::new(&mut stores)
         ),
-        "yy"
+        "yyy"
     );
 }
 
