@@ -183,7 +183,10 @@ must be serialized only through the vendored `pdf_writer` adapter. The first
 map name, validates and strips their transport framing, and records a stable
 SHA-256 program identity plus the three PDF Type-1 segment lengths. Final PDF
 assembly can resolve only this typed state; it never opens the host filesystem
-or network. Font dictionaries, descriptors, TFM-derived widths, embedded
+or network. The native driver acquires exact mapline program names through
+its configured `TEXFONTS` search path before finalization; other frontends can
+provide the same typed resource by logical name. Font dictionaries,
+descriptors, TFM-derived widths, embedded
 `/FontFile` streams, per-page `/Font` resources, and absolute text operators
 are emitted through the detached graph and canonical `pdf_writer` serializer.
 Subset program rewriting, exact descriptor metrics, encoding vectors, and

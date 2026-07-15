@@ -192,6 +192,31 @@ impl FileSessionResolvers {
     pub fn context(&mut self) -> ExecutionContext<'_> {
         ExecutionContext::with_resolvers(&self.job_name, &mut self.input, &mut self.font)
     }
+
+    /// Acquires every mapline-selected Type-1 program through the driver's
+    /// configured font search path and publishes validated bytes into engine
+    /// state. PDF finalization itself remains host-neutral.
+    pub fn provide_pdf_font_programs(&self, stores: &mut Universe) -> Result<(), String> {
+        let names = stores
+            .resolved_pdf_font_map_lines()
+            .into_iter()
+            .filter_map(|entry| entry.font_file)
+            .collect::<std::collections::BTreeSet<_>>();
+        for name in names {
+            if stores.pdf_type1_program(&name).is_some() {
+                continue;
+            }
+            let logical_name = String::from_utf8_lossy(&name);
+            let content = self
+                .font
+                .0
+                .read_program_from_world(stores.world_mut(), Path::new(logical_name.as_ref()))?;
+            stores
+                .provide_pdf_type1_program(name, content.bytes())
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
 }
 
 struct FileInputResolver(TexInputSearchPath);

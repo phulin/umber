@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use tex_state::World;
 use tex_state::{FileContent, InputReadState};
 
 /// Ordered host-side policy for resolving TeX `\input` files.
@@ -103,6 +104,33 @@ impl TexFontSearchPath {
         let requested = with_default_extension(path, "tfm");
         let candidates = font_candidates(&self.user_area, &self.system_areas, &requested);
         read_first(input, candidates)
+    }
+
+    /// Resolves an output font program by its exact logical map name. Unlike
+    /// metric lookup this never appends `.tfm`.
+    pub fn read_program<C: InputReadState + ?Sized>(
+        &self,
+        input: &mut C,
+        path: &Path,
+    ) -> Result<FileContent, String> {
+        let candidates = font_candidates(&self.user_area, &self.system_areas, path);
+        read_first(input, candidates)
+    }
+
+    pub fn read_program_from_world(
+        &self,
+        world: &mut World,
+        path: &Path,
+    ) -> Result<FileContent, String> {
+        let candidates = font_candidates(&self.user_area, &self.system_areas, path);
+        let mut failures = Vec::with_capacity(candidates.len());
+        for candidate in candidates {
+            match world.read_file(&candidate) {
+                Ok(content) => return Ok(content),
+                Err(error) => failures.push(format!("{}: {error}", candidate.display())),
+            }
+        }
+        Err(failures.join("; "))
     }
 }
 

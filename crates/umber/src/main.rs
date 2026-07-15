@@ -264,6 +264,9 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
         driver_files.push(DriverFile::new(output.clone(), dvi));
     }
     if let Some(output) = &opts.pdf {
+        resolvers
+            .provide_pdf_font_programs(&mut stores)
+            .map_err(CliError::PdfFontResource)?;
         let pdf = umber::pdf_from_committed_artifacts(&stores, &run.committed_artifacts)?;
         driver_files.push(DriverFile::new(output.clone(), pdf));
     }
@@ -594,6 +597,7 @@ enum CliError {
     Dvi(umber::DviBuildError),
     Html(umber::HtmlBuildError),
     Pdf(umber::PdfBuildError),
+    PdfFontResource(String),
     Format(FormatError),
     Finalization(umber::FinalizationError),
     InputReceipt(String),
@@ -612,6 +616,7 @@ impl std::fmt::Display for CliError {
             Self::Dvi(err) => write!(f, "{err}"),
             Self::Html(err) => write!(f, "{err}"),
             Self::Pdf(err) => write!(f, "{err}"),
+            Self::PdfFontResource(err) => write!(f, "PDF font resource error: {err}"),
             Self::Format(err) => write!(f, "{err}"),
             Self::Finalization(err) => write!(f, "{err}"),
             Self::InputReceipt(message) => f.write_str(message),
