@@ -2818,6 +2818,26 @@ fn meaning_uses_the_canonical_name_for_a_radical_alias() {
 }
 
 #[test]
+fn meaning_renders_macro_prefixes_in_tex_order() {
+    let mut stores = Universe::new();
+    let macro_cs = stores.intern("prefixed");
+    let empty = stores.intern_token_list(&[]);
+    stores.set_macro_meaning(
+        macro_cs,
+        MacroMeaning::new(
+            MeaningFlags::PROTECTED | MeaningFlags::LONG | MeaningFlags::OUTER,
+            empty,
+            empty,
+        ),
+    );
+
+    assert_eq!(
+        crate::meaning_text(&stores, Token::Cs(macro_cs.symbol())),
+        "\\protected\\long\\outer macro:->"
+    );
+}
+
+#[test]
 fn meaning_reports_a_font_selection_by_font_identity() {
     let mut stores = Universe::new();
     let alias = stores.intern("array_alias");

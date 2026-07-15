@@ -1010,7 +1010,19 @@ pub fn meaning_text(stores: &impl ExpansionState, token: Token) -> String {
                 let macro_meaning = stores.macro_definition(definition);
                 let mut text = String::new();
                 if flags.contains(MeaningFlags::PROTECTED) {
-                    text.push_str("protected");
+                    text.push_str("\\protected");
+                }
+                if flags.contains(MeaningFlags::LONG) {
+                    text.push_str("\\long");
+                }
+                if flags.contains(MeaningFlags::OUTER) {
+                    text.push_str("\\outer");
+                }
+                if flags.bits()
+                    & (MeaningFlags::PROTECTED | MeaningFlags::LONG | MeaningFlags::OUTER).bits()
+                    != 0
+                {
+                    text.push(' ');
                 }
                 text.push_str("macro:");
                 text.push_str(&token_list_text(stores, macro_meaning.parameter_text()));
