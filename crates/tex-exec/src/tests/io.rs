@@ -517,6 +517,23 @@ fn print_cs_spacing_is_shared_by_diagnostics_and_immediate_and_deferred_writes()
 }
 
 #[test]
+fn show_resolves_an_active_character_macro() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\catcode`\\~=13 \\protected\\def~{x}\\show~\\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("active-character show fixture executes");
+
+    assert!(terminal_effect_text(&stores).contains("> ~=\\protected macro:\n->x."));
+}
+
+#[test]
 fn shipout_commits_deferred_openout_closeout_whatsits() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

@@ -970,6 +970,13 @@ pub fn meaning_text(stores: &impl ExpansionState, token: Token) -> String {
     match token {
         Token::Char {
             ch,
+            cat: Catcode::Active,
+        } => stores.active_character_symbol(ch).map_or_else(
+            || "undefined".to_owned(),
+            |symbol| meaning_text(stores, Token::Cs(symbol)),
+        ),
+        Token::Char {
+            ch,
             cat: Catcode::Letter,
         } => format!("the letter {ch}"),
         Token::Char { ch, .. } => format!("the character {ch}"),

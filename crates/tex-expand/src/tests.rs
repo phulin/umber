@@ -2845,6 +2845,29 @@ fn meaning_renders_macro_prefixes_in_tex_order() {
 }
 
 #[test]
+fn meaning_resolves_an_active_character_macro() {
+    let mut stores = Universe::new();
+    let active = stores.intern_active_character('~');
+    let empty = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[char_token('x')]);
+    stores.set_macro_meaning(
+        active,
+        MacroMeaning::new(MeaningFlags::PROTECTED, empty, body),
+    );
+
+    assert_eq!(
+        crate::meaning_text(
+            &stores,
+            Token::Char {
+                ch: '~',
+                cat: Catcode::Active,
+            }
+        ),
+        "\\protected macro:->x"
+    );
+}
+
+#[test]
 fn meaning_reports_a_font_selection_by_font_identity() {
     let mut stores = Universe::new();
     let alias = stores.intern("array_alias");

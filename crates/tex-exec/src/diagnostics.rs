@@ -51,7 +51,11 @@ pub(crate) fn execute_show(input: &mut InputStack, stores: &mut Universe) -> Res
         .ok_or(ExecError::MissingToken { context: "\\show" })?;
     let token = tex_expand::semantic_token(token);
     let text = match token {
-        Token::Cs(_) => {
+        Token::Cs(_)
+        | Token::Char {
+            cat: Catcode::Active,
+            ..
+        } => {
             format!(
                 "\n> {}={}.\n",
                 token_text(stores, token),
@@ -540,10 +544,8 @@ pub(crate) fn execute_ignorespaces(
 
 fn show_meaning_text(stores: &Universe, token: Token) -> String {
     let text = meaning_text(stores, token);
-    if let Some(rest) = text.strip_prefix("macro:") {
-        format!("macro:\n{rest}")
-    } else if let Some(rest) = text.strip_prefix("protectedmacro:") {
-        format!("protectedmacro:\n{rest}")
+    if let Some((prefix, rest)) = text.split_once("macro:") {
+        format!("{prefix}macro:\n{rest}")
     } else {
         text
     }
