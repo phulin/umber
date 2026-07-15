@@ -3,9 +3,12 @@
 `tests/corpus` holds committed inputs and expected reference outputs for
 fast differential tests.
 
-`tests/latex-source.lock` pins the exact TeX Live 2025 files, byte lengths,
-and SHA-256 identities opened while building the Umber-native LaTeX format.
-The explicit LaTeX format builder verifies this closure before every build.
+`tests/latex-source.lock` pins the exact TeX Live 2025 files plus repository-local
+format configuration inputs, byte lengths, and SHA-256 identities opened while
+building the Umber-native LaTeX format. The explicit LaTeX format builder
+verifies this closure before every build. `tests/latex/language.dat` keeps the
+format's English language slot and hyphenation minima deterministic without
+depending on generated TeX Live `texmf-var` state.
 
 `tests/latex-parity-manifest.txt` pins one complete official LaTeX2e repository
 archive rather than individual support or test files. Setup derives the DVI

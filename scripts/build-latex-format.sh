@@ -83,11 +83,15 @@ expected_index="${tmp_root}/expected.index"
 
 while read -r kind relative expected_bytes expected_hash extra; do
   [[ -z "${kind:-}" || "$kind" == \#* ]] && continue
-  [[ "$kind" != source ]] && continue
+  [[ "$kind" != source && "$kind" != local ]] && continue
   [[ -z "${extra:-}" ]] || fail "invalid source lock entry for $relative"
   [[ "$relative" != /* && "$relative" != *..* && "$relative" != *\\* ]] || \
     fail "unsafe source path in lock: $relative"
-  source="${texmf_dist}/${relative}"
+  if [[ "$kind" == source ]]; then
+    source="${texmf_dist}/${relative}"
+  else
+    source="${repo_root}/${relative}"
+  fi
   [[ -f "$source" ]] || fail "missing pinned source: $source"
   actual_bytes="$(wc -c < "$source" | tr -d ' ')"
   [[ "$actual_bytes" == "$expected_bytes" ]] || \
@@ -99,7 +103,7 @@ while read -r kind relative expected_bytes expected_hash extra; do
 done < "$lock_file"
 LC_ALL=C sort -k1,1 "$expected_index" | awk -F '\t' '{ print $2 "\t" $1 }' > "$expected_receipt"
 
-texinputs="${texmf_dist}/tex/latex/base:${texmf_dist}/tex/latex/l3kernel:${texmf_dist}/tex/latex/l3backend:${texmf_dist}/tex/generic/unicode-data:${texmf_dist}/tex/generic/babel:${texmf_dist}/tex/generic/hyphen"
+texinputs="${repo_root}/tests/latex:${texmf_dist}/tex/latex/base:${texmf_dist}/tex/latex/l3kernel:${texmf_dist}/tex/latex/l3backend:${texmf_dist}/tex/generic/unicode-data:${texmf_dist}/tex/generic/babel:${texmf_dist}/tex/generic/hyphen"
 texfonts="${texmf_dist}/fonts/tfm/public/cm:${texmf_dist}/fonts/tfm/public/latex-fonts:${texmf_dist}/fonts/tfm/jknappen/ec"
 latex_ltx="${texmf_dist}/tex/latex/base/latex.ltx"
 

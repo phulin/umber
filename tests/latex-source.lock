@@ -17,6 +17,7 @@ source fonts/tfm/public/latex-fonts/lcircle10.tfm 820 f5aaff47e226ff644ae94765b8
 source fonts/tfm/public/latex-fonts/lcirclew10.tfm 820 7906e4c5d770db4002740cba4d8194281b06d6fe7edd9d9949b60a291b753646
 source fonts/tfm/public/latex-fonts/line10.tfm 748 250200d9efa885fecff118d72e5239adacd0783ccb00c4fb96fa677708ce5217
 source fonts/tfm/public/latex-fonts/linew10.tfm 748 925de632e8afb641692c58bf6c464fb1aa79782212523532590dd6b91b78c40f
+local tests/latex/language.dat 19 af5613362ab73ed05bd1554c300d78b4256eae3865ef88315856ccc0a73df2e5
 source tex/generic/babel/hyphen.cfg 6461 402fa9a57546f67f24a4c047ee387e6d6a4bb74bddf8434f15d3b72bb3550788
 source tex/generic/hyphen/hyphen.tex 27860 2c18acdc04c1a066aeb1759905e7ca449f0616c314b5ed6aebe55b9d4a89b8d4
 source tex/generic/unicode-data/CaseFolding.txt 86092 6f1f9c588eb4a5c718d9e8f93b782685e5c7fec872cf05e8e6878053599e09bb

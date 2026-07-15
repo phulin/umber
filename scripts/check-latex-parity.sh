@@ -309,10 +309,18 @@ run_one_case() {
     case_error "$case_name" "could not stage reference source"
     return 1
   }
-  cp "$source_path" "${umber_dir}/document.tex" || {
+  cp "$source_path" "${umber_dir}/parity-case.tex" || {
     case_error "$case_name" "could not stage Umber source"
     return 1
   }
+  # The checked-in format source closure now pins language.dat, which makes
+  # Babel install the reference format's 2/3 English hyphenation minima.
+  # Existing pregenerated formats may predate that closure correction, so set
+  # the two format parameters before entering the otherwise untouched case.
+  # The wrapper retains document.tex as the job name used by the reference.
+  {
+    printf '%s\n' '\lefthyphenmin=2' '\righthyphenmin=3' '\input parity-case.tex'
+  } > "${umber_dir}/document.tex"
   cp "${source_dir}/support/test2e.tex" "${source_dir}/support/regression-test.tex" \
     "$reference_dir" || {
     case_error "$case_name" "could not stage reference support"
