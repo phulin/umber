@@ -3620,6 +3620,31 @@ fn ifcat_compares_category_codes_after_expansion() {
 }
 
 #[test]
+fn if_and_ifcat_use_character_alias_command_meanings() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    let letter = stores.intern("letter");
+    stores.set_meaning(
+        letter,
+        Meaning::CharToken {
+            ch: 'a',
+            cat: Catcode::Letter,
+        },
+    );
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\if a\\letter y\\else n\\fi\\ifcat z\\letter y\\else n\\fi",
+    ));
+
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "yy"
+    );
+}
+
+#[test]
 fn ifx_compares_macro_definitions_semantically_ignoring_origin_lists() {
     let mut stores = Universe::new();
     let (_, _, else_cs, fi) = conditional_primitives(&mut stores);

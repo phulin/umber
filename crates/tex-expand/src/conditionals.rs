@@ -530,7 +530,14 @@ where
             context,
         },
     )?;
-    Ok(semantic_token(token))
+    let token = semantic_token(token);
+    Ok(match token {
+        Token::Cs(symbol) => match stores.meaning(symbol) {
+            Meaning::CharToken { ch, cat } => Token::Char { ch, cat },
+            _ => token,
+        },
+        _ => token,
+    })
 }
 
 pub(crate) fn if_char_equal(left: Token, right: Token) -> bool {
