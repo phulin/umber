@@ -241,46 +241,54 @@ pub fn pdf_from_committed_artifacts_at_dpi(
         });
     }
 
+    let mut pdf_image_groups = BTreeMap::<u32, Option<PdfObjectId>>::new();
     for image in stores.pdf_external_images() {
-        let PdfExternalImageMetadata::Raster(metadata) = image.metadata() else {
-            continue;
-        };
-        let (color_data, filter, bits, color_space, alpha_data) =
-            raster_image_streams(image.bytes(), metadata)?;
-        objects.push(PdfIndirectObject {
-            id: object_id(image.id().raw())?,
-            object: PdfObject::ImageXObject {
-                image: PdfImageXObject {
-                    width: metadata.width,
-                    height: metadata.height,
-                    bits_per_component: bits,
-                    color_space,
-                    filter,
-                    soft_mask: image.mask_object().map(object_id).transpose()?,
-                },
-                data: color_data,
-            },
-        });
-        if let Some(alpha_data) = alpha_data {
-            let mask = image.mask_object().ok_or(PdfBuildError::InvalidPng)?;
-            objects.push(PdfIndirectObject {
-                id: object_id(mask)?,
-                object: PdfObject::ImageXObject {
-                    image: PdfImageXObject {
-                        width: metadata.width,
-                        height: metadata.height,
-                        bits_per_component: if metadata.png_color_type == Some(3) {
-                            8
-                        } else {
-                            metadata.bits_per_component
+        match image.metadata() {
+            PdfExternalImageMetadata::Raster(metadata) => {
+                let (color_data, filter, bits, color_space, alpha_data) =
+                    raster_image_streams(image.bytes(), metadata)?;
+                objects.push(PdfIndirectObject {
+                    id: object_id(image.id().raw())?,
+                    object: PdfObject::ImageXObject {
+                        image: PdfImageXObject {
+                            width: metadata.width,
+                            height: metadata.height,
+                            bits_per_component: bits,
+                            color_space,
+                            filter,
+                            soft_mask: image.mask_object().map(object_id).transpose()?,
                         },
-                        color_space: PdfImageColorSpace::DeviceGray,
-                        filter: PdfImageFilter::Flate,
-                        soft_mask: None,
+                        data: color_data,
                     },
-                    data: alpha_data,
-                },
-            });
+                });
+                if let Some(alpha_data) = alpha_data {
+                    let mask = image.mask_object().ok_or(PdfBuildError::InvalidPng)?;
+                    objects.push(PdfIndirectObject {
+                        id: object_id(mask)?,
+                        object: PdfObject::ImageXObject {
+                            image: PdfImageXObject {
+                                width: metadata.width,
+                                height: metadata.height,
+                                bits_per_component: if metadata.png_color_type == Some(3) {
+                                    8
+                                } else {
+                                    metadata.bits_per_component
+                                },
+                                color_space: PdfImageColorSpace::DeviceGray,
+                                filter: PdfImageFilter::Flate,
+                                soft_mask: None,
+                            },
+                            data: alpha_data,
+                        },
+                    });
+                }
+            }
+            PdfExternalImageMetadata::PdfPage { page_box, page, .. } => {
+                let imported = import_pdf_page(image, page, page_box, &mut next_object)?;
+                pdf_image_groups.insert(image.id().raw(), imported.group);
+                objects.extend(imported.dependencies);
+                objects.push(imported.form);
+            }
         }
     }
 
@@ -292,6 +300,8 @@ pub fn pdf_from_committed_artifacts_at_dpi(
         let mut content_operations = Vec::new();
         let mut page_forms = BTreeMap::<u32, PdfObjectId>::new();
         let mut page_images = BTreeMap::<Vec<u8>, PdfObjectId>::new();
+        let mut page_group_selector = stores.pdf_page_group_selector();
+        let mut page_group = None;
         let mut has_pdf_graphics = false;
         let mut page_fonts = std::collections::BTreeMap::new();
         let mut fallback_space_on_page = false;
@@ -602,8 +612,25 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                             let image = stores
                                 .pdf_external_image_record(id)
                                 .ok_or(PdfBuildError::MissingRasterImage(object))?;
-                            if !matches!(image.metadata(), PdfExternalImageMetadata::Raster(_)) {
-                                return Err(PdfBuildError::UnsupportedPdfPageImage(object));
+                            if matches!(image.metadata(), PdfExternalImageMetadata::PdfPage { .. })
+                            {
+                                let group = pdf_image_groups.get(&object).copied().flatten();
+                                match page_group_selector.include(group.is_some()) {
+                                    tex_state::PdfPageGroupInclusion::None => {}
+                                    tex_state::PdfPageGroupInclusion::SelectForOutputPage => {
+                                        page_group = group;
+                                    }
+                                    tex_state::PdfPageGroupInclusion::KeepOnIncludedForm {
+                                        warning,
+                                    } => {
+                                        if let Some(warning) = warning {
+                                            stores.world_mut().write_text(
+                                                tex_state::PrintSink::TerminalAndLog,
+                                                &format!("{}\n", warning.message()),
+                                            );
+                                        }
+                                    }
+                                }
                             }
                             let name = format!("Im{object}").into_bytes();
                             page_images.insert(name.clone(), object_id(object)?);
@@ -725,6 +752,9 @@ pub fn pdf_from_committed_artifacts_at_dpi(
         }
         page.insert("Resources", PdfValue::Reference(resources_id))?;
         page.insert("Contents", PdfValue::Reference(contents_id))?;
+        if let Some(group) = page_group {
+            page.insert("Group", PdfValue::Reference(group))?;
+        }
         let shipped_annotations = &page_annotations[page_index];
         if !shipped_annotations.is_empty() {
             page.insert(
@@ -2517,6 +2547,250 @@ fn zlib(bytes: &[u8]) -> Result<Vec<u8>, PdfBuildError> {
     encoder.finish().map_err(|_| PdfBuildError::InvalidPng)
 }
 
+struct ImportedPdfPage {
+    form: PdfIndirectObject,
+    dependencies: Vec<PdfIndirectObject>,
+    group: Option<PdfObjectId>,
+}
+
+fn import_pdf_page(
+    image: &tex_state::PdfExternalImageRecord,
+    page: u32,
+    page_box: tex_state::PdfPageBox,
+    next_object: &mut u32,
+) -> Result<ImportedPdfPage, PdfBuildError> {
+    let document = lopdf::Document::load_mem(image.bytes())
+        .map_err(|error| PdfBuildError::InvalidPdfPage(error.to_string()))?;
+    let page_id = document
+        .get_pages()
+        .get(&page)
+        .copied()
+        .ok_or_else(|| PdfBuildError::InvalidPdfPage(format!("page {page} does not exist")))?;
+    let data = document
+        .get_page_content(page_id)
+        .map_err(|error| PdfBuildError::InvalidPdfPage(error.to_string()))?;
+    let (direct_resources, resource_ids) = document
+        .get_page_resources(page_id)
+        .map_err(|error| PdfBuildError::InvalidPdfPage(error.to_string()))?;
+    let mut dependencies = Vec::new();
+    let mut imported = BTreeMap::new();
+    let resources = if let Some(resources) = direct_resources {
+        convert_lopdf_dictionary(
+            &document,
+            resources,
+            next_object,
+            &mut imported,
+            &mut dependencies,
+        )?
+    } else if let Some(resource_id) = resource_ids.first() {
+        let resources = document
+            .get_dictionary(*resource_id)
+            .map_err(|error| PdfBuildError::InvalidPdfPage(error.to_string()))?;
+        convert_lopdf_dictionary(
+            &document,
+            resources,
+            next_object,
+            &mut imported,
+            &mut dependencies,
+        )?
+    } else {
+        PdfDictionary::new()
+    };
+    let page_dictionary = document
+        .get_dictionary(page_id)
+        .map_err(|error| PdfBuildError::InvalidPdfPage(error.to_string()))?;
+    let group = page_dictionary
+        .get(b"Group")
+        .ok()
+        .map(|value| {
+            let value = convert_lopdf_value(
+                &document,
+                value,
+                next_object,
+                &mut imported,
+                &mut dependencies,
+            )?;
+            match value {
+                PdfValue::Reference(id) => Ok(id),
+                PdfValue::Dictionary(dictionary) => {
+                    let id = allocate_output_object(next_object)?;
+                    dependencies.push(indirect_dictionary(id, dictionary));
+                    Ok(id)
+                }
+                _ => Err(PdfBuildError::InvalidPdfPage(
+                    "page Group is not a dictionary".to_owned(),
+                )),
+            }
+        })
+        .transpose()?;
+    let mut dictionary = PdfDictionary::new();
+    dictionary.insert("Resources", PdfValue::Dictionary(resources))?;
+    if let Some(group) = group {
+        dictionary.insert("Group", PdfValue::Reference(group))?;
+    }
+    let zero = PdfNumber::new(0, 0)?;
+    let one = PdfNumber::new(1, 0)?;
+    let width = page_box
+        .right
+        .checked_sub(page_box.left)
+        .ok_or(PdfBuildError::PageGeometryOverflow)?;
+    let height = page_box
+        .top
+        .checked_sub(page_box.bottom)
+        .ok_or(PdfBuildError::PageGeometryOverflow)?;
+    let width_bp = scaled_to_bp_f32(width, 4);
+    let height_bp = scaled_to_bp_f32(height, 4);
+    if width_bp <= 0.0 || height_bp <= 0.0 {
+        return Err(PdfBuildError::InvalidPdfPage(
+            "selected page box is empty".to_owned(),
+        ));
+    }
+    let left_bp = scaled_to_bp_f32(page_box.left, 4);
+    let bottom_bp = scaled_to_bp_f32(page_box.bottom, 4);
+    Ok(ImportedPdfPage {
+        form: PdfIndirectObject {
+            id: object_id(image.id().raw())?,
+            object: PdfObject::FormXObject {
+                dictionary,
+                data,
+                bbox: [zero, zero, one, one],
+                matrix: [
+                    pdf_number_from_f32(1.0 / width_bp)?,
+                    zero,
+                    zero,
+                    pdf_number_from_f32(1.0 / height_bp)?,
+                    pdf_number_from_f32(-left_bp / width_bp)?,
+                    pdf_number_from_f32(-bottom_bp / height_bp)?,
+                ],
+            },
+        },
+        dependencies,
+        group,
+    })
+}
+
+fn allocate_output_object(next_object: &mut u32) -> Result<PdfObjectId, PdfBuildError> {
+    let id = object_id(*next_object)?;
+    *next_object = next_object
+        .checked_add(1)
+        .ok_or(PdfBuildError::ObjectCapacity)?;
+    Ok(id)
+}
+
+fn convert_lopdf_dictionary(
+    document: &lopdf::Document,
+    source: &lopdf::Dictionary,
+    next_object: &mut u32,
+    imported: &mut BTreeMap<lopdf::ObjectId, PdfObjectId>,
+    objects: &mut Vec<PdfIndirectObject>,
+) -> Result<PdfDictionary, PdfBuildError> {
+    let mut dictionary = PdfDictionary::new();
+    for (name, value) in source.iter() {
+        if matches!(name.as_slice(), b"Length" | b"Filter" | b"DecodeParms") {
+            continue;
+        }
+        dictionary.insert(
+            PdfName::new(name.clone()),
+            convert_lopdf_value(document, value, next_object, imported, objects)?,
+        )?;
+    }
+    Ok(dictionary)
+}
+
+fn convert_lopdf_value(
+    document: &lopdf::Document,
+    source: &lopdf::Object,
+    next_object: &mut u32,
+    imported: &mut BTreeMap<lopdf::ObjectId, PdfObjectId>,
+    objects: &mut Vec<PdfIndirectObject>,
+) -> Result<PdfValue, PdfBuildError> {
+    Ok(match source {
+        lopdf::Object::Null => PdfValue::Null,
+        lopdf::Object::Boolean(value) => PdfValue::Bool(*value),
+        lopdf::Object::Integer(value) => PdfValue::Integer(*value),
+        lopdf::Object::Real(value) => PdfValue::Number(pdf_number_from_f32(*value)?),
+        lopdf::Object::Name(name) => PdfValue::Name(PdfName::new(name.clone())),
+        lopdf::Object::String(bytes, _) => PdfValue::String(bytes.clone()),
+        lopdf::Object::Array(values) => PdfValue::Array(
+            values
+                .iter()
+                .map(|value| convert_lopdf_value(document, value, next_object, imported, objects))
+                .collect::<Result<_, _>>()?,
+        ),
+        lopdf::Object::Dictionary(dictionary) => PdfValue::Dictionary(convert_lopdf_dictionary(
+            document,
+            dictionary,
+            next_object,
+            imported,
+            objects,
+        )?),
+        lopdf::Object::Reference(source_id) => PdfValue::Reference(import_lopdf_indirect(
+            document,
+            *source_id,
+            next_object,
+            imported,
+            objects,
+        )?),
+        lopdf::Object::Stream(_) => {
+            return Err(PdfBuildError::InvalidPdfPage(
+                "direct resource streams are unsupported".to_owned(),
+            ));
+        }
+    })
+}
+
+fn import_lopdf_indirect(
+    document: &lopdf::Document,
+    source_id: lopdf::ObjectId,
+    next_object: &mut u32,
+    imported: &mut BTreeMap<lopdf::ObjectId, PdfObjectId>,
+    objects: &mut Vec<PdfIndirectObject>,
+) -> Result<PdfObjectId, PdfBuildError> {
+    if let Some(id) = imported.get(&source_id) {
+        return Ok(*id);
+    }
+    let id = allocate_output_object(next_object)?;
+    imported.insert(source_id, id);
+    let source = document
+        .get_object(source_id)
+        .map_err(|error| PdfBuildError::InvalidPdfPage(error.to_string()))?;
+    let object = match source {
+        lopdf::Object::Stream(stream) => {
+            let data = stream
+                .decompressed_content()
+                .map_err(|error| PdfBuildError::InvalidPdfPage(error.to_string()))?;
+            PdfObject::Stream {
+                dictionary: convert_lopdf_dictionary(
+                    document,
+                    &stream.dict,
+                    next_object,
+                    imported,
+                    objects,
+                )?,
+                data,
+            }
+        }
+        value => PdfObject::Value(convert_lopdf_value(
+            document,
+            value,
+            next_object,
+            imported,
+            objects,
+        )?),
+    };
+    objects.push(PdfIndirectObject { id, object });
+    Ok(id)
+}
+
+fn pdf_number_from_f32(value: f32) -> Result<PdfNumber, PdfBuildError> {
+    if !value.is_finite() {
+        return Err(PdfBuildError::InvalidPdfPage(
+            "page resource contains a non-finite number".to_owned(),
+        ));
+    }
+    PdfNumber::new((f64::from(value) * 1_000_000_000.0).round() as i64, 9).map_err(Into::into)
+}
+
 fn output_parameters(stores: &Universe) -> PdfOutputParameters {
     stores.fixed_pdf_output_parameters().unwrap_or_else(|| {
         PdfOutputParameters {
@@ -2853,6 +3127,7 @@ pub enum PdfBuildError {
     UnsupportedPdfPageImage(u32),
     InvalidRasterDimensions,
     InvalidPng,
+    InvalidPdfPage(String),
     InvalidMatrix(Vec<u8>),
     World(WorldError),
     Parse(tex_out::ParseError),
@@ -2976,6 +3251,9 @@ impl std::fmt::Display for PdfBuildError {
                 f.write_str("registered raster image has zero width or height")
             }
             Self::InvalidPng => f.write_str("registered PNG image data is invalid"),
+            Self::InvalidPdfPage(message) => {
+                write!(f, "registered PDF-page image is invalid: {message}")
+            }
             Self::InvalidMatrix(payload) => write!(
                 f,
                 "invalid \\pdfsetmatrix payload {:?}; expected exactly four finite numbers",
@@ -3037,12 +3315,30 @@ mod tests {
         DirectFontResolver, RejectingMemoryInputResolver, RunResult, dvi_from_page_plans,
         prepare_pdftex_run_stores, run_input_collecting_artifacts,
     };
+    use lopdf::dictionary;
     use tex_exec::ExecutionContext;
     use tex_lex::{InputStack, MemoryInput};
     use tex_state::{JobClock, World};
 
     struct StaticImageResolver {
         source: tex_state::PdfExternalImageSource,
+    }
+
+    struct QueueImageResolver {
+        sources: VecDeque<tex_state::PdfExternalImageSource>,
+    }
+
+    impl tex_exec::PdfImageResolver for QueueImageResolver {
+        fn open_image(
+            &mut self,
+            _input: &mut dyn tex_state::InputReadState,
+            _request: &tex_exec::PdfImageRequest,
+            _request_index: u64,
+        ) -> Result<tex_state::PdfExternalImageSource, String> {
+            self.sources
+                .pop_front()
+                .ok_or_else(|| "test image queue is empty".to_owned())
+        }
     }
 
     impl tex_exec::PdfImageResolver for StaticImageResolver {
@@ -3065,6 +3361,26 @@ mod tests {
         let mut input_resolver = RejectingMemoryInputResolver;
         let mut font_resolver = DirectFontResolver;
         let mut image_resolver = StaticImageResolver { source: image };
+        let context = ExecutionContext::with_resource_resolvers(
+            "pdf-test",
+            &mut input_resolver,
+            &mut font_resolver,
+            &mut image_resolver,
+        );
+        run_input_collecting_artifacts(&mut input, stores, context).expect("image page ships")
+    }
+
+    fn run_with_images(
+        stores: &mut Universe,
+        source: &str,
+        images: impl IntoIterator<Item = tex_state::PdfExternalImageSource>,
+    ) -> RunResult {
+        let mut input = InputStack::new(MemoryInput::new(source));
+        let mut input_resolver = RejectingMemoryInputResolver;
+        let mut font_resolver = DirectFontResolver;
+        let mut image_resolver = QueueImageResolver {
+            sources: images.into_iter().collect(),
+        };
         let context = ExecutionContext::with_resource_resolvers(
             "pdf-test",
             &mut input_resolver,
@@ -3114,6 +3430,73 @@ mod tests {
         );
         chunk(b"IEND", &[], &mut png);
         png
+    }
+
+    fn test_pdf_page(has_group: bool) -> Vec<u8> {
+        let mut document = lopdf::Document::with_version("1.5");
+        let pages = document.new_object_id();
+        let page = document.new_object_id();
+        let contents = document.add_object(lopdf::Stream::new(
+            lopdf::dictionary! {},
+            b"0 0 10 20 re f".to_vec(),
+        ));
+        let mut page_dictionary = lopdf::dictionary! {
+            "Type" => "Page",
+            "Parent" => pages,
+            "MediaBox" => vec![0.into(), 0.into(), 10.into(), 20.into()],
+            "Resources" => lopdf::dictionary! {},
+            "Contents" => contents,
+        };
+        if has_group {
+            page_dictionary.set(
+                "Group",
+                lopdf::dictionary! {
+                    "S" => "Transparency",
+                    "CS" => "DeviceRGB",
+                },
+            );
+        }
+        document.objects.insert(page, page_dictionary.into());
+        document.objects.insert(
+            pages,
+            lopdf::dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page.into()],
+                "Count" => 1,
+            }
+            .into(),
+        );
+        let catalog = document.add_object(lopdf::dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages,
+        });
+        document.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        document
+            .save_to(&mut bytes)
+            .expect("serialize PDF-page fixture");
+        bytes
+    }
+
+    fn test_pdf_page_source(has_group: bool) -> tex_state::PdfExternalImageSource {
+        let bytes = test_pdf_page(has_group);
+        let page_box = tex_state::PdfPageBox {
+            left: Scaled::from_raw(0),
+            bottom: Scaled::from_raw(0),
+            right: Scaled::from_raw(10 * 65_536),
+            top: Scaled::from_raw(20 * 65_536),
+        };
+        tex_state::PdfExternalImageSource {
+            identity: ContentHash::from_bytes(&bytes),
+            metadata: PdfExternalImageMetadata::PdfPage {
+                page_box,
+                page: 1,
+                has_page_group: has_group,
+            },
+            natural_width: page_box.right,
+            natural_height: page_box.top,
+            bytes: bytes.into(),
+        }
     }
 
     #[test]
@@ -3336,6 +3719,129 @@ mod tests {
             b"DCTDecode"
         );
         assert_eq!(stream.content, jpeg);
+    }
+
+    #[test]
+    fn pdf_page_ximage_is_a_reused_typed_form_with_shared_page_group() {
+        let image = test_pdf_page_source(true);
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let result = run_with_image(
+            &mut stores,
+            concat!(
+                "\\pdfoutput=1 \\pdfcompresslevel=0 ",
+                "\\pdfximage width 30pt height 40pt page 1 mediabox \"page.pdf\"",
+                "\\shipout\\hbox{\\pdfrefximage\\pdflastximage}\\end",
+            ),
+            image,
+        );
+        let pdf = pdf_from_committed_artifacts(&mut stores, &result.committed_artifacts)
+            .expect("lower PDF-page image");
+        let parsed = lopdf::Document::load_mem(&pdf).expect("parse included-page PDF");
+        let form = parsed
+            .get_object((1, 0))
+            .expect("included form")
+            .as_stream()
+            .expect("form stream");
+        assert_eq!(
+            form.dict
+                .get(b"Subtype")
+                .expect("form subtype")
+                .as_name()
+                .expect("subtype name"),
+            b"Form"
+        );
+        let form_group = form
+            .dict
+            .get(b"Group")
+            .expect("form group")
+            .as_reference()
+            .expect("group reference");
+        let page_id = parsed.get_pages()[&1];
+        let page = parsed.get_dictionary(page_id).expect("output page");
+        assert_eq!(
+            page.get(b"Group")
+                .expect("output page group")
+                .as_reference()
+                .expect("group reference"),
+            form_group
+        );
+        let content = parsed.get_page_content(page_id).expect("page content");
+        assert!(content.windows(7).any(|window| window == b"/Im1 Do"));
+    }
+
+    #[test]
+    fn pdf_page_group_collision_warning_obeys_signed_suppression() {
+        for (control, expects_warning) in [(0, true), (1, false), (-1, false)] {
+            let mut stores = Universe::default();
+            prepare_pdftex_run_stores(&mut stores);
+            stores.set_int_param(IntParam::PDF_SUPPRESS_WARNING_PAGE_GROUP, control);
+            let result = run_with_images(
+                &mut stores,
+                concat!(
+                    "\\pdfoutput=1 ",
+                    "\\pdfximage \"first.pdf\" ",
+                    "\\pdfximage \"second.pdf\" ",
+                    "\\shipout\\hbox{\\pdfrefximage1\\kern1pt\\pdfrefximage2}\\end",
+                ),
+                [test_pdf_page_source(true), test_pdf_page_source(true)],
+            );
+            let pdf = pdf_from_committed_artifacts(&mut stores, &result.committed_artifacts)
+                .expect("lower two page groups");
+            let warning_present = stores.world().effect_records().iter().any(|effect| {
+                matches!(
+                    effect,
+                    tex_state::EffectRecord::StreamWrite { text, .. }
+                        if text.contains(tex_state::PdfPageGroupWarning::MULTIPLE_GROUPS_ON_ONE_PAGE)
+                )
+            });
+            let parsed = lopdf::Document::load_mem(&pdf).expect("parse page-group PDF");
+            let first = parsed
+                .get_object((1, 0))
+                .expect("first form")
+                .as_stream()
+                .expect("first form stream");
+            let second = parsed
+                .get_object((2, 0))
+                .expect("second form")
+                .as_stream()
+                .expect("second form stream");
+            let first_group = first
+                .dict
+                .get(b"Group")
+                .expect("first group")
+                .as_reference()
+                .expect("first group reference");
+            let second_group = second
+                .dict
+                .get(b"Group")
+                .expect("second group")
+                .as_reference()
+                .expect("second group reference");
+            assert_ne!(first_group, second_group);
+            let page_id = parsed.get_pages()[&1];
+            let content = parsed.get_page_content(page_id).expect("page content");
+            assert_eq!(
+                content
+                    .windows(3)
+                    .filter(|window| *window == b" Do")
+                    .count(),
+                2,
+                "both included forms must be painted",
+            );
+            let output_group = parsed
+                .get_dictionary(page_id)
+                .expect("output page")
+                .get(b"Group")
+                .expect("output group")
+                .as_reference()
+                .expect("output group reference");
+            assert_eq!(output_group, first_group);
+            assert_eq!(
+                warning_present, expects_warning,
+                "suppression value {control}",
+            );
+        }
     }
 
     fn positioned_fixture(events: Vec<PositionedEvent>, page_index: u32) -> PositionedPage {

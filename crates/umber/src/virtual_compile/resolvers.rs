@@ -187,9 +187,17 @@ fn parse_pdf_image(
         right: pdf_points_to_scaled(coordinates[2]),
         top: pdf_points_to_scaled(coordinates[3]),
     };
+    let page_dictionary = document
+        .get_dictionary(page_id)
+        .map_err(|error| error.to_string())?;
+    let has_page_group = page_dictionary.get(b"Group").is_ok();
     Ok(PdfExternalImageSource {
         identity: content.hash(),
-        metadata: PdfExternalImageMetadata::PdfPage { page_box },
+        metadata: PdfExternalImageMetadata::PdfPage {
+            page_box,
+            page: request.page,
+            has_page_group,
+        },
         natural_width: page_box.right - page_box.left,
         natural_height: page_box.top - page_box.bottom,
         bytes: content.shared_bytes(),

@@ -2078,6 +2078,8 @@ mod tests {
                         right: Scaled::from_raw(655_384),
                         top: Scaled::from_raw(327_659),
                     },
+                    page: 1,
+                    has_page_group: false,
                 },
             )
             .expect("register PDF page-box metadata");

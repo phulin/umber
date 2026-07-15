@@ -1877,6 +1877,12 @@ impl Pages<'_> {
     pub fn resources(&mut self) -> Resources<'_> {
         self.insert(Name(b"Resources")).start()
     }
+
+    /// Write the `/Resources` attribute as an indirect dictionary reference.
+    pub fn resources_ref(&mut self, resources: Ref) -> &mut Self {
+        self.pair(Name(b"Resources"), resources);
+        self
+    }
 }
 
 deref!('a, Pages<'a> => Dict<'a>, dict);
@@ -1948,6 +1954,12 @@ impl Page<'_> {
         self.insert(Name(b"Resources")).start()
     }
 
+    /// Write the `/Resources` attribute as an indirect dictionary reference.
+    pub fn resources_ref(&mut self, resources: Ref) -> &mut Self {
+        self.pair(Name(b"Resources"), resources);
+        self
+    }
+
     /// Write the `/Contents` attribute as reference to a single content stream.
     ///
     /// Such a content stream can be created using the [`Content`] builder and
@@ -1978,6 +1990,12 @@ impl Page<'_> {
     /// present.
     pub fn group(&mut self) -> Group<'_> {
         self.insert(Name(b"Group")).start()
+    }
+
+    /// Write the `/Group` attribute as an indirect dictionary reference.
+    pub fn group_ref(&mut self, group: Ref) -> &mut Self {
+        self.pair(Name(b"Group"), group);
+        self
     }
 
     /// Write the `/Thumb` attribute to set an [image][ImageXObject] as the page

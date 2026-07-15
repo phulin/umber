@@ -112,7 +112,6 @@ impl PdfDocument {
             }
             if let PdfObject::Value(PdfValue::Dictionary(dictionary)) = &indirect.object
                 && matches!(dictionary.get(b"Type"), Some(PdfValue::Name(name)) if name.as_bytes() == b"Page")
-                && dictionary.get(b"Annots").is_some()
             {
                 let mut page = pdf.page(reference);
                 if let Some(PdfValue::Array(ids)) = dictionary.get(b"Annots") {
@@ -123,7 +122,17 @@ impl PdfDocument {
                         _ => unreachable!("validated page annotation is a reference"),
                     }));
                 }
-                write_dictionary_entries_skipping(&mut page, dictionary, &[b"Type", b"Annots"])?;
+                if let Some(PdfValue::Reference(resources)) = dictionary.get(b"Resources") {
+                    page.resources_ref(writer_ref(*resources)?);
+                }
+                if let Some(PdfValue::Reference(group)) = dictionary.get(b"Group") {
+                    page.group_ref(writer_ref(*group)?);
+                }
+                write_dictionary_entries_skipping(
+                    &mut page,
+                    dictionary,
+                    &[b"Type", b"Annots", b"Resources", b"Group"],
+                )?;
                 page.finish();
                 continue;
             }
@@ -182,7 +191,6 @@ impl PdfDocument {
                     }
                     if let PdfObject::Value(PdfValue::Dictionary(dictionary)) = &indirect.object
                         && matches!(dictionary.get(b"Type"), Some(PdfValue::Name(name)) if name.as_bytes() == b"Page")
-                        && dictionary.get(b"Annots").is_some()
                     {
                         continue;
                     }
@@ -379,18 +387,35 @@ fn write_form_xobject(
         PdfStreamCompression::None => {
             let mut form = pdf.form_xobject(reference, data);
             form.bbox(bbox).matrix(matrix);
-            write_dictionary_entries(&mut form, dictionary, None)?;
+            write_form_entries(&mut form, dictionary)?;
             form.finish();
         }
         PdfStreamCompression::Flate { level } => {
             let compressed = deflate(data, level)?;
             let mut form = pdf.form_xobject(reference, &compressed);
             form.bbox(bbox).matrix(matrix).filter(Filter::FlateDecode);
-            write_dictionary_entries(&mut form, dictionary, None)?;
+            write_form_entries(&mut form, dictionary)?;
             form.finish();
         }
     }
     Ok(())
+}
+
+fn write_form_entries(
+    form: &mut pdf_writer::writers::FormXObject<'_>,
+    dictionary: &PdfDictionary,
+) -> Result<(), PdfSerializeError> {
+    if let Some(PdfValue::Dictionary(resources)) = dictionary.get(b"Resources") {
+        let mut writer = form.resources();
+        write_dictionary_entries(&mut writer, resources, None)?;
+        writer.finish();
+    } else if let Some(PdfValue::Reference(resources)) = dictionary.get(b"Resources") {
+        form.resources_ref(writer_ref(*resources)?);
+    }
+    if let Some(PdfValue::Reference(group)) = dictionary.get(b"Group") {
+        form.group_ref(writer_ref(*group)?);
+    }
+    write_dictionary_entries_skipping(form, dictionary, &[b"Resources", b"Group"])
 }
 
 fn writer_ref(id: PdfObjectId) -> Result<Ref, PdfSerializeError> {

@@ -136,7 +136,11 @@ pub struct PdfPageBox {
 /// Metadata retained after host-neutral external-image validation.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum PdfExternalImageMetadata {
-    PdfPage { page_box: PdfPageBox },
+    PdfPage {
+        page_box: PdfPageBox,
+        page: u32,
+        has_page_group: bool,
+    },
     Raster(PdfRasterImageMetadata),
 }
 
@@ -201,10 +205,10 @@ impl PdfExternalImageMetadata {
     #[must_use]
     pub const fn bbox_coordinate(self, index: u8) -> Option<Scaled> {
         match (self, index) {
-            (Self::PdfPage { page_box }, 1) => Some(page_box.left),
-            (Self::PdfPage { page_box }, 2) => Some(page_box.bottom),
-            (Self::PdfPage { page_box }, 3) => Some(page_box.right),
-            (Self::PdfPage { page_box }, 4) => Some(page_box.top),
+            (Self::PdfPage { page_box, .. }, 1) => Some(page_box.left),
+            (Self::PdfPage { page_box, .. }, 2) => Some(page_box.bottom),
+            (Self::PdfPage { page_box, .. }, 3) => Some(page_box.right),
+            (Self::PdfPage { page_box, .. }, 4) => Some(page_box.top),
             (Self::Raster(_), 1..=4) => Some(Scaled::from_raw(0)),
             (_, _) => None,
         }
@@ -2230,12 +2234,18 @@ fn external_image_fingerprint(images: &[PdfExternalImageRecord]) -> u64 {
         hasher.u32(record.id.raw());
         hasher.bytes(&record.identity.bytes());
         match record.metadata {
-            PdfExternalImageMetadata::PdfPage { page_box } => {
+            PdfExternalImageMetadata::PdfPage {
+                page_box,
+                page,
+                has_page_group,
+            } => {
                 hasher.u8(0);
                 hasher.i32(page_box.left.raw());
                 hasher.i32(page_box.bottom.raw());
                 hasher.i32(page_box.right.raw());
                 hasher.i32(page_box.top.raw());
+                hasher.u32(page);
+                hasher.bool(has_page_group);
             }
             PdfExternalImageMetadata::Raster(metadata) => {
                 hasher.u8(1);
@@ -2808,6 +2818,8 @@ mod tests {
                 right: Scaled::from_raw(40),
                 top: Scaled::from_raw(50),
             },
+            page: 1,
+            has_page_group: false,
         };
 
         state

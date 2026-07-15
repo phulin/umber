@@ -226,10 +226,22 @@ impl<'a> FormXObject<'a> {
         self.insert(Name(b"Resources")).start()
     }
 
+    /// Write the `/Resources` attribute as an indirect dictionary reference.
+    pub fn resources_ref(&mut self, resources: Ref) -> &mut Self {
+        self.pair(Name(b"Resources"), resources);
+        self
+    }
+
     /// Start writing the `/Group` dictionary to set up transparency model
     /// parameters and let this XObject be known as a group. PDF 1.4+.
     pub fn group(&mut self) -> Group<'_> {
         self.insert(Name(b"Group")).start()
+    }
+
+    /// Write the `/Group` attribute as an indirect dictionary reference.
+    pub fn group_ref(&mut self, group: Ref) -> &mut Self {
+        self.pair(Name(b"Group"), group);
+        self
     }
 
     /// Write the `/StructParent` attribute to indicate the [structure tree
