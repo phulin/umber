@@ -404,6 +404,26 @@ fn metadata_snapshots_do_not_pin_fragment_source_bytes() {
 }
 
 #[test]
+fn discarding_unpublished_bytes_burns_identity_and_keeps_deleted_metadata() {
+    let mut fragments = FragmentStore::new();
+    let (id, registration) = append(&mut fragments, b"orphan", 7);
+    let origin = registration.direct_origin(0, 1).expect("orphan origin");
+    let empty = EditorLayout::new("root.tex", LayoutGeneration::new(6), Vec::new(), &fragments)
+        .expect("empty accepted layout");
+
+    assert_eq!(fragments.discard_unpublished_bytes(id), 6);
+    assert_eq!(fragments.discard_unpublished_bytes(id), 0);
+    assert_eq!(fragments.bytes(id), None);
+    assert_eq!(fragments.len(), 1);
+    assert_eq!(fragments.reserved_position_bytes(), 7);
+    let span = direct_fragment_span(origin, &fragments).expect("metadata retains direct origin");
+    assert_eq!(
+        resolve_fragment_span(span, &fragments, &empty),
+        Some(LayoutResolvedOrigin::Deleted { minted_revision: 7 })
+    );
+}
+
+#[test]
 fn metadata_snapshots_are_o1_and_immutable_across_owner_appends() {
     let mut fragments = FragmentStore::new();
     for revision in 0..32 {

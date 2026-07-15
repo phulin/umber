@@ -242,6 +242,21 @@ impl FragmentStore {
         self.append_at(bytes, minted_revision, byte_len, start)
     }
 
+    /// Drops the session-owned bytes for a fragment that was never published
+    /// in an accepted layout, while retaining its permanent metadata row.
+    ///
+    /// Failed editor advances use this after append so their logical position
+    /// ranges and ids remain burned without retaining an orphan backing.
+    pub fn discard_unpublished_bytes(&mut self, id: FragmentId) -> usize {
+        if self.get(id).is_none() {
+            return 0;
+        }
+        Arc::make_mut(&mut self.sources)
+            .remove(&id)
+            .and_then(|source| source.bytes)
+            .map_or(0, |bytes| bytes.len())
+    }
+
     /// Appends at an exact logical position for representation-boundary tests.
     #[cfg(any(test, feature = "testing"))]
     pub fn testing_append_at(

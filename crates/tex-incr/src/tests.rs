@@ -332,6 +332,144 @@ fn nonconvergent_advance_prunes_fully_replaced_fragment_bytes() {
     assert_eq!(session.fragments.source_bytes(), replacement.len());
 }
 
+#[derive(Default)]
+struct StagedInputResolver {
+    files: BTreeMap<String, String>,
+}
+
+impl InputResolver for StagedInputResolver {
+    fn open_input(
+        &mut self,
+        _input: &mut dyn InputReadState,
+        name: &str,
+        _request_index: u64,
+    ) -> Result<Box<dyn InputSource>, String> {
+        self.files
+            .get(name)
+            .cloned()
+            .map(MemoryInput::new)
+            .map(|source| Box::new(source) as Box<dyn InputSource>)
+            .ok_or_else(|| format!("resource {name} is not available yet"))
+    }
+}
+
+#[test]
+fn multi_round_resource_retry_drops_orphan_fragment_bytes_and_keeps_parity() {
+    let original = "\\end".to_owned();
+    let replacement = "\\input one \\input two \\end".to_owned();
+    let mut session = Session::start(
+        template(),
+        "resource-retry",
+        RevisionId::new(1),
+        original.clone(),
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold run");
+    let edit = Edit {
+        base_revision: RevisionId::new(1),
+        expected_hash: ContentHash::from_bytes(original.as_bytes()),
+        range: 0..original.len(),
+        replacement: replacement.clone(),
+    };
+    let mut inputs = StagedInputResolver::default();
+    let mut fonts = DirectFontResolver;
+    let initial_live_bytes = session.fragments.source_bytes();
+    let mut peak_live_bytes = initial_live_bytes;
+
+    for (name, contents) in [
+        ("one", "\\shipout\\vbox{\\hrule height 1pt}"),
+        ("two", "\\shipout\\vbox{\\hrule height 2pt}"),
+    ] {
+        session
+            .advance_with_resolvers(RevisionId::new(2), edit.clone(), &mut inputs, &mut fonts)
+            .expect_err("unresolved input rejects this attempt");
+        peak_live_bytes = peak_live_bytes.max(session.fragments.source_bytes());
+        assert_eq!(session.fragments.source_bytes(), initial_live_bytes);
+        inputs.files.insert(name.to_owned(), contents.to_owned());
+    }
+    assert_eq!(peak_live_bytes, initial_live_bytes);
+
+    let accepted = session
+        .advance_with_resolvers(RevisionId::new(2), edit, &mut inputs, &mut fonts)
+        .expect("fully provisioned retry succeeds");
+    assert_eq!(session.fragments.source_bytes(), replacement.len());
+    assert_eq!(session.fragments.len(), 4, "failed ids remain burned");
+
+    let mut cold = Session::start(
+        template(),
+        "resource-retry",
+        RevisionId::new(2),
+        replacement,
+        usize::MAX,
+    )
+    .expect("cold session");
+    let mut cold_inputs = inputs;
+    let cold = cold
+        .cold_with_resolvers(&mut cold_inputs, &mut fonts)
+        .expect("cold comparison succeeds");
+    assert_eq!(
+        accepted.dvi_bytes().expect("incremental DVI"),
+        cold.dvi_bytes().expect("cold DVI")
+    );
+}
+
+#[test]
+fn repeated_fatal_advance_drops_orphan_fragment_bytes_before_later_accept() {
+    let original = "\\end".to_owned();
+    let replacement = persistent_source(17);
+    let mut session = Session::start(
+        template(),
+        "fatal-retry",
+        RevisionId::new(1),
+        original.clone(),
+        usize::MAX,
+    )
+    .expect("session starts");
+    let edit = Edit {
+        base_revision: RevisionId::new(1),
+        expected_hash: ContentHash::from_bytes(original.as_bytes()),
+        range: 0..original.len(),
+        replacement: replacement.clone(),
+    };
+    let initial_live_bytes = session.fragments.source_bytes();
+    let mut peak_live_bytes = initial_live_bytes;
+
+    for _ in 0..4 {
+        let error = session
+            .advance(RevisionId::new(2), edit.clone())
+            .expect_err("advance without an accepted substrate is fatal");
+        assert!(matches!(error, SessionError::MissingAcceptedSubstrate));
+        peak_live_bytes = peak_live_bytes.max(session.fragments.source_bytes());
+        assert_eq!(session.fragments.source_bytes(), initial_live_bytes);
+    }
+    assert_eq!(peak_live_bytes, initial_live_bytes);
+    assert_eq!(session.fragments.len(), 5, "failed ids remain burned");
+
+    session
+        .cold()
+        .expect("initial revision can still be accepted");
+    let accepted = session
+        .advance(RevisionId::new(2), edit)
+        .expect("same pending edit later succeeds");
+    assert_eq!(session.fragments.source_bytes(), replacement.len());
+    assert_eq!(session.fragments.len(), 6);
+
+    let mut cold = Session::start(
+        template(),
+        "fatal-retry",
+        RevisionId::new(2),
+        replacement,
+        usize::MAX,
+    )
+    .expect("cold session");
+    let cold = cold.cold().expect("cold comparison succeeds");
+    assert_eq!(
+        accepted.dvi_bytes().expect("incremental DVI"),
+        cold.dvi_bytes().expect("cold DVI")
+    );
+}
+
 #[test]
 fn alternating_edits_keep_source_backing_bytes_bounded() {
     let mut text = persistent_source(1);

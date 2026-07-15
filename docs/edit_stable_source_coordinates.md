@@ -272,10 +272,12 @@ retained per-page tables sorted by `SourcePos`.
 - **Within a compile**, engine snapshot/rollback semantics are unchanged:
   the fragment store is read-only during execution, so snapshot capture
   stays O(1) and rollback has nothing new to truncate.
-- **Across revisions**, a failed or discarded `advance` may leave its newly
-  minted fragment in the store as an orphan: no layout view, resolves as
-  `Deleted`, bytes droppable. Correctness never depends on unwinding the
-  store.
+- **Across revisions**, a failed or resource-incomplete `advance` retains its
+  newly minted fragment metadata as an orphan but immediately drops its
+  session-owned bytes. The fragment has no layout view and resolves as
+  `Deleted`; its logical position range and id remain permanently consumed.
+  Retrying the same pending patch therefore burns fresh metadata without
+  retaining duplicate replacement backings.
 - **Byte pruning**: when the last layout view of a fragment disappears and
   no retained checkpoint's revision precedes the removal, the fragment's
   bytes drop; its metadata row (region range, `minted_revision`) is retained

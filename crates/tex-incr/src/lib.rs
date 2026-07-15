@@ -406,6 +406,30 @@ impl Session {
         input_resolver: &mut dyn InputResolver,
         font_resolver: &mut dyn tex_exec::FontResolver,
     ) -> Result<AcceptedOutput, SessionError> {
+        let mut appended_fragment = None;
+        let attempt = self.advance_attempt(
+            next_revision,
+            edit,
+            input_resolver,
+            font_resolver,
+            &mut appended_fragment,
+        );
+        if attempt.is_err()
+            && let Some(fragment) = appended_fragment
+        {
+            self.fragments.discard_unpublished_bytes(fragment);
+        }
+        attempt
+    }
+
+    fn advance_attempt(
+        &mut self,
+        next_revision: RevisionId,
+        edit: Edit,
+        input_resolver: &mut dyn InputResolver,
+        font_resolver: &mut dyn tex_exec::FontResolver,
+        appended_fragment: &mut Option<tex_state::FragmentId>,
+    ) -> Result<AcceptedOutput, SessionError> {
         self.validate_edit(next_revision, &edit)?;
         let old_source = self.source.clone();
         let old_history = self.history.clone();
@@ -419,6 +443,7 @@ impl Session {
             Arc::from(expanded_replacement.as_bytes()),
             next_revision.raw(),
         )?;
+        *appended_fragment = Some(fragment);
         let next_layout = replace_layout_range(
             &self.layout,
             &self.fragments,
