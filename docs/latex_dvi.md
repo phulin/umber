@@ -1,6 +1,6 @@
 # LaTeX-DVI Support Contract
 
-Status: implementation in progress  
+Status: supported for the pinned kernel and base-class corpus
 Contract version: 1  
 Reference distribution: TeX Live 2025 LaTeX2e kernel and base files
 
@@ -63,6 +63,75 @@ During implementation, `scripts/discover-latex-kernel.sh` verifies the pinned
 kernel and Unicode-data hashes, runs the bootstrap with a fixed clock and
 explicit source/font search roots, and reports the first recovered TeX
 diagnostic even when normal TeX recovery makes the process exit successfully.
+
+## Supported workflows
+
+### CLI
+
+Build the pinned format and run a format-loaded LaTeX-DVI job with explicit
+TeX Live lookup roots:
+
+```sh
+scripts/build-latex-format.sh
+TEXINPUTS=/usr/local/texlive/2025/texmf-dist/tex/latex/base:/usr/local/texlive/2025/texmf-dist/tex/latex/l3kernel:/usr/local/texlive/2025/texmf-dist/tex/latex/l3backend \
+TEXFONTS=/usr/local/texlive/2025/texmf-dist/fonts/tfm/public/cm \
+  cargo run-dev -p umber -- run --latex document.tex \
+    --format target/latex-format/latex.fmt --dvi document.dvi
+```
+
+`--latex` is the engine contract selector; `--format` must name an
+Umber-generated image. The output is DVI, never PDF. Repeat the command when a
+document needs multiple AUX/TOC passes.
+
+### Rust library
+
+Source initialization selects the extension contract explicitly with
+`umber::prepare_latex_run_stores(&mut stores)`. Normal applications should load
+the pinned bytes with `Universe::from_format(world, &format_bytes)` and execute
+through `EngineSession` plus `FileSessionResolvers`; this is the same composed
+path used by the CLI. A library embedding remains responsible for labeling the
+run LaTeX-DVI and for supplying deterministic TeX/TFM search areas.
+
+### npm and browser worker
+
+Publish the format and exact base-corpus input closure, then select the named
+format in the standard worker resolver:
+
+```sh
+scripts/build-wasm-latex-bundle.sh \
+  --objects-base-url https://cdn.example/umber/latex/objects/
+scripts/check-latex-wasm.sh
+```
+
+```js
+const files = new Map([
+  ["document.tex", new TextEncoder().encode(
+    "\\documentclass{article}\\begin{document}Hello.\\end{document}",
+  )],
+  ["document.aux", new Uint8Array()],
+]);
+const output = await compileInWorker(
+  { mainPath: "document.tex", jobName: "document" },
+  files,
+  { manifestUrl, format: "latex", persistentCache: "indexeddb" },
+);
+```
+
+The empty AUX file represents a clean first pass; feed emitted AUX/TOC files
+back as user files for later passes. The manifest resolver verifies the format
+and every TeX/TFM object by length and SHA-256 before the WASM engine sees it.
+The package example under `examples/latex.html` is the same browser workflow.
+
+### Verification tiers
+
+- `scripts/check-latex-corpus.sh` runs article, report, book, and letter for
+  three passes against TeX Live 2025 and verifies the exact 30-file runtime
+  closure.
+- `scripts/check-latex-wasm.sh` builds the package and hosted bundle, runs the
+  article corpus for three passes inside the generated WASM module, and
+  requires exact native DVI/AUX/TOC parity.
+- `scripts/discover-latex-kernel.sh` remains the progressive bootstrap
+  diagnostic when the pinned kernel changes.
 
 ## Explicit non-goals
 

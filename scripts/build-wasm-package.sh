@@ -26,7 +26,7 @@ cp "$crate"/assets/plain.fmt \
 cp "$crate"/assets/cmu-serif-500-roman.woff2 \
   "$crate"/assets/CMU-OFL.txt \
   "$temporary/package/assets/"
-cp "$crate"/examples/index.html "$crate"/examples/main.js "$temporary/package/examples/"
+cp "$crate"/examples/*.html "$crate"/examples/*.js "$temporary/package/examples/"
 
 rm -rf "$output"
 mkdir -p "$(dirname "$output")"

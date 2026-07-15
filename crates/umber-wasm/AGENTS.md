@@ -24,6 +24,7 @@ the manifest's validated content-addressed object name.
 - `js/`: authored ES modules and Node acceptance tests, including the unified resource facade and optional application-manifest file/font resolver.
 - `browser-tests/`: dependency-free local HTTP and headless-Chrome package integration fixture.
 - `browser-tests/html-prototype.html`: two-engine line-baseline, shaping, negative-coordinate, and rule projection prototype.
-- `examples/`: minimal module-worker browser example shipped in the package.
+- `examples/`: minimal Plain and LaTeX-DVI module-worker browser examples
+  shipped in the package.
 - `package.json`: authored npm exports, package inventory, and distribution policy.
 - `THIRD_PARTY_NOTICES.md`: Plain-format source provenance and redistribution notices.
