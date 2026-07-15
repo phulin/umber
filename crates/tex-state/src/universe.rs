@@ -1771,6 +1771,23 @@ impl Universe {
         self.pdf.included_font_chars(font)
     }
 
+    /// Supplies already acquired Type-1 bytes through a typed, host-neutral
+    /// boundary. Parsing strips PFB transport framing before publication.
+    pub fn provide_pdf_type1_program(
+        &mut self,
+        logical_name: Vec<u8>,
+        bytes: &[u8],
+    ) -> Result<(), tex_fonts::PdfType1ProgramError> {
+        let program = tex_fonts::PdfType1Program::from_pfb(bytes)?;
+        self.pdf.provide_type1_program(logical_name, program);
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn pdf_type1_program(&self, logical_name: &[u8]) -> Option<&tex_fonts::PdfType1Program> {
+        self.pdf.type1_program(logical_name)
+    }
+
     fn current_pdf_output_parameters(&self) -> PdfOutputParameters {
         PdfOutputParameters {
             output: self.int_param(IntParam::PDF_OUTPUT),

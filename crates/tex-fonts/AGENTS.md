@@ -30,6 +30,7 @@ Use this crate for font-domain parsing and metric representation that does not r
 - `src/tfm/mod.rs`: TFM module boundary and public re-exports.
 - `src/tfm/parse.rs`: binary TFM parser, table decoding, scaling, and validation logic.
 - `src/tfm/types.rs`: parsed TFM data structures and conversions into backend-neutral metrics.
+- `src/type1.rs`: bounded PFB segment decoding into identity-keyed PDF-ready Type-1 program bytes.
 - `tests/fixtures/cm/cmex10.tfm`: Computer Modern extension font fixture with extensible recipes.
 - `tests/fixtures/cm/cmmi10.tfm`: Computer Modern math italic font fixture.
 - `tests/fixtures/cm/cmr10.tfm`: Computer Modern roman font fixture.

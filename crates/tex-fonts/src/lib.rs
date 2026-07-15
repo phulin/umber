@@ -4,6 +4,7 @@ pub mod metrics;
 pub mod opentype;
 pub mod pdf_map;
 pub mod tfm;
+pub mod type1;
 
 pub use metrics::{
     CharMetrics, CharTag as MetricCharTag, ExtensibleRecipe as MetricExtensibleRecipe,
@@ -26,6 +27,7 @@ pub use tfm::{
     CharacterTag, ExtensibleRecipe, FontParameter, FontParameterKind, FontParameters, Header,
     LigKernAction, LigKernStep, Ligature, LigatureDeletes, ParseError, TfmFont, TfmTable,
 };
+pub use type1::{PdfType1Program, PdfType1ProgramError, PdfType1ProgramIdentity};
 
 #[cfg(test)]
 mod tests;

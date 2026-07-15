@@ -178,7 +178,16 @@ matches the pinned 1.40.27 observations: unprefixed and `+` duplicates preserve
 the first entry, `=` replaces it, and `-` removes it. Duplicate warning
 presentation is owned by child issue 17.1. Embedded dictionaries, encodings,
 subsets, and ToUnicode streams remain downstream children 17.5 and 17.3 and
-must be serialized only through the vendored `pdf_writer` adapter.
+must be serialized only through the vendored `pdf_writer` adapter. The first
+17.5 resource boundary accepts already acquired PFB bytes under the logical
+map name, validates and strips their transport framing, and records a stable
+SHA-256 program identity plus the three PDF Type-1 segment lengths. Final PDF
+assembly can resolve only this typed state; it never opens the host filesystem
+or network. Font dictionaries, descriptors, TFM-derived widths, embedded
+`/FontFile` streams, per-page `/Font` resources, and absolute text operators
+are emitted through the detached graph and canonical `pdf_writer` serializer.
+Subset program rewriting, exact descriptor metrics, encoding vectors, and
+ToUnicode remain required before the font children can close.
 
 ## Compatibility and alias decisions
 

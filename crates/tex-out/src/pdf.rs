@@ -6,6 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroU32;
 
+use pdf_writer::{Name, Str};
 use sha2::{Digest, Sha256};
 
 mod serialize;
@@ -23,9 +24,28 @@ pub struct PdfContentRectangle {
     pub height: f32,
 }
 
+/// One absolutely positioned byte-encoded PDF text run.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PdfContentTextRun {
+    pub x: f32,
+    pub baseline: f32,
+    pub font_name: Vec<u8>,
+    pub font_size: f32,
+    pub bytes: Vec<u8>,
+}
+
 /// Encodes filled rule rectangles exclusively through `pdf_writer`.
 #[must_use]
 pub fn filled_rectangle_content(rectangles: &[PdfContentRectangle]) -> Vec<u8> {
+    page_content(rectangles, &[])
+}
+
+/// Encodes page painting operators exclusively through `pdf_writer`.
+#[must_use]
+pub fn page_content(
+    rectangles: &[PdfContentRectangle],
+    text_runs: &[PdfContentTextRun],
+) -> Vec<u8> {
     let mut content = pdf_writer::Content::new();
     content.save_state();
     for rectangle in rectangles {
@@ -34,6 +54,16 @@ pub fn filled_rectangle_content(rectangles: &[PdfContentRectangle]) -> Vec<u8> {
             .fill_nonzero();
     }
     content.restore_state();
+    if !text_runs.is_empty() {
+        content.begin_text();
+        for run in text_runs {
+            content
+                .set_font(Name(&run.font_name), run.font_size)
+                .set_text_matrix([1.0, 0.0, 0.0, 1.0, run.x, run.baseline])
+                .show(Str(&run.bytes));
+        }
+        content.end_text();
+    }
     content.finish().to_vec()
 }
 

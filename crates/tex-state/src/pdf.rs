@@ -27,8 +27,18 @@ pub enum PdfFontMapOperation {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum PdfFontOperation {
     Map(PdfFontMapOperation),
-    Attribute { font: FontId, bytes: Vec<u8> },
-    IncludeChars { font: FontId, chars: Vec<u8> },
+    Attribute {
+        font: FontId,
+        bytes: Vec<u8>,
+    },
+    IncludeChars {
+        font: FontId,
+        chars: Vec<u8>,
+    },
+    Type1Program {
+        logical_name: Vec<u8>,
+        program: tex_fonts::PdfType1Program,
+    },
 }
 
 /// Live pdfTeX microtype and font-output controls.
@@ -403,6 +413,31 @@ impl PdfState {
         self.push_font_operation(PdfFontOperation::IncludeChars { font, chars });
     }
 
+    pub(crate) fn provide_type1_program(
+        &mut self,
+        logical_name: Vec<u8>,
+        program: tex_fonts::PdfType1Program,
+    ) {
+        self.push_font_operation(PdfFontOperation::Type1Program {
+            logical_name,
+            program,
+        });
+    }
+
+    #[must_use]
+    pub(crate) fn type1_program(&self, logical_name: &[u8]) -> Option<&tex_fonts::PdfType1Program> {
+        self.font_operations
+            .iter()
+            .rev()
+            .find_map(|operation| match operation {
+                PdfFontOperation::Type1Program {
+                    logical_name: candidate,
+                    program,
+                } if candidate == logical_name => Some(program),
+                _ => None,
+            })
+    }
+
     fn push_font_operation(&mut self, operation: PdfFontOperation) {
         self.fingerprint = append_font_fingerprint(self.fingerprint, &operation);
         self.font_operations.push(operation);
@@ -413,7 +448,9 @@ impl PdfState {
             .iter()
             .filter_map(|operation| match operation {
                 PdfFontOperation::Map(map) => Some(map),
-                PdfFontOperation::Attribute { .. } | PdfFontOperation::IncludeChars { .. } => None,
+                PdfFontOperation::Attribute { .. }
+                | PdfFontOperation::IncludeChars { .. }
+                | PdfFontOperation::Type1Program { .. } => None,
             })
     }
 
@@ -576,6 +613,14 @@ fn append_font_fingerprint(previous: u64, operation: &PdfFontOperation) -> u64 {
             hasher.tag(3);
             hasher.u32(font.raw());
             hasher.bytes(chars);
+        }
+        PdfFontOperation::Type1Program {
+            logical_name,
+            program,
+        } => {
+            hasher.tag(4);
+            hasher.bytes(logical_name);
+            hasher.bytes(&program.identity().bytes());
         }
     }
     hasher.finish()

@@ -4,9 +4,10 @@ use tex_arith::Scaled;
 use tex_expand::append_token_string_text;
 use tex_out::PageNode;
 use tex_out::pdf::{
-    PdfContentRectangle, PdfDictionary, PdfIndirectObject, PdfModelError, PdfNumber, PdfObject,
-    PdfObjectCompression, PdfObjectId, PdfSerializationOptions, PdfSerializeError,
-    PdfStreamCompression, PdfValue, PdfVersion, UnvalidatedPdfDocument, filled_rectangle_content,
+    PdfContentRectangle, PdfContentTextRun, PdfDictionary, PdfIndirectObject, PdfModelError,
+    PdfName, PdfNumber, PdfObject, PdfObjectCompression, PdfObjectId, PdfSerializationOptions,
+    PdfSerializeError, PdfStreamCompression, PdfValue, PdfVersion, UnvalidatedPdfDocument,
+    page_content,
 };
 use tex_out::positioned::{PositionedError, PositionedEvent};
 use tex_state::env::banks::{IntParam, TokParam};
@@ -31,9 +32,7 @@ pub fn pdf_from_committed_artifacts(
     let pages_id = object_id(PDF_PAGES_OBJECT_ID)?;
     let page_records = stores.pdf_pages();
     let emit_info = stores.int_param(IntParam::PDF_OMIT_INFO_DICT) == 0;
-    let info_id = emit_info
-        .then(|| object_id(stores.pdf_next_object_id()))
-        .transpose()?;
+    let mut next_object = stores.pdf_next_object_id();
     let mut objects = Vec::with_capacity(2 + page_records.len() * 3 + usize::from(emit_info));
     let mut kids = Vec::with_capacity(page_records.len());
 
@@ -48,6 +47,8 @@ pub fn pdf_from_committed_artifacts(
         let positioned = tex_out::positioned::lower_page(&artifact, page_index as u32)?;
         let (page_width, page_height) = pdf_page_extents(&artifact, record)?;
         let mut rectangles = Vec::new();
+        let mut text_runs = Vec::new();
+        let mut page_fonts = std::collections::BTreeMap::new();
         for event in positioned.events {
             match event {
                 PositionedEvent::Rule(rule) => rectangles.push(PdfContentRectangle {
@@ -69,7 +70,56 @@ pub fn pdf_from_committed_artifacts(
                     height: scaled_to_bp_f32(rule.height, parameters.decimal_digits),
                 }),
                 PositionedEvent::TextRun(run) if !run.units.is_empty() => {
-                    return Err(PdfBuildError::TextRequiresFontResources);
+                    let font = positioned
+                        .fonts
+                        .iter()
+                        .find(|font| font.font_id == run.font_id)
+                        .ok_or(PdfBuildError::MissingPositionedFont(run.font_id))?;
+                    let resource_name = format!("F{}", run.font_id + 1).into_bytes();
+                    let font_id = match page_fonts.get(&run.font_id).copied() {
+                        Some(id) => id,
+                        None => {
+                            let id = object_id(next_object)?;
+                            next_object = next_object
+                                .checked_add(3)
+                                .ok_or(PdfBuildError::InvalidObjectId(u32::MAX))?;
+                            page_fonts.insert(run.font_id, id);
+                            objects.extend(pdf_type1_font_objects(
+                                stores,
+                                id,
+                                font,
+                                &resource_name,
+                            )?);
+                            id
+                        }
+                    };
+                    debug_assert_eq!(page_fonts.get(&run.font_id), Some(&font_id));
+                    let bytes = run
+                        .units
+                        .iter()
+                        .map(|unit| match unit {
+                            tex_out::positioned::TextUnit::Code(code) => *code,
+                            tex_out::positioned::TextUnit::Space => b' ',
+                        })
+                        .collect();
+                    text_runs.push(PdfContentTextRun {
+                        x: scaled_to_bp_f32(
+                            run.x
+                                .checked_add(record.h_origin())
+                                .ok_or(PdfBuildError::PageGeometryOverflow)?,
+                            parameters.decimal_digits,
+                        ),
+                        baseline: scaled_to_bp_f32(
+                            page_height
+                                .checked_sub(run.baseline)
+                                .and_then(|value| value.checked_sub(record.v_origin()))
+                                .ok_or(PdfBuildError::PageGeometryOverflow)?,
+                            parameters.decimal_digits,
+                        ),
+                        font_name: resource_name,
+                        font_size: scaled_to_bp_f32(font.at_size, parameters.decimal_digits),
+                        bytes,
+                    });
                 }
                 PositionedEvent::Special(special) => {
                     return Err(PdfBuildError::UnsupportedSpecial(special.class));
@@ -90,13 +140,23 @@ pub fn pdf_from_committed_artifacts(
                 PdfValue::Array(vec![PdfValue::Name("PDF".into())]),
             )?;
         }
+        if !page_fonts.is_empty() {
+            let mut fonts = PdfDictionary::new();
+            for (font_id, object) in page_fonts {
+                fonts.insert(
+                    format!("F{}", font_id + 1).as_str(),
+                    PdfValue::Reference(object),
+                )?;
+            }
+            resources.insert("Font", PdfValue::Dictionary(fonts))?;
+        }
         resources.set_raw_entries(token_list_bytes(stores, record.resources()));
         objects.push(indirect_dictionary(resources_id, resources));
         objects.push(PdfIndirectObject {
             id: contents_id,
             object: PdfObject::Stream {
                 dictionary: PdfDictionary::new(),
-                data: filled_rectangle_content(&rectangles),
+                data: page_content(&rectangles, &text_runs),
             },
         });
 
@@ -134,6 +194,7 @@ pub fn pdf_from_committed_artifacts(
     ));
     objects.push(indirect_dictionary(pages_id, pages));
 
+    let info_id = emit_info.then(|| object_id(next_object)).transpose()?;
     if let Some(info_id) = info_id {
         objects.push(indirect_dictionary(
             info_id,
@@ -149,6 +210,99 @@ pub fn pdf_from_committed_artifacts(
     }
     .validate()?;
     Ok(document.to_pdf_bytes_with_options(options)?)
+}
+
+fn pdf_type1_font_objects(
+    stores: &Universe,
+    id: PdfObjectId,
+    font: &tex_out::FontResource,
+    resource_name: &[u8],
+) -> Result<Vec<PdfIndirectObject>, PdfBuildError> {
+    let mapped = stores
+        .resolved_pdf_font_map_lines()
+        .into_iter()
+        .find(|entry| entry.tex_name == font.name.as_bytes());
+    let program_name = mapped
+        .as_ref()
+        .and_then(|entry| entry.font_file.as_deref())
+        .ok_or_else(|| PdfBuildError::MissingFontProgram(font.name.as_bytes().to_vec()))?;
+    let program = stores
+        .pdf_type1_program(program_name)
+        .ok_or_else(|| PdfBuildError::MissingFontProgram(program_name.to_vec()))?;
+    let descriptor_id = object_id(
+        id.get()
+            .checked_add(1)
+            .ok_or(PdfBuildError::InvalidObjectId(u32::MAX))?,
+    )?;
+    let program_id = object_id(
+        id.get()
+            .checked_add(2)
+            .ok_or(PdfBuildError::InvalidObjectId(u32::MAX))?,
+    )?;
+    let base_font = mapped
+        .as_ref()
+        .and_then(|entry| entry.postscript_name.as_deref())
+        .unwrap_or(font.name.as_bytes());
+    let mut dictionary = PdfDictionary::new();
+    dictionary.insert("Type", PdfValue::Name("Font".into()))?;
+    dictionary.insert("Subtype", PdfValue::Name("Type1".into()))?;
+    dictionary.insert("Name", PdfValue::Name(PdfName::new(resource_name)))?;
+    dictionary.insert("BaseFont", PdfValue::Name(PdfName::new(base_font)))?;
+    dictionary.insert("Encoding", PdfValue::Name("WinAnsiEncoding".into()))?;
+    dictionary.insert("FirstChar", PdfValue::Integer(0))?;
+    dictionary.insert("LastChar", PdfValue::Integer(255))?;
+    let font_id = stores
+        .font_by_source_identity(font.semantic_identity)
+        .ok_or(PdfBuildError::MissingLiveFont(font.name.clone()))?;
+    let denominator = i64::from(font.at_size.raw()).max(1);
+    let widths = (0u8..=255)
+        .map(|code| {
+            let width = stores
+                .font_char_metrics(font_id, code)
+                .map_or(0, |metrics| i64::from(metrics.width.raw()));
+            PdfValue::Integer((width * 1000 + denominator / 2) / denominator)
+        })
+        .collect();
+    dictionary.insert("Widths", PdfValue::Array(widths))?;
+    dictionary.insert("FontDescriptor", PdfValue::Reference(descriptor_id))?;
+
+    let mut descriptor = PdfDictionary::new();
+    descriptor.insert("Type", PdfValue::Name("FontDescriptor".into()))?;
+    descriptor.insert("FontName", PdfValue::Name(PdfName::new(base_font)))?;
+    descriptor.insert("Flags", PdfValue::Integer(4))?;
+    descriptor.insert(
+        "FontBBox",
+        PdfValue::Array(vec![
+            PdfValue::Integer(-500),
+            PdfValue::Integer(-500),
+            PdfValue::Integer(1500),
+            PdfValue::Integer(1500),
+        ]),
+    )?;
+    descriptor.insert("ItalicAngle", PdfValue::Integer(0))?;
+    descriptor.insert("Ascent", PdfValue::Integer(800))?;
+    descriptor.insert("Descent", PdfValue::Integer(-200))?;
+    descriptor.insert("CapHeight", PdfValue::Integer(700))?;
+    descriptor.insert("StemV", PdfValue::Integer(80))?;
+    descriptor.insert("FontFile", PdfValue::Reference(program_id))?;
+    descriptor.set_raw_entries(stores.pdf_font_attribute(font_id).to_vec());
+
+    let [length1, length2, length3] = program.lengths();
+    let mut stream = PdfDictionary::new();
+    stream.insert("Length1", PdfValue::Integer(i64::from(length1)))?;
+    stream.insert("Length2", PdfValue::Integer(i64::from(length2)))?;
+    stream.insert("Length3", PdfValue::Integer(i64::from(length3)))?;
+    Ok(vec![
+        indirect_dictionary(id, dictionary),
+        indirect_dictionary(descriptor_id, descriptor),
+        PdfIndirectObject {
+            id: program_id,
+            object: PdfObject::Stream {
+                dictionary: stream,
+                data: program.bytes().to_vec(),
+            },
+        },
+    ])
 }
 
 fn document_info_dictionary(
@@ -348,6 +502,9 @@ pub enum PdfBuildError {
     PageGeometryOverflow,
     InvalidObjectId(u32),
     TextRequiresFontResources,
+    MissingPositionedFont(u32),
+    MissingFontProgram(Vec<u8>),
+    MissingLiveFont(String),
     UnsupportedSpecial(String),
     World(WorldError),
     Parse(tex_out::ParseError),
@@ -378,6 +535,17 @@ impl std::fmt::Display for PdfBuildError {
             Self::InvalidObjectId(id) => write!(f, "invalid PDF object id {id}"),
             Self::TextRequiresFontResources => {
                 f.write_str("PDF text output requires embedded font resources")
+            }
+            Self::MissingPositionedFont(font) => {
+                write!(f, "positioned text references missing font resource {font}")
+            }
+            Self::MissingFontProgram(name) => write!(
+                f,
+                "PDF font program resource {:?} was not supplied",
+                String::from_utf8_lossy(name)
+            ),
+            Self::MissingLiveFont(name) => {
+                write!(f, "PDF artifact font {name:?} has no live metric source")
             }
             Self::UnsupportedSpecial(class) => {
                 write!(f, "PDF output does not support special class {class:?}")
@@ -497,6 +665,146 @@ mod tests {
         assert_eq!(stores.pdf_pages()[0].resources_object(), 3);
         assert_eq!(stores.pdf_pages()[0].contents_object(), 4);
         assert_eq!(stores.pdf_pages()[0].page_object(), 5);
+    }
+
+    #[test]
+    fn text_page_emits_font_resources_and_pdf_writer_text_operators() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        stores
+            .world_mut()
+            .set_memory_file(
+                "cmr10.tfm",
+                include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm").to_vec(),
+            )
+            .expect("seed TFM");
+        let parts: &[&[u8]] = &[
+            &[0x80, 1, 3, 0, 0, 0],
+            b"abc",
+            &[0x80, 2, 2, 0, 0, 0],
+            b"de",
+            &[0x80, 1, 1, 0, 0, 0],
+            b"f",
+            &[0x80, 3],
+        ];
+        let pfb = parts.concat();
+        stores
+            .provide_pdf_type1_program(b"cmr10.pfb".to_vec(), &pfb)
+            .expect("provide detached Type-1 program");
+        let run_result = run_in(
+            &mut stores,
+            concat!(
+                "\\pdfoutput=1\\pdfcompresslevel=0",
+                "\\font\\f=cmr10 ",
+                "\\pdfmapline{=cmr10 CMR10 <cmr10.pfb}",
+                "\\pdffontattr\\f{/TestAttr 42}",
+                "\\shipout\\hbox{\\f\\char65\\char66\\char67}\\end",
+            ),
+        );
+        let artifact = tex_out::PageArtifact::from_bytes(run_result.committed_artifacts[0].bytes())
+            .expect("artifact parses");
+        let positioned = tex_out::positioned::lower_page(&artifact, 0).expect("page positions");
+        assert!(!positioned.fonts.is_empty(), "{positioned:?}");
+        assert!(
+            positioned.events.iter().any(
+                |event| matches!(event, PositionedEvent::TextRun(run) if !run.units.is_empty())
+            ),
+            "{positioned:?}"
+        );
+        let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+            .expect("text PDF assembles");
+        let parsed = lopdf::Document::load_mem(&pdf).expect("lopdf parses output");
+        let page_id = parsed.get_pages()[&1];
+        let page = parsed
+            .get_object(page_id)
+            .expect("page")
+            .as_dict()
+            .expect("page dictionary");
+        let resources_id = page
+            .get(b"Resources")
+            .expect("resources")
+            .as_reference()
+            .expect("indirect resources");
+        let resources = parsed
+            .get_object(resources_id)
+            .expect("resources object")
+            .as_dict()
+            .expect("resources dictionary");
+        let fonts = resources
+            .get(b"Font")
+            .expect("font resources")
+            .as_dict()
+            .expect("font resource dictionary");
+        let font_id = fonts
+            .get(b"F1")
+            .expect("F1")
+            .as_reference()
+            .expect("indirect font");
+        let font = parsed
+            .get_object(font_id)
+            .expect("font object")
+            .as_dict()
+            .expect("font dictionary");
+        assert_eq!(
+            font.get(b"BaseFont")
+                .expect("BaseFont")
+                .as_name()
+                .expect("BaseFont name"),
+            b"CMR10"
+        );
+        let descriptor_id = font
+            .get(b"FontDescriptor")
+            .expect("FontDescriptor")
+            .as_reference()
+            .expect("indirect descriptor");
+        let descriptor = parsed
+            .get_object(descriptor_id)
+            .expect("descriptor object")
+            .as_dict()
+            .expect("descriptor dictionary");
+        assert_eq!(
+            descriptor
+                .get(b"TestAttr")
+                .expect("pdffontattr entry")
+                .as_i64()
+                .expect("integer attribute"),
+            42
+        );
+        let program_id = descriptor
+            .get(b"FontFile")
+            .expect("embedded FontFile")
+            .as_reference()
+            .expect("indirect FontFile");
+        let program = parsed
+            .get_object(program_id)
+            .expect("FontFile stream")
+            .as_stream()
+            .expect("FontFile is a stream");
+        assert_eq!(program.content, b"abcdef");
+        for (key, expected) in [(b"Length1", 3), (b"Length2", 2), (b"Length3", 1)] {
+            assert_eq!(
+                program
+                    .dict
+                    .get(key)
+                    .expect("segment length")
+                    .as_i64()
+                    .expect("integer segment length"),
+                expected
+            );
+        }
+        let content = parsed
+            .get_page_content(page_id)
+            .expect("decoded page content");
+        for operator in [b"BT".as_slice(), b"Tf", b"Tm", b"Tj", b"ET"] {
+            assert!(
+                content
+                    .windows(operator.len())
+                    .any(|window| window == operator),
+                "missing {}",
+                String::from_utf8_lossy(operator)
+            );
+        }
+        assert!(content.windows(3).any(|window| window == b"ABC"));
     }
 
     #[test]
