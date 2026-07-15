@@ -722,6 +722,24 @@ where
         }
         Meaning::InternalInteger(InternalInteger::ETeXVersion) => Ok(ScannedInt::new(2, token)),
         Meaning::InternalInteger(InternalInteger::PdfTeXVersion) => Ok(ScannedInt::new(140, token)),
+        Meaning::InternalInteger(InternalInteger::PdfElapsedTime) => {
+            crate::record_dependency!(expansion, ReadDependency::Engine(ReadEngineField::PdfTimer));
+            Ok(ScannedInt::new(stores.pdf_elapsed_time(), token))
+        }
+        Meaning::InternalInteger(InternalInteger::PdfRandomSeed) => {
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Engine(ReadEngineField::PdfRandom)
+            );
+            Ok(ScannedInt::new(stores.pdf_random_seed(), token))
+        }
+        Meaning::InternalInteger(InternalInteger::PdfShellEscape) => {
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Engine(ReadEngineField::PdfShellEscape)
+            );
+            Ok(ScannedInt::new(stores.pdf_shell_escape_status(), token))
+        }
         Meaning::InternalInteger(InternalInteger::CurrentGroupLevel) => {
             crate::record_dependency!(
                 expansion,

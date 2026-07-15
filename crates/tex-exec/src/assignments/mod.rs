@@ -1363,6 +1363,17 @@ fn execute_prefixed_command(
                 );
                 Ok(CommandOutcome::continue_only())
             }
+            UnexpandablePrimitive::PdfResetTimer => {
+                reject_all_prefixes(prefixes)?;
+                stores.world_mut().reset_pdf_timer();
+                Ok(CommandOutcome::continue_only())
+            }
+            UnexpandablePrimitive::PdfSetRandomSeed => {
+                reject_all_prefixes(prefixes)?;
+                let seed = scan_i32(input, stores, execution, command.traced)?;
+                stores.world_mut().set_pdf_random_seed(seed);
+                Ok(CommandOutcome::continue_only())
+            }
             UnexpandablePrimitive::Global
             | UnexpandablePrimitive::Long
             | UnexpandablePrimitive::Outer

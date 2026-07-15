@@ -576,6 +576,151 @@ impl Default for RngState {
     }
 }
 
+/// pdfTeX's MetaPost-derived subtractive random-number generator.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct PdfRandomState {
+    values: [i32; 55],
+    next: usize,
+    seed: i32,
+}
+
+impl PdfRandomState {
+    fn from_seed(seed: i32) -> Self {
+        let seed = seed.saturating_abs();
+        let mut state = Self {
+            values: [0; 55],
+            next: 0,
+            seed,
+        };
+        state.initialize(seed);
+        state
+    }
+
+    fn initialize(&mut self, seed: i32) {
+        const FRACTION_ONE: i32 = 1 << 28;
+        let mut j = seed;
+        while j >= FRACTION_ONE {
+            j /= 2;
+        }
+        let mut k = 1;
+        for i in 0..55 {
+            let jj = k;
+            k = j - k;
+            j = jj;
+            if k < 0 {
+                k += FRACTION_ONE;
+            }
+            self.values[(i * 21) % 55] = j;
+        }
+        self.refresh();
+        self.refresh();
+        self.refresh();
+    }
+
+    fn refresh(&mut self) {
+        const FRACTION_ONE: i32 = 1 << 28;
+        for k in 0..24 {
+            let mut value = self.values[k] - self.values[k + 31];
+            if value < 0 {
+                value += FRACTION_ONE;
+            }
+            self.values[k] = value;
+        }
+        for k in 24..55 {
+            let mut value = self.values[k] - self.values[k - 24];
+            if value < 0 {
+                value += FRACTION_ONE;
+            }
+            self.values[k] = value;
+        }
+        self.next = 54;
+    }
+
+    fn next_fraction(&mut self) -> i32 {
+        if self.next == 0 {
+            self.refresh();
+        } else {
+            self.next -= 1;
+        }
+        self.values[self.next]
+    }
+
+    fn uniform(&mut self, bound: i32) -> i32 {
+        let magnitude = i64::from(bound).abs();
+        let trial = take_fraction(magnitude, i64::from(self.next_fraction()));
+        let trial = if trial == magnitude { 0 } else { trial };
+        if bound < 0 {
+            -(trial as i32)
+        } else {
+            trial as i32
+        }
+    }
+
+    fn normal(&mut self) -> i32 {
+        const FRACTION_HALF: i64 = 1 << 27;
+        loop {
+            let (x, u) = loop {
+                let x = take_fraction(112_429, i64::from(self.next_fraction()) - FRACTION_HALF);
+                let u = i64::from(self.next_fraction());
+                if x.abs() < u {
+                    break (x, u);
+                }
+            };
+            let x = make_fraction(x, u);
+            let l = 139_548_960 - metapost_log(u);
+            if 1024_i64 * l >= x * x {
+                return x as i32;
+            }
+        }
+    }
+}
+
+impl Default for PdfRandomState {
+    fn default() -> Self {
+        Self::from_seed(0)
+    }
+}
+
+fn take_fraction(value: i64, fraction: i64) -> i64 {
+    let negative = (value < 0) != (fraction < 0);
+    let rounded = (value.abs() * fraction.abs() + (1 << 27)) / (1 << 28);
+    if negative { -rounded } else { rounded }
+}
+
+fn make_fraction(numerator: i64, denominator: i64) -> i64 {
+    let negative = (numerator < 0) != (denominator < 0);
+    let rounded = (numerator.abs() * (1 << 28) + denominator.abs() / 2) / denominator.abs();
+    if negative { -rounded } else { rounded }
+}
+
+fn metapost_log(mut value: i64) -> i64 {
+    const FRACTION_FOUR: i64 = 1 << 30;
+    const SPEC_LOG: [i64; 29] = [
+        0, 93_032_640, 38_612_034, 17_922_280, 8_662_214, 4_261_238, 2_113_709, 1_052_693, 525_315,
+        262_400, 131_136, 65_552, 32_772, 16_385, 8_192, 4_096, 2_048, 1_024, 512, 256, 128, 64,
+        32, 16, 8, 4, 2, 1, 1,
+    ];
+    let mut y = 1_302_456_860_i64;
+    let mut z = 6_581_195_i64;
+    while value < FRACTION_FOUR {
+        value *= 2;
+        y -= 93_032_639;
+        z -= 48_782;
+    }
+    y += z / 65_536;
+    let mut k = 2_usize;
+    while value > FRACTION_FOUR + 4 {
+        let mut step = ((value - 1) / (1_i64 << k)) + 1;
+        while value < FRACTION_FOUR + step {
+            step = (step + 1) / 2;
+            k += 1;
+        }
+        y += SPEC_LOG[k];
+        value -= step;
+    }
+    y / 8
+}
+
 /// TeX's job-start clock values.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct JobClock {
@@ -609,6 +754,7 @@ pub enum ShellEscapePolicy {
     #[default]
     Disabled,
     Enabled,
+    Restricted,
 }
 
 /// A recorded shell-escape request.
@@ -725,6 +871,9 @@ pub struct WorldSnapshot {
     effect_pos: EffectPos,
     stream_bufs: Arc<StreamBufState>,
     rng: RngState,
+    pdf_rng: PdfRandomState,
+    pdf_time_micros: u64,
+    pdf_timer_origin_micros: u64,
     job_clock: JobClock,
     shell_escape_policy: ShellEscapePolicy,
     input_len: usize,
@@ -740,6 +889,9 @@ pub(crate) struct WorldStateHashCursor {
     effect_pos: EffectPos,
     stream_bufs: Arc<StreamBufState>,
     rng: RngState,
+    pdf_rng: PdfRandomState,
+    pdf_time_micros: u64,
+    pdf_timer_origin_micros: u64,
     job_clock: JobClock,
     shell_escape_policy: ShellEscapePolicy,
     shell_escape_len: usize,
@@ -754,6 +906,9 @@ pub struct World {
     stream_bufs: Arc<StreamBufState>,
     committed_write_streams: [Option<WriteTarget>; STREAM_SLOT_COUNT],
     rng: RngState,
+    pdf_rng: PdfRandomState,
+    pdf_time_micros: u64,
+    pdf_timer_origin_micros: u64,
     job_clock: JobClock,
     shell_escape_policy: ShellEscapePolicy,
     inputs: Vec<InputRecord>,
@@ -789,6 +944,9 @@ impl Clone for World {
             stream_bufs: self.stream_bufs.clone(),
             committed_write_streams: self.committed_write_streams.clone(),
             rng: self.rng,
+            pdf_rng: self.pdf_rng.clone(),
+            pdf_time_micros: self.pdf_time_micros,
+            pdf_timer_origin_micros: self.pdf_timer_origin_micros,
             job_clock: self.job_clock,
             shell_escape_policy: self.shell_escape_policy,
             inputs: self.inputs.clone(),
@@ -818,6 +976,9 @@ impl PartialEq for World {
             && self.stream_bufs == other.stream_bufs
             && self.committed_write_streams == other.committed_write_streams
             && self.rng == other.rng
+            && self.pdf_rng == other.pdf_rng
+            && self.pdf_time_micros == other.pdf_time_micros
+            && self.pdf_timer_origin_micros == other.pdf_timer_origin_micros
             && self.job_clock == other.job_clock
             && self.shell_escape_policy == other.shell_escape_policy
             && self.inputs == other.inputs
@@ -914,7 +1075,24 @@ impl World {
     /// Creates a deterministic in-memory world with an explicit job clock.
     #[must_use]
     pub fn memory_with_clock(job_clock: JobClock) -> Self {
-        Self::new(WorldBackend::Memory(MemoryBackend::default()), job_clock)
+        Self::memory_with_pdftex_inputs(job_clock, 0, 0, ShellEscapePolicy::Disabled)
+    }
+
+    /// Creates a hermetic world with all pdfTeX session inputs supplied explicitly.
+    #[must_use]
+    pub fn memory_with_pdftex_inputs(
+        job_clock: JobClock,
+        random_seed: i32,
+        monotonic_micros: u64,
+        shell_escape_policy: ShellEscapePolicy,
+    ) -> Self {
+        Self::new(
+            WorldBackend::Memory(MemoryBackend::default()),
+            job_clock,
+            random_seed,
+            monotonic_micros,
+            shell_escape_policy,
+        )
     }
 
     /// Creates a real host-backed world and reads the job clock once.
@@ -927,15 +1105,27 @@ impl World {
     #[must_use]
     pub fn real_with_artifact_dir(artifact_dir: impl Into<PathBuf>) -> Self {
         let job_clock = real_job_clock();
+        let monotonic_micros = system_time_micros();
+        let random_seed = ((monotonic_micros % 1_000_000) * 1_000
+            + (monotonic_micros / 1_000_000) % 1_000_000) as i32;
         Self::new(
             WorldBackend::Real {
                 artifact_dir: artifact_dir.into(),
             },
             job_clock,
+            random_seed,
+            monotonic_micros,
+            ShellEscapePolicy::Disabled,
         )
     }
 
-    fn new(backend: WorldBackend, job_clock: JobClock) -> Self {
+    fn new(
+        backend: WorldBackend,
+        job_clock: JobClock,
+        random_seed: i32,
+        monotonic_micros: u64,
+        shell_escape_policy: ShellEscapePolicy,
+    ) -> Self {
         Self {
             backend,
             effect_base: EffectPos::default(),
@@ -943,8 +1133,11 @@ impl World {
             stream_bufs: Arc::new(StreamBufState::default()),
             committed_write_streams: Default::default(),
             rng: RngState::default(),
+            pdf_rng: PdfRandomState::from_seed(random_seed),
+            pdf_time_micros: monotonic_micros,
+            pdf_timer_origin_micros: monotonic_micros,
             job_clock,
-            shell_escape_policy: ShellEscapePolicy::default(),
+            shell_escape_policy,
             inputs: Vec::new(),
             input_identities: IdentityAllocator::new(0),
             input_contents: BTreeMap::new(),
@@ -1703,6 +1896,47 @@ impl World {
         self.rng.next_u64()
     }
 
+    /// Re-seeds pdfTeX's independent deterministic random stream.
+    pub fn set_pdf_random_seed(&mut self, seed: i32) {
+        self.pdf_rng = PdfRandomState::from_seed(seed);
+    }
+
+    #[must_use]
+    pub fn pdf_random_seed(&self) -> i32 {
+        self.pdf_rng.seed
+    }
+
+    #[must_use]
+    pub fn pdf_uniform_deviate(&mut self, bound: i32) -> i32 {
+        self.pdf_rng.uniform(bound)
+    }
+
+    #[must_use]
+    pub fn pdf_normal_deviate(&mut self) -> i32 {
+        self.pdf_rng.normal()
+    }
+
+    /// Supplies the current monotonic time without consulting the host during expansion.
+    pub fn set_pdf_time_micros(&mut self, micros: u64) {
+        self.pdf_time_micros = micros;
+    }
+
+    pub fn reset_pdf_timer(&mut self) {
+        self.pdf_timer_origin_micros = self.pdf_time_micros;
+    }
+
+    #[must_use]
+    pub fn pdf_elapsed_time(&self) -> i32 {
+        let elapsed = self
+            .pdf_time_micros
+            .saturating_sub(self.pdf_timer_origin_micros);
+        if elapsed / 1_000_000 > 32_767 {
+            i32::MAX
+        } else {
+            i32::try_from((elapsed / 100) * 65_536 / 10_000).unwrap_or(i32::MAX)
+        }
+    }
+
     #[must_use]
     pub const fn job_clock(&self) -> JobClock {
         self.job_clock
@@ -1885,6 +2119,9 @@ impl World {
         self.stream_bufs.hash(&mut hasher);
         self.committed_write_streams.hash(&mut hasher);
         self.rng.hash(&mut hasher);
+        self.pdf_rng.hash(&mut hasher);
+        self.pdf_time_micros.hash(&mut hasher);
+        self.pdf_timer_origin_micros.hash(&mut hasher);
         self.job_clock.hash(&mut hasher);
         self.shell_escape_policy.hash(&mut hasher);
         self.inputs.hash(&mut hasher);
@@ -1898,6 +2135,9 @@ impl World {
             effect_pos: self.effect_pos(),
             stream_bufs: self.stream_bufs.clone(),
             rng: self.rng,
+            pdf_rng: self.pdf_rng.clone(),
+            pdf_time_micros: self.pdf_time_micros,
+            pdf_timer_origin_micros: self.pdf_timer_origin_micros,
             job_clock: self.job_clock,
             shell_escape_policy: self.shell_escape_policy,
             shell_escape_len: self.shell_escapes.len(),
@@ -1912,6 +2152,9 @@ impl World {
             effect_pos: snapshot.effect_pos,
             stream_bufs: snapshot.stream_bufs.clone(),
             rng: snapshot.rng,
+            pdf_rng: snapshot.pdf_rng.clone(),
+            pdf_time_micros: snapshot.pdf_time_micros,
+            pdf_timer_origin_micros: snapshot.pdf_timer_origin_micros,
             job_clock: snapshot.job_clock,
             shell_escape_policy: snapshot.shell_escape_policy,
             shell_escape_len: snapshot.shell_escape_len,
@@ -1936,6 +2179,9 @@ impl World {
             effect_pos,
             stream_bufs: cursor.stream_bufs.clone(),
             rng: cursor.rng,
+            pdf_rng: cursor.pdf_rng.clone(),
+            pdf_time_micros: cursor.pdf_time_micros,
+            pdf_timer_origin_micros: cursor.pdf_timer_origin_micros,
             job_clock: cursor.job_clock,
             shell_escape_policy: cursor.shell_escape_policy,
             shell_escape_len: cursor.shell_escape_len,
@@ -2030,12 +2276,23 @@ impl World {
         self.rng
     }
 
+    pub(crate) fn pdf_random_state(&self) -> (i32, usize, [i32; 55]) {
+        (self.pdf_rng.seed, self.pdf_rng.next, self.pdf_rng.values)
+    }
+
+    pub(crate) const fn pdf_timer_state(&self) -> (u64, u64) {
+        (self.pdf_time_micros, self.pdf_timer_origin_micros)
+    }
+
     #[must_use]
     pub(crate) fn snapshot(&self) -> WorldSnapshot {
         WorldSnapshot {
             effect_pos: self.effect_pos(),
             stream_bufs: self.stream_bufs.clone(),
             rng: self.rng,
+            pdf_rng: self.pdf_rng.clone(),
+            pdf_time_micros: self.pdf_time_micros,
+            pdf_timer_origin_micros: self.pdf_timer_origin_micros,
             job_clock: self.job_clock,
             shell_escape_policy: self.shell_escape_policy,
             input_len: self.inputs.len(),
@@ -2070,6 +2327,9 @@ impl World {
             .truncate((snapshot.effect_pos.raw() - self.effect_base.raw()) as usize);
         self.stream_bufs = snapshot.stream_bufs.clone();
         self.rng = snapshot.rng;
+        self.pdf_rng = snapshot.pdf_rng.clone();
+        self.pdf_time_micros = snapshot.pdf_time_micros;
+        self.pdf_timer_origin_micros = snapshot.pdf_timer_origin_micros;
         self.shell_escape_policy = snapshot.shell_escape_policy;
         self.inputs.truncate(snapshot.input_len);
         self.shell_escapes.truncate(snapshot.shell_escape_len);
@@ -2097,6 +2357,9 @@ impl World {
         self.effects = Arc::new(Vec::new());
         self.stream_bufs = snapshot.stream_bufs.clone();
         self.rng = snapshot.rng;
+        self.pdf_rng = snapshot.pdf_rng.clone();
+        self.pdf_time_micros = snapshot.pdf_time_micros;
+        self.pdf_timer_origin_micros = snapshot.pdf_timer_origin_micros;
         self.shell_escape_policy = snapshot.shell_escape_policy;
         self.inputs.truncate(snapshot.input_len);
         self.shell_escapes.truncate(snapshot.shell_escape_len);
@@ -2398,6 +2661,15 @@ fn system_clock_seconds() -> JobClock {
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs());
     unix_seconds_to_job_clock(seconds)
+}
+
+fn system_time_micros() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_micros()
+        .try_into()
+        .unwrap_or(u64::MAX)
 }
 
 fn unix_seconds_to_job_clock(seconds: u64) -> JobClock {

@@ -517,6 +517,57 @@ fn rng_snapshot_restores_sequence() {
 }
 
 #[test]
+fn pdftex_random_stream_matches_seeded_reference_sequence() {
+    let mut world = World::memory();
+    world.set_pdf_random_seed(1);
+    assert_eq!(world.pdf_random_seed(), 1);
+    assert_eq!(world.pdf_uniform_deviate(0), 0);
+    assert_eq!(world.pdf_uniform_deviate(1), 0);
+    assert_eq!(world.pdf_uniform_deviate(2), 1);
+    assert_eq!(world.pdf_uniform_deviate(10), 6);
+    assert_eq!(world.pdf_uniform_deviate(10), 5);
+    assert_eq!(world.pdf_uniform_deviate(-10), -4);
+    assert_eq!(world.pdf_normal_deviate(), 44_619);
+    assert_eq!(world.pdf_normal_deviate(), 31_254);
+
+    world.set_pdf_random_seed(-1);
+    assert_eq!(world.pdf_random_seed(), 1);
+    assert_eq!(world.pdf_uniform_deviate(10), 7);
+}
+
+#[test]
+fn pdftex_utility_state_rolls_back_with_world_snapshot() {
+    let mut world = World::memory();
+    world.set_pdf_random_seed(1);
+    world.set_pdf_time_micros(1_250_000);
+    world.reset_pdf_timer();
+    let snapshot = world.snapshot();
+
+    let random = world.pdf_uniform_deviate(10);
+    world.set_pdf_time_micros(2_250_000);
+    assert_eq!(world.pdf_elapsed_time(), 65_536);
+    world.set_shell_escape_policy(ShellEscapePolicy::Restricted);
+
+    world.rollback(&snapshot);
+    assert_eq!(world.pdf_uniform_deviate(10), random);
+    assert_eq!(world.pdf_elapsed_time(), 0);
+    assert_eq!(world.shell_escape_policy(), ShellEscapePolicy::Disabled);
+}
+
+#[test]
+fn pdftex_session_inputs_are_supplied_at_world_construction() {
+    let world = World::memory_with_pdftex_inputs(
+        JobClock::DEFAULT,
+        17,
+        2_500_000,
+        ShellEscapePolicy::Restricted,
+    );
+    assert_eq!(world.pdf_random_seed(), 17);
+    assert_eq!(world.pdf_elapsed_time(), 0);
+    assert_eq!(world.shell_escape_policy(), ShellEscapePolicy::Restricted);
+}
+
+#[test]
 fn shell_escape_is_record_only_and_disabled_by_default() {
     let mut world = World::memory();
 

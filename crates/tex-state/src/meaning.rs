@@ -114,6 +114,9 @@ pub enum InternalInteger {
     ETeXVersion,
     /// pdfTeX's numeric release identity (`1.40.x` -> `140`).
     PdfTeXVersion,
+    PdfElapsedTime,
+    PdfRandomSeed,
+    PdfShellEscape,
     CurrentGroupLevel,
     CurrentGroupType,
     CurrentIfLevel,
@@ -130,6 +133,9 @@ impl InternalInteger {
             Self::InputLineNumber => 1,
             Self::ETeXVersion => 2,
             Self::PdfTeXVersion => 9,
+            Self::PdfElapsedTime => 10,
+            Self::PdfRandomSeed => 11,
+            Self::PdfShellEscape => 12,
             Self::CurrentGroupLevel => 3,
             Self::CurrentGroupType => 4,
             Self::CurrentIfLevel => 5,
@@ -146,6 +152,9 @@ impl InternalInteger {
             1 => Some(Self::InputLineNumber),
             2 => Some(Self::ETeXVersion),
             9 => Some(Self::PdfTeXVersion),
+            10 => Some(Self::PdfElapsedTime),
+            11 => Some(Self::PdfRandomSeed),
+            12 => Some(Self::PdfShellEscape),
             3 => Some(Self::CurrentGroupLevel),
             4 => Some(Self::CurrentGroupType),
             5 => Some(Self::CurrentIfLevel),
@@ -254,6 +263,8 @@ pub enum ExpandablePrimitive {
     PdfFileDump,
     PdfMatch,
     PdfLastMatch,
+    PdfUniformDeviate,
+    PdfNormalDeviate,
 }
 
 impl ExpandablePrimitive {
@@ -339,6 +350,8 @@ impl ExpandablePrimitive {
             Self::PdfFileDump => 76,
             Self::PdfMatch => 77,
             Self::PdfLastMatch => 78,
+            Self::PdfUniformDeviate => 79,
+            Self::PdfNormalDeviate => 80,
         }
     }
 
@@ -424,6 +437,8 @@ impl ExpandablePrimitive {
             76 => Some(Self::PdfFileDump),
             77 => Some(Self::PdfMatch),
             78 => Some(Self::PdfLastMatch),
+            79 => Some(Self::PdfUniformDeviate),
+            80 => Some(Self::PdfNormalDeviate),
             _ => None,
         }
     }
@@ -662,6 +677,8 @@ pub enum UnexpandablePrimitive {
     PdfNoBuiltinToUnicode,
     /// A registered pdfTeX name whose semantics belong to a later parity issue.
     PdfTeXUnimplemented,
+    PdfResetTimer,
+    PdfSetRandomSeed,
 }
 
 impl UnexpandablePrimitive {
@@ -897,6 +914,8 @@ impl UnexpandablePrimitive {
             Self::PdfMapLine => 226,
             Self::PdfGlyphToUnicode => 227,
             Self::PdfNoBuiltinToUnicode => 228,
+            Self::PdfResetTimer => 229,
+            Self::PdfSetRandomSeed => 230,
         }
     }
 
@@ -1132,6 +1151,8 @@ impl UnexpandablePrimitive {
             226 => Some(Self::PdfMapLine),
             227 => Some(Self::PdfGlyphToUnicode),
             228 => Some(Self::PdfNoBuiltinToUnicode),
+            229 => Some(Self::PdfResetTimer),
+            230 => Some(Self::PdfSetRandomSeed),
             _ => None,
         }
     }

@@ -31,6 +31,7 @@ Use this crate for behavior that is defined before stomach execution sees an une
 - `src/pdf_strings.rs`: pdfTeX-compatible expanded byte-string conversion, escaping, hexadecimal decoding, and comparison.
 - `src/pdf_files.rs`: pdfTeX-compatible creation/file dates, virtual file enquiries, byte dumps, and MD5 hashing.
 - `src/pdf_regex.rs`: pdfTeX-compatible POSIX extended regular-expression matching and capture retrieval.
+- `src/pdf_random.rs`: pdfTeX-compatible deterministic uniform and normal random deviates.
 - `src/scan.rs`: reusable macro definition token scanning for `\def`/`\edef`-style callers.
 - `src/scan/tests.rs`: unit tests for macro definition token scanning.
 - `src/scan_dimen.rs`: expanded TeX dimension scanning, unit conversion, diagnostics, and internal-dimension reads.

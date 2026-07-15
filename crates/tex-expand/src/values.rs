@@ -634,6 +634,24 @@ where
             "140",
             cause_origin,
         )),
+        Meaning::InternalInteger(InternalInteger::PdfElapsedTime) => Ok(push_rendered_text(
+            stores,
+            ExpansionReplayKind::TheOutput,
+            &stores.pdf_elapsed_time().to_string(),
+            cause_origin,
+        )),
+        Meaning::InternalInteger(InternalInteger::PdfRandomSeed) => Ok(push_rendered_text(
+            stores,
+            ExpansionReplayKind::TheOutput,
+            &stores.pdf_random_seed().to_string(),
+            cause_origin,
+        )),
+        Meaning::InternalInteger(InternalInteger::PdfShellEscape) => Ok(push_rendered_text(
+            stores,
+            ExpansionReplayKind::TheOutput,
+            &stores.pdf_shell_escape_status().to_string(),
+            cause_origin,
+        )),
         Meaning::InternalInteger(InternalInteger::CurrentGroupLevel) => Ok(push_rendered_text(
             stores,
             ExpansionReplayKind::TheOutput,
@@ -869,6 +887,24 @@ pub(crate) fn record_meaning_value_dependency(
             None
         }
         Meaning::InternalInteger(InternalInteger::ETeXVersion | InternalInteger::PdfTeXVersion) => {
+            None
+        }
+        Meaning::InternalInteger(InternalInteger::PdfElapsedTime) => {
+            crate::record_dependency!(expansion, ReadDependency::Engine(ReadEngineField::PdfTimer));
+            None
+        }
+        Meaning::InternalInteger(InternalInteger::PdfRandomSeed) => {
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Engine(ReadEngineField::PdfRandom)
+            );
+            None
+        }
+        Meaning::InternalInteger(InternalInteger::PdfShellEscape) => {
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Engine(ReadEngineField::PdfShellEscape)
+            );
             None
         }
         Meaning::InternalInteger(InternalInteger::CurrentGroupLevel) => {

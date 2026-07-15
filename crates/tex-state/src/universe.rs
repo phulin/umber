@@ -200,6 +200,21 @@ pub trait ExpansionState {
     fn pdf_match_capture(&self, _index: u32) -> Option<(u32, &[u8])> {
         None
     }
+    fn pdf_elapsed_time(&self) -> i32 {
+        0
+    }
+    fn pdf_random_seed(&self) -> i32 {
+        0
+    }
+    fn pdf_shell_escape_status(&self) -> i32 {
+        0
+    }
+    fn pdf_uniform_deviate(&mut self, _bound: i32) -> i32 {
+        0
+    }
+    fn pdf_normal_deviate(&mut self) -> i32 {
+        0
+    }
     fn int_param(&self, param: IntParam) -> i32;
     /// Emits the e-TeX `\scantokens` pseudo-file boundary when tracing is enabled.
     fn trace_scantokens_boundary(&mut self, _opening: bool) {}
@@ -1530,9 +1545,11 @@ impl Universe {
         let scalars = StateHashFragment::from_measured_builder(
             WORLD_SCALARS_DOMAIN,
             StateHashComponent::WorldScalars,
-            3,
+            5,
             |projection| {
                 hash_rng_state(self.world.rng_state(), projection);
+                hash_pdf_random_state(&self.world, projection);
+                hash_pdf_timer_state(&self.world, projection);
                 hash_job_clock(self.world.job_clock(), projection);
                 hash_shell_escape_policy(self.world.shell_escape_policy(), projection);
             },
@@ -1790,6 +1807,33 @@ impl Universe {
     #[must_use]
     pub fn pdf_match_capture(&self, index: u32) -> Option<(u32, &[u8])> {
         self.pdf.match_capture(index)
+    }
+
+    #[must_use]
+    pub fn pdf_elapsed_time(&self) -> i32 {
+        self.world.pdf_elapsed_time()
+    }
+
+    #[must_use]
+    pub fn pdf_random_seed(&self) -> i32 {
+        self.world.pdf_random_seed()
+    }
+
+    #[must_use]
+    pub fn pdf_shell_escape_status(&self) -> i32 {
+        match self.world.shell_escape_policy() {
+            ShellEscapePolicy::Disabled => 0,
+            ShellEscapePolicy::Enabled => 1,
+            ShellEscapePolicy::Restricted => 2,
+        }
+    }
+
+    pub fn pdf_uniform_deviate(&mut self, bound: i32) -> i32 {
+        self.world.pdf_uniform_deviate(bound)
+    }
+
+    pub fn pdf_normal_deviate(&mut self) -> i32 {
+        self.world.pdf_normal_deviate()
     }
 
     /// Enables checkpointed PDF object allocation for this timeline.
@@ -4088,6 +4132,26 @@ impl ExpansionState for Universe {
         Self::pdf_match_capture(self, index)
     }
 
+    fn pdf_elapsed_time(&self) -> i32 {
+        Self::pdf_elapsed_time(self)
+    }
+
+    fn pdf_random_seed(&self) -> i32 {
+        Self::pdf_random_seed(self)
+    }
+
+    fn pdf_shell_escape_status(&self) -> i32 {
+        Self::pdf_shell_escape_status(self)
+    }
+
+    fn pdf_uniform_deviate(&mut self, bound: i32) -> i32 {
+        Self::pdf_uniform_deviate(self, bound)
+    }
+
+    fn pdf_normal_deviate(&mut self) -> i32 {
+        Self::pdf_normal_deviate(self)
+    }
+
     fn box_dimension(&self, index: u16, dimension: BoxDimension) -> Option<Scaled> {
         Self::box_dimension(self, index, dimension)
     }
@@ -4532,6 +4596,26 @@ impl ExpansionState for ExpansionContext<'_> {
         self.universe.pdf_match_capture(index)
     }
 
+    fn pdf_elapsed_time(&self) -> i32 {
+        self.universe.pdf_elapsed_time()
+    }
+
+    fn pdf_random_seed(&self) -> i32 {
+        self.universe.pdf_random_seed()
+    }
+
+    fn pdf_shell_escape_status(&self) -> i32 {
+        self.universe.pdf_shell_escape_status()
+    }
+
+    fn pdf_uniform_deviate(&mut self, bound: i32) -> i32 {
+        self.universe.pdf_uniform_deviate(bound)
+    }
+
+    fn pdf_normal_deviate(&mut self) -> i32 {
+        self.universe.pdf_normal_deviate()
+    }
+
     fn box_dimension(&self, index: u16, dimension: BoxDimension) -> Option<Scaled> {
         self.universe.box_dimension(index, dimension)
     }
@@ -4781,6 +4865,23 @@ fn hash_rng_state(rng: crate::world::RngState, hasher: &mut StateHasher) {
     }
 }
 
+fn hash_pdf_random_state(world: &World, hasher: &mut StateHasher) {
+    let (seed, next, values) = world.pdf_random_state();
+    hasher.tag(0x92);
+    hasher.i32(seed);
+    hasher.usize(next);
+    for value in values {
+        hasher.i32(value);
+    }
+}
+
+fn hash_pdf_timer_state(world: &World, hasher: &mut StateHasher) {
+    let (current, origin) = world.pdf_timer_state();
+    hasher.tag(0x93);
+    hasher.u64(current);
+    hasher.u64(origin);
+}
+
 fn hash_job_clock(clock: JobClock, hasher: &mut StateHasher) {
     hasher.tag(0x85);
     hasher.i32(clock.time);
@@ -4795,6 +4896,7 @@ fn hash_shell_escape_policy(policy: ShellEscapePolicy, hasher: &mut StateHasher)
     hasher.u8(match policy {
         ShellEscapePolicy::Disabled => 0,
         ShellEscapePolicy::Enabled => 1,
+        ShellEscapePolicy::Restricted => 2,
     });
 }
 

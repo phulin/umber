@@ -270,6 +270,14 @@ macro_rules! dispatch_match {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfLastMatch) => {
                 crate::pdf_regex::execute_last_match(input, stores, expansion, mode, call_context)
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfUniformDeviate) => {
+                crate::pdf_random::execute_uniform(
+                    input, stores, expansion, mode, call_context,
+                )
+            }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfNormalDeviate) => {
+                Ok(crate::pdf_random::execute_normal(stores, call_context))
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::ShellEscape) => {
                 Ok(push_rendered_text(
                     stores,
@@ -1406,6 +1414,8 @@ pub fn dispatch_expandable_opcode(opcode: ExpandableOpcode) -> Result<(), Expand
         | ExpandableOpcode::PdfFileDump
         | ExpandableOpcode::PdfMatch
         | ExpandableOpcode::PdfLastMatch
+        | ExpandableOpcode::PdfUniformDeviate
+        | ExpandableOpcode::PdfNormalDeviate
         | ExpandableOpcode::IfDefined
         | ExpandableOpcode::IfCsName
         | ExpandableOpcode::IfInCsName

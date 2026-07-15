@@ -3,7 +3,7 @@
 use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, IntParam, TokParam};
 use tex_state::ids::TokenListId;
-use tex_state::meaning::{Meaning, UnexpandablePrimitive};
+use tex_state::meaning::{InternalInteger, Meaning, UnexpandablePrimitive};
 use tex_state::scaled::Scaled;
 
 /// The exact 158-name layer obtained from the pinned `pdftex.web` source.
@@ -367,6 +367,21 @@ pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
     }
+    for (name, integer) in [
+        ("pdfelapsedtime", InternalInteger::PdfElapsedTime),
+        ("pdfrandomseed", InternalInteger::PdfRandomSeed),
+        ("pdfshellescape", InternalInteger::PdfShellEscape),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::InternalInteger(integer));
+    }
+    for (name, primitive) in [
+        ("pdfresettimer", UnexpandablePrimitive::PdfResetTimer),
+        ("pdfsetrandomseed", UnexpandablePrimitive::PdfSetRandomSeed),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+    }
     tex_expand::install_pdftex_expandable_primitives(stores);
     for &name in PDFTEX_PRIMITIVE_NAMES {
         let symbol = stores.intern(name);
@@ -416,7 +431,7 @@ mod tests {
     use tex_state::meaning::ExpandablePrimitive;
     use tex_state::meaning::MeaningFlags;
     use tex_state::token::{Catcode, Token};
-    use tex_state::{FileModificationDate, JobClock, World};
+    use tex_state::{FileModificationDate, JobClock, ShellEscapePolicy, World};
 
     #[test]
     fn source_derived_inventory_is_the_exact_pinned_158_name_set() {
@@ -725,6 +740,117 @@ mod tests {
         assert!(output.contains("bad=1->b"), "{output}");
         assert!(output.contains("Bad match number (-2)."), "{output}");
         assert!(output.contains("negative=1->b"), "{output}");
+    }
+
+    #[test]
+    fn pdftex_random_primitives_match_seeded_reference_sequence() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let output = crate::run_memory_with_stores(
+            concat!(
+                "\\pdfsetrandomseed 1 ",
+                "\\message{seed=\\the\\pdfrandomseed}",
+                "\\message{u0=\\pdfuniformdeviate0}",
+                "\\message{u1=\\pdfuniformdeviate1}",
+                "\\message{u2=\\pdfuniformdeviate2}",
+                "\\message{u10a=\\pdfuniformdeviate10}",
+                "\\message{u10b=\\pdfuniformdeviate10}",
+                "\\message{uneg=\\pdfuniformdeviate-10}",
+                "\\message{n1=\\pdfnormaldeviate}",
+                "\\message{n2=\\pdfnormaldeviate}",
+                "\\pdfsetrandomseed -1 ",
+                "\\message{negative-seed=\\the\\pdfrandomseed}",
+                "\\message{repeat=\\pdfuniformdeviate10}\\end",
+            ),
+            &mut stores,
+        )
+        .expect("seeded pdfTeX random sequence");
+        for expected in [
+            "seed=1",
+            "u0=0",
+            "u1=0",
+            "u2=1",
+            "u10a=6",
+            "u10b=5",
+            "uneg=-4",
+            "n1=44619",
+            "n2=31254",
+            "negative-seed=1",
+            "repeat=7",
+        ] {
+            assert!(output.contains(expected), "{expected}: {output}");
+        }
+    }
+
+    #[test]
+    fn pdftex_timer_reset_and_shell_status_use_world_inputs() {
+        let mut stores = Universe::default();
+        stores.world_mut().set_pdf_time_micros(1_250_000);
+        stores
+            .world_mut()
+            .set_shell_escape_policy(ShellEscapePolicy::Restricted);
+        prepare_pdftex_run_stores(&mut stores);
+        let output = crate::run_memory_with_stores(
+            concat!(
+                "\\message{elapsed=\\the\\pdfelapsedtime}",
+                "\\message{shell=\\the\\pdfshellescape}",
+                "\\pdfresettimer",
+                "\\message{reset=\\the\\pdfelapsedtime}\\end",
+            ),
+            &mut stores,
+        )
+        .expect("pdfTeX timer and shell enquiries");
+        assert!(output.contains("elapsed=81920"), "{output}");
+        assert!(output.contains("shell=2"), "{output}");
+        assert!(output.contains("reset=0"), "{output}");
+    }
+
+    #[test]
+    fn pdftex_utility_format_load_uses_the_new_world_session_inputs() {
+        let mut source = Universe::default();
+        prepare_pdftex_run_stores(&mut source);
+        source.world_mut().set_pdf_random_seed(1);
+        source.world_mut().set_pdf_time_micros(1_000_000);
+        source.world_mut().reset_pdf_timer();
+        let format = source.dump_format().expect("utility-free format image");
+
+        let mut world = World::memory();
+        world.set_pdf_random_seed(9);
+        world.set_pdf_time_micros(2_000_000);
+        world.set_shell_escape_policy(ShellEscapePolicy::Enabled);
+        let mut loaded = Universe::from_format(world, &format).expect("load with fresh World");
+        crate::install_pdftex_format_primitives(&mut loaded);
+        let output = crate::run_memory_with_stores(
+            concat!(
+                "\\message{seed=\\the\\pdfrandomseed}",
+                "\\message{elapsed=\\the\\pdfelapsedtime}",
+                "\\message{shell=\\the\\pdfshellescape}\\end",
+            ),
+            &mut loaded,
+        )
+        .expect("fresh World utility inputs");
+        assert!(output.contains("seed=9"), "{output}");
+        assert!(output.contains("elapsed=131072"), "{output}");
+        assert!(output.contains("shell=1"), "{output}");
+    }
+
+    #[test]
+    fn pdftex_random_scanners_report_and_recover_bounds() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let output = crate::run_memory_with_stores(
+            concat!(
+                "\\pdfsetrandomseed 999999999999 ",
+                "\\message{seed=\\the\\pdfrandomseed}",
+                "\\message{missing=\\pdfuniformdeviate\\relax}\\end",
+            ),
+            &mut stores,
+        )
+        .expect("recover random scanner diagnostics");
+        assert!(output.contains("Number too big"), "{output}");
+        assert!(output.contains("seed=2147483647"), "{output}");
+        assert!(output.contains("Missing number"), "{output}");
+        assert!(output.contains("missing=0"), "{output}");
     }
 
     fn seed_pdftex_file_facts(stores: &mut Universe) {

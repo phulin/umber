@@ -54,6 +54,7 @@ pub mod scan_int;
 mod conditionals;
 mod dispatch;
 mod pdf_files;
+mod pdf_random;
 mod pdf_regex;
 mod pdf_strings;
 mod primitives;
@@ -402,6 +403,14 @@ pub fn install_pdftex_expandable_primitives(stores: &mut Universe) {
             "pdflastmatch",
             tex_state::meaning::ExpandablePrimitive::PdfLastMatch,
         ),
+        (
+            "pdfuniformdeviate",
+            tex_state::meaning::ExpandablePrimitive::PdfUniformDeviate,
+        ),
+        (
+            "pdfnormaldeviate",
+            tex_state::meaning::ExpandablePrimitive::PdfNormalDeviate,
+        ),
     ] {
         stores.install_primitive_meaning(name, Meaning::ExpandablePrimitive(primitive));
     }
@@ -487,6 +496,9 @@ pub enum ReadEngineField {
     ParShape,
     PenaltyArrays,
     InteractionMode,
+    PdfTimer,
+    PdfRandom,
+    PdfShellEscape,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -611,6 +623,8 @@ pub enum ExpandableOpcode {
     PdfFileDump,
     PdfMatch,
     PdfLastMatch,
+    PdfUniformDeviate,
+    PdfNormalDeviate,
     IfDefined,
     IfCsName,
     IfInCsName,

@@ -50,6 +50,27 @@ fn pdf_match_captures_are_checkpointed_and_hashed() {
 }
 
 #[test]
+fn pdftex_utility_mutations_replay_with_identical_hashes() {
+    let world = World::memory_with_pdftex_inputs(
+        crate::JobClock::DEFAULT,
+        1,
+        1_000_000,
+        crate::ShellEscapePolicy::Disabled,
+    );
+    let mut universe = Universe::with_world(world);
+    let first = universe.snapshot();
+    let random = universe.pdf_uniform_deviate(10);
+    universe.world_mut().set_pdf_time_micros(2_000_000);
+    let changed = universe.snapshot().state_hash();
+    assert_ne!(changed, first.state_hash());
+
+    universe.rollback(&first);
+    assert_eq!(universe.pdf_uniform_deviate(10), random);
+    universe.world_mut().set_pdf_time_micros(2_000_000);
+    assert_eq!(universe.snapshot().state_hash(), changed);
+}
+
+#[test]
 fn bounded_scalar_decode_does_not_validate_the_remaining_source_suffix() {
     assert_eq!(utf8_scalar_len_at(&[b'x', 0xff], 0), Some(1));
     assert_eq!(utf8_scalar_len_at(&[0xc3, 0xa9, 0xff], 0), Some(2));
