@@ -606,6 +606,23 @@ struct TokenListInputFrame {
     replay_marker: Option<TokenListReplayMarker>,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct TokenListRetirement {
+    replay_kind: TokenListReplayKind,
+    macro_invocation: OriginId,
+    parent_macro_invocation: OriginId,
+}
+
+impl From<&TokenListInputFrame> for TokenListRetirement {
+    fn from(frame: &TokenListInputFrame) -> Self {
+        Self {
+            replay_kind: frame.replay_kind,
+            macro_invocation: frame.macro_invocation,
+            parent_macro_invocation: frame.parent_macro_invocation,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct MacroLiteralSpan {
     token_list: TokenListId,
@@ -671,6 +688,14 @@ impl StableFrames {
             self.slots.pop();
         }
         frame
+    }
+    fn discard(&mut self, index: usize) {
+        self.active -= 1;
+        let frame = self.slots[index].take().expect("input frame slot is live");
+        drop(frame);
+        while self.slots.last().is_some_and(Option::is_none) {
+            self.slots.pop();
+        }
     }
     fn len(&self) -> usize {
         self.active
@@ -1889,10 +1914,8 @@ impl InputStack {
                 }
             };
             if exhausted {
-                let removed = self.remove_frame(frame_index);
-                if let InputFrame::TokenList(frame) = removed {
-                    self.retire_token_list_frame(frame);
-                }
+                let frame = self.discard_token_list_frame(frame_index);
+                self.retire_token_list_frame(frame);
                 continue;
             }
             let argument = match &mut self.frames[frame_index] {
@@ -2282,7 +2305,7 @@ impl InputStack {
                 .then_some(self.active_macro_invocation))
     }
 
-    fn retire_token_list_frame(&mut self, frame: TokenListInputFrame) {
+    fn retire_token_list_frame(&mut self, frame: TokenListRetirement) {
         if frame.replay_kind == TokenListReplayKind::AlignmentUTemplate
             && let Some(alignment) = self.alignment_inputs.last_mut()
             && alignment.align_state > 500_000
@@ -2620,14 +2643,12 @@ impl InputStack {
                             return Ok(Some(token.packed()));
                         }
                         None => {
-                            let removed = self.remove_frame(frame_index);
-                            if let InputFrame::TokenList(frame) = removed {
-                                let closes_scantokens =
-                                    frame.replay_kind == TokenListReplayKind::ScantokensEveryEof;
-                                self.retire_token_list_frame(frame);
-                                if closes_scantokens {
-                                    stores.trace_scantokens_boundary(false);
-                                }
+                            let frame = self.discard_token_list_frame(frame_index);
+                            let closes_scantokens =
+                                frame.replay_kind == TokenListReplayKind::ScantokensEveryEof;
+                            self.retire_token_list_frame(frame);
+                            if closes_scantokens {
+                                stores.trace_scantokens_boundary(false);
                             }
                         }
                     };
@@ -2807,14 +2828,12 @@ impl InputStack {
                             )));
                         }
                         None => {
-                            let removed = self.remove_frame(frame_index);
-                            if let InputFrame::TokenList(frame) = removed {
-                                let closes_scantokens =
-                                    frame.replay_kind == TokenListReplayKind::ScantokensEveryEof;
-                                self.retire_token_list_frame(frame);
-                                if closes_scantokens {
-                                    stores.trace_scantokens_boundary(false);
-                                }
+                            let frame = self.discard_token_list_frame(frame_index);
+                            let closes_scantokens =
+                                frame.replay_kind == TokenListReplayKind::ScantokensEveryEof;
+                            self.retire_token_list_frame(frame);
+                            if closes_scantokens {
+                                stores.trace_scantokens_boundary(false);
                             }
                         }
                     };
@@ -2918,7 +2937,7 @@ impl InputStack {
                             return Ok(Some(ExpansionToken::new(token, true)));
                         }
                         None => {
-                            self.remove_frame(frame_index);
+                            self.discard_token_list_frame(frame_index);
                         }
                     };
                 }
@@ -3008,10 +3027,8 @@ impl InputStack {
                 if frame.token_list == token_list && frame.replay_kind == replay_kind
         );
         if matches {
-            let removed = self.remove_frame(frame_index);
-            if let InputFrame::TokenList(frame) = removed {
-                self.retire_token_list_frame(frame);
-            }
+            let frame = self.discard_token_list_frame(frame_index);
+            self.retire_token_list_frame(frame);
         }
         matches
     }
@@ -3030,10 +3047,8 @@ impl InputStack {
             .map(|(index, _)| index)
             .collect::<Vec<_>>();
         for index in indices.into_iter().rev() {
-            let removed = self.remove_frame(index);
-            if let InputFrame::TokenList(frame) = removed {
-                self.retire_token_list_frame(frame);
-            }
+            let frame = self.discard_token_list_frame(index);
+            self.retire_token_list_frame(frame);
         }
         true
     }
@@ -3097,10 +3112,8 @@ impl InputStack {
             .collect::<Vec<_>>();
         for index in retire.into_iter().rev() {
             if matches!(self.frames[index], InputFrame::TokenList(_)) {
-                let removed = self.remove_frame(index);
-                if let InputFrame::TokenList(frame) = removed {
-                    self.retire_token_list_frame(frame);
-                }
+                let frame = self.discard_token_list_frame(index);
+                self.retire_token_list_frame(frame);
             }
         }
         true
@@ -3148,6 +3161,20 @@ impl InputStack {
             indices.remove(position);
         }
         self.frames.remove(index)
+    }
+
+    fn discard_token_list_frame(&mut self, index: usize) -> TokenListRetirement {
+        let InputFrame::TokenList(frame) = &self.frames[index] else {
+            panic!("token-list discard requires a token-list frame");
+        };
+        let retirement = TokenListRetirement::from(frame);
+        if self.token_frame_indices.last() == Some(&index) {
+            self.token_frame_indices.pop();
+        } else if let Ok(position) = self.token_frame_indices.binary_search(&index) {
+            self.token_frame_indices.remove(position);
+        }
+        self.frames.discard(index);
+        retirement
     }
 }
 
