@@ -308,6 +308,7 @@ fn write_dictionary_entries(
         }
         write_value(writer.insert(Name(key.as_bytes())), value)?;
     }
+    writer.raw_entries(dictionary.raw_entries());
     Ok(())
 }
 

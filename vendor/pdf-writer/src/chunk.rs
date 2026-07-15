@@ -731,4 +731,17 @@ mod tests {
         pdf.object_stream(Ref::new(2)).object(Ref::new(1)).primitive(Null);
         pdf.finish();
     }
+
+    #[test]
+    fn dictionary_raw_entries_stay_inside_writer_framing() {
+        let mut pdf = Pdf::new();
+        let mut dict = pdf.indirect(Ref::new(1)).dict();
+        dict.pair(Name(b"Typed"), true);
+        dict.raw_entries(b"/Extension << /Value 7 >>");
+        dict.finish();
+        let bytes = pdf.finish();
+        assert!(bytes
+            .windows(b"/Typed true\n  /Extension << /Value 7 >>".len())
+            .any(|window| window == b"/Typed true\n  /Extension << /Value 7 >>"));
+    }
 }

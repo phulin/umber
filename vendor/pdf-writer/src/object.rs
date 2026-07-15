@@ -1003,6 +1003,28 @@ impl<'a> Dict<'a> {
         self
     }
 
+    /// Append caller-supplied dictionary entries verbatim.
+    ///
+    /// This is intended for PDF extension dictionaries whose keys and values
+    /// are deliberately outside this crate's typed writer surface. The bytes
+    /// must contain complete `name value` pairs, without surrounding `<< >>`.
+    pub fn raw_entries(&mut self, entries: &[u8]) -> &mut Self {
+        if entries.is_empty() {
+            return self;
+        }
+        self.len += 1;
+        if self.settings.pretty {
+            self.buf.push(b'\n');
+            for _ in 0..self.indent {
+                self.buf.push(b' ');
+            }
+        } else if !self.buf.last().is_some_and(u8::is_ascii_whitespace) {
+            self.buf.push(b' ');
+        }
+        self.buf.extend(entries);
+        self
+    }
+
     /// Convert into a typed version.
     #[inline]
     pub fn typed<T>(self) -> TypedDict<'a, T> {

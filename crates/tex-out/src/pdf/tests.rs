@@ -170,7 +170,7 @@ fn page_resources_contents_and_parent_are_structurally_validated() {
         let PdfObject::Value(PdfValue::Dictionary(page)) = &mut objects[2].object else {
             panic!("page dictionary")
         };
-        page.0.insert(key.into(), value);
+        page.entries.insert(key.into(), value);
         assert_eq!(
             UnvalidatedPdfDocument {
                 version: sample.version(),

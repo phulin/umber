@@ -120,6 +120,67 @@ fn compact_serialization_is_deterministic_and_independently_parseable() {
 }
 
 #[test]
+fn raw_page_entries_are_hashed_validated_and_serialized_verbatim() {
+    let mut input = sample_input(&[1, 2, 3, 4, 5]);
+    let page = input
+        .objects
+        .iter_mut()
+        .find(|object| object.id == id(3))
+        .expect("page object");
+    let PdfObject::Value(PdfValue::Dictionary(page)) = &mut page.object else {
+        panic!("page dictionary");
+    };
+    let mut raw_page = dictionary([
+        ("Type", PdfValue::Name("Page".into())),
+        ("Parent", PdfValue::Reference(id(2))),
+        ("Resources", PdfValue::Reference(id(5))),
+        ("Contents", PdfValue::Reference(id(4))),
+    ]);
+    raw_page.set_raw_entries(b"/MediaBox [1 2 300 400] /Rotate 90".to_vec());
+    *page = raw_page;
+
+    let document = input.validate().expect("raw MediaBox satisfies page graph");
+    let with_raw_hash = document.semantic_hash();
+    let bytes = document.to_pdf_bytes().expect("serialize raw entries");
+    assert!(
+        bytes
+            .windows(b"/MediaBox [1 2 300 400] /Rotate 90".len())
+            .any(|window| window == b"/MediaBox [1 2 300 400] /Rotate 90")
+    );
+    let parsed = lopdf::Document::load_mem(&bytes).expect("raw entries form valid PDF syntax");
+    let page = parsed
+        .get_object((3, 0))
+        .expect("page")
+        .as_dict()
+        .expect("dict");
+    assert_eq!(
+        page.get(b"Rotate")
+            .expect("rotate")
+            .as_i64()
+            .expect("integer rotation"),
+        90
+    );
+
+    let mut changed = sample_input(&[1, 2, 3, 4, 5]);
+    let page = changed
+        .objects
+        .iter_mut()
+        .find(|object| object.id == id(3))
+        .expect("page object");
+    let PdfObject::Value(PdfValue::Dictionary(page)) = &mut page.object else {
+        panic!("page dictionary");
+    };
+    page.set_raw_entries(b"/Rotate 90".to_vec());
+    assert_ne!(
+        with_raw_hash,
+        changed
+            .validate()
+            .expect("valid changed sample")
+            .semantic_hash()
+    );
+}
+
+#[test]
 fn configured_version_and_pretty_policy_are_deterministic() {
     let mut input = sample_input(&[1, 2, 3, 4, 5]);
     input.version = PdfVersion::new(1, 7).expect("supported version");

@@ -142,9 +142,12 @@ impl From<&str> for PdfName {
     }
 }
 
-/// A key-ordered PDF dictionary.
+/// A key-ordered PDF dictionary with an optional verbatim extension fragment.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct PdfDictionary(BTreeMap<PdfName, PdfValue>);
+pub struct PdfDictionary {
+    entries: BTreeMap<PdfName, PdfValue>,
+    raw_entries: Vec<u8>,
+}
 
 impl PdfDictionary {
     #[must_use]
@@ -159,7 +162,7 @@ impl PdfDictionary {
         value: PdfValue,
     ) -> Result<(), PdfModelError> {
         let key = key.into();
-        if self.0.insert(key.clone(), value).is_some() {
+        if self.entries.insert(key.clone(), value).is_some() {
             return Err(PdfModelError::DuplicateDictionaryKey(key));
         }
         Ok(())
@@ -167,21 +170,45 @@ impl PdfDictionary {
 
     #[must_use]
     pub fn get(&self, key: &[u8]) -> Option<&PdfValue> {
-        self.0.get(&PdfName::new(key))
+        self.entries.get(&PdfName::new(key))
     }
 
     pub fn iter(&self) -> impl ExactSizeIterator<Item = (&PdfName, &PdfValue)> {
-        self.0.iter()
+        self.entries.iter()
+    }
+
+    /// Replaces the verbatim dictionary-entry fragment.
+    ///
+    /// The bytes must contain complete `name value` pairs without the
+    /// surrounding `<< >>`. This escape hatch intentionally mirrors pdfTeX's
+    /// token-list attributes, which are copied into PDF dictionaries without
+    /// parsing.
+    pub fn set_raw_entries(&mut self, entries: impl Into<Vec<u8>>) {
+        self.raw_entries = entries.into();
+    }
+
+    #[must_use]
+    pub fn raw_entries(&self) -> &[u8] {
+        &self.raw_entries
+    }
+
+    #[must_use]
+    pub fn raw_entries_contain(&self, needle: &[u8]) -> bool {
+        !needle.is_empty()
+            && self
+                .raw_entries
+                .windows(needle.len())
+                .any(|window| window == needle)
     }
 
     #[must_use]
     pub fn len(&self) -> usize {
-        self.0.len()
+        self.entries.len()
     }
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.entries.is_empty() && self.raw_entries.is_empty()
     }
 }
 
@@ -481,10 +508,11 @@ fn validate_page(
     if reference_value(page.get(b"Parent")) != Some(pages_id) {
         return Err(PdfModelError::PageParentInvalid(page_id));
     }
-    let media_box_valid = matches!(
-        page.get(b"MediaBox"),
-        Some(PdfValue::Array(values)) if values.len() == 4 && values.iter().all(is_number)
-    );
+    let media_box_valid = page.raw_entries_contain(b"/MediaBox")
+        || matches!(
+            page.get(b"MediaBox"),
+            Some(PdfValue::Array(values)) if values.len() == 4 && values.iter().all(is_number)
+        );
     if !media_box_valid {
         return Err(PdfModelError::PageMediaBoxInvalid(page_id));
     }
@@ -606,6 +634,7 @@ fn hash_dictionary(dictionary: &PdfDictionary, hasher: &mut CanonicalHasher) {
         hasher.bytes(key.as_bytes());
         hash_value(value, hasher);
     }
+    hasher.bytes(dictionary.raw_entries());
 }
 
 struct CanonicalHasher(Sha256);
