@@ -471,7 +471,11 @@ fn enabled_pretolerance_memo_preserves_end_to_end_state_effects_and_dvi() {
         }
         let source = r"\hsize=20pt \pretolerance=10000
             identical paragraph text\par
-            \prevgraf=0 identical paragraph text\par
+            \prevgraf=0 \interlinepenalty=111 \clubpenalty=222 \widowpenalty=333
+            \hbadness=0 \hfuzz=1pt \mag=1200
+            identical paragraph text\par
+            \prevgraf=0 \language=7 \lefthyphenmin=1 \righthyphenmin=1
+            identical paragraph text\par
             \vfill\eject\end";
         let mut input = InputStack::new(MemoryInput::new(source));
         let stats = Executor::new()
@@ -489,6 +493,10 @@ fn enabled_pretolerance_memo_preserves_end_to_end_state_effects_and_dvi() {
     assert_eq!(memo_hash, cold_hash);
     assert_eq!(memo_effects, cold_effects);
     assert!(memo.hits >= 1, "expected the repeated paragraph to hit");
+    assert!(
+        memo.misses >= 2,
+        "the initial and language-mutated paragraphs must miss"
+    );
 }
 
 #[test]
