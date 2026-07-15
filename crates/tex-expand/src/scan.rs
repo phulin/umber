@@ -418,7 +418,7 @@ where
                 Token::Char {
                     cat: Catcode::Parameter,
                     ..
-                }
+                } | Token::Param(_)
             )
         {
             push_scanned_token(&mut builder, &mut origins, traced, token);
@@ -441,6 +441,9 @@ where
                     traced,
                     Token::param(token_digit(token).expect("digit token was matched")),
                 ),
+                Token::Param(slot @ 1..=9) => {
+                    push_scanned_token(&mut builder, &mut origins, traced, Token::param(slot))
+                }
                 _ => {
                     return Err(ScanToksError::InvalidParameterTokenInReplacementText {
                         context: traced,
@@ -958,6 +961,9 @@ fn scan_replacement_text(
                     traced,
                     Token::param(token_digit(token).expect("digit token was matched")),
                 ),
+                Token::Param(slot @ 1..=9) => {
+                    push_scanned_token(&mut builder, &mut origins, traced, Token::param(slot))
+                }
                 _ => {
                     return Err(ScanToksError::InvalidParameterTokenInReplacementText {
                         context: traced,

@@ -1,5 +1,5 @@
 use super::{ScanToksError, scan_toks, scan_toks_expanded, scan_toks_expanded_with_driver};
-use tex_lex::{InputStack, MemoryInput};
+use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
 use tex_state::Universe;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, UnexpandablePrimitive};
@@ -349,6 +349,65 @@ fn expanded_definition_does_not_expand_the_token_register_contents() {
     assert_eq!(
         stores.tokens(scanned.replacement_text()),
         &[Token::Cs(macro_cs.symbol())]
+    );
+}
+
+#[test]
+fn expanded_definition_copies_parameter_tokens_from_token_register() {
+    let mut stores = Universe::new();
+    let the = stores.intern("the");
+    let toks = stores.intern("toks");
+    stores.set_meaning(the, Meaning::ExpandablePrimitive(ExpandablePrimitive::The));
+    stores.set_meaning(
+        toks,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks),
+    );
+    let contents = stores.intern_token_list(&[Token::param(1)]);
+    stores.set_toks(4, contents);
+    let mut input = InputStack::new(MemoryInput::new("{\\the\\toks4}"));
+    let context =
+        TracedTokenWord::pack(Token::Cs(stores.intern("xdef").symbol()), OriginId::UNKNOWN);
+
+    let scanned = scan_toks_expanded_with_driver(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        MeaningFlags::EMPTY,
+        context,
+        &mut ExpansionContext::new("texput"),
+    )
+    .expect("parameter tokens from token registers should be copied verbatim");
+
+    assert_eq!(
+        stores.tokens(scanned.replacement_text()),
+        &[Token::param(1)]
+    );
+}
+
+#[test]
+fn definition_accepts_internal_parameter_after_parameter_marker() {
+    let mut stores = Universe::new();
+    let replay = stores.intern_token_list(&[
+        char_token('{', Catcode::BeginGroup),
+        char_token('#', Catcode::Parameter),
+        Token::param(1),
+        char_token('}', Catcode::EndGroup),
+    ]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list(replay, TokenListReplayKind::Inserted);
+    let context =
+        TracedTokenWord::pack(Token::Cs(stores.intern("def").symbol()), OriginId::UNKNOWN);
+
+    let scanned = scan_toks(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        MeaningFlags::EMPTY,
+        context,
+    )
+    .expect("an internal parameter token is a valid parameter follower");
+
+    assert_eq!(
+        stores.tokens(scanned.replacement_text()),
+        &[Token::param(1)]
     );
 }
 
