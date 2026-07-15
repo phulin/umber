@@ -45,6 +45,14 @@ hash. A format may be dumped with an enabled but empty ledger; any committed
 PDF page makes the format ineligible, and the ledger itself is omitted from
 the format image.
 
+Each page receipt also captures the page-local `\pdfhorigin`, `\pdfvorigin`,
+`\pdfpagewidth`, `\pdfpageheight`, `\pdfpageattr`, and
+`\pdfpageresources` values. Finalization reads `\pdfpagesattr` from the final
+document state, matching pdfTeX's page-tree scope, while the PK bitmap mode is
+fixed by the first PDF page. Explicit nonzero page dimensions win; zero
+dimensions fall back to the shipped box extent plus twice the corresponding
+origin and TeX offset. Content coordinates consume the captured origins.
+
 ## Detached structural model
 
 The detached model represents PDF values without text formatting ambiguity:
@@ -52,6 +60,12 @@ null, booleans, signed integers, normalized fixed-point numbers, byte names,
 byte strings, arrays, dictionaries, indirect references, and streams.
 Dictionaries are key-ordered. Stream length and structural trailer fields are
 writer-owned, so callers cannot inject conflicting values.
+The dictionary model additionally carries one semantically hashed verbatim
+entry fragment for pdfTeX extension attributes. These bytes are intentionally
+not parsed: pdfTeX copies token-list attributes directly into dictionaries.
+Typed required entries remain validated, except that a raw `/MediaBox`
+suppresses and satisfies the automatically generated page box just as it does
+in pdfTeX.
 
 An unvalidated document accepts indirect objects in arbitrary input order.
 Validation sorts them by identity and rejects duplicate identities, dangling
@@ -98,7 +112,11 @@ through `pdf_writer`. None of these byte policies change semantic identity.
 The selected 0.15.0 source fork is path-pinned in the workspace manifest and
 lockfile, retains both upstream licenses, and records its crates.io checksum
 and modifications in `vendor/pdf-writer/PROVENANCE.md`. It is upgraded only
-with deterministic-byte and fixture review. `pdf_writer`
+with deterministic-byte and fixture review. Its small extension adds typed
+object-stream construction and compressed-object registration so all PDF and
+xref bytes remain owned by `pdf_writer`. It also exposes a dictionary-entry
+escape hatch that keeps pdfTeX's verbatim attribute fragments inside the
+crate-owned dictionary framing. `pdf_writer`
 supports positive signed-32-bit references and signed-32-bit integers; the
 adapter preflights the broader detached types and returns typed range errors
 instead of entering a panicking crate path. All output remains private until

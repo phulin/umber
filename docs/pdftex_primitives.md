@@ -58,9 +58,9 @@ oracle-backed test. Every name in a missing row is missing.
 
 | Family (source registration block) | Count | Status | Primitive names |
 | --- | ---: | --- | --- |
-| PDF token-list parameters | 4 | partial (state done) | `\pdfpagesattr`, `\pdfpageattr`, `\pdfpageresources`, `\pdfpkmode` |
+| PDF token-list parameters | 4 | done | `\pdfpagesattr`, `\pdfpageattr`, `\pdfpageresources`, `\pdfpkmode` |
 | PDF integer parameters | 38 | partial (output policy done; remaining state only) | `\pdfoutput`, `\pdfcompresslevel`, `\pdfobjcompresslevel`, `\pdfdecimaldigits`, `\pdfmovechars`, `\pdfimageresolution`, `\pdfpkresolution`, `\pdfuniqueresname`, `\pdfoptionpdfminorversion`, `\pdfoptionalwaysusepdfpagebox`, `\pdfoptionpdfinclusionerrorlevel`, `\pdfmajorversion`, `\pdfminorversion`, `\pdfforcepagebox`, `\pdfpagebox`, `\pdfinclusionerrorlevel`, `\pdfgamma`, `\pdfimagegamma`, `\pdfimagehicolor`, `\pdfimageapplygamma`, `\pdfadjustspacing`, `\pdfprotrudechars`, `\pdftracingfonts`, `\pdfadjustinterwordglue`, `\pdfprependkern`, `\pdfappendkern`, `\pdfgentounicode`, `\pdfdraftmode`, `\pdfinclusioncopyfonts`, `\pdfsuppresswarningdupdest`, `\pdfsuppresswarningdupmap`, `\pdfsuppresswarningpagegroup`, `\pdfinfoomitdate`, `\pdfsuppressptexinfo`, `\pdfomitcharset`, `\pdfomitinfodict`, `\pdfomitprocset`, `\pdfptexuseunderscore` |
-| PDF dimension parameters | 13 | partial (state done) | `\pdfhorigin`, `\pdfvorigin`, `\pdfpagewidth`, `\pdfpageheight`, `\pdflinkmargin`, `\pdfdestmargin`, `\pdfthreadmargin`, `\pdffirstlineheight`, `\pdflastlinedepth`, `\pdfeachlineheight`, `\pdfeachlinedepth`, `\pdfignoreddimen`, `\pdfpxdimen` |
+| PDF dimension parameters | 13 | done | `\pdfhorigin`, `\pdfvorigin`, `\pdfpagewidth`, `\pdfpageheight`, `\pdflinkmargin`, `\pdfdestmargin`, `\pdfthreadmargin`, `\pdffirstlineheight`, `\pdflastlinedepth`, `\pdfeachlineheight`, `\pdfeachlinedepth`, `\pdfignoreddimen`, `\pdfpxdimen` |
 | Font construction and primitive recovery | 3 | missing | `\letterspacefont`, `\pdfcopyfont`, `\pdfprimitive` |
 | Read-only integer enquiries | 14 | missing | `\pdftexversion`, `\pdflastobj`, `\pdflastxform`, `\pdflastximage`, `\pdflastximagepages`, `\pdflastannot`, `\pdflastxpos`, `\pdflastypos`, `\pdfretval`, `\pdflastximagecolordepth`, `\pdfelapsedtime`, `\pdfshellescape`, `\pdfrandomseed`, `\pdflastlink` |
 | Expandable conversions and enquiries | 27 | partial (1 done) | `\expanded` (done); `\pdftexrevision`, `\pdftexbanner`, `\pdffontname`, `\pdffontobjnum`, `\pdffontsize`, `\pdfpageref`, `\leftmarginkern`, `\rightmarginkern`, `\pdfxformname`, `\pdfescapestring`, `\pdfescapename`, `\pdfescapehex`, `\pdfunescapehex`, `\pdfcreationdate`, `\pdffilemoddate`, `\pdffilesize`, `\pdfmdfivesum`, `\pdffiledump`, `\pdfmatch`, `\pdflastmatch`, `\pdfstrcmp`, `\pdfcolorstackinit`, `\pdfuniformdeviate`, `\pdfnormaldeviate`, `\pdfinsertht`, `\pdfximagebbox` |
@@ -93,6 +93,15 @@ at `tests/corpus/tex_exec/pdf_output_policy` covers defaults, grouping, range
 recovery, and diagnostics; focused hermetic tests cover the three shared alias
 cells, fatal post-write changes, PDF headers and object-compression levels,
 decimal rounding, and unchanged DVI output.
+
+The four PDF token parameters follow pdfTeX's distinct consumption scopes:
+`\pdfpageattr` and `\pdfpageresources` are captured in each successful
+shipout receipt, `\pdfpagesattr` is read when the final page-tree root is
+assembled, and `\pdfpkmode` is fixed when PDF output is first initialized.
+The 13 dimensions share the ordinary dimension scanner and display path.
+`px` uses the live `\pdfpxdimen` only in pdfTeX mode; line height/depth
+parameters apply during paragraph materialization with first/last overrides
+of the each-line values and `\pdfignoreddimen` as the inactive sentinel.
 
 ## Compatibility and alias decisions
 
