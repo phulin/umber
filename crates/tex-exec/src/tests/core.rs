@@ -1686,6 +1686,36 @@ fn box_dimension_writes_are_readable_by_the() {
 }
 
 #[test]
+fn box_dimension_writes_mutate_the_visible_box_binding() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\setbox0=\\hbox{} {\\ht0=12pt}\\setbox1=\\hbox{} {\\setbox1=\\hbox{}\\global\\ht1=9pt}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("box dimension grouping case executes");
+
+    assert_eq!(
+        stores
+            .box_dimension(0, tex_state::BoxDimension::Height)
+            .expect("inherited box survives")
+            .raw(),
+        12 * tex_state::scaled::Scaled::UNITY,
+        "an inherited box is mutated across the current group"
+    );
+    assert_eq!(
+        stores
+            .box_dimension(1, tex_state::BoxDimension::Height)
+            .expect("outer box is restored")
+            .raw(),
+        0,
+        "a dimension prefix does not globalize a locally bound box"
+    );
+}
+
+#[test]
 fn uncopy_primitives_unbox_without_clearing_registers() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

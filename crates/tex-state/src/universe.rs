@@ -2935,20 +2935,16 @@ impl Universe {
     }
 
     pub fn set_box_dimension(&mut self, index: u16, dimension: BoxDimension, value: Scaled) {
-        self.set_box_dimension_impl(index, dimension, value, false);
+        self.set_box_dimension_impl(index, dimension, value);
     }
 
     pub fn set_box_dimension_global(&mut self, index: u16, dimension: BoxDimension, value: Scaled) {
-        self.set_box_dimension_impl(index, dimension, value, true);
+        // TeX82's `alter_box_dimen` mutates the visible box node directly;
+        // assignment prefixes do not change the binding level of the box.
+        self.set_box_dimension_impl(index, dimension, value);
     }
 
-    fn set_box_dimension_impl(
-        &mut self,
-        index: u16,
-        dimension: BoxDimension,
-        value: Scaled,
-        global: bool,
-    ) {
+    fn set_box_dimension_impl(&mut self, index: u16, dimension: BoxDimension, value: Scaled) {
         let Some(id) = self.box_reg(index) else {
             return;
         };
@@ -2959,11 +2955,7 @@ impl Universe {
             return;
         }
         let rewritten = self.freeze_node_list(&[node]);
-        if global {
-            self.set_box_reg_global(index, rewritten);
-        } else {
-            self.set_box_reg(index, rewritten);
-        }
+        self.set_box_reg_same_level(index, rewritten);
     }
 
     pub fn set_int_param(&mut self, param: IntParam, value: i32) {
