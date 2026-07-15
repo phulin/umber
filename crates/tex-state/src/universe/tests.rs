@@ -28,6 +28,28 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
 #[test]
+fn pdf_match_captures_are_checkpointed_and_hashed() {
+    let mut universe = Universe::new();
+    universe.set_pdf_match_state(b"first".to_vec(), vec![Some((0, 5))], 1, true);
+    let first = universe.snapshot();
+    assert_eq!(
+        universe.pdf_match_capture(0),
+        Some((0, b"first".as_slice()))
+    );
+
+    universe.set_pdf_match_state(b"second".to_vec(), vec![Some((1, 4))], 1, true);
+    assert_eq!(universe.pdf_match_capture(0), Some((1, b"eco".as_slice())));
+    assert_ne!(universe.snapshot().state_hash(), first.state_hash());
+
+    universe.rollback(&first);
+    assert_eq!(
+        universe.pdf_match_capture(0),
+        Some((0, b"first".as_slice()))
+    );
+    assert_eq!(universe.snapshot().state_hash(), first.state_hash());
+}
+
+#[test]
 fn bounded_scalar_decode_does_not_validate_the_remaining_source_suffix() {
     assert_eq!(utf8_scalar_len_at(&[b'x', 0xff], 0), Some(1));
     assert_eq!(utf8_scalar_len_at(&[0xc3, 0xa9, 0xff], 0), Some(2));

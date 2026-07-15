@@ -252,6 +252,8 @@ pub enum ExpandablePrimitive {
     PdfFileModificationDate,
     PdfMdFiveSum,
     PdfFileDump,
+    PdfMatch,
+    PdfLastMatch,
 }
 
 impl ExpandablePrimitive {
@@ -335,6 +337,8 @@ impl ExpandablePrimitive {
             Self::PdfFileModificationDate => 74,
             Self::PdfMdFiveSum => 75,
             Self::PdfFileDump => 76,
+            Self::PdfMatch => 77,
+            Self::PdfLastMatch => 78,
         }
     }
 
@@ -418,6 +422,8 @@ impl ExpandablePrimitive {
             74 => Some(Self::PdfFileModificationDate),
             75 => Some(Self::PdfMdFiveSum),
             76 => Some(Self::PdfFileDump),
+            77 => Some(Self::PdfMatch),
+            78 => Some(Self::PdfLastMatch),
             _ => None,
         }
     }

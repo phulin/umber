@@ -1,5 +1,7 @@
 //! Checkpointed pdfTeX document allocation ledger.
 
+use std::sync::Arc;
+
 use crate::ContentHash;
 use crate::ids::{FontId, TokenListId};
 use crate::scaled::Scaled;
@@ -339,10 +341,23 @@ pub(crate) struct PdfStateCursor {
     font_operation_count: usize,
     font_resource_count: usize,
     fingerprint: u64,
+    match_fingerprint: u64,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct PdfStateSnapshot(PdfStateCursor);
+#[derive(Clone, Debug)]
+pub(crate) struct PdfStateSnapshot {
+    cursor: PdfStateCursor,
+    match_state: Arc<PdfMatchState>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct PdfMatchState {
+    haystack: Vec<u8>,
+    captures: Vec<Option<(u32, u32)>>,
+    slot_count: u32,
+    matched: bool,
+    fingerprint: u64,
+}
 
 /// Live append-only PDF allocation state owned by one Universe timeline.
 #[derive(Clone, Debug)]
@@ -355,6 +370,7 @@ pub(crate) struct PdfState {
     font_operations: Vec<PdfFontOperation>,
     font_resources: Vec<PdfFontResourceRecord>,
     fingerprint: u64,
+    match_state: Arc<PdfMatchState>,
 }
 
 impl Default for PdfState {
@@ -368,6 +384,7 @@ impl Default for PdfState {
             font_operations: Vec::new(),
             font_resources: Vec::new(),
             fingerprint: base_fingerprint(false),
+            match_state: Arc::new(PdfMatchState::default()),
         }
     }
 }
@@ -798,7 +815,7 @@ impl PdfState {
     }
 
     #[must_use]
-    pub(crate) const fn cursor(&self) -> PdfStateCursor {
+    pub(crate) fn cursor(&self) -> PdfStateCursor {
         PdfStateCursor {
             enabled: self.enabled,
             next_object: self.next_object,
@@ -808,15 +825,19 @@ impl PdfState {
             font_operation_count: self.font_operations.len(),
             font_resource_count: self.font_resources.len(),
             fingerprint: self.fingerprint,
+            match_fingerprint: self.match_state.fingerprint,
         }
     }
     #[must_use]
-    pub(crate) const fn snapshot(&self) -> PdfStateSnapshot {
-        PdfStateSnapshot(self.cursor())
+    pub(crate) fn snapshot(&self) -> PdfStateSnapshot {
+        PdfStateSnapshot {
+            cursor: self.cursor(),
+            match_state: Arc::clone(&self.match_state),
+        }
     }
 
     pub(crate) fn rollback(&mut self, snapshot: PdfStateSnapshot) {
-        let cursor = snapshot.0;
+        let cursor = snapshot.cursor;
         assert!(
             cursor.page_count <= self.pages.len(),
             "PDF snapshot suffix was discarded"
@@ -829,6 +850,36 @@ impl PdfState {
         self.font_operations.truncate(cursor.font_operation_count);
         self.font_resources.truncate(cursor.font_resource_count);
         self.fingerprint = cursor.fingerprint;
+        self.match_state = snapshot.match_state;
+    }
+
+    pub(crate) fn set_match(
+        &mut self,
+        haystack: Vec<u8>,
+        captures: Vec<Option<(u32, u32)>>,
+        slot_count: u32,
+        matched: bool,
+    ) {
+        let fingerprint = match_fingerprint(&haystack, &captures, slot_count, matched);
+        self.match_state = Arc::new(PdfMatchState {
+            haystack,
+            captures,
+            slot_count,
+            matched,
+            fingerprint,
+        });
+    }
+
+    pub(crate) fn match_capture(&self, index: u32) -> Option<(u32, &[u8])> {
+        if !self.match_state.matched || index >= self.match_state.slot_count {
+            return None;
+        }
+        let &(start, end) = self.match_state.captures.get(index as usize)?.as_ref()?;
+        let bytes = self
+            .match_state
+            .haystack
+            .get(start as usize..end as usize)?;
+        Some((start, bytes))
     }
 
     #[must_use]
@@ -842,6 +893,7 @@ impl PdfState {
             hasher.usize(cursor.font_operation_count);
             hasher.usize(cursor.font_resource_count);
             hasher.u64(cursor.fingerprint);
+            hasher.u64(cursor.match_fingerprint);
         })
     }
 }
@@ -949,6 +1001,30 @@ fn append_font_fingerprint(previous: u64, operation: &PdfFontOperation) -> u64 {
             hasher.u32(request.dpi());
             hasher.bytes(request.mode());
             hasher.bytes(&font.identity().bytes());
+        }
+    }
+    hasher.finish()
+}
+
+fn match_fingerprint(
+    haystack: &[u8],
+    captures: &[Option<(u32, u32)>],
+    slot_count: u32,
+    matched: bool,
+) -> u64 {
+    let mut hasher = StateHasher::new(0x7064_665f_6d61_7463);
+    hasher.bytes(haystack);
+    hasher.u32(slot_count);
+    hasher.bool(matched);
+    hasher.usize(captures.len());
+    for capture in captures {
+        match capture {
+            Some((start, end)) => {
+                hasher.bool(true);
+                hasher.u32(*start);
+                hasher.u32(*end);
+            }
+            None => hasher.bool(false),
         }
     }
     hasher.finish()

@@ -189,6 +189,17 @@ pub trait ExpansionState {
     fn report_missing_font_identifier(&mut self) {}
     /// Records a recoverable diagnostic raised by an expandable primitive.
     fn report_expansion_diagnostic(&mut self, _message: &str) {}
+    fn set_pdf_match_state(
+        &mut self,
+        _haystack: Vec<u8>,
+        _captures: Vec<Option<(u32, u32)>>,
+        _slot_count: u32,
+        _matched: bool,
+    ) {
+    }
+    fn pdf_match_capture(&self, _index: u32) -> Option<(u32, &[u8])> {
+        None
+    }
     fn int_param(&self, param: IntParam) -> i32;
     /// Emits the e-TeX `\scantokens` pseudo-file boundary when tracing is enabled.
     fn trace_scantokens_boundary(&mut self, _opening: bool) {}
@@ -1418,7 +1429,7 @@ impl Universe {
         self.input_summary = snapshot.input_summary.clone();
         self.interaction_mode = snapshot.interaction_mode;
         self.page = snapshot.page.clone();
-        self.pdf.rollback(snapshot.pdf);
+        self.pdf.rollback(snapshot.pdf.clone());
         self.state_hash_base = snapshot.state_hash_base.clone();
         self.state_hash_projection_cache.clear();
     }
@@ -1431,7 +1442,7 @@ impl Universe {
         self.input_summary = snapshot.input_summary.clone();
         self.interaction_mode = snapshot.interaction_mode;
         self.page = snapshot.page.clone();
-        self.pdf.rollback(snapshot.pdf);
+        self.pdf.rollback(snapshot.pdf.clone());
         self.state_hash_base = snapshot.state_hash_base.clone();
         self.state_hash_projection_cache.clear();
     }
@@ -1764,6 +1775,21 @@ impl Universe {
     /// Sets the current interaction mode.
     pub fn set_interaction_mode(&mut self, mode: InteractionMode) {
         self.interaction_mode = mode;
+    }
+
+    pub fn set_pdf_match_state(
+        &mut self,
+        haystack: Vec<u8>,
+        captures: Vec<Option<(u32, u32)>>,
+        slot_count: u32,
+        matched: bool,
+    ) {
+        self.pdf.set_match(haystack, captures, slot_count, matched);
+    }
+
+    #[must_use]
+    pub fn pdf_match_capture(&self, index: u32) -> Option<(u32, &[u8])> {
+        self.pdf.match_capture(index)
     }
 
     /// Enables checkpointed PDF object allocation for this timeline.
@@ -4048,6 +4074,20 @@ impl ExpansionState for Universe {
             .write_text(PrintSink::TerminalAndLog, message);
     }
 
+    fn set_pdf_match_state(
+        &mut self,
+        haystack: Vec<u8>,
+        captures: Vec<Option<(u32, u32)>>,
+        slot_count: u32,
+        matched: bool,
+    ) {
+        Self::set_pdf_match_state(self, haystack, captures, slot_count, matched);
+    }
+
+    fn pdf_match_capture(&self, index: u32) -> Option<(u32, &[u8])> {
+        Self::pdf_match_capture(self, index)
+    }
+
     fn box_dimension(&self, index: u16, dimension: BoxDimension) -> Option<Scaled> {
         Self::box_dimension(self, index, dimension)
     }
@@ -4475,6 +4515,21 @@ impl ExpansionState for ExpansionContext<'_> {
         self.universe
             .world_mut()
             .write_text(PrintSink::TerminalAndLog, message);
+    }
+
+    fn set_pdf_match_state(
+        &mut self,
+        haystack: Vec<u8>,
+        captures: Vec<Option<(u32, u32)>>,
+        slot_count: u32,
+        matched: bool,
+    ) {
+        self.universe
+            .set_pdf_match_state(haystack, captures, slot_count, matched);
+    }
+
+    fn pdf_match_capture(&self, index: u32) -> Option<(u32, &[u8])> {
+        self.universe.pdf_match_capture(index)
     }
 
     fn box_dimension(&self, index: u16, dimension: BoxDimension) -> Option<Scaled> {

@@ -264,6 +264,12 @@ macro_rules! dispatch_match {
                     input, stores, expansion, mode, call_context,
                 )
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfMatch) => {
+                crate::pdf_regex::execute_match(input, stores, expansion, mode, call_context)
+            }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfLastMatch) => {
+                crate::pdf_regex::execute_last_match(input, stores, expansion, mode, call_context)
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::ShellEscape) => {
                 Ok(push_rendered_text(
                     stores,
@@ -1398,6 +1404,8 @@ pub fn dispatch_expandable_opcode(opcode: ExpandableOpcode) -> Result<(), Expand
         | ExpandableOpcode::PdfFileModificationDate
         | ExpandableOpcode::PdfMdFiveSum
         | ExpandableOpcode::PdfFileDump
+        | ExpandableOpcode::PdfMatch
+        | ExpandableOpcode::PdfLastMatch
         | ExpandableOpcode::IfDefined
         | ExpandableOpcode::IfCsName
         | ExpandableOpcode::IfInCsName

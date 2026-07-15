@@ -54,6 +54,7 @@ pub mod scan_int;
 mod conditionals;
 mod dispatch;
 mod pdf_files;
+mod pdf_regex;
 mod pdf_strings;
 mod primitives;
 mod scan_helpers;
@@ -393,6 +394,14 @@ pub fn install_pdftex_expandable_primitives(stores: &mut Universe) {
             "pdffiledump",
             tex_state::meaning::ExpandablePrimitive::PdfFileDump,
         ),
+        (
+            "pdfmatch",
+            tex_state::meaning::ExpandablePrimitive::PdfMatch,
+        ),
+        (
+            "pdflastmatch",
+            tex_state::meaning::ExpandablePrimitive::PdfLastMatch,
+        ),
     ] {
         stores.install_primitive_meaning(name, Meaning::ExpandablePrimitive(primitive));
     }
@@ -600,6 +609,8 @@ pub enum ExpandableOpcode {
     PdfFileModificationDate,
     PdfMdFiveSum,
     PdfFileDump,
+    PdfMatch,
+    PdfLastMatch,
     IfDefined,
     IfCsName,
     IfInCsName,

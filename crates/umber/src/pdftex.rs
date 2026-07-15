@@ -668,6 +668,65 @@ mod tests {
         assert_eq!(latex.meaning(strcmp), pdftex.meaning(pdfstrcmp));
     }
 
+    #[test]
+    fn pdfmatch_reports_posix_leftmost_longest_captures() {
+        assert_eq!(
+            pdftex_bytes(concat!(
+                "\\pdfmatch{(a+)(b*)}{xxaaabbzz}|",
+                "\\pdflastmatch0|\\pdflastmatch1|\\pdflastmatch2|\\pdflastmatch3|",
+                "\\pdfmatch{a|aa}{xaa}|\\pdflastmatch0|",
+                "\\pdfmatch icase{abc}{xAbCy}|\\pdflastmatch0%",
+            )),
+            b"1|2->aaabb|2->aaa|5->bb|-1->|1|1->aa|1|1->AbC"
+        );
+    }
+
+    #[test]
+    fn pdfmatch_subcount_and_no_match_follow_the_pinned_oracle() {
+        assert_eq!(
+            pdftex_bytes(concat!(
+                "\\pdfmatch subcount 0{(a)}{a}|\\pdflastmatch0|",
+                "\\pdfmatch subcount 2{(a)(b)(c)}{abc}|",
+                "\\pdflastmatch0|\\pdflastmatch1|\\pdflastmatch2|",
+                "\\pdfmatch{z}{abc}|\\pdflastmatch0%",
+            )),
+            b"1|-1->|1|0->abc|0->a|-1->|0|-1->"
+        );
+    }
+
+    #[test]
+    fn pdfmatch_uses_c_string_nul_termination() {
+        assert_eq!(
+            pdftex_bytes(concat!(
+                "\\pdfmatch{ab\\pdfunescapehex{00}z}{xxabyy}|\\pdflastmatch0|",
+                "\\pdfmatch{ab}{xxab\\pdfunescapehex{00}ab}|\\pdflastmatch0%",
+            )),
+            b"1|2->ab|1|2->ab"
+        );
+    }
+
+    #[test]
+    fn pdfmatch_state_is_global_and_compile_failures_preserve_it() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let output = crate::run_memory_with_stores(
+            concat!(
+                "\\pdfmatch{(a)}{xa}\\message{before=\\pdflastmatch1} ",
+                "{\\pdfmatch{(b)}{yb}}\\message{group=\\pdflastmatch1} ",
+                "\\pdfmatch{[}{q}\\message{bad=\\pdflastmatch1} ",
+                "\\message{negative=\\pdflastmatch-2}\\end",
+            ),
+            &mut stores,
+        )
+        .expect("recover pdfTeX regex diagnostics");
+        assert!(output.contains("before=1->a"), "{output}");
+        assert!(output.contains("group=1->b"), "{output}");
+        assert!(output.contains("brackets ([ ]) not balanced"), "{output}");
+        assert!(output.contains("bad=1->b"), "{output}");
+        assert!(output.contains("Bad match number (-2)."), "{output}");
+        assert!(output.contains("negative=1->b"), "{output}");
+    }
+
     fn seed_pdftex_file_facts(stores: &mut Universe) {
         stores
             .world_mut()

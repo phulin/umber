@@ -32,6 +32,7 @@ bincode = "1"
 unicode-width = "0.2"
 pdf-writer = { path = "vendor/pdf-writer", version = "=0.15.0" }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+posix-regex = "0.1.4"
 
 [profile.dev]
 debug = "line-tables-only"
