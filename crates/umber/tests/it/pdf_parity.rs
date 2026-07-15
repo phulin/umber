@@ -22,6 +22,68 @@ fn committed_pdftex_fixtures_match_structure_and_bytes() {
     }
 }
 
+#[test]
+fn annotation_fixture_matches_page_ownership_and_rectangles() {
+    let reference = read_binary_fixture("pdf", "annotations_running", "ref.pdf");
+    let umber = read_binary_fixture("pdf", "annotations_running", "umber.pdf");
+    let reference = annotation_projection(&reference);
+    let umber = annotation_projection(&umber);
+    assert_eq!(umber, reference, "annotation rectangle projection drifted");
+    assert_eq!(umber.iter().map(Vec::len).collect::<Vec<_>>(), [2, 1]);
+}
+
+fn annotation_projection(bytes: &[u8]) -> Vec<Vec<(Vec<f64>, Vec<u8>)>> {
+    let document = lopdf::Document::load_mem(bytes).expect("parse annotation fixture");
+    let mut owned = std::collections::BTreeSet::new();
+    document
+        .get_pages()
+        .into_values()
+        .map(|page_id| {
+            let page = document
+                .get_object(page_id)
+                .and_then(lopdf::Object::as_dict)
+                .expect("page dictionary");
+            page.get(b"Annots")
+                .and_then(lopdf::Object::as_array)
+                .expect("page annotation array")
+                .iter()
+                .map(|entry| {
+                    let id = entry.as_reference().expect("indirect annotation");
+                    assert!(owned.insert(id), "annotation object is shared by pages");
+                    let annotation = document
+                        .get_object(id)
+                        .and_then(lopdf::Object::as_dict)
+                        .expect("annotation dictionary");
+                    assert_eq!(
+                        annotation
+                            .get(b"Type")
+                            .and_then(lopdf::Object::as_name)
+                            .expect("annotation type"),
+                        b"Annot"
+                    );
+                    let rect = annotation
+                        .get(b"Rect")
+                        .and_then(lopdf::Object::as_array)
+                        .expect("annotation rectangle")
+                        .iter()
+                        .map(|number| match number {
+                            lopdf::Object::Integer(value) => *value as f64,
+                            lopdf::Object::Real(value) => f64::from(*value),
+                            _ => panic!("annotation rectangle value is numeric"),
+                        })
+                        .collect();
+                    let subtype = annotation
+                        .get(b"Subtype")
+                        .and_then(lopdf::Object::as_name)
+                        .expect("annotation subtype")
+                        .to_vec();
+                    (rect, subtype)
+                })
+                .collect()
+        })
+        .collect()
+}
+
 #[allow(clippy::disallowed_methods)] // Hermetic CLI fixture boundary.
 fn assert_committed_case(case: &str) {
     let temp = tempfile::tempdir().expect("create PDF parity directory");

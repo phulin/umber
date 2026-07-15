@@ -137,6 +137,9 @@ must never invoke a font generator or ambient fallback.
 The `embedded_tagged_spacing` case pins ordered fake-space controls, a custom
 fallback font selection, physical ligature output, nested font changes, and
 cross-page state together with exact Poppler extraction and raster parity.
+The `annotations_running` case pins general annotation geometry, two-page
+running-link continuation, per-page link margins, unique annotation ownership,
+and `/Annots` encounter order against pdfTeX 1.40.27.
 
 `tests/corpus/e2e` receives gitignored final-DVI oracles for Story, Gentle,
 TRIP, and e-TRIP. Their Cargo integration tests run Umber directly in process

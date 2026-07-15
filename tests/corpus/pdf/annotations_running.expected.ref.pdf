@@ -1,0 +1,123 @@
+%PDF-1.4
+%ÐÔÅØ
+5 0 obj
+<<
+/Length 27        
+>>
+stream
+q
+0 0 71.731 35.866 re f
+Q
+
+endstream
+endobj
+4 0 obj
+<<
+/Type /Page
+/Contents 5 0 R
+/Resources 3 0 R
+/MediaBox [0 0 71.731 35.866]
+/Parent 6 0 R
+/Annots [ 1 0 R 2 0 R ]
+>>
+endobj
+1 0 obj
+<<
+/Type /Annot
+/Subtype /Link /Border [0 0 0]
+/Rect [0 -0.996 7.97 3.985]
+>>
+endobj
+2 0 obj
+<<
+/Type /Annot
+/Border [0 0 0]
+/Rect [8.966 -1.993 30.884 4.981]
+/Subtype /Link /A << /S /URI /URI (https://example.invalid/) >>
+>>
+endobj
+3 0 obj
+<<
+/ProcSet [ /PDF ]
+>>
+endobj
+9 0 obj
+<<
+/Length 27        
+>>
+stream
+q
+0 0 71.731 35.866 re f
+Q
+
+endstream
+endobj
+8 0 obj
+<<
+/Type /Page
+/Contents 9 0 R
+/Resources 7 0 R
+/MediaBox [0 0 71.731 35.866]
+/Parent 6 0 R
+/Annots [ 10 0 R ]
+>>
+endobj
+10 0 obj
+<<
+/Type /Annot
+/Border [0 0 0]
+/Rect [-1.993 -2.989 13.948 5.978]
+/Subtype /Link /A << /S /URI /URI (https://example.invalid/) >>
+>>
+endobj
+7 0 obj
+<<
+/ProcSet [ /PDF ]
+>>
+endobj
+6 0 obj
+<<
+/Type /Pages
+/Count 2
+/Kids [4 0 R 8 0 R]
+>>
+endobj
+11 0 obj
+<<
+/Type /Catalog
+/Pages 6 0 R
+>>
+endobj
+12 0 obj
+<<
+/Producer (pdfTeX-1.40.27)
+/Creator (TeX)
+/CreationDate (D:20260709133600Z)
+/ModDate (D:20260709133600Z)
+/Trapped /False
+/PTEX.Fullbanner (This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) kpathsea version 6.4.1)
+>>
+endobj
+xref
+0 13
+0000000000 65535 f 
+0000000234 00000 n 
+0000000327 00000 n 
+0000000475 00000 n 
+0000000100 00000 n 
+0000000015 00000 n 
+0000000917 00000 n 
+0000000878 00000 n 
+0000000599 00000 n 
+0000000514 00000 n 
+0000000728 00000 n 
+0000000980 00000 n 
+0000001030 00000 n 
+trailer
+<< /Size 13
+/Root 11 0 R
+/Info 12 0 R
+/ID [<04F4DB363A21C8B025AF4483B12448A6> <04F4DB363A21C8B025AF4483B12448A6>] >>
+startxref
+1279
+%%EOF

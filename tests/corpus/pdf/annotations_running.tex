@@ -1,0 +1,25 @@
+\catcode123=1 \catcode125=2
+\pdfoutput=1
+\pdfcompresslevel=0
+\pdfobjcompresslevel=0
+\pdfdecimaldigits=3
+\pdfhorigin=0pt
+\pdfvorigin=0pt
+\pdfpagewidth=72pt
+\pdfpageheight=36pt
+\pdflinkmargin=1pt
+\shipout\hbox{
+  \hbox to 0pt{\vrule width 72pt height 36pt depth 0pt\hskip 0pt plus 1fil}
+  \pdfannot width 8pt height 4pt depth 1pt
+    {/Subtype /Link /Border [0 0 0]}
+  \kern10pt
+  \pdfstartlink height 4pt depth 1pt attr{/Border [0 0 0]}
+    user{/Subtype /Link /A << /S /URI /URI (https://example.invalid/) >>}
+  \kern20pt
+}
+\pdflinkmargin=2pt
+\shipout\hbox{
+  \hbox to 0pt{\vrule width 72pt height 36pt depth 0pt\hskip 0pt plus 1fil}
+  \kern12pt\pdfendlink\kern8pt
+}
+\end

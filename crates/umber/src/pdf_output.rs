@@ -753,7 +753,7 @@ fn lower_page_annotations(
                                     marker.y,
                                     positioned_box,
                                     data.dimensions,
-                                    link_margin,
+                                    Scaled::from_raw(0),
                                 )?,
                             });
                         }

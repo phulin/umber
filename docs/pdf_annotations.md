@@ -134,11 +134,12 @@ references, arrays, and operators are never assembled as raw PDF syntax in
 
 ## Parity evidence
 
-The committed corpus will separate scanner/diagnostic observations from PDF
-output cases. Structural projections pin `/Annots` order, object numbers,
-rectangles, subtype/action dictionaries, line and page splits, margin timing,
-nested boxes, copied boxes, and suppression controls. Exact Umber bytes pin the
-typed serializer and deterministic allocation. Poppler grayscale renders pin
-visible borders and page geometry. Corpus regeneration records pdfTeX 1.40.27
-and the repository-pinned Poppler version; ordinary tests consume only the
-committed artifacts.
+The committed `annotations_running` corpus separates scanner/diagnostic
+observations from PDF output parity. Its two pages pin `/Annots` encounter
+order, unique page ownership, general annotation geometry, running-link page
+splitting, and shipout-time margin changes against pdfTeX 1.40.27. Exact Umber
+bytes pin the typed serializer and deterministic allocation; the committed
+Poppler grayscale render and renderer attestation pin page geometry. Ordinary
+tests consume only these committed artifacts. Focused unit tests additionally
+pin copied-occurrence allocation, explicit box-boundary traversal, and
+running-link controls without invoking external tools.
