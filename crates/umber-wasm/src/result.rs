@@ -203,6 +203,11 @@ pub(crate) fn retention_metrics(
         "checkpointRootBytes",
         &usize_value(metrics.checkpoint_root_bytes),
     )?;
+    set(
+        &object,
+        "diagnosticBytes",
+        &usize_value(metrics.diagnostic_bytes),
+    )?;
     set(&object, "outputBytes", &usize_value(metrics.output_bytes))?;
     set(
         &object,

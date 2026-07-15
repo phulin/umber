@@ -1493,7 +1493,8 @@ impl Universe {
 
     /// Installs the immutable session fragment snapshot for this compile.
     pub fn install_editor_fragments(&mut self, fragments: crate::FragmentStore) {
-        self.stores.install_source_fragments(fragments);
+        self.stores
+            .install_source_fragments(fragments.metadata_snapshot());
     }
 
     /// Sets operational editor revision identity outside semantic state.

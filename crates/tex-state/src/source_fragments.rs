@@ -1,5 +1,6 @@
 //! Edit-stable source fragments and current-document piece-table resolution.
 
+use std::mem;
 use std::ops::Range;
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -27,6 +28,7 @@ struct SourceFragment {
     region_start: SourcePos,
     byte_len: u64,
     minted_revision: u64,
+    removed_revision: Option<u64>,
 }
 
 impl SourceFragment {
@@ -70,6 +72,7 @@ impl FragmentStore {
             region_start: SourcePos::from_raw_for_store(start),
             byte_len,
             minted_revision,
+            removed_revision: None,
         };
         let mut fragments = self.fragments.to_vec();
         fragments.push(fragment);
@@ -88,6 +91,84 @@ impl FragmentStore {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.fragments.is_empty()
+    }
+
+    /// Drops bytes from fragments that are absent from the accepted layout and
+    /// no longer needed by a checkpoint predating their removal.
+    pub fn prune_for_layout(
+        &mut self,
+        layout: &EditorLayout,
+        accepted_revision: u64,
+        oldest_retained_revision: u64,
+    ) -> usize {
+        let mut live = vec![false; self.fragments.len()];
+        for piece in layout.pieces() {
+            live[piece.fragment().raw() as usize] = true;
+        }
+        let mut fragments = self.fragments.to_vec();
+        let mut dropped = 0_usize;
+        for (index, fragment) in fragments.iter_mut().enumerate() {
+            if live[index] {
+                continue;
+            }
+            let removed_revision = *fragment
+                .removed_revision
+                .get_or_insert(accepted_revision.max(fragment.minted_revision));
+            if removed_revision <= oldest_retained_revision
+                && let Some(bytes) = fragment.bytes.take()
+            {
+                dropped = dropped.saturating_add(bytes.len());
+            }
+        }
+        self.fragments = fragments.into();
+        dropped
+    }
+
+    /// Bytes of immutable source text still retained for live or protected fragments.
+    #[must_use]
+    pub fn source_bytes(&self) -> usize {
+        self.fragments
+            .iter()
+            .filter_map(|fragment| fragment.bytes.as_ref())
+            .map(|bytes| bytes.len())
+            .sum()
+    }
+
+    /// Cumulative logical position space consumed, including one anchor per fragment.
+    #[must_use]
+    pub fn reserved_position_bytes(&self) -> u64 {
+        self.fragments.iter().fold(0_u64, |total, fragment| {
+            total.saturating_add(fragment.byte_len.saturating_add(1))
+        })
+    }
+
+    /// Requested diagnostic storage retained by this session-owned table.
+    #[must_use]
+    pub fn retained_bytes(&self) -> usize {
+        mem::size_of::<Self>()
+            .saturating_add(self.metadata_retained_bytes())
+            .saturating_add(self.source_bytes())
+    }
+
+    pub(crate) fn metadata_snapshot(&self) -> Self {
+        let fragments = self
+            .fragments
+            .iter()
+            .cloned()
+            .map(|mut fragment| {
+                fragment.bytes = None;
+                fragment
+            })
+            .collect::<Vec<_>>();
+        Self {
+            fragments: fragments.into(),
+        }
+    }
+
+    pub(crate) fn metadata_retained_bytes(&self) -> usize {
+        self.fragments
+            .len()
+            .saturating_mul(mem::size_of::<SourceFragment>())
     }
 
     /// Returns the immutable bytes retained for one fragment.
@@ -138,13 +219,13 @@ impl FragmentStore {
         if offset >= fragment.byte_len {
             return None;
         }
-        let bytes = fragment.bytes.as_deref()?;
         let offset = usize::try_from(offset).ok()?;
-        let width = std::str::from_utf8(bytes.get(offset..).unwrap_or_default())
-            .ok()?
-            .chars()
-            .next()?
-            .len_utf8() as u64;
+        let width = fragment.bytes.as_deref().map_or(1, |bytes| {
+            std::str::from_utf8(bytes.get(offset..).unwrap_or_default())
+                .ok()
+                .and_then(|suffix| suffix.chars().next())
+                .map_or(1, |character| character.len_utf8() as u64)
+        });
         let hi = position.raw().checked_add(width)?;
         (hi <= fragment.anchor())
             .then(|| SourceSpan::new(position, SourcePos::from_raw_for_store(hi)))
@@ -291,6 +372,18 @@ impl EditorLayout {
     #[must_use]
     pub fn doc_starts(&self) -> &[u64] {
         &self.doc_starts
+    }
+
+    /// Requested diagnostic storage retained by this accepted layout.
+    #[must_use]
+    pub fn retained_bytes(&self) -> usize {
+        mem::size_of::<Self>()
+            .saturating_add(self.path.len())
+            .saturating_add(self.pieces.len().saturating_mul(mem::size_of::<Piece>()))
+            .saturating_add(self.doc_starts.len().saturating_mul(mem::size_of::<u64>()))
+            .saturating_add(self.line_index.get().map_or(0, |index| {
+                index.starts.len().saturating_mul(mem::size_of::<u64>())
+            }))
     }
 
     fn current_range(&self, fragment: FragmentId, lo: u64, hi: u64) -> Option<(u64, u64)> {

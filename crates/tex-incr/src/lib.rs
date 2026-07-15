@@ -104,6 +104,7 @@ impl BoundaryRecord {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RetentionMetrics {
     pub checkpoint_root_bytes: usize,
+    pub diagnostic_bytes: usize,
     pub output_bytes: usize,
     pub protected_overage_bytes: usize,
 }
@@ -581,13 +582,32 @@ impl Session {
             .expect("accepted substrate is retained")
             .charged_bytes();
         let output_bytes = output_bytes(&self.effects, &self.artifacts);
-        let (history, retention) = prune_history(
+        let oldest_revision = oldest_retained_revision(&history, next_revision);
+        self.fragments
+            .prune_for_layout(&self.layout, next_revision.raw(), oldest_revision.raw());
+        let diagnostic_bytes = self.diagnostic_retained_bytes();
+        let (history, mut retention) = prune_history(
             history,
             self.checkpoint_budget,
             substrate_bytes,
+            diagnostic_bytes,
             output_bytes,
         );
         self.history = history;
+        let pruned_oldest_revision = oldest_retained_revision(&self.history, next_revision);
+        if pruned_oldest_revision > oldest_revision
+            && self.fragments.prune_for_layout(
+                &self.layout,
+                next_revision.raw(),
+                pruned_oldest_revision.raw(),
+            ) > 0
+        {
+            retention.diagnostic_bytes = self.diagnostic_retained_bytes();
+            retention.protected_overage_bytes = retention
+                .checkpoint_root_bytes
+                .saturating_add(retention.diagnostic_bytes)
+                .saturating_sub(self.checkpoint_budget);
+        }
         Ok(self.output(reuse, retention))
     }
 
@@ -623,10 +643,12 @@ impl Session {
             record.revision = self.revision;
         }
         let substrate_bytes = run.substrate.charged_bytes();
+        let diagnostic_bytes = self.diagnostic_retained_bytes();
         let (history, retention) = prune_history(
             run.history,
             self.checkpoint_budget,
             substrate_bytes,
+            diagnostic_bytes,
             run.output_bytes,
         );
         self.history = history;
@@ -654,6 +676,12 @@ impl Session {
             reuse,
             retention,
         }
+    }
+
+    fn diagnostic_retained_bytes(&self) -> usize {
+        self.fragments
+            .retained_bytes()
+            .saturating_add(self.layout.retained_bytes())
     }
 }
 
@@ -1083,16 +1111,19 @@ fn prune_history(
     mut history: Vec<BoundaryRecord>,
     budget: usize,
     substrate_bytes: usize,
+    diagnostic_bytes: usize,
     output_bytes: usize,
 ) -> (Vec<BoundaryRecord>, RetentionMetrics) {
     loop {
-        let charged = charged_bytes(&history, substrate_bytes);
+        let checkpoint_root_bytes = charged_bytes(&history, substrate_bytes);
+        let charged = checkpoint_root_bytes.saturating_add(diagnostic_bytes);
         if charged <= budget || history.len() <= 2 {
             let overage = charged.saturating_sub(budget);
             return (
                 history,
                 RetentionMetrics {
-                    checkpoint_root_bytes: charged,
+                    checkpoint_root_bytes,
+                    diagnostic_bytes,
                     output_bytes,
                     protected_overage_bytes: overage,
                 },
@@ -1116,11 +1147,13 @@ fn prune_history(
             })
             .map(|(index, _)| index);
         let Some(victim) = victim else {
-            let charged = charged_bytes(&history, substrate_bytes);
+            let checkpoint_root_bytes = charged_bytes(&history, substrate_bytes);
+            let charged = checkpoint_root_bytes.saturating_add(diagnostic_bytes);
             return (
                 history,
                 RetentionMetrics {
-                    checkpoint_root_bytes: charged,
+                    checkpoint_root_bytes,
+                    diagnostic_bytes,
                     output_bytes,
                     protected_overage_bytes: charged.saturating_sub(budget),
                 },
@@ -1128,6 +1161,14 @@ fn prune_history(
         };
         history.remove(victim);
     }
+}
+
+fn oldest_retained_revision(history: &[BoundaryRecord], fallback: RevisionId) -> RevisionId {
+    history
+        .iter()
+        .map(BoundaryRecord::revision)
+        .min()
+        .unwrap_or(fallback)
 }
 
 fn charged_bytes(history: &[BoundaryRecord], substrate_bytes: usize) -> usize {

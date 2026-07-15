@@ -178,6 +178,190 @@ fn reminted_line_positions_resolve_typed_deleted() {
     );
 }
 
+#[test]
+fn convergent_advance_prunes_fully_replaced_fragment_bytes() {
+    let original = source("a");
+    let mut session = Session::start(
+        template(),
+        "convergent-prune",
+        RevisionId::new(1),
+        original.clone(),
+        usize::MAX,
+    )
+    .expect("session starts");
+    let initial = session.layout.pieces()[0].fragment();
+    session.cold().expect("cold run");
+    let output = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(original.as_bytes()),
+                range: 0..original.len(),
+                replacement: original.clone(),
+            },
+        )
+        .expect("semantically unchanged edit converges");
+
+    assert!(output.reuse.convergence_boundary.is_some());
+    assert_eq!(session.fragments.bytes(initial), None);
+    assert_eq!(session.fragments.source_bytes(), session.source.len());
+    assert_eq!(
+        output.retention.diagnostic_bytes,
+        session.diagnostic_retained_bytes()
+    );
+}
+
+#[test]
+fn nonconvergent_advance_prunes_fully_replaced_fragment_bytes() {
+    let original = persistent_source(1);
+    let replacement = persistent_source(29);
+    let mut session = Session::start(
+        template(),
+        "nonconvergent-prune",
+        RevisionId::new(1),
+        original.clone(),
+        usize::MAX,
+    )
+    .expect("session starts");
+    let initial = session.layout.pieces()[0].fragment();
+    session.cold().expect("cold run");
+    let output = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(original.as_bytes()),
+                range: 0..original.len(),
+                replacement: replacement.clone(),
+            },
+        )
+        .expect("semantic edit succeeds");
+
+    assert_eq!(output.reuse.convergence_boundary, None);
+    assert_eq!(session.fragments.bytes(initial), None);
+    assert_eq!(session.fragments.source_bytes(), replacement.len());
+}
+
+#[test]
+fn alternating_edits_keep_source_backing_bytes_bounded() {
+    let mut text = persistent_source(1);
+    let initial_len = text.len();
+    let mut session = Session::start(
+        template(),
+        "balanced-pruning",
+        RevisionId::new(1),
+        text.clone(),
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold run");
+
+    for step in 1..=64_u64 {
+        let range;
+        let replacement;
+        if step % 2 == 1 {
+            range = 0..0;
+            replacement = " ".to_owned();
+        } else {
+            range = 0..1;
+            replacement = String::new();
+        }
+        let edit = Edit {
+            base_revision: RevisionId::new(step),
+            expected_hash: ContentHash::from_bytes(text.as_bytes()),
+            range: range.clone(),
+            replacement: replacement.clone(),
+        };
+        text.replace_range(range, &replacement);
+        let output = session
+            .advance(RevisionId::new(step + 1), edit)
+            .expect("balanced edit succeeds");
+        assert_eq!(session.fragments.source_bytes(), text.len());
+        assert_eq!(
+            output.retention.diagnostic_bytes,
+            session.diagnostic_retained_bytes()
+        );
+    }
+    assert_eq!(text.len(), initial_len);
+    assert_eq!(session.fragments.source_bytes(), initial_len);
+    assert_eq!(session.fragments.len(), 65);
+}
+
+#[test]
+fn keystroke_storm_tracks_cumulative_headroom_without_pinning_old_lines() {
+    let body = source("a");
+    let mut text = format!("%\n{body}");
+    let initial_len = text.len();
+    let mut session = Session::start(
+        template(),
+        "keystroke-storm",
+        RevisionId::new(1),
+        text.clone(),
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold run");
+    let mut expected_reserved = initial_len as u64 + 1;
+
+    for step in 1..=128_u64 {
+        let insert_at = text.find('\n').expect("comment terminator");
+        let edit = Edit {
+            base_revision: RevisionId::new(step),
+            expected_hash: ContentHash::from_bytes(text.as_bytes()),
+            range: insert_at..insert_at,
+            replacement: "x".to_owned(),
+        };
+        text.insert(insert_at, 'x');
+        expected_reserved += (insert_at + 3) as u64;
+        session
+            .advance(RevisionId::new(step + 1), edit)
+            .expect("keystroke edit succeeds");
+        assert!(session.fragments.source_bytes() <= initial_len + insert_at + 2);
+    }
+
+    assert_eq!(
+        session.fragments.reserved_position_bytes(),
+        expected_reserved
+    );
+    let projected_typical_session = 100_000_u64 * 101;
+    assert!(projected_typical_session < (1_u64 << 31) / 100);
+}
+
+#[test]
+fn separated_line_edits_exercise_pathological_piece_growth_bound() {
+    let mut text = (0..64).map(|_| "%a\n").collect::<String>();
+    text.push_str("\\end");
+    let mut session = Session::start(
+        template(),
+        "piece-growth",
+        RevisionId::new(1),
+        text.clone(),
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold run");
+
+    for step in 0..32_u64 {
+        let edit_at = step as usize * 6 + 1;
+        let before = session.layout.pieces().len();
+        let replacement = if step % 2 == 0 { "b" } else { "c" };
+        let edit = Edit {
+            base_revision: RevisionId::new(step + 1),
+            expected_hash: ContentHash::from_bytes(text.as_bytes()),
+            range: edit_at..edit_at + 1,
+            replacement: replacement.to_owned(),
+        };
+        text.replace_range(edit_at..edit_at + 1, replacement);
+        session
+            .advance(RevisionId::new(step + 2), edit)
+            .expect("separated line edit succeeds");
+        assert!(session.layout.pieces().len() <= before + 2);
+    }
+    assert_eq!(session.layout.pieces().len(), 64);
+    assert_eq!(session.fragments.source_bytes(), text.len() + 32 * 3);
+}
+
 fn session_piece_origin_setup(
     source: &str,
     offset: usize,

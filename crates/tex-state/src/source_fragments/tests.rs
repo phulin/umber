@@ -178,3 +178,53 @@ fn fragment_snapshot_handle_is_constant_size() {
     append(&mut fragments, &vec![b'x'; 1024 * 1024], 1);
     assert_eq!(mem::size_of_val(&fragments.clone()), before);
 }
+
+#[test]
+fn pruning_waits_for_checkpoints_and_keeps_deleted_metadata_resolvable() {
+    let mut fragments = FragmentStore::new();
+    let (id, registration) = append(&mut fragments, "é".as_bytes(), 1);
+    let origin = registration
+        .direct_origin(0, 2)
+        .expect("direct Unicode origin");
+    let live = EditorLayout::new(
+        "root.tex",
+        LayoutGeneration::new(1),
+        vec![Piece::new(id, 0, 2)],
+        &fragments,
+    )
+    .expect("live layout");
+    let deleted = EditorLayout::new("root.tex", LayoutGeneration::new(2), vec![], &fragments)
+        .expect("deleted layout");
+
+    assert_eq!(fragments.prune_for_layout(&live, 1, 1), 0);
+    assert_eq!(fragments.prune_for_layout(&deleted, 2, 1), 0);
+    assert_eq!(fragments.bytes(id), Some("é".as_bytes()));
+    assert_eq!(fragments.prune_for_layout(&deleted, 2, 2), 2);
+    assert_eq!(fragments.bytes(id), None);
+    let span = direct_fragment_span(origin, &fragments).expect("metadata retains direct origin");
+    assert_eq!(
+        resolve_fragment_span(span, &fragments, &deleted),
+        Some(LayoutResolvedOrigin::Deleted { minted_revision: 1 })
+    );
+}
+
+#[test]
+fn metadata_snapshots_do_not_pin_fragment_source_bytes() {
+    let mut fragments = FragmentStore::new();
+    let (id, _) = append(&mut fragments, b"source bytes", 1);
+    let metadata = fragments.metadata_snapshot();
+
+    assert_eq!(fragments.bytes(id), Some(&b"source bytes"[..]));
+    assert_eq!(metadata.bytes(id), None);
+    assert_eq!(metadata.source_bytes(), 0);
+    assert_eq!(
+        fragments.reserved_position_bytes(),
+        b"source bytes".len() as u64 + 1
+    );
+    assert_eq!(
+        fragments.retained_bytes(),
+        mem::size_of::<FragmentStore>()
+            + fragments.metadata_retained_bytes()
+            + b"source bytes".len()
+    );
+}

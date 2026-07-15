@@ -85,6 +85,7 @@ export interface ReuseMetrics {
 
 export interface RetentionMetrics {
   checkpointRootBytes: number;
+  diagnosticBytes: number;
   outputBytes: number;
   protectedOverageBytes: number;
 }

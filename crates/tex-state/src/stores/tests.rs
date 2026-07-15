@@ -562,6 +562,11 @@ fn oversized_and_cumulative_sources_use_wide_fallback_without_narrowing_position
         fallback.decode(),
         crate::token::OriginEncoding::Arena(_)
     ));
+    assert_eq!(
+        cumulative.source_token_origin(SourceId::new(1), 2, 3),
+        OriginId::UNKNOWN,
+        "an invalid span degrades to unknown instead of aliasing or aborting"
+    );
 }
 
 #[test]

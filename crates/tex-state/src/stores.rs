@@ -1846,6 +1846,7 @@ impl Stores {
         };
         let provenance = self.provenance_stats().retained_bytes();
         let source_map = self.source_map.stats().retained_bytes;
+        let source_fragment_metadata = self.source_fragments.metadata_retained_bytes();
         let nodes = self
             .nodes
             .retained_payload_bytes()
@@ -1860,6 +1861,7 @@ impl Stores {
             .saturating_add(self.env.journal_retained_bytes())
             .saturating_add(provenance)
             .saturating_add(source_map)
+            .saturating_add(source_fragment_metadata)
             .saturating_add(nodes)
     }
 
