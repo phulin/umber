@@ -5,6 +5,23 @@ use tex_state::node::Node;
 use tex_state::scaled::Scaled;
 
 #[test]
+fn unsupported_typesetting_diagnostic_names_control_sequence() {
+    let mut stores = Universe::new();
+    let special = stores.intern("special");
+    let error = ExecError::UnimplementedTypesetting {
+        mode: Mode::DisplayMath,
+        token: Token::Cs(special.symbol()),
+        origin: OriginId::UNKNOWN,
+        operation: "math primitive",
+    };
+
+    let rendered = error.format_with_provenance(&stores);
+
+    assert!(rendered.contains("for token \\special"));
+    assert!(!rendered.contains("Symbol("));
+}
+
+#[test]
 fn expl3_primitive_alias_pattern_consumes_its_conditional_terminator() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

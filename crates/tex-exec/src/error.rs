@@ -439,8 +439,26 @@ impl ExecError {
     /// Renders this error with lazy provenance context from the live universe.
     #[must_use]
     pub fn format_with_provenance(&self, stores: &Universe) -> String {
-        ProvenanceResolver::new(stores)
-            .render_diagnostic_site(&self.to_string(), &self.diagnostic_site())
+        ProvenanceResolver::new(stores).render_diagnostic_site(
+            &self.message_with_token_names(stores),
+            &self.diagnostic_site(),
+        )
+    }
+
+    fn message_with_token_names(&self, stores: &Universe) -> String {
+        match self {
+            Self::Captured { error, .. } => error.message_with_token_names(stores),
+            Self::UnimplementedTypesetting {
+                mode,
+                token,
+                operation,
+                ..
+            } => format!(
+                "typesetting path is not implemented yet: {operation} in {mode:?} for token {}",
+                tex_expand::token_text(stores, *token)
+            ),
+            _ => self.to_string(),
+        }
     }
 }
 
