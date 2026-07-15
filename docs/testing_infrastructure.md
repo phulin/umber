@@ -40,6 +40,18 @@ default cargo-test tier because its workload deliberately materializes large
 input, page, mode, stream, hyphenation, provenance, and Unicode code-table
 state.
 
+Incremental edit mapping and convergence have a separate deterministic fuzz
+tier:
+
+```bash
+scripts/test-incremental-fuzz.sh
+```
+
+The wrapper runs the ignored `tex-incr` 1,000-edit scripted test, comparing
+the incremental DVI with a fresh cold execution after every revision. It stays
+outside the default Cargo tier because of its intentionally long edit
+sequence.
+
 Whole-engine Gentle profiling has a separate persistent in-process runner:
 
 ```bash
