@@ -1663,8 +1663,8 @@ mod tests {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
 
-        assert_eq!(PDFTEX_INT_PARAMETER_MEANINGS.len(), 38);
-        assert_eq!(PDFTEX_INT_PARAMETER_DEFAULTS.len(), 37);
+        assert_eq!(PDFTEX_INT_PARAMETER_MEANINGS.len(), 39);
+        assert_eq!(PDFTEX_INT_PARAMETER_DEFAULTS.len(), 38);
         assert_eq!(PDFTEX_DIMEN_PARAMETERS.len(), 13);
         assert_eq!(PDFTEX_TOK_PARAMETERS.len(), 4);
         for &(parameter, expected) in PDFTEX_INT_PARAMETER_DEFAULTS {
