@@ -62,6 +62,12 @@ local restoration. Sparse e-TeX registers obey the same rules as dense cells.
 Meaning caches are owned above the environment but invalidate through exact
 generation signals returned by aggregate mutation and restoration.
 
+pdfTeX mode reserves typed cells in the integer, dimension, and token-list
+banks for its 55 parameter names, including three integer alias pairs. Mode
+preparation installs the pinned INITEX defaults; ordinary grouping, rollback,
+semantic hashing, and format serialization apply without a PDF-specific side
+store.
+
 Box slots additionally retain the group depth that owns their visible value.
 Destructive `\box`, `\unhbox`, `\unvbox`, and `\vsplit` updates preserve that
 owner depth even when executed inside a nested box-construction group: the

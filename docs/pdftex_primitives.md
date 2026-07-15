@@ -35,8 +35,10 @@ WASM session option `engine: "pdftex"` select this layer and its truthful
 semantics remain in later checklist issues fail explicitly as unsupported
 rather than behaving like `\relax`.
 
-The two already implemented pdfTeX-layer names are `\expanded` and
-`\ifincsname`; the other 156 exact names still lack their final semantics.
+The two fully implemented pdfTeX-layer names are `\expanded` and
+`\ifincsname`. The 55 parameter names have typed, assignable state, but their
+downstream PDF and typesetting effects remain assigned to checklist issues
+4--8; the other 101 exact names still lack their final semantics.
 There are two intentional pre-existing visibility overlaps: e-TeX mode keeps
 `\ifincsname`, and the supported LaTeX-DVI contract keeps `\expanded` (and
 inherits `\ifincsname` through e-TeX). The source-set gate therefore requires
@@ -54,9 +56,9 @@ oracle-backed test. Every name in a missing row is missing.
 
 | Family (source registration block) | Count | Status | Primitive names |
 | --- | ---: | --- | --- |
-| PDF token-list parameters | 4 | missing | `\pdfpagesattr`, `\pdfpageattr`, `\pdfpageresources`, `\pdfpkmode` |
-| PDF integer parameters | 38 | missing | `\pdfoutput`, `\pdfcompresslevel`, `\pdfobjcompresslevel`, `\pdfdecimaldigits`, `\pdfmovechars`, `\pdfimageresolution`, `\pdfpkresolution`, `\pdfuniqueresname`, `\pdfoptionpdfminorversion`, `\pdfoptionalwaysusepdfpagebox`, `\pdfoptionpdfinclusionerrorlevel`, `\pdfmajorversion`, `\pdfminorversion`, `\pdfforcepagebox`, `\pdfpagebox`, `\pdfinclusionerrorlevel`, `\pdfgamma`, `\pdfimagegamma`, `\pdfimagehicolor`, `\pdfimageapplygamma`, `\pdfadjustspacing`, `\pdfprotrudechars`, `\pdftracingfonts`, `\pdfadjustinterwordglue`, `\pdfprependkern`, `\pdfappendkern`, `\pdfgentounicode`, `\pdfdraftmode`, `\pdfinclusioncopyfonts`, `\pdfsuppresswarningdupdest`, `\pdfsuppresswarningdupmap`, `\pdfsuppresswarningpagegroup`, `\pdfinfoomitdate`, `\pdfsuppressptexinfo`, `\pdfomitcharset`, `\pdfomitinfodict`, `\pdfomitprocset`, `\pdfptexuseunderscore` |
-| PDF dimension parameters | 13 | missing | `\pdfhorigin`, `\pdfvorigin`, `\pdfpagewidth`, `\pdfpageheight`, `\pdflinkmargin`, `\pdfdestmargin`, `\pdfthreadmargin`, `\pdffirstlineheight`, `\pdflastlinedepth`, `\pdfeachlineheight`, `\pdfeachlinedepth`, `\pdfignoreddimen`, `\pdfpxdimen` |
+| PDF token-list parameters | 4 | partial (state done) | `\pdfpagesattr`, `\pdfpageattr`, `\pdfpageresources`, `\pdfpkmode` |
+| PDF integer parameters | 38 | partial (state done) | `\pdfoutput`, `\pdfcompresslevel`, `\pdfobjcompresslevel`, `\pdfdecimaldigits`, `\pdfmovechars`, `\pdfimageresolution`, `\pdfpkresolution`, `\pdfuniqueresname`, `\pdfoptionpdfminorversion`, `\pdfoptionalwaysusepdfpagebox`, `\pdfoptionpdfinclusionerrorlevel`, `\pdfmajorversion`, `\pdfminorversion`, `\pdfforcepagebox`, `\pdfpagebox`, `\pdfinclusionerrorlevel`, `\pdfgamma`, `\pdfimagegamma`, `\pdfimagehicolor`, `\pdfimageapplygamma`, `\pdfadjustspacing`, `\pdfprotrudechars`, `\pdftracingfonts`, `\pdfadjustinterwordglue`, `\pdfprependkern`, `\pdfappendkern`, `\pdfgentounicode`, `\pdfdraftmode`, `\pdfinclusioncopyfonts`, `\pdfsuppresswarningdupdest`, `\pdfsuppresswarningdupmap`, `\pdfsuppresswarningpagegroup`, `\pdfinfoomitdate`, `\pdfsuppressptexinfo`, `\pdfomitcharset`, `\pdfomitinfodict`, `\pdfomitprocset`, `\pdfptexuseunderscore` |
+| PDF dimension parameters | 13 | partial (state done) | `\pdfhorigin`, `\pdfvorigin`, `\pdfpagewidth`, `\pdfpageheight`, `\pdflinkmargin`, `\pdfdestmargin`, `\pdfthreadmargin`, `\pdffirstlineheight`, `\pdflastlinedepth`, `\pdfeachlineheight`, `\pdfeachlinedepth`, `\pdfignoreddimen`, `\pdfpxdimen` |
 | Font construction and primitive recovery | 3 | missing | `\letterspacefont`, `\pdfcopyfont`, `\pdfprimitive` |
 | Read-only integer enquiries | 14 | missing | `\pdftexversion`, `\pdflastobj`, `\pdflastxform`, `\pdflastximage`, `\pdflastximagepages`, `\pdflastannot`, `\pdflastxpos`, `\pdflastypos`, `\pdfretval`, `\pdflastximagecolordepth`, `\pdfelapsedtime`, `\pdfshellescape`, `\pdfrandomseed`, `\pdflastlink` |
 | Expandable conversions and enquiries | 27 | partial (1 done) | `\expanded` (done); `\pdftexrevision`, `\pdftexbanner`, `\pdffontname`, `\pdffontobjnum`, `\pdffontsize`, `\pdfpageref`, `\leftmarginkern`, `\rightmarginkern`, `\pdfxformname`, `\pdfescapestring`, `\pdfescapename`, `\pdfescapehex`, `\pdfunescapehex`, `\pdfcreationdate`, `\pdffilemoddate`, `\pdffilesize`, `\pdfmdfivesum`, `\pdffiledump`, `\pdfmatch`, `\pdflastmatch`, `\pdfstrcmp`, `\pdfcolorstackinit`, `\pdfuniformdeviate`, `\pdfnormaldeviate`, `\pdfinsertht`, `\pdfximagebbox` |
@@ -72,6 +74,15 @@ name is installed: assignments must group correctly, expandable results and
 diagnostics must match the pinned oracle, and node/effect state must survive
 checkpoint, restore, semantic hashing, and format serialization where
 applicable.
+
+The parameter-state slice uses reserved cells in the existing typed integer,
+dimension, and token-list banks. pdfTeX mode initializes the cells to the
+pinned INITEX defaults; other engine modes leave them untouched. The three
+legacy `\pdfoption...` spellings share cells with their current counterparts.
+Assignments therefore inherit TeX grouping, `\global`, and `\globaldefs`
+semantics from the common environment barrier, while snapshots, semantic
+hashes, and format images include the values through the existing bank
+machinery. Downstream consumers must not introduce shadow parameter state.
 
 ## Compatibility and alias decisions
 

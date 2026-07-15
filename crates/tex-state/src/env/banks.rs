@@ -197,6 +197,43 @@ impl IntParam {
     /// Hidden e-TeX extended-mode flag controlling compatibility-sensitive limits.
     pub const ETEX_EXTENDED_MODE: Self = Self::new(71);
 
+    /// pdfTeX's DVI/PDF output selection.
+    pub const PDF_OUTPUT: Self = Self::new(72);
+    pub const PDF_COMPRESS_LEVEL: Self = Self::new(73);
+    pub const PDF_OBJ_COMPRESS_LEVEL: Self = Self::new(74);
+    pub const PDF_DECIMAL_DIGITS: Self = Self::new(75);
+    pub const PDF_MOVE_CHARS: Self = Self::new(76);
+    pub const PDF_IMAGE_RESOLUTION: Self = Self::new(77);
+    pub const PDF_PK_RESOLUTION: Self = Self::new(78);
+    pub const PDF_UNIQUE_RESNAME: Self = Self::new(79);
+    pub const PDF_MINOR_VERSION: Self = Self::new(80);
+    pub const PDF_FORCE_PAGE_BOX: Self = Self::new(81);
+    pub const PDF_PAGE_BOX: Self = Self::new(82);
+    pub const PDF_INCLUSION_ERROR_LEVEL: Self = Self::new(83);
+    pub const PDF_MAJOR_VERSION: Self = Self::new(84);
+    pub const PDF_GAMMA: Self = Self::new(85);
+    pub const PDF_IMAGE_GAMMA: Self = Self::new(86);
+    pub const PDF_IMAGE_HICOLOR: Self = Self::new(87);
+    pub const PDF_IMAGE_APPLY_GAMMA: Self = Self::new(88);
+    pub const PDF_ADJUST_SPACING: Self = Self::new(89);
+    pub const PDF_PROTRUDE_CHARS: Self = Self::new(90);
+    pub const PDF_TRACING_FONTS: Self = Self::new(91);
+    pub const PDF_ADJUST_INTERWORD_GLUE: Self = Self::new(92);
+    pub const PDF_PREPEND_KERN: Self = Self::new(93);
+    pub const PDF_APPEND_KERN: Self = Self::new(94);
+    pub const PDF_GEN_TO_UNICODE: Self = Self::new(95);
+    pub const PDF_DRAFT_MODE: Self = Self::new(96);
+    pub const PDF_INCLUSION_COPY_FONTS: Self = Self::new(97);
+    pub const PDF_SUPPRESS_WARNING_DUP_DEST: Self = Self::new(98);
+    pub const PDF_SUPPRESS_WARNING_DUP_MAP: Self = Self::new(99);
+    pub const PDF_SUPPRESS_WARNING_PAGE_GROUP: Self = Self::new(100);
+    pub const PDF_INFO_OMIT_DATE: Self = Self::new(101);
+    pub const PDF_SUPPRESS_PTEX_INFO: Self = Self::new(102);
+    pub const PDF_OMIT_CHARSET: Self = Self::new(103);
+    pub const PDF_OMIT_INFO_DICT: Self = Self::new(104);
+    pub const PDF_OMIT_PROCSET: Self = Self::new(105);
+    pub const PDF_PTEX_USE_UNDERSCORE: Self = Self::new(106);
+
     /// Current hyphenation language.
     pub const LANGUAGE: Self = Self::new(50);
 
@@ -279,6 +316,20 @@ impl DimenParam {
 
     /// TeX's final-pass paragraph emergency stretch.
     pub const EMERGENCY_STRETCH: Self = Self::new(20);
+
+    pub const PDF_H_ORIGIN: Self = Self::new(21);
+    pub const PDF_V_ORIGIN: Self = Self::new(22);
+    pub const PDF_PAGE_WIDTH: Self = Self::new(23);
+    pub const PDF_PAGE_HEIGHT: Self = Self::new(24);
+    pub const PDF_LINK_MARGIN: Self = Self::new(25);
+    pub const PDF_DEST_MARGIN: Self = Self::new(26);
+    pub const PDF_THREAD_MARGIN: Self = Self::new(27);
+    pub const PDF_FIRST_LINE_HEIGHT: Self = Self::new(28);
+    pub const PDF_LAST_LINE_DEPTH: Self = Self::new(29);
+    pub const PDF_EACH_LINE_HEIGHT: Self = Self::new(30);
+    pub const PDF_EACH_LINE_DEPTH: Self = Self::new(31);
+    pub const PDF_IGNORED_DIMEN: Self = Self::new(32);
+    pub const PDF_PX_DIMEN: Self = Self::new(33);
 }
 
 impl GlueParam {
@@ -360,6 +411,11 @@ impl TokParam {
 
     /// e-TeX's token list inserted at natural real or virtual EOF.
     pub const EVERY_EOF: Self = Self::new(8);
+
+    pub const PDF_PAGES_ATTR: Self = Self::new(9);
+    pub const PDF_PAGE_ATTR: Self = Self::new(10);
+    pub const PDF_PAGE_RESOURCES: Self = Self::new(11);
+    pub const PDF_PK_MODE: Self = Self::new(12);
 }
 
 pub(crate) trait BankCodec {
