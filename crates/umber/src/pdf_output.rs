@@ -2137,6 +2137,40 @@ mod tests {
     }
 
     #[test]
+    fn pk_request_resolves_default_and_clamps_explicit_resolution() {
+        for (resolution, driver_dpi, expected) in
+            [(0, 600, 600), (9_000, 300, 8_000), (-8, 300, 72)]
+        {
+            let mut stores = Universe::default();
+            prepare_pdftex_run_stores(&mut stores);
+            stores
+                .world_mut()
+                .set_memory_file(
+                    "cmr10.tfm",
+                    include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm").to_vec(),
+                )
+                .expect("seed TFM");
+            let source = format!(
+                concat!(
+                    "\\pdfoutput=1\\pdfpkresolution={resolution}\\pdfpkmode{{fixture}}",
+                    "\\font\\f=cmr10 \\pdfmapline{{-cmr10}}",
+                    "\\shipout\\hbox{{\\f A}}\\end",
+                ),
+                resolution = resolution
+            );
+            run_in(&mut stores, &source);
+            let font = stores
+                .pdf_font_resources()
+                .next()
+                .expect("font resource")
+                .font();
+            let request = pk_font_request(&stores, font, driver_dpi).expect("PK request");
+            assert_eq!(request.dpi(), expected);
+            assert_eq!(request.mode(), b"fixture");
+        }
+    }
+
+    #[test]
     fn zero_page_dimensions_fall_back_to_box_plus_twice_the_origins() {
         let (stores, run_result) = run(concat!(
             "\\pdfoutput=1\\pdfcompresslevel=0\\pdfdecimaldigits=3",
