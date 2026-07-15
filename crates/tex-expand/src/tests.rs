@@ -2985,7 +2985,6 @@ fn the_fontdimen_accepts_current_font_with_exact_output_and_trace() {
             tex_state::font::NULL_FONT,
             1,
             Scaled::from_raw(Scaled::UNITY + Scaled::UNITY / 2),
-            true,
         )
         .expect("current font parameter is writable");
 
@@ -3060,7 +3059,6 @@ fn the_fontdimen_renders_zero_for_unavailable_parameter() {
             tex_state::font::NULL_FONT,
             1,
             tex_state::scaled::Scaled::from_raw(123),
-            true,
         )
         .expect("first nullfont parameter is writable");
 

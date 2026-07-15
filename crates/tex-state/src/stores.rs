@@ -1319,14 +1319,9 @@ impl Stores {
         font: FontId,
         number: u32,
         value: Scaled,
-        global: bool,
     ) -> Result<(), FontParameterError> {
-        let index = self.prepare_font_dimen_write(font, number, global)?;
-        if global {
-            self.env.set_font_dimen_global(index, value);
-        } else {
-            self.env.set_font_dimen(index, value);
-        }
+        let index = self.prepare_font_dimen_write(font, number)?;
+        self.env.set_font_dimen_global(index, value);
         Ok(())
     }
 
@@ -1336,13 +1331,9 @@ impl Stores {
         self.env.font_hyphen_char(font)
     }
 
-    pub fn set_font_hyphen_char(&mut self, font: FontId, value: i32, global: bool) {
+    pub fn set_font_hyphen_char(&mut self, font: FontId, value: i32) {
         self.assert_live_font(font);
-        if global {
-            self.env.set_font_hyphen_char_global(font, value);
-        } else {
-            self.env.set_font_hyphen_char(font, value);
-        }
+        self.env.set_font_hyphen_char_global(font, value);
     }
 
     #[must_use]
@@ -1351,13 +1342,9 @@ impl Stores {
         self.env.font_skew_char(font)
     }
 
-    pub fn set_font_skew_char(&mut self, font: FontId, value: i32, global: bool) {
+    pub fn set_font_skew_char(&mut self, font: FontId, value: i32) {
         self.assert_live_font(font);
-        if global {
-            self.env.set_font_skew_char_global(font, value);
-        } else {
-            self.env.set_font_skew_char(font, value);
-        }
+        self.env.set_font_skew_char_global(font, value);
     }
 
     fn initialize_font_banks(&mut self, font: FontId, parameter_count: u32, parameters: &[Scaled]) {
@@ -1378,7 +1365,6 @@ impl Stores {
         &mut self,
         font: FontId,
         number: u32,
-        global: bool,
     ) -> Result<u32, FontParameterError> {
         self.assert_live_font(font);
         let index = crate::env::font_dimen_index(font, number)?;
@@ -1392,11 +1378,7 @@ impl Stores {
                     last_loaded_font: self.last_loaded_font,
                 });
             }
-            if global {
-                self.env.set_font_param_len_global(font, number);
-            } else {
-                self.env.set_font_param_len(font, number);
-            }
+            self.env.set_font_param_len_global(font, number);
         }
         Ok(index)
     }

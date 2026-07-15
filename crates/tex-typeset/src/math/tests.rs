@@ -952,7 +952,7 @@ fn radical_clearance_uses_display_and_nondisplay_formulas() {
 fn math_accent_uses_skewchar_kern_and_larger_accent() {
     let mut universe = setup_universe();
     let text_font = universe.math_family_font(MathFontSize::Text, 0);
-    universe.set_font_skew_char(text_font, i32::from(b'k'), false);
+    universe.set_font_skew_char(text_font, i32::from(b'k'));
     let noad = MathNoad::new(
         NoadKind::Accent {
             accent: math_char('^'),

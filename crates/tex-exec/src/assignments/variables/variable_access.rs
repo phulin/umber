@@ -80,11 +80,10 @@ pub(super) fn write_font_int_variable(
     target: Variable,
     font: FontId,
     value: i32,
-    global: bool,
 ) {
     match target {
-        Variable::FontHyphenChar(_) => stores.set_font_hyphen_char(font, value, global),
-        Variable::FontSkewChar(_) => stores.set_font_skew_char(font, value, global),
+        Variable::FontHyphenChar(_) => stores.set_font_hyphen_char(font, value),
+        Variable::FontSkewChar(_) => stores.set_font_skew_char(font, value),
         _ => unreachable!("caller restricts target"),
     }
 }

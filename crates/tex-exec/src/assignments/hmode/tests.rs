@@ -175,7 +175,7 @@ fn unrestricted_reconstitution_inserts_null_disc_after_font_hyphen() {
         .run(&mut input, &mut stores)
         .expect("font selection should execute");
     let font = stores.current_font();
-    stores.set_font_hyphen_char(font, i32::from(b'-'), false);
+    stores.set_font_hyphen_char(font, i32::from(b'-'));
     let pending: Vec<_> = "in-line"
         .chars()
         .map(|ch| PendingHChar {
@@ -229,7 +229,7 @@ fn hyphenation_inside_ff_ligature_preserves_the_unbroken_ligature() {
         positions: vec![3],
     });
     let font = stores.current_font();
-    stores.set_font_hyphen_char(font, i32::from(b'-'), false);
+    stores.set_font_hyphen_char(font, i32::from(b'-'));
     let nodes: Vec<_> = "difference"
         .chars()
         .map(|ch| Node::Char {
@@ -469,7 +469,7 @@ fn hyphenation_keeps_scanning_across_font_kerns() {
         positions: vec![5, 9],
     });
     let font = stores.current_font();
-    stores.set_font_hyphen_char(font, i32::from(b'-'), false);
+    stores.set_font_hyphen_char(font, i32::from(b'-'));
     let pending: Vec<_> = "availability"
         .chars()
         .map(|ch| PendingHChar {
@@ -514,7 +514,7 @@ fn hyphenation_preserves_the_font_kern_after_a_reconstituted_word() {
     });
     stores.set_int_param(IntParam::LEFT_HYPHEN_MIN, 1);
     stores.set_int_param(IntParam::RIGHT_HYPHEN_MIN, 1);
-    stores.set_font_hyphen_char(font, i32::from(b'-'), false);
+    stores.set_font_hyphen_char(font, i32::from(b'-'));
     let trailing = Scaled::from_raw(-54_614);
     let nodes = [
         Node::Char {
@@ -599,7 +599,7 @@ fn discretionary_absorbs_font_kern_across_hyphenated_line_boundary() {
         positions: vec![3],
     });
     let font = stores.current_font();
-    stores.set_font_hyphen_char(font, i32::from(b'-'), false);
+    stores.set_font_hyphen_char(font, i32::from(b'-'));
     let pending: Vec<_> = "sentence"
         .chars()
         .map(|ch| PendingHChar {

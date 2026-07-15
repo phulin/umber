@@ -125,14 +125,14 @@ fn paragraph_hyphenation_requires_an_in_range_hyphen_and_omits_a_missing_glyph()
         })
         .collect();
 
-    stores.set_font_hyphen_char(font, -1, false);
+    stores.set_font_hyphen_char(font, -1);
     let disabled = crate::assignments::test_hyphenated_hlist(&mut stores, &word);
     let missing_code = (0u8..=u8::MAX)
         .find(|&code| !stores.font_char_exists(font, code))
         .expect("test font has an in-range missing character");
-    stores.set_font_hyphen_char(font, i32::from(missing_code), false);
+    stores.set_font_hyphen_char(font, i32::from(missing_code));
     let missing_glyph = crate::assignments::test_hyphenated_hlist(&mut stores, &word);
-    stores.set_font_hyphen_char(font, i32::from(b'-'), false);
+    stores.set_font_hyphen_char(font, i32::from(b'-'));
     let enabled = crate::assignments::test_hyphenated_hlist(&mut stores, &word);
 
     assert!(
@@ -199,8 +199,8 @@ fn paragraph_hyphenation_stops_at_a_font_change() {
         .expect("mixed-font hyphenation setup executes");
     let first = font_meaning(&stores, "a");
     let second = font_meaning(&stores, "b");
-    stores.set_font_hyphen_char(first, i32::from(b'-'), false);
-    stores.set_font_hyphen_char(second, i32::from(b'-'), false);
+    stores.set_font_hyphen_char(first, i32::from(b'-'));
+    stores.set_font_hyphen_char(second, i32::from(b'-'));
     let glue = stores.glue_param(GlueParam::PAR_SKIP);
     let mut nodes = vec![Node::Glue {
         spec: glue,
@@ -245,7 +245,7 @@ fn successful_pretolerance_does_not_allocate_hyphenation_nodes() {
         .run(&mut input, &mut stores)
         .expect("pretolerance allocation setup executes");
     let font = stores.current_font();
-    stores.set_font_hyphen_char(font, i32::from(b'-'), false);
+    stores.set_font_hyphen_char(font, i32::from(b'-'));
     let par_fill = stores.glue_param(GlueParam::PAR_FILL_SKIP);
     let mut nodes = vec![
         Node::Char {

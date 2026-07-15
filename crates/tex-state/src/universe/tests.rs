@@ -93,7 +93,7 @@ fn maximum_fontdimen_is_distinct_grouped_rollback_safe_and_format_stable() {
         universe.intern_font_with_identifier(test_font("boundaryfont", b"boundary"), identifier);
     universe.set_meaning(identifier, Meaning::Font(font));
     universe
-        .set_font_dimen(font, 1, Scaled::from_raw(11), true)
+        .set_font_dimen(font, 1, Scaled::from_raw(11))
         .expect("first fontdimen is writable");
     let baseline = universe.snapshot();
     let baseline_snapshot_hash = baseline.state_hash();
@@ -101,7 +101,7 @@ fn maximum_fontdimen_is_distinct_grouped_rollback_safe_and_format_stable() {
 
     universe.enter_group();
     universe
-        .set_font_dimen(font, MAX_FONT_DIMEN, Scaled::from_raw(22), false)
+        .set_font_dimen(font, MAX_FONT_DIMEN, Scaled::from_raw(22))
         .expect("maximum fontdimen is writable");
     assert_eq!(
         universe.font_dimen(font, MAX_FONT_DIMEN),
@@ -111,12 +111,13 @@ fn maximum_fontdimen_is_distinct_grouped_rollback_safe_and_format_stable() {
     assert!(universe.leave_group().is_empty());
     assert_eq!(
         universe.font_dimen(font, MAX_FONT_DIMEN),
-        Scaled::from_raw(0)
+        Scaled::from_raw(22)
     );
-    assert_eq!(universe.testing_state_hash(), baseline_hash);
+    let grouped_write_hash = universe.testing_state_hash();
+    assert_ne!(grouped_write_hash, baseline_hash);
 
     let invalid = universe
-        .set_font_dimen(font, MAX_FONT_DIMEN + 1, Scaled::from_raw(99), false)
+        .set_font_dimen(font, MAX_FONT_DIMEN + 1, Scaled::from_raw(99))
         .expect_err("fontdimen above the slot domain is rejected");
     assert!(matches!(
         invalid,
@@ -127,11 +128,18 @@ fn maximum_fontdimen_is_distinct_grouped_rollback_safe_and_format_stable() {
         Scaled::from_raw(0)
     );
     assert_eq!(universe.font_dimen(font, 1), Scaled::from_raw(11));
+    assert_eq!(universe.testing_state_hash(), grouped_write_hash);
+
+    universe.rollback(&baseline);
+    assert_eq!(
+        universe.font_dimen(font, MAX_FONT_DIMEN),
+        Scaled::from_raw(0)
+    );
     assert_eq!(universe.testing_state_hash(), baseline_hash);
 
     universe.enter_group();
     universe
-        .set_font_dimen(font, MAX_FONT_DIMEN, Scaled::from_raw(33), true)
+        .set_font_dimen(font, MAX_FONT_DIMEN, Scaled::from_raw(33))
         .expect("global maximum fontdimen is writable");
     assert!(universe.leave_group().is_empty());
     assert_eq!(
@@ -147,7 +155,7 @@ fn maximum_fontdimen_is_distinct_grouped_rollback_safe_and_format_stable() {
     assert_eq!(universe.snapshot().state_hash(), baseline_snapshot_hash);
 
     universe
-        .set_font_dimen(font, MAX_FONT_DIMEN, Scaled::from_raw(44), true)
+        .set_font_dimen(font, MAX_FONT_DIMEN, Scaled::from_raw(44))
         .expect("maximum fontdimen is format-visible");
     let bytes = universe.dump_format().expect("boundary format encodes");
     let mut restored =
@@ -168,7 +176,7 @@ fn maximum_fontdimen_is_distinct_grouped_rollback_safe_and_format_stable() {
     let restored_snapshot = restored.snapshot();
     let restored_hash = restored_snapshot.state_hash();
     restored
-        .set_font_dimen(restored_font, MAX_FONT_DIMEN, Scaled::from_raw(55), false)
+        .set_font_dimen(restored_font, MAX_FONT_DIMEN, Scaled::from_raw(55))
         .expect("restored maximum fontdimen remains writable");
     restored.rollback(&restored_snapshot);
     assert_eq!(restored.snapshot().state_hash(), restored_hash);
@@ -525,7 +533,7 @@ fn semantic_format_restores_validated_fonts_banks_hashes_and_rollback_exactly() 
     universe.set_current_font_selector(identifier, font);
     universe.set_math_family_font(crate::math::MathFontSize::Text, 3, font, true);
     universe
-        .set_font_dimen(font, 7, Scaled::from_raw(777), true)
+        .set_font_dimen(font, 7, Scaled::from_raw(777))
         .expect("guaranteed parameter is writable");
     let font_fragment = universe.stores.testing_font_semantic_fingerprint(font);
 
@@ -569,7 +577,7 @@ fn semantic_format_restores_validated_fonts_banks_hashes_and_rollback_exactly() 
     let snapshot = restored.snapshot();
     let before_hash = snapshot.state_hash();
     restored
-        .set_font_dimen(restored_font, 7, Scaled::from_raw(-9), false)
+        .set_font_dimen(restored_font, 7, Scaled::from_raw(-9))
         .expect("font parameter mutation");
     restored.set_current_font(NULL_FONT);
     restored.set_math_family_font(crate::math::MathFontSize::Text, 3, NULL_FONT, false);
@@ -2401,7 +2409,7 @@ fn short_loaded_font_parameters_seed_seven_snapshot_covered_env_values() {
 
     let snapshot = universe.snapshot();
     universe
-        .set_font_dimen(short, 7, Scaled::from_raw(77), false)
+        .set_font_dimen(short, 7, Scaled::from_raw(77))
         .expect("guaranteed fontdimen remains writable after another font loads");
     assert_eq!(universe.font_parameter(short, 7), Scaled::from_raw(77));
     universe.rollback(&snapshot);

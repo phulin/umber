@@ -48,12 +48,7 @@ fn scans_fontdimen_as_an_internal_dimension() {
     let font = stores.intern("testfont");
     stores.set_meaning(font, Meaning::Font(tex_state::font::NULL_FONT));
     stores
-        .set_font_dimen(
-            tex_state::font::NULL_FONT,
-            8,
-            Scaled::from_raw(12_345),
-            true,
-        )
+        .set_font_dimen(tex_state::font::NULL_FONT, 8, Scaled::from_raw(12_345))
         .expect("font parameter should be writable");
 
     let (value, diagnostic, next) = scan_with_stores(

@@ -48,7 +48,7 @@ fn scans_font_hyphenchar_as_an_internal_integer() {
     );
     let font_cs = stores.intern("arrayfont");
     stores.set_meaning(font_cs, Meaning::Font(tex_state::font::NULL_FONT));
-    stores.set_font_hyphen_char(tex_state::font::NULL_FONT, 257, false);
+    stores.set_font_hyphen_char(tex_state::font::NULL_FONT, 257);
     let list =
         stores.intern_token_list(&[Token::Cs(hyphenchar.symbol()), Token::Cs(font_cs.symbol())]);
     let mut input = InputStack::new(MemoryInput::new(""));
@@ -75,12 +75,7 @@ fn scans_fontdimen_as_a_raw_scaled_internal_integer() {
     let font_cs = stores.intern("arrayfont");
     stores.set_meaning(font_cs, Meaning::Font(tex_state::font::NULL_FONT));
     stores
-        .set_font_dimen(
-            tex_state::font::NULL_FONT,
-            8,
-            Scaled::from_raw(12_345),
-            true,
-        )
+        .set_font_dimen(tex_state::font::NULL_FONT, 8, Scaled::from_raw(12_345))
         .expect("font parameter should be writable");
     let list = stores.intern_token_list(&[
         Token::Cs(fontdimen.symbol()),

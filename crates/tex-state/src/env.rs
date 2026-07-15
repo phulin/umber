@@ -657,20 +657,6 @@ impl Env {
         Scaled::from_raw(decode_i32(font_bank_word(&self.font_dimens, index)))
     }
 
-    pub(crate) fn set_font_dimen(&mut self, index: u32, value: Scaled) {
-        set_font_bank_word(
-            &mut self.font_dimens,
-            &mut self.journal,
-            #[cfg(feature = "shadow")]
-            &mut self.shadow,
-            self.epoch,
-            BankTag::FontDimen,
-            index,
-            encode_i32(value.raw()),
-            false,
-        );
-    }
-
     pub(crate) fn set_font_dimen_global(&mut self, index: u32, value: Scaled) {
         set_font_bank_word(
             &mut self.font_dimens,
@@ -688,20 +674,6 @@ impl Env {
     #[must_use]
     pub fn font_param_len(&self, font: FontId) -> u32 {
         decode_u32(font_bank_word(&self.font_param_lens, font.raw()))
-    }
-
-    pub(crate) fn set_font_param_len(&mut self, font: FontId, value: u32) {
-        set_font_bank_word(
-            &mut self.font_param_lens,
-            &mut self.journal,
-            #[cfg(feature = "shadow")]
-            &mut self.shadow,
-            self.epoch,
-            BankTag::FontParamLen,
-            font.raw(),
-            u64::from(value),
-            false,
-        );
     }
 
     pub(crate) fn set_font_param_len_global(&mut self, font: FontId, value: u32) {
@@ -723,10 +695,6 @@ impl Env {
         decode_i32(font_bank_word(&self.font_hyphen_chars, font.raw()))
     }
 
-    pub(crate) fn set_font_hyphen_char(&mut self, font: FontId, value: i32) {
-        self.set_font_int_bank(BankTag::FontHyphenChar, font, value, false);
-    }
-
     pub(crate) fn set_font_hyphen_char_global(&mut self, font: FontId, value: i32) {
         self.set_font_int_bank(BankTag::FontHyphenChar, font, value, true);
     }
@@ -734,10 +702,6 @@ impl Env {
     #[must_use]
     pub fn font_skew_char(&self, font: FontId) -> i32 {
         decode_i32(font_bank_word(&self.font_skew_chars, font.raw()))
-    }
-
-    pub(crate) fn set_font_skew_char(&mut self, font: FontId, value: i32) {
-        self.set_font_int_bank(BankTag::FontSkewChar, font, value, false);
     }
 
     pub(crate) fn set_font_skew_char_global(&mut self, font: FontId, value: i32) {

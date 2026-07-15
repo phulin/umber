@@ -2376,9 +2376,8 @@ impl Universe {
         font: FontId,
         number: u32,
         value: Scaled,
-        global: bool,
     ) -> Result<(), FontParameterError> {
-        self.stores.set_font_dimen(font, number, value, global)
+        self.stores.set_font_dimen(font, number, value)
     }
 
     #[must_use]
@@ -2386,8 +2385,8 @@ impl Universe {
         self.stores.font_hyphen_char(font)
     }
 
-    pub fn set_font_hyphen_char(&mut self, font: FontId, value: i32, global: bool) {
-        self.stores.set_font_hyphen_char(font, value, global);
+    pub fn set_font_hyphen_char(&mut self, font: FontId, value: i32) {
+        self.stores.set_font_hyphen_char(font, value);
     }
 
     #[must_use]
@@ -2395,8 +2394,8 @@ impl Universe {
         self.stores.font_skew_char(font)
     }
 
-    pub fn set_font_skew_char(&mut self, font: FontId, value: i32, global: bool) {
-        self.stores.set_font_skew_char(font, value, global);
+    pub fn set_font_skew_char(&mut self, font: FontId, value: i32) {
+        self.stores.set_font_skew_char(font, value);
     }
 
     #[must_use]

@@ -109,11 +109,13 @@ fn font_definition_uses_driver_font_resolution_and_records_resolved_path() {
 }
 
 #[test]
-fn fontdimen_assignment_is_grouping_aware() {
+fn font_properties_are_inherently_global() {
     let mut stores = stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
-        "\\font\\f=cmr10 \\relax \\fontdimen2\\f=10pt {\\fontdimen2\\f=20pt \\message{in=\\the\\fontdimen2\\f}}\\message{out=\\the\\fontdimen2\\f}\\end",
+        "\\font\\f=cmr10 \\relax \\fontdimen2\\f=10pt \
+         {\\fontdimen2\\f=20pt \\hyphenchar\\f=128 \\skewchar\\f=129} \
+         \\message{fd=\\the\\fontdimen2\\f,hc=\\the\\hyphenchar\\f,sc=\\the\\skewchar\\f}\\end",
     ));
 
     Executor::new()
@@ -121,8 +123,7 @@ fn fontdimen_assignment_is_grouping_aware() {
         .expect("fontdimen assignments execute");
 
     let output = terminal_effect_text(&stores);
-    assert!(output.contains("in=20.0pt"));
-    assert!(output.contains("out=10.0pt"));
+    assert!(output.contains("fd=20.0pt,hc=128,sc=129"), "{output:?}");
 }
 
 #[test]
@@ -167,6 +168,32 @@ fn font_backed_integer_array_can_extend_and_read_entries() {
     assert_eq!(stores.font_hyphen_char(font), 128);
     assert_eq!(stores.font_parameter_count(font), 85);
     assert_eq!(stores.font_parameter(font, 85), Scaled::from_raw(85));
+}
+
+#[test]
+fn grouped_font_backed_integer_array_setup_survives_group_exit() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "{\\global\\font\\a=cmr10 at 1001sp \
+         \\fontdimen8\\a=0sp \\hyphenchar\\a=128 \
+         \\fontdimen85\\a=85sp} \
+         \\message{count=\\the\\hyphenchar\\a,item=\\the\\fontdimen85\\a}\\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("grouped font-backed integer array setup executes");
+
+    let font = font_meaning(&stores, "a");
+    assert_eq!(stores.font_hyphen_char(font), 128);
+    assert_eq!(stores.font_parameter_count(font), 85);
+    assert_eq!(stores.font_parameter(font, 85), Scaled::from_raw(85));
+    assert!(
+        terminal_effect_text(&stores).contains("count=128,item=0.0013pt"),
+        "{:?}",
+        terminal_effect_text(&stores)
+    );
 }
 
 #[test]

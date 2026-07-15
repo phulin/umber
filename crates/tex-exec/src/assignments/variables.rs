@@ -101,7 +101,7 @@ pub(super) fn execute_assignment_to_target(
         }
         Variable::FontDimen(font, number) => {
             let value = scan_scaled(input, stores, execution, context)?;
-            set_font_dimen_recovering(stores, font, number, value, global)?;
+            set_font_dimen_recovering(stores, font, number, value)?;
         }
         Variable::GlueParam(index) => {
             let value = scan_glue_id(input, stores, execution, false, context)?;
@@ -117,11 +117,11 @@ pub(super) fn execute_assignment_to_target(
         }
         Variable::FontHyphenChar(font) => {
             let value = scan_i32(input, stores, execution, context)?;
-            stores.set_font_hyphen_char(font, value, global);
+            stores.set_font_hyphen_char(font, value);
         }
         Variable::FontSkewChar(font) => {
             let value = scan_i32(input, stores, execution, context)?;
-            stores.set_font_skew_char(font, value, global);
+            stores.set_font_skew_char(font, value);
         }
     }
     Ok(())
@@ -261,7 +261,7 @@ pub(super) fn execute_arithmetic(
             let old = read_int_variable(stores, target);
             let rhs = scan_i32(input, stores, execution, context)?;
             let value = arithmetic_i32(primitive, old, rhs)?;
-            write_font_int_variable(stores, target, font, value, global);
+            write_font_int_variable(stores, target, font, value);
         }
         Variable::DimenRegister(index) | Variable::DimenParam(index) => {
             let old = read_dimen_variable(stores, target);
@@ -309,7 +309,7 @@ pub(super) fn execute_arithmetic(
                 }
                 _ => unreachable!("caller restricts primitive"),
             };
-            set_font_dimen_recovering(stores, font, number, value, global)?;
+            set_font_dimen_recovering(stores, font, number, value)?;
         }
         Variable::GlueRegister(index) | Variable::GlueParam(index) => {
             let old = stores.glue(read_glue_variable(stores, target));
@@ -344,9 +344,8 @@ fn set_font_dimen_recovering(
     font: tex_state::ids::FontId,
     number: u32,
     value: Scaled,
-    global: bool,
 ) -> Result<(), ExecError> {
-    match stores.set_font_dimen(font, number, value, global) {
+    match stores.set_font_dimen(font, number, value) {
         Ok(()) => Ok(()),
         Err(tex_state::FontParameterError::CannotGrow { current_len, .. }) => {
             let name = stores.font_name(font);
