@@ -2457,6 +2457,47 @@ fn fresh_hanging_paragraph_keeps_its_first_item_line_at_full_width() {
 }
 
 #[test]
+fn paragraph_hfill_sets_the_line_at_fill_order() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\tenrm=cmr10 \\relax \\tenrm\
+         \\setbox0=\\vbox{\\hsize=345pt \\hfill lorem\\par}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("fill-order paragraph executes");
+
+    let box0 = stores.box_reg(0).expect("vbox register");
+    let [Node::VList(vbox)] = stores.nodes(box0).testing_decoded() else {
+        panic!("register 0 should hold a vbox");
+    };
+    let line = stores
+        .nodes(vbox.children)
+        .testing_decoded()
+        .iter()
+        .find_map(|node| match node {
+            Node::HList(line) => Some(line),
+            _ => None,
+        })
+        .expect("paragraph line");
+    assert_eq!(
+        line.glue_sign,
+        tex_state::node::Sign::Stretching,
+        "line={line:?}, children={:?}",
+        stores.nodes(line.children).testing_decoded()
+    );
+    assert_eq!(
+        line.glue_order,
+        tex_state::glue::Order::Fill,
+        "line={line:?}, children={:?}",
+        stores.nodes(line.children).testing_decoded()
+    );
+    assert!(!line.glue_set.is_zero());
+}
+
+#[test]
 fn vertical_hrule_uses_defaults_and_sets_prevdepth_ignore_sentinel() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

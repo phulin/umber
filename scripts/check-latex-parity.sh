@@ -217,21 +217,26 @@ while read -r kind name path expected_bytes expected_hash passes categories supp
   stage_format "$name" "$umber_dir"
 
   for ((pass = 1; pass <= passes; pass++)); do
+    rm -f "${reference_dir}/document.dvi" "${umber_dir}/document.dvi"
+    reference_status=0
     (
       cd "$reference_dir"
       env SOURCE_DATE_EPOCH="$source_date_epoch" FORCE_SOURCE_DATE=1 \
         "$reference_latex" -interaction=batchmode document.tex > document.stdout 2> document.stderr
-    ) || fail "reference LaTeX failed for $name, pass $pass"
+    ) || reference_status=$?
+    [[ -f "${reference_dir}/document.dvi" ]] || \
+      fail "reference LaTeX emitted no DVI for $name, pass $pass (status $reference_status)"
+    umber_status=0
     (
       cd "$umber_dir"
       env SOURCE_DATE_EPOCH="$source_date_epoch" FORCE_SOURCE_DATE=1 \
         TEXINPUTS="$texinputs" TEXFONTS="$texfonts" \
         "$umber_bin" run --latex document.tex --format latex.fmt --dvi document.dvi \
           > document.stdout 2> document.stderr
-    ) || fail "Umber failed for $name, pass $pass"
+    ) || umber_status=$?
+    [[ -f "${umber_dir}/document.dvi" ]] || \
+      fail "Umber emitted no DVI for $name, pass $pass (status $umber_status)"
   done
-  [[ -f "${reference_dir}/document.dvi" ]] || fail "reference emitted no DVI for $name"
-  [[ -f "${umber_dir}/document.dvi" ]] || fail "Umber emitted no DVI for $name"
   "$parity_bin" --compare-existing-dvi \
     "${reference_dir}/document.dvi" "${umber_dir}/document.dvi" \
     --label "$name" --triage-dir "$triage_dir" || fail "coordinate-exact DVI mismatch for $name"
