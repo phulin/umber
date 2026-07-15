@@ -43,9 +43,7 @@ struct MeaningSiteCacheEntry {
 
 macro_rules! record_dependency {
     ($expansion:expr, $dependency:expr) => {
-        if let Some(recorder) = $expansion.recorder.as_deref_mut() {
-            recorder.record_dependency($dependency);
-        }
+        $expansion.record_dependency($dependency);
     };
 }
 pub(crate) use record_dependency;
@@ -606,7 +604,7 @@ pub enum ExpandableOpcode {
 }
 
 /// Current semantic mode as reported by the engine driver.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum EngineMode {
     #[default]
     Vertical,
@@ -615,7 +613,7 @@ pub enum EngineMode {
 }
 
 /// Read-only execution facts needed by expansion-time internal quantities.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct EngineStateSnapshot {
     pub mode: EngineMode,
     pub is_inner_mode: bool,
@@ -1046,6 +1044,8 @@ pub struct ExpansionContext<'a> {
     remaining_fuel: u64,
     fuel_scope_depth: u32,
     memo: Option<memo::ExpansionMemoCache>,
+    episode_reads: Option<ReadSetRecorder>,
+    episode_barrier: bool,
 }
 
 /// Default number of expansion-loop steps available to one expansion request.
@@ -1069,6 +1069,8 @@ impl<'a> ExpansionContext<'a> {
             remaining_fuel: DEFAULT_EXPANSION_FUEL,
             fuel_scope_depth: 0,
             memo: None,
+            episode_reads: None,
+            episode_barrier: false,
         }
     }
 
@@ -1092,6 +1094,8 @@ impl<'a> ExpansionContext<'a> {
             remaining_fuel: DEFAULT_EXPANSION_FUEL,
             fuel_scope_depth: 0,
             memo: None,
+            episode_reads: None,
+            episode_barrier: false,
         }
     }
 
@@ -1153,6 +1157,38 @@ impl<'a> ExpansionContext<'a> {
     pub fn clear_memoization(&mut self) {
         if let Some(memo) = &mut self.memo {
             memo.clear();
+        }
+    }
+
+    fn begin_episode_recording(&mut self) {
+        assert!(self.episode_reads.is_none(), "nested expansion episode");
+        self.episode_reads = Some(ReadSetRecorder::default());
+        self.episode_barrier = false;
+    }
+
+    fn finish_episode_recording(&mut self) -> (Vec<ReadDependency>, bool) {
+        let reads = self
+            .episode_reads
+            .take()
+            .expect("no expansion episode is active")
+            .dependencies()
+            .collect();
+        (reads, std::mem::take(&mut self.episode_barrier))
+    }
+
+    fn mark_episode_barrier(&mut self) {
+        if self.episode_reads.is_some() {
+            self.episode_barrier = true;
+        }
+    }
+
+    #[inline(always)]
+    fn record_dependency(&mut self, dependency: ReadDependency) {
+        if let Some(recorder) = self.recorder.as_deref_mut() {
+            recorder.record_dependency(dependency);
+        }
+        if let Some(recorder) = &mut self.episode_reads {
+            recorder.record_dependency(dependency);
         }
     }
 
@@ -1250,6 +1286,8 @@ impl<'a> ExpansionContext<'a> {
             remaining_fuel: self.remaining_fuel,
             fuel_scope_depth: self.fuel_scope_depth,
             memo: self.memo.take(),
+            episode_reads: self.episode_reads.take(),
+            episode_barrier: self.episode_barrier,
         };
         let output = operation(&mut nested);
         self.input_resolver = nested.input_resolver.take();
@@ -1259,6 +1297,8 @@ impl<'a> ExpansionContext<'a> {
         self.recoverable_diagnostics
             .append(&mut nested.recoverable_diagnostics);
         self.memo = nested.memo.take();
+        self.episode_reads = nested.episode_reads.take();
+        self.episode_barrier = nested.episode_barrier;
         output
     }
 
@@ -1293,6 +1333,9 @@ impl<'a> ExpansionContext<'a> {
         if let Some(recorder) = self.recorder.as_deref_mut() {
             recorder.record_meaning(symbol, meaning);
         }
+        if let Some(recorder) = &mut self.episode_reads {
+            recorder.record_meaning(symbol, meaning);
+        }
     }
 
     pub fn open_input(
@@ -1300,6 +1343,7 @@ impl<'a> ExpansionContext<'a> {
         input: &mut dyn InputReadState,
         name: &str,
     ) -> Result<Box<dyn InputSource>, String> {
+        self.mark_episode_barrier();
         let request_index = self.next_resolution_index();
         self.input_resolver
             .as_deref_mut()
@@ -1359,6 +1403,8 @@ impl<'a> ExpansionContext<'a> {
 /// [`ExpansionState`]-only helper boundary. Scanner functions take this as a
 /// trait object so the policy does not become a monomorphization axis.
 pub trait ExpansionMode {
+    fn memo_tag(&self) -> u8;
+
     fn next_expanded_token(
         &mut self,
         input: &mut InputStack,
@@ -1414,6 +1460,10 @@ pub trait ExpansionMode {
 pub struct RestrictedExpansionMode;
 
 impl ExpansionMode for RestrictedExpansionMode {
+    fn memo_tag(&self) -> u8 {
+        0
+    }
+
     fn next_expanded_token(
         &mut self,
         input: &mut InputStack,
@@ -1478,6 +1528,10 @@ impl ExpansionMode for RestrictedExpansionMode {
 pub struct DriverExpansionMode;
 
 impl ExpansionMode for DriverExpansionMode {
+    fn memo_tag(&self) -> u8 {
+        1
+    }
+
     fn next_expanded_token(
         &mut self,
         input: &mut InputStack,

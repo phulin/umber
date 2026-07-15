@@ -123,6 +123,7 @@ macro_rules! dispatch_match {
                 )))
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::CsName) => {
+                expansion.mark_episode_barrier();
                 let name = scan_csname(input, stores, expansion, call_context)?;
                 let symbol = stores.intern_relaxed_control_sequence(&name);
                 let origin = stores.synthesized_origin(
@@ -396,6 +397,7 @@ macro_rules! dispatch_match {
                 mode.dispatch_inverted_raw_token(target, input, stores, expansion)
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Scantokens) => {
+                expansion.mark_episode_barrier();
                 let raw = crate::scan::scan_general_text_with_expanded_open(
                     input, stores, expansion, mode, call_context,
                 )?;
@@ -689,6 +691,7 @@ macro_rules! dispatch_match {
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => $input_arm,
             Meaning::ExpandablePrimitive(ExpandablePrimitive::EndInput) => {
+                expansion.mark_episode_barrier();
                 input.end_current_source_after_current_line();
                 Ok(Dispatch::Continue)
             }

@@ -55,6 +55,32 @@ fn expand_all(
     output
 }
 
+fn expand_definition_body(
+    stores: &mut Universe,
+    expansion: &mut ExpansionContext<'_>,
+    source: &str,
+) -> (Vec<Token>, Vec<OriginId>) {
+    let mut input = InputStack::new(MemoryInput::new(source));
+    let scanned = crate::scan::scan_toks_expanded(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(stores),
+        MeaningFlags::EMPTY,
+        TracedTokenWord::pack(letter('d'), OriginId::UNKNOWN),
+        expansion,
+    )
+    .expect("expanded definition body");
+    let replacement = scanned.meaning().replacement_text();
+    let origins = scanned.provenance().replacement_origins();
+    (
+        stores.tokens(replacement).to_vec(),
+        if origins == tex_state::ids::OriginListId::EMPTY {
+            vec![OriginId::UNKNOWN; stores.tokens(replacement).len()]
+        } else {
+            stores.origin_list(origins).to_vec()
+        },
+    )
+}
+
 #[test]
 fn repeated_substitution_hits_and_rebinds_each_argument_origin() {
     let mut stores = Universe::new();
@@ -183,4 +209,182 @@ fn entry_and_byte_budgets_evict_and_clear_to_baseline() {
             .retained_bytes,
         0
     );
+}
+
+#[test]
+fn expanded_replay_episode_hits_and_rebinds_input_ordinals() {
+    let mut stores = Universe::new();
+    crate::install_expandable_primitives(&mut stores);
+    install_one_argument_macro(&mut stores, "m", 'A', 'B', OriginId::UNKNOWN);
+    let mut expansion = ExpansionContext::new("texput").memoizing(ExpansionMemoConfig::default());
+
+    let (first, first_origins) = expand_definition_body(&mut stores, &mut expansion, "{\\m{x}}%");
+    let (second, second_origins) =
+        expand_definition_body(&mut stores, &mut expansion, "   {\\m{x}}%");
+    assert_eq!(first, vec![letter('A'), letter('x'), letter('B')]);
+    assert_eq!(second, first);
+    assert_ne!(first_origins[1], OriginId::UNKNOWN);
+    assert_ne!(first_origins[1], second_origins[1]);
+    let stats = expansion.memo_stats().expect("memo stats enabled");
+    assert_eq!(stats.episode_lookups, 2);
+    assert_eq!(stats.episode_hits, 1);
+    assert_eq!(stats.episode_misses, 1);
+    assert_eq!(stats.expanded_tokens_reused, 3);
+}
+
+#[test]
+fn episode_dependencies_ignore_unrelated_mutation_and_invalidate_meaning_change() {
+    let mut stores = Universe::new();
+    crate::install_expandable_primitives(&mut stores);
+    let symbol = stores.intern("m");
+    let empty = stores.intern_token_list(&[]);
+    let first_body = stores.intern_token_list(&[letter('A')]);
+    stores.set_macro_meaning(
+        symbol,
+        MacroMeaning::new(MeaningFlags::EMPTY, empty, first_body),
+    );
+    let mut expansion = ExpansionContext::new("texput").memoizing(ExpansionMemoConfig::default());
+
+    assert_eq!(
+        expand_definition_body(&mut stores, &mut expansion, "{\\m}%").0,
+        vec![letter('A')]
+    );
+    stores.set_count(17, 99);
+    assert_eq!(
+        expand_definition_body(&mut stores, &mut expansion, "{\\m}%").0,
+        vec![letter('A')]
+    );
+    let second_body = stores.intern_token_list(&[letter('B')]);
+    stores.set_macro_meaning(
+        symbol,
+        MacroMeaning::new(MeaningFlags::EMPTY, empty, second_body),
+    );
+    assert_eq!(
+        expand_definition_body(&mut stores, &mut expansion, "{\\m}%").0,
+        vec![letter('B')]
+    );
+    let stats = expansion.memo_stats().expect("memo stats enabled");
+    assert_eq!(stats.episode_hits, 1);
+    assert_eq!(stats.episode_invalidations, 1);
+}
+
+#[test]
+fn episode_register_dependency_invalidates_only_the_observed_cell() {
+    let mut stores = Universe::new();
+    crate::install_expandable_primitives(&mut stores);
+    let count = stores.intern("observedcount");
+    stores.set_meaning(count, tex_state::meaning::Meaning::CountRegister(0));
+    stores.set_count(0, 12);
+    let mut expansion = ExpansionContext::new("texput").memoizing(ExpansionMemoConfig::default());
+
+    assert_eq!(
+        expand_definition_body(&mut stores, &mut expansion, "{\\the\\observedcount}%").0,
+        vec![
+            Token::Char {
+                ch: '1',
+                cat: Catcode::Other
+            },
+            Token::Char {
+                ch: '2',
+                cat: Catcode::Other
+            }
+        ]
+    );
+    stores.set_count(1, 77);
+    let _ = expand_definition_body(&mut stores, &mut expansion, "{\\the\\observedcount}%");
+    stores.set_count(0, 13);
+    assert_eq!(
+        expand_definition_body(&mut stores, &mut expansion, "{\\the\\observedcount}%").0,
+        vec![
+            Token::Char {
+                ch: '1',
+                cat: Catcode::Other
+            },
+            Token::Char {
+                ch: '3',
+                cat: Catcode::Other
+            }
+        ]
+    );
+    let stats = expansion.memo_stats().expect("memo stats enabled");
+    assert_eq!(stats.episode_hits, 1);
+    assert_eq!(stats.episode_invalidations, 1);
+}
+
+#[test]
+fn expansion_episode_hits_across_allocation_distinct_universes() {
+    let mut first = Universe::new();
+    crate::install_expandable_primitives(&mut first);
+    install_one_argument_macro(&mut first, "m", 'A', 'B', OriginId::UNKNOWN);
+    let mut expansion = ExpansionContext::new("texput").memoizing(ExpansionMemoConfig::default());
+    let first_output = expand_definition_body(&mut first, &mut expansion, "{\\m{x}}%");
+
+    let mut second = Universe::new();
+    crate::install_expandable_primitives(&mut second);
+    install_one_argument_macro(&mut second, "m", 'A', 'B', OriginId::UNKNOWN);
+    let second_output = expand_definition_body(&mut second, &mut expansion, "{\\m{x}}%");
+    assert_eq!(first_output.0, second_output.0);
+    assert_eq!(
+        expansion
+            .memo_stats()
+            .expect("memo stats enabled")
+            .episode_hits,
+        1
+    );
+}
+
+#[test]
+fn relaxed_interning_is_an_episode_barrier() {
+    let mut stores = Universe::new();
+    crate::install_expandable_primitives(&mut stores);
+    let mut expansion = ExpansionContext::new("texput").memoizing(ExpansionMemoConfig::default());
+
+    assert_eq!(
+        expand_definition_body(&mut stores, &mut expansion, "{\\csname made\\endcsname}%").0,
+        vec![Token::Cs(stores.intern("made").symbol())]
+    );
+    let _ = expand_definition_body(&mut stores, &mut expansion, "{\\csname made\\endcsname}%");
+    let stats = expansion.memo_stats().expect("memo stats enabled");
+    assert_eq!(stats.episode_hits, 0);
+    assert_eq!(stats.episode_barrier_rejections, 2);
+}
+
+#[test]
+fn episode_collision_and_malformed_entry_fall_back_to_cold_expansion() {
+    let mut stores = Universe::new();
+    crate::install_expandable_primitives(&mut stores);
+    let mut expansion = ExpansionContext::new("texput").memoizing(ExpansionMemoConfig::default());
+    expansion
+        .memo
+        .as_mut()
+        .expect("memo cache enabled")
+        .forced_candidate = Some(11);
+
+    assert_eq!(
+        expand_definition_body(&mut stores, &mut expansion, "{A}%").0,
+        vec![letter('A')]
+    );
+    assert_eq!(
+        expand_definition_body(&mut stores, &mut expansion, "{B}%").0,
+        vec![letter('B')]
+    );
+    expansion
+        .memo
+        .as_mut()
+        .expect("memo cache enabled")
+        .episodes
+        .iter_mut()
+        .find(|entry| entry.key.input == vec![letter('A')])
+        .expect("cached A episode")
+        .origins
+        .clear();
+    assert_eq!(
+        expand_definition_body(&mut stores, &mut expansion, "{A}%").0,
+        vec![letter('A')]
+    );
+
+    let stats = expansion.memo_stats().expect("memo stats enabled");
+    assert_eq!(stats.episode_hits, 0);
+    assert_eq!(stats.episode_invalidations, 1);
+    assert_eq!(stats.episode_misses, 3);
 }

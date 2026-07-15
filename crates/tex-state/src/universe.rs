@@ -403,6 +403,28 @@ impl<'a> ExpansionContext<'a> {
     pub fn origin_is_inserted_kind(&self, id: OriginId, kind: InsertedOriginKind) -> bool {
         self.universe.origin_is_inserted_kind(id, kind)
     }
+
+    /// Captures an opaque owner identity and canonical semantic state hash for
+    /// bounded expansion-episode validation.
+    pub fn memo_validation_stamp(&self) -> crate::MemoValidationStamp {
+        // Validation must not publish a semantic checkpoint. Even restoring
+        // the hash base would leave other snapshot cursors advanced, so project
+        // through an isolated owner fork instead.
+        let mut projection = self.universe.clone();
+        let state_hash = projection.snapshot().state_hash();
+        crate::MemoValidationStamp::new(self.universe.owner.0.nonce, state_hash)
+    }
+
+    /// Returns the mutation stamp for one previously recorded expansion read.
+    #[must_use]
+    pub fn dependency_changed_at(&self, key: DependencyKey) -> ChangedAt {
+        self.universe.dependency_changed_at(key)
+    }
+
+    /// Registers one expansion read and returns its current mutation stamp.
+    pub fn track_dependency(&mut self, key: DependencyKey) -> ChangedAt {
+        self.universe.track_dependency(key)
+    }
 }
 
 /// Production input-open capability over a [`Universe`].
@@ -1277,6 +1299,11 @@ impl Universe {
     /// Marks one observable fact after its aggregate mutation barrier.
     pub fn mark_dependency_changed(&mut self, key: DependencyKey) -> ChangedAt {
         self.dependencies.mark_changed(key)
+    }
+
+    /// Registers one memo read for later changed-at invalidation.
+    pub fn track_dependency(&mut self, key: DependencyKey) -> ChangedAt {
+        self.dependencies.track(key)
     }
 
     /// Returns the current changed-at stamp for validation.
