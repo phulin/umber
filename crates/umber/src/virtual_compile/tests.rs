@@ -652,6 +652,51 @@ fn requested_html_and_dvi_share_one_committed_compile() {
 }
 
 #[test]
+fn accepted_user_tfm_remains_available_across_incremental_patch() {
+    let source =
+        "\\font\\tenrm=cmr10\\relax\\tenrm %a\n\\shipout\\hbox{\\char65}\\shipout\\hbox{B}\\end";
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        html: true,
+        ..SessionOptions::default()
+    })
+    .expect("HTML session");
+    session
+        .add_user_file("cmr10.tfm", CMR10.to_vec())
+        .expect("TFM");
+    session
+        .add_user_file("main.tex", source.as_bytes().to_vec())
+        .expect("main source");
+    for font in resources(session.compile_attempt())
+        .into_iter()
+        .filter_map(|request| match request {
+            ResourceRequest::Font(request) => Some(request),
+            ResourceRequest::File(_) => None,
+        })
+    {
+        provide_cmu_font(&mut session, font);
+    }
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+
+    let comment = source.find("%a").expect("comment") + 1;
+    session
+        .apply_patch(SourcePatch {
+            next_revision: RevisionId::new(2),
+            base_revision: RevisionId::new(1),
+            expected_hash: session.content_hash().expect("accepted hash"),
+            range: comment..comment + 1,
+            replacement: "b".to_owned(),
+        })
+        .expect("comment patch");
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+}
+
+#[test]
 fn rendered_source_location_survives_paragraph_line_breaking() {
     let source = b"\\font\\tenrm=cmr10\\relax \\hsize=12pt \\parindent=0pt \\tenrm A B\\par\\end";
     let mut session = VirtualCompileSession::new(SessionOptions {

@@ -67,9 +67,11 @@ error categories are serialized through direct and worker browser APIs.
 `FileProvisioner` also owns the session's layered user and resolved-resource
 storage plus its accepted generated layer. Each TeX attempt reads inputs and
 TFM files from one immutable stage snapshot; the resolver passes selected
-shared bytes through `World` so input identity, provenance, and same-run
-pending-output precedence remain unchanged. Successful committed auxiliary
-files publish through the same stage transaction in deterministic path order.
+shared bytes through `World`, whose memory backend retains the selected path
+binding for later checkpoint-input validation, so input identity, provenance,
+and same-run pending-output precedence remain unchanged. Successful committed
+auxiliary files publish through the same stage transaction in deterministic
+path order.
 A resource request, diagnostic failure, or output-limit failure discards that
 stage, so the session retains no parallel byte maps, file-accounting counters,
 or partially published generated files.

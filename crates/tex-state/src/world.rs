@@ -999,7 +999,11 @@ impl World {
         path: &Path,
         supplied: Arc<[u8]>,
     ) -> Result<FileContent, WorldError> {
-        let bytes = match self.pending_output_bytes(path)? {
+        let pending = self.pending_output_bytes(path)?;
+        if let WorldBackend::Memory(memory) = &mut self.backend {
+            memory.files.insert(path.to_owned(), Arc::clone(&supplied));
+        }
+        let bytes = match pending {
             Some(bytes) => Arc::from(bytes),
             None => supplied,
         };

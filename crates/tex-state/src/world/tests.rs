@@ -723,6 +723,18 @@ fn supplied_input_bytes_are_recorded_and_pending_output_takes_precedence() {
 }
 
 #[test]
+fn supplied_memory_input_remains_available_for_retained_validation() {
+    let mut world = World::memory();
+    world
+        .read_supplied_file(Path::new("/job/font.tfm"), Arc::from(&b"metrics"[..]))
+        .expect("read supplied input");
+
+    world
+        .validate_recorded_inputs()
+        .expect("supplied input remains available");
+}
+
+#[test]
 fn real_world_has_no_memory_output_view() {
     assert!(World::real().memory_outputs().is_none());
 }
