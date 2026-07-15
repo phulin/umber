@@ -459,6 +459,7 @@ pub enum PdfLiteralMode {
 /// A destination marker whose final page coordinates are resolved by traversal.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct PdfDestinationEffect {
+    pub object: u32,
     pub identifier: PdfDestinationIdentifier,
     pub structure: Option<u32>,
     pub kind: PdfDestinationKind,

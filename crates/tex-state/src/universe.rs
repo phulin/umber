@@ -2338,6 +2338,36 @@ impl Universe {
         self.pdf.annotations()
     }
 
+    #[must_use]
+    pub fn pdf_destination(
+        &self,
+        identity: &crate::PdfDestinationIdentity,
+        structure: bool,
+    ) -> Option<&crate::PdfDestinationRecord> {
+        self.pdf.destination(identity, structure)
+    }
+
+    pub fn reserve_pdf_destination(
+        &mut self,
+        identity: crate::PdfDestinationIdentity,
+        structure: bool,
+    ) -> Result<crate::PdfDestinationRecord, PdfObjectCapacityError> {
+        self.pdf.reserve_destination(identity, structure)
+    }
+
+    pub fn define_pdf_destination(
+        &mut self,
+        identity: crate::PdfDestinationIdentity,
+        structure_target: Option<u32>,
+    ) -> Result<crate::PdfDestinationDefinition, PdfObjectCapacityError> {
+        self.pdf.define_destination(identity, structure_target)
+    }
+
+    #[must_use]
+    pub fn pdf_destinations(&self, structure: bool) -> &[crate::PdfDestinationRecord] {
+        self.pdf.destinations(structure)
+    }
+
     pub fn create_pdf_link(
         &mut self,
         dimensions: crate::PdfAnnotationDimensions,
@@ -2423,9 +2453,23 @@ impl Universe {
         &mut self,
         spec: crate::PdfActionSpec,
     ) -> Result<crate::PdfActionRecord, PdfObjectCapacityError> {
+        self.set_pdf_catalog_open_action_with_destinations(spec, None, None)
+    }
+
+    pub fn set_pdf_catalog_open_action_with_destinations(
+        &mut self,
+        spec: crate::PdfActionSpec,
+        destination_identity: Option<crate::PdfDestinationIdentity>,
+        structure_identity: Option<crate::PdfDestinationIdentity>,
+    ) -> Result<crate::PdfActionRecord, PdfObjectCapacityError> {
         let fingerprint =
             spec.fingerprint(|tokens| self.stores.token_list_semantic_id_value(tokens));
-        self.pdf.set_catalog_open_action(spec, fingerprint)
+        self.pdf.set_catalog_open_action(
+            spec,
+            fingerprint,
+            destination_identity,
+            structure_identity,
+        )
     }
 
     /// Allocates final document dictionaries through the canonical PDF ledger.

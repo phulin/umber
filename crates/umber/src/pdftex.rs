@@ -817,6 +817,54 @@ mod tests {
     }
 
     #[test]
+    fn pdf_destinations_claim_on_ship_and_use_positive_only_duplicate_suppression() {
+        for (suppression, warns) in [(-1, true), (0, true), (1, false)] {
+            let mut stores = Universe::default();
+            prepare_pdftex_run_stores(&mut stores);
+            let output = crate::run_memory_with_stores(
+                &format!(
+                    "\\pdfoutput=1\\setbox0=\\hbox{{\\pdfdest name{{same}} fit\\pdfdest name{{same}} fit}}\\pdfsuppresswarningdupdest={suppression}\\shipout\\box0\\end"
+                ),
+                &mut stores,
+            )
+            .expect("destination duplicate is recoverable");
+            assert_eq!(output.contains("duplicate ignored"), warns, "{output}");
+            assert_eq!(stores.pdf_destinations(false).len(), 1);
+            assert!(stores.pdf_destinations(false)[0].defined());
+            let bytes = stores
+                .world()
+                .read_artifact(stores.world().artifact_commits()[0])
+                .expect("artifact read")
+                .expect("artifact exists");
+            let artifact = tex_out::PageArtifact::from_bytes(&bytes).expect("artifact parses");
+            assert_eq!(
+                artifact
+                    .effects
+                    .iter()
+                    .filter(|effect| matches!(effect, tex_out::PageEffect::PdfDestination(_)))
+                    .count(),
+                2
+            );
+        }
+    }
+
+    #[test]
+    fn pdf_destination_duplicate_scanned_after_ship_uses_current_suppression() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let output = crate::run_memory_with_stores(
+            "\\pdfoutput=1\\shipout\\hbox{\\pdfdest num 7 fit}\\pdfsuppresswarningdupdest=-1\\setbox0=\\hbox{\\pdfdest num 7 fit}\\end",
+            &mut stores,
+        )
+        .expect("scan-time duplicate is recoverable");
+        assert!(
+            output.contains("(num7) has been already used, duplicate ignored"),
+            "{output}"
+        );
+        assert_eq!(stores.pdf_destinations(false).len(), 1);
+    }
+
+    #[test]
     fn pdf_objects_match_reference_errors_and_useobjnum_recovery() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);

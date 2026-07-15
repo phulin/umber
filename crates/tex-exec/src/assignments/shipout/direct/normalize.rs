@@ -387,19 +387,33 @@ fn append_whatsit_effect(
             if color_target == tex_state::PdfColorStackTarget::Form {
                 return Err(ExecError::PdfDestinationInForm);
             }
-            let identifier = match identifier {
+            let identity = match identifier {
                 tex_state::PdfActionIdentifier::Name(tokens) => {
                     let mut text = String::new();
                     for &token in stores.tokens(tokens) {
                         tex_expand::append_token_string_text(stores, token, &mut text);
                     }
-                    tex_out::PdfDestinationIdentifier::Name(text.into_bytes())
+                    tex_state::PdfDestinationIdentity::Name(text.into_bytes())
                 }
                 tex_state::PdfActionIdentifier::Number(number) => {
-                    tex_out::PdfDestinationIdentifier::Number(number)
+                    tex_state::PdfDestinationIdentity::Number(number)
                 }
                 tex_state::PdfActionIdentifier::Raw(_) => {
                     unreachable!("destination scanner uses typed identifiers")
+                }
+            };
+            let definition = stores
+                .define_pdf_destination(identity.clone(), structure)
+                .map_err(|_| ExecError::PdfObjectCapacity)?;
+            if definition.duplicate {
+                super::super::super::warn_pdf_destination_duplicate(stores, &identity);
+            }
+            let identifier = match identity {
+                tex_state::PdfDestinationIdentity::Name(name) => {
+                    tex_out::PdfDestinationIdentifier::Name(name)
+                }
+                tex_state::PdfDestinationIdentity::Number(number) => {
+                    tex_out::PdfDestinationIdentifier::Number(number)
                 }
             };
             let kind = match kind {
@@ -431,6 +445,7 @@ fn append_whatsit_effect(
                 tex_state::node::PdfDestinationKind::Fit => tex_out::PdfDestinationKind::Fit,
             };
             effects.push(PageEffect::PdfDestination(tex_out::PdfDestinationEffect {
+                object: definition.record.object(),
                 identifier,
                 structure,
                 kind,

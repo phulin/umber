@@ -27,12 +27,14 @@ fn pdf_destinations_round_trip_nullable_zoom_and_running_rectangle_dimensions() 
     let mut artifact = sample_artifact();
     artifact.testing_mut().effects.extend([
         PageEffect::PdfDestination(PdfDestinationEffect {
+            object: 41,
             identifier: PdfDestinationIdentifier::Name(b"z\\050".to_vec()),
             structure: Some(17),
             kind: PdfDestinationKind::Xyz { zoom: None },
             margin: Scaled::from_raw(11),
         }),
         PageEffect::PdfDestination(PdfDestinationEffect {
+            object: 42,
             identifier: PdfDestinationIdentifier::Number(23),
             structure: None,
             kind: PdfDestinationKind::FitRectangle {
@@ -43,6 +45,7 @@ fn pdf_destinations_round_trip_nullable_zoom_and_running_rectangle_dimensions() 
             margin: Scaled::from_raw(13),
         }),
         PageEffect::PdfDestination(PdfDestinationEffect {
+            object: 43,
             identifier: PdfDestinationIdentifier::Number(24),
             structure: None,
             kind: PdfDestinationKind::Xyz { zoom: Some(0) },

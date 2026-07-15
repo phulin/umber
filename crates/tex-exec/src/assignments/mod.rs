@@ -729,8 +729,9 @@ fn execute_pdf_document_fragment(
         }
         let action = pdf_actions::scan_pdf_action(context, input, stores, execution)?;
         if pdf_output > 0 {
+            let (destination, structure) = pdf_action_destination_identities(stores, action);
             stores
-                .set_pdf_catalog_open_action(action)
+                .set_pdf_catalog_open_action_with_destinations(action, destination, structure)
                 .map_err(|_| ExecError::PdfObjectCapacity)?;
         }
     }
@@ -889,6 +890,24 @@ fn execute_pdf_destination(
     } else {
         return Err(ExecError::PdfDestinationKindMissing);
     };
+    let state_identity = match identifier {
+        PdfActionIdentifier::Name(tokens) => {
+            let mut text = String::new();
+            for &token in stores.tokens(tokens) {
+                tex_expand::append_token_string_text(stores, token, &mut text);
+            }
+            tex_state::PdfDestinationIdentity::Name(text.into_bytes())
+        }
+        PdfActionIdentifier::Number(number) => tex_state::PdfDestinationIdentity::Number(number),
+        PdfActionIdentifier::Raw(_) => unreachable!("destination scanner uses typed identifiers"),
+    };
+    if stores
+        .pdf_destination(&state_identity, structure.is_some())
+        .is_some_and(tex_state::PdfDestinationRecord::defined)
+    {
+        warn_pdf_destination_duplicate(stores, &state_identity);
+        return Ok(());
+    }
     crate::vertical::append_node_to_current_list(
         nest,
         stores,
@@ -898,6 +917,25 @@ fn execute_pdf_destination(
             kind,
         }),
     )
+}
+
+pub(crate) fn warn_pdf_destination_duplicate(
+    stores: &mut Universe,
+    identity: &tex_state::PdfDestinationIdentity,
+) {
+    if stores.int_param(IntParam::PDF_SUPPRESS_WARNING_DUP_DEST) > 0 {
+        return;
+    }
+    let identity = match identity {
+        tex_state::PdfDestinationIdentity::Name(name) => {
+            format!("name{{{}}}", String::from_utf8_lossy(name))
+        }
+        tex_state::PdfDestinationIdentity::Number(number) => format!("num{number}"),
+    };
+    stores.world_mut().write_text(
+        tex_state::PrintSink::TerminalAndLog,
+        &format!("\npdfTeX warning (ext4): destination with the same identifier ({identity}) has been already used, duplicate ignored\n"),
+    );
 }
 
 fn execute_pdf_start_link(
@@ -933,6 +971,17 @@ fn execute_pdf_start_link(
             stores.execution_group_depth(),
         )
         .map_err(|_| ExecError::PdfObjectCapacity)?;
+    let (destination, structure) = pdf_action_destination_identities(stores, action);
+    if let Some(identity) = destination {
+        stores
+            .reserve_pdf_destination(identity, false)
+            .map_err(|_| ExecError::PdfObjectCapacity)?;
+    }
+    if let Some(identity) = structure {
+        stores
+            .reserve_pdf_destination(identity, true)
+            .map_err(|_| ExecError::PdfObjectCapacity)?;
+    }
     crate::vertical::append_node_to_current_list(
         nest,
         stores,
@@ -940,6 +989,52 @@ fn execute_pdf_start_link(
             object: record.object(),
         }),
     )
+}
+
+fn pdf_action_destination_identities(
+    stores: &Universe,
+    action: tex_state::PdfActionSpec,
+) -> (
+    Option<tex_state::PdfDestinationIdentity>,
+    Option<tex_state::PdfDestinationIdentity>,
+) {
+    let tex_state::PdfActionSpec::GoTo(destination) = action else {
+        return (None, None);
+    };
+    if destination.file.is_some() {
+        return (None, None);
+    }
+    let target = match destination.target {
+        tex_state::PdfActionTarget::Destination(identifier) => {
+            Some(pdf_destination_identity(stores, identifier))
+        }
+        tex_state::PdfActionTarget::Page { .. } => None,
+    };
+    let structure = destination
+        .structure
+        .map(|identifier| pdf_destination_identity(stores, identifier));
+    (target, structure)
+}
+
+fn pdf_destination_identity(
+    stores: &Universe,
+    identifier: tex_state::PdfActionIdentifier,
+) -> tex_state::PdfDestinationIdentity {
+    match identifier {
+        tex_state::PdfActionIdentifier::Name(tokens) => {
+            let mut text = String::new();
+            for &token in stores.tokens(tokens) {
+                tex_expand::append_token_string_text(stores, token, &mut text);
+            }
+            tex_state::PdfDestinationIdentity::Name(text.into_bytes())
+        }
+        tex_state::PdfActionIdentifier::Number(number) => {
+            tex_state::PdfDestinationIdentity::Number(number)
+        }
+        tex_state::PdfActionIdentifier::Raw(_) => {
+            unreachable!("local action identifiers are typed")
+        }
+    }
 }
 
 fn execute_pdf_end_link(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecError> {

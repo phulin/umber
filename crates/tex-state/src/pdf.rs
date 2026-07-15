@@ -2,6 +2,7 @@
 
 mod action;
 mod annotation;
+mod destination;
 mod document;
 mod object;
 
@@ -13,6 +14,7 @@ pub use annotation::{
     PdfAnnotationData, PdfAnnotationDimensions, PdfAnnotationInitializeError, PdfAnnotationRecord,
     PdfLinkRecord, PdfOpenLink,
 };
+pub use destination::{PdfDestinationDefinition, PdfDestinationIdentity, PdfDestinationRecord};
 use document::PdfDocumentFragments;
 pub use document::{PdfDocumentFragmentKind, PdfDocumentObjectIds};
 use object::PdfRawObjects;
@@ -805,6 +807,8 @@ pub(crate) struct PdfStateCursor {
     next_form_resource: u32,
     form_artifact_fingerprint: u64,
     return_value: i32,
+    destination_fingerprint: u64,
+    structure_destination_fingerprint: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -821,6 +825,8 @@ pub(crate) struct PdfStateSnapshot {
     color_stacks: Arc<Vec<PdfColorStack>>,
     forms: Arc<Vec<PdfFormRecord>>,
     form_artifacts: Arc<BTreeMap<u32, PdfFormArtifact>>,
+    destinations: Arc<Vec<PdfDestinationRecord>>,
+    structure_destinations: Arc<Vec<PdfDestinationRecord>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -873,6 +879,10 @@ pub(crate) struct PdfState {
     form_artifacts: Arc<BTreeMap<u32, PdfFormArtifact>>,
     form_artifact_fingerprint: u64,
     return_value: i32,
+    destinations: Arc<Vec<PdfDestinationRecord>>,
+    destination_fingerprint: u64,
+    structure_destinations: Arc<Vec<PdfDestinationRecord>>,
+    structure_destination_fingerprint: u64,
 }
 
 impl Default for PdfState {
@@ -917,6 +927,10 @@ impl Default for PdfState {
             form_artifacts: Arc::new(BTreeMap::new()),
             form_artifact_fingerprint: StateHasher::new(0x7064_665f_666d_6172).finish(),
             return_value: 0,
+            destinations: Arc::new(Vec::new()),
+            destination_fingerprint: destination_fingerprint(&[], false),
+            structure_destinations: Arc::new(Vec::new()),
+            structure_destination_fingerprint: destination_fingerprint(&[], true),
         }
     }
 }
@@ -1209,6 +1223,80 @@ impl PdfState {
     #[must_use]
     pub(crate) fn annotations(&self) -> &[PdfAnnotationRecord] {
         &self.annotations
+    }
+
+    pub(crate) fn destination(
+        &self,
+        identity: &PdfDestinationIdentity,
+        structure: bool,
+    ) -> Option<&PdfDestinationRecord> {
+        let records = if structure {
+            &self.structure_destinations
+        } else {
+            &self.destinations
+        };
+        records.iter().find(|record| record.identity() == identity)
+    }
+
+    pub(crate) fn reserve_destination(
+        &mut self,
+        identity: PdfDestinationIdentity,
+        structure: bool,
+    ) -> Result<PdfDestinationRecord, PdfObjectCapacityError> {
+        if let Some(record) = self.destination(&identity, structure) {
+            return Ok(record.clone());
+        }
+        let object = self.reserve_document_object()?;
+        let record = PdfDestinationRecord::reserved(identity, object);
+        let records = if structure {
+            &mut self.structure_destinations
+        } else {
+            &mut self.destinations
+        };
+        Arc::make_mut(records).push(record.clone());
+        if structure {
+            self.structure_destination_fingerprint = destination_fingerprint(records, true);
+        } else {
+            self.destination_fingerprint = destination_fingerprint(records, false);
+        }
+        Ok(record)
+    }
+
+    pub(crate) fn define_destination(
+        &mut self,
+        identity: PdfDestinationIdentity,
+        structure_target: Option<u32>,
+    ) -> Result<PdfDestinationDefinition, PdfObjectCapacityError> {
+        let structure = structure_target.is_some();
+        let reserved = self.reserve_destination(identity, structure)?;
+        let records = if structure {
+            &mut self.structure_destinations
+        } else {
+            &mut self.destinations
+        };
+        let record = Arc::make_mut(records)
+            .iter_mut()
+            .find(|record| record.object() == reserved.object())
+            .expect("reserved destination exists");
+        let duplicate = !record.define(structure_target);
+        let result = record.clone();
+        if structure {
+            self.structure_destination_fingerprint = destination_fingerprint(records, true);
+        } else {
+            self.destination_fingerprint = destination_fingerprint(records, false);
+        }
+        Ok(PdfDestinationDefinition {
+            record: result,
+            duplicate,
+        })
+    }
+
+    pub(crate) fn destinations(&self, structure: bool) -> &[PdfDestinationRecord] {
+        if structure {
+            &self.structure_destinations
+        } else {
+            &self.destinations
+        }
     }
 
     #[must_use]
@@ -1723,24 +1811,25 @@ impl PdfState {
         &mut self,
         spec: PdfActionSpec,
         fingerprint: u64,
+        destination_identity: Option<PdfDestinationIdentity>,
+        structure_identity: Option<PdfDestinationIdentity>,
     ) -> Result<PdfActionRecord, PdfObjectCapacityError> {
         debug_assert!(self.catalog_open_action.is_none());
-        let allocation_count = 1
-            + usize::from(spec.needs_target_object())
-            + usize::from(spec.needs_structure_object());
-        self.next_object
-            .checked_add(u32::try_from(allocation_count - 1).expect("small action allocation"))
-            .filter(|last| *last <= MAX_OBJECT_ID)
-            .ok_or(PdfObjectCapacityError)?;
         let id = self.reserve_document_object()?;
-        let target_object = spec
-            .needs_target_object()
-            .then(|| self.reserve_document_object())
-            .transpose()?;
-        let structure_object = spec
-            .needs_structure_object()
-            .then(|| self.reserve_document_object())
-            .transpose()?;
+        let target_object = if let Some(identity) = destination_identity {
+            Some(self.reserve_destination(identity, false)?.object())
+        } else {
+            spec.needs_target_object()
+                .then(|| self.reserve_document_object())
+                .transpose()?
+        };
+        let structure_object = if let Some(identity) = structure_identity {
+            Some(self.reserve_destination(identity, true)?.object())
+        } else {
+            spec.needs_structure_object()
+                .then(|| self.reserve_document_object())
+                .transpose()?
+        };
         let record = PdfActionRecord::new(id, spec, target_object, structure_object);
         if let PdfActionSpec::GoTo(PdfActionDestination {
             file: None,
@@ -1840,6 +1929,8 @@ impl PdfState {
             next_form_resource: self.next_form_resource,
             form_artifact_fingerprint: self.form_artifact_fingerprint,
             return_value: self.return_value,
+            destination_fingerprint: self.destination_fingerprint,
+            structure_destination_fingerprint: self.structure_destination_fingerprint,
         }
     }
     #[must_use]
@@ -1857,6 +1948,8 @@ impl PdfState {
             color_stacks: Arc::clone(&self.color_stacks),
             forms: Arc::clone(&self.forms),
             form_artifacts: Arc::clone(&self.form_artifacts),
+            destinations: Arc::clone(&self.destinations),
+            structure_destinations: Arc::clone(&self.structure_destinations),
         }
     }
 
@@ -1911,6 +2004,10 @@ impl PdfState {
         self.form_artifacts = snapshot.form_artifacts;
         self.form_artifact_fingerprint = cursor.form_artifact_fingerprint;
         self.return_value = cursor.return_value;
+        self.destinations = snapshot.destinations;
+        self.destination_fingerprint = cursor.destination_fingerprint;
+        self.structure_destinations = snapshot.structure_destinations;
+        self.structure_destination_fingerprint = cursor.structure_destination_fingerprint;
     }
 
     pub(crate) fn set_match(
@@ -1967,6 +2064,8 @@ impl PdfState {
             hasher.u32(cursor.next_form_resource);
             hasher.u64(cursor.form_artifact_fingerprint);
             hasher.i32(cursor.return_value);
+            hasher.u64(cursor.destination_fingerprint);
+            hasher.u64(cursor.structure_destination_fingerprint);
             hasher.bool(cursor.document_objects.pages().is_some());
             if let Some(id) = cursor.document_objects.pages() {
                 hasher.u32(id);
@@ -2232,6 +2331,34 @@ fn open_link_fingerprint(links: &[PdfOpenLink]) -> u64 {
     for link in links {
         hasher.u32(link.record.object());
         hasher.u32(link.nesting_depth);
+    }
+    hasher.finish()
+}
+
+fn destination_fingerprint(records: &[PdfDestinationRecord], structure: bool) -> u64 {
+    let mut hasher = StateHasher::new(if structure {
+        0x7064_665f_7364_7374
+    } else {
+        0x7064_665f_6465_7374
+    });
+    hasher.usize(records.len());
+    for record in records {
+        match record.identity() {
+            PdfDestinationIdentity::Name(name) => {
+                hasher.u8(0);
+                hasher.bytes(name);
+            }
+            PdfDestinationIdentity::Number(number) => {
+                hasher.u8(1);
+                hasher.u32(*number);
+            }
+        }
+        hasher.u32(record.object());
+        hasher.bool(record.defined());
+        hasher.bool(record.structure().is_some());
+        if let Some(target) = record.structure() {
+            hasher.u32(target);
+        }
     }
     hasher.finish()
 }
@@ -3247,7 +3374,7 @@ mod tests {
             window: PdfActionWindow::Unspecified,
         });
         let record = state
-            .set_catalog_open_action(action, action.fingerprint(|_| 17))
+            .set_catalog_open_action(action, action.fingerprint(|_| 17), None, None)
             .expect("reserve action and page target");
         assert_eq!(record.id(), 1);
         assert_eq!(record.target_object(), Some(2));
@@ -3298,7 +3425,7 @@ mod tests {
         assert_eq!(state.catalog_open_action(), None);
         assert_eq!(state.hash_fragment(), initial_hash);
         let replay = state
-            .set_catalog_open_action(action, action.fingerprint(|_| 17))
+            .set_catalog_open_action(action, action.fingerprint(|_| 17), None, None)
             .expect("replay action reservation");
         assert_eq!(replay, record);
         state.rollback(initial);
@@ -3370,5 +3497,53 @@ mod tests {
             (Scaled::from_raw(31), Scaled::from_raw(47)),
         );
         assert_eq!(state.hash_fragment(), changed);
+    }
+
+    #[test]
+    fn destination_maps_are_disjoint_duplicate_aware_and_rollback_safe() {
+        let mut state = PdfState::default();
+        state.enable();
+        let checkpoint = state.snapshot();
+        let initial_hash = state.hash_fragment();
+        let identity = PdfDestinationIdentity::Name(b"same".to_vec());
+        let regular = state
+            .reserve_destination(identity.clone(), false)
+            .expect("regular reservation");
+        let structure = state
+            .reserve_destination(identity.clone(), true)
+            .expect("structure reservation");
+        assert_eq!((regular.object(), structure.object()), (1, 2));
+        assert!(
+            !state
+                .define_destination(identity.clone(), None)
+                .expect("regular definition")
+                .duplicate
+        );
+        assert!(
+            state
+                .define_destination(identity.clone(), None)
+                .expect("regular duplicate")
+                .duplicate
+        );
+        let structure_definition = state
+            .define_destination(identity.clone(), Some(99))
+            .expect("structure definition");
+        assert!(!structure_definition.duplicate);
+        assert_eq!(structure_definition.record.structure(), Some(99));
+        let completed_hash = state.hash_fragment();
+
+        state.rollback(checkpoint.clone());
+        assert!(state.destinations(false).is_empty());
+        assert!(state.destinations(true).is_empty());
+        assert_eq!(state.hash_fragment(), initial_hash);
+        assert_eq!(
+            state
+                .reserve_destination(identity, false)
+                .expect("replay")
+                .object(),
+            1
+        );
+        state.rollback(checkpoint);
+        assert_ne!(completed_hash, initial_hash);
     }
 }

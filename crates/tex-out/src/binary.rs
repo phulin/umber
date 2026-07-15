@@ -1541,6 +1541,7 @@ impl Writer {
                 }
                 PageEffect::PdfDestination(marker) => {
                     self.u8(wire::effect::PDF_DESTINATION);
+                    self.u32(marker.object);
                     match &marker.identifier {
                         PdfDestinationIdentifier::Name(name) => {
                             self.u8(0);
@@ -2277,6 +2278,7 @@ impl Reader<'_> {
                     }
                 }
                 wire::effect::PDF_DESTINATION if version >= VERSION => {
+                    let object = self.u32()?;
                     let identifier = match self.u8()? {
                         0 => PdfDestinationIdentifier::Name(self.bytes()?),
                         1 => PdfDestinationIdentifier::Number(self.u32()?),
@@ -2343,6 +2345,7 @@ impl Reader<'_> {
                         }
                     };
                     PageEffect::PdfDestination(PdfDestinationEffect {
+                        object,
                         identifier,
                         structure,
                         kind,
