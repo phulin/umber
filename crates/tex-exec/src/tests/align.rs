@@ -1228,6 +1228,20 @@ fn misplaced_omit_in_cell_body_reports_reference_primary_text() {
 }
 
 #[test]
+fn misplaced_omit_in_nonstop_alignment_reports_and_continues() {
+    let mut stores = support::stores_with_fonts();
+    stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+
+    run_alignment_source_in(
+        &mut stores,
+        "\\setbox0=\\vbox{\\halign{#\\cr a \\omit b\\cr}}",
+    );
+
+    assert!(stores.box_reg(0).is_some());
+    assert!(support::terminal_effect_text(&stores).contains("! Misplaced \\omit."));
+}
+
+#[test]
 fn misplaced_noalign_outside_row_boundary_reports_reference_primary_text() {
     let err =
         run_alignment_source_err("\\setbox0=\\vbox{\\halign{#\\cr a \\noalign{\\hrule}\\cr}}");

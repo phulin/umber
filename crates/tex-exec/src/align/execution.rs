@@ -3,7 +3,7 @@ use tex_lex::{InputStack, TokenListReplayKind};
 use tex_state::env::banks::TokParam;
 use tex_state::node::{GlueKind, Node};
 use tex_state::token::{Token, TracedTokenWord};
-use tex_state::{ExpansionContext, ExpansionState, PrintSink, Universe};
+use tex_state::{ExpansionContext, ExpansionState, InteractionMode, PrintSink, Universe};
 
 use super::support::{
     align_kind, align_state, align_state_mut, alignment_mode, cell_mode, is_alignment_tab, is_cr,
@@ -531,10 +531,24 @@ fn run_cell_body_until_terminator(
         }
         stats.delivered_tokens += 1;
         if is_noalign(stores, semantic) {
-            return Err(ExecError::MisplacedNoAlign);
+            if stores.interaction_mode() == InteractionMode::ErrorStop {
+                return Err(ExecError::MisplacedNoAlign);
+            }
+            stores.world_mut().write_text(
+                PrintSink::TerminalAndLog,
+                "\n! Misplaced \\noalign.\nI expect to see \\noalign only after the \\cr of an alignment.\n",
+            );
+            continue;
         }
         if is_omit(stores, semantic) {
-            return Err(ExecError::MisplacedOmit);
+            if stores.interaction_mode() == InteractionMode::ErrorStop {
+                return Err(ExecError::MisplacedOmit);
+            }
+            stores.world_mut().write_text(
+                PrintSink::TerminalAndLog,
+                "\n! Misplaced \\omit.\nI expect to see \\omit only after the \\cr of an alignment.\n",
+            );
+            continue;
         }
         if is_alignment_par(stores, semantic) && input.alignment_cell_below_base_depth() {
             // TeX.web §1091 hmode+par_end calls off_save when the
