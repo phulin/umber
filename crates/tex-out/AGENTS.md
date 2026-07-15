@@ -34,6 +34,8 @@ Use this crate for stable, driver-facing artifact structures and serialization c
 - `src/model.rs`: Detached page artifact, classic/OpenType font identities, node, glue, kern, and output effect data model.
 - `src/pdf.rs`: validated detached PDF object/page/resource graph, canonical ordering, and semantic identity.
 - `src/pdf/tests.rs`: PDF graph validation, canonical identity, and budget tests.
+- `src/pdf/serialize.rs`: deterministic `pdf_writer` adapter, typed errors, version selection, and stream compression policy.
+- `src/pdf/serialize/tests.rs`: exact-byte determinism, independent parsing, compression, and adapter-error tests.
 - `src/positioned.rs`: public driver-neutral positioned-page event model and lowering API.
 - `src/positioned/traversal.rs`: DVI-coordinate-equivalent box, glue, rule, leader, special, and browser-shaped text-run traversal.
 - `src/positioned/tests.rs`: line-anchor, baseline, box-shift, rule, ligature, and kern-boundary coordinate tests.

@@ -8,6 +8,10 @@ use std::num::NonZeroU32;
 
 use sha2::{Digest, Sha256};
 
+mod serialize;
+
+pub use serialize::{PdfSerializationOptions, PdfSerializeError, PdfStreamCompression};
+
 /// Stable indirect-object identity within one PDF document timeline.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PdfObjectId(NonZeroU32);

@@ -61,18 +61,31 @@ state store.
 
 ## Canonical serialization with `pdf_writer`
 
-The initial adapter emits an uncompressed, deterministic PDF through
-`pdf_writer`. It visits objects in ascending Umber identity order,
-dictionaries in bytewise name order, and values in canonical graph order.
+The implemented adapter pins `pdf-writer` 0.15.0 and emits deterministic PDF
+through that crate. It visits objects in ascending Umber identity order,
+ordinary dictionaries in bytewise name order, and values in canonical graph
+order. The typed catalog writer owns its required `/Type /Catalog` entry; the
+remaining catalog entries retain model order.
 `pdf_writer` owns PDF token spelling, escaping, stream lengths, byte offsets,
 the cross-reference table, trailer size, and final framing. Umber owns the
 visit order, normalized fixed-point inputs, page/resource structure, and the
 mapping from `PdfObjectId` to the crate's indirect-reference type.
-Compression and object streams are later policies over the same structural
-graph; they must not change semantic identity.
+Compact, uncompressed output is the default. Options can request
+`pdf_writer`'s pretty layout or deterministic zlib/DEFLATE stream compression
+at levels 0--9; the adapter supplies compressed bytes and declares
+`/FlateDecode` through the crate's stream API. Automatic compression rejects
+streams that already declare `/Filter` or `/DecodeParms`. Object streams are
+a later policy over the same structural graph. None of these byte policies
+change semantic identity.
 
-The selected crate version is pinned in the workspace lockfile and upgraded
-only with deterministic-byte and fixture review. Final bytes include no wall
+The selected crate version is pinned in the workspace manifest and lockfile
+and upgraded only with deterministic-byte and fixture review. `pdf_writer`
+supports positive signed-32-bit references and signed-32-bit integers; the
+adapter preflights the broader detached types and returns typed range errors
+instead of entering a panicking crate path. All output remains private until
+`Pdf::finish` succeeds. A hermetic test parses both compressed and
+uncompressed results with an independently pinned `lopdf` development
+dependency. Final bytes include no wall
 clock, random identifier, host path, hash-map
 iteration order, or allocation address. Failure builds into a private buffer
 and returns a typed error without publishing a prefix.
@@ -97,7 +110,8 @@ also run the complete committed DVI corpus byte-for-byte.
 ## Delivery gates
 
 1. Detached model, validation, canonical semantic identity, and this design.
-2. Valid deterministic PDF serialization for a minimal page.
+   **Done.**
+2. Valid deterministic PDF serialization for a minimal page. **Done.**
 3. pdfTeX shipout integration and checkpointed engine ledger.
 4. Normalized pdfTeX structure fixtures, rendered-page fixtures, and the full
    DVI regression gate.
