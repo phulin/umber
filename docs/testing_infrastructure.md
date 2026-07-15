@@ -204,20 +204,26 @@ scripts/check-latex-parity.sh --offline --format target/latex-parity/format/late
 scripts/check-latex-parity.sh --self-test-format-reuse
 ```
 
-`tests/latex-parity-manifest.txt` pins the official
-`release-2024-11-01-PL2` archive, support files, and eight selected upstream
-cases by byte length and SHA-256. Setup extracts the unmodified LPPL snapshot
-under gitignored `third_party/latex2e-parity/`; offline mode rejects a missing
-or changed cache without accessing the network.
+`tests/latex-parity-manifest.txt` pins the complete official
+`release-2024-11-01-PL2` repository archive by commit, byte length, and SHA-256;
+it does not pin individual support or test files. Setup extracts the unmodified
+LPPL snapshot under gitignored `third_party/latex2e-parity/`, then derives every
+same-stem standard-`.tlg` shipout candidate under `base`, `required/tools`,
+`required/graphics`, and `required/amsmath`. The pinned tree yields 295
+candidates. A live classic-LaTeX census emits DVIs for 286 of them and records
+the nine alternate-configuration cases separately. Offline mode rejects a
+missing or changed archive cache without accessing the network.
 
 Without `--format`, the checker invokes the verified format builder exactly
 once before entering the case loop. With `--format`, it invokes the builder
 zero times. It hashes that pregenerated image, copies those exact bytes into a
-fresh directory for every reference/Umber pair, and every Umber command loads
-the local copy with `--format latex.fmt`. The persistent
+fresh directory for every reference/Umber pair, and each of the 286 Umber DVI
+runs loads the local copy with `--format latex.fmt`. The persistent
 `target/latex-parity/last-run-format-receipt.txt` records the builder count,
-source identity, and per-case identities; the fast self-test asserts one build
-and three identical restores.
+source identity, and all 286 per-case identities; the fast self-test asserts
+one build and three identical restores. The runner continues after individual
+engine or DVI failures and writes complete `failures.txt` and `non-dvi.txt`
+census lists in its reported work directory.
 
 Acceptance ignores transcript and process-status differences when an
 intentional diagnostic still leaves a DVI. It removes stale DVI before every

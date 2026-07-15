@@ -130,13 +130,16 @@ The package example under `examples/latex.html` is the same browser workflow.
 - `scripts/check-latex-wasm.sh` builds the package and hosted bundle, runs the
   article corpus for three passes inside the generated WASM module, and
   requires exact native DVI/AUX/TOC parity.
-- `scripts/check-latex-parity.sh` runs eight hash-pinned upstream LaTeX2e
-  regression inputs against TeX Live 2025. It builds one verified format before
-  the suite, or accepts one with `--format`, then restores byte-identical copies
-  of that pregenerated image in fresh case sessions. Logs are diagnostic only;
-  after preamble-comment normalization, every DVI byte and therefore every
-  encoded coordinate must match. Run `scripts/setup-latex-parity-tests.sh`
-  first, or use both commands with `--offline` after the archive is cached.
+- `scripts/check-latex-parity.sh` derives a whole-repository LaTeX2e DVI cohort
+  from one hash-pinned upstream archive and runs it against TeX Live 2025. The
+  pinned scopes yield 295 shipout-log candidates and 286 actual classic-LaTeX
+  DVIs; nine alternate test configurations are reported separately. It builds
+  one verified format before the suite, or accepts one with `--format`, then
+  restores byte-identical copies of that pregenerated image in fresh case
+  sessions. Logs are diagnostic only; after preamble-comment normalization,
+  every DVI byte and therefore every encoded coordinate must match. Run
+  `scripts/setup-latex-parity-tests.sh` first, or use both commands with
+  `--offline` after the archive is cached.
 - `scripts/discover-latex-kernel.sh` remains the progressive bootstrap
   diagnostic when the pinned kernel changes.
 
