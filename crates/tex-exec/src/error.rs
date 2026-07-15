@@ -158,6 +158,8 @@ pub enum ExecError {
     PdfActionPositiveIdentifier(&'static str),
     PdfActionGotoFileNum,
     PdfActionWindowRequiresGotoFile,
+    PdfEndLinkWithoutStart,
+    PdfLinkInVerticalMode(&'static str),
     VSplitNeedsVBox,
     Box255NotVoidBeforeOutput,
     OutputRoutineBox255NotVoid,
@@ -340,6 +342,12 @@ impl fmt::Display for ExecError {
             Self::PdfActionWindowRequiresGotoFile => f.write_str(
                 "pdfTeX error (ext1): `newwindow'/`nonewwindow' must be used with `goto' and `file' option",
             ),
+            Self::PdfEndLinkWithoutStart => {
+                f.write_str("pdfTeX error (ext1): \u{005c}pdfendlink without \u{005c}pdfstartlink")
+            }
+            Self::PdfLinkInVerticalMode(name) => {
+                write!(f, "You can't use `\\{name}' in vertical mode.")
+            }
             Self::VSplitNeedsVBox => write!(f, "\\vsplit needs a \\vbox"),
             Self::Box255NotVoidBeforeOutput => write!(f, "\\box255 is not void"),
             Self::OutputRoutineBox255NotVoid => {
@@ -425,6 +433,8 @@ impl std::error::Error for ExecError {
             | Self::PdfActionPositiveIdentifier(_)
             | Self::PdfActionGotoFileNum
             | Self::PdfActionWindowRequiresGotoFile
+            | Self::PdfEndLinkWithoutStart
+            | Self::PdfLinkInVerticalMode(_)
             | Self::VSplitNeedsVBox
             | Self::Box255NotVoidBeforeOutput
             | Self::OutputRoutineBox255NotVoid
@@ -507,6 +517,8 @@ impl ExecError {
             | Self::PdfActionPositiveIdentifier(_)
             | Self::PdfActionGotoFileNum
             | Self::PdfActionWindowRequiresGotoFile
+            | Self::PdfEndLinkWithoutStart
+            | Self::PdfLinkInVerticalMode(_)
             | Self::VSplitNeedsVBox
             | Self::Box255NotVoidBeforeOutput
             | Self::OutputRoutineBox255NotVoid

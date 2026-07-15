@@ -620,7 +620,12 @@ fn anchor_for_whatsit(
         Whatsit::OpenOut { .. } | Whatsit::CloseOut { .. } | Whatsit::DeferredWrite { .. } => {
             !suppress_deferred_streams
         }
-        Whatsit::Special { .. } | Whatsit::PdfAccessibility(_) => true,
+        Whatsit::Special { .. }
+        | Whatsit::PdfAccessibility(_)
+        | Whatsit::PdfAnnotation { .. }
+        | Whatsit::PdfLinkStart { .. }
+        | Whatsit::PdfLinkEnd { .. }
+        | Whatsit::PdfRunningLink(_) => true,
     };
     if !anchored {
         return Ok(None);

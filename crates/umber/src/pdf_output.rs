@@ -437,6 +437,7 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                         });
                     }
                 },
+                PositionedEvent::PdfAnnotation(_) => {}
                 PositionedEvent::Special(special) => {
                     return Err(PdfBuildError::UnsupportedSpecial(special.class));
                 }

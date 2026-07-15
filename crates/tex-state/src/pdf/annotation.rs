@@ -68,6 +68,13 @@ pub struct PdfLinkRecord {
     action: PdfActionSpec,
 }
 
+/// One currently open logical link and the mode-nest depth where it started.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct PdfOpenLink {
+    pub record: PdfLinkRecord,
+    pub nesting_depth: u32,
+}
+
 impl PdfLinkRecord {
     pub(super) const fn new(
         object: u32,

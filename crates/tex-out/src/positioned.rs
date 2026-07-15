@@ -50,6 +50,7 @@ pub enum PositionedEvent {
     Rule(PositionedRule),
     Special(PositionedSpecial),
     PdfAccessibility(PositionedPdfAccessibility),
+    PdfAnnotation(PositionedPdfAnnotation),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -119,6 +120,13 @@ pub struct PositionedPdfAccessibility {
     pub x: Scaled,
     pub y: Scaled,
     pub control: crate::PdfAccessibilityEffect,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PositionedPdfAnnotation {
+    pub x: Scaled,
+    pub y: Scaled,
+    pub marker: crate::PdfAnnotationEffect,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

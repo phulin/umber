@@ -305,6 +305,22 @@ impl Stores {
                     crate::node::PdfAccessibilityControl::FakeSpace => 2,
                 });
             }
+            Whatsit::PdfAnnotation { object } => {
+                hasher.tag(19);
+                hasher.u32(*object);
+            }
+            Whatsit::PdfLinkStart { object } => {
+                hasher.tag(20);
+                hasher.u32(*object);
+            }
+            Whatsit::PdfLinkEnd { object } => {
+                hasher.tag(21);
+                hasher.u32(*object);
+            }
+            Whatsit::PdfRunningLink(enabled) => {
+                hasher.tag(22);
+                hasher.bool(*enabled);
+            }
         }
     }
 }

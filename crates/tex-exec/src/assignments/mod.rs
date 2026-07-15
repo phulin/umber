@@ -20,13 +20,14 @@ use tex_state::node::Node;
 use tex_state::provenance::InsertedOriginKind;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
-use tex_state::{GroupKind, InteractionMode, PdfDocumentFragmentKind, Universe};
+use tex_state::{ExpansionState, GroupKind, InteractionMode, PdfDocumentFragmentKind, Universe};
+use tex_state::{PdfAnnotationData, PdfAnnotationDimensions};
 
-use crate::ModeNest;
 use crate::{
     DispatchAction, ExecError, diagnostics, dispatch_delivered_token, leave_group_with_origin,
     push_traced_tokens,
 };
+use crate::{Mode, ModeNest};
 
 mod admissibility;
 mod arithmetic;
@@ -388,6 +389,162 @@ fn execute_pdf_document_fragment(
         }
     }
     Ok(())
+}
+
+fn scan_pdf_annotation_dimensions(
+    context: TracedTokenWord,
+    input: &mut InputStack,
+    stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<PdfAnnotationDimensions, ExecError> {
+    let mut dimensions = PdfAnnotationDimensions::RUNNING;
+    loop {
+        if scan_optional_keyword_x(input, stores, execution, "width")? {
+            dimensions.width = Some(scan_scaled(input, stores, execution, context)?);
+        } else if scan_optional_keyword_x(input, stores, execution, "height")? {
+            dimensions.height = Some(scan_scaled(input, stores, execution, context)?);
+        } else if scan_optional_keyword_x(input, stores, execution, "depth")? {
+            dimensions.depth = Some(scan_scaled(input, stores, execution, context)?);
+        } else {
+            return Ok(dimensions);
+        }
+    }
+}
+
+fn execute_pdf_annotation(
+    context: TracedTokenWord,
+    nest: &mut ModeNest,
+    input: &mut InputStack,
+    stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
+    if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+        return Err(ExecError::PdfExtensionInDviMode("pdfannot"));
+    }
+    if scan_optional_keyword_x(input, stores, execution, "reserveobjnum")? {
+        stores
+            .reserve_pdf_annotation()
+            .map_err(|_| ExecError::PdfObjectCapacity)?;
+        return Ok(());
+    }
+    let use_object = if scan_optional_keyword_x(input, stores, execution, "useobjnum")? {
+        let object = scan_i32(input, stores, execution, context)?;
+        Some(u32::try_from(object).map_err(|_| ExecError::PdfReferencedObjectNotFound)?)
+    } else {
+        None
+    };
+    let dimensions = scan_pdf_annotation_dimensions(context, input, stores, execution)?;
+    let entries = scan_general_text_expanded_with_driver(
+        input,
+        &mut tex_state::ExpansionContext::new(stores),
+        execution,
+        context,
+    )?;
+    let data = PdfAnnotationData {
+        dimensions,
+        entries,
+    };
+    let record = match use_object {
+        Some(object) => stores
+            .initialize_pdf_annotation(object, data)
+            .map_err(|_| ExecError::PdfReferencedObjectNotFound)?,
+        None => stores
+            .create_pdf_annotation(data)
+            .map_err(|_| ExecError::PdfObjectCapacity)?,
+    };
+    crate::vertical::append_node_to_current_list(
+        nest,
+        stores,
+        Node::Whatsit(tex_state::node::Whatsit::PdfAnnotation {
+            object: record.object(),
+        }),
+    )
+}
+
+fn execute_pdf_start_link(
+    context: TracedTokenWord,
+    nest: &mut ModeNest,
+    input: &mut InputStack,
+    stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
+    if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
+        return Err(ExecError::PdfLinkInVerticalMode("pdfstartlink"));
+    }
+    if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+        return Err(ExecError::PdfExtensionInDviMode("pdfstartlink"));
+    }
+    let dimensions = scan_pdf_annotation_dimensions(context, input, stores, execution)?;
+    let attributes = if scan_optional_keyword_x(input, stores, execution, "attr")? {
+        scan_general_text_expanded_with_driver(
+            input,
+            &mut tex_state::ExpansionContext::new(stores),
+            execution,
+            context,
+        )?
+    } else {
+        tex_state::ids::TokenListId::EMPTY
+    };
+    let action = pdf_actions::scan_pdf_action(context, input, stores, execution)?;
+    let record = stores
+        .create_pdf_link(
+            dimensions,
+            attributes,
+            action,
+            stores.execution_group_depth(),
+        )
+        .map_err(|_| ExecError::PdfObjectCapacity)?;
+    crate::vertical::append_node_to_current_list(
+        nest,
+        stores,
+        Node::Whatsit(tex_state::node::Whatsit::PdfLinkStart {
+            object: record.object(),
+        }),
+    )
+}
+
+fn execute_pdf_end_link(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecError> {
+    if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
+        return Err(ExecError::PdfLinkInVerticalMode("pdfendlink"));
+    }
+    if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+        return Err(ExecError::PdfExtensionInDviMode("pdfendlink"));
+    }
+    let open = stores
+        .end_pdf_link()
+        .ok_or(ExecError::PdfEndLinkWithoutStart)?;
+    if open.nesting_depth != stores.execution_group_depth() {
+        stores.world_mut().write_text(
+            tex_state::PrintSink::TerminalAndLog,
+            "\npdfTeX warning: \\pdfendlink ended up in different nesting level than \\pdfstartlink\n",
+        );
+    }
+    crate::vertical::append_node_to_current_list(
+        nest,
+        stores,
+        Node::Whatsit(tex_state::node::Whatsit::PdfLinkEnd {
+            object: open.record.object(),
+        }),
+    )
+}
+
+fn execute_pdf_running_link(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    enabled: bool,
+) -> Result<(), ExecError> {
+    if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+        return Err(ExecError::PdfExtensionInDviMode(if enabled {
+            "pdfrunninglinkon"
+        } else {
+            "pdfrunninglinkoff"
+        }));
+    }
+    crate::vertical::append_node_to_current_list(
+        nest,
+        stores,
+        Node::Whatsit(tex_state::node::Whatsit::PdfRunningLink(enabled)),
+    )
 }
 
 fn execute_pdf_accessibility_control(
@@ -1604,6 +1761,30 @@ fn execute_prefixed_command(
                 )?;
                 Ok(CommandOutcome::continue_only())
             }
+            UnexpandablePrimitive::PdfAnnot => {
+                reject_all_prefixes(prefixes)?;
+                execute_pdf_annotation(command.traced, nest, input, stores, execution)?;
+                Ok(CommandOutcome::continue_only())
+            }
+            UnexpandablePrimitive::PdfStartLink => {
+                reject_all_prefixes(prefixes)?;
+                execute_pdf_start_link(command.traced, nest, input, stores, execution)?;
+                Ok(CommandOutcome::continue_only())
+            }
+            UnexpandablePrimitive::PdfEndLink => {
+                reject_all_prefixes(prefixes)?;
+                execute_pdf_end_link(nest, stores)?;
+                Ok(CommandOutcome::continue_only())
+            }
+            UnexpandablePrimitive::PdfRunningLinkOn | UnexpandablePrimitive::PdfRunningLinkOff => {
+                reject_all_prefixes(prefixes)?;
+                execute_pdf_running_link(
+                    nest,
+                    stores,
+                    primitive == UnexpandablePrimitive::PdfRunningLinkOn,
+                )?;
+                Ok(CommandOutcome::continue_only())
+            }
             UnexpandablePrimitive::Global
             | UnexpandablePrimitive::Long
             | UnexpandablePrimitive::Outer
@@ -1611,12 +1792,7 @@ fn execute_prefixed_command(
             | UnexpandablePrimitive::Immediate
             | UnexpandablePrimitive::End
             | UnexpandablePrimitive::Dump => unreachable!("prefixes are accumulated first"),
-            UnexpandablePrimitive::PdfTeXUnimplemented
-            | UnexpandablePrimitive::PdfAnnot
-            | UnexpandablePrimitive::PdfStartLink
-            | UnexpandablePrimitive::PdfEndLink
-            | UnexpandablePrimitive::PdfRunningLinkOn
-            | UnexpandablePrimitive::PdfRunningLinkOff => {
+            UnexpandablePrimitive::PdfTeXUnimplemented => {
                 unreachable!("unsupported pdfTeX placeholders return before prefix handling")
             }
         },

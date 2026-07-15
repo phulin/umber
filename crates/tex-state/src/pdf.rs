@@ -11,7 +11,7 @@ pub use action::{
 };
 pub use annotation::{
     PdfAnnotationData, PdfAnnotationDimensions, PdfAnnotationInitializeError, PdfAnnotationRecord,
-    PdfLinkRecord,
+    PdfLinkRecord, PdfOpenLink,
 };
 use document::PdfDocumentFragments;
 pub use document::{PdfDocumentFragmentKind, PdfDocumentObjectIds};
@@ -467,6 +467,7 @@ pub(crate) struct PdfStateCursor {
     space_font_name_fingerprint: u64,
     annotation_fingerprint: u64,
     link_fingerprint: u64,
+    open_link_fingerprint: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -479,6 +480,7 @@ pub(crate) struct PdfStateSnapshot {
     page_reservations: Arc<Vec<PdfPageReservation>>,
     annotations: Arc<Vec<PdfAnnotationRecord>>,
     links: Arc<Vec<PdfLinkRecord>>,
+    open_links: Arc<Vec<PdfOpenLink>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -519,6 +521,8 @@ pub(crate) struct PdfState {
     annotation_fingerprint: u64,
     links: Arc<Vec<PdfLinkRecord>>,
     link_fingerprint: u64,
+    open_links: Arc<Vec<PdfOpenLink>>,
+    open_link_fingerprint: u64,
 }
 
 impl Default for PdfState {
@@ -551,6 +555,8 @@ impl Default for PdfState {
             annotation_fingerprint: annotation_fingerprint(&[]),
             links: Arc::new(Vec::new()),
             link_fingerprint: StateHasher::new(0x7064_665f_6c69_6e6b).finish(),
+            open_links: Arc::new(Vec::new()),
+            open_link_fingerprint: open_link_fingerprint(&[]),
         }
     }
 }
@@ -618,6 +624,7 @@ impl PdfState {
             && self.current_space_font_name == 0
             && self.annotations.is_empty()
             && self.links.is_empty()
+            && self.open_links.is_empty()
     }
 
     pub(crate) fn ensure_page_capacity(&self, parameters: PdfOutputParameters) -> Result<(), ()> {
@@ -852,6 +859,7 @@ impl PdfState {
         action: PdfActionSpec,
         attributes_semantic_id: u64,
         action_semantic_id: u64,
+        nesting_depth: u32,
     ) -> Result<PdfLinkRecord, PdfObjectCapacityError> {
         let object = self.reserve_document_object()?;
         let record = PdfLinkRecord::new(object, dimensions, attributes, action);
@@ -862,7 +870,18 @@ impl PdfState {
             attributes_semantic_id,
             action_semantic_id,
         );
+        Arc::make_mut(&mut self.open_links).push(PdfOpenLink {
+            record,
+            nesting_depth,
+        });
+        self.open_link_fingerprint = open_link_fingerprint(&self.open_links);
         Ok(record)
+    }
+
+    pub(crate) fn end_link(&mut self) -> Option<PdfOpenLink> {
+        let open = Arc::make_mut(&mut self.open_links).pop();
+        self.open_link_fingerprint = open_link_fingerprint(&self.open_links);
+        open
     }
 
     #[must_use]
@@ -873,6 +892,11 @@ impl PdfState {
     #[must_use]
     pub(crate) fn last_link(&self) -> u32 {
         self.links.last().map_or(0, |record| record.object())
+    }
+
+    #[must_use]
+    pub(crate) fn open_links(&self) -> &[PdfOpenLink] {
+        &self.open_links
     }
 
     #[must_use]
@@ -1292,6 +1316,7 @@ impl PdfState {
             space_font_name_fingerprint: self.space_font_name_fingerprint,
             annotation_fingerprint: self.annotation_fingerprint,
             link_fingerprint: self.link_fingerprint,
+            open_link_fingerprint: self.open_link_fingerprint,
         }
     }
     #[must_use]
@@ -1305,6 +1330,7 @@ impl PdfState {
             page_reservations: Arc::clone(&self.page_reservations),
             annotations: Arc::clone(&self.annotations),
             links: Arc::clone(&self.links),
+            open_links: Arc::clone(&self.open_links),
         }
     }
 
@@ -1347,6 +1373,8 @@ impl PdfState {
         self.annotation_fingerprint = cursor.annotation_fingerprint;
         self.links = snapshot.links;
         self.link_fingerprint = cursor.link_fingerprint;
+        self.open_links = snapshot.open_links;
+        self.open_link_fingerprint = cursor.open_link_fingerprint;
     }
 
     pub(crate) fn set_match(
@@ -1398,6 +1426,7 @@ impl PdfState {
             hasher.u64(cursor.space_font_name_fingerprint);
             hasher.u64(cursor.annotation_fingerprint);
             hasher.u64(cursor.link_fingerprint);
+            hasher.u64(cursor.open_link_fingerprint);
             hasher.bool(cursor.document_objects.pages().is_some());
             if let Some(id) = cursor.document_objects.pages() {
                 hasher.u32(id);
@@ -1471,6 +1500,16 @@ fn append_link_fingerprint(
     hash_annotation_dimensions(&mut hasher, record.dimensions());
     hasher.u64(attributes_semantic_id);
     hasher.u64(action_semantic_id);
+    hasher.finish()
+}
+
+fn open_link_fingerprint(links: &[PdfOpenLink]) -> u64 {
+    let mut hasher = StateHasher::new(0x7064_665f_6f70_6c6e);
+    hasher.usize(links.len());
+    for link in links {
+        hasher.u32(link.record.object());
+        hasher.u32(link.nesting_depth);
+    }
     hasher.finish()
 }
 
@@ -1754,10 +1793,12 @@ mod tests {
                 PdfActionSpec::User(TokenListId::EMPTY),
                 19,
                 23,
+                1,
             )
             .expect("create link");
         assert_eq!(link.object(), 2);
         assert_eq!(state.last_link(), 2);
+        assert_eq!(state.end_link().expect("open link").record, link);
         assert_ne!(state.hash_fragment(), base_hash);
 
         state.rollback(base);

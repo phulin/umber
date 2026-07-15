@@ -374,6 +374,10 @@ impl Stores {
                 | crate::node::Whatsit::Special { .. }
                 | crate::node::Whatsit::PdfReferenceObject { .. }
                 | crate::node::Whatsit::PdfAccessibility(_)
+                | crate::node::Whatsit::PdfAnnotation { .. }
+                | crate::node::Whatsit::PdfLinkStart { .. }
+                | crate::node::Whatsit::PdfLinkEnd { .. }
+                | crate::node::Whatsit::PdfRunningLink(_)
                 | crate::node::Whatsit::Language { .. },
             ) => {}
             Node::Kern { .. }

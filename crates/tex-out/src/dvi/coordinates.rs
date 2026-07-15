@@ -179,6 +179,7 @@ pub fn compare_page(
                 }
             }
             PositionedEvent::PdfAccessibility(_) => {}
+            PositionedEvent::PdfAnnotation(_) => {}
         }
     }
     if cursor != dvi.len() {

@@ -261,6 +261,10 @@ impl NodeStorage {
                 | crate::node::Whatsit::DeferredWrite { .. }
                 | crate::node::Whatsit::PdfReferenceObject { .. }
                 | crate::node::Whatsit::PdfAccessibility(_)
+                | crate::node::Whatsit::PdfAnnotation { .. }
+                | crate::node::Whatsit::PdfLinkStart { .. }
+                | crate::node::Whatsit::PdfLinkEnd { .. }
+                | crate::node::Whatsit::PdfRunningLink(_)
                 | crate::node::Whatsit::Language { .. } => {}
             }
         }
@@ -348,6 +352,11 @@ impl NodeStorage {
                 crate::node::Whatsit::CloseOut { .. }
                 | crate::node::Whatsit::DeferredWrite { .. }
                 | crate::node::Whatsit::PdfReferenceObject { .. }
+                | crate::node::Whatsit::PdfAccessibility(_)
+                | crate::node::Whatsit::PdfAnnotation { .. }
+                | crate::node::Whatsit::PdfLinkStart { .. }
+                | crate::node::Whatsit::PdfLinkEnd { .. }
+                | crate::node::Whatsit::PdfRunningLink(_)
                 | crate::node::Whatsit::Language { .. } => {}
             }
         }

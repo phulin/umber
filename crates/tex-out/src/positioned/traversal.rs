@@ -6,8 +6,8 @@ use crate::{BoxNode, GlueKind, KernKind, LeaderPayload, PageArtifact, PageEffect
 
 use super::{
     BoxKind, PositionedBox, PositionedError, PositionedEvent, PositionedLimits, PositionedPage,
-    PositionedPdfAccessibility, PositionedRule, PositionedSourceRef, PositionedSpecial,
-    PositionedTextRun, TextUnit,
+    PositionedPdfAccessibility, PositionedPdfAnnotation, PositionedRule, PositionedSourceRef,
+    PositionedSpecial, PositionedTextRun, TextUnit,
 };
 
 const LEADER_ROUNDING_COMPENSATION: Scaled = Scaled::from_raw(10);
@@ -388,6 +388,13 @@ impl Lowerer<'_> {
                         control: *control,
                     },
                 ))?;
+            }
+            PageEffect::PdfAnnotation(marker) => {
+                self.push(PositionedEvent::PdfAnnotation(PositionedPdfAnnotation {
+                    x: self.cur_h,
+                    y: self.cur_v,
+                    marker: *marker,
+                }))?;
             }
             PageEffect::OpenOut { .. } | PageEffect::CloseOut { .. } | PageEffect::Write { .. } => {
             }

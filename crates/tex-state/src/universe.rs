@@ -2185,6 +2185,7 @@ impl Universe {
         dimensions: crate::PdfAnnotationDimensions,
         attributes: TokenListId,
         action: crate::PdfActionSpec,
+        nesting_depth: u32,
     ) -> Result<crate::PdfLinkRecord, PdfObjectCapacityError> {
         let attributes_semantic_id = self.stores.token_list_semantic_id_value(attributes);
         let action_semantic_id =
@@ -2195,7 +2196,17 @@ impl Universe {
             action,
             attributes_semantic_id,
             action_semantic_id,
+            nesting_depth,
         )
+    }
+
+    pub fn end_pdf_link(&mut self) -> Option<crate::PdfOpenLink> {
+        self.pdf.end_link()
+    }
+
+    #[must_use]
+    pub fn open_pdf_links(&self) -> &[crate::PdfOpenLink] {
+        self.pdf.open_links()
     }
 
     #[must_use]

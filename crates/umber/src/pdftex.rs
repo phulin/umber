@@ -371,6 +371,8 @@ pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
         ("pdfelapsedtime", InternalInteger::PdfElapsedTime),
         ("pdfrandomseed", InternalInteger::PdfRandomSeed),
         ("pdfshellescape", InternalInteger::PdfShellEscape),
+        ("pdflastannot", InternalInteger::PdfLastAnnot),
+        ("pdflastlink", InternalInteger::PdfLastLink),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::InternalInteger(integer));
@@ -395,6 +397,14 @@ pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
         ),
         ("pdffakespace", UnexpandablePrimitive::PdfFakeSpace),
         ("pdfspacefont", UnexpandablePrimitive::PdfSpaceFont),
+        ("pdfannot", UnexpandablePrimitive::PdfAnnot),
+        ("pdfstartlink", UnexpandablePrimitive::PdfStartLink),
+        ("pdfendlink", UnexpandablePrimitive::PdfEndLink),
+        ("pdfrunninglinkon", UnexpandablePrimitive::PdfRunningLinkOn),
+        (
+            "pdfrunninglinkoff",
+            UnexpandablePrimitive::PdfRunningLinkOff,
+        ),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
@@ -556,6 +566,78 @@ mod tests {
                 "{primitive}: {error}"
             );
         }
+    }
+
+    #[test]
+    fn pdf_annotations_and_links_allocate_pair_and_anchor_typed_effects() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let output = crate::run_memory_with_stores(
+            concat!(
+                "\\pdfoutput=1",
+                "\\pdfannot reserveobjnum",
+                "\\message{a=\\the\\pdflastannot/l=\\the\\pdflastlink}",
+                "\\shipout\\hbox{",
+                "\\pdfannot useobjnum 1 width 10pt {/Subtype /Text}",
+                "\\pdfstartlink height 6pt attr{/Border [0 0 0]}",
+                "user{/Subtype /Link /A << /S /URI /URI (u) >>}",
+                "\\pdfrunninglinkoff X\\pdfrunninglinkon\\pdfendlink}",
+                "\\message{A=\\the\\pdflastannot/L=\\the\\pdflastlink}",
+                "\\end",
+            ),
+            &mut stores,
+        )
+        .expect("annotation and link lifecycle");
+        assert!(output.contains("A=1/L=2"), "{output}");
+        assert_eq!(stores.pdf_annotations().len(), 1);
+        assert_eq!(stores.pdf_links().len(), 1);
+        assert!(stores.open_pdf_links().is_empty());
+
+        let hash = stores.world().artifact_commits()[0];
+        let bytes = stores
+            .world()
+            .read_artifact(hash)
+            .expect("artifact read")
+            .expect("artifact exists");
+        let artifact = tex_out::PageArtifact::from_bytes(&bytes).expect("artifact parses");
+        assert_eq!(
+            artifact
+                .effects
+                .iter()
+                .filter_map(|effect| match effect {
+                    tex_out::PageEffect::PdfAnnotation(marker) => Some(*marker),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            vec![
+                tex_out::PdfAnnotationEffect::Annotation { object: 1 },
+                tex_out::PdfAnnotationEffect::LinkStart { object: 2 },
+                tex_out::PdfAnnotationEffect::RunningLink(false),
+                tex_out::PdfAnnotationEffect::RunningLink(true),
+                tex_out::PdfAnnotationEffect::LinkEnd { object: 2 },
+            ]
+        );
+    }
+
+    #[test]
+    fn pdf_link_level_mismatch_warns_and_closes_the_active_link() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let output = crate::run_memory_with_stores(
+            concat!(
+                "\\pdfoutput=1 X\\hbox{\\pdfstartlink user{/Subtype /Link}",
+                "inside}\\pdfendlink\\end",
+            ),
+            &mut stores,
+        )
+        .expect("level mismatch is recoverable");
+        assert!(
+            output.contains(
+                "pdfTeX warning: \\pdfendlink ended up in different nesting level than \\pdfstartlink"
+            ),
+            "{output}"
+        );
+        assert!(stores.open_pdf_links().is_empty());
     }
 
     #[test]

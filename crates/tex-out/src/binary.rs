@@ -1,13 +1,15 @@
 use crate::{
     BoxNode, ContentHash, DiscKind, EffectSink, FontResource, FontResourceConstruction, GlueKind,
     GlueOrder, GlueSetRatio, GlueSign, GlueSpec, KernKind, LeaderPayload, PageArtifact, PageEffect,
-    PageNode, PageToken, PdfAccessibilityEffect, TokenCatcode, UnvalidatedPageArtifact,
+    PageNode, PageToken, PdfAccessibilityEffect, PdfAnnotationEffect, TokenCatcode,
+    UnvalidatedPageArtifact,
 };
 use std::fmt;
 use tex_arith::Scaled;
 
 const MAGIC: &[u8; 4] = b"UMPG";
-const VERSION: u8 = 15;
+const VERSION: u8 = 16;
+const PDF_ACCESSIBILITY_VERSION: u8 = 15;
 const FONT_CONSTRUCTION_VERSION: u8 = 14;
 const OPENTYPE_FONT_VERSION: u8 = 13;
 const LEGACY_VERSION: u8 = 12;
@@ -44,6 +46,7 @@ mod wire {
         pub const WRITE: u8 = 2;
         pub const SPECIAL: u8 = 3;
         pub const PDF_ACCESSIBILITY: u8 = 4;
+        pub const PDF_ANNOTATION: u8 = 5;
     }
 
     pub mod token {
@@ -237,6 +240,7 @@ pub(crate) fn from_bytes(
     reader.expect_magic()?;
     let version = reader.u8()?;
     if version != VERSION
+        && version != PDF_ACCESSIBILITY_VERSION
         && version != FONT_CONSTRUCTION_VERSION
         && version != OPENTYPE_FONT_VERSION
         && version != LEGACY_VERSION
@@ -1426,6 +1430,27 @@ impl Writer {
                         PdfAccessibilityEffect::FakeSpace => 2,
                     });
                 }
+                PageEffect::PdfAnnotation(marker) => {
+                    self.u8(wire::effect::PDF_ANNOTATION);
+                    match marker {
+                        PdfAnnotationEffect::Annotation { object } => {
+                            self.u8(0);
+                            self.u32(*object);
+                        }
+                        PdfAnnotationEffect::LinkStart { object } => {
+                            self.u8(1);
+                            self.u32(*object);
+                        }
+                        PdfAnnotationEffect::LinkEnd { object } => {
+                            self.u8(2);
+                            self.u32(*object);
+                        }
+                        PdfAnnotationEffect::RunningLink(enabled) => {
+                            self.u8(3);
+                            self.u8(u8::from(*enabled));
+                        }
+                    }
+                }
             }
         }
     }
@@ -1703,6 +1728,7 @@ impl Reader<'_> {
         self.expect_magic()?;
         let version = self.u8()?;
         if version != VERSION
+            && version != PDF_ACCESSIBILITY_VERSION
             && version != FONT_CONSTRUCTION_VERSION
             && version != OPENTYPE_FONT_VERSION
             && version != LEGACY_VERSION
@@ -1994,7 +2020,7 @@ impl Reader<'_> {
                     class: self.str()?,
                     payload: self.bytes()?,
                 },
-                wire::effect::PDF_ACCESSIBILITY if version >= VERSION => {
+                wire::effect::PDF_ACCESSIBILITY if version >= PDF_ACCESSIBILITY_VERSION => {
                     PageEffect::PdfAccessibility(match self.u8()? {
                         0 => PdfAccessibilityEffect::InterwordSpaceOn,
                         1 => PdfAccessibilityEffect::InterwordSpaceOff,
@@ -2002,6 +2028,35 @@ impl Reader<'_> {
                         tag => {
                             return Err(ParseError::InvalidTag {
                                 kind: "PDF accessibility effect",
+                                tag,
+                            });
+                        }
+                    })
+                }
+                wire::effect::PDF_ANNOTATION if version >= VERSION => {
+                    PageEffect::PdfAnnotation(match self.u8()? {
+                        0 => PdfAnnotationEffect::Annotation {
+                            object: self.u32()?,
+                        },
+                        1 => PdfAnnotationEffect::LinkStart {
+                            object: self.u32()?,
+                        },
+                        2 => PdfAnnotationEffect::LinkEnd {
+                            object: self.u32()?,
+                        },
+                        3 => PdfAnnotationEffect::RunningLink(match self.u8()? {
+                            0 => false,
+                            1 => true,
+                            tag => {
+                                return Err(ParseError::InvalidTag {
+                                    kind: "PDF running-link boolean",
+                                    tag,
+                                });
+                            }
+                        }),
+                        tag => {
+                            return Err(ParseError::InvalidTag {
+                                kind: "PDF annotation effect",
                                 tag,
                             });
                         }

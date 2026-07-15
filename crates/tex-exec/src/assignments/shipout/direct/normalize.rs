@@ -236,6 +236,26 @@ fn append_whatsit_effect(
                 }
             }));
         }
+        Whatsit::PdfAnnotation { object } => {
+            effects.push(PageEffect::PdfAnnotation(
+                tex_out::PdfAnnotationEffect::Annotation { object },
+            ));
+        }
+        Whatsit::PdfLinkStart { object } => {
+            effects.push(PageEffect::PdfAnnotation(
+                tex_out::PdfAnnotationEffect::LinkStart { object },
+            ));
+        }
+        Whatsit::PdfLinkEnd { object } => {
+            effects.push(PageEffect::PdfAnnotation(
+                tex_out::PdfAnnotationEffect::LinkEnd { object },
+            ));
+        }
+        Whatsit::PdfRunningLink(enabled) => {
+            effects.push(PageEffect::PdfAnnotation(
+                tex_out::PdfAnnotationEffect::RunningLink(enabled),
+            ));
+        }
         Whatsit::OpenOut { .. }
         | Whatsit::CloseOut { .. }
         | Whatsit::DeferredWrite { .. }

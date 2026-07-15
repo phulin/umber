@@ -507,6 +507,16 @@ pub enum Whatsit {
         object: u32,
     },
     PdfAccessibility(PdfAccessibilityControl),
+    PdfAnnotation {
+        object: u32,
+    },
+    PdfLinkStart {
+        object: u32,
+    },
+    PdfLinkEnd {
+        object: u32,
+    },
+    PdfRunningLink(bool),
     Language {
         language: u8,
         left_hyphen_min: u8,

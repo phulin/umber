@@ -142,6 +142,16 @@ pub(super) enum FormatWhatsit {
         object: u32,
     },
     PdfAccessibility(PdfAccessibilityControl),
+    PdfAnnotation {
+        object: u32,
+    },
+    PdfLinkStart {
+        object: u32,
+    },
+    PdfLinkEnd {
+        object: u32,
+    },
+    PdfRunningLink(bool),
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -459,6 +469,10 @@ impl FormatWhatsit {
             },
             Whatsit::PdfReferenceObject { object } => Self::PdfReferenceObject { object },
             Whatsit::PdfAccessibility(control) => Self::PdfAccessibility(control),
+            Whatsit::PdfAnnotation { object } => Self::PdfAnnotation { object },
+            Whatsit::PdfLinkStart { object } => Self::PdfLinkStart { object },
+            Whatsit::PdfLinkEnd { object } => Self::PdfLinkEnd { object },
+            Whatsit::PdfRunningLink(enabled) => Self::PdfRunningLink(enabled),
         }
     }
 
@@ -482,6 +496,10 @@ impl FormatWhatsit {
             },
             Self::PdfReferenceObject { object } => Whatsit::PdfReferenceObject { object },
             Self::PdfAccessibility(control) => Whatsit::PdfAccessibility(control),
+            Self::PdfAnnotation { object } => Whatsit::PdfAnnotation { object },
+            Self::PdfLinkStart { object } => Whatsit::PdfLinkStart { object },
+            Self::PdfLinkEnd { object } => Whatsit::PdfLinkEnd { object },
+            Self::PdfRunningLink(enabled) => Whatsit::PdfRunningLink(enabled),
         })
     }
 }

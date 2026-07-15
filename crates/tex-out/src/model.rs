@@ -379,6 +379,7 @@ pub enum PageEffect {
     Write { sink: EffectSink, text: String },
     Special { class: String, payload: Vec<u8> },
     PdfAccessibility(PdfAccessibilityEffect),
+    PdfAnnotation(PdfAnnotationEffect),
 }
 
 /// Ordered PDF-only accessibility control retained at its shipped position.
@@ -387,6 +388,15 @@ pub enum PdfAccessibilityEffect {
     InterwordSpaceOn,
     InterwordSpaceOff,
     FakeSpace,
+}
+
+/// Ordered typed annotation/link marker retained at its shipped position.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PdfAnnotationEffect {
+    Annotation { object: u32 },
+    LinkStart { object: u32 },
+    LinkEnd { object: u32 },
+    RunningLink(bool),
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -480,6 +490,7 @@ fn validate_artifact(
             PageEffect::Write { .. }
             | PageEffect::Special { .. }
             | PageEffect::PdfAccessibility(_) => None,
+            PageEffect::PdfAnnotation(_) => None,
         };
         if stream.is_some_and(|stream| stream >= 16) {
             return Err(ArtifactValidationError::InvalidStream {
