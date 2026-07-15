@@ -1,7 +1,10 @@
 //! Checkpointed pdfTeX document allocation ledger.
 
+mod document;
 mod object;
 
+pub use document::PdfDocumentFragmentKind;
+use document::PdfDocumentFragments;
 use object::PdfRawObjects;
 pub use object::{
     PdfRawObjectData, PdfRawObjectId, PdfRawObjectInitializeError, PdfRawObjectRecord,
@@ -435,6 +438,7 @@ pub(crate) struct PdfStateCursor {
     match_fingerprint: u64,
     external_image_fingerprint: u64,
     raw_object_fingerprint: u64,
+    document_fragment_fingerprint: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -443,6 +447,7 @@ pub(crate) struct PdfStateSnapshot {
     match_state: Arc<PdfMatchState>,
     external_images: Arc<Vec<PdfExternalImageRecord>>,
     raw_objects: PdfRawObjects,
+    document_fragments: PdfDocumentFragments,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -469,6 +474,7 @@ pub(crate) struct PdfState {
     external_images: Arc<Vec<PdfExternalImageRecord>>,
     external_image_fingerprint: u64,
     raw_objects: PdfRawObjects,
+    document_fragments: PdfDocumentFragments,
 }
 
 impl Default for PdfState {
@@ -486,6 +492,7 @@ impl Default for PdfState {
             external_images: Arc::new(Vec::new()),
             external_image_fingerprint: external_image_base_fingerprint(),
             raw_objects: PdfRawObjects::default(),
+            document_fragments: PdfDocumentFragments::default(),
         }
     }
 }
@@ -523,6 +530,7 @@ impl PdfState {
             && self.font_resources.is_empty()
             && self.external_images.is_empty()
             && self.raw_objects.is_empty()
+            && self.document_fragments.is_empty()
     }
 
     pub(crate) fn ensure_page_capacity(&self, parameters: PdfOutputParameters) -> Result<(), ()> {
@@ -983,6 +991,21 @@ impl PdfState {
         self.raw_objects.last_object()
     }
 
+    pub(crate) fn append_document_fragment(
+        &mut self,
+        kind: PdfDocumentFragmentKind,
+        value: PdfTokenParameter,
+    ) {
+        self.document_fragments.append(kind, value);
+    }
+
+    pub(crate) fn document_fragments(
+        &self,
+        kind: PdfDocumentFragmentKind,
+    ) -> impl Iterator<Item = TokenListId> + '_ {
+        self.document_fragments.values(kind)
+    }
+
     #[must_use]
     pub(crate) fn cursor(&self) -> PdfStateCursor {
         PdfStateCursor {
@@ -997,6 +1020,7 @@ impl PdfState {
             match_fingerprint: self.match_state.fingerprint,
             external_image_fingerprint: self.external_image_fingerprint,
             raw_object_fingerprint: self.raw_objects.fingerprint(),
+            document_fragment_fingerprint: self.document_fragments.fingerprint(),
         }
     }
     #[must_use]
@@ -1006,6 +1030,7 @@ impl PdfState {
             match_state: Arc::clone(&self.match_state),
             external_images: Arc::clone(&self.external_images),
             raw_objects: self.raw_objects.clone(),
+            document_fragments: self.document_fragments.clone(),
         }
     }
 
@@ -1027,6 +1052,7 @@ impl PdfState {
         self.external_images = snapshot.external_images;
         self.external_image_fingerprint = cursor.external_image_fingerprint;
         self.raw_objects = snapshot.raw_objects;
+        self.document_fragments = snapshot.document_fragments;
     }
 
     pub(crate) fn set_match(
@@ -1072,6 +1098,7 @@ impl PdfState {
             hasher.u64(cursor.match_fingerprint);
             hasher.u64(cursor.external_image_fingerprint);
             hasher.u64(cursor.raw_object_fingerprint);
+            hasher.u64(cursor.document_fragment_fingerprint);
         })
     }
 }
@@ -1575,5 +1602,53 @@ mod tests {
             .expect("replay initialization");
         assert_eq!(replay, first);
         assert_eq!(state.hash_fragment(), allocated_hash);
+    }
+
+    #[test]
+    fn document_fragments_preserve_kind_order_hash_and_rollback() {
+        let mut state = PdfState::default();
+        state.enable();
+        let initial = state.snapshot();
+        let initial_hash = state.hash_fragment();
+        let first = PdfTokenParameter {
+            tokens: TokenListId::EMPTY,
+            semantic_id: 11,
+        };
+        let second = PdfTokenParameter {
+            tokens: TokenListId::EMPTY,
+            semantic_id: 22,
+        };
+
+        state.append_document_fragment(PdfDocumentFragmentKind::Info, first);
+        state.append_document_fragment(PdfDocumentFragmentKind::Catalog, first);
+        state.append_document_fragment(PdfDocumentFragmentKind::Info, second);
+        assert_eq!(
+            state
+                .document_fragments(PdfDocumentFragmentKind::Info)
+                .collect::<Vec<_>>(),
+            vec![first.tokens, second.tokens]
+        );
+        assert_eq!(
+            state
+                .document_fragments(PdfDocumentFragmentKind::Catalog)
+                .collect::<Vec<_>>(),
+            vec![first.tokens]
+        );
+        assert!(!state.is_format_empty());
+        let appended_hash = state.hash_fragment();
+        assert_ne!(appended_hash, initial_hash);
+
+        state.rollback(initial);
+        assert_eq!(
+            state
+                .document_fragments(PdfDocumentFragmentKind::Info)
+                .count(),
+            0
+        );
+        assert_eq!(state.hash_fragment(), initial_hash);
+        state.append_document_fragment(PdfDocumentFragmentKind::Info, first);
+        state.append_document_fragment(PdfDocumentFragmentKind::Catalog, first);
+        state.append_document_fragment(PdfDocumentFragmentKind::Info, second);
+        assert_eq!(state.hash_fragment(), appended_hash);
     }
 }

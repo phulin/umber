@@ -20,7 +20,7 @@ use tex_state::node::Node;
 use tex_state::provenance::InsertedOriginKind;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
-use tex_state::{GroupKind, InteractionMode, Universe};
+use tex_state::{GroupKind, InteractionMode, PdfDocumentFragmentKind, Universe};
 
 use crate::ModeNest;
 use crate::{
@@ -326,6 +326,51 @@ fn execute_pdf_object(
     stores
         .initialize_pdf_raw_object(id, stream, stream_attr, file, data, immediate)
         .map_err(|_| ExecError::PdfReferencedObjectNotFound)
+}
+
+fn execute_pdf_document_fragment(
+    primitive: UnexpandablePrimitive,
+    context: TracedTokenWord,
+    input: &mut InputStack,
+    stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
+    let (name, kind, dvi_error) = match primitive {
+        UnexpandablePrimitive::PdfInfo => ("pdfinfo", PdfDocumentFragmentKind::Info, false),
+        UnexpandablePrimitive::PdfCatalog => {
+            ("pdfcatalog", PdfDocumentFragmentKind::Catalog, false)
+        }
+        UnexpandablePrimitive::PdfNames => ("pdfnames", PdfDocumentFragmentKind::Names, true),
+        UnexpandablePrimitive::PdfTrailer => {
+            ("pdftrailer", PdfDocumentFragmentKind::Trailer, false)
+        }
+        UnexpandablePrimitive::PdfTrailerId => {
+            ("pdftrailerid", PdfDocumentFragmentKind::TrailerId, false)
+        }
+        _ => unreachable!("document fragment helper called for another primitive"),
+    };
+    let pdf_output = stores.int_param(IntParam::PDF_OUTPUT);
+    if pdf_output <= 0 {
+        if dvi_error {
+            return Err(ExecError::PdfNamesInDviMode);
+        }
+        stores.world_mut().write_text(
+            tex_state::PrintSink::TerminalAndLog,
+            &format!(
+                "\npdfTeX warning (\\{name}): not allowed in DVI mode (\\pdfoutput <= 0); ignoring it\n"
+            ),
+        );
+    }
+    let tokens = scan_general_text_expanded_with_driver(
+        input,
+        &mut tex_state::ExpansionContext::new(stores),
+        execution,
+        context,
+    )?;
+    if pdf_output > 0 {
+        stores.append_pdf_document_fragment(kind, tokens);
+    }
+    Ok(())
 }
 
 pub(crate) fn execute_assignment_meaning(
@@ -1460,6 +1505,15 @@ fn execute_prefixed_command(
                 stores
                     .reference_pdf_raw_object(object)
                     .map_err(|_| ExecError::PdfReferencedObjectNotFound)?;
+                Ok(CommandOutcome::continue_only())
+            }
+            primitive @ (UnexpandablePrimitive::PdfInfo
+            | UnexpandablePrimitive::PdfCatalog
+            | UnexpandablePrimitive::PdfNames
+            | UnexpandablePrimitive::PdfTrailer
+            | UnexpandablePrimitive::PdfTrailerId) => {
+                reject_all_prefixes(prefixes)?;
+                execute_pdf_document_fragment(primitive, command.traced, input, stores, execution)?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::Global

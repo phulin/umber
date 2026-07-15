@@ -690,6 +690,11 @@ pub enum UnexpandablePrimitive {
     PdfSetRandomSeed,
     PdfObject,
     PdfReferenceObject,
+    PdfInfo,
+    PdfCatalog,
+    PdfNames,
+    PdfTrailer,
+    PdfTrailerId,
 }
 
 impl UnexpandablePrimitive {
@@ -929,6 +934,11 @@ impl UnexpandablePrimitive {
             Self::PdfSetRandomSeed => 230,
             Self::PdfObject => 231,
             Self::PdfReferenceObject => 232,
+            Self::PdfInfo => 233,
+            Self::PdfCatalog => 234,
+            Self::PdfNames => 235,
+            Self::PdfTrailer => 236,
+            Self::PdfTrailerId => 237,
         }
     }
 
@@ -1168,6 +1178,11 @@ impl UnexpandablePrimitive {
             230 => Some(Self::PdfSetRandomSeed),
             231 => Some(Self::PdfObject),
             232 => Some(Self::PdfReferenceObject),
+            233 => Some(Self::PdfInfo),
+            234 => Some(Self::PdfCatalog),
+            235 => Some(Self::PdfNames),
+            236 => Some(Self::PdfTrailer),
+            237 => Some(Self::PdfTrailerId),
             _ => None,
         }
     }

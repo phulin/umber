@@ -380,6 +380,11 @@ pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
         ("pdfsetrandomseed", UnexpandablePrimitive::PdfSetRandomSeed),
         ("pdfobj", UnexpandablePrimitive::PdfObject),
         ("pdfrefobj", UnexpandablePrimitive::PdfReferenceObject),
+        ("pdfinfo", UnexpandablePrimitive::PdfInfo),
+        ("pdfcatalog", UnexpandablePrimitive::PdfCatalog),
+        ("pdfnames", UnexpandablePrimitive::PdfNames),
+        ("pdftrailer", UnexpandablePrimitive::PdfTrailer),
+        ("pdftrailerid", UnexpandablePrimitive::PdfTrailerId),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
@@ -433,7 +438,9 @@ mod tests {
     use tex_state::meaning::ExpandablePrimitive;
     use tex_state::meaning::MeaningFlags;
     use tex_state::token::{Catcode, Token};
-    use tex_state::{FileModificationDate, JobClock, ShellEscapePolicy, World};
+    use tex_state::{
+        FileModificationDate, JobClock, PdfDocumentFragmentKind, ShellEscapePolicy, World,
+    };
 
     #[test]
     fn source_derived_inventory_is_the_exact_pinned_158_name_set() {
@@ -529,6 +536,80 @@ mod tests {
         assert!(error.to_string().contains(
             "pdfTeX error (ext1): `\\pdfobj reserveobjnum' cannot be used with \\immediate."
         ));
+    }
+
+    #[test]
+    fn pdf_document_fragments_expand_and_preserve_source_order() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+        crate::run_memory_with_stores(
+            concat!(
+                "\\def\\value{one}",
+                "\\pdfinfo{/First (\\value)}",
+                "\\def\\value{two}",
+                "\\pdfcatalog{/Catalog (\\value)}",
+                "\\pdfinfo{/Second (\\value)}",
+                "\\pdfnames{/Names (\\value)}",
+                "\\pdftrailer{/Trailer (\\value)}",
+                "\\pdftrailerid{<0123><4567>}",
+                "\\end",
+            ),
+            &mut stores,
+        )
+        .expect("execute document dictionary actions");
+
+        let fragments = |kind| {
+            stores
+                .pdf_document_fragments(kind)
+                .map(|tokens| token_list_text(&stores, tokens))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            fragments(PdfDocumentFragmentKind::Info),
+            ["/First (one)", "/Second (two)"]
+        );
+        assert_eq!(
+            fragments(PdfDocumentFragmentKind::Catalog),
+            ["/Catalog (two)"]
+        );
+        assert_eq!(fragments(PdfDocumentFragmentKind::Names), ["/Names (two)"]);
+        assert_eq!(
+            fragments(PdfDocumentFragmentKind::Trailer),
+            ["/Trailer (two)"]
+        );
+        assert_eq!(
+            fragments(PdfDocumentFragmentKind::TrailerId),
+            ["<0123><4567>"]
+        );
+    }
+
+    #[test]
+    fn pdf_document_fragments_match_dvi_mode_consumption() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let output = crate::run_memory_with_stores(
+            "\\pdfinfo{/Ignored true}\\message{continued}\\end",
+            &mut stores,
+        )
+        .expect("warning form scans and ignores its argument");
+        assert!(output.contains("pdfTeX warning (\\pdfinfo)"));
+        assert!(output.contains("continued"));
+        assert_eq!(
+            stores
+                .pdf_document_fragments(PdfDocumentFragmentKind::Info)
+                .count(),
+            0
+        );
+
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let error = crate::run_memory_with_stores("\\pdfnames{/Forbidden true}\\end", &mut stores)
+            .expect_err("pdfnames must fail before scanning in DVI mode");
+        assert_eq!(
+            error.to_string(),
+            "pdfTeX error (\\pdfnames): not allowed in DVI mode (\\pdfoutput <= 0)."
+        );
     }
 
     #[test]

@@ -33,10 +33,11 @@ use crate::page::{
     PageInsertion, PageInteger, PageMark, PageStateHashCursor,
 };
 use crate::pdf::{
-    PdfExternalImageId, PdfExternalImageMetadata, PdfExternalImageRegistrationError,
-    PdfFontResourceRecord, PdfObjectCapacityError, PdfOutputParameters, PdfPageParameters,
-    PdfRawObjectData, PdfRawObjectId, PdfRawObjectInitializeError, PdfRawObjectRecord, PdfState,
-    PdfStateCursor, PdfStateSnapshot, PdfTokenParameter,
+    PdfDocumentFragmentKind, PdfExternalImageId, PdfExternalImageMetadata,
+    PdfExternalImageRegistrationError, PdfFontResourceRecord, PdfObjectCapacityError,
+    PdfOutputParameters, PdfPageParameters, PdfRawObjectData, PdfRawObjectId,
+    PdfRawObjectInitializeError, PdfRawObjectRecord, PdfState, PdfStateCursor, PdfStateSnapshot,
+    PdfTokenParameter,
 };
 use crate::provenance::ProvenanceStats;
 use crate::provenance::{
@@ -2122,6 +2123,24 @@ impl Universe {
     #[must_use]
     pub fn pdf_last_object(&self) -> u32 {
         self.pdf.last_raw_object()
+    }
+
+    /// Appends expanded tokens to one document-level PDF dictionary destination.
+    pub fn append_pdf_document_fragment(
+        &mut self,
+        kind: PdfDocumentFragmentKind,
+        tokens: TokenListId,
+    ) {
+        let value = self.pdf_token_parameter(tokens);
+        self.pdf.append_document_fragment(kind, value);
+    }
+
+    /// Returns document-level fragments of `kind` in source order.
+    pub fn pdf_document_fragments(
+        &self,
+        kind: PdfDocumentFragmentKind,
+    ) -> impl Iterator<Item = TokenListId> + '_ {
+        self.pdf.document_fragments(kind)
     }
 
     fn current_pdf_output_parameters(&self) -> PdfOutputParameters {

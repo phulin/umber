@@ -62,6 +62,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/page.rs`: Snapshot-owned page-builder state, page dimensions/integers, contribution/current-page queues, and fire-up records.
 - `src/pdf.rs`: Checkpointed pdfTeX document mode, deterministic object allocation, and committed-page ledger.
 - `src/pdf/object.rs`: Copy-on-write raw PDF object reservations, initialization payloads, and last-object state.
+- `src/pdf/document.rs`: Copy-on-write raw document dictionary and trailer fragments in source order.
 - `src/page/sequence.rs`: Canonical persistent binary-forest sequence for growing current-page nodes.
 - `src/page/state_hash.rs`: Page semantic cursors, bounded derived projection caches, and component framing.
 - `src/page/tests.rs`: Page snapshot-root sharing and copy-on-write isolation tests.

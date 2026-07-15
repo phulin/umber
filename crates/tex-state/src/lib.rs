@@ -27,7 +27,7 @@
 /// Hashes are
 /// comparable only when both this version and the named-boundary schedule
 /// match.
-pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 17;
+pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 18;
 
 pub mod cell;
 pub mod code_tables;
@@ -63,11 +63,11 @@ pub mod token_store;
 mod universe;
 
 pub use pdf::{
-    PDF_CATALOG_OBJECT_ID, PDF_PAGES_OBJECT_ID, PdfExternalImageId, PdfExternalImageIdError,
-    PdfExternalImageMetadata, PdfExternalImageRegistrationError, PdfFontConfiguration,
-    PdfFontMapOperation, PdfFontResourceRecord, PdfGlyphToUnicode, PdfObjectCapacityError,
-    PdfOutputParameters, PdfPageBox, PdfPageRecord, PdfRawObjectData, PdfRawObjectId,
-    PdfRawObjectInitializeError, PdfRawObjectRecord,
+    PDF_CATALOG_OBJECT_ID, PDF_PAGES_OBJECT_ID, PdfDocumentFragmentKind, PdfExternalImageId,
+    PdfExternalImageIdError, PdfExternalImageMetadata, PdfExternalImageRegistrationError,
+    PdfFontConfiguration, PdfFontMapOperation, PdfFontResourceRecord, PdfGlyphToUnicode,
+    PdfObjectCapacityError, PdfOutputParameters, PdfPageBox, PdfPageRecord, PdfRawObjectData,
+    PdfRawObjectId, PdfRawObjectInitializeError, PdfRawObjectRecord,
 };
 pub mod world;
 
