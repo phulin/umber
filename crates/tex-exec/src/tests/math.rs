@@ -53,6 +53,26 @@ fn remove_item_commands_apply_to_math_lists() {
 }
 
 #[test]
+fn control_space_in_math_appends_normal_interword_glue() {
+    let (stores, executor) = run_math_source("$\\ X");
+    let nodes = math_nodes(&stores, &executor);
+
+    assert!(
+        matches!(
+            nodes,
+            [
+                Node::Glue {
+                    kind: GlueKind::Normal,
+                    ..
+                },
+                ..
+            ]
+        ),
+        "{nodes:?}"
+    );
+}
+
+#[test]
 fn lastbox_in_math_reports_recovery_and_yields_no_node() {
     let (stores, executor) = run_math_source(r"$\lastbox");
 

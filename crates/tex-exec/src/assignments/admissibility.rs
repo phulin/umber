@@ -114,6 +114,7 @@ const fn admissibility(primitive: UnexpandablePrimitive) -> Admissibility {
         | UnexpandablePrimitive::ErrMessage
         | UnexpandablePrimitive::Special
         | UnexpandablePrimitive::IgnoreSpaces
+        | UnexpandablePrimitive::ControlSpace
         | UnexpandablePrimitive::Lowercase
         | UnexpandablePrimitive::Uppercase
         | UnexpandablePrimitive::Cr
