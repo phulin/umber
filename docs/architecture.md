@@ -183,6 +183,10 @@ DVI remains the exact compatibility output. HTML preserves exact TeX page,
 box, rule, baseline, and run-anchor coordinates while browser shaping owns
 glyph placement inside a text run.
 
+Generated pdfTeX font instances retain their immutable construction and
+original-source parameter records in format images, keeping downstream
+artifacts independent of live engine state.
+
 ## 11. Incremental engine (`tex-incr`)
 
 `tex-incr` retains accepted editor revisions, named checkpoints, artifacts,

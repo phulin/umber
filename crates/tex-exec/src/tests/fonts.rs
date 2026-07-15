@@ -1,6 +1,69 @@
 use super::support::*;
 use super::*;
+use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::scaled::Scaled;
+
+#[test]
+fn pdftex_generated_fonts_match_copy_and_letterspace_state() {
+    let mut stores = stores_with_fonts();
+    stores.set_int_param_global(tex_state::env::banks::IntParam::DEFAULT_HYPHEN_CHAR, 45);
+    stores.set_int_param_global(tex_state::env::banks::IntParam::DEFAULT_SKEW_CHAR, -1);
+    tex_expand::install_expandable_primitives(&mut stores);
+    for (name, primitive) in [
+        ("pdfcopyfont", UnexpandablePrimitive::PdfCopyFont),
+        ("letterspacefont", UnexpandablePrimitive::LetterspaceFont),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+    }
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\base=cmr10 at 12pt \
+         \\fontdimen2\\base=9pt \
+         \\lpcode\\base`A=111 \
+         \\hyphenchar\\base=99 \
+         \\skewchar\\base=98 \
+         \\pdfcopyfont\\copy=\\base \
+         \\letterspacefont\\spaced=\\base 100 nolig \
+         \\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("generated font definitions execute");
+
+    let base = font_meaning(&stores, "base");
+    let copy = font_meaning(&stores, "copy");
+    let spaced = font_meaning(&stores, "spaced");
+    assert_ne!(base, copy);
+    assert_ne!(base, spaced);
+    assert_eq!(stores.font_name(copy), "cmr10 at 12.0pt");
+    assert_eq!(stores.font_name(spaced), "cmr10+100ls at 12.0pt");
+    assert_eq!(stores.font_parameter(copy, 2).raw(), 9 * Scaled::UNITY);
+    assert_eq!(stores.font_parameter(spaced, 2).raw(), 4 * Scaled::UNITY);
+    assert_eq!(stores.font_hyphen_char(copy), 99);
+    assert_eq!(stores.font_skew_char(copy), 98);
+    assert_eq!(stores.font_hyphen_char(spaced), 45);
+    assert_eq!(stores.font_skew_char(spaced), -1);
+    assert_eq!(
+        stores.pdf_font_code(tex_state::PdfFontCode::Lp, copy, b'A'),
+        0
+    );
+    assert_eq!(
+        stores.pdf_font_code(tex_state::PdfFontCode::Lp, spaced, b'A'),
+        0
+    );
+    assert!(stores.pdf_font_ligatures_disabled(spaced));
+    assert_eq!(
+        stores.font_char_metrics(spaced, b'A').unwrap().width.raw()
+            - stores.font_char_metrics(base, b'A').unwrap().width.raw(),
+        78_643
+    );
+    let source = match stores.font(spaced).construction() {
+        tex_fonts::FontConstruction::Letterspaced { source, .. } => *source,
+        construction => panic!("unexpected construction {construction:?}"),
+    };
+    assert_eq!(stores.font_by_source_identity(source), Some(base));
+}
 
 #[test]
 fn font_definition_loads_tfm_via_world_and_reuses_identity() {

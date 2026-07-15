@@ -1464,6 +1464,8 @@ pub(super) fn hash_kern_kind(kind: KernKind, hasher: &mut StateHasher) {
         KernKind::Font => 1,
         KernKind::Accent => 2,
         KernKind::Mu => 3,
+        KernKind::LeftMargin => 4,
+        KernKind::RightMargin => 5,
     });
 }
 

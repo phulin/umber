@@ -72,6 +72,74 @@ pub(super) fn execute_font_definition(
     Ok(())
 }
 
+pub(super) fn execute_generated_font_definition(
+    primitive: UnexpandablePrimitive,
+    prefixes: Prefixes,
+    context: TracedTokenWord,
+    input: &mut InputStack,
+    stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
+    reject_macro_prefixes(prefixes)?;
+    let primitive_name = match primitive {
+        UnexpandablePrimitive::LetterspaceFont => "\\letterspacefont",
+        UnexpandablePrimitive::PdfCopyFont => "\\pdfcopyfont",
+        _ => unreachable!("caller restricts generated-font primitive"),
+    };
+    let target = scan_definition_target(input, stores, primitive_name)?;
+    let global = apply_globaldefs(prefixes.global, stores);
+
+    // pdfTeX defines the destination as nullfont before scanning the source.
+    // This is observable for self-copying definitions and on later errors.
+    if global {
+        stores.set_meaning_global(target, Meaning::Font(tex_state::font::NULL_FONT));
+    } else {
+        stores.set_meaning(target, Meaning::Font(tex_state::font::NULL_FONT));
+    }
+    skip_optional_equals_x(input, stores, execution)?;
+    let source = scan_font_selector(input, stores, execution)?;
+
+    if primitive == UnexpandablePrimitive::PdfCopyFont
+        && matches!(
+            stores.font(source).construction(),
+            tex_fonts::FontConstruction::Letterspaced { .. }
+        )
+    {
+        return Err(ExecError::CannotCopyFont("cannot copy a letterspaced font"));
+    }
+
+    let id = match primitive {
+        UnexpandablePrimitive::PdfCopyFont => {
+            stores.try_copy_font_with_identifier(source, target)?
+        }
+        UnexpandablePrimitive::LetterspaceFont => {
+            let amount = scan_i32(input, stores, execution, context)?.clamp(-1000, 1000) as i16;
+            let no_ligatures = scan_optional_keyword_x(input, stores, execution, "nolig")?;
+            let id = stores.try_letterspace_font_with_identifier(
+                source,
+                target,
+                amount,
+                no_ligatures,
+            )?;
+            if stores.font_parameter(id, 6).raw() == 0 {
+                stores.world_mut().write_text(
+                    tex_state::PrintSink::TerminalAndLog,
+                    "\npdfTeX warning (\\letterspacefont): font has zero em size (\\fontdimen6)\n",
+                );
+            }
+            id
+        }
+        _ => unreachable!("caller restricts generated-font primitive"),
+    };
+    let meaning = Meaning::Font(id);
+    if global {
+        stores.set_meaning_global(target, meaning);
+    } else {
+        stores.set_meaning(target, meaning);
+    }
+    Ok(())
+}
+
 pub(super) fn scan_font_variable_target(
     primitive: UnexpandablePrimitive,
     context: TracedTokenWord,

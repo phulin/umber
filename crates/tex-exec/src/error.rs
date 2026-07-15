@@ -30,6 +30,7 @@ pub enum ExecError {
         message: String,
     },
     FontParameter(FontParameterError),
+    CannotCopyFont(&'static str),
     EmptyModeNestSummary,
     CannotPopBaseMode,
     UndefinedControlSequence {
@@ -164,6 +165,9 @@ impl fmt::Display for ExecError {
                 write!(f, "could not open TFM for font {name}: {message}")
             }
             Self::FontParameter(err) => write!(f, "{err:?}"),
+            Self::CannotCopyFont(reason) => {
+                write!(f, "pdfTeX error (\\pdfcopyfont): {reason}")
+            }
             Self::EmptyModeNestSummary => write!(f, "mode nest summary has no levels"),
             Self::CannotPopBaseMode => write!(f, "cannot pop the base vertical mode level"),
             Self::UndefinedControlSequence { name, .. } => {
@@ -345,6 +349,7 @@ impl std::error::Error for ExecError {
             | Self::FileEndedWithinRead
             | Self::TerminalReadEof
             | Self::FontParameter(_)
+            | Self::CannotCopyFont(_)
             | Self::UnimplementedTypesetting { .. }
             | Self::UnsupportedShipoutNode { .. }
             | Self::InvalidShipoutArtifact(_)
@@ -392,6 +397,7 @@ impl ExecError {
             | Self::FontParse(_)
             | Self::FontOpen { .. }
             | Self::FontParameter(_)
+            | Self::CannotCopyFont(_)
             | Self::EmptyModeNestSummary
             | Self::CannotPopBaseMode
             | Self::MissingPrefixedCommand

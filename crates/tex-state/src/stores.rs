@@ -11,9 +11,9 @@ use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use crate::env::{Env, EnvSnapshot};
 use crate::font::PdfFontCode;
 use crate::font::{
-    CharMetrics, CharTag, ExtensibleRecipe, FontMetrics, FontMetricsValidationError, FontStore,
-    FontStoreMark, LigKernChar, LigKernCommand, LigKernIter, LoadedFont, MissingCharacter,
-    NULL_FONT, complete_font_hash_fragment,
+    CharMetrics, CharTag, ExtensibleRecipe, FontMetrics, FontMetricsValidationError,
+    FontSourceIdentity, FontStore, FontStoreMark, LigKernChar, LigKernCommand, LigKernIter,
+    LoadedFont, MissingCharacter, NULL_FONT, complete_font_hash_fragment,
 };
 
 fn pdf_font_code_bank(table: PdfFontCode) -> crate::cell::BankTag {
@@ -1155,6 +1155,48 @@ impl Stores {
         Ok(id)
     }
 
+    /// Creates a distinct pdfTeX copied-font instance and initializes its
+    /// mutable banks from the source font's current values.
+    pub fn try_copy_font_with_identifier(
+        &mut self,
+        source: FontId,
+        symbol: impl SymbolReference,
+    ) -> Result<FontId, FontParameterError> {
+        self.assert_live_font(source);
+        let parameter_count = self.font_parameter_count(source);
+        let parameters = (1..=parameter_count)
+            .map(|number| self.font_parameter(source, number))
+            .collect();
+        let font = self.font(source).copied(parameters);
+        let hyphen_char = self.font_hyphen_char(source);
+        let skew_char = self.font_skew_char(source);
+        let id = self.try_intern_font_with_identifier(font, symbol)?;
+        self.env.set_font_hyphen_char_global(id, hyphen_char);
+        self.env.set_font_skew_char_global(id, skew_char);
+        Ok(id)
+    }
+
+    /// Creates a distinct host-neutral letterspaced font instance.
+    pub fn try_letterspace_font_with_identifier(
+        &mut self,
+        source: FontId,
+        symbol: impl SymbolReference,
+        amount: i16,
+        no_ligatures: bool,
+    ) -> Result<FontId, FontParameterError> {
+        self.assert_live_font(source);
+        let current_quad = self.font_parameter(source, 6);
+        let font = self
+            .font(source)
+            .letterspaced(current_quad, amount, no_ligatures)
+            .expect("bounded live TeX font widths support letterspacing");
+        let id = self.try_intern_font_with_identifier(font, symbol)?;
+        if no_ligatures {
+            self.env.set_pdf_no_ligatures_global(id);
+        }
+        Ok(id)
+    }
+
     pub fn intern_font_with_identifier(
         &mut self,
         font: LoadedFont,
@@ -1169,6 +1211,11 @@ impl Stores {
     pub fn font(&self, id: FontId) -> &LoadedFont {
         let id = self.resolve_stored_font(id);
         self.fonts.get(id)
+    }
+
+    #[must_use]
+    pub fn font_by_source_identity(&self, identity: FontSourceIdentity) -> Option<FontId> {
+        self.fonts.by_source_identity(identity)
     }
 
     #[must_use]

@@ -23,6 +23,7 @@ impl StoreFormat {
             return Err(StoreFormatError::Invalid("non-canonical null font"));
         }
 
+        let mut source_identities = std::collections::BTreeSet::new();
         for (raw, font) in self.fonts.iter().enumerate() {
             if font.parameters.len() < tex_fonts::metrics::MIN_TEX_FONT_PARAMETERS {
                 return Err(StoreFormatError::Invalid(
@@ -34,6 +35,16 @@ impl StoreFormat {
                     "immutable font parameter count exceeds bank capacity",
                 ));
             }
+            if font.source_parameters.len() < tex_fonts::metrics::MIN_TEX_FONT_PARAMETERS {
+                return Err(StoreFormatError::Invalid(
+                    "font source has fewer than seven parameters",
+                ));
+            }
+            if font.source_parameters.len() > MAX_FONT_PARAMETERS {
+                return Err(StoreFormatError::Invalid(
+                    "font source parameter count exceeds bank capacity",
+                ));
+            }
             if font
                 .identifier
                 .is_some_and(|symbol| symbol as usize >= self.names.len())
@@ -43,6 +54,17 @@ impl StoreFormat {
             font.metrics()
                 .validate()
                 .map_err(|source| StoreFormatError::InvalidFontMetrics { font: raw, source })?;
+            let source = match font.construction {
+                FormatFontConstruction::Loaded => None,
+                FormatFontConstruction::Copied { source }
+                | FormatFontConstruction::Letterspaced { source, .. } => Some(source),
+            };
+            if source.is_some_and(|source| !source_identities.contains(&source)) {
+                return Err(StoreFormatError::Invalid(
+                    "generated font source is not an earlier font",
+                ));
+            }
+            source_identities.insert(font.clone().restore().source_identity().bytes());
         }
         if self.last_loaded_font as usize >= self.fonts.len() {
             return Err(StoreFormatError::Invalid("last loaded font is not live"));

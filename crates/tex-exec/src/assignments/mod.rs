@@ -647,6 +647,18 @@ fn execute_prefixed_command(
                 execute_font_definition(prefixes, command.traced, input, stores, execution)?;
                 Ok(CommandOutcome::assigned())
             }
+            primitive @ (UnexpandablePrimitive::LetterspaceFont
+            | UnexpandablePrimitive::PdfCopyFont) => {
+                execute_generated_font_definition(
+                    primitive,
+                    prefixes,
+                    command.traced,
+                    input,
+                    stores,
+                    execution,
+                )?;
+                Ok(CommandOutcome::assigned())
+            }
             UnexpandablePrimitive::TextFont
             | UnexpandablePrimitive::ScriptFont
             | UnexpandablePrimitive::ScriptScriptFont => {

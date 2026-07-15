@@ -159,7 +159,7 @@ fn maximum_fontdimen_is_distinct_grouped_rollback_safe_and_format_stable() {
         .set_font_dimen(font, MAX_FONT_DIMEN, Scaled::from_raw(44))
         .expect("maximum fontdimen is format-visible");
     let bytes = universe.dump_format().expect("boundary format encodes");
-    let mut restored =
+    let restored =
         Universe::from_format(World::memory(), &bytes).expect("boundary format restores");
     let restored_identifier = restored.intern("boundaryfont");
     let Meaning::Font(restored_font) = restored.meaning(restored_identifier) else {
@@ -744,7 +744,7 @@ fn format_with_box_glue_set(glue_set: GlueSetRatio) -> Vec<u8> {
 }
 
 #[test]
-fn format_v7_round_trips_tex_web_box_shift_and_rejects_v6() {
+fn format_v8_round_trips_tex_web_box_shift_and_rejects_v7() {
     let mut universe = Universe::with_world(World::memory());
     let children = universe.freeze_node_list(&[]);
     let root = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
@@ -761,19 +761,19 @@ fn format_v7_round_trips_tex_web_box_shift_and_rejects_v6() {
     universe.set_box_reg(19, root);
 
     let bytes = universe.dump_format().expect("format encodes");
-    assert_eq!(&bytes[8..12], &7_u32.to_le_bytes());
-    let restored = Universe::from_format(World::memory(), &bytes).expect("v7 format restores");
+    assert_eq!(&bytes[8..12], &8_u32.to_le_bytes());
+    let restored = Universe::from_format(World::memory(), &bytes).expect("v8 format restores");
     let restored_root = restored.box_reg(19).expect("box register restores");
     let [Node::HList(boxed)] = restored.nodes(restored_root).testing_decoded() else {
         panic!("box register should contain an hlist");
     };
     assert_eq!(boxed.shift, Scaled::from_raw(-4));
 
-    let mut v6 = bytes;
-    v6[8..12].copy_from_slice(&6_u32.to_le_bytes());
+    let mut v7 = bytes;
+    v7[8..12].copy_from_slice(&7_u32.to_le_bytes());
     assert!(matches!(
-        Universe::from_format(World::memory(), &v6),
-        Err(super::FormatError::UnsupportedVersion(6))
+        Universe::from_format(World::memory(), &v7),
+        Err(super::FormatError::UnsupportedVersion(7))
     ));
 }
 
@@ -2618,6 +2618,61 @@ fn snapshot_state_hash_distinguishes_font_identifier_identity() {
         first.snapshot().state_hash(),
         second.snapshot().state_hash()
     );
+}
+
+#[test]
+fn generated_fonts_rollback_replay_and_format_with_source_links() {
+    let mut universe = Universe::with_world(World::memory());
+    universe.set_int_param_global(crate::env::banks::IntParam::DEFAULT_HYPHEN_CHAR, 45);
+    universe.set_int_param_global(crate::env::banks::IntParam::DEFAULT_SKEW_CHAR, -1);
+    let base_name = universe.intern("base");
+    let copy_name = universe.intern("copy");
+    let spaced_name = universe.intern("spaced");
+    let base = universe.intern_font_with_identifier(test_font("cmr10", b"metrics"), base_name);
+    universe
+        .set_font_dimen(base, 2, Scaled::from_raw(9 * Scaled::UNITY))
+        .expect("current source fontdimen write");
+    universe.set_font_hyphen_char(base, 99);
+    let before = universe.snapshot();
+
+    let copy = universe
+        .try_copy_font_with_identifier(base, copy_name)
+        .expect("copy font");
+    let spaced = universe
+        .try_letterspace_font_with_identifier(base, spaced_name, 100, true)
+        .expect("letterspace font");
+    assert_eq!(universe.font_parameter(copy, 2).raw(), 9 * Scaled::UNITY);
+    assert_eq!(universe.font_parameter(spaced, 2).raw(), 0);
+    assert_eq!(universe.font_hyphen_char(copy), 99);
+    assert_eq!(universe.font_hyphen_char(spaced), 45);
+    assert!(universe.pdf_font_ligatures_disabled(spaced));
+    let source = match universe.font(spaced).construction() {
+        crate::font::FontConstruction::Letterspaced { source, .. } => *source,
+        construction => panic!("unexpected construction {construction:?}"),
+    };
+    assert_eq!(universe.font_by_source_identity(source), Some(base));
+    let generated_hash = universe.snapshot().state_hash();
+    let format = universe.dump_format().expect("generated font format");
+    let mut restored =
+        Universe::from_format(World::memory(), &format).expect("restore generated fonts");
+    assert_eq!(restored.dump_format().expect("canonical redump"), format);
+    assert_eq!(
+        restored.font_by_source_identity(source).map(FontId::raw),
+        Some(base.raw())
+    );
+
+    universe.rollback(&before);
+    let replay_copy = universe
+        .try_copy_font_with_identifier(base, copy_name)
+        .expect("replay copy font");
+    let replay_spaced = universe
+        .try_letterspace_font_with_identifier(base, spaced_name, 100, true)
+        .expect("replay letterspace font");
+    assert_eq!(replay_copy.raw(), copy.raw());
+    assert_eq!(replay_spaced.raw(), spaced.raw());
+    assert_ne!(replay_copy, copy);
+    assert_ne!(replay_spaced, spaced);
+    assert_eq!(universe.snapshot().state_hash(), generated_hash);
 }
 
 #[test]

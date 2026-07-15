@@ -1,8 +1,60 @@
 use crate::metrics::{
-    CharMetrics, CharTag, FontMetrics, FontMetricsValidationError, LigKernChar, LigKernCommand,
-    LigKernInstruction, MAX_LIG_KERN_PROGRAM_LEN,
+    CharMetrics, CharTag, FontConstruction, FontMetrics, FontMetricsValidationError, LigKernChar,
+    LigKernCommand, LigKernInstruction, LoadedFont, MAX_LIG_KERN_PROGRAM_LEN,
 };
 use tex_arith::Scaled;
+
+#[test]
+fn generated_fonts_preserve_source_ancestry_and_pdftex_rounding() {
+    let mut characters = vec![None; 256];
+    characters[b'A' as usize] = Some(CharMetrics {
+        width: Scaled::from_raw(500_000),
+        height: Scaled::from_raw(0),
+        depth: Scaled::from_raw(0),
+        italic_correction: Scaled::from_raw(0),
+        tag: CharTag::None,
+    });
+    let source = LoadedFont::new(
+        "test",
+        "/host/path/test.tfm",
+        [7; 32],
+        42,
+        Scaled::from_raw(10 * Scaled::UNITY),
+        Scaled::from_raw(12 * Scaled::UNITY),
+        vec![
+            Scaled::from_raw(0),
+            Scaled::from_raw(4 * Scaled::UNITY),
+            Scaled::from_raw(0),
+            Scaled::from_raw(0),
+            Scaled::from_raw(0),
+            Scaled::from_raw(12 * Scaled::UNITY),
+            Scaled::from_raw(0),
+        ],
+        FontMetrics::new(characters, Vec::new(), None, None, Vec::new()),
+    );
+    let copied = source.copied(vec![Scaled::from_raw(9 * Scaled::UNITY); 8]);
+    let letterspaced = copied
+        .letterspaced(Scaled::from_raw(99), 100, true)
+        .expect("bounded metric derivation");
+
+    assert_eq!(copied.parameters().len(), 8);
+    assert_eq!(letterspaced.name(), "test+100ls");
+    assert_eq!(letterspaced.parameters()[1].raw(), 4 * Scaled::UNITY);
+    assert_eq!(
+        letterspaced.metrics().character(b'A').unwrap().width.raw(),
+        500_000 + 78_643
+    );
+    let FontConstruction::Letterspaced {
+        source: ancestry,
+        amount: 100,
+        no_ligatures: true,
+    } = letterspaced.construction()
+    else {
+        panic!("letterspaced construction metadata")
+    };
+    assert_eq!(*ancestry, copied.source_identity());
+    assert_ne!(source.source_identity(), copied.source_identity());
+}
 
 #[test]
 fn lig_kern_program_capacity_accepts_both_addressable_length_edges() {

@@ -86,12 +86,27 @@ struct FormatFont {
     design_size: i32,
     size: i32,
     parameters: Vec<i32>,
+    source_parameters: Vec<i32>,
     characters: Vec<Option<tex_fonts::CharMetrics>>,
     lig_kern_program: Vec<tex_fonts::LigKernInstruction>,
     right_boundary_char: Option<u8>,
     left_boundary_program: Option<u16>,
     extensible_recipes: Vec<tex_fonts::metrics::ExtensibleRecipe>,
     identifier: Option<u32>,
+    construction: FormatFontConstruction,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+enum FormatFontConstruction {
+    Loaded,
+    Copied {
+        source: [u8; 32],
+    },
+    Letterspaced {
+        source: [u8; 32],
+        amount: i16,
+        no_ligatures: bool,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -749,17 +764,48 @@ impl FormatFont {
             design_size: font.design_size().raw(),
             size: font.size().raw(),
             parameters: font.parameters().iter().map(|v| v.raw()).collect(),
+            source_parameters: font.source_parameters().iter().map(|v| v.raw()).collect(),
             characters: font.metrics().characters().to_vec(),
             lig_kern_program: font.metrics().lig_kern_program().to_vec(),
             right_boundary_char: font.metrics().right_boundary_char(),
             left_boundary_program: font.metrics().left_boundary_program(),
             extensible_recipes: font.metrics().extensible_recipes().to_vec(),
             identifier: fonts.identifier(id).map(crate::interner::SymbolId::raw),
+            construction: match font.construction() {
+                tex_fonts::FontConstruction::Loaded => FormatFontConstruction::Loaded,
+                tex_fonts::FontConstruction::Copied { source } => FormatFontConstruction::Copied {
+                    source: source.bytes(),
+                },
+                tex_fonts::FontConstruction::Letterspaced {
+                    source,
+                    amount,
+                    no_ligatures,
+                } => FormatFontConstruction::Letterspaced {
+                    source: source.bytes(),
+                    amount: *amount,
+                    no_ligatures: *no_ligatures,
+                },
+            },
         }
     }
 
     fn restore(self) -> LoadedFont {
         let diagnostic_path = std::path::PathBuf::from(&self.name);
+        let construction = match self.construction {
+            FormatFontConstruction::Loaded => tex_fonts::FontConstruction::Loaded,
+            FormatFontConstruction::Copied { source } => tex_fonts::FontConstruction::Copied {
+                source: tex_fonts::FontSourceIdentity::from_bytes(source),
+            },
+            FormatFontConstruction::Letterspaced {
+                source,
+                amount,
+                no_ligatures,
+            } => tex_fonts::FontConstruction::Letterspaced {
+                source: tex_fonts::FontSourceIdentity::from_bytes(source),
+                amount,
+                no_ligatures,
+            },
+        };
         LoadedFont::new(
             self.name,
             diagnostic_path,
@@ -776,6 +822,13 @@ impl FormatFont {
                 self.extensible_recipes,
             ),
         )
+        .with_source_parameters(
+            self.source_parameters
+                .into_iter()
+                .map(Scaled::from_raw)
+                .collect(),
+        )
+        .with_construction(construction)
     }
 
     fn metrics(&self) -> FontMetrics {

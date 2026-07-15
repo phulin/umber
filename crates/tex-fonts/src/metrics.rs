@@ -4,6 +4,7 @@ use crate::opentype::{
     FontContainer, FontFeaturePolicy, FontInstanceIdentity, FontObjectIdentity,
     FontProgramIdentity, VariationSelection, WritingDirection,
 };
+use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use tex_arith::Scaled;
 
@@ -30,9 +31,66 @@ pub struct LoadedFont {
     design_size: Scaled,
     size: Scaled,
     parameters: Vec<Scaled>,
+    source_parameters: Vec<Scaled>,
     metrics: FontMetrics,
     opentype: Option<OpenTypeFontSelection>,
+    construction: FontConstruction,
 }
+
+/// Host-neutral provenance for an immutable font instance.
+///
+/// pdfTeX allocates copied and letterspaced fonts as distinct internal fonts,
+/// even when their source bytes and nominal name are otherwise identical.
+/// Keeping that distinction on the immutable record prevents state restore
+/// and semantic hashing from accidentally folding generated instances back
+/// into an ordinary file load.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct FontSourceIdentity([u8; 32]);
+
+impl FontSourceIdentity {
+    #[must_use]
+    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    #[must_use]
+    pub const fn bytes(self) -> [u8; 32] {
+        self.0
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum FontConstruction {
+    Loaded,
+    Copied {
+        source: FontSourceIdentity,
+    },
+    Letterspaced {
+        source: FontSourceIdentity,
+        amount: i16,
+        no_ligatures: bool,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FontConstructionError {
+    WidthOverflow { character: u8 },
+}
+
+impl std::fmt::Display for FontConstructionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::WidthOverflow { character } => {
+                write!(
+                    f,
+                    "letterspaced width for character {character} overflows scaled arithmetic"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for FontConstructionError {}
 
 /// OpenType program selected alongside classic TeX metrics for artifact/output reuse.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -71,6 +129,7 @@ impl LoadedFont {
             MIN_TEX_FONT_PARAMETERS.max(parameters.len()),
             Scaled::from_raw(0),
         );
+        let source_parameters = parameters.clone();
         Self {
             name: name.into(),
             path: path.into(),
@@ -79,8 +138,10 @@ impl LoadedFont {
             design_size,
             size,
             parameters,
+            source_parameters,
             metrics,
             opentype: None,
+            construction: FontConstruction::Loaded,
         }
     }
 
@@ -105,6 +166,119 @@ impl LoadedFont {
     #[must_use]
     pub const fn opentype(&self) -> Option<&OpenTypeFontSelection> {
         self.opentype.as_ref()
+    }
+
+    #[must_use]
+    pub const fn construction(&self) -> &FontConstruction {
+        &self.construction
+    }
+
+    /// Deterministic, host-neutral identity for generated-font ancestry.
+    #[must_use]
+    pub fn source_identity(&self) -> FontSourceIdentity {
+        let mut hasher = Sha256::new();
+        hasher.update(b"umber-font-source-v1");
+        hasher.update((self.name.len() as u64).to_le_bytes());
+        hasher.update(self.name.as_bytes());
+        hasher.update(self.content_hash);
+        hasher.update(self.checksum.to_le_bytes());
+        hasher.update(self.design_size.raw().to_le_bytes());
+        hasher.update(self.size.raw().to_le_bytes());
+        hasher.update((self.parameters.len() as u64).to_le_bytes());
+        for parameter in &self.parameters {
+            hasher.update(parameter.raw().to_le_bytes());
+        }
+        match self.construction {
+            FontConstruction::Loaded => hasher.update([0]),
+            FontConstruction::Copied { source } => {
+                hasher.update([1]);
+                hasher.update(source.bytes());
+            }
+            FontConstruction::Letterspaced {
+                source,
+                amount,
+                no_ligatures,
+            } => {
+                hasher.update([2]);
+                hasher.update(source.bytes());
+                hasher.update(amount.to_le_bytes());
+                hasher.update([u8::from(no_ligatures)]);
+            }
+        }
+        FontSourceIdentity(hasher.finalize().into())
+    }
+
+    /// Reattaches validated construction metadata at a detached restore
+    /// boundary. Runtime callers should prefer [`Self::copied`] or
+    /// [`Self::letterspaced`].
+    #[must_use]
+    pub fn with_construction(mut self, construction: FontConstruction) -> Self {
+        self.construction = construction;
+        self
+    }
+
+    /// Restores the original file-backed font parameters retained by a
+    /// generated font. They are used when pdfTeX semantics reread the source
+    /// metrics, as `\letterspacefont` does for a copied font.
+    #[must_use]
+    pub fn with_source_parameters(mut self, mut parameters: Vec<Scaled>) -> Self {
+        parameters.resize(
+            MIN_TEX_FONT_PARAMETERS.max(parameters.len()),
+            Scaled::from_raw(0),
+        );
+        self.source_parameters = parameters;
+        self
+    }
+
+    /// Creates pdfTeX's independent `\pdfcopyfont` metric record.
+    ///
+    /// The supplied parameters are the source font's current fontdimen bank,
+    /// because pdfTeX copies mutable `font_info` rather than rereading the TFM.
+    #[must_use]
+    pub fn copied(&self, parameters: Vec<Scaled>) -> Self {
+        let source = self.source_identity();
+        let mut copied = self.clone();
+        copied.parameters = parameters;
+        copied.parameters.resize(
+            MIN_TEX_FONT_PARAMETERS.max(copied.parameters.len()),
+            Scaled::from_raw(0),
+        );
+        copied.construction = FontConstruction::Copied { source };
+        copied
+    }
+
+    /// Creates pdfTeX's immutable letterspaced metric projection.
+    ///
+    /// pdfTeX rereads the source TFM at the existing size, so ordinary source
+    /// fontdimen edits are not inherited. Its one exception is a zero TFM em:
+    /// a positive current `fontdimen6` is used as the generated font's quad.
+    pub fn letterspaced(
+        &self,
+        current_quad: Scaled,
+        amount: i16,
+        no_ligatures: bool,
+    ) -> Result<Self, FontConstructionError> {
+        debug_assert!((-1000..=1000).contains(&i32::from(amount)));
+        let source = self.source_identity();
+        let mut generated = self.clone();
+        generated.parameters = self.source_parameters.clone();
+        if generated.parameters[5].raw() == 0 && current_quad.raw() > 0 {
+            generated.parameters[5] = current_quad;
+        }
+        let quad = generated.parameters[5];
+        let delta = round_scaled_ratio(quad, i32::from(amount), 1000);
+        generated.metrics = generated.metrics.with_added_width(delta)?;
+        generated.name = if amount > 0 {
+            format!("{}+{amount}ls", self.name)
+        } else {
+            format!("{}{amount}ls", self.name)
+        };
+        generated.construction = FontConstruction::Letterspaced {
+            source,
+            amount,
+            no_ligatures,
+        };
+        Ok(generated)
     }
 
     #[must_use]
@@ -140,6 +314,11 @@ impl LoadedFont {
     #[must_use]
     pub fn parameters(&self) -> &[Scaled] {
         &self.parameters
+    }
+
+    #[must_use]
+    pub fn source_parameters(&self) -> &[Scaled] {
+        &self.source_parameters
     }
 
     #[must_use]
@@ -315,6 +494,29 @@ impl FontMetrics {
             left_boundary_program,
             extensible_recipes,
         }
+    }
+
+    fn with_added_width(&self, delta: Scaled) -> Result<Self, FontConstructionError> {
+        let mut characters = self.characters.clone();
+        for (code, character) in characters.iter_mut().enumerate() {
+            let Some(metrics) = character else {
+                continue;
+            };
+            metrics.width =
+                metrics
+                    .width
+                    .checked_add(delta)
+                    .ok_or(FontConstructionError::WidthOverflow {
+                        character: code as u8,
+                    })?;
+        }
+        Ok(Self::new(
+            characters,
+            self.lig_kern_program.clone(),
+            self.right_boundary_char,
+            self.left_boundary_program,
+            self.extensible_recipes.clone(),
+        ))
     }
 
     /// Validates all shape and reference invariants needed by metric queries.
@@ -572,6 +774,18 @@ impl FontMetrics {
             },
         }
     }
+}
+
+fn round_scaled_ratio(value: Scaled, numerator: i32, denominator: i32) -> Scaled {
+    debug_assert!(denominator > 0);
+    let product = i64::from(value.raw()) * i64::from(numerator);
+    let denominator = i64::from(denominator);
+    let rounded = if product >= 0 {
+        (product + denominator / 2) / denominator
+    } else {
+        -((-product + denominator / 2) / denominator)
+    };
+    Scaled::from_raw(i32::try_from(rounded).expect("bounded letterspace ratio fits i32"))
 }
 
 impl Default for FontMetrics {

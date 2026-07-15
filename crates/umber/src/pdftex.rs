@@ -344,6 +344,8 @@ pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
         ("knbccode", UnexpandablePrimitive::PdfKnbcCode),
         ("knaccode", UnexpandablePrimitive::PdfKnacCode),
         ("pdfnoligatures", UnexpandablePrimitive::PdfNoLigatures),
+        ("letterspacefont", UnexpandablePrimitive::LetterspaceFont),
+        ("pdfcopyfont", UnexpandablePrimitive::PdfCopyFont),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));

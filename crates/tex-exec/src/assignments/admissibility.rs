@@ -75,6 +75,8 @@ const fn admissibility(primitive: UnexpandablePrimitive) -> Admissibility {
         | UnexpandablePrimitive::PdfKnbcCode
         | UnexpandablePrimitive::PdfKnacCode
         | UnexpandablePrimitive::Font
+        | UnexpandablePrimitive::LetterspaceFont
+        | UnexpandablePrimitive::PdfCopyFont
         | UnexpandablePrimitive::TextFont
         | UnexpandablePrimitive::ScriptFont
         | UnexpandablePrimitive::ScriptScriptFont

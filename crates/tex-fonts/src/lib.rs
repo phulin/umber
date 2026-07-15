@@ -6,7 +6,8 @@ pub mod tfm;
 
 pub use metrics::{
     CharMetrics, CharTag as MetricCharTag, ExtensibleRecipe as MetricExtensibleRecipe,
-    FontContentHash, FontMetrics, FontMetricsValidationError, LigKernChar, LigKernCommand,
+    FontConstruction, FontConstructionError, FontContentHash, FontMetrics,
+    FontMetricsValidationError, FontSourceIdentity, LigKernChar, LigKernCommand,
     LigKernInstruction, LigKernIter, LigKernStep as MetricLigKernStep, LigatureCommand, LoadedFont,
     MAX_LIG_KERN_PROGRAM_LEN, OpenTypeFontSelection, OpenTypeProgramSelection,
 };

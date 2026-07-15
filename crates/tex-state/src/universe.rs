@@ -1008,7 +1008,7 @@ impl Default for Universe {
 
 impl Universe {
     const FORMAT_MAGIC: [u8; 8] = *b"UMBRFMT\0";
-    pub const FORMAT_SCHEMA_VERSION: u32 = 7;
+    pub const FORMAT_SCHEMA_VERSION: u32 = 8;
 
     /// Creates an isolated TeX state timeline.
     #[must_use]
@@ -2381,9 +2381,36 @@ impl Universe {
         self.stores.try_intern_font_with_identifier(font, symbol)
     }
 
+    pub fn try_copy_font_with_identifier(
+        &mut self,
+        source: FontId,
+        symbol: impl crate::interner::SymbolReference,
+    ) -> Result<FontId, FontParameterError> {
+        self.stores.try_copy_font_with_identifier(source, symbol)
+    }
+
+    pub fn try_letterspace_font_with_identifier(
+        &mut self,
+        source: FontId,
+        symbol: impl crate::interner::SymbolReference,
+        amount: i16,
+        no_ligatures: bool,
+    ) -> Result<FontId, FontParameterError> {
+        self.stores
+            .try_letterspace_font_with_identifier(source, symbol, amount, no_ligatures)
+    }
+
     #[must_use]
     pub fn font(&self, id: FontId) -> &LoadedFont {
         self.stores.font(id)
+    }
+
+    #[must_use]
+    pub fn font_by_source_identity(
+        &self,
+        identity: tex_fonts::FontSourceIdentity,
+    ) -> Option<FontId> {
+        self.stores.font_by_source_identity(identity)
     }
 
     #[must_use]

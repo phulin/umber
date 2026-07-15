@@ -9,9 +9,9 @@ use crate::world::ContentHash;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 pub use tex_fonts::metrics::{
-    CharMetrics, CharTag, ExtensibleRecipe, FontContentHash, FontMetrics,
-    FontMetricsValidationError, LigKernChar, LigKernCommand, LigKernInstruction, LigKernIter,
-    LigKernStep, LigatureCommand, LoadedFont,
+    CharMetrics, CharTag, ExtensibleRecipe, FontConstruction, FontContentHash, FontMetrics,
+    FontMetricsValidationError, FontSourceIdentity, LigKernChar, LigKernCommand,
+    LigKernInstruction, LigKernIter, LigKernStep, LigatureCommand, LoadedFont,
 };
 
 /// TeX's predefined null font.
@@ -79,6 +79,7 @@ struct FontHashFragmentKey {
     checksum: u32,
     design_size: Scaled,
     size: Scaled,
+    construction: FontConstruction,
 }
 
 /// Immutable font store with dense ids and hash-consed load identity.
@@ -150,12 +151,13 @@ impl FontStore {
     }
 
     pub(crate) fn intern(&mut self, font: LoadedFont) -> Result<FontId, FontStoreCapacityError> {
+        let deduplicate = matches!(font.construction(), FontConstruction::Loaded);
         let key = FontKey {
             name: font.name().to_owned(),
             size: font.size(),
             content_hash: font.content_hash(),
         };
-        if let Some(id) = self.by_key.get(&key).copied() {
+        if deduplicate && let Some(id) = self.by_key.get(&key).copied() {
             return Ok(id);
         }
         if self.fonts.len() >= MAX_FONT_COUNT {
@@ -186,7 +188,9 @@ impl FontStore {
                 self.hash_fragments[hash_fragment],
                 None,
             ));
-        self.by_key.insert(key, id);
+        if deduplicate {
+            self.by_key.insert(key, id);
+        }
         Ok(id)
     }
 
@@ -260,6 +264,19 @@ impl FontStore {
         self.fonts
             .get(id.raw() as usize)
             .expect("font id is not live in this Universe timeline")
+    }
+
+    #[must_use]
+    pub(crate) fn by_source_identity(&self, identity: FontSourceIdentity) -> Option<FontId> {
+        self.fonts.iter().enumerate().find_map(|(raw, font)| {
+            (font.source_identity() == identity).then(|| {
+                FontId::from_identity(
+                    self.identities
+                        .identity_at(raw as u32)
+                        .expect("live font slot has an identity"),
+                )
+            })
+        })
     }
 
     pub(crate) fn hash_fragment(&self, id: FontId) -> &StateHashFragment {
@@ -361,7 +378,11 @@ impl FontStore {
             font.checksum().hash(hasher);
             font.design_size().raw().hash(hasher);
             font.size().raw().hash(hasher);
+            font.construction().hash(hasher);
             for parameter in font.parameters() {
+                parameter.raw().hash(hasher);
+            }
+            for parameter in font.source_parameters() {
                 parameter.raw().hash(hasher);
             }
             font.metrics().hash(hasher);
@@ -378,6 +399,7 @@ impl From<&LoadedFont> for FontHashFragmentKey {
             checksum: font.checksum(),
             design_size: font.design_size(),
             size: font.size(),
+            construction: font.construction().clone(),
         }
     }
 }
@@ -389,6 +411,23 @@ fn font_hash_fragment(font: &LoadedFont) -> StateHashFragment {
         fragment.u32(font.checksum());
         fragment.i32(font.design_size().raw());
         fragment.i32(font.size().raw());
+        match font.construction() {
+            FontConstruction::Loaded => fragment.u8(0),
+            FontConstruction::Copied { source } => {
+                fragment.u8(1);
+                fragment.bytes(&source.bytes());
+            }
+            FontConstruction::Letterspaced {
+                source,
+                amount,
+                no_ligatures,
+            } => {
+                fragment.u8(2);
+                fragment.bytes(&source.bytes());
+                fragment.i32(i32::from(*amount));
+                fragment.bool(*no_ligatures);
+            }
+        }
     })
 }
 

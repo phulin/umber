@@ -596,6 +596,8 @@ pub enum UnexpandablePrimitive {
     PdfKnbcCode,
     PdfKnacCode,
     PdfNoLigatures,
+    LetterspaceFont,
+    PdfCopyFont,
     /// A registered pdfTeX name whose semantics belong to a later parity issue.
     PdfTeXUnimplemented,
 }
@@ -824,6 +826,8 @@ impl UnexpandablePrimitive {
             Self::PdfKnbcCode => 217,
             Self::PdfKnacCode => 218,
             Self::PdfNoLigatures => 219,
+            Self::LetterspaceFont => 220,
+            Self::PdfCopyFont => 221,
         }
     }
 
@@ -1050,6 +1054,8 @@ impl UnexpandablePrimitive {
             217 => Some(Self::PdfKnbcCode),
             218 => Some(Self::PdfKnacCode),
             219 => Some(Self::PdfNoLigatures),
+            220 => Some(Self::LetterspaceFont),
+            221 => Some(Self::PdfCopyFont),
             _ => None,
         }
     }
