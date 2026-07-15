@@ -1556,10 +1556,10 @@ impl Universe {
     /// validating that the accepted layout belongs to the same lineage.
     pub fn install_editor_fragments(
         &mut self,
-        fragments: crate::FragmentStore,
+        fragments: &crate::FragmentStore,
         layout: &crate::EditorLayout,
     ) -> Result<(), crate::EditorLayoutError> {
-        layout.validate_store(&fragments)?;
+        layout.validate_store(fragments)?;
         self.stores
             .install_source_fragments(fragments.metadata_snapshot());
         Ok(())

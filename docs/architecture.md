@@ -264,7 +264,9 @@ supply.
   emit them.
   Editor-stable coordinates add a session append-only `FragmentStore` whose
   immutable rows reserve ranges from the same non-rewinding allocator as
-  engine source regions. O(1) clones receive fresh append lineages, and opaque
+  engine source regions. Persistent metadata roots snapshot in O(1), append
+  and look up in O(log n), and receive fresh append lineages; mutable bytes
+  remain in the session owner. Opaque
   fragment handles combine that lineage with their dense slot so forked
   suffixes cannot alias. Accepted `EditorLayout` piece tables carry validated
   fragment views and a `LayoutGeneration`; aggregate installation revalidates

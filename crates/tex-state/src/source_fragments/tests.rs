@@ -141,7 +141,7 @@ fn cross_store_layout_and_aggregate_installation_are_rejected() {
 
     let mut universe = crate::Universe::new();
     assert_eq!(
-        universe.install_editor_fragments(second, &layout),
+        universe.install_editor_fragments(&second, &layout),
         Err(EditorLayoutError::UnknownFragment)
     );
 }
@@ -279,4 +279,22 @@ fn metadata_snapshots_do_not_pin_fragment_source_bytes() {
             + fragments.metadata_retained_bytes()
             + b"source bytes".len()
     );
+}
+
+#[test]
+fn metadata_snapshots_are_o1_and_immutable_across_owner_appends() {
+    let mut fragments = FragmentStore::new();
+    for revision in 0..32 {
+        append(&mut fragments, b"x", revision);
+    }
+    let metadata = fragments.metadata_snapshot();
+    assert!(Arc::ptr_eq(
+        fragments.fragments.root.as_ref().expect("owner root"),
+        metadata.fragments.root.as_ref().expect("snapshot root")
+    ));
+    assert_eq!(metadata.len(), 32);
+    append(&mut fragments, b"later", 33);
+    assert_eq!(fragments.len(), 33);
+    assert_eq!(metadata.len(), 32);
+    assert_eq!(metadata.source_bytes(), 0);
 }

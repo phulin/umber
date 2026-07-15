@@ -1,5 +1,6 @@
 //! Edit-stable source fragments and current-document piece-table resolution.
 
+use std::collections::HashMap;
 use std::mem;
 use std::ops::Range;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
@@ -31,6 +32,7 @@ pub struct FragmentId {
 }
 
 impl FragmentId {
+    #[cfg(test)]
     #[must_use]
     pub(crate) const fn raw(self) -> u32 {
         self.slot
@@ -41,11 +43,16 @@ impl FragmentId {
 #[derive(Clone, Debug)]
 struct SourceFragment {
     id: FragmentId,
-    bytes: Option<Arc<[u8]>>,
     region_start: SourcePos,
     byte_len: u64,
     minted_revision: u64,
+}
+
+#[derive(Clone, Debug)]
+struct FragmentSource {
+    bytes: Option<Arc<[u8]>>,
     removed_revision: Option<u64>,
+    live_generation: LayoutGeneration,
 }
 
 impl SourceFragment {
@@ -54,21 +61,148 @@ impl SourceFragment {
     }
 }
 
+#[derive(Debug)]
+enum FragmentNode {
+    Leaf(SourceFragment),
+    Branch {
+        left: Option<Arc<Self>>,
+        right: Option<Arc<Self>>,
+    },
+}
+
+#[derive(Clone, Debug, Default)]
+struct FragmentTable {
+    root: Option<Arc<FragmentNode>>,
+    len: u32,
+    depth: u8,
+}
+
+impl FragmentTable {
+    fn push(&mut self, fragment: SourceFragment) -> Result<(), SourceMapError> {
+        if self.len == u32::MAX {
+            return Err(SourceMapError::LogicalPositionExhausted);
+        }
+        if self.root.is_none() {
+            self.root = Some(Arc::new(FragmentNode::Leaf(fragment)));
+        } else if u64::from(self.len) == (1_u64 << self.depth) {
+            self.root = Some(Arc::new(FragmentNode::Branch {
+                left: self.root.take(),
+                right: Some(Self::new_path(self.depth, fragment)),
+            }));
+            self.depth += 1;
+        } else {
+            let Some(root) = self.root.as_ref() else {
+                unreachable!("nonempty fragment tree")
+            };
+            self.root = Some(Self::insert(root, self.depth, self.len, fragment));
+        }
+        self.len += 1;
+        Ok(())
+    }
+
+    fn new_path(depth: u8, fragment: SourceFragment) -> Arc<FragmentNode> {
+        if depth == 0 {
+            Arc::new(FragmentNode::Leaf(fragment))
+        } else {
+            Arc::new(FragmentNode::Branch {
+                left: Some(Self::new_path(depth - 1, fragment)),
+                right: None,
+            })
+        }
+    }
+
+    fn insert(
+        node: &Arc<FragmentNode>,
+        depth: u8,
+        index: u32,
+        fragment: SourceFragment,
+    ) -> Arc<FragmentNode> {
+        if depth == 0 {
+            return Arc::new(FragmentNode::Leaf(fragment));
+        }
+        let FragmentNode::Branch { left, right } = node.as_ref() else {
+            unreachable!("fragment tree depth matches node shape")
+        };
+        let right_half = index & (1_u32 << (depth - 1)) != 0;
+        if right_half {
+            let child = match right {
+                Some(child) => Self::insert(child, depth - 1, index, fragment),
+                None => Self::new_path(depth - 1, fragment),
+            };
+            Arc::new(FragmentNode::Branch {
+                left: left.clone(),
+                right: Some(child),
+            })
+        } else {
+            let child = match left {
+                Some(child) => Self::insert(child, depth - 1, index, fragment),
+                None => Self::new_path(depth - 1, fragment),
+            };
+            Arc::new(FragmentNode::Branch {
+                left: Some(child),
+                right: right.clone(),
+            })
+        }
+    }
+
+    fn get(&self, index: u32) -> Option<&SourceFragment> {
+        if index >= self.len {
+            return None;
+        }
+        let mut node = self.root.as_deref()?;
+        for shift in (0..self.depth).rev() {
+            let FragmentNode::Branch { left, right } = node else {
+                return None;
+            };
+            node = if index & (1_u32 << shift) == 0 {
+                left.as_deref()?
+            } else {
+                right.as_deref()?
+            };
+        }
+        let FragmentNode::Leaf(fragment) = node else {
+            return None;
+        };
+        Some(fragment)
+    }
+
+    fn visit(&self, mut visitor: impl FnMut(&SourceFragment)) {
+        fn walk(node: &FragmentNode, visitor: &mut impl FnMut(&SourceFragment)) {
+            match node {
+                FragmentNode::Leaf(fragment) => visitor(fragment),
+                FragmentNode::Branch { left, right } => {
+                    if let Some(left) = left {
+                        walk(left, visitor);
+                    }
+                    if let Some(right) = right {
+                        walk(right, visitor);
+                    }
+                }
+            }
+        }
+        if let Some(root) = &self.root {
+            walk(root, &mut visitor);
+        }
+    }
+}
+
 /// Session-scoped append-only registry of immutable editor source fragments.
 ///
-/// Clones share their inherited rows in O(1) and receive a fresh append
-/// lineage. Appending uses copy-on-write, so sibling suffixes cannot mint the
-/// same identity even when they occupy the same dense slot.
+/// Clones share inherited metadata and byte ownership in O(1) and receive a
+/// fresh append lineage. Engine generations install a metadata-only view;
+/// the accepted session remains the sole byte-state mutator.
 #[derive(Debug)]
 pub struct FragmentStore {
-    fragments: Arc<[SourceFragment]>,
+    fragments: FragmentTable,
+    sources: Arc<HashMap<FragmentId, FragmentSource>>,
     append_lineage: u64,
 }
 
 impl Clone for FragmentStore {
     fn clone(&self) -> Self {
         Self {
-            fragments: Arc::clone(&self.fragments),
+            fragments: self.fragments.clone(),
+            sources: Arc::clone(&self.sources),
             append_lineage: next_fragment_lineage(),
         }
     }
@@ -77,7 +211,8 @@ impl Clone for FragmentStore {
 impl Default for FragmentStore {
     fn default() -> Self {
         Self {
-            fragments: Arc::from([]),
+            fragments: FragmentTable::default(),
+            sources: Arc::new(HashMap::new()),
             append_lineage: next_fragment_lineage(),
         }
     }
@@ -101,23 +236,26 @@ impl FragmentStore {
         let byte_len =
             u64::try_from(bytes.len()).map_err(|_| SourceMapError::LogicalPositionExhausted)?;
         let (start, _) = LogicalPositionAllocator.reserve(byte_len)?;
-        let slot = u32::try_from(self.fragments.len())
-            .map_err(|_| SourceMapError::LogicalPositionExhausted)?;
+        let slot = self.fragments.len;
         let id = FragmentId {
             lineage: self.append_lineage,
             slot,
         };
         let fragment = SourceFragment {
             id,
-            bytes: Some(bytes),
             region_start: SourcePos::from_raw_for_store(start),
             byte_len,
             minted_revision,
-            removed_revision: None,
         };
-        let mut fragments = self.fragments.to_vec();
-        fragments.push(fragment);
-        self.fragments = fragments.into();
+        self.fragments.push(fragment)?;
+        Arc::make_mut(&mut self.sources).insert(
+            id,
+            FragmentSource {
+                bytes: Some(bytes),
+                removed_revision: None,
+                live_generation: LayoutGeneration::new(u64::MAX),
+            },
+        );
         Ok((
             id,
             RegisteredSource::new(SourcePos::from_raw_for_store(start), byte_len),
@@ -126,12 +264,12 @@ impl FragmentStore {
 
     #[must_use]
     pub fn len(&self) -> usize {
-        self.fragments.len()
+        self.fragments.len as usize
     }
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.fragments.is_empty()
+        self.fragments.len == 0
     }
 
     /// Drops bytes from fragments that are absent from the accepted layout and
@@ -142,35 +280,37 @@ impl FragmentStore {
         accepted_revision: u64,
         oldest_retained_revision: u64,
     ) -> usize {
-        let mut live = vec![false; self.fragments.len()];
+        let sources = Arc::make_mut(&mut self.sources);
         for piece in layout.pieces() {
-            live[piece.fragment().raw() as usize] = true;
+            if let Some(source) = sources.get_mut(&piece.fragment()) {
+                source.live_generation = layout.generation();
+            }
         }
-        let mut fragments = self.fragments.to_vec();
         let mut dropped = 0_usize;
-        for (index, fragment) in fragments.iter_mut().enumerate() {
-            if live[index] {
+        for (id, source) in sources.iter_mut() {
+            if source.live_generation == layout.generation() {
                 continue;
             }
-            let removed_revision = *fragment
+            let fragment = self.fragments.get(id.slot).expect("source has metadata");
+            let removed_revision = *source
                 .removed_revision
                 .get_or_insert(accepted_revision.max(fragment.minted_revision));
             if removed_revision <= oldest_retained_revision
-                && let Some(bytes) = fragment.bytes.take()
+                && let Some(bytes) = source.bytes.take()
             {
                 dropped = dropped.saturating_add(bytes.len());
             }
         }
-        self.fragments = fragments.into();
+        sources.retain(|_, source| source.bytes.is_some());
         dropped
     }
 
     /// Bytes of immutable source text still retained for live or protected fragments.
     #[must_use]
     pub fn source_bytes(&self) -> usize {
-        self.fragments
-            .iter()
-            .filter_map(|fragment| fragment.bytes.as_ref())
+        self.sources
+            .values()
+            .filter_map(|source| source.bytes.as_ref())
             .map(|bytes| bytes.len())
             .sum()
     }
@@ -178,9 +318,11 @@ impl FragmentStore {
     /// Cumulative logical position space consumed, including one anchor per fragment.
     #[must_use]
     pub fn reserved_position_bytes(&self) -> u64 {
-        self.fragments.iter().fold(0_u64, |total, fragment| {
-            total.saturating_add(fragment.byte_len.saturating_add(1))
-        })
+        let mut total = 0_u64;
+        self.fragments.visit(|fragment| {
+            total = total.saturating_add(fragment.byte_len.saturating_add(1));
+        });
+        total
     }
 
     /// Requested diagnostic storage retained by this session-owned table.
@@ -192,31 +334,31 @@ impl FragmentStore {
     }
 
     pub(crate) fn metadata_snapshot(&self) -> Self {
-        let fragments = self
-            .fragments
-            .iter()
-            .cloned()
-            .map(|mut fragment| {
-                fragment.bytes = None;
-                fragment
-            })
-            .collect::<Vec<_>>();
         Self {
-            fragments: fragments.into(),
+            fragments: self.fragments.clone(),
+            sources: Arc::new(HashMap::new()),
             append_lineage: next_fragment_lineage(),
         }
     }
 
+    /// Measurement-only access to the exact immutable view installed in an
+    /// engine generation.
+    #[cfg(feature = "testing")]
+    #[must_use]
+    pub fn testing_metadata_snapshot(&self) -> Self {
+        self.metadata_snapshot()
+    }
+
     pub(crate) fn metadata_retained_bytes(&self) -> usize {
-        self.fragments
-            .len()
-            .saturating_mul(mem::size_of::<SourceFragment>())
+        (self.fragments.len as usize)
+            .saturating_mul(mem::size_of::<SourceFragment>() + mem::size_of::<FragmentNode>())
     }
 
     /// Returns the immutable bytes retained for one fragment.
     #[must_use]
     pub fn bytes(&self, id: FragmentId) -> Option<&[u8]> {
-        self.get(id)?.bytes.as_deref()
+        self.get(id)?;
+        self.sources.get(&id)?.bytes.as_deref()
     }
 
     /// Returns the allocation-free registration capability for one fragment.
@@ -244,16 +386,23 @@ impl FragmentStore {
 
     fn get(&self, id: FragmentId) -> Option<&SourceFragment> {
         self.fragments
-            .get(id.slot as usize)
+            .get(id.slot)
             .filter(|fragment| fragment.id == id)
     }
 
     fn fragment_at(&self, position: SourcePos) -> Option<(FragmentId, &SourceFragment)> {
-        let index = self
-            .fragments
-            .partition_point(|fragment| fragment.region_start <= position)
-            .checked_sub(1)?;
-        let fragment = &self.fragments[index];
+        let mut low = 0_u32;
+        let mut high = self.fragments.len;
+        while low < high {
+            let mid = low + (high - low) / 2;
+            let fragment = self.fragments.get(mid)?;
+            if fragment.region_start <= position {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+        let fragment = self.fragments.get(low.checked_sub(1)?)?;
         (position.raw() <= fragment.anchor()).then_some((fragment.id, fragment))
     }
 
@@ -264,7 +413,7 @@ impl FragmentStore {
             return None;
         }
         let offset = usize::try_from(offset).ok()?;
-        let width = fragment.bytes.as_deref().map_or(1, |bytes| {
+        let width = self.bytes(fragment.id).map_or(1, |bytes| {
             std::str::from_utf8(bytes.get(offset..).unwrap_or_default())
                 .ok()
                 .and_then(|suffix| suffix.chars().next())
@@ -489,10 +638,7 @@ impl EditorLayout {
         self.line_index_builds.fetch_add(1, Ordering::Relaxed);
         let mut starts = vec![0];
         for (piece_index, piece) in self.pieces.iter().enumerate() {
-            let Some(bytes) = fragments
-                .get(piece.fragment)
-                .and_then(|fragment| fragment.bytes.as_deref())
-            else {
+            let Some(bytes) = fragments.bytes(piece.fragment) else {
                 continue;
             };
             let range = piece.range.start as usize..piece.range.end as usize;

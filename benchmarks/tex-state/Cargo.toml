@@ -20,3 +20,7 @@ harness = false
 [[bench]]
 name = "snapshot_budgets"
 harness = false
+
+[[bench]]
+name = "accepted_edit_scaling"
+harness = false

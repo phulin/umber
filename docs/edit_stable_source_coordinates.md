@@ -84,9 +84,11 @@ from the table at read time. A `SourcePos` inside `F1` resolves to a typed
 - **Construction** stays the existing single add per token: the lexer keeps
   calling `RegisteredSource::direct_origin(start, end)` with
   fragment-relative offsets. No table is consulted per token (§4).
-- **Edit** cost is O(affected pieces + log pieces): split at most two
-  boundary pieces, drop covered pieces, insert one piece. Nothing retained is
-  rewritten, so there is nothing to go stale.
+- **Fragment metadata** costs O(log fragments) per accepted append and O(1)
+  per immutable engine-generation snapshot. The current flat piece-table
+  replacement still rebuilds O(pieces); optimizing that separate layout
+  operation is deferred. Nothing retained is rewritten, so there is nothing
+  to go stale.
 - **Read** pays the deferred work: piece-table search, prefix-sum offset
   reconstruction, and lazy line indexing of the current document. Reads are
   rare (clicks, hovers, diagnostics), so O(log pieces) plus a per-generation
@@ -97,16 +99,22 @@ from the table at read time. A `SourcePos` inside `F1` resolves to a typed
 ```rust
 /// tex-state: session-scoped, append-only, immutable entries.
 pub struct FragmentStore {
-    fragments: Vec<SourceFragment>,   // FragmentId -> entry
+    fragments: PersistentTree<SourceFragment>, // O(log n) indexed append
+    sources: HashMap<FragmentId, FragmentSource>, // session owner only
     append_lineage: u64,              // fresh on every writable clone
 }
 
 pub struct SourceFragment {
     id: FragmentId,                   // lineage tag + dense slot
-    bytes: Option<Arc<[u8]>>,        // None once fully deleted (metadata kept)
     region_start: SourcePos,          // disjoint logical range, + end anchor
     byte_len: u64,
     minted_revision: RevisionId,      // diagnostic metadata
+}
+
+pub struct FragmentSource {
+    bytes: Option<Arc<[u8]>>,         // absent from immutable engine views
+    removed_revision: Option<RevisionId>,
+    live_generation: LayoutGeneration,
 }
 
 /// tex-incr: the accepted document as an ordered sequence of fragment views.
@@ -123,11 +131,15 @@ pub struct Piece {
 ```
 
 Positions and fragment ids are process-unique and never reused, extending
-the existing rollback invariant. A clone shares the immutable fragment rows
+the existing rollback invariant. A clone shares the persistent metadata root
 in O(1) but receives a fresh append lineage, so sibling copy-on-write appends
 at the same dense slot mint different handles and reject one another rather
-than aliasing. The `FragmentStore` is owned by the session's retained root and
-shared with every engine generation as an `Arc` snapshot installed together
+than aliasing. Appends path-copy O(log fragments) metadata nodes. Mutable byte
+retention lives only in the session owner; pruning marks the layout's live
+source entries in place and drops retired entries without cloning metadata or
+allocating a fragment-count bitmap. The `FragmentStore` is owned by the
+session's retained root and shared with every engine generation as an O(1)
+metadata snapshot installed together
 with its validated layout at rebind. It therefore survives fork discard: a
 fragment minted for an edit stays resolvable no matter which substrate —
 scratch or converged — wins the revision, which fixes the dead-origin defect
@@ -242,7 +254,8 @@ retained per-page tables sorted by `SourcePos`.
 - **Byte pruning**: when the last layout view of a fragment disappears and
   no retained checkpoint's revision precedes the removal, the fragment's
   bytes drop; its metadata row (region range, `minted_revision`) is retained
-  forever so old ids stay typed-`Deleted` rather than aliasable. Session
+  forever in the persistent metadata tree so old ids stay typed-`Deleted`
+  rather than aliasable. Session
   memory becomes O(initial document + live inserted text + metadata per
   edit) instead of one full document per revision. `self.source` remains the
   single contiguous current-document copy.
@@ -291,7 +304,8 @@ lookups chase at most one hop. Deferred until measurements demand it.
   hashes, memo keys, format images, and artifact content identity.
 - Ordinary source-character delivery performs zero provenance-store writes;
   `TracedTokenWord` stays 64 bits with a 32-bit origin field.
-- Snapshot capture stays O(1); positions and fragment ids are never reused
+- Snapshot capture stays O(1) by sharing the immutable metadata root;
+  positions and fragment ids are never reused
   across rollback or fork discard.
 - Resolution degrades to typed `Deleted`/`Unknown`, never to a silently
   wrong offset; diagnostic exhaustion never aborts execution.

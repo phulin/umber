@@ -135,6 +135,39 @@ construction/read costs do not justify remapping every retained coordinate.
 The reserved rebase design remains available if future million-edit sessions
 or measured resolver latency cross a host-facing budget.
 
+### Accepted-edit fragment metadata scaling
+
+The post-review accepted-edit fixture measures one fragment append plus the
+immutable engine-generation metadata snapshot after geometrically increasing
+inherited fragment counts. Teardown and fixture construction are outside the
+timed interval. Set `UMBER_ACCEPTED_EDIT_REPORT=1` to emit allocation counts:
+
+```bash
+UMBER_ACCEPTED_EDIT_REPORT=1 cargo bench \
+  --manifest-path benchmarks/tex-state/Cargo.toml \
+  --bench accepted_edit_scaling
+```
+
+| Inherited fragments | Append + snapshot time | Allocations |
+| ---: | ---: | ---: |
+| 128 | 456.22-473.24 ns | 13 |
+| 512 | 531.83-579.12 ns | 15 |
+| 2,048 | 584.74-626.62 ns | 17 |
+| 8,192 | 650.77-707.65 ns | 19 |
+
+Each 4x increase adds two persistent-tree levels and exactly two allocations;
+time grows from about 0.46 to 0.68 microseconds across 64x more metadata.
+`FragmentStore` now separates the mutable session byte owner from a persistent
+indexed metadata tree. Appends path-copy O(log fragments) nodes, metadata-only
+generation snapshots clone one root in O(1), and pruning marks retained byte
+entries by layout generation without cloning metadata or allocating a
+fragment-count bitmap. A pointer-identity regression test also proves a
+snapshot retains its old length and no source bytes after later owner appends.
+
+This measurement deliberately excludes the flat `EditorLayout` rebuild, which
+remains O(pieces) and is tracked as a separate layout optimization rather than
+being hidden in the fragment-table claim.
+
 ## Incremental memory
 
 Logical bytes include live origin records, origin-list spans and entries, source

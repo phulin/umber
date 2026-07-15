@@ -356,7 +356,7 @@ impl crate::Executor {
         checkpoint: &EngineCheckpoint,
         old_source: &str,
         source: &str,
-        fragments: FragmentStore,
+        fragments: &FragmentStore,
         layout: &tex_state::EditorLayout,
         layout_cursor: LayoutCursor,
     ) -> Result<Duration, EditorRestoreError> {
