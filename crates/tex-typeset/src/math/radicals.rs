@@ -223,7 +223,7 @@ pub(super) fn make_math_accent(
             amount: neg(delta),
             kind: KernKind::Accent,
         },
-        MathNode::HList(accentee),
+        boxed_node(accentee),
     ]);
     let mut packed = ctx.layout.vpack(list);
     packed.width = accentee_width;

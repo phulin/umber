@@ -984,6 +984,32 @@ fn math_accent_uses_skewchar_kern_and_larger_accent() {
 }
 
 #[test]
+fn nested_math_accent_preserves_the_inner_vertical_box() {
+    let mut universe = setup_universe();
+    let inner = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::Accent {
+            accent: math_char('^'),
+        },
+        MathField::MathChar(math_char('a')),
+    ))]);
+    let input = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::Accent {
+            accent: math_char('^'),
+        },
+        MathField::SubMlist(inner),
+    ))]);
+    let params = MathParams::read(&universe);
+
+    let hlist = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+
+    let [MathNode::VList(outer)] = root_nodes(&hlist).as_slice() else {
+        panic!("expected outer accent vbox");
+    };
+    let outer_nodes = list_nodes(&hlist, outer.list);
+    assert!(matches!(outer_nodes.last(), Some(MathNode::VList(_))));
+}
+
+#[test]
 fn nested_under_overline_retains_inner_vertical_box() {
     let mut universe = setup_universe();
     let sum = universe.freeze_node_list(&[
