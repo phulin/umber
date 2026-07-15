@@ -406,6 +406,12 @@ pub enum PageEffect {
     PdfSnapYComp {
         ratio: u16,
     },
+    PdfRefXForm {
+        object: u32,
+        width: Scaled,
+        height: Scaled,
+        depth: Scaled,
+    },
 }
 
 /// Ordered PDF-only accessibility control retained at its shipped position.
@@ -534,6 +540,7 @@ fn validate_artifact(
             | PageEffect::PdfSnapRefPoint
             | PageEffect::PdfSnapY { .. }
             | PageEffect::PdfSnapYComp { .. } => None,
+            PageEffect::PdfRefXForm { .. } => None,
         };
         if stream.is_some_and(|stream| stream >= 16) {
             return Err(ArtifactValidationError::InvalidStream {

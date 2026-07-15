@@ -324,8 +324,19 @@ fn append_whatsit_effect(
             spec: super::lower_glue(stores.glue(glue)),
         }),
         Whatsit::PdfSnapYComp { ratio } => effects.push(PageEffect::PdfSnapYComp { ratio }),
-        // Lowered by the PDF form traversal introduced with Form XObjects.
-        Whatsit::PdfRefXForm { .. } => {}
+        Whatsit::PdfRefXForm {
+            object,
+            width,
+            height,
+            depth,
+        } => {
+            effects.push(PageEffect::PdfRefXForm {
+                object,
+                width,
+                height,
+                depth,
+            });
+        }
         Whatsit::OpenOut { .. }
         | Whatsit::CloseOut { .. }
         | Whatsit::DeferredWrite { .. }

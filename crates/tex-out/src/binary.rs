@@ -57,7 +57,7 @@ mod wire {
         pub const PDF_SNAP_REF_POINT: u8 = 12;
         pub const PDF_SNAP_Y: u8 = 13;
         pub const PDF_SNAP_Y_COMP: u8 = 14;
-        // Tag 15 is reserved by independently developed artifact effects.
+        pub const PDF_REF_XFORM: u8 = 15;
         pub const PDF_ANNOTATION: u8 = 16;
     }
 
@@ -1508,6 +1508,18 @@ impl Writer {
                     self.u8(wire::effect::PDF_SNAP_Y_COMP);
                     self.u16(*ratio);
                 }
+                PageEffect::PdfRefXForm {
+                    object,
+                    width,
+                    height,
+                    depth,
+                } => {
+                    self.u8(wire::effect::PDF_REF_XFORM);
+                    self.u32(*object);
+                    self.scaled(*width);
+                    self.scaled(*height);
+                    self.scaled(*depth);
+                }
             }
         }
     }
@@ -2173,6 +2185,12 @@ impl Reader<'_> {
                     spec: self.glue_spec()?,
                 },
                 wire::effect::PDF_SNAP_Y_COMP => PageEffect::PdfSnapYComp { ratio: self.u16()? },
+                wire::effect::PDF_REF_XFORM if version >= PRE_ANNOTATION_VERSION => PageEffect::PdfRefXForm {
+                    object: self.u32()?,
+                    width: self.scaled()?,
+                    height: self.scaled()?,
+                    depth: self.scaled()?,
+                },
                 tag => {
                     return Err(ParseError::InvalidTag {
                         kind: "effect",

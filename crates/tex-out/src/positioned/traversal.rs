@@ -453,7 +453,27 @@ impl Lowerer<'_> {
             .effects
             .get(effect_index as usize)
             .ok_or(PositionedError::MissingEffect { effect_index })?;
-        if matches!(effect, PageEffect::PdfSavePosition) {
+        if let PageEffect::PdfRefXForm {
+            width,
+            height,
+            depth,
+            ..
+        } = effect
+        {
+            if vertical {
+                self.cur_v = add(self.cur_v, *height)?;
+            }
+            self.push(PositionedEvent::PdfGraphics(PositionedPdfGraphics {
+                x: self.cur_h,
+                y: self.cur_v,
+                effect: effect.clone(),
+            }))?;
+            if vertical {
+                self.cur_v = add(self.cur_v, *depth)?;
+            } else {
+                self.cur_h = add(self.cur_h, *width)?;
+            }
+        } else if matches!(effect, PageEffect::PdfSavePosition) {
             self.last_saved_position = Some((self.cur_h, self.cur_v));
         } else if matches!(effect, PageEffect::PdfSnapRefPoint) {
             self.snap_reference = (self.cur_h, self.cur_v);
