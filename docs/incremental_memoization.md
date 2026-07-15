@@ -510,6 +510,27 @@ incremental and cold results. Relevant corpus parity, snapshot budgets,
 profiling, `cargo test --tests`, and `scripts/check.sh` gate each
 rollout phase.
 
+### Named-checkpoint baseline before memoization
+
+The committed `tex-incr` multi-page baseline uses 20 independently shipped
+pages and edits page 11 after restoring the preceding `ShipoutComplete`.
+An optimized macOS run on 2026-07-15 recorded the following diagnostic sample;
+the work counters are deterministic, while the timings are observations rather
+than performance gates:
+
+| Edit | Fork | Re-execute | Splice | Bytes / tokens / dispatches | Hash checks | Pages retyped / reused | Retained checkpoint / diagnostic / output bytes |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| comment-only | 110 us | 58 us | 135 us | 53 / 2 / 2 | 1 match | 1 / 9 | 159,666 / 1,772 / 3,500 |
+| semantic rule-width change | 222 us | 251 us | 212 us | 530 / 22 / 22 | 10 mismatches | 10 / 0 | 158,954 / 1,805 / 3,500 |
+
+The semantic case demonstrates the limitation this design addresses: after
+the edited page, every later schedule entry is comparable but its folded
+history hash remains divergent. The comment case preserves identical history
+and adopts the suffix at the first comparison. The scenario matrix beside the
+baseline also checks changed paragraph content, page-number reads, marks,
+deferred writes, page-count changes, output routines, and insertions against a
+fresh cold execution.
+
 ## Implementation sequence
 
 1. **Contract correction and baseline.** Reclassify folded hashes as

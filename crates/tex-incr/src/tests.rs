@@ -23,6 +23,48 @@ fn persistent_source(value: usize) -> String {
     format!("\\shipout\\vbox{{\\hrule height 1pt width {value}pt}}\\count0={value}\\end")
 }
 
+fn multi_page_source(pages: usize) -> String {
+    let mut source = String::new();
+    for page in 0..pages {
+        source.push_str(&format!(
+            "% page {page}\n\\shipout\\vbox{{\\hrule height1pt width {}pt}}\n",
+            page + 10
+        ));
+    }
+    source.push_str("\\end");
+    source
+}
+
+fn assert_semantic_edit_matches_cold(name: &str, original: &str, edited: &str) -> ReuseMetrics {
+    let mut session = Session::start(template(), name, RevisionId::new(1), original, usize::MAX)
+        .expect("incremental session");
+    session
+        .register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("incremental font");
+    session.cold().expect("initial cold run");
+    let incremental = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(original.as_bytes()),
+                range: 0..original.len(),
+                replacement: edited.to_owned(),
+            },
+        )
+        .expect("semantic edit");
+
+    let mut cold = Session::start(template(), name, RevisionId::new(2), edited, usize::MAX)
+        .expect("comparison session");
+    cold.register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("comparison font");
+    let cold = cold.cold().expect("comparison cold run");
+    assert_eq!(incremental.dvi_pages, cold.dvi_pages, "{name}: DVI plans");
+    assert_eq!(incremental.artifacts, cold.artifacts, "{name}: artifacts");
+    assert_eq!(incremental.effects, cold.effects, "{name}: effects");
+    incremental.reuse
+}
+
 #[test]
 fn transient_episode_publishes_durable_content_only_once() {
     let mut universe = Universe::new();
@@ -219,6 +261,113 @@ fn no_op_revision_converges_at_first_eligible_boundary() {
         output.dvi_bytes().expect("incremental DVI"),
         cold.dvi_bytes().expect("cold DVI")
     );
+}
+
+#[test]
+fn semantic_edit_scenario_matrix_is_cold_identical_without_false_convergence() {
+    let cases = [
+        (
+            "paragraph-content",
+            "\\font\\f=cmr10\\f \\setbox0=\\vbox{alpha beta\\par}\\shipout\\box0\\end",
+            "\\font\\f=cmr10\\f \\setbox0=\\vbox{alpha gamma\\par}\\shipout\\box0\\end",
+        ),
+        (
+            "page-number-read",
+            "\\count0=1\\shipout\\hbox{\\write16{page \\the\\count0}}\\end",
+            "\\count0=2\\shipout\\hbox{\\write16{page \\the\\count0}}\\end",
+        ),
+        (
+            "mark",
+            "\\shipout\\vbox{\\mark{A}\\hrule height1pt}\\end",
+            "\\shipout\\vbox{\\mark{B}\\hrule height1pt}\\end",
+        ),
+        (
+            "deferred-write",
+            "\\shipout\\hbox{\\write16{alpha}}\\end",
+            "\\shipout\\hbox{\\write16{beta}}\\end",
+        ),
+        (
+            "page-count",
+            "\\shipout\\vbox{\\hrule height1pt}\\end",
+            "\\shipout\\vbox{\\hrule height1pt}\\shipout\\vbox{\\hrule height2pt}\\end",
+        ),
+        (
+            "output-routine",
+            "\\count0=1\\output={\\global\\advance\\count0 by 1\\shipout\\box255}\\topskip=0pt\\vsize=1pt\\hrule height2pt\\penalty-10000\\end",
+            "\\count0=2\\output={\\global\\advance\\count0 by 1\\shipout\\box255}\\topskip=0pt\\vsize=1pt\\hrule height2pt\\penalty-10000\\end",
+        ),
+        (
+            "footnote-insertion",
+            "\\output={\\shipout\\box255}\\topskip=0pt\\vsize=5pt\\insert7{\\hrule height1pt}\\hrule height10pt\\penalty-10000\\end",
+            "\\output={\\shipout\\box255}\\topskip=0pt\\vsize=5pt\\insert7{\\hrule height2pt}\\hrule height10pt\\penalty-10000\\end",
+        ),
+    ];
+    for (name, original, edited) in cases {
+        let metrics = assert_semantic_edit_matches_cold(name, original, edited);
+        assert_eq!(metrics.convergence_boundary, None, "{name}");
+        assert_ne!(
+            metrics.same_history_stop,
+            SameHistoryStop::Matched,
+            "{name}"
+        );
+        assert_eq!(metrics.pages_reused, 0, "{name}");
+        assert!(metrics.reexecuted_commands > 0, "{name}");
+    }
+}
+
+#[test]
+fn multi_page_baseline_distinguishes_comment_and_semantic_edits() {
+    let original = multi_page_source(20);
+    let comment_at = original.find("page 10").expect("middle comment") + "page ".len();
+    let mut comment_session = Session::start(
+        template(),
+        "comment-baseline",
+        RevisionId::new(1),
+        original.clone(),
+        usize::MAX,
+    )
+    .expect("comment session");
+    comment_session.cold().expect("comment cold");
+    let comment = comment_session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(original.as_bytes()),
+                range: comment_at..comment_at + 2,
+                replacement: "XX".to_owned(),
+            },
+        )
+        .expect("comment edit");
+    assert_eq!(comment.reuse.same_history_stop, SameHistoryStop::Matched);
+    assert!(comment.reuse.pages_reused > 0);
+
+    let width_at = original.find("width 20pt").expect("middle width") + "width ".len();
+    let mut semantic_session = Session::start(
+        template(),
+        "semantic-baseline",
+        RevisionId::new(1),
+        original.clone(),
+        usize::MAX,
+    )
+    .expect("semantic session");
+    semantic_session.cold().expect("semantic cold");
+    let semantic = semantic_session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(original.as_bytes()),
+                range: width_at..width_at + 2,
+                replacement: "21".to_owned(),
+            },
+        )
+        .expect("semantic edit");
+    assert_ne!(semantic.reuse.same_history_stop, SameHistoryStop::Matched);
+    assert_eq!(semantic.reuse.pages_reused, 0);
+    assert_eq!(semantic.reuse.pages_retyped, 10);
+    assert!(semantic.reuse.same_history_hash_mismatches > 0);
+    assert!(semantic.reuse.reexecuted_bytes < original.len());
 }
 
 #[test]
