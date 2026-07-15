@@ -1607,6 +1607,21 @@ fn transient_replay_buffers_return_to_pool_on_exhaustion_and_abort() {
 }
 
 #[test]
+fn replay_abort_removes_nested_source_and_condition_frames() {
+    let mut input = InputStack::new(MemoryInput::new("outer"));
+    let marker = input.push_transient_tokens(Vec::new(), TokenListReplayKind::OutputRoutine);
+    input.push_source(MemoryInput::new("nested"));
+    input.push_condition(ConditionFrameSummary::new_if(condition_context(), true));
+
+    assert_eq!(input.source_depth(), 2);
+    assert_eq!(input.condition_depth(), 1);
+    assert!(input.abort_token_list_replay(marker));
+    assert_eq!(input.source_depth(), 1);
+    assert_eq!(input.condition_depth(), 0);
+    assert!(!input.contains_token_list_replay_marker(marker));
+}
+
+#[test]
 fn transient_replay_pool_drops_exceptionally_large_buffers() {
     let mut stores = Universe::new();
     let mut words = Vec::with_capacity(super::TRANSIENT_BUFFER_POOL_MAX_CAPACITY + 1);

@@ -3227,8 +3227,12 @@ impl InputStack {
             .map(|(index, _)| index)
             .collect::<Vec<_>>();
         for index in indices.into_iter().rev() {
-            let frame = self.discard_token_list_frame(index);
-            self.retire_token_list_frame(frame);
+            if matches!(self.frames[index], InputFrame::TokenList(_)) {
+                let frame = self.discard_token_list_frame(index);
+                self.retire_token_list_frame(frame);
+            } else {
+                let _ = self.remove_frame(index);
+            }
         }
         true
     }
