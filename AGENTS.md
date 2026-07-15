@@ -43,9 +43,7 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `tools/texlive-wasm-publish`: standalone deterministic publisher for pinned browser TeX Live manifests and content-addressed objects.
 - `benchmarks/`: opt-in standalone benchmark crates kept outside the root workspace.
 - `benchmarks/plain-tex`: fixed end-to-end Plain TeX engine workloads and runner.
-- `benchmarks/semantic-hash-model`: standalone comparison of traversal-based and promoted semantic hashing over a realistic TeX-like workload.
 - `benchmarks/tex-exec`: focused execution-layer Criterion benchmarks, including shipout lowering.
-- `benchmarks/tex-out`: focused detached artifact encoding, DVI planning, and final emission Criterion benchmarks.
 - `benchmarks/tex-state`: focused state-layer latency and allocation-budget benchmarks.
 - `tests/`: committed fixtures and parity test definitions.
 - `docs/`: architecture, phase, and design documents.

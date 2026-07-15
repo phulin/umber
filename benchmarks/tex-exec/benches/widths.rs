@@ -4,6 +4,7 @@ use tex_fonts::{CharMetrics, FontMetrics, LoadedFont};
 use tex_state::Universe;
 use tex_state::node::{KernKind, Node};
 use tex_state::scaled::Scaled;
+use tex_state::token::OriginId;
 use tex_typeset::{HpackParams, PackSpec, hpack};
 
 fn width_font(name: &str, salt: u8) -> LoadedFont {
@@ -36,6 +37,7 @@ fn same_font(count: usize) -> (Universe, tex_state::ids::NodeListId) {
         .map(|i| Node::Char {
             font,
             ch: char::from((32 + i % 95) as u8),
+            origin: OriginId::UNKNOWN,
         })
         .collect::<Vec<_>>();
     let list = state.freeze_node_list(&nodes);
@@ -59,6 +61,7 @@ fn mixed(count: usize) -> (Universe, tex_state::ids::NodeListId) {
                 Node::Char {
                     font: fonts[(i / 37) & 1],
                     ch: char::from((32 + i % 95) as u8),
+                    origin: OriginId::UNKNOWN,
                 }
             }
         })

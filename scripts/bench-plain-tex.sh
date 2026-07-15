@@ -159,20 +159,15 @@ measure_engine() {
   local warm_dir="$work_dir/$stem-$engine-warm"
   local expected_checksum
   local times=""
-  local failures=0
 
   prepare_run "$input" "$warm_dir"
   if ! invoke_engine "$engine" "$input" "$warm_dir"; then
-    if [[ "$engine" != umber ]]; then
-      report_failure "$engine" "$input" "$warm_dir"
-      return 1
-    fi
+    report_failure "$engine" "$input" "$warm_dir"
+    return 1
   fi
-  if [[ "$engine" != umber ]]; then
-    validate_run "$engine" "$input" "$warm_dir"
-    expected_checksum="$(normalized_artifact_checksum \
-      "$(artifact_path "$engine" "$stem" "$warm_dir")")"
-  fi
+  validate_run "$engine" "$input" "$warm_dir"
+  expected_checksum="$(normalized_artifact_checksum \
+    "$(artifact_path "$engine" "$stem" "$warm_dir")")"
   rm -rf "$warm_dir"
 
   for run in $(seq 1 "$runs"); do
@@ -182,30 +177,24 @@ measure_engine() {
     local status=0
     prepare_run "$input" "$run_dir"
     seconds="$({ TIMEFORMAT='%R'; time invoke_engine "$engine" "$input" "$run_dir"; } 2>&1)" || status=$?
-    if [[ "$status" -ne 0 && "$engine" != umber ]]; then
+    if [[ "$status" -ne 0 ]]; then
       report_failure "$engine" "$input" "$run_dir"
       return 1
     fi
-    if [[ "$engine" == umber ]]; then
-      if [[ "$status" -ne 0 ]]; then
-        failures=$((failures + 1))
-      fi
-    else
-      validate_run "$engine" "$input" "$run_dir"
-      actual_checksum="$(normalized_artifact_checksum \
-        "$(artifact_path "$engine" "$stem" "$run_dir")")"
-      if [[ "$actual_checksum" != "$expected_checksum" ]]; then
-        printf 'bench-plain-tex: %s produced nondeterministic output for %s run %d\n' \
-          "$engine" "$input" "$run" >&2
-        return 1
-      fi
+    validate_run "$engine" "$input" "$run_dir"
+    actual_checksum="$(normalized_artifact_checksum \
+      "$(artifact_path "$engine" "$stem" "$run_dir")")"
+    if [[ "$actual_checksum" != "$expected_checksum" ]]; then
+      printf 'bench-plain-tex: %s produced nondeterministic output for %s run %d\n' \
+        "$engine" "$input" "$run" >&2
+      return 1
     fi
     times="$times $seconds"
     rm -rf "$run_dir"
   done
 
   printf '%s\n' "$times" | awk \
-    -v workload="$stem" -v engine="$engine" -v failures="$failures" '
+    -v workload="$stem" -v engine="$engine" '
     {
       min = $1
       max = $1
@@ -214,9 +203,8 @@ measure_engine() {
         if ($i < min) min = $i
         if ($i > max) max = $i
       }
-      status = failures == 0 ? "ok" : "error(" failures ")"
       printf "%s\t%s\t%.6f\t%.6f\t%.6f\t%s\n", \
-        workload, engine, sum / NF, min, max, status
+        workload, engine, sum / NF, min, max, "ok"
     }
   ' >>"$results"
 }

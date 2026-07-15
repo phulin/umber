@@ -40,10 +40,9 @@ otherwise idle machine and compare complete result sets from the same host.
 
 The workloads use a shared primitive-compatible preamble, committed Computer
 Modern metrics, explicit register assignments, and explicit discretionary
-breakpoints so every engine receives the same input. For external engines,
-completion markers and normalized artifact checks catch truncation, execution
-errors, and nondeterminism. Umber is deliberately best-effort during bring-up:
-its invocation is timed even when it exits with an error, and its output is not
-validated. The table marks how many of its five measured runs failed. These
-checks do not replace cross-engine byte-parity testing: use the repository's
-fixture, corpus, and TRIP workflows for compatibility claims.
+breakpoints so every engine receives the same input. Every engine, including
+Umber, must exit successfully, emit the expected completion marker and DVI/XDV
+artifact, and reproduce the warm-up's normalized artifact checksum on every
+measured run. These checks do not replace cross-engine byte-parity testing:
+use the repository's fixture, corpus, and TRIP workflows for compatibility
+claims.
