@@ -90,7 +90,7 @@ fn trailing_hash_brace_is_appended_to_the_macro_replacement() {
         .expect("trailing hash-brace macro executes");
 
     let output = terminal_effect_text(&stores);
-    assert!(output.contains("ARG=[#1 ]"), "{output}");
+    assert!(output.contains("ARG=[##1 ]"), "{output}");
     assert!(!output.contains("Too many }'s"), "{output}");
 }
 
