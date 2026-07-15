@@ -111,7 +111,8 @@ prepare_format() {
   if [[ -z "$format_file" ]]; then
     mkdir -p "$format_output_dir"
     UMBER_LATEX_FORMAT_WORK_ROOT="$scratch_parent" \
-      "$format_builder" --texmf-dist "$texmf_dist" --output-dir "$format_output_dir"
+      "$format_builder" --texmf-dist "$texmf_dist" --output-dir "$format_output_dir" \
+        > /dev/null
     format_build_count=$((format_build_count + 1))
     format_file="${format_output_dir}/latex.fmt"
   fi
@@ -211,9 +212,9 @@ fi
 
 [[ -f "$manifest" ]] || fail "missing parity manifest: $manifest"
 if [[ $offline -eq 1 ]]; then
-  "${repo_root}/scripts/setup-latex-parity-tests.sh" --offline
+  "${repo_root}/scripts/setup-latex-parity-tests.sh" --offline > /dev/null
 else
-  "${repo_root}/scripts/setup-latex-parity-tests.sh"
+  "${repo_root}/scripts/setup-latex-parity-tests.sh" > /dev/null
 fi
 [[ -x "$reference_latex" ]] || fail "missing reference LaTeX; set UMBER_REF_LATEX"
 [[ -x "$reference_kpsewhich" ]] || \
@@ -232,8 +233,8 @@ fi
 cd "$repo_root"
 prepare_format
 start_receipt
-cargo build --release -p umber
-cargo build -p parity-harness
+cargo build --quiet --release -p umber
+cargo build --quiet -p parity-harness
 
 umber_bin="${target_dir}/release/umber"
 parity_bin="${target_dir}/debug/parity-harness"
@@ -322,14 +323,32 @@ run_one_case() {
       case_error "$case_name" "reference timed out after ${case_timeout_seconds}s"
       return 1
     fi
-    printf 'LaTeX DVI parity: %s has no classic LaTeX DVI (status %s)\n' \
-      "$case_name" "$reference_status"
     return 2
   fi
   if [[ ! -f "${reference_dir}/document.fls" ]]; then
     case_error "$case_name" "reference recorder did not emit document.fls"
     return 1
   fi
+
+  # Mirror every external input directory opened by the reference job. The
+  # trailing colon in reference TEXINPUTS asks kpathsea to search its complete
+  # pinned TeX Live tree; Umber deliberately accepts only explicit directories.
+  # Exclude the reference work directory so generated files such as document.aux
+  # cannot leak from the reference run into the isolated Umber run.
+  local case_texinputs="$local_inputs"
+  local recorded_input resolved_input resolved_input_dir
+  while IFS= read -r recorded_input; do
+    resolved_input="$recorded_input"
+    if [[ "$resolved_input" != /* ]]; then
+      resolved_input="${reference_dir}/${resolved_input}"
+    fi
+    [[ -f "$resolved_input" && "$resolved_input" != *.tfm ]] || continue
+    resolved_input_dir="$(cd "${resolved_input%/*}" && pwd -P)"
+    [[ "$resolved_input_dir" != "$reference_dir" ]] || continue
+    if [[ ":${case_texinputs}:" != *":${resolved_input_dir}:"* ]]; then
+      case_texinputs+=":${resolved_input_dir}"
+    fi
+  done < <(sed -n '/^INPUT /s/^INPUT //p' "${reference_dir}/document.fls")
 
   # Include every TFM the reference job opened, even when that font never
   # reaches the DVI. Missing one such load shifts TeX's later font numbers and
@@ -366,7 +385,7 @@ run_one_case() {
   (
     cd "$umber_dir"
     run_with_case_timeout env SOURCE_DATE_EPOCH="$source_date_epoch" FORCE_SOURCE_DATE=1 \
-      TEXINPUTS="$local_inputs" TEXFONTS="$case_texfonts" \
+      TEXINPUTS="$case_texinputs" TEXFONTS="$case_texfonts" \
       "$umber_bin" run --latex document.tex --format latex.fmt --dvi document.dvi \
         > document.stdout 2> document.stderr < /dev/null
   ) || umber_status=$?
@@ -385,7 +404,6 @@ run_one_case() {
     case_error "$case_name" "coordinate-exact DVI mismatch"
     return 1
   fi
-  printf 'LaTeX DVI parity: %s (%s)\n' "$case_name" "$path"
 }
 
 [[ -f "$case_list" ]] || fail "setup did not produce case list: $case_list"
@@ -439,7 +457,9 @@ printf 'LaTeX DVI census: %s candidates, %s classic DVI cases, %s non-DVI config
   "$selected" "$dvi_selected" "$((selected - dvi_selected))" "$non_dvi_report"
 mv "$active_receipt" "$receipt"
 if [[ $failed -gt 0 ]]; then
-  printf 'LaTeX DVI parity failures: %s of %s; list: %s\n' \
-    "$failed" "$dvi_selected" "$failures_report" >&2
+  printf 'LaTeX DVI parity: %s exact, %s failures of %s; list: %s\n' \
+    "$((dvi_selected - failed))" "$failed" "$dvi_selected" "$failures_report" >&2
   exit 1
 fi
+printf 'LaTeX DVI parity: %s exact, 0 failures of %s\n' \
+  "$dvi_selected" "$dvi_selected"
