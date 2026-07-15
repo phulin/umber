@@ -197,6 +197,15 @@ impl FileSessionResolvers {
     /// driver's configured font search path. PDF finalization remains
     /// host-neutral and consumes only validated resources in engine state.
     pub fn provide_pdf_font_programs(&self, stores: &mut Universe) -> Result<(), String> {
+        self.provide_pdf_font_programs_at_dpi(stores, pdf_output::DEFAULT_PDF_PK_RESOLUTION)
+    }
+
+    /// Variant used by hosts that configure a non-default bitmap device DPI.
+    pub fn provide_pdf_font_programs_at_dpi(
+        &self,
+        stores: &mut Universe,
+        driver_dpi: i32,
+    ) -> Result<(), String> {
         let encodings = stores
             .resolved_pdf_font_map_lines()
             .into_iter()
@@ -247,6 +256,33 @@ impl FileSessionResolvers {
                     .provide_pdf_type1_program(name, content.bytes())
                     .map_err(|error| error.to_string())?;
             }
+        }
+        let mapped_names = stores
+            .resolved_pdf_font_map_lines()
+            .into_iter()
+            .map(|entry| entry.tex_name)
+            .collect::<BTreeSet<_>>();
+        let requests = stores
+            .pdf_font_resources()
+            .filter_map(|resource| {
+                let font = stores.font(resource.font());
+                (!mapped_names.contains(font.name().as_bytes()))
+                    .then(|| pdf_output::pk_font_request(stores, resource.font(), driver_dpi))
+            })
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        for request in requests {
+            if stores.pdf_pk_font(&request).is_some() {
+                continue;
+            }
+            let logical_name = request.logical_name();
+            let display_name = String::from_utf8_lossy(&logical_name);
+            let content = self
+                .font
+                .0
+                .read_program_from_world(stores.world_mut(), Path::new(display_name.as_ref()))?;
+            stores
+                .provide_pdf_pk_font(request, content.bytes())
+                .map_err(|error| error.to_string())?;
         }
         Ok(())
     }

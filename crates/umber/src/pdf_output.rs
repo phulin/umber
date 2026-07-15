@@ -11,6 +11,7 @@ use tex_out::pdf::{
 };
 use tex_out::positioned::{PositionedError, PositionedEvent};
 use tex_state::env::banks::{IntParam, TokParam};
+use tex_state::ids::FontId;
 use tex_state::ids::TokenListId;
 use tex_state::{
     CommittedArtifact, ContentHash, PDF_CATALOG_OBJECT_ID, PDF_PAGES_OBJECT_ID,
@@ -18,6 +19,40 @@ use tex_state::{
 };
 
 use std::collections::{BTreeMap, BTreeSet};
+
+pub(crate) const DEFAULT_PDF_PK_RESOLUTION: i32 = 600;
+
+pub(crate) fn pk_font_request(
+    stores: &Universe,
+    font_id: FontId,
+    driver_dpi: i32,
+) -> Result<tex_fonts::PdfPkFontRequest, String> {
+    let font = stores.font(font_id);
+    let parameters = output_parameters(stores);
+    let base_dpi = if parameters.pk_resolution == 0 {
+        driver_dpi.clamp(72, 8_000)
+    } else {
+        parameters.pk_resolution
+    };
+    let design_size = i64::from(font.design_size().raw());
+    if design_size <= 0 {
+        return Err(format!("font {} has invalid PK design size", font.name()));
+    }
+    let scaled_dpi = i64::from(base_dpi)
+        .checked_mul(i64::from(font.size().raw()))
+        .and_then(|value| value.checked_add(design_size / 2))
+        .map(|value| value / design_size)
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or_else(|| format!("font {} PK resolution overflows", font.name()))?;
+    let mode = stores
+        .fixed_pdf_pk_mode()
+        .unwrap_or_else(|| stores.tok_param(TokParam::PDF_PK_MODE));
+    Ok(tex_fonts::PdfPkFontRequest::new(
+        font.name().as_bytes().to_vec(),
+        scaled_dpi,
+        token_list_bytes(stores, mode),
+    ))
+}
 
 /// Builds one deterministic PDF from the current checkpointed page ledger.
 pub fn pdf_from_committed_artifacts(

@@ -1856,6 +1856,26 @@ impl Universe {
         self.pdf.truetype_program(logical_name)
     }
 
+    /// Supplies a PK bitmap program already acquired by a host for the exact
+    /// typed name, resolution, and mode request.
+    pub fn provide_pdf_pk_font(
+        &mut self,
+        request: tex_fonts::PdfPkFontRequest,
+        bytes: &[u8],
+    ) -> Result<(), tex_fonts::PdfPkFontError> {
+        let font = tex_fonts::PdfPkFont::parse(bytes)?;
+        self.pdf.provide_pk_font(request, font);
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn pdf_pk_font(
+        &self,
+        request: &tex_fonts::PdfPkFontRequest,
+    ) -> Option<&tex_fonts::PdfPkFont> {
+        self.pdf.pk_font(request)
+    }
+
     /// Lazily reserves the page-resource name and font-dictionary object used
     /// by enquiries and by the first shipped page containing this font.
     pub fn ensure_pdf_font_resource(

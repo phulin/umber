@@ -23,6 +23,7 @@ Use this crate for font-domain parsing and metric representation that does not r
 - `src/metrics.rs`: immutable loaded-font records, selected OpenType artifact bindings, and backend-neutral metric query types.
 - `src/pdf_encoding.rs`: host-neutral parsing of named 256-entry PostScript encoding vectors.
 - `src/pdf_map.rs`: host-neutral pdfTeX/dvips map directive and entry parsing; logical resource names only.
+- `src/pdf_pk.rs`: bounded host-neutral PK bitmap font decoding, normalized glyph masks, and content identity.
 - `src/pdf_truetype.rs`: validated SFNT bytes and PDF descriptor metrics normalized through `ttf-parser`.
 - `src/opentype/`: validated OpenType resource contracts, canonical identities, bounded SFNT/WOFF2 decoding, and immutable metric/cmap/table projections.
 - `src/tests.rs`: crate-internal test module declarations for TFM parsing and cross-checks.

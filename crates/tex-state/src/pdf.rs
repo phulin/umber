@@ -98,6 +98,10 @@ enum PdfFontOperation {
         logical_name: Vec<u8>,
         program: tex_fonts::PdfTrueTypeProgram,
     },
+    PkFont {
+        request: tex_fonts::PdfPkFontRequest,
+        font: tex_fonts::PdfPkFont,
+    },
 }
 
 /// Live pdfTeX microtype and font-output controls.
@@ -619,6 +623,30 @@ impl PdfState {
         });
     }
 
+    pub(crate) fn provide_pk_font(
+        &mut self,
+        request: tex_fonts::PdfPkFontRequest,
+        font: tex_fonts::PdfPkFont,
+    ) {
+        self.push_font_operation(PdfFontOperation::PkFont { request, font });
+    }
+
+    pub(crate) fn pk_font(
+        &self,
+        request: &tex_fonts::PdfPkFontRequest,
+    ) -> Option<&tex_fonts::PdfPkFont> {
+        self.font_operations
+            .iter()
+            .rev()
+            .find_map(|operation| match operation {
+                PdfFontOperation::PkFont {
+                    request: candidate,
+                    font,
+                } if candidate == request => Some(font),
+                _ => None,
+            })
+    }
+
     pub(crate) fn truetype_program(
         &self,
         logical_name: &[u8],
@@ -651,7 +679,8 @@ impl PdfState {
                 | PdfFontOperation::NoBuiltinToUnicode { .. }
                 | PdfFontOperation::Type1Program { .. }
                 | PdfFontOperation::Encoding { .. }
-                | PdfFontOperation::TrueTypeProgram { .. } => None,
+                | PdfFontOperation::TrueTypeProgram { .. }
+                | PdfFontOperation::PkFont { .. } => None,
             })
     }
 
@@ -914,6 +943,13 @@ fn append_font_fingerprint(previous: u64, operation: &PdfFontOperation) -> u64 {
             hasher.bytes(logical_name);
             hasher.bytes(&program.identity().bytes());
         }
+        PdfFontOperation::PkFont { request, font } => {
+            hasher.tag(10);
+            hasher.bytes(request.tex_name());
+            hasher.u32(request.dpi());
+            hasher.bytes(request.mode());
+            hasher.bytes(&font.identity().bytes());
+        }
     }
     hasher.finish()
 }
@@ -1134,6 +1170,25 @@ mod tests {
         );
         assert!(!state.builtin_to_unicode_disabled(font));
         assert_eq!(state.hash_fragment(), checkpoint_hash);
+    }
+
+    #[test]
+    fn pk_font_provision_is_typed_hashed_and_rollback_owned() {
+        let mut bytes = vec![247, 89, 0];
+        bytes.extend_from_slice(&[0; 16]);
+        bytes.extend_from_slice(&[0xe0, 10, 65, 0, 0, 0, 3, 3, 2, 0, 1, 0b1010_1000]);
+        bytes.push(245);
+        let font = tex_fonts::PdfPkFont::parse(&bytes).expect("synthetic PK parses");
+        let request = tex_fonts::PdfPkFontRequest::new(b"cmr10".to_vec(), 300, b"cx".to_vec());
+        let mut state = PdfState::default();
+        let before = state.hash_fragment();
+        let snapshot = state.snapshot();
+        state.provide_pk_font(request.clone(), font.clone());
+        assert_eq!(state.pk_font(&request), Some(&font));
+        assert_ne!(state.hash_fragment(), before);
+        state.rollback(snapshot);
+        assert!(state.pk_font(&request).is_none());
+        assert_eq!(state.hash_fragment(), before);
     }
 
     #[test]
