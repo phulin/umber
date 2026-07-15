@@ -531,6 +531,18 @@ fn math_atom_group_around_accent_replaces_the_ord_wrapper() {
 }
 
 #[test]
+fn mathaccent_skips_relax_before_its_nucleus() {
+    let (stores, executor) = run_math_source(r#"$\mathaccent"7013\relax a"#);
+    let nodes = math_nodes(&stores, &executor);
+
+    let [Node::MathNoad(noad)] = nodes else {
+        panic!("the accent and its nucleus should form one noad")
+    };
+    assert!(matches!(noad.kind, NoadKind::Accent { .. }));
+    assert_math_char(&noad.nucleus, 1, 'a');
+}
+
+#[test]
 fn math_group_mismatch_reports_the_closing_token_origin() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

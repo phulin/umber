@@ -34,98 +34,108 @@ pub(super) fn scan_math_field(
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<MathField, ExecError> {
-    let traced =
-        next_non_space_traced_x(input, stores, execution)?.ok_or(ExecError::MissingToken {
-            context: "math field",
-        })?;
-    let token = tex_expand::semantic_token(traced);
-    match token {
-        Token::Char {
-            cat: Catcode::BeginGroup,
-            ..
-        } => scan_math_field_group_after_open(nest, input, stores, execution),
-        Token::Char {
-            ch,
-            cat: Catcode::Active,
-        } => {
-            redispatch_active_char(input, stores, ch);
-            scan_math_field(nest, input, stores, execution)
+    loop {
+        let traced =
+            next_non_space_traced_x(input, stores, execution)?.ok_or(ExecError::MissingToken {
+                context: "math field",
+            })?;
+        let token = tex_expand::semantic_token(traced);
+        if let Token::Cs(symbol) = token
+            && stores.meaning(symbol) == Meaning::Relax
+        {
+            continue;
         }
-        Token::Char { ch, .. } => {
-            let value = stores.mathcode(ch);
-            if value == 0x8000 {
+        return match token {
+            Token::Char {
+                cat: Catcode::BeginGroup,
+                ..
+            } => scan_math_field_group_after_open(nest, input, stores, execution),
+            Token::Char {
+                ch,
+                cat: Catcode::Active,
+            } => {
                 redispatch_active_char(input, stores, ch);
                 scan_math_field(nest, input, stores, execution)
-            } else {
-                let (_, math_char) = math_char_from_mathcode(ch, value, stores, traced.origin())?;
-                Ok(MathField::MathChar(math_char))
             }
-        }
-        Token::Cs(_) if assignments::has_catcode_meaning(stores, token, Catcode::BeginGroup) => {
-            scan_math_field_group_after_open(nest, input, stores, execution)
-        }
-        Token::Cs(symbol) => match stores.meaning(symbol) {
-            Meaning::CharGiven(ch) => {
-                let (_, math_char) =
-                    math_char_from_mathcode(ch, stores.mathcode(ch), stores, traced.origin())?;
-                Ok(MathField::MathChar(math_char))
+            Token::Char { ch, .. } => {
+                let value = stores.mathcode(ch);
+                if value == 0x8000 {
+                    redispatch_active_char(input, stores, ch);
+                    scan_math_field(nest, input, stores, execution)
+                } else {
+                    let (_, math_char) =
+                        math_char_from_mathcode(ch, value, stores, traced.origin())?;
+                    Ok(MathField::MathChar(math_char))
+                }
             }
-            Meaning::MathCharGiven(value) => Ok(MathField::MathChar(math_char_from_code(
-                u32::from(value),
-                stores,
-                traced.origin(),
-            )?)),
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char) => {
-                let context = TracedTokenWord::pack(Token::Cs(symbol.symbol()), OriginId::UNKNOWN);
-                let value = assignments::scan_i32(input, stores, execution, context)?;
-                let ch =
-                    u8::try_from(value)
-                        .map(char::from)
-                        .map_err(|_| ExecError::InvalidCode {
+            Token::Cs(_)
+                if assignments::has_catcode_meaning(stores, token, Catcode::BeginGroup) =>
+            {
+                scan_math_field_group_after_open(nest, input, stores, execution)
+            }
+            Token::Cs(symbol) => match stores.meaning(symbol) {
+                Meaning::CharGiven(ch) => {
+                    let (_, math_char) =
+                        math_char_from_mathcode(ch, stores.mathcode(ch), stores, traced.origin())?;
+                    Ok(MathField::MathChar(math_char))
+                }
+                Meaning::MathCharGiven(value) => Ok(MathField::MathChar(math_char_from_code(
+                    u32::from(value),
+                    stores,
+                    traced.origin(),
+                )?)),
+                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char) => {
+                    let context =
+                        TracedTokenWord::pack(Token::Cs(symbol.symbol()), OriginId::UNKNOWN);
+                    let value = assignments::scan_i32(input, stores, execution, context)?;
+                    let ch = u8::try_from(value).map(char::from).map_err(|_| {
+                        ExecError::InvalidCode {
                             context: "\\char",
                             value,
-                        })?;
-                let (_, math_char) =
-                    math_char_from_mathcode(ch, stores.mathcode(ch), stores, traced.origin())?;
-                Ok(MathField::MathChar(math_char))
-            }
-            Meaning::UnexpandablePrimitive(
-                UnexpandablePrimitive::Leaders
-                | UnexpandablePrimitive::CLeaders
-                | UnexpandablePrimitive::XLeaders,
-            ) => {
-                stores.world_mut().write_text(
+                        }
+                    })?;
+                    let (_, math_char) =
+                        math_char_from_mathcode(ch, stores.mathcode(ch), stores, traced.origin())?;
+                    Ok(MathField::MathChar(math_char))
+                }
+                Meaning::UnexpandablePrimitive(
+                    UnexpandablePrimitive::Leaders
+                    | UnexpandablePrimitive::CLeaders
+                    | UnexpandablePrimitive::XLeaders,
+                ) => {
+                    stores.world_mut().write_text(
                     tex_state::PrintSink::TerminalAndLog,
                     "\n! Missing { inserted.\nA left brace was mandatory here, so I've put one in.\n",
                 );
-                let opener = Token::Char {
-                    ch: '{',
-                    cat: Catcode::BeginGroup,
-                };
-                let origin = stores.inserted_origin(
-                    InsertedOriginKind::ErrorRecovery,
-                    opener,
-                    traced.origin(),
-                );
-                input.back_input_alignment_token(traced);
-                crate::insert_traced_tokens(
-                    input,
-                    stores,
-                    [TracedTokenWord::pack(opener, origin), traced],
-                );
-                scan_math_field(nest, input, stores, execution)
-            }
-            _ => {
-                let mut temp = ModeNest::new();
-                temp.push(nest.current_mode());
-                dispatch_math_token_with_context(&mut temp, traced, input, stores, execution)?;
-                let id = finish_current_math_list(&mut temp, stores);
-                Ok(MathField::SubMlist(id))
-            }
-        },
-        Token::Param(_) | Token::Frozen(_) => Err(ExecError::MissingToken {
-            context: "math field",
-        }),
+                    let opener = Token::Char {
+                        ch: '{',
+                        cat: Catcode::BeginGroup,
+                    };
+                    let origin = stores.inserted_origin(
+                        InsertedOriginKind::ErrorRecovery,
+                        opener,
+                        traced.origin(),
+                    );
+                    input.back_input_alignment_token(traced);
+                    crate::insert_traced_tokens(
+                        input,
+                        stores,
+                        [TracedTokenWord::pack(opener, origin), traced],
+                    );
+                    scan_math_field(nest, input, stores, execution)
+                }
+                _ => {
+                    let mut temp = ModeNest::new();
+                    temp.push(nest.current_mode());
+                    dispatch_math_token_with_context(&mut temp, traced, input, stores, execution)?;
+                    let id = finish_current_math_list(&mut temp, stores);
+                    Ok(MathField::SubMlist(id))
+                }
+            },
+            Token::Param(_) | Token::Frozen(_) => Err(ExecError::MissingToken {
+                context: "math field",
+            }),
+        };
     }
 }
 
