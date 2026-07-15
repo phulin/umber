@@ -103,6 +103,12 @@ impl<'a, 'context> EngineSession<'a, 'context> {
         self.stores
     }
 
+    /// Returns expansion memo statistics when the session opted into that cache.
+    #[must_use]
+    pub fn expansion_memo_stats(&self) -> Option<tex_expand::ExpansionMemoStats> {
+        self.context.expansion_memo_stats()
+    }
+
     pub fn execute(&mut self) -> Result<RunResult, tex_exec::ExecError> {
         let artifact_start = self.artifact_cursor;
         let stats = Executor::new().run_with_context(self.input, self.stores, &mut self.context)?;
