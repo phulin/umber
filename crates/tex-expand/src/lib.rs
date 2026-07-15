@@ -869,12 +869,16 @@ impl<'a> ExpansionContext<'a> {
         symbol: Symbol,
     ) -> Meaning {
         #[cfg(feature = "profiling-stats")]
-        let started = Instant::now();
+        let started = input
+            .should_sample_expansion_meaning_timer()
+            .then(Instant::now);
         let meaning = self.resolve_meaning_inner(input, stores, symbol);
         #[cfg(feature = "profiling-stats")]
-        input.record_expansion_meaning_resolution_nanos(
-            u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
-        );
+        if let Some(started) = started {
+            input.record_expansion_meaning_resolution_nanos(
+                u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+            );
+        }
         meaning
     }
 

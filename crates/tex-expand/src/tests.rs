@@ -113,7 +113,7 @@ fn macro_site_meaning_cache_is_expansion_owned_and_guarded() {
     assert_eq!(stats.meaning_lookups, 9);
     assert_eq!(stats.frame_step_timer_samples, 1);
     assert_eq!(stats.provenance_timer_samples, 1);
-    assert_eq!(stats.classification_meaning_timer_samples, 11);
+    assert_eq!(stats.classification_meaning_timer_samples, 1);
 }
 
 #[test]

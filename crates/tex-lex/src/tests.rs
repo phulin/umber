@@ -1858,7 +1858,19 @@ fn expansion_stats_measure_literal_runs_and_segmentation_reuse() {
     assert_eq!(stats.segmentation_cache_misses, 1);
     assert_eq!(stats.segmentation_cache_hits, 1);
     assert_eq!(stats.builder_appends, 6);
-    assert_eq!(stats.builder_append_timer_samples, 2);
+    assert_eq!(stats.builder_append_timer_samples, 1);
+}
+
+#[cfg(feature = "profiling-stats")]
+#[test]
+fn expansion_timers_sample_one_event_per_1024() {
+    let mut events = 0;
+    let sampled = (0..2050)
+        .filter(|_| super::should_sample_timer(&mut events))
+        .collect::<Vec<_>>();
+
+    assert_eq!(sampled, vec![0, 1024, 2048]);
+    assert_eq!(events, 2050);
 }
 
 #[test]
