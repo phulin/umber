@@ -1,0 +1,91 @@
+diff --git a/texk/web2c/pdftexdir/pdftex.web b/texk/web2c/pdftexdir/pdftex.web
+index 3ccce70883..1a31c0673a 100644
+--- a/texk/web2c/pdftexdir/pdftex.web
++++ b/texk/web2c/pdftexdir/pdftex.web
+@@ -6527,6 +6527,9 @@ A global boolean variable called |no_new_control_sequence| is set to
+ @<Glob...@>=
+ @!prim: array [0..prim_size] of two_halves;  {the primitives table}
+ @!prim_used:pointer; {allocation pointer for |prim|}
++@!primitive_trace_cmd: array[0..4092] of integer;
++@!primitive_trace_chr: array[0..4092] of integer;
++@!primitive_trace_prim: array[0..4092] of pointer;
+ 
+ @ @<Set init...@>=
+ no_new_control_sequence:=true; {new identifiers are usually forbidden}
+@@ -9181,18 +9184,61 @@ end;
+ next token of input. It has been slightly optimized to take account of
+ common cases.
+ 
++@ The profiling build records the first execution of each primitive meaning.
++Aliases created with \.{\\let} are folded onto an original primitive with the
++same command and operand. The trace is deliberately a presence set rather
++than a frequency counter: document prevalence is the useful corpus metric,
++and emitting only first use keeps ordinary jobs small.
++
++@p procedure trace_primitive_execution;
++label found,done;
++var @!slot,@!first_slot:0..4092;
++@!p:pointer;
++begin
++if cur_cs=0 then goto done;
++slot:=(cur_cmd*257+cur_chr) mod 4093;
++first_slot:=slot;
++while primitive_trace_prim[slot]<>undefined_primitive do
++  begin
++  if (primitive_trace_cmd[slot]=cur_cmd)and
++     (primitive_trace_chr[slot]=cur_chr) then goto done;
++  slot:=(slot+1) mod 4093;
++  if slot=first_slot then goto done;
++  end;
++if (cur_cs>=prim_eqtb_base)and(cur_cs<frozen_null_font) then
++  begin
++  p:=cur_cs-prim_eqtb_base;
++  if (prim_eq_type(p)=cur_cmd)and(prim_equiv(p)=cur_chr) then goto found;
++  end;
++for p:=1 to prim_size do
++  if (prim_text(p)>0)and(prim_eq_type(p)=cur_cmd)and
++     (prim_equiv(p)=cur_chr) then goto found;
++goto done;
++found:
++primitive_trace_cmd[slot]:=cur_cmd;
++primitive_trace_chr[slot]:=cur_chr;
++primitive_trace_prim[slot]:=p;
++print_nl("PDFTEX_PRIMITIVE_USED ");
++print_char(@'134); print(prim_text(p)-1);
++print_ln;
++done:
++end;
++
+-@p procedure get_x_token; {sets |cur_cmd|, |cur_chr|, |cur_tok|,
++procedure get_x_token; {sets |cur_cmd|, |cur_chr|, |cur_tok|,
+   and expands macros}
+ label restart,done;
+ begin restart: get_next;
+ @^inner loop@>
+-if cur_cmd<=max_command then goto done;
++if cur_cmd<=max_command then
++  begin trace_primitive_execution; goto done;
++  end;
+ if cur_cmd>=call then
+   if cur_cmd<end_template then macro_call
+   else  begin cur_cs:=frozen_endv; cur_cmd:=endv;
+     goto done; {|cur_chr=null_list|}
+     end
+-else expand;
++else begin trace_primitive_execution; expand;
++  end;
+ goto restart;
+ done: if cur_cs=0 then cur_tok:=(cur_cmd*@'400)+cur_chr
+ else cur_tok:=cs_token_flag+cur_cs;
+@@ -9203,9 +9249,10 @@ procedure calls: |get_next; x_token|.
+ 
+ @p procedure x_token; {|get_x_token| without the initial |get_next|}
+ begin while cur_cmd>max_command do
+-  begin expand;
++  begin trace_primitive_execution; expand;
+   get_next;
+   end;
++trace_primitive_execution;
+ if cur_cs=0 then cur_tok:=(cur_cmd*@'400)+cur_chr
+ else cur_tok:=cs_token_flag+cur_cs;
+ end;
