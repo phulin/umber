@@ -6,6 +6,7 @@ manifest="${repo_root}/tests/latex-parity-manifest.txt"
 source_dir="${repo_root}/third_party/latex2e-parity/source"
 case_list="${repo_root}/third_party/latex2e-parity/dvi-cases.txt"
 texmf_dist="${UMBER_TEXMF_DIST:-/usr/local/texlive/2025/texmf-dist}"
+texmf_var="${UMBER_TEXMF_VAR:-}"
 reference_latex="${UMBER_REF_LATEX:-$(command -v latex || true)}"
 format_builder="${UMBER_LATEX_FORMAT_BUILDER:-${repo_root}/scripts/build-latex-format.sh}"
 format_file=""
@@ -214,6 +215,9 @@ reference_version="$($reference_latex --version | sed -n '1p')"
 [[ "$reference_version" == *'TeX Live 2025'* ]] || \
   fail "reference LaTeX is not from pinned TeX Live 2025: $reference_version"
 [[ -d "$texmf_dist" ]] || fail "missing pinned texmf-dist root: $texmf_dist"
+if [[ -z "$texmf_var" ]]; then
+  texmf_var="$(kpsewhich -var-value=TEXMFVAR)"
+fi
 
 cd "$repo_root"
 prepare_format
@@ -226,7 +230,7 @@ parity_bin="${target_dir}/debug/parity-harness"
 [[ -x "$umber_bin" && -x "$parity_bin" ]] || fail "required parity binaries were not built"
 source_date_epoch="$(awk '$1 == "source_date_epoch" { print $2 }' "$manifest")"
 texinput_rel_dirs=(
-  tex/latex/base tex/latex/tools tex/latex/graphics tex/latex/graphics-def
+  tex/latex/base tex/latex/firstaid tex/latex/tools tex/latex/graphics tex/latex/graphics-def
   tex/latex/amsmath tex/latex/amscls tex/latex/amsfonts
   tex/latex/l3kernel tex/latex/l3backend tex/latex/l3packages/xparse
   tex/latex/alegreya tex/latex/algolrevived tex/latex/cyrillic tex/latex/etoolbox
@@ -313,13 +317,28 @@ run_one_case() {
     return 2
   fi
 
+  # The reference engine may deterministically generate missing TFMs through
+  # mktexfmt while running this case. Discover their leaf directories after
+  # the reference run so Umber sees the same generated font metrics without
+  # requiring recursive kpathsea path syntax in its explicit host resolver.
+  local case_texfonts="$texfonts"
+  if [[ -d "${texmf_var}/fonts/tfm" ]]; then
+    local generated_tfm generated_dir
+    while IFS= read -r generated_tfm; do
+      generated_dir="${generated_tfm%/*}"
+      if [[ ":${case_texfonts}:" != *":${generated_dir}:"* ]]; then
+        case_texfonts+=":${generated_dir}"
+      fi
+    done < <(find "${texmf_var}/fonts/tfm" -type f -name '*.tfm' -print)
+  fi
+
   stage_format "$case_name" "$umber_dir"
 
   local umber_status=0
   (
     cd "$umber_dir"
     run_with_case_timeout env SOURCE_DATE_EPOCH="$source_date_epoch" FORCE_SOURCE_DATE=1 \
-      TEXINPUTS="$local_inputs" TEXFONTS="$texfonts" \
+      TEXINPUTS="$local_inputs" TEXFONTS="$case_texfonts" \
       "$umber_bin" run --latex document.tex --format latex.fmt --dvi document.dvi \
         > document.stdout 2> document.stderr < /dev/null
   ) || umber_status=$?
