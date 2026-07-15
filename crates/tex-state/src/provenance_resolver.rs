@@ -18,7 +18,7 @@ use crate::source_fragments::{
     EditorLayout, FragmentStore, LayoutResolvedOrigin, direct_fragment_span, resolve_fragment_span,
 };
 use crate::source_map::SourceBacking;
-use crate::token::OriginId;
+use crate::token::{OriginId, Token};
 
 const DEFAULT_TRACE_DEPTH: usize = 8;
 
@@ -494,9 +494,9 @@ impl<'a> ProvenanceResolver<'a> {
             Some(OriginRecord::MacroInvocation(_)) => "macro expansion".to_owned(),
             Some(OriginRecord::Inserted(inserted)) => {
                 format!(
-                    "inserted {} token {:?}",
+                    "inserted {} token {}",
                     inserted_kind_label(inserted.kind()),
-                    inserted.token()
+                    self.token_summary(inserted.token())
                 )
             }
             Some(OriginRecord::Synthesized(synthesized)) => {
@@ -513,6 +513,14 @@ impl<'a> ProvenanceResolver<'a> {
 
     fn record(&self, origin: OriginId) -> Option<OriginRecord> {
         self.universe.origin_if_live(origin)
+    }
+
+    fn token_summary(&self, token: Token) -> String {
+        match token {
+            Token::Cs(symbol) => format!("\\{}", self.universe.resolve(symbol)),
+            Token::Param(slot) => format!("#{slot}"),
+            _ => format!("{token:?}"),
+        }
     }
 }
 

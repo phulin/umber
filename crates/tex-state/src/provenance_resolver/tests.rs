@@ -2,7 +2,9 @@ use crate::ids::OriginListId;
 use crate::input::{InputFrameSummary, InputSummary, MacroArguments, TokenListReplayKind};
 use crate::macro_store::MacroMeaning;
 use crate::meaning::MeaningFlags;
-use crate::provenance::{DiagnosticSite, RelatedLocation, RelatedLocationRole, SourceOrigin};
+use crate::provenance::{
+    DiagnosticSite, InsertedOriginKind, RelatedLocation, RelatedLocationRole, SourceOrigin,
+};
 use crate::source_map::SourceDescriptor;
 use crate::token::{OriginId, Token};
 use crate::{
@@ -10,6 +12,22 @@ use crate::{
     Universe, World,
 };
 use std::sync::Arc;
+
+#[test]
+fn inserted_control_sequence_diagnostic_uses_its_resolved_name() {
+    let mut universe = Universe::new();
+    let symbol = universe.intern("hook_name:");
+    let origin = universe.inserted_origin(
+        InsertedOriginKind::ExpandAfter,
+        Token::Cs(symbol.symbol()),
+        OriginId::UNKNOWN,
+    );
+
+    let rendered = ProvenanceResolver::new(&universe).render_diagnostic("failure", Some(origin));
+
+    assert!(rendered.contains("inserted expandafter token \\hook_name:"));
+    assert!(!rendered.contains("Symbol("));
+}
 
 #[test]
 fn layout_resolver_checks_fragments_before_engine_sources() {
