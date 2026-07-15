@@ -236,23 +236,19 @@ where
                 ));
             }
             Meaning::SkipRegister(index) if !mu => {
-                consume_optional_space(input, stores, expansion, mode)?;
                 let spec = stores.glue(stores.skip(index));
                 return Ok(intern_spec(stores, signed_spec(spec, negative)));
             }
             Meaning::MuskipRegister(index) if mu => {
-                consume_optional_space(input, stores, expansion, mode)?;
                 let spec = stores.glue(stores.muskip(index));
                 return Ok(intern_spec(stores, signed_spec(spec, negative)));
             }
             Meaning::GlueParam(index) if !mu => {
-                consume_optional_space(input, stores, expansion, mode)?;
                 let spec =
                     stores.glue(stores.glue_param(tex_state::env::banks::GlueParam::new(index)));
                 return Ok(intern_spec(stores, signed_spec(spec, negative)));
             }
             Meaning::MuGlueParam(index) if mu => {
-                consume_optional_space(input, stores, expansion, mode)?;
                 let spec =
                     stores.glue(stores.glue_param(tex_state::env::banks::GlueParam::new(index)));
                 return Ok(intern_spec(stores, signed_spec(spec, negative)));
@@ -266,7 +262,6 @@ where
                         index: u32::from(index),
                     }
                 );
-                consume_optional_space(input, stores, expansion, mode)?;
                 let spec = stores.glue(stores.skip(index));
                 return Ok(intern_spec(stores, signed_spec(spec, negative)));
             }
@@ -279,12 +274,10 @@ where
                         index: u32::from(index),
                     }
                 );
-                consume_optional_space(input, stores, expansion, mode)?;
                 let spec = stores.glue(stores.muskip(index));
                 return Ok(intern_spec(stores, signed_spec(spec, negative)));
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastSkip) if !mu => {
-                consume_optional_space(input, stores, expansion, mode)?;
                 return Ok(intern_spec(
                     stores,
                     signed_spec(expansion.engine.last_skip, negative),
@@ -301,7 +294,6 @@ where
                             index: u32::from(index),
                         }
                     );
-                    consume_optional_space(input, stores, expansion, mode)?;
                     let id = if mu {
                         stores.muskip(index)
                     } else {
@@ -757,23 +749,6 @@ where
     Ok(scan_helpers::scan_optional_keyword_with_mode_and_context(
         input, stores, expansion, mode, keyword,
     )?)
-}
-
-fn consume_optional_space(
-    input: &mut InputStack,
-    stores: &mut tex_state::ExpansionContext<'_>,
-    expansion: &mut ExpansionContext<'_>,
-    mode: &mut dyn ExpansionMode,
-) -> Result<(), ScanGlueError>
-where
-{
-    let Some(token) = next_x(input, stores, expansion, mode)? else {
-        return Ok(());
-    };
-    if !is_space(token) {
-        unread_token(input, stores, token);
-    }
-    Ok(())
 }
 
 fn unread_token(

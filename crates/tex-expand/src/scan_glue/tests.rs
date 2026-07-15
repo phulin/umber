@@ -298,6 +298,33 @@ fn scans_internal_skip_values() {
 }
 
 #[test]
+fn internal_glue_does_not_expand_following_optional_space_lookahead() {
+    let mut stores = Universe::new();
+    let alias = stores.intern("alias");
+    stores.set_meaning(alias, Meaning::SkipRegister(7));
+    let boom = stores.intern("boom");
+    let params = stores.intern_token_list(&[]);
+    let replacement = stores.intern_token_list(&[char_token('X', Catcode::Letter)]);
+    stores.set_macro_meaning(
+        boom,
+        MacroMeaning::new(MeaningFlags::EMPTY, params, replacement),
+    );
+    let mut input = InputStack::new(MemoryInput::new("\\alias\\boom"));
+
+    scan_glue(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("internal glue should scan");
+    let next = input
+        .next_token(&mut tex_state::ExpansionContext::new(&mut stores))
+        .expect("following token should lex");
+
+    assert_eq!(next, Some(Token::Cs(boom.symbol())));
+}
+
+#[test]
 fn scans_muglue_with_mu_units() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new("1mu plus 2fil x"));
