@@ -1236,6 +1236,10 @@ struct HistorySink {
 }
 
 impl CheckpointSink for HistorySink {
+    fn wants_exact_state_identity(&self) -> bool {
+        true
+    }
+
     fn checkpoint(&mut self, checkpoint: EngineCheckpoint) {
         push_checkpoint(&mut self.records, &mut self.occurrences, checkpoint);
     }
@@ -1385,6 +1389,10 @@ impl ResumeSink {
 }
 
 impl CheckpointSink for ResumeSink {
+    fn wants_exact_state_identity(&self) -> bool {
+        true
+    }
+
     fn stop_requested(&self) -> bool {
         self.convergence_old_index.is_some()
     }

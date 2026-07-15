@@ -534,7 +534,7 @@ impl PureMemoRuntime {
         let Some(cache) = self.cache.as_mut() else {
             return;
         };
-        // Charge the map key and FIFO key as well as the entry and owned payload.
+        // Charge the map key and CLOCK key as well as the entry and owned payload.
         let charge = std::mem::size_of::<Entry>()
             .saturating_add(std::mem::size_of::<PureMemoKey>().saturating_mul(2))
             .saturating_add(owned_bytes);

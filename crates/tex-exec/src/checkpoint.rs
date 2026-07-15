@@ -190,6 +190,13 @@ pub trait CheckpointSink {
         false
     }
 
+    /// Whether this sink needs strong canonical identities for optional exact
+    /// suffix adoption. Ordinary checkpoint consumers leave this false and
+    /// retain O(1) state snapshots.
+    fn wants_exact_state_identity(&self) -> bool {
+        false
+    }
+
     fn checkpoint(&mut self, checkpoint: EngineCheckpoint);
 }
 
@@ -254,7 +261,11 @@ impl<'a, C: CheckpointSink> EngineSession<'a, C> {
         let artifact_prefix = universe.world().artifact_pos();
         let root_anchor = input_summary.conservative_root_position();
         let root_content_hash = universe.root_editor_content_hash(&input_summary);
-        let universe = universe.snapshot();
+        let universe = if self.sink.wants_exact_state_identity() {
+            universe.snapshot_with_exact_identity()
+        } else {
+            universe.snapshot()
+        };
         let state_hash = combine_mode_hash(universe.state_hash(), mode_hash);
         self.sink.checkpoint(EngineCheckpoint {
             schema_version: ENGINE_CHECKPOINT_SCHEMA_VERSION,

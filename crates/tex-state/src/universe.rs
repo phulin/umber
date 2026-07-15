@@ -2021,7 +2021,15 @@ impl Universe {
     /// Takes an O(1) snapshot of the whole timeline tuple.
     #[must_use]
     pub fn snapshot(&mut self) -> Snapshot {
-        self.checkpoint_from_hash_base(self.state_hash_base.clone())
+        self.checkpoint_from_hash_base(self.state_hash_base.clone(), false)
+    }
+
+    /// Captures the strong optional identities used only by incremental suffix
+    /// adoption. Ordinary rollback snapshots must remain O(1).
+    #[doc(hidden)]
+    #[must_use]
+    pub fn snapshot_with_exact_identity(&mut self) -> Snapshot {
+        self.checkpoint_from_hash_base(self.state_hash_base.clone(), true)
     }
 
     #[must_use]
@@ -2084,15 +2092,19 @@ impl Universe {
             .restore_tracker(&rollback.dependency_tracker);
     }
 
-    fn checkpoint_from_hash_base(&mut self, hash_base: StateHashBase) -> Snapshot {
+    fn checkpoint_from_hash_base(&mut self, hash_base: StateHashBase, exact: bool) -> Snapshot {
         // The page codec is the allocation-independent semantic projection
         // already used by page replay. Provenance is returned separately and
         // intentionally does not participate in continuation equality.
-        let exact_page_identity = self
-            .detach_page_memo_transition()
-            .ok()
-            .and_then(|(value, _)| value.to_bytes().ok())
-            .map(|bytes| ContentHash::from_bytes(&bytes));
+        let exact_page_identity =
+            exact
+                .then(|| self.detach_page_memo_transition())
+                .and_then(|result| {
+                    result
+                        .ok()
+                        .and_then(|(value, _)| value.to_bytes().ok())
+                        .map(|bytes| ContentHash::from_bytes(&bytes))
+                });
         let world = self.world.snapshot();
         let store = self.stores.checkpoint();
         let store_cursor = self.stores.state_hash_cursor_from_snapshot(&store);
@@ -2136,11 +2148,14 @@ impl Universe {
             .next_snapshot_serial
             .checked_add(1)
             .expect("Universe snapshot serial exhausted");
-        let exact_store_identity = self
-            .stores
-            .encode_semantic_identity()
-            .ok()
-            .map(|bytes| ContentHash::from_bytes(&bytes));
+        let exact_store_identity = exact
+            .then(|| {
+                self.stores
+                    .encode_semantic_identity()
+                    .ok()
+                    .map(|bytes| ContentHash::from_bytes(&bytes))
+            })
+            .flatten();
         Snapshot {
             owner: self.owner.snapshot_owner(),
             serial,

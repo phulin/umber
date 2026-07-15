@@ -591,7 +591,9 @@ and exact future-relevant World scalars. Existing detached effect and artifact
 prefixes remain outside that comparison and are composed in order. Boundaries
 inside open groups, or any boundary whose canonical projection cannot be
 formed, are safe misses. The folded `state_hash` remains diagnostic telemetry
-and is not consulted by the splice decision.
+and is not consulted by the splice decision. Strong identities are requested
+only by incremental history sinks; ordinary rollback and profiling checkpoints
+retain the O(1) snapshot path.
 
 ## Cache ownership, trust, and eviction
 
@@ -681,18 +683,37 @@ An optimized macOS run on 2026-07-15 recorded the following diagnostic sample;
 the work counters are deterministic, while the timings are observations rather
 than performance gates:
 
-| Edit | Fork | Re-execute | Splice | Bytes / tokens / dispatches | Hash checks | Pages retyped / reused | Retained checkpoint / diagnostic / output bytes |
+| Edit | Fork | Re-execute | Splice | Bytes / tokens / dispatches | Exact checks | Pages retyped / reused | Retained checkpoint / memo / diagnostic / output bytes |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| comment-only | 110 us | 58 us | 135 us | 53 / 2 / 2 | 1 match | 1 / 9 | 159,666 / 1,772 / 3,500 |
-| semantic rule-width change | 222 us | 251 us | 212 us | 530 / 22 / 22 | 10 mismatches | 10 / 0 | 158,954 / 1,805 / 3,500 |
+| comment-only | 109 us | 267 us | 111 us | 53 / 2 / 2 | 1 match | 1 / 9 | 166,130 / 0 / 1,772 / 3,500 |
+| semantic rule-width change | 122 us | 498 us | 111 us | 106 / 4 / 4 | 1 miss, then match | 2 / 8 | 164,378 / 0 / 1,805 / 3,500 |
 
-The semantic case demonstrates the limitation this design addresses: after
-the edited page, every later schedule entry is comparable but its folded
-history hash remains divergent. The comment case preserves identical history
-and adopts the suffix at the first comparison. The scenario matrix beside the
-baseline also checks changed paragraph content, page-number reads, marks,
-deferred writes, page-count changes, output routines, and insertions against a
-fresh cold execution.
+The semantic case now demonstrates the intended hierarchy: the changed page
+misses, the next exact boundary matches, and the remaining eight-page suffix is
+adopted. The comment case adopts at the first comparison. The scenario matrix
+beside the baseline also checks changed paragraph content, page-number reads,
+marks, deferred writes, page-count changes, output routines, and insertions
+against a fresh cold execution.
+
+### Final release evaluation
+
+The 2026-07-15 release pass kept the cache session-local and opt-in. A paired
+20-sample `pure_memo_accepted_edit` run measured 1.844 ms at the disabled point
+estimate and 2.582 ms enabled, about 40% slower for that workload. The memo
+layers therefore remain available for explicit experiments but are not enabled
+by default. Cross-run persistence is deferred: session-local reuse has not yet
+shown an end-to-end benefit that justifies an untrusted persistent format,
+compatibility policy, integrity validation, and disk I/O.
+
+The optimized Gentle runner produced the pinned 97 pages and 263,424-byte DVI.
+Twenty measured default runs averaged 215.591 ms; the ordinary named-checkpoint
+path averaged 221.272 ms and captured 1,108 checkpoints, a 2.6% observation on
+this run. These are profiling builds with instrumentation and are diagnostic,
+not thresholds. The explicit snapshot gate reported all budgets met, including
+flat 208 ns ordinary input/page/stream/hyphenation/provenance/code-table
+snapshots in that run. The explicit 1,000-edit incremental-versus-cold tier,
+the complete workspace test/check gate, and Story, Gentle, TRIP, and e-TRIP
+parity all passed.
 
 ### Dependency-recorder baseline
 
