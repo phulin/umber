@@ -28,6 +28,26 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
 #[test]
+fn page_group_selector_consumes_live_signed_warning_control() {
+    for (control, warning) in [(0, true), (23, false), (-23, false)] {
+        let mut universe = Universe::new();
+        universe.set_int_param(IntParam::PDF_SUPPRESS_WARNING_PAGE_GROUP, control);
+        let mut selector = universe.pdf_page_group_selector();
+        assert_eq!(
+            selector.include(true),
+            crate::PdfPageGroupInclusion::SelectForOutputPage
+        );
+        let crate::PdfPageGroupInclusion::KeepOnIncludedForm {
+            warning: actual_warning,
+        } = selector.include(true)
+        else {
+            panic!("second page group must remain on its included form");
+        };
+        assert_eq!(actual_warning.is_some(), warning, "control {control}");
+    }
+}
+
+#[test]
 fn pdf_match_captures_are_checkpointed_and_hashed() {
     let mut universe = Universe::new();
     universe.set_pdf_match_state(b"first".to_vec(), vec![Some((0, 5))], 1, true);

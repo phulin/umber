@@ -154,6 +154,82 @@ impl PdfExternalImageMetadata {
     }
 }
 
+/// The page-group placement selected while including a PDF page.
+///
+/// pdfTeX shares the first included page group with the output page. Later
+/// groups remain local to their included forms and do not replace that first
+/// selection.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PdfPageGroupInclusion {
+    /// The included page has no `/Group` entry.
+    None,
+    /// Share this group between the included form and the output page.
+    SelectForOutputPage,
+    /// Keep this group on the included form without replacing the page group.
+    KeepOnIncludedForm {
+        warning: Option<PdfPageGroupWarning>,
+    },
+}
+
+/// A diagnostic raised when multiple PDF page groups meet on one output page.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PdfPageGroupWarning {
+    MultipleGroupsOnOnePage,
+}
+
+impl PdfPageGroupWarning {
+    pub const MULTIPLE_GROUPS_ON_ONE_PAGE: &'static str =
+        "PDF inclusion: multiple pdfs with page group included in a single page";
+
+    #[must_use]
+    pub const fn message(self) -> &'static str {
+        match self {
+            Self::MultipleGroupsOnOnePage => Self::MULTIPLE_GROUPS_ON_ONE_PAGE,
+        }
+    }
+}
+
+/// Per-output-page pdfTeX page-group selection policy.
+///
+/// Construct one selector at the start of each page shipout, then visit PDF
+/// images in output order. The signed suppression parameter is interpreted
+/// exactly like pdfTeX: only zero permits the collision warning.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PdfPageGroupSelector {
+    selected: bool,
+    suppress_collision_warning: bool,
+}
+
+impl PdfPageGroupSelector {
+    #[must_use]
+    pub const fn new(suppress_warning_page_group: i32) -> Self {
+        Self {
+            selected: false,
+            suppress_collision_warning: suppress_warning_page_group != 0,
+        }
+    }
+
+    #[must_use]
+    pub const fn has_selection(self) -> bool {
+        self.selected
+    }
+
+    #[must_use]
+    pub fn include(&mut self, has_page_group: bool) -> PdfPageGroupInclusion {
+        if !has_page_group {
+            return PdfPageGroupInclusion::None;
+        }
+        if !self.selected {
+            self.selected = true;
+            return PdfPageGroupInclusion::SelectForOutputPage;
+        }
+        PdfPageGroupInclusion::KeepOnIncludedForm {
+            warning: (!self.suppress_collision_warning)
+                .then_some(PdfPageGroupWarning::MultipleGroupsOnOnePage),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct PdfExternalImageRecord {
     id: PdfExternalImageId,
@@ -2297,6 +2373,54 @@ mod tests {
         assert_eq!(state.last_annotation(), 0);
         assert_eq!(state.last_link(), 0);
         assert_eq!(state.hash_fragment(), base_hash);
+    }
+
+    #[test]
+    fn page_group_selector_keeps_first_group_on_page_and_later_groups_on_forms() {
+        let mut selector = PdfPageGroupSelector::new(0);
+        assert_eq!(selector.include(false), PdfPageGroupInclusion::None);
+        assert!(!selector.has_selection());
+        assert_eq!(
+            selector.include(true),
+            PdfPageGroupInclusion::SelectForOutputPage
+        );
+        assert!(selector.has_selection());
+        assert_eq!(
+            selector.include(true),
+            PdfPageGroupInclusion::KeepOnIncludedForm {
+                warning: Some(PdfPageGroupWarning::MultipleGroupsOnOnePage),
+            }
+        );
+        assert_eq!(
+            selector.include(false),
+            PdfPageGroupInclusion::None,
+            "images without page groups do not disturb the first selection"
+        );
+        assert!(selector.has_selection());
+    }
+
+    #[test]
+    fn page_group_warning_matches_pdftex_for_zero_positive_and_negative_controls() {
+        for (control, warning) in [
+            (0, Some(PdfPageGroupWarning::MultipleGroupsOnOnePage)),
+            (1, None),
+            (-1, None),
+        ] {
+            let mut selector = PdfPageGroupSelector::new(control);
+            assert_eq!(
+                selector.include(true),
+                PdfPageGroupInclusion::SelectForOutputPage
+            );
+            assert_eq!(
+                selector.include(true),
+                PdfPageGroupInclusion::KeepOnIncludedForm { warning },
+                "control {control}"
+            );
+        }
+        assert_eq!(
+            PdfPageGroupWarning::MultipleGroupsOnOnePage.message(),
+            "PDF inclusion: multiple pdfs with page group included in a single page"
+        );
     }
 
     #[test]

@@ -79,8 +79,8 @@ pub use pdf::{
     PdfExternalImageRegistrationError, PdfFontConfiguration, PdfFontMapOperation,
     PdfFontResourceRecord, PdfFormArtifact, PdfFormColorRollback, PdfFormRecord, PdfGlyphToUnicode,
     PdfLinkRecord, PdfObjectCapacityError, PdfOpenLink, PdfOutputParameters, PdfPageBox,
-    PdfPageRecord, PdfRawObjectData, PdfRawObjectId, PdfRawObjectInitializeError,
-    PdfRawObjectRecord,
+    PdfPageGroupInclusion, PdfPageGroupSelector, PdfPageGroupWarning, PdfPageRecord,
+    PdfRawObjectData, PdfRawObjectId, PdfRawObjectInitializeError, PdfRawObjectRecord,
 };
 pub mod world;
 

@@ -1939,6 +1939,12 @@ impl Universe {
         self.pdf.external_image(id)
     }
 
+    /// Starts pdfTeX's page-group selection policy for one output page.
+    #[must_use]
+    pub fn pdf_page_group_selector(&self) -> crate::PdfPageGroupSelector {
+        crate::PdfPageGroupSelector::new(self.int_param(IntParam::PDF_SUPPRESS_WARNING_PAGE_GROUP))
+    }
+
     pub fn allocate_pdf_color_stack(
         &mut self,
         mode: crate::PdfColorStackMode,
