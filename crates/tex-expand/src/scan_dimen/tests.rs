@@ -3,7 +3,7 @@ use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, GlueParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
-use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
+use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign};
 use tex_state::provenance::OriginRecord;
 use tex_state::scaled::{
@@ -121,6 +121,36 @@ fn dimension_scanner_records_typed_value_and_magnification_dependencies() {
         bank: ReadBank::Magnification,
         index: 0,
     }));
+}
+
+#[test]
+fn internal_dimension_scan_does_not_expand_trailing_conditionals() {
+    let mut stores = Universe::new();
+    let measured = stores.intern("measured");
+    stores.set_meaning(measured, Meaning::DimenRegister(3));
+    stores.set_dimen(3, Scaled::from_raw(77));
+    let iftrue = stores.intern("iftrue");
+    stores.set_meaning(
+        iftrue,
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::IfTrue),
+    );
+    let mut input = InputStack::new(MemoryInput::new("\\measured\\iftrue x\\fi"));
+
+    let scanned = scan_dimen(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("internal dimension scan should succeed");
+
+    assert_eq!(scanned.value(), Scaled::from_raw(77));
+    assert_eq!(input.condition_depth(), 0);
+    assert_eq!(
+        input
+            .next_token(&mut tex_state::ExpansionContext::new(&mut stores))
+            .expect("trailing conditional should remain readable"),
+        Some(Token::Cs(iftrue.symbol()))
+    );
 }
 
 fn char_token(ch: char, cat: Catcode) -> Token {

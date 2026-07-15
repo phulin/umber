@@ -404,8 +404,19 @@ where
         ));
     };
 
-    let scanned = scan_unsigned_after_first_token(input, stores, expansion, mode, token, options)?;
-    consume_optional_space(input, stores, expansion, mode)?;
+    let mut consume_trailing_space = true;
+    let scanned = scan_unsigned_after_first_token(
+        input,
+        stores,
+        expansion,
+        mode,
+        token,
+        options,
+        &mut consume_trailing_space,
+    )?;
+    if consume_trailing_space {
+        consume_optional_space(input, stores, expansion, mode)?;
+    }
     Ok(apply_sign(scanned, negative))
 }
 
@@ -649,6 +660,7 @@ fn scan_unsigned_after_first_token(
     mode: &mut dyn ExpansionMode,
     token: TracedTokenWord,
     options: ScanDimenOptions,
+    consume_trailing_space: &mut bool,
 ) -> Result<ScannedDimen, ScanDimenError>
 where
 {
@@ -675,7 +687,14 @@ where
             cat: Catcode::Other,
         } => scan_integer_constant_with_unit(input, stores, expansion, mode, token, options),
         Token::Cs(symbol) => scan_internal_or_numeric_dimension(
-            input, stores, expansion, mode, token, symbol, options,
+            input,
+            stores,
+            expansion,
+            mode,
+            token,
+            symbol,
+            options,
+            consume_trailing_space,
         ),
         _ => {
             unread_token(input, stores, token);
@@ -793,9 +812,14 @@ fn scan_internal_or_numeric_dimension(
     token: TracedTokenWord,
     symbol: Symbol,
     options: ScanDimenOptions,
+    consume_trailing_space: &mut bool,
 ) -> Result<ScannedDimen, ScanDimenError>
 where
 {
+    // TeX's internal-dimension path attaches the sign and returns without
+    // expanding one token of optional-space lookahead. Numeric dimensions do
+    // perform that lookahead after scanning their unit.
+    *consume_trailing_space = false;
     let meaning = stores.meaning(symbol);
     expansion.record_meaning(symbol, meaning);
     crate::values::record_meaning_value_dependency(expansion, meaning);
@@ -820,26 +844,21 @@ where
             ));
         }
         Meaning::DimenRegister(index) => {
-            consume_optional_space(input, stores, expansion, mode)?;
             return Ok(ScannedDimen::new(stores.dimen(index)));
         }
         Meaning::DimenParam(index) => {
-            consume_optional_space(input, stores, expansion, mode)?;
             return Ok(ScannedDimen::new(
                 stores.dimen_param(tex_state::env::banks::DimenParam::new(index)),
             ));
         }
         Meaning::SkipRegister(index) => {
-            consume_optional_space(input, stores, expansion, mode)?;
             return Ok(ScannedDimen::new(stores.glue(stores.skip(index)).width));
         }
         Meaning::GlueParam(index) => {
-            consume_optional_space(input, stores, expansion, mode)?;
             let glue = stores.glue_param(GlueParam::new(index));
             return Ok(ScannedDimen::new(stores.glue(glue).width));
         }
         Meaning::MuskipRegister(index) => {
-            consume_optional_space(input, stores, expansion, mode)?;
             let width = stores.glue(stores.muskip(index)).width;
             return Ok(if options.require_mu_unit {
                 ScannedDimen::new(width)
@@ -852,7 +871,6 @@ where
             });
         }
         Meaning::MuGlueParam(index) => {
-            consume_optional_space(input, stores, expansion, mode)?;
             let glue = stores.glue_param(GlueParam::new(index));
             let width = stores.glue(glue).width;
             return Ok(if options.require_mu_unit {
@@ -866,7 +884,6 @@ where
             });
         }
         Meaning::PageDimension(dimension) => {
-            consume_optional_space(input, stores, expansion, mode)?;
             return Ok(ScannedDimen::new(stores.page_dimension(dimension)));
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
@@ -878,7 +895,6 @@ where
                     index: u32::from(index),
                 }
             );
-            consume_optional_space(input, stores, expansion, mode)?;
             return Ok(ScannedDimen::new(stores.dimen(index)));
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) => {
@@ -890,7 +906,6 @@ where
                     index: u32::from(index),
                 }
             );
-            consume_optional_space(input, stores, expansion, mode)?;
             return Ok(ScannedDimen::new(stores.glue(stores.skip(index)).width));
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
@@ -902,7 +917,6 @@ where
                     index: u32::from(index),
                 }
             );
-            consume_optional_space(input, stores, expansion, mode)?;
             let width = stores.glue(stores.muskip(index)).width;
             return Ok(if options.require_mu_unit {
                 ScannedDimen::new(width)
@@ -920,7 +934,6 @@ where
             | UnexpandablePrimitive::Dp),
         ) => {
             let index = scan_register_index(input, stores, expansion, mode, token)?;
-            consume_optional_space(input, stores, expansion, mode)?;
             let dimension = match primitive {
                 UnexpandablePrimitive::Wd => BoxDimension::Width,
                 UnexpandablePrimitive::Ht => BoxDimension::Height,
@@ -934,21 +947,17 @@ where
             ));
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PrevDepth) => {
-            consume_optional_space(input, stores, expansion, mode)?;
             return Ok(ScannedDimen::new(expansion.engine.prev_depth));
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastKern) => {
-            consume_optional_space(input, stores, expansion, mode)?;
             return Ok(ScannedDimen::new(expansion.engine.last_kern));
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastSkip) => {
-            consume_optional_space(input, stores, expansion, mode)?;
             return Ok(ScannedDimen::new(expansion.engine.last_skip.width));
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::FontDimen) => {
             let value = crate::values::scan_font_dimen(input, stores, expansion, mode, token)
                 .map_err(ScanDimenError::Expand)?;
-            consume_optional_space(input, stores, expansion, mode)?;
             return Ok(ScannedDimen::new(value));
         }
         Meaning::UnexpandablePrimitive(
@@ -960,7 +969,6 @@ where
             let value = crate::values::scan_font_char_dimension(
                 input, stores, expansion, mode, token, primitive,
             )?;
-            consume_optional_space(input, stores, expansion, mode)?;
             return Ok(ScannedDimen::new(value));
         }
         Meaning::UnexpandablePrimitive(
@@ -978,10 +986,10 @@ where
 
     if stores.resolve(symbol) == "dimen" {
         let index = scan_register_index(input, stores, expansion, mode, token)?;
-        consume_optional_space(input, stores, expansion, mode)?;
         return Ok(ScannedDimen::new(stores.dimen(index)));
     }
 
+    *consume_trailing_space = true;
     unread_token(input, stores, token);
     let scanned = scan_int::scan_int_with_mode_and_context(input, stores, expansion, mode, token)?;
     if scanned.diagnostic() == Some(scan_int::IntegerDiagnostic::NumberTooBig) {
