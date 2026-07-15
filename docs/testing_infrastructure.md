@@ -224,7 +224,8 @@ source identity, and all 286 per-case identities; the fast self-test asserts
 one build and three identical restores. The runner continues after individual
 engine or DVI failures and writes complete `failures.txt` and `non-dvi.txt`
 census lists in its reported work directory. Reference and Umber cases have a
-30-second timeout so one recovery loop cannot stall the census; set
+60-second timeout so one recovery loop cannot stall the census without
+misclassifying the slower tools cases under full-corpus load; set
 `UMBER_LATEX_CASE_TIMEOUT_SECONDS` to tune that explicit tier locally.
 
 Acceptance ignores transcript and process-status differences when an

@@ -14,7 +14,7 @@ offline=0
 keep_work=0
 self_test=0
 format_build_count=0
-case_timeout_seconds="${UMBER_LATEX_CASE_TIMEOUT_SECONDS:-30}"
+case_timeout_seconds="${UMBER_LATEX_CASE_TIMEOUT_SECONDS:-60}"
 
 target_dir="${CARGO_TARGET_DIR:-${repo_root}/target}"
 if [[ "$target_dir" != /* ]]; then
