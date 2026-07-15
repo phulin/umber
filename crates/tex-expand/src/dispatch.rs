@@ -610,6 +610,24 @@ macro_rules! dispatch_match {
                     call_origin,
                 ))
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfXFormName) => {
+                let object = scan_int::scan_int_with_mode_and_context(
+                    input, stores, expansion, mode, call_context,
+                )?.value();
+                crate::record_dependency!(
+                    expansion,
+                    crate::ReadDependency::Engine(crate::ReadEngineField::PdfForms)
+                );
+                let Some(form) = u32::try_from(object).ok().and_then(|id| stores.pdf_form(id)) else {
+                    return Err(ExpandError::PdfFormNotFound { object, context: call_context });
+                };
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::NumberOutput,
+                    &form.resource().to_string(),
+                    call_origin,
+                ))
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfPrimitive) => {
                 let Some(target) = crate::next_semantic_raw_token(input, stores)? else {
                     return Err(ExpandError::MissingTokenAfterPrimitive {
@@ -1530,6 +1548,7 @@ pub fn dispatch_expandable_opcode(opcode: ExpandableOpcode) -> Result<(), Expand
         | ExpandableOpcode::PdfInsertHeight
         | ExpandableOpcode::PdfXImageBBox
         | ExpandableOpcode::PdfColorStackInit
+        | ExpandableOpcode::PdfXFormName
         | ExpandableOpcode::IfDefined
         | ExpandableOpcode::IfCsName
         | ExpandableOpcode::IfInCsName

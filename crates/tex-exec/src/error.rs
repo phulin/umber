@@ -149,6 +149,7 @@ pub enum ExecError {
     PdfDraftModeChanged,
     PdfObjectCapacity,
     PdfReferencedObjectNotFound,
+    PdfXFormVoidBox,
     PdfImmediateReservedObject,
     PdfExtensionInDviMode(&'static str),
     PdfDuplicateOpenAction,
@@ -315,6 +316,9 @@ impl fmt::Display for ExecError {
             Self::PdfReferencedObjectNotFound => {
                 f.write_str("pdfTeX error (ext1): cannot find referenced object.")
             }
+            Self::PdfXFormVoidBox => {
+                f.write_str("pdfTeX error (ext1): \\pdfxform cannot be used with a void box")
+            }
             Self::PdfImmediateReservedObject => f.write_str(
                 "pdfTeX error (ext1): `\\pdfobj reserveobjnum' cannot be used with \\immediate.",
             ),
@@ -424,6 +428,7 @@ impl std::error::Error for ExecError {
             | Self::PdfDraftModeChanged
             | Self::PdfObjectCapacity
             | Self::PdfReferencedObjectNotFound
+            | Self::PdfXFormVoidBox
             | Self::PdfImmediateReservedObject
             | Self::PdfExtensionInDviMode(_)
             | Self::PdfDuplicateOpenAction
@@ -508,6 +513,7 @@ impl ExecError {
             | Self::PdfDraftModeChanged
             | Self::PdfObjectCapacity
             | Self::PdfReferencedObjectNotFound
+            | Self::PdfXFormVoidBox
             | Self::PdfImmediateReservedObject
             | Self::PdfExtensionInDviMode(_)
             | Self::PdfDuplicateOpenAction

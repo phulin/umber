@@ -363,6 +363,18 @@ impl Stores {
                 hasher.tag(22);
                 hasher.bool(*enabled);
             }
+            Whatsit::PdfRefXForm {
+                object,
+                width,
+                height,
+                depth,
+            } => {
+                hasher.tag(27);
+                hasher.u32(*object);
+                hasher.i32(width.raw());
+                hasher.i32(height.raw());
+                hasher.i32(depth.raw());
+            }
         }
     }
 }

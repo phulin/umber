@@ -23,7 +23,7 @@ pub use object::{
 use std::sync::Arc;
 
 use crate::ContentHash;
-use crate::ids::{FontId, TokenListId};
+use crate::ids::{FontId, NodeListId, TokenListId};
 use crate::scaled::Scaled;
 use crate::state_hash::{StateHashFragment, StateHasher};
 use std::collections::BTreeMap;
@@ -33,6 +33,7 @@ const PDF_PAGE_DOMAIN: u64 = 0x7064_665f_7061_6765;
 const PDF_FONT_DOMAIN: u64 = 0x7064_665f_666f_6e74;
 const PDF_EXTERNAL_IMAGE_DOMAIN: u64 = 0x7064_665f_7869_6d67;
 const PDF_COLOR_STACK_DOMAIN: u64 = 0x7064_665f_636f_6c72;
+const PDF_FORM_DOMAIN: u64 = 0x7064_665f_666f_726d;
 const FIRST_DYNAMIC_OBJECT: u32 = 1;
 const OBJECTS_PER_PAGE: u32 = 3;
 const MAX_OBJECT_ID: u32 = i32::MAX as u32;
@@ -450,6 +451,66 @@ pub struct PdfPageRecord {
     parameters: PdfPageParameters,
 }
 
+/// Immutable captured box and canonical identities for one `\pdfxform`.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct PdfFormRecord {
+    object: u32,
+    resource: u32,
+    box_list: NodeListId,
+    box_semantic_id: u64,
+    width: Scaled,
+    height: Scaled,
+    depth: Scaled,
+    attr: Option<PdfTokenParameter>,
+    resources: Option<PdfTokenParameter>,
+    immediate: bool,
+}
+
+impl PdfFormRecord {
+    #[must_use]
+    pub const fn object(self) -> u32 {
+        self.object
+    }
+    #[must_use]
+    pub const fn resource(self) -> u32 {
+        self.resource
+    }
+    #[must_use]
+    pub const fn box_list(self) -> NodeListId {
+        self.box_list
+    }
+    #[must_use]
+    pub const fn width(self) -> Scaled {
+        self.width
+    }
+    #[must_use]
+    pub const fn height(self) -> Scaled {
+        self.height
+    }
+    #[must_use]
+    pub const fn depth(self) -> Scaled {
+        self.depth
+    }
+    #[must_use]
+    pub const fn attr(self) -> Option<TokenListId> {
+        match self.attr {
+            Some(v) => Some(v.tokens),
+            None => None,
+        }
+    }
+    #[must_use]
+    pub const fn resources(self) -> Option<TokenListId> {
+        match self.resources {
+            Some(v) => Some(v.tokens),
+            None => None,
+        }
+    }
+    #[must_use]
+    pub const fn immediate(self) -> bool {
+        self.immediate
+    }
+}
+
 impl PdfPageRecord {
     #[must_use]
     pub const fn artifact(self) -> ContentHash {
@@ -532,6 +593,8 @@ pub(crate) struct PdfStateCursor {
     color_stack_fingerprint: u64,
     last_position: (Scaled, Scaled),
     snap_reference: (Scaled, Scaled),
+    form_fingerprint: u64,
+    next_form_resource: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -546,6 +609,7 @@ pub(crate) struct PdfStateSnapshot {
     links: Arc<Vec<PdfLinkRecord>>,
     open_links: Arc<Vec<PdfOpenLink>>,
     color_stacks: Arc<Vec<PdfColorStack>>,
+    forms: Arc<Vec<PdfFormRecord>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -592,6 +656,9 @@ pub(crate) struct PdfState {
     color_stack_fingerprint: u64,
     last_position: (Scaled, Scaled),
     snap_reference: (Scaled, Scaled),
+    forms: Arc<Vec<PdfFormRecord>>,
+    form_fingerprint: u64,
+    next_form_resource: u32,
 }
 
 impl Default for PdfState {
@@ -630,6 +697,9 @@ impl Default for PdfState {
             color_stack_fingerprint: color_stack_fingerprint(&[]),
             last_position: (Scaled::from_raw(0), Scaled::from_raw(0)),
             snap_reference: (Scaled::from_raw(0), Scaled::from_raw(0)),
+            forms: Arc::new(Vec::new()),
+            form_fingerprint: StateHasher::new(PDF_FORM_DOMAIN).finish(),
+            next_form_resource: 1,
         }
     }
 }
@@ -701,6 +771,7 @@ impl PdfState {
             && self.color_stacks.is_empty()
             && self.last_position == (Scaled::from_raw(0), Scaled::from_raw(0))
             && self.snap_reference == (Scaled::from_raw(0), Scaled::from_raw(0))
+            && self.forms.is_empty()
     }
 
     pub(crate) fn ensure_page_capacity(&self, parameters: PdfOutputParameters) -> Result<(), ()> {
@@ -1237,6 +1308,64 @@ impl PdfState {
         Ok(id)
     }
 
+    pub(crate) fn reserve_form(&mut self) -> Result<(u32, u32), PdfObjectCapacityError> {
+        let object = (self.next_object <= MAX_OBJECT_ID)
+            .then_some(self.next_object)
+            .ok_or(PdfObjectCapacityError)?;
+        let resource = self.next_form_resource;
+        self.next_object += 1;
+        self.next_form_resource = self
+            .next_form_resource
+            .checked_add(1)
+            .ok_or(PdfObjectCapacityError)?;
+        Ok((object, resource))
+    }
+
+    pub(crate) fn initialize_form(
+        &mut self,
+        identity: (u32, u32),
+        box_list: NodeListId,
+        box_semantic_id: u64,
+        dimensions: (Scaled, Scaled, Scaled),
+        options: (Option<PdfTokenParameter>, Option<PdfTokenParameter>),
+        immediate: bool,
+    ) -> Result<PdfFormRecord, PdfObjectCapacityError> {
+        let (object, resource) = identity;
+        let (attr, resources) = options;
+        let record = PdfFormRecord {
+            object,
+            resource,
+            box_list,
+            box_semantic_id,
+            width: dimensions.0,
+            height: dimensions.1,
+            depth: dimensions.2,
+            attr,
+            resources,
+            immediate,
+        };
+        Arc::make_mut(&mut self.forms).push(record);
+        self.form_fingerprint = append_form_fingerprint(self.form_fingerprint, record);
+        Ok(record)
+    }
+
+    #[must_use]
+    pub(crate) fn form(&self, object: u32) -> Option<PdfFormRecord> {
+        self.forms
+            .iter()
+            .copied()
+            .find(|form| form.object == object)
+    }
+
+    pub(crate) fn forms(&self) -> impl ExactSizeIterator<Item = PdfFormRecord> + '_ {
+        self.forms.iter().copied()
+    }
+
+    #[must_use]
+    pub(crate) fn last_form(&self) -> u32 {
+        self.forms.last().map_or(0, |form| form.object)
+    }
+
     pub(crate) fn initialize_raw_object(
         &mut self,
         id: PdfRawObjectId,
@@ -1400,6 +1529,8 @@ impl PdfState {
             color_stack_fingerprint: self.color_stack_fingerprint,
             last_position: self.last_position,
             snap_reference: self.snap_reference,
+            form_fingerprint: self.form_fingerprint,
+            next_form_resource: self.next_form_resource,
         }
     }
     #[must_use]
@@ -1415,6 +1546,7 @@ impl PdfState {
             links: Arc::clone(&self.links),
             open_links: Arc::clone(&self.open_links),
             color_stacks: Arc::clone(&self.color_stacks),
+            forms: Arc::clone(&self.forms),
         }
     }
 
@@ -1463,6 +1595,9 @@ impl PdfState {
         self.color_stack_fingerprint = cursor.color_stack_fingerprint;
         self.last_position = cursor.last_position;
         self.snap_reference = cursor.snap_reference;
+        self.forms = snapshot.forms;
+        self.form_fingerprint = cursor.form_fingerprint;
+        self.next_form_resource = cursor.next_form_resource;
     }
 
     pub(crate) fn set_match(
@@ -1515,6 +1650,8 @@ impl PdfState {
             hasher.u64(cursor.annotation_fingerprint);
             hasher.u64(cursor.link_fingerprint);
             hasher.u64(cursor.open_link_fingerprint);
+            hasher.u64(cursor.form_fingerprint);
+            hasher.u32(cursor.next_form_resource);
             hasher.bool(cursor.document_objects.pages().is_some());
             if let Some(id) = cursor.document_objects.pages() {
                 hasher.u32(id);
@@ -1947,6 +2084,25 @@ fn append_fingerprint(previous: u64, record: PdfPageRecord) -> u64 {
     hasher.u64(record.parameters.resources.semantic_id);
     hasher.i32(record.parameters.omit_procset);
     hasher.u32(record.parameters.space_font_name);
+    hasher.finish()
+}
+
+fn append_form_fingerprint(previous: u64, record: PdfFormRecord) -> u64 {
+    let mut hasher = StateHasher::new(PDF_FORM_DOMAIN);
+    hasher.u64(previous);
+    hasher.u32(record.object);
+    hasher.u32(record.resource);
+    hasher.u64(record.box_semantic_id);
+    hasher.i32(record.width.raw());
+    hasher.i32(record.height.raw());
+    hasher.i32(record.depth.raw());
+    for value in [record.attr, record.resources] {
+        hasher.bool(value.is_some());
+        if let Some(value) = value {
+            hasher.u64(value.semantic_id);
+        }
+    }
+    hasher.bool(record.immediate);
     hasher.finish()
 }
 

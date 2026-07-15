@@ -784,6 +784,13 @@ where
             );
             Ok(ScannedInt::new(stores.pdf_last_position().1.raw(), token))
         }
+        Meaning::InternalInteger(InternalInteger::PdfLastXForm) => {
+            crate::record_dependency!(expansion, ReadDependency::Engine(ReadEngineField::PdfForms));
+            Ok(ScannedInt::new(
+                i32::try_from(stores.pdf_last_form()).unwrap_or(i32::MAX),
+                token,
+            ))
+        }
         Meaning::InternalInteger(InternalInteger::CurrentGroupLevel) => {
             crate::record_dependency!(
                 expansion,

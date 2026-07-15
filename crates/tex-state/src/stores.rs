@@ -1619,6 +1619,11 @@ impl Stores {
         self.nodes.get(id, &self.survivors)
     }
 
+    pub(crate) fn node_list_semantic_id_value(&self, id: NodeListId) -> u64 {
+        self.assert_live_node_list(id);
+        self.nodes.semantic_id(id, &self.survivors).value()
+    }
+
     /// Keeps a survivor root alive until its enclosing allocation scope ends.
     pub fn pin_survivor(&mut self, id: NodeListId) {
         self.assert_live_node_list(id);

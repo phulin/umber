@@ -542,6 +542,12 @@ pub enum Whatsit {
     PdfSnapYComp {
         ratio: u16,
     },
+    PdfRefXForm {
+        object: u32,
+        width: Scaled,
+        height: Scaled,
+        depth: Scaled,
+    },
     Language {
         language: u8,
         left_hyphen_min: u8,

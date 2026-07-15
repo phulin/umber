@@ -122,6 +122,7 @@ pub enum InternalInteger {
     PdfLastLink,
     PdfLastXPos,
     PdfLastYPos,
+    PdfLastXForm,
     CurrentGroupLevel,
     CurrentGroupType,
     CurrentIfLevel,
@@ -144,7 +145,7 @@ impl InternalInteger {
             Self::PdfLastObject => 13,
             Self::PdfLastXPos => 14,
             Self::PdfLastYPos => 15,
-            // 16 is reserved by the PDF form/image branch.
+            Self::PdfLastXForm => 16,
             Self::PdfLastAnnot => 17,
             Self::PdfLastLink => 18,
             Self::CurrentGroupLevel => 3,
@@ -169,6 +170,7 @@ impl InternalInteger {
             13 => Some(Self::PdfLastObject),
             14 => Some(Self::PdfLastXPos),
             15 => Some(Self::PdfLastYPos),
+            16 => Some(Self::PdfLastXForm),
             17 => Some(Self::PdfLastAnnot),
             18 => Some(Self::PdfLastLink),
             3 => Some(Self::CurrentGroupLevel),
@@ -265,6 +267,7 @@ pub enum ExpandablePrimitive {
     PdfInsertHeight,
     PdfXImageBBox,
     PdfColorStackInit,
+    PdfXFormName,
     /// Accesses the immutable original primitive table.
     PdfPrimitive,
     /// Tests current meaning against the same-spelling original primitive.
@@ -374,6 +377,7 @@ impl ExpandablePrimitive {
             Self::PdfInsertHeight => 81,
             Self::PdfXImageBBox => 82,
             Self::PdfColorStackInit => 83,
+            Self::PdfXFormName => 84,
         }
     }
 
@@ -464,6 +468,7 @@ impl ExpandablePrimitive {
             81 => Some(Self::PdfInsertHeight),
             82 => Some(Self::PdfXImageBBox),
             83 => Some(Self::PdfColorStackInit),
+            84 => Some(Self::PdfXFormName),
             _ => None,
         }
     }
@@ -709,6 +714,8 @@ pub enum UnexpandablePrimitive {
     PdfSnapRefPoint,
     PdfSnapY,
     PdfSnapYComp,
+    PdfXForm,
+    PdfRefXForm,
     /// A registered pdfTeX name whose semantics belong to a later parity issue.
     PdfTeXUnimplemented,
     PdfResetTimer,
@@ -992,6 +999,8 @@ impl UnexpandablePrimitive {
             Self::PdfEndLink => 257,
             Self::PdfRunningLinkOn => 258,
             Self::PdfRunningLinkOff => 259,
+            Self::PdfXForm => 251,
+            Self::PdfRefXForm => 252,
         }
     }
 
@@ -1254,6 +1263,8 @@ impl UnexpandablePrimitive {
             257 => Some(Self::PdfEndLink),
             258 => Some(Self::PdfRunningLinkOn),
             259 => Some(Self::PdfRunningLinkOff),
+            251 => Some(Self::PdfXForm),
+            252 => Some(Self::PdfRefXForm),
             _ => None,
         }
     }

@@ -251,6 +251,18 @@ fn execute_immediate(
             execute_pdf_object(traced, input, stores, execution, true)?;
             Ok(CommandOutcome::continue_only())
         }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfXForm) => {
+            execute_pdf_form(
+                UnexpandablePrimitive::PdfXForm,
+                traced,
+                &mut ModeNest::new(),
+                input,
+                stores,
+                execution,
+                true,
+            )?;
+            Ok(CommandOutcome::continue_only())
+        }
         _ => {
             // TeX.web's `do_extension` treats `\immediate` as a one-token
             // lookahead: only openout, write, and closeout are executed here.
@@ -331,6 +343,78 @@ fn execute_pdf_object(
     stores
         .initialize_pdf_raw_object(id, stream, stream_attr, file, data, immediate)
         .map_err(|_| ExecError::PdfReferencedObjectNotFound)
+}
+
+fn execute_pdf_form(
+    primitive: UnexpandablePrimitive,
+    context: TracedTokenWord,
+    nest: &mut ModeNest,
+    input: &mut InputStack,
+    stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
+    immediate: bool,
+) -> Result<(), ExecError> {
+    let name = if primitive == UnexpandablePrimitive::PdfXForm {
+        "pdfxform"
+    } else {
+        "pdfrefxform"
+    };
+    if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+        return Err(ExecError::PdfExtensionInDviMode(name));
+    }
+    if primitive == UnexpandablePrimitive::PdfRefXForm {
+        let object = scan_i32(input, stores, execution, context)?;
+        let form = u32::try_from(object)
+            .ok()
+            .and_then(|object| stores.pdf_form(object))
+            .ok_or(ExecError::PdfReferencedObjectNotFound)?;
+        crate::vertical::append_node_to_current_list(
+            nest,
+            stores,
+            Node::Whatsit(tex_state::node::Whatsit::PdfRefXForm {
+                object: form.object(),
+                width: form.width(),
+                height: form.height(),
+                depth: form.depth(),
+            }),
+        )?;
+        return Ok(());
+    }
+    let identity = stores
+        .reserve_pdf_form()
+        .map_err(|_| ExecError::PdfObjectCapacity)?;
+    let attr = if scan_optional_keyword_x(input, stores, execution, "attr")? {
+        Some(scan_general_text_expanded_with_driver(
+            input,
+            &mut tex_state::ExpansionContext::new(stores),
+            execution,
+            context,
+        )?)
+    } else {
+        None
+    };
+    let resources = if scan_optional_keyword_x(input, stores, execution, "resources")? {
+        Some(scan_general_text_expanded_with_driver(
+            input,
+            &mut tex_state::ExpansionContext::new(stores),
+            execution,
+            context,
+        )?)
+    } else {
+        None
+    };
+    let index = scan_register_index(input, stores, execution, context)?;
+    let list = stores
+        .take_box_reg_same_level(index)
+        .ok_or(ExecError::PdfXFormVoidBox)?;
+    let dimensions = match stores.nodes(list).first().map(|node| node.to_owned()) {
+        Some(Node::HList(node) | Node::VList(node)) => (node.width, node.height, node.depth),
+        _ => return Err(ExecError::PdfXFormVoidBox),
+    };
+    stores
+        .initialize_pdf_form(identity, list, dimensions, attr, resources, immediate)
+        .map_err(|_| ExecError::PdfObjectCapacity)?;
+    Ok(())
 }
 
 fn execute_pdf_document_fragment(
@@ -1729,6 +1813,19 @@ fn execute_prefixed_command(
             UnexpandablePrimitive::PdfObject => {
                 reject_all_prefixes(prefixes)?;
                 execute_pdf_object(command.traced, input, stores, execution, false)?;
+                Ok(CommandOutcome::continue_only())
+            }
+            primitive @ (UnexpandablePrimitive::PdfXForm | UnexpandablePrimitive::PdfRefXForm) => {
+                reject_all_prefixes(prefixes)?;
+                execute_pdf_form(
+                    primitive,
+                    command.traced,
+                    nest,
+                    input,
+                    stores,
+                    execution,
+                    false,
+                )?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::PdfReferenceObject => {

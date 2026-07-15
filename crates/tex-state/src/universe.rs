@@ -234,6 +234,12 @@ pub trait ExpansionState {
     fn pdf_last_link(&self) -> u32 {
         0
     }
+    fn pdf_form(&self, _object: u32) -> Option<crate::PdfFormRecord> {
+        None
+    }
+    fn pdf_last_form(&self) -> u32 {
+        0
+    }
     fn pdf_uniform_deviate(&mut self, _bound: i32) -> i32 {
         0
     }
@@ -2151,6 +2157,48 @@ impl Universe {
     /// Reserves the next identity in the canonical PDF object ledger.
     pub fn reserve_pdf_raw_object(&mut self) -> Result<PdfRawObjectId, PdfObjectCapacityError> {
         self.pdf.reserve_raw_object()
+    }
+
+    /// Reserves pdfTeX's object and resource identities before scanning form options.
+    pub fn reserve_pdf_form(&mut self) -> Result<(u32, u32), PdfObjectCapacityError> {
+        self.pdf.reserve_form()
+    }
+
+    /// Captures a consumed box into a previously reserved PDF form identity.
+    pub fn initialize_pdf_form(
+        &mut self,
+        identity: (u32, u32),
+        box_list: NodeListId,
+        dimensions: (Scaled, Scaled, Scaled),
+        attr: Option<TokenListId>,
+        resources: Option<TokenListId>,
+        immediate: bool,
+    ) -> Result<crate::PdfFormRecord, PdfObjectCapacityError> {
+        let semantic_id = self.stores.node_list_semantic_id_value(box_list);
+        let attr = attr.map(|tokens| self.pdf_token_parameter(tokens));
+        let resources = resources.map(|tokens| self.pdf_token_parameter(tokens));
+        self.pdf.initialize_form(
+            identity,
+            box_list,
+            semantic_id,
+            dimensions,
+            (attr, resources),
+            immediate,
+        )
+    }
+
+    #[must_use]
+    pub fn pdf_form(&self, object: u32) -> Option<crate::PdfFormRecord> {
+        self.pdf.form(object)
+    }
+
+    pub fn pdf_forms(&self) -> impl ExactSizeIterator<Item = crate::PdfFormRecord> + '_ {
+        self.pdf.forms()
+    }
+
+    #[must_use]
+    pub fn pdf_last_form(&self) -> u32 {
+        self.pdf.last_form()
     }
 
     /// Initializes a previously reserved raw object without changing its ID.
@@ -4450,6 +4498,14 @@ impl ExpansionState for Universe {
         Self::pdf_last_link(self)
     }
 
+    fn pdf_form(&self, object: u32) -> Option<crate::PdfFormRecord> {
+        Self::pdf_form(self, object)
+    }
+
+    fn pdf_last_form(&self) -> u32 {
+        Self::pdf_last_form(self)
+    }
+
     fn pdf_uniform_deviate(&mut self, bound: i32) -> i32 {
         Self::pdf_uniform_deviate(self, bound)
     }
@@ -4946,6 +5002,14 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn pdf_last_link(&self) -> u32 {
         self.universe.pdf_last_link()
+    }
+
+    fn pdf_form(&self, object: u32) -> Option<crate::PdfFormRecord> {
+        self.universe.pdf_form(object)
+    }
+
+    fn pdf_last_form(&self) -> u32 {
+        self.universe.pdf_last_form()
     }
 
     fn pdf_uniform_deviate(&mut self, bound: i32) -> i32 {

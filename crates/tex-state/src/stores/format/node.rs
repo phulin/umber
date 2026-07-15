@@ -178,6 +178,12 @@ pub(super) enum FormatWhatsit {
         object: u32,
     },
     PdfRunningLink(bool),
+    PdfRefXForm {
+        object: u32,
+        width: i32,
+        height: i32,
+        depth: i32,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -527,6 +533,17 @@ impl FormatWhatsit {
             Whatsit::PdfLinkStart { object } => Self::PdfLinkStart { object },
             Whatsit::PdfLinkEnd { object } => Self::PdfLinkEnd { object },
             Whatsit::PdfRunningLink(enabled) => Self::PdfRunningLink(enabled),
+            Whatsit::PdfRefXForm {
+                object,
+                width,
+                height,
+                depth,
+            } => Self::PdfRefXForm {
+                object,
+                width: width.raw(),
+                height: height.raw(),
+                depth: depth.raw(),
+            },
         }
     }
 
@@ -585,6 +602,17 @@ impl FormatWhatsit {
             Self::PdfLinkStart { object } => Whatsit::PdfLinkStart { object },
             Self::PdfLinkEnd { object } => Whatsit::PdfLinkEnd { object },
             Self::PdfRunningLink(enabled) => Whatsit::PdfRunningLink(enabled),
+            Self::PdfRefXForm {
+                object,
+                width,
+                height,
+                depth,
+            } => Whatsit::PdfRefXForm {
+                object,
+                width: Scaled::from_raw(width),
+                height: Scaled::from_raw(height),
+                depth: Scaled::from_raw(depth),
+            },
         })
     }
 }

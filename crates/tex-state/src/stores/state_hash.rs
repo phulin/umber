@@ -1259,6 +1259,18 @@ impl Stores {
                 hasher.tag(23);
                 hasher.bool(*enabled);
             }
+            Whatsit::PdfRefXForm {
+                object,
+                width,
+                height,
+                depth,
+            } => {
+                hasher.tag(28);
+                hasher.u32(*object);
+                hasher.i32(width.raw());
+                hasher.i32(height.raw());
+                hasher.i32(depth.raw());
+            }
         }
     }
 
@@ -1657,6 +1669,7 @@ fn hash_internal_integer(integer: InternalInteger, hasher: &mut StateHasher) {
         InternalInteger::PdfLastLink => hasher.tag(18),
         InternalInteger::PdfLastXPos => hasher.tag(14),
         InternalInteger::PdfLastYPos => hasher.tag(15),
+        InternalInteger::PdfLastXForm => hasher.tag(16),
         InternalInteger::CurrentGroupLevel => hasher.tag(3),
         InternalInteger::CurrentGroupType => hasher.tag(4),
         InternalInteger::CurrentIfLevel => hasher.tag(5),

@@ -417,6 +417,16 @@ fn measure_hlist(state: &impl TypesetState, nodes: NodeList<'_>) -> Measurement 
                 meas.depth = meas.depth.max(unset.depth);
             }
             NodeRef::Penalty(_) => {}
+            NodeRef::Whatsit(tex_state::node::Whatsit::PdfRefXForm {
+                width,
+                height,
+                depth,
+                ..
+            }) => {
+                meas.width = add(meas.width, *width);
+                meas.height = meas.height.max(*height);
+                meas.depth = meas.depth.max(*depth);
+            }
             NodeRef::Disc { replace, .. } => {
                 let replacement = measure_hlist(state, state.nodes(replace));
                 meas.width = add(meas.width, replacement.width);
@@ -499,6 +509,16 @@ fn measure_hlist_nodes(state: &impl TypesetState, nodes: &[Node]) -> Measurement
             Node::MathOn(width) | Node::MathOff(width) => {
                 meas.width = add(meas.width, *width);
             }
+            Node::Whatsit(tex_state::node::Whatsit::PdfRefXForm {
+                width,
+                height,
+                depth,
+                ..
+            }) => {
+                meas.width = add(meas.width, *width);
+                meas.height = meas.height.max(*height);
+                meas.depth = meas.depth.max(*depth);
+            }
             Node::Penalty(_)
             | Node::Mark { .. }
             | Node::Ins { .. }
@@ -552,6 +572,16 @@ fn measure_vlist(state: &impl TypesetState, nodes: NodeList<'_>) -> Measurement 
                 }
             }
             NodeRef::Penalty(_) => {}
+            NodeRef::Whatsit(tex_state::node::Whatsit::PdfRefXForm {
+                width,
+                height,
+                depth,
+                ..
+            }) => {
+                meas.height = add(add(meas.height, meas.depth), *height);
+                meas.depth = *depth;
+                meas.width = meas.width.max(*width);
+            }
             NodeRef::Char { .. }
             | NodeRef::Lig { .. }
             | NodeRef::Disc { .. }

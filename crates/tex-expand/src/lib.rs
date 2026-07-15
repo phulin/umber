@@ -423,6 +423,10 @@ pub fn install_pdftex_expandable_primitives(stores: &mut Universe) {
             "pdfcolorstackinit",
             tex_state::meaning::ExpandablePrimitive::PdfColorStackInit,
         ),
+        (
+            "pdfxformname",
+            tex_state::meaning::ExpandablePrimitive::PdfXFormName,
+        ),
     ] {
         stores.install_primitive_meaning(name, Meaning::ExpandablePrimitive(primitive));
     }
@@ -433,6 +437,10 @@ pub fn install_pdftex_expandable_primitives(stores: &mut Universe) {
     stores.install_primitive_meaning(
         "pdflastobj",
         Meaning::InternalInteger(tex_state::meaning::InternalInteger::PdfLastObject),
+    );
+    stores.install_primitive_meaning(
+        "pdflastxform",
+        Meaning::InternalInteger(tex_state::meaning::InternalInteger::PdfLastXForm),
     );
 }
 
@@ -519,6 +527,7 @@ pub enum ReadEngineField {
     PdfExternalImages,
     PdfObjects,
     PdfPositions,
+    PdfForms,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -648,6 +657,7 @@ pub enum ExpandableOpcode {
     PdfInsertHeight,
     PdfXImageBBox,
     PdfColorStackInit,
+    PdfXFormName,
     IfDefined,
     IfCsName,
     IfInCsName,
@@ -804,6 +814,10 @@ pub enum ExpandError {
         object: i32,
         context: TracedTokenWord,
     },
+    PdfFormNotFound {
+        object: i32,
+        context: TracedTokenWord,
+    },
     PdfXImageBBoxInvalidParameter {
         index: i32,
         context: TracedTokenWord,
@@ -891,6 +905,9 @@ impl fmt::Display for ExpandError {
             Self::PdfExternalImageNotFound { .. } => {
                 f.write_str("pdfTeX error (ext1): cannot find referenced object.")
             }
+            Self::PdfFormNotFound { .. } => {
+                f.write_str("pdfTeX error (ext1): cannot find referenced object.")
+            }
             Self::PdfXImageBBoxInvalidParameter { .. } => {
                 f.write_str("pdfTeX error (pdfximagebbox): invalid parameter.")
             }
@@ -943,6 +960,7 @@ impl std::error::Error for ExpandError {
             | Self::PdfInvalidFontIdentifier { .. }
             | Self::PdfObjectCapacity { .. }
             | Self::PdfExternalImageNotFound { .. }
+            | Self::PdfFormNotFound { .. }
             | Self::PdfXImageBBoxInvalidParameter { .. }
             | Self::InvalidConditionalRelation { .. }
             | Self::IncompleteIf { .. }
@@ -978,6 +996,7 @@ impl ExpandError {
             | Self::PdfInvalidFontIdentifier { context }
             | Self::PdfObjectCapacity { context }
             | Self::PdfExternalImageNotFound { context, .. }
+            | Self::PdfFormNotFound { context, .. }
             | Self::PdfXImageBBoxInvalidParameter { context, .. }
             | Self::InvalidConditionalRelation { context }
             | Self::IncompleteIf { context } => Some(context.origin()),

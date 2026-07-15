@@ -176,6 +176,9 @@ pub(super) fn node_width_at<S: TypesetState>(state: &S, nodes: &[Node], index: u
                 state.nodes(*replace).len(),
             ));
         }
+        Node::Whatsit(tex_state::node::Whatsit::PdfRefXForm { width, .. }) => {
+            widths.natural = add(widths.natural, *width);
+        }
         Node::Penalty(_)
         | Node::Mark { .. }
         | Node::Ins { .. }

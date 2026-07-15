@@ -685,7 +685,9 @@ fn anchor_for_whatsit(
     anchor: &mut u32,
 ) -> Result<Option<u32>, ExecError> {
     let anchored = match whatsit {
-        Whatsit::Language { .. } | Whatsit::PdfReferenceObject { .. } => false,
+        Whatsit::Language { .. }
+        | Whatsit::PdfReferenceObject { .. }
+        | Whatsit::PdfRefXForm { .. } => false,
         Whatsit::OpenOut { .. } | Whatsit::CloseOut { .. } | Whatsit::DeferredWrite { .. } => {
             !suppress_deferred_streams
         }

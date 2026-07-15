@@ -78,6 +78,7 @@ pub use pdf::{
     PdfDocumentObjectIds, PdfExternalImageId, PdfExternalImageIdError, PdfExternalImageMetadata,
     PdfExternalImageRegistrationError, PdfFontConfiguration, PdfFontMapOperation,
     PdfFontResourceRecord, PdfGlyphToUnicode, PdfLinkRecord, PdfObjectCapacityError, PdfOpenLink,
+    PdfFormRecord,
     PdfOutputParameters, PdfPageBox, PdfPageRecord, PdfRawObjectData, PdfRawObjectId,
     PdfRawObjectInitializeError, PdfRawObjectRecord,
 };

@@ -682,6 +682,12 @@ where
             &stores.pdf_last_position().1.raw().to_string(),
             cause_origin,
         )),
+        Meaning::InternalInteger(InternalInteger::PdfLastXForm) => Ok(push_rendered_text(
+            stores,
+            ExpansionReplayKind::TheOutput,
+            &stores.pdf_last_form().to_string(),
+            cause_origin,
+        )),
         Meaning::InternalInteger(InternalInteger::CurrentGroupLevel) => Ok(push_rendered_text(
             stores,
             ExpansionReplayKind::TheOutput,
@@ -950,6 +956,10 @@ pub(crate) fn record_meaning_value_dependency(
                 expansion,
                 ReadDependency::Engine(ReadEngineField::PdfObjects)
             );
+            None
+        }
+        Meaning::InternalInteger(InternalInteger::PdfLastXForm) => {
+            crate::record_dependency!(expansion, ReadDependency::Engine(ReadEngineField::PdfForms));
             None
         }
         Meaning::InternalInteger(InternalInteger::CurrentGroupLevel) => {

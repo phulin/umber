@@ -372,6 +372,8 @@ pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
         ("pdfsnaprefpoint", UnexpandablePrimitive::PdfSnapRefPoint),
         ("pdfsnapy", UnexpandablePrimitive::PdfSnapY),
         ("pdfsnapycomp", UnexpandablePrimitive::PdfSnapYComp),
+        ("pdfxform", UnexpandablePrimitive::PdfXForm),
+        ("pdfrefxform", UnexpandablePrimitive::PdfRefXForm),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
@@ -384,6 +386,7 @@ pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
         ("pdflastlink", InternalInteger::PdfLastLink),
         ("pdflastxpos", InternalInteger::PdfLastXPos),
         ("pdflastypos", InternalInteger::PdfLastYPos),
+        ("pdflastxform", InternalInteger::PdfLastXForm),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::InternalInteger(integer));
@@ -503,6 +506,99 @@ mod tests {
             "the registered inventory must not contain duplicates",
         );
         assert_eq!(PDFTEX_PRIMITIVE_NAMES, source_names);
+    }
+
+    #[test]
+    fn form_names_have_exact_append_only_identity() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        for (name, expected) in [
+            ("pdfxform", UnexpandablePrimitive::PdfXForm),
+            ("pdfrefxform", UnexpandablePrimitive::PdfRefXForm),
+        ] {
+            let symbol = stores.intern(name);
+            assert_eq!(
+                stores.meaning(symbol),
+                Meaning::UnexpandablePrimitive(expected),
+            );
+        }
+        assert_eq!(UnexpandablePrimitive::PdfXForm.operand(), 251);
+        assert_eq!(UnexpandablePrimitive::PdfRefXForm.operand(), 252);
+        assert_eq!(InternalInteger::PdfLastXForm.operand(), 16);
+        assert_eq!(ExpandablePrimitive::PdfXFormName.operand(), 84);
+    }
+
+    #[test]
+    fn pdfxform_consumes_box_and_captures_options_and_dimensions() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        crate::run_memory_with_stores(
+            concat!(
+                "\\pdfoutput=1",
+                "\\setbox0=\\hbox to 10pt{}",
+                "\\pdfxform attr {/A 1} resources {/R 2} 0",
+                "\\message{last=\\the\\pdflastxform,name=\\pdfxformname\\pdflastxform}",
+                "\\pdfrefxform 1\\end",
+            ),
+            &mut stores,
+        )
+        .expect("scan and reference a PDF form");
+        assert!(stores.box_reg(0).is_none());
+        let form = stores.pdf_form(1).expect("captured form");
+        assert_eq!(form.resource(), 1);
+        assert_eq!(form.width(), Scaled::from_raw(10 * 65_536));
+        assert!(form.attr().is_some());
+        assert!(form.resources().is_some());
+        let output = crate::run_memory_with_stores(
+            "\\message{name=\\pdfxformname1,last=\\the\\pdflastxform}\\end",
+            &mut stores,
+        )
+        .expect("expand form enquiries");
+        assert_eq!(output, " name=1,last=1");
+    }
+
+    #[test]
+    fn pdfxform_rejects_void_boxes_and_dvi_mode() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let error = crate::run_memory_with_stores("\\pdfoutput=1\\pdfxform0\\end", &mut stores)
+            .expect_err("void form box must fail");
+        assert_eq!(
+            error.to_string(),
+            "pdfTeX error (ext1): \\pdfxform cannot be used with a void box"
+        );
+        crate::run_memory_with_stores("\\setbox0=\\hbox{}\\pdfxform0\\end", &mut stores)
+            .expect("form allocation continues after the failed reserved identity");
+        let form = stores
+            .pdf_form(2)
+            .expect("second object and resource are retained");
+        assert_eq!(form.resource(), 2);
+
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let error = crate::run_memory_with_stores("\\pdfxform0\\end", &mut stores)
+            .expect_err("DVI mode must reject forms");
+        assert_eq!(
+            error.to_string(),
+            "pdfTeX error (\\pdfxform): not allowed in DVI mode (\\pdfoutput <= 0)."
+        );
+    }
+
+    #[test]
+    fn pdf_forms_rollback_and_replay_reuse_canonical_identity() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let snapshot = stores.snapshot();
+        let source = "\\pdfoutput=1\\setbox0=\\hbox{}\\pdfxform0\\end";
+        crate::run_memory_with_stores(source, &mut stores).expect("first form run");
+        let first_hash = stores.testing_state_hash();
+        assert_eq!(stores.pdf_last_form(), 1);
+        stores.rollback(&snapshot);
+        assert_eq!(stores.pdf_last_form(), 0);
+        assert!(stores.pdf_forms().next().is_none());
+        crate::run_memory_with_stores(source, &mut stores).expect("replayed form run");
+        assert_eq!(stores.pdf_last_form(), 1);
+        assert_eq!(stores.testing_state_hash(), first_hash);
     }
 
     #[test]
