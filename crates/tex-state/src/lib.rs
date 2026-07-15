@@ -14,10 +14,12 @@
 /// source coordinates revision-mapping metadata while retaining normalized-line
 /// cursor state in the semantic projection. Version 10 widens font-parameter
 /// counts and fontdimen slots to the 17-bit domain used by LaTeX's font-backed
-/// integer arrays. Hashes are
+/// integer arrays. Version 11 adds by-value transient input replay frames and
+/// hashes their remaining semantic token sequence without diagnostic origins.
+/// Hashes are
 /// comparable only when both this version and the named-boundary schedule
 /// match.
-pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 10;
+pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 11;
 
 pub mod cell;
 pub mod code_tables;

@@ -1044,6 +1044,7 @@ impl Stores {
         let source_id = summary.frames().iter().find_map(|frame| match frame {
             crate::input::InputFrameSummary::Source { source_id, .. } => Some(*source_id),
             crate::input::InputFrameSummary::TokenList { .. }
+            | crate::input::InputFrameSummary::TransientTokenList { .. }
             | crate::input::InputFrameSummary::Condition { .. } => None,
         })?;
         let region = self.source_region(source_id)?;

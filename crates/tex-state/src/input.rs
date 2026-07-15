@@ -409,13 +409,28 @@ impl Hash for InputSummary {
 
 impl InputSummary {
     pub(crate) fn retained_bytes(&self) -> usize {
-        std::mem::size_of::<InputSemanticState>().saturating_add(
-            self.semantic_root
-                .0
-                .frames
-                .capacity()
-                .saturating_mul(std::mem::size_of::<InputFrameSummary>()),
-        )
+        let frames = self
+            .semantic_root
+            .0
+            .frames
+            .capacity()
+            .saturating_mul(std::mem::size_of::<InputFrameSummary>());
+        let transient_words = self
+            .semantic_root
+            .0
+            .frames
+            .iter()
+            .filter_map(|frame| match frame {
+                InputFrameSummary::TransientTokenList { tokens, .. } => Some(tokens.len()),
+                InputFrameSummary::Source { .. }
+                | InputFrameSummary::TokenList { .. }
+                | InputFrameSummary::Condition { .. } => None,
+            })
+            .sum::<usize>()
+            .saturating_mul(std::mem::size_of::<TracedTokenWord>());
+        std::mem::size_of::<InputSemanticState>()
+            .saturating_add(frames)
+            .saturating_add(transient_words)
     }
 
     pub(crate) fn semantic_root(&self) -> InputSemanticRoot {
@@ -442,7 +457,9 @@ impl InputSummary {
             .iter()
             .filter_map(|frame| match frame {
                 InputFrameSummary::Source { source_id, .. } => Some(source_id.raw()),
-                InputFrameSummary::TokenList { .. } | InputFrameSummary::Condition { .. } => None,
+                InputFrameSummary::TokenList { .. }
+                | InputFrameSummary::TransientTokenList { .. }
+                | InputFrameSummary::Condition { .. } => None,
             })
             .chain(last_source_id.map(SourceId::raw))
             .max()
@@ -531,7 +548,9 @@ impl InputSummary {
             .iter()
             .find_map(|frame| match frame {
                 InputFrameSummary::Source { source, .. } => Some(source.next_source_offset()),
-                InputFrameSummary::TokenList { .. } | InputFrameSummary::Condition { .. } => None,
+                InputFrameSummary::TokenList { .. }
+                | InputFrameSummary::TransientTokenList { .. }
+                | InputFrameSummary::Condition { .. } => None,
             })
             .or_else(|| {
                 self.last_source_frame()
@@ -552,7 +571,9 @@ impl InputSummary {
                 input_record,
                 source,
             } => Some((source_id, input_record, source)),
-            InputFrameSummary::TokenList { .. } | InputFrameSummary::Condition { .. } => None,
+            InputFrameSummary::TokenList { .. }
+            | InputFrameSummary::TransientTokenList { .. }
+            | InputFrameSummary::Condition { .. } => None,
         })?;
         let source_id = *root.0;
         let registration = root.2.registration();
@@ -611,6 +632,16 @@ pub enum InputFrameSummary {
         macro_invocation: crate::token::OriginId,
         parent_macro_invocation: crate::token::OriginId,
     },
+    /// Execution-local token replay with inline per-token provenance.
+    ///
+    /// The words are the complete unconsumed suffix. Transient replay has no
+    /// durable token-list or origin-list identity.
+    TransientTokenList {
+        tokens: Arc<[TracedTokenWord]>,
+        replay_kind: TokenListReplayKind,
+        macro_invocation: crate::token::OriginId,
+        parent_macro_invocation: crate::token::OriginId,
+    },
     Condition {
         token: ConditionFrameToken,
         condition: ConditionFrameSummary,
@@ -654,6 +685,21 @@ impl PartialEq for InputFrameSummary {
                     && macro_arguments_semantic_eq(*left_arguments, *right_arguments)
             }
             (
+                Self::TransientTokenList {
+                    tokens: left_tokens,
+                    replay_kind: left_replay_kind,
+                    ..
+                },
+                Self::TransientTokenList {
+                    tokens: right_tokens,
+                    replay_kind: right_replay_kind,
+                    ..
+                },
+            ) => {
+                left_replay_kind == right_replay_kind
+                    && traced_tokens_semantic_eq(left_tokens, right_tokens)
+            }
+            (
                 Self::Condition {
                     token: _,
                     condition: left,
@@ -695,15 +741,34 @@ impl Hash for InputFrameSummary {
                 index.hash(state);
                 hash_macro_arguments_semantic(*macro_arguments, state);
             }
+            Self::TransientTokenList {
+                tokens,
+                replay_kind,
+                ..
+            } => {
+                2_u8.hash(state);
+                replay_kind.hash(state);
+                for word in tokens.iter().copied() {
+                    word.token().hash(state);
+                }
+            }
             Self::Condition {
                 token: _,
                 condition,
             } => {
-                2_u8.hash(state);
+                3_u8.hash(state);
                 condition.hash(state);
             }
         }
     }
+}
+
+fn traced_tokens_semantic_eq(left: &[TracedTokenWord], right: &[TracedTokenWord]) -> bool {
+    left.len() == right.len()
+        && left
+            .iter()
+            .zip(right)
+            .all(|(&left, &right)| left.token() == right.token())
 }
 
 fn macro_arguments_semantic_eq(left: MacroArguments, right: MacroArguments) -> bool {

@@ -51,6 +51,18 @@ impl Stores {
                     self.assert_live_origin(*macro_invocation);
                     self.assert_live_origin(*parent_macro_invocation);
                 }
+                InputFrameSummary::TransientTokenList {
+                    tokens,
+                    macro_invocation,
+                    parent_macro_invocation,
+                    ..
+                } => {
+                    for &word in tokens.iter() {
+                        self.assert_live_traced_token_word(word);
+                    }
+                    self.assert_live_origin(*macro_invocation);
+                    self.assert_live_origin(*parent_macro_invocation);
+                }
                 InputFrameSummary::Condition { condition, .. } => {
                     self.assert_live_traced_token_word(condition.context());
                 }

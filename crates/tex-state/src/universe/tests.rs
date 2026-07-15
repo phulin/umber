@@ -1214,6 +1214,47 @@ fn semantic_hash_ignores_pending_source_token_origins() {
 }
 
 #[test]
+fn transient_input_hash_uses_stable_control_sequence_atoms_and_ignores_origins() {
+    let mut first = Universe::new();
+    let first_symbol = first.intern("transient-name");
+    let first_origin = first.source_origin(SourceId::new(1), 10, 2, 3);
+    first.set_input_summary(transient_summary(TracedTokenWord::pack(
+        Token::Cs(first_symbol.symbol()),
+        first_origin,
+    )));
+
+    let mut second = Universe::new();
+    second.intern("different-allocation-order");
+    let second_symbol = second.intern("transient-name");
+    let second_origin = second.source_origin(SourceId::new(9), 90, 8, 7);
+    second.set_input_summary(transient_summary(TracedTokenWord::pack(
+        Token::Cs(second_symbol.symbol()),
+        second_origin,
+    )));
+
+    assert_eq!(
+        first.snapshot().state_hash(),
+        second.snapshot().state_hash()
+    );
+}
+
+#[test]
+fn transient_input_validation_rejects_stale_packed_symbols_atomically() {
+    let mut universe = Universe::new();
+    let mark = universe.snapshot();
+    let stale = universe.intern("rolled-back-transient");
+    universe.rollback(&mark);
+    universe.intern("replacement-transient");
+    let invalid = transient_summary(TracedTokenWord::pack(
+        Token::Cs(stale.symbol()),
+        OriginId::UNKNOWN,
+    ));
+
+    assert!(catch_unwind(AssertUnwindSafe(|| universe.set_input_summary(invalid))).is_err());
+    assert_eq!(universe.input_summary(), &InputSummary::default());
+}
+
+#[test]
 fn input_hash_ignores_source_ids_and_allocator_history() {
     let mut universe = Universe::new();
     let first_registration = universe
@@ -3133,6 +3174,19 @@ fn macro_replay_summary(
             index: 0,
             macro_arguments: arguments,
             macro_invocation: invocation,
+            parent_macro_invocation: OriginId::UNKNOWN,
+        }],
+        None,
+        None,
+    )
+}
+
+fn transient_summary(word: TracedTokenWord) -> InputSummary {
+    InputSummary::new(
+        vec![InputFrameSummary::TransientTokenList {
+            tokens: Arc::from([word]),
+            replay_kind: TokenListReplayKind::Inserted,
+            macro_invocation: OriginId::UNKNOWN,
             parent_macro_invocation: OriginId::UNKNOWN,
         }],
         None,

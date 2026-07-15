@@ -239,6 +239,9 @@ impl<'a> ProvenanceResolver<'a> {
             .find_map(|frame| match frame {
                 InputFrameSummary::TokenList {
                     macro_invocation, ..
+                }
+                | InputFrameSummary::TransientTokenList {
+                    macro_invocation, ..
                 } if *macro_invocation != OriginId::UNKNOWN => Some(*macro_invocation),
                 _ => None,
             })

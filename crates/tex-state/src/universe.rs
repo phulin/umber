@@ -4309,11 +4309,24 @@ fn hash_input_summary_fields(
                     }
                 }
             }
+            InputFrameSummary::TransientTokenList {
+                tokens,
+                replay_kind,
+                macro_invocation: _,
+                parent_macro_invocation: _,
+            } => {
+                hasher.tag(2);
+                hash_token_list_replay_kind(*replay_kind, hasher);
+                hasher.usize(tokens.len());
+                for &word in tokens.iter() {
+                    hash_traced_token_semantic(stores, word, hasher);
+                }
+            }
             InputFrameSummary::Condition {
                 token: _,
                 condition,
             } => {
-                hasher.tag(2);
+                hasher.tag(3);
                 hash_condition_kind(condition.kind(), hasher);
                 hash_condition_limb(condition.limb(), hasher);
                 hasher.bool(condition.evaluating());

@@ -594,16 +594,54 @@ impl SourceInputFrame {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
+enum ReplayPayload {
+    Stored {
+        token_list: TokenListId,
+        origin_list: OriginListId,
+    },
+    Transient {
+        tokens: Vec<TracedTokenWord>,
+    },
+}
+
+#[derive(Debug, Eq, PartialEq)]
 struct TokenListInputFrame {
-    token_list: TokenListId,
-    origin_list: OriginListId,
+    payload: ReplayPayload,
     replay_kind: TokenListReplayKind,
     index: usize,
     macro_arguments: MacroArguments,
     macro_invocation: OriginId,
     parent_macro_invocation: OriginId,
     replay_marker: Option<TokenListReplayMarker>,
+}
+
+impl TokenListInputFrame {
+    fn stored_ids(&self) -> Option<(TokenListId, OriginListId)> {
+        match self.payload {
+            ReplayPayload::Stored {
+                token_list,
+                origin_list,
+            } => Some((token_list, origin_list)),
+            ReplayPayload::Transient { .. } => None,
+        }
+    }
+
+    fn len(&self, stores: &impl ExpansionState) -> usize {
+        match &self.payload {
+            ReplayPayload::Stored { token_list, .. } => stores.tokens(*token_list).len(),
+            ReplayPayload::Transient { tokens } => tokens.len(),
+        }
+    }
+
+    fn semantic_token_at(&self, stores: &impl ExpansionState, index: usize) -> Option<Token> {
+        match &self.payload {
+            ReplayPayload::Stored { token_list, .. } => {
+                stores.tokens(*token_list).get(index).copied()
+            }
+            ReplayPayload::Transient { tokens } => tokens.get(index)?.token(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -636,6 +674,8 @@ type LiteralSpanBounds = (usize, usize);
 type LiteralSpanCache = AHashMap<(TokenListId, LiteralSpanPolicy), Arc<[LiteralSpanBounds]>>;
 
 const LITERAL_SPAN_CACHE_MAX_ENTRIES: usize = 4096;
+const TRANSIENT_BUFFER_POOL_MAX_ENTRIES: usize = 64;
+const TRANSIENT_BUFFER_POOL_MAX_CAPACITY: usize = 4096;
 
 /// Identifies one live token-list replay frame independently of its content.
 ///
@@ -688,14 +728,6 @@ impl StableFrames {
             self.slots.pop();
         }
         frame
-    }
-    fn discard(&mut self, index: usize) {
-        self.active -= 1;
-        let frame = self.slots[index].take().expect("input frame slot is live");
-        drop(frame);
-        while self.slots.last().is_some_and(Option::is_none) {
-            self.slots.pop();
-        }
     }
     fn len(&self) -> usize {
         self.active
@@ -1047,6 +1079,7 @@ pub struct InputStack {
     alignment_inputs: Vec<AlignmentInput>,
     /// Derived, discardable segmentation of immutable macro token lists.
     literal_span_cache: LiteralSpanCache,
+    transient_buffer_pool: Vec<Vec<TracedTokenWord>>,
     #[cfg(feature = "profiling-stats")]
     expansion_stats: ExpansionStats,
     active_macro_invocation: OriginId,
@@ -1124,6 +1157,7 @@ impl InputStack {
             next_condition_token: 0,
             alignment_inputs: Vec::new(),
             literal_span_cache: AHashMap::new(),
+            transient_buffer_pool: Vec::new(),
             #[cfg(feature = "profiling-stats")]
             expansion_stats: ExpansionStats::default(),
             active_macro_invocation: OriginId::UNKNOWN,
@@ -1268,11 +1302,29 @@ impl InputStack {
                     macro_invocation,
                     parent_macro_invocation,
                 } => frames.push(InputFrame::TokenList(TokenListInputFrame {
-                    token_list: *token_list,
-                    origin_list: *origin_list,
+                    payload: ReplayPayload::Stored {
+                        token_list: *token_list,
+                        origin_list: *origin_list,
+                    },
                     replay_kind: *replay_kind,
                     index: *index,
                     macro_arguments: *macro_arguments,
+                    macro_invocation: *macro_invocation,
+                    parent_macro_invocation: *parent_macro_invocation,
+                    replay_marker: None,
+                })),
+                InputFrameSummary::TransientTokenList {
+                    tokens,
+                    replay_kind,
+                    macro_invocation,
+                    parent_macro_invocation,
+                } => frames.push(InputFrame::TokenList(TokenListInputFrame {
+                    payload: ReplayPayload::Transient {
+                        tokens: tokens.to_vec(),
+                    },
+                    replay_kind: *replay_kind,
+                    index: 0,
+                    macro_arguments: MacroArguments::new(),
                     macro_invocation: *macro_invocation,
                     parent_macro_invocation: *parent_macro_invocation,
                     replay_marker: None,
@@ -1339,7 +1391,9 @@ impl InputStack {
                 .iter()
                 .filter_map(|frame| match frame {
                     InputFrameSummary::Condition { token, .. } => Some(token.raw()),
-                    InputFrameSummary::Source { .. } | InputFrameSummary::TokenList { .. } => None,
+                    InputFrameSummary::Source { .. }
+                    | InputFrameSummary::TokenList { .. }
+                    | InputFrameSummary::TransientTokenList { .. } => None,
                 })
                 .max()
                 .map_or(0, |token| {
@@ -1349,6 +1403,7 @@ impl InputStack {
                 }),
             alignment_inputs: Vec::new(),
             literal_span_cache: AHashMap::new(),
+            transient_buffer_pool: Vec::new(),
             #[cfg(feature = "profiling-stats")]
             expansion_stats: ExpansionStats::default(),
             active_macro_invocation,
@@ -1682,8 +1737,54 @@ impl InputStack {
             .checked_add(1)
             .expect("token-list replay marker overflowed");
         self.push_frame(InputFrame::TokenList(TokenListInputFrame {
-            token_list,
-            origin_list,
+            payload: ReplayPayload::Stored {
+                token_list,
+                origin_list,
+            },
+            replay_kind,
+            index: 0,
+            macro_arguments: MacroArguments::new(),
+            macro_invocation: OriginId::UNKNOWN,
+            parent_macro_invocation: OriginId::UNKNOWN,
+            replay_marker: Some(replay_marker),
+        }));
+        replay_marker
+    }
+
+    /// Takes a cleared packed-token buffer from the replay pool.
+    ///
+    /// Callers fill the buffer and transfer it back with
+    /// [`Self::push_transient_tokens`] or [`Self::recycle_transient_token_buffer`].
+    pub fn take_transient_token_buffer(&mut self) -> Vec<TracedTokenWord> {
+        self.transient_buffer_pool.pop().unwrap_or_default()
+    }
+
+    /// Returns an unused packed-token buffer to the bounded replay pool.
+    pub fn recycle_transient_token_buffer(&mut self, mut tokens: Vec<TracedTokenWord>) {
+        tokens.clear();
+        if tokens.capacity() <= TRANSIENT_BUFFER_POOL_MAX_CAPACITY
+            && self.transient_buffer_pool.len() < TRANSIENT_BUFFER_POOL_MAX_ENTRIES
+        {
+            self.transient_buffer_pool.push(tokens);
+        }
+    }
+
+    /// Pushes execution-local traced tokens without publishing durable list ids.
+    pub fn push_transient_tokens(
+        &mut self,
+        tokens: Vec<TracedTokenWord>,
+        replay_kind: TokenListReplayKind,
+    ) -> TokenListReplayMarker {
+        let replay_marker = TokenListReplayMarker {
+            sequence: self.next_replay_marker,
+            frame_index: self.frames.slot_len(),
+        };
+        self.next_replay_marker = self
+            .next_replay_marker
+            .checked_add(1)
+            .expect("token-list replay marker overflowed");
+        self.push_frame(InputFrame::TokenList(TokenListInputFrame {
+            payload: ReplayPayload::Transient { tokens },
             replay_kind,
             index: 0,
             macro_arguments: MacroArguments::new(),
@@ -1721,8 +1822,10 @@ impl InputStack {
     ) {
         let parent_macro_invocation = self.active_macro_invocation;
         self.push_frame(InputFrame::TokenList(TokenListInputFrame {
-            token_list,
-            origin_list,
+            payload: ReplayPayload::Stored {
+                token_list,
+                origin_list,
+            },
             replay_kind: TokenListReplayKind::MacroBody,
             index: 0,
             macro_arguments,
@@ -1907,7 +2010,7 @@ impl InputStack {
                         TokenListReplayKind::MacroBody | TokenListReplayKind::MacroArgument
                     ) =>
                 {
-                    frame.index >= stores.tokens(frame.token_list).len()
+                    frame.index >= frame.len(stores)
                 }
                 InputFrame::Source(_) | InputFrame::TokenList(_) | InputFrame::Condition { .. } => {
                     false
@@ -1922,11 +2025,12 @@ impl InputStack {
                 InputFrame::TokenList(frame)
                     if frame.replay_kind == TokenListReplayKind::MacroBody
                         && matches!(
-                            stores.tokens(frame.token_list).get(frame.index),
+                            frame.semantic_token_at(stores, frame.index),
                             Some(Token::Param(_))
                         ) =>
                 {
-                    let Token::Param(slot) = stores.tokens(frame.token_list)[frame.index] else {
+                    let Some(Token::Param(slot)) = frame.semantic_token_at(stores, frame.index)
+                    else {
                         unreachable!("guard restricts the token kind")
                     };
                     let argument = frame.macro_arguments.get_traced(slot);
@@ -1941,8 +2045,10 @@ impl InputStack {
             };
             if let Some(argument) = argument {
                 self.push_frame(InputFrame::TokenList(TokenListInputFrame {
-                    token_list: argument.token_list(),
-                    origin_list: argument.origin_list(),
+                    payload: ReplayPayload::Stored {
+                        token_list: argument.token_list(),
+                        origin_list: argument.origin_list(),
+                    },
                     replay_kind: TokenListReplayKind::MacroArgument,
                     index: 0,
                     macro_arguments: MacroArguments::new(),
@@ -1958,14 +2064,12 @@ impl InputStack {
                     if matches!(
                         frame.replay_kind,
                         TokenListReplayKind::MacroBody | TokenListReplayKind::MacroArgument
-                    ) =>
+                    ) && frame.stored_ids().is_some() =>
                 {
-                    (
-                        frame.token_list,
-                        frame.origin_list,
-                        frame.replay_kind,
-                        frame.index,
-                    )
+                    let (token_list, origin_list) = frame
+                        .stored_ids()
+                        .expect("guard restricts replay to stored content");
+                    (token_list, origin_list, frame.replay_kind, frame.index)
                 }
                 InputFrame::Source(_) | InputFrame::TokenList(_) | InputFrame::Condition { .. } => {
                     return None;
@@ -2166,14 +2270,27 @@ impl InputStack {
                             .with_registration(source.registration)
                             .with_scantokens(source.scantokens),
                     },
-                    InputFrame::TokenList(token_list) => InputFrameSummary::TokenList {
-                        token_list: token_list.token_list,
-                        origin_list: token_list.origin_list,
-                        replay_kind: token_list.replay_kind,
-                        index: token_list.index,
-                        macro_arguments: token_list.macro_arguments,
-                        macro_invocation: token_list.macro_invocation,
-                        parent_macro_invocation: token_list.parent_macro_invocation,
+                    InputFrame::TokenList(frame) => match &frame.payload {
+                        ReplayPayload::Stored {
+                            token_list,
+                            origin_list,
+                        } => InputFrameSummary::TokenList {
+                            token_list: *token_list,
+                            origin_list: *origin_list,
+                            replay_kind: frame.replay_kind,
+                            index: frame.index,
+                            macro_arguments: frame.macro_arguments,
+                            macro_invocation: frame.macro_invocation,
+                            parent_macro_invocation: frame.parent_macro_invocation,
+                        },
+                        ReplayPayload::Transient { tokens } => {
+                            InputFrameSummary::TransientTokenList {
+                                tokens: Arc::from(&tokens[frame.index..]),
+                                replay_kind: frame.replay_kind,
+                                macro_invocation: frame.macro_invocation,
+                                parent_macro_invocation: frame.parent_macro_invocation,
+                            }
+                        }
                     },
                     InputFrame::Condition { token, condition } => InputFrameSummary::Condition {
                         token: *token,
@@ -2625,8 +2742,10 @@ impl InputStack {
                     ) {
                         Some(TracedTokenReplay::PushArgument(argument)) => {
                             self.push_frame(InputFrame::TokenList(TokenListInputFrame {
-                                token_list: argument.token_list(),
-                                origin_list: argument.origin_list(),
+                                payload: ReplayPayload::Stored {
+                                    token_list: argument.token_list(),
+                                    origin_list: argument.origin_list(),
+                                },
                                 replay_kind: TokenListReplayKind::MacroArgument,
                                 index: 0,
                                 macro_arguments: MacroArguments::new(),
@@ -2762,10 +2881,12 @@ impl InputStack {
             };
             match &mut self.frames[frame_index] {
                 InputFrame::TokenList(token_list) => {
+                    let stored_token_list =
+                        token_list.stored_ids().map(|(token_list, _)| token_list);
                     let macro_replay_site = (token_list.replay_kind
                         == TokenListReplayKind::MacroBody
                         && matches!(
-                            stores.tokens(token_list.token_list).get(token_list.index),
+                            token_list.semantic_token_at(stores, token_list.index),
                             Some(
                                 Token::Cs(_)
                                     | Token::Char {
@@ -2774,19 +2895,20 @@ impl InputStack {
                                     }
                             )
                         ))
-                    .then_some(MacroReplaySite {
-                        token_list: token_list.token_list,
+                    .then_some(stored_token_list)
+                    .flatten()
+                    .map(|stored_token_list| MacroReplaySite {
+                        token_list: stored_token_list,
                         token_index: token_list.index,
                     });
                     #[cfg(feature = "profiling-stats")]
-                    if let Some(token) = stores.tokens(token_list.token_list).get(token_list.index)
-                    {
+                    if let Some(token) = token_list.semantic_token_at(stores, token_list.index) {
                         self.expansion_stats.token_frame_steps += 1;
                         if matches!(token, Token::Char { .. }) {
                             self.expansion_stats.character_tokens += 1;
                         }
                         if !matches!(
-                            token,
+                            &token,
                             Token::Param(slot)
                                 if token_list.replay_kind == TokenListReplayKind::MacroBody
                                     && token_list.macro_arguments.get_traced(*slot).is_some()
@@ -2802,8 +2924,10 @@ impl InputStack {
                     ) {
                         Some(TracedTokenReplay::PushArgument(argument)) => {
                             self.push_frame(InputFrame::TokenList(TokenListInputFrame {
-                                token_list: argument.token_list(),
-                                origin_list: argument.origin_list(),
+                                payload: ReplayPayload::Stored {
+                                    token_list: argument.token_list(),
+                                    origin_list: argument.origin_list(),
+                                },
                                 replay_kind: TokenListReplayKind::MacroArgument,
                                 index: 0,
                                 macro_arguments: MacroArguments::new(),
@@ -2919,8 +3043,10 @@ impl InputStack {
                     match next_token_from_token_list_frame(token_list, stores) {
                         Some(TokenReplay::PushArgument(argument)) => {
                             self.push_frame(InputFrame::TokenList(TokenListInputFrame {
-                                token_list: argument.token_list(),
-                                origin_list: argument.origin_list(),
+                                payload: ReplayPayload::Stored {
+                                    token_list: argument.token_list(),
+                                    origin_list: argument.origin_list(),
+                                },
                                 replay_kind: TokenListReplayKind::MacroArgument,
                                 index: 0,
                                 macro_arguments: MacroArguments::new(),
@@ -3004,11 +3130,10 @@ impl InputStack {
     pub fn current_token_list_frame(&self) -> Option<(TokenListId, TokenListReplayKind, usize)> {
         let frame_index = self.current_token_frame_index()?;
         match &self.frames[frame_index] {
-            InputFrame::TokenList(token_list) => Some((
-                token_list.token_list,
-                token_list.replay_kind,
-                token_list.index,
-            )),
+            InputFrame::TokenList(frame) => {
+                let (token_list, _) = frame.stored_ids()?;
+                Some((token_list, frame.replay_kind, frame.index))
+            }
             InputFrame::Source(_) | InputFrame::Condition { .. } => None,
         }
     }
@@ -3024,7 +3149,8 @@ impl InputStack {
         let matches = matches!(
             &self.frames[frame_index],
             InputFrame::TokenList(frame)
-                if frame.token_list == token_list && frame.replay_kind == replay_kind
+                if frame.stored_ids().is_some_and(|(stored, _)| stored == token_list)
+                    && frame.replay_kind == replay_kind
         );
         if matches {
             let frame = self.discard_token_list_frame(frame_index);
@@ -3063,7 +3189,8 @@ impl InputStack {
             matches!(
                 frame,
                 InputFrame::TokenList(frame)
-                    if frame.token_list == token_list && frame.replay_kind == replay_kind
+                    if frame.stored_ids().is_some_and(|(stored, _)| stored == token_list)
+                        && frame.replay_kind == replay_kind
             )
         })
     }
@@ -3095,9 +3222,7 @@ impl InputStack {
             self.frames
                 .iter_indexed_from(marked_index)
                 .all(|(_, frame)| match frame {
-                    InputFrame::TokenList(frame) => {
-                        frame.index >= stores.tokens(frame.token_list).len()
-                    }
+                    InputFrame::TokenList(frame) => frame.index >= frame.len(stores),
                     InputFrame::Condition { .. } => true,
                     InputFrame::Source(_) => false,
                 });
@@ -3173,7 +3298,13 @@ impl InputStack {
         } else if let Ok(position) = self.token_frame_indices.binary_search(&index) {
             self.token_frame_indices.remove(position);
         }
-        self.frames.discard(index);
+        let InputFrame::TokenList(mut frame) = self.frames.remove(index) else {
+            unreachable!("validated token-list frame changed during removal")
+        };
+        if let ReplayPayload::Transient { tokens } = &mut frame.payload {
+            let tokens = std::mem::take(tokens);
+            self.recycle_transient_token_buffer(tokens);
+        }
         retirement
     }
 }
@@ -3182,8 +3313,7 @@ fn next_token_from_token_list_frame(
     frame: &mut TokenListInputFrame,
     stores: &impl ExpansionState,
 ) -> Option<TokenReplay> {
-    let tokens = stores.tokens(frame.token_list);
-    let token = tokens.get(frame.index).copied()?;
+    let token = frame.semantic_token_at(stores, frame.index)?;
     frame.index += 1;
 
     if frame.replay_kind == TokenListReplayKind::MacroBody
@@ -3207,8 +3337,7 @@ fn next_traced_token_from_token_list_frame(
 ) -> Option<TracedTokenReplay> {
     #[cfg(feature = "profiling-stats")]
     let frame_started = Instant::now();
-    let tokens = stores.tokens(frame.token_list);
-    let Some(token) = tokens.get(frame.index).copied() else {
+    let Some(token) = frame.semantic_token_at(stores, frame.index) else {
         #[cfg(feature = "profiling-stats")]
         if let Some(stats) = stats {
             add_elapsed(&mut stats.frame_step_nanos, frame_started);
@@ -3237,7 +3366,10 @@ fn next_traced_token_from_token_list_frame(
     }
     #[cfg(feature = "profiling-stats")]
     let provenance_started = Instant::now();
-    let origin = replay_origin(frame, stores, token);
+    let origin = match &frame.payload {
+        ReplayPayload::Stored { .. } => replay_origin(frame, stores, token),
+        ReplayPayload::Transient { tokens } => tokens[frame.index - 1].origin(),
+    };
     #[cfg(feature = "profiling-stats")]
     if let Some(stats) = stats {
         add_elapsed(&mut stats.provenance_nanos, provenance_started);
@@ -3256,7 +3388,10 @@ fn replay_origin(
     stores: &mut impl ExpansionState,
     token: Token,
 ) -> OriginId {
-    if frame.origin_list == OriginListId::EMPTY {
+    let (token_list, origin_list) = frame
+        .stored_ids()
+        .expect("stored replay origin requested for transient frame");
+    if origin_list == OriginListId::EMPTY {
         if frame.replay_kind == TokenListReplayKind::MacroBody {
             return OriginId::UNKNOWN;
         }
@@ -3268,11 +3403,11 @@ fn replay_origin(
         );
     }
 
-    let Some(origins) = stores.origin_list_if_live(frame.origin_list) else {
+    let Some(origins) = stores.origin_list_if_live(origin_list) else {
         return OriginId::UNKNOWN;
     };
     if frame.index == 1 {
-        let token_len = stores.tokens(frame.token_list).len();
+        let token_len = stores.tokens(token_list).len();
         assert_eq!(
             origins.len(),
             token_len,

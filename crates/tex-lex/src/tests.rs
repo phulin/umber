@@ -1546,6 +1546,88 @@ fn token_list_replay_uses_frame_origin_list_without_changing_semantic_identity()
 }
 
 #[test]
+fn transient_replay_preserves_inline_origins_and_summarizes_only_live_suffix() {
+    let mut stores = Universe::new();
+    let first = char_token('x', Catcode::Letter);
+    let second = char_token('y', Catcode::Letter);
+    let first_origin = stores.source_origin(tex_state::SourceId::new(1), 10, 2, 3);
+    let second_origin = stores.source_origin(tex_state::SourceId::new(1), 11, 2, 4);
+    let words = vec![
+        TracedTokenWord::pack(first, first_origin),
+        TracedTokenWord::pack(second, second_origin),
+    ];
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_transient_tokens(words, TokenListReplayKind::Inserted);
+
+    let replayed = input
+        .next_traced_token(&mut stores)
+        .expect("transient replay")
+        .expect("first token");
+    assert_eq!(replayed.unpack(), Some((first, first_origin)));
+
+    let summary = input.summary();
+    let Some(InputFrameSummary::TransientTokenList { tokens, .. }) = summary.frames().last() else {
+        panic!("expected transient replay summary");
+    };
+    assert_eq!(
+        tokens.as_ref(),
+        &[TracedTokenWord::pack(second, second_origin)]
+    );
+
+    let mut restored =
+        InputStack::from_summary(&summary, |_, _, _| Ok::<_, ()>(MemoryInput::new("")))
+            .expect("restore transient replay");
+    let replayed = restored
+        .next_traced_token(&mut stores)
+        .expect("restored transient replay")
+        .expect("remaining token");
+    assert_eq!(replayed.unpack(), Some((second, second_origin)));
+}
+
+#[test]
+fn transient_replay_buffers_return_to_pool_on_exhaustion_and_abort() {
+    let mut stores = Universe::new();
+    let token = char_token('x', Catcode::Letter);
+    let word = TracedTokenWord::pack(token, OriginId::UNKNOWN);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_transient_tokens(vec![word], TokenListReplayKind::Inserted);
+
+    assert_eq!(
+        input.next_token(&mut stores).expect("transient replay"),
+        Some(token)
+    );
+    assert_eq!(input.next_token(&mut stores).expect("retire replay"), None);
+    assert_eq!(input.transient_buffer_pool.len(), 1);
+    assert!(input.take_transient_token_buffer().is_empty());
+
+    let outer = input.push_transient_tokens(vec![word], TokenListReplayKind::Inserted);
+    input.push_transient_tokens(vec![word], TokenListReplayKind::NoExpand);
+    assert!(input.abort_token_list_replay(outer));
+    assert_eq!(input.transient_buffer_pool.len(), 2);
+}
+
+#[test]
+fn transient_replay_pool_drops_exceptionally_large_buffers() {
+    let mut stores = Universe::new();
+    let mut words = Vec::with_capacity(super::TRANSIENT_BUFFER_POOL_MAX_CAPACITY + 1);
+    words.push(TracedTokenWord::pack(
+        char_token('x', Catcode::Letter),
+        OriginId::UNKNOWN,
+    ));
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_transient_tokens(words, TokenListReplayKind::Inserted);
+
+    assert!(
+        input
+            .next_token(&mut stores)
+            .expect("transient replay")
+            .is_some()
+    );
+    assert_eq!(input.next_token(&mut stores).expect("retire replay"), None);
+    assert!(input.transient_buffer_pool.is_empty());
+}
+
+#[test]
 fn macro_body_frame_invocation_origin_does_not_affect_summary_equality() {
     let mut stores = Universe::new();
     let token = char_token('x', Catcode::Letter);
