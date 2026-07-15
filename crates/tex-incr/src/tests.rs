@@ -32,7 +32,7 @@ fn cold_history_contains_only_named_restartable_boundaries() {
 }
 
 #[test]
-fn live_retention_charges_line_index_built_after_acceptance() {
+fn live_retention_charges_query_caches_to_their_owners() {
     let text = "\\font\\tenrm=cmr10\\relax\\tenrm\\shipout\\hbox{A}\\end";
     let mut session = Session::start(template(), "retention-query", RevisionId::new(1), text, 0)
         .expect("session starts");
@@ -42,6 +42,7 @@ fn live_retention_charges_line_index_built_after_acceptance() {
     let accepted = session.cold().expect("cold execution succeeds");
     let before = session.retention_metrics().expect("accepted retention");
     assert_eq!(before, accepted.retention);
+    assert_eq!(session.render_maps.borrow().retained_bytes(), 0);
 
     let event = (0..32)
         .find(|&event| {
@@ -62,11 +63,15 @@ fn live_retention_charges_line_index_built_after_acceptance() {
     assert_eq!(session.page_lowerings(1), 1);
 
     let after = session.retention_metrics().expect("live retention");
-    let query_cache_bytes = after.diagnostic_bytes - before.diagnostic_bytes;
-    assert!(query_cache_bytes > 0);
+    let line_index_bytes = after.diagnostic_bytes - before.diagnostic_bytes;
+    let page_map_bytes = session.render_maps.borrow().retained_bytes();
+    assert!(line_index_bytes > 0);
+    assert!(page_map_bytes > 0);
+    assert_eq!(after.output_bytes - before.output_bytes, page_map_bytes);
     assert_eq!(
         after.protected_overage_bytes - before.protected_overage_bytes,
-        query_cache_bytes
+        line_index_bytes,
+        "only checkpoint-owned diagnostics count against the checkpoint budget"
     );
     assert_eq!(
         accepted.retention, before,

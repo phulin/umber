@@ -1,6 +1,6 @@
 # Rendered Source Map
 
-Status: phases 1-3 implemented. Accepted HTML is revision-stamped and the
+Status: phases 1-4 implemented. Accepted HTML is revision-stamped and the
 native `tex-incr`/`umber` query path uses a lazily built, session-cached
 per-page render source map with typed current, deleted, and stale-revision
 results. The WASM boundary exposes those typed results and the authored DOM
@@ -228,8 +228,12 @@ map layout must not preclude it (it does not).
 3. **umber-wasm + js (implemented):** extend the typed query result, add the authored
    `source-map.js` DOM helper and Node tests, extend the browser integration
    fixture with a click-to-source assertion.
-4. **Docs and budgets:** update `source_spans_and_provenance.md` §6.3,
+4. **Docs and budgets (implemented):** update `source_spans_and_provenance.md` §6.3,
    `provenance_performance.md` rendered-source follow-up, and
    `persistent_compile_sessions.md`; verify
    `scripts/check-snapshot-budgets.sh` still meets retained-allocation
-   budgets with the lazily built maps included in accounting.
+   budgets with the lazily built maps included in accounting. Live retention
+   tests charge the exact page-map capacities to `output_bytes`, independently
+   charge the lazy layout line index to `diagnostic_bytes`, and preserve the
+   point-in-time accepted metrics. The 2026-07-15 snapshot gate met every
+   latency and retained-allocation budget.

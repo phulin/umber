@@ -376,7 +376,14 @@ diagnostic:
 - Character origins are excluded from node semantic identity, state hashes,
   format images, artifact bytes, and artifact content identity. Shipout may
   retain an in-process artifact-node sidecar for an explicit diagnostic
-  consumer, and retained-output accounting must include that memory.
+  consumer, and retained-output accounting includes that memory. A rendered
+  source query may also lazily build a per-page event-prefix/origin map from
+  that sidecar. The map is accepted-output-owned operational state: live
+  session telemetry adds its retained vector capacities and page-slot table to
+  `output_bytes`, while the point-in-time metrics copied into the accepted
+  output remain unchanged. The layout line-start index built while resolving a
+  current origin is instead checkpoint-owned diagnostic state and is charged
+  to `diagnostic_bytes` and the protected checkpoint budget.
 
 Errors use a structured payload conceptually equivalent to:
 

@@ -76,9 +76,10 @@ stores, consume checkpoints, or prevent later patches.
 The retention values copied into an accepted output are a point-in-time
 snapshot taken during acceptance. The session's `retention_metrics()` getter,
 and therefore the WASM `retentionMetrics` property, is live: it preserves the
-accepted checkpoint/output totals but refreshes diagnostic bytes and protected
-budget overage so caches allocated by later rendered-source queries are
-included.
+accepted checkpoint and artifact-output bases, adds any later per-page render
+maps to `output_bytes`, and refreshes diagnostic bytes and protected budget
+overage for a later layout line index. The accepted output's copied metrics do
+not change.
 
 `dispose()` releases resources, accepted history, and output. No session
 method succeeds after disposal.
@@ -128,9 +129,12 @@ on demand.
 
 The first page query allocates its compact page map, and the first successful
 current-document query may allocate the accepted layout's line-start index.
-Both remain operational, diagnostic-only state: they do not affect semantic
+Both remain operational, query-only state: they do not affect semantic
 state, snapshot identity, or snapshot capture complexity, and live session
-retention telemetry charges them after the query.
+retention telemetry charges them after the query. Ownership determines the
+metric: the map is retained with accepted output and increases `output_bytes`;
+the line index belongs to the checkpoint layout and increases
+`diagnostic_bytes` plus protected checkpoint overage.
 
 Origin columns and artifact sidecars are excluded from semantic node hashes,
 artifact bytes, and artifact content identity. Reused committed pages retain

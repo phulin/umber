@@ -58,12 +58,14 @@ before the observation. Workload construction and the first state-hash capture
 occur outside the measured region. This isolates steady capture from initial
 semantic hashing and makes results stable across machines.
 
-Query-owned diagnostic caches are deliberately not constructed by snapshot
+Query-owned caches are deliberately not constructed by snapshot
 capture. In particular, an editor layout's line-start index remains lazy and
 nonsemantic, so the O(1) capture rows do not force it. The accepted-session
-retention budget is covered separately by live native/WASM telemetry tests:
-after a cold rendered-source query, diagnostic bytes and protected overage
-increase by the retained line-index allocation.
+retention budget is covered separately by live session telemetry tests. After
+a cold rendered-source query, `output_bytes` increases by the exact retained
+page-map allocation, while diagnostic bytes and protected overage increase only
+by the retained line-index allocation. Neither cache changes the point-in-time
+metrics copied into the accepted output.
 
 ## Budgets
 

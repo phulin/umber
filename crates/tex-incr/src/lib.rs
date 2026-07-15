@@ -311,11 +311,14 @@ impl Session {
     /// Returns live retention telemetry for the accepted session state.
     ///
     /// The accepted output keeps its point-in-time metrics, while this view
-    /// also charges diagnostic caches constructed by later source queries.
+    /// also charges caches constructed by later rendered-source queries.
     #[must_use]
     pub fn retention_metrics(&self) -> Option<RetentionMetrics> {
         self.accepted_retention.map(|mut retention| {
             retention.diagnostic_bytes = self.diagnostic_retained_bytes();
+            retention.output_bytes = retention
+                .output_bytes
+                .saturating_add(self.render_maps.borrow().retained_bytes());
             retention.protected_overage_bytes = retention
                 .checkpoint_root_bytes
                 .saturating_add(retention.diagnostic_bytes)
@@ -830,7 +833,6 @@ impl Session {
         self.fragments
             .retained_bytes()
             .saturating_add(self.layout.retained_bytes())
-            .saturating_add(self.render_maps.borrow().retained_bytes())
     }
 }
 

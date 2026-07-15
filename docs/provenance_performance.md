@@ -252,11 +252,23 @@ Shipout retains a separate origin sidecar only for accepted in-process page
 artifacts. Its logical payload is four bytes per renderable source character;
 retention metrics additionally charge the outer `Arc` address table. The
 source resolver and page positioning work run only when the host makes an
-explicit query. `scripts/check-snapshot-budgets.sh` continued to meet every
-snapshot and retained-allocation budget after this change, and the affected
-native, Firefox WASM, and optimized Chrome suites remained green. The existing
-source-token throughput matrix is unchanged because token delivery and
-provenance-arena allocation are unchanged.
+explicit query. The first query of a page retains only its compact event-prefix
+and origin vectors plus the cache's page-slot table; live retention telemetry
+charges those exact capacities to accepted `output_bytes`. A current-document
+resolution can independently build the layout line-start index, whose retained
+allocation remains in checkpoint-owned `diagnostic_bytes` and protected budget
+overage. The accepted output keeps the point-in-time values captured before
+either query cache exists.
+
+The native retention regression checks the cold-query split exactly: the page
+map's measured retained bytes equal the live `output_bytes` increase, while the
+protected overage changes only by the line-index diagnostic allocation. On
+2026-07-15, `scripts/check-snapshot-budgets.sh` continued to meet every snapshot
+latency and retained-allocation budget. Query caches remain absent from snapshot
+capture itself, so the gate stays a test of semantic root capture while the
+session regression proves lazy output accounting. The existing source-token
+throughput matrix is unchanged because token delivery and provenance-arena
+allocation are unchanged.
 
 ## Resolver and capacity decision
 
