@@ -9,7 +9,6 @@ texmf_dist="${UMBER_TEXMF_DIST:-/usr/local/texlive/2025/texmf-dist}"
 texmf_var="${UMBER_TEXMF_VAR:-}"
 reference_latex="${UMBER_REF_LATEX:-$(command -v latex || true)}"
 reference_kpsewhich="${UMBER_REF_KPSEWHICH:-$(command -v kpsewhich || true)}"
-reference_dvitype="${UMBER_REF_DVITYPE:-$(command -v dvitype || true)}"
 format_builder="${UMBER_LATEX_FORMAT_BUILDER:-${repo_root}/scripts/build-latex-format.sh}"
 format_file=""
 case_filter=""
@@ -219,8 +218,6 @@ fi
 [[ -x "$reference_latex" ]] || fail "missing reference LaTeX; set UMBER_REF_LATEX"
 [[ -x "$reference_kpsewhich" ]] || \
   fail "missing reference kpsewhich; set UMBER_REF_KPSEWHICH"
-[[ -x "$reference_dvitype" ]] || \
-  fail "missing reference DVItype; set UMBER_REF_DVITYPE"
 [[ "$case_timeout_seconds" =~ ^[1-9][0-9]*$ ]] || \
   fail "UMBER_LATEX_CASE_TIMEOUT_SECONDS must be a positive integer"
 command -v perl >/dev/null 2>&1 || fail "Perl is required for per-case timeouts"
@@ -317,7 +314,7 @@ run_one_case() {
     cd "$reference_dir"
     run_with_case_timeout env SOURCE_DATE_EPOCH="$source_date_epoch" FORCE_SOURCE_DATE=1 \
       TEXINPUTS="${local_inputs}:" \
-      "$reference_latex" -interaction=batchmode document.tex \
+      "$reference_latex" -recorder -interaction=batchmode document.tex \
         > document.stdout 2> document.stderr < /dev/null
   ) || reference_status=$?
   if [[ ! -f "${reference_dir}/document.dvi" ]]; then
@@ -329,26 +326,29 @@ run_one_case() {
       "$case_name" "$reference_status"
     return 2
   fi
+  if [[ ! -f "${reference_dir}/document.fls" ]]; then
+    case_error "$case_name" "reference recorder did not emit document.fls"
+    return 1
+  fi
 
-  # The reference engine may deterministically generate missing TFMs through
-  # mktexfmt while running this case. Discover their leaf directories after
-  # the reference run so Umber sees the same generated font metrics without
-  # requiring recursive kpathsea path syntax in its explicit host resolver.
+  # Include every TFM the reference job opened, even when that font never
+  # reaches the DVI. Missing one such load shifts TeX's later font numbers and
+  # breaks byte-exact output. Leaf directories keep Umber's explicit resolver
+  # equivalent without relying on recursive kpathsea path syntax.
   local case_texfonts="$texfonts"
-  local reference_font resolved_tfm resolved_dir
-  while IFS= read -r reference_font; do
-    resolved_tfm="$("$reference_kpsewhich" "${reference_font}.tfm" || true)"
-    if [[ ! -f "$resolved_tfm" ]]; then
-      case_error "$case_name" "could not resolve reference font ${reference_font}.tfm"
-      return 1
+  local recorded_tfm resolved_tfm resolved_dir
+  while IFS= read -r recorded_tfm; do
+    resolved_tfm="$recorded_tfm"
+    if [[ "$resolved_tfm" != /* ]]; then
+      resolved_tfm="${reference_dir}/${resolved_tfm}"
     fi
+    [[ -f "$resolved_tfm" ]] || continue
     resolved_dir="${resolved_tfm%/*}"
     if [[ ":${case_texfonts}:" != *":${resolved_dir}:"* ]]; then
       case_texfonts+=":${resolved_dir}"
     fi
   done < <(
-    "$reference_dvitype" -output-level=1 "${reference_dir}/document.dvi" 2>/dev/null |
-      sed -n 's/^[0-9][0-9]*: fntdef[1-4] [0-9][0-9]*: \(.*\)---loaded at size.*$/\1/p'
+    sed -n '/^INPUT .*\.tfm$/s/^INPUT //p' "${reference_dir}/document.fls"
   )
   if [[ -d "${texmf_var}/fonts/tfm" ]]; then
     local generated_tfm generated_dir
