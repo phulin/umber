@@ -2378,6 +2378,13 @@ impl Universe {
         self.pdf.append_thread_bead(identity)
     }
 
+    pub fn reserve_pdf_thread(
+        &mut self,
+        identity: crate::PdfDestinationIdentity,
+    ) -> Result<crate::PdfThreadRecord, PdfObjectCapacityError> {
+        self.pdf.reserve_thread(identity)
+    }
+
     #[must_use]
     pub fn pdf_threads(&self) -> &[crate::PdfThreadRecord] {
         self.pdf.threads()

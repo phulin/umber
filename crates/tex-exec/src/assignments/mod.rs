@@ -1140,6 +1140,15 @@ fn reserve_pdf_action_destinations(
     stores: &mut Universe,
     action: tex_state::PdfActionSpec,
 ) -> Result<(), ExecError> {
+    if let tex_state::PdfActionSpec::Thread(destination) = action
+        && destination.file.is_none()
+        && let tex_state::PdfActionTarget::Destination(identifier) = destination.target
+    {
+        stores
+            .reserve_pdf_thread(pdf_destination_identity(stores, identifier))
+            .map_err(|_| ExecError::PdfObjectCapacity)?;
+        return Ok(());
+    }
     let (destination, structure) = pdf_action_destination_identities(stores, action);
     if let Some(identity) = destination {
         stores

@@ -143,6 +143,7 @@ pub fn pdf_from_committed_artifacts_at_dpi(
         &mut next_object,
     )?;
     let thread_output = thread_objects(
+        stores.pdf_threads(),
         &positioned_pages,
         &page_records,
         parameters.decimal_digits,
@@ -1870,20 +1871,58 @@ struct ShippedBead {
 }
 
 fn thread_objects(
+    thread_records: &[tex_state::PdfThreadRecord],
     pages: &[PositionedPage],
-    records: &[tex_state::PdfPageRecord],
+    page_records: &[tex_state::PdfPageRecord],
     decimal_digits: i32,
     next_object: &mut u32,
 ) -> Result<ThreadOutput, PdfBuildError> {
     let mut beads = Vec::<ShippedBead>::new();
     let mut page_beads = vec![Vec::new(); pages.len()];
-    for (page_index, (page, record)) in pages.iter().zip(records).enumerate() {
+    for (page_index, (page, record)) in pages.iter().zip(page_records).enumerate() {
         let mut boxes = BTreeMap::<u32, PositionedBox>::new();
-        let mut running_bead = None;
+        let mut running_bead: Option<usize> = None;
+        let mut running_parent_depth = None;
         for event in &page.events {
             match event {
                 PositionedEvent::Box(positioned) => {
                     boxes.insert(positioned.id, *positioned);
+                    if running_parent_depth.is_some_and(|depth| positioned.depth == depth + 1)
+                        && positioned.kind == BoxKind::Vertical
+                        && let Some(previous) = running_bead
+                    {
+                        let bead = object_id(*next_object)?;
+                        *next_object = next_object
+                            .checked_add(1)
+                            .ok_or(PdfBuildError::ObjectCapacity)?;
+                        let rectangle = object_id(*next_object)?;
+                        *next_object = next_object
+                            .checked_add(1)
+                            .ok_or(PdfBuildError::ObjectCapacity)?;
+                        let source = beads[previous].clone();
+                        page_beads[page_index].push(bead);
+                        beads.push(ShippedBead {
+                            thread: source.thread,
+                            bead,
+                            rectangle,
+                            page: source.page,
+                            rect: marker_rect(
+                                positioned.x,
+                                positioned.baseline,
+                                *positioned,
+                                PdfAnnotationDimensions {
+                                    width: None,
+                                    height: None,
+                                    depth: None,
+                                },
+                                source.margin,
+                            )?,
+                            attributes: Vec::new(),
+                            title: source.title,
+                            margin: source.margin,
+                        });
+                        running_bead = Some(beads.len() - 1);
+                    }
                 }
                 PositionedEvent::PdfThread(positioned) => {
                     let marker = &positioned.marker;
@@ -1918,6 +1957,9 @@ fn thread_objects(
                         margin: marker.margin,
                     });
                     running_bead = positioned.running.then_some(beads.len() - 1);
+                    running_parent_depth = positioned
+                        .running
+                        .then(|| boxes[&positioned.containing_box].depth);
                 }
                 PositionedEvent::PdfEndThread { y, .. } => {
                     if let Some(index) = running_bead.take() {
@@ -1925,9 +1967,48 @@ fn thread_objects(
                             .checked_add(beads[index].margin)
                             .ok_or(PdfBuildError::PageGeometryOverflow)?;
                     }
+                    running_parent_depth = None;
                 }
                 _ => {}
             }
+        }
+    }
+    if let Some((page, page_record)) = pages.first().zip(page_records.first()) {
+        for thread in thread_records {
+            let thread_id = object_id(thread.object())?;
+            if beads.iter().any(|bead| bead.thread == thread_id) {
+                continue;
+            }
+            let bead = object_id(*next_object)?;
+            *next_object = next_object
+                .checked_add(1)
+                .ok_or(PdfBuildError::ObjectCapacity)?;
+            let rectangle = object_id(*next_object)?;
+            *next_object = next_object
+                .checked_add(1)
+                .ok_or(PdfBuildError::ObjectCapacity)?;
+            page_beads[0].push(bead);
+            let title = match thread.identity() {
+                tex_state::PdfDestinationIdentity::Name(name) => name.clone(),
+                tex_state::PdfDestinationIdentity::Number(number) => {
+                    number.to_string().into_bytes()
+                }
+            };
+            beads.push(ShippedBead {
+                thread: thread_id,
+                bead,
+                rectangle,
+                page: object_id(page_record.page_object())?,
+                rect: ShippedAnnotationRect {
+                    left: Scaled::from_raw(0),
+                    bottom: Scaled::from_raw(0),
+                    right: page.width,
+                    top: page.height,
+                },
+                attributes: Vec::new(),
+                title,
+                margin: Scaled::from_raw(0),
+            });
         }
     }
     if beads.is_empty() {
@@ -1985,7 +2066,7 @@ fn thread_objects(
                     rectangle: bead.rectangle,
                 }),
             });
-            let page_index = records
+            let page_index = page_records
                 .iter()
                 .position(|record| object_id(record.page_object()).ok() == Some(bead.page))
                 .expect("bead page belongs to page ledger");
@@ -2221,10 +2302,19 @@ fn detached_link_action(
             } else {
                 let identity = tex_state::PdfDestinationIdentity::Number(number);
                 PdfDestinationTarget::Reference(object_id(
-                    stores
-                        .pdf_destination(&identity, false)
-                        .expect("local numeric action reserves its destination")
-                        .object(),
+                    if kind == PdfDestinationActionKind::Thread {
+                        stores
+                            .pdf_threads()
+                            .iter()
+                            .find(|thread| thread.identity() == &identity)
+                            .expect("local numeric thread action reserves its thread")
+                            .object()
+                    } else {
+                        stores
+                            .pdf_destination(&identity, false)
+                            .expect("local numeric action reserves its destination")
+                            .object()
+                    },
                 )?)
             }
         }
@@ -7066,6 +7156,37 @@ mod tests {
                 PositionedError::UnmatchedPdfSaves { count: 1 }
             ))
         ));
+    }
+
+    #[test]
+    fn running_threads_add_vbox_beads_and_missing_actions_get_fixed_beads() {
+        let (mut stores, run) = run(concat!(
+            "\\pdfoutput=1\\pdfpagewidth=40pt\\pdfpageheight=40pt",
+            "\\pdfhorigin=0pt\\pdfvorigin=0pt",
+            "\\pdfoutline thread num 99 {Missing}",
+            "\\shipout\\vbox{\\pdfstartthread name{running}",
+            "\\vbox{\\hrule width3pt height2pt}",
+            "\\vbox{\\hrule width4pt height2pt}\\pdfendthread}\\end",
+        ));
+        let pdf = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
+            .expect("thread PDF assembles");
+        let text = String::from_utf8_lossy(&pdf);
+        assert!(text.contains("/Threads"));
+        let document = lopdf::Document::load_mem(&pdf).expect("thread PDF parses");
+        assert_eq!(
+            document
+                .objects
+                .values()
+                .filter_map(|object| object.as_dict().ok())
+                .filter(|dict| {
+                    dict.has(b"V") && dict.has(b"N") && dict.has(b"P") && dict.has(b"R")
+                })
+                .count(),
+            4
+        );
+        assert_eq!(stores.pdf_threads().len(), 2);
+        assert!(stores.pdf_threads()[0].beads().is_empty());
+        assert_eq!(stores.pdf_threads()[1].beads().len(), 1);
     }
 
     #[test]

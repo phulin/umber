@@ -906,6 +906,32 @@ mod tests {
     }
 
     #[test]
+    fn local_thread_actions_reserve_thread_objects_without_destination_aliases() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        crate::run_memory_with_stores(
+            concat!(
+                "\\pdfoutput=1",
+                "\\pdfoutline thread num 17 {Missing thread}",
+                "\\shipout\\hbox{}\\end",
+            ),
+            &mut stores,
+        )
+        .expect("thread action scans");
+        assert_eq!(stores.pdf_threads().len(), 1);
+        assert_eq!(
+            stores.pdf_threads()[0].identity(),
+            &tex_state::PdfDestinationIdentity::Number(17)
+        );
+        assert!(stores.pdf_threads()[0].beads().is_empty());
+        assert!(
+            stores
+                .pdf_destination(&tex_state::PdfDestinationIdentity::Number(17), false)
+                .is_none()
+        );
+    }
+
+    #[test]
     fn pdf_destination_duplicate_scanned_after_ship_uses_current_suppression() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);

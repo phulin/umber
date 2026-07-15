@@ -1342,6 +1342,25 @@ impl PdfState {
         Ok((threads[index].clone(), bead))
     }
 
+    pub(crate) fn reserve_thread(
+        &mut self,
+        identity: PdfDestinationIdentity,
+    ) -> Result<PdfThreadRecord, PdfObjectCapacityError> {
+        if let Some(thread) = self
+            .threads
+            .iter()
+            .find(|thread| thread.identity() == &identity)
+        {
+            return Ok(thread.clone());
+        }
+        let object = self.reserve_document_object()?;
+        let record = PdfThreadRecord::new(identity, object);
+        let threads = Arc::make_mut(&mut self.threads);
+        threads.push(record.clone());
+        self.thread_fingerprint = thread_fingerprint(threads);
+        Ok(record)
+    }
+
     pub(crate) fn threads(&self) -> &[PdfThreadRecord] {
         &self.threads
     }
