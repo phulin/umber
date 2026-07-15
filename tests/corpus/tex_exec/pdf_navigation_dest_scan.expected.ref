@@ -1,0 +1,10 @@
+success: false
+stdout:
+[0]
+! pdfTeX error (ext1): num identifier must be positive.
+!  ==> Fatal error occurred, no output PDF file produced!
+log:
+[0]
+! pdfTeX error (ext1): num identifier must be positive.
+
+!  ==> Fatal error occurred, no output PDF file produced!

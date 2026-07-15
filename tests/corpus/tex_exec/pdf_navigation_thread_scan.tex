@@ -1,0 +1,16 @@
+\catcode123=1 \catcode125=2
+\newlinechar=10
+\pdfoutput=1
+\def\threadattr{/I << /Title (expanded) >>}
+\shipout\vbox{
+  \pdfthread name{running-dimensions}
+  \pdfthread depth 1pt width 4pt height 2pt name{ordered}
+  \pdfthread width 1pt height 2pt width 5pt depth 3pt attr{\threadattr} num 17
+  \pdfstartthread height 2pt depth 1pt width 6pt name{started}
+  \vbox{\hrule width2pt height1pt}
+  \pdfendthread
+}
+\pdfthread num 0
+\pdfthread num 2147483648
+\pdfthread
+\end

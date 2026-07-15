@@ -1,0 +1,24 @@
+\catcode123=1 \catcode125=2
+\newlinechar=10
+\pdfoutput=1
+\setbox0=\vbox{
+  \pdfdest name{xyz-null} xyz
+  \pdfdest name{xyz-positive} xyz zoom 1250
+  \pdfdest name{xyz-zero} xyz zoom 0
+  \pdfdest name{xyz-negative} xyz zoom -250
+  \pdfdest num 1 fitbh
+  \pdfdest num 2 fitbv
+  \pdfdest num 3 fitb
+  \pdfdest num 4 fith
+  \pdfdest num 5 fitv
+  \pdfdest num 6 fitr width 4pt height 3pt depth 2pt
+  \pdfdest num 7 fitr
+  \pdfdest num 8 fit
+  \pdfdest struct 9 name{structure} fit
+}
+\shipout\box0
+\pdfdest num 0 fit
+\pdfdest num 2147483648 fit
+\pdfdest fit
+\pdfdest name{missing-kind}
+\end

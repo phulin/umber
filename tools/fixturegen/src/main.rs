@@ -222,6 +222,13 @@ fn regenerate_tex_exec_case(case: &str) -> Result<()> {
             | "pdf_compatibility_controls"
             | "pdf_move_chars_warning"
             | "pdf_ignored_dimen_effects"
+            | "pdf_navigation_dest_scan"
+            | "pdf_navigation_dest_lifecycle"
+            | "pdf_navigation_outline_scan"
+            | "pdf_navigation_outline_tree"
+            | "pdf_navigation_thread_scan"
+            | "pdf_navigation_thread_lifecycle"
+            | "pdf_navigation_thread_graph"
     ) {
         opts.ini = true;
     }

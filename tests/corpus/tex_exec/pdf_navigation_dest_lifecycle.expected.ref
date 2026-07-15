@@ -1,0 +1,21 @@
+success: true
+stdout:
+[0
+pdfTeX warning (ext4): destination with the same identifier (name{pre}) has bee
+n already used, duplicate ignored
+pdfTeX warning (dest): name{missing-regular} has been referenced but does not e
+xist, replaced by a fixed one
+
+pdfTeX warning (structure dest): name{missing-structure} has been referenced bu
+t does not exist
+
+log:
+[0
+pdfTeX warning (ext4): destination with the same identifier (name{pre}) has bee
+n already used, duplicate ignored
+pdfTeX warning (dest): name{missing-regular} has been referenced but does not e
+xist, replaced by a fixed one
+
+pdfTeX warning (structure dest): name{missing-structure} has been referenced bu
+t does not exist
+

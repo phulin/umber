@@ -95,7 +95,8 @@ box-register behavior. The `pdf_output_policy`, `pdf_image_config`,
 pinned pdfTeX in INITEX mode so PDF parameter defaults, grouping, first-write
 recovery, font diagnostics, and effective microtype nodes do not inherit
 format-file assignments; their fixtures anchor the corresponding Umber policy
-tests.
+tests. The seven `pdf_navigation_*` cases pin destination, outline, and
+article-thread scanner and lifecycle observations in that same INITEX mode.
 
 `tests/corpus/tex_exec_io` contains small file-effect and DVI special-payload
 sources plus reference observations used by `tex-exec` I/O and shipout tests.
@@ -144,6 +145,9 @@ The `form_xobjects` case pins nested Form XObject dictionaries and decoded
 streams, attributes/resources, h/v/math placement, reuse, saved positions and
 form-local snapping. Its exact-byte and retained-session replay gates consume
 the same committed source.
+The `navigation_structures` case pins the composed multipage destination name
+tree, outline hierarchy, thread/bead graph, deterministic bytes, and unchanged
+page pixels.
 
 `tests/corpus/e2e` receives gitignored final-DVI oracles for Story, Gentle,
 TRIP, and e-TRIP. Their Cargo integration tests run Umber directly in process

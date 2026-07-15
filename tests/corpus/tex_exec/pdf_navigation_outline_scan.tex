@@ -1,0 +1,15 @@
+\catcode123=1 \catcode125=2
+\newlinechar=10
+\pdfoutput=1
+\message{last-before=\the\pdflastobj}
+\pdfoutline user{/S /URI /URI (https://example.invalid)}{User}
+\pdfoutline goto page 1 {/Fit} count 0 {Page}
+\pdfoutline goto name{later} count 2 {Open}
+\pdfoutline goto num 7 count -1 {Closed}
+\pdfoutline goto file{remote.pdf} page 2 {/FitH 0} newwindow {Remote}
+\pdfoutline thread name{article}{Thread}
+\pdfoutline attr{/C [1 0 0] /F 2} goto name{later}{(literal title)}
+\pdfoutline goto name{later}{<4142>}
+\message{last-after=\the\pdflastobj}
+\shipout\hbox{\pdfdest name{later} fit\pdfdest num 7 fit}
+\end

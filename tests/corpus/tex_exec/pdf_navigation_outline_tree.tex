@@ -1,0 +1,13 @@
+\catcode123=1 \catcode125=2
+\newlinechar=10
+\pdfoutput=1
+\pdfoutline goto name{forward} count 3 {Root open}
+\pdfoutline goto page 1 {/Fit} count -2 {Closed branch}
+\pdfoutline goto page 1 {/Fit} {Closed child one}
+\pdfoutline goto page 2 {/Fit} {Closed child two}
+\pdfoutline goto num 31 {Open child two}
+\pdfoutline goto page 2 {/Fit} {Open child three}
+\pdfoutline goto page 1 {/Fit} {Second root}
+\shipout\hbox{\pdfdest name{forward} fit\pdfdest num 31 fit}
+\shipout\hbox{}
+\end

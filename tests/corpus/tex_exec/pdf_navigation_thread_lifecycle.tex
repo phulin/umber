@@ -1,0 +1,13 @@
+\catcode123=1 \catcode125=2
+\newlinechar=10
+\pdfoutput=1
+\pdfthreadmargin=-1pt
+\shipout\hbox{\pdfthread width4pt height2pt depth1pt name{one-shot-h}}
+\pdfthreadmargin=0pt
+\shipout\vbox{\pdfthread name{one-shot-v}\pdfstartthread name{running}\vbox{}\vbox{}\pdfendthread}
+\pdfthreadmargin=1pt
+\shipout\hbox{\pdfstartthread name{bad-start}\pdfendthread}
+\shipout\vbox{\pdfstartthread name{misnested}\vbox{\pdfendthread}}
+\shipout\vbox{\pdfstartthread name{page-reset}}
+\shipout\vbox{\pdfendthread}
+\end

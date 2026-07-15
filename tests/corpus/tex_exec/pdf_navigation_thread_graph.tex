@@ -1,0 +1,14 @@
+\catcode123=1 \catcode125=2
+\newlinechar=10
+\pdfoutput=1
+\pdfpagewidth=40pt \pdfpageheight=40pt
+\pdfoutline thread name{missing}{Missing thread action}
+\shipout\vbox{
+  \pdfthread name{single}
+  \pdfthread attr{/I << /Title (first) >>} name{many}
+  \pdfthread name{many}
+  \pdfthread attr{/I << /Title (last) >>} name{many}
+  \pdfthread num 23
+}
+\shipout\vbox{\pdfthread name{many}}
+\end

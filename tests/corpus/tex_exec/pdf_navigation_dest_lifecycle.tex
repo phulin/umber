@@ -1,0 +1,16 @@
+\catcode123=1 \catcode125=2
+\newlinechar=10
+\pdfoutput=1
+\pdfpagewidth=40pt \pdfpageheight=40pt
+\pdfhorigin=0pt \pdfvorigin=0pt
+\pdfdestmargin=1pt
+\setbox0=\hbox{\pdfdest name{pre} fitr\pdfdest name{pre} fitr}
+\pdfsuppresswarningdupdest=-1
+\shipout\box0
+\pdfsuppresswarningdupdest=1
+\setbox0=\hbox{\pdfdest name{pre} fit}
+\pdfsuppresswarningdupdest=0
+\shipout\vbox{\pdfdest name{page-two} xyz\leaders\hbox{\pdfdest name{leader} fit}\vskip4pt}
+\pdfoutline goto name{missing-regular}{missing regular}
+\pdfoutline goto struct name{missing-structure} name{page-two}{missing structure}
+\end
