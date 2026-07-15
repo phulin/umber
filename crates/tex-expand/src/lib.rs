@@ -290,6 +290,14 @@ pub fn install_pdftex_expandable_primitives(stores: &mut Universe) {
             tex_state::meaning::ExpandablePrimitive::PdfFontSize,
         ),
         (
+            "pdffontname",
+            tex_state::meaning::ExpandablePrimitive::PdfFontName,
+        ),
+        (
+            "pdffontobjnum",
+            tex_state::meaning::ExpandablePrimitive::PdfFontObjectNumber,
+        ),
+        (
             "leftmarginkern",
             tex_state::meaning::ExpandablePrimitive::LeftMarginKern,
         ),
@@ -493,6 +501,8 @@ pub enum ExpandableOpcode {
     ETeXRevision,
     PdfTeXRevision,
     PdfTeXBanner,
+    PdfFontName,
+    PdfFontObjectNumber,
     IfDefined,
     IfCsName,
     IfInCsName,
@@ -639,6 +649,12 @@ pub enum ExpandError {
     MarginKernExpectedHBox {
         context: TracedTokenWord,
     },
+    PdfInvalidFontIdentifier {
+        context: TracedTokenWord,
+    },
+    PdfObjectCapacity {
+        context: TracedTokenWord,
+    },
     InvalidConditionalRelation {
         context: TracedTokenWord,
     },
@@ -713,6 +729,12 @@ impl fmt::Display for ExpandError {
             Self::MarginKernExpectedHBox { .. } => {
                 f.write_str("pdfTeX error (marginkern): a non-empty hbox expected")
             }
+            Self::PdfInvalidFontIdentifier { .. } => {
+                f.write_str("pdfTeX error (font): invalid font identifier.")
+            }
+            Self::PdfObjectCapacity { .. } => {
+                f.write_str("pdfTeX error (font): too many PDF objects.")
+            }
             Self::InvalidConditionalRelation { context } => {
                 write!(
                     f,
@@ -759,6 +781,8 @@ impl std::error::Error for ExpandError {
             | Self::MathFamilyOutOfRange { .. }
             | Self::FontDimenOutOfRange { .. }
             | Self::MarginKernExpectedHBox { .. }
+            | Self::PdfInvalidFontIdentifier { .. }
+            | Self::PdfObjectCapacity { .. }
             | Self::InvalidConditionalRelation { .. }
             | Self::IncompleteIf { .. }
             | Self::ExtraConditionalControl { .. }
@@ -790,6 +814,8 @@ impl ExpandError {
             | Self::MathFamilyOutOfRange { context, .. }
             | Self::FontDimenOutOfRange { context, .. }
             | Self::MarginKernExpectedHBox { context }
+            | Self::PdfInvalidFontIdentifier { context }
+            | Self::PdfObjectCapacity { context }
             | Self::InvalidConditionalRelation { context }
             | Self::IncompleteIf { context } => Some(context.origin()),
             Self::ScanInt(err) => err.primary_origin(),

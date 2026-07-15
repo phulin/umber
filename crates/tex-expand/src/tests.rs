@@ -22,6 +22,79 @@ use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, InputReadState, Universe};
 
+fn pdf_test_font(name: &str, content_hash: [u8; 32], size: i32) -> tex_state::font::LoadedFont {
+    tex_state::font::LoadedFont::new(
+        name,
+        name,
+        content_hash,
+        0,
+        Scaled::from_raw(655_360),
+        Scaled::from_raw(size),
+        vec![Scaled::from_raw(0); 7],
+        tex_state::font::FontMetrics::default(),
+    )
+}
+
+#[test]
+fn pdf_font_enquiries_share_stable_resource_and_object_identities() {
+    let mut stores = Universe::new();
+    stores.enable_pdf_output();
+    crate::install_pdftex_expandable_primitives(&mut stores);
+    let a = stores.intern("a");
+    let b = stores.intern("b");
+    let c = stores.intern("c");
+    let font_a = stores.intern_font_with_identifier(pdf_test_font("cmr10", [1; 32], 655_360), a);
+    let font_b = stores.intern_font_with_identifier(pdf_test_font("cmr10", [1; 32], 786_432), b);
+    let font_c = stores.intern_font_with_identifier(pdf_test_font("cmtt10", [2; 32], 655_360), c);
+    stores.set_meaning(a, Meaning::Font(font_a));
+    stores.set_meaning(b, Meaning::Font(font_b));
+    stores.set_meaning(c, Meaning::Font(font_c));
+
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\pdffontname\\a\\pdffontobjnum\\a\\pdffontname\\b\\pdffontobjnum\\b\\pdffontname\\c\\pdffontobjnum\\c",
+    ));
+    let mut output = String::new();
+    while let Some(token) = crate::get_x_token(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    )
+    .expect("font enquiry expansion")
+    {
+        let Token::Char { ch, cat } = crate::semantic_token(token) else {
+            panic!("non-character enquiry output")
+        };
+        assert_eq!(cat, Catcode::Other);
+        output.push(ch);
+    }
+    assert_eq!(output, "131334");
+    assert_eq!(stores.pdf_next_object_id(), 5);
+    assert_eq!(
+        stores
+            .pdf_font_resources()
+            .map(|record| (record.resource_number(), record.object_number()))
+            .collect::<Vec<_>>(),
+        vec![(1, 3), (3, 4)]
+    );
+}
+
+#[test]
+fn pdf_font_enquiries_reject_nullfont() {
+    let mut stores = Universe::new();
+    crate::install_pdftex_expandable_primitives(&mut stores);
+    let nullfont = stores.intern("nullfont");
+    stores.set_meaning(nullfont, Meaning::Font(tex_state::font::NULL_FONT));
+    let mut input = InputStack::new(MemoryInput::new("\\pdffontobjnum\\nullfont"));
+    let error = crate::get_x_token(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    )
+    .expect_err("nullfont must be rejected");
+    assert_eq!(
+        error.to_string(),
+        "pdfTeX error (font): invalid font identifier."
+    );
+}
+
 #[cfg(feature = "profiling-stats")]
 #[test]
 fn macro_site_meaning_cache_is_expansion_owned_and_guarded() {

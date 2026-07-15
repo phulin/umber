@@ -399,6 +399,34 @@ macro_rules! dispatch_match {
                 ))
             }
             Meaning::ExpandablePrimitive(
+                primitive @ (ExpandablePrimitive::PdfFontName
+                | ExpandablePrimitive::PdfFontObjectNumber),
+            ) => {
+                let font = scan_font_selector(input, stores, expansion, mode, call_context)?;
+                if font == tex_state::font::NULL_FONT {
+                    return Err(ExpandError::PdfInvalidFontIdentifier { context: call_context });
+                }
+                crate::record_dependency!(expansion, crate::ReadDependency::Font {
+                    field: crate::ReadFontField::Metrics,
+                    font: font.raw(),
+                    index: 0,
+                });
+                let record = stores
+                    .ensure_pdf_font_resource(font)
+                    .map_err(|_| ExpandError::PdfObjectCapacity { context: call_context })?;
+                let number = match primitive {
+                    ExpandablePrimitive::PdfFontName => record.resource_number(),
+                    ExpandablePrimitive::PdfFontObjectNumber => record.object_number(),
+                    _ => unreachable!(),
+                };
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::NumberOutput,
+                    &number.to_string(),
+                    call_origin,
+                ))
+            }
+            Meaning::ExpandablePrimitive(
                 primitive @ (ExpandablePrimitive::LeftMarginKern
                 | ExpandablePrimitive::RightMarginKern),
             ) => {
@@ -1265,6 +1293,8 @@ pub fn dispatch_expandable_opcode(opcode: ExpandableOpcode) -> Result<(), Expand
         | ExpandableOpcode::ETeXRevision
         | ExpandableOpcode::PdfTeXRevision
         | ExpandableOpcode::PdfTeXBanner
+        | ExpandableOpcode::PdfFontName
+        | ExpandableOpcode::PdfFontObjectNumber
         | ExpandableOpcode::IfDefined
         | ExpandableOpcode::IfCsName
         | ExpandableOpcode::IfInCsName

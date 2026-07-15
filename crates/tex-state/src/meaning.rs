@@ -235,6 +235,8 @@ pub enum ExpandablePrimitive {
     PdfFontSize,
     LeftMarginKern,
     RightMarginKern,
+    PdfFontName,
+    PdfFontObjectNumber,
 }
 
 impl ExpandablePrimitive {
@@ -305,6 +307,8 @@ impl ExpandablePrimitive {
             Self::PdfFontSize => 61,
             Self::LeftMarginKern => 62,
             Self::RightMarginKern => 63,
+            Self::PdfFontName => 64,
+            Self::PdfFontObjectNumber => 65,
         }
     }
 
@@ -375,6 +379,8 @@ impl ExpandablePrimitive {
             61 => Some(Self::PdfFontSize),
             62 => Some(Self::LeftMarginKern),
             63 => Some(Self::RightMarginKern),
+            64 => Some(Self::PdfFontName),
+            65 => Some(Self::PdfFontObjectNumber),
             _ => None,
         }
     }

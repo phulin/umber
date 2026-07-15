@@ -98,6 +98,14 @@ pub(super) fn stage_shipout(
         Some(overlay.effects.len()),
         "normalization and emission must anchor identical effects"
     );
+    for resource in &emission.fonts {
+        let font = stores
+            .font_by_source_identity(resource.semantic_identity)
+            .expect("emitted font resource remains live through shipout");
+        stores
+            .ensure_pdf_font_resource(font)
+            .map_err(|_| ExecError::ArithmeticOverflow)?;
+    }
     let artifact_bytes = encoder
         .finish(&emission.fonts, &overlay.effects)
         .map_err(invalid_artifact)?;

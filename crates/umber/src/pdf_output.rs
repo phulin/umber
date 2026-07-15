@@ -35,6 +35,7 @@ pub fn pdf_from_committed_artifacts(
     let mut next_object = stores.pdf_next_object_id();
     let mut objects = Vec::with_capacity(2 + page_records.len() * 3 + usize::from(emit_info));
     let mut kids = Vec::with_capacity(page_records.len());
+    let mut emitted_fonts = std::collections::BTreeSet::new();
 
     let mut catalog = PdfDictionary::new();
     catalog.insert("Type", PdfValue::Name("Catalog".into()))?;
@@ -75,25 +76,41 @@ pub fn pdf_from_committed_artifacts(
                         .iter()
                         .find(|font| font.font_id == run.font_id)
                         .ok_or(PdfBuildError::MissingPositionedFont(run.font_id))?;
-                    let resource_name = format!("F{}", run.font_id + 1).into_bytes();
-                    let font_id = match page_fonts.get(&run.font_id).copied() {
+                    let live_font = stores
+                        .font_by_source_identity(font.semantic_identity)
+                        .ok_or(PdfBuildError::MissingLiveFont(font.name.clone()))?;
+                    let resource = stores
+                        .pdf_font_resource(live_font)
+                        .ok_or(PdfBuildError::MissingFontResource(font.name.clone()))?;
+                    let resource_name = format!("F{}", resource.resource_number()).into_bytes();
+                    let font_id = match page_fonts.get(&resource.resource_number()).copied() {
                         Some(id) => id,
                         None => {
-                            let id = object_id(next_object)?;
-                            next_object = next_object
-                                .checked_add(3)
-                                .ok_or(PdfBuildError::InvalidObjectId(u32::MAX))?;
-                            page_fonts.insert(run.font_id, id);
-                            objects.extend(pdf_type1_font_objects(
-                                stores,
-                                id,
-                                font,
-                                &resource_name,
-                            )?);
+                            let id = object_id(resource.object_number())?;
+                            page_fonts.insert(resource.resource_number(), id);
+                            if emitted_fonts.insert(resource.object_number()) {
+                                let descriptor_id = object_id(next_object)?;
+                                let program_id = object_id(
+                                    next_object
+                                        .checked_add(1)
+                                        .ok_or(PdfBuildError::InvalidObjectId(u32::MAX))?,
+                                )?;
+                                next_object = next_object
+                                    .checked_add(2)
+                                    .ok_or(PdfBuildError::InvalidObjectId(u32::MAX))?;
+                                objects.extend(pdf_type1_font_objects(
+                                    stores,
+                                    id,
+                                    descriptor_id,
+                                    program_id,
+                                    font,
+                                    &resource_name,
+                                )?);
+                            }
                             id
                         }
                     };
-                    debug_assert_eq!(page_fonts.get(&run.font_id), Some(&font_id));
+                    debug_assert_eq!(page_fonts.get(&resource.resource_number()), Some(&font_id));
                     let bytes = run
                         .units
                         .iter()
@@ -142,9 +159,9 @@ pub fn pdf_from_committed_artifacts(
         }
         if !page_fonts.is_empty() {
             let mut fonts = PdfDictionary::new();
-            for (font_id, object) in page_fonts {
+            for (resource_number, object) in page_fonts {
                 fonts.insert(
-                    format!("F{}", font_id + 1).as_str(),
+                    format!("F{resource_number}").as_str(),
                     PdfValue::Reference(object),
                 )?;
             }
@@ -215,6 +232,8 @@ pub fn pdf_from_committed_artifacts(
 fn pdf_type1_font_objects(
     stores: &Universe,
     id: PdfObjectId,
+    descriptor_id: PdfObjectId,
+    program_id: PdfObjectId,
     font: &tex_out::FontResource,
     resource_name: &[u8],
 ) -> Result<Vec<PdfIndirectObject>, PdfBuildError> {
@@ -229,16 +248,6 @@ fn pdf_type1_font_objects(
     let program = stores
         .pdf_type1_program(program_name)
         .ok_or_else(|| PdfBuildError::MissingFontProgram(program_name.to_vec()))?;
-    let descriptor_id = object_id(
-        id.get()
-            .checked_add(1)
-            .ok_or(PdfBuildError::InvalidObjectId(u32::MAX))?,
-    )?;
-    let program_id = object_id(
-        id.get()
-            .checked_add(2)
-            .ok_or(PdfBuildError::InvalidObjectId(u32::MAX))?,
-    )?;
     let base_font = mapped
         .as_ref()
         .and_then(|entry| entry.postscript_name.as_deref())
@@ -520,6 +529,7 @@ pub enum PdfBuildError {
     TextRequiresFontResources,
     MissingPositionedFont(u32),
     MissingFontProgram(Vec<u8>),
+    MissingFontResource(String),
     MissingLiveFont(String),
     UnsupportedSpecial(String),
     World(WorldError),
@@ -560,6 +570,9 @@ impl std::fmt::Display for PdfBuildError {
                 "PDF font program resource {:?} was not supplied",
                 String::from_utf8_lossy(name)
             ),
+            Self::MissingFontResource(name) => {
+                write!(f, "PDF font {name:?} has no checkpointed resource identity")
+            }
             Self::MissingLiveFont(name) => {
                 write!(f, "PDF artifact font {name:?} has no live metric source")
             }

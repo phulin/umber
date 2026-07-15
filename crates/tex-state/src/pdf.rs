@@ -15,6 +15,43 @@ const FIRST_DYNAMIC_OBJECT: u32 = 3;
 const OBJECTS_PER_PAGE: u32 = 3;
 const MAX_OBJECT_ID: u32 = i32::MAX as u32;
 
+/// The PDF object ledger cannot reserve another indirect object.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PdfObjectCapacityError;
+
+impl std::fmt::Display for PdfObjectCapacityError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PDF object number exceeds 2147483647")
+    }
+}
+
+impl std::error::Error for PdfObjectCapacityError {}
+
+/// Stable page resource and indirect-object identities for one PDF font.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct PdfFontResourceRecord {
+    font: FontId,
+    resource_number: u32,
+    object_number: u32,
+    tfm_content_hash: [u8; 32],
+    program_identity: Option<[u8; 32]>,
+}
+
+impl PdfFontResourceRecord {
+    #[must_use]
+    pub const fn font(self) -> FontId {
+        self.font
+    }
+    #[must_use]
+    pub const fn resource_number(self) -> u32 {
+        self.resource_number
+    }
+    #[must_use]
+    pub const fn object_number(self) -> u32 {
+        self.object_number
+    }
+}
+
 /// A host-neutral font-map mutation recorded by a pdfTeX action primitive.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PdfFontMapOperation {
@@ -274,6 +311,7 @@ pub(crate) struct PdfStateCursor {
     output_parameters: Option<PdfOutputParameters>,
     pk_mode: Option<PdfTokenParameter>,
     font_operation_count: usize,
+    font_resource_count: usize,
     fingerprint: u64,
 }
 
@@ -289,6 +327,7 @@ pub(crate) struct PdfState {
     output_parameters: Option<PdfOutputParameters>,
     pk_mode: Option<PdfTokenParameter>,
     font_operations: Vec<PdfFontOperation>,
+    font_resources: Vec<PdfFontResourceRecord>,
     fingerprint: u64,
 }
 
@@ -301,6 +340,7 @@ impl Default for PdfState {
             output_parameters: None,
             pk_mode: None,
             font_operations: Vec::new(),
+            font_resources: Vec::new(),
             fingerprint: base_fingerprint(false),
         }
     }
@@ -336,6 +376,7 @@ impl PdfState {
             && self.output_parameters.is_none()
             && self.pk_mode.is_none()
             && self.font_operations.is_empty()
+            && self.font_resources.is_empty()
     }
 
     pub(crate) fn ensure_page_capacity(&self, parameters: PdfOutputParameters) -> Result<(), ()> {
@@ -422,6 +463,65 @@ impl PdfState {
             logical_name,
             program,
         });
+    }
+
+    pub(crate) fn ensure_font_resource(
+        &mut self,
+        font: FontId,
+        tfm_content_hash: [u8; 32],
+        program_identity: Option<[u8; 32]>,
+    ) -> Result<PdfFontResourceRecord, PdfObjectCapacityError> {
+        if let Some(record) = self
+            .font_resources
+            .iter()
+            .copied()
+            .find(|record| record.font == font)
+        {
+            return Ok(record);
+        }
+        if let Some(record) = self.font_resources.iter().copied().find(|record| {
+            record.tfm_content_hash == tfm_content_hash
+                && record.program_identity == program_identity
+        }) {
+            let alias = PdfFontResourceRecord { font, ..record };
+            self.font_resources.push(alias);
+            self.fingerprint = append_font_resource_fingerprint(self.fingerprint, alias);
+            return Ok(alias);
+        }
+        if self.next_object > MAX_OBJECT_ID {
+            return Err(PdfObjectCapacityError);
+        }
+        let record = PdfFontResourceRecord {
+            font,
+            resource_number: font.raw(),
+            object_number: self.next_object,
+            tfm_content_hash,
+            program_identity,
+        };
+        self.next_object += 1;
+        self.font_resources.push(record);
+        self.fingerprint = append_font_resource_fingerprint(self.fingerprint, record);
+        Ok(record)
+    }
+
+    pub(crate) fn font_resource(&self, font: FontId) -> Option<PdfFontResourceRecord> {
+        self.font_resources
+            .iter()
+            .copied()
+            .find(|record| record.font == font)
+    }
+
+    pub(crate) fn font_resources(&self) -> impl Iterator<Item = PdfFontResourceRecord> + '_ {
+        self.font_resources
+            .iter()
+            .copied()
+            .enumerate()
+            .filter_map(|(index, record)| {
+                (!self.font_resources[..index]
+                    .iter()
+                    .any(|prior| prior.object_number == record.object_number))
+                .then_some(record)
+            })
     }
 
     #[must_use]
@@ -538,6 +638,7 @@ impl PdfState {
             output_parameters: self.output_parameters,
             pk_mode: self.pk_mode,
             font_operation_count: self.font_operations.len(),
+            font_resource_count: self.font_resources.len(),
             fingerprint: self.fingerprint,
         }
     }
@@ -558,6 +659,7 @@ impl PdfState {
         self.output_parameters = cursor.output_parameters;
         self.pk_mode = cursor.pk_mode;
         self.font_operations.truncate(cursor.font_operation_count);
+        self.font_resources.truncate(cursor.font_resource_count);
         self.fingerprint = cursor.fingerprint;
     }
 
@@ -570,9 +672,25 @@ impl PdfState {
             hasher.usize(cursor.page_count);
             hash_output_parameters(hasher, cursor.output_parameters);
             hasher.usize(cursor.font_operation_count);
+            hasher.usize(cursor.font_resource_count);
             hasher.u64(cursor.fingerprint);
         })
     }
+}
+
+fn append_font_resource_fingerprint(previous: u64, record: PdfFontResourceRecord) -> u64 {
+    let mut hasher = StateHasher::new(PDF_FONT_DOMAIN);
+    hasher.u64(previous);
+    hasher.tag(5);
+    hasher.u32(record.font.raw());
+    hasher.u32(record.resource_number);
+    hasher.u32(record.object_number);
+    hasher.bytes(&record.tfm_content_hash);
+    hasher.bool(record.program_identity.is_some());
+    if let Some(identity) = record.program_identity {
+        hasher.bytes(&identity);
+    }
+    hasher.finish()
 }
 
 fn append_font_fingerprint(previous: u64, operation: &PdfFontOperation) -> u64 {

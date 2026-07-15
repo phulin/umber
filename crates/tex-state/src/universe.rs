@@ -33,8 +33,8 @@ use crate::page::{
     PageInsertion, PageInteger, PageMark, PageStateHashCursor,
 };
 use crate::pdf::{
-    PdfOutputParameters, PdfPageParameters, PdfState, PdfStateCursor, PdfStateSnapshot,
-    PdfTokenParameter,
+    PdfFontResourceRecord, PdfObjectCapacityError, PdfOutputParameters, PdfPageParameters,
+    PdfState, PdfStateCursor, PdfStateSnapshot, PdfTokenParameter,
 };
 use crate::provenance::ProvenanceStats;
 use crate::provenance::{
@@ -153,6 +153,10 @@ pub trait ExpansionState {
     fn font_skew_char(&self, font: FontId) -> i32;
     fn pdf_font_code(&self, table: crate::font::PdfFontCode, font: FontId, code: u8) -> i32;
     fn current_font(&self) -> FontId;
+    fn ensure_pdf_font_resource(
+        &mut self,
+        font: FontId,
+    ) -> Result<PdfFontResourceRecord, PdfObjectCapacityError>;
     fn current_font_symbol(&self) -> Option<Symbol>;
     fn math_family_font(&self, size: MathFontSize, family: u8) -> FontId;
     fn nodes(&self, id: NodeListId) -> NodeList<'_>;
@@ -1786,6 +1790,30 @@ impl Universe {
     #[must_use]
     pub fn pdf_type1_program(&self, logical_name: &[u8]) -> Option<&tex_fonts::PdfType1Program> {
         self.pdf.type1_program(logical_name)
+    }
+
+    /// Lazily reserves the page-resource name and font-dictionary object used
+    /// by enquiries and by the first shipped page containing this font.
+    pub fn ensure_pdf_font_resource(
+        &mut self,
+        font: FontId,
+    ) -> Result<PdfFontResourceRecord, PdfObjectCapacityError> {
+        let loaded = self.font(font);
+        let tfm_content_hash = loaded.content_hash();
+        let program_identity = loaded
+            .opentype()
+            .map(|selection| selection.program_identity.bytes());
+        self.pdf
+            .ensure_font_resource(font, tfm_content_hash, program_identity)
+    }
+
+    #[must_use]
+    pub fn pdf_font_resource(&self, font: FontId) -> Option<PdfFontResourceRecord> {
+        self.pdf.font_resource(font)
+    }
+
+    pub fn pdf_font_resources(&self) -> impl Iterator<Item = PdfFontResourceRecord> + '_ {
+        self.pdf.font_resources()
     }
 
     fn current_pdf_output_parameters(&self) -> PdfOutputParameters {
@@ -3770,6 +3798,13 @@ impl ExpansionState for Universe {
         Self::current_font(self)
     }
 
+    fn ensure_pdf_font_resource(
+        &mut self,
+        font: FontId,
+    ) -> Result<PdfFontResourceRecord, PdfObjectCapacityError> {
+        Self::ensure_pdf_font_resource(self, font)
+    }
+
     fn current_font_symbol(&self) -> Option<Symbol> {
         Self::current_font_symbol(self).map(SymbolId::symbol)
     }
@@ -4172,6 +4207,13 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn current_font(&self) -> FontId {
         self.universe.current_font()
+    }
+
+    fn ensure_pdf_font_resource(
+        &mut self,
+        font: FontId,
+    ) -> Result<PdfFontResourceRecord, PdfObjectCapacityError> {
+        self.universe.ensure_pdf_font_resource(font)
     }
 
     fn current_font_symbol(&self) -> Option<Symbol> {
