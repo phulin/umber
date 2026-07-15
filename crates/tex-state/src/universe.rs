@@ -32,6 +32,7 @@ use crate::page::{
     PageBreak, PageBuilderState, PageContents, PageDimension, PageFireUp, PageHashCache,
     PageInsertion, PageInteger, PageMark, PageStateHashCursor,
 };
+use crate::pdf::{PdfState, PdfStateCursor, PdfStateSnapshot};
 use crate::provenance::ProvenanceStats;
 use crate::provenance::{
     InsertedOriginKind, OriginListBuilder, OriginRecord, SynthesizedOriginKind, SyntheticOriginKind,
@@ -318,6 +319,7 @@ pub struct Snapshot {
     input_summary: InputSummary,
     interaction_mode: InteractionMode,
     page: PageBuilderState,
+    pdf: PdfStateSnapshot,
     state_hash: u64,
     state_hash_base: StateHashBase,
 }
@@ -380,6 +382,7 @@ struct ScopedRollback {
     input_summary: InputSummary,
     interaction_mode: InteractionMode,
     page: PageBuilderState,
+    pdf: PdfStateSnapshot,
     state_hash_base: StateHashBase,
 }
 
@@ -447,6 +450,9 @@ impl ShipoutTransaction<'_> {
         artifact: crate::world::VerifiedArtifact,
         effect_pos: EffectPos,
     ) -> Result<ContentHash, WorldError> {
+        self.pdf
+            .ensure_page_capacity()
+            .map_err(|()| WorldError::pdf_object_ids_exhausted())?;
         let hash_base = self.state_hash_base.clone();
         let hash = self.world.store_verified_artifact(&artifact)?;
         if self.world.commit_mode() == WorldCommitMode::Retained {
@@ -454,6 +460,7 @@ impl ShipoutTransaction<'_> {
             self.stores.release_shipout_nodes(node_mark);
             self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
             self.page.set_integer(PageInteger::DeadCycles, 0);
+            self.pdf.commit_page(hash);
             let (bytes, render_origins) = artifact.into_parts();
             self.world
                 .record_artifact_commit(hash, bytes, render_origins);
@@ -473,6 +480,7 @@ impl ShipoutTransaction<'_> {
         self.stores.release_shipout_nodes(node_mark);
         self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
         self.page.set_integer(PageInteger::DeadCycles, 0);
+        self.pdf.commit_page(hash);
         let (bytes, render_origins) = artifact.into_parts();
         self.world
             .record_artifact_commit(hash, bytes, render_origins);
@@ -763,6 +771,7 @@ pub enum FormatError {
     OpenGroups(u32),
     NonEmptyInput,
     NonEmptyPage,
+    NonEmptyPdfDocument,
     BadMagic,
     UnsupportedVersion(u32),
     Truncated,
@@ -778,6 +787,9 @@ impl std::fmt::Display for FormatError {
             Self::OpenGroups(depth) => write!(f, "cannot dump a format with {depth} open groups"),
             Self::NonEmptyInput => f.write_str("cannot dump a format with live input state"),
             Self::NonEmptyPage => f.write_str("cannot dump a format with page-builder material"),
+            Self::NonEmptyPdfDocument => {
+                f.write_str("cannot dump a format after PDF object allocation")
+            }
             Self::BadMagic => f.write_str("not an Umber format file"),
             Self::UnsupportedVersion(version) => {
                 write!(f, "unsupported Umber format version {version}")
@@ -803,6 +815,7 @@ struct StateHashBase {
     input_fragment: StateHashFragment,
     interaction_mode: InteractionMode,
     page: PageStateHashCursor,
+    pdf: PdfStateCursor,
     checkpoint_hash: u64,
 }
 
@@ -849,6 +862,7 @@ pub struct Universe {
     /// Operational editor revision identity; excluded from snapshots and semantic hashes.
     editor_content_hash: Option<ContentHash>,
     page: PageBuilderState,
+    pdf: PdfState,
     state_hash_base: StateHashBase,
     state_hash_projection_cache: StateHashProjectionCache,
     next_snapshot_serial: u64,
@@ -955,6 +969,7 @@ impl Clone for Universe {
             input_fragment: self.state_hash_base.input_fragment,
             interaction_mode: self.state_hash_base.interaction_mode,
             page: self.state_hash_base.page.clone(),
+            pdf: self.state_hash_base.pdf,
             checkpoint_hash: self.state_hash_base.checkpoint_hash,
         };
         Self {
@@ -966,6 +981,7 @@ impl Clone for Universe {
             pending_every_job: self.pending_every_job,
             editor_content_hash: self.editor_content_hash,
             page: self.page.clone(),
+            pdf: self.pdf.clone(),
             state_hash_base,
             state_hash_projection_cache: self.state_hash_projection_cache.clone(),
             next_snapshot_serial: self.next_snapshot_serial,
@@ -1001,6 +1017,7 @@ impl Universe {
         );
         let input_summary = InputSummary::default();
         let page = PageBuilderState::default();
+        let pdf = PdfState::default();
         let input_fragment = hash_input_summary_fragment(&stores, &world, &input_summary);
         let state_hash_base = StateHashBase {
             store: stores.state_hash_cursor(),
@@ -1009,6 +1026,7 @@ impl Universe {
             input_fragment,
             interaction_mode: InteractionMode::default(),
             page: page.state_hash_cursor(),
+            pdf: pdf.cursor(),
             checkpoint_hash: INITIAL_STATE_HASH,
         };
         Self {
@@ -1020,6 +1038,7 @@ impl Universe {
             pending_every_job: false,
             editor_content_hash: None,
             page,
+            pdf,
             state_hash_base,
             state_hash_projection_cache: StateHashProjectionCache::default(),
             next_snapshot_serial: 0,
@@ -1065,6 +1084,9 @@ impl Universe {
         // e-TeX deliberately does not dump its saved vertical-discard lists.
         if !self.page.is_format_empty() {
             return Err(FormatError::NonEmptyPage);
+        }
+        if !self.pdf.is_format_empty() {
+            return Err(FormatError::NonEmptyPdfDocument);
         }
         let payload = self
             .stores
@@ -1119,6 +1141,7 @@ impl Universe {
         );
         let input_summary = InputSummary::default();
         let page = PageBuilderState::default();
+        let pdf = PdfState::default();
         let input_fragment = hash_input_summary_fragment(&stores, &world, &input_summary);
         let state_hash_base = StateHashBase {
             store: stores.state_hash_cursor(),
@@ -1127,6 +1150,7 @@ impl Universe {
             input_fragment,
             interaction_mode: mode,
             page: page.state_hash_cursor(),
+            pdf: pdf.cursor(),
             checkpoint_hash: checksum,
         };
         Ok(Self {
@@ -1138,6 +1162,7 @@ impl Universe {
             pending_every_job: true,
             editor_content_hash: None,
             page,
+            pdf,
             state_hash_base,
             state_hash_projection_cache: StateHashProjectionCache::default(),
             next_snapshot_serial: 0,
@@ -1186,6 +1211,7 @@ impl Universe {
             input_summary: self.input_summary.clone(),
             interaction_mode: self.interaction_mode,
             page: self.page.clone(),
+            pdf: self.pdf.snapshot(),
             state_hash_base: self.state_hash_base.clone(),
         }
     }
@@ -1202,6 +1228,7 @@ impl Universe {
         self.input_summary = rollback.input_summary;
         self.interaction_mode = rollback.interaction_mode;
         self.page = rollback.page;
+        self.pdf.rollback(rollback.pdf);
         self.state_hash_base = rollback.state_hash_base;
         self.state_hash_projection_cache.clear();
     }
@@ -1221,11 +1248,13 @@ impl Universe {
             fragment
         };
         let page_cursor = self.page.state_hash_cursor();
+        let pdf_cursor = self.pdf.cursor();
         let state_hash = if hash_base.store == store_cursor
             && hash_base.world == world_cursor
             && hash_base.input_fragment == input_fragment
             && hash_base.interaction_mode == self.interaction_mode
             && hash_base.page == page_cursor
+            && hash_base.pdf == pdf_cursor
         {
             hash_base.checkpoint_hash
         } else {
@@ -1239,6 +1268,7 @@ impl Universe {
             input_fragment,
             interaction_mode: self.interaction_mode,
             page: page_cursor,
+            pdf: pdf_cursor,
             checkpoint_hash: state_hash,
         };
         self.state_hash_base = next_hash_base.clone();
@@ -1256,6 +1286,7 @@ impl Universe {
             input_summary: self.input_summary.clone(),
             interaction_mode: self.interaction_mode,
             page: self.page.clone(),
+            pdf: self.pdf.snapshot(),
             state_hash,
             state_hash_base: next_hash_base,
         }
@@ -1276,6 +1307,7 @@ impl Universe {
             input_fragment: hash_base.input_fragment,
             interaction_mode: hash_base.interaction_mode,
             page: hash_base.page,
+            pdf: hash_base.pdf,
             checkpoint_hash: hash_base.checkpoint_hash,
         }
     }
@@ -1295,6 +1327,7 @@ impl Universe {
         self.input_summary = snapshot.input_summary.clone();
         self.interaction_mode = snapshot.interaction_mode;
         self.page = snapshot.page.clone();
+        self.pdf.rollback(snapshot.pdf);
         self.state_hash_base = snapshot.state_hash_base.clone();
         self.state_hash_projection_cache.clear();
     }
@@ -1307,6 +1340,7 @@ impl Universe {
         self.input_summary = snapshot.input_summary.clone();
         self.interaction_mode = snapshot.interaction_mode;
         self.page = snapshot.page.clone();
+        self.pdf.rollback(snapshot.pdf);
         self.state_hash_base = snapshot.state_hash_base.clone();
         self.state_hash_projection_cache.clear();
     }
@@ -1329,6 +1363,7 @@ impl Universe {
             },
         );
         let page = self.hash_page_state(&mut cache.page);
+        let pdf = self.pdf.hash_fragment();
         self.state_hash_projection_cache = cache;
 
         let mut hasher = StateHasher::new(UNIVERSE_SLICE_DOMAIN);
@@ -1338,6 +1373,7 @@ impl Universe {
         input.apply(&mut hasher);
         interaction.apply(&mut hasher);
         page.apply(&mut hasher);
+        pdf.apply(&mut hasher);
         hasher.finish()
     }
 
@@ -1637,6 +1673,26 @@ impl Universe {
     /// Sets the current interaction mode.
     pub fn set_interaction_mode(&mut self, mode: InteractionMode) {
         self.interaction_mode = mode;
+    }
+
+    /// Enables checkpointed PDF object allocation for this timeline.
+    pub fn enable_pdf_output(&mut self) {
+        self.pdf.enable();
+    }
+
+    #[must_use]
+    pub const fn pdf_output_enabled(&self) -> bool {
+        self.pdf.enabled()
+    }
+
+    #[must_use]
+    pub fn pdf_pages(&self) -> &[crate::PdfPageRecord] {
+        self.pdf.pages()
+    }
+
+    #[must_use]
+    pub const fn pdf_next_object_id(&self) -> u32 {
+        self.pdf.next_object()
     }
 
     /// Returns the current code-table generation vector.
@@ -3216,6 +3272,7 @@ impl Universe {
         self.hash_page_state(&mut PageHashCache::default())
             .fingerprint()
             .hash(&mut hasher);
+        self.pdf.cursor().hash(&mut hasher);
         hasher.finish()
     }
 

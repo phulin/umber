@@ -1836,6 +1836,71 @@ fn retained_shipout_rolls_back_logical_output_without_published_host_bytes() {
 }
 
 #[test]
+fn pdf_page_allocation_replays_identical_object_ids_and_hashes() {
+    let mut universe = Universe::new();
+    universe.enable_pdf_output();
+    universe
+        .begin_retained_session()
+        .expect("retained session starts");
+    let before = universe.snapshot();
+
+    let effect_pos = universe.world().effect_pos();
+    let first_hash = universe
+        .begin_shipout()
+        .commit(
+            crate::VerifiedArtifact::new(b"checkpointed PDF page".to_vec()),
+            effect_pos,
+        )
+        .expect("first shipout succeeds");
+    let first_page = universe.pdf_pages()[0];
+    let first_state_hash = universe.snapshot().state_hash();
+    assert_eq!(first_page.artifact(), first_hash);
+    assert_eq!(first_page.resources_object(), 3);
+    assert_eq!(first_page.contents_object(), 4);
+    assert_eq!(first_page.page_object(), 5);
+    assert_eq!(universe.pdf_next_object_id(), 6);
+
+    universe.rollback(&before);
+    assert!(universe.pdf_pages().is_empty());
+    assert_eq!(universe.pdf_next_object_id(), 3);
+
+    let effect_pos = universe.world().effect_pos();
+    let replay_hash = universe
+        .begin_shipout()
+        .commit(
+            crate::VerifiedArtifact::new(b"checkpointed PDF page".to_vec()),
+            effect_pos,
+        )
+        .expect("replayed shipout succeeds");
+    assert_eq!(replay_hash, first_hash);
+    assert_eq!(universe.pdf_pages(), &[first_page]);
+    assert_eq!(universe.snapshot().state_hash(), first_state_hash);
+}
+
+#[test]
+fn failed_shipout_does_not_allocate_pdf_objects() {
+    let mut universe = Universe::new();
+    universe.enable_pdf_output();
+    let mut transaction = universe.begin_shipout();
+    transaction
+        .world_mut()
+        .write_text(PrintSink::TerminalAndLog, "uncommitted effect");
+    let effect_pos = transaction.world().effect_pos();
+    transaction
+        .world_mut()
+        .fail_effect_commit_before(effect_pos);
+    transaction
+        .commit(
+            crate::VerifiedArtifact::new(b"failed PDF page".to_vec()),
+            effect_pos,
+        )
+        .expect_err("effect failure rejects shipout");
+
+    assert!(universe.pdf_pages().is_empty());
+    assert_eq!(universe.pdf_next_object_id(), 3);
+}
+
+#[test]
 fn snapshot_state_hash_is_deterministic_for_same_program() {
     assert_eq!(
         checkpoint_hashes_for_program(),

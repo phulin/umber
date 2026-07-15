@@ -634,6 +634,14 @@ impl WorldError {
         }
     }
 
+    pub(crate) fn pdf_object_ids_exhausted() -> Self {
+        Self::new(
+            "allocate PDF object",
+            None,
+            "pdfTeX object-number space is exhausted",
+        )
+    }
+
     fn effect_commit(mut self, through: EffectPos, retry_safety: EffectRetrySafety) -> Self {
         self.committed_effects_through = Some(through);
         self.retry_safety = retry_safety;

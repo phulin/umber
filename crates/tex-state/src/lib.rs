@@ -17,10 +17,12 @@
 /// integer arrays. Version 11 adds by-value transient input replay frames and
 /// packed macro arguments, hashing their semantic token sequences without
 /// diagnostic origins.
+/// Version 12 adds the pdfTeX document ledger and committed page/object
+/// identities to checkpoint hashing.
 /// Hashes are
 /// comparable only when both this version and the named-boundary schedule
 /// match.
-pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 11;
+pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 12;
 
 pub mod cell;
 pub mod code_tables;
@@ -42,6 +44,7 @@ pub mod measurement;
 pub mod node;
 pub mod node_arena;
 pub mod page;
+mod pdf;
 pub mod provenance;
 mod provenance_resolver;
 pub mod scaled;
@@ -53,6 +56,8 @@ pub mod survivor;
 pub mod token;
 pub mod token_store;
 mod universe;
+
+pub use pdf::{PDF_CATALOG_OBJECT_ID, PDF_PAGES_OBJECT_ID, PdfPageRecord};
 pub mod world;
 
 pub use input::{
