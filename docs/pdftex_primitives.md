@@ -62,7 +62,7 @@ oracle-backed test. Every name in a missing row is missing.
 | PDF dimension parameters | 13 | done | `\pdfhorigin`, `\pdfvorigin`, `\pdfpagewidth`, `\pdfpageheight`, `\pdflinkmargin`, `\pdfdestmargin`, `\pdfthreadmargin`, `\pdffirstlineheight`, `\pdflastlinedepth`, `\pdfeachlineheight`, `\pdfeachlinedepth`, `\pdfignoreddimen`, `\pdfpxdimen` |
 | Font construction and primitive recovery | 3 | done | `\pdfprimitive`, `\letterspacefont`, `\pdfcopyfont` |
 | Read-only integer enquiries | 14 | partial (1 done) | `\pdftexversion` (done); `\pdflastobj`, `\pdflastxform`, `\pdflastximage`, `\pdflastximagepages`, `\pdflastannot`, `\pdflastxpos`, `\pdflastypos`, `\pdfretval`, `\pdflastximagecolordepth`, `\pdfelapsedtime`, `\pdfshellescape`, `\pdfrandomseed`, `\pdflastlink` |
-| Expandable conversions and enquiries | 27 | partial (13 done) | `\expanded`, `\pdftexrevision`, `\pdftexbanner`, `\pdffontsize`, `\pdffontname`, `\pdffontobjnum`, `\leftmarginkern`, `\rightmarginkern`, `\pdfescapestring`, `\pdfescapename`, `\pdfescapehex`, `\pdfunescapehex`, `\pdfstrcmp` (done); `\pdfpageref`, `\pdfxformname`, `\pdfcreationdate`, `\pdffilemoddate`, `\pdffilesize`, `\pdfmdfivesum`, `\pdffiledump`, `\pdfmatch`, `\pdflastmatch`, `\pdfcolorstackinit`, `\pdfuniformdeviate`, `\pdfnormaldeviate`, `\pdfinsertht`, `\pdfximagebbox` |
+| Expandable conversions and enquiries | 27 | partial (18 done) | `\expanded`, `\pdftexrevision`, `\pdftexbanner`, `\pdffontsize`, `\pdffontname`, `\pdffontobjnum`, `\leftmarginkern`, `\rightmarginkern`, `\pdfescapestring`, `\pdfescapename`, `\pdfescapehex`, `\pdfunescapehex`, `\pdfcreationdate`, `\pdffilemoddate`, `\pdffilesize`, `\pdfmdfivesum`, `\pdffiledump`, `\pdfstrcmp` (done); `\pdfpageref`, `\pdfxformname`, `\pdfmatch`, `\pdflastmatch`, `\pdfcolorstackinit`, `\pdfuniformdeviate`, `\pdfnormaldeviate`, `\pdfinsertht`, `\pdfximagebbox` |
 | Primitive-identity conditional | 1 | done | `\ifpdfprimitive` |
 | Horizontal-mode normalization | 1 | missing | `\quitvmode` |
 | Character codes and ligature control | 10 | done | `\lpcode`, `\rpcode`, `\efcode`, `\tagcode`, `\knbscode`, `\stbscode`, `\shbscode`, `\knbccode`, `\knaccode`, `\pdfnoligatures` |
@@ -185,6 +185,14 @@ pdfTeX bytes rather than Rust text ordering. Their results use space catcode
 for byte 32 and other catcode for every other byte. Hex output is uppercase;
 hex input ignores non-hex bytes and pads an unmatched final high nibble with
 zero, matching the pinned pdfTeX 1.40.27 oracle.
+Creation time comes from the immutable job clock. File size, modification
+date, byte dump, and file-mode MD5 enquiries resolve immutable content through
+the same driver input policy as `\input`; expansion code never reads the host
+filesystem or clock. `World` captures typed civil modification metadata with
+each successful input record, and hermetic callers may seed it explicitly.
+Missing content or missing modification metadata expands to nothing. File dump
+offset and length default to zero, overlong ranges stop at EOF, and negative
+ranges report recoverable pdfTeX diagnostics before being coerced to zero.
 
 The generated-font and microtype slice implements independent copied and
 letterspaced font state, validated `\pdffontexpand` configuration, discrete
@@ -237,8 +245,9 @@ The implementation should preserve exact pdfTeX spellings even when a shared
 engine-neutral implementation exists. In particular, `\pdfcreationdate`,
 `\pdffilesize`, `\pdfshellescape`, and `\pdfstrcmp` should initially be aliases
 over Umber's existing neutral facilities, with pdfTeX-compatible results and
-error behavior. `\pdfstrcmp` and the supported neutral `\strcmp` share the
-byte-exact implementation. `\pdfoptionpdfminorversion` is a legacy alias for
+error behavior. `\pdfcreationdate`/`\creationdate`,
+`\pdffilesize`/`\filesize`, and `\pdfstrcmp`/`\strcmp` share their exact
+implementations. `\pdfoptionpdfminorversion` is a legacy alias for
 `\pdfminorversion` and shares its state cell. The two obsolete inclusion
 controls instead retain the separate scan-time compatibility behavior
 described above.
