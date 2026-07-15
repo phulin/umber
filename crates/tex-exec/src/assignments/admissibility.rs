@@ -114,6 +114,7 @@ const fn admissibility(primitive: UnexpandablePrimitive) -> Admissibility {
         | UnexpandablePrimitive::Message
         | UnexpandablePrimitive::ErrMessage
         | UnexpandablePrimitive::Special
+        | UnexpandablePrimitive::IgnoreSpaces
         | UnexpandablePrimitive::Lowercase
         | UnexpandablePrimitive::Uppercase
         | UnexpandablePrimitive::Cr
@@ -154,6 +155,9 @@ mod tests {
         assert!(!is_assignment_primitive(UnexpandablePrimitive::Mark));
         assert!(math_allows_mode_independent_primitive(
             UnexpandablePrimitive::Mark
+        ));
+        assert!(math_allows_mode_independent_primitive(
+            UnexpandablePrimitive::IgnoreSpaces
         ));
     }
 }
