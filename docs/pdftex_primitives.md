@@ -66,7 +66,7 @@ oracle-backed test. Every name in a missing row is missing.
 | Primitive-identity conditional | 1 | missing | `\ifpdfprimitive` |
 | Horizontal-mode normalization | 1 | missing | `\quitvmode` |
 | Character codes and ligature control | 10 | done | `\lpcode`, `\rpcode`, `\efcode`, `\tagcode`, `\knbscode`, `\stbscode`, `\shbscode`, `\knbccode`, `\knaccode`, `\pdfnoligatures` |
-| PDF backend actions | 43 | partial (font expansion done) | `\pdffontexpand` (done); `\pdfliteral`, `\pdfcolorstack`, `\pdfsetmatrix`, `\pdfsave`, `\pdfrestore`, `\pdfobj`, `\pdfrefobj`, `\pdfxform`, `\pdfrefxform`, `\pdfximage`, `\pdfrefximage`, `\pdfannot`, `\pdfstartlink`, `\pdfendlink`, `\pdfoutline`, `\pdfdest`, `\pdfthread`, `\pdfstartthread`, `\pdfendthread`, `\pdfsavepos`, `\pdfsnaprefpoint`, `\pdfsnapy`, `\pdfsnapycomp`, `\pdfinfo`, `\pdfcatalog`, `\pdfnames`, `\pdfincludechars`, `\pdffontattr`, `\pdfmapfile`, `\pdfmapline`, `\pdftrailer`, `\pdftrailerid`, `\pdfresettimer`, `\pdfsetrandomseed`, `\pdfglyphtounicode`, `\pdfnobuiltintounicode`, `\pdfinterwordspaceon`, `\pdfinterwordspaceoff`, `\pdffakespace`, `\pdfrunninglinkoff`, `\pdfrunninglinkon`, `\pdfspacefont` |
+| PDF backend actions | 43 | partial (font expansion and font-map state done) | `\pdffontexpand`, `\pdfincludechars`, `\pdffontattr`, `\pdfmapfile`, `\pdfmapline` (done); `\pdfliteral`, `\pdfcolorstack`, `\pdfsetmatrix`, `\pdfsave`, `\pdfrestore`, `\pdfobj`, `\pdfrefobj`, `\pdfxform`, `\pdfrefxform`, `\pdfximage`, `\pdfrefximage`, `\pdfannot`, `\pdfstartlink`, `\pdfendlink`, `\pdfoutline`, `\pdfdest`, `\pdfthread`, `\pdfstartthread`, `\pdfendthread`, `\pdfsavepos`, `\pdfsnaprefpoint`, `\pdfsnapy`, `\pdfsnapycomp`, `\pdfinfo`, `\pdfcatalog`, `\pdfnames`, `\pdftrailer`, `\pdftrailerid`, `\pdfresettimer`, `\pdfsetrandomseed`, `\pdfglyphtounicode`, `\pdfnobuiltintounicode`, `\pdfinterwordspaceon`, `\pdfinterwordspaceoff`, `\pdffakespace`, `\pdfrunninglinkoff`, `\pdfrunninglinkon`, `\pdfspacefont` |
 | Compatibility error policy | 1 | missing | `\ignoreprimitiveerror` |
 | Late expansion conditionals | 3 | partial (1 done) | `\ifincsname` (done); `\ifpdfabsnum`, `\ifpdfabsdim` |
 
@@ -166,6 +166,19 @@ explicit movements around glyphs from the physical source font; PDF output
 continues to use only the canonical `pdf_writer` serialization pipeline.
 `\leftmarginkern` and `\rightmarginkern` implement pdfTeX's box-register edge
 scan and exact void/non-hbox diagnostic.
+
+The font-map state slice implements `\pdfmapfile`, `\pdfmapline`,
+`\pdffontattr`, and `\pdfincludechars` as real pdfTeX-mode actions. Expanded
+balanced text is converted to bytes and parsed without host I/O. Map-file and
+font-program names remain logical resource names: native and WASM frontends
+must acquire their bytes through the existing typed resource boundary.
+Checkpointed append-only mutations give snapshot rollback and semantic hashes
+the same exact suffix discipline as PDF object allocation. Map-line lookup
+matches the pinned 1.40.27 observations: unprefixed and `+` duplicates preserve
+the first entry, `=` replaces it, and `-` removes it. Duplicate warning
+presentation is owned by child issue 17.1. Embedded dictionaries, encodings,
+subsets, and ToUnicode streams remain downstream children 17.5 and 17.3 and
+must be serialized only through the vendored `pdf_writer` adapter.
 
 ## Compatibility and alias decisions
 

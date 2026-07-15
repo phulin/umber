@@ -25,6 +25,7 @@ pub enum ExecError {
     ScanGlue(tex_expand::scan_glue::ScanGlueError),
     World(WorldError),
     FontParse(tex_fonts::ParseError),
+    PdfFontMap(tex_fonts::PdfFontMapError),
     FontOpen {
         name: String,
         message: String,
@@ -163,6 +164,7 @@ impl fmt::Display for ExecError {
             Self::ScanGlue(err) => write!(f, "{err}"),
             Self::World(err) => write!(f, "{err}"),
             Self::FontParse(err) => write!(f, "{err}"),
+            Self::PdfFontMap(err) => write!(f, "{err}"),
             Self::FontOpen { name, message } => {
                 write!(f, "could not open TFM for font {name}: {message}")
             }
@@ -314,6 +316,7 @@ impl std::error::Error for ExecError {
             Self::ScanGlue(err) => Some(err),
             Self::World(err) => Some(err),
             Self::FontParse(err) => Some(err),
+            Self::PdfFontMap(err) => Some(err),
             Self::FontOpen { .. }
             | Self::EmptyModeNestSummary
             | Self::CannotPopBaseMode
@@ -403,6 +406,7 @@ impl ExecError {
             Self::ScanToks(_)
             | Self::World(_)
             | Self::FontParse(_)
+            | Self::PdfFontMap(_)
             | Self::FontOpen { .. }
             | Self::FontParameter(_)
             | Self::FontExpansion(_)
@@ -532,6 +536,12 @@ impl From<WorldError> for ExecError {
 impl From<tex_fonts::ParseError> for ExecError {
     fn from(value: tex_fonts::ParseError) -> Self {
         Self::FontParse(value)
+    }
+}
+
+impl From<tex_fonts::PdfFontMapError> for ExecError {
+    fn from(value: tex_fonts::PdfFontMapError) -> Self {
+        Self::PdfFontMap(value)
     }
 }
 

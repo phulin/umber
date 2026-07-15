@@ -60,8 +60,8 @@ pub mod token_store;
 mod universe;
 
 pub use pdf::{
-    PDF_CATALOG_OBJECT_ID, PDF_PAGES_OBJECT_ID, PdfFontConfiguration, PdfOutputParameters,
-    PdfPageRecord,
+    PDF_CATALOG_OBJECT_ID, PDF_PAGES_OBJECT_ID, PdfFontConfiguration, PdfFontMapOperation,
+    PdfOutputParameters, PdfPageRecord,
 };
 pub mod world;
 

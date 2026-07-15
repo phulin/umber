@@ -29,6 +29,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/assignments/macros.rs`: macro-definition primitives plus `\aftergroup` and `\afterassignment`.
 - `src/assignments/mod.rs`: assignment dispatcher, prefix handling, group commands, and shared scan helpers.
 - `src/assignments/paragraph.rs`: paragraph start/end, parshape, line breaking, indentation, and prevdepth logic.
+- `src/assignments/pdf_fonts.rs`: pdfTeX map, font-attribute, and forced-character action scanning into host-neutral state.
 - `src/assignments/primitives.rs`: registration table for unexpandable primitive meanings.
 - `src/assignments/scanning.rs`: assignment classification and operand scanners for variables and definitions.
 - `src/assignments/shipout.rs`: `\shipout` transaction, commit, and publication orchestration.

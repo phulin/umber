@@ -1,17 +1,35 @@
 //! Checkpointed pdfTeX document allocation ledger.
 
 use crate::ContentHash;
-use crate::ids::TokenListId;
+use crate::ids::{FontId, TokenListId};
 use crate::scaled::Scaled;
 use crate::state_hash::{StateHashFragment, StateHasher};
+use std::collections::BTreeMap;
 
 const PDF_STATE_DOMAIN: u64 = 0x7064_665f_7374_6174;
 const PDF_PAGE_DOMAIN: u64 = 0x7064_665f_7061_6765;
+const PDF_FONT_DOMAIN: u64 = 0x7064_665f_666f_6e74;
 pub const PDF_CATALOG_OBJECT_ID: u32 = 1;
 pub const PDF_PAGES_OBJECT_ID: u32 = 2;
 const FIRST_DYNAMIC_OBJECT: u32 = 3;
 const OBJECTS_PER_PAGE: u32 = 3;
 const MAX_OBJECT_ID: u32 = i32::MAX as u32;
+
+/// A host-neutral font-map mutation recorded by a pdfTeX action primitive.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PdfFontMapOperation {
+    File(tex_fonts::PdfFontMapFile),
+    Line(tex_fonts::PdfFontMapEntry),
+}
+
+/// An append-only font-output mutation. The log makes snapshots cheap and
+/// ensures rollback discards the exact suffix produced after a checkpoint.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum PdfFontOperation {
+    Map(PdfFontMapOperation),
+    Attribute { font: FontId, bytes: Vec<u8> },
+    IncludeChars { font: FontId, chars: Vec<u8> },
+}
 
 /// Live pdfTeX microtype and font-output controls.
 ///
@@ -245,6 +263,7 @@ pub(crate) struct PdfStateCursor {
     page_count: usize,
     output_parameters: Option<PdfOutputParameters>,
     pk_mode: Option<PdfTokenParameter>,
+    font_operation_count: usize,
     fingerprint: u64,
 }
 
@@ -259,6 +278,7 @@ pub(crate) struct PdfState {
     pages: Vec<PdfPageRecord>,
     output_parameters: Option<PdfOutputParameters>,
     pk_mode: Option<PdfTokenParameter>,
+    font_operations: Vec<PdfFontOperation>,
     fingerprint: u64,
 }
 
@@ -270,6 +290,7 @@ impl Default for PdfState {
             pages: Vec::new(),
             output_parameters: None,
             pk_mode: None,
+            font_operations: Vec::new(),
             fingerprint: base_fingerprint(false),
         }
     }
@@ -304,6 +325,7 @@ impl PdfState {
             && self.next_object == FIRST_DYNAMIC_OBJECT
             && self.output_parameters.is_none()
             && self.pk_mode.is_none()
+            && self.font_operations.is_empty()
     }
 
     pub(crate) fn ensure_page_capacity(&self, parameters: PdfOutputParameters) -> Result<(), ()> {
@@ -369,6 +391,107 @@ impl PdfState {
         }
     }
 
+    pub(crate) fn push_font_map(&mut self, operation: PdfFontMapOperation) {
+        self.push_font_operation(PdfFontOperation::Map(operation));
+    }
+
+    pub(crate) fn set_font_attribute(&mut self, font: FontId, bytes: Vec<u8>) {
+        self.push_font_operation(PdfFontOperation::Attribute { font, bytes });
+    }
+
+    pub(crate) fn include_font_chars(&mut self, font: FontId, chars: Vec<u8>) {
+        self.push_font_operation(PdfFontOperation::IncludeChars { font, chars });
+    }
+
+    fn push_font_operation(&mut self, operation: PdfFontOperation) {
+        self.fingerprint = append_font_fingerprint(self.fingerprint, &operation);
+        self.font_operations.push(operation);
+    }
+
+    pub(crate) fn font_maps(&self) -> impl Iterator<Item = &PdfFontMapOperation> {
+        self.font_operations
+            .iter()
+            .filter_map(|operation| match operation {
+                PdfFontOperation::Map(map) => Some(map),
+                PdfFontOperation::Attribute { .. } | PdfFontOperation::IncludeChars { .. } => None,
+            })
+    }
+
+    #[must_use]
+    pub(crate) fn resolved_font_map_lines(&self) -> Vec<tex_fonts::PdfFontMapEntry> {
+        self.resolve_font_map_lines().0.into_values().collect()
+    }
+
+    #[must_use]
+    pub(crate) fn font_map_duplicate_names(&self) -> Vec<Vec<u8>> {
+        self.resolve_font_map_lines().1
+    }
+
+    fn resolve_font_map_lines(
+        &self,
+    ) -> (BTreeMap<Vec<u8>, tex_fonts::PdfFontMapEntry>, Vec<Vec<u8>>) {
+        let mut entries = BTreeMap::new();
+        let mut duplicates = Vec::new();
+        for operation in self.font_maps() {
+            let PdfFontMapOperation::Line(entry) = operation else {
+                continue;
+            };
+            match entry.directive {
+                tex_fonts::PdfFontMapDirective::Default | tex_fonts::PdfFontMapDirective::Add => {
+                    if entries.contains_key(&entry.tex_name) {
+                        duplicates.push(entry.tex_name.clone());
+                    } else {
+                        entries.insert(entry.tex_name.clone(), entry.clone());
+                    }
+                }
+                tex_fonts::PdfFontMapDirective::Replace => {
+                    entries.insert(entry.tex_name.clone(), entry.clone());
+                }
+                tex_fonts::PdfFontMapDirective::Remove => {
+                    entries.remove(&entry.tex_name);
+                }
+            }
+        }
+        (entries, duplicates)
+    }
+
+    #[must_use]
+    pub(crate) fn font_attribute(&self, font: FontId) -> &[u8] {
+        self.font_operations
+            .iter()
+            .rev()
+            .find_map(|operation| match operation {
+                PdfFontOperation::Attribute {
+                    font: candidate,
+                    bytes,
+                } if *candidate == font => Some(bytes.as_slice()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    #[must_use]
+    pub(crate) fn included_font_chars(&self, font: FontId) -> Vec<u8> {
+        let mut included = [false; 256];
+        for operation in &self.font_operations {
+            if let PdfFontOperation::IncludeChars {
+                font: candidate,
+                chars,
+            } = operation
+                && *candidate == font
+            {
+                for &character in chars {
+                    included[usize::from(character)] = true;
+                }
+            }
+        }
+        included
+            .into_iter()
+            .enumerate()
+            .filter_map(|(character, present)| present.then_some(character as u8))
+            .collect()
+    }
+
     #[must_use]
     pub(crate) const fn cursor(&self) -> PdfStateCursor {
         PdfStateCursor {
@@ -377,6 +500,7 @@ impl PdfState {
             page_count: self.pages.len(),
             output_parameters: self.output_parameters,
             pk_mode: self.pk_mode,
+            font_operation_count: self.font_operations.len(),
             fingerprint: self.fingerprint,
         }
     }
@@ -396,6 +520,7 @@ impl PdfState {
         self.next_object = cursor.next_object;
         self.output_parameters = cursor.output_parameters;
         self.pk_mode = cursor.pk_mode;
+        self.font_operations.truncate(cursor.font_operation_count);
         self.fingerprint = cursor.fingerprint;
     }
 
@@ -407,9 +532,53 @@ impl PdfState {
             hasher.u32(cursor.next_object);
             hasher.usize(cursor.page_count);
             hash_output_parameters(hasher, cursor.output_parameters);
+            hasher.usize(cursor.font_operation_count);
             hasher.u64(cursor.fingerprint);
         })
     }
+}
+
+fn append_font_fingerprint(previous: u64, operation: &PdfFontOperation) -> u64 {
+    let mut hasher = StateHasher::new(PDF_FONT_DOMAIN);
+    hasher.u64(previous);
+    match operation {
+        PdfFontOperation::Map(PdfFontMapOperation::File(file)) => {
+            hasher.tag(0);
+            hasher.tag(file.directive as u8);
+            hasher.bytes(&file.logical_name);
+        }
+        PdfFontOperation::Map(PdfFontMapOperation::Line(line)) => {
+            hasher.tag(1);
+            hasher.tag(line.directive as u8);
+            hasher.bytes(&line.tex_name);
+            hasher.bool(line.postscript_name.is_some());
+            if let Some(name) = &line.postscript_name {
+                hasher.bytes(name);
+            }
+            for instruction in &line.special_instructions {
+                hasher.bytes(instruction);
+            }
+            for encoding in &line.encoding_files {
+                hasher.bytes(encoding);
+            }
+            hasher.bool(line.font_file.is_some());
+            if let Some(file) = &line.font_file {
+                hasher.bytes(file);
+            }
+            hasher.tag(line.program as u8);
+        }
+        PdfFontOperation::Attribute { font, bytes } => {
+            hasher.tag(2);
+            hasher.u32(font.raw());
+            hasher.bytes(bytes);
+        }
+        PdfFontOperation::IncludeChars { font, chars } => {
+            hasher.tag(3);
+            hasher.u32(font.raw());
+            hasher.bytes(chars);
+        }
+    }
+    hasher.finish()
 }
 
 fn base_fingerprint(enabled: bool) -> u64 {
@@ -581,5 +750,51 @@ mod tests {
         state.rollback(snapshot);
         state.commit_page(hash, parameters, page, token);
         assert_eq!((state.pages()[0], state.cursor()), first);
+    }
+
+    #[test]
+    fn font_output_log_rolls_back_and_projects_last_attribute_and_char_union() {
+        let mut state = PdfState::default();
+        state.enable();
+        let font = crate::font::NULL_FONT;
+        state.set_font_attribute(font, b"/StemV 70".to_vec());
+        state.include_font_chars(font, vec![b'B', b'A', b'B']);
+        let checkpoint = state.snapshot();
+        let checkpoint_hash = state.hash_fragment();
+
+        state.set_font_attribute(font, b"/StemV 80".to_vec());
+        state.include_font_chars(font, vec![b'C']);
+        state.push_font_map(PdfFontMapOperation::Line(
+            tex_fonts::PdfFontMapEntry::parse(b"cmr10 CMR10 <cmr10.pfb").expect("valid map entry"),
+        ));
+        assert_eq!(state.font_attribute(font), b"/StemV 80");
+        assert_eq!(state.included_font_chars(font), b"ABC");
+        assert_eq!(state.font_maps().count(), 1);
+
+        state.rollback(checkpoint);
+        assert_eq!(state.font_attribute(font), b"/StemV 70");
+        assert_eq!(state.included_font_chars(font), b"AB");
+        assert_eq!(state.font_maps().count(), 0);
+        assert_eq!(state.hash_fragment(), checkpoint_hash);
+    }
+
+    #[test]
+    fn map_line_resolution_keeps_first_duplicate_and_honors_replace_and_remove() {
+        let mut state = PdfState::default();
+        for line in [
+            b"cmr10 First <cmr10.pfb".as_slice(),
+            b"+cmr10 Ignored <ignored.pfb",
+            b"=cmr10 Replacement <replacement.pfb",
+            b"-cmr10",
+            b"cmtt10 CMTT10 <cmtt10.pfb",
+        ] {
+            state.push_font_map(PdfFontMapOperation::Line(
+                tex_fonts::PdfFontMapEntry::parse(line).expect("valid map entry"),
+            ));
+        }
+        assert_eq!(state.font_map_duplicate_names(), [b"cmr10"]);
+        let entries = state.resolved_font_map_lines();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].tex_name, b"cmtt10");
     }
 }

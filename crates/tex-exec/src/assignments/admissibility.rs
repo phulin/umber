@@ -78,6 +78,10 @@ const fn admissibility(primitive: UnexpandablePrimitive) -> Admissibility {
         | UnexpandablePrimitive::LetterspaceFont
         | UnexpandablePrimitive::PdfCopyFont
         | UnexpandablePrimitive::PdfFontExpand
+        | UnexpandablePrimitive::PdfFontAttr
+        | UnexpandablePrimitive::PdfIncludeChars
+        | UnexpandablePrimitive::PdfMapFile
+        | UnexpandablePrimitive::PdfMapLine
         | UnexpandablePrimitive::TextFont
         | UnexpandablePrimitive::ScriptFont
         | UnexpandablePrimitive::ScriptScriptFont

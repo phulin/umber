@@ -36,6 +36,7 @@ mod hmode;
 mod hyphenation;
 mod macros;
 mod paragraph;
+mod pdf_fonts;
 mod primitives;
 mod scanning;
 mod shipout;
@@ -67,6 +68,7 @@ pub(crate) use paragraph::{
     display_line_dimensions, end_paragraph, ensure_horizontal_for_character,
     interrupt_paragraph_for_display, make_indent_box, normal_paragraph,
 };
+use pdf_fonts::*;
 pub use primitives::{install_etex_unexpandable_primitives, install_unexpandable_primitives};
 use scanning::*;
 pub(crate) use scanning::{
@@ -663,6 +665,20 @@ fn execute_prefixed_command(
             }
             UnexpandablePrimitive::PdfFontExpand => {
                 execute_pdf_font_expand(prefixes, command.traced, input, stores, execution)?;
+                Ok(CommandOutcome::assigned())
+            }
+            primitive @ (UnexpandablePrimitive::PdfFontAttr
+            | UnexpandablePrimitive::PdfIncludeChars
+            | UnexpandablePrimitive::PdfMapFile
+            | UnexpandablePrimitive::PdfMapLine) => {
+                reject_all_prefixes(prefixes)?;
+                execute_pdf_font_output_action(
+                    primitive,
+                    command.traced,
+                    input,
+                    stores,
+                    execution,
+                )?;
                 Ok(CommandOutcome::assigned())
             }
             UnexpandablePrimitive::TextFont

@@ -4,6 +4,46 @@ use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::scaled::Scaled;
 
 #[test]
+fn pdf_font_output_actions_record_host_neutral_checkpointed_state() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    for (name, primitive) in [
+        ("pdffontattr", UnexpandablePrimitive::PdfFontAttr),
+        ("pdfincludechars", UnexpandablePrimitive::PdfIncludeChars),
+        ("pdfmapfile", UnexpandablePrimitive::PdfMapFile),
+        ("pdfmapline", UnexpandablePrimitive::PdfMapLine),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+    }
+    let mut input = InputStack::new(MemoryInput::new(concat!(
+        "\\font\\base=cmr10 ",
+        "\\pdfmapfile{+pdftex.map} ",
+        "\\pdfmapline{+cmr10 CMR10 <cmr10.pfb} ",
+        "\\pdffontattr\\base{/StemV 70} ",
+        "\\pdfincludechars\\base{CABA} \\end",
+    )));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("PDF font actions execute");
+
+    let font = font_meaning(&stores, "base");
+    assert_eq!(stores.pdf_font_attribute(font), b"/StemV 70");
+    assert_eq!(stores.included_pdf_font_chars(font), b"ABC");
+    let maps = stores.pdf_font_maps().collect::<Vec<_>>();
+    assert!(matches!(
+        maps[0],
+        tex_state::PdfFontMapOperation::File(file)
+            if file.logical_name == b"pdftex.map"
+    ));
+    assert!(matches!(
+        maps[1],
+        tex_state::PdfFontMapOperation::Line(line)
+            if line.tex_name == b"cmr10" && line.font_file.as_deref() == Some(b"cmr10.pfb")
+    ));
+}
+
+#[test]
 fn pdf_font_expand_materializes_scaled_line_fonts() {
     let mut stores = stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);

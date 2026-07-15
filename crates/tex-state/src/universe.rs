@@ -1734,6 +1734,43 @@ impl Universe {
         self.pdf.pk_mode()
     }
 
+    /// Records a parsed, host-neutral font-map mutation.
+    pub fn push_pdf_font_map(&mut self, operation: crate::PdfFontMapOperation) {
+        self.pdf.push_font_map(operation);
+    }
+
+    pub fn pdf_font_maps(&self) -> impl Iterator<Item = &crate::PdfFontMapOperation> {
+        self.pdf.font_maps()
+    }
+
+    #[must_use]
+    pub fn resolved_pdf_font_map_lines(&self) -> Vec<tex_fonts::PdfFontMapEntry> {
+        self.pdf.resolved_font_map_lines()
+    }
+
+    #[must_use]
+    pub fn pdf_font_map_duplicate_names(&self) -> Vec<Vec<u8>> {
+        self.pdf.font_map_duplicate_names()
+    }
+
+    pub fn set_pdf_font_attribute(&mut self, font: FontId, bytes: Vec<u8>) {
+        self.pdf.set_font_attribute(font, bytes);
+    }
+
+    #[must_use]
+    pub fn pdf_font_attribute(&self, font: FontId) -> &[u8] {
+        self.pdf.font_attribute(font)
+    }
+
+    pub fn include_pdf_font_chars(&mut self, font: FontId, chars: Vec<u8>) {
+        self.pdf.include_font_chars(font, chars);
+    }
+
+    #[must_use]
+    pub fn included_pdf_font_chars(&self, font: FontId) -> Vec<u8> {
+        self.pdf.included_font_chars(font)
+    }
+
     fn current_pdf_output_parameters(&self) -> PdfOutputParameters {
         PdfOutputParameters {
             output: self.int_param(IntParam::PDF_OUTPUT),
