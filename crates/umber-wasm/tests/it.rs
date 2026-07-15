@@ -387,7 +387,7 @@ fn resource_batches_use_rust_validation_and_retry_state() {
 #[wasm_bindgen_test]
 fn committed_plain_format_loads_and_rejects_incompatible_bytes() {
     assert_eq!(package_version(), env!("CARGO_PKG_VERSION"));
-    assert_eq!(format_schema_version(), 7);
+    assert_eq!(format_schema_version(), 8);
     let format = include_bytes!("../assets/plain.fmt");
     let mut plain = session_with_format("main.tex", format);
     plain
@@ -404,9 +404,14 @@ fn committed_plain_format_loads_and_rejects_incompatible_bytes() {
     let native_tex = b"\\catcode`\\{=1 \\catcode`\\}=2 \\endinput";
     assert_format_error(native_tex, "not an Umber format file");
 
-    let mut wrong_schema = format.to_vec();
-    wrong_schema[8..12].copy_from_slice(&4_u32.to_le_bytes());
-    assert_format_error(&wrong_schema, "unsupported Umber format version 4");
+    for incompatible in [7_u32, 9] {
+        let mut wrong_schema = format.to_vec();
+        wrong_schema[8..12].copy_from_slice(&incompatible.to_le_bytes());
+        assert_format_error(
+            &wrong_schema,
+            &format!("unsupported Umber format version {incompatible}"),
+        );
+    }
 
     let mut corrupt = format.to_vec();
     let last = corrupt.last_mut().expect("format payload");
