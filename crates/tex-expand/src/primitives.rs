@@ -89,7 +89,9 @@ pub(crate) fn scan_csname(
                     return Ok(name);
                 }
             }
-            push @ Dispatch::Push { .. } => apply_dispatch_push(input, push),
+            push @ (Dispatch::Push { .. } | Dispatch::PushTransient { .. }) => {
+                apply_dispatch_push(input, push);
+            }
         }
     }
 }

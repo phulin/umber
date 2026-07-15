@@ -21,7 +21,7 @@ use tex_state::glue::GlueSpec;
 use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
-use tex_state::provenance::{DiagnosticSite, InsertedOriginKind, SynthesizedOriginKind};
+use tex_state::provenance::{DiagnosticSite, InsertedOriginKind};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, FileContent, InputReadState, MeaningCacheGuard, Universe};
@@ -491,10 +491,10 @@ impl Default for EngineStateSnapshot {
 }
 
 /// Result of one expansion dispatch.
-// Keeping dispatch copyable avoids ownership machinery in the expansion loop;
-// generation-tagged replay handles make the uncommon Push variant larger.
+// Generation-tagged replay handles and transient buffers make push variants
+// larger than the direct-delivery cases.
 #[allow(clippy::large_enum_variant)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Dispatch {
     Continue,
     Deliver(TracedTokenWord),
@@ -505,6 +505,10 @@ pub enum Dispatch {
         origin_list: tex_state::ids::OriginListId,
         macro_arguments: MacroArguments,
         macro_invocation: OriginId,
+    },
+    PushTransient {
+        replay_kind: ExpansionReplayKind,
+        tokens: Vec<TracedTokenWord>,
     },
 }
 
@@ -1327,7 +1331,9 @@ fn get_x_token_with_context_inner(
                 }
                 return Ok(Some(token));
             }
-            push @ Dispatch::Push { .. } => apply_dispatch_push(input, push),
+            push @ (Dispatch::Push { .. } | Dispatch::PushTransient { .. }) => {
+                apply_dispatch_push(input, push);
+            }
         }
     }
 }
@@ -1503,7 +1509,7 @@ fn intercept_suppressed_alignment_token(
 
 pub fn back_input<I>(
     input: &mut InputStack,
-    stores: &mut tex_state::ExpansionContext<'_>,
+    _stores: &mut tex_state::ExpansionContext<'_>,
     tokens: I,
 ) where
     I: IntoIterator<Item = TracedTokenWord>,
@@ -1516,33 +1522,36 @@ pub fn back_input<I>(
     };
     input.back_input_alignment_token(first);
     let Some(second) = traced.next() else {
+        if let Some((list, replay_kind, index)) = input.current_token_list_frame()
+            && matches!(
+                replay_kind,
+                TokenListReplayKind::MacroBody | TokenListReplayKind::MacroArgument
+            )
+            && index > 0
+            && _stores.tokens(list).get(index - 1).copied() == Some(semantic_token(first))
+            && input.rewind_current_token_list_frame()
+        {
+            return;
+        }
         if input.push_current_source_pending(first) {
             return;
         }
-        let token_list = stores.intern_token_list(&[semantic_token(first)]);
-        let mut origins = stores.origin_list_builder();
-        origins.push(first.origin());
-        let origin_list = stores.finish_origin_list(&mut origins);
-        input.push_token_list_with_origins(token_list, origin_list, TokenListReplayKind::Inserted);
+        let mut buffer = input.take_transient_token_buffer();
+        buffer.push(first);
+        input.push_transient_tokens(buffer, TokenListReplayKind::Inserted);
         return;
     };
 
     input.back_input_alignment_token(second);
     let (lower, _) = traced.size_hint();
-    let mut semantic = Vec::with_capacity(lower.saturating_add(2));
-    semantic.extend([semantic_token(first), semantic_token(second)]);
-    let mut origins = stores.origin_list_builder();
-    origins.reserve(lower.saturating_add(2));
-    origins.push(first.origin());
-    origins.push(second.origin());
+    let mut buffer = input.take_transient_token_buffer();
+    buffer.reserve(lower.saturating_add(2));
+    buffer.extend([first, second]);
     for token in traced {
         input.back_input_alignment_token(token);
-        semantic.push(semantic_token(token));
-        origins.push(token.origin());
+        buffer.push(token);
     }
-    let token_list = stores.intern_token_list(&semantic);
-    let origin_list = stores.finish_origin_list(&mut origins);
-    input.push_token_list_with_origins(token_list, origin_list, TokenListReplayKind::Inserted);
+    input.push_transient_tokens(buffer, TokenListReplayKind::Inserted);
 }
 
 #[cfg(test)]
@@ -1565,27 +1574,18 @@ pub(crate) fn back_input_call_count() -> usize {
 /// Unlike [`back_input`], this does not reverse alignment brace accounting.
 pub fn insert_input<I>(
     input: &mut InputStack,
-    stores: &mut tex_state::ExpansionContext<'_>,
+    _stores: &mut tex_state::ExpansionContext<'_>,
     tokens: I,
 ) where
     I: IntoIterator<Item = TracedTokenWord>,
 {
-    let traced = tokens.into_iter().collect::<Vec<_>>();
+    let mut traced = input.take_transient_token_buffer();
+    traced.extend(tokens);
     if traced.is_empty() {
+        input.recycle_transient_token_buffer(traced);
         return;
     }
-    let semantic = traced
-        .iter()
-        .copied()
-        .map(semantic_token)
-        .collect::<Vec<_>>();
-    let token_list = stores.intern_token_list(&semantic);
-    let mut origins = stores.origin_list_builder();
-    for token in traced {
-        origins.push(token.origin());
-    }
-    let origin_list = stores.finish_origin_list(&mut origins);
-    input.push_token_list_with_origins(token_list, origin_list, TokenListReplayKind::Inserted);
+    input.push_transient_tokens(traced, TokenListReplayKind::Inserted);
 }
 
 /// Implements TeX's unexpanded `get_token`, including alignment delimiter
@@ -1703,7 +1703,9 @@ pub(crate) fn get_x_token_without_input_open(
                 }
                 return Ok(Some(token));
             }
-            push @ Dispatch::Push { .. } => apply_dispatch_push(input, push),
+            push @ (Dispatch::Push { .. } | Dispatch::PushTransient { .. }) => {
+                apply_dispatch_push(input, push);
+            }
         }
     }
 }
@@ -1764,31 +1766,43 @@ pub(crate) fn push_dispatch_result(
         }
         Dispatch::DeliverNoExpand(token) => push_noexpand_token(input, stores, token),
         Dispatch::Continue => {}
-        push @ Dispatch::Push { .. } => apply_dispatch_push(input, push),
+        push @ (Dispatch::Push { .. } | Dispatch::PushTransient { .. }) => {
+            apply_dispatch_push(input, push);
+        }
     }
 }
 
 pub(crate) fn apply_dispatch_push(input: &mut InputStack, dispatch: Dispatch) {
-    let Dispatch::Push {
-        replay_kind,
-        token_list,
-        origin_list,
-        macro_arguments,
-        macro_invocation,
-    } = dispatch
-    else {
-        return;
-    };
-
-    if replay_kind == ExpansionReplayKind::MacroBody {
-        input.push_macro_body_with_origins_and_invocation(
+    match dispatch {
+        Dispatch::Push {
+            replay_kind,
             token_list,
             origin_list,
             macro_arguments,
             macro_invocation,
-        );
-    } else {
-        input.push_token_list_with_origins(token_list, origin_list, replay_kind.as_lex_kind());
+        } => {
+            if replay_kind == ExpansionReplayKind::MacroBody {
+                input.push_macro_body_with_origins_and_invocation(
+                    token_list,
+                    origin_list,
+                    macro_arguments,
+                    macro_invocation,
+                );
+            } else {
+                input.push_token_list_with_origins(
+                    token_list,
+                    origin_list,
+                    replay_kind.as_lex_kind(),
+                );
+            }
+        }
+        Dispatch::PushTransient {
+            replay_kind,
+            tokens,
+        } => {
+            input.push_transient_tokens(tokens, replay_kind.as_lex_kind());
+        }
+        Dispatch::Continue | Dispatch::Deliver(_) | Dispatch::DeliverNoExpand(_) => {}
     }
 }
 
@@ -1799,9 +1813,10 @@ pub(crate) fn push_inserted_token(
     kind: InsertedOriginKind,
 ) {
     let semantic = semantic_token(token);
-    let token_list = stores.intern_token_list(&[semantic]);
-    let origin_list = inserted_origin_list(stores, &[token], kind);
-    input.push_token_list_with_origins(token_list, origin_list, TokenListReplayKind::Inserted);
+    let origin = stores.inserted_origin(kind, semantic, token.origin());
+    let mut buffer = input.take_transient_token_buffer();
+    buffer.push(TracedTokenWord::pack(semantic, origin));
+    input.push_transient_tokens(buffer, TokenListReplayKind::Inserted);
 }
 
 pub(crate) fn push_noexpand_token(
@@ -1810,21 +1825,10 @@ pub(crate) fn push_noexpand_token(
     token: TracedTokenWord,
 ) {
     let semantic = semantic_token(token);
-    let token_list = stores.intern_token_list(&[semantic]);
-    let origin_list = inserted_origin_list(stores, &[token], InsertedOriginKind::NoExpand);
-    input.push_token_list_with_origins(token_list, origin_list, TokenListReplayKind::NoExpand);
-}
-
-pub(crate) fn inserted_origin_list(
-    stores: &mut tex_state::ExpansionContext<'_>,
-    tokens: &[TracedTokenWord],
-    kind: InsertedOriginKind,
-) -> tex_state::ids::OriginListId {
-    let mut origins = stores.origin_list_builder();
-    for &token in tokens {
-        origins.push(stores.inserted_origin(kind, semantic_token(token), token.origin()));
-    }
-    stores.finish_origin_list(&mut origins)
+    let origin = stores.inserted_origin(InsertedOriginKind::NoExpand, semantic, token.origin());
+    let mut buffer = input.take_transient_token_buffer();
+    buffer.push(TracedTokenWord::pack(semantic, origin));
+    input.push_transient_tokens(buffer, TokenListReplayKind::NoExpand);
 }
 
 pub(crate) fn expansion_suppressed_origin_list(
@@ -1844,16 +1848,6 @@ pub(crate) fn expansion_suppressed_origin_list(
         origins.push(stores.inserted_origin(InsertedOriginKind::Unexpanded, token, parent));
     }
     stores.finish_origin_list(&mut origins)
-}
-
-pub(crate) fn synthesized_origin_list(
-    stores: &mut tex_state::ExpansionContext<'_>,
-    len: usize,
-    parent: OriginId,
-    kind: SynthesizedOriginKind,
-) -> tex_state::ids::OriginListId {
-    let origin = stores.synthesized_origin(kind, parent);
-    stores.allocate_repeated_origin_list(origin, len)
 }
 
 pub fn semantic_token(token: TracedTokenWord) -> Token {

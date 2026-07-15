@@ -178,18 +178,12 @@ where
                 let symbol = stores
                     .font_identifier_symbol(font)
                     .ok_or(ExpandError::UnsupportedTheTarget { context: token })?;
-                Ok(Dispatch::Push {
-                    replay_kind: ExpansionReplayKind::TheOutput,
-                    token_list: stores.intern_token_list(&[Token::Cs(symbol.symbol())]),
-                    origin_list: crate::synthesized_origin_list(
-                        stores,
-                        1,
-                        cause_origin,
-                        SynthesizedOriginKind::ValueRendering,
-                    ),
-                    macro_arguments: MacroArguments::new(),
-                    macro_invocation: OriginId::UNKNOWN,
-                })
+                Ok(push_rendered_tokens(
+                    stores,
+                    ExpansionReplayKind::TheOutput,
+                    [Token::Cs(symbol.symbol())],
+                    cause_origin,
+                ))
             }
             primitive @ (tex_state::meaning::UnexpandablePrimitive::TextFont
             | tex_state::meaning::UnexpandablePrimitive::ScriptFont
@@ -921,27 +915,14 @@ pub(crate) fn push_rendered_tokens<I>(
 where
     I: IntoIterator<Item = Token>,
 {
-    let tokens = tokens.into_iter().collect::<Vec<_>>();
-    let token_list = freeze_output_tokens(stores, &tokens);
-    Dispatch::Push {
+    let origin = stores.synthesized_origin(SynthesizedOriginKind::ValueRendering, parent);
+    Dispatch::PushTransient {
         replay_kind,
-        token_list,
-        origin_list: crate::synthesized_origin_list(
-            stores,
-            tokens.len(),
-            parent,
-            SynthesizedOriginKind::ValueRendering,
-        ),
-        macro_arguments: MacroArguments::new(),
-        macro_invocation: OriginId::UNKNOWN,
+        tokens: tokens
+            .into_iter()
+            .map(|token| TracedTokenWord::pack(token, origin))
+            .collect(),
     }
-}
-
-fn freeze_output_tokens(
-    stores: &mut tex_state::ExpansionContext<'_>,
-    tokens: &[Token],
-) -> TokenListId {
-    stores.intern_token_list(tokens)
 }
 
 pub(crate) fn string_tokens(stores: &impl ExpansionState, token: Token) -> Vec<Token> {
@@ -1136,6 +1117,10 @@ pub fn scan_the_text_with_context(
     )?;
     Ok(match dispatch {
         Dispatch::Push { token_list, .. } => token_list_text(stores, token_list),
+        Dispatch::PushTransient { tokens, .. } => tokens
+            .into_iter()
+            .map(|word| token_text(stores, crate::semantic_token(word)))
+            .collect(),
         Dispatch::Deliver(token) | Dispatch::DeliverNoExpand(token) => {
             token_text(stores, crate::semantic_token(token))
         }

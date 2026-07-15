@@ -423,10 +423,11 @@ fn run_output_routine_inner(
     nest.push(Mode::InternalVertical);
     nest.current_list_mut().set_prev_depth(IGNORE_DEPTH);
     let output_frame = delimited_output_tokens(stores, output);
-    *replay = Some(input.push_token_list(output_frame, TokenListReplayKind::OutputRoutine));
+    let output_replay = input.push_token_list(output_frame, TokenListReplayKind::OutputRoutine);
+    *replay = Some(output_replay);
 
     match run_main_control_until(nest, input, stores, execution, stats, |input, stores| {
-        pop_finished_output_frame(input, stores, output_frame)
+        pop_finished_output_frame(input, stores, output_replay)
     })? {
         MainControlExit::Stopped => {}
         MainControlExit::EndOfInput => {
@@ -473,18 +474,9 @@ fn run_output_routine_inner(
 fn pop_finished_output_frame(
     input: &mut InputStack,
     stores: &Universe,
-    output: tex_state::ids::TokenListId,
+    output_replay: tex_lex::TokenListReplayMarker,
 ) -> bool {
-    while let Some((token_list, replay_kind, index)) = input.current_token_list_frame() {
-        if index < stores.tokens(token_list).len() {
-            return false;
-        }
-        input.pop_current_token_list_frame(token_list, replay_kind);
-        if token_list == output && replay_kind == TokenListReplayKind::OutputRoutine {
-            return true;
-        }
-    }
-    false
+    input.finish_exhausted_token_list_replay(output_replay, stores)
 }
 
 fn delimited_output_tokens(

@@ -2139,8 +2139,8 @@ fn generated_value_tokens_share_one_synthesized_origin_record() {
     let growth = stores.provenance_stats().saturating_sub(before);
 
     assert_eq!(growth.origin_records(), 1);
-    assert_eq!(growth.origin_list_spans(), 1);
-    assert_eq!(growth.origin_list_entries(), 4);
+    assert_eq!(growth.origin_list_spans(), 0);
+    assert_eq!(growth.origin_list_entries(), 0);
 }
 
 #[test]
@@ -2755,9 +2755,8 @@ fn the_renders_supported_registers_and_token_registers() {
 }
 
 #[test]
-fn rendered_output_is_frozen_and_rollback_removes_it() {
+fn rendered_output_uses_transient_replay_without_durable_identity() {
     let mut stores = Universe::new();
-    let snapshot = stores.snapshot();
     let number = expandable_primitive(&mut stores, "number", ExpandablePrimitive::Number);
     let list = stores.intern_token_list(&[Token::Cs(number.symbol()), char_token('7')]);
     let mut input = InputStack::new(MemoryInput::new(""));
@@ -2774,16 +2773,16 @@ fn rendered_output_is_frozen_and_rollback_removes_it() {
             cat: Catcode::Other
         })
     );
-    let rendered = match input.summary().frames().last() {
-        Some(tex_lex::InputFrameSummary::TokenList { token_list, .. }) => *token_list,
-        other => panic!("expected rendered token-list frame, got {other:?}"),
-    };
-
-    stores.rollback(&snapshot);
-    let err = std::panic::catch_unwind(|| stores.tokens(rendered));
     assert!(
-        err.is_err(),
-        "rendered output must be rollback-coupled frozen content"
+        matches!(
+            input.summary().frames().last(),
+            Some(tex_lex::InputFrameSummary::TransientTokenList {
+                tokens,
+                replay_kind: TokenListReplayKind::Inserted,
+                ..
+            }) if tokens.is_empty()
+        ),
+        "rendered output must not acquire a permanent token-list id"
     );
 }
 
