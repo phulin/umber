@@ -76,6 +76,10 @@ enum PdfFontOperation {
         logical_name: Vec<u8>,
         program: tex_fonts::PdfType1Program,
     },
+    Encoding {
+        logical_name: Vec<u8>,
+        encoding: tex_fonts::PdfEncoding,
+    },
 }
 
 /// Live pdfTeX microtype and font-output controls.
@@ -538,6 +542,30 @@ impl PdfState {
             })
     }
 
+    pub(crate) fn provide_encoding(
+        &mut self,
+        logical_name: Vec<u8>,
+        encoding: tex_fonts::PdfEncoding,
+    ) {
+        self.push_font_operation(PdfFontOperation::Encoding {
+            logical_name,
+            encoding,
+        });
+    }
+
+    pub(crate) fn encoding(&self, logical_name: &[u8]) -> Option<&tex_fonts::PdfEncoding> {
+        self.font_operations
+            .iter()
+            .rev()
+            .find_map(|operation| match operation {
+                PdfFontOperation::Encoding {
+                    logical_name: candidate,
+                    encoding,
+                } if candidate == logical_name => Some(encoding),
+                _ => None,
+            })
+    }
+
     fn push_font_operation(&mut self, operation: PdfFontOperation) {
         self.fingerprint = append_font_fingerprint(self.fingerprint, &operation);
         self.font_operations.push(operation);
@@ -550,7 +578,8 @@ impl PdfState {
                 PdfFontOperation::Map(map) => Some(map),
                 PdfFontOperation::Attribute { .. }
                 | PdfFontOperation::IncludeChars { .. }
-                | PdfFontOperation::Type1Program { .. } => None,
+                | PdfFontOperation::Type1Program { .. }
+                | PdfFontOperation::Encoding { .. } => None,
             })
     }
 
@@ -739,6 +768,17 @@ fn append_font_fingerprint(previous: u64, operation: &PdfFontOperation) -> u64 {
             hasher.tag(4);
             hasher.bytes(logical_name);
             hasher.bytes(&program.identity().bytes());
+        }
+        PdfFontOperation::Encoding {
+            logical_name,
+            encoding,
+        } => {
+            hasher.tag(6);
+            hasher.bytes(logical_name);
+            hasher.bytes(encoding.name());
+            for name in encoding.glyph_names() {
+                hasher.bytes(name);
+            }
         }
     }
     hasher.finish()

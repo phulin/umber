@@ -193,10 +193,28 @@ impl FileSessionResolvers {
         ExecutionContext::with_resolvers(&self.job_name, &mut self.input, &mut self.font)
     }
 
-    /// Acquires every mapline-selected Type-1 program through the driver's
-    /// configured font search path and publishes validated bytes into engine
-    /// state. PDF finalization itself remains host-neutral.
+    /// Acquires every mapline-selected font program and encoding through the
+    /// driver's configured font search path. PDF finalization remains
+    /// host-neutral and consumes only validated resources in engine state.
     pub fn provide_pdf_font_programs(&self, stores: &mut Universe) -> Result<(), String> {
+        let encodings = stores
+            .resolved_pdf_font_map_lines()
+            .into_iter()
+            .flat_map(|entry| entry.encoding_files)
+            .collect::<std::collections::BTreeSet<_>>();
+        for name in encodings {
+            if stores.pdf_encoding(&name).is_some() {
+                continue;
+            }
+            let logical_name = String::from_utf8_lossy(&name);
+            let content = self
+                .font
+                .0
+                .read_program_from_world(stores.world_mut(), Path::new(logical_name.as_ref()))?;
+            stores
+                .provide_pdf_encoding(name, content.bytes())
+                .map_err(|error| error.to_string())?;
+        }
         let names = stores
             .resolved_pdf_font_map_lines()
             .into_iter()

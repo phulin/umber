@@ -1792,6 +1792,21 @@ impl Universe {
         self.pdf.type1_program(logical_name)
     }
 
+    pub fn provide_pdf_encoding(
+        &mut self,
+        logical_name: Vec<u8>,
+        bytes: &[u8],
+    ) -> Result<(), tex_fonts::PdfEncodingError> {
+        let encoding = tex_fonts::PdfEncoding::parse(bytes)?;
+        self.pdf.provide_encoding(logical_name, encoding);
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn pdf_encoding(&self, logical_name: &[u8]) -> Option<&tex_fonts::PdfEncoding> {
+        self.pdf.encoding(logical_name)
+    }
+
     /// Lazily reserves the page-resource name and font-dictionary object used
     /// by enquiries and by the first shipped page containing this font.
     pub fn ensure_pdf_font_resource(

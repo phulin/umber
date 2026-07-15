@@ -2,6 +2,7 @@
 
 pub mod metrics;
 pub mod opentype;
+pub mod pdf_encoding;
 pub mod pdf_map;
 pub mod tfm;
 pub mod type1;
@@ -20,6 +21,7 @@ pub use opentype::{
     FontWireError, OpenTypeFont, OpenTypeMetrics, OpenTypeTag, ResolvedFont, ShapingTables,
     VariationCoordinate, VariationSelection, WritingDirection,
 };
+pub use pdf_encoding::{PdfEncoding, PdfEncodingError};
 pub use pdf_map::{
     PdfFontMapDirective, PdfFontMapEntry, PdfFontMapError, PdfFontMapFile, PdfFontMapProgram,
 };

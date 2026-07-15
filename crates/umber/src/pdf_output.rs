@@ -257,6 +257,26 @@ fn pdf_type1_font_objects(
     dictionary.insert("Subtype", PdfValue::Name("Type1".into()))?;
     dictionary.insert("Name", PdfValue::Name(PdfName::new(resource_name)))?;
     dictionary.insert("BaseFont", PdfValue::Name(PdfName::new(base_font)))?;
+    if let Some(encoding_name) = mapped
+        .as_ref()
+        .and_then(|entry| entry.encoding_files.first())
+    {
+        let encoding = stores
+            .pdf_encoding(encoding_name)
+            .ok_or_else(|| PdfBuildError::MissingEncoding(encoding_name.clone()))?;
+        let mut differences = Vec::with_capacity(257);
+        differences.push(PdfValue::Integer(0));
+        differences.extend(
+            encoding
+                .glyph_names()
+                .iter()
+                .map(|name| PdfValue::Name(PdfName::new(name.clone()))),
+        );
+        let mut encoding_dictionary = PdfDictionary::new();
+        encoding_dictionary.insert("Type", PdfValue::Name("Encoding".into()))?;
+        encoding_dictionary.insert("Differences", PdfValue::Array(differences))?;
+        dictionary.insert("Encoding", PdfValue::Dictionary(encoding_dictionary))?;
+    }
     dictionary.insert("FirstChar", PdfValue::Integer(0))?;
     dictionary.insert("LastChar", PdfValue::Integer(255))?;
     let font_id = stores
@@ -530,6 +550,7 @@ pub enum PdfBuildError {
     MissingPositionedFont(u32),
     MissingFontProgram(Vec<u8>),
     MissingFontResource(String),
+    MissingEncoding(Vec<u8>),
     MissingLiveFont(String),
     UnsupportedSpecial(String),
     World(WorldError),
@@ -573,6 +594,11 @@ impl std::fmt::Display for PdfBuildError {
             Self::MissingFontResource(name) => {
                 write!(f, "PDF font {name:?} has no checkpointed resource identity")
             }
+            Self::MissingEncoding(name) => write!(
+                f,
+                "PDF encoding resource {:?} was not supplied",
+                String::from_utf8_lossy(name)
+            ),
             Self::MissingLiveFont(name) => {
                 write!(f, "PDF artifact font {name:?} has no live metric source")
             }
@@ -720,12 +746,26 @@ mod tests {
         stores
             .provide_pdf_type1_program(b"cmr10.pfb".to_vec(), &pfb)
             .expect("provide detached Type-1 program");
+        let mut encoding = b"/FixtureEncoding [".to_vec();
+        for code in 0..256 {
+            let name = match code {
+                65 => "A",
+                66 => "B",
+                67 => "C",
+                _ => ".notdef",
+            };
+            encoding.extend_from_slice(format!("/{name} ").as_bytes());
+        }
+        encoding.extend_from_slice(b"] def");
+        stores
+            .provide_pdf_encoding(b"fixture.enc".to_vec(), &encoding)
+            .expect("provide detached encoding");
         let run_result = run_in(
             &mut stores,
             concat!(
                 "\\pdfoutput=1\\pdfcompresslevel=0",
                 "\\font\\f=cmr10 ",
-                "\\pdfmapline{=cmr10 CMR10 <cmr10.pfb}",
+                "\\pdfmapline{=cmr10 CMR10 <fixture.enc <cmr10.pfb}",
                 "\\pdffontattr\\f{/TestAttr 42}",
                 "\\shipout\\hbox{\\f\\char65\\char66\\char67}\\end",
             ),
@@ -781,6 +821,18 @@ mod tests {
                 .expect("BaseFont name"),
             b"CMR10"
         );
+        let encoding = font
+            .get(b"Encoding")
+            .expect("custom Encoding")
+            .as_dict()
+            .expect("inline Encoding dictionary");
+        let differences = encoding
+            .get(b"Differences")
+            .expect("Differences")
+            .as_array()
+            .expect("Differences array");
+        assert_eq!(differences.len(), 257);
+        assert_eq!(differences[66].as_name().expect("code 65 glyph"), b"A");
         let descriptor_id = font
             .get(b"FontDescriptor")
             .expect("FontDescriptor")
