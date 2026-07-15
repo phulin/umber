@@ -413,6 +413,7 @@ pub enum InsertedOriginKind {
     AfterGroup,
     AfterAssignment,
     NoExpand,
+    Unexpanded,
     ExpandAfter,
     Unread,
     TokenListReplay(TokenListReplayKind),

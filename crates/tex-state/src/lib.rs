@@ -12,10 +12,12 @@
 /// the per-field full avalanche with a faster ordered streaming recurrence and
 /// retains the same strong final avalanche. Version 9 makes absolute editor-root
 /// source coordinates revision-mapping metadata while retaining normalized-line
-/// cursor state in the semantic projection. Hashes are
+/// cursor state in the semantic projection. Version 10 widens font-parameter
+/// counts and fontdimen slots to the 17-bit domain used by LaTeX's font-backed
+/// integer arrays. Hashes are
 /// comparable only when both this version and the named-boundary schedule
 /// match.
-pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 9;
+pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 10;
 
 pub mod cell;
 pub mod code_tables;

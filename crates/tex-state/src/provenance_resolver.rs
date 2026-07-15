@@ -630,6 +630,7 @@ fn inserted_kind_label(kind: InsertedOriginKind) -> &'static str {
         InsertedOriginKind::AfterGroup => "aftergroup",
         InsertedOriginKind::AfterAssignment => "afterassignment",
         InsertedOriginKind::NoExpand => "noexpand",
+        InsertedOriginKind::Unexpanded => "unexpanded",
         InsertedOriginKind::ExpandAfter => "expandafter",
         InsertedOriginKind::Unread => "unread",
         InsertedOriginKind::TokenListReplay(_) => "token-list replay",

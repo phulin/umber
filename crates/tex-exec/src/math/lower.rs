@@ -199,7 +199,7 @@ impl MathTypesetState for LoweredMathSink<'_> {
     }
 
     fn font_parameter(&self, font: FontId, number: u16) -> Scaled {
-        self.stores.font_parameter(font, number)
+        self.stores.font_parameter(font, u32::from(number))
     }
 
     fn font_next_larger(&self, font: FontId, code: u8) -> Option<u8> {

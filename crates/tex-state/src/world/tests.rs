@@ -372,6 +372,66 @@ fn input_stream_reads_are_pinned_and_snapshot_cursor_restores() {
 }
 
 #[test]
+fn input_stream_advances_an_incremental_byte_cursor() {
+    let mut world = World::memory();
+    let contents = "é\r\ntwo\n末";
+    world
+        .set_memory_file("large-stream.tex", contents.as_bytes().to_vec())
+        .expect("seed memory file");
+    let slot = StreamSlot::new(2);
+    world.open_in(slot, "large-stream.tex").expect("open input");
+
+    assert!(!world.input_stream_eof(slot));
+    assert_eq!(
+        world
+            .read_stream_line(slot)
+            .expect("first UTF-8 line should be readable")
+            .as_deref(),
+        Some("é")
+    );
+    assert_eq!(
+        world
+            .stream_bufs()
+            .read_stream_target(slot)
+            .expect("open stream should retain its target")
+            .next_byte(),
+        4
+    );
+    assert_eq!(
+        world
+            .read_stream_line(slot)
+            .expect("CRLF line should be readable")
+            .as_deref(),
+        Some("two")
+    );
+    assert_eq!(
+        world
+            .stream_bufs()
+            .read_stream_target(slot)
+            .expect("open stream should retain its target")
+            .next_byte(),
+        8
+    );
+    assert!(!world.input_stream_eof(slot));
+    assert_eq!(
+        world
+            .read_stream_line(slot)
+            .expect("final UTF-8 line should be readable")
+            .as_deref(),
+        Some("末")
+    );
+    assert!(world.input_stream_eof(slot));
+    assert_eq!(
+        world
+            .stream_bufs()
+            .read_stream_target(slot)
+            .expect("open stream should retain its target")
+            .next_byte(),
+        contents.len()
+    );
+}
+
+#[test]
 fn terminal_input_cursor_is_snapshot_state() {
     let mut world = World::memory();
     world

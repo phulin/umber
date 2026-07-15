@@ -184,7 +184,7 @@ fn oversized_immutable_font_parameter_table_is_rejected_before_publication() {
         0,
         Scaled::from_raw(Scaled::UNITY),
         Scaled::from_raw(Scaled::UNITY),
-        vec![Scaled::from_raw(0); usize::from(MAX_FONT_DIMEN) + 1],
+        vec![Scaled::from_raw(0); MAX_FONT_DIMEN as usize + 1],
         crate::font::FontMetrics::default(),
     );
 
@@ -193,7 +193,7 @@ fn oversized_immutable_font_parameter_table_is_rejected_before_publication() {
         Err(super::FontParameterError::ParameterCountOutOfRange {
             count,
             maximum: MAX_FONT_DIMEN,
-        }) if count == usize::from(MAX_FONT_DIMEN) + 1
+        }) if count == MAX_FONT_DIMEN as usize + 1
     ));
     assert_eq!(universe.testing_state_hash(), before);
 }
@@ -692,7 +692,7 @@ fn format_with_box_glue_set(glue_set: GlueSetRatio) -> Vec<u8> {
 }
 
 #[test]
-fn format_v6_round_trips_tex_web_box_shift_and_rejects_v5() {
+fn format_v7_round_trips_tex_web_box_shift_and_rejects_v6() {
     let mut universe = Universe::with_world(World::memory());
     let children = universe.freeze_node_list(&[]);
     let root = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
@@ -709,19 +709,19 @@ fn format_v6_round_trips_tex_web_box_shift_and_rejects_v5() {
     universe.set_box_reg(19, root);
 
     let bytes = universe.dump_format().expect("format encodes");
-    assert_eq!(&bytes[8..12], &6_u32.to_le_bytes());
-    let restored = Universe::from_format(World::memory(), &bytes).expect("v6 format restores");
+    assert_eq!(&bytes[8..12], &7_u32.to_le_bytes());
+    let restored = Universe::from_format(World::memory(), &bytes).expect("v7 format restores");
     let restored_root = restored.box_reg(19).expect("box register restores");
     let [Node::HList(boxed)] = restored.nodes(restored_root).testing_decoded() else {
         panic!("box register should contain an hlist");
     };
     assert_eq!(boxed.shift, Scaled::from_raw(-4));
 
-    let mut v5 = bytes;
-    v5[8..12].copy_from_slice(&5_u32.to_le_bytes());
+    let mut v6 = bytes;
+    v6[8..12].copy_from_slice(&6_u32.to_le_bytes());
     assert!(matches!(
-        Universe::from_format(World::memory(), &v5),
-        Err(super::FormatError::UnsupportedVersion(5))
+        Universe::from_format(World::memory(), &v6),
+        Err(super::FormatError::UnsupportedVersion(6))
     ));
 }
 

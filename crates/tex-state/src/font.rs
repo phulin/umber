@@ -18,7 +18,7 @@ pub use tex_fonts::metrics::{
 pub const NULL_FONT: FontId = FontId::builtin(0);
 
 /// Largest TeX font-parameter number representable in a fontdimen cell key.
-pub const MAX_FONT_DIMEN: u16 = 1 << 15;
+pub const MAX_FONT_DIMEN: u32 = 1 << 17;
 
 /// Largest dense font id representable in a fontdimen cell key.
 pub const MAX_FONT_DIMEN_FONT_ID: u32 = (1 << 15) - 1;

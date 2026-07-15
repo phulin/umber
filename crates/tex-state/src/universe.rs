@@ -136,9 +136,9 @@ pub trait ExpansionState {
     fn glue(&self, id: GlueId) -> GlueSpec;
     fn font_name(&self, id: FontId) -> String;
     fn font_identifier_symbol(&self, id: FontId) -> Option<Symbol>;
-    fn font_parameter(&self, font: FontId, number: u16) -> Scaled;
-    fn font_dimen(&self, font: FontId, number: u16) -> Scaled;
-    fn font_parameter_count(&self, font: FontId) -> u16;
+    fn font_parameter(&self, font: FontId, number: u32) -> Scaled;
+    fn font_dimen(&self, font: FontId, number: u32) -> Scaled;
+    fn font_parameter_count(&self, font: FontId) -> u32;
     fn font_char_metrics(&self, font: FontId, code: u8) -> Option<crate::font::CharMetrics>;
     fn font_hyphen_char(&self, font: FontId) -> i32;
     fn font_skew_char(&self, font: FontId) -> i32;
@@ -270,6 +270,12 @@ impl<'a> ExpansionContext<'a> {
     #[must_use]
     pub fn new(universe: &'a mut Universe) -> Self {
         Self { universe }
+    }
+
+    /// Reads expansion-control provenance attached to a delivered token.
+    #[must_use]
+    pub fn origin(&self, id: OriginId) -> OriginRecord {
+        self.universe.origin(id)
     }
 }
 
@@ -961,7 +967,7 @@ impl Default for Universe {
 
 impl Universe {
     const FORMAT_MAGIC: [u8; 8] = *b"UMBRFMT\0";
-    pub const FORMAT_SCHEMA_VERSION: u32 = 6;
+    pub const FORMAT_SCHEMA_VERSION: u32 = 7;
 
     /// Creates an isolated TeX state timeline.
     #[must_use]
@@ -2290,7 +2296,7 @@ impl Universe {
     }
 
     #[must_use]
-    pub fn font_parameter(&self, font: FontId, number: u16) -> Scaled {
+    pub fn font_parameter(&self, font: FontId, number: u32) -> Scaled {
         self.stores.font_parameter(font, number)
     }
 
@@ -2344,19 +2350,19 @@ impl Universe {
     }
 
     #[must_use]
-    pub fn font_dimen(&self, font: FontId, number: u16) -> Scaled {
+    pub fn font_dimen(&self, font: FontId, number: u32) -> Scaled {
         self.stores.font_dimen(font, number)
     }
 
     #[must_use]
-    pub fn font_parameter_count(&self, font: FontId) -> u16 {
+    pub fn font_parameter_count(&self, font: FontId) -> u32 {
         self.stores.font_parameter_count(font)
     }
 
     pub fn set_font_dimen(
         &mut self,
         font: FontId,
-        number: u16,
+        number: u32,
         value: Scaled,
         global: bool,
     ) -> Result<(), FontParameterError> {
@@ -3427,15 +3433,15 @@ impl ExpansionState for Universe {
         Self::font_identifier_symbol(self, id).map(SymbolId::symbol)
     }
 
-    fn font_parameter(&self, font: FontId, number: u16) -> Scaled {
+    fn font_parameter(&self, font: FontId, number: u32) -> Scaled {
         Self::font_parameter(self, font, number)
     }
 
-    fn font_dimen(&self, font: FontId, number: u16) -> Scaled {
+    fn font_dimen(&self, font: FontId, number: u32) -> Scaled {
         Self::font_dimen(self, font, number)
     }
 
-    fn font_parameter_count(&self, font: FontId) -> u16 {
+    fn font_parameter_count(&self, font: FontId) -> u32 {
         Self::font_parameter_count(self, font)
     }
     fn font_char_metrics(&self, font: FontId, code: u8) -> Option<crate::font::CharMetrics> {
@@ -3816,15 +3822,15 @@ impl ExpansionState for ExpansionContext<'_> {
             .map(SymbolId::symbol)
     }
 
-    fn font_parameter(&self, font: FontId, number: u16) -> Scaled {
+    fn font_parameter(&self, font: FontId, number: u32) -> Scaled {
         self.universe.font_parameter(font, number)
     }
 
-    fn font_dimen(&self, font: FontId, number: u16) -> Scaled {
+    fn font_dimen(&self, font: FontId, number: u32) -> Scaled {
         self.universe.font_dimen(font, number)
     }
 
-    fn font_parameter_count(&self, font: FontId) -> u16 {
+    fn font_parameter_count(&self, font: FontId) -> u32 {
         self.universe.font_parameter_count(font)
     }
     fn font_char_metrics(&self, font: FontId, code: u8) -> Option<crate::font::CharMetrics> {
@@ -4128,7 +4134,7 @@ fn hash_stream_bufs(streams: &StreamBufState, hasher: &mut StateHasher) {
                 hasher.bool(true);
                 hash_path(target.path(), hasher);
                 hasher.bytes(&target.hash().bytes());
-                hasher.usize(target.next_line());
+                hasher.usize(target.next_byte());
             }
             None => hasher.bool(false),
         }

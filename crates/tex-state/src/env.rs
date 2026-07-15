@@ -37,7 +37,7 @@ use std::collections::BTreeMap;
 const SEGMENT_BITS: u32 = 16;
 const SEGMENT_LEN: usize = 1 << SEGMENT_BITS;
 const SEGMENT_MASK: u32 = (SEGMENT_LEN as u32) - 1;
-const FONT_DIMEN_BITS: u32 = 15;
+const FONT_DIMEN_BITS: u32 = 17;
 const MATH_FAMILY_FONT_COUNT: usize = 3 * MATH_FAMILY_COUNT as usize;
 
 type MeaningSegment = Box<[u64; SEGMENT_LEN]>;
@@ -650,7 +650,7 @@ impl Env {
     }
 
     #[must_use]
-    pub fn font_dimen(&self, font: FontId, number: u16) -> Scaled {
+    pub fn font_dimen(&self, font: FontId, number: u32) -> Scaled {
         let Ok(index) = font_dimen_index(font, number) else {
             return Scaled::from_raw(0);
         };
@@ -686,11 +686,11 @@ impl Env {
     }
 
     #[must_use]
-    pub fn font_param_len(&self, font: FontId) -> u16 {
-        decode_u16(font_bank_word(&self.font_param_lens, font.raw()))
+    pub fn font_param_len(&self, font: FontId) -> u32 {
+        decode_u32(font_bank_word(&self.font_param_lens, font.raw()))
     }
 
-    pub(crate) fn set_font_param_len(&mut self, font: FontId, value: u16) {
+    pub(crate) fn set_font_param_len(&mut self, font: FontId, value: u32) {
         set_font_bank_word(
             &mut self.font_param_lens,
             &mut self.journal,
@@ -704,7 +704,7 @@ impl Env {
         );
     }
 
-    pub(crate) fn set_font_param_len_global(&mut self, font: FontId, value: u16) {
+    pub(crate) fn set_font_param_len_global(&mut self, font: FontId, value: u32) {
         set_font_bank_word(
             &mut self.font_param_lens,
             &mut self.journal,
@@ -869,7 +869,7 @@ fn checked_aftergroup_start(start: u32, len: usize) -> usize {
 
 pub(crate) fn font_dimen_index(
     font: FontId,
-    number: u16,
+    number: u32,
 ) -> Result<u32, crate::stores::FontParameterError> {
     use crate::font::{MAX_FONT_DIMEN, MAX_FONT_DIMEN_FONT_ID};
     use crate::stores::FontParameterError;
@@ -889,7 +889,7 @@ pub(crate) fn font_dimen_index(
             maximum: MAX_FONT_DIMEN_FONT_ID,
         });
     }
-    Ok((font.raw() << FONT_DIMEN_BITS) | u32::from(number - 1))
+    Ok((font.raw() << FONT_DIMEN_BITS) | (number - 1))
 }
 
 fn math_family_font_index(size: MathFontSize, family: u8) -> u16 {
@@ -943,10 +943,10 @@ fn decode_i32(word: u64) -> i32 {
     word as u32 as i32
 }
 
-fn decode_u16(word: u64) -> u16 {
-    match u16::try_from(word) {
+fn decode_u32(word: u64) -> u32 {
+    match u32::try_from(word) {
         Ok(value) => value,
-        Err(_) => panic!("font parameter count exceeds u16"),
+        Err(_) => panic!("font parameter count exceeds u32"),
     }
 }
 

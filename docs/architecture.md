@@ -1254,10 +1254,10 @@ immutable tables, with mutable font state kept behind the state timeline.
   parameter values only seed those banks at load time. TFM parsing and the
   backend-neutral loaded-font boundary both enforce TeX82's guaranteed
   `\fontdimen1` through `\fontdimen7`, padding absent values with zero before
-  the snapshot-covered Env bank is initialized. The journal cell codec splits
-  its 30-bit index evenly between a 15-bit dense `FontId` and a 15-bit
-  zero-based parameter slot: font ids `0..=32767` and fontdimens `1..=32768`
-  are injective, with the final pair mapping to index `(1 << 30) - 1`.
+  the snapshot-covered Env bank is initialized. The journal cell codec uses a
+  15-bit dense `FontId` and a 17-bit zero-based parameter slot across its full
+  32-bit Env-bank index: font ids `0..=32767` and fontdimens `1..=131072` are
+  injective, with the final pair mapping to `u32::MAX`.
   Runtime loading and assignment preflight reject either field beyond that
   domain before publishing a font or changing parameter-count state; invalid
   reads use TeX's zero-valued dummy font-info behavior.
@@ -1285,10 +1285,11 @@ Responsibility: page artifacts → bytes on disk. Strictly downstream.
   artifact bytes before asking `World` to store them.
 - Box shifts retain TeX.web's `shift_amount` representation across live state,
   format images, committed artifacts, and drivers: positive is down in an
-  hlist and right in a vlist. Format-image version 6 adds complete ligature
+  hlist and right in a vlist. Format-image version 7 widens the packed
+  fontdimen slot and parameter-count domain; version 6 adds complete ligature
   source provenance; version 5 introduced version-2 content
   identities; version 4 established the current shift representation. Artifact
-  version 13 and format version 6 reject older ambiguous encodings or identity
+  version 13 and format version 7 reject older ambiguous encodings or identity
   schemes rather than guessing context or silently changing semantic hashes.
 - The artifact record captures the effective job magnification, banner,
   `\hoffset`, and `\voffset` at shipout, so DVI generation does not reach back

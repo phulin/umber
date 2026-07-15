@@ -31,7 +31,7 @@ fn fontdimen_key_codec_is_injective_at_both_field_boundaries() {
 
     assert_eq!(first, 0);
     assert_eq!(last_slot + 1, next_font);
-    assert_eq!(last, (1 << 30) - 1);
+    assert_eq!(last, u32::MAX);
     assert!(matches!(
         font_dimen_index(FontId::new(0), MAX_FONT_DIMEN + 1),
         Err(FontParameterError::NumberOutOfRange { .. })

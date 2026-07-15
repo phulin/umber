@@ -179,18 +179,18 @@ pub enum FontParameterError {
     /// TeX font parameter numbers start at 1.
     Zero,
     /// The parameter number exceeds the injective fontdimen slot domain.
-    NumberOutOfRange { number: u16, maximum: u16 },
+    NumberOutOfRange { number: u32, maximum: u32 },
     /// The dense font id exceeds the fontdimen key's font field.
     FontOutOfRange { font: FontId, maximum: u32 },
     /// A loaded immutable font has more parameters than the cell key can name.
-    ParameterCountOutOfRange { count: usize, maximum: u16 },
+    ParameterCountOutOfRange { count: usize, maximum: u32 },
     /// Loading another distinct font would exceed the fontdimen font field.
     TooManyFonts { maximum: u32 },
     /// Only the most recently loaded font may grow its parameter table.
     CannotGrow {
         font: FontId,
-        number: u16,
-        current_len: u16,
+        number: u32,
+        current_len: u32,
         last_loaded_font: FontId,
     },
 }
@@ -1078,7 +1078,7 @@ impl Stores {
     /// Interns a loaded immutable font and initializes its Env-side banks.
     pub fn try_intern_font(&mut self, font: LoadedFont) -> Result<FontId, FontParameterError> {
         let parameter_len = font.parameters().len();
-        let parameter_count = u16::try_from(parameter_len)
+        let parameter_count = u32::try_from(parameter_len)
             .ok()
             .filter(|&count| count <= crate::font::MAX_FONT_DIMEN)
             .ok_or(FontParameterError::ParameterCountOutOfRange {
@@ -1229,7 +1229,7 @@ impl Stores {
     }
 
     #[must_use]
-    pub fn font_parameter(&self, font: FontId, number: u16) -> Scaled {
+    pub fn font_parameter(&self, font: FontId, number: u32) -> Scaled {
         self.font_dimen(font, number)
     }
 
@@ -1288,13 +1288,13 @@ impl Stores {
     }
 
     #[must_use]
-    pub fn font_dimen(&self, font: FontId, number: u16) -> Scaled {
+    pub fn font_dimen(&self, font: FontId, number: u32) -> Scaled {
         self.assert_live_font(font);
         self.env.font_dimen(font, number)
     }
 
     #[must_use]
-    pub fn font_parameter_count(&self, font: FontId) -> u16 {
+    pub fn font_parameter_count(&self, font: FontId) -> u32 {
         self.assert_live_font(font);
         self.env.font_param_len(font)
     }
@@ -1302,7 +1302,7 @@ impl Stores {
     pub fn set_font_dimen(
         &mut self,
         font: FontId,
-        number: u16,
+        number: u32,
         value: Scaled,
         global: bool,
     ) -> Result<(), FontParameterError> {
@@ -1345,10 +1345,10 @@ impl Stores {
         }
     }
 
-    fn initialize_font_banks(&mut self, font: FontId, parameter_count: u16, parameters: &[Scaled]) {
+    fn initialize_font_banks(&mut self, font: FontId, parameter_count: u32, parameters: &[Scaled]) {
         self.env.set_font_param_len_global(font, parameter_count);
         for (index, value) in parameters.iter().copied().enumerate() {
-            let number = u16::try_from(index + 1).expect("font parameter index exceeds u16");
+            let number = u32::try_from(index + 1).expect("font parameter index exceeds u32");
             let index = crate::env::font_dimen_index(font, number)
                 .expect("validated loaded font parameters fit the fontdimen key");
             self.env.set_font_dimen_global(index, value);
@@ -1362,7 +1362,7 @@ impl Stores {
     fn prepare_font_dimen_write(
         &mut self,
         font: FontId,
-        number: u16,
+        number: u32,
         global: bool,
     ) -> Result<u32, FontParameterError> {
         self.assert_live_font(font);

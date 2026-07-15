@@ -216,6 +216,8 @@ pub enum ExpandablePrimitive {
     Expanded,
     /// Umber's neutral file-size enquiry for the LaTeX extension contract.
     FileSize,
+    /// Engine-neutral lexicographic comparison of two expanded strings.
+    StringCompare,
 }
 
 impl ExpandablePrimitive {
@@ -277,6 +279,7 @@ impl ExpandablePrimitive {
             Self::SplitBotMarks => 52,
             Self::Expanded => 53,
             Self::FileSize => 54,
+            Self::StringCompare => 55,
         }
     }
 
@@ -338,6 +341,7 @@ impl ExpandablePrimitive {
             52 => Some(Self::SplitBotMarks),
             53 => Some(Self::Expanded),
             54 => Some(Self::FileSize),
+            55 => Some(Self::StringCompare),
             _ => None,
         }
     }

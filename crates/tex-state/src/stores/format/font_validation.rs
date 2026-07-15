@@ -1,6 +1,6 @@
 use super::*;
 
-const FONT_DIMEN_BITS: u32 = 15;
+const FONT_DIMEN_BITS: u32 = 17;
 const FONT_DIMEN_MASK: u32 = (1 << FONT_DIMEN_BITS) - 1;
 const MAX_FONT_COUNT: usize = crate::font::MAX_FONT_COUNT;
 const MAX_FONT_PARAMETERS: usize = crate::font::MAX_FONT_DIMEN as usize;

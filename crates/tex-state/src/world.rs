@@ -341,7 +341,7 @@ impl<'a> MemoryOutput<'a> {
 pub struct ReadTarget {
     path: PathBuf,
     hash: ContentHash,
-    next_line: usize,
+    next_byte: usize,
 }
 
 impl ReadTarget {
@@ -356,8 +356,8 @@ impl ReadTarget {
     }
 
     #[must_use]
-    pub const fn next_line(&self) -> usize {
-        self.next_line
+    pub const fn next_byte(&self) -> usize {
+        self.next_byte
     }
 }
 
@@ -1144,7 +1144,7 @@ impl World {
         self.stream_bufs_mut().read_streams[slot.index()] = Some(ReadTarget {
             path: content.path.clone(),
             hash: content.hash,
-            next_line: 0,
+            next_byte: 0,
         });
         Ok(())
     }
@@ -1161,14 +1161,14 @@ impl World {
         let Some(bytes) = self.input_contents.get(&target.hash) else {
             return true;
         };
-        target.next_line >= split_physical_lines(&String::from_utf8_lossy(bytes)).len()
+        target.next_byte >= bytes.len()
     }
 
     pub fn read_stream_line(&mut self, slot: StreamSlot) -> Result<Option<String>, WorldError> {
         let Some(target) = self.stream_bufs.read_streams[slot.index()].as_ref() else {
             return Ok(None);
         };
-        let (hash, path, next_line) = (target.hash, target.path.clone(), target.next_line);
+        let (hash, path, next_byte) = (target.hash, target.path.clone(), target.next_byte);
         let Some(bytes) = self.input_contents.get(&hash) else {
             return Err(WorldError::new(
                 "read input stream",
@@ -1176,15 +1176,14 @@ impl World {
                 "pinned input content is missing",
             ));
         };
-        let lines = split_physical_lines(&String::from_utf8_lossy(bytes));
-        let Some(line) = lines.get(next_line).cloned() else {
+        let Some((line, next_byte)) = next_physical_line(bytes, next_byte) else {
             self.stream_bufs_mut().read_streams[slot.index()] = None;
             return Ok(Some(String::new()));
         };
         self.stream_bufs_mut().read_streams[slot.index()]
             .as_mut()
             .expect("read stream remained open")
-            .next_line += 1;
+            .next_byte = next_byte;
         Ok(Some(line))
     }
 
@@ -2158,24 +2157,23 @@ fn append_partial_line(buffer: &mut String, text: &str) {
     }
 }
 
-fn split_physical_lines(input: &str) -> Vec<String> {
-    let mut lines = Vec::new();
-    let mut start = 0;
-    for (index, ch) in input.char_indices() {
-        if ch == '\n' {
-            let end = if index > start && input[..index].ends_with('\r') {
-                index - 1
-            } else {
-                index
-            };
-            lines.push(input[start..end].to_owned());
-            start = index + 1;
-        }
+fn next_physical_line(bytes: &[u8], start: usize) -> Option<(String, usize)> {
+    let tail = bytes.get(start..)?;
+    if tail.is_empty() {
+        return None;
     }
-    if start < input.len() {
-        lines.push(input[start..].to_owned());
+    let newline = tail.iter().position(|&byte| byte == b'\n');
+    let (mut end, next) = match newline {
+        Some(offset) => (start + offset, start + offset + 1),
+        None => (bytes.len(), bytes.len()),
+    };
+    if end > start && bytes[end - 1] == b'\r' {
+        end -= 1;
     }
-    lines
+    Some((
+        String::from_utf8_lossy(&bytes[start..end]).into_owned(),
+        next,
+    ))
 }
 
 fn normalize_terminal_line(mut line: String) -> String {

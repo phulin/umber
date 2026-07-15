@@ -1167,12 +1167,13 @@ math-family, and last-loaded font selectors must be live. Only after that
 read-only pass may fresh stores be built and raw Env words restored. Thus a
 checksum authenticates transport integrity but never substitutes for semantic
 validation, and failure cannot expose a partially reconstructed live tuple.
-Fontdimen cells use an injective 15-bit-font/15-bit-slot split within the
-30-bit `CellId` index: font ids end at 32767 and one-based parameter numbers at
-32768. The checked encoder runs before parameter-count or journal mutation;
-there is no masking fallback, so 32769 cannot alias fontdimen 1. This changes
+Fontdimen cells use an injective 15-bit-font/17-bit-slot split across the full
+32-bit Env-bank index: font ids end at 32767 and one-based parameter numbers at
+131072. The checked encoder runs before parameter-count or journal mutation;
+there is no masking fallback, so 131073 cannot alias fontdimen 1. This changes
 no journal layout: `CellId`, `UndoRec`, and `Entry` retain the sizes documented
-in §6.
+in §6. Format-image version 7 rejects the earlier packed interpretation, and
+checkpoint-hash schema version 10 frames the widened parameter count as `u32`.
 
 ### 10.4 Builder-then-freeze for content
 

@@ -27,7 +27,7 @@ const CELL_VALUE_DOMAIN: u64 = 0x6365_6c6c_7661_6c75;
 const CELL_ORDER_DOMAIN: u64 = 0x6365_6c6c_5f6f_7264;
 #[cfg(test)]
 const NODE_LIST_MAX_ITEMS: usize = 1_000_000;
-const FONT_DIMEN_BITS: u32 = 15;
+const FONT_DIMEN_BITS: u32 = 17;
 const FONT_DIMEN_MASK: u32 = (1 << FONT_DIMEN_BITS) - 1;
 
 /// Derived semantic fingerprints at the latest checkpoint boundary.
@@ -549,7 +549,7 @@ impl Stores {
                 SemanticCellKey::FontBank {
                     bank: bank_order(cell.bank()),
                     font: self.font_semantic_key(self.resolve_stored_font(font)),
-                    index: u32::from(slot),
+                    index: slot,
                 }
             }
             BankTag::FontParamLen | BankTag::FontHyphenChar | BankTag::FontSkewChar => {
@@ -625,7 +625,7 @@ impl Stores {
                 None => hasher.tag(0),
             },
             BankTag::FontDimen => hasher.i32(word as u32 as i32),
-            BankTag::FontParamLen => hasher.u16(decode_u16(word)),
+            BankTag::FontParamLen => hasher.u32(decode_u32(word)),
             BankTag::FontHyphenChar | BankTag::FontSkewChar => hasher.i32(word as u32 as i32),
             BankTag::CurrentFont => self.hash_current_font_word(word, hasher),
             BankTag::MathFamilyFont => self.hash_font(
@@ -1601,17 +1601,10 @@ fn decode_u32(word: u64) -> u32 {
     }
 }
 
-fn unpack_font_dimen_index(index: u32) -> (FontId, u16) {
+fn unpack_font_dimen_index(index: u32) -> (FontId, u32) {
     let font = FontId::new(index >> FONT_DIMEN_BITS);
-    let slot = ((index & FONT_DIMEN_MASK) + 1) as u16;
+    let slot = (index & FONT_DIMEN_MASK) + 1;
     (font, slot)
-}
-
-fn decode_u16(word: u64) -> u16 {
-    match u16::try_from(word) {
-        Ok(value) => value,
-        Err(_) => panic!("font parameter count exceeds u16"),
-    }
 }
 
 #[cfg(test)]
