@@ -1050,6 +1050,10 @@ pub trait ExpansionMode {
     ) -> Result<(), ExpandError> {
         let dispatch = self.dispatch_raw_token(target, input, stores, expansion)?;
         push_dispatch_result(input, stores, dispatch);
+        // TeX's `back_input` cancels the first `get_token` delivery before
+        // the saved token is read again. Without this, a brace held by
+        // `\expandafter` changes `align_state` twice.
+        input.undo_alignment_delivery(classify_alignment_token(stores, saved).0);
         push_inserted_token(input, stores, saved, InsertedOriginKind::ExpandAfter);
         Ok(())
     }

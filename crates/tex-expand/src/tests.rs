@@ -1675,6 +1675,33 @@ fn expandafter_expands_second_token_then_replays_saved_token_first() {
 }
 
 #[test]
+fn expandafter_saved_brace_updates_alignment_depth_only_when_replayed() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    let empty = stores.intern_token_list(&[]);
+    let mut input = InputStack::new(MemoryInput::new("\\expandafter{\\romannumeral0}"));
+    input.begin_alignment();
+    input.begin_alignment_cell(None, empty, stores.execution_group_depth());
+
+    let mut context = tex_state::ExpansionContext::new(&mut stores);
+    assert_eq!(
+        get_x_token(&mut input, &mut context).expect("opening brace expands"),
+        Some(Token::Char {
+            ch: '{',
+            cat: Catcode::BeginGroup,
+        }),
+    );
+    assert_eq!(
+        get_x_token(&mut input, &mut context).expect("closing brace expands"),
+        Some(Token::Char {
+            ch: '}',
+            cat: Catcode::EndGroup,
+        }),
+    );
+    assert!(input.alignment_cell_at_base_depth());
+}
+
+#[test]
 fn expandafter_chains_match_tex_pushback_order() {
     let mut stores = Universe::new();
     let expandafter =
