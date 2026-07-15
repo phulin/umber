@@ -140,13 +140,18 @@ nonzero `\pdfomitcharset` omits the eligible subset Type-1 `/CharSet` entry.
 The latter two contracts come from `writefont.c` at the same pinned TeX Live
 source commit as `pdftex.web`.
 
-The actual expansion/protrusion, character-code-driven glue/kern, ToUnicode,
-PK-font, and font-dictionary effects remain deliberately unclaimed: issue
-7.2 depends on character tables (10), font shaping/expansion (11), and font
-maps/embedding (17). Those backends must consume the typed live projection and
-continue to serialize PDF through the canonical `pdf_writer` adapter. This
-split prevents the configuration issue from duplicating the owning font
-subsystems.
+Issue 7.2 now consumes that projection for the effective paragraph and font
+dictionary behavior. The pinned INITEX `pdf_microtype_effects` oracle covers
+positive and inactive negative prepend/append kerns, interword width/stretch/
+shrink adjustment, protrusion margin kern placement, and expansion diagnostics.
+The pinned PDF `embedded_subset_type1`, `embedded_subset_omit`, and
+`embedded_subset_controls_negative` fixtures prove positive and nonpositive
+ToUnicode generation and zero/nonzero CharSet omission against pdfTeX 1.40.27.
+The font dictionaries and CMaps continue to serialize only through the
+canonical `pdf_writer` adapter. PK bitmap output remains open in child issue
+7.2.1: the repository does not yet have a PK decoder, typed PK resource
+provider, or Type3 bitmap font producer, so resolution-only state is not
+claimed as output parity.
 
 The four PDF token parameters follow pdfTeX's distinct consumption scopes:
 `\pdfpageattr` and `\pdfpageresources` are captured in each successful
@@ -256,9 +261,10 @@ checklist and include focused pdfTeX-oracle fixtures:
 7. **Implement PDF microtype and font-output configuration parameters.**
    Cover adjustment, protrusion, kern insertion, tracing, ToUnicode, PK
    resolution, and character-set omission. The oracle-backed configuration
-   contract and tracing diagnostic are complete in issue 7.1; effective
-   shaping and font-output integration remains in issue 7.2 after issues 10,
-   11, and 17. Depends on issue 3.
+   contract and tracing diagnostic are complete in issue 7.1. Issue 7.2 has
+   integrated paragraph shaping and Type-1 font-dictionary effects after
+   issues 10, 11, and 17; PK bitmap output remains the explicit 7.2.1 blocker.
+   Depends on issue 3.
 8. **Implement PDF metadata and warning-policy configuration parameters.**
    Cover date/info/procset omission, duplicate warnings, pTeX information,
    underscore policy, and compatibility-only parameter behavior. Depends on

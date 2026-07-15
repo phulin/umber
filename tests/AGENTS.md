@@ -91,10 +91,11 @@ otherwise leak into byte output.
 normalized `<case>.expected.ref` outputs used by `tex-exec` crate-internal
 tests for grouping, after-token ordering, magnification diagnostics, and
 box-register behavior. The `pdf_output_policy`, `pdf_image_config`,
-`pdf_metadata_config`, and `pdf_font_config` cases run pinned pdfTeX in INITEX
-mode so PDF parameter defaults, grouping, first-write recovery, and font
-diagnostics do not inherit format-file assignments; their fixtures anchor the
-corresponding Umber policy tests.
+`pdf_metadata_config`, `pdf_font_config`, and `pdf_microtype_effects` cases run
+pinned pdfTeX in INITEX mode so PDF parameter defaults, grouping, first-write
+recovery, font diagnostics, and effective microtype nodes do not inherit
+format-file assignments; their fixtures anchor the corresponding Umber policy
+tests.
 
 `tests/corpus/tex_exec_io` contains small file-effect and DVI special-payload
 sources plus reference observations used by `tex-exec` I/O and shipout tests.
@@ -126,7 +127,9 @@ reference PDFs, exact Umber PDFs, canonical structure projections, grayscale
 PGM renders, and renderer/hash attestations. Regeneration uses pdfTeX 1.40.27
 and Poppler `pdftoppm` 25.08.0 only through `scripts/regen-fixtures.sh`; cargo
 tests remain hermetic by rebuilding Umber bytes and checking the committed
-structure, byte, render, and digest chain without invoking either tool.
+structure, byte, render, and digest chain without invoking either tool. The
+`embedded_subset_controls_negative` case pins nonpositive ToUnicode generation
+and signed-nonzero Type-1 CharSet omission.
 
 `tests/corpus/e2e` receives gitignored final-DVI oracles for Story, Gentle,
 TRIP, and e-TRIP. Their Cargo integration tests run Umber directly in process
