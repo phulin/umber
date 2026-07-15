@@ -222,6 +222,55 @@ pub struct DependencyTracker {
     changed: BTreeMap<DependencyKey, ChangedAt>,
 }
 
+/// Optional recording state installed around one interpreter computation.
+///
+/// Ordinary execution keeps `active` empty.  Recording therefore adds one
+/// predictable branch and does not allocate, lock, or touch an atomic.
+#[derive(Clone, Debug, Default)]
+pub struct DependencyRuntime {
+    tracker: DependencyTracker,
+    active: Option<DependencyRegion>,
+}
+
+impl DependencyRuntime {
+    /// Starts a region. Nested computations should instead record a bounded
+    /// [`DependencyKey::Query`] in their parent.
+    pub fn begin_region(&mut self) {
+        assert!(self.active.is_none(), "dependency region already active");
+        self.active = Some(DependencyRegion::default());
+    }
+
+    #[must_use]
+    pub const fn is_recording(&self) -> bool {
+        self.active.is_some()
+    }
+
+    /// Records a semantic read only when a region is active.
+    #[inline(always)]
+    pub fn record(&mut self, key: DependencyKey, value: DependencyValue) {
+        if let Some(region) = &mut self.active {
+            region.record(self.tracker.observe(key, value));
+        }
+    }
+
+    /// Finishes the active region in canonical key order.
+    pub fn finish_region(&mut self) -> Vec<ObservedDependency> {
+        self.active
+            .take()
+            .expect("no dependency region is active")
+            .into_observations()
+    }
+
+    pub fn mark_changed(&mut self, key: DependencyKey) -> ChangedAt {
+        self.tracker.mark_changed(key)
+    }
+
+    #[must_use]
+    pub const fn tracker(&self) -> &DependencyTracker {
+        &self.tracker
+    }
+}
+
 impl DependencyTracker {
     #[must_use]
     pub fn changed_at(&self, key: DependencyKey) -> ChangedAt {

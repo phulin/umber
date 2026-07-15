@@ -122,3 +122,17 @@ fn canonical_content_observations_ignore_allocation_identity() {
         DependencyValue::Content(ContentHash::from_bytes(&right))
     );
 }
+
+#[test]
+fn disabled_runtime_does_not_retain_reads_or_allocate_a_region() {
+    let mut runtime = DependencyRuntime::default();
+    assert!(!runtime.is_recording());
+    runtime.record(DependencyKey::Meaning(1), DependencyValue::Integer(2));
+    assert!(!runtime.is_recording());
+
+    runtime.begin_region();
+    runtime.record(DependencyKey::Meaning(1), DependencyValue::Integer(2));
+    runtime.record(DependencyKey::Meaning(1), DependencyValue::Integer(2));
+    assert_eq!(runtime.finish_region().len(), 1);
+    assert!(!runtime.is_recording());
+}
