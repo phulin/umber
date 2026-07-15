@@ -352,6 +352,64 @@ fn expansion_episode_hits_across_allocation_distinct_universes() {
 }
 
 #[test]
+fn cross_universe_validation_ignores_unobserved_state_and_checks_observed_meaning() {
+    let mut first = Universe::new();
+    crate::install_expandable_primitives(&mut first);
+    install_one_argument_macro(&mut first, "m", 'A', 'B', OriginId::UNKNOWN);
+    let mut expansion = ExpansionContext::new("texput").memoizing(ExpansionMemoConfig::default());
+    assert_eq!(
+        expand_definition_body(&mut first, &mut expansion, "{\\m{x}}%").0,
+        vec![letter('A'), letter('x'), letter('B')]
+    );
+
+    let mut unrelated = Universe::new();
+    crate::install_expandable_primitives(&mut unrelated);
+    install_one_argument_macro(&mut unrelated, "m", 'A', 'B', OriginId::UNKNOWN);
+    unrelated.set_count(93, 7_777);
+    assert_eq!(
+        expand_definition_body(&mut unrelated, &mut expansion, "{\\m{x}}%").0,
+        vec![letter('A'), letter('x'), letter('B')]
+    );
+
+    let mut changed = Universe::new();
+    crate::install_expandable_primitives(&mut changed);
+    install_one_argument_macro(&mut changed, "m", 'C', 'D', OriginId::UNKNOWN);
+    assert_eq!(
+        expand_definition_body(&mut changed, &mut expansion, "{\\m{x}}%").0,
+        vec![letter('C'), letter('x'), letter('D')]
+    );
+    let stats = expansion.memo_stats().expect("memo stats enabled");
+    assert_eq!(stats.episode_hits, 1);
+    assert_eq!(stats.episode_invalidations, 1);
+}
+
+#[test]
+fn changed_then_restored_meaning_backdates_and_hits() {
+    let mut stores = Universe::new();
+    crate::install_expandable_primitives(&mut stores);
+    install_one_argument_macro(&mut stores, "m", 'A', 'B', OriginId::UNKNOWN);
+    let mut expansion = ExpansionContext::new("texput").memoizing(ExpansionMemoConfig::default());
+    let expected = vec![letter('A'), letter('x'), letter('B')];
+    assert_eq!(
+        expand_definition_body(&mut stores, &mut expansion, "{\\m{x}}%").0,
+        expected
+    );
+    install_one_argument_macro(&mut stores, "m", 'C', 'D', OriginId::UNKNOWN);
+    install_one_argument_macro(&mut stores, "m", 'A', 'B', OriginId::UNKNOWN);
+    assert_eq!(
+        expand_definition_body(&mut stores, &mut expansion, "{\\m{x}}%").0,
+        expected
+    );
+    assert_eq!(
+        expansion
+            .memo_stats()
+            .expect("memo stats enabled")
+            .episode_hits,
+        1
+    );
+}
+
+#[test]
 fn relaxed_interning_is_an_episode_barrier() {
     let mut stores = Universe::new();
     crate::install_expandable_primitives(&mut stores);

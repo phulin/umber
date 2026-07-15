@@ -6,7 +6,9 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::time::Instant;
 
 use tex_state::token::{OriginId, Token, TracedTokenWord};
-use tex_state::{ChangedAt, DependencyKey, ExpansionState, MemoValidationStamp, TracedTokenList};
+use tex_state::{
+    DependencyKey, ExpansionState, MemoValidationStamp, ObservedDependency, TracedTokenList,
+};
 
 use crate::ExpansionContext;
 
@@ -73,7 +75,7 @@ enum EpisodeOriginRecipe {
 struct ExpansionEpisodeEntry {
     key: ExpansionEpisodeKey,
     stamp: MemoValidationStamp,
-    dependencies: Vec<(DependencyKey, ChangedAt)>,
+    dependencies: Vec<ObservedDependency>,
     output: Vec<Token>,
     origins: Vec<EpisodeOriginRecipe>,
     retained_bytes: usize,
@@ -164,17 +166,23 @@ impl ExpansionMemoCache {
             self.stats.episode_misses = self.stats.episode_misses.saturating_add(1);
             return None;
         };
-        let valid = if bucket[index]
+        let same_owner = bucket[index]
             .stamp
-            .same_universe(MemoValidationStamp::new_for_owner(owner_nonce))
-        {
-            bucket[index]
-                .dependencies
-                .iter()
-                .all(|(key, changed)| stores.dependency_changed_at(*key) == *changed)
-        } else {
-            bucket[index].stamp.state_hash() == stores.memo_validation_stamp().state_hash()
-        };
+            .same_universe(MemoValidationStamp::new_for_owner(owner_nonce));
+        let valid = bucket[index].dependencies.iter_mut().all(|observed| {
+            let current_stamp = stores.dependency_changed_at(observed.key);
+            if same_owner && current_stamp == observed.changed_at {
+                return true;
+            }
+            let Some(current) = stores.semantic_dependency_value(observed.key) else {
+                return false;
+            };
+            if current != observed.value {
+                return false;
+            }
+            observed.changed_at = current_stamp;
+            true
+        });
         if !valid || bucket[index].output.len() != bucket[index].origins.len() {
             let removed = bucket.swap_remove(index);
             if bucket.is_empty() {
@@ -189,6 +197,9 @@ impl ExpansionMemoCache {
             self.stats.episode_misses = self.stats.episode_misses.saturating_add(1);
             return None;
         }
+        if !same_owner {
+            bucket[index].stamp = MemoValidationStamp::new_for_owner(owner_nonce);
+        }
         let entry = &bucket[index];
         self.stats.episode_hits = self.stats.episode_hits.saturating_add(1);
         self.stats.expanded_tokens_reused = self
@@ -202,7 +213,7 @@ impl ExpansionMemoCache {
         &mut self,
         attempt: EpisodeAttempt,
         stamp: MemoValidationStamp,
-        dependencies: Vec<(DependencyKey, ChangedAt)>,
+        dependencies: Vec<ObservedDependency>,
         output: Vec<Token>,
         origins: Vec<EpisodeOriginRecipe>,
     ) {
@@ -220,7 +231,7 @@ impl ExpansionMemoCache {
             .saturating_add(
                 dependencies
                     .len()
-                    .saturating_mul(std::mem::size_of::<(DependencyKey, ChangedAt)>()),
+                    .saturating_mul(std::mem::size_of::<ObservedDependency>()),
             )
             .saturating_add(
                 origins
@@ -358,15 +369,27 @@ pub(crate) fn finish_expansion_episode(
     };
     let dependencies = dependencies
         .into_iter()
-        .map(|key| (key, stores.track_dependency(key)))
-        .collect();
+        .map(|key| {
+            Some(ObservedDependency {
+                key,
+                changed_at: stores.track_dependency(key),
+                value: stores.semantic_dependency_value(key)?,
+            })
+        })
+        .collect::<Option<Vec<_>>>();
+    let Some(dependencies) = dependencies else {
+        let memo = expansion.memo.as_mut().expect("episode cache enabled");
+        memo.stats.episode_barrier_rejections =
+            memo.stats.episode_barrier_rejections.saturating_add(1);
+        return;
+    };
     expansion
         .memo
         .as_mut()
         .expect("episode cache enabled")
         .insert_episode(
             attempt,
-            stores.memo_validation_stamp(),
+            MemoValidationStamp::new_for_owner(stores.memo_owner_nonce()),
             dependencies,
             output_tokens,
             recipes,

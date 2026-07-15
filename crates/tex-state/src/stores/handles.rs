@@ -203,7 +203,7 @@ impl Stores {
             .expect("stored glue slot is not live")
     }
 
-    pub(super) fn resolve_stored_font(&self, id: FontId) -> FontId {
+    pub(crate) fn resolve_stored_font(&self, id: FontId) -> FontId {
         self.fonts
             .resolve_stored(id)
             .expect("stored font slot is not live")

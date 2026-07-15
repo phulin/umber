@@ -414,6 +414,10 @@ impl Stores {
         self.hash_font(id, hasher);
     }
 
+    pub(crate) fn hash_meaning_semantic(&self, meaning: Meaning, hasher: &mut StateHasher) {
+        self.hash_meaning(meaning, hasher);
+    }
+
     #[cfg(test)]
     pub(crate) fn testing_font_semantic_fingerprint(&self, id: FontId) -> u64 {
         self.fonts

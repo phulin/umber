@@ -431,6 +431,12 @@ impl<'a> ExpansionContext<'a> {
     pub fn track_dependency(&mut self, key: DependencyKey) -> ChangedAt {
         self.universe.track_dependency(key)
     }
+
+    /// Reads a detached semantic observation for an expansion-owned episode.
+    #[must_use]
+    pub fn semantic_dependency_value(&self, key: DependencyKey) -> Option<DependencyValue> {
+        self.universe.semantic_dependency_value(key)
+    }
 }
 
 /// Production input-open capability over a [`Universe`].
@@ -1083,6 +1089,10 @@ impl EngineBoundaryHasher<'_> {
         self.hasher.u32(value);
     }
 
+    pub fn u64(&mut self, value: u64) {
+        self.hasher.u64(value);
+    }
+
     pub fn i32(&mut self, value: i32) {
         self.hasher.i32(value);
     }
@@ -1112,6 +1122,14 @@ impl EngineBoundaryHasher<'_> {
 
     pub fn font(&mut self, id: FontId) {
         self.stores.hash_font_semantic(id, &mut self.hasher);
+    }
+
+    pub fn meaning(&mut self, meaning: Meaning) {
+        self.stores.hash_meaning_semantic(meaning, &mut self.hasher);
+    }
+
+    pub fn str(&mut self, value: &str) {
+        self.hasher.str(value);
     }
 }
 
@@ -1328,6 +1346,228 @@ impl Universe {
         self.dependencies
             .tracker()
             .validate_region(observations, read_current)
+    }
+
+    /// Reads one state-owned dependency as an allocation-independent value.
+    ///
+    /// Executor/input-stack facts return `None`; their owning layer must add
+    /// them to its explicit key or reject the containing memo episode.
+    #[must_use]
+    pub fn semantic_dependency_value(&self, key: DependencyKey) -> Option<DependencyValue> {
+        const DOMAIN: u64 = 0x6465_7065_6e64_0001;
+        let projection =
+            |build: &mut dyn FnMut(&mut EngineBoundaryHasher<'_>)| DependencyValue::Projection {
+                schema: 1,
+                fingerprint: self.engine_boundary_hash(DOMAIN, |hash| build(hash)),
+            };
+        let token_list = |id| {
+            let mut build = |hash: &mut EngineBoundaryHasher<'_>| hash.token_list(id);
+            projection(&mut build)
+        };
+        let glue = |id| {
+            let mut build = |hash: &mut EngineBoundaryHasher<'_>| hash.glue(id);
+            projection(&mut build)
+        };
+        let font = |id| {
+            let mut build = |hash: &mut EngineBoundaryHasher<'_>| hash.font(id);
+            projection(&mut build)
+        };
+        let node_list = |id| {
+            let mut build = |hash: &mut EngineBoundaryHasher<'_>| hash.node_list(id);
+            projection(&mut build)
+        };
+        match key {
+            DependencyKey::Meaning(raw) => {
+                let symbol = self.stores.resolve_stored_symbol(Symbol::new(raw));
+                let meaning = self.meaning(symbol);
+                let mut build = |hash: &mut EngineBoundaryHasher<'_>| hash.meaning(meaning);
+                Some(projection(&mut build))
+            }
+            DependencyKey::Cell { bank, index } => {
+                let index16 = u16::try_from(index).ok()?;
+                Some(match bank {
+                    DependencyBank::Count => {
+                        DependencyValue::Integer(i64::from(self.count(index16)))
+                    }
+                    DependencyBank::Dimen => {
+                        DependencyValue::Integer(i64::from(self.dimen(index16).raw()))
+                    }
+                    DependencyBank::Skip => glue(self.skip(index16)),
+                    DependencyBank::Muskip => glue(self.muskip(index16)),
+                    DependencyBank::Toks => token_list(self.toks(index16)),
+                    DependencyBank::Box => self
+                        .box_reg(index16)
+                        .map_or(DependencyValue::Absent, node_list),
+                    DependencyBank::IntParam => {
+                        DependencyValue::Integer(i64::from(self.int_param(IntParam::new(index16))))
+                    }
+                    DependencyBank::DimenParam => DependencyValue::Integer(i64::from(
+                        self.dimen_param(DimenParam::new(index16)).raw(),
+                    )),
+                    DependencyBank::GlueParam => glue(self.glue_param(GlueParam::new(index16))),
+                    DependencyBank::TokParam => token_list(self.tok_param(TokParam::new(index16))),
+                    DependencyBank::CurrentFont => font(self.current_font()),
+                    DependencyBank::MathFamilyFont => {
+                        let family = u8::try_from(index % 16).ok()?;
+                        let size = match index / 16 {
+                            0 => MathFontSize::Text,
+                            1 => MathFontSize::Script,
+                            2 => MathFontSize::ScriptScript,
+                            _ => return None,
+                        };
+                        font(self.math_family_font(size, family))
+                    }
+                    DependencyBank::LastBadness => {
+                        DependencyValue::Integer(i64::from(self.last_badness()))
+                    }
+                    DependencyBank::Magnification => {
+                        DependencyValue::Integer(i64::from(self.mag()))
+                    }
+                })
+            }
+            DependencyKey::Code { table, scalar } => {
+                let ch = char::from_u32(scalar)?;
+                Some(DependencyValue::Integer(match table {
+                    DependencyCodeTable::Catcode => i64::from(self.catcode(ch) as u8),
+                    DependencyCodeTable::Lccode => i64::from(self.lccode(ch)),
+                    DependencyCodeTable::Uccode => i64::from(self.uccode(ch)),
+                    DependencyCodeTable::Sfcode => i64::from(self.sfcode(ch)),
+                    DependencyCodeTable::Mathcode => i64::from(self.mathcode(ch)),
+                    DependencyCodeTable::Delcode => i64::from(self.delcode(ch)),
+                }))
+            }
+            // Expansion always records the exact scalar beside a generation
+            // dependency. The scalar observation supplies semantic validity;
+            // the generation remains only a same-owner fast invalidator.
+            DependencyKey::CodeGeneration(_) => Some(DependencyValue::Unsigned(0)),
+            DependencyKey::Font {
+                field,
+                font: raw,
+                index,
+            } => {
+                let id = self.stores.resolve_stored_font(FontId::new(raw));
+                Some(match field {
+                    DependencyFontField::Identifier => {
+                        self.font_identifier_symbol(id)
+                            .map_or(DependencyValue::Absent, |symbol| {
+                                let name = self.resolve(symbol);
+                                let mut build =
+                                    |hash: &mut EngineBoundaryHasher<'_>| hash.str(name);
+                                projection(&mut build)
+                            })
+                    }
+                    DependencyFontField::Name => {
+                        let name = self.font_name(id);
+                        let mut build = |hash: &mut EngineBoundaryHasher<'_>| hash.str(&name);
+                        projection(&mut build)
+                    }
+                    DependencyFontField::Parameter => {
+                        DependencyValue::Integer(i64::from(self.font_parameter(id, index).raw()))
+                    }
+                    DependencyFontField::ParameterCount => {
+                        DependencyValue::Unsigned(u64::from(self.font_parameter_count(id)))
+                    }
+                    DependencyFontField::HyphenChar => {
+                        DependencyValue::Integer(i64::from(self.font_hyphen_char(id)))
+                    }
+                    DependencyFontField::SkewChar => {
+                        DependencyValue::Integer(i64::from(self.font_skew_char(id)))
+                    }
+                    DependencyFontField::Metrics => font(id),
+                })
+            }
+            DependencyKey::InputStream(raw) => {
+                if raw >= 16 {
+                    return None;
+                }
+                let stream = crate::world::StreamSlot::new(raw);
+                Some(DependencyValue::Bool(self.input_stream_eof(stream)))
+            }
+            DependencyKey::PageDimension(raw) => {
+                let dimension = PageDimension::from_index(raw)?;
+                Some(DependencyValue::Integer(i64::from(
+                    self.page_dimension(dimension).raw(),
+                )))
+            }
+            DependencyKey::PageInteger(raw) => {
+                let integer = PageInteger::from_index(raw)?;
+                Some(DependencyValue::Integer(i64::from(
+                    self.page_integer(integer),
+                )))
+            }
+            DependencyKey::PageMark(raw) => {
+                let mark = match raw {
+                    0 => PageMark::Top,
+                    1 => PageMark::First,
+                    2 => PageMark::Bot,
+                    3 => PageMark::SplitFirst,
+                    4 => PageMark::SplitBot,
+                    _ => return None,
+                };
+                Some(token_list(self.page_mark(mark)))
+            }
+            DependencyKey::PageMarkClass { mark, class } => {
+                let mark = match mark {
+                    0 => PageMark::Top,
+                    1 => PageMark::First,
+                    2 => PageMark::Bot,
+                    3 => PageMark::SplitFirst,
+                    4 => PageMark::SplitBot,
+                    _ => return None,
+                };
+                Some(token_list(self.page_mark_class(mark, class)))
+            }
+            DependencyKey::Engine(DependencyEngineField::GroupLevel) => Some(
+                DependencyValue::Unsigned(u64::from(self.execution_group_depth())),
+            ),
+            DependencyKey::Engine(DependencyEngineField::GroupType) => {
+                Some(DependencyValue::Integer(i64::from(
+                    self.innermost_group_kind().map_or(0, GroupKind::etex_code),
+                )))
+            }
+            DependencyKey::Engine(DependencyEngineField::ParShape) => {
+                let shape = self.paragraph_shape();
+                let mut build = |hash: &mut EngineBoundaryHasher<'_>| {
+                    hash.usize(shape.len());
+                    for line in &shape {
+                        hash.i32(line.indent.raw());
+                        hash.i32(line.width.raw());
+                    }
+                };
+                Some(projection(&mut build))
+            }
+            DependencyKey::Engine(DependencyEngineField::PenaltyArrays) => {
+                let mut build = |hash: &mut EngineBoundaryHasher<'_>| {
+                    for kind in [
+                        PenaltyArrayKind::InterLine,
+                        PenaltyArrayKind::Club,
+                        PenaltyArrayKind::Widow,
+                        PenaltyArrayKind::DisplayWidow,
+                    ] {
+                        let values = self.penalty_array(kind);
+                        hash.usize(values.len());
+                        for value in values {
+                            hash.i32(value);
+                        }
+                    }
+                };
+                Some(projection(&mut build))
+            }
+            DependencyKey::Engine(DependencyEngineField::InteractionMode) => Some(
+                DependencyValue::Integer(i64::from(encode_interaction_mode(self.interaction_mode))),
+            ),
+            DependencyKey::HyphenationPatterns(_)
+            | DependencyKey::HyphenationExceptions(_)
+            | DependencyKey::HyphenationCodes(_)
+            | DependencyKey::InputRecord(_)
+            | DependencyKey::PhysicalLine { .. }
+            | DependencyKey::InputLine
+            | DependencyKey::InputStack
+            | DependencyKey::Engine(_)
+            | DependencyKey::Page(_)
+            | DependencyKey::World { .. }
+            | DependencyKey::Query { .. } => None,
+        }
     }
 
     /// Enables the bounded session-local pure-query cache.

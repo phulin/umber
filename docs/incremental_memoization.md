@@ -307,9 +307,14 @@ The implemented expansion-episode cache is session-local, bounded by entry
 count and retained bytes, hash-indexed, and opt-in through `ExecutionContext`.
 The initial recursive episode boundary is deliberately narrower than the
 design maximum: it surrounds caller-owned frozen general-text expansion, uses
-dynamic changed-at dependencies and executor facts in its key. Same-owner hits
-avoid a whole-Universe projection; allocation-independent state projection is
-reserved for an actual cross-owner candidate. It rejects input opens,
+dynamic changed-at dependencies and executor facts in its key. Entries retain
+allocation-independent semantic observations for meanings, registers, code
+cells, fonts, groups, page enquiries, and streams. Same-owner hits take the
+changed-at fast path and backdate changed-then-restored values; cross-owner hits
+compare only the recorded observations, so unrelated state does not invalidate
+them and no whole-Universe projection is needed. Dependencies owned by an
+unsupported input or executor surface make the episode an explicit barrier.
+It rejects input opens,
 `\csname`, `\scantokens`,
 `\endinput`, unsupported provenance, and malformed entries atomically. Full-key
 verification handles candidate collisions. Cache-on/off execution tests compare
@@ -319,12 +324,15 @@ verify provenance rebinding.
 The losing substitution layer is no longer part of enabled execution. Gentle
 now reports zero substitution lookups and retains zero memo bytes because its
 main `\edef` path does not cross the supported recursive episode boundary. The
-layer remains opt-in until a real workload exercises that boundary and wins an
-alternating paired timing gate. A repeated ABBA rerun after removing eager
+layer remains opt-in while paragraph and hierarchical trace phases add broader
+caller-owned boundaries. A repeated ABBA rerun after removing eager
 substitution produced six stable 10-run blocks: disabled averaged 131.62 ms and
 enabled averaged 131.24 ms. The 0.29% difference is noise-level parity, while
 both enabled runs reported zero lookups and zero retained bytes; the earlier
 roughly 4% sequential difference was not reproducible under stable load.
+An additional eight-block order-balanced rerun measured 128.88 ms disabled and
+129.82 ms enabled; all memo counters were again zero, so the 0.73% difference
+is disabled-path noise rather than evidence about episode reuse.
 
 ### Paragraph pipeline
 
@@ -647,23 +655,21 @@ distributions differ.
     World-backed persistence from measurements, run the complete edit/corpus
     matrix, and enable editor-session memoization only after independent review.
 
-Each phase is independently useful and may stop if end-to-end measurements do
-not justify its complexity. Later phases depend on the correctness contracts of
-earlier phases, not merely on their API presence.
+Each phase remains independently gated for correctness, atomic fallback, and
+retention. Measurements inform the final default-enablement and persistence
+decision, but do not stop implementation of later phases. Later phases depend
+on the correctness contracts of earlier phases, not merely on their API
+presence.
 
-### 2026-07-15 release decision
+### 2026-07-15 continuation decision
 
-The rollout stops after the detached-value, dependency, pure-query, and
-expansion phases. The only edit-level pure-query experiment was 31% slower
-because named-boundary convergence already skipped the unchanged suffix, and
-the high-hit-rate Gentle expansion experiment was 4.1% slower. All caches remain
-off by default, with no lock or atomic work on ordinary execution. Paragraph
-transactions, page-builder replay, output/shipout replay, and hierarchical trace
-composition are deferred rather than shipping an unmeasured high-risk state and
-effect replay surface. World-backed persistence is also deferred: session-local
-results have not demonstrated material end-to-end benefit. The retained bounded
-substrates remain available for future measured experiments without committing
-the editor session to their overhead.
+Implementation continues through paragraph transactions, page-builder replay,
+output/shipout replay, hierarchical trace composition, and the complete release
+gate even though the first isolated memo layers did not improve end-to-end edit
+latency. Caches remain off by default during development, with no lock or atomic
+work on ordinary execution. The release phase decides which layers to enable
+and whether World-backed persistence is justified after the complete
+architecture and edit matrix exist.
 
 ## Related work
 
