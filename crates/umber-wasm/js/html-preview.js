@@ -8,7 +8,10 @@ export function installHtmlPreview(iframe, html, options = {}) {
 	}
 	const text = decode(html);
 	validate(text);
-	iframe.setAttribute("sandbox", options.allowDomAccess ? "allow-same-origin" : "");
+	iframe.setAttribute(
+		"sandbox",
+		options.allowDomAccess ? "allow-same-origin" : "",
+	);
 	iframe.setAttribute("referrerpolicy", "no-referrer");
 	iframe.setAttribute("title", "Umber HTML preview");
 	iframe.srcdoc = text;
