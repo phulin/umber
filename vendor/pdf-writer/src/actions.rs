@@ -40,6 +40,12 @@ impl Action<'_> {
         self
     }
 
+    /// Write a named destination using pdfTeX-compatible string syntax.
+    pub fn destination_pdftex_string(&mut self, name: PdfStringSyntax) -> &mut Self {
+        self.pair(Name(b"D"), name);
+        self
+    }
+
     /// Write a numeric thread or destination identifier.
     pub fn destination_number(&mut self, number: i32) -> &mut Self {
         self.pair(Name(b"D"), number);
@@ -138,6 +144,18 @@ impl Action<'_> {
     /// `Rendition`.
     pub fn rendition(&mut self) -> Rendition<'_> {
         self.insert(Name(b"R")).start()
+    }
+}
+
+impl<'a> Action<'a> {
+    /// Start an action dictionary without automatically writing `/Type`.
+    ///
+    /// `/Type /Action` is optional. This constructor supports compatibility
+    /// producers such as pdfTeX that omit it from indirect outline actions.
+    /// Nested annotation actions created by [`Annotation::action`] retain the
+    /// existing explicit `/Type /Action` behavior.
+    pub fn start_without_type(obj: Obj<'a>) -> Self {
+        Self { dict: obj.dict() }
     }
 }
 

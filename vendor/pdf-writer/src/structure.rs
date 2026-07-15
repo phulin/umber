@@ -68,6 +68,12 @@ impl Catalog<'_> {
         self
     }
 
+    /// Write the `/Threads` attribute pointing to an article-thread array.
+    pub fn threads(&mut self, id: Ref) -> &mut Self {
+        self.pair(Name(b"Threads"), id);
+        self
+    }
+
     /// Start writing the `/StructTreeRoot` attribute to specify the root of the
     /// document's structure tree. PDF 1.3+.
     ///
@@ -2025,6 +2031,12 @@ impl Page<'_> {
         self
     }
 
+    /// Write the `/B` array of article beads belonging to this page.
+    pub fn beads(&mut self, ids: impl IntoIterator<Item = Ref>) -> &mut Self {
+        self.insert(Name(b"B")).array().items(ids);
+        self
+    }
+
     /// Write the `/StructParents` attribute to indicate the [structure tree
     /// elements][StructElement] the contents of this XObject may belong to. PDF 1.3+.
     pub fn struct_parents(&mut self, key: i32) -> &mut Self {
@@ -2128,6 +2140,18 @@ impl OutlineItem<'_> {
     /// Write the `/Title` attribute.
     pub fn title(&mut self, title: impl TextStrLike) -> &mut Self {
         self.pair(Name(b"Title"), title);
+        self
+    }
+
+    /// Write an indirect `/Title` string reference.
+    pub fn title_ref(&mut self, title: Ref) -> &mut Self {
+        self.pair(Name(b"Title"), title);
+        self
+    }
+
+    /// Write an indirect `/A` action reference.
+    pub fn action_ref(&mut self, action: Ref) -> &mut Self {
+        self.pair(Name(b"A"), action);
         self
     }
 
@@ -2290,6 +2314,25 @@ impl Names<'_> {
 
 deref!('a, Names<'a> => Dict<'a>, dict);
 
+/// Writer for a named-destination dictionary.
+///
+/// This dictionary wraps a destination array in the `/D` entry used by
+/// pdfTeX's destination name tree.
+pub struct NamedDestination<'a> {
+    dict: Dict<'a>,
+}
+
+writer!(NamedDestination: |obj| Self { dict: obj.dict() });
+
+impl NamedDestination<'_> {
+    /// Start writing the `/D` destination array.
+    pub fn destination(&mut self) -> Destination<'_> {
+        self.insert(Name(b"D")).start()
+    }
+}
+
+deref!('a, NamedDestination<'a> => Dict<'a>, dict);
+
 /// Writer for a _destination array_.
 ///
 /// A dictionary mapping to this struct is created by
@@ -2324,7 +2367,10 @@ impl Destination<'_> {
         self.item(Name(b"XYZ"));
         self.item(left);
         self.item(top);
-        self.item(zoom.unwrap_or_default());
+        match zoom {
+            Some(zoom) => self.item(zoom),
+            None => self.item(Null),
+        };
     }
 
     /// Write the `/Fit` command which fits all of the referenced page on
@@ -2376,6 +2422,115 @@ impl Destination<'_> {
 }
 
 deref!('a, Destination<'a> => Array<'a>, array);
+
+/// Writer for an indirect array of article-thread references.
+pub struct ThreadList<'a> {
+    array: Array<'a>,
+}
+
+writer!(ThreadList: |obj| Self { array: obj.array() });
+
+impl ThreadList<'_> {
+    /// Append one article-thread reference.
+    pub fn thread(&mut self, thread: Ref) -> &mut Self {
+        self.array.item(thread);
+        self
+    }
+
+    /// Append multiple article-thread references.
+    pub fn threads(&mut self, threads: impl IntoIterator<Item = Ref>) -> &mut Self {
+        self.array.items(threads);
+        self
+    }
+}
+
+deref!('a, ThreadList<'a> => Array<'a>, array);
+
+/// Writer for an article-thread dictionary.
+pub struct Thread<'a> {
+    dict: Dict<'a>,
+}
+
+writer!(Thread: |obj| Self { dict: obj.dict() });
+
+impl Thread<'_> {
+    /// Write the `/F` reference to the first bead in this thread.
+    pub fn first_bead(&mut self, bead: Ref) -> &mut Self {
+        self.pair(Name(b"F"), bead);
+        self
+    }
+
+    /// Start writing the optional `/I` thread-information dictionary.
+    pub fn info(&mut self) -> ThreadInfo<'_> {
+        self.insert(Name(b"I")).start()
+    }
+}
+
+deref!('a, Thread<'a> => Dict<'a>, dict);
+
+/// Writer for an article thread's information dictionary.
+pub struct ThreadInfo<'a> {
+    dict: Dict<'a>,
+}
+
+writer!(ThreadInfo: |obj| Self { dict: obj.dict() });
+
+impl ThreadInfo<'_> {
+    /// Write the thread `/Title` using ordinary byte-string encoding.
+    pub fn title(&mut self, title: Str) -> &mut Self {
+        self.pair(Name(b"Title"), title);
+        self
+    }
+
+    /// Write the thread `/Title` using pdfTeX-compatible string syntax.
+    pub fn title_pdftex(&mut self, title: PdfStringSyntax) -> &mut Self {
+        self.pair(Name(b"Title"), title);
+        self
+    }
+}
+
+deref!('a, ThreadInfo<'a> => Dict<'a>, dict);
+
+/// Writer for an article bead dictionary.
+pub struct Bead<'a> {
+    dict: Dict<'a>,
+}
+
+writer!(Bead: |obj| Self { dict: obj.dict() });
+
+impl Bead<'_> {
+    /// Write the `/T` owning-thread reference on the first bead.
+    pub fn thread(&mut self, thread: Ref) -> &mut Self {
+        self.pair(Name(b"T"), thread);
+        self
+    }
+
+    /// Write the `/V` previous-bead reference.
+    pub fn previous(&mut self, bead: Ref) -> &mut Self {
+        self.pair(Name(b"V"), bead);
+        self
+    }
+
+    /// Write the `/N` next-bead reference.
+    pub fn next(&mut self, bead: Ref) -> &mut Self {
+        self.pair(Name(b"N"), bead);
+        self
+    }
+
+    /// Write the `/P` page reference.
+    pub fn page(&mut self, page: Ref) -> &mut Self {
+        self.pair(Name(b"P"), page);
+        self
+    }
+
+    /// Write the `/R` bead-rectangle reference.
+    pub fn rectangle(&mut self, rectangle: Ref) -> &mut Self {
+        self.pair(Name(b"R"), rectangle);
+        self
+    }
+}
+
+deref!('a, Bead<'a> => Dict<'a>, dict);
 
 /// What order to tab through the annotations on a page.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]

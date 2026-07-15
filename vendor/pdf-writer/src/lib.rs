@@ -139,10 +139,10 @@ pub mod writers {
     };
     pub use renditions::{MediaClip, MediaPermissions, MediaPlayParams, Rendition};
     pub use structure::{
-        Catalog, ClassMap, Destination, DeveloperExtension, DocumentInfo, MarkInfo,
-        MarkedRef, Metadata, Names, Namespace, NamespaceRoleMap, ObjectRef, Outline,
-        OutlineItem, Page, PageLabel, Pages, RoleMap, StructChildren, StructElement,
-        StructTreeRoot, ViewerPreferences,
+        Bead, Catalog, ClassMap, Destination, DeveloperExtension, DocumentInfo, MarkInfo,
+        MarkedRef, Metadata, NamedDestination, Names, Namespace, NamespaceRoleMap,
+        ObjectRef, Outline, OutlineItem, Page, PageLabel, Pages, RoleMap, StructChildren,
+        StructElement, StructTreeRoot, Thread, ThreadInfo, ThreadList, ViewerPreferences,
     };
     pub use transitions::Transition;
     pub use xobject::{FormXObject, Group, ImageXObject, Reference};
@@ -195,9 +195,9 @@ use self::chunk::XRefEntry;
 pub use self::chunk::{Chunk, ObjectStream, Settings};
 pub use self::content::{Content, InlineImage};
 pub use self::object::{
-    Array, Date, Dict, Filter, Finish, LanguageIdentifier, Name, Null, Obj, Primitive,
-    Raw, Rect, Ref, Rewrite, Str, Stream, TextStr, TextStrLike, TextStrWithLang,
-    TypedArray, TypedDict, Writer,
+    Array, Date, Dict, Filter, Finish, LanguageIdentifier, Name, Null, Obj,
+    PdfStringSyntax, Primitive, Raw, Rect, Ref, Rewrite, Str, Stream, TextStr,
+    TextStrLike, TextStrWithLang, TypedArray, TypedDict, Writer,
 };
 
 use std::fmt::{self, Debug, Formatter};

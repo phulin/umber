@@ -169,6 +169,48 @@ impl Sealed for Str<'_> {
 
 impl Primitive for Str<'_> {}
 
+/// A PDF string object using pdfTeX's source-compatible syntax policy.
+///
+/// Empty input becomes `()`. Input already enclosed in parentheses, or an
+/// even-length hexadecimal string enclosed in angle brackets, is preserved
+/// verbatim. Every other byte sequence is enclosed in parentheses without
+/// additional escaping. This deliberately mirrors pdfTeX's compatibility
+/// behavior and should only be used for user-provided pdfTeX string syntax;
+/// generated strings should use [`Str`] or [`TextStr`].
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct PdfStringSyntax<'a>(pub &'a [u8]);
+
+impl PdfStringSyntax<'_> {
+    fn is_hex_string(self) -> bool {
+        self.0.len().is_multiple_of(2)
+            && self.0.first() == Some(&b'<')
+            && self.0.last() == Some(&b'>')
+            && self.0[1..self.0.len() - 1].iter().all(u8::is_ascii_hexdigit)
+    }
+}
+
+impl Sealed for PdfStringSyntax<'_> {
+    const STARTS_WITH_DELIMITER: bool = true;
+
+    fn write(self, buf: &mut Buf) {
+        buf.limits.register_str_len(self.0.len());
+        if self.0.is_empty() {
+            buf.extend(b"()");
+        } else if (self.0.first() == Some(&b'(') && self.0.last() == Some(&b')'))
+            || self.is_hex_string()
+        {
+            buf.extend(self.0);
+        } else {
+            buf.reserve(self.0.len() + 2);
+            buf.push(b'(');
+            buf.extend(self.0);
+            buf.push(b')');
+        }
+    }
+}
+
+impl Primitive for PdfStringSyntax<'_> {}
+
 /// A unicode text string object.
 ///
 /// This is written as a [`Str`] containing either bare ASCII (if possible) or a
@@ -1506,7 +1548,17 @@ impl<T> NameTree<'_, T> {
 
     /// Write the `/Limits` array to set the range of names in this node. This
     /// is required for every node except the root node.
-    pub fn limits(&mut self, min: Name, max: Name) -> &mut Self {
+    pub fn limits(&mut self, min: Str, max: Str) -> &mut Self {
+        self.dict.insert(Name(b"Limits")).array().typed().items([min, max]);
+        self
+    }
+
+    /// Write pdfTeX-compatible string syntax to the `/Limits` array.
+    pub fn limits_pdftex(
+        &mut self,
+        min: PdfStringSyntax,
+        max: PdfStringSyntax,
+    ) -> &mut Self {
         self.dict.insert(Name(b"Limits")).array().typed().items([min, max]);
         self
     }
@@ -1538,6 +1590,13 @@ where
 {
     /// Insert a name-value pair.
     pub fn insert(&mut self, key: Str, value: T) -> &mut Self {
+        self.arr.item(key);
+        self.arr.item(value);
+        self
+    }
+
+    /// Insert a key using pdfTeX-compatible string syntax.
+    pub fn insert_pdftex(&mut self, key: PdfStringSyntax, value: T) -> &mut Self {
         self.arr.item(key);
         self.arr.item(value);
         self
@@ -1676,6 +1735,13 @@ mod tests {
         test_primitive!(Str(b"a\x14b"), br"(a\024b)");
         test_primitive!(Str(b"\xFF\xAA"), b"<FFAA>");
         test_primitive!(Str(b"\x0A\x7F\x1F"), br"(\n\177\037)");
+
+        // Test pdfTeX-compatible string syntax.
+        test_primitive!(PdfStringSyntax(b""), b"()");
+        test_primitive!(PdfStringSyntax(b"bare"), b"(bare)");
+        test_primitive!(PdfStringSyntax(b"(literal)"), b"(literal)");
+        test_primitive!(PdfStringSyntax(b"<4142>"), b"<4142>");
+        test_primitive!(PdfStringSyntax(b"<41G2>"), b"(<41G2>)");
 
         // Test text strings.
         test_primitive!(TextStr("Hallo"), b"(Hallo)");

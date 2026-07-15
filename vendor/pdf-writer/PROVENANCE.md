@@ -22,3 +22,10 @@ Umber also adds `Content::verbatim_operations` as a deliberately narrow
 escape hatch for user-authored pdfTeX `\pdfliteral` payloads. The method owns
 content-stream separation/framing; all engine-generated operators continue to
 use the typed writer API.
+
+Umber additionally carries typed pdfTeX navigation writers: nullable XYZ
+destinations, string-key name-tree limits and named-destination dictionaries,
+indirect actions and outline references, and article thread/bead structures.
+`PdfStringSyntax` confines pdfTeX's legacy literal/hex/bare string policy to a
+single primitive object writer; downstream navigation code does not author
+dictionary, array, reference, or string framing.

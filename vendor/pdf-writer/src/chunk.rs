@@ -415,14 +415,39 @@ impl Chunk {
         self.indirect(id).start()
     }
 
+    /// Start writing an indirect action dictionary without `/Type /Action`.
+    pub fn action(&mut self, id: Ref) -> Action<'_> {
+        Action::start_without_type(self.indirect(id))
+    }
+
     /// Start writing a destination for use in a name tree.
     pub fn destination(&mut self, id: Ref) -> Destination<'_> {
+        self.indirect(id).start()
+    }
+
+    /// Start writing a named-destination dictionary.
+    pub fn named_destination(&mut self, id: Ref) -> NamedDestination<'_> {
         self.indirect(id).start()
     }
 
     /// Start writing a named destination dictionary.
     pub fn destinations(&mut self, id: Ref) -> TypedDict<'_, Destination<'_>> {
         self.indirect(id).dict().typed()
+    }
+
+    /// Start writing an indirect article-thread reference array.
+    pub fn thread_list(&mut self, id: Ref) -> ThreadList<'_> {
+        self.indirect(id).start()
+    }
+
+    /// Start writing an article-thread dictionary.
+    pub fn thread(&mut self, id: Ref) -> Thread<'_> {
+        self.indirect(id).start()
+    }
+
+    /// Start writing an article bead dictionary.
+    pub fn bead(&mut self, id: Ref) -> Bead<'_> {
+        self.indirect(id).start()
     }
 
     /// Start writing a file specification dictionary.
@@ -636,6 +661,7 @@ impl Debug for Chunk {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::ActionType;
 
     fn stream_data_after<'a>(pdf: &'a [u8], marker: &[u8]) -> &'a [u8] {
         let marker = memchr::memmem::find(pdf, marker).expect("stream marker");
@@ -743,5 +769,103 @@ mod tests {
         assert!(bytes
             .windows(b"/Typed true\n  /Extension << /Value 7 >>".len())
             .any(|window| window == b"/Typed true\n  /Extension << /Value 7 >>"));
+    }
+
+    #[test]
+    fn navigation_writers_emit_exact_typed_objects() {
+        let mut chunk = Chunk::with_settings(Settings { pretty: false });
+
+        chunk
+            .named_destination(Ref::new(1))
+            .destination()
+            .page(Ref::new(2))
+            .xyz(10.0, 20.0, None);
+        chunk
+            .action(Ref::new(3))
+            .action_type(ActionType::GoTo)
+            .destination_pdftex_string(PdfStringSyntax(b"(dest)"));
+        chunk
+            .outline_item(Ref::new(4))
+            .title_ref(Ref::new(5))
+            .action_ref(Ref::new(3))
+            .parent(Ref::new(14));
+        chunk.indirect(Ref::new(5)).primitive(PdfStringSyntax(b"<FEFF0054>"));
+
+        let mut names = chunk.name_tree::<Ref>(Ref::new(6));
+        names.limits_pdftex(PdfStringSyntax(b"(dest)"), PdfStringSyntax(b"(dest)"));
+        names.names().insert_pdftex(PdfStringSyntax(b"(dest)"), Ref::new(1));
+        names.finish();
+
+        chunk.thread_list(Ref::new(7)).threads([Ref::new(8)]);
+        let mut thread = chunk.thread(Ref::new(8));
+        thread.first_bead(Ref::new(9));
+        thread.info().title_pdftex(PdfStringSyntax(b"(article)"));
+        thread.finish();
+        chunk
+            .bead(Ref::new(9))
+            .thread(Ref::new(8))
+            .previous(Ref::new(9))
+            .next(Ref::new(9))
+            .page(Ref::new(12))
+            .rectangle(Ref::new(10));
+        chunk.indirect(Ref::new(10)).primitive(Rect::new(1.0, 2.0, 3.0, 4.0));
+        Catalog::start(chunk.indirect(Ref::new(11)))
+            .pages(Ref::new(13))
+            .threads(Ref::new(7));
+        chunk.page(Ref::new(12)).parent(Ref::new(13)).beads([Ref::new(9)]);
+
+        assert_eq!(
+            chunk.as_bytes(),
+            b"1 0 obj\n<</D[2 0 R/XYZ 10 20 null]>>\nendobj\n\
+3 0 obj\n<</S/GoTo/D(dest)>>\nendobj\n\
+4 0 obj\n<</Title 5 0 R/A 3 0 R/Parent 14 0 R>>\nendobj\n\
+5 0 obj\n<FEFF0054>\nendobj\n\
+6 0 obj\n<</Limits[(dest)(dest)]/Names[(dest)1 0 R]>>\nendobj\n\
+7 0 obj\n[8 0 R]\nendobj\n\
+8 0 obj\n<</F 9 0 R/I<</Title(article)>>>>\nendobj\n\
+9 0 obj\n<</T 8 0 R/V 9 0 R/N 9 0 R/P 12 0 R/R 10 0 R>>\nendobj\n\
+10 0 obj\n[1 2 3 4]\nendobj\n\
+11 0 obj\n<</Type/Catalog/Pages 13 0 R/Threads 7 0 R>>\nendobj\n\
+12 0 obj\n<</Type/Page/Parent 13 0 R/B[9 0 R]>>\nendobj\n"
+        );
+    }
+
+    #[test]
+    fn navigation_writers_compose_inside_object_streams() {
+        let mut pdf = Pdf::with_settings(Settings { pretty: false });
+        let mut objects = pdf.object_stream(Ref::new(20));
+
+        NamedDestination::start(objects.object(Ref::new(1)))
+            .destination()
+            .page(Ref::new(2))
+            .fit();
+        Action::start_without_type(objects.object(Ref::new(3)))
+            .action_type(ActionType::GoTo)
+            .destination_pdftex_string(PdfStringSyntax(b"(dest)"));
+        Thread::start(objects.object(Ref::new(8))).first_bead(Ref::new(9));
+        Bead::start(objects.object(Ref::new(9)))
+            .thread(Ref::new(8))
+            .previous(Ref::new(9))
+            .next(Ref::new(9))
+            .page(Ref::new(2))
+            .rectangle(Ref::new(10));
+        objects.finish();
+
+        let bytes = pdf.finish_with_xref_stream(Ref::new(21));
+        let decoded = stream_data_after(&bytes, b"/Type/ObjStm");
+        assert!(decoded
+            .windows(b"<</D[2 0 R/Fit]>>".len())
+            .any(|window| window == b"<</D[2 0 R/Fit]>>"));
+        assert!(decoded
+            .windows(b"<</S/GoTo/D(dest)>>".len())
+            .any(|window| window == b"<</S/GoTo/D(dest)>>"));
+        assert!(decoded
+            .windows(b"<</F 9 0 R>>".len())
+            .any(|window| window == b"<</F 9 0 R>>"));
+        assert!(decoded
+            .windows(b"<</T 8 0 R/V 9 0 R/N 9 0 R/P 2 0 R/R 10 0 R>>".len())
+            .any(|window| {
+                window == b"<</T 8 0 R/V 9 0 R/N 9 0 R/P 2 0 R/R 10 0 R>>"
+            }));
     }
 }
