@@ -23,4 +23,6 @@ long-lived editor-session strategy over executor-named checkpoints.
 ## Validation
 
 Run `cargo test --tests -p tex-incr`; run the scripted fuzz tier through
-`scripts/test-incremental-fuzz.sh` when changing edit mapping or convergence.
+Run the explicit 1,000-edit tier with
+`cargo test --tests -p tex-incr tests::thousand_edit_scripted_fuzz_matches_cold_every_revision -- --ignored --exact`
+when changing edit mapping or convergence.
