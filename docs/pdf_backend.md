@@ -108,6 +108,10 @@ matching type-2 entries from `finish_with_xref_stream`. Positive
 ordinary type-1 entries. When stream compression is enabled, ordinary,
 object, and cross-reference streams all declare deterministic Flate encoding
 through `pdf_writer`. None of these byte policies change semantic identity.
+Type3 bitmap glyph streams also remain crate-owned: the vendored content
+builder accepts typed width, height, image-mask, bit depth, decode array, and
+payload inputs and writes the complete inline-image operation. Umber never
+handwrites `BI`, `ID`, or `EI` framing.
 
 The selected 0.15.0 source fork is path-pinned in the workspace manifest and
 lockfile, retains both upstream licenses, and records its crates.io checksum
@@ -131,9 +135,16 @@ The Umber driver lowers committed positioned rule events into `pdf_writer`
 content operations, builds the detached catalog/page/resource graph, and
 serializes only after validation. `umber run --pdftex --pdf <path>` publishes
 the resulting private buffer through the same effect-before-driver
-finalization barrier as DVI and HTML. The current integration deliberately
-returns typed errors for text and specials until their resource-owning
-primitive slices are implemented; a minimal rule-only page is complete.
+finalization barrier as DVI and HTML. Unmapped TeX fonts use a host-neutral PK
+resource boundary. A typed request contains the TeX name, resolved DPI, and
+frozen mode and names the exact `name.<dpi>pk` resource; native filesystem
+lookup is only one provider for that request. The bounded decoder in
+`tex-fonts` validates short, extended, and long character packets and
+normalizes packed or raw rasters to immutable row-byte masks before
+checkpointed provision to `Universe`. Finalization selects only an
+already-provided exact resource and emits a Type3 font with one CharProc per
+used glyph. Both request and decoded program types live below the native
+CLI/WASM boundary and perform no filesystem or process access.
 
 Finalization also builds pdfTeX's default document-information dictionary and
 registers it in the trailer through `pdf_writer`. `/Producer`, `/Creator`,
@@ -177,10 +188,14 @@ It must not discard drawing operators, geometry, font selection, resource
 names, page order, or stream bytes after decompression.
 
 Rendering uses Poppler `pdftoppm` 25.08.0 at 72 dpi in grayscale mode. The
-regenerator requires exact PGM equality, with no pixel or antialiasing
-tolerance, and commits the raster plus an attestation containing the renderer
-arguments and SHA-256 identities of both input PDFs and the equal raster.
-Ordinary cargo tests remain hermetic: they reproduce the committed Umber PDF
+regenerator requires exact PGM equality for ordinary fixtures. Embedded-font
+and PK fixtures use a maximum gray-value delta of two for independent font
+rasterizers and additionally require exact UTF-8 extraction. The committed
+300 and 600 DPI PK-only cases pin real bitmap programs, Type3 structure, and
+resolution-dependent rendered output. Each attestation records the renderer
+and extractor arguments plus SHA-256 identities of both PDFs, the reference
+raster, and extracted text. Ordinary cargo tests remain hermetic: they
+reproduce the committed Umber PDF
 bytes, repeat structural normalization against the committed pdfTeX PDF, and
 verify the raster attestation chain without launching pdfTeX or Poppler. A
 structural mismatch cannot be blessed by a visually similar page. Tests also

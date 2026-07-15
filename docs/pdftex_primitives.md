@@ -148,10 +148,16 @@ The pinned PDF `embedded_subset_type1`, `embedded_subset_omit`, and
 `embedded_subset_controls_negative` fixtures prove positive and nonpositive
 ToUnicode generation and zero/nonzero CharSet omission against pdfTeX 1.40.27.
 The font dictionaries and CMaps continue to serialize only through the
-canonical `pdf_writer` adapter. PK bitmap output remains open in child issue
-7.2.1: the repository does not yet have a PK decoder, typed PK resource
-provider, or Type3 bitmap font producer, so resolution-only state is not
-claimed as output parity.
+canonical `pdf_writer` adapter. Child issue 7.2.1 completes PK output with a
+bounded, host-neutral decoder and checkpointed typed resource provider. The
+driver resolves the frozen `\pdfpkresolution` and `\pdfpkmode`, selects exact
+`name.<dpi>pk` resources, and emits Type3 fonts with resolution-dependent
+matrices, widths, bounding boxes, and image-mask CharProcs. The vendored
+`pdf_writer` content API owns the typed inline-image dictionary and all
+`BI`/`ID`/`EI` framing. Real `cmr10` PK-only fixtures at 300 and 600 DPI match
+pdfTeX 1.40.27 structure, extracted text, and rendered pixels. Focused tests
+pin the zero sentinel to the host-provided driver DPI, clamp nonzero values to
+`72..=8000`, and cover negative values through the same lower bound.
 
 The four PDF token parameters follow pdfTeX's distinct consumption scopes:
 `\pdfpageattr` and `\pdfpageresources` are captured in each successful
@@ -262,8 +268,8 @@ checklist and include focused pdfTeX-oracle fixtures:
    Cover adjustment, protrusion, kern insertion, tracing, ToUnicode, PK
    resolution, and character-set omission. The oracle-backed configuration
    contract and tracing diagnostic are complete in issue 7.1. Issue 7.2 has
-   integrated paragraph shaping and Type-1 font-dictionary effects after
-   issues 10, 11, and 17; PK bitmap output remains the explicit 7.2.1 blocker.
+   integrated paragraph shaping, Type-1 font-dictionary effects, and the
+   host-neutral PK-to-Type3 bitmap pipeline after issues 10, 11, and 17.
    Depends on issue 3.
 8. **Implement PDF metadata and warning-policy configuration parameters.**
    Cover date/info/procset omission, duplicate warnings, pTeX information,

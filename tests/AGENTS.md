@@ -129,7 +129,11 @@ and Poppler `pdftoppm` 25.08.0 only through `scripts/regen-fixtures.sh`; cargo
 tests remain hermetic by rebuilding Umber bytes and checking the committed
 structure, byte, render, and digest chain without invoking either tool. The
 `embedded_subset_controls_negative` case pins nonpositive ToUnicode generation
-and signed-nonzero Type-1 CharSet omission.
+and signed-nonzero Type-1 CharSet omission. The `pk_bitmap_300` and
+`pk_bitmap_600` cases stage the committed `cmr10.<dpi>pk` programs and prove
+resolution-dependent Type3 font output. PK assets are exact-name runtime
+resources; fixture regeneration may locate and pin a missing asset, but Umber
+must never invoke a font generator or ambient fallback.
 
 `tests/corpus/e2e` receives gitignored final-DVI oracles for Story, Gentle,
 TRIP, and e-TRIP. Their Cargo integration tests run Umber directly in process
