@@ -249,7 +249,11 @@ rendering with pdfTeX, and requires byte-identical retained-snapshot replay.
 Its focused identity assertions require raw objects 1 and 2, action/forward
 page identities 3 and 4, page resource/content identities 5 and 6, and final
 document identities 7 through 10, including exact `useobjnum` and `\pdfrefobj`
-preservation.
+preservation. Focused oracle tests require exact invalid-object warnings,
+missing-reference and invalid-immediate diagnostics, DVI-mode errors, and
+duplicate-open-action errors. Together with normalized and rendered PDF
+fixtures plus retained-snapshot replay, these tests close the issue-13
+object/dictionary parity gate.
 
 The generated-font and microtype slice implements independent copied and
 letterspaced font state, validated `\pdffontexpand` configuration, discrete

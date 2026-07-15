@@ -510,21 +510,24 @@ mod tests {
     fn pdf_objects_match_reference_errors_and_useobjnum_recovery() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        crate::run_memory_with_stores(
+        let output = crate::run_memory_with_stores(
             "\\pdfoutput=1\\pdfobj useobjnum 99 {fallback}\\message{last=\\the\\pdflastobj}\\end",
             &mut stores,
         )
         .expect("recover invalid useobjnum");
+        assert_eq!(
+            output,
+            "\npdfTeX warning (\\pdfobj): invalid object number being ignored\nlast=1"
+        );
         assert_eq!(stores.pdf_last_object(), 1);
 
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
         let error = crate::run_memory_with_stores("\\pdfoutput=1\\pdfrefobj 99\\end", &mut stores)
             .expect_err("invalid reference must be fatal");
-        assert!(
-            error
-                .to_string()
-                .contains("pdfTeX error (ext1): cannot find referenced object.")
+        assert_eq!(
+            error.to_string(),
+            "pdfTeX error (ext1): cannot find referenced object."
         );
 
         let mut stores = Universe::default();
@@ -534,9 +537,10 @@ mod tests {
             &mut stores,
         )
         .expect_err("immediate reservation must be fatal");
-        assert!(error.to_string().contains(
+        assert_eq!(
+            error.to_string(),
             "pdfTeX error (ext1): `\\pdfobj reserveobjnum' cannot be used with \\immediate."
-        ));
+        );
     }
 
     #[test]
