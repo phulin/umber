@@ -10,7 +10,7 @@ use tex_out::pdf::{
     PdfDestinationPage, PdfDestinationStructure, PdfDestinationTarget, PdfDictionary,
     PdfIndirectObject, PdfModelError, PdfName, PdfNumber, PdfObject, PdfObjectCompression,
     PdfObjectId, PdfSerializationOptions, PdfSerializeError, PdfStreamCompression, PdfTrailer,
-    PdfValue, PdfVersion, UnvalidatedPdfDocument, ordered_page_content,
+    PdfValue, PdfVersion, UnvalidatedPdfDocument, ordered_page_content, page_content,
 };
 use tex_out::positioned::{
     BoxKind, PositionedBox, PositionedError, PositionedEvent, PositionedPage,
@@ -237,6 +237,7 @@ pub fn pdf_from_committed_artifacts_at_dpi(
         let positioned = positioned_pages[page_index].clone();
         let (page_width, page_height) = pdf_page_extents(&artifact, record)?;
         let mut content_operations = Vec::new();
+        let mut has_pdf_graphics = false;
         let mut page_fonts = std::collections::BTreeMap::new();
         let mut fallback_space_on_page = false;
         for event in positioned.events {
@@ -477,6 +478,7 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                     return Err(PdfBuildError::UnsupportedSpecial(special.class));
                 }
                 PositionedEvent::PdfGraphics(graphics) => {
+                    has_pdf_graphics = true;
                     let x = scaled_to_bp_f32(
                         graphics
                             .x
@@ -551,7 +553,25 @@ pub fn pdf_from_committed_artifacts_at_dpi(
             id: contents_id,
             object: PdfObject::Stream {
                 dictionary: PdfDictionary::new(),
-                data: ordered_page_content(&content_operations),
+                data: if has_pdf_graphics {
+                    ordered_page_content(&content_operations)
+                } else {
+                    let rectangles = content_operations
+                        .iter()
+                        .filter_map(|operation| match operation {
+                            PdfContentOperation::Rectangle(rectangle) => Some(*rectangle),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+                    let text_runs = content_operations
+                        .iter()
+                        .filter_map(|operation| match operation {
+                            PdfContentOperation::Text(run) => Some(run.clone()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+                    page_content(&rectangles, &text_runs)
+                },
             },
         });
 
