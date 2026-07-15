@@ -18,6 +18,7 @@ use tex_state::{
 mod html_output;
 mod input_search;
 mod memory_output;
+mod pdf_output;
 mod pdftex;
 mod virtual_compile;
 
@@ -29,6 +30,7 @@ pub use memory_output::{
     MemoryOutputCollectionError, MemoryOutputFile, MemoryRunOutput, collect_final_memory_output,
     collect_final_memory_output_from_commits, collect_final_memory_output_from_plans,
 };
+pub use pdf_output::{PdfBuildError, pdf_from_committed_artifacts};
 pub use pdftex::PDFTEX_PRIMITIVE_NAMES;
 pub use tex_fonts::{
     AcceptedFontContainers, FeatureSetting, FontContainer, FontFeaturePolicy, FontObjectIdentity,
@@ -371,12 +373,14 @@ pub fn prepare_pdftex_run_stores(stores: &mut Universe) {
     prepare_etex_run_stores(stores);
     pdftex::install_pdftex_layer(stores);
     pdftex::initialize_pdftex_parameter_defaults(stores);
+    stores.enable_pdf_output();
 }
 
 /// Restores driver-selected pdfTeX meanings after loading a format image.
 pub fn install_pdftex_format_primitives(stores: &mut Universe) {
     tex_exec::install_etex_unexpandable_primitives(stores);
     pdftex::install_pdftex_layer(stores);
+    stores.enable_pdf_output();
 }
 
 /// Installs the primitive/state setup used by supported LaTeX-DVI runs.

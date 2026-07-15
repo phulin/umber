@@ -27,6 +27,7 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/memory_output.rs`: exact committed terminal/log/DVI/aux collection for successful memory-backed runs, aggregate output limits, and auxiliary publication into VFS stage transactions.
 - `src/memory_output/tests.rs`: final-commit idempotence, output accounting, and memory-boundary tests.
 - `src/pdftex.rs`: pinned pdfTeX 1.40.27 primitive inventory and explicit placeholder registration for pdfTeX mode.
+- `src/pdf_output.rs`: deterministic committed-artifact lowering into the checkpointed PDF object graph.
 - `src/virtual_compile.rs`: host-neutral persistent compile session, revision-checked root patches, shared-VFS file/OpenType resource retries, atomic response registration, retained immutable resources, and composed resource accounting.
 - `src/virtual_compile/path.rs`: logical TeX/TFM request normalization over `umber-vfs` canonical paths.
 - `src/virtual_compile/resolvers.rs`: VFS-snapshot-backed input/font resolvers that register selected bytes through World, with typed missing-file and logical OpenType-font side state.

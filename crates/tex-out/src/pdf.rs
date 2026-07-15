@@ -12,6 +12,27 @@ mod serialize;
 
 pub use serialize::{PdfSerializationOptions, PdfSerializeError, PdfStreamCompression};
 
+/// One filled rectangle in PDF user-space points.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PdfContentRectangle {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+/// Encodes filled rule rectangles exclusively through `pdf_writer`.
+#[must_use]
+pub fn filled_rectangle_content(rectangles: &[PdfContentRectangle]) -> Vec<u8> {
+    let mut content = pdf_writer::Content::new();
+    for rectangle in rectangles {
+        content
+            .rect(rectangle.x, rectangle.y, rectangle.width, rectangle.height)
+            .fill_nonzero();
+    }
+    content.finish().to_vec()
+}
+
 /// Stable indirect-object identity within one PDF document timeline.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PdfObjectId(NonZeroU32);
