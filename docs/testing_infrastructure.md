@@ -68,9 +68,10 @@ controls and measured boundary.
 ## Fixture Regeneration
 
 `scripts/regen-fixtures.sh` is the sole live-reference rewrite path. It builds
-`tools/fixturegen` for text/native fixture updates and `tools/refexec` for DVI
-fixture updates. Its `--area fonts` mode owns the explicit live `tftopl`
-cross-check and does not rewrite fixtures.
+`tools/fixturegen` for text/native and PDF fixture updates and `tools/refexec`
+for DVI fixture updates. Its `--area pdf` mode requires pdfTeX 1.40.27 and
+Poppler `pdftoppm` 25.08.0; its `--area fonts` mode owns the explicit live
+`tftopl` cross-check and does not rewrite fixtures.
 
 See `tests/AGENTS.md` for the supported areas and cases, required tools,
 copied support files, and validation performed after a rewrite.
@@ -87,6 +88,21 @@ DVI regeneration runs the live reference engine through `tools/refexec`,
 copies the pinned local CM TFMs and area support files, uses INITEX for the math
 corpus, and rewrites raw reference DVI only when the existing
 preamble-comment-only comparison detects a change.
+
+## Committed PDF Corpus
+
+`tests/corpus/pdf` commits minimal primitive-only sources, pinned reference
+PDFs, deterministic Umber PDFs, normalized catalog/page/resource/content
+structure, exact 72-dpi grayscale PGM renders, and renderer/hash attestations.
+Regenerate it only with `scripts/regen-fixtures.sh --area pdf` or
+`scripts/regen-fixtures.sh --case pdf/<case>`.
+
+Regeneration resolves object references and removes only byte-layout and
+volatile metadata differences before comparing structure. It then renders
+both PDFs with pinned Poppler and requires exact dimensions and pixels. The
+ordinary cargo test invokes neither external tool: it rebuilds the exact Umber
+bytes, normalizes the committed reference and current output, and verifies the
+SHA-256 chain connecting both committed PDFs to the equal raster.
 
 ## External Document Corpus
 

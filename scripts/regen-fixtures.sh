@@ -6,6 +6,7 @@ cd "$repo_root"
 
 text_areas=(hello lexer expand lexer_dynamic exec etex_exec typeset tex_exec tex_exec_io)
 dvi_areas=(dvi page math align leaders)
+pdf_area=pdf
 e2e_area=e2e
 
 target_dir="${CARGO_TARGET_DIR:-target}"
@@ -35,6 +36,7 @@ usage:
 Fixture areas:
   text/native: hello lexer expand lexer_dynamic exec etex_exec typeset tex_exec tex_exec_io
   DVI:         dvi page math align leaders
+  PDF:         pdf  (pinned pdfTeX structure plus exact Poppler grayscale pixels)
   end-to-end:  e2e  (story, gentle, trip, and e-trip local DVI oracles)
   live check:  fonts  (runs the tftopl cross-check; it does not rewrite fixtures)
 
@@ -53,6 +55,9 @@ Reference tools:
 
   The fonts live check requires tftopl on PATH, or
   UMBER_REF_TFTOPL=/absolute/path/to/tftopl.
+
+  PDF regeneration requires pdfTeX 1.40.27 and pdftoppm 25.08.0. Set
+  UMBER_REF_PDFTEX and UMBER_PDF_RENDERER to select their absolute paths.
 
   Regeneration pins SOURCE_DATE_EPOCH by default so Umber and the reference
   TeX observe the same job-start clock. Set SOURCE_DATE_EPOCH explicitly to
@@ -86,7 +91,8 @@ is_dvi_area() {
 }
 
 is_known_area() {
-  is_text_area "$1" || is_dvi_area "$1" || [[ "$1" == "$e2e_area" || "$1" == "fonts" ]]
+  is_text_area "$1" || is_dvi_area "$1" || \
+    [[ "$1" == "$pdf_area" || "$1" == "$e2e_area" || "$1" == "fonts" ]]
 }
 
 test_command_for_area() {
@@ -133,6 +139,9 @@ test_command_for_area() {
       ;;
     leaders)
       printf '%s\n' 'cargo test -p umber --test it run_leaders_corpus_matches_committed_dvi'
+      ;;
+    pdf)
+      printf '%s\n' 'cargo test -p umber --test it pdf_parity'
       ;;
     *)
       die "unknown fixture area: ${area}"
@@ -477,6 +486,17 @@ regen_dvi_area() {
   validate_dvi_area "$area"
 }
 
+regen_pdf_area() {
+  local command_string
+  build_fixturegen_once
+  build_umber_once
+  run_command 'Regenerating pinned PDF parity fixtures' \
+    env UMBER_BIN="$umber_bin" "$fixturegen_bin" --area pdf
+  command_string="$(test_command_for_area pdf)"
+  # shellcheck disable=SC2086
+  run_command 'Validating hermetic PDF parity fixtures' $command_string
+}
+
 run_fonts_live_check() {
   build_fixturegen_once
   run_command 'Running live tftopl font cross-check' "$fixturegen_bin" --area fonts
@@ -489,6 +509,8 @@ regen_area() {
     regen_text_area "$area"
   elif is_dvi_area "$area"; then
     regen_dvi_area "$area"
+  elif [[ "$area" == "$pdf_area" ]]; then
+    regen_pdf_area
   elif [[ "$area" == "$e2e_area" ]]; then
     regen_e2e_area
   else
@@ -525,6 +547,14 @@ regen_case() {
     validate_dvi_area "$area"
   elif [[ "$area" == "$e2e_area" ]]; then
     regen_e2e_case "$case"
+  elif [[ "$area" == "$pdf_area" ]]; then
+    build_fixturegen_once
+    build_umber_once
+    run_command "Regenerating pdf/${case} fixtures" \
+      env UMBER_BIN="$umber_bin" "$fixturegen_bin" --case pdf "$case"
+    command_string="$(test_command_for_area pdf)"
+    # shellcheck disable=SC2086
+    run_command 'Validating hermetic PDF parity fixtures' $command_string
   elif is_text_area "$area"; then
     printf 'Regenerating text area %s for requested case %s\n' "$area" "$case" >&2
     build_fixturegen_once
@@ -672,6 +702,7 @@ case "$mode" in
     for area_arg in "${dvi_areas[@]}"; do
       regen_area "$area_arg"
     done
+    regen_area "$pdf_area"
     regen_area "$e2e_area"
     ;;
   area)

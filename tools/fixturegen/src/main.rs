@@ -1,6 +1,7 @@
 #![allow(clippy::disallowed_methods)] // host-side fixture regeneration tool.
 
 mod fonts;
+mod pdf;
 
 use std::env;
 use std::fs;
@@ -74,7 +75,7 @@ fn run() -> Result<()> {
 fn print_usage() {
     eprintln!(
         "usage: fixturegen --area AREA | --case AREA/CASE | --case AREA CASE\n\
-         areas: hello lexer expand lexer_dynamic exec etex_exec typeset tex_exec tex_exec_io fonts"
+         areas: hello lexer expand lexer_dynamic exec etex_exec typeset tex_exec tex_exec_io pdf fonts"
     );
 }
 
@@ -102,6 +103,7 @@ fn regenerate_area(area: &str) -> Result<()> {
         "typeset" => regenerate_cases(area, |case| regenerate_reference_log_case(area, case, true)),
         "tex_exec" => regenerate_cases(area, regenerate_tex_exec_case),
         "tex_exec_io" => regenerate_cases(area, regenerate_tex_exec_io_case),
+        "pdf" => pdf::regenerate_area(),
         "fonts" => fonts::run(&repo_root()),
         _ => bail!("unknown fixturegen area: {area}"),
     }
@@ -121,6 +123,9 @@ fn regenerate_cases(area: &str, mut regenerate: impl FnMut(&str) -> Result<()>) 
 fn regenerate_case(area: &str, case: &str) -> Result<()> {
     if area == "fonts" {
         bail!("--case is not meaningful for the fonts live check");
+    }
+    if area == "pdf" {
+        return pdf::regenerate_case(case);
     }
     if !TEXT_AREAS.contains(&area) {
         bail!("unknown fixturegen area: {area}");
@@ -414,6 +419,11 @@ fn strip_case_suffixes(case: &str) -> String {
         ".expected.out",
         ".expected.effects",
         ".expected.specials",
+        ".expected.ref.pdf",
+        ".expected.umber.pdf",
+        ".expected.structure",
+        ".expected.pgm",
+        ".expected.render",
     ] {
         name = name.strip_suffix(suffix).unwrap_or(name);
     }
@@ -476,7 +486,7 @@ fn lex_invalid_character_fixture() -> String {
     actual
 }
 
-fn lexer_fixture(case: &str) -> (Lexer<WorldInput>, Universe) {
+fn lexer_fixture(case: &str) -> (Lexer, Universe) {
     let path = source_path("lexer_dynamic", case);
     let mut stores = Universe::with_world(World::real());
     let content = stores
@@ -487,11 +497,7 @@ fn lexer_fixture(case: &str) -> (Lexer<WorldInput>, Universe) {
     (Lexer::new(WorldInput::from_content(content)), stores)
 }
 
-fn push_remaining_tokens(
-    actual: &mut String,
-    lexer: &mut Lexer<WorldInput>,
-    stores: &mut Universe,
-) {
+fn push_remaining_tokens(actual: &mut String, lexer: &mut Lexer, stores: &mut Universe) {
     while let Some(token) = lexer
         .next_token(stores)
         .expect("dynamic lexer fixture should succeed")
@@ -500,7 +506,7 @@ fn push_remaining_tokens(
     }
 }
 
-fn push_next_token(actual: &mut String, lexer: &mut Lexer<WorldInput>, stores: &mut Universe) {
+fn push_next_token(actual: &mut String, lexer: &mut Lexer, stores: &mut Universe) {
     let token = lexer
         .next_token(stores)
         .expect("dynamic lexer fixture should succeed")

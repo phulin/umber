@@ -41,6 +41,7 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `tools/`: Rust tooling crates.
 - `benchmarks/`: opt-in standalone benchmark crates kept outside the root workspace.
 - `tests/`: committed fixtures and parity test definitions.
+- `tests/corpus/pdf/`: pinned minimal pdfTeX references, deterministic Umber PDFs, normalized structure, and rendered-page parity fixtures.
 - `docs/`: architecture, phase, and design documents.
 - `scripts/`: local development scripts and versioned git hook templates.
 - `third_party/`: ignored reference downloads and external source archives.

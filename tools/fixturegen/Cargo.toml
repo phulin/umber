@@ -8,6 +8,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1"
 refexec = { path = "../refexec" }
+sha2 = "0.10"
 tempfile = "3"
 test-support = { path = "../../crates/test-support" }
 tex-arith = { path = "../../crates/tex-arith" }

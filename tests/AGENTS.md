@@ -117,6 +117,13 @@ the other DVI corpora; keep cases primitive-only.
 against its committed DVI fixture, and `scripts/regen-fixtures.sh` owns fixture
 regeneration for the area.
 
+`tests/corpus/pdf` contains primitive-only minimal PDF inputs, pinned pdfTeX
+reference PDFs, exact Umber PDFs, canonical structure projections, grayscale
+PGM renders, and renderer/hash attestations. Regeneration uses pdfTeX 1.40.27
+and Poppler `pdftoppm` 25.08.0 only through `scripts/regen-fixtures.sh`; cargo
+tests remain hermetic by rebuilding Umber bytes and checking the committed
+structure, byte, render, and digest chain without invoking either tool.
+
 `tests/corpus/e2e` receives gitignored final-DVI oracles for Story, Gentle,
 TRIP, and e-TRIP. Their Cargo integration tests run Umber directly in process
 and return cleanly when an
@@ -155,7 +162,7 @@ Modes:
 - `--all` regenerates all committed fixture areas.
 - `--area AREA` regenerates one area, such as `hello`, `lexer`, `expand`,
   `lexer_dynamic`, `exec`, `typeset`, `dvi`, `page`, `math`, `align`,
-  `leaders`, `e2e`, `etex_exec`, `tex_exec`, or `tex_exec_io`.
+  `leaders`, `pdf`, `e2e`, `etex_exec`, `tex_exec`, or `tex_exec_io`.
 - `--case AREA/CASE` regenerates one case exactly for text/native and DVI
   areas.
 

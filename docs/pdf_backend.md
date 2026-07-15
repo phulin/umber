@@ -111,20 +111,25 @@ primitive slices are implemented; a minimal rule-only page is complete.
 
 ## Parity oracle
 
-Committed minimal fixtures are regenerated only through
-`scripts/regen-fixtures.sh`. The reference producer is pinned pdfTeX 1.40.27
-with the repository's deterministic clock policy. Structural comparison
+Committed `tests/corpus/pdf` minimal fixtures are regenerated only through
+`scripts/regen-fixtures.sh --area pdf` or its `--case pdf/<case>` form. The
+reference producer is pinned pdfTeX 1.40.27 with the repository's deterministic
+clock policy. Structural comparison
 parses both files, removes byte-layout-only fields (offsets, xref spelling,
 compression containers, and permitted volatile metadata), resolves indirect
 references, and compares the normalized catalog/page/resource/content graph.
 It must not discard drawing operators, geometry, font selection, resource
 names, page order, or stream bytes after decompression.
 
-Rendering comparison rasterizes corresponding pages with one pinned renderer
-and fixed resolution/color settings, then compares dimensions and pixels. Any
-tolerance must be explicit and limited to documented antialiasing edges; a
-structural mismatch cannot be blessed by a visually similar page. Tests must
-also run the complete committed DVI corpus byte-for-byte.
+Rendering uses Poppler `pdftoppm` 25.08.0 at 72 dpi in grayscale mode. The
+regenerator requires exact PGM equality, with no pixel or antialiasing
+tolerance, and commits the raster plus an attestation containing the renderer
+arguments and SHA-256 identities of both input PDFs and the equal raster.
+Ordinary cargo tests remain hermetic: they reproduce the committed Umber PDF
+bytes, repeat structural normalization against the committed pdfTeX PDF, and
+verify the raster attestation chain without launching pdfTeX or Poppler. A
+structural mismatch cannot be blessed by a visually similar page. Tests also
+run the complete committed DVI corpus byte-for-byte.
 
 ## Delivery gates
 
@@ -133,6 +138,6 @@ also run the complete committed DVI corpus byte-for-byte.
 2. Valid deterministic PDF serialization for a minimal page. **Done.**
 3. pdfTeX shipout integration and checkpointed engine ledger. **Done.**
 4. Normalized pdfTeX structure fixtures, rendered-page fixtures, and the full
-   DVI regression gate.
+   DVI regression gate. **Done.**
 
 The parent backend issue is complete only when all four gates pass.
