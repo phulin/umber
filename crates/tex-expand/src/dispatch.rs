@@ -521,6 +521,52 @@ macro_rules! dispatch_match {
                     call_origin,
                 ))
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfXImageBBox) => {
+                let object = scan_int::scan_int_with_mode_and_context(
+                    input,
+                    stores,
+                    expansion,
+                    mode,
+                    call_context,
+                )?
+                .value();
+                crate::record_dependency!(
+                    expansion,
+                    crate::ReadDependency::Engine(crate::ReadEngineField::PdfExternalImages)
+                );
+                let id = u32::try_from(object)
+                    .ok()
+                    .and_then(|raw| tex_state::PdfExternalImageId::new(raw).ok());
+                let Some(metadata) = id.and_then(|id| stores.pdf_external_image(id)) else {
+                    return Err(ExpandError::PdfExternalImageNotFound {
+                        object,
+                        context: call_context,
+                    });
+                };
+                let index = scan_int::scan_int_with_mode_and_context(
+                    input,
+                    stores,
+                    expansion,
+                    mode,
+                    call_context,
+                )?
+                .value();
+                let Some(coordinate) = u8::try_from(index)
+                    .ok()
+                    .and_then(|index| metadata.bbox_coordinate(index))
+                else {
+                    return Err(ExpandError::PdfXImageBBoxInvalidParameter {
+                        index,
+                        context: call_context,
+                    });
+                };
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::NumberOutput,
+                    &crate::values::format_scaled(coordinate),
+                    call_origin,
+                ))
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfPrimitive) => {
                 let Some(target) = crate::next_semantic_raw_token(input, stores)? else {
                     return Err(ExpandError::MissingTokenAfterPrimitive {
@@ -1439,6 +1485,7 @@ pub fn dispatch_expandable_opcode(opcode: ExpandableOpcode) -> Result<(), Expand
         | ExpandableOpcode::PdfUniformDeviate
         | ExpandableOpcode::PdfNormalDeviate
         | ExpandableOpcode::PdfInsertHeight
+        | ExpandableOpcode::PdfXImageBBox
         | ExpandableOpcode::IfDefined
         | ExpandableOpcode::IfCsName
         | ExpandableOpcode::IfInCsName

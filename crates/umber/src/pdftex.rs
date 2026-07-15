@@ -1443,6 +1443,103 @@ mod tests {
     }
 
     #[test]
+    fn pdf_ximage_bbox_matches_page_box_indices_raster_and_catcodes() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let pdf_id = tex_state::PdfExternalImageId::new(7).expect("PDF image id");
+        stores
+            .register_pdf_external_image(
+                pdf_id,
+                tex_state::PdfExternalImageMetadata::PdfPage {
+                    page_box: tex_state::PdfPageBox {
+                        left: Scaled::from_raw(0),
+                        bottom: Scaled::from_raw(0),
+                        right: Scaled::from_raw(655_384),
+                        top: Scaled::from_raw(327_659),
+                    },
+                },
+            )
+            .expect("register PDF page-box metadata");
+        stores
+            .register_pdf_external_image(
+                tex_state::PdfExternalImageId::new(8).expect("raster image id"),
+                tex_state::PdfExternalImageMetadata::Raster,
+            )
+            .expect("register raster metadata");
+
+        let output = crate::run_memory_with_stores(
+            concat!(
+                "\\message{bbox=[\\pdfximagebbox7 1]/[\\pdfximagebbox7 2]/",
+                "[\\pdfximagebbox7 3]/[\\pdfximagebbox7 4]}",
+                "\\message{raster=[\\pdfximagebbox8 1]/[\\pdfximagebbox8 4]}",
+            ),
+            &mut stores,
+        )
+        .expect("pdfTeX image bounding-box enquiries");
+        assert!(
+            output.contains("bbox=[0.0pt]/[0.0pt]/[10.00037pt]/[4.99968pt]"),
+            "{output}"
+        );
+        assert!(output.contains("raster=[0.0pt]/[0.0pt]"), "{output}");
+
+        let mut input = InputStack::new(MemoryInput::new("\\pdfximagebbox7 3"));
+        let mut context = tex_state::ExpansionContext::new(&mut stores);
+        let mut expanded = Vec::new();
+        while let Some(token) =
+            tex_expand::get_x_token(&mut input, &mut context).expect("bbox expansion")
+        {
+            expanded.push(tex_expand::semantic_token(token));
+        }
+        assert_eq!(
+            expanded
+                .iter()
+                .filter_map(|token| match token {
+                    Token::Char { ch, .. } => Some(*ch),
+                    _ => None,
+                })
+                .collect::<String>(),
+            "10.00037pt"
+        );
+        assert!(expanded.iter().all(|token| matches!(
+            token,
+            Token::Char {
+                cat: Catcode::Other,
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn pdf_ximage_bbox_rejects_missing_objects_and_bad_indices() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let missing = crate::run_memory_with_stores("\\message{\\pdfximagebbox99 1}", &mut stores)
+            .expect_err("missing external image must be fatal");
+        assert_eq!(
+            missing.to_string(),
+            "pdfTeX error (ext1): cannot find referenced object."
+        );
+
+        stores
+            .register_pdf_external_image(
+                tex_state::PdfExternalImageId::new(7).expect("PDF image id"),
+                tex_state::PdfExternalImageMetadata::Raster,
+            )
+            .expect("register image metadata");
+        for index in [0, 5, -1] {
+            let error = crate::run_memory_with_stores(
+                &format!("\\message{{\\pdfximagebbox7 {index}}}"),
+                &mut stores,
+            )
+            .expect_err("bad bbox index must be fatal");
+            assert_eq!(
+                error.to_string(),
+                "pdfTeX error (pdfximagebbox): invalid parameter."
+            );
+        }
+    }
+
+    #[test]
     fn pdf_metadata_configuration_matches_the_pinned_initex_oracle() {
         let reference = test_support::read_fixture("tex_exec", "pdf_metadata_config", "ref");
         for expected in [

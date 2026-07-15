@@ -247,6 +247,7 @@ pub enum ExpandablePrimitive {
     PdfFontName,
     PdfFontObjectNumber,
     PdfInsertHeight,
+    PdfXImageBBox,
     /// Accesses the immutable original primitive table.
     PdfPrimitive,
     /// Tests current meaning against the same-spelling original primitive.
@@ -354,6 +355,7 @@ impl ExpandablePrimitive {
             Self::PdfUniformDeviate => 79,
             Self::PdfNormalDeviate => 80,
             Self::PdfInsertHeight => 81,
+            Self::PdfXImageBBox => 82,
         }
     }
 
@@ -442,6 +444,7 @@ impl ExpandablePrimitive {
             79 => Some(Self::PdfUniformDeviate),
             80 => Some(Self::PdfNormalDeviate),
             81 => Some(Self::PdfInsertHeight),
+            82 => Some(Self::PdfXImageBBox),
             _ => None,
         }
     }

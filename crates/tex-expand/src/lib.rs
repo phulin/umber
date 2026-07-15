@@ -415,6 +415,10 @@ pub fn install_pdftex_expandable_primitives(stores: &mut Universe) {
             "pdfinsertht",
             tex_state::meaning::ExpandablePrimitive::PdfInsertHeight,
         ),
+        (
+            "pdfximagebbox",
+            tex_state::meaning::ExpandablePrimitive::PdfXImageBBox,
+        ),
     ] {
         stores.install_primitive_meaning(name, Meaning::ExpandablePrimitive(primitive));
     }
@@ -504,6 +508,7 @@ pub enum ReadEngineField {
     PdfRandom,
     PdfShellEscape,
     PageInsertions,
+    PdfExternalImages,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -631,6 +636,7 @@ pub enum ExpandableOpcode {
     PdfUniformDeviate,
     PdfNormalDeviate,
     PdfInsertHeight,
+    PdfXImageBBox,
     IfDefined,
     IfCsName,
     IfInCsName,
@@ -783,6 +789,14 @@ pub enum ExpandError {
     PdfObjectCapacity {
         context: TracedTokenWord,
     },
+    PdfExternalImageNotFound {
+        object: i32,
+        context: TracedTokenWord,
+    },
+    PdfXImageBBoxInvalidParameter {
+        index: i32,
+        context: TracedTokenWord,
+    },
     InvalidConditionalRelation {
         context: TracedTokenWord,
     },
@@ -863,6 +877,12 @@ impl fmt::Display for ExpandError {
             Self::PdfObjectCapacity { .. } => {
                 f.write_str("pdfTeX error (font): too many PDF objects.")
             }
+            Self::PdfExternalImageNotFound { .. } => {
+                f.write_str("pdfTeX error (ext1): cannot find referenced object.")
+            }
+            Self::PdfXImageBBoxInvalidParameter { .. } => {
+                f.write_str("pdfTeX error (pdfximagebbox): invalid parameter.")
+            }
             Self::InvalidConditionalRelation { context } => {
                 write!(
                     f,
@@ -911,6 +931,8 @@ impl std::error::Error for ExpandError {
             | Self::MarginKernExpectedHBox { .. }
             | Self::PdfInvalidFontIdentifier { .. }
             | Self::PdfObjectCapacity { .. }
+            | Self::PdfExternalImageNotFound { .. }
+            | Self::PdfXImageBBoxInvalidParameter { .. }
             | Self::InvalidConditionalRelation { .. }
             | Self::IncompleteIf { .. }
             | Self::ExtraConditionalControl { .. }
@@ -944,6 +966,8 @@ impl ExpandError {
             | Self::MarginKernExpectedHBox { context }
             | Self::PdfInvalidFontIdentifier { context }
             | Self::PdfObjectCapacity { context }
+            | Self::PdfExternalImageNotFound { context, .. }
+            | Self::PdfXImageBBoxInvalidParameter { context, .. }
             | Self::InvalidConditionalRelation { context }
             | Self::IncompleteIf { context } => Some(context.origin()),
             Self::ScanInt(err) => err.primary_origin(),

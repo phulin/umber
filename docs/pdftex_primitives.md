@@ -62,7 +62,7 @@ oracle-backed test. Every name in a missing row is missing.
 | PDF dimension parameters | 13 | done | `\pdfhorigin`, `\pdfvorigin`, `\pdfpagewidth`, `\pdfpageheight`, `\pdflinkmargin`, `\pdfdestmargin`, `\pdfthreadmargin`, `\pdffirstlineheight`, `\pdflastlinedepth`, `\pdfeachlineheight`, `\pdfeachlinedepth`, `\pdfignoreddimen`, `\pdfpxdimen` |
 | Font construction and primitive recovery | 3 | done | `\pdfprimitive`, `\letterspacefont`, `\pdfcopyfont` |
 | Read-only integer enquiries | 14 | partial (4 done) | `\pdftexversion`, `\pdfelapsedtime`, `\pdfshellescape`, `\pdfrandomseed` (done); `\pdflastobj`, `\pdflastxform`, `\pdflastximage`, `\pdflastximagepages`, `\pdflastannot`, `\pdflastxpos`, `\pdflastypos`, `\pdfretval`, `\pdflastximagecolordepth`, `\pdflastlink` |
-| Expandable conversions and enquiries | 27 | partial (23 done) | `\expanded`, `\pdftexrevision`, `\pdftexbanner`, `\pdffontsize`, `\pdffontname`, `\pdffontobjnum`, `\leftmarginkern`, `\rightmarginkern`, `\pdfescapestring`, `\pdfescapename`, `\pdfescapehex`, `\pdfunescapehex`, `\pdfcreationdate`, `\pdffilemoddate`, `\pdffilesize`, `\pdfmdfivesum`, `\pdffiledump`, `\pdfstrcmp`, `\pdfmatch`, `\pdflastmatch`, `\pdfuniformdeviate`, `\pdfnormaldeviate`, `\pdfinsertht` (done); `\pdfpageref`, `\pdfxformname`, `\pdfcolorstackinit`, `\pdfximagebbox` |
+| Expandable conversions and enquiries | 27 | partial (24 done) | `\expanded`, `\pdftexrevision`, `\pdftexbanner`, `\pdffontsize`, `\pdffontname`, `\pdffontobjnum`, `\leftmarginkern`, `\rightmarginkern`, `\pdfescapestring`, `\pdfescapename`, `\pdfescapehex`, `\pdfunescapehex`, `\pdfcreationdate`, `\pdffilemoddate`, `\pdffilesize`, `\pdfmdfivesum`, `\pdffiledump`, `\pdfstrcmp`, `\pdfmatch`, `\pdflastmatch`, `\pdfuniformdeviate`, `\pdfnormaldeviate`, `\pdfinsertht`, `\pdfximagebbox` (done); `\pdfpageref`, `\pdfxformname`, `\pdfcolorstackinit` |
 | Primitive-identity conditional | 1 | done | `\ifpdfprimitive` |
 | Horizontal-mode normalization | 1 | missing | `\quitvmode` |
 | Character codes and ligature control | 10 | done | `\lpcode`, `\rpcode`, `\efcode`, `\tagcode`, `\knbscode`, `\stbscode`, `\shbscode`, `\knbccode`, `\knaccode`, `\pdfnoligatures` |
@@ -164,6 +164,17 @@ returns `0pt` for a class with no current-page insertion and otherwise reports
 the accumulated or split height maintained by the insertion subsystem; page
 output clears the enquiry together with that subsystem state. The parity test
 covers grouping, accumulation, splitting, absent classes, and output reset.
+
+`\pdfximagebbox` reads typed, detached external-image metadata from the
+checkpointed PDF ledger. PDF images retain the selected page-box coordinates
+in scaled points; indices 1 through 4 return left, bottom, right, and top.
+Raster images return `0.0pt` for every valid index. Missing image objects and
+indices outside 1 through 4 are fatal with pdfTeX's pinned diagnostics. The
+metadata registry is snapshot-, rollback-, and semantic-hash-safe and performs
+no host I/O. Image parsing, resource acquisition, object allocation, and
+`\pdfximage`/`\pdfrefximage` registration remain tracked by issue
+`umber2-kbz0.14.3`; emitted PDF bytes continue exclusively through
+`pdf_writer` at the existing detached output boundary.
 
 The four PDF token parameters follow pdfTeX's distinct consumption scopes:
 `\pdfpageattr` and `\pdfpageresources` are captured in each successful
