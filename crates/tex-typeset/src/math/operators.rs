@@ -181,14 +181,14 @@ fn displayed_limits(
             amount: size_params.big_op_spacing5,
             kind: KernKind::Explicit,
         });
-        list.push(MathNode::HList(sup));
+        list.push(boxed_node(sup));
         list.push(MathNode::Kern {
             amount: shift_up,
             kind: KernKind::Explicit,
         });
         height = add(height, add(size_params.big_op_spacing5, sup_extent));
     }
-    list.push(MathNode::HList(op));
+    list.push(boxed_node(op));
     if !matches!(noad.subscript, MathField::Empty) {
         let shift_down =
             sub(size_params.big_op_spacing4, sub_box.height).max(size_params.big_op_spacing2);
@@ -197,7 +197,7 @@ fn displayed_limits(
             amount: shift_down,
             kind: KernKind::Explicit,
         });
-        list.push(MathNode::HList(sub_box));
+        list.push(boxed_node(sub_box));
         list.push(MathNode::Kern {
             amount: size_params.big_op_spacing5,
             kind: KernKind::Explicit,

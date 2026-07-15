@@ -778,6 +778,44 @@ fn display_limits_does_not_rewrap_clean_compound_operator() {
 }
 
 #[test]
+fn display_limits_preserve_same_width_source_vbox_axis() {
+    let mut universe = setup_universe();
+    let children = universe.freeze_node_list(&[]);
+    let source_vbox = Node::VList(BoxNode::new(BoxNodeFields {
+        width: sc(30),
+        height: sc(40),
+        depth: sc(10),
+        shift: sc(0),
+        display: false,
+        glue_set: GlueSetRatio::from_raw(0),
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children,
+    }));
+    let source_vbox = universe.freeze_node_list(&[source_vbox]);
+    let mut op = MathNoad::new(
+        NoadKind::Operator(LimitType::Limits),
+        MathField::MathChar(math_char('o')),
+    );
+    op.superscript = MathField::SubBox(source_vbox);
+    let input = universe.freeze_node_list(&[Node::MathNoad(op)]);
+    let params = MathParams::read(&universe);
+
+    let layout = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+
+    let [MathNode::VList(limits)] = root_nodes(&layout).as_slice() else {
+        panic!("expected displayed-limits vbox");
+    };
+    assert!(list_nodes(&layout, limits.list).iter().any(|node| {
+        matches!(
+            node,
+            MathNode::VList(boxed)
+                if boxed.width == sc(30) && boxed.height == sc(40) && boxed.depth == sc(10)
+        )
+    }));
+}
+
+#[test]
 fn display_limits_operator_without_scripts_keeps_italic_correction_width() {
     let mut universe = setup_universe();
     let op = MathNoad::new(
