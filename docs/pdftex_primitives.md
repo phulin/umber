@@ -64,10 +64,10 @@ oracle-backed test. Every name in a missing row is missing.
 | Read-only integer enquiries | 14 | partial (8 done) | `\pdftexversion`, `\pdfelapsedtime`, `\pdfshellescape`, `\pdfrandomseed`, `\pdflastobj`, `\pdflastxform`, `\pdflastxpos`, `\pdflastypos` (done); `\pdflastximage`, `\pdflastximagepages`, `\pdflastannot`, `\pdfretval`, `\pdflastximagecolordepth`, `\pdflastlink` |
 | Expandable conversions and enquiries | 27 | partial (26 done) | `\expanded`, `\pdftexrevision`, `\pdftexbanner`, `\pdffontsize`, `\pdffontname`, `\pdffontobjnum`, `\leftmarginkern`, `\rightmarginkern`, `\pdfescapestring`, `\pdfescapename`, `\pdfescapehex`, `\pdfunescapehex`, `\pdfcreationdate`, `\pdffilemoddate`, `\pdffilesize`, `\pdfmdfivesum`, `\pdffiledump`, `\pdfstrcmp`, `\pdfmatch`, `\pdflastmatch`, `\pdfuniformdeviate`, `\pdfnormaldeviate`, `\pdfinsertht`, `\pdfximagebbox`, `\pdfcolorstackinit`, `\pdfxformname` (done); `\pdfpageref` |
 | Primitive-identity conditional | 1 | done | `\ifpdfprimitive` |
-| Horizontal-mode normalization | 1 | missing | `\quitvmode` |
+| Horizontal-mode normalization | 1 | done | `\quitvmode` |
 | Character codes and ligature control | 10 | done | `\lpcode`, `\rpcode`, `\efcode`, `\tagcode`, `\knbscode`, `\stbscode`, `\shbscode`, `\knbccode`, `\knaccode`, `\pdfnoligatures` |
 | PDF backend actions | 43 | partial (27 done) | `\pdffontexpand`, `\pdfincludechars`, `\pdffontattr`, `\pdfmapfile`, `\pdfmapline`, `\pdfglyphtounicode`, `\pdfnobuiltintounicode`, `\pdfresettimer`, `\pdfsetrandomseed`, `\pdfobj`, `\pdfrefobj`, `\pdfinfo`, `\pdfcatalog`, `\pdfnames`, `\pdftrailer`, `\pdftrailerid`, `\pdfliteral`, `\pdfcolorstack`, `\pdfsetmatrix`, `\pdfsave`, `\pdfrestore`, `\pdfsavepos`, `\pdfsnaprefpoint`, `\pdfsnapy`, `\pdfsnapycomp`, `\pdfxform`, `\pdfrefxform` (done); `\pdfximage`, `\pdfrefximage`, `\pdfannot`, `\pdfstartlink`, `\pdfendlink`, `\pdfoutline`, `\pdfdest`, `\pdfthread`, `\pdfstartthread`, `\pdfendthread`, `\pdfinterwordspaceon`, `\pdfinterwordspaceoff`, `\pdffakespace`, `\pdfrunninglinkoff`, `\pdfrunninglinkon`, `\pdfspacefont` |
-| Compatibility error policy | 1 | missing | `\ignoreprimitiveerror` |
+| Compatibility error policy | 1 | done | `\ignoreprimitiveerror` |
 | Late expansion conditionals | 3 | done | `\ifincsname`, `\ifpdfabsnum`, `\ifpdfabsdim` |
 
 Counts in the table sum to 158. No primitive is complete merely because its
@@ -190,7 +190,12 @@ assembled, and `\pdfpkmode` is fixed when PDF output is first initialized.
 The 13 dimensions share the ordinary dimension scanner and display path.
 `px` uses the live `\pdfpxdimen` only in pdfTeX mode; line height/depth
 parameters apply during paragraph materialization with first/last overrides
-of the each-line values and `\pdfignoreddimen` as the inactive sentinel.
+of the each-line values and `\pdfignoreddimen` as the inactive sentinel. The
+sentinel is fully live: pdfTeX also uses its current value for vertical-list
+`prevdepth` initialization, comparison, and diagnostics. The committed
+`pdf_ignored_dimen_effects` INITEX oracle proves both roles after changing the
+sentinel away from its `-1000pt` default; TeX and original e-TeX retain their
+fixed `-1000pt` constant.
 
 The identity utility slice matches pdfTeX 1.40.27's token-level identity:
 `\pdftexversion` is the internal integer 140, while `\pdftexrevision` and
@@ -320,11 +325,51 @@ implementations. `\pdfoptionpdfminorversion` is a legacy alias for
 controls instead retain the separate scan-time compatibility behavior
 described above.
 
-Potential compatibility/no-op controls are `\pdfmovechars`, the image gamma
-controls, `\pdfignoreddimen`, `\pdfpkmode`, and warning-suppression or omission
-knobs. They may be implemented as accepted state only where the pinned oracle
-demonstrates that output is unaffected. Silently accepting a primitive whose
-value or diagnostics remain observable is not parity.
+The source and executable audit found no blanket no-op among the potential
+compatibility controls:
+
+- `\quitvmode` is pdfTeX's third `start_par` command. It starts an indented
+  paragraph in outer or internal vertical mode and consumes nothing in
+  horizontal or math mode. `pdf_compatibility_controls` pins all three mode
+  families.
+- `\ignoreprimitiveerror` is a grouped integer bitmask. Bit 1 (the low bit) is
+  consulted at the sole source use: infinite shrinkage encountered by
+  `\vsplit`. Odd values print exactly `ignored error: Infinite glue shrinkage
+  found in box being split` without entering ordinary error recovery, while
+  the glue is still made finite. Even values keep the normal error and help.
+- Positive `\pdfmovechars` warns when a not-yet-used PDF font is first marked
+  used, then directly resets the live parameter to zero. Reassigning it before
+  reusing only an already-used font neither warns nor resets it. The committed
+  `pdf_move_chars_warning` INITEX oracle pins the warning, reset, and reuse
+  distinction.
+- `\pdfignoreddimen` is the live line-dimension and prevdepth sentinel
+  described above; changing it is immediately observable.
+- `\pdfpkmode` is fixed at the first committed PDF shipout and becomes part of
+  the exact host-neutral `PdfPkFontRequest` together with the resolved DPI.
+  Focused freezing tests and the 300/600-DPI Type3 fixtures use this typed
+  request; it is not accepted-only state.
+- `\pdfgamma`, `\pdfimagegamma`, `\pdfimagehicolor`, and
+  `\pdfimageapplygamma` are fixed and clamped when PDF output opens. Pinned
+  `writepng.c` uses apply-gamma plus the two gamma values for libpng sample
+  conversion and uses high-color to retain or strip 16-bit samples (PDF below
+  1.5 forces stripping). End-to-end raster inclusion evidence remains owned by
+  `umber2-kbz0.6.2` after external-image support; these values must not be
+  treated as no-ops in the interim.
+- The warning knobs have distinct predicates at their producers: duplicate
+  destination and map warnings are suppressed only by positive values, while
+  the page-group warning is suppressed by any nonzero value. Destination,
+  map, and included-page-group integration are owned respectively by
+  `umber2-kbz0.16.1`, closed `umber2-kbz0.17.1`, and
+  `umber2-kbz0.14.1`.
+- The omission controls all affect emitted dictionaries: nonzero
+  `\pdfinfoomitdate` removes generated dates; odd `\pdfsuppressptexinfo`
+  removes the pTeX banner; nonzero `\pdfomitcharset` removes eligible Type-1
+  `/CharSet`; nonzero `\pdfomitinfodict` removes the Info object/reference;
+  and `\pdfomitprocset` emits for negative values, follows the pre-PDF-2
+  compatibility default at zero, and omits for positive values.
+  `\pdfptexuseunderscore` selects `PTEX_` only when positive (or for PDF 2).
+  Metadata and embedded-font PDF fixtures exercise these typed `pdf_writer`
+  dictionary paths.
 
 ## Beads epic decomposition
 
