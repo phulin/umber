@@ -180,6 +180,10 @@ pub trait InputSource: fmt::Debug {
     fn is_scantokens(&self) -> bool {
         false
     }
+
+    /// Allows a physical file source to preserve arbitrary bytes for classic
+    /// 8-bit TeX tokenization. Generated/scantokens sources remain Unicode.
+    fn set_utf8_input_as_bytes(&mut self, _enabled: bool) {}
 }
 
 impl<T> InputSource for Box<T>
@@ -200,6 +204,10 @@ where
 
     fn is_scantokens(&self) -> bool {
         (**self).is_scantokens()
+    }
+
+    fn set_utf8_input_as_bytes(&mut self, enabled: bool) {
+        (**self).set_utf8_input_as_bytes(enabled);
     }
 }
 
@@ -249,6 +257,7 @@ impl From<WorldError> for InputSourceError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PhysicalLine {
     text: String,
+    bytes_as_chars: bool,
     start: usize,
     content_end: usize,
     terminator_start: usize,
@@ -266,6 +275,7 @@ impl PhysicalLine {
         assert!(terminator_end >= content_end);
         Self {
             text,
+            bytes_as_chars: false,
             start,
             content_end,
             terminator_start: content_end,
@@ -336,6 +346,7 @@ pub struct WorldInput {
     backing: Arc<[u8]>,
     next_offset: usize,
     invalid_utf8: Option<(usize, usize, usize, usize)>,
+    decode_invalid_bytes: bool,
     scantokens: bool,
 }
 
@@ -354,6 +365,7 @@ impl WorldInput {
             backing: Arc::from(input.as_bytes()),
             next_offset: 0,
             invalid_utf8: None,
+            decode_invalid_bytes: false,
             scantokens: false,
         }
     }
@@ -388,6 +400,7 @@ impl WorldInput {
                     backing: bytes,
                     next_offset,
                     invalid_utf8: None,
+                    decode_invalid_bytes: false,
                     scantokens: false,
                 }
             }
@@ -405,11 +418,18 @@ impl WorldInput {
                     .trim_end_matches('\r')
                     .chars()
                     .count();
+                let mut next_offset = 0;
+                for _ in 0..lines_read {
+                    if next_physical_byte_line(&bytes, &mut next_offset).is_none() {
+                        break;
+                    }
+                }
                 Self {
                     input_record: Some(input_record),
                     backing: bytes,
-                    next_offset: 0,
+                    next_offset,
                     invalid_utf8: Some((byte_start, byte_end, line, column)),
+                    decode_invalid_bytes: false,
                     scantokens: false,
                 }
             }
@@ -419,6 +439,12 @@ impl WorldInput {
 
 impl InputSource for WorldInput {
     fn read_line(&mut self) -> Result<Option<PhysicalLine>, InputSourceError> {
+        if self.decode_invalid_bytes {
+            return Ok(next_physical_byte_line(
+                &self.backing,
+                &mut self.next_offset,
+            ));
+        }
         if let Some((byte_start, byte_end, line, column)) = self.invalid_utf8.take() {
             return Err(InputSourceError::InvalidUtf8 {
                 byte_start,
@@ -449,6 +475,10 @@ impl InputSource for WorldInput {
     fn is_scantokens(&self) -> bool {
         self.scantokens
     }
+
+    fn set_utf8_input_as_bytes(&mut self, enabled: bool) {
+        self.decode_invalid_bytes = enabled && self.invalid_utf8.is_some();
+    }
 }
 
 /// A TeX-normalized logical input line.
@@ -470,6 +500,7 @@ pub struct LineReader<S> {
 pub struct SourceFrame {
     state: LexerState,
     line: String,
+    bytes_as_chars: bool,
     byte_offset: usize,
     pending: VecDeque<TracedTokenWord>,
     physical_line_start: usize,
@@ -517,6 +548,14 @@ impl SourceFrame {
         self.column
     }
 
+    fn cursor_len(&self) -> usize {
+        if self.bytes_as_chars {
+            self.line.chars().count()
+        } else {
+            self.line.len()
+        }
+    }
+
     fn summary(&self, next_source_offset: usize, byte_oriented: bool) -> SourceFrameSummary {
         SourceFrameSummary::new_with_physical_metadata(
             self.physical_line_start,
@@ -536,6 +575,7 @@ impl SourceFrame {
         )
         .with_origin_line_start(self.origin_line_start)
         .with_byte_oriented(byte_oriented)
+        .with_bytes_as_chars(self.bytes_as_chars)
     }
 
     fn from_summary(summary: &SourceFrameSummary) -> Self {
@@ -546,6 +586,7 @@ impl SourceFrame {
         Self {
             state: summary.lexer_state(),
             line: summary.normalized_line().to_owned(),
+            bytes_as_chars: summary.bytes_as_chars(),
             byte_offset: summary.line_byte_offset(),
             pending: summary.pending().iter().copied().collect(),
             physical_line_start: summary.buffer_offset(),
@@ -1316,7 +1357,8 @@ impl InputStack {
     }
 
     /// Pushes an erased source returned by an input resolver.
-    pub fn push_boxed_source(&mut self, source: Box<dyn InputSource>) -> SourceId {
+    pub fn push_boxed_source(&mut self, mut source: Box<dyn InputSource>) -> SourceId {
+        source.set_utf8_input_as_bytes(self.utf8_input_as_bytes);
         let source_id = SourceId::new(self.next_source_id);
         self.next_source_id = self
             .next_source_id
@@ -1365,7 +1407,8 @@ impl InputStack {
                     input_record,
                     source,
                 } => {
-                    let reopened = reopen_source(*source_id, *input_record, source)?;
+                    let mut reopened = reopen_source(*source_id, *input_record, source)?;
+                    reopened.set_utf8_input_as_bytes(summary.utf8_input_as_bytes());
                     let descriptor = reopened.source_descriptor();
                     let reopened: Box<dyn InputSource> = Box::new(reopened);
                     frames.push(InputFrame::Source(SourceInputFrame {
@@ -2048,7 +2091,10 @@ impl InputStack {
             self.expansion_stats.source_text_span_attempts += 1;
         }
         ensure_source_registered(source, stores);
-        if !source.frame.pending.is_empty() || source.frame.byte_offset >= source.frame.line.len() {
+        if source.frame.bytes_as_chars
+            || !source.frame.pending.is_empty()
+            || source.frame.byte_offset >= source.frame.cursor_len()
+        {
             return 0;
         }
         let Some(registration) = source.registration else {
@@ -2059,7 +2105,7 @@ impl InputStack {
         let mut byte_offset = source.frame.byte_offset;
         let mut column = source.frame.column;
         let utf8_input_as_bytes = self.utf8_input_as_bytes && !source.scantokens;
-        while byte_offset < source.frame.line.len() {
+        while byte_offset < source.frame.cursor_len() {
             let (ch, width) = input_char_at(&source.frame, byte_offset, utf8_input_as_bytes)
                 .expect("byte cursor remains within the normalized line");
             let cat = stores.catcode(ch);
@@ -2554,6 +2600,11 @@ impl InputStack {
     /// Presents physical UTF-8 bytes as classic 8-bit TeX character codes.
     pub fn set_utf8_input_as_bytes(&mut self, enabled: bool) {
         self.utf8_input_as_bytes = enabled;
+        for frame in self.frames.iter_mut() {
+            if let InputFrame::Source(source) = frame {
+                source.lines.source.set_utf8_input_as_bytes(enabled);
+            }
+        }
     }
 
     /// Stops the current source frame after its current normalized line.
@@ -2875,7 +2926,7 @@ impl InputStack {
                         return Ok(Some(token));
                     }
 
-                    if source.frame.byte_offset >= source.frame.line.len() {
+                    if source.frame.byte_offset >= source.frame.cursor_len() {
                         if source.frame.end_after_current_line {
                             let popped = self.remove_frame(frame_index);
                             if let InputFrame::Source(source) = popped {
@@ -3060,7 +3111,7 @@ impl InputStack {
                         return Ok(Some(TracedExpansionToken::new(token, false)));
                     }
 
-                    if source.frame.byte_offset >= source.frame.line.len() {
+                    if source.frame.byte_offset >= source.frame.cursor_len() {
                         if source.frame.end_after_current_line {
                             let popped = self.remove_frame(frame_index);
                             if let InputFrame::Source(source) = popped {
@@ -3159,7 +3210,7 @@ impl InputStack {
                         return Ok(Some(ExpansionToken::new(decode_traced_token(token), false)));
                     }
 
-                    if source.frame.byte_offset >= source.frame.line.len() {
+                    if source.frame.byte_offset >= source.frame.cursor_len() {
                         if source.frame.end_after_current_line {
                             let popped = self.remove_frame(frame_index);
                             if let InputFrame::Source(source) = popped {
@@ -3556,6 +3607,7 @@ fn load_next_line_readonly(
         Some(line) => {
             install_line_coordinates(source, &line);
             source.frame.state = LexerState::NewLine;
+            source.frame.bytes_as_chars = line.bytes_as_chars;
             source.frame.line = line.text;
             source.frame.byte_offset = 0;
             source.frame.physical_line_start = line.physical_start;
@@ -3584,6 +3636,7 @@ fn load_next_line(
         Some(line) => {
             install_line_coordinates(source, &line);
             source.frame.state = LexerState::NewLine;
+            source.frame.bytes_as_chars = line.bytes_as_chars;
             source.frame.line = line.text;
             source.frame.byte_offset = 0;
             source.frame.physical_line_start = line.physical_start;
@@ -3820,7 +3873,7 @@ fn next_token_from_line(
         }
         Catcode::Comment => {
             source.frame.column += remaining_input_chars(&source.frame, utf8_input_as_bytes);
-            source.frame.byte_offset = source.frame.line.len();
+            source.frame.byte_offset = source.frame.cursor_len();
             Ok(None)
         }
         Catcode::EndLine => {
@@ -3921,7 +3974,7 @@ fn next_token_from_line_readonly(
         }),
         Catcode::Comment => {
             source.frame.column += remaining_input_chars(&source.frame, utf8_input_as_bytes);
-            source.frame.byte_offset = source.frame.line.len();
+            source.frame.byte_offset = source.frame.cursor_len();
             Ok(None)
         }
         Catcode::EndLine => {
@@ -3987,7 +4040,7 @@ fn scan_control_sequence(
     utf8_input_as_bytes: bool,
     start: LexSourceContext,
 ) -> DecodedTracedToken {
-    if source.frame.byte_offset >= source.frame.line.len() {
+    if source.frame.byte_offset >= source.frame.cursor_len() {
         source.frame.state = LexerState::SkippingBlanks;
         let token = Token::Cs(stores.intern("").symbol());
         return traced_source_token(
@@ -4023,7 +4076,7 @@ fn scan_control_sequence(
     }
 
     let mut name = String::from(ch);
-    while source.frame.byte_offset < source.frame.line.len() {
+    while source.frame.byte_offset < source.frame.cursor_len() {
         let mark = source.frame.byte_offset;
         let mark_col = source.frame.column;
         let next = read_expanded_char(
@@ -4058,7 +4111,7 @@ fn scan_control_sequence_readonly(
     utf8_input_as_bytes: bool,
     context: LexSourceContext,
 ) -> Result<Token, LexError> {
-    if source.frame.byte_offset >= source.frame.line.len() {
+    if source.frame.byte_offset >= source.frame.cursor_len() {
         source.frame.state = LexerState::SkippingBlanks;
         return readonly_cs_token(stores, "", context);
     }
@@ -4080,7 +4133,7 @@ fn scan_control_sequence_readonly(
     }
 
     let mut name = String::from(ch);
-    while source.frame.byte_offset < source.frame.line.len() {
+    while source.frame.byte_offset < source.frame.cursor_len() {
         let mark = source.frame.byte_offset;
         let mark_col = source.frame.column;
         let next = read_expanded_char(
@@ -4157,6 +4210,9 @@ fn input_char_at(
     byte_offset: usize,
     utf8_input_as_bytes: bool,
 ) -> Option<(char, usize)> {
+    if frame.bytes_as_chars {
+        return frame.line.chars().nth(byte_offset).map(|ch| (ch, 1));
+    }
     let physical_byte = utf8_input_as_bytes
         && frame
             .synthetic_endline_start
@@ -4350,6 +4406,7 @@ where
 #[derive(Debug)]
 struct NormalizedLine {
     text: String,
+    bytes_as_chars: bool,
     physical_start: usize,
     physical_content_end: usize,
     terminator_start: usize,
@@ -4360,17 +4417,23 @@ struct NormalizedLine {
 
 fn normalize_line(line: &PhysicalLine, endlinechar: i32) -> NormalizedLine {
     let stripped = line.text.trim_end_matches(' ');
-    let normalized_end_anchor = line.start + stripped.len();
+    let cursor_len = if line.bytes_as_chars {
+        stripped.chars().count()
+    } else {
+        stripped.len()
+    };
+    let normalized_end_anchor = line.start + cursor_len;
     let mut normalized = stripped.to_owned();
     let mut synthetic_endline_start = None;
     if let Ok(value) = u32::try_from(endlinechar)
         && let Some(ch) = char::from_u32(value)
     {
-        synthetic_endline_start = Some(normalized.len());
+        synthetic_endline_start = Some(cursor_len);
         normalized.push(ch);
     }
     NormalizedLine {
         text: normalized,
+        bytes_as_chars: line.bytes_as_chars,
         physical_start: line.start,
         physical_content_end: line.content_end,
         terminator_start: line.terminator_start,
@@ -4406,6 +4469,43 @@ fn next_physical_line(bytes: &[u8], next_offset: &mut usize) -> Option<PhysicalL
     *next_offset = terminator_end;
     Some(PhysicalLine {
         text,
+        bytes_as_chars: false,
+        start,
+        content_end: terminator_start,
+        terminator_start,
+        terminator_end,
+    })
+}
+
+fn next_physical_byte_line(bytes: &[u8], next_offset: &mut usize) -> Option<PhysicalLine> {
+    let start = *next_offset;
+    if start >= bytes.len() {
+        return None;
+    }
+    let newline = bytes[start..]
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .map(|relative| start + relative);
+    let (terminator_start, terminator_end) = match newline {
+        Some(index) => {
+            let terminator_start = if index > start && bytes[index - 1] == b'\r' {
+                index - 1
+            } else {
+                index
+            };
+            (terminator_start, index + 1)
+        }
+        None => (bytes.len(), bytes.len()),
+    };
+    let text = bytes[start..terminator_start]
+        .iter()
+        .copied()
+        .map(char::from)
+        .collect();
+    *next_offset = terminator_end;
+    Some(PhysicalLine {
+        text,
+        bytes_as_chars: true,
         start,
         content_end: terminator_start,
         terminator_start,

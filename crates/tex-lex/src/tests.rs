@@ -1402,6 +1402,73 @@ fn invalid_world_utf8_reports_exact_physical_byte_range() {
 }
 
 #[test]
+fn classic_input_mode_preserves_invalid_bytes_across_world_input_resume() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+    for byte in [0xed, 0x80] {
+        stores.set_catcode(char::from(byte), Catcode::Other);
+    }
+    stores
+        .world_mut()
+        .set_memory_file("invalid.tex", vec![b'a', 0xed, b'b', b'\n', 0x80])
+        .expect("seed invalid input");
+    let content = stores
+        .world_mut()
+        .read_file("invalid.tex")
+        .expect("read invalid input bytes");
+    let mut input = InputStack::new(super::WorldInput::from_content(content));
+    input.set_utf8_input_as_bytes(true);
+
+    assert_eq!(
+        input.next_token(&mut stores).expect("ASCII token"),
+        Some(char_token('a', Catcode::Letter))
+    );
+    assert_eq!(
+        input.next_token(&mut stores).expect("invalid byte token"),
+        Some(char_token(char::from(0xed), Catcode::Other))
+    );
+    let summary = input.publication_summary(&mut stores);
+    let [InputFrameSummary::Source { source, .. }] = summary.frames() else {
+        panic!("expected source frame");
+    };
+    assert!(summary.utf8_input_as_bytes());
+    assert!(source.bytes_as_chars());
+    assert_eq!(source.line_byte_offset(), 2);
+    assert!(source.is_resume_complete());
+
+    let mut restored = InputStack::from_summary(&summary, |_source_id, input_record, source| {
+        let content = stores
+            .world()
+            .recorded_input_content(
+                input_record.expect("world input frame retains its input record"),
+            )
+            .expect("recorded source content");
+        Ok::<_, ()>(super::WorldInput::from_content_after_lines(
+            content,
+            source.line_number(),
+        ))
+    })
+    .expect("restore byte-oriented world input");
+
+    assert_eq!(
+        restored
+            .next_token(&mut stores)
+            .expect("restored ASCII token"),
+        Some(char_token('b', Catcode::Letter))
+    );
+    assert_eq!(
+        restored
+            .next_token(&mut stores)
+            .expect("restored invalid byte on following line"),
+        Some(char_token(char::from(0x80), Catcode::Other))
+    );
+    assert_eq!(
+        restored.next_token(&mut stores).expect("end of input"),
+        None
+    );
+}
+
+#[test]
 fn endline_derived_tokens_have_inserted_origins() {
     let mut stores = Universe::new();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);

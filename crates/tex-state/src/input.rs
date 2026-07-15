@@ -892,6 +892,7 @@ pub struct SourceFrameSummary {
     registration: Option<RegisteredSource>,
     scantokens: bool,
     byte_oriented: bool,
+    bytes_as_chars: bool,
 }
 
 impl SourceFrameSummary {
@@ -968,6 +969,7 @@ impl SourceFrameSummary {
             registration: None,
             scantokens: false,
             byte_oriented: false,
+            bytes_as_chars: false,
         }
     }
 
@@ -986,6 +988,14 @@ impl SourceFrameSummary {
     #[must_use]
     pub const fn with_byte_oriented(mut self, byte_oriented: bool) -> Self {
         self.byte_oriented = byte_oriented;
+        self
+    }
+
+    /// Marks a physical line whose Unicode scalars are a one-for-one view of
+    /// source bytes rather than UTF-8 decoding.
+    #[must_use]
+    pub const fn with_bytes_as_chars(mut self, bytes_as_chars: bool) -> Self {
+        self.bytes_as_chars = bytes_as_chars;
         self
     }
 
@@ -1047,6 +1057,9 @@ impl SourceFrameSummary {
 
     #[must_use]
     pub fn line_char_offset(&self) -> usize {
+        if self.bytes_as_chars {
+            return self.line_byte_offset;
+        }
         self.normalized_line[..self.line_byte_offset]
             .chars()
             .count()
@@ -1055,6 +1068,11 @@ impl SourceFrameSummary {
     #[must_use]
     pub fn line_byte_offset(&self) -> usize {
         self.line_byte_offset
+    }
+
+    #[must_use]
+    pub const fn bytes_as_chars(&self) -> bool {
+        self.bytes_as_chars
     }
 
     #[must_use]
@@ -1096,16 +1114,23 @@ impl SourceFrameSummary {
     /// needed after a source has been reopened by the snapshot owner.
     #[must_use]
     pub fn is_resume_complete(&self) -> bool {
-        self.line_byte_offset <= self.normalized_line.len()
-            && (self.byte_oriented || self.normalized_line.is_char_boundary(self.line_byte_offset))
+        let cursor_len = if self.bytes_as_chars {
+            self.normalized_line.chars().count()
+        } else {
+            self.normalized_line.len()
+        };
+        self.line_byte_offset <= cursor_len
+            && (self.bytes_as_chars
+                || self.byte_oriented
+                || self.normalized_line.is_char_boundary(self.line_byte_offset))
             && self.buffer_offset <= self.normalized_end_anchor
             && self.normalized_end_anchor <= self.physical_content_end
             && self.physical_content_end <= self.terminator_start
             && self.terminator_start <= self.terminator_end
             && self.terminator_end <= self.next_source_offset
             && self.synthetic_endline_start.is_none_or(|offset| {
-                offset <= self.normalized_line.len()
-                    && self.normalized_line.is_char_boundary(offset)
+                offset <= cursor_len
+                    && (self.bytes_as_chars || self.normalized_line.is_char_boundary(offset))
             })
     }
 }
@@ -1127,6 +1152,7 @@ impl PartialEq for SourceFrameSummary {
             && self.end_after_current_line == other.end_after_current_line
             && self.scantokens == other.scantokens
             && self.byte_oriented == other.byte_oriented
+            && self.bytes_as_chars == other.bytes_as_chars
             && traced_pending_tokens_eq(&self.pending, &other.pending)
     }
 }
@@ -1154,6 +1180,7 @@ impl Hash for SourceFrameSummary {
         self.end_after_current_line.hash(state);
         self.scantokens.hash(state);
         self.byte_oriented.hash(state);
+        self.bytes_as_chars.hash(state);
     }
 }
 
