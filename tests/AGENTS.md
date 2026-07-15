@@ -3,6 +3,14 @@
 `tests/corpus` holds committed inputs and expected reference outputs for
 fast differential tests.
 
+`tests/latex-source.lock` pins the exact TeX Live 2025 files, byte lengths,
+and SHA-256 identities opened while building the Umber-native LaTeX format.
+The explicit LaTeX format builder verifies this closure before every build.
+
+`tests/latex/` contains committed, compact LaTeX-DVI inputs used by explicit
+format and corpus gates. `format-equivalence.tex` must remain deterministic
+and is run both from source-initialized kernel state and the serialized format.
+
 ## Corpus Layout
 
 Each case input lives at:
