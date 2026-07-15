@@ -352,9 +352,21 @@ or atomic operation. On the 128-node `linebreak_memo` Criterion workload
 (benchmark noise, no measurable regression), and a strong-key-verified detached
 hit 10.18 us, about 392x faster. A cache-on/off executor test with repeated
 paragraph content verifies identical DVI plans, virtual effects, and final
-semantic state. General edit-level benefit is intentionally deferred to the
-paragraph-front-end reuse layer, where repeated layout inputs can arise across
-accepted revisions rather than only within one execution.
+semantic state. The `pure_memo_accepted_edit` benchmark edits the first of two
+otherwise identical 128-rule paragraphs. Disabled execution measured 0.919 ms;
+enabled execution measured 1.205 ms, about 31% slower. Existing named-boundary
+convergence skips the unchanged second paragraph, leaving only a strong-key
+miss on the edited paragraph. The layer therefore remains off by default.
+Edit-level layout caching should be reconsidered only after paragraph-front-end
+reuse creates prepared-hlist hits that restart convergence does not already
+eliminate.
+
+The shipout profile was also rechecked before widening the cache boundary:
+1,024-node ordinary lowering measured 269.75 us and deferred-math shipout
+4.46 ms. The expensive case includes required math normalization and execution,
+while the already-fused pure DVI planning slice is not independently dominant;
+artifact/DVI caching therefore remains disabled rather than retaining a second
+page representation without demonstrated benefit.
 
 ### Page builder, insertions, and marks
 

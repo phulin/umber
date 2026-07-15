@@ -14,6 +14,7 @@ tex-expand = { path = "../../crates/tex-expand" }
 tex-fonts = { path = "../../crates/tex-fonts" }
 tex-lex = { path = "../../crates/tex-lex" }
 tex-state = { path = "../../crates/tex-state" }
+tex-incr = { path = "../../crates/tex-incr" }
 tex-typeset = { path = "../../crates/tex-typeset" }
 
 [[bench]]
@@ -26,4 +27,8 @@ harness = false
 
 [[bench]]
 name = "layout"
+harness = false
+
+[[bench]]
+name = "pure_memo_edit"
 harness = false

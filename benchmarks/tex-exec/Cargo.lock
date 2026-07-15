@@ -339,9 +339,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi",
  "wasip2",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -691,6 +693,7 @@ dependencies = [
  "tex-exec",
  "tex-expand",
  "tex-fonts",
+ "tex-incr",
  "tex-lex",
  "tex-state",
  "tex-typeset",
@@ -713,6 +716,18 @@ dependencies = [
  "tex-arith",
  "ttf-parser",
  "woff2-patched",
+]
+
+[[package]]
+name = "tex-incr"
+version = "0.1.0"
+dependencies = [
+ "getrandom",
+ "tex-exec",
+ "tex-expand",
+ "tex-lex",
+ "tex-out",
+ "tex-state",
 ]
 
 [[package]]

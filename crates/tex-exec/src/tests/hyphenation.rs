@@ -490,3 +490,65 @@ fn enabled_pretolerance_memo_preserves_end_to_end_state_effects_and_dvi() {
     assert_eq!(memo_effects, cold_effects);
     assert!(memo.hits >= 1, "expected the repeated paragraph to hit");
 }
+
+#[test]
+fn randomized_pretolerance_cache_differential_matches_disabled_kernel() {
+    let mut disabled = Universe::new();
+    let glue = disabled.intern_glue(tex_state::glue::GlueSpec {
+        width: Scaled::from_raw(4),
+        stretch: Scaled::from_raw(2),
+        ..tex_state::glue::GlueSpec::ZERO
+    });
+    let mut enabled = disabled.clone();
+    enabled.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut seed = 0x9e37_79b9_u32;
+
+    for case in 0..128 {
+        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        let mut nodes = Vec::new();
+        for index in 0..(8 + seed as usize % 40) {
+            if index % 2 == 0 {
+                nodes.push(Node::Rule {
+                    width: Some(Scaled::from_raw(1 + ((seed >> (index % 16)) as i32 & 31))),
+                    height: Some(Scaled::from_raw(1)),
+                    depth: Some(Scaled::from_raw(0)),
+                });
+            } else {
+                nodes.push(Node::Glue {
+                    spec: glue,
+                    kind: GlueKind::Normal,
+                    leader: None,
+                });
+            }
+        }
+        nodes.push(Node::Penalty(-10_000));
+        let params = tex_typeset::linebreak::LineBreakParams {
+            pretolerance: 10_000,
+            tolerance: 1_000 + (seed % 9_000) as i32,
+            line_penalty: (seed % 100) as i32,
+            hyphen_penalty: 50,
+            ex_hyphen_penalty: 50,
+            adj_demerits: (seed % 1_000) as i32,
+            double_hyphen_demerits: 1_000,
+            final_hyphen_demerits: 500,
+            emergency_stretch: Scaled::from_raw((seed % 20) as i32),
+            looseness: 0,
+            last_line_fit: 0,
+            left_skip: tex_state::glue::GlueSpec::ZERO,
+            right_skip: tex_state::glue::GlueSpec::ZERO,
+            par_fill_skip: tex_state::glue::GlueSpec::ZERO,
+            shape: tex_typeset::linebreak::LineShape::natural(Scaled::from_raw(
+                30 + (seed % 300) as i32,
+            )),
+        };
+        let expected = crate::cached_pretolerance_plan(&mut disabled, &nodes, &params);
+        let actual = crate::cached_pretolerance_plan(&mut enabled, &nodes, &params);
+        assert_eq!(actual, expected, "random differential case {case}");
+        assert_eq!(
+            crate::cached_pretolerance_plan(&mut enabled, &nodes, &params),
+            expected,
+            "random cached differential case {case}"
+        );
+    }
+    assert!(enabled.pure_memo_stats().hits >= 128);
+}
