@@ -9,6 +9,7 @@ pub mod expansion;
 pub mod linebreak;
 pub mod math;
 mod packing;
+pub mod protrusion;
 mod vertical_break;
 
 use tex_state::Universe;

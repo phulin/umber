@@ -415,18 +415,22 @@ fn run_pass<S: TypesetState>(
             // e-TeX's last-line adjustment ratio.
             widths.add_normal_stretch(extra);
             let terminal = forced && bp.position >= nodes.len();
-            // Character protrusion, when breakpoint-aware, adjusts `target`
-            // through the same signed-shortfall seam before expansion. The
-            // protrusion module owns edge discovery and will supply the
-            // adjustment here without changing the expansion/glue ordering.
+            let scoring_target = if params.pdf_protrude_chars > 1 {
+                let start = active_candidate.width_position.min(nodes.len());
+                let end = bp.position.min(nodes.len()).max(start);
+                let protrusion = crate::protrusion::line_protrusion(state, &nodes[start..end]);
+                Scaled::from_raw(target.raw().saturating_add(protrusion.total().raw()))
+            } else {
+                target
+            };
             let normal_b = line_badness(
                 widths,
-                target,
+                scoring_target,
                 Scaled::from_raw(0),
                 (params.pdf_adjust_spacing > 1).then_some(expansion_steps(widths)),
             );
             let fitted = terminal
-                .then(|| last_line_fit.badness(&active_candidate, widths, target))
+                .then(|| last_line_fit.badness(&active_candidate, widths, scoring_target))
                 .flatten();
             let (b, fitness) = fitted
                 .map(|(bad, fitness, _)| (bad, fitness))
@@ -434,7 +438,7 @@ fn run_pass<S: TypesetState>(
                     let badness = normal_b.min(INF_BAD);
                     (
                         normal_b,
-                        fitness_class(badness, widths.natural.raw(), target.raw()),
+                        fitness_class(badness, widths.natural.raw(), scoring_target.raw()),
                     )
                 });
             let artificial = final_pass
@@ -474,10 +478,10 @@ fn run_pass<S: TypesetState>(
                     line_shortfall: if terminal && fitted.is_none() {
                         Scaled::from_raw(0)
                     } else {
-                        Scaled::from_raw(target.raw().saturating_sub(widths.natural.raw()))
+                        Scaled::from_raw(scoring_target.raw().saturating_sub(widths.natural.raw()))
                     },
                     line_glue: fitted.map_or_else(
-                        || candidate_line_glue(widths, target, b),
+                        || candidate_line_glue(widths, scoring_target, b),
                         |(_, _, adjustment)| adjustment,
                     ),
                 };

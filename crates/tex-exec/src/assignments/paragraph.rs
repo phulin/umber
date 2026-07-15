@@ -271,10 +271,14 @@ fn break_current_paragraph(
     let mut last_line = None;
     let total_lines = decisions.breaks.len();
     let pdf_line_dimensions = pdf_line_dimensions(stores);
+    let protrudes_chars = stores.pdf_font_configuration().protrudes_chars();
     let mut materializer = LineMaterializer::new(decisions.nodes, decisions.breaks, post_params);
     let mut line_nodes = Vec::new();
     let mut migrated = Vec::new();
     while let Some(mut broken) = materializer.materialize_next(stores, line_nodes) {
+        if protrudes_chars {
+            tex_typeset::protrusion::insert_margin_kerns(stores, &mut broken.nodes);
+        }
         extract_migrating_material(stores, &mut broken.nodes, &mut migrated);
         let line = hpack_owned_with_overfull_rule(
             stores,
