@@ -3791,6 +3791,28 @@ fn ifx_compares_macro_definitions_semantically_ignoring_origin_lists() {
 }
 
 #[test]
+fn ifx_compares_an_active_character_with_a_control_sequence_alias_by_meaning() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    stores.set_catcode('<', Catcode::Active);
+    let active = stores.intern_active_character('<');
+    let alias = stores.intern("next");
+    let body = stores.intern_token_list(&[char_token('x')]);
+    let meaning = MacroMeaning::new(MeaningFlags::EMPTY, TokenListId::EMPTY, body);
+    stores.set_macro_meaning(active, meaning);
+    stores.set_macro_meaning(alias, meaning);
+    let mut input = InputStack::new(MemoryInput::new("\\ifx<\\next y\\else n\\fi"));
+
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "y"
+    );
+}
+
+#[test]
 fn ifx_uses_meaning_word_equality_for_non_macros_without_expansion() {
     let mut stores = Universe::new();
     let (_, _, else_cs, fi) = conditional_primitives(&mut stores);

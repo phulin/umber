@@ -4,7 +4,7 @@ use tex_lex::{
 use tex_state::ExpansionState;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::provenance::InsertedOriginKind;
-use tex_state::token::{OriginId, Token, TracedTokenWord};
+use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::{
     Dispatch, ExpandError, ExpandableOpcode, ExpansionContext, ExpansionMode,
@@ -616,15 +616,35 @@ pub(crate) fn ifx_operands_equal(
     left: IfxOperand,
     right: IfxOperand,
 ) -> bool {
+    let left_is_control_sequence = matches!(
+        left.token,
+        Token::Cs(_)
+            | Token::Char {
+                cat: Catcode::Active,
+                ..
+            }
+    );
+    let right_is_control_sequence = matches!(
+        right.token,
+        Token::Cs(_)
+            | Token::Char {
+                cat: Catcode::Active,
+                ..
+            }
+    );
+    if left_is_control_sequence || right_is_control_sequence {
+        return left_is_control_sequence
+            && right_is_control_sequence
+            && meanings_ifx_equal(
+                stores,
+                left.meaning.expect("control sequence meaning"),
+                right.meaning.expect("control sequence meaning"),
+            );
+    }
     match (left.token, right.token) {
         (Token::Char { .. } | Token::Param(_), Token::Char { .. } | Token::Param(_)) => {
             left.token == right.token
         }
-        (Token::Cs(_), Token::Cs(_)) => meanings_ifx_equal(
-            stores,
-            left.meaning.expect("control sequence meaning"),
-            right.meaning.expect("control sequence meaning"),
-        ),
         _ => false,
     }
 }
