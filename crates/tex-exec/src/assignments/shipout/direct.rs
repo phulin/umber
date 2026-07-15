@@ -35,9 +35,11 @@ pub(super) fn stage_form(
     stores: &mut Universe,
     expansion: &mut tex_expand::ExpansionContext<'_>,
 ) -> Result<tex_state::PdfFormArtifact, ExecError> {
-    let color_scope = stores.begin_pdf_form_color_scope();
+    let color_rollback = stores.pdf_form_color_rollback();
     let result = stage_form_inner(form, stores, expansion);
-    stores.restore_pdf_form_color_scope(color_scope);
+    if result.is_err() {
+        stores.rollback_pdf_form_colors(color_rollback);
+    }
     result
 }
 

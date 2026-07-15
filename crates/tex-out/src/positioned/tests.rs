@@ -299,6 +299,69 @@ fn rules_and_shifted_boxes_use_dvi_coordinates() {
 }
 
 #[test]
+fn form_references_advance_at_pdftex_hlist_and_vlist_baselines() {
+    let effects = vec![
+        PageEffect::PdfRefXForm {
+            object: 1,
+            width: sp(10),
+            height: sp(7),
+            depth: sp(3),
+        },
+        PageEffect::PdfRefXForm {
+            object: 2,
+            width: sp(20),
+            height: sp(11),
+            depth: sp(4),
+        },
+    ];
+    let horizontal_root = PageNode::HList(box_node(
+        30,
+        20,
+        5,
+        vec![
+            PageNode::WhatsitAnchor { effect_index: 0 },
+            PageNode::WhatsitAnchor { effect_index: 1 },
+        ],
+    ));
+    let mut horizontal = page(PageNode::HList(box_node(0, 0, 0, Vec::new())));
+    horizontal.testing_mut().root = horizontal_root;
+    horizontal.testing_mut().effects = effects.clone();
+    let positioned = lower_page(&horizontal, 0).expect("lower horizontal forms");
+    let positions = positioned
+        .events
+        .iter()
+        .filter_map(|event| match event {
+            PositionedEvent::PdfGraphics(graphics) => Some((graphics.x, graphics.y)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(positions, vec![(sp(0), sp(20)), (sp(10), sp(20))]);
+
+    let vertical_root = PageNode::VList(box_node(
+        20,
+        25,
+        0,
+        vec![
+            PageNode::WhatsitAnchor { effect_index: 0 },
+            PageNode::WhatsitAnchor { effect_index: 1 },
+        ],
+    ));
+    let mut vertical = page(PageNode::VList(box_node(0, 0, 0, Vec::new())));
+    vertical.testing_mut().root = vertical_root;
+    vertical.testing_mut().effects = effects;
+    let positioned = lower_page(&vertical, 0).expect("lower vertical forms");
+    let positions = positioned
+        .events
+        .iter()
+        .filter_map(|event| match event {
+            PositionedEvent::PdfGraphics(graphics) => Some((graphics.x, graphics.y)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(positions, vec![(sp(0), sp(7)), (sp(0), sp(21))]);
+}
+
+#[test]
 fn dvi_oracle_rejects_one_sp_anchor_drift_with_event_context() {
     let page = page(PageNode::HList(box_node(
         100,

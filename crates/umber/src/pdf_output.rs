@@ -2463,7 +2463,6 @@ pub enum PdfBuildError {
     ReferencedFormNotFound(u32),
     MissingFormArtifact(u32),
     RecursiveForm(u32),
-    FormTextNotYetLowerable(u32),
     InvalidRawObjectFileName(u32),
     TextRequiresFontResources,
     MissingPositionedFont(u32),
@@ -2541,10 +2540,6 @@ impl std::fmt::Display for PdfBuildError {
                 write!(f, "PDF form {id} was referenced before traversal")
             }
             Self::RecursiveForm(id) => write!(f, "PDF form {id} recursively references itself"),
-            Self::FormTextNotYetLowerable(id) => write!(
-                f,
-                "PDF form {id} contains text without form-local font lowering"
-            ),
             Self::InvalidRawObjectFileName(id) => {
                 write!(f, "PDF stream object {id} has a non-UTF-8 file name")
             }
@@ -4362,7 +4357,7 @@ mod tests {
     }
 
     #[test]
-    fn form_color_state_is_isolated_and_immediate_forms_serialize_without_references() {
+    fn form_color_state_persists_separately_and_immediate_forms_serialize_without_references() {
         let (mut stores, first_run) = run(concat!(
             "\\pdfoutput=1\\pdfcompresslevel=0",
             "\\setbox0=\\hbox{\\pdfcolorstack0 push {1 g}}\\pdfxform0",
@@ -4371,15 +4366,15 @@ mod tests {
         ));
         let second = stores
             .pdf_form_artifact(2)
-            .expect("second form staged independently");
+            .expect("second form staged after the first");
         let artifact =
             tex_out::PageArtifact::from_bytes(second.bytes()).expect("parse form artifact");
         assert!(artifact.effects.iter().any(|effect| matches!(
             effect,
-            tex_out::PageEffect::PdfColorStack { payload, .. } if payload == b"0 g 0 G"
+            tex_out::PageEffect::PdfColorStack { payload, .. } if payload == b"1 g"
         )));
         pdf_from_committed_artifacts(&mut stores, &first_run.committed_artifacts)
-            .expect("serialize isolated form colors");
+            .expect("serialize persistent form colors");
 
         let (mut stores, run) = run(concat!(
             "\\pdfoutput=1\\pdfcompresslevel=0",
@@ -4393,6 +4388,56 @@ mod tests {
             pdf.windows(b"/Subtype/Form".len())
                 .any(|w| w == b"/Subtype/Form")
         );
+    }
+
+    #[test]
+    fn form_snap_coordinates_are_local_and_do_not_replace_page_grid() {
+        let (stores, _) = run(concat!(
+            "\\pdfoutput=1",
+            "\\setbox0=\\vbox{\\kern10pt\\pdfsnaprefpoint\\kern20pt\\pdfsavepos}",
+            "\\pdfxform0",
+            "\\shipout\\vbox{\\kern5pt\\pdfsnaprefpoint\\pdfrefxform1}\\end",
+        ));
+        let form = stores
+            .pdf_form_artifact(1)
+            .expect("form traversal artifact");
+        assert_eq!(
+            form.last_position(),
+            Some((Scaled::from_raw(0), Scaled::from_raw(0)))
+        );
+        assert_eq!(form.snap_reference(), (Scaled::from_raw(0), pt(20)));
+        assert_eq!(stores.pdf_snap_reference(), (Scaled::from_raw(0), pt(5)));
+    }
+
+    #[test]
+    fn failed_form_traversal_rolls_back_colors_positions_and_artifact() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let before = stores.pdf_last_position();
+        let error = try_run_in(
+            &mut stores,
+            concat!(
+                "\\pdfoutput=1",
+                "\\setbox0=\\hbox{\\pdfcolorstack0 push {1 g}",
+                "\\pdfsavepos\\pdfsetmatrix{bad}}",
+                "\\pdfxform0\\pdfrefxform1\\end",
+            ),
+        )
+        .expect_err("malformed form traversal must fail transactionally");
+        assert_eq!(
+            error.to_string(),
+            "pdfTeX error (\\pdfsetmatrix): Unrecognized format."
+        );
+        assert!(stores.pdf_form_artifact(1).is_none());
+        assert_eq!(stores.pdf_last_position(), before);
+        let current = stores
+            .apply_pdf_color_stack(
+                0,
+                tex_state::PdfColorStackTarget::Form,
+                &tex_state::PdfColorStackAction::Current,
+            )
+            .expect("default form stack remains usable");
+        assert_eq!(current.payload, b"0 g 0 G");
     }
 
     #[test]

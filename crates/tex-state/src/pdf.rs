@@ -77,7 +77,7 @@ struct PdfColorStackRuntime {
 }
 
 #[derive(Clone, Debug)]
-pub struct PdfFormColorScope(Vec<PdfColorStackRuntime>, u64);
+pub struct PdfFormColorRollback(Vec<PdfColorStackRuntime>, u64);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PdfColorStack {
@@ -1766,8 +1766,8 @@ impl PdfState {
         self.snap_reference = snap_reference;
     }
 
-    pub(crate) fn begin_form_color_scope(&self) -> PdfFormColorScope {
-        PdfFormColorScope(
+    pub(crate) fn form_color_rollback(&self) -> PdfFormColorRollback {
+        PdfFormColorRollback(
             self.color_stacks
                 .iter()
                 .map(|stack| stack.form.clone())
@@ -1776,8 +1776,8 @@ impl PdfState {
         )
     }
 
-    pub(crate) fn restore_form_color_scope(&mut self, scope: PdfFormColorScope) {
-        let PdfFormColorScope(runtimes, fingerprint) = scope;
+    pub(crate) fn rollback_form_colors(&mut self, rollback: PdfFormColorRollback) {
+        let PdfFormColorRollback(runtimes, fingerprint) = rollback;
         for (stack, runtime) in Arc::make_mut(&mut self.color_stacks)
             .iter_mut()
             .zip(runtimes)

@@ -34,8 +34,53 @@ a source-inventory parity project rather than a manual-only subset.
 | `\pdfcolorstackinit`, `\pdfcolorstack` | allocation, page/form stacks, four operations | `umber2-kbz0.12.3` |
 | `\pdfsavepos`, `\pdflastxpos`, `\pdflastypos` | shipout coordinates in sp | `umber2-kbz0.12.4` |
 | `\pdfsnaprefpoint`, `\pdfsnapy`, `\pdfsnapycomp` | vertical-grid adjustment | `umber2-kbz0.12.4` |
+| `\pdfxform`, `\pdfrefxform`, `\pdflastxform`, `\pdfxformname` | captured boxes and reusable Form XObjects | `umber2-kbz0.14.4` |
 | `\pdfresettimer`, `\pdfelapsedtime` | deterministic monotonic 16.16 timer | `umber2-kbz0.9.5`, integrated by `umber2-kbz0.12.5` |
 | `\pdfsetrandomseed`, `\pdfrandomseed` | global seed and exact RNG reset | `umber2-kbz0.9.5`, integrated by `umber2-kbz0.12.5` |
+
+The stored-meaning codec keeps the previously accepted object/dictionary
+operands unchanged: `\pdfobj` through `\pdftrailerid` occupy unexpandable
+operands 231 through 237 and `\pdflastobj` occupies internal-integer operand
+13. The graphics family is appended at 238 through 246, while
+`\pdflastxpos` and `\pdflastypos` use 14 and 15. Checkpoint schema 22 composes
+the canonical object ledger with color-stack and saved-position state. An
+exhaustive codec test requires every stored meaning through these endpoints to
+decode bijectively, preventing later branch integrations from reusing an
+accepted operand.
+
+Tagged-spacing operations retain operands 247 through 250. Form creation and
+reference were therefore appended at 251 and 252; `\pdflastxform` uses
+internal-integer operand 16 and `\pdfxformname` uses expandable operand 84.
+
+## Form XObjects
+
+`\pdfxform` reserves its canonical object and resource identities before it
+scans optional `attr`, optional `resources`, and a box-register number. A
+nonvoid box is consumed with ordinary same-level assignment semantics and its
+dimensions, immutable node root, expanded attributes, and expanded resources
+are retained checkpointably. `\pdfrefxform` validates the object and appends a
+dimensioned reusable node; horizontal traversal advances by the form width,
+while vertical traversal advances by height, places the form at its baseline,
+then advances by depth. Normal forms are traversed lazily when their owning
+page or form is finally shipped; `\immediate\pdfxform` traverses at once.
+
+Each first traversal produces a schema-v16 detached artifact. Recursive form
+references remain typed artifact effects, so nested rules, text and physical
+glyph codes, graphics operations, font resources, and tagged spacing follow
+the same normalized traversal as pages. Form origins are always zero. Saved
+positions publish `(cur_h, height + depth - cur_v)` and form snapping begins
+from its own zero reference, without importing or replacing the page grid.
+Color stacks use their independent form projection; matching pdfTeX 1.40.27,
+that projection persists between successful form traversals while never
+mutating the page projection. A failed transactional traversal publishes no
+artifact or saved-position suffix and rolls its color changes back.
+
+Final assembly emits only immediate or transitively referenced forms. Page and
+form resource dictionaries map `/Fm<n>` to the canonical object, nested forms
+are deduplicated, and cycles are rejected. `/Type /XObject`, `/Subtype /Form`,
+`/BBox`, identity `/Matrix`, `/FormType 1`, attributes, resources, streams, and
+`Do` placement are all written through typed APIs in the vendored
+`pdf_writer`; no backend-owned raw PDF framing is permitted.
 
 ## Literals
 

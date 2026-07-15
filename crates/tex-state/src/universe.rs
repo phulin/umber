@@ -2210,12 +2210,12 @@ impl Universe {
         self.pdf.form_artifact(object)
     }
 
-    pub fn begin_pdf_form_color_scope(&self) -> crate::PdfFormColorScope {
-        self.pdf.begin_form_color_scope()
+    pub fn pdf_form_color_rollback(&self) -> crate::PdfFormColorRollback {
+        self.pdf.form_color_rollback()
     }
 
-    pub fn restore_pdf_form_color_scope(&mut self, scope: crate::PdfFormColorScope) {
-        self.pdf.restore_form_color_scope(scope);
+    pub fn rollback_pdf_form_colors(&mut self, rollback: crate::PdfFormColorRollback) {
+        self.pdf.rollback_form_colors(rollback);
     }
 
     /// Initializes a previously reserved raw object without changing its ID.

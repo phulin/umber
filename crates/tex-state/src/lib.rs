@@ -77,7 +77,7 @@ pub use pdf::{
     PdfColorStackEmission, PdfColorStackMode, PdfColorStackTarget, PdfDocumentFragmentKind,
     PdfDocumentObjectIds, PdfExternalImageId, PdfExternalImageIdError, PdfExternalImageMetadata,
     PdfExternalImageRegistrationError, PdfFontConfiguration, PdfFontMapOperation,
-    PdfFontResourceRecord, PdfFormArtifact, PdfFormColorScope, PdfFormRecord, PdfGlyphToUnicode,
+    PdfFontResourceRecord, PdfFormArtifact, PdfFormColorRollback, PdfFormRecord, PdfGlyphToUnicode,
     PdfLinkRecord, PdfObjectCapacityError, PdfOpenLink, PdfOutputParameters, PdfPageBox,
     PdfPageRecord, PdfRawObjectData, PdfRawObjectId, PdfRawObjectInitializeError,
     PdfRawObjectRecord,
