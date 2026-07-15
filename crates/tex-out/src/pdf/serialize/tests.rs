@@ -75,6 +75,7 @@ fn sample_input(order: &[u32]) -> UnvalidatedPdfDocument {
     UnvalidatedPdfDocument {
         version: PdfVersion::new(1, 4).expect("supported version"),
         catalog: id(1),
+        info: None,
         objects: order
             .iter()
             .map(|raw| objects.remove(raw).expect("test object"))
@@ -117,6 +118,51 @@ fn compact_serialization_is_deterministic_and_independently_parseable() {
         .as_stream()
         .expect("content stream");
     assert_eq!(content.content, b"q\n10 20 30 40 re\nS\nQ\n");
+}
+
+#[test]
+fn document_info_is_registered_in_the_pdf_writer_trailer() {
+    let mut input = sample_input(&[1, 2, 3, 4, 5]);
+    let info_id = id(6);
+    input.info = Some(info_id);
+    input.objects.push(indirect(
+        6,
+        PdfValue::Dictionary(dictionary([
+            ("Creator", PdfValue::String(b"TeX".to_vec())),
+            ("Trapped", PdfValue::Name("False".into())),
+        ])),
+    ));
+    let document = input.validate().expect("document info dictionary is valid");
+    let bytes = document.to_pdf_bytes().expect("serialize info dictionary");
+    let parsed = lopdf::Document::load_mem(&bytes).expect("lopdf parses output");
+    assert_eq!(
+        parsed
+            .trailer
+            .get(b"Info")
+            .expect("Info trailer entry")
+            .as_reference()
+            .expect("Info reference"),
+        (6, 0)
+    );
+    let info = parsed
+        .get_object((6, 0))
+        .expect("Info object")
+        .as_dict()
+        .expect("Info dictionary");
+    assert_eq!(
+        info.get(b"Creator")
+            .expect("Creator")
+            .as_str()
+            .expect("Creator string"),
+        b"TeX"
+    );
+    assert_eq!(
+        info.get(b"Trapped")
+            .expect("Trapped")
+            .as_name()
+            .expect("Trapped name"),
+        b"False"
+    );
 }
 
 #[test]
@@ -247,6 +293,7 @@ fn adapter_range_and_compression_errors_are_typed() {
     let high_id = UnvalidatedPdfDocument {
         version: sample.version(),
         catalog: sample.catalog(),
+        info: sample.info(),
         objects,
     }
     .validate()
@@ -261,6 +308,7 @@ fn adapter_range_and_compression_errors_are_typed() {
     let high_integer = UnvalidatedPdfDocument {
         version: sample.version(),
         catalog: sample.catalog(),
+        info: sample.info(),
         objects,
     }
     .validate()

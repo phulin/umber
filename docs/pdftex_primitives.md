@@ -98,6 +98,21 @@ minor-version alias, the two independent obsolete inclusion cells, fatal
 post-write changes, PDF headers and object-compression levels, decimal
 rounding, and unchanged DVI output.
 
+The INITEX metadata-configuration oracle at
+`tests/corpus/tex_exec/pdf_metadata_config` covers the nine issue-8 parameter
+names, their zero defaults, signed assignments, and ordinary grouping. The
+default Info dictionary uses the pinned job clock for `/CreationDate` and
+`/ModDate`; the live final controls implement complete Info/date omission,
+odd `\pdfsuppressptexinfo` suppression, and `PTEX_` selection for positive
+`\pdfptexuseunderscore` or PDF 2. `\pdfomitprocset` is captured at shipout:
+negative values emit the page resource entry, zero emits it only before PDF 2,
+and positive values omit it. All dictionary and trailer bytes flow through the
+canonical vendored `pdf_writer` adapter. The warning controls remain real
+configuration state; their collision-point effects are tracked under
+`umber2-kbz0.16.1` (destinations), `umber2-kbz0.17.1` (font maps), and
+`umber2-kbz0.14.1` (included-PDF page groups), avoiding invented no-ops before
+those producers exist.
+
 The INITEX image-configuration oracle at
 `tests/corpus/tex_exec/pdf_image_config` covers all 14 issue-6 names. Integer
 assignment accepts the ordinary signed TeX range and groups normally;

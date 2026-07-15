@@ -1751,6 +1751,7 @@ impl Universe {
             height: self.dimen_param(DimenParam::PDF_PAGE_HEIGHT),
             page_attr: self.current_pdf_token_parameter(TokParam::PDF_PAGE_ATTR),
             resources: self.current_pdf_token_parameter(TokParam::PDF_PAGE_RESOURCES),
+            omit_procset: self.int_param(IntParam::PDF_OMIT_PROCSET),
         }
     }
 

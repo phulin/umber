@@ -85,6 +85,8 @@ pub(crate) struct PdfPageParameters {
     pub(crate) height: Scaled,
     pub(crate) page_attr: PdfTokenParameter,
     pub(crate) resources: PdfTokenParameter,
+    /// Raw `\pdfomitprocset` value captured when this page is shipped.
+    pub(crate) omit_procset: i32,
 }
 
 /// Stable object identities assigned to one committed PDF page.
@@ -137,6 +139,10 @@ impl PdfPageRecord {
     #[must_use]
     pub const fn resources(self) -> TokenListId {
         self.parameters.resources.tokens
+    }
+    #[must_use]
+    pub const fn omit_procset(self) -> i32 {
+        self.parameters.omit_procset
     }
 }
 
@@ -341,6 +347,7 @@ fn append_fingerprint(previous: u64, record: PdfPageRecord) -> u64 {
     hasher.i32(record.parameters.height.raw());
     hasher.u64(record.parameters.page_attr.semantic_id);
     hasher.u64(record.parameters.resources.semantic_id);
+    hasher.i32(record.parameters.omit_procset);
     hasher.finish()
 }
 
@@ -437,6 +444,7 @@ mod tests {
             height: Scaled::from_raw(40),
             page_attr: token,
             resources: token,
+            omit_procset: 0,
         };
         state.commit_page(hash, parameters, page, token);
         let first = (state.pages()[0], state.cursor());

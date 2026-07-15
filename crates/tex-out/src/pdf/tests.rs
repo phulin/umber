@@ -76,6 +76,7 @@ fn sample_document(order: &[u32]) -> PdfDocument {
     UnvalidatedPdfDocument {
         version: PdfVersion::new(1, 4).expect("supported version"),
         catalog: id(1),
+        info: None,
         objects: order
             .iter()
             .map(|id| by_id.remove(id).expect("test object exists"))
@@ -122,6 +123,7 @@ fn duplicate_and_dangling_object_identities_are_rejected() {
         UnvalidatedPdfDocument {
             version: sample.version(),
             catalog: sample.catalog(),
+            info: sample.info(),
             objects,
         }
         .validate(),
@@ -139,10 +141,28 @@ fn duplicate_and_dangling_object_identities_are_rejected() {
         UnvalidatedPdfDocument {
             version: sample.version(),
             catalog: sample.catalog(),
+            info: sample.info(),
             objects,
         }
         .validate(),
         Err(PdfModelError::MissingObject(id(99)))
+    );
+}
+
+#[test]
+fn info_reference_must_name_a_dictionary() {
+    let sample = sample_document(&[1, 2, 3, 4, 5]);
+    let mut objects = sample.objects().cloned().collect::<Vec<_>>();
+    objects.push(indirect(6, PdfValue::Integer(7)));
+    assert_eq!(
+        UnvalidatedPdfDocument {
+            version: sample.version(),
+            catalog: sample.catalog(),
+            info: Some(id(6)),
+            objects,
+        }
+        .validate(),
+        Err(PdfModelError::InfoNotDictionary(id(6)))
     );
 }
 
@@ -175,6 +195,7 @@ fn page_resources_contents_and_parent_are_structurally_validated() {
             UnvalidatedPdfDocument {
                 version: sample.version(),
                 catalog: sample.catalog(),
+                info: sample.info(),
                 objects,
             }
             .validate(),
@@ -194,6 +215,7 @@ fn stream_bytes_and_page_order_affect_semantic_identity() {
     let second = UnvalidatedPdfDocument {
         version: first.version(),
         catalog: first.catalog(),
+        info: first.info(),
         objects,
     }
     .validate()
@@ -207,6 +229,7 @@ fn limits_and_writer_owned_stream_length_are_enforced() {
     let input = UnvalidatedPdfDocument {
         version: sample.version(),
         catalog: sample.catalog(),
+        info: sample.info(),
         objects: sample.objects().cloned().collect(),
     };
     assert_eq!(
@@ -231,6 +254,7 @@ fn limits_and_writer_owned_stream_length_are_enforced() {
         UnvalidatedPdfDocument {
             version: input.version,
             catalog: input.catalog,
+            info: input.info,
             objects,
         }
         .validate(),

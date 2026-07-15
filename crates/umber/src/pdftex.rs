@@ -665,6 +665,36 @@ mod tests {
     }
 
     #[test]
+    fn pdf_metadata_configuration_matches_the_pinned_initex_oracle() {
+        let reference = test_support::read_fixture("tex_exec", "pdf_metadata_config", "ref");
+        for expected in [
+            "defaults=0/0/0/0/0/0/0/0/0",
+            "local=-1/-2/-3/-4/-5/-6/-7/-8/-9",
+            "restored=1/2/3/4/5/6/7/8/9",
+        ] {
+            assert!(
+                reference.contains(expected),
+                "missing {expected:?}: {reference}"
+            );
+        }
+
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let output = crate::run_memory_with_stores(
+            include_str!("../../../tests/corpus/tex_exec/pdf_metadata_config.tex"),
+            &mut stores,
+        )
+        .expect("pdfTeX metadata configuration assignments");
+        for expected in [
+            "defaults=0/0/0/0/0/0/0/0/0",
+            "local=-1/-2/-3/-4/-5/-6/-7/-8/-9",
+            "restored=1/2/3/4/5/6/7/8/9",
+        ] {
+            assert!(output.contains(expected), "missing {expected:?}: {output}");
+        }
+    }
+
+    #[test]
     fn all_page_token_and_dimension_parameters_scan_group_and_display() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);

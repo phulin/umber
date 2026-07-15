@@ -30,7 +30,11 @@ pub fn pdf_from_committed_artifacts(
     let catalog_id = object_id(PDF_CATALOG_OBJECT_ID)?;
     let pages_id = object_id(PDF_PAGES_OBJECT_ID)?;
     let page_records = stores.pdf_pages();
-    let mut objects = Vec::with_capacity(2 + page_records.len() * 3);
+    let emit_info = stores.int_param(IntParam::PDF_OMIT_INFO_DICT) == 0;
+    let info_id = emit_info
+        .then(|| object_id(stores.pdf_next_object_id()))
+        .transpose()?;
+    let mut objects = Vec::with_capacity(2 + page_records.len() * 3 + usize::from(emit_info));
     let mut kids = Vec::with_capacity(page_records.len());
 
     let mut catalog = PdfDictionary::new();
@@ -79,10 +83,13 @@ pub fn pdf_from_committed_artifacts(
         let page_id = object_id(record.page_object())?;
         kids.push(PdfValue::Reference(page_id));
         let mut resources = PdfDictionary::new();
-        resources.insert(
-            "ProcSet",
-            PdfValue::Array(vec![PdfValue::Name("PDF".into())]),
-        )?;
+        if record.omit_procset() < 0 || (record.omit_procset() == 0 && parameters.major_version < 2)
+        {
+            resources.insert(
+                "ProcSet",
+                PdfValue::Array(vec![PdfValue::Name("PDF".into())]),
+            )?;
+        }
         resources.set_raw_entries(token_list_bytes(stores, record.resources()));
         objects.push(indirect_dictionary(resources_id, resources));
         objects.push(PdfIndirectObject {
@@ -127,13 +134,63 @@ pub fn pdf_from_committed_artifacts(
     ));
     objects.push(indirect_dictionary(pages_id, pages));
 
+    if let Some(info_id) = info_id {
+        objects.push(indirect_dictionary(
+            info_id,
+            document_info_dictionary(stores, parameters)?,
+        ));
+    }
+
     let document = UnvalidatedPdfDocument {
         version,
         catalog: catalog_id,
+        info: info_id,
         objects,
     }
     .validate()?;
     Ok(document.to_pdf_bytes_with_options(options)?)
+}
+
+fn document_info_dictionary(
+    stores: &Universe,
+    parameters: PdfOutputParameters,
+) -> Result<PdfDictionary, PdfModelError> {
+    const PRODUCER: &[u8] = b"pdfTeX-1.40.27";
+    const FULL_BANNER: &[u8] = b"This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025)";
+
+    let mut info = PdfDictionary::new();
+    info.insert("Producer", PdfValue::String(PRODUCER.to_vec()))?;
+    info.insert("Creator", PdfValue::String(b"TeX".to_vec()))?;
+    if stores.int_param(IntParam::PDF_INFO_OMIT_DATE) == 0 {
+        let date = pdf_date(stores.world().job_clock());
+        info.insert("CreationDate", PdfValue::String(date.clone()))?;
+        info.insert("ModDate", PdfValue::String(date))?;
+    }
+    info.insert("Trapped", PdfValue::Name("False".into()))?;
+    if stores.int_param(IntParam::PDF_SUPPRESS_PTEX_INFO) % 2 == 0 {
+        let key = if stores.int_param(IntParam::PDF_PTEX_USE_UNDERSCORE) > 0
+            || parameters.major_version >= 2
+        {
+            "PTEX_Fullbanner"
+        } else {
+            "PTEX.Fullbanner"
+        };
+        info.insert(key, PdfValue::String(FULL_BANNER.to_vec()))?;
+    }
+    Ok(info)
+}
+
+fn pdf_date(clock: tex_state::JobClock) -> Vec<u8> {
+    format!(
+        "D:{:04}{:02}{:02}{:02}{:02}{:02}Z",
+        clock.year,
+        clock.month,
+        clock.day,
+        clock.time / 60,
+        clock.time % 60,
+        clock.second,
+    )
+    .into_bytes()
 }
 
 fn artifact_bytes(
@@ -371,6 +428,7 @@ mod tests {
     };
     use tex_exec::ExecutionContext;
     use tex_lex::{InputStack, MemoryInput};
+    use tex_state::{JobClock, World};
 
     fn run_in(stores: &mut Universe, source: &str) -> RunResult {
         let mut input = InputStack::new(MemoryInput::new(source));
@@ -392,6 +450,13 @@ mod tests {
 
     fn run(source: &str) -> (Universe, RunResult) {
         let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let result = run_in(&mut stores, source);
+        (stores, result)
+    }
+
+    fn run_with_clock(source: &str, clock: JobClock) -> (Universe, RunResult) {
+        let mut stores = Universe::with_world(World::memory_with_clock(clock));
         prepare_pdftex_run_stores(&mut stores);
         let result = run_in(&mut stores, source);
         (stores, result)
@@ -432,6 +497,175 @@ mod tests {
         assert_eq!(stores.pdf_pages()[0].resources_object(), 3);
         assert_eq!(stores.pdf_pages()[0].contents_object(), 4);
         assert_eq!(stores.pdf_pages()[0].page_object(), 5);
+    }
+
+    #[test]
+    fn default_info_dictionary_uses_the_pinned_job_clock() {
+        let clock = JobClock {
+            time: 13 * 60 + 36,
+            second: 7,
+            day: 9,
+            month: 7,
+            year: 2026,
+        };
+        let (stores, run_result) = run_with_clock(
+            "\\pdfoutput=1\\pdfcompresslevel=0\\shipout\\vbox{\\hrule width1pt height1pt}\\end",
+            clock,
+        );
+        let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+            .expect("PDF assembles");
+        let parsed = lopdf::Document::load_mem(&pdf).expect("lopdf parses output");
+        let info_id = parsed
+            .trailer
+            .get(b"Info")
+            .expect("default Info trailer entry")
+            .as_reference()
+            .expect("Info reference");
+        let info = parsed
+            .get_object(info_id)
+            .expect("Info object")
+            .as_dict()
+            .expect("Info dictionary");
+        for (key, expected) in [
+            (b"Producer".as_slice(), b"pdfTeX-1.40.27".as_slice()),
+            (b"Creator".as_slice(), b"TeX".as_slice()),
+            (b"CreationDate".as_slice(), b"D:20260709133607Z".as_slice()),
+            (b"ModDate".as_slice(), b"D:20260709133607Z".as_slice()),
+            (
+                b"PTEX.Fullbanner".as_slice(),
+                b"This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025)".as_slice(),
+            ),
+        ] {
+            assert_eq!(
+                info.get(key)
+                    .unwrap_or_else(|_| panic!("missing {}", String::from_utf8_lossy(key)))
+                    .as_str()
+                    .expect("metadata string"),
+                expected
+            );
+        }
+        assert_eq!(
+            info.get(b"Trapped")
+                .expect("Trapped")
+                .as_name()
+                .expect("Trapped name"),
+            b"False"
+        );
+    }
+
+    #[test]
+    fn info_omission_date_suppression_and_ptex_key_policy_match_pdftex() {
+        let source = concat!(
+            "\\pdfoutput=1\\pdfcompresslevel=0",
+            "\\shipout\\vbox{\\hrule width1pt height1pt}",
+            "\\pdfinfoomitdate=1\\pdfsuppressptexinfo=1\\end",
+        );
+        let (stores, run_result) = run(source);
+        let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+            .expect("PDF assembles");
+        let parsed = lopdf::Document::load_mem(&pdf).expect("lopdf parses output");
+        let info_id = parsed
+            .trailer
+            .get(b"Info")
+            .expect("Info trailer entry")
+            .as_reference()
+            .expect("Info reference");
+        let info = parsed
+            .get_object(info_id)
+            .expect("Info object")
+            .as_dict()
+            .expect("Info dictionary");
+        assert!(!info.has(b"CreationDate"));
+        assert!(!info.has(b"ModDate"));
+        assert!(!info.has(b"PTEX.Fullbanner"));
+        assert!(!info.has(b"PTEX_Fullbanner"));
+
+        let (stores, run_result) = run(concat!(
+            "\\pdfoutput=1\\pdfcompresslevel=0\\pdfptexuseunderscore=1",
+            "\\shipout\\vbox{\\hrule width1pt height1pt}\\end",
+        ));
+        let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+            .expect("PDF assembles");
+        let parsed = lopdf::Document::load_mem(&pdf).expect("lopdf parses output");
+        let info_id = parsed
+            .trailer
+            .get(b"Info")
+            .expect("Info trailer entry")
+            .as_reference()
+            .expect("Info reference");
+        let info = parsed
+            .get_object(info_id)
+            .expect("Info object")
+            .as_dict()
+            .expect("Info dictionary");
+        assert!(info.has(b"PTEX_Fullbanner"));
+        assert!(!info.has(b"PTEX.Fullbanner"));
+
+        let (stores, run_result) = run(concat!(
+            "\\pdfoutput=1\\pdfcompresslevel=0",
+            "\\shipout\\vbox{\\hrule width1pt height1pt}",
+            "\\pdfomitinfodict=-1\\end",
+        ));
+        let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+            .expect("PDF assembles");
+        let parsed = lopdf::Document::load_mem(&pdf).expect("lopdf parses output");
+        assert!(!parsed.trailer.has(b"Info"));
+    }
+
+    #[test]
+    fn procset_policy_is_captured_at_each_shipout() {
+        let (stores, run_result) = run(concat!(
+            "\\pdfoutput=1\\pdfcompresslevel=0",
+            "{\\pdfomitprocset=1\\shipout\\vbox{\\hrule width1pt height1pt}}",
+            "\\shipout\\vbox{\\hrule width1pt height1pt}\\end",
+        ));
+        let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+            .expect("PDF assembles");
+        let parsed = lopdf::Document::load_mem(&pdf).expect("lopdf parses output");
+        let pages = parsed.get_pages();
+        for (page_number, expected) in [(1, false), (2, true)] {
+            let page = parsed
+                .get_object(pages[&page_number])
+                .expect("page object")
+                .as_dict()
+                .expect("page dictionary");
+            let resources_id = page
+                .get(b"Resources")
+                .expect("Resources entry")
+                .as_reference()
+                .expect("Resources reference");
+            let resources = parsed
+                .get_object(resources_id)
+                .expect("resources object")
+                .as_dict()
+                .expect("resources dictionary");
+            assert_eq!(resources.has(b"ProcSet"), expected);
+        }
+
+        let (stores, run_result) = run(concat!(
+            "\\pdfoutput=1\\pdfmajorversion=2\\pdfminorversion=0\\pdfcompresslevel=0",
+            "\\shipout\\vbox{\\hrule width1pt height1pt}\\end",
+        ));
+        let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+            .expect("PDF assembles");
+        let parsed = lopdf::Document::load_mem(&pdf).expect("lopdf parses output");
+        let page_id = parsed.get_pages()[&1];
+        let page = parsed
+            .get_object(page_id)
+            .expect("page object")
+            .as_dict()
+            .expect("page dictionary");
+        let resources_id = page
+            .get(b"Resources")
+            .expect("Resources entry")
+            .as_reference()
+            .expect("Resources reference");
+        let resources = parsed
+            .get_object(resources_id)
+            .expect("resources object")
+            .as_dict()
+            .expect("resources dictionary");
+        assert!(!resources.has(b"ProcSet"));
     }
 
     fn pdf_number(object: &lopdf::Object) -> f32 {

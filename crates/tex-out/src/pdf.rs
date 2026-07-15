@@ -248,6 +248,8 @@ pub struct PdfIndirectObject {
 pub struct UnvalidatedPdfDocument {
     pub version: PdfVersion,
     pub catalog: PdfObjectId,
+    /// Optional document-information dictionary registered in the file trailer.
+    pub info: Option<PdfObjectId>,
     pub objects: Vec<PdfIndirectObject>,
 }
 
@@ -280,6 +282,11 @@ impl PdfDocument {
         self.0.catalog
     }
 
+    #[must_use]
+    pub const fn info(&self) -> Option<PdfObjectId> {
+        self.0.info
+    }
+
     pub fn objects(&self) -> impl ExactSizeIterator<Item = &PdfIndirectObject> {
         self.0.objects.iter()
     }
@@ -291,6 +298,10 @@ impl PdfDocument {
         hasher.byte(self.version().major());
         hasher.byte(self.version().minor());
         hasher.u32(self.catalog().get());
+        hasher.byte(u8::from(self.info().is_some()));
+        if let Some(info) = self.info() {
+            hasher.u32(info.get());
+        }
         hasher.len(self.0.objects.len());
         for indirect in &self.0.objects {
             hasher.u32(indirect.id.get());
@@ -347,6 +358,7 @@ pub enum PdfModelError {
     CatalogNotDictionary(PdfObjectId),
     CatalogTypeMissing(PdfObjectId),
     CatalogPagesMissing(PdfObjectId),
+    InfoNotDictionary(PdfObjectId),
     PagesRootNotDictionary(PdfObjectId),
     PagesTypeMissing(PdfObjectId),
     PagesKidsInvalid(PdfObjectId),
@@ -391,6 +403,14 @@ fn validate_document(
         .collect::<BTreeSet<_>>();
     if !ids.contains(&document.catalog) {
         return Err(PdfModelError::MissingObject(document.catalog));
+    }
+    if let Some(info) = document.info {
+        if !ids.contains(&info) {
+            return Err(PdfModelError::MissingObject(info));
+        }
+        if object_dictionary(document, info).is_none() {
+            return Err(PdfModelError::InfoNotDictionary(info));
+        }
     }
 
     let mut value_count = 0_usize;

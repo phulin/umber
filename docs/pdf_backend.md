@@ -135,6 +135,19 @@ finalization barrier as DVI and HTML. The current integration deliberately
 returns typed errors for text and specials until their resource-owning
 primitive slices are implemented; a minimal rule-only page is complete.
 
+Finalization also builds pdfTeX's default document-information dictionary and
+registers it in the trailer through `pdf_writer`. `/Producer`, `/Creator`,
+`/Trapped`, and the `PTEX.Fullbanner` compatibility entry are deterministic;
+`/CreationDate` and `/ModDate` use the immutable pinned job clock. The live
+final values of `\pdfomitinfodict`, `\pdfinfoomitdate`,
+`\pdfsuppressptexinfo`, and `\pdfptexuseunderscore` select omission and the
+legacy `PTEX.` versus `PTEX_` spelling exactly as in pdfTeX (PDF 2 also selects
+the underscore spelling). `\pdfomitprocset` is captured in each committed
+page receipt because resource dictionaries are page-scoped: negative values
+always emit `/ProcSet`, zero emits it before PDF 2, and positive values omit
+it. Both the information and resource dictionaries remain structural values
+whose final bytes are written only by `pdf_writer`.
+
 pdfTeX mode freezes `\pdfoutput`, the PDF version, stream/object compression,
 decimal precision, gamma conversion, draft mode, inclusion copy-fonts, PK
 resolution, and unique-resource-name policy at the first committed shipout.

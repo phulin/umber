@@ -89,6 +89,15 @@ impl PdfDocument {
                 catalog.finish();
                 continue;
             }
+            if Some(indirect.id) == self.info() {
+                let PdfObject::Value(PdfValue::Dictionary(dictionary)) = &indirect.object else {
+                    unreachable!("validated PDF info object is a dictionary")
+                };
+                let mut info = pdf.document_info(reference);
+                write_dictionary_entries(&mut info, dictionary, None)?;
+                info.finish();
+                continue;
+            }
 
             match &indirect.object {
                 PdfObject::Value(value)
@@ -113,7 +122,7 @@ impl PdfDocument {
                 let (object_stream_id, xref_id) = auxiliary_refs(self)?;
                 let mut object_stream = pdf.object_stream(object_stream_id);
                 for indirect in self.objects() {
-                    if indirect.id == self.catalog() {
+                    if indirect.id == self.catalog() || Some(indirect.id) == self.info() {
                         continue;
                     }
                     if let PdfObject::Value(value) = &indirect.object {

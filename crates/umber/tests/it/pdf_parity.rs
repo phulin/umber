@@ -4,6 +4,8 @@ use std::process::Command;
 use sha2::{Digest, Sha256};
 use test_support::{corpus_root, pdf::normalize_structure, read_binary_fixture, read_fixture};
 
+const PINNED_SOURCE_DATE_EPOCH: &str = "1783604160";
+
 #[test]
 #[allow(clippy::disallowed_methods)] // Hermetic CLI fixture boundary.
 fn committed_pdftex_fixture_matches_structure_and_bytes() {
@@ -12,6 +14,7 @@ fn committed_pdftex_fixture_matches_structure_and_bytes() {
     let source = corpus_root().join("pdf/minimal_rule.tex");
     let output = Command::new(env!("CARGO_BIN_EXE_umber"))
         .args(["run", "--pdftex", "--pdf"])
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
         .arg(&actual_path)
         .arg(source)
         .output()
