@@ -477,6 +477,9 @@ pub enum PdfObject {
     PdfStringSyntax(Vec<u8>),
     Outline(PdfOutlineObject),
     OutlineItem(PdfOutlineItemObject),
+    ThreadList(Vec<PdfObjectId>),
+    Thread(PdfThreadObject),
+    Bead(PdfBeadObject),
     /// One complete direct object body retained for pdfTeX compatibility.
     Raw(Vec<u8>),
     Stream {
@@ -515,6 +518,22 @@ pub struct PdfOutlineItemObject {
     pub last: Option<PdfObjectId>,
     pub count: Option<i32>,
     pub raw_entries: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PdfThreadObject {
+    pub first_bead: PdfObjectId,
+    pub default_title: Option<Vec<u8>>,
+    pub raw_entries: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PdfBeadObject {
+    pub thread: Option<PdfObjectId>,
+    pub previous: PdfObjectId,
+    pub next: PdfObjectId,
+    pub page: PdfObjectId,
+    pub rectangle: PdfObjectId,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -881,7 +900,10 @@ fn validate_document(
             | PdfObject::Action(_)
             | PdfObject::PdfStringSyntax(_)
             | PdfObject::Outline(_)
-            | PdfObject::OutlineItem(_) => {}
+            | PdfObject::OutlineItem(_)
+            | PdfObject::ThreadList(_)
+            | PdfObject::Thread(_)
+            | PdfObject::Bead(_) => {}
         }
         if stream_bytes > limits.max_stream_bytes {
             return Err(PdfModelError::TooManyStreamBytes {
@@ -1010,6 +1032,34 @@ fn validate_object_values(
                 item.next,
                 item.first,
                 item.last,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if !ids.contains(&id) {
+                    return Err(PdfModelError::MissingObject(id));
+                }
+            }
+        }
+        PdfObject::ThreadList(threads) => {
+            for id in threads {
+                if !ids.contains(id) {
+                    return Err(PdfModelError::MissingObject(*id));
+                }
+            }
+        }
+        PdfObject::Thread(thread) => {
+            if !ids.contains(&thread.first_bead) {
+                return Err(PdfModelError::MissingObject(thread.first_bead));
+            }
+        }
+        PdfObject::Bead(bead) => {
+            for id in [
+                bead.thread,
+                Some(bead.previous),
+                Some(bead.next),
+                Some(bead.page),
+                Some(bead.rectangle),
             ]
             .into_iter()
             .flatten()
@@ -1313,6 +1363,30 @@ fn hash_object(object: &PdfObject, hasher: &mut CanonicalHasher) {
                 hasher.i64(i64::from(count));
             }
             hasher.bytes(&item.raw_entries);
+        }
+        PdfObject::ThreadList(threads) => {
+            hasher.byte(13);
+            hasher.len(threads.len());
+            for id in threads {
+                hasher.u32(id.get());
+            }
+        }
+        PdfObject::Thread(thread) => {
+            hasher.byte(14);
+            hasher.u32(thread.first_bead.get());
+            hasher.bool(thread.default_title.is_some());
+            if let Some(title) = &thread.default_title {
+                hasher.bytes(title);
+            }
+            hasher.bytes(&thread.raw_entries);
+        }
+        PdfObject::Bead(bead) => {
+            hasher.byte(15);
+            hasher.u32(bead.thread.map_or(0, PdfObjectId::get));
+            hasher.u32(bead.previous.get());
+            hasher.u32(bead.next.get());
+            hasher.u32(bead.page.get());
+            hasher.u32(bead.rectangle.get());
         }
     }
 }

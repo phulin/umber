@@ -99,7 +99,14 @@ impl PdfDocument {
                     unreachable!("validated PDF catalog is a dictionary")
                 };
                 let mut catalog = pdf.catalog(reference);
-                write_dictionary_entries(&mut catalog, dictionary, Some(b"Type"))?;
+                if let Some(PdfValue::Reference(threads)) = dictionary.get(b"Threads") {
+                    catalog.threads(writer_ref(*threads)?);
+                }
+                write_dictionary_entries_skipping(
+                    &mut catalog,
+                    dictionary,
+                    &[b"Type", b"Threads"],
+                )?;
                 catalog.finish();
                 continue;
             }
@@ -130,10 +137,16 @@ impl PdfDocument {
                 if let Some(PdfValue::Reference(group)) = dictionary.get(b"Group") {
                     page.group_ref(writer_ref(*group)?);
                 }
+                if let Some(PdfValue::Array(ids)) = dictionary.get(b"B") {
+                    page.beads(ids.iter().map(|value| match value {
+                        PdfValue::Reference(id) => writer_ref(*id).expect("validated bead ref"),
+                        _ => unreachable!("validated page bead is a reference"),
+                    }));
+                }
                 write_dictionary_entries_skipping(
                     &mut page,
                     dictionary,
-                    &[b"Type", b"Annots", b"Resources", b"Group"],
+                    &[b"Type", b"Annots", b"Resources", b"Group", b"B"],
                 )?;
                 page.finish();
                 continue;
@@ -212,6 +225,36 @@ impl PdfDocument {
                     writer.raw_entries(&item.raw_entries);
                     writer.finish();
                 }
+                PdfObject::ThreadList(threads) => {
+                    pdf.thread_list(reference).threads(
+                        threads
+                            .iter()
+                            .copied()
+                            .map(writer_ref)
+                            .collect::<Result<Vec<_>, _>>()?,
+                    );
+                }
+                PdfObject::Thread(thread) => {
+                    let mut writer = pdf.thread(reference);
+                    writer.first_bead(writer_ref(thread.first_bead)?);
+                    if let Some(title) = &thread.default_title {
+                        writer.info().title_pdftex(PdfStringSyntax(title));
+                    }
+                    writer.raw_entries(&thread.raw_entries);
+                    writer.finish();
+                }
+                PdfObject::Bead(bead) => {
+                    let mut writer = pdf.bead(reference);
+                    if let Some(thread) = bead.thread {
+                        writer.thread(writer_ref(thread)?);
+                    }
+                    writer
+                        .previous(writer_ref(bead.previous)?)
+                        .next(writer_ref(bead.next)?)
+                        .page(writer_ref(bead.page)?)
+                        .rectangle(writer_ref(bead.rectangle)?);
+                    writer.finish();
+                }
                 PdfObject::Stream { dictionary, data } => write_stream(
                     &mut pdf,
                     reference,
@@ -273,7 +316,10 @@ impl PdfDocument {
                         | PdfObject::Action(_)
                         | PdfObject::PdfStringSyntax(_)
                         | PdfObject::Outline(_)
-                        | PdfObject::OutlineItem(_) => {}
+                        | PdfObject::OutlineItem(_)
+                        | PdfObject::ThreadList(_)
+                        | PdfObject::Thread(_)
+                        | PdfObject::Bead(_) => {}
                     }
                 }
                 match options.stream_compression {
@@ -490,7 +536,10 @@ fn validate_object_scalars(object: &PdfObject) -> Result<(), PdfSerializeError> 
         | PdfObject::Action(_)
         | PdfObject::PdfStringSyntax(_)
         | PdfObject::Outline(_)
-        | PdfObject::OutlineItem(_) => {}
+        | PdfObject::OutlineItem(_)
+        | PdfObject::ThreadList(_)
+        | PdfObject::Thread(_)
+        | PdfObject::Bead(_) => {}
     }
     while let Some(value) = stack.pop() {
         match value {

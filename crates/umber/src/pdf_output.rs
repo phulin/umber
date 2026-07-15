@@ -5,15 +5,15 @@ use tex_arith::Scaled;
 use tex_expand::append_token_string_text;
 use tex_out::PageNode;
 use tex_out::pdf::{
-    PdfAnnotationAction, PdfAnnotationObject, PdfAnnotationType, PdfContentOperation,
-    PdfContentRectangle, PdfContentTextRun, PdfDestinationAction, PdfDestinationActionKind,
-    PdfDestinationNameTree, PdfDestinationNameTreeChildren, PdfDestinationPage,
-    PdfDestinationStructure, PdfDestinationTarget, PdfDestinationView, PdfDictionary,
-    PdfExplicitDestination, PdfImageColorSpace, PdfImageFilter, PdfImageXObject, PdfIndirectObject,
-    PdfModelError, PdfName, PdfNamesObject, PdfNumber, PdfObject, PdfObjectCompression,
-    PdfObjectId, PdfOutlineItemObject, PdfOutlineObject, PdfSerializationOptions,
-    PdfSerializeError, PdfStreamCompression, PdfTrailer, PdfValue, PdfVersion,
-    UnvalidatedPdfDocument, ordered_page_content, page_content,
+    PdfAnnotationAction, PdfAnnotationObject, PdfAnnotationType, PdfBeadObject,
+    PdfContentOperation, PdfContentRectangle, PdfContentTextRun, PdfDestinationAction,
+    PdfDestinationActionKind, PdfDestinationNameTree, PdfDestinationNameTreeChildren,
+    PdfDestinationPage, PdfDestinationStructure, PdfDestinationTarget, PdfDestinationView,
+    PdfDictionary, PdfExplicitDestination, PdfImageColorSpace, PdfImageFilter, PdfImageXObject,
+    PdfIndirectObject, PdfModelError, PdfName, PdfNamesObject, PdfNumber, PdfObject,
+    PdfObjectCompression, PdfObjectId, PdfOutlineItemObject, PdfOutlineObject,
+    PdfSerializationOptions, PdfSerializeError, PdfStreamCompression, PdfThreadObject, PdfTrailer,
+    PdfValue, PdfVersion, UnvalidatedPdfDocument, ordered_page_content, page_content,
 };
 use tex_out::positioned::{
     BoxKind, PositionedBox, PositionedError, PositionedEvent, PositionedPage,
@@ -142,6 +142,12 @@ pub fn pdf_from_committed_artifacts_at_dpi(
         shipped_destinations,
         &mut next_object,
     )?;
+    let thread_output = thread_objects(
+        &positioned_pages,
+        &page_records,
+        parameters.decimal_digits,
+        &mut next_object,
+    )?;
     let mut objects =
         Vec::with_capacity(2 + page_records.len() * 3 + stores.pdf_raw_objects().len() + 2);
     let mut kids = Vec::with_capacity(page_records.len());
@@ -164,6 +170,9 @@ pub fn pdf_from_committed_artifacts_at_dpi(
     }
     if let Some(outlines) = outline_output.root {
         catalog.insert("Outlines", PdfValue::Reference(outlines))?;
+    }
+    if let Some(threads) = thread_output.list {
+        catalog.insert("Threads", PdfValue::Reference(threads))?;
     }
     let open_action = stores.pdf_catalog_open_action();
     if let Some(action) = open_action {
@@ -194,6 +203,7 @@ pub fn pdf_from_committed_artifacts_at_dpi(
     objects.extend(outline_output.objects);
     objects.extend(destination_output.destinations);
     objects.extend(destination_output.name_tree);
+    objects.extend(thread_output.objects.clone());
 
     if let Some(info) = document_ids.info() {
         let mut dictionary = document_info_dictionary(stores, parameters)?;
@@ -685,6 +695,8 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                 PositionedEvent::Box(_)
                 | PositionedEvent::BoxEnd(_)
                 | PositionedEvent::PdfDestination(_)
+                | PositionedEvent::PdfThread(_)
+                | PositionedEvent::PdfEndThread { .. }
                 | PositionedEvent::TextRun(_) => {}
             }
         }
@@ -792,6 +804,14 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                         .map(|annotation| object_id(annotation.object).map(PdfValue::Reference))
                         .collect::<Result<_, _>>()?,
                 ),
+            )?;
+        }
+        if let Some(beads) = thread_output.page_beads.get(page_index)
+            && !beads.is_empty()
+        {
+            page.insert(
+                "B",
+                PdfValue::Array(beads.iter().copied().map(PdfValue::Reference).collect()),
             )?;
         }
         page.set_raw_entries(page_attr);
@@ -1002,6 +1022,8 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                 | PositionedEvent::PdfAccessibility(_)
                 | PositionedEvent::PdfAnnotation(_)
                 | PositionedEvent::PdfDestination(_)
+                | PositionedEvent::PdfThread(_)
+                | PositionedEvent::PdfEndThread { .. }
                 | PositionedEvent::TextRun(_) => {}
             }
         }
@@ -1819,12 +1841,171 @@ fn lower_page_annotations(
                 | PositionedEvent::Special(_)
                 | PositionedEvent::PdfAccessibility(_)
                 | PositionedEvent::PdfGraphics(_)
-                | PositionedEvent::PdfDestination(_) => {}
+                | PositionedEvent::PdfDestination(_)
+                | PositionedEvent::PdfThread(_)
+                | PositionedEvent::PdfEndThread { .. } => {}
             }
         }
         result.push(shipped);
     }
     Ok(result)
+}
+
+struct ThreadOutput {
+    objects: Vec<PdfIndirectObject>,
+    list: Option<PdfObjectId>,
+    page_beads: Vec<Vec<PdfObjectId>>,
+}
+
+#[derive(Clone)]
+struct ShippedBead {
+    thread: PdfObjectId,
+    bead: PdfObjectId,
+    rectangle: PdfObjectId,
+    page: PdfObjectId,
+    rect: ShippedAnnotationRect,
+    attributes: Vec<u8>,
+    title: Vec<u8>,
+}
+
+fn thread_objects(
+    pages: &[PositionedPage],
+    records: &[tex_state::PdfPageRecord],
+    decimal_digits: i32,
+    next_object: &mut u32,
+) -> Result<ThreadOutput, PdfBuildError> {
+    let mut beads = Vec::<ShippedBead>::new();
+    let mut page_beads = vec![Vec::new(); pages.len()];
+    for (page_index, (page, record)) in pages.iter().zip(records).enumerate() {
+        let mut boxes = BTreeMap::<u32, PositionedBox>::new();
+        for event in &page.events {
+            match event {
+                PositionedEvent::Box(positioned) => {
+                    boxes.insert(positioned.id, *positioned);
+                }
+                PositionedEvent::PdfThread(positioned) => {
+                    let marker = &positioned.marker;
+                    let dimensions = PdfAnnotationDimensions {
+                        width: marker.width,
+                        height: marker.height,
+                        depth: marker.depth,
+                    };
+                    let rect = marker_rect(
+                        positioned.x,
+                        positioned.y,
+                        boxes[&positioned.containing_box],
+                        dimensions,
+                        marker.margin,
+                    )?;
+                    let title = match &marker.identifier {
+                        tex_out::PdfDestinationIdentifier::Name(name) => name.clone(),
+                        tex_out::PdfDestinationIdentifier::Number(number) => {
+                            number.to_string().into_bytes()
+                        }
+                    };
+                    let bead = object_id(marker.bead_object)?;
+                    page_beads[page_index].push(bead);
+                    beads.push(ShippedBead {
+                        thread: object_id(marker.thread_object)?,
+                        bead,
+                        rectangle: object_id(marker.rectangle_object)?,
+                        page: object_id(record.page_object())?,
+                        rect,
+                        attributes: marker.attributes.clone(),
+                        title,
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+    if beads.is_empty() {
+        return Ok(ThreadOutput {
+            objects: Vec::new(),
+            list: None,
+            page_beads,
+        });
+    }
+    let mut by_thread = BTreeMap::<PdfObjectId, Vec<usize>>::new();
+    for (index, bead) in beads.iter().enumerate() {
+        by_thread.entry(bead.thread).or_default().push(index);
+    }
+    let list = object_id(*next_object)?;
+    *next_object = next_object
+        .checked_add(1)
+        .ok_or(PdfBuildError::ObjectCapacity)?;
+    let mut objects = vec![PdfIndirectObject {
+        id: list,
+        object: PdfObject::ThreadList(by_thread.keys().copied().collect()),
+    }];
+    for (&thread, indices) in &by_thread {
+        let attributes = indices
+            .iter()
+            .rev()
+            .find_map(|&index| {
+                (!beads[index].attributes.is_empty()).then(|| beads[index].attributes.clone())
+            })
+            .unwrap_or_default();
+        let default_title = attributes.is_empty().then(|| {
+            let mut title = vec![b'('];
+            title.extend_from_slice(&beads[indices[0]].title);
+            title.push(b')');
+            title
+        });
+        objects.push(PdfIndirectObject {
+            id: thread,
+            object: PdfObject::Thread(PdfThreadObject {
+                first_bead: beads[indices[0]].bead,
+                default_title,
+                raw_entries: attributes,
+            }),
+        });
+        for (position, &index) in indices.iter().enumerate() {
+            let bead = &beads[index];
+            let previous = beads[indices[(position + indices.len() - 1) % indices.len()]].bead;
+            let next = beads[indices[(position + 1) % indices.len()]].bead;
+            objects.push(PdfIndirectObject {
+                id: bead.bead,
+                object: PdfObject::Bead(PdfBeadObject {
+                    thread: (position == 0).then_some(thread),
+                    previous,
+                    next,
+                    page: bead.page,
+                    rectangle: bead.rectangle,
+                }),
+            });
+            let page_index = records
+                .iter()
+                .position(|record| object_id(record.page_object()).ok() == Some(bead.page))
+                .expect("bead page belongs to page ledger");
+            let page_height = pages[page_index].height;
+            let rect = &bead.rect;
+            objects.push(PdfIndirectObject {
+                id: bead.rectangle,
+                object: PdfObject::Value(PdfValue::Array(vec![
+                    PdfValue::Number(scaled_to_bp_number(rect.left, decimal_digits)?),
+                    PdfValue::Number(scaled_to_bp_number(
+                        page_height
+                            .checked_sub(rect.bottom)
+                            .ok_or(PdfBuildError::PageGeometryOverflow)?,
+                        decimal_digits,
+                    )?),
+                    PdfValue::Number(scaled_to_bp_number(rect.right, decimal_digits)?),
+                    PdfValue::Number(scaled_to_bp_number(
+                        page_height
+                            .checked_sub(rect.top)
+                            .ok_or(PdfBuildError::PageGeometryOverflow)?,
+                        decimal_digits,
+                    )?),
+                ])),
+            });
+        }
+    }
+    Ok(ThreadOutput {
+        objects,
+        list: Some(list),
+        page_beads,
+    })
 }
 
 fn link_segment(

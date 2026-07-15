@@ -57,6 +57,8 @@ pub enum PositionedEvent {
     PdfAnnotation(PositionedPdfAnnotation),
     PdfGraphics(PositionedPdfGraphics),
     PdfDestination(PositionedPdfDestination),
+    PdfThread(PositionedPdfThread),
+    PdfEndThread { x: Scaled, y: Scaled },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -159,6 +161,15 @@ pub struct PositionedPdfDestination {
     pub y: Scaled,
     pub containing_box: u32,
     pub marker: crate::PdfDestinationEffect,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PositionedPdfThread {
+    pub x: Scaled,
+    pub y: Scaled,
+    pub containing_box: u32,
+    pub running: bool,
+    pub marker: crate::PdfThreadEffect,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

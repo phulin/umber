@@ -426,6 +426,9 @@ pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
         ),
         ("pdfoutline", UnexpandablePrimitive::PdfOutline),
         ("pdfdest", UnexpandablePrimitive::PdfDest),
+        ("pdfthread", UnexpandablePrimitive::PdfThread),
+        ("pdfstartthread", UnexpandablePrimitive::PdfStartThread),
+        ("pdfendthread", UnexpandablePrimitive::PdfEndThread),
         ("pdfximage", UnexpandablePrimitive::PdfXImage),
         ("pdfrefximage", UnexpandablePrimitive::PdfRefXImage),
     ] {
@@ -863,6 +866,43 @@ mod tests {
             output.contains(&format!("page={page_object},missing=0")),
             "{output}"
         );
+    }
+
+    #[test]
+    fn pdf_article_thread_scanner_allocates_and_commits_typed_beads() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        crate::run_memory_with_stores(
+            concat!(
+                "\\pdfoutput=1\\pdfthreadmargin=2pt",
+                "\\shipout\\hbox{\\pdfthread depth 3pt width 10pt height 4pt ",
+                "attr{/I << /Title (custom) >>} name{chapter}X}\\end",
+            ),
+            &mut stores,
+        )
+        .expect("thread scanner and shipout");
+        let thread = &stores.pdf_threads()[0];
+        assert_eq!(thread.beads().len(), 1);
+        let bytes = stores
+            .world()
+            .read_artifact(stores.world().artifact_commits()[0])
+            .expect("artifact read")
+            .expect("artifact exists");
+        let artifact = tex_out::PageArtifact::from_bytes(&bytes).expect("artifact parses");
+        let marker = artifact
+            .effects
+            .iter()
+            .find_map(|effect| match effect {
+                tex_out::PageEffect::PdfThread(marker) => Some(marker),
+                _ => None,
+            })
+            .expect("typed thread effect");
+        assert_eq!(marker.thread_object, thread.object());
+        assert_eq!(
+            marker.margin,
+            tex_state::scaled::Scaled::from_raw(2 * 65_536)
+        );
+        assert_eq!(marker.attributes, b"/I << /Title (custom) >>");
     }
 
     #[test]

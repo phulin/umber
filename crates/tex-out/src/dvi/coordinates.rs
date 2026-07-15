@@ -182,6 +182,7 @@ pub fn compare_page(
             PositionedEvent::PdfAccessibility(_) => {}
             PositionedEvent::PdfAnnotation(_) | PositionedEvent::PdfDestination(_) => {}
             PositionedEvent::BoxEnd(_) => {}
+            PositionedEvent::PdfThread(_) | PositionedEvent::PdfEndThread { .. } => {}
         }
     }
     if cursor != dvi.len() {

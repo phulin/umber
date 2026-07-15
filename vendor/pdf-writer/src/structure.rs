@@ -2470,6 +2470,12 @@ impl Thread<'_> {
     pub fn info(&mut self) -> ThreadInfo<'_> {
         self.insert(Name(b"I")).start()
     }
+
+    /// Append validated pdfTeX-compatible thread dictionary entries.
+    pub fn raw_entries(&mut self, entries: &[u8]) -> &mut Self {
+        self.dict.raw_entries(entries);
+        self
+    }
 }
 
 deref!('a, Thread<'a> => Dict<'a>, dict);

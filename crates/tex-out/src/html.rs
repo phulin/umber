@@ -756,6 +756,7 @@ fn write_page(
             | PositionedEvent::PdfDestination(_)
             | PositionedEvent::PdfGraphics(_) => {}
             PositionedEvent::BoxEnd(_) => {}
+            PositionedEvent::PdfThread(_) | PositionedEvent::PdfEndThread { .. } => {}
         }
         check_html_size(out, options)?;
     }

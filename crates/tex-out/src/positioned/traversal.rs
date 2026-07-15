@@ -7,8 +7,8 @@ use crate::{BoxNode, GlueKind, KernKind, LeaderPayload, PageArtifact, PageEffect
 use super::{
     BoxKind, PositionedBox, PositionedBoxEnd, PositionedError, PositionedEvent, PositionedLimits,
     PositionedPage, PositionedPdfAccessibility, PositionedPdfAnnotation, PositionedPdfDestination,
-    PositionedPdfGraphics, PositionedRule, PositionedSourceRef, PositionedSpecial,
-    PositionedTextRun, TextUnit,
+    PositionedPdfGraphics, PositionedPdfThread, PositionedRule, PositionedSourceRef,
+    PositionedSpecial, PositionedTextRun, TextUnit,
 };
 
 const LEADER_ROUNDING_COMPENSATION: Scaled = Scaled::from_raw(10);
@@ -537,6 +537,22 @@ impl Lowerer<'_> {
                     .expect("positioned effects are nested in a box"),
                 marker: marker.clone(),
             }))?;
+        } else if let PageEffect::PdfThread(marker) | PageEffect::PdfStartThread(marker) = effect {
+            self.push(PositionedEvent::PdfThread(PositionedPdfThread {
+                x: self.cur_h,
+                y: self.cur_v,
+                containing_box: *self
+                    .box_stack
+                    .last()
+                    .expect("positioned effects are nested in a box"),
+                running: matches!(effect, PageEffect::PdfStartThread(_)),
+                marker: marker.clone(),
+            }))?;
+        } else if matches!(effect, PageEffect::PdfEndThread) {
+            self.push(PositionedEvent::PdfEndThread {
+                x: self.cur_h,
+                y: self.cur_v,
+            })?;
         } else if let PageEffect::Special { class, payload } = effect {
             self.push(PositionedEvent::Special(PositionedSpecial {
                 x: self.cur_h,
