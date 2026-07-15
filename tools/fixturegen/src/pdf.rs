@@ -78,7 +78,7 @@ pub(super) fn regenerate_case(case: &str) -> Result<()> {
     let umber_bytes = fs::read(&umber_pdf).context("failed to read Umber PDF")?;
     let reference_structure = normalize_structure(&reference_bytes)?;
     let umber_structure = normalize_structure(&umber_bytes)?;
-    let font_case = case.starts_with("embedded_");
+    let font_case = case.starts_with("embedded_") || case.starts_with("pk_bitmap_");
     if !font_case && reference_structure != umber_structure {
         bail!(
             "normalized PDF structure mismatch for pdf/{case}:\nreference:\n{reference_structure}\nUmber:\n{umber_structure}"
@@ -130,7 +130,7 @@ pub(super) fn regenerate_case(case: &str) -> Result<()> {
 }
 
 fn stage_font_resources(case: &str, directory: &Path) -> Result<()> {
-    if !case.starts_with("embedded_") {
+    if !case.starts_with("embedded_") && !case.starts_with("pk_bitmap_") {
         return Ok(());
     }
     let corpus = corpus_root();
@@ -143,6 +143,23 @@ fn stage_font_resources(case: &str, directory: &Path) -> Result<()> {
         directory.join("cmr10.tfm"),
     )
     .context("failed to stage cmr10.tfm")?;
+    if let Some(dpi) = case.strip_prefix("pk_bitmap_") {
+        let name = format!("cmr10.{dpi}pk");
+        let committed = corpus_root().join("pdf").join(&name);
+        if !committed.is_file() {
+            let output = Command::new("kpsewhich")
+                .args(["--dpi", dpi, "--format=pk", "cmr10"])
+                .output()
+                .context("failed to locate pinned PK font with kpsewhich")?;
+            let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+            if !output.status.success() || !path.is_file() {
+                bail!("kpsewhich did not locate {name}");
+            }
+            fs::copy(path, &committed).with_context(|| format!("failed to pin {name}"))?;
+        }
+        fs::copy(committed, directory.join(name)).context("failed to stage PK font")?;
+        return Ok(());
+    }
     match case {
         "embedded_type1"
         | "embedded_subset_type1"

@@ -1,0 +1,10 @@
+pdf-render-v2
+renderer pdftoppm version 25.08.0
+arguments -r 72 -gray -singlefile
+comparison max-gray-delta 2
+extractor pdftotext version 25.08.0
+extraction exact-utf8
+reference-pdf-sha256 589574de84dbbe07e5c5037319931091ef9d7cb96f839356b1ba6d3fd69afff1
+umber-pdf-sha256 76303c92dedff60b2799a63a4e059b59ea7d19db2325cf017c74d71081ba9348
+pgm-sha256 bbc5b89be0b38957020bb85db9838ad40f9f26bef98792164b45823c4b2d2864
+extract-sha256 8a67dab04f2b92e4fa4bbce096709171bcf69f6931a18e5852ef86aa086e06fd

@@ -30,7 +30,9 @@ pub use memory_output::{
     MemoryOutputCollectionError, MemoryOutputFile, MemoryRunOutput, collect_final_memory_output,
     collect_final_memory_output_from_commits, collect_final_memory_output_from_plans,
 };
-pub use pdf_output::{PdfBuildError, pdf_from_committed_artifacts};
+pub use pdf_output::{
+    PdfBuildError, pdf_from_committed_artifacts, pdf_from_committed_artifacts_at_dpi,
+};
 pub use pdftex::PDFTEX_PRIMITIVE_NAMES;
 pub use tex_fonts::{
     AcceptedFontContainers, FeatureSetting, FontContainer, FontFeaturePolicy, FontObjectIdentity,

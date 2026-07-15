@@ -34,6 +34,51 @@ pub struct PdfContentTextRun {
     pub bytes: Vec<u8>,
 }
 
+/// One PK-derived monochrome Type-3 glyph procedure.
+pub struct PdfType3BitmapGlyph<'a> {
+    pub advance: f32,
+    pub bbox: [i32; 4],
+    pub width: u32,
+    pub height: u32,
+    pub x: i32,
+    pub y: i32,
+    pub bitmap: &'a [u8],
+}
+
+/// Encodes a Type-3 glyph procedure entirely through the vendored
+/// `pdf_writer`, including its typed inline-image builder.
+#[must_use]
+pub fn type3_bitmap_glyph_content(glyph: &PdfType3BitmapGlyph<'_>) -> Vec<u8> {
+    let mut content = pdf_writer::Content::new();
+    content.start_shape_glyph(
+        glyph.advance,
+        glyph.bbox[0] as f32,
+        glyph.bbox[1] as f32,
+        glyph.bbox[2] as f32,
+        glyph.bbox[3] as f32,
+    );
+    content.save_state();
+    content.transform([
+        glyph.width as f32,
+        0.0,
+        0.0,
+        glyph.height as f32,
+        glyph.x as f32,
+        glyph.y as f32,
+    ]);
+    content
+        .inline_image(
+            i32::try_from(glyph.width).expect("validated PK width fits i32"),
+            i32::try_from(glyph.height).expect("validated PK height fits i32"),
+            glyph.bitmap,
+        )
+        .image_mask()
+        .bits_per_component(1)
+        .decode([1.0, 0.0])
+        .finish();
+    content.finish().to_vec()
+}
+
 /// Encodes filled rule rectangles exclusively through `pdf_writer`.
 #[must_use]
 pub fn filled_rectangle_content(rectangles: &[PdfContentRectangle]) -> Vec<u8> {

@@ -71,6 +71,8 @@ fn committed_embedded_font_fixtures_match_bytes_structure_and_attestations() {
         "embedded_subset_truetype",
         "embedded_subset_omit",
         "embedded_subset_controls_negative",
+        "pk_bitmap_300",
+        "pk_bitmap_600",
     ] {
         check_embedded_font_case(case);
     }
@@ -90,7 +92,14 @@ fn check_embedded_font_case(case: &str) {
         temp.path().join("cmr10.tfm"),
     )
     .expect("stage cmr10 TFM");
-    if matches!(
+    if case.starts_with("pk_bitmap_") {
+        let dpi = case.trim_start_matches("pk_bitmap_");
+        fs::copy(
+            corpus_root().join("pdf").join(format!("cmr10.{dpi}pk")),
+            temp.path().join(format!("cmr10.{dpi}pk")),
+        )
+        .expect("stage committed PK program");
+    } else if matches!(
         case,
         "embedded_type1"
             | "embedded_subset_type1"
@@ -163,6 +172,18 @@ fn check_embedded_font_case(case: &str) {
             assert!(!actual_structure.contains("/CharSet"));
             assert!(!reference_structure.contains("/ToUnicode"));
             assert!(!reference_structure.contains("/CharSet"));
+        }
+        "pk_bitmap_300" => {
+            assert!(actual_structure.contains("/Subtype /Type3"));
+            assert!(actual_structure.contains("/FontMatrix [0.024 0 0 0.024 0 0]"));
+            assert!(reference_structure.contains("/Subtype /Type3"));
+            assert!(reference_structure.contains("/FontMatrix [0.024 0 0 0.024 0 0]"));
+        }
+        "pk_bitmap_600" => {
+            assert!(actual_structure.contains("/Subtype /Type3"));
+            assert!(actual_structure.contains("/FontMatrix [0.012 0 0 0.012 0 0]"));
+            assert!(reference_structure.contains("/Subtype /Type3"));
+            assert!(reference_structure.contains("/FontMatrix [0.012 0 0 0.012 0 0]"));
         }
         _ => {}
     }

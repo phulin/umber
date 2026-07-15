@@ -59,6 +59,16 @@ pub fn pdf_from_committed_artifacts(
     stores: &Universe,
     artifacts: &[CommittedArtifact],
 ) -> Result<Vec<u8>, PdfBuildError> {
+    pdf_from_committed_artifacts_at_dpi(stores, artifacts, DEFAULT_PDF_PK_RESOLUTION)
+}
+
+/// Builds a PDF using an explicit host bitmap-device DPI when
+/// `\pdfpkresolution` retains its zero sentinel.
+pub fn pdf_from_committed_artifacts_at_dpi(
+    stores: &Universe,
+    artifacts: &[CommittedArtifact],
+    driver_dpi: i32,
+) -> Result<Vec<u8>, PdfBuildError> {
     let parameters = output_parameters(stores);
     if parameters.output <= 0 {
         return Err(PdfBuildError::PdfOutputDisabled);
@@ -124,39 +134,65 @@ pub fn pdf_from_committed_artifacts(
                             let id = object_id(resource.object_number())?;
                             page_fonts.insert(resource.resource_number(), id);
                             if emitted_fonts.insert(resource.object_number()) {
-                                let descriptor_id = object_id(next_object)?;
-                                let program_id = object_id(
-                                    next_object
-                                        .checked_add(1)
-                                        .ok_or(PdfBuildError::InvalidObjectId(u32::MAX))?,
-                                )?;
                                 let live_font = stores
                                     .font_by_source_identity(font.semantic_identity)
                                     .ok_or_else(|| {
                                         PdfBuildError::MissingLiveFont(font.name.clone())
                                     })?;
-                                let wants_to_unicode =
-                                    stores.pdf_font_configuration().generates_to_unicode()
-                                        && !stores.pdf_builtin_to_unicode_disabled(live_font);
-                                let to_unicode_id = wants_to_unicode
-                                    .then(|| object_id(next_object.saturating_add(2)))
-                                    .transpose()?;
-                                next_object = next_object
-                                    .checked_add(if wants_to_unicode { 3 } else { 2 })
-                                    .ok_or(PdfBuildError::InvalidObjectId(u32::MAX))?;
-                                objects.extend(pdf_font_objects(
-                                    stores,
-                                    PdfFontObjectIds {
-                                        font: id,
-                                        descriptor: descriptor_id,
-                                        program: program_id,
-                                        to_unicode: to_unicode_id,
-                                    },
-                                    font,
-                                    &resource_name,
+                                let used_codes =
                                     font_usage.get(&resource.object_number()).ok_or_else(|| {
                                         PdfBuildError::MissingFontUsage(font.name.clone())
-                                    })?,
+                                    })?;
+                                let mapped = stores
+                                    .resolved_pdf_font_map_lines()
+                                    .into_iter()
+                                    .any(|entry| entry.tex_name == font.name.as_bytes());
+                                let ids = if mapped {
+                                    let descriptor = object_id(next_object)?;
+                                    let program = object_id(
+                                        next_object
+                                            .checked_add(1)
+                                            .ok_or(PdfBuildError::InvalidObjectId(u32::MAX))?,
+                                    )?;
+                                    let wants_to_unicode =
+                                        stores.pdf_font_configuration().generates_to_unicode()
+                                            && !stores.pdf_builtin_to_unicode_disabled(live_font);
+                                    let to_unicode = wants_to_unicode
+                                        .then(|| object_id(next_object.saturating_add(2)))
+                                        .transpose()?;
+                                    next_object = next_object
+                                        .checked_add(if wants_to_unicode { 3 } else { 2 })
+                                        .ok_or(PdfBuildError::InvalidObjectId(u32::MAX))?;
+                                    PdfFontObjectIds {
+                                        font: id,
+                                        descriptor: Some(descriptor),
+                                        program: Some(program),
+                                        to_unicode,
+                                        char_procs: BTreeMap::new(),
+                                    }
+                                } else {
+                                    let mut char_procs = BTreeMap::new();
+                                    for &code in used_codes {
+                                        char_procs.insert(code, object_id(next_object)?);
+                                        next_object = next_object
+                                            .checked_add(1)
+                                            .ok_or(PdfBuildError::InvalidObjectId(u32::MAX))?;
+                                    }
+                                    PdfFontObjectIds {
+                                        font: id,
+                                        descriptor: None,
+                                        program: None,
+                                        to_unicode: None,
+                                        char_procs,
+                                    }
+                                };
+                                objects.extend(pdf_font_objects(
+                                    stores,
+                                    ids,
+                                    font,
+                                    &resource_name,
+                                    used_codes,
+                                    driver_dpi,
                                 )?);
                             }
                             id
@@ -317,12 +353,13 @@ fn collect_font_usage(
     Ok(usage)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct PdfFontObjectIds {
     font: PdfObjectId,
-    descriptor: PdfObjectId,
-    program: PdfObjectId,
+    descriptor: Option<PdfObjectId>,
+    program: Option<PdfObjectId>,
     to_unicode: Option<PdfObjectId>,
+    char_procs: BTreeMap<u8, PdfObjectId>,
 }
 
 fn pdf_font_objects(
@@ -331,6 +368,7 @@ fn pdf_font_objects(
     font: &tex_out::FontResource,
     resource_name: &[u8],
     used_codes: &BTreeSet<u8>,
+    driver_dpi: i32,
 ) -> Result<Vec<PdfIndirectObject>, PdfBuildError> {
     let mapped = stores
         .resolved_pdf_font_map_lines()
@@ -343,6 +381,9 @@ fn pdf_font_objects(
     let resident = mapped
         .as_ref()
         .is_some_and(|entry| entry.program == tex_fonts::PdfFontMapProgram::Resident);
+    if mapped.is_none() {
+        return pdf_pk_font_objects(stores, ids, font, resource_name, used_codes, driver_dpi);
+    }
     if program_name.is_none() && !resident {
         return Err(PdfBuildError::MissingFontProgram(
             font.name.as_bytes().to_vec(),
@@ -484,7 +525,13 @@ fn pdf_font_objects(
     if resident {
         return Ok(vec![indirect_dictionary(ids.font, dictionary)]);
     }
-    dictionary.insert("FontDescriptor", PdfValue::Reference(ids.descriptor))?;
+    let descriptor_id = ids
+        .descriptor
+        .expect("mapped font allocation reserves descriptor");
+    let program_id = ids
+        .program
+        .expect("mapped font allocation reserves program");
+    dictionary.insert("FontDescriptor", PdfValue::Reference(descriptor_id))?;
 
     let mut descriptor = PdfDictionary::new();
     descriptor.insert("Type", PdfValue::Name("FontDescriptor".into()))?;
@@ -551,7 +598,7 @@ fn pdf_font_objects(
     descriptor.insert("XHeight", PdfValue::Integer(x_height))?;
     descriptor.insert(
         if is_truetype { "FontFile2" } else { "FontFile" },
-        PdfValue::Reference(ids.program),
+        PdfValue::Reference(program_id),
     )?;
     descriptor.set_raw_entries(stores.pdf_font_attribute(font_id).to_vec());
     if subset_requested && !is_truetype && !stores.pdf_font_configuration().omits_charset() {
@@ -577,9 +624,9 @@ fn pdf_font_objects(
     };
     let mut objects = vec![
         indirect_dictionary(ids.font, dictionary),
-        indirect_dictionary(ids.descriptor, descriptor),
+        indirect_dictionary(descriptor_id, descriptor),
         PdfIndirectObject {
-            id: ids.program,
+            id: program_id,
             object: PdfObject::Stream {
                 dictionary: stream,
                 data,
@@ -590,6 +637,152 @@ fn pdf_font_objects(
         objects.push(stream);
     }
     Ok(objects)
+}
+
+fn pdf_pk_font_objects(
+    stores: &Universe,
+    ids: PdfFontObjectIds,
+    font: &tex_out::FontResource,
+    resource_name: &[u8],
+    used_codes: &BTreeSet<u8>,
+    driver_dpi: i32,
+) -> Result<Vec<PdfIndirectObject>, PdfBuildError> {
+    let font_id = stores
+        .font_by_source_identity(font.semantic_identity)
+        .ok_or_else(|| PdfBuildError::MissingLiveFont(font.name.clone()))?;
+    let request = pk_font_request(stores, font_id, driver_dpi).map_err(PdfBuildError::PkFont)?;
+    let pk = stores
+        .pdf_pk_font(&request)
+        .ok_or_else(|| PdfBuildError::MissingPkFont(request.clone()))?;
+    let first_char = *used_codes
+        .first()
+        .ok_or_else(|| PdfBuildError::MissingFontUsage(font.name.clone()))?;
+    let last_char = *used_codes.last().expect("nonempty usage checked");
+    let matrix = rounded_pk_matrix(font.at_size, request.dpi())?;
+    let mut font_bbox = [i32::MAX, i32::MAX, i32::MIN, i32::MIN];
+    let mut char_procs = PdfDictionary::new();
+    let mut encoding_differences = Vec::new();
+    let mut widths = Vec::new();
+    let mut objects = Vec::with_capacity(1 + used_codes.len());
+
+    for code in first_char..=last_char {
+        let metrics = stores.font_char_metrics(font_id, code);
+        widths.push(PdfValue::Number(PdfNumber::new(
+            metrics.map_or(0, |metrics| {
+                pk_advance_hundredths(metrics.width, request.dpi())
+            }),
+            2,
+        )?));
+        if !used_codes.contains(&code) {
+            continue;
+        }
+        let glyph = pk
+            .glyph(u32::from(code))
+            .ok_or_else(|| PdfBuildError::MissingPkGlyph {
+                font: font.name.clone(),
+                code,
+            })?;
+        let bbox = [
+            -glyph.x_offset,
+            glyph.y_offset - i32::try_from(glyph.height).expect("bounded PK height") + 1,
+            -glyph.x_offset + i32::try_from(glyph.width).expect("bounded PK width") + 1,
+            glyph.y_offset + 1,
+        ];
+        for index in 0..2 {
+            font_bbox[index] = font_bbox[index].min(bbox[index]);
+            font_bbox[index + 2] = font_bbox[index + 2].max(bbox[index + 2]);
+        }
+        let name = format!("a{code}").into_bytes();
+        let id = ids.char_procs[&code];
+        char_procs.insert(
+            String::from_utf8_lossy(&name).as_ref(),
+            PdfValue::Reference(id),
+        )?;
+        encoding_differences.push(PdfValue::Integer(i64::from(code)));
+        encoding_differences.push(PdfValue::Name(PdfName::new(name)));
+        let advance = stores
+            .font_char_metrics(font_id, code)
+            .map_or(0.0, |metrics| {
+                pk_advance_hundredths(metrics.width, request.dpi()) as f32 / 100.0
+            });
+        let data = tex_out::pdf::type3_bitmap_glyph_content(&tex_out::pdf::PdfType3BitmapGlyph {
+            advance,
+            bbox,
+            width: glyph.width,
+            height: glyph.height,
+            x: -glyph.x_offset,
+            y: bbox[1],
+            bitmap: &glyph.bitmap,
+        });
+        objects.push(PdfIndirectObject {
+            id,
+            object: PdfObject::Stream {
+                dictionary: PdfDictionary::new(),
+                data,
+            },
+        });
+    }
+
+    let mut dictionary = PdfDictionary::new();
+    dictionary.insert("Type", PdfValue::Name("Font".into()))?;
+    dictionary.insert("Subtype", PdfValue::Name("Type3".into()))?;
+    dictionary.insert("Name", PdfValue::Name(PdfName::new(resource_name)))?;
+    dictionary.insert(
+        "FontMatrix",
+        PdfValue::Array(vec![
+            PdfValue::Number(matrix),
+            PdfValue::Integer(0),
+            PdfValue::Integer(0),
+            PdfValue::Number(matrix),
+            PdfValue::Integer(0),
+            PdfValue::Integer(0),
+        ]),
+    )?;
+    dictionary.insert(
+        "FontBBox",
+        PdfValue::Array(
+            font_bbox
+                .into_iter()
+                .map(|value| PdfValue::Integer(i64::from(value)))
+                .collect(),
+        ),
+    )?;
+    let mut resources = PdfDictionary::new();
+    resources.insert(
+        "ProcSet",
+        PdfValue::Array(vec![
+            PdfValue::Name("PDF".into()),
+            PdfValue::Name("ImageB".into()),
+        ]),
+    )?;
+    dictionary.insert("Resources", PdfValue::Dictionary(resources))?;
+    dictionary.insert("FirstChar", PdfValue::Integer(i64::from(first_char)))?;
+    dictionary.insert("LastChar", PdfValue::Integer(i64::from(last_char)))?;
+    dictionary.insert("Widths", PdfValue::Array(widths))?;
+    let mut encoding = PdfDictionary::new();
+    encoding.insert("Type", PdfValue::Name("Encoding".into()))?;
+    encoding.insert("Differences", PdfValue::Array(encoding_differences))?;
+    dictionary.insert("Encoding", PdfValue::Dictionary(encoding))?;
+    dictionary.insert("CharProcs", PdfValue::Dictionary(char_procs))?;
+    objects.push(indirect_dictionary(ids.font, dictionary));
+    Ok(objects)
+}
+
+fn rounded_pk_matrix(at_size: Scaled, dpi: u32) -> Result<PdfNumber, PdfBuildError> {
+    let denominator = i64::from(at_size.raw())
+        .checked_mul(i64::from(dpi))
+        .ok_or(PdfBuildError::PageGeometryOverflow)?;
+    if denominator <= 0 {
+        return Err(PdfBuildError::PageGeometryOverflow);
+    }
+    let numerator = 7_227_i64 * 65_536 * 1_000;
+    PdfNumber::new((numerator + denominator / 2) / denominator, 5).map_err(Into::into)
+}
+
+fn pk_advance_hundredths(width: Scaled, dpi: u32) -> i64 {
+    let numerator = i64::from(width.raw()) * i64::from(dpi) * 10_000;
+    let denominator = 65_536_i64 * 7_227;
+    (numerator + denominator / 2) / denominator
 }
 
 fn encoding_differences(
@@ -929,6 +1122,9 @@ pub enum PdfBuildError {
     MissingFontProgram(Vec<u8>),
     MissingFontResource(String),
     MissingFontUsage(String),
+    PkFont(String),
+    MissingPkFont(tex_fonts::PdfPkFontRequest),
+    MissingPkGlyph { font: String, code: u8 },
     MissingEncoding(Vec<u8>),
     MissingBuiltinGlyphName { font: String, code: u8 },
     TrueTypeSubsetRequiresEncoding(String),
@@ -979,6 +1175,17 @@ impl std::fmt::Display for PdfBuildError {
             }
             Self::MissingFontUsage(name) => {
                 write!(f, "PDF font {name:?} has no committed glyph-use projection")
+            }
+            Self::PkFont(message) => f.write_str(message),
+            Self::MissingPkFont(request) => write!(
+                f,
+                "PK font resource {:?} at {} DPI in mode {:?} was not supplied",
+                String::from_utf8_lossy(request.tex_name()),
+                request.dpi(),
+                String::from_utf8_lossy(request.mode()),
+            ),
+            Self::MissingPkGlyph { font, code } => {
+                write!(f, "PK font {font:?} has no glyph for character code {code}")
             }
             Self::MissingEncoding(name) => write!(
                 f,

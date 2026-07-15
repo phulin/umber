@@ -227,13 +227,16 @@ fn parse_glyph(flag: u8, cursor: &mut Cursor<'_>) -> Result<PdfPkGlyph, PdfPkFon
     let dyn_f = flag >> 4;
     let first_black = flag & 8 != 0;
     let format = flag & 7;
-    let packet_length = match format {
-        0..=3 => u32::from(format) * 256 + u32::from(cursor.u8()?),
-        4..=6 => u32::from(format - 4) * 65_536 + u32::from(cursor.u16()?),
-        7 => cursor.u32()?,
+    let (packet_length, length_bytes) = match format {
+        0..=3 => (u32::from(format) * 256 + u32::from(cursor.u8()?), 1usize),
+        4..=6 => (u32::from(format - 4) * 65_536 + u32::from(cursor.u16()?), 2),
+        7 => (cursor.u32()?, 4),
         _ => unreachable!(),
     };
-    let packet_length = usize::try_from(packet_length).map_err(|_| PdfPkFontError::PacketLength)?;
+    let packet_length = usize::try_from(packet_length)
+        .ok()
+        .and_then(|length| length.checked_add(length_bytes))
+        .ok_or(PdfPkFontError::PacketLength)?;
     let packet = cursor.take(packet_length)?;
     let mut packet = Cursor::new(packet);
     let (code, tfm_width, horizontal_escapement, width, height, x_offset, y_offset) = if format <= 3
@@ -428,7 +431,7 @@ impl<'a> Nybbles<'a> {
         let first = self.next()?;
         match first {
             0 => {
-                let mut zeros = 0u32;
+                let mut zeros = 1u32;
                 let mut digit = self.next()?;
                 while digit == 0 {
                     zeros = zeros
@@ -444,10 +447,8 @@ impl<'a> Nybbles<'a> {
                         .ok_or(PdfPkFontError::InvalidPackedNumber)?;
                 }
                 value
-                    .checked_sub(15)
-                    .and_then(|value| {
-                        value.checked_add(u32::from(13 - dyn_f) * 16 + u32::from(dyn_f))
-                    })
+                    .checked_add(u32::from(13 - dyn_f) * 16 + u32::from(dyn_f))
+                    .and_then(|value| value.checked_sub(15))
                     .ok_or(PdfPkFontError::InvalidPackedNumber)
             }
             value if value <= dyn_f => Ok(u32::from(value)),
@@ -547,7 +548,7 @@ mod tests {
     fn decodes_raw_bitmap_packet_into_row_aligned_mask() {
         let mut bytes = vec![PK_PRE, PK_ID, 0];
         bytes.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-        bytes.extend_from_slice(&[0xe0, 10, 65, 0, 0, 0, 3, 3, 2, 0, 1, 0b101_01000]);
+        bytes.extend_from_slice(&[0xe0, 9, 65, 0, 0, 0, 3, 3, 2, 0, 1, 0b101_01000]);
         bytes.push(PK_POST);
         let font = PdfPkFont::parse(&bytes).expect("synthetic PK parses");
         let glyph = font.glyph(65).expect("glyph present");
@@ -564,5 +565,19 @@ mod tests {
             decode_raw(&[], 1, 1, 1),
             Err(PdfPkFontError::RasterUnderflow)
         );
+    }
+
+    #[test]
+    fn decodes_the_committed_real_pk_font() {
+        let font_300 = PdfPkFont::parse(include_bytes!("../../../tests/corpus/pdf/cmr10.300pk"))
+            .expect("committed 300 DPI PK font parses");
+        let glyph = font_300.glyph(65).expect("300 DPI A glyph");
+        assert_eq!((glyph.width, glyph.height), (28, 29));
+        assert_eq!((glyph.x_offset, glyph.y_offset), (-1, 28));
+        let font_600 = PdfPkFont::parse(include_bytes!("../../../tests/corpus/pdf/cmr10.600pk"))
+            .expect("committed 600 DPI PK font parses");
+        let glyph = font_600.glyph(65).expect("600 DPI A glyph");
+        assert_eq!((glyph.width, glyph.height), (55, 60));
+        assert_eq!((glyph.x_offset, glyph.y_offset), (-3, 59));
     }
 }
