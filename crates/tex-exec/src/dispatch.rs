@@ -113,19 +113,7 @@ pub(crate) fn dispatch_delivered_token_with_context(
         }
     };
 
-    let unexpanded_delivery = matches!(
-        stores.origin(origin),
-        OriginRecord::Inserted(inserted)
-            if inserted.kind() == InsertedOriginKind::Unexpanded
-    );
-    if unexpanded_delivery
-        && matches!(
-            meaning,
-            Meaning::Undefined | Meaning::Macro { .. } | Meaning::ExpandablePrimitive(_)
-        )
-    {
-        let replay_origin = stores.inserted_origin(InsertedOriginKind::Unread, token, origin);
-        push_traced_tokens(input, stores, [TracedTokenWord::pack(token, replay_origin)]);
+    if replay_unexpanded_command(traced, meaning, input, stores) {
         return Ok(DispatchAction::Continue);
     }
 
@@ -242,6 +230,33 @@ pub(crate) fn dispatch_delivered_token_with_context(
             origin,
         }),
     }
+}
+
+pub(crate) fn replay_unexpanded_command(
+    traced: TracedTokenWord,
+    meaning: Meaning,
+    input: &mut InputStack,
+    stores: &mut Universe,
+) -> bool {
+    let origin = traced.origin();
+    let unexpanded_delivery = matches!(
+        stores.origin(origin),
+        OriginRecord::Inserted(inserted)
+            if inserted.kind() == InsertedOriginKind::Unexpanded
+    );
+    if !unexpanded_delivery
+        || !matches!(
+            meaning,
+            Meaning::Undefined | Meaning::Macro { .. } | Meaning::ExpandablePrimitive(_)
+        )
+    {
+        return false;
+    }
+
+    let token = tex_expand::semantic_token(traced);
+    let replay_origin = stores.inserted_origin(InsertedOriginKind::Unread, token, origin);
+    push_traced_tokens(input, stores, [TracedTokenWord::pack(token, replay_origin)]);
+    true
 }
 
 fn dispatch_character_token(

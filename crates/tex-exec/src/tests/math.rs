@@ -328,6 +328,22 @@ fn semi_simple_groups_execute_assignments_and_aftergroup_in_math_mode() {
 }
 
 #[test]
+fn token_register_macros_resume_expansion_in_math_mode() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"\def\fromtoks{\global\count0=7\relax}\toks0={\fromtoks}$\the\toks0 x$",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("token-register contents should resume expansion in math mode");
+
+    assert_eq!(stores.count(0), 7);
+}
+
+#[test]
 fn semi_simple_math_aftergroup_replay_has_aftergroup_provenance() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

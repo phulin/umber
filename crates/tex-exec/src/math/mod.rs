@@ -477,6 +477,9 @@ fn dispatch_math_control(
     let origin = traced.origin();
     let meaning = stores.meaning(symbol);
     execution.record_meaning(symbol, meaning);
+    if crate::dispatch::replay_unexpanded_command(traced, meaning, input, stores) {
+        return Ok(DispatchAction::Continue);
+    }
     match meaning {
         Meaning::Relax => Ok(DispatchAction::Continue),
         Meaning::Undefined => Err(ExecError::UndefinedControlSequence {
