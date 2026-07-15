@@ -374,6 +374,10 @@ impl Stores {
             Node::Whatsit(crate::node::Whatsit::PdfSnapY { glue }) => {
                 self.assert_live_glue(*glue);
             }
+            Node::Whatsit(crate::node::Whatsit::PdfDestination {
+                identifier: crate::PdfActionIdentifier::Name(tokens),
+                ..
+            }) => self.assert_live_token_list(*tokens),
             Node::Whatsit(
                 crate::node::Whatsit::OpenOut { .. }
                 | crate::node::Whatsit::CloseOut { .. }
@@ -394,6 +398,7 @@ impl Stores {
                 | crate::node::Whatsit::PdfSnapYComp { .. }
                 | crate::node::Whatsit::PdfRefXForm { .. }
                 | crate::node::Whatsit::PdfRefXImage { .. }
+                | crate::node::Whatsit::PdfDestination { .. }
                 | crate::node::Whatsit::Language { .. },
             ) => {}
             Node::Kern { .. }

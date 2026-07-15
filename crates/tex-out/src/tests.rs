@@ -3,7 +3,8 @@ use crate::{
     CodecLimitKind, ContentHash, DiscKind, EffectSink, FontResource, GlueKind, GlueOrder,
     GlueSetRatio, GlueSign, GlueSpec, JobInfo, KernKind, LeaderPayload, OpenTypeFontResource,
     PageArtifact, PageEffect, PageNode, PageToken, ParseError, PdfAccessibilityEffect,
-    PdfLiteralMode, SerializeError, TokenCatcode,
+    PdfDestinationEffect, PdfDestinationIdentifier, PdfDestinationKind, PdfLiteralMode,
+    SerializeError, TokenCatcode,
 };
 use tex_arith::Scaled;
 
@@ -18,6 +19,43 @@ fn page_artifact_round_trips() {
     assert_eq!(
         parsed.to_bytes().expect("parsed artifact serializes"),
         bytes
+    );
+}
+
+#[test]
+fn pdf_destinations_round_trip_nullable_zoom_and_running_rectangle_dimensions() {
+    let mut artifact = sample_artifact();
+    artifact.testing_mut().effects.extend([
+        PageEffect::PdfDestination(PdfDestinationEffect {
+            identifier: PdfDestinationIdentifier::Name(b"z\\050".to_vec()),
+            structure: Some(17),
+            kind: PdfDestinationKind::Xyz { zoom: None },
+            margin: Scaled::from_raw(11),
+        }),
+        PageEffect::PdfDestination(PdfDestinationEffect {
+            identifier: PdfDestinationIdentifier::Number(23),
+            structure: None,
+            kind: PdfDestinationKind::FitRectangle {
+                width: None,
+                height: Some(Scaled::from_raw(31)),
+                depth: Some(Scaled::from_raw(-7)),
+            },
+            margin: Scaled::from_raw(13),
+        }),
+        PageEffect::PdfDestination(PdfDestinationEffect {
+            identifier: PdfDestinationIdentifier::Number(24),
+            structure: None,
+            kind: PdfDestinationKind::Xyz { zoom: Some(0) },
+            margin: Scaled::from_raw(0),
+        }),
+    ]);
+    let bytes = artifact
+        .to_bytes()
+        .expect("destination artifact serializes");
+    assert_eq!(bytes[4], 19);
+    assert_eq!(
+        PageArtifact::from_bytes(&bytes).expect("destination artifact parses"),
+        artifact
     );
 }
 

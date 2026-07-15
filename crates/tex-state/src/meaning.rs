@@ -747,6 +747,7 @@ pub enum UnexpandablePrimitive {
     QuitVMode,
     PdfXImage,
     PdfRefXImage,
+    PdfDest,
 }
 
 impl UnexpandablePrimitive {
@@ -1013,7 +1014,8 @@ impl UnexpandablePrimitive {
             Self::PdfEndLink => 257,
             Self::PdfRunningLinkOn => 258,
             Self::PdfRunningLinkOff => 259,
-            // 260..=264 are reserved by the navigation parity slice.
+            Self::PdfDest => 260,
+            // 261..=264 are reserved by the navigation parity slice.
             Self::QuitVMode => 265,
         }
     }
@@ -1281,6 +1283,7 @@ impl UnexpandablePrimitive {
             257 => Some(Self::PdfEndLink),
             258 => Some(Self::PdfRunningLinkOn),
             259 => Some(Self::PdfRunningLinkOff),
+            260 => Some(Self::PdfDest),
             265 => Some(Self::QuitVMode),
             _ => None,
         }

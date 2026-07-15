@@ -554,6 +554,11 @@ pub enum Whatsit {
         height: Scaled,
         depth: Scaled,
     },
+    PdfDestination {
+        identifier: crate::PdfActionIdentifier,
+        structure: Option<u32>,
+        kind: PdfDestinationKind,
+    },
     Language {
         language: u8,
         left_hyphen_min: u8,
@@ -561,6 +566,18 @@ pub enum Whatsit {
     },
 }
 
+/// A page destination view, retained until final traversal resolves geometry.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PdfDestinationKind {
+    Xyz { zoom: Option<i32> },
+    FitBoundingBoxHorizontal,
+    FitBoundingBoxVertical,
+    FitBoundingBox,
+    FitHorizontal,
+    FitVertical,
+    FitRectangle(crate::PdfAnnotationDimensions),
+    Fit,
+}
 /// Ordered PDF text-accessibility controls interpreted during page traversal.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum PdfAccessibilityControl {

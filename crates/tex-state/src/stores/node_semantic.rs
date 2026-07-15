@@ -387,6 +387,62 @@ impl Stores {
                 hasher.i32(height.raw());
                 hasher.i32(depth.raw());
             }
+            Whatsit::PdfDestination {
+                identifier,
+                structure,
+                kind,
+            } => {
+                hasher.tag(23);
+                match identifier {
+                    crate::PdfActionIdentifier::Name(tokens) => {
+                        hasher.u8(0);
+                        hasher.u64(self.token_list_semantic_id_value(*tokens));
+                    }
+                    crate::PdfActionIdentifier::Number(number) => {
+                        hasher.u8(1);
+                        hasher.u32(*number);
+                    }
+                    crate::PdfActionIdentifier::Raw(_) => {
+                        unreachable!("destinations use typed identifiers")
+                    }
+                }
+                hasher.bool(structure.is_some());
+                if let Some(structure) = structure {
+                    hasher.u32(*structure);
+                }
+                hash_pdf_destination_kind(hasher, *kind);
+            }
         }
+    }
+}
+
+fn hash_pdf_destination_kind(
+    hasher: &mut crate::state_hash::StateHasher,
+    kind: crate::node::PdfDestinationKind,
+) {
+    use crate::node::PdfDestinationKind::*;
+    match kind {
+        Xyz { zoom } => {
+            hasher.u8(0);
+            hasher.bool(zoom.is_some());
+            if let Some(zoom) = zoom {
+                hasher.i32(zoom);
+            }
+        }
+        FitBoundingBoxHorizontal => hasher.u8(1),
+        FitBoundingBoxVertical => hasher.u8(2),
+        FitBoundingBox => hasher.u8(3),
+        FitHorizontal => hasher.u8(4),
+        FitVertical => hasher.u8(5),
+        FitRectangle(dimensions) => {
+            hasher.u8(6);
+            for value in [dimensions.width, dimensions.height, dimensions.depth] {
+                hasher.bool(value.is_some());
+                if let Some(value) = value {
+                    hasher.i32(value.raw());
+                }
+            }
+        }
+        Fit => hasher.u8(7),
     }
 }

@@ -190,6 +190,16 @@ pub(super) enum FormatWhatsit {
         height: i32,
         depth: i32,
     },
+    PdfDestination {
+        name_tokens: Option<u32>,
+        number: Option<u32>,
+        structure: Option<u32>,
+        kind: u8,
+        zoom: Option<i32>,
+        width: Option<i32>,
+        height: Option<i32>,
+        depth: Option<i32>,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -561,6 +571,42 @@ impl FormatWhatsit {
                 height: height.raw(),
                 depth: depth.raw(),
             },
+            Whatsit::PdfDestination {
+                identifier,
+                structure,
+                kind,
+            } => {
+                let (name_tokens, number) = match identifier {
+                    crate::PdfActionIdentifier::Name(tokens) => (Some(tokens.raw()), None),
+                    crate::PdfActionIdentifier::Number(number) => (None, Some(number)),
+                    crate::PdfActionIdentifier::Raw(_) => {
+                        unreachable!("destinations use typed identifiers")
+                    }
+                };
+                let (kind, zoom, dimensions) = match kind {
+                    crate::node::PdfDestinationKind::Xyz { zoom } => (0, zoom, None),
+                    crate::node::PdfDestinationKind::FitBoundingBoxHorizontal => (1, None, None),
+                    crate::node::PdfDestinationKind::FitBoundingBoxVertical => (2, None, None),
+                    crate::node::PdfDestinationKind::FitBoundingBox => (3, None, None),
+                    crate::node::PdfDestinationKind::FitHorizontal => (4, None, None),
+                    crate::node::PdfDestinationKind::FitVertical => (5, None, None),
+                    crate::node::PdfDestinationKind::FitRectangle(dimensions) => {
+                        (6, None, Some(dimensions))
+                    }
+                    crate::node::PdfDestinationKind::Fit => (7, None, None),
+                };
+                let dimensions = dimensions.unwrap_or(crate::PdfAnnotationDimensions::RUNNING);
+                Self::PdfDestination {
+                    name_tokens,
+                    number,
+                    structure,
+                    kind,
+                    zoom,
+                    width: dimensions.width.map(Scaled::raw),
+                    height: dimensions.height.map(Scaled::raw),
+                    depth: dimensions.depth.map(Scaled::raw),
+                }
+            }
         }
     }
 
@@ -641,6 +687,45 @@ impl FormatWhatsit {
                 height: Scaled::from_raw(height),
                 depth: Scaled::from_raw(depth),
             },
+            Self::PdfDestination {
+                name_tokens,
+                number,
+                structure,
+                kind,
+                zoom,
+                width,
+                height,
+                depth,
+            } => {
+                let identifier = match (name_tokens, number) {
+                    (Some(tokens), None) => {
+                        crate::PdfActionIdentifier::Name(token_list_id(stores, tokens)?)
+                    }
+                    (None, Some(number)) => crate::PdfActionIdentifier::Number(number),
+                    _ => return Err(StoreFormatError::Invalid("PDF destination identifier")),
+                };
+                let dimensions = crate::PdfAnnotationDimensions {
+                    width: width.map(Scaled::from_raw),
+                    height: height.map(Scaled::from_raw),
+                    depth: depth.map(Scaled::from_raw),
+                };
+                let kind = match kind {
+                    0 => crate::node::PdfDestinationKind::Xyz { zoom },
+                    1 => crate::node::PdfDestinationKind::FitBoundingBoxHorizontal,
+                    2 => crate::node::PdfDestinationKind::FitBoundingBoxVertical,
+                    3 => crate::node::PdfDestinationKind::FitBoundingBox,
+                    4 => crate::node::PdfDestinationKind::FitHorizontal,
+                    5 => crate::node::PdfDestinationKind::FitVertical,
+                    6 => crate::node::PdfDestinationKind::FitRectangle(dimensions),
+                    7 => crate::node::PdfDestinationKind::Fit,
+                    _ => return Err(StoreFormatError::Invalid("PDF destination kind")),
+                };
+                Whatsit::PdfDestination {
+                    identifier,
+                    structure,
+                    kind,
+                }
+            }
         })
     }
 }

@@ -1,15 +1,17 @@
 use crate::{
     BoxNode, ContentHash, DiscKind, EffectSink, FontResource, FontResourceConstruction, GlueKind,
     GlueOrder, GlueSetRatio, GlueSign, GlueSpec, KernKind, LeaderPayload, PageArtifact, PageEffect,
-    PageNode, PageToken, PdfAccessibilityEffect, PdfAnnotationEffect, PdfLiteralMode, TokenCatcode,
+    PageNode, PageToken, PdfAccessibilityEffect, PdfAnnotationEffect, PdfDestinationEffect,
+    PdfDestinationIdentifier, PdfDestinationKind, PdfLiteralMode, TokenCatcode,
     UnvalidatedPageArtifact,
 };
 use std::fmt;
 use tex_arith::Scaled;
 
 const MAGIC: &[u8; 4] = b"UMPG";
-const VERSION: u8 = 18;
-const PRE_IMAGE_VERSION: u8 = 17;
+const VERSION: u8 = 19;
+const ANNOTATION_VERSION: u8 = 18;
+const IMAGE_VERSION: u8 = 17;
 const PRE_ANNOTATION_VERSION: u8 = 16;
 const PDF_ACCESSIBILITY_VERSION: u8 = 15;
 const FONT_CONSTRUCTION_VERSION: u8 = 14;
@@ -61,6 +63,7 @@ mod wire {
         pub const PDF_REF_XFORM: u8 = 15;
         pub const PDF_ANNOTATION: u8 = 16;
         pub const PDF_REF_XIMAGE: u8 = 17;
+        pub const PDF_DESTINATION: u8 = 18;
     }
 
     pub mod token {
@@ -254,6 +257,8 @@ pub(crate) fn from_bytes(
     reader.expect_magic()?;
     let version = reader.u8()?;
     if version != VERSION
+        && version != IMAGE_VERSION
+        && version != ANNOTATION_VERSION
         && version != PRE_ANNOTATION_VERSION
         && version != PDF_ACCESSIBILITY_VERSION
         && version != FONT_CONSTRUCTION_VERSION
@@ -1534,6 +1539,52 @@ impl Writer {
                     self.scaled(*height);
                     self.scaled(*depth);
                 }
+                PageEffect::PdfDestination(marker) => {
+                    self.u8(wire::effect::PDF_DESTINATION);
+                    match &marker.identifier {
+                        PdfDestinationIdentifier::Name(name) => {
+                            self.u8(0);
+                            self.bytes(name);
+                        }
+                        PdfDestinationIdentifier::Number(number) => {
+                            self.u8(1);
+                            self.u32(*number);
+                        }
+                    }
+                    self.u8(u8::from(marker.structure.is_some()));
+                    if let Some(structure) = marker.structure {
+                        self.u32(structure);
+                    }
+                    match marker.kind {
+                        PdfDestinationKind::Xyz { zoom } => {
+                            self.u8(0);
+                            self.u8(u8::from(zoom.is_some()));
+                            if let Some(zoom) = zoom {
+                                self.i32(zoom);
+                            }
+                        }
+                        PdfDestinationKind::FitBoundingBoxHorizontal => self.u8(1),
+                        PdfDestinationKind::FitBoundingBoxVertical => self.u8(2),
+                        PdfDestinationKind::FitBoundingBox => self.u8(3),
+                        PdfDestinationKind::FitHorizontal => self.u8(4),
+                        PdfDestinationKind::FitVertical => self.u8(5),
+                        PdfDestinationKind::FitRectangle {
+                            width,
+                            height,
+                            depth,
+                        } => {
+                            self.u8(6);
+                            for value in [width, height, depth] {
+                                self.u8(u8::from(value.is_some()));
+                                if let Some(value) = value {
+                                    self.scaled(value);
+                                }
+                            }
+                        }
+                        PdfDestinationKind::Fit => self.u8(7),
+                    }
+                    self.scaled(marker.margin);
+                }
             }
         }
     }
@@ -1811,6 +1862,8 @@ impl Reader<'_> {
         self.expect_magic()?;
         let version = self.u8()?;
         if version != VERSION
+            && version != IMAGE_VERSION
+            && version != ANNOTATION_VERSION
             && version != PRE_ANNOTATION_VERSION
             && version != PDF_ACCESSIBILITY_VERSION
             && version != FONT_CONSTRUCTION_VERSION
@@ -2215,13 +2268,86 @@ impl Reader<'_> {
                         depth: self.scaled()?,
                     }
                 }
-                wire::effect::PDF_REF_XIMAGE if version >= PRE_IMAGE_VERSION => {
+                wire::effect::PDF_REF_XIMAGE if version >= IMAGE_VERSION => {
                     PageEffect::PdfRefXImage {
                         object: self.u32()?,
                         width: self.scaled()?,
                         height: self.scaled()?,
                         depth: self.scaled()?,
                     }
+                }
+                wire::effect::PDF_DESTINATION if version >= VERSION => {
+                    let identifier = match self.u8()? {
+                        0 => PdfDestinationIdentifier::Name(self.bytes()?),
+                        1 => PdfDestinationIdentifier::Number(self.u32()?),
+                        tag => {
+                            return Err(ParseError::InvalidTag {
+                                kind: "PDF destination identifier",
+                                tag,
+                            });
+                        }
+                    };
+                    let structure = match self.u8()? {
+                        0 => None,
+                        1 => Some(self.u32()?),
+                        tag => {
+                            return Err(ParseError::InvalidTag {
+                                kind: "PDF destination structure",
+                                tag,
+                            });
+                        }
+                    };
+                    let kind = match self.u8()? {
+                        0 => PdfDestinationKind::Xyz {
+                            zoom: match self.u8()? {
+                                0 => None,
+                                1 => Some(self.i32()?),
+                                tag => {
+                                    return Err(ParseError::InvalidTag {
+                                        kind: "PDF destination zoom",
+                                        tag,
+                                    });
+                                }
+                            },
+                        },
+                        1 => PdfDestinationKind::FitBoundingBoxHorizontal,
+                        2 => PdfDestinationKind::FitBoundingBoxVertical,
+                        3 => PdfDestinationKind::FitBoundingBox,
+                        4 => PdfDestinationKind::FitHorizontal,
+                        5 => PdfDestinationKind::FitVertical,
+                        6 => {
+                            let mut read = || -> Result<Option<Scaled>, ParseError> {
+                                Ok(match self.u8()? {
+                                    0 => None,
+                                    1 => Some(self.scaled()?),
+                                    tag => {
+                                        return Err(ParseError::InvalidTag {
+                                            kind: "PDF destination dimension",
+                                            tag,
+                                        });
+                                    }
+                                })
+                            };
+                            PdfDestinationKind::FitRectangle {
+                                width: read()?,
+                                height: read()?,
+                                depth: read()?,
+                            }
+                        }
+                        7 => PdfDestinationKind::Fit,
+                        tag => {
+                            return Err(ParseError::InvalidTag {
+                                kind: "PDF destination kind",
+                                tag,
+                            });
+                        }
+                    };
+                    PageEffect::PdfDestination(PdfDestinationEffect {
+                        identifier,
+                        structure,
+                        kind,
+                        margin: self.scaled()?,
+                    })
                 }
                 tag => {
                     return Err(ParseError::InvalidTag {
@@ -3056,10 +3182,13 @@ mod wire_tests {
             wire::effect::PDF_ACCESSIBILITY,
             wire::effect::PDF_ANNOTATION,
             wire::effect::PDF_REF_XIMAGE,
+            wire::effect::PDF_DESTINATION,
         ];
         let unique = tags.into_iter().collect::<std::collections::BTreeSet<_>>();
         assert_eq!(unique.len(), tags.len());
-        const { assert!(wire::effect::PDF_ANNOTATION == 16) };
-        const { assert!(wire::effect::PDF_REF_XIMAGE == 17) };
+        const {
+            assert!(wire::effect::PDF_ANNOTATION == 16);
+            assert!(wire::effect::PDF_DESTINATION == 18);
+        };
     }
 }

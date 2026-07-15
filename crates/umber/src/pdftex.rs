@@ -426,6 +426,7 @@ pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
         ),
         ("pdfximage", UnexpandablePrimitive::PdfXImage),
         ("pdfrefximage", UnexpandablePrimitive::PdfRefXImage),
+        ("pdfdest", UnexpandablePrimitive::PdfDest),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));

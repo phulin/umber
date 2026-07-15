@@ -376,6 +376,67 @@ fn append_whatsit_effect(
             height,
             depth,
         }),
+        Whatsit::PdfDestination {
+            identifier,
+            structure,
+            kind,
+        } => {
+            if suppress_deferred_streams {
+                return Ok(());
+            }
+            if color_target == tex_state::PdfColorStackTarget::Form {
+                return Err(ExecError::PdfDestinationInForm);
+            }
+            let identifier = match identifier {
+                tex_state::PdfActionIdentifier::Name(tokens) => {
+                    let mut text = String::new();
+                    for &token in stores.tokens(tokens) {
+                        tex_expand::append_token_string_text(stores, token, &mut text);
+                    }
+                    tex_out::PdfDestinationIdentifier::Name(text.into_bytes())
+                }
+                tex_state::PdfActionIdentifier::Number(number) => {
+                    tex_out::PdfDestinationIdentifier::Number(number)
+                }
+                tex_state::PdfActionIdentifier::Raw(_) => {
+                    unreachable!("destination scanner uses typed identifiers")
+                }
+            };
+            let kind = match kind {
+                tex_state::node::PdfDestinationKind::Xyz { zoom } => {
+                    tex_out::PdfDestinationKind::Xyz { zoom }
+                }
+                tex_state::node::PdfDestinationKind::FitBoundingBoxHorizontal => {
+                    tex_out::PdfDestinationKind::FitBoundingBoxHorizontal
+                }
+                tex_state::node::PdfDestinationKind::FitBoundingBoxVertical => {
+                    tex_out::PdfDestinationKind::FitBoundingBoxVertical
+                }
+                tex_state::node::PdfDestinationKind::FitBoundingBox => {
+                    tex_out::PdfDestinationKind::FitBoundingBox
+                }
+                tex_state::node::PdfDestinationKind::FitHorizontal => {
+                    tex_out::PdfDestinationKind::FitHorizontal
+                }
+                tex_state::node::PdfDestinationKind::FitVertical => {
+                    tex_out::PdfDestinationKind::FitVertical
+                }
+                tex_state::node::PdfDestinationKind::FitRectangle(dimensions) => {
+                    tex_out::PdfDestinationKind::FitRectangle {
+                        width: dimensions.width,
+                        height: dimensions.height,
+                        depth: dimensions.depth,
+                    }
+                }
+                tex_state::node::PdfDestinationKind::Fit => tex_out::PdfDestinationKind::Fit,
+            };
+            effects.push(PageEffect::PdfDestination(tex_out::PdfDestinationEffect {
+                identifier,
+                structure,
+                kind,
+                margin: stores.dimen_param(DimenParam::PDF_DEST_MARGIN),
+            }));
+        }
         Whatsit::OpenOut { .. }
         | Whatsit::CloseOut { .. }
         | Whatsit::DeferredWrite { .. }

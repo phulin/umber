@@ -49,6 +49,7 @@ pub use model::{
     EffectSink, FontResource, FontResourceConstruction, GlueKind, GlueOrder, GlueSetRatio,
     GlueSign, GlueSpec, JobInfo, KernKind, LeaderPayload, OpenTypeFontResource, PageArtifact,
     PageArtifactBuilder, PageEffect, PageNode, PageToken, PdfAccessibilityEffect,
-    PdfAnnotationEffect, PdfLiteralMode, TokenCatcode, UnvalidatedPageArtifact,
+    PdfAnnotationEffect, PdfDestinationEffect, PdfDestinationIdentifier, PdfDestinationKind,
+    PdfLiteralMode, TokenCatcode, UnvalidatedPageArtifact,
 };
 pub use tex_content::{ContentDomain, ContentHash, ContentIdentity};

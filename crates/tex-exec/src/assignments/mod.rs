@@ -807,6 +807,99 @@ fn execute_pdf_annotation(
     )
 }
 
+fn scan_pdf_destination_positive(
+    context: TracedTokenWord,
+    input: &mut InputStack,
+    stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
+    kind: &'static str,
+) -> Result<u32, ExecError> {
+    const MAX_HALFWORD: i32 = 1_073_741_823;
+    let value = scan_i32(input, stores, execution, context)?;
+    if !(1..=MAX_HALFWORD).contains(&value) {
+        return Err(ExecError::PdfActionPositiveIdentifier(kind));
+    }
+    Ok(value as u32)
+}
+
+fn execute_pdf_destination(
+    context: TracedTokenWord,
+    nest: &mut ModeNest,
+    input: &mut InputStack,
+    stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
+    use tex_state::PdfActionIdentifier;
+    use tex_state::node::PdfDestinationKind;
+
+    if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+        return Err(ExecError::PdfExtensionInDviMode("pdfdest"));
+    }
+    let structure = scan_optional_keyword_x(input, stores, execution, "struct")?
+        .then(|| {
+            scan_pdf_destination_positive(context, input, stores, execution, "structure identifier")
+        })
+        .transpose()?;
+    let identifier = if scan_optional_keyword_x(input, stores, execution, "num")? {
+        PdfActionIdentifier::Number(scan_pdf_destination_positive(
+            context,
+            input,
+            stores,
+            execution,
+            "destination identifier",
+        )?)
+    } else if scan_optional_keyword_x(input, stores, execution, "name")? {
+        PdfActionIdentifier::Name(scan_general_text_expanded_with_driver(
+            input,
+            &mut tex_state::ExpansionContext::new(stores),
+            execution,
+            context,
+        )?)
+    } else {
+        return Err(ExecError::PdfDestinationIdentifierMissing);
+    };
+    let kind = if scan_optional_keyword_x(input, stores, execution, "xyz")? {
+        let zoom = if scan_optional_keyword_x(input, stores, execution, "zoom")? {
+            let zoom = scan_i32(input, stores, execution, context)?;
+            Some(
+                (zoom <= 1_073_741_823)
+                    .then_some(zoom)
+                    .ok_or(ExecError::ArithmeticOverflow)?,
+            )
+        } else {
+            None
+        };
+        PdfDestinationKind::Xyz { zoom }
+    } else if scan_optional_keyword_x(input, stores, execution, "fitbh")? {
+        PdfDestinationKind::FitBoundingBoxHorizontal
+    } else if scan_optional_keyword_x(input, stores, execution, "fitbv")? {
+        PdfDestinationKind::FitBoundingBoxVertical
+    } else if scan_optional_keyword_x(input, stores, execution, "fitb")? {
+        PdfDestinationKind::FitBoundingBox
+    } else if scan_optional_keyword_x(input, stores, execution, "fith")? {
+        PdfDestinationKind::FitHorizontal
+    } else if scan_optional_keyword_x(input, stores, execution, "fitv")? {
+        PdfDestinationKind::FitVertical
+    } else if scan_optional_keyword_x(input, stores, execution, "fitr")? {
+        PdfDestinationKind::FitRectangle(scan_pdf_annotation_dimensions(
+            context, input, stores, execution,
+        )?)
+    } else if scan_optional_keyword_x(input, stores, execution, "fit")? {
+        PdfDestinationKind::Fit
+    } else {
+        return Err(ExecError::PdfDestinationKindMissing);
+    };
+    crate::vertical::append_node_to_current_list(
+        nest,
+        stores,
+        Node::Whatsit(tex_state::node::Whatsit::PdfDestination {
+            identifier,
+            structure,
+            kind,
+        }),
+    )
+}
+
 fn execute_pdf_start_link(
     context: TracedTokenWord,
     nest: &mut ModeNest,
@@ -2142,6 +2235,11 @@ fn execute_prefixed_command(
             UnexpandablePrimitive::PdfAnnot => {
                 reject_all_prefixes(prefixes)?;
                 execute_pdf_annotation(command.traced, nest, input, stores, execution)?;
+                Ok(CommandOutcome::continue_only())
+            }
+            UnexpandablePrimitive::PdfDest => {
+                reject_all_prefixes(prefixes)?;
+                execute_pdf_destination(command.traced, nest, input, stores, execution)?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::PdfStartLink => {

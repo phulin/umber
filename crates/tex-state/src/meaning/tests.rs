@@ -150,6 +150,7 @@ fn complete_primitive_codecs_are_unique_through_image_and_compatibility_registra
         (257, UnexpandablePrimitive::PdfEndLink),
         (258, UnexpandablePrimitive::PdfRunningLinkOn),
         (259, UnexpandablePrimitive::PdfRunningLinkOff),
+        (260, UnexpandablePrimitive::PdfDest),
     ];
     for (operand, primitive) in annotations {
         assert_eq!(primitive.operand(), operand);
@@ -173,7 +174,7 @@ fn complete_primitive_codecs_are_unique_through_image_and_compatibility_registra
     }
 
     let mut unexpandable = std::collections::HashSet::new();
-    for operand in 0..=259 {
+    for operand in 0..=260 {
         if let Some(primitive) = UnexpandablePrimitive::from_operand(operand) {
             assert_eq!(primitive.operand(), operand);
             assert!(

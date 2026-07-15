@@ -429,6 +429,7 @@ pub enum PageEffect {
         height: Scaled,
         depth: Scaled,
     },
+    PdfDestination(PdfDestinationEffect),
 }
 
 /// Ordered PDF-only accessibility control retained at its shipped position.
@@ -453,6 +454,39 @@ pub enum PdfLiteralMode {
     Origin,
     Page,
     Direct,
+}
+
+/// A destination marker whose final page coordinates are resolved by traversal.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct PdfDestinationEffect {
+    pub identifier: PdfDestinationIdentifier,
+    pub structure: Option<u32>,
+    pub kind: PdfDestinationKind,
+    pub margin: Scaled,
+}
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum PdfDestinationIdentifier {
+    Name(Vec<u8>),
+    Number(u32),
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PdfDestinationKind {
+    Xyz {
+        zoom: Option<i32>,
+    },
+    FitBoundingBoxHorizontal,
+    FitBoundingBoxVertical,
+    FitBoundingBox,
+    FitHorizontal,
+    FitVertical,
+    FitRectangle {
+        width: Option<Scaled>,
+        height: Option<Scaled>,
+        depth: Option<Scaled>,
+    },
+    Fit,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -557,7 +591,9 @@ fn validate_artifact(
             | PageEffect::PdfSnapRefPoint
             | PageEffect::PdfSnapY { .. }
             | PageEffect::PdfSnapYComp { .. } => None,
-            PageEffect::PdfRefXForm { .. } | PageEffect::PdfRefXImage { .. } => None,
+            PageEffect::PdfRefXForm { .. }
+            | PageEffect::PdfRefXImage { .. }
+            | PageEffect::PdfDestination(_) => None,
         };
         if stream.is_some_and(|stream| stream >= 16) {
             return Err(ArtifactValidationError::InvalidStream {

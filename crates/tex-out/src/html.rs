@@ -752,8 +752,9 @@ fn write_page(
                 out.push_str("\"></span>\n");
             }
             PositionedEvent::PdfAccessibility(_) => {}
-            PositionedEvent::PdfAnnotation(_) => {}
-            PositionedEvent::PdfGraphics(_) => {}
+            PositionedEvent::PdfAnnotation(_)
+            | PositionedEvent::PdfDestination(_)
+            | PositionedEvent::PdfGraphics(_) => {}
             PositionedEvent::BoxEnd(_) => {}
         }
         check_html_size(out, options)?;

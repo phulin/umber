@@ -1283,6 +1283,54 @@ impl Stores {
                 hasher.i32(height.raw());
                 hasher.i32(depth.raw());
             }
+            Whatsit::PdfDestination {
+                identifier,
+                structure,
+                kind,
+            } => {
+                hasher.tag(24);
+                match identifier {
+                    crate::PdfActionIdentifier::Name(tokens) => {
+                        hasher.u8(0);
+                        self.hash_token_list_semantic(*tokens, hasher);
+                    }
+                    crate::PdfActionIdentifier::Number(number) => {
+                        hasher.u8(1);
+                        hasher.u32(*number);
+                    }
+                    crate::PdfActionIdentifier::Raw(_) => {
+                        unreachable!("destinations use typed identifiers")
+                    }
+                }
+                hasher.bool(structure.is_some());
+                if let Some(structure) = structure {
+                    hasher.u32(*structure);
+                }
+                match kind {
+                    crate::node::PdfDestinationKind::Xyz { zoom } => {
+                        hasher.u8(0);
+                        hasher.bool(zoom.is_some());
+                        if let Some(zoom) = zoom {
+                            hasher.i32(*zoom);
+                        }
+                    }
+                    crate::node::PdfDestinationKind::FitBoundingBoxHorizontal => hasher.u8(1),
+                    crate::node::PdfDestinationKind::FitBoundingBoxVertical => hasher.u8(2),
+                    crate::node::PdfDestinationKind::FitBoundingBox => hasher.u8(3),
+                    crate::node::PdfDestinationKind::FitHorizontal => hasher.u8(4),
+                    crate::node::PdfDestinationKind::FitVertical => hasher.u8(5),
+                    crate::node::PdfDestinationKind::FitRectangle(dimensions) => {
+                        hasher.u8(6);
+                        for value in [dimensions.width, dimensions.height, dimensions.depth] {
+                            hasher.bool(value.is_some());
+                            if let Some(value) = value {
+                                hasher.i32(value.raw());
+                            }
+                        }
+                    }
+                    crate::node::PdfDestinationKind::Fit => hasher.u8(7),
+                }
+            }
         }
     }
 

@@ -165,6 +165,9 @@ pub enum ExecError {
     PdfActionWindowRequiresGotoFile,
     PdfEndLinkWithoutStart,
     PdfLinkInVerticalMode(&'static str),
+    PdfDestinationIdentifierMissing,
+    PdfDestinationKindMissing,
+    PdfDestinationInForm,
     VSplitNeedsVBox,
     Box255NotVoidBeforeOutput,
     OutputRoutineBox255NotVoid,
@@ -359,6 +362,15 @@ impl fmt::Display for ExecError {
             Self::PdfLinkInVerticalMode(name) => {
                 write!(f, "You can't use `\\{name}' in vertical mode.")
             }
+            Self::PdfDestinationIdentifierMissing => {
+                f.write_str("pdfTeX error (ext4): destination identifier type missing")
+            }
+            Self::PdfDestinationKindMissing => {
+                f.write_str("pdfTeX error (ext4): destination type missing")
+            }
+            Self::PdfDestinationInForm => {
+                f.write_str("pdfTeX error (ext4): destinations cannot be inside an XForm")
+            }
             Self::VSplitNeedsVBox => write!(f, "\\vsplit needs a \\vbox"),
             Self::Box255NotVoidBeforeOutput => write!(f, "\\box255 is not void"),
             Self::OutputRoutineBox255NotVoid => {
@@ -448,6 +460,9 @@ impl std::error::Error for ExecError {
             | Self::PdfActionWindowRequiresGotoFile
             | Self::PdfEndLinkWithoutStart
             | Self::PdfLinkInVerticalMode(_)
+            | Self::PdfDestinationIdentifierMissing
+            | Self::PdfDestinationKindMissing
+            | Self::PdfDestinationInForm
             | Self::VSplitNeedsVBox
             | Self::Box255NotVoidBeforeOutput
             | Self::OutputRoutineBox255NotVoid
@@ -534,6 +549,9 @@ impl ExecError {
             | Self::PdfActionWindowRequiresGotoFile
             | Self::PdfEndLinkWithoutStart
             | Self::PdfLinkInVerticalMode(_)
+            | Self::PdfDestinationIdentifierMissing
+            | Self::PdfDestinationKindMissing
+            | Self::PdfDestinationInForm
             | Self::VSplitNeedsVBox
             | Self::Box255NotVoidBeforeOutput
             | Self::OutputRoutineBox255NotVoid

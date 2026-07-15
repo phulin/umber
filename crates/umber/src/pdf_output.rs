@@ -685,6 +685,7 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                 }
                 PositionedEvent::Box(_)
                 | PositionedEvent::BoxEnd(_)
+                | PositionedEvent::PdfDestination(_)
                 | PositionedEvent::TextRun(_) => {}
             }
         }
@@ -1001,6 +1002,7 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                 | PositionedEvent::BoxEnd(_)
                 | PositionedEvent::PdfAccessibility(_)
                 | PositionedEvent::PdfAnnotation(_)
+                | PositionedEvent::PdfDestination(_)
                 | PositionedEvent::TextRun(_) => {}
             }
         }
@@ -1354,7 +1356,8 @@ fn lower_page_annotations(
                 | PositionedEvent::Rule(_)
                 | PositionedEvent::Special(_)
                 | PositionedEvent::PdfAccessibility(_)
-                | PositionedEvent::PdfGraphics(_) => {}
+                | PositionedEvent::PdfGraphics(_)
+                | PositionedEvent::PdfDestination(_) => {}
             }
         }
         result.push(shipped);

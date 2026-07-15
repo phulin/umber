@@ -180,7 +180,7 @@ pub fn compare_page(
                 }
             }
             PositionedEvent::PdfAccessibility(_) => {}
-            PositionedEvent::PdfAnnotation(_) => {}
+            PositionedEvent::PdfAnnotation(_) | PositionedEvent::PdfDestination(_) => {}
             PositionedEvent::BoxEnd(_) => {}
         }
     }
