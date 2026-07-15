@@ -850,6 +850,22 @@ mod tests {
     }
 
     #[test]
+    fn pdfpageref_expands_to_shipped_page_object_and_zero_for_missing_pages() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let output = crate::run_memory_with_stores(
+            "\\pdfoutput=1\\shipout\\hbox{}\\message{page=\\pdfpageref1,missing=\\pdfpageref2}\\end",
+            &mut stores,
+        )
+        .expect("pdfpageref run");
+        let page_object = stores.pdf_pages()[0].page_object();
+        assert!(
+            output.contains(&format!("page={page_object},missing=0")),
+            "{output}"
+        );
+    }
+
+    #[test]
     fn pdf_destination_duplicate_scanned_after_ship_uses_current_suppression() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);

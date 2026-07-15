@@ -237,6 +237,9 @@ pub trait ExpansionState {
     fn pdf_form(&self, _object: u32) -> Option<crate::PdfFormRecord> {
         None
     }
+    fn pdf_page_object(&self, _page: u32) -> Option<u32> {
+        None
+    }
     fn pdf_last_form(&self) -> u32 {
         0
     }
@@ -4648,6 +4651,12 @@ impl ExpansionState for Universe {
         Self::pdf_form(self, object)
     }
 
+    fn pdf_page_object(&self, page: u32) -> Option<u32> {
+        page.checked_sub(1)
+            .and_then(|index| Self::pdf_pages(self).get(index as usize))
+            .map(|record| record.page_object())
+    }
+
     fn pdf_last_form(&self) -> u32 {
         Self::pdf_last_form(self)
     }
@@ -5160,6 +5169,12 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn pdf_form(&self, object: u32) -> Option<crate::PdfFormRecord> {
         self.universe.pdf_form(object)
+    }
+
+    fn pdf_page_object(&self, page: u32) -> Option<u32> {
+        page.checked_sub(1)
+            .and_then(|index| self.universe.pdf_pages().get(index as usize))
+            .map(|record| record.page_object())
     }
 
     fn pdf_last_form(&self) -> u32 {

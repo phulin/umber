@@ -275,6 +275,7 @@ pub enum ExpandablePrimitive {
     PdfXImageBBox,
     PdfColorStackInit,
     PdfXFormName,
+    PdfPageRef,
     /// Accesses the immutable original primitive table.
     PdfPrimitive,
     /// Tests current meaning against the same-spelling original primitive.
@@ -385,6 +386,7 @@ impl ExpandablePrimitive {
             Self::PdfXImageBBox => 82,
             Self::PdfColorStackInit => 83,
             Self::PdfXFormName => 84,
+            Self::PdfPageRef => 85,
         }
     }
 
@@ -476,6 +478,7 @@ impl ExpandablePrimitive {
             82 => Some(Self::PdfXImageBBox),
             83 => Some(Self::PdfColorStackInit),
             84 => Some(Self::PdfXFormName),
+            85 => Some(Self::PdfPageRef),
             _ => None,
         }
     }

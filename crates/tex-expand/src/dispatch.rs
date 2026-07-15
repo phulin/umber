@@ -628,6 +628,27 @@ macro_rules! dispatch_match {
                     call_origin,
                 ))
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfPageRef) => {
+                let page = scan_int::scan_int_with_mode_and_context(
+                    input, stores, expansion, mode, call_context,
+                )?
+                .value();
+                crate::record_dependency!(
+                    expansion,
+                    crate::ReadDependency::Engine(crate::ReadEngineField::PdfPages)
+                );
+                let object = u32::try_from(page)
+                    .ok()
+                    .filter(|page| *page != 0)
+                    .and_then(|page| stores.pdf_page_object(page))
+                    .unwrap_or(0);
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::NumberOutput,
+                    &object.to_string(),
+                    call_origin,
+                ))
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfPrimitive) => {
                 let Some(target) = crate::next_semantic_raw_token(input, stores)? else {
                     return Err(ExpandError::MissingTokenAfterPrimitive {
@@ -1549,6 +1570,7 @@ pub fn dispatch_expandable_opcode(opcode: ExpandableOpcode) -> Result<(), Expand
         | ExpandableOpcode::PdfXImageBBox
         | ExpandableOpcode::PdfColorStackInit
         | ExpandableOpcode::PdfXFormName
+        | ExpandableOpcode::PdfPageRef
         | ExpandableOpcode::IfDefined
         | ExpandableOpcode::IfCsName
         | ExpandableOpcode::IfInCsName

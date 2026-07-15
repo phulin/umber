@@ -427,6 +427,10 @@ pub fn install_pdftex_expandable_primitives(stores: &mut Universe) {
             "pdfxformname",
             tex_state::meaning::ExpandablePrimitive::PdfXFormName,
         ),
+        (
+            "pdfpageref",
+            tex_state::meaning::ExpandablePrimitive::PdfPageRef,
+        ),
     ] {
         stores.install_primitive_meaning(name, Meaning::ExpandablePrimitive(primitive));
     }
@@ -528,6 +532,7 @@ pub enum ReadEngineField {
     PdfObjects,
     PdfPositions,
     PdfForms,
+    PdfPages,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -658,6 +663,7 @@ pub enum ExpandableOpcode {
     PdfXImageBBox,
     PdfColorStackInit,
     PdfXFormName,
+    PdfPageRef,
     IfDefined,
     IfCsName,
     IfInCsName,

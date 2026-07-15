@@ -135,6 +135,18 @@ fn pdf_accessibility_operands_are_unique_and_follow_parallel_reservations() {
             );
         }
     }
+
+    let mut expandable = Vec::new();
+    for operand in 0..=85 {
+        let value =
+            ExpandablePrimitive::from_operand(operand).expect("contiguous expandable operand");
+        assert_eq!(value.operand(), operand);
+        assert!(
+            !expandable.contains(&value),
+            "duplicate expandable operand {operand}"
+        );
+        expandable.push(value);
+    }
     // 238..=246 belong to the accepted form/image branch. They may be absent
     // until that branch merges, but this slice must never claim them.
     for reserved in 238..=246 {
