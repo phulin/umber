@@ -11,7 +11,7 @@ use tex_state::provenance::{InsertedOriginKind, OriginRecord};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{
     EditorLayout, ExpansionState, FragmentStore, LayoutGeneration, Piece, ProvenanceResolver,
-    TracedTokenList, Universe,
+    Universe,
 };
 
 mod input_lines;
