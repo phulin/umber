@@ -21,6 +21,7 @@ if [[ "$target_dir" != /* ]]; then
 fi
 format_output_dir="${target_dir}/latex-parity/format"
 receipt="${target_dir}/latex-parity/last-run-format-receipt.txt"
+active_receipt="$receipt"
 triage_dir="${target_dir}/latex-parity/triage"
 
 usage() {
@@ -96,7 +97,8 @@ prepare_format() {
 
 start_receipt() {
   mkdir -p "$(dirname "$receipt")"
-  cat > "$receipt" <<EOF
+  active_receipt="${receipt}.$$"
+  cat > "$active_receipt" <<EOF
 schema 1
 format ${format_file}
 format_bytes ${format_bytes}
@@ -114,7 +116,7 @@ stage_format() {
   staged_hash="$(sha256 "$staged")"
   [[ "$staged_hash" == "$format_sha256" ]] || \
     fail "staged format identity changed for $case_name"
-  printf 'case %s %s %s\n' "$case_name" "$staged_hash" "$staged" >> "$receipt"
+  printf 'case %s %s %s\n' "$case_name" "$staged_hash" "$staged" >> "$active_receipt"
 }
 
 run_format_reuse_self_test() {
@@ -154,9 +156,9 @@ EOF
   done
   [[ "$(cat "$count_file")" == 1 ]] || fail "self-test format builder did not run once"
   [[ "$format_build_count" == 1 ]] || fail "self-test recorded the wrong build count"
-  [[ "$(awk '$1 == "case" { print $3 }' "$receipt" | sort -u | wc -l | tr -d ' ')" == 1 ]] || \
+  [[ "$(awk '$1 == "case" { print $3 }' "$active_receipt" | sort -u | wc -l | tr -d ' ')" == 1 ]] || \
     fail "self-test staged more than one format identity"
-  [[ "$(awk '$1 == "case" { count++ } END { print count + 0 }' "$receipt")" == 3 ]] || \
+  [[ "$(awk '$1 == "case" { count++ } END { print count + 0 }' "$active_receipt")" == 3 ]] || \
     fail "self-test did not stage every case"
   printf '%s\n' 'LaTeX parity format-reuse self-test: passed (one build, three identical restores)'
 }
@@ -320,10 +322,10 @@ while IFS= read -r path; do
 done < "$case_list"
 
 [[ $selected -gt 0 ]] || fail "no manifest case matched '${case_filter:-the suite}'"
-receipt_cases="$(awk '$1 == "case" { count++ } END { print count + 0 }' "$receipt")"
+receipt_cases="$(awk '$1 == "case" { count++ } END { print count + 0 }' "$active_receipt")"
 [[ "$receipt_cases" == "$dvi_selected" ]] || fail "format receipt omitted a DVI case"
 if [[ $dvi_selected -gt 0 ]]; then
-  receipt_hashes="$(awk '$1 == "case" { print $3 }' "$receipt" | sort -u | wc -l | tr -d ' ')"
+  receipt_hashes="$(awk '$1 == "case" { print $3 }' "$active_receipt" | sort -u | wc -l | tr -d ' ')"
   [[ "$receipt_hashes" == 1 ]] || fail "selected DVI cases did not restore one format identity"
 fi
 if [[ -z "$case_filter" ]]; then
@@ -335,6 +337,7 @@ printf 'LaTeX format reuse: %s cases restored sha256:%s (builder invocations: %s
   "$dvi_selected" "$format_sha256" "$format_build_count"
 printf 'LaTeX DVI census: %s candidates, %s classic DVI cases, %s non-DVI configurations (%s)\n' \
   "$selected" "$dvi_selected" "$((selected - dvi_selected))" "$non_dvi"
+mv "$active_receipt" "$receipt"
 if [[ $failed -gt 0 ]]; then
   printf 'LaTeX DVI parity failures: %s of %s; list: %s\n' "$failed" "$dvi_selected" "$failures" >&2
   exit 1
