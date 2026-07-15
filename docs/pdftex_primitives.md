@@ -62,7 +62,7 @@ oracle-backed test. Every name in a missing row is missing.
 | PDF dimension parameters | 13 | done | `\pdfhorigin`, `\pdfvorigin`, `\pdfpagewidth`, `\pdfpageheight`, `\pdflinkmargin`, `\pdfdestmargin`, `\pdfthreadmargin`, `\pdffirstlineheight`, `\pdflastlinedepth`, `\pdfeachlineheight`, `\pdfeachlinedepth`, `\pdfignoreddimen`, `\pdfpxdimen` |
 | Font construction and primitive recovery | 3 | done | `\pdfprimitive`, `\letterspacefont`, `\pdfcopyfont` |
 | Read-only integer enquiries | 14 | partial (1 done) | `\pdftexversion` (done); `\pdflastobj`, `\pdflastxform`, `\pdflastximage`, `\pdflastximagepages`, `\pdflastannot`, `\pdflastxpos`, `\pdflastypos`, `\pdfretval`, `\pdflastximagecolordepth`, `\pdfelapsedtime`, `\pdfshellescape`, `\pdfrandomseed`, `\pdflastlink` |
-| Expandable conversions and enquiries | 27 | partial (18 done) | `\expanded`, `\pdftexrevision`, `\pdftexbanner`, `\pdffontsize`, `\pdffontname`, `\pdffontobjnum`, `\leftmarginkern`, `\rightmarginkern`, `\pdfescapestring`, `\pdfescapename`, `\pdfescapehex`, `\pdfunescapehex`, `\pdfcreationdate`, `\pdffilemoddate`, `\pdffilesize`, `\pdfmdfivesum`, `\pdffiledump`, `\pdfstrcmp` (done); `\pdfpageref`, `\pdfxformname`, `\pdfmatch`, `\pdflastmatch`, `\pdfcolorstackinit`, `\pdfuniformdeviate`, `\pdfnormaldeviate`, `\pdfinsertht`, `\pdfximagebbox` |
+| Expandable conversions and enquiries | 27 | partial (20 done) | `\expanded`, `\pdftexrevision`, `\pdftexbanner`, `\pdffontsize`, `\pdffontname`, `\pdffontobjnum`, `\leftmarginkern`, `\rightmarginkern`, `\pdfescapestring`, `\pdfescapename`, `\pdfescapehex`, `\pdfunescapehex`, `\pdfcreationdate`, `\pdffilemoddate`, `\pdffilesize`, `\pdfmdfivesum`, `\pdffiledump`, `\pdfstrcmp`, `\pdfmatch`, `\pdflastmatch` (done); `\pdfpageref`, `\pdfxformname`, `\pdfcolorstackinit`, `\pdfuniformdeviate`, `\pdfnormaldeviate`, `\pdfinsertht`, `\pdfximagebbox` |
 | Primitive-identity conditional | 1 | done | `\ifpdfprimitive` |
 | Horizontal-mode normalization | 1 | missing | `\quitvmode` |
 | Character codes and ligature control | 10 | done | `\lpcode`, `\rpcode`, `\efcode`, `\tagcode`, `\knbscode`, `\stbscode`, `\shbscode`, `\knbccode`, `\knaccode`, `\pdfnoligatures` |
@@ -185,6 +185,13 @@ pdfTeX bytes rather than Rust text ordering. Their results use space catcode
 for byte 32 and other catcode for every other byte. Hex output is uppercase;
 hex input ignores non-hex bytes and pads an unmatched final high nibble with
 zero, matching the pinned pdfTeX 1.40.27 oracle.
+`\pdfmatch` implements POSIX extended regular expressions over those same byte
+strings, including `icase`, leftmost-longest matching, C-string NUL
+termination, and the `subcount` capture limit. `\pdflastmatch` reports decimal
+byte offsets and raw capture bytes. Capture state is checkpointed and hashed
+but deliberately not grouped, matching pdfTeX's process-global match storage;
+a no-match result clears capture availability, while a malformed expression
+reports a recoverable warning and preserves the preceding successful state.
 Creation time comes from the immutable job clock. File size, modification
 date, byte dump, and file-mode MD5 enquiries resolve immutable content through
 the same driver input policy as `\input`; expansion code never reads the host
