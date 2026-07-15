@@ -467,6 +467,8 @@ pub struct Snapshot {
     interaction_mode: InteractionMode,
     page: PageBuilderState,
     pdf: PdfStateSnapshot,
+    exact_store_identity: Option<ContentHash>,
+    exact_page_identity: Option<ContentHash>,
     state_hash: u64,
     state_hash_base: StateHashBase,
 }
@@ -685,6 +687,27 @@ impl Snapshot {
     #[must_use]
     pub const fn state_hash(&self) -> u64 {
         self.state_hash
+    }
+
+    /// Verifies equality of every future-relevant root retained by two named
+    /// checkpoints without treating the folded 64-bit history hash as proof.
+    ///
+    /// The canonical store identity is deliberately optional: open groups
+    /// cannot currently be encoded by the format codec, and that case is a
+    /// safe miss. Detached effect and artifact history is excluded; callers
+    /// splice those ordered prefixes separately.
+    #[must_use]
+    pub fn exact_future_state_matches(&self, other: &Self) -> bool {
+        matches!(
+            (self.exact_store_identity, other.exact_store_identity),
+            (Some(left), Some(right)) if left == right
+        ) && self.exact_page_identity.is_some()
+            && self.exact_page_identity == other.exact_page_identity
+            && self
+                .input_summary
+                .exact_future_state_matches(&other.input_summary)
+            && self.interaction_mode == other.interaction_mode
+            && self.world.exact_future_state_matches(&other.world)
     }
 }
 
@@ -2057,6 +2080,14 @@ impl Universe {
     }
 
     fn checkpoint_from_hash_base(&mut self, hash_base: StateHashBase) -> Snapshot {
+        // The page codec is the allocation-independent semantic projection
+        // already used by page replay. Provenance is returned separately and
+        // intentionally does not participate in continuation equality.
+        let exact_page_identity = self
+            .detach_page_memo_transition()
+            .ok()
+            .and_then(|(value, _)| value.to_bytes().ok())
+            .map(|bytes| ContentHash::from_bytes(&bytes));
         let world = self.world.snapshot();
         let store = self.stores.checkpoint();
         let store_cursor = self.stores.state_hash_cursor_from_snapshot(&store);
@@ -2100,6 +2131,11 @@ impl Universe {
             .next_snapshot_serial
             .checked_add(1)
             .expect("Universe snapshot serial exhausted");
+        let exact_store_identity = self
+            .stores
+            .encode_semantic_identity()
+            .ok()
+            .map(|bytes| ContentHash::from_bytes(&bytes));
         Snapshot {
             owner: self.owner.snapshot_owner(),
             serial,
@@ -2110,6 +2146,8 @@ impl Universe {
             interaction_mode: self.interaction_mode,
             page: self.page.clone(),
             pdf: self.pdf.snapshot(),
+            exact_store_identity,
+            exact_page_identity,
             state_hash,
             state_hash_base: next_hash_base,
         }

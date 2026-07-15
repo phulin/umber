@@ -450,6 +450,27 @@ impl Hash for InputSummary {
 }
 
 impl InputSummary {
+    /// Exact future input semantics with revision-relative byte coordinates
+    /// excluded. The editor checkpoint restore separately proves the mapped
+    /// root suffix; this comparison retains line/token content and lexer state
+    /// so buffered tokens from a semantic edit cannot spuriously converge.
+    pub(crate) fn exact_future_state_matches(&self, other: &Self) -> bool {
+        let left = &self.semantic_root.0;
+        let right = &other.semantic_root.0;
+        left.unicode_superscript_notation == right.unicode_superscript_notation
+            && left.frames.len() == right.frames.len()
+            && left
+                .frames
+                .iter()
+                .zip(&right.frames)
+                .all(|(left, right)| input_frame_future_eq(left, right))
+            && match (&left.last_source_frame, &right.last_source_frame) {
+                (Some(left), Some(right)) => source_frame_future_eq(left, right),
+                (None, None) => true,
+                _ => false,
+            }
+    }
+
     pub(crate) fn retained_bytes(&self) -> usize {
         let frames = self
             .semantic_root
@@ -684,6 +705,69 @@ impl InputSummary {
             source_id,
         ))
     }
+}
+
+fn input_frame_future_eq(left: &InputFrameSummary, right: &InputFrameSummary) -> bool {
+    match (left, right) {
+        (
+            InputFrameSummary::Source { source: left, .. },
+            InputFrameSummary::Source { source: right, .. },
+        ) => source_frame_future_eq(left, right),
+        (
+            InputFrameSummary::TokenList {
+                token_list: left_list,
+                replay_kind: left_kind,
+                index: left_index,
+                macro_arguments: left_arguments,
+                ..
+            },
+            InputFrameSummary::TokenList {
+                token_list: right_list,
+                replay_kind: right_kind,
+                index: right_index,
+                macro_arguments: right_arguments,
+                ..
+            },
+        ) => {
+            left_list == right_list
+                && left_kind == right_kind
+                && left_index == right_index
+                && macro_arguments_semantic_eq(left_arguments, right_arguments)
+        }
+        (
+            InputFrameSummary::TransientTokenList {
+                tokens: left_tokens,
+                replay_kind: left_kind,
+                ..
+            },
+            InputFrameSummary::TransientTokenList {
+                tokens: right_tokens,
+                replay_kind: right_kind,
+                ..
+            },
+        ) => left_kind == right_kind && traced_tokens_semantic_eq(left_tokens, right_tokens),
+        (
+            InputFrameSummary::Condition {
+                condition: left, ..
+            },
+            InputFrameSummary::Condition {
+                condition: right, ..
+            },
+        ) => left == right,
+        _ => false,
+    }
+}
+
+fn source_frame_future_eq(left: &SourceFrameSummary, right: &SourceFrameSummary) -> bool {
+    left.line_number == right.line_number
+        && left.column == right.column
+        && left.lexer_state == right.lexer_state
+        && left.normalized_line == right.normalized_line
+        && left.line_byte_offset == right.line_byte_offset
+        && left.synthetic_endline_start == right.synthetic_endline_start
+        && left.end_after_current_line == right.end_after_current_line
+        && left.scantokens == right.scantokens
+        && traced_pending_tokens_eq(&left.pending, &right.pending)
 }
 
 /// Snapshot summary for one input frame.

@@ -84,6 +84,15 @@ impl EngineCheckpoint {
         self.root_anchor
     }
 
+    /// Returns true only when both checkpoints carry a strong canonical store
+    /// identity and all remaining future-relevant roots compare exactly.
+    #[must_use]
+    pub fn exact_future_state_matches(&self, other: &Self) -> bool {
+        self.boundary == other.boundary
+            && self.universe.exact_future_state_matches(&other.universe)
+            && self.modes == other.modes
+    }
+
     /// Rehomes revision-relative root metadata after a validated convergence
     /// match while adopting the owner-exact state snapshot by reference.
     pub fn rehome_converged_root(

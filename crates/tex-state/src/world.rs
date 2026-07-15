@@ -907,6 +907,18 @@ pub struct WorldSnapshot {
     commit_mode: WorldCommitMode,
 }
 
+impl WorldSnapshot {
+    /// Exact state that can affect future execution, excluding already
+    /// detached effect, input, shell-command, and artifact history.
+    pub(crate) fn exact_future_state_matches(&self, other: &Self) -> bool {
+        self.stream_bufs == other.stream_bufs
+            && self.rng == other.rng
+            && self.job_clock == other.job_clock
+            && self.shell_escape_policy == other.shell_escape_policy
+            && self.commit_mode == other.commit_mode
+    }
+}
+
 /// Cursor into World-owned state for semantic convergence hashing.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct WorldStateHashCursor {

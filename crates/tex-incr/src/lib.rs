@@ -129,6 +129,8 @@ pub struct ReuseMetrics {
     pub reexecuted_paragraphs: usize,
     pub same_history_attempts: usize,
     pub same_history_hash_mismatches: usize,
+    pub trace_nodes_walked: usize,
+    pub suffixes_adopted: usize,
     pub same_history_stop: SameHistoryStop,
     pub restart_fork_latency: Duration,
     pub reexecution_latency: Duration,
@@ -138,11 +140,11 @@ pub struct ReuseMetrics {
 /// Why identical-history suffix adoption did or did not stop re-execution.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum SameHistoryStop {
-    /// A mapped schedule entry had the same folded history hash.
+    /// A mapped schedule entry passed exact future-state verification.
     Matched,
     /// The mapped named-boundary schedule differed from the accepted revision.
     ScheduleDiverged,
-    /// Every comparable boundary had a different folded history hash.
+    /// Every comparable boundary failed exact future-state verification.
     HashesDiverged,
     /// No old boundary after the restart anchor could be mapped and compared.
     NoComparableBoundary,
@@ -893,6 +895,8 @@ impl Session {
                         reexecuted_paragraphs,
                         same_history_attempts,
                         same_history_hash_mismatches,
+                        trace_nodes_walked: same_history_attempts,
+                        suffixes_adopted: 1,
                         same_history_stop,
                         restart_fork_latency,
                         reexecution_latency,
@@ -940,6 +944,8 @@ impl Session {
                         reexecuted_paragraphs,
                         same_history_attempts,
                         same_history_hash_mismatches,
+                        trace_nodes_walked: same_history_attempts,
+                        suffixes_adopted: 0,
                         same_history_stop,
                         restart_fork_latency,
                         reexecution_latency,
@@ -1326,7 +1332,7 @@ struct AdvanceRun {
 struct ResumeSink {
     records: Vec<BoundaryRecord>,
     occurrences: HashMap<(usize, EngineBoundary), u32>,
-    expected: Vec<(usize, BoundaryKey, u64)>,
+    expected: Vec<(usize, BoundaryKey, EngineCheckpoint)>,
     next_expected: usize,
     convergence_old_index: Option<usize>,
     schedule_diverged: bool,
@@ -1355,7 +1361,7 @@ impl ResumeSink {
                             position,
                             ..record.key
                         },
-                        record.state_hash(),
+                        record.checkpoint().clone(),
                     )
                 })
             })
@@ -1384,8 +1390,8 @@ impl CheckpointSink for ResumeSink {
         if self.schedule_diverged {
             return;
         }
-        let Some((old_index, expected_key, expected_hash)) =
-            self.expected.get(self.next_expected).copied()
+        let Some((old_index, expected_key, expected_checkpoint)) =
+            self.expected.get(self.next_expected)
         else {
             self.schedule_diverged = true;
             return;
@@ -1394,14 +1400,17 @@ impl CheckpointSink for ResumeSink {
         if self.changed_new_range.contains(&actual.key.position) {
             return;
         }
-        if actual.key != expected_key {
+        if actual.key != *expected_key {
             self.schedule_diverged = true;
             return;
         }
         self.next_expected += 1;
         self.same_history_attempts += 1;
-        if actual.state_hash() == expected_hash {
-            self.convergence_old_index = Some(old_index);
+        if actual
+            .checkpoint()
+            .exact_future_state_matches(expected_checkpoint)
+        {
+            self.convergence_old_index = Some(*old_index);
         } else {
             self.same_history_hash_mismatches += 1;
         }

@@ -340,6 +340,16 @@ impl Stores {
         // A format captures the reachable box graph below and deliberately
         // drops transient mode/page material, just as TeX's `store_fmt_file`
         // does not serialize the current nest or contribution list.
+        self.encode_semantic_identity()
+    }
+
+    /// Canonical semantic store bytes for checkpoint verification. Survivor
+    /// pins are retention metadata, so unlike a restorable format dump they
+    /// neither prevent nor participate in this identity.
+    pub(crate) fn encode_semantic_identity(&self) -> Result<Vec<u8>, StoreFormatError> {
+        if self.env.group_depth() != 0 {
+            return Err(StoreFormatError::OpenGroups(self.env.group_depth()));
+        }
         let format = StoreFormat::capture(self)?;
         bincode::serialize(&format).map_err(|error| StoreFormatError::Codec(error.to_string()))
     }

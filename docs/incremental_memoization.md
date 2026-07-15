@@ -571,6 +571,18 @@ identity verifies equality before suffix adoption.
 
 Failure to match merely continues trace validation and replay.
 
+The implemented splice walks the flat ordered named-boundary trace after the
+restart point. Every mapped boundary is attempted even after an earlier miss,
+so a semantic edit can retype its changed pages and still adopt later pages.
+Adoption now requires a SHA-256 identity of canonical store state, the
+allocation-independent detached page transition, an exact future-input
+comparison that ignores only revision-relative coordinates, exact mode state,
+and exact future-relevant World scalars. Existing detached effect and artifact
+prefixes remain outside that comparison and are composed in order. Boundaries
+inside open groups, or any boundary whose canonical projection cannot be
+formed, are safe misses. The folded `state_hash` remains diagnostic telemetry
+and is not consulted by the splice decision.
+
 ## Cache ownership, trust, and eviction
 
 The first cache is session-local, single-threaded, and byte-budgeted. It owns
