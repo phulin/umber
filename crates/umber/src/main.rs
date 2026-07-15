@@ -1,5 +1,6 @@
+use std::collections::BTreeMap;
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use tex_lex::{InputStack, Lexer, WorldInput};
@@ -294,6 +295,12 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
         let format = stores.dump_format()?;
         driver_files.push(DriverFile::new(output.clone(), format));
     }
+    if let Some(output) = &opts.input_records_out {
+        driver_files.push(DriverFile::new(
+            output.clone(),
+            input_record_receipt(stores.world())?,
+        ));
+    }
     let effect_pos = stores.world().effect_pos();
     let finalization = PlannedFinalization::new(effect_pos, driver_files)?;
     if opts.show_fixtures {
@@ -316,6 +323,7 @@ struct RunCliOptions {
     html_assets: Option<PathBuf>,
     format: Option<PathBuf>,
     format_out: Option<PathBuf>,
+    input_records_out: Option<PathBuf>,
     engine: RunEngine,
     #[cfg(feature = "profiling-stats")]
     profiling_stats: bool,
@@ -339,6 +347,7 @@ impl RunCliOptions {
         let mut html_assets = None;
         let mut format = None;
         let mut format_out = None;
+        let mut input_records_out = None;
         let mut engine = RunEngine::Tex82;
         #[cfg(feature = "profiling-stats")]
         let mut profiling_stats = false;
@@ -426,6 +435,19 @@ impl RunCliOptions {
                     };
                     format_out = Some(PathBuf::from(path));
                 }
+                "--input-records-out" => {
+                    if input_records_out.is_some() {
+                        return Err(CliError::Usage(
+                            "run accepts at most one --input-records-out path",
+                        ));
+                    }
+                    let Some(path) = args.next() else {
+                        return Err(CliError::Usage(
+                            "missing output path for --input-records-out",
+                        ));
+                    };
+                    input_records_out = Some(PathBuf::from(path));
+                }
                 flag if flag.starts_with('-') => {
                     return Err(CliError::Usage(
                         "run accepts one input path with optional --show-fixtures and --dvi <path>",
@@ -475,11 +497,51 @@ impl RunCliOptions {
             html_assets,
             format,
             format_out,
+            input_records_out,
             engine,
             #[cfg(feature = "profiling-stats")]
             profiling_stats,
         })
     }
+}
+
+fn input_record_receipt(world: &World) -> Result<Vec<u8>, CliError> {
+    let mut records = BTreeMap::<&Path, usize>::new();
+    for record in world.input_records() {
+        match records.entry(record.path()) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(record.len());
+            }
+            std::collections::btree_map::Entry::Occupied(entry) => {
+                if *entry.get() != record.len() {
+                    return Err(CliError::InputReceipt(format!(
+                        "input changed length while the job was running: {}",
+                        record.path().display()
+                    )));
+                }
+            }
+        }
+    }
+
+    let mut receipt = Vec::new();
+    for (path, len) in records {
+        let Some(path) = path.to_str() else {
+            return Err(CliError::InputReceipt(
+                "an input path is not valid UTF-8".to_owned(),
+            ));
+        };
+        if path.contains(['\n', '\r', '\t']) {
+            return Err(CliError::InputReceipt(format!(
+                "an input path contains a receipt delimiter: {}",
+                Path::new(path).display()
+            )));
+        }
+        receipt.extend_from_slice(len.to_string().as_bytes());
+        receipt.push(b'\t');
+        receipt.extend_from_slice(path.as_bytes());
+        receipt.push(b'\n');
+    }
+    Ok(receipt)
 }
 
 fn format_token(token: Token, stores: &Universe) -> String {
@@ -505,6 +567,7 @@ enum CliError {
     Html(umber::HtmlBuildError),
     Format(FormatError),
     Finalization(umber::FinalizationError),
+    InputReceipt(String),
     Watch(watch::WatchError),
 }
 
@@ -521,6 +584,7 @@ impl std::fmt::Display for CliError {
             Self::Html(err) => write!(f, "{err}"),
             Self::Format(err) => write!(f, "{err}"),
             Self::Finalization(err) => write!(f, "{err}"),
+            Self::InputReceipt(message) => f.write_str(message),
             Self::Watch(err) => write!(f, "{err}"),
         }
     }
