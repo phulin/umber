@@ -63,6 +63,8 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 
 - Implementation agents should run the relevant tests explicitly, then use
   `scripts/check.sh` for the format and clippy gate without rerunning tests.
+- When running tests, make sure to use `cargo test -q` so you don't fill up
+  your context window.
 - Use `scripts/check-and-test.sh` when a single command should run the full
   workspace test suite concurrently with the format and clippy gate. Clippy
   uses its own `target/clippy` directory so it does not lock the test build.

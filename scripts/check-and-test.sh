@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-cargo test --workspace --tests &
+cargo test --workspace --tests --quiet &
 test_pid=$!
 scripts/check.sh &
 check_pid=$!
