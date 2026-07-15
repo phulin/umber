@@ -143,14 +143,18 @@ fn pdf_accessibility_operands_are_unique_and_follow_parallel_reservations() {
 }
 
 #[test]
-fn complete_primitive_codecs_are_unique_through_image_and_compatibility_registrations() {
+fn complete_primitive_codecs_are_unique_through_navigation_and_compatibility_registrations() {
     let annotations = [
         (255, UnexpandablePrimitive::PdfAnnot),
         (256, UnexpandablePrimitive::PdfStartLink),
         (257, UnexpandablePrimitive::PdfEndLink),
         (258, UnexpandablePrimitive::PdfRunningLinkOn),
         (259, UnexpandablePrimitive::PdfRunningLinkOff),
-        (260, UnexpandablePrimitive::PdfDest),
+        (260, UnexpandablePrimitive::PdfOutline),
+        (261, UnexpandablePrimitive::PdfDest),
+        (262, UnexpandablePrimitive::PdfThread),
+        (263, UnexpandablePrimitive::PdfStartThread),
+        (264, UnexpandablePrimitive::PdfEndThread),
     ];
     for (operand, primitive) in annotations {
         assert_eq!(primitive.operand(), operand);
@@ -174,7 +178,7 @@ fn complete_primitive_codecs_are_unique_through_image_and_compatibility_registra
     }
 
     let mut unexpandable = std::collections::HashSet::new();
-    for operand in 0..=260 {
+    for operand in 0..=265 {
         if let Some(primitive) = UnexpandablePrimitive::from_operand(operand) {
             assert_eq!(primitive.operand(), operand);
             assert!(
@@ -182,9 +186,6 @@ fn complete_primitive_codecs_are_unique_through_image_and_compatibility_registra
                 "duplicate unexpandable primitive at operand {operand}"
             );
         }
-    }
-    for reserved in 260..=264 {
-        assert_eq!(UnexpandablePrimitive::from_operand(reserved), None);
     }
     assert_eq!(UnexpandablePrimitive::QuitVMode.operand(), 265);
     assert_eq!(

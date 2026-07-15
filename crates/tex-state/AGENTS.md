@@ -63,6 +63,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/pdf.rs`: Checkpointed pdfTeX document mode, deterministic object allocation, and committed-page ledger.
 - `src/pdf/action.rs`: Typed, checkpointed PDF action model shared by catalog, link, and outline scanners.
 - `src/pdf/annotation.rs`: Checkpointed general-annotation reservations, running dimension specs, and logical-link records.
+- `src/pdf/outline.rs`: Immediately allocated, checkpointed PDF outline entries and their action/item/title identities.
 - `src/pdf/object.rs`: Copy-on-write raw PDF object reservations, initialization payloads, and last-object state.
 - `src/pdf/document.rs`: Copy-on-write raw document dictionary and trailer fragments in source order.
 - `src/page/sequence.rs`: Canonical persistent binary-forest sequence for growing current-page nodes.

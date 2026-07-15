@@ -5,6 +5,7 @@ mod annotation;
 mod destination;
 mod document;
 mod object;
+mod outline;
 
 pub use action::{
     PdfActionDestination, PdfActionIdentifier, PdfActionRecord, PdfActionSpec, PdfActionTarget,
@@ -21,6 +22,7 @@ use object::PdfRawObjects;
 pub use object::{
     PdfRawObjectData, PdfRawObjectId, PdfRawObjectInitializeError, PdfRawObjectRecord,
 };
+pub use outline::PdfOutlineRecord;
 
 use std::sync::Arc;
 
@@ -809,6 +811,7 @@ pub(crate) struct PdfStateCursor {
     return_value: i32,
     destination_fingerprint: u64,
     structure_destination_fingerprint: u64,
+    outline_fingerprint: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -827,6 +830,7 @@ pub(crate) struct PdfStateSnapshot {
     form_artifacts: Arc<BTreeMap<u32, PdfFormArtifact>>,
     destinations: Arc<Vec<PdfDestinationRecord>>,
     structure_destinations: Arc<Vec<PdfDestinationRecord>>,
+    outlines: Arc<Vec<PdfOutlineRecord>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -883,6 +887,8 @@ pub(crate) struct PdfState {
     destination_fingerprint: u64,
     structure_destinations: Arc<Vec<PdfDestinationRecord>>,
     structure_destination_fingerprint: u64,
+    outlines: Arc<Vec<PdfOutlineRecord>>,
+    outline_fingerprint: u64,
 }
 
 impl Default for PdfState {
@@ -931,6 +937,8 @@ impl Default for PdfState {
             destination_fingerprint: destination_fingerprint(&[], false),
             structure_destinations: Arc::new(Vec::new()),
             structure_destination_fingerprint: destination_fingerprint(&[], true),
+            outlines: Arc::new(Vec::new()),
+            outline_fingerprint: outline_fingerprint(&[]),
         }
     }
 }
@@ -1297,6 +1305,41 @@ impl PdfState {
         } else {
             &self.destinations
         }
+    }
+
+    pub(crate) fn create_outline(
+        &mut self,
+        attributes: TokenListId,
+        action: PdfActionSpec,
+        count: i32,
+        title: TokenListId,
+        semantic_ids: [u64; 3],
+    ) -> Result<PdfOutlineRecord, PdfObjectCapacityError> {
+        let action_object = self.reserve_document_object()?;
+        let item_object = self.reserve_document_object()?;
+        let title_object = self.reserve_document_object()?;
+        let record = PdfOutlineRecord::new(
+            action_object,
+            item_object,
+            title_object,
+            attributes,
+            action,
+            count,
+            title,
+        );
+        Arc::make_mut(&mut self.outlines).push(record);
+        self.outline_fingerprint = append_outline_fingerprint(
+            self.outline_fingerprint,
+            record,
+            semantic_ids[0],
+            semantic_ids[1],
+            semantic_ids[2],
+        );
+        Ok(record)
+    }
+
+    pub(crate) fn outlines(&self) -> &[PdfOutlineRecord] {
+        &self.outlines
     }
 
     #[must_use]
@@ -1935,6 +1978,7 @@ impl PdfState {
             return_value: self.return_value,
             destination_fingerprint: self.destination_fingerprint,
             structure_destination_fingerprint: self.structure_destination_fingerprint,
+            outline_fingerprint: self.outline_fingerprint,
         }
     }
     #[must_use]
@@ -1954,6 +1998,7 @@ impl PdfState {
             form_artifacts: Arc::clone(&self.form_artifacts),
             destinations: Arc::clone(&self.destinations),
             structure_destinations: Arc::clone(&self.structure_destinations),
+            outlines: Arc::clone(&self.outlines),
         }
     }
 
@@ -2012,6 +2057,8 @@ impl PdfState {
         self.destination_fingerprint = cursor.destination_fingerprint;
         self.structure_destinations = snapshot.structure_destinations;
         self.structure_destination_fingerprint = cursor.structure_destination_fingerprint;
+        self.outlines = snapshot.outlines;
+        self.outline_fingerprint = cursor.outline_fingerprint;
     }
 
     pub(crate) fn set_match(
@@ -2070,6 +2117,7 @@ impl PdfState {
             hasher.i32(cursor.return_value);
             hasher.u64(cursor.destination_fingerprint);
             hasher.u64(cursor.structure_destination_fingerprint);
+            hasher.u64(cursor.outline_fingerprint);
             hasher.bool(cursor.document_objects.pages().is_some());
             if let Some(id) = cursor.document_objects.pages() {
                 hasher.u32(id);
@@ -2364,6 +2412,29 @@ fn destination_fingerprint(records: &[PdfDestinationRecord], structure: bool) ->
             hasher.u32(target);
         }
     }
+    hasher.finish()
+}
+
+fn outline_fingerprint(_records: &[PdfOutlineRecord]) -> u64 {
+    StateHasher::new(0x7064_665f_6f75_746c).finish()
+}
+
+fn append_outline_fingerprint(
+    previous: u64,
+    record: PdfOutlineRecord,
+    attributes_semantic_id: u64,
+    action_semantic_id: u64,
+    title_semantic_id: u64,
+) -> u64 {
+    let mut hasher = StateHasher::new(0x7064_665f_6f75_746c);
+    hasher.u64(previous);
+    hasher.u32(record.action_object());
+    hasher.u32(record.item_object());
+    hasher.u32(record.title_object());
+    hasher.u64(attributes_semantic_id);
+    hasher.u64(action_semantic_id);
+    hasher.i32(record.count());
+    hasher.u64(title_semantic_id);
     hasher.finish()
 }
 
@@ -3549,5 +3620,44 @@ mod tests {
         );
         state.rollback(checkpoint);
         assert_ne!(completed_hash, initial_hash);
+    }
+
+    #[test]
+    fn outlines_allocate_action_item_title_and_rollback_as_one_ledger_entry() {
+        let mut state = PdfState::default();
+        state.enable();
+        let checkpoint = state.snapshot();
+        let record = state
+            .create_outline(
+                TokenListId::EMPTY,
+                PdfActionSpec::User(TokenListId::EMPTY),
+                -2,
+                TokenListId::EMPTY,
+                [1, 2, 3],
+            )
+            .expect("outline");
+        assert_eq!(
+            (
+                record.action_object(),
+                record.item_object(),
+                record.title_object()
+            ),
+            (1, 2, 3)
+        );
+        assert_eq!(state.next_object(), 4);
+        let hash = state.hash_fragment();
+        state.rollback(checkpoint.clone());
+        assert!(state.outlines().is_empty());
+        let replay = state
+            .create_outline(
+                TokenListId::EMPTY,
+                PdfActionSpec::User(TokenListId::EMPTY),
+                -2,
+                TokenListId::EMPTY,
+                [1, 2, 3],
+            )
+            .expect("replay");
+        assert_eq!(replay, record);
+        assert_eq!(state.hash_fragment(), hash);
     }
 }

@@ -52,6 +52,12 @@ impl Action<'_> {
         self
     }
 
+    /// Write `/D` as an indirect destination object reference.
+    pub fn destination_ref(&mut self, destination: Ref) -> &mut Self {
+        self.pair(Name(b"D"), destination);
+        self
+    }
+
     /// Write the thread structure destination (`/SD`) as an indirect object.
     pub fn structure_destination(&mut self, id: Ref) -> &mut Self {
         self.pair(Name(b"SD"), id);

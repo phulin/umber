@@ -12,7 +12,7 @@ use tex_lex::{InputStack, LexError, TokenListReplayKind};
 use tex_state::code_tables::{DelCode, LcCode, MathCode, SfCode, UcCode};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
-use tex_state::ids::GlueId;
+use tex_state::ids::{GlueId, TokenListId};
 use tex_state::interner::Symbol;
 use tex_state::math::MathFontSize;
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
@@ -919,6 +919,44 @@ fn execute_pdf_destination(
     )
 }
 
+fn execute_pdf_outline(
+    context: TracedTokenWord,
+    input: &mut InputStack,
+    stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
+    if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+        return Err(ExecError::PdfExtensionInDviMode("pdfoutline"));
+    }
+    let attributes = if scan_optional_keyword_x(input, stores, execution, "attr")? {
+        scan_general_text_expanded_with_driver(
+            input,
+            &mut tex_state::ExpansionContext::new(stores),
+            execution,
+            context,
+        )?
+    } else {
+        TokenListId::EMPTY
+    };
+    let action = pdf_actions::scan_pdf_action(context, input, stores, execution)?;
+    let count = if scan_optional_keyword_x(input, stores, execution, "count")? {
+        scan_i32(input, stores, execution, context)?
+    } else {
+        0
+    };
+    let title = scan_general_text_expanded_with_driver(
+        input,
+        &mut tex_state::ExpansionContext::new(stores),
+        execution,
+        context,
+    )?;
+    stores
+        .create_pdf_outline(attributes, action, count, title)
+        .map_err(|_| ExecError::PdfObjectCapacity)?;
+    reserve_pdf_action_destinations(stores, action)?;
+    Ok(())
+}
+
 pub(crate) fn warn_pdf_destination_duplicate(
     stores: &mut Universe,
     identity: &tex_state::PdfDestinationIdentity,
@@ -1022,6 +1060,24 @@ fn pdf_action_destination_identities(
         .structure
         .map(|identifier| pdf_destination_identity(stores, identifier));
     (target, structure)
+}
+
+fn reserve_pdf_action_destinations(
+    stores: &mut Universe,
+    action: tex_state::PdfActionSpec,
+) -> Result<(), ExecError> {
+    let (destination, structure) = pdf_action_destination_identities(stores, action);
+    if let Some(identity) = destination {
+        stores
+            .reserve_pdf_destination(identity, false)
+            .map_err(|_| ExecError::PdfObjectCapacity)?;
+    }
+    if let Some(identity) = structure {
+        stores
+            .reserve_pdf_destination(identity, true)
+            .map_err(|_| ExecError::PdfObjectCapacity)?;
+    }
+    Ok(())
 }
 
 fn pdf_destination_identity(
@@ -2340,6 +2396,11 @@ fn execute_prefixed_command(
                 execute_pdf_annotation(command.traced, nest, input, stores, execution)?;
                 Ok(CommandOutcome::continue_only())
             }
+            UnexpandablePrimitive::PdfOutline => {
+                reject_all_prefixes(prefixes)?;
+                execute_pdf_outline(command.traced, input, stores, execution)?;
+                Ok(CommandOutcome::continue_only())
+            }
             UnexpandablePrimitive::PdfDest => {
                 reject_all_prefixes(prefixes)?;
                 execute_pdf_destination(command.traced, nest, input, stores, execution)?;
@@ -2395,7 +2456,10 @@ fn execute_prefixed_command(
                 )?;
                 Ok(CommandOutcome::continue_only())
             }
-            UnexpandablePrimitive::PdfTeXUnimplemented => {
+            UnexpandablePrimitive::PdfTeXUnimplemented
+            | UnexpandablePrimitive::PdfThread
+            | UnexpandablePrimitive::PdfStartThread
+            | UnexpandablePrimitive::PdfEndThread => {
                 unreachable!("unsupported pdfTeX placeholders return before prefix handling")
             }
         },

@@ -11,8 +11,9 @@ use tex_out::pdf::{
     PdfDestinationStructure, PdfDestinationTarget, PdfDestinationView, PdfDictionary,
     PdfExplicitDestination, PdfImageColorSpace, PdfImageFilter, PdfImageXObject, PdfIndirectObject,
     PdfModelError, PdfName, PdfNamesObject, PdfNumber, PdfObject, PdfObjectCompression,
-    PdfObjectId, PdfSerializationOptions, PdfSerializeError, PdfStreamCompression, PdfTrailer,
-    PdfValue, PdfVersion, UnvalidatedPdfDocument, ordered_page_content, page_content,
+    PdfObjectId, PdfOutlineItemObject, PdfOutlineObject, PdfSerializationOptions,
+    PdfSerializeError, PdfStreamCompression, PdfTrailer, PdfValue, PdfVersion,
+    UnvalidatedPdfDocument, ordered_page_content, page_content,
 };
 use tex_out::positioned::{
     BoxKind, PositionedBox, PositionedError, PositionedEvent, PositionedPage,
@@ -21,10 +22,9 @@ use tex_state::env::banks::{IntParam, TokParam};
 use tex_state::ids::FontId;
 use tex_state::ids::TokenListId;
 use tex_state::{
-    CommittedArtifact, ContentHash, PdfActionDestination, PdfActionIdentifier, PdfActionRecord,
-    PdfActionSpec, PdfActionTarget, PdfActionWindow, PdfAnnotationDimensions,
-    PdfDocumentFragmentKind, PdfExternalImageMetadata, PdfLinkRecord, PdfOutputParameters,
-    PdfRasterColorSpace, PdfRasterFormat, Universe, WorldError,
+    CommittedArtifact, ContentHash, PdfActionIdentifier, PdfActionSpec, PdfActionTarget,
+    PdfActionWindow, PdfAnnotationDimensions, PdfDocumentFragmentKind, PdfExternalImageMetadata,
+    PdfLinkRecord, PdfOutputParameters, PdfRasterColorSpace, PdfRasterFormat, Universe, WorldError,
 };
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -135,6 +135,7 @@ pub fn pdf_from_committed_artifacts_at_dpi(
             .expect("PDF finalization allocates the page tree"),
     )?;
     let mut next_object = stores.pdf_next_object_id();
+    let outline_output = outline_objects(stores, &page_records, &mut next_object)?;
     let destination_output = destination_objects(
         stores,
         &page_records,
@@ -161,6 +162,9 @@ pub fn pdf_from_committed_artifacts_at_dpi(
     if let Some(names) = document_ids.names() {
         catalog.insert("Names", PdfValue::Reference(object_id(names)?))?;
     }
+    if let Some(outlines) = outline_output.root {
+        catalog.insert("Outlines", PdfValue::Reference(outlines))?;
+    }
     let open_action = stores.pdf_catalog_open_action();
     if let Some(action) = open_action {
         catalog.insert("OpenAction", PdfValue::Reference(object_id(action.id())?))?;
@@ -174,7 +178,7 @@ pub fn pdf_from_committed_artifacts_at_dpi(
     if let Some(action) = open_action {
         objects.push(PdfIndirectObject {
             id: object_id(action.id())?,
-            object: PdfObject::Raw(pdf_action_bytes(stores, action, &page_records)?),
+            object: PdfObject::Action(detached_link_action(stores, action.spec(), &page_records)?),
         });
     }
 
@@ -187,6 +191,7 @@ pub fn pdf_from_committed_artifacts_at_dpi(
             }),
         });
     }
+    objects.extend(outline_output.objects);
     objects.extend(destination_output.destinations);
     objects.extend(destination_output.name_tree);
 
@@ -1222,6 +1227,140 @@ struct ShippedDestination {
     view: PdfDestinationView,
 }
 
+struct OutlineObjects {
+    objects: Vec<PdfIndirectObject>,
+    root: Option<PdfObjectId>,
+}
+
+fn outline_objects(
+    stores: &Universe,
+    pages: &[tex_state::PdfPageRecord],
+    next_object: &mut u32,
+) -> Result<OutlineObjects, PdfBuildError> {
+    let records = stores.pdf_outlines();
+    if records.is_empty() {
+        return Ok(OutlineObjects {
+            objects: Vec::new(),
+            root: None,
+        });
+    }
+    let root = object_id(*next_object)?;
+    *next_object = next_object
+        .checked_add(1)
+        .ok_or(PdfBuildError::ObjectCapacity)?;
+    let mut parents = vec![None; records.len()];
+    let mut children = vec![Vec::new(); records.len()];
+    let mut roots = Vec::new();
+    let mut stack = Vec::<(usize, usize)>::new();
+    for (index, record) in records.iter().enumerate() {
+        while stack.last().is_some_and(|(_, remaining)| *remaining == 0) {
+            stack.pop();
+        }
+        if let Some((parent, remaining)) = stack.last_mut() {
+            parents[index] = Some(*parent);
+            children[*parent].push(index);
+            *remaining -= 1;
+        } else {
+            roots.push(index);
+        }
+        if record.count() != 0 {
+            stack.push((index, record.count().unsigned_abs() as usize));
+        }
+    }
+    let descendants = (0..records.len())
+        .map(|index| outline_descendants(index, &children))
+        .collect::<Vec<_>>();
+    let visible_count: usize = roots
+        .iter()
+        .map(|&index| outline_visible(index, records, &children))
+        .sum();
+    let mut previous = vec![None; records.len()];
+    let mut next = vec![None; records.len()];
+    for siblings in std::iter::once(&roots).chain(children.iter()) {
+        for pair in siblings.windows(2) {
+            next[pair[0]] = Some(pair[1]);
+            previous[pair[1]] = Some(pair[0]);
+        }
+    }
+    let mut objects = Vec::with_capacity(records.len() * 3 + 1);
+    for (index, record) in records.iter().copied().enumerate() {
+        objects.push(PdfIndirectObject {
+            id: object_id(record.action_object())?,
+            object: PdfObject::Action(detached_link_action(stores, record.action(), pages)?),
+        });
+        objects.push(PdfIndirectObject {
+            id: object_id(record.title_object())?,
+            object: PdfObject::PdfStringSyntax(token_list_bytes(stores, record.title())),
+        });
+        let child_ids =
+            if let Some((&first, &last)) = children[index].first().zip(children[index].last()) {
+                Some((
+                    object_id(records[first].item_object())?,
+                    object_id(records[last].item_object())?,
+                ))
+            } else {
+                None
+            };
+        let signed_count = (!children[index].is_empty()).then(|| {
+            let count = i32::try_from(descendants[index]).unwrap_or(i32::MAX);
+            if record.count() < 0 { -count } else { count }
+        });
+        objects.push(PdfIndirectObject {
+            id: object_id(record.item_object())?,
+            object: PdfObject::OutlineItem(PdfOutlineItemObject {
+                title: object_id(record.title_object())?,
+                action: object_id(record.action_object())?,
+                parent: parents[index]
+                    .map_or(Ok(root), |parent| object_id(records[parent].item_object()))?,
+                previous: previous[index]
+                    .map(|sibling| object_id(records[sibling].item_object()))
+                    .transpose()?,
+                next: next[index]
+                    .map(|sibling| object_id(records[sibling].item_object()))
+                    .transpose()?,
+                first: child_ids.map(|ids| ids.0),
+                last: child_ids.map(|ids| ids.1),
+                count: signed_count,
+                raw_entries: token_list_bytes(stores, record.attributes()),
+            }),
+        });
+    }
+    objects.push(PdfIndirectObject {
+        id: root,
+        object: PdfObject::Outline(PdfOutlineObject {
+            first: object_id(records[*roots.first().expect("outline has root")].item_object())?,
+            last: object_id(records[*roots.last().expect("outline has root")].item_object())?,
+            visible_count: i32::try_from(visible_count).unwrap_or(i32::MAX),
+        }),
+    });
+    Ok(OutlineObjects {
+        objects,
+        root: Some(root),
+    })
+}
+
+fn outline_descendants(index: usize, children: &[Vec<usize>]) -> usize {
+    children[index]
+        .iter()
+        .map(|&child| 1 + outline_descendants(child, children))
+        .sum()
+}
+
+fn outline_visible(
+    index: usize,
+    records: &[tex_state::PdfOutlineRecord],
+    children: &[Vec<usize>],
+) -> usize {
+    1 + if records[index].count() > 0 {
+        children[index]
+            .iter()
+            .map(|&child| outline_visible(child, records, children))
+            .sum()
+    } else {
+        0
+    }
+}
+
 fn lower_page_destinations(
     stores: &Universe,
     artifacts: &[CommittedArtifact],
@@ -1885,18 +2024,49 @@ fn detached_link_action(
             PdfDestinationTarget::Name(token_list_bytes(stores, tokens))
         }
         PdfActionTarget::Destination(PdfActionIdentifier::Number(number)) => {
-            PdfDestinationTarget::Number(number)
+            if external {
+                PdfDestinationTarget::Number(number)
+            } else {
+                let identity = tex_state::PdfDestinationIdentity::Number(number);
+                PdfDestinationTarget::Reference(object_id(
+                    stores
+                        .pdf_destination(&identity, false)
+                        .expect("local numeric action reserves its destination")
+                        .object(),
+                )?)
+            }
         }
         PdfActionTarget::Destination(PdfActionIdentifier::Raw(tokens)) => {
             PdfDestinationTarget::Name(token_list_bytes(stores, tokens))
         }
     };
-    let structure = destination.structure.map(|identifier| match identifier {
-        PdfActionIdentifier::Name(tokens) | PdfActionIdentifier::Raw(tokens) => {
-            PdfDestinationStructure::External(token_list_bytes(stores, tokens))
-        }
-        PdfActionIdentifier::Number(number) => {
-            PdfDestinationStructure::External(number.to_string().into_bytes())
+    let structure = destination.structure.and_then(|identifier| {
+        if external {
+            Some(match identifier {
+                PdfActionIdentifier::Name(tokens) | PdfActionIdentifier::Raw(tokens) => {
+                    PdfDestinationStructure::External(token_list_bytes(stores, tokens))
+                }
+                PdfActionIdentifier::Number(number) => {
+                    PdfDestinationStructure::External(number.to_string().into_bytes())
+                }
+            })
+        } else {
+            let identity = match identifier {
+                PdfActionIdentifier::Name(tokens) | PdfActionIdentifier::Raw(tokens) => {
+                    tex_state::PdfDestinationIdentity::Name(token_list_bytes(stores, tokens))
+                }
+                PdfActionIdentifier::Number(number) => {
+                    tex_state::PdfDestinationIdentity::Number(number)
+                }
+            };
+            stores
+                .pdf_destination(&identity, true)
+                .filter(|record| record.defined())
+                .map(|record| {
+                    PdfDestinationStructure::Internal(
+                        object_id(record.object()).expect("valid reserved destination object"),
+                    )
+                })
         }
     });
     Ok(PdfAnnotationAction::Destination(PdfDestinationAction {
@@ -3323,150 +3493,6 @@ fn serialization_options(
 
 fn object_id(raw: u32) -> Result<PdfObjectId, PdfBuildError> {
     PdfObjectId::new(raw).ok_or(PdfBuildError::InvalidObjectId(raw))
-}
-
-fn pdf_action_bytes(
-    stores: &Universe,
-    record: PdfActionRecord,
-    pages: &[tex_state::PdfPageRecord],
-) -> Result<Vec<u8>, PdfBuildError> {
-    let mut out = Vec::new();
-    match record.spec() {
-        PdfActionSpec::User(tokens) => return Ok(token_list_bytes(stores, tokens)),
-        PdfActionSpec::GoTo(action) => {
-            out.extend_from_slice(b"<< ");
-            write_action_destination(stores, record, action, pages, true, &mut out)?;
-        }
-        PdfActionSpec::Thread(action) => {
-            out.extend_from_slice(b"<< ");
-            write_action_destination(stores, record, action, pages, false, &mut out)?;
-        }
-    }
-    out.extend_from_slice(b" >>");
-    Ok(out)
-}
-
-fn write_action_destination(
-    stores: &Universe,
-    record: PdfActionRecord,
-    action: PdfActionDestination,
-    pages: &[tex_state::PdfPageRecord],
-    goto: bool,
-    out: &mut Vec<u8>,
-) -> Result<(), PdfBuildError> {
-    if let Some(file) = action.file {
-        out.extend_from_slice(b"/F ");
-        write_file_string(&token_list_bytes(stores, file), out);
-        out.push(b' ');
-        match action.window {
-            PdfActionWindow::New => out.extend_from_slice(b"/NewWindow true "),
-            PdfActionWindow::Same => out.extend_from_slice(b"/NewWindow false "),
-            PdfActionWindow::Unspecified => {}
-        }
-    }
-    match action.target {
-        PdfActionTarget::Page { number, view } => {
-            if action.file.is_some() {
-                out.extend_from_slice(b"/S /GoToR /D [");
-                out.extend_from_slice((number - 1).to_string().as_bytes());
-            } else {
-                let page = pages
-                    .get((number - 1) as usize)
-                    .ok_or(PdfBuildError::OpenActionPageNotFound(number))?;
-                out.extend_from_slice(b"/S /GoTo /D [");
-                out.extend_from_slice(page.page_object().to_string().as_bytes());
-                out.extend_from_slice(b" 0 R");
-            }
-            out.push(b' ');
-            out.extend_from_slice(&token_list_bytes(stores, view));
-            out.push(b']');
-        }
-        PdfActionTarget::Destination(identifier) => {
-            if goto {
-                out.extend_from_slice(if action.file.is_some() {
-                    b"/S /GoToR /D ".as_slice()
-                } else {
-                    b"/S /GoTo /D ".as_slice()
-                });
-            } else {
-                out.extend_from_slice(b"/S /Thread /D ");
-            }
-            write_action_identifier(
-                stores,
-                identifier,
-                action.file.is_some(),
-                record.target_object(),
-                out,
-            );
-        }
-    }
-    if let Some(structure) = action.structure {
-        out.extend_from_slice(b" /SD ");
-        if action.file.is_some() {
-            match structure {
-                PdfActionIdentifier::Raw(tokens) => {
-                    out.extend_from_slice(&token_list_bytes(stores, tokens));
-                }
-                _ => unreachable!("external structure identifier is raw"),
-            }
-        } else {
-            out.extend_from_slice(
-                record
-                    .structure_object()
-                    .expect("internal structure object")
-                    .to_string()
-                    .as_bytes(),
-            );
-            out.extend_from_slice(b" 0 R");
-        }
-    }
-    Ok(())
-}
-
-fn write_action_identifier(
-    stores: &Universe,
-    identifier: PdfActionIdentifier,
-    external: bool,
-    target_object: Option<u32>,
-    out: &mut Vec<u8>,
-) {
-    match identifier {
-        PdfActionIdentifier::Name(tokens) => {
-            write_pdf_string(&token_list_bytes(stores, tokens), out)
-        }
-        PdfActionIdentifier::Number(number) if external => {
-            out.extend_from_slice(number.to_string().as_bytes());
-        }
-        PdfActionIdentifier::Number(_) => {
-            out.extend_from_slice(
-                target_object
-                    .expect("internal target object")
-                    .to_string()
-                    .as_bytes(),
-            );
-            out.extend_from_slice(b" 0 R");
-        }
-        PdfActionIdentifier::Raw(_) => unreachable!("raw identifier is structure-only"),
-    }
-}
-
-fn write_file_string(bytes: &[u8], out: &mut Vec<u8>) {
-    if bytes.first() == Some(&b'(') && bytes.last() == Some(&b')') {
-        out.extend_from_slice(bytes);
-    } else {
-        write_pdf_string(bytes, out);
-    }
-}
-
-fn write_pdf_string(bytes: &[u8], out: &mut Vec<u8>) {
-    out.push(b'(');
-    for &byte in bytes {
-        if matches!(byte, b'\\' | b'(' | b')') {
-            out.push(b'\\');
-        }
-        out.push(byte);
-    }
-    out.push(b')');
 }
 
 fn indirect_dictionary(id: PdfObjectId, dictionary: PdfDictionary) -> PdfIndirectObject {
@@ -6429,6 +6455,38 @@ mod tests {
             b"/Limits",
             b"/FitR",
             b"/XYZ",
+        ] {
+            assert!(
+                pdf.windows(marker.len()).any(|window| window == marker),
+                "missing {:?}",
+                String::from_utf8_lossy(marker)
+            );
+        }
+    }
+
+    #[test]
+    fn pdf_outlines_emit_typed_hierarchy_actions_and_indirect_titles() {
+        let (mut stores, run) = run(concat!(
+            "\\pdfoutput=1\\pdfcompresslevel=0",
+            "\\pdfoutline attr{/F 2} user{/S /Named /N /NextPage} count 2 {Root}",
+            "\\pdfoutline user{/S /Named /N /NextPage} count -1 {(Closed)}",
+            "\\pdfoutline user{/S /Named /N /NextPage} {Leaf}",
+            "\\pdfoutline user{/S /Named /N /NextPage} {Sibling}",
+            "\\shipout\\hbox{}\\end",
+        ));
+        assert_eq!(stores.pdf_outlines().len(), 4);
+        let pdf = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
+            .expect("outline PDF assembles");
+        lopdf::Document::load_mem(&pdf).expect("outline PDF parses");
+        for marker in [
+            b"/Outlines".as_slice(),
+            b"/First",
+            b"/Last",
+            b"/Parent",
+            b"/Prev",
+            b"/Next",
+            b"/Count -1",
+            b"/Title",
         ] {
             assert!(
                 pdf.windows(marker.len()).any(|window| window == marker),

@@ -80,10 +80,10 @@ pub use pdf::{
     PdfExternalImageMetadata, PdfExternalImageRecord, PdfExternalImageRegistrationError,
     PdfExternalImageSource, PdfFontConfiguration, PdfFontMapOperation, PdfFontResourceRecord,
     PdfFormArtifact, PdfFormColorRollback, PdfFormRecord, PdfGlyphToUnicode, PdfLinkRecord,
-    PdfObjectCapacityError, PdfOpenLink, PdfOutputParameters, PdfPageBox, PdfPageGroupInclusion,
-    PdfPageGroupSelector, PdfPageGroupWarning, PdfPageRecord, PdfRasterColorSpace, PdfRasterFormat,
-    PdfRasterImageMetadata, PdfRawObjectData, PdfRawObjectId, PdfRawObjectInitializeError,
-    PdfRawObjectRecord,
+    PdfObjectCapacityError, PdfOpenLink, PdfOutlineRecord, PdfOutputParameters, PdfPageBox,
+    PdfPageGroupInclusion, PdfPageGroupSelector, PdfPageGroupWarning, PdfPageRecord,
+    PdfRasterColorSpace, PdfRasterFormat, PdfRasterImageMetadata, PdfRawObjectData, PdfRawObjectId,
+    PdfRawObjectInitializeError, PdfRawObjectRecord,
 };
 pub mod world;
 

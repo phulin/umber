@@ -745,9 +745,13 @@ pub enum UnexpandablePrimitive {
     PdfRunningLinkOff,
     /// Starts a paragraph only when TeX is currently in vertical mode.
     QuitVMode,
+    PdfOutline,
+    PdfDest,
+    PdfThread,
+    PdfStartThread,
+    PdfEndThread,
     PdfXImage,
     PdfRefXImage,
-    PdfDest,
 }
 
 impl UnexpandablePrimitive {
@@ -1014,8 +1018,11 @@ impl UnexpandablePrimitive {
             Self::PdfEndLink => 257,
             Self::PdfRunningLinkOn => 258,
             Self::PdfRunningLinkOff => 259,
-            Self::PdfDest => 260,
-            // 261..=264 are reserved by the navigation parity slice.
+            Self::PdfOutline => 260,
+            Self::PdfDest => 261,
+            Self::PdfThread => 262,
+            Self::PdfStartThread => 263,
+            Self::PdfEndThread => 264,
             Self::QuitVMode => 265,
         }
     }
@@ -1283,7 +1290,11 @@ impl UnexpandablePrimitive {
             257 => Some(Self::PdfEndLink),
             258 => Some(Self::PdfRunningLinkOn),
             259 => Some(Self::PdfRunningLinkOff),
-            260 => Some(Self::PdfDest),
+            260 => Some(Self::PdfOutline),
+            261 => Some(Self::PdfDest),
+            262 => Some(Self::PdfThread),
+            263 => Some(Self::PdfStartThread),
+            264 => Some(Self::PdfEndThread),
             265 => Some(Self::QuitVMode),
             _ => None,
         }

@@ -6,7 +6,8 @@ use flate2::Compression;
 use flate2::write::ZlibEncoder;
 use pdf_writer::types::{ActionType, AnnotationType, Predictor};
 use pdf_writer::{
-    Dict, Filter, Finish, Name, Null, Obj, Pdf, Raw, Rect, Ref, Settings, Str, XRefFilter,
+    Dict, Filter, Finish, Name, Null, Obj, Pdf, PdfStringSyntax, Raw, Rect, Ref, Settings, Str,
+    XRefFilter,
 };
 
 use super::{
@@ -173,6 +174,44 @@ impl PdfDocument {
                     writer.raw_entries(&names.raw_entries);
                     writer.finish();
                 }
+                PdfObject::Action(action) => {
+                    write_detached_action(pdf.action(reference), action)?;
+                }
+                PdfObject::PdfStringSyntax(value) => {
+                    pdf.indirect(reference).primitive(PdfStringSyntax(value));
+                }
+                PdfObject::Outline(outline) => {
+                    let mut writer = pdf.outline(reference);
+                    writer
+                        .first(writer_ref(outline.first)?)
+                        .last(writer_ref(outline.last)?)
+                        .count(outline.visible_count);
+                    writer.finish();
+                }
+                PdfObject::OutlineItem(item) => {
+                    let mut writer = pdf.outline_item(reference);
+                    writer
+                        .title_ref(writer_ref(item.title)?)
+                        .action_ref(writer_ref(item.action)?)
+                        .parent(writer_ref(item.parent)?);
+                    if let Some(id) = item.previous {
+                        writer.prev(writer_ref(id)?);
+                    }
+                    if let Some(id) = item.next {
+                        writer.next(writer_ref(id)?);
+                    }
+                    if let Some(id) = item.first {
+                        writer.first(writer_ref(id)?);
+                    }
+                    if let Some(id) = item.last {
+                        writer.last(writer_ref(id)?);
+                    }
+                    if let Some(count) = item.count {
+                        writer.count(count);
+                    }
+                    writer.raw_entries(&item.raw_entries);
+                    writer.finish();
+                }
                 PdfObject::Stream { dictionary, data } => write_stream(
                     &mut pdf,
                     reference,
@@ -230,7 +269,11 @@ impl PdfDocument {
                         | PdfObject::Destination(_)
                         | PdfObject::NamedDestination(_)
                         | PdfObject::DestinationNameTree(_)
-                        | PdfObject::Names(_) => {}
+                        | PdfObject::Names(_)
+                        | PdfObject::Action(_)
+                        | PdfObject::PdfStringSyntax(_)
+                        | PdfObject::Outline(_)
+                        | PdfObject::OutlineItem(_) => {}
                     }
                 }
                 match options.stream_compression {
@@ -443,7 +486,11 @@ fn validate_object_scalars(object: &PdfObject) -> Result<(), PdfSerializeError> 
         | PdfObject::Destination(_)
         | PdfObject::NamedDestination(_)
         | PdfObject::DestinationNameTree(_)
-        | PdfObject::Names(_) => {}
+        | PdfObject::Names(_)
+        | PdfObject::Action(_)
+        | PdfObject::PdfStringSyntax(_)
+        | PdfObject::Outline(_)
+        | PdfObject::OutlineItem(_) => {}
     }
     while let Some(value) = stack.pop() {
         match value {
@@ -582,56 +629,99 @@ fn write_annotation(
             writer.raw_entries(entries);
         }
         Some(PdfAnnotationAction::Destination(spec)) => {
-            let external = spec.file.is_some();
-            let mut action = writer.action();
-            action.action_type(match (spec.kind, external) {
-                (PdfDestinationActionKind::GoTo, false) => ActionType::GoTo,
-                (PdfDestinationActionKind::GoTo, true) => ActionType::RemoteGoTo,
-                (PdfDestinationActionKind::Thread, _) => ActionType::Thread,
-            });
-            if let Some(file) = &spec.file {
-                action.file_spec().path(Str(file));
-            }
-            if let Some(new_window) = spec.new_window {
-                action.new_window(new_window);
-            }
-            match &spec.target {
-                PdfDestinationTarget::Page { page, view } => match page {
-                    PdfDestinationPage::Internal(id) => {
-                        action.destination().page(writer_ref(*id)?).raw_view(view)
-                    }
-                    PdfDestinationPage::External(number) => action
-                        .destination()
-                        .page_number(i32::try_from(*number).map_err(|_| {
-                            PdfSerializeError::IntegerOutOfRange(i64::from(*number))
-                        })?)
-                        .raw_view(view),
-                },
-                PdfDestinationTarget::Name(name) => {
-                    action.destination_string(Str(name));
-                }
-                PdfDestinationTarget::Number(number) => {
-                    action.destination_number(
-                        i32::try_from(*number).map_err(|_| {
-                            PdfSerializeError::IntegerOutOfRange(i64::from(*number))
-                        })?,
-                    );
-                }
-            }
-            match &spec.structure {
-                Some(PdfDestinationStructure::Internal(id)) => {
-                    action.structure_destination(writer_ref(*id)?);
-                }
-                Some(PdfDestinationStructure::External(value)) => {
-                    action.structure_destination_raw(value);
-                }
-                None => {}
-            }
-            action.finish();
+            write_destination_action(writer.action(), spec)?;
         }
         None => {}
     }
     writer.finish();
+    Ok(())
+}
+
+fn write_detached_action(
+    mut action: pdf_writer::writers::Action<'_>,
+    value: &PdfAnnotationAction,
+) -> Result<(), PdfSerializeError> {
+    match value {
+        PdfAnnotationAction::UserEntries(entries) => {
+            action.raw_entries(user_action_entries(entries));
+            action.finish();
+            Ok(())
+        }
+        PdfAnnotationAction::Destination(spec) => write_destination_action(action, spec),
+    }
+}
+
+fn user_action_entries(entries: &[u8]) -> &[u8] {
+    let mut start = 0;
+    let mut end = entries.len();
+    while entries.get(start).is_some_and(u8::is_ascii_whitespace) {
+        start += 1;
+    }
+    while end > start && entries[end - 1].is_ascii_whitespace() {
+        end -= 1;
+    }
+    if entries.get(start..start + 2) == Some(b"<<")
+        && end >= start + 4
+        && entries.get(end - 2..end) == Some(b">>")
+    {
+        &entries[start + 2..end - 2]
+    } else {
+        entries
+    }
+}
+
+fn write_destination_action(
+    mut action: pdf_writer::writers::Action<'_>,
+    spec: &super::PdfDestinationAction,
+) -> Result<(), PdfSerializeError> {
+    let external = spec.file.is_some();
+    action.action_type(match (spec.kind, external) {
+        (PdfDestinationActionKind::GoTo, false) => ActionType::GoTo,
+        (PdfDestinationActionKind::GoTo, true) => ActionType::RemoteGoTo,
+        (PdfDestinationActionKind::Thread, _) => ActionType::Thread,
+    });
+    if let Some(file) = &spec.file {
+        action.file_spec().path(Str(file));
+    }
+    if let Some(new_window) = spec.new_window {
+        action.new_window(new_window);
+    }
+    match &spec.target {
+        PdfDestinationTarget::Reference(id) => {
+            action.destination_ref(writer_ref(*id)?);
+        }
+        PdfDestinationTarget::Page { page, view } => match page {
+            PdfDestinationPage::Internal(id) => {
+                action.destination().page(writer_ref(*id)?).raw_view(view)
+            }
+            PdfDestinationPage::External(number) => action
+                .destination()
+                .page_number(
+                    i32::try_from(*number)
+                        .map_err(|_| PdfSerializeError::IntegerOutOfRange(i64::from(*number)))?,
+                )
+                .raw_view(view),
+        },
+        PdfDestinationTarget::Name(name) => {
+            action.destination_string(Str(name));
+        }
+        PdfDestinationTarget::Number(number) => {
+            action.destination_number(
+                i32::try_from(*number)
+                    .map_err(|_| PdfSerializeError::IntegerOutOfRange(i64::from(*number)))?,
+            );
+        }
+    }
+    match &spec.structure {
+        Some(PdfDestinationStructure::Internal(id)) => {
+            action.structure_destination(writer_ref(*id)?);
+        }
+        Some(PdfDestinationStructure::External(value)) => {
+            action.structure_destination_raw(value);
+        }
+        None => {}
+    }
+    action.finish();
     Ok(())
 }
 

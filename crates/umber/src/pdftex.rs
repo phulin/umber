@@ -424,9 +424,10 @@ pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
             "pdfrunninglinkoff",
             UnexpandablePrimitive::PdfRunningLinkOff,
         ),
+        ("pdfoutline", UnexpandablePrimitive::PdfOutline),
+        ("pdfdest", UnexpandablePrimitive::PdfDest),
         ("pdfximage", UnexpandablePrimitive::PdfXImage),
         ("pdfrefximage", UnexpandablePrimitive::PdfRefXImage),
-        ("pdfdest", UnexpandablePrimitive::PdfDest),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));

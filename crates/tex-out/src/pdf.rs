@@ -473,6 +473,10 @@ pub enum PdfObject {
     DestinationNameTree(PdfDestinationNameTree),
     /// The indirect catalog `/Names` dictionary.
     Names(PdfNamesObject),
+    Action(PdfAnnotationAction),
+    PdfStringSyntax(Vec<u8>),
+    Outline(PdfOutlineObject),
+    OutlineItem(PdfOutlineItemObject),
     /// One complete direct object body retained for pdfTeX compatibility.
     Raw(Vec<u8>),
     Stream {
@@ -491,6 +495,26 @@ pub enum PdfObject {
         image: PdfImageXObject,
         data: Vec<u8>,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PdfOutlineObject {
+    pub first: PdfObjectId,
+    pub last: PdfObjectId,
+    pub visible_count: i32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PdfOutlineItemObject {
+    pub title: PdfObjectId,
+    pub action: PdfObjectId,
+    pub parent: PdfObjectId,
+    pub previous: Option<PdfObjectId>,
+    pub next: Option<PdfObjectId>,
+    pub first: Option<PdfObjectId>,
+    pub last: Option<PdfObjectId>,
+    pub count: Option<i32>,
+    pub raw_entries: Vec<u8>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -609,6 +633,7 @@ pub enum PdfDestinationActionKind {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PdfDestinationTarget {
+    Reference(PdfObjectId),
     Page {
         page: PdfDestinationPage,
         /// User-supplied destination view operands.
@@ -852,7 +877,11 @@ fn validate_document(
             | PdfObject::Destination(_)
             | PdfObject::NamedDestination(_)
             | PdfObject::DestinationNameTree(_)
-            | PdfObject::Names(_) => {}
+            | PdfObject::Names(_)
+            | PdfObject::Action(_)
+            | PdfObject::PdfStringSyntax(_)
+            | PdfObject::Outline(_)
+            | PdfObject::OutlineItem(_) => {}
         }
         if stream_bytes > limits.max_stream_bytes {
             return Err(PdfModelError::TooManyStreamBytes {
@@ -902,6 +931,11 @@ fn validate_object_values(
                 {
                     return Err(PdfModelError::MissingObject(id));
                 }
+                if let PdfDestinationTarget::Reference(id) = action.target
+                    && !ids.contains(&id)
+                {
+                    return Err(PdfModelError::MissingObject(id));
+                }
                 if let Some(PdfDestinationStructure::Internal(id)) = action.structure
                     && !ids.contains(&id)
                 {
@@ -935,6 +969,54 @@ fn validate_object_values(
                 && !ids.contains(&id)
             {
                 return Err(PdfModelError::MissingObject(id));
+            }
+        }
+        PdfObject::Action(action) => {
+            if let PdfAnnotationAction::Destination(action) = action {
+                if let PdfDestinationTarget::Page {
+                    page: PdfDestinationPage::Internal(id),
+                    ..
+                } = action.target
+                    && !ids.contains(&id)
+                {
+                    return Err(PdfModelError::MissingObject(id));
+                }
+                if let PdfDestinationTarget::Reference(id) = action.target
+                    && !ids.contains(&id)
+                {
+                    return Err(PdfModelError::MissingObject(id));
+                }
+                if let Some(PdfDestinationStructure::Internal(id)) = action.structure
+                    && !ids.contains(&id)
+                {
+                    return Err(PdfModelError::MissingObject(id));
+                }
+            }
+        }
+        PdfObject::PdfStringSyntax(_) => {}
+        PdfObject::Outline(outline) => {
+            for id in [outline.first, outline.last] {
+                if !ids.contains(&id) {
+                    return Err(PdfModelError::MissingObject(id));
+                }
+            }
+        }
+        PdfObject::OutlineItem(item) => {
+            for id in [
+                Some(item.title),
+                Some(item.action),
+                Some(item.parent),
+                item.previous,
+                item.next,
+                item.first,
+                item.last,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if !ids.contains(&id) {
+                    return Err(PdfModelError::MissingObject(id));
+                }
             }
         }
     }
@@ -1204,6 +1286,34 @@ fn hash_object(object: &PdfObject, hasher: &mut CanonicalHasher) {
             hasher.u32(names.destinations.map_or(0, PdfObjectId::get));
             hasher.bytes(&names.raw_entries);
         }
+        PdfObject::Action(action) => {
+            hasher.byte(9);
+            hash_annotation_action(Some(action), hasher);
+        }
+        PdfObject::PdfStringSyntax(value) => {
+            hasher.byte(10);
+            hasher.bytes(value);
+        }
+        PdfObject::Outline(outline) => {
+            hasher.byte(11);
+            hasher.u32(outline.first.get());
+            hasher.u32(outline.last.get());
+            hasher.i64(i64::from(outline.visible_count));
+        }
+        PdfObject::OutlineItem(item) => {
+            hasher.byte(12);
+            hasher.u32(item.title.get());
+            hasher.u32(item.action.get());
+            hasher.u32(item.parent.get());
+            for id in [item.previous, item.next, item.first, item.last] {
+                hasher.u32(id.map_or(0, PdfObjectId::get));
+            }
+            hasher.bool(item.count.is_some());
+            if let Some(count) = item.count {
+                hasher.i64(i64::from(count));
+            }
+            hasher.bytes(&item.raw_entries);
+        }
     }
 }
 
@@ -1276,6 +1386,10 @@ fn hash_annotation_action(action: Option<&PdfAnnotationAction>, hasher: &mut Can
                 hasher.bytes(file);
             }
             match &action.target {
+                PdfDestinationTarget::Reference(id) => {
+                    hasher.byte(3);
+                    hasher.u32(id.get());
+                }
                 PdfDestinationTarget::Page { page, view } => {
                     hasher.byte(0);
                     match page {

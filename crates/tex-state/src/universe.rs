@@ -2368,6 +2368,35 @@ impl Universe {
         self.pdf.destinations(structure)
     }
 
+    pub fn create_pdf_outline(
+        &mut self,
+        attributes: TokenListId,
+        action: crate::PdfActionSpec,
+        count: i32,
+        title: TokenListId,
+    ) -> Result<crate::PdfOutlineRecord, PdfObjectCapacityError> {
+        let attributes_semantic_id = self.stores.token_list_semantic_id_value(attributes);
+        let action_semantic_id =
+            action.fingerprint(|tokens| self.stores.token_list_semantic_id_value(tokens));
+        let title_semantic_id = self.stores.token_list_semantic_id_value(title);
+        self.pdf.create_outline(
+            attributes,
+            action,
+            count,
+            title,
+            [
+                attributes_semantic_id,
+                action_semantic_id,
+                title_semantic_id,
+            ],
+        )
+    }
+
+    #[must_use]
+    pub fn pdf_outlines(&self) -> &[crate::PdfOutlineRecord] {
+        self.pdf.outlines()
+    }
+
     pub fn create_pdf_link(
         &mut self,
         dimensions: crate::PdfAnnotationDimensions,
