@@ -5,8 +5,62 @@ use crate::meaning::MeaningFlags;
 use crate::provenance::{DiagnosticSite, RelatedLocation, RelatedLocationRole, SourceOrigin};
 use crate::source_map::SourceDescriptor;
 use crate::token::{OriginId, Token};
-use crate::{ProvenanceResolver, Universe, World};
+use crate::{
+    EditorLayout, FragmentStore, LayoutGeneration, LayoutResolvedOrigin, Piece, ProvenanceResolver,
+    Universe, World,
+};
 use std::sync::Arc;
+
+#[test]
+fn layout_resolver_checks_fragments_before_engine_sources() {
+    let mut fragments = FragmentStore::new();
+    let (fragment, registration) = fragments
+        .append(Arc::from(&b"alpha\nbeta"[..]), 11)
+        .expect("fragment appends");
+    let origin = registration.direct_origin(6, 7).expect("direct origin");
+    let layout = EditorLayout::new(
+        "editor.tex",
+        LayoutGeneration::new(4),
+        vec![Piece::new(fragment, 0, 10)],
+        &fragments,
+    )
+    .expect("layout is valid");
+    let universe = Universe::new();
+
+    assert_eq!(
+        ProvenanceResolver::new(&universe).resolve_layout_origin(origin, &fragments, &layout),
+        LayoutResolvedOrigin::Current {
+            path: "editor.tex".into(),
+            doc_offset_lo: 6,
+            doc_offset_hi: 7,
+            line: 2,
+            column: 1,
+        }
+    );
+
+    let engine_registration = universe_with_registered_source(b"engine");
+    let (universe, engine_origin) = engine_registration;
+    assert_eq!(
+        ProvenanceResolver::new(&universe).resolve_layout_origin(
+            engine_origin,
+            &fragments,
+            &layout
+        ),
+        LayoutResolvedOrigin::Foreign
+    );
+}
+
+fn universe_with_registered_source(bytes: &[u8]) -> (Universe, OriginId) {
+    let mut universe = Universe::new();
+    let registration = universe
+        .register_input_source(
+            crate::SourceId::new(0),
+            SourceDescriptor::generated(Arc::from(bytes)),
+        )
+        .expect("engine source registers");
+    let origin = registration.direct_origin(0, 1).expect("direct origin");
+    (universe, origin)
+}
 
 #[test]
 fn resolver_renders_source_line_and_caret() {

@@ -53,10 +53,12 @@ The design has four goals:
 - Ordinary source locations and arena-backed origins are indistinguishable to
   downstream callers. Only the aggregate state facade and resolver decode the
   representation.
-- A source position is meaningful only while its source-map region is live on
-  the current timeline. An arena origin is meaningful only while its record is
-  live. Rolled-back or absent data resolves to unknown rather than causing a
-  second diagnostic failure.
+- An engine source position is meaningful only while its source-map region is
+  live on the current timeline. An editor-fragment position remains meaningful
+  for the session and resolves through the current layout to either a current
+  document offset or typed `Deleted`. An arena origin is meaningful only while
+  its record is live. Rolled-back or absent data resolves to unknown rather
+  than causing a second diagnostic failure.
 - Source-map and provenance rollback are watermark truncations. Snapshot
   capture remains O(1).
 - Source position allocation and origin-record allocation are infallible from
@@ -195,6 +197,24 @@ stable content identity such as `ContentHash`, never solely by a reusable
 `InputRecordId`; otherwise it is truncated with the source registry. Cache
 data is display-only, does not participate in semantic state or snapshot
 hashes, and is measured separately as retained diagnostic memory.
+
+### 4.4 Edit-stable fragment overlay
+
+The editor root uses a session-scoped `FragmentStore` alongside the
+rollback-coupled source map. Each immutable fragment reserves one disjoint
+logical range plus its end anchor from the same non-rewinding allocator used
+by engine sources. The fragment table is append-only and cloned as an O(1)
+`Arc` snapshot for engine generations, so discarded forks cannot cause either
+fragment or engine ranges to be handed out again.
+
+`EditorLayout` is an immutable piece table for one `LayoutGeneration`. It
+validates fragment-relative piece ranges and stores document prefix sums.
+Layout-aware resolution checks fragments before the engine source map: a live
+piece yields current document offsets and lazy line/column data, a fragment
+range absent from the layout yields typed `Deleted`, an engine source yields
+`Foreign`, and invalid or absent provenance yields `Unknown`. Its line-start
+cache is display-only and belongs to the exact layout generation, preventing a
+retained origin from observing a stale line index after an edit.
 
 ## 5. Packed origin representation
 

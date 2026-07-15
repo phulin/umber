@@ -40,6 +40,7 @@ pub mod page;
 pub mod provenance;
 mod provenance_resolver;
 pub mod scaled;
+pub mod source_fragments;
 pub mod source_map;
 pub(crate) mod state_hash;
 mod stores;
@@ -59,6 +60,10 @@ pub use page::{
     PageFireUp, PageInteger,
 };
 pub use provenance_resolver::{ProvenanceResolver, ResolvedSourceLocation};
+pub use source_fragments::{
+    EditorLayout, EditorLayoutError, FragmentId, FragmentStore, LayoutGeneration,
+    LayoutResolvedOrigin, Piece,
+};
 pub use stores::{FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnostic};
 pub use universe::{
     BoxBuildTransaction, BoxDimension, EngineBoundaryHasher, ExpansionContext, ExpansionState,

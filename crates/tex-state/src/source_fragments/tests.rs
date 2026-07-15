@@ -1,0 +1,180 @@
+use std::mem;
+
+use super::*;
+use crate::input::SourceId;
+use crate::source_map::{SourceDescriptor, SourceMap};
+
+fn append(
+    store: &mut FragmentStore,
+    bytes: &[u8],
+    revision: u64,
+) -> (FragmentId, RegisteredSource) {
+    store
+        .append(Arc::from(bytes), revision)
+        .expect("fragment appends")
+}
+
+#[test]
+fn fragment_and_engine_regions_are_disjoint_and_monotonic() {
+    let mut fragments = FragmentStore::new();
+    let (_, first) = append(&mut fragments, b"first", 1);
+    let first_span = first.span(0, 5).expect("fragment span is valid");
+
+    let mut source_map = SourceMap::default();
+    let engine = source_map
+        .register(
+            SourceId::new(0),
+            SourceDescriptor::generated(Arc::from(&b"engine"[..])),
+        )
+        .expect("engine source registers");
+    let (_, last) = append(&mut fragments, b"last", 2);
+    let last_span = last.span(0, 4).expect("fragment span is valid");
+
+    assert!(first_span.hi().raw() < engine.raw());
+    assert!(engine.raw() < last_span.lo().raw());
+    assert!(fragments.fragment_at(engine).is_none());
+    assert!(source_map.region_for_position(first_span.lo()).is_none());
+    assert!(source_map.region_for_position(last_span.lo()).is_none());
+}
+
+#[test]
+fn deleted_fragment_position_is_typed_and_never_aliased() {
+    let mut fragments = FragmentStore::new();
+    let (_, registration) = append(&mut fragments, b"old", 17);
+    let origin = registration.direct_origin(1, 2).expect("direct origin");
+    let layout = EditorLayout::new("root.tex", LayoutGeneration::new(2), vec![], &fragments)
+        .expect("empty layout is valid");
+
+    let span = direct_fragment_span(origin, &fragments).expect("fragment origin resolves");
+    assert_eq!(
+        resolve_fragment_span(span, &fragments, &layout),
+        Some(LayoutResolvedOrigin::Deleted {
+            minted_revision: 17
+        })
+    );
+}
+
+#[test]
+fn fragment_snapshot_survives_simulated_fork_discard() {
+    let mut retained = FragmentStore::new();
+    let (id, registration) = append(&mut retained, b"retained", 3);
+    let installed_snapshot = retained.clone();
+    let mut discarded_fork = installed_snapshot.clone();
+    let (_, discarded_registration) = append(&mut discarded_fork, b"discarded", 4);
+    drop(discarded_fork);
+
+    let (_, later_registration) = append(&mut retained, b"later", 5);
+    assert!(
+        discarded_registration
+            .span(0, 1)
+            .expect("discarded fork registration is valid")
+            .lo()
+            .raw()
+            < later_registration
+                .span(0, 1)
+                .expect("later retained registration is valid")
+                .lo()
+                .raw()
+    );
+
+    let layout = EditorLayout::new(
+        "root.tex",
+        LayoutGeneration::new(3),
+        vec![Piece::new(id, 0, 8)],
+        &installed_snapshot,
+    )
+    .expect("layout is valid");
+    let span = registration.span(0, 1).expect("fragment span is valid");
+    assert!(matches!(
+        resolve_fragment_span(span, &installed_snapshot, &layout),
+        Some(LayoutResolvedOrigin::Current {
+            doc_offset_lo: 0,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn empty_fragments_and_end_anchors_resolve_without_borrowing_a_neighbor() {
+    let mut fragments = FragmentStore::new();
+    let (empty_id, empty) = append(&mut fragments, b"", 1);
+    let (text_id, text) = append(&mut fragments, b"abc", 1);
+    let layout = EditorLayout::new(
+        "root.tex",
+        LayoutGeneration::new(1),
+        vec![Piece::new(empty_id, 0, 0), Piece::new(text_id, 0, 3)],
+        &fragments,
+    )
+    .expect("layout is valid");
+
+    let empty_anchor = empty.span(0, 0).expect("empty anchor is valid");
+    assert_eq!(
+        resolve_fragment_span(empty_anchor, &fragments, &layout),
+        Some(LayoutResolvedOrigin::Current {
+            path: "root.tex".into(),
+            doc_offset_lo: 0,
+            doc_offset_hi: 0,
+            line: 1,
+            column: 1,
+        })
+    );
+
+    let end_anchor = text.span(3, 3).expect("end anchor is valid");
+    assert_eq!(
+        resolve_fragment_span(end_anchor, &fragments, &layout),
+        Some(LayoutResolvedOrigin::Current {
+            path: "root.tex".into(),
+            doc_offset_lo: 3,
+            doc_offset_hi: 3,
+            line: 1,
+            column: 4,
+        })
+    );
+}
+
+#[test]
+fn line_index_is_lazy_once_per_layout_generation() {
+    let mut fragments = FragmentStore::new();
+    let (id, registration) = append(&mut fragments, b"a\nb", 1);
+    let first = EditorLayout::new(
+        "root.tex",
+        LayoutGeneration::new(7),
+        vec![Piece::new(id, 0, 3)],
+        &fragments,
+    )
+    .expect("layout is valid");
+    let span = registration.span(2, 3).expect("fragment span is valid");
+    assert_eq!(first.line_index_build_count(), 0);
+    for _ in 0..2 {
+        assert!(matches!(
+            resolve_fragment_span(span, &fragments, &first),
+            Some(LayoutResolvedOrigin::Current {
+                line: 2,
+                column: 1,
+                ..
+            })
+        ));
+    }
+    assert_eq!(first.line_index_build_count(), 1);
+
+    let second = EditorLayout::new(
+        "root.tex",
+        LayoutGeneration::new(8),
+        vec![Piece::new(id, 0, 3)],
+        &fragments,
+    )
+    .expect("layout is valid");
+    assert!(matches!(
+        resolve_fragment_span(span, &fragments, &second),
+        Some(LayoutResolvedOrigin::Current { line: 2, .. })
+    ));
+    assert_eq!(second.line_index_build_count(), 1);
+}
+
+#[test]
+fn fragment_snapshot_handle_is_constant_size() {
+    let mut fragments = FragmentStore::new();
+    let before = mem::size_of_val(&fragments.clone());
+    append(&mut fragments, &vec![b'x'; 1024 * 1024], 1);
+    assert_eq!(mem::size_of_val(&fragments.clone()), before);
+}

@@ -10,6 +10,26 @@ use crate::world::{ContentHash, InputRecordId};
 
 static NEXT_LOGICAL_SOURCE_POSITION: AtomicU64 = AtomicU64::new(0);
 
+/// Shared high-water allocator for every logical source-coordinate range.
+///
+/// The process-wide counter is deliberately not part of rollback state: a
+/// discarded timeline permanently consumes its range, so no surviving fork
+/// can reinterpret an old packed origin. Fragment and engine registrations
+/// use this same allocator.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct LogicalPositionAllocator;
+
+impl LogicalPositionAllocator {
+    pub(crate) fn reserve(self, byte_len: u64) -> Result<(u64, u64), SourceMapError> {
+        NEXT_LOGICAL_SOURCE_POSITION
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |start| {
+                start.checked_add(byte_len)?.checked_add(1)
+            })
+            .map(|start| (start, start + byte_len + 1))
+            .map_err(|_| SourceMapError::LogicalPositionExhausted)
+    }
+}
+
 /// An opaque position in the current timeline's logical source space.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct SourcePos(u64);
@@ -362,12 +382,7 @@ impl SourceMap {
                 .ok_or(SourceMapError::LogicalPositionExhausted)?;
             return Ok((start, next));
         }
-        NEXT_LOGICAL_SOURCE_POSITION
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |start| {
-                start.checked_add(byte_len)?.checked_add(1)
-            })
-            .map(|start| (start, start + byte_len + 1))
-            .map_err(|_| SourceMapError::LogicalPositionExhausted)
+        LogicalPositionAllocator.reserve(byte_len)
     }
 
     fn descriptor_matches(&self, region: SourceRegion, descriptor: &SourceDescriptor) -> bool {

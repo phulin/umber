@@ -14,6 +14,9 @@ use crate::provenance::{
     DiagnosticSite, InsertedOriginKind, OriginRecord, SourceOrigin, SynthesizedOriginKind,
     SyntheticOriginKind,
 };
+use crate::source_fragments::{
+    EditorLayout, FragmentStore, LayoutResolvedOrigin, direct_fragment_span, resolve_fragment_span,
+};
 use crate::source_map::SourceBacking;
 use crate::token::OriginId;
 
@@ -87,6 +90,50 @@ impl<'a> ProvenanceResolver<'a> {
             line: display.line_number,
             column: display.column,
         })
+    }
+
+    /// Resolves an origin against the current editor piece table before
+    /// falling through to the rollback-coupled engine source map.
+    #[must_use]
+    pub fn resolve_layout_origin(
+        &self,
+        origin: OriginId,
+        fragments: &FragmentStore,
+        layout: &EditorLayout,
+    ) -> LayoutResolvedOrigin {
+        let mut current = origin;
+        for _ in 0..self.trace_depth.saturating_add(4) {
+            if let Some(span) = direct_fragment_span(current, fragments) {
+                return resolve_fragment_span(span, fragments, layout)
+                    .unwrap_or(LayoutResolvedOrigin::Unknown);
+            }
+            match self.record(current) {
+                Some(OriginRecord::SourceSpan(span)) => {
+                    if let Some(resolved) = resolve_fragment_span(span, fragments, layout) {
+                        return resolved;
+                    }
+                    return self
+                        .resolve_origin(current)
+                        .map_or(LayoutResolvedOrigin::Unknown, |_| {
+                            LayoutResolvedOrigin::Foreign
+                        });
+                }
+                Some(OriginRecord::Source(_)) => return LayoutResolvedOrigin::Foreign,
+                Some(OriginRecord::MacroInvocation(invocation)) => {
+                    current = invocation.invocation();
+                }
+                Some(OriginRecord::Inserted(inserted)) => current = inserted.parent(),
+                Some(OriginRecord::Synthesized(synthesized)) => current = synthesized.parent(),
+                Some(OriginRecord::UnknownBootstrap | OriginRecord::Synthetic(_)) | None => {
+                    return self
+                        .resolve_origin(current)
+                        .map_or(LayoutResolvedOrigin::Unknown, |_| {
+                            LayoutResolvedOrigin::Foreign
+                        });
+                }
+            }
+        }
+        LayoutResolvedOrigin::Unknown
     }
 
     /// Renders a complete diagnostic message with optional primary origin.

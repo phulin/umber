@@ -262,6 +262,13 @@ supply.
   more than 5%. Flat source records remain only as degraded compatibility for
   explicitly unregistered legacy/test origins; production traced inputs do not
   emit them.
+  Editor-stable coordinates add a session append-only `FragmentStore` whose
+  immutable rows reserve ranges from the same non-rewinding allocator as
+  engine source regions. Accepted `EditorLayout` piece tables carry validated
+  fragment views and a `LayoutGeneration`; diagnostic resolution checks this
+  overlay first and returns current document coordinates or typed deletion,
+  then falls through to World/generated engine sources. Lazy line indexes are
+  tied to the exact layout generation, while fragment snapshots remain O(1).
   Horizontal main control may consume a physical-source run directly only
   when every already-normalized scalar currently has catcode `Letter` or
   `Other` and its ordinary lexer delivery would use a direct source origin.
