@@ -313,7 +313,9 @@ fn finish_math(
         }
     }
     let mut content = finish_current_math_list(nest, stores);
-    let font_failure = math_font_failure(stores);
+    let font_failure = math_list_requires_font_parameters(stores, content)
+        .then(|| math_font_failure(stores))
+        .flatten();
     if let Some(failure) = font_failure {
         content = stores.freeze_node_list(&[]);
         stores
@@ -376,7 +378,9 @@ fn finish_equation_number(
     }
 
     let mut content = finish_current_math_list(nest, stores);
-    let font_failure = math_font_failure(stores);
+    let font_failure = math_list_requires_font_parameters(stores, content)
+        .then(|| math_font_failure(stores))
+        .flatten();
     if let Some(failure) = font_failure {
         content = stores.freeze_node_list(&[]);
         stores
@@ -455,6 +459,18 @@ fn math_font_failure(stores: &Universe) -> Option<MathFontFailure> {
         return Some(MathFontFailure::Extension);
     }
     None
+}
+
+fn math_list_requires_font_parameters(
+    stores: &Universe,
+    content: tex_state::ids::NodeListId,
+) -> bool {
+    stores.nodes(content).into_iter().any(|node| {
+        matches!(
+            node.to_owned(),
+            Node::MathNoad(_) | Node::FractionNoad(_) | Node::MathChoice(_) | Node::MathList(_)
+        )
+    })
 }
 
 #[cfg(test)]
