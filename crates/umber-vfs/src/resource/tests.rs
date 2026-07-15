@@ -1,4 +1,5 @@
 use super::*;
+use proptest::prelude::*;
 
 fn key(kind: FileKind, name: &str) -> FileRequestKey {
     FileRequestKey::new(kind, name).expect("request key")
@@ -214,6 +215,61 @@ fn partial_permuted_and_chunked_responses_are_equivalent() {
     chunked.provision(refs).expect("second chunk");
 
     assert_eq!(state(&together), state(&chunked));
+}
+
+proptest! {
+    #[test]
+    fn arbitrary_response_permutations_and_chunking_are_equivalent(
+        entries in prop::collection::btree_map(
+            "[a-z]{1,8}\\.tex",
+            (any::<u32>(), prop::collection::vec(any::<u8>(), 0..64)),
+            1..32,
+        ),
+        chunk_size in 1usize..8,
+    ) {
+        let requests = FileRequestBatch::new(
+            entries
+                .keys()
+                .map(|name| request(FileKind::TexInput, name)),
+            [],
+        );
+        let responses = entries
+            .iter()
+            .map(|(name, (order, bytes))| {
+                (
+                    *order,
+                    response(
+                        FileKind::TexInput,
+                        name,
+                        &format!("/texlive/tex/{name}"),
+                        bytes,
+                    ),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let mut together = FileProvisioner::new(VfsLimits::default()).expect("registry");
+        together.expect(&requests);
+        together
+            .provision_batch(responses.iter().map(|(_, response)| response.clone()))
+            .expect("canonical batch");
+
+        let mut permuted = responses;
+        permuted.sort_by_key(|(order, response)| (*order, response.request.clone()));
+        let chunk_count = permuted.len().div_ceil(chunk_size);
+        let mut chunked = FileProvisioner::new(VfsLimits::default()).expect("registry");
+        chunked.expect(&requests);
+        for (index, chunk) in permuted.chunks(chunk_size).enumerate() {
+            chunked
+                .provision_batch(chunk.iter().map(|(_, response)| response.clone()))
+                .expect("permuted partial batch");
+            if index + 1 < chunk_count {
+                chunked.retry().expect("partial batch made progress");
+            }
+        }
+
+        prop_assert_eq!(state(&together), state(&chunked));
+    }
 }
 
 #[test]

@@ -1,9 +1,12 @@
 # Shared virtual filesystem
 
-Status: canonical paths, immutable files, layered storage, typed file requests,
-resource registration, file limits, deterministic snapshots, generated-file
-transactions, TeX compile-session input/output adapters, shared native/WASM
-resource batching, and atomic editor-revision/build acceptance implemented.
+Status: VFS substrate and TeX-session migration complete. Canonical paths,
+immutable files, layered storage, typed file requests, resource registration,
+file limits, deterministic snapshots, generated-file transactions, TeX
+compile-session input/output adapters, shared native/WASM resource batching,
+atomic editor-revision/build acceptance, and legacy-store removal are
+implemented. Bibliography stages and native multipass project orchestration are
+separately tracked by the `umber2-rti9` epic.
 
 This document defines `umber-vfs`, the host-neutral virtual filesystem shared
 by Umber's TeX driver, bibliography processing, native embeddings, and the
@@ -468,6 +471,18 @@ Required property tests include:
 The end-to-end gate compares cold and retained multi-pass builds and requires
 byte-identical generated files and DVI.
 
+The implemented VFS/TeX exit gate runs `cargo test --tests -p umber-vfs -p
+umber -p umber-wasm`, `scripts/test-incremental-fuzz.sh`,
+`scripts/check-and-test.sh`, and `scripts/check-wasm.sh`. Together these cover
+arbitrary canonical paths, arbitrary response permutations and chunk sizes,
+atomic invalid and conflicting batches, stage/build discard and limit failure,
+accepted-root and generated-output rollback, stale revision rejection, retained
+input and generated-generation accounting, direct Rust/WASM wire conversion,
+persistent native and browser revisions, cancellation before provisioning, and
+the optimized browser package. The `umber` session owns one `FileProvisioner`;
+`umber-wasm` is a representation adapter and the authored JavaScript facade has
+no private path, request, registration, progress, or byte-accounting store.
+
 ## Migration plan
 
 1. **Complete.** Add `umber-vfs` with the current `VirtualPath` behavior and
@@ -501,26 +516,42 @@ byte-identical generated files and DVI.
    generations. Candidate root bytes, generated files, diagnostics, artifacts,
    DVI/HTML, and returned output now accept or roll back together, with composed
    retention charges.
-9. Add the bibliography resource kinds and adapters defined in
-   [`bib.md`](bib.md).
-10. Implement native multi-stage orchestration, then expose the identical state
-   machine through `umber-wasm`.
-11. Remove any remaining superseded adapter state after all native,
-   incremental, and browser generated-output paths use `umber-vfs`.
+9. **Resource vocabulary complete; bibliography adapter deferred.** The shared
+   bibliography domains and file kinds are implemented here. `BibSession` and
+   its engine-specific validation are owned by `umber2-rti9.12`.
+10. **TeX session complete; project orchestration deferred.** Native and WASM
+    TeX compilation use the identical persistent Rust state machine. In-process
+    LaTeX/bibliography multipass orchestration is owned by `umber2-rti9.14` and
+    its WASM exposure by `umber2-rti9.15`.
+11. **Complete for every implemented consumer.** Native incremental and browser
+    TeX generated-output paths use `umber-vfs`; no superseded private file map,
+    path type, request table, progress tracker, or VFS byte counter remains in
+    `umber` or `umber-wasm`. Future bibliography consumers must use the same
+    substrate rather than introduce parallel storage.
 
 ## Exit criteria
 
-The design is complete when:
+The shared VFS substrate and its implemented TeX consumers are complete:
 
-- TeX and bibliography processing exchange generated files through one VFS
-  without native filesystem access or subprocesses;
-- native and WASM builds run the same Rust stages and observe identical paths,
-  requests, diagnostics, and bytes;
-- missing files from either engine participate in one batched resource loop;
-- a failure or resource miss at any stage leaves the previous accepted build
-  unchanged;
-- generated-file convergence and invalidation are explicit and tested;
-- duplicate provisioning, collision, limit, cancellation, and no-progress
-  behavior are typed and deterministic;
-- persistent revision retention charges every live VFS allocation; and
-- no legacy private virtual-file store remains in `umber` or `umber-wasm`.
+- native and WASM TeX builds run the same Rust stages and observe identical
+  paths, requests, diagnostics, and bytes;
+- missing TeX files participate in one deterministic batched resource loop;
+- a failure or resource miss leaves the previous accepted root, generated
+  files, diagnostics, artifacts, and returned output unchanged;
+- generated-file replacement and invalidation are explicit transactional
+  policy and have adversarial coverage;
+- duplicate provisioning, collision, limit, cancellation, stale-revision, and
+  no-progress behavior are typed and deterministic;
+- persistent revision retention charges the live VFS input and accepted
+  generated generations, and replacing a revision releases unreferenced
+  internal generations; and
+- no legacy private virtual-file store or duplicate public path/request type
+  remains in `umber` or `umber-wasm`.
+
+The following are project-level bibliography integration criteria, not missing
+VFS substrate work: TeX and bibliography processing must exchange generated
+files through this one VFS without runtime filesystem access or subprocesses;
+both engines' missing files must share the resource loop; and native/WASM must
+run the same multipass project stages. They are acceptance criteria of
+`umber2-rti9.12`, `umber2-rti9.14`, and `umber2-rti9.15` and cannot be claimed
+until those tracked consumers exist.
