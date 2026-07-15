@@ -3600,6 +3600,23 @@ fn end_cleanup_ejects_residual_page() {
 }
 
 #[test]
+fn end_cleanup_exposes_tex_its_all_over_penalty_to_output_routine() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\output={\\global\\count0=\\outputpenalty \\shipout\\box255}\\
+         \\setbox0=\\hbox{}\\copy0\\end",
+    ));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("end cleanup output routine executes");
+
+    assert_eq!(stores.count(0), -1_073_741_824);
+    assert_eq!(stats.shipped_artifacts.len(), 1);
+}
+
+#[test]
 fn end_inside_unterminated_box_reaches_outer_cleanup() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

@@ -7,8 +7,7 @@ use tex_state::env::banks::{DimenParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node, Sign};
 use tex_state::page::{
-    EJECT_PENALTY, INF_PENALTY, PageDimension, PageFireUp, PageInsertionStatus, PageInteger,
-    PageMark,
+    AWFUL_BAD, INF_PENALTY, PageDimension, PageFireUp, PageInsertionStatus, PageInteger, PageMark,
 };
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::Token;
@@ -22,6 +21,9 @@ use crate::packing_params::vpack;
 use crate::page_builder::build_page;
 use crate::splitting::{natural_vlist_size, prune_page_top, vpack_natural};
 use crate::{ExecError, ExecutionStats, Mode, ModeNest, leave_group, push_traced_tokens};
+
+/// TeX.web's `-1073741824` end-job penalty from `its_all_over`.
+const END_JOB_PENALTY: i32 = -AWFUL_BAD - 1;
 
 pub(crate) fn drain_pending_output(
     nest: &mut ModeNest,
@@ -525,7 +527,7 @@ fn append_end_cleanup_contributions(stores: &mut Universe) {
         kind: GlueKind::Normal,
         leader: None,
     });
-    stores.append_page_contribution(Node::Penalty(EJECT_PENALTY));
+    stores.append_page_contribution(Node::Penalty(END_JOB_PENALTY));
 }
 
 fn job_is_quiescent(stores: &Universe) -> bool {
@@ -539,7 +541,7 @@ fn job_is_quiescent(stores: &Universe) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tex_state::page::PageBreak;
+    use tex_state::page::{EJECT_PENALTY, PageBreak};
 
     fn fire_up(best_break: usize, trigger: usize) -> PageFireUp {
         PageFireUp::new(
@@ -591,5 +593,17 @@ mod tests {
         assert_eq!(penalty, EJECT_PENALTY);
         assert_eq!(after_break, [Node::Penalty(INF_PENALTY)]);
         assert!(stores.page_contributions().is_empty());
+    }
+
+    #[test]
+    fn end_cleanup_uses_tex_its_all_over_penalty() {
+        let mut stores = Universe::new();
+
+        append_end_cleanup_contributions(&mut stores);
+
+        assert_eq!(
+            stores.page_contributions().back(),
+            Some(&Node::Penalty(-1_073_741_824))
+        );
     }
 }
