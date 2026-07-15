@@ -3,7 +3,9 @@
 # The archive identity covers the complete, unmodified LPPL repository. Cases
 # are deliberately not pinned one file at a time: setup derives the corpus from
 # every .lvt in the declared scopes whose same-stem standard .tlg records a
-# shipped DVI box. The exact pinned tree currently yields 295 cases.
+# shipped DVI box. The exact pinned tree yields 295 candidates, of which the
+# pinned classic LaTeX executable actually emits 286 DVIs; the other nine log
+# variants ship only under a different test configuration.
 snapshot release-2024-11-01-PL2
 commit 08926fa6af2c978cbd19f14597252877619f6338
 archive_url https://github.com/latex3/latex2e/archive/08926fa6af2c978cbd19f14597252877619f6338.tar.gz
@@ -13,6 +15,7 @@ archive_sha256 eeacc19ae021b4acf113560960574419ee4f9c2aa5a8e907dd77e06c9430a7e1
 source_date_epoch 1730419200
 selection standard-tlg-shipout
 expected_cases 295
+expected_dvi_cases 286
 scope base
 scope required/tools
 scope required/graphics

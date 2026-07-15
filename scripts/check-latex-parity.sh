@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 manifest="${repo_root}/tests/latex-parity-manifest.txt"
 source_dir="${repo_root}/third_party/latex2e-parity/source"
+case_list="${repo_root}/third_party/latex2e-parity/dvi-cases.txt"
 texmf_dist="${UMBER_TEXMF_DIST:-/usr/local/texlive/2025/texmf-dist}"
 reference_latex="${UMBER_REF_LATEX:-$(command -v latex || true)}"
 format_builder="${UMBER_LATEX_FORMAT_BUILDER:-${repo_root}/scripts/build-latex-format.sh}"
@@ -28,7 +29,7 @@ usage: scripts/check-latex-parity.sh [options]
 
 Options:
   --format PATH       Reuse an existing pregenerated Umber latex.fmt.
-  --case NAME         Run one manifest case instead of the complete cohort.
+  --case NAME         Run one derived case name or repository-relative path.
   --offline           Do not fetch the pinned upstream LaTeX2e snapshot.
   --keep-work         Preserve successful reference and Umber work directories.
   --self-test-format-reuse
@@ -187,7 +188,24 @@ umber_bin="${target_dir}/release/umber"
 parity_bin="${target_dir}/debug/parity-harness"
 [[ -x "$umber_bin" && -x "$parity_bin" ]] || fail "required parity binaries were not built"
 source_date_epoch="$(awk '$1 == "source_date_epoch" { print $2 }' "$manifest")"
-texinputs=".:${texmf_dist}/tex/latex/base:${texmf_dist}/tex/latex/l3kernel:${texmf_dist}/tex/latex/l3backend:${texmf_dist}/tex/generic/unicode-data:${texmf_dist}/tex/generic/babel:${texmf_dist}/tex/generic/hyphen"
+texinput_rel_dirs=(
+  tex/latex/base tex/latex/tools tex/latex/graphics tex/latex/graphics-def
+  tex/latex/amsmath tex/latex/amscls tex/latex/amsfonts
+  tex/latex/l3kernel tex/latex/l3backend tex/latex/l3packages/xparse
+  tex/latex/alegreya tex/latex/algolrevived tex/latex/cyrillic tex/latex/etoolbox
+  tex/latex/hycolor tex/latex/hypdoc tex/latex/hyperref tex/latex/kvoptions
+  tex/latex/kvsetkeys tex/latex/lm tex/latex/pict2e tex/latex/refcount
+  tex/latex/rerunfilecheck tex/latex/stix2-type1 tex/latex/url
+  tex/generic/babel tex/generic/hyphen tex/generic/unicode-data
+  tex/generic/bigintcalc tex/generic/bitset tex/generic/gettitlestring
+  tex/generic/iftex tex/generic/infwarerr tex/generic/intcalc
+  tex/generic/kvdefinekeys tex/generic/ltxcmds tex/generic/pdfescape
+  tex/generic/pdftexcmds tex/generic/stringenc tex/generic/uniquecounter
+)
+texinputs="."
+for relative_dir in "${texinput_rel_dirs[@]}"; do
+  texinputs+=":${texmf_dist}/${relative_dir}"
+done
 texfonts="${texmf_dist}/fonts/tfm/public/cm:${texmf_dist}/fonts/tfm/public/latex-fonts:${texmf_dist}/fonts/tfm/jknappen/ec"
 work_root="$(mktemp -d "${TMPDIR:-/tmp}/umber-latex-parity.XXXXXX")"
 cleanup() {
@@ -200,53 +218,124 @@ cleanup() {
 }
 trap cleanup EXIT
 
-selected=0
-while read -r kind name path expected_bytes expected_hash passes categories support_path extra; do
-  [[ "$kind" == case ]] || continue
-  [[ -z "$case_filter" || "$name" == "$case_filter" ]] || continue
-  [[ -z "${extra:-}" ]] || fail "invalid manifest case record for $name"
-  selected=$((selected + 1))
-  case_root="${work_root}/${name}"
-  reference_dir="${case_root}/reference"
-  umber_dir="${case_root}/umber"
-  mkdir -p "$reference_dir" "$umber_dir"
-  cp "${source_dir}/${path}" "${reference_dir}/document.tex"
-  cp "${source_dir}/${path}" "${umber_dir}/document.tex"
-  cp "${source_dir}/${support_path}" "${reference_dir}/$(basename "$support_path")"
-  cp "${source_dir}/${support_path}" "${umber_dir}/$(basename "$support_path")"
-  stage_format "$name" "$umber_dir"
+case_error() {
+  local case_name="$1"
+  shift
+  printf 'LaTeX DVI parity failed: %s: %s\n' "$case_name" "$*" >&2
+}
 
-  for ((pass = 1; pass <= passes; pass++)); do
-    rm -f "${reference_dir}/document.dvi" "${umber_dir}/document.dvi"
-    reference_status=0
-    (
-      cd "$reference_dir"
-      env SOURCE_DATE_EPOCH="$source_date_epoch" FORCE_SOURCE_DATE=1 \
-        "$reference_latex" -interaction=batchmode document.tex > document.stdout 2> document.stderr
-    ) || reference_status=$?
-    [[ -f "${reference_dir}/document.dvi" ]] || \
-      fail "reference LaTeX emitted no DVI for $name, pass $pass (status $reference_status)"
-    umber_status=0
-    (
-      cd "$umber_dir"
-      env SOURCE_DATE_EPOCH="$source_date_epoch" FORCE_SOURCE_DATE=1 \
-        TEXINPUTS="$texinputs" TEXFONTS="$texfonts" \
-        "$umber_bin" run --latex document.tex --format latex.fmt --dvi document.dvi \
-          > document.stdout 2> document.stderr
-    ) || umber_status=$?
-    [[ -f "${umber_dir}/document.dvi" ]] || \
-      fail "Umber emitted no DVI for $name, pass $pass (status $umber_status)"
-  done
-  "$parity_bin" --compare-existing-dvi \
+run_one_case() {
+  local path="$1"
+  local case_name="$2"
+  local case_root="${work_root}/${case_name}"
+  local reference_dir="${case_root}/reference"
+  local umber_dir="${case_root}/umber"
+  local source_path="${source_dir}/${path}"
+  local source_parent
+  source_parent="$(dirname "$source_path")"
+  local local_inputs=".:${source_parent}:${source_dir}/support:${source_dir}/base:${source_dir}/required/tools:${source_dir}/required/graphics:${source_dir}/required/amsmath:${texinputs}"
+  mkdir -p "$reference_dir" "$umber_dir"
+  cp "$source_path" "${reference_dir}/document.tex" || {
+    case_error "$case_name" "could not stage reference source"
+    return 1
+  }
+  cp "$source_path" "${umber_dir}/document.tex" || {
+    case_error "$case_name" "could not stage Umber source"
+    return 1
+  }
+  cp "${source_dir}/support/test2e.tex" "${source_dir}/support/regression-test.tex" \
+    "$reference_dir" || {
+    case_error "$case_name" "could not stage reference support"
+    return 1
+  }
+  cp "${source_dir}/support/test2e.tex" "${source_dir}/support/regression-test.tex" \
+    "$umber_dir" || {
+    case_error "$case_name" "could not stage Umber support"
+    return 1
+  }
+  rm -f "${reference_dir}/document.dvi" "${umber_dir}/document.dvi"
+  local reference_status=0
+  (
+    cd "$reference_dir"
+    env SOURCE_DATE_EPOCH="$source_date_epoch" FORCE_SOURCE_DATE=1 \
+      TEXINPUTS="${local_inputs}:" \
+      "$reference_latex" -interaction=batchmode document.tex \
+        > document.stdout 2> document.stderr < /dev/null
+  ) || reference_status=$?
+  if [[ ! -f "${reference_dir}/document.dvi" ]]; then
+    printf 'LaTeX DVI parity: %s has no classic LaTeX DVI (status %s)\n' \
+      "$case_name" "$reference_status"
+    return 2
+  fi
+
+  stage_format "$case_name" "$umber_dir"
+
+  local umber_status=0
+  (
+    cd "$umber_dir"
+    env SOURCE_DATE_EPOCH="$source_date_epoch" FORCE_SOURCE_DATE=1 \
+      TEXINPUTS="$local_inputs" TEXFONTS="$texfonts" \
+      "$umber_bin" run --latex document.tex --format latex.fmt --dvi document.dvi \
+        > document.stdout 2> document.stderr < /dev/null
+  ) || umber_status=$?
+  if [[ ! -f "${umber_dir}/document.dvi" ]]; then
+    case_error "$case_name" "Umber emitted no DVI (status $umber_status)"
+    return 1
+  fi
+
+  if ! "$parity_bin" --compare-existing-dvi \
     "${reference_dir}/document.dvi" "${umber_dir}/document.dvi" \
-    --label "$name" --triage-dir "$triage_dir" || fail "coordinate-exact DVI mismatch for $name"
-  printf 'LaTeX DVI parity: %s (%s; %s pass(es))\n' "$name" "$categories" "$passes"
-done < "$manifest"
+    --label "$case_name" --triage-dir "$triage_dir"; then
+    case_error "$case_name" "coordinate-exact DVI mismatch"
+    return 1
+  fi
+  printf 'LaTeX DVI parity: %s (%s)\n' "$case_name" "$path"
+}
+
+[[ -f "$case_list" ]] || fail "setup did not produce case list: $case_list"
+selected=0
+dvi_selected=0
+failed=0
+failures="${work_root}/failures.txt"
+non_dvi="${work_root}/non-dvi.txt"
+: > "$failures"
+: > "$non_dvi"
+while IFS= read -r path; do
+  [[ -n "$path" ]] || continue
+  case_name="${path%.lvt}"
+  case_name="${case_name//\//--}"
+  [[ -z "$case_filter" || "$case_name" == "$case_filter" || "$path" == "$case_filter" ]] || continue
+  selected=$((selected + 1))
+  status=0
+  run_one_case "$path" "$case_name" || status=$?
+  if [[ $status -eq 2 ]]; then
+    printf '%s\t%s\n' "$case_name" "$path" >> "$non_dvi"
+  else
+    dvi_selected=$((dvi_selected + 1))
+  fi
+  if [[ $status -eq 1 ]]; then
+    failed=$((failed + 1))
+    printf '%s\t%s\n' "$case_name" "$path" >> "$failures"
+  fi
+done < "$case_list"
 
 [[ $selected -gt 0 ]] || fail "no manifest case matched '${case_filter:-the suite}'"
 receipt_cases="$(awk '$1 == "case" { count++ } END { print count + 0 }' "$receipt")"
-[[ "$receipt_cases" == "$selected" ]] || fail "format receipt omitted a selected case"
-receipt_hashes="$(awk '$1 == "case" { print $3 }' "$receipt" | sort -u | wc -l | tr -d ' ')"
-[[ "$receipt_hashes" == 1 ]] || fail "selected cases did not restore one format identity"
+[[ "$receipt_cases" == "$dvi_selected" ]] || fail "format receipt omitted a DVI case"
+if [[ $dvi_selected -gt 0 ]]; then
+  receipt_hashes="$(awk '$1 == "case" { print $3 }' "$receipt" | sort -u | wc -l | tr -d ' ')"
+  [[ "$receipt_hashes" == 1 ]] || fail "selected DVI cases did not restore one format identity"
+fi
+if [[ -z "$case_filter" ]]; then
+  expected_dvi_cases="$(awk '$1 == "expected_dvi_cases" { print $2 }' "$manifest")"
+  [[ "$dvi_selected" == "$expected_dvi_cases" ]] || \
+    fail "derived $dvi_selected classic LaTeX DVI cases; expected $expected_dvi_cases"
+fi
 printf 'LaTeX format reuse: %s cases restored sha256:%s (builder invocations: %s)\n' \
-  "$selected" "$format_sha256" "$format_build_count"
+  "$dvi_selected" "$format_sha256" "$format_build_count"
+printf 'LaTeX DVI census: %s candidates, %s classic DVI cases, %s non-DVI configurations (%s)\n' \
+  "$selected" "$dvi_selected" "$((selected - dvi_selected))" "$non_dvi"
+if [[ $failed -gt 0 ]]; then
+  printf 'LaTeX DVI parity failures: %s of %s; list: %s\n' "$failed" "$dvi_selected" "$failures" >&2
+  exit 1
+fi

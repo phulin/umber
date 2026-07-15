@@ -7,11 +7,13 @@ fast differential tests.
 and SHA-256 identities opened while building the Umber-native LaTeX format.
 The explicit LaTeX format builder verifies this closure before every build.
 
-`tests/latex-parity-manifest.txt` pins the official LaTeX2e regression archive,
-the support files, and every selected DVI smoke case by byte length and
-SHA-256. `scripts/setup-latex-parity-tests.sh` owns acquisition under
-gitignored `third_party/latex2e-parity/`; do not copy or modify individual
-upstream LPPL files in the repository.
+`tests/latex-parity-manifest.txt` pins one complete official LaTeX2e repository
+archive rather than individual support or test files. Setup derives the DVI
+cohort from same-stem standard `.tlg` shipout markers in the declared package
+scopes, then the live reference run distinguishes actual classic-LaTeX DVI
+cases from alternate test configurations. `scripts/setup-latex-parity-tests.sh`
+owns acquisition under gitignored `third_party/latex2e-parity/`; do not copy or
+modify individual upstream LPPL files in the repository.
 
 `tests/latex/` contains committed, compact LaTeX-DVI inputs used by explicit
 format and corpus gates. `format-equivalence.tex` must remain deterministic
