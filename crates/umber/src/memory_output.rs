@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 
 use tex_out::dvi::DviPagePlan;
-use tex_state::{CommittedArtifact, ContentHash, Universe, WorldError};
+use tex_state::{CommittedArtifact, ContentHash, Universe, World, WorldError};
+use umber_vfs::{StageTransaction, TransactionError, VirtualPath};
 
 use crate::{DviBuildError, dvi_from_artifacts, dvi_from_committed_artifacts, dvi_from_page_plans};
 
@@ -25,6 +26,35 @@ pub fn collect_final_memory_output_from_plans(
 pub struct MemoryOutputFile {
     pub path: PathBuf,
     pub bytes: Vec<u8>,
+}
+
+/// Copies complete, committed auxiliary files from `World` into one private
+/// VFS stage write set, preserving World's deterministic path order.
+pub(crate) fn publish_auxiliary_outputs(
+    world: &World,
+    stage: &mut StageTransaction<'_, '_>,
+) -> Result<Vec<MemoryOutputFile>, MemoryOutputCollectionError> {
+    let outputs = world
+        .memory_outputs()
+        .ok_or(MemoryOutputCollectionError::NotMemoryBacked)?;
+    let mut files = Vec::with_capacity(outputs.len());
+    for output in outputs {
+        let Some(path) = output.path().to_str() else {
+            return Err(MemoryOutputCollectionError::InvalidAuxiliaryPath(
+                output.path().to_owned(),
+            ));
+        };
+        let virtual_path = VirtualPath::user(path).map_err(|_| {
+            MemoryOutputCollectionError::InvalidAuxiliaryPath(output.path().to_owned())
+        })?;
+        let bytes = output.bytes().to_vec();
+        stage.write(virtual_path, bytes.clone())?;
+        files.push(MemoryOutputFile {
+            path: output.path().to_owned(),
+            bytes,
+        });
+    }
+    Ok(files)
 }
 
 /// Fast-path variant for artifacts committed by the current in-process run.
@@ -152,18 +182,25 @@ fn account(
 #[derive(Debug)]
 pub enum MemoryOutputCollectionError {
     NotMemoryBacked,
+    InvalidAuxiliaryPath(PathBuf),
     OutputLimitExceeded {
         limit: usize,
         required_at_least: usize,
     },
     World(WorldError),
     Dvi(DviBuildError),
+    Transaction(TransactionError),
 }
 
 impl std::fmt::Display for MemoryOutputCollectionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NotMemoryBacked => write!(f, "final output collection requires a memory World"),
+            Self::InvalidAuxiliaryPath(path) => write!(
+                f,
+                "auxiliary output path {:?} is not a valid /job virtual path",
+                path
+            ),
             Self::OutputLimitExceeded {
                 limit,
                 required_at_least,
@@ -173,6 +210,7 @@ impl std::fmt::Display for MemoryOutputCollectionError {
             ),
             Self::World(error) => error.fmt(f),
             Self::Dvi(error) => error.fmt(f),
+            Self::Transaction(error) => error.fmt(f),
         }
     }
 }
@@ -188,6 +226,12 @@ impl From<WorldError> for MemoryOutputCollectionError {
 impl From<DviBuildError> for MemoryOutputCollectionError {
     fn from(value: DviBuildError) -> Self {
         Self::Dvi(value)
+    }
+}
+
+impl From<TransactionError> for MemoryOutputCollectionError {
+    fn from(value: TransactionError) -> Self {
+        Self::Transaction(value)
     }
 }
 

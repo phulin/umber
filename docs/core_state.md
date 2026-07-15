@@ -145,7 +145,11 @@ fork accepted `World` state so output inspection does not mutate the session.
 
 Native search, browser fetch, caching, authentication, and URL selection are
 host policies. The engine reports typed missing resources and accepts validated
-responses through the same host-neutral session API.
+responses through the same host-neutral session API. A driver resolver may
+supply immutable bytes selected from its own storage, but it must pass them
+through the narrow `InputReadState` capability so `World` still allocates the
+input record, retains the content backing, and gives pending same-run output
+precedence.
 
 ## 9. Snapshots, rollback, and commit
 

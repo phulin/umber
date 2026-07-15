@@ -25,7 +25,7 @@ Its resource-registration and accounting boundaries are specified in
 - `src/lib.rs`: canonical virtual path API and crate exports.
 - `src/file.rs`: immutable shared file values, provenance, and identities.
 - `src/limits.rs`: checked file-count and byte limits shared by all VFS clients.
-- `src/resource.rs`: typed resource requests, deterministic batches, and atomic provisioning.
+- `src/resource.rs`: typed resource requests, deterministic batches, atomic provisioning, and build-transaction access over the provisioner's layered storage.
 - `src/resource/tests.rs`: request, registration, conflict, limit, and retry tests.
 - `src/snapshot.rs`: immutable generation snapshots, exact reads, invalidation, and bounded enumeration.
 - `src/snapshot/tests.rs`: snapshot stability, precedence, retention, staleness, and ordering tests.

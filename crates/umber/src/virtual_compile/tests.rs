@@ -241,6 +241,102 @@ fn attempt_local_effects_do_not_leak_across_fetch_rounds() {
 }
 
 #[test]
+fn missing_resource_attempt_discards_auxiliary_stage_writes() {
+    let mut session = session(concat!(
+        "\\immediate\\openout1=attempt.aux ",
+        "\\immediate\\write1{complete} ",
+        "\\immediate\\closeout1 \\input remote \\end"
+    ));
+    let missing = requests(session.compile_attempt());
+    let output_path = VirtualPath::user("attempt.aux").expect("output path");
+    assert!(
+        session
+            .files
+            .snapshot()
+            .get(&output_path)
+            .expect("live snapshot")
+            .is_none(),
+        "suspended attempt must not publish its auxiliary file"
+    );
+
+    session
+        .provide_resolved_file(
+            missing[0].key().clone(),
+            "/texlive/tex/remote.tex",
+            b"\\message{resolved}".to_vec(),
+        )
+        .expect("provide remote");
+    let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+        panic!("retry should complete");
+    };
+    assert_eq!(output.files.len(), 1);
+    let snapshot = session.files.snapshot();
+    let accepted = snapshot
+        .get(&output_path)
+        .expect("live snapshot")
+        .expect("accepted auxiliary output");
+    assert_eq!(accepted.bytes(), output.files[0].bytes);
+}
+
+#[test]
+fn native_and_vfs_single_pass_outputs_are_byte_identical() {
+    let source = concat!(
+        "\\immediate\\openout1=shared.aux ",
+        "\\immediate\\write1{same} ",
+        "\\immediate\\closeout1 \\message{same}\\end"
+    );
+    let mut stores = Universe::with_world(World::memory());
+    prepare_run_stores(&mut stores);
+    crate::run_memory_with_stores(source, &mut stores).expect("native memory run");
+    let native =
+        crate::collect_final_memory_output(&mut stores, &[], 1 << 20).expect("native output");
+
+    let mut virtual_session = VirtualCompileSession::new(SessionOptions {
+        job_name: Some("texput".to_owned()),
+        ..SessionOptions::default()
+    })
+    .expect("virtual session");
+    virtual_session
+        .add_user_file("main.tex", source.as_bytes().to_vec())
+        .expect("main source");
+    let CompileAttemptResult::Complete(virtual_output) = virtual_session.compile_attempt() else {
+        panic!("virtual run should complete");
+    };
+    assert_eq!(virtual_output, native);
+}
+
+#[test]
+fn auxiliary_stage_limit_fails_without_publishing_generated_files() {
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        limits: SessionLimits {
+            output_bytes: 32,
+            ..SessionLimits::default()
+        },
+        ..SessionOptions::default()
+    })
+    .expect("session");
+    let source = format!(
+        "\\immediate\\openout1=large.aux \\immediate\\write1{{{}}} \\immediate\\closeout1 \\end",
+        "x".repeat(64)
+    );
+    session
+        .add_user_file("main.tex", source.into_bytes())
+        .expect("main source");
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Error(CompileError::LimitExceeded { limit: 32, .. })
+    ));
+    assert!(
+        session
+            .files
+            .snapshot()
+            .get(&VirtualPath::user("large.aux").expect("path"))
+            .expect("live snapshot")
+            .is_none()
+    );
+}
+
+#[test]
 fn format_and_fresh_initialization_both_complete() {
     let mut stores = Universe::with_world(World::memory());
     prepare_run_stores(&mut stores);

@@ -183,15 +183,7 @@ impl VirtualFs {
     }
 
     pub fn begin_build(&mut self, plan: BuildPlan) -> BuildTransaction<'_> {
-        let mut working = self.storage.clone();
-        working.replace_layer(FileLayer::new(LayerKind::PendingGenerated));
-        BuildTransaction {
-            target: self,
-            working,
-            plan,
-            next_stage: 1,
-            issued_snapshots: RefCell::new(Vec::new()),
-        }
+        BuildTransaction::new(&mut self.storage, self.limits, plan)
     }
 }
 
@@ -214,7 +206,8 @@ pub struct AcceptedBuild {
 
 /// Private multi-stage overlay for one build attempt.
 pub struct BuildTransaction<'a> {
-    target: &'a mut VirtualFs,
+    target: &'a mut LayeredFileStorage,
+    limits: VfsLimits,
     working: LayeredFileStorage,
     plan: BuildPlan,
     next_stage: u64,
@@ -222,6 +215,23 @@ pub struct BuildTransaction<'a> {
 }
 
 impl<'fs> BuildTransaction<'fs> {
+    pub(crate) fn new(
+        target: &'fs mut LayeredFileStorage,
+        limits: VfsLimits,
+        plan: BuildPlan,
+    ) -> Self {
+        let mut working = target.clone();
+        working.replace_layer(FileLayer::new(LayerKind::PendingGenerated));
+        Self {
+            target,
+            limits,
+            working,
+            plan,
+            next_stage: 1,
+            issued_snapshots: RefCell::new(Vec::new()),
+        }
+    }
+
     #[must_use]
     pub fn snapshot(&self) -> VfsSnapshot {
         self.issue_snapshot()
@@ -253,18 +263,16 @@ impl<'fs> BuildTransaction<'fs> {
         let pending = self.working.layer(LayerKind::PendingGenerated);
         let generated_files = pending.len();
         let logical_bytes = layer_bytes(pending)?;
-        self.target
-            .limits
+        self.limits
             .check(VfsLimitKind::GeneratedFiles, generated_files)?;
-        self.target
-            .limits
+        self.limits
             .check(VfsLimitKind::GeneratedBytes, logical_bytes)?;
 
         let accepted = pending.reclassified(LayerKind::AcceptedGenerated)?;
         let mut published = self.working.clone();
         published.replace_layer(accepted);
         published.replace_layer(FileLayer::new(LayerKind::PendingGenerated));
-        self.target.storage = published;
+        *self.target = published;
         Ok(AcceptedBuild {
             build: self.plan.build,
             generated_files,
@@ -310,7 +318,7 @@ impl StageTransaction<'_, '_> {
 
     pub fn write(&mut self, path: VirtualPath, bytes: Vec<u8>) -> Result<(), TransactionError> {
         require_job_path(&path)?;
-        let limits = self.build.target.limits;
+        let limits = self.build.limits;
         limits.check(VfsLimitKind::OneFileBytes, bytes.len())?;
         let replaced = self.writes.get(&path).map_or(0, |bytes| bytes.len());
         let next_bytes = limits.checked_replacement_total(
@@ -362,7 +370,7 @@ impl StageTransaction<'_, '_> {
             ))?;
         }
         let generated_bytes = layer_bytes(&pending)?;
-        let limits = self.build.target.limits;
+        let limits = self.build.limits;
         limits.check(VfsLimitKind::GeneratedFiles, pending.len())?;
         limits.check(VfsLimitKind::GeneratedBytes, generated_bytes)?;
         self.build.working.replace_layer(pending);

@@ -61,8 +61,14 @@ registration, and file limits are owned by `umber-vfs`. The compile session
 adds TeX lookup/default-extension policy and combines file requests with font
 requests, while the WASM layer only adapts the shared Rust wire values.
 `FileProvisioner` also owns the session's layered user and resolved-resource
-storage. Initial engine state is seeded from one immutable VFS snapshot, so
-the session retains no parallel byte maps or file-accounting counters.
+storage plus its accepted generated layer. Each TeX attempt reads inputs and
+TFM files from one immutable stage snapshot; the resolver passes selected
+shared bytes through `World` so input identity, provenance, and same-run
+pending-output precedence remain unchanged. Successful committed auxiliary
+files publish through the same stage transaction in deterministic path order.
+A resource request, diagnostic failure, or output-limit failure discards that
+stage, so the session retains no parallel byte maps, file-accounting counters,
+or partially published generated files.
 
 Clearing the distribution cache preserves the latest root bytes but discards
 accepted incremental history and restarts resource acquisition as a cold

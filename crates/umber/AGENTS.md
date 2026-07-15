@@ -24,11 +24,11 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/input_search/tests.rs`: focused TeX input/font area ordering, extension, and input-record coverage.
 - `src/html_output.rs`: exact native web-font bundle resolver with TFM identity, WOFF2 digest, complete encoding-map, and embedding-license validation.
 - `src/lib.rs`: shared engine session, file resolvers, typed effect-before-driver finalization, run helpers, and one-artifact-at-a-time DVI construction.
-- `src/memory_output.rs`: exact committed terminal/log/DVI/aux collection for successful memory-backed runs with aggregate output limits.
+- `src/memory_output.rs`: exact committed terminal/log/DVI/aux collection for successful memory-backed runs, aggregate output limits, and auxiliary publication into VFS stage transactions.
 - `src/memory_output/tests.rs`: final-commit idempotence, output accounting, and memory-boundary tests.
 - `src/virtual_compile.rs`: host-neutral persistent compile session, revision-checked root patches, shared-VFS file/OpenType resource retries, atomic response registration, retained immutable resources, and composed resource accounting.
 - `src/virtual_compile/path.rs`: logical TeX/TFM request normalization over `umber-vfs` canonical paths.
-- `src/virtual_compile/resolvers.rs`: World-backed input/font resolvers with typed missing-file and logical OpenType-font side state.
+- `src/virtual_compile/resolvers.rs`: VFS-snapshot-backed input/font resolvers that register selected bytes through World, with typed missing-file and logical OpenType-font side state.
 - `src/virtual_compile/tests.rs`: native retry, path, precedence, limits, format, effect-isolation, font batching, and DVI coverage.
 - `src/main.rs`: `umber` binary entry point, CLI argument parsing, `lex-dump`/`expand-dump`/`run` dispatch, token formatting, and real-run file resolvers.
 - `src/watch.rs`: minimal polling incremental-edit demo, contiguous edit synthesis, DVI publication, and phase latency reporting.

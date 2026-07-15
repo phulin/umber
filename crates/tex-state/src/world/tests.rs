@@ -703,6 +703,26 @@ fn memory_outputs_enumerate_only_materialized_outputs_in_path_order() {
 }
 
 #[test]
+fn supplied_input_bytes_are_recorded_and_pending_output_takes_precedence() {
+    let mut world = World::memory();
+    let supplied: Arc<[u8]> = Arc::from(&b"snapshot"[..]);
+    let first = world
+        .read_supplied_file(Path::new("same.aux"), Arc::clone(&supplied))
+        .expect("read supplied input");
+    assert_eq!(first.bytes(), b"snapshot");
+
+    let slot = StreamSlot::new(1);
+    world.open_out(slot, "same.aux");
+    world.write_text(PrintSink::Stream(slot), "pending");
+    world.close_out(slot);
+    let reopened = world
+        .read_supplied_file(Path::new("same.aux"), supplied)
+        .expect("reopen pending output");
+    assert_eq!(reopened.bytes(), b"pending");
+    assert_eq!(world.input_records().len(), 2);
+}
+
+#[test]
 fn real_world_has_no_memory_output_view() {
     assert!(World::real().memory_outputs().is_none());
 }

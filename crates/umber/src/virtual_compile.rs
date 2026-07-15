@@ -8,20 +8,23 @@ use tex_fonts::{
 use tex_out::html::{HtmlFontKey, HtmlFontResolver, WebFont};
 use tex_state::{ContentHash, JobClock, Universe, World};
 
-use crate::{MemoryOutputFile, MemoryRunOutput, prepare_run_stores};
+use crate::{
+    MemoryOutputCollectionError, MemoryRunOutput, memory_output::publish_auxiliary_outputs,
+    prepare_run_stores,
+};
 
 mod path;
 mod resolvers;
 
 use path::user_path_for_key;
 use resolvers::VirtualRunResolvers;
+use umber_vfs::{
+    BuildId, BuildPlan, FileProvisioner, FileRequestBatch, ProducerId, ProvisionError,
+    ProvisionOutcome, TransactionError, UserRegistrationError,
+};
 pub use umber_vfs::{
     FileKind, FileRequest, FileRequestKey, RequestKeyError, ResolvedFile, ResourceDomain,
     VfsLimitError, VfsLimitKind, VfsLimits, VirtualPath, VirtualPathError,
-};
-use umber_vfs::{
-    FileProvisioner, FileRequestBatch, ProvisionError, ProvisionOutcome, UserRegistrationError,
-    VfsSnapshot, VirtualRoot,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -98,8 +101,8 @@ impl SessionLimits {
             one_file_bytes: self.one_file_bytes,
             user_bytes: self.user_source_bytes,
             resolved_bytes: self.cached_file_bytes,
-            stage_bytes: VfsLimits::HARD_MAX.stage_bytes,
-            generated_bytes: VfsLimits::HARD_MAX.generated_bytes,
+            stage_bytes: self.output_bytes,
+            generated_bytes: self.output_bytes,
         }
     }
 }
@@ -741,14 +744,8 @@ impl VirtualCompileSession {
             let source = String::from_utf8(source.bytes().to_vec()).map_err(|_| {
                 CompileError::Incremental("the editable main file must be valid UTF-8".to_owned())
             })?;
-            let mut world = World::memory_with_clock(self.clock);
-            seed_world_from_snapshot(
-                &mut world,
-                &snapshot,
-                self.files.user_file_count(),
-                self.files.len(),
-            )?;
-            let mut template = if let Some(format) = &self.format {
+            let world = World::memory_with_clock(self.clock);
+            let template = if let Some(format) = &self.format {
                 Universe::from_format(world, format)
                     .map_err(|error| CompileError::Format(error.to_string()))?
             } else {
@@ -756,13 +753,6 @@ impl VirtualCompileSession {
                 prepare_run_stores(&mut template);
                 template
             };
-            // The root is supplied through the editor input, not reopened as
-            // an included file. Keeping the registered copy is harmless and
-            // preserves absolute self-input behavior.
-            template
-                .world_mut()
-                .set_memory_file(self.main_path.as_path(), source.as_bytes().to_vec())
-                .map_err(|error| CompileError::World(error.to_string()))?;
             self.incremental = Some(
                 tex_incr::Session::start_with_source_path(
                     template,
@@ -776,8 +766,21 @@ impl VirtualCompileSession {
             );
         }
 
+        let resolved_paths = self
+            .files
+            .resolved_paths()
+            .map(|(key, path)| (key.clone(), path.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let mut build = self
+            .files
+            .begin_build(BuildPlan::new(BuildId::new(u64::from(self.attempts))));
+        let mut stage = build
+            .begin_stage(ProducerId::new(1))
+            .map_err(map_transaction)?;
+        let snapshot = stage.snapshot();
         let mut resolvers = VirtualRunResolvers::new(
-            &self.files,
+            &snapshot,
+            &resolved_paths,
             &self.resolved_fonts,
             self.accepted_font_containers,
             self.html,
@@ -797,6 +800,8 @@ impl VirtualCompileSession {
         let (file_misses, font_misses, fatal) = resolvers.finish();
 
         if !file_misses.is_empty() || !font_misses.is_empty() {
+            stage.discard();
+            build.discard();
             self.files
                 .expect(&FileRequestBatch::new(file_misses.clone(), []));
             for request in &font_misses {
@@ -830,38 +835,39 @@ impl VirtualCompileSession {
             }));
         }
         if let Some(fatal) = fatal {
+            stage.discard();
+            build.discard();
             return Err(fatal);
         }
-        let accepted = execution.map_err(|error| {
-            CompileError::Diagnostic(CompileDiagnostic {
-                message: error.to_string(),
-                file: None,
-                line: None,
-                column: None,
-            })
-        })?;
-        let world = self
+        let accepted = match execution {
+            Ok(accepted) => accepted,
+            Err(error) => {
+                stage.discard();
+                build.discard();
+                return Err(CompileError::Diagnostic(CompileDiagnostic {
+                    message: error.to_string(),
+                    file: None,
+                    line: None,
+                    column: None,
+                }));
+            }
+        };
+        let accepted_world = self
             .incremental
             .as_ref()
             .expect("accepted incremental session exists")
             .materialize_accepted_world()
             .map_err(|error| CompileError::Output(error.to_string()))?;
-        let terminal = world
+        let terminal = accepted_world
             .memory_terminal_output()
             .ok_or_else(|| CompileError::Output("accepted output is not memory-backed".to_owned()))?
             .to_vec();
-        let log = world
+        let log = accepted_world
             .memory_log_output()
             .ok_or_else(|| CompileError::Output("accepted output is not memory-backed".to_owned()))?
             .to_vec();
-        let files = world
-            .memory_outputs()
-            .ok_or_else(|| CompileError::Output("accepted output is not memory-backed".to_owned()))?
-            .map(|file| MemoryOutputFile {
-                path: file.path().to_owned(),
-                bytes: file.bytes().to_vec(),
-            })
-            .collect::<Vec<_>>();
+        let files =
+            publish_auxiliary_outputs(&accepted_world, &mut stage).map_err(map_memory_output)?;
         let dvi = if accepted.dvi_pages.is_empty() {
             Vec::new()
         } else {
@@ -939,6 +945,8 @@ impl VirtualCompileSession {
                 .collect();
         }
         check_limit("returned output bytes", existing, self.limits.output_bytes)?;
+        stage.finish().map_err(map_transaction)?;
+        build.accept().map_err(map_transaction)?;
         self.pending_patch = None;
         self.last_reuse = Some(accepted.reuse);
         self.accepted_output = Some(output.clone());
@@ -953,6 +961,7 @@ impl VirtualCompileSession {
                 .map_err(map_user_registration)?;
         }
         self.files.clear();
+        self.files.clear_generated_outputs();
         self.resolved_fonts.clear();
         self.font_responses.clear();
         self.font_requests.clear();
@@ -1093,32 +1102,6 @@ fn check_limit(resource: &'static str, attempted: usize, limit: usize) -> Result
     Ok(())
 }
 
-fn seed_world_from_snapshot(
-    world: &mut World,
-    snapshot: &VfsSnapshot,
-    user_files: usize,
-    resolved_files: usize,
-) -> Result<(), CompileError> {
-    for (root, limit) in [
-        (VirtualRoot::Job, user_files),
-        (VirtualRoot::Distribution, resolved_files),
-    ] {
-        for path in snapshot
-            .list_root(root, limit)
-            .map_err(|error| CompileError::World(error.to_string()))?
-        {
-            let file = snapshot
-                .get(&path)
-                .map_err(|error| CompileError::World(error.to_string()))?
-                .expect("enumerated VFS paths remain visible in their snapshot");
-            world
-                .set_memory_file(path.as_path(), file.bytes().to_vec())
-                .map_err(|error| CompileError::World(error.to_string()))?;
-        }
-    }
-    Ok(())
-}
-
 fn map_user_registration(error: UserRegistrationError) -> CompileError {
     match error {
         UserRegistrationError::Limit(error) => map_vfs_limit(error),
@@ -1146,6 +1129,20 @@ fn map_vfs_limit(error: VfsLimitError) -> CompileError {
             limit,
             attempted,
         },
+    }
+}
+
+fn map_transaction(error: TransactionError) -> CompileError {
+    match error {
+        TransactionError::Limit(error) => map_vfs_limit(error),
+        error => CompileError::Output(error.to_string()),
+    }
+}
+
+fn map_memory_output(error: MemoryOutputCollectionError) -> CompileError {
+    match error {
+        MemoryOutputCollectionError::Transaction(error) => map_transaction(error),
+        error => CompileError::Output(error.to_string()),
     }
 }
 

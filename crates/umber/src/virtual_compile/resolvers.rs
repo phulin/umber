@@ -11,14 +11,16 @@ use tex_lex::WorldInput;
 use tex_state::{FileContent, InputReadState};
 
 use super::path::RequestedFile;
-use super::{CompileError, FileKind, FileProvisioner, FileRequest, FileRequestKey};
+use super::{CompileError, FileKind, FileRequest, FileRequestKey, VirtualPath};
+use umber_vfs::VfsSnapshot;
 pub(super) struct VirtualRunResolvers<'a> {
     input: VirtualFileResolver<'a>,
     font: VirtualFontResolver<'a>,
 }
 
 struct VirtualFileResolver<'a> {
-    files: &'a FileProvisioner,
+    snapshot: &'a VfsSnapshot,
+    resolved_paths: &'a BTreeMap<FileRequestKey, VirtualPath>,
     misses: Vec<(u64, FileRequest)>,
     seen: BTreeSet<FileRequestKey>,
     fatal: Option<CompileError>,
@@ -26,15 +28,17 @@ struct VirtualFileResolver<'a> {
 
 impl<'a> VirtualRunResolvers<'a> {
     pub(super) fn new(
-        files: &'a FileProvisioner,
+        snapshot: &'a VfsSnapshot,
+        resolved_paths: &'a BTreeMap<FileRequestKey, VirtualPath>,
         resolved_fonts: &'a BTreeMap<FontRequestKey, OpenTypeFont>,
         accepted_font_containers: AcceptedFontContainers,
         require_opentype: bool,
     ) -> Self {
         Self {
-            input: VirtualFileResolver::new(files),
+            input: VirtualFileResolver::new(snapshot, resolved_paths),
             font: VirtualFontResolver::new(
-                files,
+                snapshot,
+                resolved_paths,
                 resolved_fonts,
                 accepted_font_containers,
                 require_opentype,
@@ -59,9 +63,13 @@ impl<'a> VirtualRunResolvers<'a> {
 }
 
 impl<'a> VirtualFileResolver<'a> {
-    fn new(files: &'a FileProvisioner) -> Self {
+    fn new(
+        snapshot: &'a VfsSnapshot,
+        resolved_paths: &'a BTreeMap<FileRequestKey, VirtualPath>,
+    ) -> Self {
         Self {
-            files,
+            snapshot,
+            resolved_paths,
             misses: Vec::new(),
             seen: BTreeSet::new(),
             fatal: None,
@@ -89,19 +97,26 @@ impl<'a> VirtualFileResolver<'a> {
 
         match requested {
             RequestedFile::UserOnly(path) => {
-                if !self.files.contains_user(&path) {
+                let Some(file) = self.snapshot_file(&path)? else {
                     let failure = CompileError::UnavailableAbsoluteUserFile(path.to_string());
                     self.record_fatal(failure.clone());
                     return Err(failure.to_string());
-                }
-                self.read_seeded(input, path.as_path())
+                };
+                self.read_snapshot(input, file)
             }
             RequestedFile::Remote { user_path, key } => {
-                if self.files.contains_user(&user_path) {
-                    return self.read_seeded(input, user_path.as_path());
+                if let Some(file) = self.snapshot_file(&user_path)? {
+                    return self.read_snapshot(input, file);
                 }
-                if let Some(resolved) = self.files.get(&key) {
-                    return self.read_seeded(input, resolved.path().as_path());
+                if let Some(path) = self.resolved_paths.get(&key) {
+                    let Some(file) = self.snapshot_file(path)? else {
+                        let failure = CompileError::World(format!(
+                            "resolved virtual file {path} is unavailable in its VFS snapshot"
+                        ));
+                        self.record_fatal(failure.clone());
+                        return Err(failure.to_string());
+                    };
+                    return self.read_snapshot(input, file);
                 }
                 if self.seen.insert(key.clone()) {
                     self.misses
@@ -112,19 +127,32 @@ impl<'a> VirtualFileResolver<'a> {
         }
     }
 
-    fn read_seeded(
+    fn snapshot_file(
         &mut self,
-        input: &mut dyn InputReadState,
-        path: &Path,
-    ) -> Result<FileContent, String> {
-        input.read_input_file(path).map_err(|error| {
-            let failure = CompileError::World(format!(
-                "seeded virtual file {} is unavailable: {error}",
-                path.display()
-            ));
+        path: &VirtualPath,
+    ) -> Result<Option<&'a umber_vfs::VirtualFile>, String> {
+        self.snapshot.get(path).map_err(|error| {
+            let failure = CompileError::World(error.to_string());
             self.record_fatal(failure.clone());
             failure.to_string()
         })
+    }
+
+    fn read_snapshot(
+        &mut self,
+        input: &mut dyn InputReadState,
+        file: &umber_vfs::VirtualFile,
+    ) -> Result<FileContent, String> {
+        input
+            .read_supplied_input_file(file.path().as_path(), file.shared_bytes())
+            .map_err(|error| {
+                let failure = CompileError::World(format!(
+                    "VFS file {} could not be registered with World: {error}",
+                    file.path()
+                ));
+                self.record_fatal(failure.clone());
+                failure.to_string()
+            })
     }
 
     fn record_fatal(&mut self, failure: CompileError) {
@@ -167,13 +195,14 @@ struct VirtualFontResolver<'a> {
 
 impl<'a> VirtualFontResolver<'a> {
     fn new(
-        files: &'a FileProvisioner,
+        snapshot: &'a VfsSnapshot,
+        resolved_paths: &'a BTreeMap<FileRequestKey, VirtualPath>,
         resolved_fonts: &'a BTreeMap<FontRequestKey, OpenTypeFont>,
         accepted_font_containers: AcceptedFontContainers,
         require_opentype: bool,
     ) -> Self {
         Self {
-            files: VirtualFileResolver::new(files),
+            files: VirtualFileResolver::new(snapshot, resolved_paths),
             resolved_fonts,
             accepted_font_containers,
             require_opentype,

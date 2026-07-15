@@ -985,6 +985,28 @@ impl World {
             Some(bytes) => Arc::from(bytes),
             None => self.materialized_file_bytes(path)?,
         };
+        Ok(self.register_input_content(path, bytes))
+    }
+
+    /// Registers immutable bytes supplied by a driver-owned resolver as one
+    /// successful input read.
+    ///
+    /// A pending TeX output at the same path still takes precedence. This
+    /// preserves TeX's ability to close and reopen a file within one run while
+    /// keeping host search and storage policy outside [`World`].
+    pub(crate) fn read_supplied_file(
+        &mut self,
+        path: &Path,
+        supplied: Arc<[u8]>,
+    ) -> Result<FileContent, WorldError> {
+        let bytes = match self.pending_output_bytes(path)? {
+            Some(bytes) => Arc::from(bytes),
+            None => supplied,
+        };
+        Ok(self.register_input_content(path, bytes))
+    }
+
+    fn register_input_content(&mut self, path: &Path, bytes: Arc<[u8]>) -> FileContent {
         let record = self.allocate_input_record();
         let content = FileContent::from_shared(record, path.to_owned(), bytes);
         self.input_contents
@@ -995,7 +1017,7 @@ impl World {
             hash: content.hash,
             len: content.bytes.len(),
         });
-        Ok(content)
+        content
     }
 
     /// Replays the uncommitted stream suffix for one path without publishing

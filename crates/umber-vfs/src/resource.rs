@@ -3,8 +3,9 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::{
-    FileContentId, FileOrigin, ImmutableBindingError, LayerKind, LayeredFileStorage, VfsLimitError,
-    VfsLimitKind, VfsLimits, VfsSnapshot, VirtualFile, VirtualPath,
+    BuildPlan, BuildTransaction, FileContentId, FileOrigin, ImmutableBindingError, LayerKind,
+    LayeredFileStorage, VfsLimitError, VfsLimitKind, VfsLimits, VfsSnapshot, VirtualFile,
+    VirtualPath,
 };
 
 #[cfg(test)]
@@ -455,6 +456,17 @@ impl FileProvisioner {
         self.storage.snapshot()
     }
 
+    /// Begins a generated-output build over the same layered storage that
+    /// owns this provisioner's immutable inputs.
+    pub fn begin_build(&mut self, plan: BuildPlan) -> BuildTransaction<'_> {
+        BuildTransaction::new(&mut self.storage, self.limits, plan)
+    }
+
+    /// Enumerates typed resolved-resource path bindings in request order.
+    pub fn resolved_paths(&self) -> impl Iterator<Item = (&FileRequestKey, &VirtualPath)> {
+        self.files.iter()
+    }
+
     #[must_use]
     pub fn user_file_count(&self) -> usize {
         self.storage.layer(LayerKind::User).len()
@@ -664,6 +676,13 @@ impl FileProvisioner {
         self.expected.clear();
         self.required.clear();
         self.required_at_batch_start = 0;
+    }
+
+    /// Drops accepted generated files while preserving immutable user and
+    /// resolved-resource registrations.
+    pub fn clear_generated_outputs(&mut self) {
+        self.storage.clear_layer(LayerKind::AcceptedGenerated);
+        self.storage.clear_layer(LayerKind::PendingGenerated);
     }
 }
 

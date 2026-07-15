@@ -248,6 +248,14 @@ pub trait InputReadState {
         &mut self,
         path: &std::path::Path,
     ) -> Result<crate::FileContent, crate::WorldError>;
+
+    /// Records immutable bytes selected by a driver-owned resolver as a
+    /// `World` input while preserving pending-output precedence.
+    fn read_supplied_input_file(
+        &mut self,
+        path: &std::path::Path,
+        bytes: std::sync::Arc<[u8]>,
+    ) -> Result<crate::FileContent, crate::WorldError>;
 }
 
 /// State operations available only to the top-level `\input` dispatch path.
@@ -4139,6 +4147,14 @@ impl InputReadState for InputOpenContext<'_> {
         path: &std::path::Path,
     ) -> Result<crate::FileContent, crate::WorldError> {
         self.universe.world.read_file(path)
+    }
+
+    fn read_supplied_input_file(
+        &mut self,
+        path: &std::path::Path,
+        bytes: std::sync::Arc<[u8]>,
+    ) -> Result<crate::FileContent, crate::WorldError> {
+        self.universe.world.read_supplied_file(path, bytes)
     }
 }
 
