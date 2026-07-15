@@ -267,6 +267,48 @@ pub struct PhysicalLine {
     terminator_end: usize,
 }
 
+/// Exact content identity of one physical line, including terminator spelling.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct PhysicalLineId {
+    content: ContentHash,
+    terminator: LineTerminator,
+}
+
+/// Physical terminator retained separately from TeX's normalized line image.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum LineTerminator {
+    Missing,
+    Lf,
+    CrLf,
+}
+
+/// Complete key for content-addressed TeX line normalization.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct LineNormalizationKey {
+    physical: PhysicalLineId,
+    endlinechar: i32,
+    scantokens: bool,
+}
+
+/// Stable identity of a normalized line value and the key that produced it.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct NormalizedLineId {
+    key: LineNormalizationKey,
+    content: ContentHash,
+}
+
+impl NormalizedLineId {
+    #[must_use]
+    pub const fn key(self) -> LineNormalizationKey {
+        self.key
+    }
+
+    #[must_use]
+    pub const fn content(self) -> ContentHash {
+        self.content
+    }
+}
+
 impl PhysicalLine {
     /// Constructs a physical line whose terminator, if any, immediately
     /// follows `text` in the source backing.
@@ -283,6 +325,45 @@ impl PhysicalLine {
             content_end,
             terminator_start: content_end,
             terminator_end,
+        }
+    }
+
+    #[must_use]
+    pub fn identity(&self) -> PhysicalLineId {
+        let terminator = match self.terminator_end - self.terminator_start {
+            0 => LineTerminator::Missing,
+            1 => LineTerminator::Lf,
+            2 => LineTerminator::CrLf,
+            _ => unreachable!("physical input supports only LF and CRLF terminators"),
+        };
+        let mut framed = Vec::with_capacity(self.text.len() + 2);
+        framed.extend_from_slice(self.text.as_bytes());
+        match terminator {
+            LineTerminator::Missing => {}
+            LineTerminator::Lf => framed.push(b'\n'),
+            LineTerminator::CrLf => framed.extend_from_slice(b"\r\n"),
+        }
+        PhysicalLineId {
+            content: ContentHash::from_bytes(&framed),
+            terminator,
+        }
+    }
+
+    #[must_use]
+    pub fn normalization_key(&self, endlinechar: i32, scantokens: bool) -> LineNormalizationKey {
+        LineNormalizationKey {
+            physical: self.identity(),
+            endlinechar,
+            scantokens,
+        }
+    }
+
+    #[must_use]
+    pub fn normalized_identity(&self, endlinechar: i32, scantokens: bool) -> NormalizedLineId {
+        let normalized = normalize_line(self, endlinechar);
+        NormalizedLineId {
+            key: self.normalization_key(endlinechar, scantokens),
+            content: ContentHash::from_bytes(normalized.text.as_bytes()),
         }
     }
 }
@@ -496,6 +577,84 @@ pub enum LineEvent {
 #[derive(Debug)]
 pub struct LineReader<S> {
     source: S,
+    normalization_cache: LineNormalizationCache,
+}
+
+#[derive(Clone, Debug)]
+struct CachedNormalizedLine {
+    text: String,
+    stripped_len: usize,
+    synthetic_endline_start: Option<usize>,
+}
+
+/// Derived, content-addressed normalized-line values.
+///
+/// The cache is ordinary single-owner data. It never participates in input
+/// summaries or semantic hashes and can be dropped without affecting output.
+#[derive(Clone, Debug, Default)]
+pub struct LineNormalizationCache {
+    entries: AHashMap<LineNormalizationKey, CachedNormalizedLine>,
+    hits: usize,
+}
+
+impl LineNormalizationCache {
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    #[must_use]
+    pub const fn hits(&self) -> usize {
+        self.hits
+    }
+
+    #[must_use]
+    pub fn retained_bytes(&self) -> usize {
+        self.entries.capacity()
+            * (core::mem::size_of::<LineNormalizationKey>()
+                + core::mem::size_of::<CachedNormalizedLine>())
+            + self
+                .entries
+                .values()
+                .map(|line| line.text.capacity())
+                .sum::<usize>()
+    }
+
+    fn normalize(
+        &mut self,
+        line: &PhysicalLine,
+        endlinechar: i32,
+        scantokens: bool,
+    ) -> NormalizedLine {
+        let key = line.normalization_key(endlinechar, scantokens);
+        let cached = if let Some(cached) = self.entries.get(&key) {
+            self.hits = self.hits.saturating_add(1);
+            cached.clone()
+        } else {
+            let normalized = normalize_line(line, endlinechar);
+            let cached = CachedNormalizedLine {
+                stripped_len: normalized.normalized_end_anchor - normalized.physical_start,
+                synthetic_endline_start: normalized.synthetic_endline_start,
+                text: normalized.text,
+            };
+            self.entries.insert(key, cached.clone());
+            cached
+        };
+        NormalizedLine {
+            text: cached.text,
+            physical_start: line.start,
+            physical_content_end: line.content_end,
+            terminator_start: line.terminator_start,
+            terminator_end: line.terminator_end,
+            normalized_end_anchor: line.start + cached.stripped_len,
+            synthetic_endline_start: cached.synthetic_endline_start,
+        }
+    }
 }
 
 /// Source-frame-local lexer state.
@@ -4461,7 +4620,26 @@ fn chain_superscript_expansion(
 impl<S> LineReader<S> {
     #[must_use]
     pub fn new(source: S) -> Self {
-        Self { source }
+        Self {
+            source,
+            normalization_cache: LineNormalizationCache::default(),
+        }
+    }
+
+    #[must_use]
+    pub fn with_normalization_cache(
+        source: S,
+        normalization_cache: LineNormalizationCache,
+    ) -> Self {
+        Self {
+            source,
+            normalization_cache,
+        }
+    }
+
+    #[must_use]
+    pub const fn normalization_cache(&self) -> &LineNormalizationCache {
+        &self.normalization_cache
     }
 
     #[must_use]
@@ -4490,7 +4668,11 @@ where
         let Some(line) = self.source.read_line()? else {
             return Ok(None);
         };
-        Ok(Some(normalize_line(&line, stores.endlinechar())))
+        Ok(Some(self.normalization_cache.normalize(
+            &line,
+            stores.endlinechar(),
+            self.source.is_scantokens(),
+        )))
     }
 }
 

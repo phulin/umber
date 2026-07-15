@@ -2,7 +2,8 @@ use super::{
     ConditionFrameSummary, ConditionKind, ConditionLimb, ImmutableSourceKind, InputFrame,
     InputFrameSummary, InputSource, InputStack, LayoutCursor, LayoutCursorError, LexError, Lexer,
     LexerState, LineEvent, LineReader, LiteralSpanPolicy, MACRO_ARGUMENT_SLOTS, MacroArgumentRange,
-    MacroArguments, MemoryInput, StableSourceSpanId, TokenListReplayKind, load_next_line,
+    MacroArguments, MemoryInput, PhysicalLine, StableSourceSpanId, TokenListReplayKind,
+    load_next_line,
 };
 use std::sync::Arc;
 use tex_state::env::banks::IntParam;
@@ -785,6 +786,56 @@ fn immutable_source_delivery_identity_uses_content_not_runtime_record() {
             end: 1,
         }
     );
+}
+
+#[test]
+fn physical_line_and_normalization_identities_cover_exact_inputs() {
+    let lf = PhysicalLine::new("a  ".to_owned(), 0, 4);
+    let shifted_lf = PhysicalLine::new("a  ".to_owned(), 100, 104);
+    let crlf = PhysicalLine::new("a  ".to_owned(), 0, 5);
+    let missing = PhysicalLine::new("a  ".to_owned(), 0, 3);
+
+    assert_eq!(lf.identity(), shifted_lf.identity());
+    assert_ne!(lf.identity(), crlf.identity());
+    assert_ne!(lf.identity(), missing.identity());
+
+    let ordinary = lf.normalized_identity(13, false);
+    let scan = lf.normalized_identity(13, true);
+    let changed_endline = lf.normalized_identity(-1, false);
+    assert_ne!(ordinary.key(), scan.key());
+    assert_ne!(ordinary.key(), changed_endline.key());
+    assert_ne!(ordinary.content(), changed_endline.content());
+    assert_eq!(
+        ordinary.content(),
+        crlf.normalized_identity(13, false).content()
+    );
+}
+
+#[test]
+fn line_reader_reuses_only_complete_normalization_keys() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, 13);
+    let mut reader = LineReader::new(MemoryInput::new("same\nsame\nsame\n"));
+
+    assert_eq!(
+        reader.next_event(&stores).expect("first line"),
+        Some(LineEvent::Text("same\r".into()))
+    );
+    assert_eq!(reader.normalization_cache().hits(), 0);
+    assert_eq!(
+        reader.next_event(&stores).expect("second line"),
+        Some(LineEvent::Text("same\r".into()))
+    );
+    assert_eq!(reader.normalization_cache().hits(), 1);
+
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+    assert_eq!(
+        reader.next_event(&stores).expect("third line"),
+        Some(LineEvent::Text("same".into()))
+    );
+    assert_eq!(reader.normalization_cache().hits(), 1);
+    assert_eq!(reader.normalization_cache().len(), 2);
+    assert!(reader.normalization_cache().retained_bytes() > 0);
 }
 
 #[test]
