@@ -193,3 +193,36 @@ publishes that closure with the format, builds the real WASM package, and
 requires three-pass native/WASM article parity. Neither command belongs in the
 ordinary workspace test tier because both intentionally build live pinned
 distribution artifacts.
+
+The upstream LaTeX2e DVI tier is also explicit:
+
+```bash
+scripts/setup-latex-parity-tests.sh
+scripts/setup-latex-parity-tests.sh --offline
+scripts/check-latex-parity.sh --offline
+scripts/check-latex-parity.sh --offline --format target/latex-parity/format/latex.fmt
+scripts/check-latex-parity.sh --self-test-format-reuse
+```
+
+`tests/latex-parity-manifest.txt` pins the official
+`release-2024-11-01-PL2` archive, support files, and eight selected upstream
+cases by byte length and SHA-256. Setup extracts the unmodified LPPL snapshot
+under gitignored `third_party/latex2e-parity/`; offline mode rejects a missing
+or changed cache without accessing the network.
+
+Without `--format`, the checker invokes the verified format builder exactly
+once before entering the case loop. With `--format`, it invokes the builder
+zero times. It hashes that pregenerated image, copies those exact bytes into a
+fresh directory for every reference/Umber pair, and every Umber command loads
+the local copy with `--format latex.fmt`. The persistent
+`target/latex-parity/last-run-format-receipt.txt` records the builder count,
+source identity, and per-case identities; the fast self-test asserts one build
+and three identical restores.
+
+Acceptance ignores transcript and process-status differences when an
+intentional diagnostic still leaves a DVI. It removes stale DVI before every
+pass and requires a newly emitted file, then normalizes only the existing DVI
+preamble comment and otherwise requires byte identity. Mismatches write raw
+DVI, first-byte context, page-limited disassemblies, and the divergent page and
+opcode under `target/latex-parity/triage/<case>/`. This live TeX Live tier and
+its roughly 74 MB format build remain outside ordinary Cargo tests.

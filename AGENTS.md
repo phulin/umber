@@ -54,6 +54,8 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `scripts/build-wasm-package.sh`: optimized npm-shaped WASM package assembler.
 - `scripts/check-wasm.sh`: complete Firefox, Chrome, Node, and package-content WASM gate.
 - `scripts/discover-latex-kernel.sh`: pinned TeX Live 2025 LaTeX kernel bootstrap discovery and first-diagnostic gate.
+- `scripts/setup-latex-parity-tests.sh`: hash-pinned acquisition and offline verification for the upstream LaTeX2e regression snapshot.
+- `scripts/check-latex-parity.sh`: explicit coordinate-exact upstream LaTeX DVI tier that builds or accepts one pregenerated format and restores it for every isolated case.
 - `scripts/setup-conformance-tests.sh`: pinned third-party acquisition plus local Story, Gentle, TRIP, and e-TRIP DVI-oracle generation with pdfTeX.
 - `scripts/test-wasm-browser.sh`: optimized-package local HTTP integration runner.
 - `third_party/`: ignored reference downloads and external source archives.

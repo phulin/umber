@@ -7,6 +7,12 @@ fast differential tests.
 and SHA-256 identities opened while building the Umber-native LaTeX format.
 The explicit LaTeX format builder verifies this closure before every build.
 
+`tests/latex-parity-manifest.txt` pins the official LaTeX2e regression archive,
+the support files, and every selected DVI smoke case by byte length and
+SHA-256. `scripts/setup-latex-parity-tests.sh` owns acquisition under
+gitignored `third_party/latex2e-parity/`; do not copy or modify individual
+upstream LPPL files in the repository.
+
 `tests/latex/` contains committed, compact LaTeX-DVI inputs used by explicit
 format and corpus gates. `format-equivalence.tex` must remain deterministic
 and is run both from source-initialized kernel state and the serialized format.
@@ -16,6 +22,9 @@ DVI and exact `.aux`/`.toc`/`.lof`/`.lot`/`.out` file parity with TeX Live 2025.
 Their union of format-loaded TeX/TFM inputs must exactly match
 `latex-runtime.lock`; `scripts/build-wasm-latex-bundle.sh` publishes that same
 typed closure and the generated native format through the WASM manifest.
+`scripts/check-latex-parity.sh` is a separate live-reference tier: it restores
+one pregenerated `latex.fmt` into clean per-case sessions and gates only
+preamble-comment-normalized, otherwise byte-identical DVI.
 
 ## Corpus Layout
 
