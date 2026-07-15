@@ -101,6 +101,9 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
     let content = stores.world_mut().read_file(path)?;
 
     let mut input = InputStack::new(WorldInput::from_content(content));
+    if opts.engine == RunEngine::Latex {
+        input.set_utf8_input_as_bytes(true);
+    }
     let mut resolvers = FileSessionResolvers::from_environment(path);
     let run = match EngineSession::new(&mut input, &mut stores, resolvers.context()).execute() {
         Ok(run) => run,

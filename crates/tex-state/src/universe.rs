@@ -836,6 +836,8 @@ pub struct Universe {
     world: World,
     interaction_mode: InteractionMode,
     input_summary: InputSummary,
+    /// One-shot runtime marker set only when a format image starts a fresh job.
+    pending_every_job: bool,
     /// Operational editor revision identity; excluded from snapshots and semantic hashes.
     editor_content_hash: Option<ContentHash>,
     page: PageBuilderState,
@@ -953,6 +955,7 @@ impl Clone for Universe {
             world: self.world.clone(),
             interaction_mode: self.interaction_mode,
             input_summary: self.input_summary.clone(),
+            pending_every_job: self.pending_every_job,
             editor_content_hash: self.editor_content_hash,
             page: self.page.clone(),
             state_hash_base,
@@ -1006,6 +1009,7 @@ impl Universe {
             world,
             interaction_mode: InteractionMode::default(),
             input_summary,
+            pending_every_job: false,
             editor_content_hash: None,
             page,
             state_hash_base,
@@ -1118,6 +1122,7 @@ impl Universe {
             world,
             interaction_mode: mode,
             input_summary,
+            pending_every_job: true,
             editor_content_hash: None,
             page,
             state_hash_base,
@@ -1596,6 +1601,18 @@ impl Universe {
     #[must_use]
     pub const fn input_summary(&self) -> &InputSummary {
         &self.input_summary
+    }
+
+    /// Returns the format's `\everyjob` list exactly once for a fresh job.
+    ///
+    /// The marker is operational rather than format state: dumping a format
+    /// does not schedule `\everyjob` in the INITEX job that creates it, while
+    /// every timeline constructed from that image starts with it pending.
+    pub fn take_pending_every_job(&mut self) -> TokenListId {
+        if !std::mem::take(&mut self.pending_every_job) {
+            return TokenListId::EMPTY;
+        }
+        self.tok_param(TokParam::EVERY_JOB)
     }
 
     /// Returns the current interaction mode.
@@ -4242,6 +4259,7 @@ fn hash_input_summary_fields(
     hasher: &mut StateHasher,
 ) {
     hasher.bool(summary.unicode_superscript_notation());
+    hasher.bool(summary.utf8_input_as_bytes());
     hasher.usize(summary.frames().len());
     let mut root_source_seen = false;
     for frame in summary.frames() {
@@ -4482,6 +4500,7 @@ fn hash_token_list_replay_kind(kind: TokenListReplayKind, hasher: &mut StateHash
         TokenListReplayKind::NoExpand => 2,
         TokenListReplayKind::Unexpanded => 10,
         TokenListReplayKind::EveryPar => 3,
+        TokenListReplayKind::EveryJob => 11,
         TokenListReplayKind::EveryCr => 4,
         TokenListReplayKind::Mark => 5,
         TokenListReplayKind::OutputRoutine => 6,

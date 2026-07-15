@@ -517,7 +517,7 @@ impl SourceFrame {
         self.column
     }
 
-    fn summary(&self, next_source_offset: usize) -> SourceFrameSummary {
+    fn summary(&self, next_source_offset: usize, byte_oriented: bool) -> SourceFrameSummary {
         SourceFrameSummary::new_with_physical_metadata(
             self.physical_line_start,
             next_source_offset,
@@ -535,6 +535,7 @@ impl SourceFrame {
             self.end_after_current_line,
         )
         .with_origin_line_start(self.origin_line_start)
+        .with_byte_oriented(byte_oriented)
     }
 
     fn from_summary(summary: &SourceFrameSummary) -> Self {
@@ -1158,6 +1159,7 @@ pub struct InputStack {
     condition_frame_indices: Vec<usize>,
     next_source_id: u32,
     unicode_superscript_notation: bool,
+    utf8_input_as_bytes: bool,
     last_source_frame: Option<LastSourceFrame>,
     next_replay_marker: u64,
     next_condition_token: u64,
@@ -1237,6 +1239,7 @@ impl InputStack {
             condition_frame_indices: Vec::new(),
             next_source_id: 0,
             unicode_superscript_notation: true,
+            utf8_input_as_bytes: false,
             last_source_frame: None,
             next_replay_marker: 0,
             next_condition_token: 0,
@@ -1461,6 +1464,7 @@ impl InputStack {
             condition_frame_indices,
             next_source_id: summary.next_source_id(),
             unicode_superscript_notation: summary.unicode_superscript_notation(),
+            utf8_input_as_bytes: summary.utf8_input_as_bytes(),
             last_source_frame: summary.last_source_frame().map(|source| LastSourceFrame {
                 source_id: summary
                     .last_source_id()
@@ -2054,16 +2058,15 @@ impl InputStack {
         let start = tokens_out.len();
         let mut byte_offset = source.frame.byte_offset;
         let mut column = source.frame.column;
+        let utf8_input_as_bytes = self.utf8_input_as_bytes && !source.scantokens;
         while byte_offset < source.frame.line.len() {
-            let ch = source.frame.line[byte_offset..]
-                .chars()
-                .next()
-                .expect("byte cursor remains at a scalar boundary");
+            let (ch, width) = input_char_at(&source.frame, byte_offset, utf8_input_as_bytes)
+                .expect("byte cursor remains within the normalized line");
             let cat = stores.catcode(ch);
             if !matches!(cat, Catcode::Letter | Catcode::Other) {
                 break;
             }
-            let next = byte_offset + ch.len_utf8();
+            let next = byte_offset + width;
             let Some(physical_start) = source
                 .frame
                 .origin_line_start
@@ -2361,7 +2364,7 @@ impl InputStack {
                         input_record: source.input_record,
                         source: source
                             .frame
-                            .summary(source.next_source_offset)
+                            .summary(source.next_source_offset, self.utf8_input_as_bytes)
                             .with_registration(source.registration)
                             .with_scantokens(source.scantokens),
                     },
@@ -2399,12 +2402,13 @@ impl InputStack {
                 .and_then(|last| last.input_record),
             self.last_source_frame.as_ref().map(|last| {
                 last.frame
-                    .summary(last.next_source_offset)
+                    .summary(last.next_source_offset, self.utf8_input_as_bytes)
                     .with_registration(last.registration)
             }),
             self.next_source_id,
             self.unicode_superscript_notation,
         )
+        .with_utf8_input_as_bytes(self.utf8_input_as_bytes)
     }
 
     /// Captures a summary whose source capabilities are ready for publication
@@ -2545,6 +2549,11 @@ impl InputStack {
 
     pub fn set_unicode_superscript_notation(&mut self, enabled: bool) {
         self.unicode_superscript_notation = enabled;
+    }
+
+    /// Presents physical UTF-8 bytes as classic 8-bit TeX character codes.
+    pub fn set_utf8_input_as_bytes(&mut self, enabled: bool) {
+        self.utf8_input_as_bytes = enabled;
     }
 
     /// Stops the current source frame after its current normalized line.
@@ -2780,6 +2789,10 @@ impl Lexer {
     pub fn set_unicode_superscript_notation(&mut self, enabled: bool) {
         self.input.set_unicode_superscript_notation(enabled);
     }
+
+    pub fn set_utf8_input_as_bytes(&mut self, enabled: bool) {
+        self.input.set_utf8_input_as_bytes(enabled);
+    }
 }
 
 impl Lexer {
@@ -2910,8 +2923,12 @@ impl InputStack {
                         continue;
                     }
 
-                    let Some(token) =
-                        next_token_from_line(source, stores, self.unicode_superscript_notation)?
+                    let Some(token) = next_token_from_line(
+                        source,
+                        stores,
+                        self.unicode_superscript_notation,
+                        self.utf8_input_as_bytes && !source.scantokens,
+                    )?
                     else {
                         continue;
                     };
@@ -3091,8 +3108,12 @@ impl InputStack {
                         continue;
                     }
 
-                    let Some(token) =
-                        next_token_from_line(source, stores, self.unicode_superscript_notation)?
+                    let Some(token) = next_token_from_line(
+                        source,
+                        stores,
+                        self.unicode_superscript_notation,
+                        self.utf8_input_as_bytes && !source.scantokens,
+                    )?
                     else {
                         continue;
                     };
@@ -3171,6 +3192,7 @@ impl InputStack {
                         source,
                         stores,
                         self.unicode_superscript_notation,
+                        self.utf8_input_as_bytes && !source.scantokens,
                     )?
                     else {
                         continue;
@@ -3772,9 +3794,15 @@ fn next_token_from_line(
     source: &mut SourceInputFrame,
     stores: &mut impl ExpansionState,
     unicode_superscript_notation: bool,
+    utf8_input_as_bytes: bool,
 ) -> Result<Option<DecodedTracedToken>, LexError> {
     let start = source_coordinate(source);
-    let ch = read_expanded_char(source, stores, unicode_superscript_notation);
+    let ch = read_expanded_char(
+        source,
+        stores,
+        unicode_superscript_notation,
+        utf8_input_as_bytes,
+    );
     let cat = stores.catcode(ch);
     match cat {
         Catcode::Ignored => Ok(None),
@@ -3791,9 +3819,7 @@ fn next_token_from_line(
             })
         }
         Catcode::Comment => {
-            source.frame.column += source.frame.line[source.frame.byte_offset..]
-                .chars()
-                .count();
+            source.frame.column += remaining_input_chars(&source.frame, utf8_input_as_bytes);
             source.frame.byte_offset = source.frame.line.len();
             Ok(None)
         }
@@ -3837,6 +3863,7 @@ fn next_token_from_line(
             source,
             stores,
             unicode_superscript_notation,
+            utf8_input_as_bytes,
             start,
         ))),
         Catcode::Letter | Catcode::Superscript => {
@@ -3875,9 +3902,15 @@ fn next_token_from_line_readonly(
     source: &mut SourceInputFrame,
     stores: &impl ExpansionState,
     unicode_superscript_notation: bool,
+    utf8_input_as_bytes: bool,
 ) -> Result<Option<Token>, LexError> {
     let start = source_coordinate(source);
-    let ch = read_expanded_char(source, stores, unicode_superscript_notation);
+    let ch = read_expanded_char(
+        source,
+        stores,
+        unicode_superscript_notation,
+        utf8_input_as_bytes,
+    );
     let cat = stores.catcode(ch);
     match cat {
         Catcode::Ignored => Ok(None),
@@ -3887,9 +3920,7 @@ fn next_token_from_line_readonly(
             site: Box::new(DiagnosticSite::unknown()),
         }),
         Catcode::Comment => {
-            source.frame.column += source.frame.line[source.frame.byte_offset..]
-                .chars()
-                .count();
+            source.frame.column += remaining_input_chars(&source.frame, utf8_input_as_bytes);
             source.frame.byte_offset = source.frame.line.len();
             Ok(None)
         }
@@ -3928,6 +3959,7 @@ fn next_token_from_line_readonly(
             source,
             stores,
             unicode_superscript_notation,
+            utf8_input_as_bytes,
             start,
         )?)),
         Catcode::Letter | Catcode::Superscript => {
@@ -3952,6 +3984,7 @@ fn scan_control_sequence(
     source: &mut SourceInputFrame,
     stores: &mut impl ExpansionState,
     unicode_superscript_notation: bool,
+    utf8_input_as_bytes: bool,
     start: LexSourceContext,
 ) -> DecodedTracedToken {
     if source.frame.byte_offset >= source.frame.line.len() {
@@ -3966,7 +3999,12 @@ fn scan_control_sequence(
         );
     }
 
-    let ch = read_expanded_char(source, stores, unicode_superscript_notation);
+    let ch = read_expanded_char(
+        source,
+        stores,
+        unicode_superscript_notation,
+        utf8_input_as_bytes,
+    );
     let cat = stores.catcode(ch);
     if cat != Catcode::Letter {
         source.frame.state = if cat == Catcode::Space {
@@ -3988,7 +4026,12 @@ fn scan_control_sequence(
     while source.frame.byte_offset < source.frame.line.len() {
         let mark = source.frame.byte_offset;
         let mark_col = source.frame.column;
-        let next = read_expanded_char(source, stores, unicode_superscript_notation);
+        let next = read_expanded_char(
+            source,
+            stores,
+            unicode_superscript_notation,
+            utf8_input_as_bytes,
+        );
         if stores.catcode(next) == Catcode::Letter {
             name.push(next);
         } else {
@@ -4012,6 +4055,7 @@ fn scan_control_sequence_readonly(
     source: &mut SourceInputFrame,
     stores: &impl ExpansionState,
     unicode_superscript_notation: bool,
+    utf8_input_as_bytes: bool,
     context: LexSourceContext,
 ) -> Result<Token, LexError> {
     if source.frame.byte_offset >= source.frame.line.len() {
@@ -4019,7 +4063,12 @@ fn scan_control_sequence_readonly(
         return readonly_cs_token(stores, "", context);
     }
 
-    let ch = read_expanded_char(source, stores, unicode_superscript_notation);
+    let ch = read_expanded_char(
+        source,
+        stores,
+        unicode_superscript_notation,
+        utf8_input_as_bytes,
+    );
     let cat = stores.catcode(ch);
     if cat != Catcode::Letter {
         source.frame.state = if cat == Catcode::Space {
@@ -4034,7 +4083,12 @@ fn scan_control_sequence_readonly(
     while source.frame.byte_offset < source.frame.line.len() {
         let mark = source.frame.byte_offset;
         let mark_col = source.frame.column;
-        let next = read_expanded_char(source, stores, unicode_superscript_notation);
+        let next = read_expanded_char(
+            source,
+            stores,
+            unicode_superscript_notation,
+            utf8_input_as_bytes,
+        );
         if stores.catcode(next) == Catcode::Letter {
             name.push(next);
         } else {
@@ -4066,14 +4120,18 @@ fn read_expanded_char(
     source: &mut SourceInputFrame,
     stores: &impl ExpansionState,
     unicode_superscript_notation: bool,
+    utf8_input_as_bytes: bool,
 ) -> char {
-    let ch = source.frame.line[source.frame.byte_offset..]
-        .chars()
-        .next()
+    let ch = take_input_char(&mut source.frame, utf8_input_as_bytes)
         .expect("caller checks that the byte cursor is not at line end");
-    source.frame.byte_offset += ch.len_utf8();
-    source.frame.column += 1;
-    expand_superscript_notation(source, ch, stores, unicode_superscript_notation).unwrap_or(ch)
+    expand_superscript_notation(
+        source,
+        ch,
+        stores,
+        unicode_superscript_notation,
+        utf8_input_as_bytes,
+    )
+    .unwrap_or(ch)
 }
 
 #[derive(Clone, Copy)]
@@ -4094,18 +4152,49 @@ fn restore_cursor(frame: &mut SourceFrame, mark: CursorMark) {
     frame.column = mark.column;
 }
 
-fn take_char(frame: &mut SourceFrame) -> Option<char> {
-    let ch = frame.line[frame.byte_offset..].chars().next()?;
-    frame.byte_offset += ch.len_utf8();
+fn input_char_at(
+    frame: &SourceFrame,
+    byte_offset: usize,
+    utf8_input_as_bytes: bool,
+) -> Option<(char, usize)> {
+    let physical_byte = utf8_input_as_bytes
+        && frame
+            .synthetic_endline_start
+            .is_none_or(|synthetic| byte_offset < synthetic);
+    if physical_byte {
+        return frame
+            .line
+            .as_bytes()
+            .get(byte_offset)
+            .copied()
+            .map(|byte| (char::from(byte), 1));
+    }
+    let ch = frame.line.get(byte_offset..)?.chars().next()?;
+    Some((ch, ch.len_utf8()))
+}
+
+fn take_input_char(frame: &mut SourceFrame, utf8_input_as_bytes: bool) -> Option<char> {
+    let (ch, width) = input_char_at(frame, frame.byte_offset, utf8_input_as_bytes)?;
+    frame.byte_offset += width;
     frame.column += 1;
     Some(ch)
 }
 
-fn take_ascii_hex(frame: &mut SourceFrame, count: usize) -> Option<u32> {
+fn remaining_input_chars(frame: &SourceFrame, utf8_input_as_bytes: bool) -> usize {
+    let mut offset = frame.byte_offset;
+    let mut count = 0;
+    while let Some((_, width)) = input_char_at(frame, offset, utf8_input_as_bytes) {
+        offset += width;
+        count += 1;
+    }
+    count
+}
+
+fn take_ascii_hex(frame: &mut SourceFrame, count: usize, utf8_input_as_bytes: bool) -> Option<u32> {
     let mark = cursor_mark(frame);
     let mut value = 0_u32;
     for _ in 0..count {
-        let Some(ch) = take_char(frame) else {
+        let Some(ch) = take_input_char(frame, utf8_input_as_bytes) else {
             restore_cursor(frame, mark);
             return None;
         };
@@ -4123,34 +4212,39 @@ fn expand_superscript_notation(
     ch: char,
     stores: &impl ExpansionState,
     unicode_superscript_notation: bool,
+    utf8_input_as_bytes: bool,
 ) -> Option<char> {
     if stores.catcode(ch) != Catcode::Superscript {
         return None;
     }
-    expand_superscript_after_first(source, stores, unicode_superscript_notation)
+    expand_superscript_after_first(
+        source,
+        stores,
+        unicode_superscript_notation,
+        utf8_input_as_bytes,
+    )
 }
 
 fn expand_superscript_after_first(
     source: &mut SourceInputFrame,
     stores: &impl ExpansionState,
     unicode_superscript_notation: bool,
+    utf8_input_as_bytes: bool,
 ) -> Option<char> {
     let saved = cursor_mark(&source.frame);
-    let second = source.frame.line[source.frame.byte_offset..]
-        .chars()
-        .next()?;
+    let second = input_char_at(&source.frame, source.frame.byte_offset, utf8_input_as_bytes)?.0;
     if stores.catcode(second) != Catcode::Superscript {
         return None;
     }
-    take_char(&mut source.frame);
+    take_input_char(&mut source.frame, utf8_input_as_bytes);
 
     if unicode_superscript_notation {
         let unicode_mark = cursor_mark(&source.frame);
-        let third = take_char(&mut source.frame);
-        let fourth = take_char(&mut source.frame);
+        let third = take_input_char(&mut source.frame, utf8_input_as_bytes);
+        let fourth = take_input_char(&mut source.frame, utf8_input_as_bytes);
         if third.is_some_and(|ch| stores.catcode(ch) == Catcode::Superscript)
             && fourth.is_some_and(|ch| stores.catcode(ch) == Catcode::Superscript)
-            && let Some(value) = take_ascii_hex(&mut source.frame, 4)
+            && let Some(value) = take_ascii_hex(&mut source.frame, 4, utf8_input_as_bytes)
             && let Some(decoded) = char::from_u32(value)
         {
             return Some(chain_superscript_expansion(
@@ -4158,13 +4252,14 @@ fn expand_superscript_after_first(
                 decoded,
                 stores,
                 unicode_superscript_notation,
+                utf8_input_as_bytes,
             ));
         }
         restore_cursor(&mut source.frame, unicode_mark);
     }
 
     let hex_mark = cursor_mark(&source.frame);
-    if let Some(value) = take_ascii_hex(&mut source.frame, 2)
+    if let Some(value) = take_ascii_hex(&mut source.frame, 2, utf8_input_as_bytes)
         && let Some(decoded) = char::from_u32(value)
     {
         return Some(chain_superscript_expansion(
@@ -4172,11 +4267,12 @@ fn expand_superscript_after_first(
             decoded,
             stores,
             unicode_superscript_notation,
+            utf8_input_as_bytes,
         ));
     }
     restore_cursor(&mut source.frame, hex_mark);
 
-    let Some(target) = take_char(&mut source.frame) else {
+    let Some(target) = take_input_char(&mut source.frame, utf8_input_as_bytes) else {
         restore_cursor(&mut source.frame, saved);
         return None;
     };
@@ -4191,6 +4287,7 @@ fn expand_superscript_after_first(
         decoded,
         stores,
         unicode_superscript_notation,
+        utf8_input_as_bytes,
     ))
 }
 
@@ -4199,10 +4296,16 @@ fn chain_superscript_expansion(
     decoded: char,
     stores: &impl ExpansionState,
     unicode_superscript_notation: bool,
+    utf8_input_as_bytes: bool,
 ) -> char {
     if stores.catcode(decoded) == Catcode::Superscript {
-        expand_superscript_after_first(source, stores, unicode_superscript_notation)
-            .unwrap_or(decoded)
+        expand_superscript_after_first(
+            source,
+            stores,
+            unicode_superscript_notation,
+            utf8_input_as_bytes,
+        )
+        .unwrap_or(decoded)
     } else {
         decoded
     }

@@ -364,6 +364,32 @@ fn dump_marks_format_stop_and_stops_before_following_input() {
 }
 
 #[test]
+fn format_loaded_job_replays_everyjob_before_root_input() {
+    let mut initex = Universe::new();
+    tex_expand::install_expandable_primitives(&mut initex);
+    crate::install_unexpandable_primitives(&mut initex);
+    let mut format_source = InputStack::new(MemoryInput::new(
+        r"\everyjob{\count0=42\message{EVERYJOB}}\dump",
+    ));
+    Executor::new()
+        .run(&mut format_source, &mut initex)
+        .expect("format creation");
+    let format = initex.dump_format().expect("dump format");
+
+    let mut stores =
+        Universe::from_format(tex_state::World::memory(), &format).expect("load format");
+    let mut input = InputStack::new(MemoryInput::new(r"\message{COUNT=\the\count0}\end"));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("format-loaded job");
+
+    let terminal = terminal_effect_text(&stores);
+    let every_job = terminal.find("EVERYJOB").expect("everyjob message");
+    let root = terminal.find("COUNT=42").expect("root-input message");
+    assert!(every_job < root, "{terminal:?}");
+}
+
+#[test]
 fn immediate_puts_back_non_io_extension_tokens() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
@@ -506,6 +532,38 @@ fn uppercase_expands_tokens_until_its_opening_brace() {
     Executor::new()
         .run(&mut input, &mut stores)
         .expect("case-shift scanner expands tokens that precede its opening brace");
+    assert!(support::terminal_effect_text(&stores).contains("OK"));
+}
+
+#[test]
+fn uppercase_retargets_active_character_definitions() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\catcode126=13 \\uccode126=239 \\uppercase{\\gdef~{\\message{ok}}}\\uppercase{~}\\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("uppercase should preserve the active namespace");
+    assert!(support::terminal_effect_text(&stores).contains("OK"));
+}
+
+#[test]
+fn protected_active_macro_expands_from_classic_utf8_input() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\catcode126=13 \\catcode239=13 \\catcode172=13 \\catcode128=13 \\uccode126=239 \\uppercase{\\protected\\def~#1#2{\\message{OK}}}ﬀ\\end",
+    ));
+    input.set_utf8_input_as_bytes(true);
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("protected active byte macro should expand under command demand");
     assert!(support::terminal_effect_text(&stores).contains("OK"));
 }
 

@@ -352,6 +352,9 @@ impl TokParam {
     /// TeX's `\everydisplay` token-list parameter.
     pub const EVERY_DISPLAY: Self = Self::new(3);
 
+    /// TeX's token list inserted at the start of a format-loaded job.
+    pub const EVERY_JOB: Self = Self::new(6);
+
     /// TeX's `\everycr` token-list parameter.
     pub const EVERY_CR: Self = Self::new(7);
 

@@ -2,7 +2,7 @@ use super::*;
 use std::path::PathBuf;
 
 use tex_expand::token_text;
-use tex_lex::{MemoryInput, TokenListReplayKind};
+use tex_lex::TokenListReplayKind;
 use tex_state::ids::TokenListId;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{Meaning, MeaningFlags};
@@ -193,7 +193,7 @@ fn expand_write_tokens(
     expansion: &mut tex_expand::ExpansionContext<'_>,
     tokens: TokenListId,
 ) -> Result<String, ExecError> {
-    let mut input = InputStack::new(MemoryInput::new(""));
+    let mut input = InputStack::empty();
     input.push_token_list(tokens, TokenListReplayKind::Inserted);
     let mut text = String::new();
     while let Some(token) = next_write_expansion_token(&mut input, stores, expansion)? {

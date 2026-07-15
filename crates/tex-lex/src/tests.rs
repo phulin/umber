@@ -1229,6 +1229,54 @@ fn failed_superscript_transform_restores_byte_cursor_and_column() {
 }
 
 #[test]
+fn classic_input_mode_delivers_utf8_bytes_and_resumes_mid_scalar() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+    for byte in [0xef, 0xac, 0x80] {
+        stores.set_catcode(char::from(byte), Catcode::Other);
+    }
+    let mut input = InputStack::new(MemoryInput::new("ﬀ"));
+    input.set_utf8_input_as_bytes(true);
+
+    assert_eq!(
+        input.next_token(&mut stores).expect("first byte"),
+        Some(char_token(char::from(0xef), Catcode::Other))
+    );
+    let summary = input.summary();
+    assert!(summary.utf8_input_as_bytes());
+    let [InputFrameSummary::Source { source, .. }] = summary.frames() else {
+        panic!("expected source frame");
+    };
+    assert_eq!(source.line_byte_offset(), 1);
+    assert!(source.is_resume_complete());
+
+    let mut restored =
+        InputStack::from_summary(&summary, |_, _, _| Ok::<_, ()>(MemoryInput::new("")))
+            .expect("byte-oriented summary restores");
+    assert_eq!(
+        restored.next_token(&mut stores).expect("second byte"),
+        Some(char_token(char::from(0xac), Catcode::Other))
+    );
+    assert_eq!(
+        restored.next_token(&mut stores).expect("third byte"),
+        Some(char_token(char::from(0x80), Catcode::Other))
+    );
+}
+
+#[test]
+fn classic_input_mode_does_not_reencode_scantokens_characters() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+    let mut input = InputStack::new(MemoryInput::scantokens("é"));
+    input.set_utf8_input_as_bytes(true);
+
+    assert_eq!(
+        input.next_token(&mut stores).expect("scantokens character"),
+        Some(char_token('é', Catcode::Other))
+    );
+}
+
+#[test]
 fn input_summary_restores_source_allocator_and_unicode_superscript_mode() {
     let mut stores = Universe::new();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);

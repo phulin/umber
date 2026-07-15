@@ -177,6 +177,7 @@ pub enum TokenListReplayKind {
     /// Tokens returned by e-TeX `\unexpanded`; command demand may expand them.
     Unexpanded,
     EveryPar,
+    EveryJob,
     EveryCr,
     Mark,
     OutputRoutine,
@@ -423,6 +424,7 @@ struct InputSemanticState {
     last_source_record: Option<InputRecordId>,
     last_source_frame: Option<SourceFrameSummary>,
     unicode_superscript_notation: bool,
+    utf8_input_as_bytes: bool,
 }
 
 impl PartialEq for InputSemanticRoot {
@@ -547,6 +549,7 @@ impl InputSummary {
                 last_source_record,
                 last_source_frame,
                 unicode_superscript_notation,
+                utf8_input_as_bytes: false,
             })),
             last_source_id,
             next_source_id,
@@ -595,6 +598,18 @@ impl InputSummary {
     #[must_use]
     pub fn unicode_superscript_notation(&self) -> bool {
         self.semantic_root.0.unicode_superscript_notation
+    }
+
+    #[must_use]
+    pub fn utf8_input_as_bytes(&self) -> bool {
+        self.semantic_root.0.utf8_input_as_bytes
+    }
+
+    /// Selects classic 8-bit TeX tokenization of physical UTF-8 input bytes.
+    #[must_use]
+    pub fn with_utf8_input_as_bytes(mut self, enabled: bool) -> Self {
+        Arc::make_mut(&mut self.semantic_root.0).utf8_input_as_bytes = enabled;
+        self
     }
 
     /// Conservative complete-physical-line position for the root editor source.
@@ -876,6 +891,7 @@ pub struct SourceFrameSummary {
     end_after_current_line: bool,
     registration: Option<RegisteredSource>,
     scantokens: bool,
+    byte_oriented: bool,
 }
 
 impl SourceFrameSummary {
@@ -951,6 +967,7 @@ impl SourceFrameSummary {
             end_after_current_line,
             registration: None,
             scantokens: false,
+            byte_oriented: false,
         }
     }
 
@@ -962,6 +979,13 @@ impl SourceFrameSummary {
     #[must_use]
     pub const fn with_scantokens(mut self, scantokens: bool) -> Self {
         self.scantokens = scantokens;
+        self
+    }
+
+    /// Allows a resumable cursor to lie between bytes of one UTF-8 scalar.
+    #[must_use]
+    pub const fn with_byte_oriented(mut self, byte_oriented: bool) -> Self {
+        self.byte_oriented = byte_oriented;
         self
     }
 
@@ -1073,7 +1097,7 @@ impl SourceFrameSummary {
     #[must_use]
     pub fn is_resume_complete(&self) -> bool {
         self.line_byte_offset <= self.normalized_line.len()
-            && self.normalized_line.is_char_boundary(self.line_byte_offset)
+            && (self.byte_oriented || self.normalized_line.is_char_boundary(self.line_byte_offset))
             && self.buffer_offset <= self.normalized_end_anchor
             && self.normalized_end_anchor <= self.physical_content_end
             && self.physical_content_end <= self.terminator_start
@@ -1102,6 +1126,7 @@ impl PartialEq for SourceFrameSummary {
             && self.synthetic_endline_start == other.synthetic_endline_start
             && self.end_after_current_line == other.end_after_current_line
             && self.scantokens == other.scantokens
+            && self.byte_oriented == other.byte_oriented
             && traced_pending_tokens_eq(&self.pending, &other.pending)
     }
 }
@@ -1128,6 +1153,7 @@ impl Hash for SourceFrameSummary {
         }
         self.end_after_current_line.hash(state);
         self.scantokens.hash(state);
+        self.byte_oriented.hash(state);
     }
 }
 

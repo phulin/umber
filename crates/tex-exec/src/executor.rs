@@ -5,9 +5,10 @@ use std::path::Path;
 use tex_expand::{EngineStateSnapshot, InputResolver, ReadRecorder, get_x_token_with_context};
 use tex_lex::InputStack;
 use tex_out::dvi::DviPagePlan;
+use tex_state::ids::TokenListId;
 use tex_state::node::Node;
 use tex_state::token::TracedTokenWord;
-use tex_state::{FileContent, InputReadState, InputSummary, Universe};
+use tex_state::{FileContent, InputReadState, InputSummary, TokenListReplayKind, Universe};
 
 use crate::checkpoint::{CheckpointSink, EngineBoundary, EngineSession, NoopCheckpointSink};
 use crate::dispatch::{dispatch_delivered_token_with_context, unimplemented_typesetting};
@@ -203,6 +204,10 @@ where {
         execution.job_clock = stores.world().job_clock();
         let mut session = EngineSession::new(checkpoints);
         if publish_job_start {
+            let every_job = stores.take_pending_every_job();
+            if every_job != TokenListId::EMPTY {
+                input.push_token_list(every_job, TokenListReplayKind::EveryJob);
+            }
             session.publish(EngineBoundary::JobStart, &self.nest, input, stores);
         }
         let artifact_start = stores.world().artifact_commits().len();
