@@ -1,8 +1,9 @@
 # Asynchronous WASM Resource Acquisition
 
 Status: partially implemented contract and active rollout plan. Typed,
-batched file/OpenType resource acquisition is implemented by the persistent
-compile session; the remaining OpenType rollout is tracked by `umber2-y2ei`.
+batched file/OpenType resource acquisition and its shared native/WASM retry
+state are implemented by the persistent compile session; the remaining
+OpenType rollout is tracked by `umber2-y2ei`.
 
 ## Goals
 
@@ -136,13 +137,19 @@ interface ResourceResolver {
 The facade is an ergonomic driver over `advance` and `provideResources`; it is
 not the engine protocol. For each batch it:
 
-1. validates and canonicalizes request keys;
-2. forwards required requests to the client resolver;
-3. optionally forwards or schedules prefetch hints;
-4. validates the iterable response shape and byte limits at the JS boundary;
-5. transfers responses into Rust;
-6. requires progress on at least one requested resource; and
-7. advances again until completion or error.
+1. forwards Rust-serialized required requests to the client resolver;
+2. optionally forwards or schedules prefetch hints;
+3. checks only that the resolver returned an iterable transport batch;
+4. transfers the complete batch, including empty and duplicate responses, into
+   Rust without maintaining a JavaScript request or path registry; and
+5. advances again until the shared session reports completion or a typed
+   error, including retry without progress.
+
+The WASM adapter parses the wire representation into the same Rust request
+keys and responses used by native callers. `umber-vfs` owns file path,
+identity, duplicate, conflict, limit, partial-batch, and progress semantics.
+The facade therefore has no file-kind table, path canonicalizer, duplicate
+map, or resource-byte counter that could drift from native behavior.
 
 The application or its resolver decides whether to use memory caches,
 in-flight joining, HTTP caching, IndexedDB, a service worker, authenticated
@@ -152,7 +159,9 @@ deployment model.
 
 Cancellation aborts work owned only by the cancelled session. A client may
 retain a shared in-flight fetch while another live session still references
-it. No partially downloaded or partially verified response reaches Rust.
+it. The facade checks cancellation again after acquisition and before batch
+transfer, so no response from cancelled work reaches Rust. No partially
+downloaded or partially verified response reaches Rust.
 
 ## Prefetch without correctness coupling
 
@@ -256,8 +265,10 @@ markup or executable URLs derived from document input.
 5. Reuse retained font objects directly in embedded and manifest HTML output.
 6. Expose the low-level `advance`/`provideResources` API and drive it through an
    optional high-level client resolver facade.
-7. Add required-versus-hint batching, cancellation, worker transfer, bounded
-   partial responses, and no-progress detection.
+7. **Complete.** Add required-versus-hint batching, cancellation-facing
+   disposal, worker transfer, bounded partial responses, and shared Rust
+   no-progress detection. JavaScript now owns acquisition only and forwards
+   response batches without duplicating path, identity, or lookup semantics.
 8. Add long-lived retain/release accounting and client-cache integration hooks
    for incremental render sessions.
 9. Remove superseded preload and post-finalization font-delivery APIs after the

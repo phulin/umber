@@ -2,7 +2,8 @@
 
 Status: canonical paths, immutable files, layered storage, typed file requests,
 resource registration, file limits, deterministic snapshots, generated-file
-transactions, and TeX compile-session input/output adapters implemented.
+transactions, TeX compile-session input/output adapters, and shared native/WASM
+resource batching implemented.
 
 This document defines `umber-vfs`, the host-neutral virtual filesystem shared
 by Umber's TeX driver, bibliography processing, native embeddings, and the
@@ -391,7 +392,11 @@ diagnostics, output enumeration, or cache identity.
 
 The JavaScript binding is a representation adapter. It transfers typed
 requests and byte responses and may drive an asynchronous resolver loop, but
-it does not implement alternative path or layer semantics.
+it does not implement alternative path or layer semantics. The authored
+facade forwards every iterable response batch, including empty, partial,
+permuted, and duplicate batches, into the Rust session. Rust serializes typed
+error codes back through direct and worker APIs; cancellation is checked before
+transfer and disposes the session without provisioning the acquired batch.
 
 ## Errors
 
@@ -477,11 +482,16 @@ byte-identical generated files and DVI.
    `VfsSnapshot`, pass selected immutable bytes through `World`, and publish
    complete committed auxiliary outputs through `StageTransaction`; suspended
    and failed attempts discard the complete stage.
-7. Add the bibliography resource kinds and adapters defined in
+7. **Native/WASM resource batching complete.** Native callers and
+   `umber-wasm` now use the same `VirtualCompileSession` request state and
+   `FileProvisioner` registration path. Browser JavaScript owns acquisition and
+   transport only; VFS validation, exact duplicates, conflicts, limits, partial
+   progress, and no-progress remain Rust semantics.
+8. Add the bibliography resource kinds and adapters defined in
    [`bib.md`](bib.md).
-8. Implement native multi-stage orchestration, then expose the identical state
+9. Implement native multi-stage orchestration, then expose the identical state
    machine through `umber-wasm`.
-9. Remove any remaining superseded adapter state after all native,
+10. Remove any remaining superseded adapter state after all native,
    incremental, and browser generated-output paths use `umber-vfs`.
 
 ## Exit criteria

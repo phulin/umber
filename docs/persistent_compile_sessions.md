@@ -60,6 +60,10 @@ Domain-qualified file request identity, deterministic file batching, generic
 registration, and file limits are owned by `umber-vfs`. The compile session
 adds TeX lookup/default-extension policy and combines file requests with font
 requests, while the WASM layer only adapts the shared Rust wire values.
+Authored JavaScript forwards resolver batches unchanged and retains no request,
+path, duplicate, progress, or byte-accounting shadow state. Empty and partial
+batches therefore reach the same Rust retry state as native calls; stable Rust
+error categories are serialized through direct and worker browser APIs.
 `FileProvisioner` also owns the session's layered user and resolved-resource
 storage plus its accepted generated layer. Each TeX attempt reads inputs and
 TFM files from one immutable stage snapshot; the resolver passes selected
