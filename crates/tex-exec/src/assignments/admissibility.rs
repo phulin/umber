@@ -28,17 +28,7 @@ const NEITHER: Admissibility = Admissibility {
 /// one classification decision rather than coordinated allowlists.
 const fn admissibility(primitive: UnexpandablePrimitive) -> Admissibility {
     match primitive {
-        UnexpandablePrimitive::Patterns
-        | UnexpandablePrimitive::Hyphenation
-        | UnexpandablePrimitive::SpaceFactor
-        | UnexpandablePrimitive::PrevDepth
-        | UnexpandablePrimitive::OpenIn
-        | UnexpandablePrimitive::CloseIn
-        | UnexpandablePrimitive::Read
-        | UnexpandablePrimitive::BatchMode
-        | UnexpandablePrimitive::NonstopMode
-        | UnexpandablePrimitive::ScrollMode
-        | UnexpandablePrimitive::ErrorStopMode => ASSIGNMENT_ONLY,
+        UnexpandablePrimitive::SpaceFactor | UnexpandablePrimitive::PrevDepth => ASSIGNMENT_ONLY,
         UnexpandablePrimitive::Def
         | UnexpandablePrimitive::Edef
         | UnexpandablePrimitive::Gdef
@@ -87,6 +77,15 @@ const fn admissibility(primitive: UnexpandablePrimitive) -> Admissibility {
         | UnexpandablePrimitive::Wd
         | UnexpandablePrimitive::Ht
         | UnexpandablePrimitive::Dp
+        | UnexpandablePrimitive::Patterns
+        | UnexpandablePrimitive::Hyphenation
+        | UnexpandablePrimitive::OpenIn
+        | UnexpandablePrimitive::CloseIn
+        | UnexpandablePrimitive::Read
+        | UnexpandablePrimitive::BatchMode
+        | UnexpandablePrimitive::NonstopMode
+        | UnexpandablePrimitive::ScrollMode
+        | UnexpandablePrimitive::ErrorStopMode
         | UnexpandablePrimitive::OpenOut
         | UnexpandablePrimitive::CloseOut
         | UnexpandablePrimitive::Immediate
@@ -158,6 +157,9 @@ mod tests {
         ));
         assert!(math_allows_mode_independent_primitive(
             UnexpandablePrimitive::IgnoreSpaces
+        ));
+        assert!(math_allows_mode_independent_primitive(
+            UnexpandablePrimitive::OpenIn
         ));
     }
 }
