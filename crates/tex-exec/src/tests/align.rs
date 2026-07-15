@@ -747,6 +747,27 @@ fn preamble_recognizes_alignment_tab_alias_by_meaning() {
 }
 
 #[test]
+fn alignment_brace_depth_uses_character_alias_meanings() {
+    let stores = run_boxed_alignment_source(
+        "\\let\\bgroup={\\let\\egroup=}\\halign{#\\cr \\bgroup x}\\cr {y\\egroup\\cr}",
+    );
+    let rows = vlist_rows(&stores, box_zero_vlist(&stores));
+
+    assert_eq!(rows.len(), 2);
+    assert_eq!(cell_text(&stores, row_cells(&stores, rows[0])[0]), "x");
+    assert_eq!(cell_text(&stores, row_cells(&stores, rows[1])[0]), "y");
+}
+
+#[test]
+fn expanded_text_scanning_preserves_alignment_brace_depth() {
+    let stores = run_boxed_alignment_source("\\halign{#\\cr x\\expanded{}\\cr}");
+    let rows = vlist_rows(&stores, box_zero_vlist(&stores));
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(cell_text(&stores, row_cells(&stores, rows[0])[0]), "x");
+}
+
+#[test]
 fn plain_tab_row_closes_alignment_and_box_before_surrounding_begingroup() {
     let source = "\\let\\bgroup={\\let\\egroup=}\
          \\def\\tbbox{\\setbox0=\\hbox\\bgroup}\

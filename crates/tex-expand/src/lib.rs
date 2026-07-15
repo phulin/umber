@@ -1254,6 +1254,11 @@ pub(crate) struct PreparedExpansionToken(TracedExpansionToken);
 
 impl PreparedExpansionToken {
     #[must_use]
+    pub(crate) const fn expansion_token(self) -> TracedExpansionToken {
+        self.0
+    }
+
+    #[must_use]
     pub(crate) fn traced_token(self) -> TracedTokenWord {
         self.0.traced_token()
     }
@@ -1421,25 +1426,16 @@ pub(crate) fn intercept_alignment_token(
             .map(|symbol| stores.meaning(symbol)),
         Token::Char { .. } | Token::Param(_) | Token::Frozen(_) => None,
     };
-    // WEB updates align_state only in the character-token branches of
-    // get_next. A control sequence whose meaning was \let to a brace still
-    // has that command code for execution, but it does not change the input
-    // scanner's brace level merely by being delivered.
-    let delivery = if matches!(
-        token,
-        Token::Char {
-            cat: Catcode::BeginGroup,
-            ..
-        }
-    ) {
+    let has_catcode_meaning = |expected| {
+        matches!(token, Token::Char { cat, .. } if cat == expected)
+            || matches!(meaning, Some(Meaning::CharToken { cat, .. }) if cat == expected)
+    };
+    // TeX's get_next updates align_state from cur_cmd, after control-sequence
+    // meaning lookup. Character-command aliases therefore balance templates
+    // exactly like literal braces.
+    let delivery = if has_catcode_meaning(Catcode::BeginGroup) {
         tex_lex::AlignmentTokenDelivery::LeftBrace
-    } else if matches!(
-        token,
-        Token::Char {
-            cat: Catcode::EndGroup,
-            ..
-        }
-    ) {
+    } else if has_catcode_meaning(Catcode::EndGroup) {
         tex_lex::AlignmentTokenDelivery::RightBrace
     } else {
         tex_lex::AlignmentTokenDelivery::Other

@@ -617,7 +617,7 @@ fn collect_expanded_text(
         {
             continue;
         }
-        let Some(read) = input.next_traced_expansion_token(stores)? else {
+        let Some(prepared) = crate::next_prepared_expansion_token(input, stores, expansion)? else {
             return match boundary {
                 ExpandedTextBoundary::Replay(_) => {
                     Ok(finish_traced_list(stores, &mut builder, &mut origins))
@@ -627,6 +627,7 @@ fn collect_expanded_text(
                 }
             };
         };
+        let read = prepared.expansion_token();
         expansion.observe_read(read);
         let token = read.token();
         let traced = read.traced_token();
