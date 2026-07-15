@@ -1003,6 +1003,7 @@ name = "test-support"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "lopdf",
  "refexec",
  "similar",
  "tempfile",

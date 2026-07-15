@@ -3,6 +3,7 @@
 mod compile_fail;
 mod corpus;
 pub mod dvi;
+pub mod pdf;
 
 #[allow(clippy::disallowed_methods)] // host tool, not engine code
 mod imp {

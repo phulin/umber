@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+lopdf = { version = "=0.43.0", default-features = false }
 refexec = { path = "../../tools/refexec" }
 similar.workspace = true
 tempfile.workspace = true
