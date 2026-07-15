@@ -4,6 +4,7 @@ use tex_expand::append_token_string_text;
 use tex_expand::scan::scan_general_text_expanded_with_driver;
 use tex_lex::InputStack;
 use tex_state::Universe;
+use tex_state::env::banks::IntParam;
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::token::TracedTokenWord;
 
@@ -46,7 +47,24 @@ pub(super) fn execute_pdf_font_output_action(
         }
         UnexpandablePrimitive::PdfMapLine => {
             let line = tex_fonts::PdfFontMapEntry::parse(&bytes)?;
+            let duplicate_count = stores.pdf_font_map_duplicate_names().len();
             stores.push_pdf_font_map(tex_state::PdfFontMapOperation::Line(line));
+            let duplicates = stores.pdf_font_map_duplicate_names();
+            if duplicates.len() > duplicate_count
+                && stores.int_param(IntParam::PDF_SUPPRESS_WARNING_DUP_MAP) <= 0
+            {
+                let name = String::from_utf8_lossy(
+                    duplicates
+                        .last()
+                        .expect("a newly recorded duplicate has a name"),
+                );
+                stores.world_mut().write_text(
+                    tex_state::PrintSink::TerminalAndLog,
+                    &format!(
+                        "\npdfTeX warning: pdftex: fontmap entry for `{name}' already exists, duplicates ignored\n"
+                    ),
+                );
+            }
         }
         _ => unreachable!("caller restricts PDF font output actions"),
     }

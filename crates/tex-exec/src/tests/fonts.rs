@@ -44,6 +44,51 @@ fn pdf_font_output_actions_record_host_neutral_checkpointed_state() {
 }
 
 #[test]
+fn duplicate_pdf_map_warning_uses_pdftex_positive_only_suppression() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    let primitive = stores.intern("pdfmapline");
+    stores.set_meaning(
+        primitive,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfMapLine),
+    );
+    stores.set_int_param_global(
+        tex_state::env::banks::IntParam::PDF_SUPPRESS_WARNING_DUP_MAP,
+        -1,
+    );
+    let mut input = InputStack::new(MemoryInput::new(concat!(
+        "\\pdfmapline{cmr10 First <cmr10.pfb} ",
+        "\\pdfmapline{+cmr10 Ignored <ignored.pfb} \\end",
+    )));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("duplicate map actions execute");
+    assert!(terminal_effect_text(&stores).contains(
+        "pdfTeX warning: pdftex: fontmap entry for `cmr10' already exists, duplicates ignored"
+    ));
+
+    let mut suppressed = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut suppressed);
+    let primitive = suppressed.intern("pdfmapline");
+    suppressed.set_meaning(
+        primitive,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfMapLine),
+    );
+    suppressed.set_int_param_global(
+        tex_state::env::banks::IntParam::PDF_SUPPRESS_WARNING_DUP_MAP,
+        1,
+    );
+    let mut input = InputStack::new(MemoryInput::new(concat!(
+        "\\pdfmapline{cmr10 First <cmr10.pfb} ",
+        "\\pdfmapline{cmr10 Ignored <ignored.pfb} \\end",
+    )));
+    Executor::new()
+        .run(&mut input, &mut suppressed)
+        .expect("suppressed duplicate map actions execute");
+    assert!(!terminal_effect_text(&suppressed).contains("fontmap entry"));
+}
+
+#[test]
 fn pdf_font_expand_materializes_scaled_line_fonts() {
     let mut stores = stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);
