@@ -248,7 +248,6 @@ fn pdf_type1_font_objects(
     dictionary.insert("Subtype", PdfValue::Name("Type1".into()))?;
     dictionary.insert("Name", PdfValue::Name(PdfName::new(resource_name)))?;
     dictionary.insert("BaseFont", PdfValue::Name(PdfName::new(base_font)))?;
-    dictionary.insert("Encoding", PdfValue::Name("WinAnsiEncoding".into()))?;
     dictionary.insert("FirstChar", PdfValue::Integer(0))?;
     dictionary.insert("LastChar", PdfValue::Integer(255))?;
     let font_id = stores
@@ -270,20 +269,37 @@ fn pdf_type1_font_objects(
     descriptor.insert("Type", PdfValue::Name("FontDescriptor".into()))?;
     descriptor.insert("FontName", PdfValue::Name(PdfName::new(base_font)))?;
     descriptor.insert("Flags", PdfValue::Integer(4))?;
+    let bbox = program.font_bbox().unwrap_or([-500, -500, 1500, 1500]);
     descriptor.insert(
         "FontBBox",
-        PdfValue::Array(vec![
-            PdfValue::Integer(-500),
-            PdfValue::Integer(-500),
-            PdfValue::Integer(1500),
-            PdfValue::Integer(1500),
-        ]),
+        PdfValue::Array(
+            bbox.into_iter()
+                .map(|value| PdfValue::Integer(i64::from(value)))
+                .collect(),
+        ),
     )?;
+    let scale_metric =
+        |value: Scaled| (i64::from(value.raw()) * 1000 + denominator / 2) / denominator;
+    let ascent = (0u8..=255)
+        .filter_map(|code| stores.font_char_metrics(font_id, code))
+        .map(|metrics| scale_metric(metrics.height))
+        .max()
+        .unwrap_or(0);
+    let descent = (0u8..=255)
+        .filter_map(|code| stores.font_char_metrics(font_id, code))
+        .map(|metrics| scale_metric(metrics.depth))
+        .max()
+        .unwrap_or(0);
+    let cap_height = stores
+        .font_char_metrics(font_id, b'H')
+        .map_or(ascent, |metrics| scale_metric(metrics.height));
+    let x_height = scale_metric(stores.font_parameter(font_id, 5));
     descriptor.insert("ItalicAngle", PdfValue::Integer(0))?;
-    descriptor.insert("Ascent", PdfValue::Integer(800))?;
-    descriptor.insert("Descent", PdfValue::Integer(-200))?;
-    descriptor.insert("CapHeight", PdfValue::Integer(700))?;
+    descriptor.insert("Ascent", PdfValue::Integer(ascent))?;
+    descriptor.insert("Descent", PdfValue::Integer(-descent))?;
+    descriptor.insert("CapHeight", PdfValue::Integer(cap_height))?;
     descriptor.insert("StemV", PdfValue::Integer(80))?;
+    descriptor.insert("XHeight", PdfValue::Integer(x_height))?;
     descriptor.insert("FontFile", PdfValue::Reference(program_id))?;
     descriptor.set_raw_entries(stores.pdf_font_attribute(font_id).to_vec());
 

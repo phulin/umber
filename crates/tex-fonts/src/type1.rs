@@ -84,6 +84,37 @@ impl PdfType1Program {
     pub const fn lengths(&self) -> [u32; 3] {
         [self.length1, self.length2, self.length3]
     }
+
+    /// Reads the cleartext `/FontBBox` without interpreting PostScript.
+    #[must_use]
+    pub fn font_bbox(&self) -> Option<[i32; 4]> {
+        let cleartext = self.bytes.get(..self.length1 as usize)?;
+        let marker = b"/FontBBox";
+        let start = cleartext
+            .windows(marker.len())
+            .position(|window| window == marker)?
+            + marker.len();
+        let mut values = [0; 4];
+        let mut count = 0usize;
+        for token in cleartext[start..]
+            .split(|byte| byte.is_ascii_whitespace() || matches!(byte, b'{' | b'}' | b'[' | b']'))
+            .filter(|token| !token.is_empty())
+        {
+            if count == 4 {
+                break;
+            }
+            let text = std::str::from_utf8(token).ok()?;
+            match text.parse::<i32>() {
+                Ok(value) => {
+                    values[count] = value;
+                    count += 1;
+                }
+                Err(_) if count == 0 => continue,
+                Err(_) => return None,
+            }
+        }
+        (count == 4).then_some(values)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -123,5 +154,16 @@ mod tests {
         assert_eq!(program.bytes(), b"abcdef");
         assert_eq!(program.lengths(), [3, 2, 1]);
         assert_ne!(program.identity().bytes(), [0; 32]);
+    }
+
+    #[test]
+    fn reads_cleartext_font_bbox_without_postscript_execution() {
+        let header = b"%!PS /FontBBox {-40 -250 1009 750 }readonly def\n";
+        let mut pfb = vec![0x80, 1];
+        pfb.extend_from_slice(&(header.len() as u32).to_le_bytes());
+        pfb.extend_from_slice(header);
+        pfb.extend_from_slice(&[0x80, 2, 1, 0, 0, 0, 0, 0x80, 3]);
+        let program = PdfType1Program::from_pfb(&pfb).expect("valid synthetic PFB");
+        assert_eq!(program.font_bbox(), Some([-40, -250, 1009, 750]));
     }
 }
