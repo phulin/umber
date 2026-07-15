@@ -240,6 +240,14 @@ macro_rules! dispatch_match {
                     input, stores, expansion, mode, call_context,
                 )
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::ShellEscape) => {
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::NumberOutput,
+                    "0",
+                    call_origin,
+                ))
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Unexpanded) => {
                 let raw = crate::scan::scan_general_text_with_expanded_open(
                     input, stores, expansion, mode, call_context,
@@ -1109,6 +1117,7 @@ pub fn dispatch_expandable_opcode(opcode: ExpandableOpcode) -> Result<(), Expand
         | ExpandableOpcode::Expanded
         | ExpandableOpcode::FileSize
         | ExpandableOpcode::StringCompare
+        | ExpandableOpcode::ShellEscape
         | ExpandableOpcode::Unexpanded
         | ExpandableOpcode::Detokenize
         | ExpandableOpcode::Unless

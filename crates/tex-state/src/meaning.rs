@@ -218,6 +218,8 @@ pub enum ExpandablePrimitive {
     FileSize,
     /// Engine-neutral lexicographic comparison of two expanded strings.
     StringCompare,
+    /// Disabled/enabled shell-escape status for the LaTeX extension contract.
+    ShellEscape,
 }
 
 impl ExpandablePrimitive {
@@ -280,6 +282,7 @@ impl ExpandablePrimitive {
             Self::Expanded => 53,
             Self::FileSize => 54,
             Self::StringCompare => 55,
+            Self::ShellEscape => 56,
         }
     }
 
@@ -342,6 +345,7 @@ impl ExpandablePrimitive {
             53 => Some(Self::Expanded),
             54 => Some(Self::FileSize),
             55 => Some(Self::StringCompare),
+            56 => Some(Self::ShellEscape),
             _ => None,
         }
     }

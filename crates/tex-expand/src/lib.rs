@@ -247,6 +247,10 @@ pub fn install_latex_expandable_primitives(stores: &mut Universe) {
             "strcmp",
             tex_state::meaning::ExpandablePrimitive::StringCompare,
         ),
+        (
+            "shellescape",
+            tex_state::meaning::ExpandablePrimitive::ShellEscape,
+        ),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
@@ -427,6 +431,7 @@ pub enum ExpandableOpcode {
     Expanded,
     FileSize,
     StringCompare,
+    ShellEscape,
     Unexpanded,
     Detokenize,
     Unless,

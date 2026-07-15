@@ -729,6 +729,21 @@ fn expanded_is_installed_only_in_the_latex_extension_layer() {
         stores.meaning(strcmp),
         Meaning::ExpandablePrimitive(ExpandablePrimitive::StringCompare)
     );
+    let shellescape = stores.intern("shellescape");
+    assert_eq!(
+        stores.meaning(shellescape),
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::ShellEscape)
+    );
+}
+
+#[test]
+fn shellescape_reports_the_disabled_world_policy() {
+    let mut stores = Universe::new();
+    crate::install_latex_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("A\\shellescape B%"));
+    let mut expansion = tex_state::ExpansionContext::new(&mut stores);
+
+    assert_eq!(next_expanded_chars(&mut input, &mut expansion), "A0B");
 }
 
 #[test]
