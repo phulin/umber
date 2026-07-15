@@ -66,6 +66,11 @@ pub enum PdfContentOperation {
         x: f32,
         y: f32,
     },
+    FormXObject {
+        x: f32,
+        y: f32,
+        name: Vec<u8>,
+    },
 }
 
 /// One PK-derived monochrome Type-3 glyph procedure.
@@ -223,6 +228,13 @@ pub fn ordered_page_content(operations: &[PdfContentOperation]) -> Vec<u8> {
                 if let Some(saved) = saved_origins.pop() {
                     origin = saved;
                 }
+            }
+            PdfContentOperation::FormXObject { x, y, name } => {
+                end_pdf_text(&mut content, &mut in_text);
+                set_origin(&mut content, &mut origin, *x, *y);
+                content.save_state();
+                content.x_object(Name(name));
+                content.restore_state();
             }
         }
     }
@@ -436,6 +448,13 @@ pub enum PdfObject {
     Stream {
         dictionary: PdfDictionary,
         data: Vec<u8>,
+    },
+    /// A typed reusable Form XObject serialized through `pdf_writer::FormXObject`.
+    FormXObject {
+        dictionary: PdfDictionary,
+        data: Vec<u8>,
+        bbox: [PdfNumber; 4],
+        matrix: [PdfNumber; 6],
     },
 }
 
@@ -703,7 +722,10 @@ fn validate_document(
     let mut stream_bytes = 0_usize;
     for indirect in &document.objects {
         match &indirect.object {
-            PdfObject::Stream { dictionary, data } => {
+            PdfObject::Stream { dictionary, data }
+            | PdfObject::FormXObject {
+                dictionary, data, ..
+            } => {
                 if dictionary.get(b"Length").is_some() {
                     return Err(PdfModelError::ReservedStreamLength(indirect.id));
                 }
@@ -739,7 +761,7 @@ fn validate_object_values(
     let mut stack = Vec::new();
     match object {
         PdfObject::Value(value) => stack.push((value, 1_usize)),
-        PdfObject::Stream { dictionary, .. } => {
+        PdfObject::Stream { dictionary, .. } | PdfObject::FormXObject { dictionary, .. } => {
             stack.extend(dictionary.iter().map(|(_, value)| (value, 1)))
         }
         PdfObject::Raw(_) => {}
@@ -927,6 +949,24 @@ fn hash_object(object: &PdfObject, hasher: &mut CanonicalHasher) {
         PdfObject::Stream { dictionary, data } => {
             hasher.byte(1);
             hash_dictionary(dictionary, hasher);
+            hasher.bytes(data);
+        }
+        PdfObject::FormXObject {
+            dictionary,
+            data,
+            bbox,
+            matrix,
+        } => {
+            hasher.byte(3);
+            hash_dictionary(dictionary, hasher);
+            for value in bbox {
+                hasher.i64(value.coefficient());
+                hasher.byte(value.decimal_places());
+            }
+            for value in matrix {
+                hasher.i64(value.coefficient());
+                hasher.byte(value.decimal_places());
+            }
             hasher.bytes(data);
         }
         PdfObject::Raw(data) => {

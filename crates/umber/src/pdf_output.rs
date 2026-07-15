@@ -130,6 +130,7 @@ pub fn pdf_from_committed_artifacts_at_dpi(
     let mut emitted_fonts = std::collections::BTreeSet::new();
     let mut interword_space_enabled = false;
     let mut fallback_space_font = None;
+    let mut referenced_forms = BTreeSet::<u32>::new();
 
     let mut catalog = PdfDictionary::new();
     catalog.insert("Type", PdfValue::Name("Catalog".into()))?;
@@ -237,6 +238,7 @@ pub fn pdf_from_committed_artifacts_at_dpi(
         let positioned = positioned_pages[page_index].clone();
         let (page_width, page_height) = pdf_page_extents(&artifact, record)?;
         let mut content_operations = Vec::new();
+        let mut page_forms = BTreeMap::<u32, PdfObjectId>::new();
         let mut has_pdf_graphics = false;
         let mut page_fonts = std::collections::BTreeMap::new();
         let mut fallback_space_on_page = false;
@@ -519,6 +521,19 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                                 bytes: payload,
                             }
                         }
+                        tex_out::PageEffect::PdfRefXForm { object, .. } => {
+                            let form = stores
+                                .pdf_form(object)
+                                .ok_or(PdfBuildError::ReferencedFormNotFound(object))?;
+                            let form_id = object_id(form.object())?;
+                            referenced_forms.insert(form.object());
+                            page_forms.insert(form.resource(), form_id);
+                            PdfContentOperation::FormXObject {
+                                x,
+                                y,
+                                name: format!("Fm{}", form.resource()).into_bytes(),
+                            }
+                        }
                         _ => unreachable!("positioned PDF graphics event contains PDF effect"),
                     };
                     content_operations.push(operation);
@@ -554,6 +569,16 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                 fonts.insert("UmberSpace", PdfValue::Reference(fallback.font))?;
             }
             resources.insert("Font", PdfValue::Dictionary(fonts))?;
+        }
+        if !page_forms.is_empty() {
+            let mut xobjects = PdfDictionary::new();
+            for (resource, object) in page_forms {
+                xobjects.insert(
+                    format!("Fm{resource}").as_str(),
+                    PdfValue::Reference(object),
+                )?;
+            }
+            resources.insert("XObject", PdfValue::Dictionary(xobjects))?;
         }
         resources.set_raw_entries(token_list_bytes(stores, record.resources()));
         objects.push(indirect_dictionary(resources_id, resources));
@@ -627,6 +652,42 @@ pub fn pdf_from_committed_artifacts_at_dpi(
             )?);
         }
         objects.push(indirect_dictionary(page_id, page));
+    }
+
+    for object in referenced_forms {
+        let form = stores
+            .pdf_form(object)
+            .ok_or(PdfBuildError::ReferencedFormNotFound(object))?;
+        let mut dictionary = PdfDictionary::new();
+        dictionary.insert("FormType", PdfValue::Integer(1))?;
+        let mut resources = PdfDictionary::new();
+        if let Some(tokens) = form.resources() {
+            resources.set_raw_entries(token_list_bytes(stores, tokens));
+        }
+        dictionary.insert("Resources", PdfValue::Dictionary(resources))?;
+        if let Some(tokens) = form.attr() {
+            dictionary.set_raw_entries(token_list_bytes(stores, tokens));
+        }
+        let zero = PdfNumber::new(0, 0)?;
+        let one = PdfNumber::new(1, 0)?;
+        let total_height = form
+            .height()
+            .checked_add(form.depth())
+            .ok_or(PdfBuildError::PageGeometryOverflow)?;
+        objects.push(PdfIndirectObject {
+            id: object_id(form.object())?,
+            object: PdfObject::FormXObject {
+                dictionary,
+                data: Vec::new(),
+                bbox: [
+                    zero,
+                    zero,
+                    scaled_to_bp_number(form.width(), parameters.decimal_digits)?,
+                    scaled_to_bp_number(total_height, parameters.decimal_digits)?,
+                ],
+                matrix: [one, zero, zero, one, zero, zero],
+            },
+        });
     }
 
     let mut pages = PdfDictionary::new();
@@ -2167,6 +2228,7 @@ pub enum PdfBuildError {
     OpenActionPageNotFound(u32),
     OpenActionHasNoPage,
     ReferencedRawObjectUninitialized(u32),
+    ReferencedFormNotFound(u32),
     InvalidRawObjectFileName(u32),
     TextRequiresFontResources,
     MissingPositionedFont(u32),
@@ -2236,6 +2298,9 @@ impl std::fmt::Display for PdfBuildError {
                     f,
                     "referenced PDF object {id} was reserved but never initialized"
                 )
+            }
+            Self::ReferencedFormNotFound(id) => {
+                write!(f, "referenced PDF form object {id} was not captured")
             }
             Self::InvalidRawObjectFileName(id) => {
                 write!(f, "PDF stream object {id} has a non-UTF-8 file name")
@@ -4003,6 +4068,25 @@ mod tests {
             pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts),
             Err(PdfBuildError::ReferencedRawObjectUninitialized(1))
         ));
+    }
+
+    #[test]
+    fn referenced_form_uses_typed_pdf_writer_xobject_and_page_resource() {
+        let (mut stores, run) = run(concat!(
+            "\\pdfoutput=1\\pdfcompresslevel=0",
+            "\\setbox0=\\hbox to10pt{\\vrule width10pt height5pt}",
+            "\\pdfxform attr {/OC 7} resources {/ExtGState <<>>} 0",
+            "\\pdfrefxform1\\end",
+        ));
+        let pdf = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
+            .expect("serialize referenced form");
+        assert!(
+            pdf.windows(b"/Subtype/Form".len())
+                .any(|w| w == b"/Subtype/Form")
+        );
+        assert!(pdf.windows(b"/XObject".len()).any(|w| w == b"/XObject"));
+        assert!(pdf.windows(b"/Fm1 Do".len()).any(|w| w == b"/Fm1 Do"));
+        assert!(pdf.windows(b"/BBox[0 0".len()).any(|w| w == b"/BBox[0 0"));
     }
 
     #[test]

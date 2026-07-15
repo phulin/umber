@@ -150,6 +150,20 @@ impl PdfDocument {
                     data,
                     options.stream_compression,
                 )?,
+                PdfObject::FormXObject {
+                    dictionary,
+                    data,
+                    bbox,
+                    matrix,
+                } => write_form_xobject(
+                    &mut pdf,
+                    reference,
+                    dictionary,
+                    data,
+                    *bbox,
+                    *matrix,
+                    options.stream_compression,
+                )?,
             }
         }
 
@@ -177,7 +191,7 @@ impl PdfDocument {
                                 .object(writer_ref(indirect.id)?)
                                 .primitive(Raw(data));
                         }
-                        PdfObject::Stream { .. } => {}
+                        PdfObject::Stream { .. } | PdfObject::FormXObject { .. } => {}
                         PdfObject::Annotation(_) => {}
                     }
                 }
@@ -270,7 +284,7 @@ fn validate_object_scalars(object: &PdfObject) -> Result<(), PdfSerializeError> 
     let mut stack = Vec::new();
     match object {
         PdfObject::Value(value) => stack.push(value),
-        PdfObject::Stream { dictionary, .. } => {
+        PdfObject::Stream { dictionary, .. } | PdfObject::FormXObject { dictionary, .. } => {
             stack.extend(dictionary.iter().map(|(_, value)| value));
         }
         PdfObject::Raw(_) => {}
@@ -289,6 +303,40 @@ fn validate_object_scalars(object: &PdfObject) -> Result<(), PdfSerializeError> 
                 stack.extend(dictionary.iter().map(|(_, value)| value));
             }
             _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn write_form_xobject(
+    pdf: &mut Pdf,
+    reference: Ref,
+    dictionary: &PdfDictionary,
+    data: &[u8],
+    bbox: [PdfNumber; 4],
+    matrix: [PdfNumber; 6],
+    compression: PdfStreamCompression,
+) -> Result<(), PdfSerializeError> {
+    let bbox = Rect::new(
+        number_as_f32(bbox[0]),
+        number_as_f32(bbox[1]),
+        number_as_f32(bbox[2]),
+        number_as_f32(bbox[3]),
+    );
+    let matrix = matrix.map(number_as_f32);
+    match compression {
+        PdfStreamCompression::None => {
+            let mut form = pdf.form_xobject(reference, data);
+            form.bbox(bbox).matrix(matrix);
+            write_dictionary_entries(&mut form, dictionary, None)?;
+            form.finish();
+        }
+        PdfStreamCompression::Flate { level } => {
+            let compressed = deflate(data, level)?;
+            let mut form = pdf.form_xobject(reference, &compressed);
+            form.bbox(bbox).matrix(matrix).filter(Filter::FlateDecode);
+            write_dictionary_entries(&mut form, dictionary, None)?;
+            form.finish();
         }
     }
     Ok(())
