@@ -4,9 +4,16 @@ use std::io::Write as _;
 
 use flate2::Compression;
 use flate2::write::ZlibEncoder;
-use pdf_writer::{Dict, Filter, Finish, Name, Null, Obj, Pdf, Raw, Ref, Settings, Str, XRefFilter};
+use pdf_writer::types::{ActionType, AnnotationType};
+use pdf_writer::{
+    Dict, Filter, Finish, Name, Null, Obj, Pdf, Raw, Rect, Ref, Settings, Str, XRefFilter,
+};
 
-use super::{PdfDictionary, PdfDocument, PdfNumber, PdfObject, PdfObjectId, PdfValue};
+use super::{
+    PdfAnnotationAction, PdfAnnotationObject, PdfAnnotationType, PdfDestinationActionKind,
+    PdfDestinationPage, PdfDestinationStructure, PdfDestinationTarget, PdfDictionary, PdfDocument,
+    PdfNumber, PdfObject, PdfObjectId, PdfValue,
+};
 
 /// Deterministic stream encoding selected at final serialization.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -102,6 +109,23 @@ impl PdfDocument {
                 info.finish();
                 continue;
             }
+            if let PdfObject::Value(PdfValue::Dictionary(dictionary)) = &indirect.object
+                && matches!(dictionary.get(b"Type"), Some(PdfValue::Name(name)) if name.as_bytes() == b"Page")
+                && dictionary.get(b"Annots").is_some()
+            {
+                let mut page = pdf.page(reference);
+                if let Some(PdfValue::Array(ids)) = dictionary.get(b"Annots") {
+                    page.annotations(ids.iter().map(|value| match value {
+                        PdfValue::Reference(id) => {
+                            writer_ref(*id).expect("validated annotation ref")
+                        }
+                        _ => unreachable!("validated page annotation is a reference"),
+                    }));
+                }
+                write_dictionary_entries_skipping(&mut page, dictionary, &[b"Type", b"Annots"])?;
+                page.finish();
+                continue;
+            }
 
             match &indirect.object {
                 PdfObject::Value(value)
@@ -116,6 +140,9 @@ impl PdfDocument {
                     pdf.indirect(reference).primitive(Raw(data));
                 }
                 PdfObject::Raw(_) => {}
+                PdfObject::Annotation(annotation) => {
+                    write_annotation(&mut pdf, reference, annotation)?;
+                }
                 PdfObject::Stream { dictionary, data } => write_stream(
                     &mut pdf,
                     reference,
@@ -135,6 +162,12 @@ impl PdfDocument {
                     if indirect.id == self.catalog() || self.trailer().info == Some(indirect.id) {
                         continue;
                     }
+                    if let PdfObject::Value(PdfValue::Dictionary(dictionary)) = &indirect.object
+                        && matches!(dictionary.get(b"Type"), Some(PdfValue::Name(name)) if name.as_bytes() == b"Page")
+                        && dictionary.get(b"Annots").is_some()
+                    {
+                        continue;
+                    }
                     match &indirect.object {
                         PdfObject::Value(value) => {
                             write_value(object_stream.object(writer_ref(indirect.id)?), value)?;
@@ -145,6 +178,7 @@ impl PdfDocument {
                                 .primitive(Raw(data));
                         }
                         PdfObject::Stream { .. } => {}
+                        PdfObject::Annotation(_) => {}
                     }
                 }
                 match options.stream_compression {
@@ -240,6 +274,7 @@ fn validate_object_scalars(object: &PdfObject) -> Result<(), PdfSerializeError> 
             stack.extend(dictionary.iter().map(|(_, value)| value));
         }
         PdfObject::Raw(_) => {}
+        PdfObject::Annotation(_) => {}
     }
     while let Some(value) = stack.pop() {
         match value {
@@ -298,6 +333,82 @@ fn deflate(data: &[u8], level: u8) -> Result<Vec<u8>, PdfSerializeError> {
         .map_err(|error| PdfSerializeError::Compression(error.kind()))
 }
 
+fn write_annotation(
+    pdf: &mut Pdf,
+    reference: Ref,
+    annotation: &PdfAnnotationObject,
+) -> Result<(), PdfSerializeError> {
+    let mut writer = pdf.annotation(reference);
+    writer.rect(Rect::new(
+        number_as_f32(annotation.rect[0]),
+        number_as_f32(annotation.rect[1]),
+        number_as_f32(annotation.rect[2]),
+        number_as_f32(annotation.rect[3]),
+    ));
+    if let Some(kind) = annotation.subtype {
+        writer.subtype(match kind {
+            PdfAnnotationType::Link => AnnotationType::Link,
+        });
+    }
+    writer.raw_entries(&annotation.raw_entries);
+    match &annotation.action {
+        Some(PdfAnnotationAction::UserEntries(entries)) => {
+            writer.raw_entries(entries);
+        }
+        Some(PdfAnnotationAction::Destination(spec)) => {
+            let external = spec.file.is_some();
+            let mut action = writer.action();
+            action.action_type(match (spec.kind, external) {
+                (PdfDestinationActionKind::GoTo, false) => ActionType::GoTo,
+                (PdfDestinationActionKind::GoTo, true) => ActionType::RemoteGoTo,
+                (PdfDestinationActionKind::Thread, _) => ActionType::Thread,
+            });
+            if let Some(file) = &spec.file {
+                action.file_spec().path(Str(file));
+            }
+            if let Some(new_window) = spec.new_window {
+                action.new_window(new_window);
+            }
+            match &spec.target {
+                PdfDestinationTarget::Page { page, view } => match page {
+                    PdfDestinationPage::Internal(id) => {
+                        action.destination().page(writer_ref(*id)?).raw_view(view)
+                    }
+                    PdfDestinationPage::External(number) => action
+                        .destination()
+                        .page_number(i32::try_from(*number).map_err(|_| {
+                            PdfSerializeError::IntegerOutOfRange(i64::from(*number))
+                        })?)
+                        .raw_view(view),
+                },
+                PdfDestinationTarget::Name(name) => {
+                    action.destination_string(Str(name));
+                }
+                PdfDestinationTarget::Number(number) => {
+                    action.destination_number(
+                        i32::try_from(*number).map_err(|_| {
+                            PdfSerializeError::IntegerOutOfRange(i64::from(*number))
+                        })?,
+                    );
+                }
+            }
+            match &spec.structure {
+                Some(PdfDestinationStructure::Internal(id)) => {
+                    action.structure_destination(writer_ref(*id)?);
+                }
+                Some(PdfDestinationStructure::External(value)) => {
+                    action.structure_destination_raw(value);
+                }
+                None => {}
+            }
+            action.finish();
+        }
+        None => {}
+    }
+    writer.finish();
+    Ok(())
+}
+
 fn write_value(object: Obj<'_>, value: &PdfValue) -> Result<(), PdfSerializeError> {
     match value {
         PdfValue::Null => object.primitive(Null),
@@ -332,6 +443,21 @@ fn write_dictionary_entries(
 ) -> Result<(), PdfSerializeError> {
     for (key, value) in dictionary.iter() {
         if skip == Some(key.as_bytes()) {
+            continue;
+        }
+        write_value(writer.insert(Name(key.as_bytes())), value)?;
+    }
+    writer.raw_entries(dictionary.raw_entries());
+    Ok(())
+}
+
+fn write_dictionary_entries_skipping(
+    writer: &mut Dict<'_>,
+    dictionary: &PdfDictionary,
+    skip: &[&[u8]],
+) -> Result<(), PdfSerializeError> {
+    for (key, value) in dictionary.iter() {
+        if skip.contains(&key.as_bytes()) {
             continue;
         }
         write_value(writer.insert(Name(key.as_bytes())), value)?;

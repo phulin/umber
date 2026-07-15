@@ -313,12 +313,73 @@ pub enum PdfValue {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PdfObject {
     Value(PdfValue),
+    Annotation(PdfAnnotationObject),
     /// One complete direct object body retained for pdfTeX compatibility.
     Raw(Vec<u8>),
     Stream {
         dictionary: PdfDictionary,
         data: Vec<u8>,
     },
+}
+
+/// A detached annotation serialized through `pdf_writer`'s typed builder.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PdfAnnotationObject {
+    pub rect: [PdfNumber; 4],
+    pub subtype: Option<PdfAnnotationType>,
+    pub action: Option<PdfAnnotationAction>,
+    /// User-supplied pdfTeX annotation or link-attribute entries only.
+    pub raw_entries: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PdfAnnotationType {
+    Link,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PdfAnnotationAction {
+    /// Complete user-supplied annotation entries, retained as a compatibility escape hatch.
+    UserEntries(Vec<u8>),
+    Destination(PdfDestinationAction),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PdfDestinationAction {
+    pub kind: PdfDestinationActionKind,
+    pub file: Option<Vec<u8>>,
+    pub target: PdfDestinationTarget,
+    pub structure: Option<PdfDestinationStructure>,
+    pub new_window: Option<bool>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PdfDestinationActionKind {
+    GoTo,
+    Thread,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PdfDestinationTarget {
+    Page {
+        page: PdfDestinationPage,
+        /// User-supplied destination view operands.
+        view: Vec<u8>,
+    },
+    Name(Vec<u8>),
+    Number(u32),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PdfDestinationPage {
+    Internal(PdfObjectId),
+    External(u32),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PdfDestinationStructure {
+    Internal(PdfObjectId),
+    External(Vec<u8>),
 }
 
 /// File-trailer extensions owned by the detached document model.
@@ -472,6 +533,9 @@ pub enum PdfModelError {
     PageMediaBoxInvalid(PdfObjectId),
     PageResourcesInvalid(PdfObjectId),
     PageContentsInvalid(PdfObjectId),
+    PageAnnotationsInvalid(PdfObjectId),
+    AnnotationNotTyped(PdfObjectId),
+    AnnotationOwnedByMultiplePages(PdfObjectId),
 }
 
 impl std::fmt::Display for PdfModelError {
@@ -529,7 +593,7 @@ fn validate_document(
                 stream_bytes = stream_bytes.saturating_add(data.len());
             }
             PdfObject::Raw(data) => stream_bytes = stream_bytes.saturating_add(data.len()),
-            PdfObject::Value(_) => {}
+            PdfObject::Value(_) | PdfObject::Annotation(_) => {}
         }
         if stream_bytes > limits.max_stream_bytes {
             return Err(PdfModelError::TooManyStreamBytes {
@@ -562,6 +626,23 @@ fn validate_object_values(
             stack.extend(dictionary.iter().map(|(_, value)| (value, 1)))
         }
         PdfObject::Raw(_) => {}
+        PdfObject::Annotation(annotation) => {
+            if let Some(PdfAnnotationAction::Destination(action)) = &annotation.action {
+                if let PdfDestinationTarget::Page {
+                    page: PdfDestinationPage::Internal(id),
+                    ..
+                } = action.target
+                    && !ids.contains(&id)
+                {
+                    return Err(PdfModelError::MissingObject(id));
+                }
+                if let Some(PdfDestinationStructure::Internal(id)) = action.structure
+                    && !ids.contains(&id)
+                {
+                    return Err(PdfModelError::MissingObject(id));
+                }
+            }
+        }
     }
     while let Some((value, depth)) = stack.pop() {
         if depth > max_depth {
@@ -617,10 +698,11 @@ fn validate_page_graph(document: &UnvalidatedPdfDocument) -> Result<(), PdfModel
     if count != Some(kids.len()) {
         return Err(PdfModelError::PagesCountInvalid(pages_id));
     }
+    let mut annotation_owners = BTreeSet::new();
     for kid in kids {
         let page_id =
             reference_value(Some(kid)).ok_or(PdfModelError::PagesKidsInvalid(pages_id))?;
-        validate_page(document, page_id, pages_id)?;
+        validate_page(document, page_id, pages_id, &mut annotation_owners)?;
     }
     Ok(())
 }
@@ -629,6 +711,7 @@ fn validate_page(
     document: &UnvalidatedPdfDocument,
     page_id: PdfObjectId,
     pages_id: PdfObjectId,
+    annotation_owners: &mut BTreeSet<PdfObjectId>,
 ) -> Result<(), PdfModelError> {
     let page =
         object_dictionary(document, page_id).ok_or(PdfModelError::PageNotDictionary(page_id))?;
@@ -668,6 +751,22 @@ fn validate_page(
     };
     if !contents_valid {
         return Err(PdfModelError::PageContentsInvalid(page_id));
+    }
+    if let Some(annotations) = page.get(b"Annots") {
+        let PdfValue::Array(annotations) = annotations else {
+            return Err(PdfModelError::PageAnnotationsInvalid(page_id));
+        };
+        for annotation in annotations {
+            let Some(id) = reference_value(Some(annotation)) else {
+                return Err(PdfModelError::PageAnnotationsInvalid(page_id));
+            };
+            if !matches!(object(document, id), Some(PdfObject::Annotation(_))) {
+                return Err(PdfModelError::AnnotationNotTyped(id));
+            }
+            if !annotation_owners.insert(id) {
+                return Err(PdfModelError::AnnotationOwnedByMultiplePages(id));
+            }
+        }
     }
     Ok(())
 }
@@ -716,6 +815,83 @@ fn hash_object(object: &PdfObject, hasher: &mut CanonicalHasher) {
         PdfObject::Raw(data) => {
             hasher.byte(2);
             hasher.bytes(data);
+        }
+        PdfObject::Annotation(annotation) => {
+            hasher.byte(3);
+            for number in annotation.rect {
+                hasher.i64(number.coefficient());
+                hasher.byte(number.decimal_places());
+            }
+            hasher.byte(match annotation.subtype {
+                None => 0,
+                Some(PdfAnnotationType::Link) => 1,
+            });
+            hasher.bytes(&annotation.raw_entries);
+            hash_annotation_action(annotation.action.as_ref(), hasher);
+        }
+    }
+}
+
+fn hash_annotation_action(action: Option<&PdfAnnotationAction>, hasher: &mut CanonicalHasher) {
+    let Some(action) = action else {
+        hasher.byte(0);
+        return;
+    };
+    match action {
+        PdfAnnotationAction::UserEntries(entries) => {
+            hasher.byte(1);
+            hasher.bytes(entries);
+        }
+        PdfAnnotationAction::Destination(action) => {
+            hasher.byte(2);
+            hasher.byte(match action.kind {
+                PdfDestinationActionKind::GoTo => 0,
+                PdfDestinationActionKind::Thread => 1,
+            });
+            hasher.bool(action.file.is_some());
+            if let Some(file) = &action.file {
+                hasher.bytes(file);
+            }
+            match &action.target {
+                PdfDestinationTarget::Page { page, view } => {
+                    hasher.byte(0);
+                    match page {
+                        PdfDestinationPage::Internal(id) => {
+                            hasher.byte(0);
+                            hasher.u32(id.get());
+                        }
+                        PdfDestinationPage::External(number) => {
+                            hasher.byte(1);
+                            hasher.u32(*number);
+                        }
+                    }
+                    hasher.bytes(view);
+                }
+                PdfDestinationTarget::Name(name) => {
+                    hasher.byte(1);
+                    hasher.bytes(name);
+                }
+                PdfDestinationTarget::Number(number) => {
+                    hasher.byte(2);
+                    hasher.u32(*number);
+                }
+            }
+            match &action.structure {
+                None => hasher.byte(0),
+                Some(PdfDestinationStructure::Internal(id)) => {
+                    hasher.byte(1);
+                    hasher.u32(id.get());
+                }
+                Some(PdfDestinationStructure::External(value)) => {
+                    hasher.byte(2);
+                    hasher.bytes(value);
+                }
+            }
+            hasher.byte(match action.new_window {
+                None => 0,
+                Some(false) => 1,
+                Some(true) => 2,
+            });
         }
     }
 }

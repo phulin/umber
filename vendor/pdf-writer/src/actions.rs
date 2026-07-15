@@ -34,6 +34,30 @@ impl Action<'_> {
         self
     }
 
+    /// Write a string-valued named destination.
+    pub fn destination_string(&mut self, name: Str) -> &mut Self {
+        self.pair(Name(b"D"), name);
+        self
+    }
+
+    /// Write a numeric thread or destination identifier.
+    pub fn destination_number(&mut self, number: i32) -> &mut Self {
+        self.pair(Name(b"D"), number);
+        self
+    }
+
+    /// Write the thread structure destination (`/SD`) as an indirect object.
+    pub fn structure_destination(&mut self, id: Ref) -> &mut Self {
+        self.pair(Name(b"SD"), id);
+        self
+    }
+
+    /// Write user-provided external thread structure destination syntax.
+    pub fn structure_destination_raw(&mut self, value: &[u8]) -> &mut Self {
+        self.insert(Name(b"SD")).primitive(Raw(value));
+        self
+    }
+
     /// Start writing the `/F` attribute, depending on the [`ActionType`], setting:
     /// - `RemoteGoTo`: which file to go to
     /// - `Launch`: which application to launch
@@ -183,6 +207,8 @@ deref!('a, Fields<'a> => Array<'a>, array);
 pub enum ActionType {
     /// Go to a destination in the document.
     GoTo,
+    /// Follow a bead thread in this or another document.
+    Thread,
     /// Go to a destination in another document.
     RemoteGoTo,
     /// Launch an application.
@@ -219,6 +245,7 @@ impl ActionType {
     pub(crate) fn to_name(self) -> Name<'static> {
         match self {
             Self::GoTo => Name(b"GoTo"),
+            Self::Thread => Name(b"Thread"),
             Self::RemoteGoTo => Name(b"GoToR"),
             Self::Launch => Name(b"Launch"),
             Self::Uri => Name(b"URI"),

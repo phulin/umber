@@ -5,7 +5,9 @@ use tex_arith::Scaled;
 use tex_expand::append_token_string_text;
 use tex_out::PageNode;
 use tex_out::pdf::{
-    PdfContentRectangle, PdfContentTextRun, PdfDictionary, PdfIndirectObject, PdfModelError,
+    PdfAnnotationAction, PdfAnnotationObject, PdfAnnotationType, PdfContentRectangle,
+    PdfContentTextRun, PdfDestinationAction, PdfDestinationActionKind, PdfDestinationPage,
+    PdfDestinationStructure, PdfDestinationTarget, PdfDictionary, PdfIndirectObject, PdfModelError,
     PdfName, PdfNumber, PdfObject, PdfObjectCompression, PdfObjectId, PdfSerializationOptions,
     PdfSerializeError, PdfStreamCompression, PdfTrailer, PdfValue, PdfVersion,
     UnvalidatedPdfDocument, page_content,
@@ -513,7 +515,29 @@ pub fn pdf_from_committed_artifacts_at_dpi(
         }
         page.insert("Resources", PdfValue::Reference(resources_id))?;
         page.insert("Contents", PdfValue::Reference(contents_id))?;
+        let shipped_annotations = &page_annotations[page_index];
+        if !shipped_annotations.is_empty() {
+            page.insert(
+                "Annots",
+                PdfValue::Array(
+                    shipped_annotations
+                        .iter()
+                        .map(|annotation| object_id(annotation.object).map(PdfValue::Reference))
+                        .collect::<Result<_, _>>()?,
+                ),
+            )?;
+        }
         page.set_raw_entries(page_attr);
+        for annotation in shipped_annotations {
+            objects.push(annotation_object(
+                stores,
+                *annotation,
+                record,
+                page_height,
+                &page_records,
+                parameters.decimal_digits,
+            )?);
+        }
         objects.push(indirect_dictionary(page_id, page));
     }
 
@@ -883,6 +907,140 @@ fn assign_annotation_objects(
         };
     }
     Ok(())
+}
+
+fn annotation_object(
+    stores: &Universe,
+    shipped: ShippedAnnotation,
+    page: tex_state::PdfPageRecord,
+    page_height: Scaled,
+    pages: &[tex_state::PdfPageRecord],
+    decimal_digits: i32,
+) -> Result<PdfIndirectObject, PdfBuildError> {
+    let left = shipped
+        .rect
+        .left
+        .checked_add(page.h_origin())
+        .ok_or(PdfBuildError::PageGeometryOverflow)?;
+    let right = shipped
+        .rect
+        .right
+        .checked_add(page.h_origin())
+        .ok_or(PdfBuildError::PageGeometryOverflow)?;
+    let bottom = page_height
+        .checked_sub(shipped.rect.bottom)
+        .and_then(|value| value.checked_sub(page.v_origin()))
+        .ok_or(PdfBuildError::PageGeometryOverflow)?;
+    let top = page_height
+        .checked_sub(shipped.rect.top)
+        .and_then(|value| value.checked_sub(page.v_origin()))
+        .ok_or(PdfBuildError::PageGeometryOverflow)?;
+    let (subtype, action, raw_entries) = match shipped.kind {
+        ShippedAnnotationKind::Annotation => {
+            let record = stores
+                .pdf_annotations()
+                .iter()
+                .find(|record| record.object() == shipped.source_object)
+                .and_then(|record| record.data())
+                .ok_or(PdfBuildError::MissingAnnotationRecord(
+                    shipped.source_object,
+                ))?;
+            (None, None, token_list_bytes(stores, record.entries))
+        }
+        ShippedAnnotationKind::Link => {
+            let record = stores
+                .pdf_links()
+                .iter()
+                .copied()
+                .find(|record| record.object() == shipped.source_object)
+                .ok_or(PdfBuildError::MissingLinkRecord(shipped.source_object))?;
+            let raw_entries = token_list_bytes(stores, record.attributes());
+            let action = detached_link_action(stores, record.action(), pages)?;
+            let subtype = (!matches!(action, PdfAnnotationAction::UserEntries(_)))
+                .then_some(PdfAnnotationType::Link);
+            (subtype, Some(action), raw_entries)
+        }
+    };
+    Ok(PdfIndirectObject {
+        id: object_id(shipped.object)?,
+        object: PdfObject::Annotation(PdfAnnotationObject {
+            rect: [
+                scaled_to_bp_number(left, decimal_digits)?,
+                scaled_to_bp_number(bottom, decimal_digits)?,
+                scaled_to_bp_number(right, decimal_digits)?,
+                scaled_to_bp_number(top, decimal_digits)?,
+            ],
+            subtype,
+            action,
+            raw_entries,
+        }),
+    })
+}
+
+fn detached_link_action(
+    stores: &Universe,
+    spec: PdfActionSpec,
+    pages: &[tex_state::PdfPageRecord],
+) -> Result<PdfAnnotationAction, PdfBuildError> {
+    let destination = match spec {
+        PdfActionSpec::User(tokens) => {
+            return Ok(PdfAnnotationAction::UserEntries(token_list_bytes(
+                stores, tokens,
+            )));
+        }
+        PdfActionSpec::GoTo(destination) => (PdfDestinationActionKind::GoTo, destination),
+        PdfActionSpec::Thread(destination) => (PdfDestinationActionKind::Thread, destination),
+    };
+    let (kind, destination) = destination;
+    let external = destination.file.is_some();
+    let target = match destination.target {
+        PdfActionTarget::Page { number, view } => {
+            let page = if external {
+                PdfDestinationPage::External(number.saturating_sub(1))
+            } else {
+                PdfDestinationPage::Internal(object_id(
+                    pages
+                        .get((number - 1) as usize)
+                        .ok_or(PdfBuildError::OpenActionPageNotFound(number))?
+                        .page_object(),
+                )?)
+            };
+            PdfDestinationTarget::Page {
+                page,
+                view: token_list_bytes(stores, view),
+            }
+        }
+        PdfActionTarget::Destination(PdfActionIdentifier::Name(tokens)) => {
+            PdfDestinationTarget::Name(token_list_bytes(stores, tokens))
+        }
+        PdfActionTarget::Destination(PdfActionIdentifier::Number(number)) => {
+            PdfDestinationTarget::Number(number)
+        }
+        PdfActionTarget::Destination(PdfActionIdentifier::Raw(tokens)) => {
+            PdfDestinationTarget::Name(token_list_bytes(stores, tokens))
+        }
+    };
+    let structure = destination.structure.map(|identifier| match identifier {
+        PdfActionIdentifier::Name(tokens) | PdfActionIdentifier::Raw(tokens) => {
+            PdfDestinationStructure::External(token_list_bytes(stores, tokens))
+        }
+        PdfActionIdentifier::Number(number) => {
+            PdfDestinationStructure::External(number.to_string().into_bytes())
+        }
+    });
+    Ok(PdfAnnotationAction::Destination(PdfDestinationAction {
+        kind,
+        file: destination
+            .file
+            .map(|tokens| token_list_bytes(stores, tokens)),
+        target,
+        structure,
+        new_window: match destination.window {
+            PdfActionWindow::Unspecified => None,
+            PdfActionWindow::New => Some(true),
+            PdfActionWindow::Same => Some(false),
+        },
+    }))
 }
 
 #[derive(Clone)]
@@ -2195,6 +2353,57 @@ mod tests {
         assign_annotation_objects(&mut stores, &mut shipped).expect("continuation object");
         assert_eq!(shipped[0][0].object, link.object());
         assert_ne!(shipped[1][0].object, link.object());
+    }
+
+    #[test]
+    fn annotations_are_page_owned_typed_indirect_objects() {
+        let (mut stores, result) = run(concat!(
+            "\\pdfoutput=1",
+            "\\pdfannot reserveobjnum",
+            "\\shipout\\hbox{",
+            "\\pdfannot useobjnum 1 width 10pt {/Subtype /Text}",
+            "\\pdfstartlink height 6pt attr{/Border [0 0 0]}",
+            "user{/Subtype /Link /A << /S /URI /URI (u) >>}",
+            "\\kern10pt\\pdfendlink}",
+            "\\end",
+        ));
+        let bytes = pdf_from_committed_artifacts(&mut stores, &result.committed_artifacts)
+            .expect("typed annotations serialize");
+        let document = lopdf::Document::load_mem(&bytes).expect("parse generated PDF");
+        let page_id = document.get_pages()[&1];
+        let page = document
+            .get_object(page_id)
+            .and_then(lopdf::Object::as_dict)
+            .expect("page dictionary");
+        let annotations = page
+            .get(b"Annots")
+            .and_then(lopdf::Object::as_array)
+            .expect("page annotations");
+        assert_eq!(annotations.len(), 2);
+        for annotation in annotations {
+            let id = annotation.as_reference().expect("indirect annotation");
+            let dictionary = document
+                .get_object(id)
+                .and_then(lopdf::Object::as_dict)
+                .expect("annotation dictionary");
+            assert_eq!(
+                dictionary
+                    .get(b"Type")
+                    .expect("annotation type")
+                    .as_name()
+                    .expect("annotation type name"),
+                b"Annot"
+            );
+            assert_eq!(
+                dictionary
+                    .get(b"Rect")
+                    .expect("annotation rectangle")
+                    .as_array()
+                    .expect("annotation rectangle array")
+                    .len(),
+                4
+            );
+        }
     }
 
     fn run_in(stores: &mut Universe, source: &str) -> RunResult {

@@ -2290,6 +2290,17 @@ impl Destination<'_> {
         self
     }
 
+    /// The zero-based target page number in an external document.
+    pub fn page_number(mut self, page: i32) -> Self {
+        self.item(page);
+        self
+    }
+
+    /// Append user-provided pdfTeX view operands to this destination.
+    pub fn raw_view(mut self, view: &[u8]) {
+        self.push().primitive(Raw(view));
+    }
+
     /// Write the `/XYZ` command which skips to the specified coordinated.
     pub fn xyz(mut self, left: f32, top: f32, zoom: Option<f32>) {
         self.item(Name(b"XYZ"));
