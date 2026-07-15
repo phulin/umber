@@ -25,6 +25,16 @@ pub enum BankTag {
     FontSkewChar = 14,
     CurrentFont = 15,
     MathFamilyFont = 16,
+    PdfLpCode = 17,
+    PdfRpCode = 18,
+    PdfEfCode = 19,
+    PdfTagCode = 20,
+    PdfKnbsCode = 21,
+    PdfStbsCode = 22,
+    PdfShbsCode = 23,
+    PdfKnbcCode = 24,
+    PdfKnacCode = 25,
+    PdfNoLigatures = 26,
 }
 
 impl BankTag {
@@ -47,6 +57,16 @@ impl BankTag {
             14 => Self::FontSkewChar,
             15 => Self::CurrentFont,
             16 => Self::MathFamilyFont,
+            17 => Self::PdfLpCode,
+            18 => Self::PdfRpCode,
+            19 => Self::PdfEfCode,
+            20 => Self::PdfTagCode,
+            21 => Self::PdfKnbsCode,
+            22 => Self::PdfStbsCode,
+            23 => Self::PdfShbsCode,
+            24 => Self::PdfKnbcCode,
+            25 => Self::PdfKnacCode,
+            26 => Self::PdfNoLigatures,
             _ => panic!("unknown cell bank tag"),
         }
     }
@@ -78,7 +98,7 @@ impl CellId {
     #[must_use]
     pub(crate) const fn from_raw(raw: u64) -> Option<Self> {
         let bank = raw >> BANK_SHIFT;
-        if bank <= BankTag::MathFamilyFont as u64 {
+        if bank <= BankTag::PdfNoLigatures as u64 {
             Some(Self(raw))
         } else {
             None

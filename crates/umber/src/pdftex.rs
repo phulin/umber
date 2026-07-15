@@ -333,6 +333,21 @@ pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::TokParam(parameter.raw()));
     }
+    for &(name, primitive) in &[
+        ("lpcode", UnexpandablePrimitive::PdfLpCode),
+        ("rpcode", UnexpandablePrimitive::PdfRpCode),
+        ("efcode", UnexpandablePrimitive::PdfEfCode),
+        ("tagcode", UnexpandablePrimitive::PdfTagCode),
+        ("knbscode", UnexpandablePrimitive::PdfKnbsCode),
+        ("stbscode", UnexpandablePrimitive::PdfStbsCode),
+        ("shbscode", UnexpandablePrimitive::PdfShbsCode),
+        ("knbccode", UnexpandablePrimitive::PdfKnbcCode),
+        ("knaccode", UnexpandablePrimitive::PdfKnacCode),
+        ("pdfnoligatures", UnexpandablePrimitive::PdfNoLigatures),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+    }
     tex_expand::install_pdftex_expandable_primitives(stores);
 }
 
@@ -648,6 +663,44 @@ mod tests {
         assert_eq!(configuration.resolved_pk_resolution(600), 300);
         assert!(configuration.traces_fonts());
         assert!(configuration.omits_charset());
+    }
+
+    #[test]
+    fn pdf_font_codes_size_and_ligature_suppression_match_oracle() {
+        let reference = test_support::read_fixture("tex_exec", "pdf_font_codes", "ref");
+        const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+        let mut stores = Universe::default();
+        stores
+            .world_mut()
+            .set_memory_file("cmr10.tfm", CMR10.to_vec())
+            .expect("seed cmr10");
+        prepare_pdftex_run_stores(&mut stores);
+        let output = crate::run_memory_with_stores(
+            include_str!("../../../tests/corpus/tex_exec/pdf_font_codes.tex"),
+            &mut stores,
+        )
+        .expect("pdfTeX font-code fixture");
+        for expected in [
+            "defaults=0/0/1000/0/0/0/0/0/12.0pt",
+            "assigned=7/-1000/800/1000/-1000/321/-432/543",
+            "tag-before=1",
+            "tag-after=0",
+            ".\\a f",
+            ".\\a i",
+        ] {
+            assert!(
+                reference.contains(expected),
+                "oracle missing {expected:?}: {reference}"
+            );
+            assert!(
+                output.contains(expected),
+                "Umber missing {expected:?}: {output}"
+            );
+        }
+        assert!(
+            !output.contains("ligature fi"),
+            "ligature survived: {output}"
+        );
     }
 
     #[test]

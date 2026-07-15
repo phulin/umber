@@ -1,0 +1,14 @@
+success: false
+stdout:
+defaults=0/0/1000/0/0/0/0/0/12.0pt
+assigned=7/-1000/800/1000/-1000/321/-432/543 tag-before=1 tag-after=0
+! OK (see the transcript file).
+log:
+defaults=0/0/1000/0/0/0/0/0/12.0pt
+assigned=7/-1000/800/1000/-1000/321/-432/543 tag-before=1 tag-after=0
+> \box0=
+\hbox(8.33333+0.0)x7.00003
+.\a f
+.\a i
+
+! OK.

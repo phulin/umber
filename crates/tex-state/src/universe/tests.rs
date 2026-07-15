@@ -422,6 +422,48 @@ fn semantic_format_round_trips_sparse_unicode_code_tables() {
 }
 
 #[test]
+fn pdf_font_codes_round_trip_and_change_checkpoint_identity() {
+    use crate::font::{NULL_FONT, PdfFontCode};
+
+    let mut universe = Universe::new();
+    let baseline = universe.snapshot().state_hash();
+    universe.set_pdf_font_code(PdfFontCode::Lp, NULL_FONT, 255, -1_500);
+    universe.set_pdf_font_code(PdfFontCode::Ef, NULL_FONT, 0, 321);
+    universe.set_pdf_font_code(PdfFontCode::Knac, NULL_FONT, 128, 456);
+    universe.disable_pdf_font_ligatures(NULL_FONT);
+    assert_eq!(
+        universe.pdf_font_code(PdfFontCode::Lp, NULL_FONT, 255),
+        -1000
+    );
+    assert_eq!(universe.pdf_font_code(PdfFontCode::Ef, NULL_FONT, 0), 321);
+    assert_ne!(universe.snapshot().state_hash(), baseline);
+
+    let mut equivalent = Universe::new();
+    equivalent.set_pdf_font_code(PdfFontCode::Lp, NULL_FONT, 255, -1_500);
+    equivalent.set_pdf_font_code(PdfFontCode::Ef, NULL_FONT, 0, 321);
+    equivalent.set_pdf_font_code(PdfFontCode::Knac, NULL_FONT, 128, 456);
+    equivalent.disable_pdf_font_ligatures(NULL_FONT);
+    assert_eq!(
+        equivalent.snapshot().state_hash(),
+        universe.snapshot().state_hash()
+    );
+
+    let image = universe.dump_format().expect("pdf font-code format");
+    let restored = Universe::from_format(World::memory(), &image).expect("pdf font-code restore");
+    assert_eq!(
+        restored.pdf_font_code(PdfFontCode::Lp, NULL_FONT, 255),
+        -1000
+    );
+    assert_eq!(restored.pdf_font_code(PdfFontCode::Ef, NULL_FONT, 0), 321);
+    assert_eq!(
+        restored.pdf_font_code(PdfFontCode::Knac, NULL_FONT, 128),
+        456
+    );
+    assert!(restored.pdf_font_ligatures_disabled(NULL_FONT));
+    assert_eq!(restored.dump_format().expect("canonical redump"), image);
+}
+
+#[test]
 fn semantic_format_rejects_live_input_and_page_state() {
     let mut with_input = Universe::new();
     with_input.set_input_summary(InputSummary::new(

@@ -157,6 +157,16 @@ pub struct Env {
     font_param_lens: BTreeMap<u32, WordStamp>,
     font_hyphen_chars: BTreeMap<u32, WordStamp>,
     font_skew_chars: BTreeMap<u32, WordStamp>,
+    pdf_lp_codes: BTreeMap<u32, WordStamp>,
+    pdf_rp_codes: BTreeMap<u32, WordStamp>,
+    pdf_ef_codes: BTreeMap<u32, WordStamp>,
+    pdf_tag_codes: BTreeMap<u32, WordStamp>,
+    pdf_knbs_codes: BTreeMap<u32, WordStamp>,
+    pdf_stbs_codes: BTreeMap<u32, WordStamp>,
+    pdf_shbs_codes: BTreeMap<u32, WordStamp>,
+    pdf_knbc_codes: BTreeMap<u32, WordStamp>,
+    pdf_knac_codes: BTreeMap<u32, WordStamp>,
+    pdf_no_ligatures: BTreeMap<u32, WordStamp>,
     current_font: WordStamp,
     math_family_fonts: FixedBank<FontIdCodec, MATH_FAMILY_FONT_COUNT>,
     journal: Journal,
@@ -195,6 +205,16 @@ impl Env {
             font_param_lens: BTreeMap::new(),
             font_hyphen_chars: BTreeMap::new(),
             font_skew_chars: BTreeMap::new(),
+            pdf_lp_codes: BTreeMap::new(),
+            pdf_rp_codes: BTreeMap::new(),
+            pdf_ef_codes: BTreeMap::new(),
+            pdf_tag_codes: BTreeMap::new(),
+            pdf_knbs_codes: BTreeMap::new(),
+            pdf_stbs_codes: BTreeMap::new(),
+            pdf_shbs_codes: BTreeMap::new(),
+            pdf_knbc_codes: BTreeMap::new(),
+            pdf_knac_codes: BTreeMap::new(),
+            pdf_no_ligatures: BTreeMap::new(),
             current_font: WordStamp::default(),
             math_family_fonts: FixedBank::new(),
             journal: Journal::new(),
@@ -720,6 +740,74 @@ impl Env {
 
     pub(crate) fn set_font_skew_char_global(&mut self, font: FontId, value: i32) {
         self.set_font_int_bank(BankTag::FontSkewChar, font, value, true);
+    }
+
+    pub(crate) fn pdf_font_code(&self, bank: BankTag, font: FontId, code: u8) -> Option<i32> {
+        let index = (font.raw() << 8) | u32::from(code);
+        let map = match bank {
+            BankTag::PdfLpCode => &self.pdf_lp_codes,
+            BankTag::PdfRpCode => &self.pdf_rp_codes,
+            BankTag::PdfEfCode => &self.pdf_ef_codes,
+            BankTag::PdfTagCode => &self.pdf_tag_codes,
+            BankTag::PdfKnbsCode => &self.pdf_knbs_codes,
+            BankTag::PdfStbsCode => &self.pdf_stbs_codes,
+            BankTag::PdfShbsCode => &self.pdf_shbs_codes,
+            BankTag::PdfKnbcCode => &self.pdf_knbc_codes,
+            BankTag::PdfKnacCode => &self.pdf_knac_codes,
+            _ => unreachable!("caller restricts pdfTeX font-code banks"),
+        };
+        map.get(&index).map(|entry| decode_i32(entry.word))
+    }
+
+    pub(crate) fn set_pdf_font_code_global(
+        &mut self,
+        bank: BankTag,
+        font: FontId,
+        code: u8,
+        value: i32,
+    ) {
+        let index = (font.raw() << 8) | u32::from(code);
+        let map = match bank {
+            BankTag::PdfLpCode => &mut self.pdf_lp_codes,
+            BankTag::PdfRpCode => &mut self.pdf_rp_codes,
+            BankTag::PdfEfCode => &mut self.pdf_ef_codes,
+            BankTag::PdfTagCode => &mut self.pdf_tag_codes,
+            BankTag::PdfKnbsCode => &mut self.pdf_knbs_codes,
+            BankTag::PdfStbsCode => &mut self.pdf_stbs_codes,
+            BankTag::PdfShbsCode => &mut self.pdf_shbs_codes,
+            BankTag::PdfKnbcCode => &mut self.pdf_knbc_codes,
+            BankTag::PdfKnacCode => &mut self.pdf_knac_codes,
+            _ => unreachable!("caller restricts pdfTeX font-code banks"),
+        };
+        set_font_bank_word(
+            map,
+            &mut self.journal,
+            #[cfg(feature = "shadow")]
+            &mut self.shadow,
+            self.epoch,
+            bank,
+            index,
+            encode_i32(value),
+            true,
+        );
+    }
+
+    pub(crate) fn pdf_no_ligatures(&self, font: FontId) -> bool {
+        font_bank_word(&self.pdf_no_ligatures, font.raw()) != 0
+    }
+
+    pub(crate) fn set_pdf_no_ligatures_global(&mut self, font: FontId) {
+        set_font_bank_word(
+            &mut self.pdf_no_ligatures,
+            &mut self.journal,
+            #[cfg(feature = "shadow")]
+            &mut self.shadow,
+            self.epoch,
+            BankTag::PdfNoLigatures,
+            font.raw(),
+            1,
+            true,
+        );
     }
 
     fn set_current_font_word(&mut self, word: u64, global: bool) {

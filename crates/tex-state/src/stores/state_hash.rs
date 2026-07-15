@@ -560,6 +560,25 @@ impl Stores {
                     index: 0,
                 }
             }
+            bank @ (BankTag::PdfLpCode
+            | BankTag::PdfRpCode
+            | BankTag::PdfEfCode
+            | BankTag::PdfTagCode
+            | BankTag::PdfKnbsCode
+            | BankTag::PdfStbsCode
+            | BankTag::PdfShbsCode
+            | BankTag::PdfKnbcCode
+            | BankTag::PdfKnacCode) => SemanticCellKey::FontBank {
+                bank: bank_order(bank),
+                font: self
+                    .font_semantic_key(self.resolve_stored_font(FontId::new(cell.index() >> 8))),
+                index: cell.index() & 0xff,
+            },
+            BankTag::PdfNoLigatures => SemanticCellKey::FontBank {
+                bank: bank_order(cell.bank()),
+                font: self.font_semantic_key(self.resolve_stored_font(FontId::new(cell.index()))),
+                index: 0,
+            },
             bank => SemanticCellKey::Bank {
                 bank: bank_order(bank),
                 index: cell.index(),
@@ -626,7 +645,18 @@ impl Stores {
             },
             BankTag::FontDimen => hasher.i32(word as u32 as i32),
             BankTag::FontParamLen => hasher.u32(decode_u32(word)),
-            BankTag::FontHyphenChar | BankTag::FontSkewChar => hasher.i32(word as u32 as i32),
+            BankTag::FontHyphenChar
+            | BankTag::FontSkewChar
+            | BankTag::PdfLpCode
+            | BankTag::PdfRpCode
+            | BankTag::PdfEfCode
+            | BankTag::PdfTagCode
+            | BankTag::PdfKnbsCode
+            | BankTag::PdfStbsCode
+            | BankTag::PdfShbsCode
+            | BankTag::PdfKnbcCode
+            | BankTag::PdfKnacCode => hasher.i32(word as u32 as i32),
+            BankTag::PdfNoLigatures => hasher.bool(word != 0),
             BankTag::CurrentFont => self.hash_current_font_word(word, hasher),
             BankTag::MathFamilyFont => self.hash_font(
                 self.resolve_stored_font(FontId::new(decode_u32(word))),
@@ -1592,6 +1622,16 @@ fn bank_order(bank: BankTag) -> u8 {
         BankTag::FontSkewChar => 14,
         BankTag::CurrentFont => 15,
         BankTag::MathFamilyFont => 16,
+        BankTag::PdfLpCode => 17,
+        BankTag::PdfRpCode => 18,
+        BankTag::PdfEfCode => 19,
+        BankTag::PdfTagCode => 20,
+        BankTag::PdfKnbsCode => 21,
+        BankTag::PdfStbsCode => 22,
+        BankTag::PdfShbsCode => 23,
+        BankTag::PdfKnbcCode => 24,
+        BankTag::PdfKnacCode => 25,
+        BankTag::PdfNoLigatures => 26,
     }
 }
 

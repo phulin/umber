@@ -20,6 +20,16 @@ fn cell_id_packs_every_bank_index_and_global_bit() {
         BankTag::FontSkewChar,
         BankTag::CurrentFont,
         BankTag::MathFamilyFont,
+        BankTag::PdfLpCode,
+        BankTag::PdfRpCode,
+        BankTag::PdfEfCode,
+        BankTag::PdfTagCode,
+        BankTag::PdfKnbsCode,
+        BankTag::PdfStbsCode,
+        BankTag::PdfShbsCode,
+        BankTag::PdfKnbcCode,
+        BankTag::PdfKnacCode,
+        BankTag::PdfNoLigatures,
     ];
 
     for bank in banks {
@@ -42,6 +52,6 @@ fn cell_id_packs_every_bank_index_and_global_bit() {
 
 #[test]
 fn detached_cell_decode_rejects_reserved_bank_bits() {
-    assert_eq!(CellId::from_raw(17_u64 << BANK_SHIFT), None);
+    assert_eq!(CellId::from_raw(27_u64 << BANK_SHIFT), None);
     assert_eq!(CellId::from_raw(u64::MAX), None);
 }

@@ -232,6 +232,7 @@ pub enum ExpandablePrimitive {
     PdfTeXRevision,
     /// The full pinned pdfTeX engine banner.
     PdfTeXBanner,
+    PdfFontSize,
 }
 
 impl ExpandablePrimitive {
@@ -299,6 +300,7 @@ impl ExpandablePrimitive {
             Self::IfInCsName => 58,
             Self::PdfTeXRevision => 59,
             Self::PdfTeXBanner => 60,
+            Self::PdfFontSize => 61,
         }
     }
 
@@ -366,6 +368,7 @@ impl ExpandablePrimitive {
             58 => Some(Self::IfInCsName),
             59 => Some(Self::PdfTeXRevision),
             60 => Some(Self::PdfTeXBanner),
+            61 => Some(Self::PdfFontSize),
             _ => None,
         }
     }
@@ -583,6 +586,16 @@ pub enum UnexpandablePrimitive {
     End,
     Dump,
     SetLanguage,
+    PdfLpCode,
+    PdfRpCode,
+    PdfEfCode,
+    PdfTagCode,
+    PdfKnbsCode,
+    PdfStbsCode,
+    PdfShbsCode,
+    PdfKnbcCode,
+    PdfKnacCode,
+    PdfNoLigatures,
     /// A registered pdfTeX name whose semantics belong to a later parity issue.
     PdfTeXUnimplemented,
 }
@@ -801,6 +814,16 @@ impl UnexpandablePrimitive {
             Self::PageDiscards => 207,
             Self::SplitDiscards => 208,
             Self::PdfTeXUnimplemented => 209,
+            Self::PdfLpCode => 210,
+            Self::PdfRpCode => 211,
+            Self::PdfEfCode => 212,
+            Self::PdfTagCode => 213,
+            Self::PdfKnbsCode => 214,
+            Self::PdfStbsCode => 215,
+            Self::PdfShbsCode => 216,
+            Self::PdfKnbcCode => 217,
+            Self::PdfKnacCode => 218,
+            Self::PdfNoLigatures => 219,
         }
     }
 
@@ -1017,6 +1040,16 @@ impl UnexpandablePrimitive {
             207 => Some(Self::PageDiscards),
             208 => Some(Self::SplitDiscards),
             209 => Some(Self::PdfTeXUnimplemented),
+            210 => Some(Self::PdfLpCode),
+            211 => Some(Self::PdfRpCode),
+            212 => Some(Self::PdfEfCode),
+            213 => Some(Self::PdfTagCode),
+            214 => Some(Self::PdfKnbsCode),
+            215 => Some(Self::PdfStbsCode),
+            216 => Some(Self::PdfShbsCode),
+            217 => Some(Self::PdfKnbcCode),
+            218 => Some(Self::PdfKnacCode),
+            219 => Some(Self::PdfNoLigatures),
             _ => None,
         }
     }

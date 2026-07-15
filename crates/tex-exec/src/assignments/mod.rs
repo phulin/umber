@@ -618,6 +618,31 @@ fn execute_prefixed_command(
                 )?;
                 Ok(CommandOutcome::assigned())
             }
+            primitive @ (UnexpandablePrimitive::PdfLpCode
+            | UnexpandablePrimitive::PdfRpCode
+            | UnexpandablePrimitive::PdfEfCode
+            | UnexpandablePrimitive::PdfTagCode
+            | UnexpandablePrimitive::PdfKnbsCode
+            | UnexpandablePrimitive::PdfStbsCode
+            | UnexpandablePrimitive::PdfShbsCode
+            | UnexpandablePrimitive::PdfKnbcCode
+            | UnexpandablePrimitive::PdfKnacCode) => {
+                execute_pdf_font_code_assignment(
+                    primitive,
+                    prefixes,
+                    command.traced,
+                    input,
+                    stores,
+                    execution,
+                )?;
+                Ok(CommandOutcome::assigned())
+            }
+            UnexpandablePrimitive::PdfNoLigatures => {
+                reject_all_prefixes(prefixes)?;
+                let font = scan_font_selector(input, stores, execution)?;
+                stores.disable_pdf_font_ligatures(font);
+                Ok(CommandOutcome::assigned())
+            }
             UnexpandablePrimitive::Font => {
                 execute_font_definition(prefixes, command.traced, input, stores, execution)?;
                 Ok(CommandOutcome::assigned())

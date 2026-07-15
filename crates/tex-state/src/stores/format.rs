@@ -557,6 +557,16 @@ impl StoreFormat {
                 | BankTag::FontParamLen
                 | BankTag::FontHyphenChar
                 | BankTag::FontSkewChar
+                | BankTag::PdfLpCode
+                | BankTag::PdfRpCode
+                | BankTag::PdfEfCode
+                | BankTag::PdfTagCode
+                | BankTag::PdfKnbsCode
+                | BankTag::PdfStbsCode
+                | BankTag::PdfShbsCode
+                | BankTag::PdfKnbcCode
+                | BankTag::PdfKnacCode
+                | BankTag::PdfNoLigatures
                 | BankTag::CurrentFont
                 | BankTag::MathFamilyFont => {}
             }

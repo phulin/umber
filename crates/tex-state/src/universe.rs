@@ -143,6 +143,7 @@ pub trait ExpansionState {
     fn intern_glue(&mut self, spec: GlueSpec) -> GlueId;
     fn glue(&self, id: GlueId) -> GlueSpec;
     fn font_name(&self, id: FontId) -> String;
+    fn font_size(&self, id: FontId) -> Scaled;
     fn font_identifier_symbol(&self, id: FontId) -> Option<Symbol>;
     fn font_parameter(&self, font: FontId, number: u32) -> Scaled;
     fn font_dimen(&self, font: FontId, number: u32) -> Scaled;
@@ -150,6 +151,7 @@ pub trait ExpansionState {
     fn font_char_metrics(&self, font: FontId, code: u8) -> Option<crate::font::CharMetrics>;
     fn font_hyphen_char(&self, font: FontId) -> i32;
     fn font_skew_char(&self, font: FontId) -> i32;
+    fn pdf_font_code(&self, table: crate::font::PdfFontCode, font: FontId, code: u8) -> i32;
     fn current_font(&self) -> FontId;
     fn current_font_symbol(&self) -> Option<Symbol>;
     fn math_family_font(&self, size: MathFontSize, family: u8) -> FontId;
@@ -2466,6 +2468,30 @@ impl Universe {
     }
 
     #[must_use]
+    pub fn pdf_font_code(&self, table: crate::font::PdfFontCode, font: FontId, code: u8) -> i32 {
+        self.stores.pdf_font_code(table, font, code)
+    }
+
+    pub fn set_pdf_font_code(
+        &mut self,
+        table: crate::font::PdfFontCode,
+        font: FontId,
+        code: u8,
+        value: i32,
+    ) {
+        self.stores.set_pdf_font_code(table, font, code, value);
+    }
+
+    pub fn disable_pdf_font_ligatures(&mut self, font: FontId) {
+        self.stores.disable_pdf_font_ligatures(font);
+    }
+
+    #[must_use]
+    pub fn pdf_font_ligatures_disabled(&self, font: FontId) -> bool {
+        self.stores.pdf_font_ligatures_disabled(font)
+    }
+
+    #[must_use]
     pub fn extensible_recipe(&self, font: FontId, code: u8) -> Option<ExtensibleRecipe> {
         self.stores.extensible_recipe(font, code)
     }
@@ -3603,6 +3629,10 @@ impl ExpansionState for Universe {
         Self::font_name(self, id)
     }
 
+    fn font_size(&self, id: FontId) -> Scaled {
+        Self::font(self, id).size()
+    }
+
     fn font_identifier_symbol(&self, id: FontId) -> Option<Symbol> {
         Self::font_identifier_symbol(self, id).map(SymbolId::symbol)
     }
@@ -3628,6 +3658,10 @@ impl ExpansionState for Universe {
 
     fn font_skew_char(&self, font: FontId) -> i32 {
         Self::font_skew_char(self, font)
+    }
+
+    fn pdf_font_code(&self, table: crate::font::PdfFontCode, font: FontId, code: u8) -> i32 {
+        Self::pdf_font_code(self, table, font, code)
     }
 
     fn current_font(&self) -> FontId {
@@ -3997,6 +4031,10 @@ impl ExpansionState for ExpansionContext<'_> {
         self.universe.font_name(id)
     }
 
+    fn font_size(&self, id: FontId) -> Scaled {
+        self.universe.font(id).size()
+    }
+
     fn font_identifier_symbol(&self, id: FontId) -> Option<Symbol> {
         self.universe
             .font_identifier_symbol(id)
@@ -4024,6 +4062,10 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn font_skew_char(&self, font: FontId) -> i32 {
         self.universe.font_skew_char(font)
+    }
+
+    fn pdf_font_code(&self, table: crate::font::PdfFontCode, font: FontId, code: u8) -> i32 {
+        self.universe.pdf_font_code(table, font, code)
     }
 
     fn current_font(&self) -> FontId {

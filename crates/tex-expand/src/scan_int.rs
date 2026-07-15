@@ -915,6 +915,38 @@ where
             let value = crate::values::scan_font_dimen(input, stores, expansion, mode, token)?;
             Ok(ScannedInt::new(value.raw(), token))
         }
+        primitive @ (tex_state::meaning::UnexpandablePrimitive::PdfLpCode
+        | tex_state::meaning::UnexpandablePrimitive::PdfRpCode
+        | tex_state::meaning::UnexpandablePrimitive::PdfEfCode
+        | tex_state::meaning::UnexpandablePrimitive::PdfTagCode
+        | tex_state::meaning::UnexpandablePrimitive::PdfKnbsCode
+        | tex_state::meaning::UnexpandablePrimitive::PdfStbsCode
+        | tex_state::meaning::UnexpandablePrimitive::PdfShbsCode
+        | tex_state::meaning::UnexpandablePrimitive::PdfKnbcCode
+        | tex_state::meaning::UnexpandablePrimitive::PdfKnacCode) => {
+            let font = crate::values::scan_font_selector(input, stores, expansion, mode, token)?;
+            let scanned = scan_int_with_mode_and_context(input, stores, expansion, mode, token)?;
+            let code = u8::try_from(scanned.value()).map_err(|_| {
+                ScanIntError::RegisterNumberOutOfRange {
+                    value: scanned.value(),
+                    context: scanned.context(),
+                }
+            })?;
+            let table = pdf_font_code_table(primitive);
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Font {
+                    field: ReadFontField::PdfCode,
+                    font: font.raw(),
+                    index: (table as u32) * 256 + u32::from(code),
+                }
+            );
+            consume_optional_space(input, stores, expansion, mode)?;
+            Ok(ScannedInt::new(
+                stores.pdf_font_code(table, font, code),
+                token,
+            ))
+        }
         tex_state::meaning::UnexpandablePrimitive::Count => {
             let index = scan_register_index(input, stores, expansion, mode, token)?;
             crate::record_dependency!(
@@ -1133,6 +1165,15 @@ const fn is_internal_numeric_primitive(
             | Primitive::FontDimen
             | Primitive::HyphenChar
             | Primitive::SkewChar
+            | Primitive::PdfLpCode
+            | Primitive::PdfRpCode
+            | Primitive::PdfEfCode
+            | Primitive::PdfTagCode
+            | Primitive::PdfKnbsCode
+            | Primitive::PdfStbsCode
+            | Primitive::PdfShbsCode
+            | Primitive::PdfKnbcCode
+            | Primitive::PdfKnacCode
             | Primitive::ParShape
             | Primitive::PrevDepth
             | Primitive::PrevGraf
@@ -1144,6 +1185,24 @@ const fn is_internal_numeric_primitive(
             | Primitive::LastKern
             | Primitive::LastSkip
     )
+}
+
+fn pdf_font_code_table(
+    primitive: tex_state::meaning::UnexpandablePrimitive,
+) -> tex_state::PdfFontCode {
+    use tex_state::meaning::UnexpandablePrimitive as P;
+    match primitive {
+        P::PdfLpCode => tex_state::PdfFontCode::Lp,
+        P::PdfRpCode => tex_state::PdfFontCode::Rp,
+        P::PdfEfCode => tex_state::PdfFontCode::Ef,
+        P::PdfTagCode => tex_state::PdfFontCode::Tag,
+        P::PdfKnbsCode => tex_state::PdfFontCode::Knbs,
+        P::PdfStbsCode => tex_state::PdfFontCode::Stbs,
+        P::PdfShbsCode => tex_state::PdfFontCode::Shbs,
+        P::PdfKnbcCode => tex_state::PdfFontCode::Knbc,
+        P::PdfKnacCode => tex_state::PdfFontCode::Knac,
+        _ => unreachable!("caller restricts pdfTeX font-code primitive"),
+    }
 }
 
 fn scan_register_index(

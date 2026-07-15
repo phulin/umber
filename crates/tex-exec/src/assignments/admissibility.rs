@@ -65,6 +65,15 @@ const fn admissibility(primitive: UnexpandablePrimitive) -> Admissibility {
         | UnexpandablePrimitive::SfCode
         | UnexpandablePrimitive::MathCode
         | UnexpandablePrimitive::DelCode
+        | UnexpandablePrimitive::PdfLpCode
+        | UnexpandablePrimitive::PdfRpCode
+        | UnexpandablePrimitive::PdfEfCode
+        | UnexpandablePrimitive::PdfTagCode
+        | UnexpandablePrimitive::PdfKnbsCode
+        | UnexpandablePrimitive::PdfStbsCode
+        | UnexpandablePrimitive::PdfShbsCode
+        | UnexpandablePrimitive::PdfKnbcCode
+        | UnexpandablePrimitive::PdfKnacCode
         | UnexpandablePrimitive::Font
         | UnexpandablePrimitive::TextFont
         | UnexpandablePrimitive::ScriptFont

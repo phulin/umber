@@ -19,11 +19,12 @@
 /// diagnostic origins.
 /// Version 12 adds the pdfTeX document ledger and committed page/object
 /// identities to checkpoint hashing. Version 13 adds the output controls
-/// frozen by the first shipped page.
+/// frozen by the first shipped page. Version 14 adds pdfTeX's mutable
+/// per-font character-code and ligature-suppression state.
 /// Hashes are
 /// comparable only when both this version and the named-boundary schedule
 /// match.
-pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 13;
+pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 14;
 
 pub mod cell;
 pub mod code_tables;
@@ -64,6 +65,7 @@ pub use pdf::{
 };
 pub mod world;
 
+pub use font::PdfFontCode;
 pub use input::{
     ConditionFrameSummary, ConditionFrameToken, ConditionKind, ConditionLimb, InputFrameSummary,
     InputSummary, LexerState, MACRO_ARGUMENT_SLOTS, MacroArgumentRange, MacroArguments,

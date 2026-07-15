@@ -1,8 +1,8 @@
 #[cfg(feature = "shadow")]
 use super::shadow_set;
 use super::{
-    Env, RegisterBank, SEGMENT_LEN, barrier, is_dense_register, register_index, segment_index,
-    segment_offset, u16_index,
+    Env, RegisterBank, SEGMENT_LEN, barrier, font_bank_word, is_dense_register, register_index,
+    segment_index, segment_offset, u16_index,
 };
 use crate::cell::{BankTag, CellId};
 use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
@@ -43,6 +43,36 @@ impl Env {
             }
             BankTag::FontSkewChar => {
                 restore_font_bank_word(&mut self.font_skew_chars, cell.index(), word);
+            }
+            BankTag::PdfLpCode => {
+                restore_font_bank_word(&mut self.pdf_lp_codes, cell.index(), word)
+            }
+            BankTag::PdfRpCode => {
+                restore_font_bank_word(&mut self.pdf_rp_codes, cell.index(), word)
+            }
+            BankTag::PdfEfCode => {
+                restore_font_bank_word(&mut self.pdf_ef_codes, cell.index(), word)
+            }
+            BankTag::PdfTagCode => {
+                restore_font_bank_word(&mut self.pdf_tag_codes, cell.index(), word)
+            }
+            BankTag::PdfKnbsCode => {
+                restore_font_bank_word(&mut self.pdf_knbs_codes, cell.index(), word)
+            }
+            BankTag::PdfStbsCode => {
+                restore_font_bank_word(&mut self.pdf_stbs_codes, cell.index(), word)
+            }
+            BankTag::PdfShbsCode => {
+                restore_font_bank_word(&mut self.pdf_shbs_codes, cell.index(), word)
+            }
+            BankTag::PdfKnbcCode => {
+                restore_font_bank_word(&mut self.pdf_knbc_codes, cell.index(), word)
+            }
+            BankTag::PdfKnacCode => {
+                restore_font_bank_word(&mut self.pdf_knac_codes, cell.index(), word)
+            }
+            BankTag::PdfNoLigatures => {
+                restore_font_bank_word(&mut self.pdf_no_ligatures, cell.index(), word)
             }
             BankTag::CurrentFont => self.current_font.word = word,
             BankTag::MathFamilyFont => self
@@ -107,6 +137,16 @@ impl Env {
                 .font_skew_chars
                 .get(&index)
                 .map_or(0, |entry| entry.word),
+            BankTag::PdfLpCode => font_bank_word(&self.pdf_lp_codes, index),
+            BankTag::PdfRpCode => font_bank_word(&self.pdf_rp_codes, index),
+            BankTag::PdfEfCode => font_bank_word(&self.pdf_ef_codes, index),
+            BankTag::PdfTagCode => font_bank_word(&self.pdf_tag_codes, index),
+            BankTag::PdfKnbsCode => font_bank_word(&self.pdf_knbs_codes, index),
+            BankTag::PdfStbsCode => font_bank_word(&self.pdf_stbs_codes, index),
+            BankTag::PdfShbsCode => font_bank_word(&self.pdf_shbs_codes, index),
+            BankTag::PdfKnbcCode => font_bank_word(&self.pdf_knbc_codes, index),
+            BankTag::PdfKnacCode => font_bank_word(&self.pdf_knac_codes, index),
+            BankTag::PdfNoLigatures => font_bank_word(&self.pdf_no_ligatures, index),
             BankTag::CurrentFont => self.current_font.word,
             BankTag::MathFamilyFont => {
                 u64::from(self.math_family_fonts.get(u16_index(index)).raw())
@@ -178,6 +218,16 @@ impl Env {
         for_each_font_bank_word(BankTag::FontParamLen, &self.font_param_lens, &mut f);
         for_each_font_bank_word(BankTag::FontHyphenChar, &self.font_hyphen_chars, &mut f);
         for_each_font_bank_word(BankTag::FontSkewChar, &self.font_skew_chars, &mut f);
+        for_each_font_bank_word(BankTag::PdfLpCode, &self.pdf_lp_codes, &mut f);
+        for_each_font_bank_word(BankTag::PdfRpCode, &self.pdf_rp_codes, &mut f);
+        for_each_font_bank_word(BankTag::PdfEfCode, &self.pdf_ef_codes, &mut f);
+        for_each_font_bank_word(BankTag::PdfTagCode, &self.pdf_tag_codes, &mut f);
+        for_each_font_bank_word(BankTag::PdfKnbsCode, &self.pdf_knbs_codes, &mut f);
+        for_each_font_bank_word(BankTag::PdfStbsCode, &self.pdf_stbs_codes, &mut f);
+        for_each_font_bank_word(BankTag::PdfShbsCode, &self.pdf_shbs_codes, &mut f);
+        for_each_font_bank_word(BankTag::PdfKnbcCode, &self.pdf_knbc_codes, &mut f);
+        for_each_font_bank_word(BankTag::PdfKnacCode, &self.pdf_knac_codes, &mut f);
+        for_each_font_bank_word(BankTag::PdfNoLigatures, &self.pdf_no_ligatures, &mut f);
         if self.current_font.word != 0 {
             f(CellId::new(BankTag::CurrentFont, 0), self.current_font.word);
         }

@@ -384,6 +384,20 @@ macro_rules! dispatch_match {
                     call_origin,
                 ))
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfFontSize) => {
+                let font = scan_font_selector(input, stores, expansion, mode, call_context)?;
+                crate::record_dependency!(expansion, crate::ReadDependency::Font {
+                    field: crate::ReadFontField::Metrics,
+                    font: font.raw(),
+                    index: 0,
+                });
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::NumberOutput,
+                    &crate::values::format_scaled(stores.font_size(font)),
+                    call_origin,
+                ))
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => $input_arm,
             Meaning::ExpandablePrimitive(ExpandablePrimitive::EndInput) => {
                 input.end_current_source_after_current_line();

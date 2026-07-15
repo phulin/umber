@@ -463,6 +463,39 @@ pub(super) fn execute_code_table_assignment(
     Ok(())
 }
 
+pub(super) fn execute_pdf_font_code_assignment(
+    primitive: UnexpandablePrimitive,
+    prefixes: Prefixes,
+    context: TracedTokenWord,
+    input: &mut InputStack,
+    stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
+    reject_macro_prefixes(prefixes)?;
+    let font = super::scan_font_selector(input, stores, execution)?;
+    let code = scan_i32(input, stores, execution, context)?;
+    let code = u8::try_from(code).map_err(|_| ExecError::InvalidCode {
+        context: "pdfTeX font-code character",
+        value: code,
+    })?;
+    skip_optional_equals_x(input, stores, execution)?;
+    let value = scan_i32(input, stores, execution, context)?;
+    let table = match primitive {
+        UnexpandablePrimitive::PdfLpCode => tex_state::PdfFontCode::Lp,
+        UnexpandablePrimitive::PdfRpCode => tex_state::PdfFontCode::Rp,
+        UnexpandablePrimitive::PdfEfCode => tex_state::PdfFontCode::Ef,
+        UnexpandablePrimitive::PdfTagCode => tex_state::PdfFontCode::Tag,
+        UnexpandablePrimitive::PdfKnbsCode => tex_state::PdfFontCode::Knbs,
+        UnexpandablePrimitive::PdfStbsCode => tex_state::PdfFontCode::Stbs,
+        UnexpandablePrimitive::PdfShbsCode => tex_state::PdfFontCode::Shbs,
+        UnexpandablePrimitive::PdfKnbcCode => tex_state::PdfFontCode::Knbc,
+        UnexpandablePrimitive::PdfKnacCode => tex_state::PdfFontCode::Knac,
+        _ => unreachable!("caller restricts pdfTeX font-code primitives"),
+    };
+    stores.set_pdf_font_code(table, font, code, value);
+    Ok(())
+}
+
 fn char_from_code(value: i32, context: &'static str) -> Result<char, ExecError> {
     u32::try_from(value)
         .ok()

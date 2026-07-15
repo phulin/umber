@@ -17,6 +17,20 @@ pub use tex_fonts::metrics::{
 /// TeX's predefined null font.
 pub const NULL_FONT: FontId = FontId::builtin(0);
 
+/// One of pdfTeX's mutable per-font, per-byte character-code tables.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PdfFontCode {
+    Lp,
+    Rp,
+    Ef,
+    Tag,
+    Knbs,
+    Stbs,
+    Shbs,
+    Knbc,
+    Knac,
+}
+
 /// Largest TeX font-parameter number representable in a fontdimen cell key.
 pub const MAX_FONT_DIMEN: u32 = 1 << 17;
 

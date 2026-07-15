@@ -9,11 +9,27 @@ use crate::code_tables::{
 };
 use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use crate::env::{Env, EnvSnapshot};
+use crate::font::PdfFontCode;
 use crate::font::{
-    CharMetrics, ExtensibleRecipe, FontMetrics, FontMetricsValidationError, FontStore,
+    CharMetrics, CharTag, ExtensibleRecipe, FontMetrics, FontMetricsValidationError, FontStore,
     FontStoreMark, LigKernChar, LigKernCommand, LigKernIter, LoadedFont, MissingCharacter,
     NULL_FONT, complete_font_hash_fragment,
 };
+
+fn pdf_font_code_bank(table: PdfFontCode) -> crate::cell::BankTag {
+    use crate::cell::BankTag;
+    match table {
+        PdfFontCode::Lp => BankTag::PdfLpCode,
+        PdfFontCode::Rp => BankTag::PdfRpCode,
+        PdfFontCode::Ef => BankTag::PdfEfCode,
+        PdfFontCode::Tag => BankTag::PdfTagCode,
+        PdfFontCode::Knbs => BankTag::PdfKnbsCode,
+        PdfFontCode::Stbs => BankTag::PdfStbsCode,
+        PdfFontCode::Shbs => BankTag::PdfShbsCode,
+        PdfFontCode::Knbc => BankTag::PdfKnbcCode,
+        PdfFontCode::Knac => BankTag::PdfKnacCode,
+    }
+}
 use crate::glue::{GlueSpec, GlueStore, GlueStoreMark};
 use crate::hyphenation::{ExceptionSpec, HyphenationTable, PatternSpec};
 use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, OriginListId, TokenListId};
@@ -1215,6 +1231,9 @@ impl Stores {
 
     #[must_use]
     pub fn font_next_larger(&self, font: FontId, code: u8) -> Option<u8> {
+        if self.pdf_font_code(PdfFontCode::Tag, font, code) & 2 == 0 {
+            return None;
+        }
         self.font(font).metrics().next_larger(code)
     }
 
@@ -1240,11 +1259,82 @@ impl Stores {
         left: LigKernChar,
         right: LigKernChar,
     ) -> Option<LigKernCommand> {
+        if let LigKernChar::Char(code) = left
+            && self.pdf_font_code(PdfFontCode::Tag, font, code) & 1 == 0
+        {
+            return None;
+        }
+        if self.env.pdf_no_ligatures(font) {
+            return self
+                .font(font)
+                .metrics()
+                .lig_kern_command(left, right)
+                .filter(|command| matches!(command, LigKernCommand::Kern(_)));
+        }
         self.font(font).metrics().lig_kern_command(left, right)
     }
 
     #[must_use]
+    pub fn pdf_font_code(&self, table: PdfFontCode, font: FontId, code: u8) -> i32 {
+        self.assert_live_font(font);
+        let bank = pdf_font_code_bank(table);
+        self.env
+            .pdf_font_code(bank, font, code)
+            .unwrap_or_else(|| match table {
+                PdfFontCode::Ef => 1000,
+                PdfFontCode::Tag => {
+                    self.font_char_metrics(font, code)
+                        .map_or(0, |metrics| match metrics.tag {
+                            CharTag::None => 0,
+                            CharTag::LigKern { .. } => 1,
+                            CharTag::NextLarger(_) => 2,
+                            CharTag::Extensible(_) => 4,
+                        })
+                }
+                _ => 0,
+            })
+    }
+
+    pub fn set_pdf_font_code(&mut self, table: PdfFontCode, font: FontId, code: u8, value: i32) {
+        self.assert_live_font(font);
+        let value = match table {
+            PdfFontCode::Lp
+            | PdfFontCode::Rp
+            | PdfFontCode::Knbs
+            | PdfFontCode::Stbs
+            | PdfFontCode::Shbs
+            | PdfFontCode::Knbc
+            | PdfFontCode::Knac => value.clamp(-1000, 1000),
+            PdfFontCode::Ef => value.clamp(0, 1000),
+            PdfFontCode::Tag => {
+                let current = self.pdf_font_code(table, font, code);
+                if value >= 0 {
+                    current
+                } else {
+                    current & !(-value).min(7)
+                }
+            }
+        };
+        self.env
+            .set_pdf_font_code_global(pdf_font_code_bank(table), font, code, value);
+    }
+
+    pub fn disable_pdf_font_ligatures(&mut self, font: FontId) {
+        self.assert_live_font(font);
+        self.env.set_pdf_no_ligatures_global(font);
+    }
+
+    #[must_use]
+    pub fn pdf_font_ligatures_disabled(&self, font: FontId) -> bool {
+        self.assert_live_font(font);
+        self.env.pdf_no_ligatures(font)
+    }
+
+    #[must_use]
     pub fn extensible_recipe(&self, font: FontId, code: u8) -> Option<ExtensibleRecipe> {
+        if self.pdf_font_code(PdfFontCode::Tag, font, code) & 4 == 0 {
+            return None;
+        }
         self.font(font).metrics().extensible_recipe(code)
     }
 

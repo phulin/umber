@@ -285,6 +285,10 @@ pub fn install_pdftex_expandable_primitives(stores: &mut Universe) {
             "pdftexbanner",
             tex_state::meaning::ExpandablePrimitive::PdfTeXBanner,
         ),
+        (
+            "pdffontsize",
+            tex_state::meaning::ExpandablePrimitive::PdfFontSize,
+        ),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
@@ -393,6 +397,7 @@ pub enum ReadFontField {
     HyphenChar,
     SkewChar,
     Metrics,
+    PdfCode,
 }
 
 /// Deterministic concrete recorder for memoization and speculation clients.
