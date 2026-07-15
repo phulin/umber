@@ -676,16 +676,40 @@ where
                 mode,
                 digit_value(ch).expect("digit"),
             )?;
-            scan_decimal_tail(input, stores, expansion, mode, integer, options)
+            scan_decimal_tail(
+                input,
+                stores,
+                expansion,
+                mode,
+                integer,
+                options,
+                consume_trailing_space,
+            )
         }
         Token::Char {
             ch: '.' | ',',
             cat: Catcode::Other,
-        } => scan_fraction_and_unit(input, stores, expansion, mode, 0, options),
+        } => scan_fraction_and_unit(
+            input,
+            stores,
+            expansion,
+            mode,
+            0,
+            options,
+            consume_trailing_space,
+        ),
         Token::Char {
             ch: '\'' | '"' | '`',
             cat: Catcode::Other,
-        } => scan_integer_constant_with_unit(input, stores, expansion, mode, token, options),
+        } => scan_integer_constant_with_unit(
+            input,
+            stores,
+            expansion,
+            mode,
+            token,
+            options,
+            consume_trailing_space,
+        ),
         Token::Cs(symbol) => scan_internal_or_numeric_dimension(
             input,
             stores,
@@ -738,6 +762,7 @@ fn scan_decimal_tail(
     mode: &mut dyn ExpansionMode,
     integer: i32,
     options: ScanDimenOptions,
+    consume_trailing_space: &mut bool,
 ) -> Result<ScannedDimen, ScanDimenError>
 where
 {
@@ -747,11 +772,26 @@ where
     };
 
     if is_decimal_point(token) {
-        return scan_fraction_and_unit(input, stores, expansion, mode, integer, options);
+        return scan_fraction_and_unit(
+            input,
+            stores,
+            expansion,
+            mode,
+            integer,
+            options,
+            consume_trailing_space,
+        );
     }
 
     unread_token(input, stores, token);
-    match scan_unit(input, stores, expansion, mode, options)? {
+    match scan_unit(
+        input,
+        stores,
+        expansion,
+        mode,
+        options,
+        consume_trailing_space,
+    )? {
         UnitScan::Scanned(unit) => convert_scanned_unit(stores, integer, 0, unit),
         UnitScan::Rejected(_) if options.coerce_integer_to_sp => {
             convert_decimal(integer, 0, PhysicalUnit::Sp, false, stores.mag())
@@ -767,11 +807,19 @@ fn scan_fraction_and_unit(
     mode: &mut dyn ExpansionMode,
     integer: i32,
     options: ScanDimenOptions,
+    consume_trailing_space: &mut bool,
 ) -> Result<ScannedDimen, ScanDimenError>
 where
 {
     let fraction = scan_fraction(input, stores, expansion, mode)?;
-    match scan_unit(input, stores, expansion, mode, options)? {
+    match scan_unit(
+        input,
+        stores,
+        expansion,
+        mode,
+        options,
+        consume_trailing_space,
+    )? {
         UnitScan::Scanned(unit) => convert_scanned_unit(stores, integer, fraction, unit),
         UnitScan::Rejected(origin) => {
             recover_missing_unit(integer, fraction, options, stores, origin)
@@ -1001,7 +1049,14 @@ where
     }
 
     let integer = scanned.value();
-    let unit = match scan_unit(input, stores, expansion, mode, options)? {
+    let unit = match scan_unit(
+        input,
+        stores,
+        expansion,
+        mode,
+        options,
+        consume_trailing_space,
+    )? {
         UnitScan::Scanned(unit) => unit,
         UnitScan::Rejected(_) if options.coerce_integer_to_sp => {
             return convert_decimal(integer, 0, PhysicalUnit::Sp, false, stores.mag()).map(
@@ -1028,6 +1083,7 @@ fn scan_integer_constant_with_unit(
     mode: &mut dyn ExpansionMode,
     token: TracedTokenWord,
     options: ScanDimenOptions,
+    consume_trailing_space: &mut bool,
 ) -> Result<ScannedDimen, ScanDimenError>
 where
 {
@@ -1040,7 +1096,14 @@ where
             scanned.diagnostic_origin().unwrap_or(token.origin()),
         ));
     }
-    let unit = match scan_unit(input, stores, expansion, mode, options)? {
+    let unit = match scan_unit(
+        input,
+        stores,
+        expansion,
+        mode,
+        options,
+        consume_trailing_space,
+    )? {
         UnitScan::Scanned(unit) => unit,
         UnitScan::Rejected(_) if options.coerce_integer_to_sp => {
             return convert_decimal(scanned.value(), 0, PhysicalUnit::Sp, false, stores.mag()).map(
@@ -1088,6 +1151,7 @@ fn scan_unit(
     expansion: &mut ExpansionContext<'_>,
     mode: &mut dyn ExpansionMode,
     options: ScanDimenOptions,
+    consume_trailing_space: &mut bool,
 ) -> Result<UnitScan, ScanDimenError>
 where
 {
@@ -1103,6 +1167,7 @@ where
         crate::values::record_meaning_value_dependency(expansion, meaning);
         if meaning == Meaning::UnexpandablePrimitive(UnexpandablePrimitive::DimExpr) {
             let expression = scan_dim_expr(input, stores, expansion, mode, first)?;
+            *consume_trailing_space = false;
             return Ok(UnitScan::Scanned(ScannedUnit::InternalExpression(
                 expression,
             )));
@@ -1154,6 +1219,7 @@ where
             _ => None,
         };
         if let Some(unit) = internal {
+            *consume_trailing_space = false;
             return Ok(UnitScan::Scanned(ScannedUnit::Internal(unit)));
         }
         if matches!(
@@ -1168,6 +1234,7 @@ where
         ) {
             let integer =
                 scan_int::scan_internal_integer(input, stores, expansion, mode, first, symbol)?;
+            *consume_trailing_space = false;
             return Ok(UnitScan::Scanned(ScannedUnit::Internal(Scaled::from_raw(
                 integer.value(),
             ))));

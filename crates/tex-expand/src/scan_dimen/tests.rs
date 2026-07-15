@@ -668,6 +668,37 @@ fn decimal_factor_multiplies_dimension_register_unit_with_tex_rounding() {
 }
 
 #[test]
+fn internal_dimension_unit_does_not_expand_trailing_token() {
+    let mut stores = Universe::new();
+    let p_unit = stores.intern("punit");
+    stores.set_meaning(p_unit, Meaning::DimenRegister(3));
+    stores.set_dimen(3, Scaled::from_raw(Scaled::UNITY));
+    let marker = stores.intern("marker");
+    let params = stores.intern_token_list(&[]);
+    let replacement = stores.intern_token_list(&[char_token('x', Catcode::Letter)]);
+    stores.set_macro_meaning(
+        marker,
+        MacroMeaning::new(MeaningFlags::EMPTY, params, replacement),
+    );
+    let mut input = InputStack::new(MemoryInput::new("5.5\\punit\\marker"));
+
+    let scanned = scan_dimen(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("numeric factor with an internal dimension unit scans");
+
+    assert_eq!(scanned.value().raw(), 360_448);
+    assert_eq!(
+        input
+            .next_token(&mut tex_state::ExpansionContext::new(&mut stores))
+            .expect("trailing token remains readable"),
+        Some(Token::Cs(marker.symbol()))
+    );
+}
+
+#[test]
 fn decimal_factor_multiplies_primitive_dimension_register_unit() {
     let mut stores = Universe::new();
     let dimen = stores.intern("dimen");
