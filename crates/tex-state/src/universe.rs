@@ -183,6 +183,7 @@ pub trait ExpansionState {
     fn page_integer(&self, integer: PageInteger) -> i32;
     fn page_mark(&self, mark: PageMark) -> TokenListId;
     fn page_mark_class(&self, mark: PageMark, class: u16) -> TokenListId;
+    fn page_insertion_height(&self, class: u16) -> Option<Scaled>;
     fn penalty_array_value(&self, kind: PenaltyArrayKind, index: i32) -> i32;
     fn paragraph_shape_dimension(&self, line: i32, width: bool) -> Scaled;
     fn report_bad_register_code(&mut self, _value: i32, _maximum: u16) {}
@@ -3363,6 +3364,13 @@ impl Universe {
         self.page.page_insertion(class)
     }
 
+    #[must_use]
+    pub fn page_insertion_height(&self, class: u16) -> Option<Scaled> {
+        self.page
+            .page_insertion(class)
+            .map(|insertion| insertion.height())
+    }
+
     pub fn upsert_page_insertion(&mut self, insertion: PageInsertion) {
         self.page.upsert_page_insertion(insertion);
     }
@@ -4097,6 +4105,10 @@ impl ExpansionState for Universe {
         Self::page_mark_class(self, mark, class)
     }
 
+    fn page_insertion_height(&self, class: u16) -> Option<Scaled> {
+        Self::page_insertion_height(self, class)
+    }
+
     fn penalty_array_value(&self, kind: PenaltyArrayKind, index: i32) -> i32 {
         Self::penalty_array_value(self, kind, index)
     }
@@ -4557,6 +4569,10 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn page_mark_class(&self, mark: PageMark, class: u16) -> TokenListId {
         self.universe.page_mark_class(mark, class)
+    }
+
+    fn page_insertion_height(&self, class: u16) -> Option<Scaled> {
+        self.universe.page_insertion_height(class)
     }
 
     fn penalty_array_value(&self, kind: PenaltyArrayKind, index: i32) -> i32 {

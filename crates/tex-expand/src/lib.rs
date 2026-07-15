@@ -411,6 +411,10 @@ pub fn install_pdftex_expandable_primitives(stores: &mut Universe) {
             "pdfnormaldeviate",
             tex_state::meaning::ExpandablePrimitive::PdfNormalDeviate,
         ),
+        (
+            "pdfinsertht",
+            tex_state::meaning::ExpandablePrimitive::PdfInsertHeight,
+        ),
     ] {
         stores.install_primitive_meaning(name, Meaning::ExpandablePrimitive(primitive));
     }
@@ -499,6 +503,7 @@ pub enum ReadEngineField {
     PdfTimer,
     PdfRandom,
     PdfShellEscape,
+    PageInsertions,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -625,6 +630,7 @@ pub enum ExpandableOpcode {
     PdfLastMatch,
     PdfUniformDeviate,
     PdfNormalDeviate,
+    PdfInsertHeight,
     IfDefined,
     IfCsName,
     IfInCsName,

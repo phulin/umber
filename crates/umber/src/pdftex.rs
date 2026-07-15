@@ -1383,6 +1383,66 @@ mod tests {
     }
 
     #[test]
+    fn pdf_insert_height_reads_live_page_insertion_accounting() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let output = crate::run_memory_with_stores(
+            concat!(
+                "\\vsize=100pt ",
+                "\\count254=1000 \\dimen254=100pt \\skip254=0pt ",
+                "\\message{before=\\pdfinsertht254/absent=\\pdfinsertht253} ",
+                "{\\insert254{\\hbox{\\vrule height10pt depth2pt width0pt}}} ",
+                "\\message{first=\\pdfinsertht254} ",
+                "\\insert254{\\hbox{\\vrule height3pt depth1pt width0pt}} ",
+                "\\message{second=\\pdfinsertht254/absent=\\pdfinsertht253}",
+            ),
+            &mut stores,
+        )
+        .expect("pdfTeX insertion-height enquiry");
+
+        for expected in [
+            "before=0pt/absent=0pt",
+            "first=12.0pt",
+            "second=16.0pt/absent=0pt",
+        ] {
+            assert!(output.contains(expected), "missing {expected:?}: {output}");
+        }
+        assert_eq!(
+            stores.page_insertion_height(254),
+            Some(Scaled::from_raw(16 * Scaled::UNITY))
+        );
+
+        crate::run_memory_with_stores("\\end", &mut stores)
+            .expect("finish the page containing insertions");
+        assert_eq!(stores.page_insertion_height(254), None);
+
+        let mut split_stores = Universe::default();
+        prepare_pdftex_run_stores(&mut split_stores);
+        let split_output = crate::run_memory_with_stores(
+            concat!(
+                "\\vsize=100pt ",
+                "\\count254=1000 \\dimen254=5pt \\skip254=0pt ",
+                "\\splittopskip=0pt \\splitmaxdepth=0pt ",
+                "\\insert254{",
+                "\\hbox{\\vrule height4pt depth0pt width0pt}",
+                "\\vskip1pt",
+                "\\hbox{\\vrule height4pt depth0pt width0pt}} ",
+                "\\message{split=\\pdfinsertht254}",
+            ),
+            &mut split_stores,
+        )
+        .expect("split pdfTeX insertion-height enquiry");
+        assert!(
+            split_output.contains("split=4.0pt"),
+            "split oracle mismatch: {split_output}"
+        );
+        assert_eq!(
+            split_stores.page_insertion_height(254),
+            Some(Scaled::from_raw(4 * Scaled::UNITY))
+        );
+    }
+
+    #[test]
     fn pdf_metadata_configuration_matches_the_pinned_initex_oracle() {
         let reference = test_support::read_fixture("tex_exec", "pdf_metadata_config", "ref");
         for expected in [

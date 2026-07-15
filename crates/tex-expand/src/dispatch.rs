@@ -499,6 +499,28 @@ macro_rules! dispatch_match {
                     call_origin,
                 ))
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfInsertHeight) => {
+                let class = scan_register_index_with_mode_and_context(
+                    input,
+                    stores,
+                    expansion,
+                    mode,
+                    call_context,
+                )?;
+                crate::record_dependency!(
+                    expansion,
+                    crate::ReadDependency::Engine(crate::ReadEngineField::PageInsertions)
+                );
+                let text = stores
+                    .page_insertion_height(class)
+                    .map_or_else(|| "0pt".to_owned(), crate::values::format_scaled);
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::NumberOutput,
+                    &text,
+                    call_origin,
+                ))
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfPrimitive) => {
                 let Some(target) = crate::next_semantic_raw_token(input, stores)? else {
                     return Err(ExpandError::MissingTokenAfterPrimitive {
@@ -1416,6 +1438,7 @@ pub fn dispatch_expandable_opcode(opcode: ExpandableOpcode) -> Result<(), Expand
         | ExpandableOpcode::PdfLastMatch
         | ExpandableOpcode::PdfUniformDeviate
         | ExpandableOpcode::PdfNormalDeviate
+        | ExpandableOpcode::PdfInsertHeight
         | ExpandableOpcode::IfDefined
         | ExpandableOpcode::IfCsName
         | ExpandableOpcode::IfInCsName

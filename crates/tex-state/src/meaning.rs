@@ -246,6 +246,7 @@ pub enum ExpandablePrimitive {
     RightMarginKern,
     PdfFontName,
     PdfFontObjectNumber,
+    PdfInsertHeight,
     /// Accesses the immutable original primitive table.
     PdfPrimitive,
     /// Tests current meaning against the same-spelling original primitive.
@@ -352,6 +353,7 @@ impl ExpandablePrimitive {
             Self::PdfLastMatch => 78,
             Self::PdfUniformDeviate => 79,
             Self::PdfNormalDeviate => 80,
+            Self::PdfInsertHeight => 81,
         }
     }
 
@@ -439,6 +441,7 @@ impl ExpandablePrimitive {
             78 => Some(Self::PdfLastMatch),
             79 => Some(Self::PdfUniformDeviate),
             80 => Some(Self::PdfNormalDeviate),
+            81 => Some(Self::PdfInsertHeight),
             _ => None,
         }
     }
