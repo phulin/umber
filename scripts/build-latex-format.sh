@@ -65,7 +65,9 @@ source_date_epoch="$(awk '$1 == "source_date_epoch" { print $2 }' "$lock_file")"
 [[ -n "$distribution" && -n "$format_schema" && -n "$source_date_epoch" ]] || \
   fail "source lock is missing required metadata"
 
-tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/umber-latex-format.XXXXXX")"
+scratch_parent="${UMBER_LATEX_FORMAT_WORK_ROOT:-${output_dir}/work}"
+mkdir -p "$scratch_parent"
+tmp_root="$(mktemp -d "${scratch_parent}/build.XXXXXX")"
 cleanup() {
   local status=$?
   if [[ $status -eq 0 ]]; then

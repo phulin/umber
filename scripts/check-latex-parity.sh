@@ -111,7 +111,8 @@ reap_abandoned_work_roots() {
 prepare_format() {
   if [[ -z "$format_file" ]]; then
     mkdir -p "$format_output_dir"
-    "$format_builder" --texmf-dist "$texmf_dist" --output-dir "$format_output_dir"
+    UMBER_LATEX_FORMAT_WORK_ROOT="$scratch_parent" \
+      "$format_builder" --texmf-dist "$texmf_dist" --output-dir "$format_output_dir"
     format_build_count=$((format_build_count + 1))
     format_file="${format_output_dir}/latex.fmt"
   fi
@@ -151,6 +152,7 @@ run_format_reuse_self_test() {
   temp="$(mktemp -d "${scratch_parent}/self-test.XXXXXX")"
   trap "rm -rf '$temp'" EXIT
   local count_file="${temp}/builder-count"
+  local work_root_file="${temp}/builder-work-root"
   local stub_builder="${temp}/format-builder"
   cat > "$stub_builder" <<'EOF'
 #!/usr/bin/env bash
@@ -166,11 +168,13 @@ done
 count=0
 [[ ! -f "$UMBER_SELF_TEST_COUNT_FILE" ]] || count="$(cat "$UMBER_SELF_TEST_COUNT_FILE")"
 printf '%s\n' "$((count + 1))" > "$UMBER_SELF_TEST_COUNT_FILE"
+printf '%s\n' "$UMBER_LATEX_FORMAT_WORK_ROOT" > "$UMBER_SELF_TEST_WORK_ROOT_FILE"
 mkdir -p "$output_dir"
 printf 'one immutable pregenerated format\n' > "${output_dir}/latex.fmt"
 EOF
   chmod +x "$stub_builder"
   export UMBER_SELF_TEST_COUNT_FILE="$count_file"
+  export UMBER_SELF_TEST_WORK_ROOT_FILE="$work_root_file"
   format_builder="$stub_builder"
   format_output_dir="${temp}/format"
   receipt="${temp}/receipt.txt"
@@ -182,6 +186,8 @@ EOF
     stage_format "$name" "${temp}/${name}"
   done
   [[ "$(cat "$count_file")" == 1 ]] || fail "self-test format builder did not run once"
+  [[ "$(cat "$work_root_file")" == "$scratch_parent" ]] || \
+    fail "self-test format builder did not receive the parity scratch root"
   [[ "$format_build_count" == 1 ]] || fail "self-test recorded the wrong build count"
   [[ "$(awk '$1 == "case" { print $3 }' "$active_receipt" | sort -u | wc -l | tr -d ' ')" == 1 ]] || \
     fail "self-test staged more than one format identity"
