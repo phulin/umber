@@ -142,7 +142,7 @@ impl Lowerer<'_> {
                     self.cur_h = add(self.cur_h, *width)?;
                 }
                 PageNode::Kern { amount, kind } => {
-                    if !matches!(kind, KernKind::Font) {
+                    if !matches!(kind, KernKind::Font | KernKind::Auto) {
                         run.flush(self)?;
                     }
                     self.cur_h = add(self.cur_h, *amount)?;

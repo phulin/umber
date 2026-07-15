@@ -424,6 +424,8 @@ pub enum UnsetKind {
 pub enum KernKind {
     Explicit,
     Font,
+    /// Automatic kern from pdfTeX's `knbc`/`knac` character-code tables.
+    Auto,
     Accent,
     Mu,
     /// pdfTeX character protrusion at the left edge of a finalized line.

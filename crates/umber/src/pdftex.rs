@@ -681,6 +681,54 @@ mod tests {
     }
 
     #[test]
+    fn pdf_microtype_effects_match_the_pinned_initex_oracle() {
+        let reference = test_support::read_fixture("tex_exec", "pdf_microtype_effects", "ref");
+        for expected in [
+            "\\kern 1.0 (for \\pdfprependkern/\\pdfappendkern)",
+            "\\kern 5.0 (for \\pdfprependkern/\\pdfappendkern)",
+            "\\glue 4.33333 plus 3.66666 minus 4.11111",
+            "\\kern-1.0 (left margin)",
+            "\\kern-2.0 (right margin)",
+            "\\f (-50) A",
+        ] {
+            assert!(
+                reference.contains(expected),
+                "missing {expected:?}: {reference}"
+            );
+        }
+
+        const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+        let mut stores = Universe::default();
+        stores
+            .world_mut()
+            .set_memory_file("cmr10.tfm", CMR10.to_vec())
+            .expect("seed cmr10");
+        prepare_pdftex_run_stores(&mut stores);
+        let output = crate::run_memory_with_stores(
+            include_str!("../../../tests/corpus/tex_exec/pdf_microtype_effects.tex"),
+            &mut stores,
+        )
+        .expect("pdfTeX microtype effect fixture");
+        for expected in [
+            "> \\box0=\n\\hbox(6.83331+0.0)x14.58337\n.\\f A\n.\\f B",
+            "> \\box3=\n\\hbox(6.83331+0.0)x24.58337",
+            ".\\kern 5.0 (for \\pdfprependkern/\\pdfappendkern)",
+            "> \\box4=\n\\hbox(6.83331+0.0)x14.58337",
+            "> \\box6=\n\\hbox(6.83331+0.0)x18.9167",
+            ".\\glue 4.33333 plus 3.66666 minus 4.11111",
+            "> \\box7=\n\\hbox(6.83331+0.0)x17.9167",
+            "..\\kern-1.0 (left margin)",
+            "..\\kern-2.0 (right margin)",
+            "> \\box10=\n\\vbox(6.83331+0.0)x20.0",
+            "> \\box12=\n\\vbox(6.83331+0.0)x15.0",
+            "..\\f (-50) A",
+            "> \\box13=\n\\vbox(6.83331+0.0)x15.0",
+        ] {
+            assert!(output.contains(expected), "missing {expected:?}: {output}");
+        }
+    }
+
+    #[test]
     fn pdf_font_codes_size_and_ligature_suppression_match_oracle() {
         let reference = test_support::read_fixture("tex_exec", "pdf_font_codes", "ref");
         const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");

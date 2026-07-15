@@ -1,0 +1,236 @@
+success: false
+stdout:
+! OK (see the transcript file).
+! OK (see the transcript file).
+! OK (see the transcript file).
+! OK (see the transcript file).
+! OK (see the transcript file).
+! OK (see the transcript file).
+! OK (see the transcript file).
+! OK (see the transcript file).
+
+Underfull \hbox (badness 10000) in paragraph at lines 36--36
+\f A.
+! OK (see the transcript file).
+
+Underfull \hbox (badness 10000) in paragraph at lines 38--38
+\f A.
+! OK (see the transcript file).
+
+Underfull \hbox (badness 10000) in paragraph at lines 40--40
+\f A.
+! OK (see the transcript file).
+
+Overfull \hbox (7.50005pt too wide) in paragraph at lines 46--46
+\f AAA
+! OK (see the transcript file).
+
+Overfull \hbox (6.37505pt too wide) in paragraph at lines 48--48
+\f (-50) AAA
+! OK (see the transcript file).
+
+Overfull \hbox (7.50005pt too wide) in paragraph at lines 50--50
+\f AAA
+! OK (see the transcript file).
+log:
+> \box0=
+\hbox(6.83331+0.0)x14.58337
+.\f A
+.\f B
+
+! OK.
+
+> \box1=
+\hbox(6.83331+0.0)x18.58337
+.\kern 1.0 (for \pdfprependkern/\pdfappendkern)
+.\f A
+.\kern 3.0 (for \pdfprependkern/\pdfappendkern)
+.\f B
+
+! OK.
+
+> \box2=
+\hbox(6.83331+0.0)x20.58337
+.\f A
+.\kern 2.0 (for \pdfprependkern/\pdfappendkern)
+.\f B
+.\kern 4.0 (for \pdfprependkern/\pdfappendkern)
+
+! OK.
+
+> \box3=
+\hbox(6.83331+0.0)x24.58337
+.\kern 1.0 (for \pdfprependkern/\pdfappendkern)
+.\f A
+.\kern 5.0 (for \pdfprependkern/\pdfappendkern)
+.\f B
+.\kern 4.0 (for \pdfprependkern/\pdfappendkern)
+
+! OK.
+
+> \box4=
+\hbox(6.83331+0.0)x14.58337
+.\f A
+.\f B
+
+! OK.
+
+> \box5=
+\hbox(6.83331+0.0)x17.9167
+.\f A
+.\glue 3.33333 plus 1.66498 minus 1.11221
+.\f B
+
+! OK.
+
+> \box6=
+\hbox(6.83331+0.0)x18.9167
+.\f A
+.\glue 4.33333 plus 3.66666 minus 4.11111
+.\f B
+
+! OK.
+
+> \box7=
+\hbox(6.83331+0.0)x17.9167
+.\f A
+.\glue 3.33333 plus 1.66498 minus 1.11221
+.\f B
+
+! OK.
+
+Underfull \hbox (badness 10000) in paragraph at lines 36--36
+\f A.
+
+\hbox(6.83331+0.0)x20.0
+.\f A
+.\f .
+.\penalty 10000
+.\glue(\parfillskip) 0.0
+.\glue(\rightskip) 0.0
+
+> \box8=
+\vbox(6.83331+0.0)x20.0
+.\hbox(6.83331+0.0)x20.0
+..\f A
+..\f .
+..\penalty 10000
+..\glue(\parfillskip) 0.0
+..\glue(\rightskip) 0.0
+
+! OK.
+
+Underfull \hbox (badness 10000) in paragraph at lines 38--38
+\f A.
+
+\hbox(6.83331+0.0)x20.0
+.\kern-1.0 (left margin)
+.\f A
+.\f .
+.\penalty 10000
+.\kern-2.0 (right margin)
+.\glue(\parfillskip) 0.0
+.\glue(\rightskip) 0.0
+
+> \box9=
+\vbox(6.83331+0.0)x20.0
+.\hbox(6.83331+0.0)x20.0
+..\kern-1.0 (left margin)
+..\f A
+..\f .
+..\penalty 10000
+..\kern-2.0 (right margin)
+..\glue(\parfillskip) 0.0
+..\glue(\rightskip) 0.0
+
+! OK.
+
+Underfull \hbox (badness 10000) in paragraph at lines 40--40
+\f A.
+
+\hbox(6.83331+0.0)x20.0
+.\f A
+.\f .
+.\penalty 10000
+.\glue(\parfillskip) 0.0
+.\glue(\rightskip) 0.0
+
+> \box10=
+\vbox(6.83331+0.0)x20.0
+.\hbox(6.83331+0.0)x20.0
+..\f A
+..\f .
+..\penalty 10000
+..\glue(\parfillskip) 0.0
+..\glue(\rightskip) 0.0
+
+! OK.
+
+Overfull \hbox (7.50005pt too wide) in paragraph at lines 46--46
+\f AAA
+
+\hbox(6.83331+0.0)x15.0
+.\f A
+.\f A
+.\f A
+.\penalty 10000
+.\glue(\parfillskip) 0.0
+.\glue(\rightskip) 0.0
+
+> \box11=
+\vbox(6.83331+0.0)x15.0
+.\hbox(6.83331+0.0)x15.0
+..\f A
+..\f A
+..\f A
+..\penalty 10000
+..\glue(\parfillskip) 0.0
+..\glue(\rightskip) 0.0
+
+! OK.
+
+Overfull \hbox (6.37505pt too wide) in paragraph at lines 48--48
+\f (-50) AAA
+
+\hbox(6.83331+0.0)x15.0
+.\f (-50) A
+.\f (-50) A
+.\f (-50) A
+.\penalty 10000
+.\glue(\parfillskip) 0.0
+.\glue(\rightskip) 0.0
+
+> \box12=
+\vbox(6.83331+0.0)x15.0
+.\hbox(6.83331+0.0)x15.0
+..\f (-50) A
+..\f (-50) A
+..\f (-50) A
+..\penalty 10000
+..\glue(\parfillskip) 0.0
+..\glue(\rightskip) 0.0
+
+! OK.
+
+Overfull \hbox (7.50005pt too wide) in paragraph at lines 50--50
+\f AAA
+
+\hbox(6.83331+0.0)x15.0
+.\f A
+.\f A
+.\f A
+.\penalty 10000
+.\glue(\parfillskip) 0.0
+.\glue(\rightskip) 0.0
+
+> \box13=
+\vbox(6.83331+0.0)x15.0
+.\hbox(6.83331+0.0)x15.0
+..\f A
+..\f A
+..\f A
+..\penalty 10000
+..\glue(\parfillskip) 0.0
+..\glue(\rightskip) 0.0
+
+! OK.

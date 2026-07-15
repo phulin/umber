@@ -1,0 +1,51 @@
+\catcode`\{=1
+\catcode`\}=2
+\font\f=cmr10
+\showboxbreadth=100
+\showboxdepth=100
+
+\knbccode\f`A=100
+\knaccode\f`A=200
+\knbccode\f`B=300
+\knaccode\f`B=400
+\pdfprependkern=0 \pdfappendkern=0
+\setbox0=\hbox{\f AB}\showbox0
+\pdfprependkern=1 \pdfappendkern=0
+\setbox1=\hbox{\f AB}\showbox1
+\pdfprependkern=0 \pdfappendkern=1
+\setbox2=\hbox{\f AB}\showbox2
+\pdfprependkern=1 \pdfappendkern=1
+\setbox3=\hbox{\f AB}\showbox3
+\pdfprependkern=-1 \pdfappendkern=-1
+\setbox4=\hbox{\f AB}\showbox4
+
+\pdfprependkern=0 \pdfappendkern=0
+\knbscode\f`A=100
+\stbscode\f`A=200
+\shbscode\f`A=300
+\pdfadjustinterwordglue=0
+\setbox5=\hbox{\f A B}\showbox5
+\pdfadjustinterwordglue=1
+\setbox6=\hbox{\f A B}\showbox6
+\pdfadjustinterwordglue=-1
+\setbox7=\hbox{\f A B}\showbox7
+
+\lpcode\f`A=100
+\rpcode\f`.=200
+\pdfprotrudechars=0
+\setbox8=\vbox{\hsize=20pt \noindent\f A.\par}\showbox8
+\pdfprotrudechars=1
+\setbox9=\vbox{\hsize=20pt \noindent\f A.\par}\showbox9
+\pdfprotrudechars=-1
+\setbox10=\vbox{\hsize=20pt \noindent\f A.\par}\showbox10
+
+\pdffontexpand\f 100 50 10 autoexpand
+\efcode\f`A=1000
+\pdfprotrudechars=0
+\pdfadjustspacing=0
+\setbox11=\vbox{\hsize=15pt \noindent\f AAA\par}\showbox11
+\pdfadjustspacing=1
+\setbox12=\vbox{\hsize=15pt \noindent\f AAA\par}\showbox12
+\pdfadjustspacing=-1
+\setbox13=\vbox{\hsize=15pt \noindent\f AAA\par}\showbox13
+\end

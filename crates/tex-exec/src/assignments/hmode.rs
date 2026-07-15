@@ -89,6 +89,7 @@ fn flush_pending_hchar_run(nest: &mut ModeNest, stores: &mut Universe, insert_hy
         .then(|| right_boundary_kern(stores, &pending.current))
         .flatten();
     let disc = literal_hyphen_disc(stores, &pending.current, insert_hyphen_discs);
+    let trailing_auto_kern = auto_kern(stores, &pending.current, None);
     let list = nest.current_list_mut();
     let removed = list.take_pending_hchars();
     debug_assert_eq!(removed, Some(pending.clone()));
@@ -97,8 +98,11 @@ fn flush_pending_hchar_run(nest: &mut ModeNest, stores: &mut Universe, insert_hy
         boundary,
         rechar_node(pending.current),
         disc,
-        right_boundary_kern,
+        trailing_auto_kern,
     );
+    if let Some(kern) = right_boundary_kern {
+        list.push(kern);
+    }
 }
 
 pub(super) fn execute_hmode_material(
@@ -375,12 +379,20 @@ fn execute_vadjust(
 
 fn append_space(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecError> {
     flush_pending_hchars(nest, stores)?;
-    let sf = nest.current_list().space_factor();
-    let spec = if sf >= 2000 {
+    let configuration = stores.pdf_font_configuration();
+    let sf = if configuration.adjusts_interword_glue() {
+        1000
+    } else {
+        nest.current_list().space_factor()
+    };
+    let mut spec = if sf >= 2000 {
         nonzero_glue_param_or_font_space(stores, GlueParam::XSPACE_SKIP, sf)
     } else {
         nonzero_glue_param_or_font_space(stores, GlueParam::SPACE_SKIP, sf)
     };
+    if configuration.adjusts_interword_glue() {
+        adjust_interword_glue(stores, nest.current_list().nodes(), &mut spec);
+    }
     let id = stores.intern_glue(spec);
     nest.current_list_mut().push(Node::Glue {
         spec: id,
@@ -399,7 +411,10 @@ fn append_control_space(
         ensure_horizontal_for_character(nest, input, stores)?;
     }
     flush_pending_hchars(nest, stores)?;
-    let spec = nonzero_glue_param_or_font_space(stores, GlueParam::SPACE_SKIP, 1000);
+    let mut spec = nonzero_glue_param_or_font_space(stores, GlueParam::SPACE_SKIP, 1000);
+    if stores.pdf_font_configuration().adjusts_interword_glue() {
+        adjust_interword_glue(stores, nest.current_list().nodes(), &mut spec);
+    }
     let id = stores.intern_glue(spec);
     nest.current_list_mut().push(Node::Glue {
         spec: id,
@@ -446,6 +461,9 @@ fn append_pending_hchar(
     origin: OriginId,
 ) {
     let Some(mut pending) = nest.current_list().pending_hchars() else {
+        if let Some(kern) = auto_kern(stores, &PendingHRunChar::new(font, ch, origin), Some(true)) {
+            nest.current_list_mut().push(kern);
+        }
         nest.current_list_mut()
             .begin_pending_hchars(font, ch, origin);
         return;
@@ -459,17 +477,27 @@ fn append_pending_hchar(
         ReconstitutionStep::Emit { current, kern } => {
             let insert_hyphen_discs = nest.current_mode() == Mode::Horizontal;
             let disc = literal_hyphen_disc(stores, &current, insert_hyphen_discs);
-            let kern = kern.map(|amount| Node::Kern {
+            let auto = auto_kern_between(stores, &current, &next);
+            let font_kern = kern.map(|amount| Node::Kern {
                 amount,
                 kind: KernKind::Font,
             });
             pending.current = next;
-            Some((rechar_node(current), disc, kern))
+            Some((rechar_node(current), disc, auto, font_kern))
         }
     };
     let list = nest.current_list_mut();
-    if let Some((current, disc, kern)) = emitted {
-        list.push_reconstituted(None, current, disc, kern);
+    if let Some((current, disc, auto, font_kern)) = emitted {
+        list.push(current);
+        if let Some(disc) = disc {
+            list.push(disc);
+        }
+        if let Some(auto) = auto {
+            list.push(auto);
+        }
+        if let Some(font_kern) = font_kern {
+            list.push(font_kern);
+        }
     }
     list.set_pending_hchars(pending);
 }
@@ -485,6 +513,13 @@ pub(crate) fn reconstitute(
         return Vec::new();
     };
     let mut out = Vec::with_capacity(pending.len());
+    if let Some(kern) = auto_kern(
+        stores,
+        &PendingHRunChar::new(first.font, first.ch, first.origin),
+        Some(true),
+    ) {
+        out.push(kern);
+    }
     if !no_left_boundary && let Some(node) = boundary_command_node(stores, first, true) {
         out.push(node);
     }
@@ -497,6 +532,7 @@ pub(crate) fn reconstitute(
                 current: emitted,
                 kern,
             } => {
+                let auto = auto_kern_between(stores, &emitted, &next);
                 if let Some(disc) = literal_hyphen_disc(stores, &emitted, insert_hyphen_discs) {
                     out.push(rechar_node(emitted));
                     out.push(disc);
@@ -504,21 +540,145 @@ pub(crate) fn reconstitute(
                     out.push(rechar_node(emitted));
                 }
                 if let Some(amount) = kern {
+                    if let Some(auto) = auto {
+                        out.push(auto);
+                    }
                     out.push(Node::Kern {
                         amount,
                         kind: KernKind::Font,
                     });
+                } else if let Some(auto) = auto {
+                    out.push(auto);
                 }
                 current = next;
             }
         }
     }
     let disc = literal_hyphen_disc(stores, &current, insert_hyphen_discs);
+    let trailing_auto_kern = auto_kern(stores, &current, None);
     out.push(rechar_node(current));
     if let Some(disc) = disc {
         out.push(disc);
     }
+    if let Some(kern) = trailing_auto_kern {
+        out.push(kern);
+    }
     out
+}
+
+fn auto_kern_between(
+    stores: &Universe,
+    left: &PendingHRunChar,
+    right: &PendingHRunChar,
+) -> Option<Node> {
+    if left.font == right.font {
+        return auto_kern_codes(stores, left.font, Some(left.ch), Some(right.ch));
+    }
+    // Font changes normally flush the old run before the assignment. Keep the
+    // fallback deterministic for reconstructed mixed-font runs by applying
+    // only the old font's trailing append code here.
+    auto_kern_codes(stores, left.font, Some(left.ch), None)
+}
+
+fn auto_kern(stores: &Universe, glyph: &PendingHRunChar, leading: Option<bool>) -> Option<Node> {
+    match leading {
+        Some(true) => auto_kern_codes(stores, glyph.font, None, Some(glyph.ch)),
+        _ => auto_kern_codes(stores, glyph.font, Some(glyph.ch), None),
+    }
+}
+
+fn auto_kern_codes(
+    stores: &Universe,
+    font: FontId,
+    left: Option<char>,
+    right: Option<char>,
+) -> Option<Node> {
+    let configuration = stores.pdf_font_configuration();
+    let mut amount = Scaled::from_raw(0);
+    if configuration.appends_kerns()
+        && let Some(left) = left.and_then(|ch| u8::try_from(ch as u32).ok())
+    {
+        amount = add_scaled(
+            amount,
+            scaled_font_code(
+                stores,
+                font,
+                stores.pdf_font_code(tex_state::PdfFontCode::Knac, font, left),
+            ),
+        );
+    }
+    if configuration.prepends_kerns()
+        && let Some(right) = right.and_then(|ch| u8::try_from(ch as u32).ok())
+    {
+        amount = add_scaled(
+            amount,
+            scaled_font_code(
+                stores,
+                font,
+                stores.pdf_font_code(tex_state::PdfFontCode::Knbc, font, right),
+            ),
+        );
+    }
+    (amount.raw() != 0).then_some(Node::Kern {
+        amount,
+        kind: KernKind::Auto,
+    })
+}
+
+fn add_scaled(left: Scaled, right: Scaled) -> Scaled {
+    Scaled::from_raw(left.raw().saturating_add(right.raw()))
+}
+
+fn adjust_interword_glue(stores: &Universe, nodes: &[Node], spec: &mut GlueSpec) {
+    let mut glyph = None;
+    for node in nodes.iter().rev() {
+        match node {
+            Node::Char { font, ch, .. } | Node::Lig { font, ch, .. } => {
+                glyph = u8::try_from(*ch as u32).ok().map(|code| (*font, code));
+                break;
+            }
+            Node::Kern {
+                kind: KernKind::Auto,
+                ..
+            } => {}
+            _ => return,
+        }
+    }
+    let Some((font, code)) = glyph else {
+        return;
+    };
+    let width = scaled_font_code(
+        stores,
+        font,
+        stores.pdf_font_code(tex_state::PdfFontCode::Knbs, font, code),
+    );
+    let stretch = scaled_font_code(
+        stores,
+        font,
+        stores.pdf_font_code(tex_state::PdfFontCode::Stbs, font, code),
+    );
+    let shrink = scaled_font_code(
+        stores,
+        font,
+        stores.pdf_font_code(tex_state::PdfFontCode::Shbs, font, code),
+    );
+    spec.width = Scaled::from_raw(spec.width.raw().saturating_add(width.raw()));
+    spec.stretch = Scaled::from_raw(spec.stretch.raw().saturating_add(stretch.raw()));
+    spec.shrink = Scaled::from_raw(spec.shrink.raw().saturating_add(shrink.raw()));
+}
+
+fn scaled_font_code(stores: &Universe, font: FontId, code: i32) -> Scaled {
+    let product = i64::from(stores.font_parameter(font, 6).raw()) * i64::from(code);
+    let rounded = if product >= 0 {
+        (product + 500) / 1000
+    } else {
+        -((-product + 500) / 1000)
+    };
+    Scaled::from_raw(i32::try_from(rounded).unwrap_or(if rounded < 0 {
+        i32::MIN
+    } else {
+        i32::MAX
+    }))
 }
 
 enum ReconstitutionStep {

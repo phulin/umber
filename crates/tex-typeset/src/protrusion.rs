@@ -42,8 +42,7 @@ pub fn line_protrusion(state: &impl TypesetState, nodes: &[Node]) -> LineProtrus
 pub fn insert_margin_kerns(state: &impl TypesetState, nodes: &mut Vec<Node>) {
     let protrusion = line_protrusion(state, nodes);
     if protrusion.right.raw() != 0 {
-        let at = edge_position(state, nodes, Edge::Right)
-            .map_or_else(|| trailing_right_skip_start(nodes), |index| index + 1);
+        let at = right_margin_position(nodes);
         nodes.insert(
             at,
             Node::Kern {
@@ -104,19 +103,32 @@ fn leading_left_skip_end(nodes: &[Node]) -> usize {
         .count()
 }
 
-fn trailing_right_skip_start(nodes: &[Node]) -> usize {
+fn right_margin_position(nodes: &[Node]) -> usize {
     nodes
         .iter()
         .rposition(|node| {
-            !matches!(
+            matches!(
                 node,
                 Node::Glue {
-                    kind: GlueKind::RightSkip,
+                    kind: GlueKind::ParFillSkip | GlueKind::RightSkip,
                     ..
                 } | Node::Direction(_)
             )
         })
-        .map_or(0, |index| index + 1)
+        .map_or(nodes.len(), |mut index| {
+            while index > 0
+                && matches!(
+                    nodes[index - 1],
+                    Node::Glue {
+                        kind: GlueKind::ParFillSkip | GlueKind::RightSkip,
+                        ..
+                    } | Node::Direction(_)
+                )
+            {
+                index -= 1;
+            }
+            index
+        })
 }
 
 #[derive(Clone, Copy)]

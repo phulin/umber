@@ -317,6 +317,7 @@ pub enum GlueSign {
 pub enum KernKind {
     Explicit,
     Font,
+    Auto,
     Accent,
     LeftMargin,
     RightMargin,

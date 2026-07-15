@@ -2678,6 +2678,7 @@ fn kern_kind_tag(kind: KernKind) -> u8 {
         KernKind::Accent => 2,
         KernKind::LeftMargin => 3,
         KernKind::RightMargin => 4,
+        KernKind::Auto => 5,
     }
 }
 
@@ -2688,6 +2689,7 @@ fn parse_kern_kind(tag: u8) -> Result<KernKind, ParseError> {
         2 => Ok(KernKind::Accent),
         3 => Ok(KernKind::LeftMargin),
         4 => Ok(KernKind::RightMargin),
+        5 => Ok(KernKind::Auto),
         tag => Err(ParseError::InvalidTag {
             kind: "kern kind",
             tag,

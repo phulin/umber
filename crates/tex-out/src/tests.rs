@@ -69,7 +69,7 @@ fn generated_font_constructions_round_trip_with_source_identity() {
 }
 
 #[test]
-fn margin_kern_sides_round_trip() {
+fn pdftex_kern_kinds_round_trip() {
     let mut artifact = sample_artifact();
     let PageNode::VList(root) = &mut artifact.testing_mut().root else {
         unreachable!("sample root is a vlist");
@@ -82,6 +82,10 @@ fn margin_kern_sides_round_trip() {
         PageNode::Kern {
             amount: Scaled::from_raw(456),
             kind: KernKind::RightMargin,
+        },
+        PageNode::Kern {
+            amount: Scaled::from_raw(789),
+            kind: KernKind::Auto,
         },
     ];
 

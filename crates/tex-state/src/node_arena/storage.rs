@@ -486,6 +486,7 @@ fn kern_code(v: KernKind) -> u8 {
         KernKind::Mu => 3,
         KernKind::LeftMargin => 4,
         KernKind::RightMargin => 5,
+        KernKind::Auto => 6,
     }
 }
 fn style_code(v: MathStyle) -> u8 {
@@ -530,6 +531,7 @@ pub(super) fn decode_kern(value: u8) -> KernKind {
         3 => KernKind::Mu,
         4 => KernKind::LeftMargin,
         5 => KernKind::RightMargin,
+        6 => KernKind::Auto,
         _ => unreachable!(),
     }
 }

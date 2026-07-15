@@ -284,7 +284,7 @@ fn ligature_and_character_fonts_share_the_same_dense_identity() {
 }
 
 #[test]
-fn margin_kern_sides_round_trip_in_compact_nodes() {
+fn pdftex_kern_kinds_round_trip_in_compact_nodes() {
     let mut arena = NodeArena::new();
     let nodes = [
         Node::Kern {
@@ -295,12 +295,16 @@ fn margin_kern_sides_round_trip_in_compact_nodes() {
             amount: scaled(456),
             kind: KernKind::RightMargin,
         },
+        Node::Kern {
+            amount: scaled(789),
+            kind: KernKind::Auto,
+        },
     ];
     let list = arena.append(&nodes);
 
     assert_eq!(arena.get_epoch(list), &nodes);
     assert_eq!(arena.storage.testing_sidecar_lengths(), [0; 13]);
-    assert_eq!(arena.storage.testing_tags(), vec![2, 2]);
+    assert_eq!(arena.storage.testing_tags(), vec![2, 2, 2]);
 }
 
 #[test]

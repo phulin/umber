@@ -100,6 +100,13 @@ fn dump_node(
             KernKind::Font => {
                 let _ = writeln!(out, "\\kern{}", format_scaled_without_unit(*amount));
             }
+            KernKind::Auto => {
+                let _ = writeln!(
+                    out,
+                    "\\kern {} (for \\pdfprependkern/\\pdfappendkern)",
+                    format_scaled_without_unit(*amount)
+                );
+            }
             KernKind::Accent => {
                 let _ = writeln!(
                     out,
@@ -113,14 +120,14 @@ fn dump_node(
             KernKind::LeftMargin => {
                 let _ = writeln!(
                     out,
-                    "\\kern {} (left margin)",
+                    "\\kern{} (left margin)",
                     format_scaled_without_unit(*amount)
                 );
             }
             KernKind::RightMargin => {
                 let _ = writeln!(
                     out,
-                    "\\kern {} (right margin)",
+                    "\\kern{} (right margin)",
                     format_scaled_without_unit(*amount)
                 );
             }
@@ -488,14 +495,23 @@ fn dump_mark(stores: &Universe, class: u16, tokens: TokenListId, out: &mut Strin
 }
 
 fn dump_font(stores: &Universe, font: tex_state::ids::FontId) -> String {
-    let identifier = stores.font_identifier_symbol(font).map_or_else(
+    let loaded = stores.font(font);
+    let (identifier_font, expansion_ratio) = match loaded.construction() {
+        tex_fonts::FontConstruction::Expanded { source, ratio } => (
+            stores.font_by_source_identity(*source).unwrap_or(font),
+            Some(*ratio),
+        ),
+        _ => (font, None),
+    };
+    let identifier = stores.font_identifier_symbol(identifier_font).map_or_else(
         || format!("\\{}", stores.font_name(font)),
         |symbol| tex_expand::token_text(stores, Token::Cs(symbol.symbol())),
     );
     if !stores.pdf_font_configuration().traces_fonts() {
-        return identifier;
+        return expansion_ratio.map_or(identifier.clone(), |ratio| {
+            format!("{identifier} ({}{ratio})", if ratio > 0 { "+" } else { "" })
+        });
     }
-    let loaded = stores.font(font);
     let mut result = format!("{identifier} ({})", loaded.name());
     if loaded.size() != loaded.design_size() {
         result.pop();
