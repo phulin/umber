@@ -478,6 +478,21 @@ fn internal_integer_assignment_leaves_following_expandafter_unexpanded() {
 }
 
 #[test]
+fn uppercase_expands_tokens_until_its_opening_brace() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\def\\body{\\message{ok}}\\uppercase\\expandafter{\\body}\\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("case-shift scanner expands tokens that precede its opening brace");
+    assert!(support::terminal_effect_text(&stores).contains("OK"));
+}
+
+#[test]
 fn dispatch_character_hits_loud_typesetting_stub() {
     let mut stores = Universe::new();
     let token = Token::Char {

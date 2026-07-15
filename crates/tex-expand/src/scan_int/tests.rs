@@ -38,6 +38,71 @@ fn scan_with_stores(
     (scanned.value(), next)
 }
 
+#[test]
+fn scans_font_hyphenchar_as_an_internal_integer() {
+    let mut stores = Universe::new();
+    let hyphenchar = stores.intern("hyphenchar");
+    stores.set_meaning(
+        hyphenchar,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HyphenChar),
+    );
+    let font_cs = stores.intern("arrayfont");
+    stores.set_meaning(font_cs, Meaning::Font(tex_state::font::NULL_FONT));
+    stores.set_font_hyphen_char(tex_state::font::NULL_FONT, 257, false);
+    let list =
+        stores.intern_token_list(&[Token::Cs(hyphenchar.symbol()), Token::Cs(font_cs.symbol())]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list(list, tex_lex::TokenListReplayKind::Inserted);
+
+    let scanned = scan_int(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("font hyphenchar should scan as an integer");
+
+    assert_eq!(scanned.value(), 257);
+}
+
+#[test]
+fn scans_fontdimen_as_a_raw_scaled_internal_integer() {
+    let mut stores = Universe::new();
+    let fontdimen = stores.intern("fontdimen");
+    stores.set_meaning(
+        fontdimen,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::FontDimen),
+    );
+    let font_cs = stores.intern("arrayfont");
+    stores.set_meaning(font_cs, Meaning::Font(tex_state::font::NULL_FONT));
+    stores
+        .set_font_dimen(
+            tex_state::font::NULL_FONT,
+            8,
+            Scaled::from_raw(12_345),
+            true,
+        )
+        .expect("font parameter should be writable");
+    let list = stores.intern_token_list(&[
+        Token::Cs(fontdimen.symbol()),
+        Token::Char {
+            ch: '8',
+            cat: Catcode::Other,
+        },
+        Token::Cs(font_cs.symbol()),
+    ]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list(list, tex_lex::TokenListReplayKind::Inserted);
+
+    let scanned = scan_int(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("fontdimen should coerce to scaled points in an integer context");
+
+    assert_eq!(scanned.value(), 12_345);
+}
+
 fn char_token(ch: char, cat: Catcode) -> Token {
     Token::Char { ch, cat }
 }

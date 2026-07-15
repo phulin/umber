@@ -1,7 +1,7 @@
 use tex_lex::InputStack;
 use tex_out::dvi::DviPagePlan;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
-use tex_state::provenance::InsertedOriginKind;
+use tex_state::provenance::{InsertedOriginKind, OriginRecord};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ContentHash, GroupKind, GroupMismatch, Universe};
 
@@ -112,6 +112,22 @@ pub(crate) fn dispatch_delivered_token_with_context(
             return Ok(DispatchAction::NotConsumed);
         }
     };
+
+    let unexpanded_delivery = matches!(
+        stores.origin(origin),
+        OriginRecord::Inserted(inserted)
+            if inserted.kind() == InsertedOriginKind::Unexpanded
+    );
+    if unexpanded_delivery
+        && matches!(
+            meaning,
+            Meaning::Undefined | Meaning::Macro { .. } | Meaning::ExpandablePrimitive(_)
+        )
+    {
+        let replay_origin = stores.inserted_origin(InsertedOriginKind::Unread, token, origin);
+        push_traced_tokens(input, stores, [TracedTokenWord::pack(token, replay_origin)]);
+        return Ok(DispatchAction::Continue);
+    }
 
     let continues_character_run = matches!(
         meaning,

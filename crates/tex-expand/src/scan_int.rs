@@ -11,7 +11,7 @@ use tex_state::{ExpansionState, PenaltyArrayKind};
 
 use crate::{
     ExpandError, ExpansionContext, ExpansionMode, ReadBank, ReadCodeTable, ReadDependency,
-    ReadEngineField, RestrictedExpansionMode, semantic_token,
+    ReadEngineField, ReadFontField, RestrictedExpansionMode, semantic_token,
 };
 
 const INT_MAX: i64 = i32::MAX as i64;
@@ -261,7 +261,7 @@ where
         let Some(token) = next_x(input, stores, expansion, mode)? else {
             return Ok((negative, None));
         };
-        if is_space(token) {
+        if is_space(stores, token) {
             continue;
         }
         if is_char(token, '+') {
@@ -359,7 +359,7 @@ where
         };
         let delivery = input.take_direct_source_delivery(token);
         let Some(digit) = token_digit_for_radix(token, radix) else {
-            if !is_space(token) {
+            if !is_space(stores, token) {
                 unread_token(input, stores, token);
             }
             break;
@@ -438,7 +438,7 @@ where
     let Some(token) = mode.next_expanded_token(input, stores, expansion)? else {
         return Ok(());
     };
-    if !is_space(token) {
+    if !is_space(stores, token) {
         unread_token(input, stores, token);
     }
     Ok(())
@@ -599,7 +599,7 @@ where
 {
     loop {
         let token = next_x(input, stores, expansion, mode)?;
-        if token.is_none_or(|token| !is_space(token)) {
+        if token.is_none_or(|token| !is_space(stores, token)) {
             return Ok(token);
         }
     }
@@ -891,6 +891,29 @@ where
             );
             Ok(ScannedInt::new(stores.interaction_mode_value(), token))
         }
+        primitive @ (tex_state::meaning::UnexpandablePrimitive::HyphenChar
+        | tex_state::meaning::UnexpandablePrimitive::SkewChar) => {
+            let font = crate::values::scan_font_selector(input, stores, expansion, mode, token)?;
+            let (field, value) =
+                if primitive == tex_state::meaning::UnexpandablePrimitive::HyphenChar {
+                    (ReadFontField::HyphenChar, stores.font_hyphen_char(font))
+                } else {
+                    (ReadFontField::SkewChar, stores.font_skew_char(font))
+                };
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Font {
+                    field,
+                    font: font.raw(),
+                    index: 0,
+                }
+            );
+            Ok(ScannedInt::new(value, token))
+        }
+        tex_state::meaning::UnexpandablePrimitive::FontDimen => {
+            let value = crate::values::scan_font_dimen(input, stores, expansion, mode, token)?;
+            Ok(ScannedInt::new(value.raw(), token))
+        }
         tex_state::meaning::UnexpandablePrimitive::Count => {
             let index = scan_register_index(input, stores, expansion, mode, token)?;
             crate::record_dependency!(
@@ -1156,7 +1179,7 @@ where
     let Some(token) = crate::next_unintercepted_raw_token(input, stores)? else {
         return Ok(());
     };
-    if is_space(token) {
+    if is_space(stores, token) {
         return Ok(());
     }
 
@@ -1273,10 +1296,22 @@ fn digit_value(ch: char) -> Option<i64> {
     }
 }
 
-fn is_space(token: TracedTokenWord) -> bool {
-    matches!(
+fn is_space(stores: &mut tex_state::ExpansionContext<'_>, token: TracedTokenWord) -> bool {
+    if matches!(
         semantic_token(token),
         Token::Char {
+            cat: Catcode::Space,
+            ..
+        }
+    ) {
+        return true;
+    }
+    let Some(symbol) = crate::expandable_symbol(stores, token) else {
+        return false;
+    };
+    matches!(
+        stores.meaning(symbol),
+        Meaning::CharToken {
             cat: Catcode::Space,
             ..
         }

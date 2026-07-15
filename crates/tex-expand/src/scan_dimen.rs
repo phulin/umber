@@ -945,6 +945,12 @@ where
             consume_optional_space(input, stores, expansion, mode)?;
             return Ok(ScannedDimen::new(expansion.engine.last_skip.width));
         }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::FontDimen) => {
+            let value = crate::values::scan_font_dimen(input, stores, expansion, mode, token)
+                .map_err(ScanDimenError::Expand)?;
+            consume_optional_space(input, stores, expansion, mode)?;
+            return Ok(ScannedDimen::new(value));
+        }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::FontCharWd
             | UnexpandablePrimitive::FontCharHt
@@ -1432,11 +1438,16 @@ fn convert_font_relative_unit(
     fraction: i32,
     unit: Scaled,
 ) -> Result<ScannedDimen, ScanDimenError> {
-    assert!(integer >= 0, "dimension integer part must be nonnegative");
     assert!(
         (0..=Scaled::UNITY).contains(&fraction),
         "dimension fraction out of range"
     );
+    let negative = integer < 0;
+    let magnitude = if negative {
+        integer.checked_neg().unwrap_or(Scaled::MAX_DIMEN.raw() + 1)
+    } else {
+        integer
+    };
 
     let fractional = match xn_over_d(unit, fraction, Scaled::UNITY) {
         Ok(value) => value.quotient,
@@ -1448,11 +1459,12 @@ fn convert_font_relative_unit(
             ));
         }
     };
-    match nx_plus_y(integer, unit, fractional).and_then(|value| {
+    match nx_plus_y(magnitude, unit, fractional).and_then(|value| {
         value
             .check_dimension()
             .map_err(|_| tex_state::scaled::ArithmeticError::Overflow)
     }) {
+        Ok(value) if negative => Ok(ScannedDimen::new(-value)),
         Ok(value) => Ok(ScannedDimen::new(value)),
         Err(_) => Ok(ScannedDimen::with_diagnostic(
             Scaled::MAX_DIMEN,

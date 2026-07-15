@@ -38,6 +38,7 @@ in TeX82 compatibility mode and plain e-TeX mode.
 | --- | --- | --- |
 | `\expanded` | done | Expands balanced text in the pdfTeX-manual message style: parameter characters are ordinary, protected macros remain unexpanded during the primitive's expansion, and the resulting tokens return to the surrounding expansion context. |
 | `\filesize` | done | Expands to the decimal byte size of a resolved input file, or no tokens when the file is absent, through the same deterministic `World`-mediated lookup policy as `\input`. |
+| `\strcmp` | done | Fully expands two balanced texts, converts their tokens with TeX string-printing rules, and returns `-1`, `0`, or `1` from bytewise lexical comparison. |
 
 This inventory will grow only when the pinned LaTeX kernel or representative
 base corpus demonstrates a semantic dependency. pdfTeX-prefixed aliases such
@@ -57,9 +58,9 @@ The TeX82 TRIP, Plain TeX, and e-TeX/e-TRIP gates remain mandatory. LaTeX-only
 meanings must not leak into either earlier mode.
 
 During implementation, `scripts/discover-latex-kernel.sh` verifies the pinned
-kernel hashes, runs the bootstrap with a fixed clock and search roots, and
-reports the first recovered TeX diagnostic even when normal TeX recovery makes
-the process exit successfully.
+kernel and Unicode-data hashes, runs the bootstrap with a fixed clock and
+explicit source/font search roots, and reports the first recovered TeX
+diagnostic even when normal TeX recovery makes the process exit successfully.
 
 ## Explicit non-goals
 

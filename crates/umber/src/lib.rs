@@ -411,6 +411,8 @@ mod primitive_mode_tests {
         prepare_etex_run_stores(&mut etex);
         let expanded = etex.intern("expanded");
         assert_eq!(etex.meaning(expanded), Meaning::Undefined);
+        let strcmp = etex.intern("strcmp");
+        assert_eq!(etex.meaning(strcmp), Meaning::Undefined);
 
         let mut latex = Universe::default();
         prepare_latex_run_stores(&mut latex);
@@ -418,6 +420,11 @@ mod primitive_mode_tests {
         assert_eq!(
             latex.meaning(expanded),
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Expanded)
+        );
+        let strcmp = latex.intern("strcmp");
+        assert_eq!(
+            latex.meaning(strcmp),
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::StringCompare)
         );
         assert_eq!(latex.catcode('{'), Catcode::Other);
         assert_eq!(latex.catcode('#'), Catcode::Other);

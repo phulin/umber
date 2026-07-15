@@ -123,24 +123,32 @@ pub(crate) fn scan_input_name(
 
     if is_begin_group(crate::semantic_token(first)) {
         let mut name = String::new();
+        let mut quoted = false;
         loop {
             let Some(token) = get_x_token_without_input_open(input, stores, expansion)? else {
                 return Err(ExpandError::MissingInputName { context });
             };
             let semantic = crate::semantic_token(token);
-            if is_end_group(semantic) {
+            if is_end_group(semantic) && !quoted {
                 return if name.is_empty() {
                     Err(ExpandError::MissingInputName { context })
                 } else {
                     Ok(name)
                 };
             }
+            if matches!(semantic, Token::Char { ch: '"', .. }) {
+                quoted = !quoted;
+                continue;
+            }
             append_input_name_token(&mut name, token)?;
         }
     }
 
     let mut name = String::new();
-    append_input_name_token(&mut name, first)?;
+    let mut quoted = matches!(crate::semantic_token(first), Token::Char { ch: '"', .. });
+    if !quoted {
+        append_input_name_token(&mut name, first)?;
+    }
     loop {
         let token = match get_x_token_without_input_open(input, stores, expansion) {
             Ok(Some(token)) => token,
@@ -149,13 +157,22 @@ pub(crate) fn scan_input_name(
             Err(error) => return Err(error),
         };
         let semantic = crate::semantic_token(token);
+        if matches!(semantic, Token::Char { ch: '"', .. }) {
+            quoted = !quoted;
+            continue;
+        }
         if matches!(
             semantic,
             Token::Char {
                 cat: Catcode::Space,
                 ..
             }
-        ) {
+        ) && !quoted
+        {
+            break;
+        }
+        if matches!(semantic, Token::Cs(_) | Token::Param(_) | Token::Frozen(_)) {
+            crate::back_input(input, stores, [token]);
             break;
         }
         append_input_name_token(&mut name, token)?;

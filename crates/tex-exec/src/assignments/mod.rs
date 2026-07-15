@@ -1062,12 +1062,12 @@ fn execute_prefixed_command(
             }
             UnexpandablePrimitive::Uppercase => {
                 reject_all_prefixes(prefixes)?;
-                diagnostics::execute_change_case(input, stores, true)?;
+                diagnostics::execute_change_case(input, stores, execution, true)?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::Lowercase => {
                 reject_all_prefixes(prefixes)?;
-                diagnostics::execute_change_case(input, stores, false)?;
+                diagnostics::execute_change_case(input, stores, execution, false)?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::IgnoreSpaces => {

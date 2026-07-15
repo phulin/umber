@@ -82,11 +82,14 @@ pub(super) fn scan_font_variable_target(
     match primitive {
         UnexpandablePrimitive::FontDimen => {
             let number = scan_i32(input, stores, execution, context)?;
-            if !(1..=i32::from(u16::MAX)).contains(&number) {
+            if !(1..=i32::try_from(tex_state::font::MAX_FONT_DIMEN)
+                .expect("maximum fontdimen fits i32"))
+                .contains(&number)
+            {
                 return Err(ExecError::RegisterNumberOutOfRange(number));
             }
             let font = scan_font_selector(input, stores, execution)?;
-            Ok(Variable::FontDimen(font, number as u16))
+            Ok(Variable::FontDimen(font, number as u32))
         }
         UnexpandablePrimitive::HyphenChar => {
             let font = scan_font_selector(input, stores, execution)?;

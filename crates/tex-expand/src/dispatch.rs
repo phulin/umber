@@ -236,6 +236,11 @@ macro_rules! dispatch_match {
                 })
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::FileSize) => $filesize_arm,
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::StringCompare) => {
+                execute_string_compare_primitive(
+                    input, stores, expansion, mode, call_context,
+                )
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Unexpanded) => {
                 let raw = crate::scan::scan_general_text_with_expanded_open(
                     input, stores, expansion, mode, call_context,
@@ -249,10 +254,16 @@ macro_rules! dispatch_match {
                         },
                     },
                 )?;
+                let origin_list = crate::expansion_suppressed_origin_list(
+                    stores,
+                    raw.token_list(),
+                    raw.origin_list(),
+                    OriginId::UNKNOWN,
+                );
                 Ok(Dispatch::Push {
                     replay_kind: ExpansionReplayKind::Unexpanded,
                     token_list: raw.token_list(),
-                    origin_list: raw.origin_list(),
+                    origin_list,
                     macro_arguments: MacroArguments::new(),
                     macro_invocation: OriginId::UNKNOWN,
                 })
@@ -477,30 +488,16 @@ macro_rules! dispatch_match {
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfX) => {
                 let frame_token = begin_if_evaluation(input, call_context, ConditionMetadata::new(13, $invert));
-                let Some(left) = crate::next_semantic_raw_token(input, stores)? else {
-                    return Err(ExpandError::MissingTokenAfterPrimitive {
-                        opcode: ExpandableOpcode::If,
-                        context: call_context,
-                    });
-                };
-                let Some(right) = crate::next_semantic_raw_token(input, stores)? else {
-                    return Err(ExpandError::MissingTokenAfterPrimitive {
-                        opcode: ExpandableOpcode::If,
-                        context: call_context,
-                    });
-                };
-                let left = crate::semantic_token(left);
-                let right = crate::semantic_token(right);
-                for operand in [left, right] {
-                    if let Token::Cs(symbol) = operand {
-                        let meaning = stores.meaning(symbol);
-                        expansion.record_meaning(symbol, meaning);
-                    }
-                }
+                let left = scan_ifx_operand(
+                    input, stores, expansion, mode, call_context,
+                )?;
+                let right = scan_ifx_operand(
+                    input, stores, expansion, mode, call_context,
+                )?;
                 complete_if_evaluation(
                     input,
                     stores, expansion,
-                    ifx_equal(stores, left, right) ^ $invert,
+                    ifx_operands_equal(stores, left, right) ^ $invert,
                     frame_token,
                 )
             }
@@ -779,7 +776,7 @@ macro_rules! dispatch_match {
                 crate::record_dependency!(expansion, crate::ReadDependency::Font {
                     field: crate::ReadFontField::Metrics,
                     font: font.raw(),
-                    index: u16::try_from(code).unwrap_or(u16::MAX),
+                    index: u32::try_from(code).unwrap_or(u32::MAX),
                 });
                 let exists = u8::try_from(code)
                     .ok()
@@ -917,6 +914,35 @@ fn execute_filesize_primitive(
     }
 }
 
+fn execute_string_compare_primitive(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
+    context: TracedTokenWord,
+) -> Result<Dispatch, ExpandError> {
+    let mut strings = [String::new(), String::new()];
+    for string in &mut strings {
+        let text = crate::scan::scan_general_text_expanded_with_expanded_open(
+            input, stores, expansion, mode, context,
+        )?;
+        for &token in stores.tokens(text.token_list()) {
+            crate::append_token_string_text(stores, token, string);
+        }
+    }
+    let result = match strings[0].as_bytes().cmp(strings[1].as_bytes()) {
+        std::cmp::Ordering::Less => "-1",
+        std::cmp::Ordering::Equal => "0",
+        std::cmp::Ordering::Greater => "1",
+    };
+    Ok(push_rendered_text(
+        stores,
+        ExpansionReplayKind::NumberOutput,
+        result,
+        context.origin(),
+    ))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn dispatch_core(
     token: Token,
@@ -954,15 +980,7 @@ where
         },
         {
             let context = TracedTokenWord::pack(token, call_origin);
-            if input_open.is_some() {
-                execute_filesize_primitive(input, stores, expansion, context)
-            } else {
-                Err(ExpandError::InputOpen {
-                    name: "\\filesize".to_owned(),
-                    message: "\\filesize requires input-open authority".to_owned(),
-                    context,
-                })
-            }
+            execute_filesize_primitive(input, stores, expansion, context)
         }
     )
 }
@@ -1091,6 +1109,7 @@ pub fn dispatch_expandable_opcode(opcode: ExpandableOpcode) -> Result<(), Expand
         | ExpandableOpcode::The
         | ExpandableOpcode::Expanded
         | ExpandableOpcode::FileSize
+        | ExpandableOpcode::StringCompare
         | ExpandableOpcode::Unexpanded
         | ExpandableOpcode::Detokenize
         | ExpandableOpcode::Unless

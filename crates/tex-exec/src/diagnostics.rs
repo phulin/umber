@@ -493,11 +493,13 @@ since the offensive shrinkability has been made finite.\n"
 pub(crate) fn execute_change_case(
     input: &mut InputStack,
     stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
     uppercase: bool,
 ) -> Result<(), ExecError> {
     let mut tokens = scan_balanced_raw_text(
         input,
         stores,
+        execution,
         if uppercase {
             "\\uppercase"
         } else {
@@ -550,9 +552,11 @@ fn show_meaning_text(stores: &Universe, token: Token) -> String {
 fn scan_balanced_raw_text(
     input: &mut InputStack,
     stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
     context: &'static str,
 ) -> Result<Vec<Token>, ExecError> {
-    let open = next_non_space_raw(input, stores)?.ok_or(ExecError::MissingToken { context })?;
+    let open =
+        next_non_space_x(input, stores, execution)?.ok_or(ExecError::MissingToken { context })?;
     if !is_begin_group(open) {
         return Err(ExecError::MissingToken { context });
     }
@@ -609,18 +613,6 @@ fn scan_balanced_expanded_text(
         }
     }
     Err(ExecError::MissingToken { context })
-}
-
-fn next_non_space_raw(
-    input: &mut InputStack,
-    stores: &mut Universe,
-) -> Result<Option<Token>, ExecError> {
-    while let Some(token) = input.next_token(stores)? {
-        if !is_space(token) {
-            return Ok(Some(token));
-        }
-    }
-    Ok(None)
 }
 
 fn next_non_space_x(

@@ -2,7 +2,6 @@ use tex_lex::{
     ConditionFrameSummary, ConditionFrameToken, ConditionKind, ConditionLimb, InputStack,
 };
 use tex_state::ExpansionState;
-use tex_state::interner::Symbol;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::provenance::InsertedOriginKind;
 use tex_state::token::{OriginId, Token, TracedTokenWord};
@@ -537,6 +536,7 @@ where
 pub(crate) fn if_char_equal(left: Token, right: Token) -> bool {
     match (left, right) {
         (Token::Char { ch: left, .. }, Token::Char { ch: right, .. }) => left == right,
+        (Token::Cs(_), Token::Cs(_)) => true,
         _ => false,
     }
 }
@@ -550,12 +550,74 @@ pub(crate) fn if_cat_equal(left: Token, right: Token) -> bool {
     }
 }
 
-pub(crate) fn ifx_equal(stores: &impl ExpansionState, left: Token, right: Token) -> bool {
-    match (left, right) {
-        (Token::Char { .. } | Token::Param(_), Token::Char { .. } | Token::Param(_)) => {
-            left == right
+#[derive(Clone, Copy)]
+pub(crate) struct IfxOperand {
+    token: Token,
+    meaning: Option<Meaning>,
+}
+
+pub(crate) fn scan_ifx_operand(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
+    context: TracedTokenWord,
+) -> Result<IfxOperand, ExpandError> {
+    loop {
+        let Some(read) = input.next_traced_expansion_token(stores)? else {
+            return Err(ExpandError::MissingTokenAfterPrimitive {
+                opcode: ExpandableOpcode::If,
+                context,
+            });
+        };
+        expansion.observe_read(read);
+        let token = read.token();
+        let traced = read.traced_token();
+        let Some(symbol) = crate::expandable_symbol(stores, traced) else {
+            return Ok(IfxOperand {
+                token,
+                meaning: None,
+            });
+        };
+        let meaning = expansion.resolve_meaning(input, stores, symbol);
+        expansion.record_meaning(symbol, meaning);
+        if !read.suppress_expansion()
+            && meaning == Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand)
+        {
+            let dispatch = mode.dispatch_raw_token(traced, input, stores, expansion)?;
+            crate::push_dispatch_result(input, stores, dispatch);
+            continue;
         }
-        (Token::Cs(left), Token::Cs(right)) => meaning_words_ifx_equal(stores, left, right),
+        let meaning = if read.suppress_expansion()
+            && matches!(
+                meaning,
+                Meaning::Undefined | Meaning::Macro { .. } | Meaning::ExpandablePrimitive(_)
+            ) {
+            Meaning::Relax
+        } else {
+            meaning
+        };
+        return Ok(IfxOperand {
+            token,
+            meaning: Some(meaning),
+        });
+    }
+}
+
+pub(crate) fn ifx_operands_equal(
+    stores: &impl ExpansionState,
+    left: IfxOperand,
+    right: IfxOperand,
+) -> bool {
+    match (left.token, right.token) {
+        (Token::Char { .. } | Token::Param(_), Token::Char { .. } | Token::Param(_)) => {
+            left.token == right.token
+        }
+        (Token::Cs(_), Token::Cs(_)) => meanings_ifx_equal(
+            stores,
+            left.meaning.expect("control sequence meaning"),
+            right.meaning.expect("control sequence meaning"),
+        ),
         _ => false,
     }
 }
@@ -680,9 +742,7 @@ where
     Ok(value.clamp(0, 15) as u8)
 }
 
-fn meaning_words_ifx_equal(stores: &impl ExpansionState, left: Symbol, right: Symbol) -> bool {
-    let left = stores.meaning(left);
-    let right = stores.meaning(right);
+fn meanings_ifx_equal(stores: &impl ExpansionState, left: Meaning, right: Meaning) -> bool {
     match (left, right) {
         (
             Meaning::Macro {

@@ -153,6 +153,23 @@ fn fontdimen_capacity_boundary_is_injective_and_recovers_without_mutation() {
 }
 
 #[test]
+fn font_backed_integer_array_can_extend_and_read_entries() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\a=cmr10 at 1sp \\fontdimen8\\a=0sp \\hyphenchar\\a=128 \\fontdimen85\\a=85sp \\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("font-backed integer array setup executes");
+    let font = font_meaning(&stores, "a");
+    assert_eq!(stores.font_hyphen_char(font), 128);
+    assert_eq!(stores.font_parameter_count(font), 85);
+    assert_eq!(stores.font_parameter(font, 85), Scaled::from_raw(85));
+}
+
+#[test]
 fn the_fontdimen_reads_the_current_font_selector() {
     let mut stores = stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);

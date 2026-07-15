@@ -24,7 +24,7 @@ pub(super) enum Variable {
     TokParam(u16),
     PageDimension(PageDimension),
     PageInteger(PageInteger),
-    FontDimen(FontId, u16),
+    FontDimen(FontId, u32),
     FontHyphenChar(FontId),
     FontSkewChar(FontId),
 }
@@ -342,7 +342,7 @@ pub(super) fn execute_arithmetic(
 fn set_font_dimen_recovering(
     stores: &mut Universe,
     font: tex_state::ids::FontId,
-    number: u16,
+    number: u32,
     value: Scaled,
     global: bool,
 ) -> Result<(), ExecError> {

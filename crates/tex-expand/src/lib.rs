@@ -6,8 +6,10 @@
 
 #![forbid(unsafe_code)]
 
+use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;
+use std::sync::Arc;
 #[cfg(feature = "profiling-stats")]
 use std::time::Instant;
 
@@ -16,6 +18,7 @@ use tex_lex::{
     TracedExpansionToken,
 };
 use tex_state::glue::GlueSpec;
+use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::provenance::{DiagnosticSite, InsertedOriginKind, SynthesizedOriginKind};
@@ -242,6 +245,10 @@ pub fn install_latex_expandable_primitives(stores: &mut Universe) {
             "filesize",
             tex_state::meaning::ExpandablePrimitive::FileSize,
         ),
+        (
+            "strcmp",
+            tex_state::meaning::ExpandablePrimitive::StringCompare,
+        ),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
@@ -278,7 +285,7 @@ pub enum ReadDependency {
     Font {
         field: ReadFontField,
         font: u32,
-        index: u16,
+        index: u32,
     },
     PageDimension(u8),
     PageInteger(u8),
@@ -421,6 +428,7 @@ pub enum ExpandableOpcode {
     The,
     Expanded,
     FileSize,
+    StringCompare,
     Unexpanded,
     Detokenize,
     Unless,
@@ -791,6 +799,7 @@ pub struct ExpansionContext<'a> {
     pub(crate) recorder: Option<&'a mut dyn ReadRecorder>,
     resolution_index: u64,
     meaning_site_cache: Box<[Option<MeaningSiteCacheEntry>; MEANING_SITE_CACHE_LEN]>,
+    parameter_pattern_cache: HashMap<TokenListId, Arc<args::ParameterPattern>>,
     last_macro_replay_site: Option<MacroReplaySite>,
 }
 
@@ -804,6 +813,7 @@ impl<'a> ExpansionContext<'a> {
             recorder: None,
             resolution_index: 0,
             meaning_site_cache: Box::new([None; MEANING_SITE_CACHE_LEN]),
+            parameter_pattern_cache: HashMap::new(),
             last_macro_replay_site: None,
         }
     }
@@ -820,6 +830,7 @@ impl<'a> ExpansionContext<'a> {
             recorder: None,
             resolution_index: 0,
             meaning_site_cache: Box::new([None; MEANING_SITE_CACHE_LEN]),
+            parameter_pattern_cache: HashMap::new(),
             last_macro_replay_site: None,
         }
     }
@@ -899,23 +910,27 @@ impl<'a> ExpansionContext<'a> {
     }
 
     /// Creates a context for a nested in-memory expansion while preserving
-    /// session facts and reborrowing the active recorder.
+    /// session facts and reborrowing read-only host resolution and recording.
     ///
-    /// Input resolution is intentionally not inherited: callers use this for
-    /// effect-free nested token-list expansion such as deferred `\write`
-    /// material. The recorder is reborrowed so those reads remain observable.
+    /// The restricted expansion driver still rejects `\input`, while
+    /// read-only enquiries such as `\filesize` retain their World-backed
+    /// resolver. Resolution indices remain session-global across the nested
+    /// operation.
     pub fn with_nested<O>(&mut self, operation: impl FnOnce(&mut ExpansionContext<'a>) -> O) -> O {
         let mut nested = ExpansionContext {
             engine: self.engine,
             job_name: self.job_name,
-            input_resolver: None,
+            input_resolver: self.input_resolver.take(),
             recorder: self.recorder.take(),
-            resolution_index: 0,
+            resolution_index: self.resolution_index,
             meaning_site_cache: Box::new([None; MEANING_SITE_CACHE_LEN]),
+            parameter_pattern_cache: HashMap::new(),
             last_macro_replay_site: None,
         };
         let output = operation(&mut nested);
+        self.input_resolver = nested.input_resolver.take();
         self.recorder = nested.recorder.take();
+        self.resolution_index = nested.resolution_index;
         output
     }
 
@@ -1501,13 +1516,6 @@ pub fn back_input<I>(
     };
     input.back_input_alignment_token(first);
     let Some(second) = traced.next() else {
-        if let Some((list, _, index)) = input.current_token_list_frame()
-            && index > 0
-            && stores.tokens(list).get(index - 1).copied() == Some(semantic_token(first))
-            && input.rewind_current_token_list_frame()
-        {
-            return;
-        }
         if input.push_current_source_pending(first) {
             return;
         }
@@ -1815,6 +1823,25 @@ pub(crate) fn inserted_origin_list(
     let mut origins = stores.origin_list_builder();
     for &token in tokens {
         origins.push(stores.inserted_origin(kind, semantic_token(token), token.origin()));
+    }
+    stores.finish_origin_list(&mut origins)
+}
+
+pub(crate) fn expansion_suppressed_origin_list(
+    stores: &mut tex_state::ExpansionContext<'_>,
+    token_list: TokenListId,
+    source_origins: OriginListId,
+    fallback_parent: OriginId,
+) -> OriginListId {
+    let tokens = stores.tokens(token_list).to_vec();
+    let parents = if source_origins == OriginListId::EMPTY {
+        vec![fallback_parent; tokens.len()]
+    } else {
+        stores.origin_list(source_origins).to_vec()
+    };
+    let mut origins = stores.origin_list_builder();
+    for (&token, parent) in tokens.iter().zip(parents) {
+        origins.push(stores.inserted_origin(InsertedOriginKind::Unexpanded, token, parent));
     }
     stores.finish_origin_list(&mut origins)
 }

@@ -2,7 +2,7 @@ use super::{ScanToksError, scan_toks, scan_toks_expanded, scan_toks_expanded_wit
 use tex_lex::{InputStack, MemoryInput};
 use tex_state::Universe;
 use tex_state::macro_store::MacroMeaning;
-use tex_state::meaning::MeaningFlags;
+use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::provenance::OriginRecord;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
@@ -285,6 +285,171 @@ fn expanded_definition_interprets_doubled_parameter_from_macro_argument_replay()
     assert_eq!(
         stores.tokens(scanned.replacement_text()),
         &[char_token('#', Catcode::Parameter)]
+    );
+}
+
+#[test]
+fn expanded_definition_copies_unexpanded_parameter_character_verbatim() {
+    let mut stores = Universe::new();
+    crate::install_etex_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("{\\unexpanded{#1}}"));
+    let context =
+        TracedTokenWord::pack(Token::Cs(stores.intern("xdef").symbol()), OriginId::UNKNOWN);
+
+    let scanned = scan_toks_expanded_with_driver(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        MeaningFlags::EMPTY,
+        context,
+        &mut ExpansionContext::new("texput"),
+    )
+    .expect("unexpanded parameter character is copied literally");
+
+    assert_eq!(
+        stores.tokens(scanned.replacement_text()),
+        &[
+            char_token('#', Catcode::Parameter),
+            char_token('1', Catcode::Other),
+        ]
+    );
+}
+
+#[test]
+fn expanded_definition_does_not_expand_the_token_register_contents() {
+    let mut stores = Universe::new();
+    let the = stores.intern("the");
+    let toks = stores.intern("toks");
+    stores.set_meaning(the, Meaning::ExpandablePrimitive(ExpandablePrimitive::The));
+    stores.set_meaning(
+        toks,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks),
+    );
+    let macro_cs = stores.intern("macro");
+    let empty = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[char_token('x', Catcode::Letter)]);
+    stores.set_macro_meaning(
+        macro_cs,
+        MacroMeaning::new(MeaningFlags::EMPTY, empty, body),
+    );
+    let contents = stores.intern_token_list(&[Token::Cs(macro_cs.symbol())]);
+    stores.set_toks(4, contents);
+    let mut input = InputStack::new(MemoryInput::new("{\\the\\toks4}"));
+    let context =
+        TracedTokenWord::pack(Token::Cs(stores.intern("xdef").symbol()), OriginId::UNKNOWN);
+
+    let scanned = scan_toks_expanded_with_driver(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        MeaningFlags::EMPTY,
+        context,
+        &mut ExpansionContext::new("texput"),
+    )
+    .expect("the token-register contents should be copied without expansion");
+
+    assert_eq!(
+        stores.tokens(scanned.replacement_text()),
+        &[Token::Cs(macro_cs.symbol())]
+    );
+}
+
+#[test]
+fn expanded_definition_reexpands_nested_unexpanded_output() {
+    let mut stores = Universe::new();
+    crate::install_etex_expandable_primitives(&mut stores);
+    crate::install_latex_expandable_primitives(&mut stores);
+    let macro_cs = stores.intern("macro");
+    let empty = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[char_token('x', Catcode::Letter)]);
+    stores.set_macro_meaning(
+        macro_cs,
+        MacroMeaning::new(MeaningFlags::EMPTY, empty, body),
+    );
+    let mut input = InputStack::new(MemoryInput::new("{\\expanded{\\unexpanded{\\macro}}}"));
+    let context =
+        TracedTokenWord::pack(Token::Cs(stores.intern("xdef").symbol()), OriginId::UNKNOWN);
+
+    let scanned = scan_toks_expanded_with_driver(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        MeaningFlags::EMPTY,
+        context,
+        &mut ExpansionContext::new("texput"),
+    )
+    .expect("nested unexpanded output should re-enter the enclosing expansion");
+
+    assert_eq!(
+        stores.tokens(scanned.replacement_text()),
+        &[char_token('x', Catcode::Letter)]
+    );
+}
+
+#[test]
+fn unexpanded_provenance_does_not_suppress_later_macro_replay() {
+    let mut stores = Universe::new();
+    crate::install_etex_expandable_primitives(&mut stores);
+    let macro_cs = stores.intern("macro");
+    let empty = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[char_token('x', Catcode::Letter)]);
+    stores.set_macro_meaning(
+        macro_cs,
+        MacroMeaning::new(MeaningFlags::EMPTY, empty, body),
+    );
+    let context =
+        TracedTokenWord::pack(Token::Cs(stores.intern("xdef").symbol()), OriginId::UNKNOWN);
+    let mut first_input = InputStack::new(MemoryInput::new("{\\unexpanded{\\macro}}"));
+    let first = scan_toks_expanded_with_driver(
+        &mut first_input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        MeaningFlags::EMPTY,
+        context,
+        &mut ExpansionContext::new("texput"),
+    )
+    .expect("first expanded definition");
+    let holder = stores.intern("holder");
+    stores.set_macro_meaning_with_provenance(holder, first.meaning(), first.provenance());
+
+    let mut second_input = InputStack::new(MemoryInput::new("{\\holder}"));
+    let second = scan_toks_expanded_with_driver(
+        &mut second_input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        MeaningFlags::EMPTY,
+        context,
+        &mut ExpansionContext::new("texput"),
+    )
+    .expect("later replay expands normally");
+
+    assert_eq!(
+        stores.tokens(second.replacement_text()),
+        &[char_token('x', Catcode::Letter)]
+    );
+}
+
+#[test]
+fn expanded_definition_tracks_braces_returned_by_nested_expanded() {
+    let mut stores = Universe::new();
+    crate::install_expandable_primitives(&mut stores);
+    crate::install_etex_expandable_primitives(&mut stores);
+    crate::install_latex_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("{\\expanded{{\\iffalse}}}\\fi X}}}"));
+    let context =
+        TracedTokenWord::pack(Token::Cs(stores.intern("xdef").symbol()), OriginId::UNKNOWN);
+
+    let scanned = scan_toks_expanded_with_driver(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        MeaningFlags::EMPTY,
+        context,
+        &mut ExpansionContext::new("texput"),
+    )
+    .expect("nested expanded braces should extend the outer definition scan");
+
+    assert_eq!(
+        stores.tokens(scanned.replacement_text()),
+        &[
+            char_token('{', Catcode::BeginGroup),
+            char_token('X', Catcode::Letter),
+            char_token('}', Catcode::EndGroup),
+        ]
     );
 }
 

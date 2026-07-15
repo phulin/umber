@@ -6,6 +6,7 @@
 
 use std::collections::VecDeque;
 use std::fmt;
+use std::sync::Arc;
 
 use tex_lex::{InputStack, LexError, MACRO_ARGUMENT_SLOTS, MacroArguments};
 use tex_state::ExpansionState;
@@ -143,7 +144,7 @@ struct ParameterSpec {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct ParameterPattern {
+pub(crate) struct ParameterPattern {
     leading: Vec<Token>,
     specs: Vec<ParameterSpec>,
 }
@@ -173,7 +174,17 @@ pub(crate) fn match_macro_call_with_context(
     meaning: MacroMeaning,
 ) -> Result<MatchedArguments, MacroCallError> {
     let macro_name = macro_name(stores, traced_semantic_token(call_token));
-    let pattern = parse_parameter_text(stores.tokens(meaning.parameter_text()));
+    let parameter_text = meaning.parameter_text();
+    let pattern = match expansion.parameter_pattern_cache.get(&parameter_text) {
+        Some(pattern) => Arc::clone(pattern),
+        None => {
+            let pattern = Arc::new(parse_parameter_text(stores.tokens(parameter_text)));
+            expansion
+                .parameter_pattern_cache
+                .insert(parameter_text, Arc::clone(&pattern));
+            pattern
+        }
+    };
     match_exact_tokens(
         input,
         stores,

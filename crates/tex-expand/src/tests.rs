@@ -625,7 +625,7 @@ fn get_x_or_protected_stops_before_protected_macro_expansion() {
 }
 
 #[test]
-fn unexpanded_delivers_general_text_without_expanding_macros() {
+fn unexpanded_suppresses_macros_for_the_current_expansion_call() {
     let mut stores = Universe::new();
     install_expandable_primitives(&mut stores);
     crate::install_etex_expandable_primitives(&mut stores);
@@ -649,6 +649,64 @@ fn unexpanded_delivers_general_text_without_expanding_macros() {
 }
 
 #[test]
+fn expanded_replays_nested_unexpanded_tokens_to_its_caller() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    crate::install_etex_expandable_primitives(&mut stores);
+    crate::install_latex_expandable_primitives(&mut stores);
+    let macro_cs = stores.intern("macro");
+    let empty = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[char_token('x')]);
+    stores.set_macro_meaning(
+        macro_cs,
+        MacroMeaning::new(MeaningFlags::EMPTY, empty, body),
+    );
+    let mut input = InputStack::new(MemoryInput::new("\\expanded{\\unexpanded{\\macro}}"));
+
+    assert_eq!(
+        get_x_token(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .expect("expanded expansion"),
+        Some(char_token('x'))
+    );
+}
+
+#[test]
+fn back_input_clears_one_shot_noexpand_suppression() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    let roman = stores.intern("romannumeral");
+    let suppressed = stores.intern_token_list(&[Token::Cs(roman.symbol())]);
+    let mut input = InputStack::new(MemoryInput::new("0x"));
+    input.push_token_list(suppressed, TokenListReplayKind::NoExpand);
+
+    let first = crate::get_x_token(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    )
+    .expect("suppressed delivery")
+    .expect("suppressed token");
+    assert_eq!(crate::semantic_token(first), Token::Cs(roman.symbol()));
+    crate::back_input(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        [first],
+    );
+
+    assert_eq!(
+        crate::get_x_token(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .expect("replayed expansion")
+        .map(crate::semantic_token),
+        Some(char_token('x'))
+    );
+}
+
+#[test]
 fn expanded_is_installed_only_in_the_latex_extension_layer() {
     let mut stores = Universe::new();
     install_expandable_primitives(&mut stores);
@@ -665,6 +723,33 @@ fn expanded_is_installed_only_in_the_latex_extension_layer() {
     assert_eq!(
         stores.meaning(filesize),
         Meaning::ExpandablePrimitive(ExpandablePrimitive::FileSize)
+    );
+    let strcmp = stores.intern("strcmp");
+    assert_eq!(
+        stores.meaning(strcmp),
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::StringCompare)
+    );
+}
+
+#[test]
+fn strcmp_expands_and_compares_two_general_text_strings() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    crate::install_latex_expandable_primitives(&mut stores);
+    let value = stores.intern("value");
+    let empty = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[char_token('a')]);
+    stores.set_macro_meaning(value, MacroMeaning::new(MeaningFlags::EMPTY, empty, body));
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\strcmp{\\value}{aa},\\strcmp{same}{same},\\strcmp{z}{a}",
+    ));
+
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "-1,0,1 "
     );
 }
 
@@ -697,6 +782,38 @@ fn filesize_expands_the_filename_and_returns_its_byte_count() {
         ),
         "6 "
     );
+    assert_eq!(context.resolver.sized, vec!["asset"]);
+}
+
+#[test]
+fn nested_restricted_expansion_retains_filesize_resolution() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    crate::install_latex_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\filesize{asset}"));
+    let mut context = MemoryResolverFixture::new("main").with_source("asset", "hello\n");
+
+    let output = {
+        let mut expansion = context.expansion_context();
+        expansion.with_nested(|nested| {
+            let mut output = String::new();
+            while let Some(token) = crate::get_x_token_without_input_open(
+                &mut input,
+                &mut tex_state::ExpansionContext::new(&mut stores),
+                nested,
+            )
+            .expect("read-only file enquiry is valid in restricted expansion")
+            {
+                let Token::Char { ch, .. } = crate::semantic_token(token) else {
+                    panic!("expected rendered filesize character")
+                };
+                output.push(ch);
+            }
+            output
+        })
+    };
+
+    assert_eq!(output, "6 ");
     assert_eq!(context.resolver.sized, vec!["asset"]);
 }
 
@@ -740,6 +857,25 @@ fn expanded_performs_message_style_balanced_text_expansion() {
             &mut tex_state::ExpansionContext::new(&mut stores)
         ),
         "a X{b}#"
+    );
+}
+
+#[test]
+fn expanded_balances_braces_after_conditional_expansion() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    crate::install_etex_expandable_primitives(&mut stores);
+    crate::install_latex_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"\expanded{{{A\iffalse}}}\fi B\iffalse{{{\fi}}}%",
+    ));
+
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "{{AB}}"
     );
 }
 
@@ -2294,6 +2430,37 @@ fn number_and_romannumeral_scan_expanded_integer_edge_cases() {
 }
 
 #[test]
+fn number_renders_a_nested_numexpr_and_consumes_its_relax() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    let numexpr = stores.intern("numexpr");
+    stores.set_meaning(
+        numexpr,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NumExpr),
+    );
+    let relax = stores.intern("relax");
+    stores.set_meaning(relax, Meaning::Relax);
+    let mut input = InputStack::new(MemoryInput::new("\\number\\numexpr0+85\\relax%"));
+
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "85"
+    );
+
+    let mut input = InputStack::new(MemoryInput::new("\\the\\numexpr0+85\\relax%"));
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "85"
+    );
+}
+
+#[test]
 fn the_renders_assignable_registers_parameters_and_code_tables() {
     let mut stores = Universe::new();
     expandable_primitive(&mut stores, "the", ExpandablePrimitive::The);
@@ -2498,6 +2665,33 @@ fn meaning_uses_tex_printable_forms_for_nonprinting_macro_tokens() {
 }
 
 #[test]
+fn meaning_uses_the_canonical_name_for_a_radical_alias() {
+    let mut stores = Universe::new();
+    let alias = stores.intern("sqrtsign");
+    stores.set_meaning(
+        alias,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Radical),
+    );
+
+    assert_eq!(
+        crate::meaning_text(&stores, Token::Cs(alias.symbol())),
+        "\\radical"
+    );
+}
+
+#[test]
+fn meaning_reports_a_font_selection_by_font_identity() {
+    let mut stores = Universe::new();
+    let alias = stores.intern("array_alias");
+    stores.set_meaning(alias, Meaning::Font(tex_state::font::NULL_FONT));
+
+    assert_eq!(
+        crate::meaning_text(&stores, Token::Cs(alias.symbol())),
+        "select font nullfont"
+    );
+}
+
+#[test]
 fn the_renders_supported_registers_and_token_registers() {
     let mut stores = Universe::new();
     let the = expandable_primitive(&mut stores, "the", ExpandablePrimitive::The);
@@ -2646,6 +2840,46 @@ fn input_pushes_driver_source_and_returns_to_calling_source() {
         ),
         "ab z "
     );
+    assert_eq!(context.resolver.opened, vec!["inc"]);
+}
+
+#[test]
+fn input_strips_filename_quotes_and_accepts_spaces_inside_them() {
+    let mut stores = Universe::new();
+    stores.set_int_param(tex_state::env::banks::IntParam::END_LINE_CHAR, 13);
+    expandable_primitive(&mut stores, "input", ExpandablePrimitive::Input);
+    let mut input = InputStack::new(MemoryInput::new("\\input \"inc file\" z"));
+    let mut context = MemoryResolverFixture::new("main").with_source("inc file", "ab");
+
+    assert_eq!(
+        next_expanded_chars_with_context(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores),
+            &mut context
+        ),
+        "ab z "
+    );
+    assert_eq!(context.resolver.opened, vec!["inc file"]);
+}
+
+#[test]
+fn input_filename_stops_before_an_unexpandable_control_sequence() {
+    let mut stores = Universe::new();
+    stores.set_int_param(tex_state::env::banks::IntParam::END_LINE_CHAR, -1);
+    expandable_primitive(&mut stores, "input", ExpandablePrimitive::Input);
+    let relax = stores.intern("relax");
+    stores.set_meaning(relax, Meaning::Relax);
+    let mut input = InputStack::new(MemoryInput::new("\\input inc\\relax"));
+    let mut context = MemoryResolverFixture::new("main").with_source("inc", "");
+
+    let token = get_x_token_with_context(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut context,
+    )
+    .expect("input expansion succeeds")
+    .expect("filename terminator is replayed");
+    assert_eq!(token, Token::Cs(relax.symbol()));
     assert_eq!(context.resolver.opened, vec!["inc"]);
 }
 
@@ -3238,6 +3472,36 @@ fn if_expands_to_two_unexpandable_character_tokens_before_comparing_charcodes() 
 }
 
 #[test]
+fn if_compares_two_unexpandable_control_sequences_as_character_code_256() {
+    let mut stores = Universe::new();
+    let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
+    let if_cs = expandable_primitive(&mut stores, "if", ExpandablePrimitive::If);
+    let left = stores.intern("left-relax");
+    let right = stores.intern("right-relax");
+    stores.set_meaning(left, Meaning::Relax);
+    stores.set_meaning(right, Meaning::Relax);
+    let list = stores.intern_token_list(&[
+        Token::Cs(if_cs.symbol()),
+        Token::Cs(left.symbol()),
+        Token::Cs(right.symbol()),
+        char_token('y'),
+        Token::Cs(else_cs.symbol()),
+        char_token('n'),
+        Token::Cs(fi.symbol()),
+    ]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list(list, TokenListReplayKind::Inserted);
+
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "y"
+    );
+}
+
+#[test]
 fn ifcat_compares_category_codes_after_expansion() {
     let mut stores = Universe::new();
     let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
@@ -3380,6 +3644,69 @@ fn ifx_uses_meaning_word_equality_for_non_macros_without_expansion() {
             &mut tex_state::ExpansionContext::new(&mut stores)
         ),
         "yy"
+    );
+}
+
+#[test]
+fn ifx_treats_a_noexpanded_expandable_operand_as_relax() {
+    let mut stores = Universe::new();
+    crate::install_expandable_primitives(&mut stores);
+    crate::install_etex_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\ifx\\noexpand\\empty\\empty n\\else y\\fi%",
+    ));
+    let empty = stores.intern("empty");
+    let token_list = stores.intern_token_list(&[]);
+    stores.set_macro_meaning(
+        empty,
+        MacroMeaning::new(MeaningFlags::EMPTY, token_list, token_list),
+    );
+
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "y"
+    );
+}
+
+#[test]
+fn ifnum_consumes_a_char_token_space_after_expanded_digits() {
+    let mut stores = Universe::new();
+    let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
+    let ifnum = expandable_primitive(&mut stores, "ifnum", ExpandablePrimitive::IfNum);
+    let string = expandable_primitive(&mut stores, "string", ExpandablePrimitive::String);
+    let stop = stores.intern("stop");
+    stores.set_meaning(
+        stop,
+        Meaning::CharToken {
+            ch: ' ',
+            cat: Catcode::Space,
+        },
+    );
+    let list = stores.intern_token_list(&[
+        Token::Cs(ifnum.symbol()),
+        char_token('9'),
+        char_token('<'),
+        char_token('1'),
+        Token::Cs(string.symbol()),
+        char_token('1'),
+        Token::Cs(stop.symbol()),
+        char_token('t'),
+        Token::Cs(else_cs.symbol()),
+        char_token('f'),
+        Token::Cs(fi.symbol()),
+    ]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list(list, TokenListReplayKind::Inserted);
+
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "t"
     );
 }
 

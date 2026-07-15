@@ -7,7 +7,9 @@
 
 use std::fmt;
 
-use tex_lex::{InputStack, LexError, LiteralSpanPolicy, TokenListReplayKind};
+use tex_lex::{
+    InputStack, LexError, LiteralSpanPolicy, TokenListReplayKind, TokenListReplayMarker,
+};
 use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
@@ -323,7 +325,36 @@ where
             && let Some(symbol) = crate::expandable_symbol(stores, raw)
         {
             let meaning = expansion.resolve_meaning(input, stores, symbol);
-            if matches!(meaning, Meaning::Macro { flags, .. } if !flags.contains(MeaningFlags::PROTECTED))
+            if meaning == Meaning::ExpandablePrimitive(ExpandablePrimitive::Unexpanded) {
+                expansion.record_meaning(symbol, meaning);
+                let dispatch = crate::dispatch::dispatch_with_context(
+                    traced_semantic_token(raw),
+                    raw.origin(),
+                    input,
+                    stores,
+                    expansion,
+                    meaning,
+                )?;
+                crate::push_dispatch_result(input, stores, dispatch);
+                continue;
+            }
+            if meaning == Meaning::ExpandablePrimitive(ExpandablePrimitive::Expanded) {
+                expansion.record_meaning(symbol, meaning);
+                let dispatch = crate::dispatch::dispatch_with_context(
+                    traced_semantic_token(raw),
+                    raw.origin(),
+                    input,
+                    stores,
+                    expansion,
+                    meaning,
+                )?;
+                crate::push_dispatch_result(input, stores, dispatch);
+                continue;
+            }
+            let needs_suppressed_replay =
+                meaning == Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand);
+            if needs_suppressed_replay
+                || matches!(meaning, Meaning::Macro { flags, .. } if !flags.contains(MeaningFlags::PROTECTED))
             {
                 expansion.record_meaning(symbol, meaning);
                 let dispatched = crate::dispatch::dispatch_with_context(
@@ -375,6 +406,24 @@ where
             return Ok(finish_traced_list(stores, &mut builder, &mut origins));
         }
         let token = traced_semantic_token(traced);
+
+        // e-TeX's `\unexpanded` contributes its token list through TeX's
+        // `the_toks` path. Parameter characters from that list are copied
+        // verbatim; they are not reinterpreted as definition parameters.
+        // `\noexpand` gives a parameter character the same one-token
+        // suppression semantics.
+        if prepared.suppress_expansion()
+            && matches!(
+                token,
+                Token::Char {
+                    cat: Catcode::Parameter,
+                    ..
+                }
+            )
+        {
+            push_scanned_token(&mut builder, &mut origins, traced, token);
+            continue;
+        }
 
         if pending_parameter {
             pending_parameter = false;
@@ -460,14 +509,29 @@ pub(crate) fn scan_general_text_expanded_with_expanded_open(
     mode: &mut dyn ExpansionMode,
     context: TracedTokenWord,
 ) -> Result<TracedTokenList, ScanToksError> {
-    let raw_text = scan_general_text_with_expanded_open(input, stores, expansion, mode, context)?;
-    expand_replacement_text(
+    let open = loop {
+        let token = mode
+            .next_expanded_token(input, stores, expansion)?
+            .ok_or(ScanToksError::EndOfInputInReplacementText { context })?;
+        if !matches!(
+            traced_semantic_token(token),
+            Token::Char {
+                cat: Catcode::Space,
+                ..
+            }
+        ) {
+            break token;
+        }
+    };
+    if !has_begin_group_meaning(stores, traced_semantic_token(open)) {
+        return Err(ScanToksError::MissingGeneralTextBeginGroup { context: open });
+    }
+    collect_expanded_text(
         input,
         stores,
-        raw_text.token_list(),
-        raw_text.origin_list(),
         expansion,
         mode,
+        ExpandedTextBoundary::Balanced { depth: 1, context },
     )
 }
 
@@ -507,99 +571,205 @@ fn expand_replacement_text(
         replacement_origins,
         TokenListReplayKind::Inserted,
     );
+    let result = collect_expanded_text(
+        input,
+        stores,
+        expansion,
+        mode,
+        ExpandedTextBoundary::Replay(replay),
+    );
+    if result.is_err() {
+        input.abort_token_list_replay(replay);
+    }
+    result
+}
+
+#[derive(Clone, Copy)]
+enum ExpandedTextBoundary {
+    Replay(TokenListReplayMarker),
+    Balanced {
+        depth: u32,
+        context: TracedTokenWord,
+    },
+}
+
+fn collect_expanded_text(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
+    mut boundary: ExpandedTextBoundary,
+) -> Result<TracedTokenList, ScanToksError> {
     let mut builder = stores.token_list_builder();
     let mut origins = stores.origin_list_builder();
-    let expansion_result = (|| -> Result<(), ScanToksError> {
-        loop {
-            if input.finish_exhausted_token_list_replay(replay, stores) {
-                break;
-            }
-            if input.append_macro_literal_span(
-                stores,
+    loop {
+        if let ExpandedTextBoundary::Replay(replay) = boundary
+            && input.finish_exhausted_token_list_replay(replay, stores)
+        {
+            break;
+        }
+        if input.append_macro_literal_span(
+            stores,
+            &mut builder,
+            &mut origins,
+            LiteralSpanPolicy::ExpandedReplacement,
+        ) > 0
+        {
+            continue;
+        }
+        let Some(read) = input.next_traced_expansion_token(stores)? else {
+            return match boundary {
+                ExpandedTextBoundary::Replay(_) => {
+                    Ok(finish_traced_list(stores, &mut builder, &mut origins))
+                }
+                ExpandedTextBoundary::Balanced { context, .. } => {
+                    Err(ScanToksError::EndOfInputInReplacementText { context })
+                }
+            };
+        };
+        expansion.observe_read(read);
+        let token = read.token();
+        let traced = read.traced_token();
+        if read.suppress_expansion() {
+            append_collected_token(
+                &mut boundary,
                 &mut builder,
                 &mut origins,
-                LiteralSpanPolicy::ExpandedReplacement,
-            ) > 0
-            {
-                continue;
-            }
-            let Some(read) = input.next_traced_expansion_token(stores)? else {
-                break;
-            };
-            expansion.observe_read(read);
-            let token = read.token();
-            let traced = read.traced_token();
-            if read.suppress_expansion() {
-                builder.push(token);
-                origins.push(read.origin());
-                continue;
-            }
-
-            let Some(symbol) = crate::expandable_symbol(stores, traced) else {
-                builder.push(token);
-                origins.push(read.origin());
-                continue;
-            };
-            let meaning = expansion.resolve_meaning(input, stores, symbol);
-            if matches!(meaning, Meaning::Macro { flags, .. } if flags.contains(MeaningFlags::PROTECTED))
-            {
-                builder.push(token);
-                origins.push(read.origin());
-                continue;
-            }
-            if meaning == Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand) {
-                let Some(suppressed) = crate::next_suppressed_semantic_raw_token(input, stores)?
-                else {
-                    return Err(ExpandError::MissingTokenAfterPrimitive {
-                        opcode: ExpandableOpcode::NoExpand,
-                        context: traced,
-                    }
-                    .into());
-                };
-                builder.push(traced_semantic_token(suppressed));
-                origins.push(stores.inserted_origin(
-                    InsertedOriginKind::NoExpand,
-                    traced_semantic_token(suppressed),
-                    suppressed.origin(),
-                ));
-                continue;
-            }
-
-            if meaning == Meaning::ExpandablePrimitive(ExpandablePrimitive::ExpandAfter) {
-                // In an `\edef`, `\expandafter` performs exactly one expansion
-                // step on its target, then returns control to the protected-aware
-                // replacement scanner. Calling `get_x_token` here would continue
-                // through the saved protected macro and expand it incorrectly.
-                let dispatch = mode.dispatch_raw_token(traced, input, stores, expansion)?;
-                crate::push_dispatch_result(input, stores, dispatch);
-                continue;
-            }
-
-            if matches!(meaning, Meaning::Macro { .. }) {
-                // Keep macro replacement replay in this collection loop. The next
-                // iteration can copy its inert character runs directly; any
-                // parameter, cs/active site, or semantic edge naturally re-enters
-                // the existing interpreter below.
-                let dispatch = mode.dispatch_raw_token(traced, input, stores, expansion)?;
-                crate::push_dispatch_result(input, stores, dispatch);
-                continue;
-            }
-
-            unread_token(input, stores, traced);
-            if let Some(expanded) = mode.next_expanded_token(input, stores, expansion)? {
-                builder.push(crate::semantic_token(expanded));
-                origins.push(expanded.origin());
-            }
+                traced,
+                token,
+                false,
+            );
+            continue;
         }
-        Ok(())
-    })();
-    if let Err(error) = expansion_result {
-        input.abort_token_list_replay(replay);
-        return Err(error);
+
+        let Some(symbol) = crate::expandable_symbol(stores, traced) else {
+            if append_collected_token(
+                &mut boundary,
+                &mut builder,
+                &mut origins,
+                traced,
+                token,
+                true,
+            ) {
+                break;
+            }
+            continue;
+        };
+        let meaning = expansion.resolve_meaning(input, stores, symbol);
+        if matches!(meaning, Meaning::Macro { flags, .. } if flags.contains(MeaningFlags::PROTECTED))
+        {
+            append_collected_token(
+                &mut boundary,
+                &mut builder,
+                &mut origins,
+                traced,
+                token,
+                true,
+            );
+            continue;
+        }
+        if meaning == Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand) {
+            let Some(suppressed_token) = crate::next_suppressed_semantic_raw_token(input, stores)?
+            else {
+                return Err(ExpandError::MissingTokenAfterPrimitive {
+                    opcode: ExpandableOpcode::NoExpand,
+                    context: traced,
+                }
+                .into());
+            };
+            let suppressed = traced_semantic_token(suppressed_token);
+            let origin = stores.inserted_origin(
+                InsertedOriginKind::NoExpand,
+                suppressed,
+                suppressed_token.origin(),
+            );
+            append_collected_token(
+                &mut boundary,
+                &mut builder,
+                &mut origins,
+                TracedTokenWord::pack(suppressed, origin),
+                suppressed,
+                false,
+            );
+            continue;
+        }
+
+        if matches!(
+            meaning,
+            Meaning::ExpandablePrimitive(
+                ExpandablePrimitive::Unexpanded | ExpandablePrimitive::Expanded
+            )
+        ) {
+            let dispatch = mode.dispatch_raw_token(traced, input, stores, expansion)?;
+            crate::push_dispatch_result(input, stores, dispatch);
+            continue;
+        }
+
+        if meaning == Meaning::ExpandablePrimitive(ExpandablePrimitive::ExpandAfter) {
+            // In an `\edef`, `\expandafter` performs exactly one expansion
+            // step on its target, then returns control to the protected-aware
+            // replacement scanner. Calling `get_x_token` here would continue
+            // through the saved protected macro and expand it incorrectly.
+            let dispatch = mode.dispatch_raw_token(traced, input, stores, expansion)?;
+            crate::push_dispatch_result(input, stores, dispatch);
+            continue;
+        }
+
+        if matches!(meaning, Meaning::Macro { .. }) {
+            // Keep macro replacement replay in this collection loop. The next
+            // iteration can copy its inert character runs directly; any
+            // parameter, cs/active site, or semantic edge naturally re-enters
+            // the existing interpreter below.
+            let dispatch = mode.dispatch_raw_token(traced, input, stores, expansion)?;
+            crate::push_dispatch_result(input, stores, dispatch);
+            continue;
+        }
+
+        unread_token(input, stores, traced);
+        if let Some(expanded) = mode.next_expanded_token(input, stores, expansion)?
+            && append_collected_token(
+                &mut boundary,
+                &mut builder,
+                &mut origins,
+                expanded,
+                crate::semantic_token(expanded),
+                true,
+            )
+        {
+            break;
+        }
     }
-    let token_list = stores.finish_token_list(&mut builder);
-    let origin_list = stores.finish_origin_list(&mut origins);
-    Ok(TracedTokenList::new(token_list, origin_list))
+    Ok(finish_traced_list(stores, &mut builder, &mut origins))
+}
+
+fn append_collected_token(
+    boundary: &mut ExpandedTextBoundary,
+    builder: &mut TokenListBuilder,
+    origins: &mut OriginListBuilder,
+    traced: TracedTokenWord,
+    token: Token,
+    balance: bool,
+) -> bool {
+    if balance && let ExpandedTextBoundary::Balanced { depth, .. } = boundary {
+        match token {
+            Token::Char {
+                cat: Catcode::BeginGroup,
+                ..
+            } => *depth = depth.saturating_add(1),
+            Token::Char {
+                cat: Catcode::EndGroup,
+                ..
+            } => {
+                *depth -= 1;
+                if *depth == 0 {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    push_scanned_token(builder, origins, traced, token);
+    false
 }
 
 fn unread_token(

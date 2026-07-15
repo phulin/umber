@@ -4,7 +4,7 @@ use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{FontId, TokenListId};
 use tex_state::interner::ControlSequenceKind;
 use tex_state::math::MathFontSize;
-use tex_state::meaning::{InternalInteger, Meaning, MeaningFlags};
+use tex_state::meaning::{InternalInteger, Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::provenance::SynthesizedOriginKind;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
@@ -143,10 +143,17 @@ where
                         index: u32::from(index),
                     }
                 );
+                let token_list = stores.toks(index);
+                let origin_list = crate::expansion_suppressed_origin_list(
+                    stores,
+                    token_list,
+                    tex_state::ids::OriginListId::EMPTY,
+                    cause_origin,
+                );
                 Ok(Dispatch::Push {
-                    replay_kind: ExpansionReplayKind::TheOutput,
-                    token_list: stores.toks(index),
-                    origin_list: tex_state::ids::OriginListId::EMPTY,
+                    replay_kind: ExpansionReplayKind::Unexpanded,
+                    token_list,
+                    origin_list,
                     macro_arguments: MacroArguments::new(),
                     macro_invocation: OriginId::UNKNOWN,
                 })
@@ -216,39 +223,7 @@ where
                 ))
             }
             tex_state::meaning::UnexpandablePrimitive::FontDimen => {
-                let scanned = scan_int::scan_int_with_mode_and_context(
-                    input, stores, expansion, mode, token,
-                )?;
-                let number = scanned.value();
-                let font = scan_font_selector(input, stores, expansion, mode, token)?;
-                crate::record_dependency!(
-                    expansion,
-                    ReadDependency::Font {
-                        field: ReadFontField::ParameterCount,
-                        font: font.raw(),
-                        index: 0,
-                    }
-                );
-                let available = stores.font_parameter_count(font);
-                let number = u16::try_from(number)
-                    .ok()
-                    .filter(|number| *number > 0 && *number <= available);
-                // TeX.web §578 diagnoses an unavailable parameter but
-                // points at its zero-valued dummy font-info cell, so \the
-                // still expands to a usable dimension.
-                let value = if let Some(number) = number {
-                    crate::record_dependency!(
-                        expansion,
-                        ReadDependency::Font {
-                            field: ReadFontField::Parameter,
-                            font: font.raw(),
-                            index: number,
-                        }
-                    );
-                    stores.font_dimen(font, number)
-                } else {
-                    tex_state::scaled::Scaled::from_raw(0)
-                };
+                let value = scan_font_dimen(input, stores, expansion, mode, token)?;
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
@@ -570,13 +545,22 @@ where
             &format_muglue(stores.glue(stores.muskip(index))),
             cause_origin,
         )),
-        Meaning::ToksRegister(index) => Ok(Dispatch::Push {
-            replay_kind: ExpansionReplayKind::TheOutput,
-            token_list: stores.toks(index),
-            origin_list: tex_state::ids::OriginListId::EMPTY,
-            macro_arguments: MacroArguments::new(),
-            macro_invocation: OriginId::UNKNOWN,
-        }),
+        Meaning::ToksRegister(index) => {
+            let token_list = stores.toks(index);
+            let origin_list = crate::expansion_suppressed_origin_list(
+                stores,
+                token_list,
+                tex_state::ids::OriginListId::EMPTY,
+                cause_origin,
+            );
+            Ok(Dispatch::Push {
+                replay_kind: ExpansionReplayKind::Unexpanded,
+                token_list,
+                origin_list,
+                macro_arguments: MacroArguments::new(),
+                macro_invocation: OriginId::UNKNOWN,
+            })
+        }
         Meaning::IntParam(index) => Ok(push_rendered_text(
             stores,
             ExpansionReplayKind::TheOutput,
@@ -687,13 +671,22 @@ where
             &format_muglue(stores.glue(stores.glue_param(GlueParam::new(index)))),
             cause_origin,
         )),
-        Meaning::TokParam(index) => Ok(Dispatch::Push {
-            replay_kind: ExpansionReplayKind::TheOutput,
-            token_list: stores.tok_param(TokParam::new(index)),
-            origin_list: tex_state::ids::OriginListId::EMPTY,
-            macro_arguments: MacroArguments::new(),
-            macro_invocation: OriginId::UNKNOWN,
-        }),
+        Meaning::TokParam(index) => {
+            let token_list = stores.tok_param(TokParam::new(index));
+            let origin_list = crate::expansion_suppressed_origin_list(
+                stores,
+                token_list,
+                tex_state::ids::OriginListId::EMPTY,
+                cause_origin,
+            );
+            Ok(Dispatch::Push {
+                replay_kind: ExpansionReplayKind::Unexpanded,
+                token_list,
+                origin_list,
+                macro_arguments: MacroArguments::new(),
+                macro_invocation: OriginId::UNKNOWN,
+            })
+        }
         _ => match stores.resolve(symbol) {
             "count" => {
                 let index = scan_helpers::scan_register_index_with_mode_and_context(
@@ -742,10 +735,17 @@ where
                         index: u32::from(index),
                     }
                 );
+                let token_list = stores.toks(index);
+                let origin_list = crate::expansion_suppressed_origin_list(
+                    stores,
+                    token_list,
+                    tex_state::ids::OriginListId::EMPTY,
+                    cause_origin,
+                );
                 Ok(Dispatch::Push {
-                    replay_kind: ExpansionReplayKind::TheOutput,
-                    token_list: stores.toks(index),
-                    origin_list: tex_state::ids::OriginListId::EMPTY,
+                    replay_kind: ExpansionReplayKind::Unexpanded,
+                    token_list,
+                    origin_list,
                     macro_arguments: MacroArguments::new(),
                     macro_invocation: OriginId::UNKNOWN,
                 })
@@ -1019,8 +1019,11 @@ pub fn meaning_text(stores: &impl ExpansionState, token: Token) -> String {
             | Meaning::PageInteger(_) => {
                 format!("\\{}", stores.resolve(symbol))
             }
-            Meaning::Font(_) => format!("select font {}", token_text(stores, token)),
+            Meaning::Font(font) => format!("select font {}", stores.font_name(font)),
             Meaning::ExpandablePrimitive(_) => format!("\\{}", stores.resolve(symbol)),
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Radical) => {
+                "\\radical".to_owned()
+            }
             Meaning::UnexpandablePrimitive(_) => format!("\\{}", stores.resolve(symbol)),
             Meaning::Macro { flags, definition } => {
                 let macro_meaning = stores.macro_definition(definition);
@@ -1284,6 +1287,45 @@ where
         .ok_or(ExpandError::UnsupportedTheTarget { context })
 }
 
+pub(crate) fn scan_font_dimen(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
+    context: TracedTokenWord,
+) -> Result<tex_state::scaled::Scaled, ExpandError> {
+    let number =
+        scan_int::scan_int_with_mode_and_context(input, stores, expansion, mode, context)?.value();
+    let font = scan_font_selector(input, stores, expansion, mode, context)?;
+    crate::record_dependency!(
+        expansion,
+        ReadDependency::Font {
+            field: ReadFontField::ParameterCount,
+            font: font.raw(),
+            index: 0,
+        }
+    );
+    let available = stores.font_parameter_count(font);
+    let number = u32::try_from(number)
+        .ok()
+        .filter(|number| *number > 0 && *number <= available);
+    // TeX.web §578 diagnoses an unavailable parameter but points at its
+    // zero-valued dummy font-info cell, so callers still receive a dimension.
+    Ok(if let Some(number) = number {
+        crate::record_dependency!(
+            expansion,
+            ReadDependency::Font {
+                field: ReadFontField::Parameter,
+                font: font.raw(),
+                index: number,
+            }
+        );
+        stores.font_dimen(font, number)
+    } else {
+        tex_state::scaled::Scaled::from_raw(0)
+    })
+}
+
 pub(crate) fn scan_font_selector(
     input: &mut InputStack,
     stores: &mut tex_state::ExpansionContext<'_>,
@@ -1364,7 +1406,7 @@ where
         ReadDependency::Font {
             field: ReadFontField::Metrics,
             font: font.raw(),
-            index: u16::try_from(code).unwrap_or(u16::MAX),
+            index: u32::try_from(code).unwrap_or(u32::MAX),
         }
     );
     let Some(metrics) = u8::try_from(code)
