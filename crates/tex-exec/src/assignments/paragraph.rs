@@ -29,7 +29,18 @@ pub(super) fn execute_paragraph_command(
     global: bool,
 ) -> Result<(), ExecError> {
     match primitive {
-        UnexpandablePrimitive::Par | UnexpandablePrimitive::EndGraf => end_paragraph(nest, stores),
+        UnexpandablePrimitive::Par | UnexpandablePrimitive::EndGraf => {
+            if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
+                // TeX82's `vmode + par_end` branch calls `normal_paragraph`
+                // even though there is no horizontal list to finish. LaTeX
+                // relies on this to clear a list's one-line `\parshape`
+                // before starting nested verbatim paragraphs.
+                normal_paragraph(nest, stores);
+                build_page_if_outer_vertical(nest, stores)
+            } else {
+                end_paragraph(nest, stores)
+            }
+        }
         UnexpandablePrimitive::Indent => start_paragraph(nest, input, stores, true),
         UnexpandablePrimitive::NoIndent => start_paragraph(nest, input, stores, false),
         UnexpandablePrimitive::ParShape => {

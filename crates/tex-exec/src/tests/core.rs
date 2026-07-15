@@ -3851,6 +3851,26 @@ fn parshape_and_hanging_parameters_reset_after_paragraph() {
 }
 
 #[test]
+fn vertical_par_resets_normal_paragraph_parameters_without_material() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\parshape=1 3pt 40pt\\hangindent=5pt\\hangafter=2\\looseness=2\\par",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("vertical par executes normal_paragraph");
+
+    assert_eq!(stores.dimen_param(DimenParam::HANG_INDENT).raw(), 0);
+    assert_eq!(stores.int_param(IntParam::HANG_AFTER), 1);
+    assert_eq!(stores.int_param(IntParam::LOOSENESS), 0);
+    assert!(stores.paragraph_shape().is_empty());
+    assert!(stores.current_page_nodes().is_empty());
+    assert!(stores.page_contributions().is_empty());
+}
+
+#[test]
 fn parshape_assignment_obeys_local_and_global_grouping() {
     let mut local_stores = Universe::new();
     install_unexpandable_primitives(&mut local_stores);
