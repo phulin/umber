@@ -115,6 +115,39 @@ impl PdfType1Program {
         }
         (count == 4).then_some(values)
     }
+
+    /// Reads `/StdVW`, the Type-1 vertical stem width used by PDF descriptors.
+    #[must_use]
+    pub fn stem_v(&self) -> Option<i32> {
+        self.cleartext_integer(b"/StdVW")
+    }
+
+    #[must_use]
+    pub fn italic_angle(&self) -> Option<i32> {
+        self.cleartext_integer(b"/ItalicAngle")
+    }
+
+    #[must_use]
+    pub fn is_fixed_pitch(&self) -> bool {
+        self.cleartext_value(b"/isFixedPitch")
+            .is_some_and(|value| value == b"true")
+    }
+
+    fn cleartext_integer(&self, marker: &[u8]) -> Option<i32> {
+        let value = self.cleartext_value(marker)?;
+        std::str::from_utf8(value).ok()?.parse().ok()
+    }
+
+    fn cleartext_value(&self, marker: &[u8]) -> Option<&[u8]> {
+        let cleartext = self.bytes.get(..self.length1 as usize)?;
+        let start = cleartext
+            .windows(marker.len())
+            .position(|window| window == marker)?
+            + marker.len();
+        cleartext[start..]
+            .split(|byte| byte.is_ascii_whitespace() || matches!(byte, b'[' | b']' | b'{' | b'}'))
+            .find(|token| !token.is_empty())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -158,12 +191,15 @@ mod tests {
 
     #[test]
     fn reads_cleartext_font_bbox_without_postscript_execution() {
-        let header = b"%!PS /FontBBox {-40 -250 1009 750 }readonly def\n";
+        let header = b"%!PS /FontBBox {-40 -250 1009 750 }readonly def /StdVW [69] def /ItalicAngle 0 def /isFixedPitch true def\n";
         let mut pfb = vec![0x80, 1];
         pfb.extend_from_slice(&(header.len() as u32).to_le_bytes());
         pfb.extend_from_slice(header);
         pfb.extend_from_slice(&[0x80, 2, 1, 0, 0, 0, 0, 0x80, 3]);
         let program = PdfType1Program::from_pfb(&pfb).expect("valid synthetic PFB");
         assert_eq!(program.font_bbox(), Some([-40, -250, 1009, 750]));
+        assert_eq!(program.stem_v(), Some(69));
+        assert_eq!(program.italic_angle(), Some(0));
+        assert!(program.is_fixed_pitch());
     }
 }

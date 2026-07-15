@@ -4,6 +4,7 @@ pub mod metrics;
 pub mod opentype;
 pub mod pdf_encoding;
 pub mod pdf_map;
+pub mod pdf_truetype;
 pub mod tfm;
 pub mod type1;
 
@@ -25,6 +26,7 @@ pub use pdf_encoding::{PdfEncoding, PdfEncodingError};
 pub use pdf_map::{
     PdfFontMapDirective, PdfFontMapEntry, PdfFontMapError, PdfFontMapFile, PdfFontMapProgram,
 };
+pub use pdf_truetype::{PdfTrueTypeProgram, PdfTrueTypeProgramError, PdfTrueTypeProgramIdentity};
 pub use tfm::{
     CharacterTag, ExtensibleRecipe, FontParameter, FontParameterKind, FontParameters, Header,
     LigKernAction, LigKernStep, Ligature, LigatureDeletes, ParseError, TfmFont, TfmTable,

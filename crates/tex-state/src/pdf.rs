@@ -80,6 +80,10 @@ enum PdfFontOperation {
         logical_name: Vec<u8>,
         encoding: tex_fonts::PdfEncoding,
     },
+    TrueTypeProgram {
+        logical_name: Vec<u8>,
+        program: tex_fonts::PdfTrueTypeProgram,
+    },
 }
 
 /// Live pdfTeX microtype and font-output controls.
@@ -566,6 +570,33 @@ impl PdfState {
             })
     }
 
+    pub(crate) fn provide_truetype_program(
+        &mut self,
+        logical_name: Vec<u8>,
+        program: tex_fonts::PdfTrueTypeProgram,
+    ) {
+        self.push_font_operation(PdfFontOperation::TrueTypeProgram {
+            logical_name,
+            program,
+        });
+    }
+
+    pub(crate) fn truetype_program(
+        &self,
+        logical_name: &[u8],
+    ) -> Option<&tex_fonts::PdfTrueTypeProgram> {
+        self.font_operations
+            .iter()
+            .rev()
+            .find_map(|operation| match operation {
+                PdfFontOperation::TrueTypeProgram {
+                    logical_name: candidate,
+                    program,
+                } if candidate == logical_name => Some(program),
+                _ => None,
+            })
+    }
+
     fn push_font_operation(&mut self, operation: PdfFontOperation) {
         self.fingerprint = append_font_fingerprint(self.fingerprint, &operation);
         self.font_operations.push(operation);
@@ -579,7 +610,8 @@ impl PdfState {
                 PdfFontOperation::Attribute { .. }
                 | PdfFontOperation::IncludeChars { .. }
                 | PdfFontOperation::Type1Program { .. }
-                | PdfFontOperation::Encoding { .. } => None,
+                | PdfFontOperation::Encoding { .. }
+                | PdfFontOperation::TrueTypeProgram { .. } => None,
             })
     }
 
@@ -779,6 +811,14 @@ fn append_font_fingerprint(previous: u64, operation: &PdfFontOperation) -> u64 {
             for name in encoding.glyph_names() {
                 hasher.bytes(name);
             }
+        }
+        PdfFontOperation::TrueTypeProgram {
+            logical_name,
+            program,
+        } => {
+            hasher.tag(7);
+            hasher.bytes(logical_name);
+            hasher.bytes(&program.identity().bytes());
         }
     }
     hasher.finish()

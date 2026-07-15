@@ -98,7 +98,7 @@ pub fn pdf_from_committed_artifacts(
                                 next_object = next_object
                                     .checked_add(2)
                                     .ok_or(PdfBuildError::InvalidObjectId(u32::MAX))?;
-                                objects.extend(pdf_type1_font_objects(
+                                objects.extend(pdf_font_objects(
                                     stores,
                                     id,
                                     descriptor_id,
@@ -229,7 +229,7 @@ pub fn pdf_from_committed_artifacts(
     Ok(document.to_pdf_bytes_with_options(options)?)
 }
 
-fn pdf_type1_font_objects(
+fn pdf_font_objects(
     stores: &Universe,
     id: PdfObjectId,
     descriptor_id: PdfObjectId,
@@ -245,16 +245,29 @@ fn pdf_type1_font_objects(
         .as_ref()
         .and_then(|entry| entry.font_file.as_deref())
         .ok_or_else(|| PdfBuildError::MissingFontProgram(font.name.as_bytes().to_vec()))?;
-    let program = stores
-        .pdf_type1_program(program_name)
-        .ok_or_else(|| PdfBuildError::MissingFontProgram(program_name.to_vec()))?;
+    let is_truetype = program_name
+        .rsplit(|byte| *byte == b'.')
+        .next()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case(b"ttf"));
+    let type1 = (!is_truetype)
+        .then(|| stores.pdf_type1_program(program_name))
+        .flatten();
+    let truetype = is_truetype
+        .then(|| stores.pdf_truetype_program(program_name))
+        .flatten();
+    if type1.is_none() && truetype.is_none() {
+        return Err(PdfBuildError::MissingFontProgram(program_name.to_vec()));
+    }
     let base_font = mapped
         .as_ref()
         .and_then(|entry| entry.postscript_name.as_deref())
         .unwrap_or(font.name.as_bytes());
     let mut dictionary = PdfDictionary::new();
     dictionary.insert("Type", PdfValue::Name("Font".into()))?;
-    dictionary.insert("Subtype", PdfValue::Name("Type1".into()))?;
+    dictionary.insert(
+        "Subtype",
+        PdfValue::Name(if is_truetype { "TrueType" } else { "Type1" }.into()),
+    )?;
     dictionary.insert("Name", PdfValue::Name(PdfName::new(resource_name)))?;
     dictionary.insert("BaseFont", PdfValue::Name(PdfName::new(base_font)))?;
     if let Some(encoding_name) = mapped
@@ -297,8 +310,49 @@ fn pdf_type1_font_objects(
     let mut descriptor = PdfDictionary::new();
     descriptor.insert("Type", PdfValue::Name("FontDescriptor".into()))?;
     descriptor.insert("FontName", PdfValue::Name(PdfName::new(base_font)))?;
-    descriptor.insert("Flags", PdfValue::Integer(4))?;
-    let bbox = program.font_bbox().unwrap_or([-500, -500, 1500, 1500]);
+    let scale_metric =
+        |value: Scaled| (i64::from(value.raw()) * 1000 + denominator / 2) / denominator;
+    let tfm_ascent = (0u8..=255)
+        .filter_map(|code| stores.font_char_metrics(font_id, code))
+        .map(|metrics| scale_metric(metrics.height))
+        .max()
+        .unwrap_or(0);
+    let tfm_descent = (0u8..=255)
+        .filter_map(|code| stores.font_char_metrics(font_id, code))
+        .map(|metrics| scale_metric(metrics.depth))
+        .max()
+        .unwrap_or(0);
+    let tfm_cap_height = stores
+        .font_char_metrics(font_id, b'H')
+        .map_or(tfm_ascent, |metrics| scale_metric(metrics.height));
+    let tfm_x_height = scale_metric(stores.font_parameter(font_id, 5));
+    let (bbox, ascent, descent, cap_height, x_height, italic_angle, stem_v, fixed_pitch) =
+        if let Some(program) = truetype {
+            (
+                program.bbox(),
+                i64::from(program.ascent()),
+                i64::from(program.descent()),
+                i64::from(program.cap_height()),
+                i64::from(program.x_height()),
+                i64::from(program.italic_angle()),
+                i64::from(program.stem_v()),
+                program.fixed_pitch(),
+            )
+        } else {
+            let program = type1.expect("program kind checked");
+            (
+                program.font_bbox().unwrap_or([-500, -500, 1500, 1500]),
+                tfm_ascent,
+                -tfm_descent,
+                tfm_cap_height,
+                tfm_x_height,
+                i64::from(program.italic_angle().unwrap_or(0)),
+                i64::from(program.stem_v().unwrap_or(80)),
+                program.is_fixed_pitch(),
+            )
+        };
+    let flags = 4 + i64::from(fixed_pitch) + if italic_angle != 0 { 64 } else { 0 };
+    descriptor.insert("Flags", PdfValue::Integer(flags))?;
     descriptor.insert(
         "FontBBox",
         PdfValue::Array(
@@ -307,36 +361,30 @@ fn pdf_type1_font_objects(
                 .collect(),
         ),
     )?;
-    let scale_metric =
-        |value: Scaled| (i64::from(value.raw()) * 1000 + denominator / 2) / denominator;
-    let ascent = (0u8..=255)
-        .filter_map(|code| stores.font_char_metrics(font_id, code))
-        .map(|metrics| scale_metric(metrics.height))
-        .max()
-        .unwrap_or(0);
-    let descent = (0u8..=255)
-        .filter_map(|code| stores.font_char_metrics(font_id, code))
-        .map(|metrics| scale_metric(metrics.depth))
-        .max()
-        .unwrap_or(0);
-    let cap_height = stores
-        .font_char_metrics(font_id, b'H')
-        .map_or(ascent, |metrics| scale_metric(metrics.height));
-    let x_height = scale_metric(stores.font_parameter(font_id, 5));
-    descriptor.insert("ItalicAngle", PdfValue::Integer(0))?;
+    descriptor.insert("ItalicAngle", PdfValue::Integer(italic_angle))?;
     descriptor.insert("Ascent", PdfValue::Integer(ascent))?;
-    descriptor.insert("Descent", PdfValue::Integer(-descent))?;
+    descriptor.insert("Descent", PdfValue::Integer(descent))?;
     descriptor.insert("CapHeight", PdfValue::Integer(cap_height))?;
-    descriptor.insert("StemV", PdfValue::Integer(80))?;
+    descriptor.insert("StemV", PdfValue::Integer(stem_v))?;
     descriptor.insert("XHeight", PdfValue::Integer(x_height))?;
-    descriptor.insert("FontFile", PdfValue::Reference(program_id))?;
+    descriptor.insert(
+        if is_truetype { "FontFile2" } else { "FontFile" },
+        PdfValue::Reference(program_id),
+    )?;
     descriptor.set_raw_entries(stores.pdf_font_attribute(font_id).to_vec());
 
-    let [length1, length2, length3] = program.lengths();
     let mut stream = PdfDictionary::new();
-    stream.insert("Length1", PdfValue::Integer(i64::from(length1)))?;
-    stream.insert("Length2", PdfValue::Integer(i64::from(length2)))?;
-    stream.insert("Length3", PdfValue::Integer(i64::from(length3)))?;
+    let data = if let Some(program) = truetype {
+        stream.insert("Length1", PdfValue::Integer(program.bytes().len() as i64))?;
+        program.bytes().to_vec()
+    } else {
+        let program = type1.expect("program kind checked");
+        let [length1, length2, length3] = program.lengths();
+        stream.insert("Length1", PdfValue::Integer(i64::from(length1)))?;
+        stream.insert("Length2", PdfValue::Integer(i64::from(length2)))?;
+        stream.insert("Length3", PdfValue::Integer(i64::from(length3)))?;
+        program.bytes().to_vec()
+    };
     Ok(vec![
         indirect_dictionary(id, dictionary),
         indirect_dictionary(descriptor_id, descriptor),
@@ -344,7 +392,7 @@ fn pdf_type1_font_objects(
             id: program_id,
             object: PdfObject::Stream {
                 dictionary: stream,
-                data: program.bytes().to_vec(),
+                data,
             },
         },
     ])

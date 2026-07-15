@@ -62,7 +62,7 @@ oracle-backed test. Every name in a missing row is missing.
 | PDF dimension parameters | 13 | done | `\pdfhorigin`, `\pdfvorigin`, `\pdfpagewidth`, `\pdfpageheight`, `\pdflinkmargin`, `\pdfdestmargin`, `\pdfthreadmargin`, `\pdffirstlineheight`, `\pdflastlinedepth`, `\pdfeachlineheight`, `\pdfeachlinedepth`, `\pdfignoreddimen`, `\pdfpxdimen` |
 | Font construction and primitive recovery | 3 | partial (generated fonts done) | `\letterspacefont`, `\pdfcopyfont` (done); `\pdfprimitive` |
 | Read-only integer enquiries | 14 | missing | `\pdftexversion`, `\pdflastobj`, `\pdflastxform`, `\pdflastximage`, `\pdflastximagepages`, `\pdflastannot`, `\pdflastxpos`, `\pdflastypos`, `\pdfretval`, `\pdflastximagecolordepth`, `\pdfelapsedtime`, `\pdfshellescape`, `\pdfrandomseed`, `\pdflastlink` |
-| Expandable conversions and enquiries | 27 | partial (identity, font size, and margin kerns done) | `\expanded`, `\pdftexrevision`, `\pdftexbanner`, `\pdffontsize`, `\leftmarginkern`, `\rightmarginkern` (done); `\pdffontname`, `\pdffontobjnum`, `\pdfpageref`, `\pdfxformname`, `\pdfescapestring`, `\pdfescapename`, `\pdfescapehex`, `\pdfunescapehex`, `\pdfcreationdate`, `\pdffilemoddate`, `\pdffilesize`, `\pdfmdfivesum`, `\pdffiledump`, `\pdfmatch`, `\pdflastmatch`, `\pdfstrcmp`, `\pdfcolorstackinit`, `\pdfuniformdeviate`, `\pdfnormaldeviate`, `\pdfinsertht`, `\pdfximagebbox` |
+| Expandable conversions and enquiries | 27 | partial (identity and font enquiries done) | `\expanded`, `\pdftexrevision`, `\pdftexbanner`, `\pdffontsize`, `\pdffontname`, `\pdffontobjnum`, `\leftmarginkern`, `\rightmarginkern` (done); `\pdfpageref`, `\pdfxformname`, `\pdfescapestring`, `\pdfescapename`, `\pdfescapehex`, `\pdfunescapehex`, `\pdfcreationdate`, `\pdffilemoddate`, `\pdffilesize`, `\pdfmdfivesum`, `\pdffiledump`, `\pdfmatch`, `\pdflastmatch`, `\pdfstrcmp`, `\pdfcolorstackinit`, `\pdfuniformdeviate`, `\pdfnormaldeviate`, `\pdfinsertht`, `\pdfximagebbox` |
 | Primitive-identity conditional | 1 | missing | `\ifpdfprimitive` |
 | Horizontal-mode normalization | 1 | missing | `\quitvmode` |
 | Character codes and ligature control | 10 | done | `\lpcode`, `\rpcode`, `\efcode`, `\tagcode`, `\knbscode`, `\stbscode`, `\shbscode`, `\knbccode`, `\knaccode`, `\pdfnoligatures` |
@@ -176,21 +176,23 @@ Checkpointed append-only mutations give snapshot rollback and semantic hashes
 the same exact suffix discipline as PDF object allocation. Map-line lookup
 matches the pinned 1.40.27 observations: unprefixed and `+` duplicates preserve
 the first entry, `=` replaces it, and `-` removes it. Duplicate warning
-presentation is owned by child issue 17.1. Embedded dictionaries, encodings,
-subsets, and ToUnicode streams remain downstream children 17.5 and 17.3 and
-must be serialized only through the vendored `pdf_writer` adapter. The first
-17.5 resource boundary accepts already acquired PFB bytes under the logical
-map name, validates and strips their transport framing, and records a stable
-SHA-256 program identity plus the three PDF Type-1 segment lengths. Final PDF
+presentation is owned by child issue 17.1. Embedded dictionaries and custom
+encoding vectors are serialized only through the canonical vendored
+`pdf_writer` adapter. The 17.5 resource boundary accepts already acquired PFB,
+TrueType SFNT, and PostScript encoding bytes under their logical map names,
+validates them, and records stable SHA-256 program identities. PFB transport
+framing is stripped while retaining all three PDF Type-1 segment lengths. Final PDF
 assembly can resolve only this typed state; it never opens the host filesystem
 or network. The native driver acquires exact mapline program names through
 its configured `TEXFONTS` search path before finalization; other frontends can
 provide the same typed resource by logical name. Font dictionaries,
-descriptors, TFM-derived widths, embedded
-`/FontFile` streams, per-page `/Font` resources, and absolute text operators
-are emitted through the detached graph and canonical `pdf_writer` serializer.
-Subset program rewriting, exact descriptor metrics, encoding vectors, and
-ToUnicode remain required before the font children can close.
+program-derived descriptors, TFM-derived widths, custom `/Encoding`
+differences, embedded `/FontFile` and `/FontFile2` streams, per-page `/Font`
+resources, and absolute text operators are emitted through the detached graph
+and canonical `pdf_writer` serializer. Font resource names and dictionary
+object numbers are allocated at enquiry or first shipout use and survive
+checkpoint rollback exactly. Subset program rewriting and ToUnicode streams
+remain owned by child 17.3.
 
 ## Compatibility and alias decisions
 

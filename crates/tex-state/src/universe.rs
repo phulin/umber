@@ -1807,6 +1807,24 @@ impl Universe {
         self.pdf.encoding(logical_name)
     }
 
+    pub fn provide_pdf_truetype_program(
+        &mut self,
+        logical_name: Vec<u8>,
+        bytes: &[u8],
+    ) -> Result<(), tex_fonts::PdfTrueTypeProgramError> {
+        let program = tex_fonts::PdfTrueTypeProgram::parse(bytes)?;
+        self.pdf.provide_truetype_program(logical_name, program);
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn pdf_truetype_program(
+        &self,
+        logical_name: &[u8],
+    ) -> Option<&tex_fonts::PdfTrueTypeProgram> {
+        self.pdf.truetype_program(logical_name)
+    }
+
     /// Lazily reserves the page-resource name and font-dictionary object used
     /// by enquiries and by the first shipped page containing this font.
     pub fn ensure_pdf_font_resource(

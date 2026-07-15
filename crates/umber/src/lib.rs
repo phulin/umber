@@ -221,7 +221,13 @@ impl FileSessionResolvers {
             .filter_map(|entry| entry.font_file)
             .collect::<std::collections::BTreeSet<_>>();
         for name in names {
-            if stores.pdf_type1_program(&name).is_some() {
+            let is_truetype = name
+                .rsplit(|byte| *byte == b'.')
+                .next()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case(b"ttf"));
+            if (is_truetype && stores.pdf_truetype_program(&name).is_some())
+                || (!is_truetype && stores.pdf_type1_program(&name).is_some())
+            {
                 continue;
             }
             let logical_name = String::from_utf8_lossy(&name);
@@ -229,9 +235,15 @@ impl FileSessionResolvers {
                 .font
                 .0
                 .read_program_from_world(stores.world_mut(), Path::new(logical_name.as_ref()))?;
-            stores
-                .provide_pdf_type1_program(name, content.bytes())
-                .map_err(|error| error.to_string())?;
+            if is_truetype {
+                stores
+                    .provide_pdf_truetype_program(name, content.bytes())
+                    .map_err(|error| error.to_string())?;
+            } else {
+                stores
+                    .provide_pdf_type1_program(name, content.bytes())
+                    .map_err(|error| error.to_string())?;
+            }
         }
         Ok(())
     }
