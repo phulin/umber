@@ -2577,6 +2577,40 @@ fn vertical_vrule_runs_everypar_before_scanning_rule_dimensions() {
 }
 
 #[test]
+fn vertical_char_runs_everypar_before_scanning_and_appending_the_character() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\f=cmr10 \\relax \\f \\vsize=1000pt \\everypar{\\char66 }\\char65 \\par",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("vertical char starts a paragraph");
+
+    let chars = stores
+        .current_page_nodes()
+        .iter()
+        .find_map(|node| match node {
+            Node::HList(line) => Some(
+                stores
+                    .nodes(line.children)
+                    .testing_decoded()
+                    .iter()
+                    .filter_map(|child| match child {
+                        Node::Char { ch, .. } | Node::Lig { ch, .. } => Some(*ch),
+                        _ => None,
+                    })
+                    .collect::<String>(),
+            ),
+            _ => None,
+        })
+        .expect("paragraph should contribute a line");
+    assert_eq!(chars, "BA", "page={:?}", stores.current_page_nodes());
+}
+
+#[test]
 fn hrule_in_restricted_horizontal_mode_reports_and_is_ignored() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
