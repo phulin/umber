@@ -254,6 +254,14 @@ pub(crate) fn rendered_source_result(
                 &JsValue::from_f64(accepted.raw() as f64),
             )?;
         }
+        umber::RenderedSourceResult::OutputMismatch { accepted } => {
+            set(&object, "kind", &JsValue::from_str("output-mismatch"))?;
+            set(
+                &object,
+                "acceptedOutput",
+                &JsValue::from_str(&accepted.to_string()),
+            )?;
+        }
     }
     Ok(object.unchecked_into())
 }

@@ -98,19 +98,6 @@ async function integration() {
 			),
 		],
 	]);
-	const htmlFirst = await compileInWorker(htmlOptions, htmlFiles, resolver);
-	const htmlSecond = await compileInWorker(htmlOptions, htmlFiles, resolver);
-	assert(htmlFirst.html instanceof Uint8Array, "worker returned no HTML bytes");
-	assert(htmlFirst.dvi.byteLength > 0, "joint HTML compile returned no DVI");
-	assert(htmlFirst.htmlAssets.length === 0, "embedded HTML returned assets");
-	assert(
-		htmlFirst.html.length === htmlSecond.html.length &&
-			htmlFirst.html.every((byte, index) => byte === htmlSecond.html[index]),
-		"worker HTML bytes were not deterministic",
-	);
-	const generatedGeometry = await installAndMeasureGeneratedHtml(
-		htmlFirst.html,
-	);
 	const retained = new CompilerSession(htmlOptions);
 	retained.addUserFile("cmr10.tfm", cmr10);
 	retained.addUserFile("html.tex", htmlFiles.get("html.tex"));
@@ -132,6 +119,19 @@ async function integration() {
 		retainedAttempt.kind === "complete",
 		`retained HTML compile failed: ${JSON.stringify(retainedAttempt)}`,
 	);
+	const htmlFirst = retainedAttempt.output;
+	const retainedRepeat = retained.advance();
+	assert(retainedRepeat.kind === "complete", "retained output reread failed");
+	const htmlSecond = retainedRepeat.output;
+	assert(htmlFirst.html instanceof Uint8Array, "session returned no HTML bytes");
+	assert(htmlFirst.dvi.byteLength > 0, "joint HTML compile returned no DVI");
+	assert(htmlFirst.htmlAssets.length === 0, "embedded HTML returned assets");
+	assert(
+		htmlFirst.html.length === htmlSecond.html.length &&
+			htmlFirst.html.every((byte, index) => byte === htmlSecond.html[index]),
+		"accepted session HTML reread was not deterministic",
+	);
+	const generatedGeometry = await installAndMeasureGeneratedHtml(htmlFirst.html);
 	const clickSource = assertClickToSource(
 		retained,
 		htmlFiles.get("html.tex"),

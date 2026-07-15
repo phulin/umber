@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }
 tex-exec = { path = "../tex-exec" }
 tex-expand = { path = "../tex-expand" }
 tex-lex = { path = "../tex-lex" }

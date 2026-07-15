@@ -462,7 +462,11 @@ fn requested_html_and_dvi_share_one_committed_compile() {
     };
     assert!(!output.dvi.is_empty());
     let html = String::from_utf8(output.html.expect("HTML output")).expect("HTML UTF-8");
+    let output_id = session
+        .rendered_output_id()
+        .expect("rendered output identity");
     assert!(html.contains("data-umber-page=\"1\" data-umber-revision=\"1\""));
+    assert!(html.contains(&format!("data-umber-output=\"{output_id}\"")));
     assert!(html.contains("data-umber-baseline-sp"));
     assert!(html.contains(">A</text>"));
     assert!(output.html_assets.is_empty());
@@ -471,7 +475,7 @@ fn requested_html_and_dvi_share_one_committed_compile() {
     let retention_before = session.retention_metrics().expect("accepted retention");
     let location = current_render_location(
         session
-            .rendered_source_location(page, event, Some(0), RevisionId::new(1))
+            .rendered_source_location(page, event, Some(0), output_id, RevisionId::new(1))
             .expect("source query"),
     );
     let retention_after = session.retention_metrics().expect("live retention");
@@ -485,13 +489,13 @@ fn requested_html_and_dvi_share_one_committed_compile() {
     assert_eq!((location.line, location.column), (1, start as u32 + 1));
     assert!(
         session
-            .rendered_source_location(0, event, Some(0), RevisionId::new(1))
+            .rendered_source_location(0, event, Some(0), output_id, RevisionId::new(1))
             .expect("invalid page query")
             .is_none()
     );
     assert!(
         session
-            .rendered_source_location(page, event, Some(u32::MAX), RevisionId::new(1))
+            .rendered_source_location(page, event, Some(u32::MAX), output_id, RevisionId::new(1),)
             .expect("invalid unit query")
             .is_none()
     );
@@ -507,7 +511,7 @@ fn requested_html_and_dvi_share_one_committed_compile() {
         .expect("glyph patch");
     assert!(
         session
-            .rendered_source_location(1, event, Some(0), RevisionId::new(1))
+            .rendered_source_location(1, event, Some(0), output_id, RevisionId::new(1))
             .expect("query while patch pending")
             .is_none()
     );
@@ -516,10 +520,11 @@ fn requested_html_and_dvi_share_one_committed_compile() {
     };
     let html = String::from_utf8(output.html.expect("patched HTML output")).expect("HTML UTF-8");
     assert!(html.contains("data-umber-page=\"1\" data-umber-revision=\"2\""));
+    assert!(html.contains(&format!("data-umber-output=\"{output_id}\"")));
     let (page, event) = rendered_text_address(&html, b'B');
     assert_eq!(
         session
-            .rendered_source_location(page, event, Some(0), RevisionId::new(1))
+            .rendered_source_location(page, event, Some(0), output_id, RevisionId::new(1))
             .expect("stale source query"),
         Some(RenderedSourceResult::StaleRevision {
             accepted: RevisionId::new(2),
@@ -527,7 +532,7 @@ fn requested_html_and_dvi_share_one_committed_compile() {
     );
     let location = current_render_location(
         session
-            .rendered_source_location(page, event, Some(0), RevisionId::new(2))
+            .rendered_source_location(page, event, Some(0), output_id, RevisionId::new(2))
             .expect("patched source query"),
     );
     assert_eq!(location.revision, RevisionId::new(2));
@@ -570,9 +575,12 @@ fn rendered_source_location_survives_paragraph_line_breaking() {
     let html = String::from_utf8(output.html.expect("HTML output")).expect("HTML UTF-8");
     assert!(html.matches("class=\"umber-run\"").count() >= 2);
     let (page, event) = rendered_text_address(&html, b'B');
+    let output_id = session
+        .rendered_output_id()
+        .expect("rendered output identity");
     let location = current_render_location(
         session
-            .rendered_source_location(page, event, Some(0), RevisionId::new(1))
+            .rendered_source_location(page, event, Some(0), output_id, RevisionId::new(1))
             .expect("source query"),
     );
     let start = source.iter().position(|byte| *byte == b'B').expect("B");
@@ -621,9 +629,12 @@ fn rendered_source_location_survives_math_layout() {
     };
     let html = String::from_utf8(output.html.expect("HTML output")).expect("HTML UTF-8");
     let (page, event) = rendered_text_address(&html, b'A');
+    let output_id = session
+        .rendered_output_id()
+        .expect("rendered output identity");
     let location = current_render_location(
         session
-            .rendered_source_location(page, event, Some(0), RevisionId::new(1))
+            .rendered_source_location(page, event, Some(0), output_id, RevisionId::new(1))
             .expect("source query"),
     );
     let start = source

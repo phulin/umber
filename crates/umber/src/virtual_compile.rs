@@ -271,8 +271,15 @@ pub struct RenderedSourceLocation {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RenderedSourceResult {
     Current(RenderedSourceLocation),
-    Deleted { minted_revision: u64 },
-    StaleRevision { accepted: tex_incr::RevisionId },
+    Deleted {
+        minted_revision: u64,
+    },
+    StaleRevision {
+        accepted: tex_incr::RevisionId,
+    },
+    OutputMismatch {
+        accepted: tex_incr::RenderedOutputId,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -605,12 +612,19 @@ impl VirtualCompileSession {
         })
     }
 
+    #[must_use]
+    pub fn rendered_output_id(&self) -> Option<tex_incr::RenderedOutputId> {
+        self.revision()
+            .and_then(|_| self.incremental.as_ref().map(tex_incr::Session::output_id))
+    }
+
     /// Resolves one HTML page/event/unit against the currently accepted output.
     pub fn rendered_source_location(
         &self,
         page: u32,
         event: u32,
         unit: Option<u32>,
+        output_id: tex_incr::RenderedOutputId,
         revision: tex_incr::RevisionId,
     ) -> Result<Option<RenderedSourceResult>, CompileError> {
         if self.accepted_output.is_none() {
@@ -620,7 +634,7 @@ impl VirtualCompileSession {
             return Ok(None);
         };
         session
-            .rendered_source_location(page, event, unit, revision)
+            .rendered_source_location(page, event, unit, output_id, revision)
             .map(|location| {
                 location.map(|result| match result {
                     tex_incr::RenderedSourceResult::Current(location) => {
@@ -638,6 +652,9 @@ impl VirtualCompileSession {
                     }
                     tex_incr::RenderedSourceResult::StaleRevision { accepted } => {
                         RenderedSourceResult::StaleRevision { accepted }
+                    }
+                    tex_incr::RenderedSourceResult::OutputMismatch { accepted } => {
+                        RenderedSourceResult::OutputMismatch { accepted }
                     }
                 })
             })
@@ -1017,6 +1034,11 @@ impl VirtualCompileSession {
             );
         let remaining = self.limits.output_bytes.saturating_sub(existing);
         let html = if self.html {
+            let output_id = self
+                .incremental
+                .as_ref()
+                .expect("accepted incremental session exists")
+                .output_id();
             let mut resolver = SessionFontResolver {
                 fonts: &self.html_fonts,
                 resolved: &self.resolved_fonts,
@@ -1024,6 +1046,7 @@ impl VirtualCompileSession {
             };
             let html_options = tex_out::html::HtmlOptions {
                 revision: accepted.revision.raw(),
+                output_id,
                 max_html_bytes: remaining,
                 max_total_asset_bytes: remaining,
                 max_asset_bytes: remaining,

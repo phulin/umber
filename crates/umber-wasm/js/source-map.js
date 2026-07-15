@@ -18,6 +18,7 @@ export function renderedSourceKeyFromPoint(document, x, y, options = {}) {
 	const pageOrdinal = unsignedInteger(page.dataset?.umberPage, 1);
 	const event = unsignedInteger(run.dataset?.umberEvent, 0);
 	const revision = unsignedInteger(page.dataset?.umberRevision, 1);
+	const output = outputIdentity(page.dataset?.umberOutput);
 	const codes = parseCodes(run.dataset?.umberCodes);
 	const encoding = selectEncoding(run.dataset?.umberFont, options);
 	const unit = unitAtOffset(codes, encoding, caret.offset);
@@ -25,11 +26,12 @@ export function renderedSourceKeyFromPoint(document, x, y, options = {}) {
 		pageOrdinal === null ||
 		event === null ||
 		revision === null ||
+		output === null ||
 		unit === null
 	) {
 		return null;
 	}
-	return { page: pageOrdinal, event, unit, revision };
+	return { page: pageOrdinal, event, unit, output, revision };
 }
 
 /** Resolves the source location at a browser point with one session query. */
@@ -47,6 +49,7 @@ export function renderedSourceLocationFromPoint(
 				key.page,
 				key.event,
 				key.unit,
+				key.output,
 				key.revision,
 			);
 }
@@ -92,4 +95,10 @@ function unsignedInteger(value, minimum) {
 	if (typeof value !== "string" || !/^\d+$/.test(value)) return null;
 	const number = Number(value);
 	return Number.isSafeInteger(number) && number >= minimum ? number : null;
+}
+
+function outputIdentity(value) {
+	return typeof value === "string" && /^[0-9a-f]{32}$/.test(value)
+		? value
+		: null;
 }

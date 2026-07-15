@@ -7,7 +7,11 @@ import {
 } from "./source-map.js";
 
 function fixture({ codes = "0x41,0x42", offset = 0, font = "7" } = {}) {
-	const page = element({ umberPage: "2", umberRevision: "9" });
+	const page = element({
+		umberPage: "2",
+		umberRevision: "9",
+		umberOutput: "0123456789abcdef0123456789abcdef",
+	});
 	const run = element({
 		umberEvent: "4",
 		umberCodes: codes,
@@ -44,6 +48,7 @@ test("maps OT1 caret offsets to revision-bound rendered units", () => {
 		page: 2,
 		event: 4,
 		unit: 1,
+		output: "0123456789abcdef0123456789abcdef",
 		revision: 9,
 	});
 });
@@ -78,7 +83,13 @@ test("preserves spaces as units and delegates one typed session query", () => {
 	};
 	const session = {
 		renderedSourceLocation(...arguments_) {
-			assert.deepEqual(arguments_, [2, 4, 1, 9]);
+			assert.deepEqual(arguments_, [
+				2,
+				4,
+				1,
+				"0123456789abcdef0123456789abcdef",
+				9,
+			]);
 			return expected;
 		},
 	};

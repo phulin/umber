@@ -1,11 +1,12 @@
 # Rendered Source Map
 
-Status: phases 1-4 implemented. Accepted HTML is revision-stamped and the
-native `tex-incr`/`umber` query path uses a lazily built, session-cached
-per-page render source map with typed current, deleted, and stale-revision
-results. The WASM boundary exposes those typed results and the authored DOM
-helper converts browser caret positions into revision-bound queries; no mapping
-tables cross into JavaScript.
+Status: phases 1-4 and the producer-binding closure are implemented. Accepted
+HTML is stamped with a collision-resistant session/output identity and revision.
+The native `tex-incr`/`umber` query path uses a lazily built, session-cached
+per-page render source map with typed current, deleted, stale-revision, and
+cross-session mismatch results. The WASM boundary exposes those typed results
+and the authored DOM helper converts browser caret positions into producer- and
+revision-bound queries; no mapping tables cross into JavaScript.
 
 Builds on the edit-stable fragment-backed coordinates of
 `edit_stable_source_coordinates.md` (umber2-hwtp): the map stores opaque
@@ -16,7 +17,7 @@ by `LayoutGeneration`, not revision.
 
 ## 1. Problem
 
-`Session::rendered_source_location(page, event, unit)`
+`Session::rendered_source_location(page, event, unit, output, revision)`
 (`crates/tex-incr/src/lib.rs`) currently answers one HTML click by:
 
 1. deserializing the entire committed page artifact
@@ -35,11 +36,13 @@ Two structural defects:
   Nothing is retained between queries, so an interactive host that
   highlights on hover pays full page deserialization and lowering per mouse
   move.
-- **No revision binding.** The `(page, event)` key is an index into the
+- **Originally no producer/revision binding.** The `(page, event)` key is an index into the
   event list of whatever output is currently accepted. Nothing ties a DOM
   ordinal to the revision that rendered it; HTML from revision N queried
   after revision N+1 is accepted indexes into a different page set and
   returns a plausible but wrong location instead of a typed staleness error.
+  A revision alone is insufficient because every independent session begins at
+  revision 1.
 
 Within one revision the index-based key itself is sound: the query path and
 the HTML emitter run the same versioned lowering in the same binary, so
@@ -94,10 +97,14 @@ retained — only the compact columns. Runs of consecutive direct origins
 (ordinary text) may later be run-length encoded; that is an optimization,
 not part of the contract.
 
-### 2.2 Revision binding
+### 2.2 Producer and revision binding
 
-- Stamp the page container in the emitted HTML with the accepted revision
-  (`data-umber-revision`) next to the existing `data-umber-page`.
+- Each incremental session mints one OS-random 128-bit rendered-output identity.
+  Stamp its canonical lowercase hexadecimal form (`data-umber-output`) and the
+  accepted revision (`data-umber-revision`) next to `data-umber-page`.
+- The query API takes both values. It checks output identity first: a foreign
+  session returns typed `output-mismatch` before page/event lookup. Only a
+  matching producer proceeds to the revision check.
 - The query API takes the revision the host read from the DOM. A mismatch
   with the currently accepted revision returns a typed `stale-revision`
   result instead of `None` or a silently wrong location.
@@ -122,10 +129,11 @@ first:
 One surface on `CompilerSession`:
 
 ```ts
-renderedSourceLocation(page, event, unit, revision):
+renderedSourceLocation(page, event, unit, output, revision):
     | { kind: "current"; path; start; end; line; column }
     | { kind: "deleted"; mintedRevision: number }
     | { kind: "stale-revision"; accepted: number }
+    | { kind: "output-mismatch"; acceptedOutput: string }
     | null                                   // unsourced or out of range
 ```
 
@@ -146,7 +154,7 @@ already ships (`cm-fonts.js`). Encoding entries may map one code to multiple
 scalars, so this offset arithmetic must live beside the encoding data, not
 be re-derived by applications. This helper reads only attributes already in
 the HTML; it needs no exported tables. `renderedSourceKeyFromPoint` returns
-`{ page, event, unit, revision }`; `renderedSourceLocationFromPoint` passes that
+`{ page, event, unit, output, revision }`; `renderedSourceLocationFromPoint` passes that
 key through one `CompilerSession.renderedSourceLocation` call. OT1 is the
 default encoding, while callers rendering other supplied faces pass either one
 encoding or a map keyed by the HTML `data-umber-font` id. Offsets are counted
@@ -237,3 +245,7 @@ map layout must not preclude it (it does not).
    charge the lazy layout line index to `diagnostic_bytes`, and preserve the
    point-in-time accepted metrics. The 2026-07-15 snapshot gate met every
    latency and retained-allocation budget.
+5. **Producer binding (implemented):** add the 128-bit session/output identity,
+   stamp and query it across native/WASM/DOM boundaries, reject cross-session
+   pairing before map lookup, and make the Chrome fixture retain the exact
+   `CompilerSession` that emitted the installed HTML.

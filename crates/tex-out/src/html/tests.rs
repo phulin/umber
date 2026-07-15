@@ -7,12 +7,27 @@ use crate::{
 };
 
 use super::{
-    AssetMode, HtmlError, HtmlFontKey, HtmlFontResolver, HtmlOptions, WebFont, write_html,
-    write_positioned_html,
+    AssetMode, HtmlError, HtmlFontKey, HtmlFontResolver, HtmlOptions, RenderedOutputId, WebFont,
+    write_html, write_positioned_html,
 };
 
 fn sp(raw: i32) -> Scaled {
     Scaled::from_raw(raw)
+}
+
+#[test]
+fn rendered_output_identity_has_one_canonical_safe_encoding() {
+    let identity = RenderedOutputId::from_bytes([0xab; 16]);
+    assert_eq!(identity.to_string(), "abababababababababababababababab");
+    assert_eq!(
+        RenderedOutputId::parse_hex(&identity.to_string()),
+        Some(identity)
+    );
+    assert_eq!(
+        RenderedOutputId::parse_hex("ABABABABABABABABABABABABABABABAB"),
+        None
+    );
+    assert_eq!(RenderedOutputId::parse_hex("éééééééééééééééé"), None);
 }
 
 #[test]
@@ -96,6 +111,7 @@ fn serialization_is_deterministic_exact_and_escaped() {
     assert_eq!(first, second);
     let html = String::from_utf8(first.html).expect("UTF-8 HTML");
     assert!(html.contains("data-umber-page=\"1\" data-umber-revision=\"42\""));
+    assert!(html.contains("data-umber-output=\"00000000000000000000000000000000\""));
     assert!(html.contains("data-umber-x-sp=\"17\""));
     assert!(html.contains("data-umber-baseline-sp=\"53\""));
     assert!(html.contains("A&lt;&amp;B"));

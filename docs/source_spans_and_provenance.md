@@ -370,7 +370,9 @@ diagnostic:
   nodes retain one per consumed source character. These diagnostic-only
   columns survive ligaturing, hyphenation, math layout, packing, and line
   breaking so an accepted compile session can answer a lazy rendered-source
-  query. Synthetic characters use a
+  query. The rendered DOM supplies the producing session's 128-bit output
+  identity and accepted revision; both are checked before this sidecar is
+  indexed. Synthetic characters use a
   related source origin where one is well-defined and otherwise degrade to
   `OriginId::UNKNOWN`.
 - Character origins are excluded from node semantic identity, state hashes,

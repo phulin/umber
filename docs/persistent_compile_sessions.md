@@ -88,26 +88,31 @@ method succeeds after disposal.
 
 HTML output identifies each page and positioned event with `data-umber-page`
 and `data-umber-event`; every page pairs its ordinal with the accepted
-`data-umber-revision`. A text event also exposes its source character codes,
+`data-umber-revision` and the producing session's OS-random 128-bit
+`data-umber-output` identity. A text event also exposes its source character codes,
 so a browser can translate a pointer hit into an optional text-unit index.
 The native session and `CompilerSession.renderedSourceLocation` expose the
-revision-checked lazy query below. The authored `source-map.js` companion reads
-the page revision and event metadata from canonical HTML and translates DOM
+producer- and revision-checked lazy query below. The authored `source-map.js` companion reads
+the page identity, revision, and event metadata from canonical HTML and translates DOM
 caret offsets into the corresponding text unit before making this call:
 
 ```text
-rendered_source_location(page, event, unit?, dom_revision)
+rendered_source_location(page, event, unit?, dom_output, dom_revision)
     -> Current { revision, path, start, end, line, column }
      | Deleted { minted_revision }
      | StaleRevision { accepted }
+     | OutputMismatch { accepted_output }
      | none
 ```
 
 Pages are numbered from one and events and units from zero. Omitting `unit`
 selects the first source-backed unit in the text event, which is sufficient
 for coarse run-level navigation. A precise SVG text hit can supply the glyph
-or character unit. The caller passes the revision stamped on the page; a
-mismatch is returned as typed `StaleRevision` before page data is touched.
+or character unit. The caller passes both values stamped on the page. Output
+identity is checked first, so HTML from an independent revision-1 session
+returns typed `OutputMismatch` before page data is touched. A matching producer
+with an old revision returns typed `StaleRevision`, preserving edit invalidation
+separately from cross-session misuse.
 Invalid page/event/unit values and synthetic output return `none`; they are
 not compile errors. An origin whose fragment was removed from the current
 editor layout returns typed `Deleted`. While a patch is pending, no query is

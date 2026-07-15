@@ -52,12 +52,13 @@ fn live_retention_charges_query_caches_to_their_owners() {
                 .is_some()
         })
         .expect("source-backed text event");
+    let output_id = session.output_id();
     session
-        .rendered_source_location(1, event, Some(0), RevisionId::new(1))
+        .rendered_source_location(1, event, Some(0), output_id, RevisionId::new(1))
         .expect("source query")
         .expect("mapped source");
     session
-        .rendered_source_location(1, event, Some(0), RevisionId::new(1))
+        .rendered_source_location(1, event, Some(0), output_id, RevisionId::new(1))
         .expect("repeated source query")
         .expect("mapped source");
     assert_eq!(session.page_lowerings(1), 1);
@@ -90,6 +91,60 @@ fn live_retention_charges_query_caches_to_their_owners() {
         )
         .expect_err("missing input rolls the attempted revision back");
     assert_eq!(session.page_lowerings(1), 0, "rollback drops page maps");
+}
+
+#[test]
+fn rendered_source_queries_reject_another_revision_one_session() {
+    let mut first = Session::start(
+        template(),
+        "first-output",
+        RevisionId::new(1),
+        "\\font\\tenrm=cmr10\\relax\\shipout\\hbox{\\tenrm A}\\end",
+        usize::MAX,
+    )
+    .expect("first session");
+    first
+        .register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("first font");
+    first.cold().expect("first output");
+    let first_event = (0..32)
+        .find(|&event| {
+            first
+                .rendered_origin(1, event, Some(0))
+                .expect("first render lookup")
+                .is_some()
+        })
+        .expect("first source-backed event");
+
+    let mut second = Session::start(
+        template(),
+        "second-output",
+        RevisionId::new(1),
+        "\\font\\tenrm=cmr10\\relax\\shipout\\hbox{\\vrule\\tenrm BBB}\\end",
+        usize::MAX,
+    )
+    .expect("second session");
+    second
+        .register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("second font");
+    second.cold().expect("second output");
+
+    assert_ne!(first.output_id(), second.output_id());
+    assert_eq!(
+        second
+            .rendered_source_location(
+                1,
+                first_event,
+                Some(0),
+                first.output_id(),
+                RevisionId::new(1),
+            )
+            .expect("cross-session query"),
+        Some(RenderedSourceResult::OutputMismatch {
+            accepted: second.output_id(),
+        })
+    );
+    assert_eq!(second.page_lowerings(1), 0, "mismatch must precede lookup");
 }
 
 #[test]
@@ -298,7 +353,7 @@ fn convergent_adopted_char_artifact_keeps_current_and_deleted_provenance() {
     let b_offset = session.source.find("{B}").expect("B box") + 1;
     assert_eq!(
         session
-            .rendered_source_location(2, b_event, None, RevisionId::new(3))
+            .rendered_source_location(2, b_event, None, session.output_id(), RevisionId::new(3),)
             .expect("render source lookup"),
         Some(RenderedSourceResult::Current(
             tex_state::ResolvedSourceLocation {
@@ -344,7 +399,7 @@ fn convergent_adopted_char_artifact_keeps_current_and_deleted_provenance() {
     );
     assert_eq!(
         session
-            .rendered_source_location(2, b_event, None, RevisionId::new(4))
+            .rendered_source_location(2, b_event, None, session.output_id(), RevisionId::new(4),)
             .expect("deleted render source lookup"),
         Some(RenderedSourceResult::Deleted { minted_revision: 1 })
     );

@@ -124,7 +124,8 @@ export interface Diagnostic {
 export type RenderedSourceResult =
   | { kind: "current"; path: string; start: number; end: number; line: number; column: number }
   | { kind: "deleted"; mintedRevision: number }
-  | { kind: "stale-revision"; accepted: number };
+  | { kind: "stale-revision"; accepted: number }
+  | { kind: "output-mismatch"; acceptedOutput: string };
 
 export type AttemptResult =
   | { kind: "need-resources"; required: ResourceRequest[]; prefetchHints: ResourceRequest[] }
@@ -287,14 +288,18 @@ impl CompilerSession {
         page: u32,
         event: u32,
         unit: Option<u32>,
+        output_id: String,
         revision: u32,
     ) -> Result<Option<JsRenderedSourceResult>, JsValue> {
+        let output_id = umber::RenderedOutputId::parse_hex(&output_id)
+            .ok_or_else(|| js_error("rendered output identity must be 32 hexadecimal digits"))?;
         match self
             .session_ref()?
             .rendered_source_location(
                 page,
                 event,
                 unit,
+                output_id,
                 umber::RevisionId::new(u64::from(revision)),
             )
             .map_err(boundary_error)?

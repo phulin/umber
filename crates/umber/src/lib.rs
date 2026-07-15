@@ -33,7 +33,7 @@ pub use tex_fonts::{
     FontProgramIdentity, FontPurposes, FontRequest, FontRequestKey, OpenTypeTag, ResolvedFont,
     VariationCoordinate, VariationSelection,
 };
-pub use tex_incr::RevisionId;
+pub use tex_incr::{RenderedOutputId, RevisionId};
 pub use tex_incr::{RetentionMetrics, ReuseMetrics};
 pub use virtual_compile::{
     CompileAttemptResult, CompileDiagnostic, CompileError, FileKind, FileRequest, FileRequestKey,

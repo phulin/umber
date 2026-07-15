@@ -4,6 +4,7 @@
 mod tests;
 
 use std::collections::BTreeMap;
+use std::fmt;
 
 use sha2::{Digest, Sha256};
 use tex_arith::Scaled;
@@ -63,12 +64,64 @@ pub enum AssetMode {
     },
 }
 
+/// Opaque identity binding rendered HTML to the session that produced it.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct RenderedOutputId([u8; 16]);
+
+impl RenderedOutputId {
+    pub const ZERO: Self = Self([0; 16]);
+
+    #[must_use]
+    pub const fn from_bytes(bytes: [u8; 16]) -> Self {
+        Self(bytes)
+    }
+
+    #[must_use]
+    pub const fn as_bytes(self) -> [u8; 16] {
+        self.0
+    }
+
+    pub fn parse_hex(value: &str) -> Option<Self> {
+        let value = value.as_bytes();
+        if value.len() != 32 {
+            return None;
+        }
+        let mut bytes = [0; 16];
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            let start = index * 2;
+            let high = hex_nibble(value[start])?;
+            let low = hex_nibble(value[start + 1])?;
+            *byte = (high << 4) | low;
+        }
+        Some(Self(bytes))
+    }
+}
+
+const fn hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        _ => None,
+    }
+}
+
+impl fmt::Display for RenderedOutputId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for byte in self.0 {
+            write!(formatter, "{byte:02x}")?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HtmlOptions {
     pub title: String,
     pub language: String,
     /// Accepted editor revision whose page/event ordinals this HTML describes.
     pub revision: u64,
+    /// Producing session identity paired with `revision` for source queries.
+    pub output_id: RenderedOutputId,
     pub asset_mode: AssetMode,
     pub max_pages: usize,
     pub max_html_bytes: usize,
@@ -86,6 +139,7 @@ impl Default for HtmlOptions {
             title: "Umber document".to_owned(),
             language: "und".to_owned(),
             revision: 1,
+            output_id: RenderedOutputId::ZERO,
             asset_mode: AssetMode::Embedded,
             max_pages: 16_384,
             max_html_bytes: 256 * 1024 * 1024,
@@ -553,6 +607,8 @@ fn write_page(
     out.push_str(&page.page_index.to_string());
     out.push_str("\" data-umber-revision=\"");
     out.push_str(&options.revision.to_string());
+    out.push_str("\" data-umber-output=\"");
+    out.push_str(&options.output_id.to_string());
     out.push('"');
     attr_sp(out, "width", page.width);
     attr_sp(out, "height", page.height);

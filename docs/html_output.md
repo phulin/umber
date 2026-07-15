@@ -143,8 +143,9 @@ and committed artifact at `\font` load and shipout respectively.
 Each page is an isolated fixed-size `section` with `position: relative`,
 `contain: strict`, and `overflow: hidden`. Events are absolute children in
 artifact traversal order. Its `data-umber-page` ordinal is immediately paired
-with `data-umber-revision`, the accepted editor revision whose deterministic
-page and event ordinals the HTML describes. Each run is a zero-layout SVG whose
+with `data-umber-output`, the producing session's collision-resistant 128-bit
+identity, and `data-umber-revision`, the accepted editor revision whose
+deterministic page and event ordinals the HTML describes. Each run is a zero-layout SVG whose
 `text` element receives the exact projected `x` and `y` baseline. The baseline
 is retained in metadata and marked by a transparent one-CSS-pixel SVG geometry
 probe; the probe is `aria-hidden`, does not paint, and works around Firefox
@@ -161,7 +162,7 @@ a coordinate claim.
 The authored WASM package's `source-map.js` helper is the canonical bridge from
 a browser point to this metadata. It uses `caretPositionFromPoint`,
 `data-umber-codes`, and the selected font encoding to compute a text-unit
-ordinal, then includes the page's stamped revision in the query. The helper
+ordinal, then includes the page's stamped output identity and revision in the query. The helper
 counts DOM UTF-16 offsets from the actual encoding entries, so a TeX code that
 maps to multiple Unicode scalars still names exactly one rendered unit.
 
@@ -188,10 +189,12 @@ caller-selected content-addressed same-origin prefix.
 ## Determinism, limits, and failures
 
 Serialization is UTF-8 with LF endings, fixed attribute/style order, lowercase
-hex, canonical decimal/base64 encodings, and no timestamps or host paths. Page
-and event identifiers derive from page/event ordinals, never addresses or hash
-map iteration. Repeated native and WASM runs over equal artifact and resource
-bytes must produce identical HTML and asset bytes.
+hex, canonical decimal/base64 encodings, and no timestamps or host paths. The
+session/output identity is intentionally nondeterministic across independent
+sessions; repeated serialization of one accepted session remains byte-identical.
+Page and event identifiers derive from page/event ordinals, never addresses or
+hash map iteration. Equal artifact/resource bytes and an equal output identity
+produce identical HTML and asset bytes across native and WASM.
 
 Default limits are 16,384 pages, 1,000,000 events per page, 16,384 run
 codes, 4,096 nesting depth, 64 MiB per asset, 256 MiB total assets, 256 MiB

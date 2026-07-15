@@ -127,12 +127,13 @@ async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
     assert!(html.is_instance_of::<Uint8Array>());
     let html_text = String::from_utf8(Uint8Array::new(&html).to_vec()).expect("HTML UTF-8");
     let event = rendered_text_event(&html_text, b'A');
+    let output_id = rendered_output_id(&html_text);
     let retention_before = session.retention_metrics().expect("accepted retention");
     let diagnostic_before = field(&retention_before, "diagnosticBytes")
         .as_f64()
         .expect("numeric diagnostic bytes");
     let location = session
-        .rendered_source_location(1, event, Some(0), 1)
+        .rendered_source_location(1, event, Some(0), output_id.clone(), 1)
         .expect("source query")
         .expect("mapped source");
     let retention_after = session.retention_metrics().expect("live retention");
@@ -142,7 +143,7 @@ async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
     assert!(diagnostic_after > diagnostic_before);
     assert!(
         session
-            .rendered_source_location(1, event, Some(2), 1)
+            .rendered_source_location(1, event, Some(2), output_id.clone(), 1)
             .expect("space query")
             .is_none()
     );
@@ -161,11 +162,36 @@ async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
         Some((source_start + 1) as f64)
     );
     let stale = session
-        .rendered_source_location(1, event, Some(0), 0)
+        .rendered_source_location(1, event, Some(0), output_id.clone(), 0)
         .expect("stale query")
         .expect("typed stale result");
     assert_eq!(string_field(stale.as_ref(), "kind"), "stale-revision");
     assert_eq!(field(stale.as_ref(), "accepted").as_f64(), Some(1.0));
+
+    let other_options = options("main.tex");
+    set(&other_options, "html", Object::new().as_ref());
+    let mut other = CompilerSession::new(other_options.unchecked_ref::<JsSessionOptions>())
+        .expect("second HTML session");
+    other
+        .add_user_file("cmr10.tfm", &bytes(tfm))
+        .expect("second TFM");
+    other
+        .add_user_file(
+            "main.tex",
+            &bytes(b"\\font\\tenrm=cmr10\\relax\\shipout\\hbox{\\tenrm BBB}\\end"),
+        )
+        .expect("second source");
+    provide_requested_html_font(&mut other);
+    let other_complete = other.advance().expect("second HTML compile");
+    let other_output = field(other_complete.as_ref(), "output");
+    let other_html = String::from_utf8(Uint8Array::new(&field(&other_output, "html")).to_vec())
+        .expect("second HTML UTF-8");
+    assert_ne!(rendered_output_id(&other_html), output_id);
+    let mismatch = other
+        .rendered_source_location(1, event, Some(0), output_id.clone(), 1)
+        .expect("cross-session query")
+        .expect("typed mismatch");
+    assert_eq!(string_field(mismatch.as_ref(), "kind"), "output-mismatch");
     let function = js_sys::Function::new_with_args(
         "bytes",
         r#"
@@ -379,11 +405,12 @@ fn rendered_queries_track_length_changes_before_a_reused_page() {
     let third_html = String::from_utf8(Uint8Array::new(&field(&third_output, "html")).to_vec())
         .expect("third HTML");
     let b_event = rendered_text_event(&third_html, b'B');
+    let output_id = rendered_output_id(&third_html);
     let mut revision_three = revision_two;
     revision_three.insert_str(insert_at, inserted);
     let b_offset = revision_three.find("{B}").expect("B box") + 1;
     let current = session
-        .rendered_source_location(2, b_event, Some(0), 3)
+        .rendered_source_location(2, b_event, Some(0), output_id.clone(), 3)
         .expect("current query")
         .expect("current result");
     assert_eq!(string_field(current.as_ref(), "kind"), "current");
@@ -411,7 +438,7 @@ fn rendered_queries_track_length_changes_before_a_reused_page() {
     let fourth = session.advance().expect("fourth revision");
     assert_eq!(string_field(fourth.as_ref(), "kind"), "complete");
     let deleted = session
-        .rendered_source_location(2, b_event, Some(0), 4)
+        .rendered_source_location(2, b_event, Some(0), output_id, 4)
         .expect("deleted query")
         .expect("deleted result");
     assert_eq!(string_field(deleted.as_ref(), "kind"), "deleted");
@@ -528,6 +555,19 @@ fn rendered_text_event(html: &str, code: u8) -> u32 {
     html[event_start..event_end]
         .parse::<u32>()
         .expect("numeric event id")
+}
+
+fn rendered_output_id(html: &str) -> String {
+    let prefix = "data-umber-output=\"";
+    let start = html
+        .find(prefix)
+        .map(|start| start + prefix.len())
+        .expect("rendered output id");
+    let end = html[start..]
+        .find('"')
+        .map(|end| start + end)
+        .expect("rendered output id end");
+    html[start..end].to_owned()
 }
 
 fn set(object: &Object, name: &str, value: &JsValue) {

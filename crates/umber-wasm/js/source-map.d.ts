@@ -5,6 +5,7 @@ export interface RenderedSourceKey {
 	page: number;
 	event: number;
 	unit: number;
+	output: string;
 	revision: number;
 }
 export interface RenderedSourcePointOptions {
@@ -27,6 +28,7 @@ export function renderedSourceLocationFromPoint(
 			page: number,
 			event: number,
 			unit: number | undefined,
+			output: string,
 			revision: number,
 		): RenderedSourceResult | undefined;
 	},

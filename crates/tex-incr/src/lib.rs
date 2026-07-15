@@ -18,6 +18,7 @@ use tex_exec::{
 use tex_expand::InputResolver;
 use tex_lex::{InputSource, InputStack, LayoutCursor, LayoutCursorError, MemoryInput, WorldInput};
 use tex_out::dvi::{DviError, DviPagePlan, DviStreamWriter};
+pub use tex_out::html::RenderedOutputId;
 use tex_state::token::OriginId;
 use tex_state::{
     CommittedArtifact, ContentHash, EditorLayout, EditorLayoutError, EffectRecord, FragmentStore,
@@ -140,6 +141,7 @@ pub enum RenderedSourceResult {
     Current(tex_state::ResolvedSourceLocation),
     Deleted { minted_revision: u64 },
     StaleRevision { accepted: RevisionId },
+    OutputMismatch { accepted: RenderedOutputId },
 }
 
 #[derive(Debug)]
@@ -214,6 +216,7 @@ pub struct Session {
     job_name: String,
     source_path: String,
     revision: RevisionId,
+    output_id: RenderedOutputId,
     source: String,
     fragments: FragmentStore,
     layout: EditorLayout,
@@ -267,11 +270,14 @@ impl Session {
             vec![Piece::new(fragment, 0, fragment_len)],
             &fragments,
         )?;
+        let mut output_id = [0; 16];
+        getrandom::fill(&mut output_id).map_err(SessionError::OutputIdentity)?;
         Ok(Self {
             template,
             job_name: job_name.into(),
             source_path,
             revision,
+            output_id: RenderedOutputId::from_bytes(output_id),
             content_hash: ContentHash::from_bytes(source.as_bytes()),
             source,
             fragments,
@@ -291,6 +297,11 @@ impl Session {
     #[must_use]
     pub const fn revision(&self) -> RevisionId {
         self.revision
+    }
+
+    #[must_use]
+    pub const fn output_id(&self) -> RenderedOutputId {
+        self.output_id
     }
 
     #[must_use]
@@ -376,8 +387,14 @@ impl Session {
         page: u32,
         event: u32,
         unit: Option<u32>,
+        output_id: RenderedOutputId,
         revision: RevisionId,
     ) -> Result<Option<RenderedSourceResult>, SessionError> {
+        if output_id != self.output_id {
+            return Ok(Some(RenderedSourceResult::OutputMismatch {
+                accepted: self.output_id,
+            }));
+        }
         if revision != self.revision {
             return Ok(Some(RenderedSourceResult::StaleRevision {
                 accepted: self.revision,
@@ -1384,6 +1401,7 @@ fn output_bytes(effects: &[EffectRecord], artifacts: &[CommittedArtifact]) -> us
 
 #[derive(Debug)]
 pub enum SessionError {
+    OutputIdentity(getrandom::Error),
     StaleRevision {
         expected: RevisionId,
         actual: RevisionId,
@@ -1405,6 +1423,9 @@ pub enum SessionError {
 impl fmt::Display for SessionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::OutputIdentity(error) => {
+                write!(f, "could not create rendered-output identity: {error}")
+            }
             Self::StaleRevision { expected, actual } => write!(
                 f,
                 "edit targets stale revision {} (accepted revision is {})",
