@@ -8,7 +8,9 @@ use tex_out::dvi::DviPagePlan;
 use tex_state::ids::TokenListId;
 use tex_state::node::Node;
 use tex_state::token::TracedTokenWord;
-use tex_state::{FileContent, InputReadState, InputSummary, TokenListReplayKind, Universe};
+use tex_state::{
+    FileContent, InputReadState, InputSummary, ParagraphBarrierReason, TokenListReplayKind, Universe,
+};
 
 use crate::checkpoint::{CheckpointSink, EngineBoundary, EngineSession, NoopCheckpointSink};
 use crate::dispatch::{dispatch_delivered_token_with_context, unimplemented_typesetting};
@@ -95,6 +97,12 @@ pub(crate) struct PendingParagraphMemo {
     pub(crate) trace_origins: Vec<tex_state::token::OriginId>,
 }
 
+pub(crate) struct ColdParagraphRecording {
+    pub(crate) effect_start: usize,
+    pub(crate) trace: Vec<TracedTokenWord>,
+    pub(crate) barriers: std::collections::BTreeSet<ParagraphBarrierReason>,
+}
+
 pub struct ExecutionContext<'a> {
     expansion: tex_expand::ExpansionContext<'a>,
     font_resolver: Option<&'a mut dyn FontResolver>,
@@ -102,6 +110,7 @@ pub struct ExecutionContext<'a> {
     pub(crate) pending_paragraph_memo: Option<PendingParagraphMemo>,
     pub(crate) bypass_paragraph_memo_once: bool,
     pub(crate) paragraph_memo_barrier: bool,
+    pub(crate) cold_paragraph_recording: Option<ColdParagraphRecording>,
 }
 
 impl<'a> ExecutionContext<'a> {
@@ -114,6 +123,7 @@ impl<'a> ExecutionContext<'a> {
             pending_paragraph_memo: None,
             bypass_paragraph_memo_once: false,
             paragraph_memo_barrier: false,
+            cold_paragraph_recording: None,
         }
     }
 
@@ -130,6 +140,7 @@ impl<'a> ExecutionContext<'a> {
             pending_paragraph_memo: None,
             bypass_paragraph_memo_once: false,
             paragraph_memo_barrier: false,
+            cold_paragraph_recording: None,
         }
     }
 
@@ -147,6 +158,7 @@ impl<'a> ExecutionContext<'a> {
             pending_paragraph_memo: None,
             bypass_paragraph_memo_once: false,
             paragraph_memo_barrier: false,
+            cold_paragraph_recording: None,
         }
     }
 
@@ -197,6 +209,40 @@ impl<'a> ExecutionContext<'a> {
             .as_deref_mut()
             .ok_or_else(|| format!("PDF image {} has no host resolver", request.name))?
             .open_image(input, request, request_index)
+    }
+
+    pub(crate) fn begin_cold_paragraph_recording(&mut self, effect_start: usize) -> bool {
+        if self.cold_paragraph_recording.is_some() {
+            return false;
+        }
+        self.expansion.begin_paragraph_recording();
+        self.cold_paragraph_recording = Some(ColdParagraphRecording {
+            effect_start,
+            trace: Vec::new(),
+            barriers: std::collections::BTreeSet::new(),
+        });
+        true
+    }
+
+    pub(crate) fn observe_paragraph_token(&mut self, token: TracedTokenWord) {
+        if let Some(recording) = &mut self.cold_paragraph_recording {
+            recording.trace.push(token);
+        }
+    }
+
+    pub(crate) fn mark_paragraph_barrier(&mut self, reason: ParagraphBarrierReason) {
+        if let Some(recording) = &mut self.cold_paragraph_recording {
+            recording.barriers.insert(reason);
+        }
+    }
+
+    pub(crate) fn finish_paragraph_expansion_recording(
+        &mut self,
+    ) -> (
+        Vec<tex_state::DependencyKey>,
+        Vec<tex_expand::ParagraphExpansionBarrier>,
+    ) {
+        self.expansion.finish_paragraph_recording()
     }
 }
 
@@ -500,6 +546,9 @@ where
             && !execution.paragraph_memo_barrier
             && stores.paragraph_memo_enabled()
         {
+            if execution.begin_cold_paragraph_recording(stores.world().effect_records().len()) {
+                stores.begin_pure_paragraph_recording();
+            }
             if execution.bypass_paragraph_memo_once {
                 execution.bypass_paragraph_memo_once = false;
             } else if crate::paragraph_memo::try_reuse_literal_paragraph(
@@ -522,6 +571,7 @@ where
                 stats.delivered_tokens += macro_text.len();
                 stats.macro_text_span_tokens += macro_text.len();
                 for token in macro_text.drain(..) {
+                    execution.observe_paragraph_token(token);
                     let appended = assignments::try_append_character(nest, token, stores)?;
                     debug_assert!(appended);
                 }
@@ -531,6 +581,7 @@ where
                 stats.delivered_tokens += macro_text.len();
                 stats.source_text_span_tokens += macro_text.len();
                 for token in macro_text.drain(..) {
+                    execution.observe_paragraph_token(token);
                     let appended = assignments::try_append_character(nest, token, stores)?;
                     debug_assert!(appended);
                 }
@@ -678,6 +729,7 @@ where
         }
         stats.delivered_tokens += 1;
         stats.main_control_dispatches += 1;
+        execution.observe_paragraph_token(token);
         let action =
             match dispatch_delivered_token_with_context(nest, token, input, stores, execution) {
                 Ok(action) => action,

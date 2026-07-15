@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::path::Path;
 #[cfg(feature = "profiling-stats")]
@@ -32,6 +33,19 @@ use tex_state::{
 };
 
 const MEANING_SITE_CACHE_LEN: usize = 64;
+pub const PARAGRAPH_SCANTOKENS_BARRIER_DOMAIN: u32 = 0x5053_434e;
+pub const PARAGRAPH_INPUT_OPEN_BARRIER_DOMAIN: u32 = 0x5049_4e50;
+pub const PARAGRAPH_END_INPUT_BARRIER_DOMAIN: u32 = 0x5045_4e44;
+
+/// Expansion-side operations which prevent a containing paragraph region
+/// from being replayed. `\csname` is intentionally absent: the meaning of its
+/// constructed symbol is recorded like any other meaning read.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum ParagraphExpansionBarrier {
+    InputOpen,
+    EndInput,
+    Scantokens,
+}
 
 #[derive(Clone, Copy, Debug)]
 struct MeaningSiteCacheEntry {
@@ -1046,6 +1060,8 @@ pub struct ExpansionContext<'a> {
     memo: Option<memo::ExpansionMemoCache>,
     episode_reads: Option<ReadSetRecorder>,
     episode_barrier: bool,
+    paragraph_reads: Option<ReadSetRecorder>,
+    paragraph_barriers: BTreeSet<ParagraphExpansionBarrier>,
 }
 
 /// Default number of expansion-loop steps available to one expansion request.
@@ -1071,6 +1087,8 @@ impl<'a> ExpansionContext<'a> {
             memo: None,
             episode_reads: None,
             episode_barrier: false,
+            paragraph_reads: None,
+            paragraph_barriers: BTreeSet::new(),
         }
     }
 
@@ -1096,6 +1114,8 @@ impl<'a> ExpansionContext<'a> {
             memo: None,
             episode_reads: None,
             episode_barrier: false,
+            paragraph_reads: None,
+            paragraph_barriers: BTreeSet::new(),
         }
     }
 
@@ -1182,12 +1202,42 @@ impl<'a> ExpansionContext<'a> {
         }
     }
 
+    #[doc(hidden)]
+    pub fn begin_paragraph_recording(&mut self) {
+        debug_assert!(self.paragraph_reads.is_none());
+        self.paragraph_reads = Some(ReadSetRecorder::default());
+        self.paragraph_barriers.clear();
+    }
+
+    #[doc(hidden)]
+    pub fn finish_paragraph_recording(
+        &mut self,
+    ) -> (Vec<ReadDependency>, Vec<ParagraphExpansionBarrier>) {
+        let reads = self
+            .paragraph_reads
+            .take()
+            .map_or_else(Vec::new, |reads| reads.dependencies().collect());
+        let barriers = std::mem::take(&mut self.paragraph_barriers)
+            .into_iter()
+            .collect();
+        (reads, barriers)
+    }
+
+    pub(crate) fn mark_paragraph_barrier(&mut self, barrier: ParagraphExpansionBarrier) {
+        if self.paragraph_reads.is_some() {
+            self.paragraph_barriers.insert(barrier);
+        }
+    }
+
     #[inline(always)]
     fn record_dependency(&mut self, dependency: ReadDependency) {
         if let Some(recorder) = self.recorder.as_deref_mut() {
             recorder.record_dependency(dependency);
         }
         if let Some(recorder) = &mut self.episode_reads {
+            recorder.record_dependency(dependency);
+        }
+        if let Some(recorder) = &mut self.paragraph_reads {
             recorder.record_dependency(dependency);
         }
     }
@@ -1288,6 +1338,8 @@ impl<'a> ExpansionContext<'a> {
             memo: self.memo.take(),
             episode_reads: self.episode_reads.take(),
             episode_barrier: self.episode_barrier,
+            paragraph_reads: self.paragraph_reads.take(),
+            paragraph_barriers: std::mem::take(&mut self.paragraph_barriers),
         };
         let output = operation(&mut nested);
         self.input_resolver = nested.input_resolver.take();
@@ -1299,6 +1351,8 @@ impl<'a> ExpansionContext<'a> {
         self.memo = nested.memo.take();
         self.episode_reads = nested.episode_reads.take();
         self.episode_barrier = nested.episode_barrier;
+        self.paragraph_reads = nested.paragraph_reads.take();
+        self.paragraph_barriers = std::mem::take(&mut nested.paragraph_barriers);
         output
     }
 
@@ -1336,6 +1390,9 @@ impl<'a> ExpansionContext<'a> {
         if let Some(recorder) = &mut self.episode_reads {
             recorder.record_meaning(symbol, meaning);
         }
+        if let Some(recorder) = &mut self.paragraph_reads {
+            recorder.record_meaning(symbol, meaning);
+        }
     }
 
     pub fn open_input(
@@ -1344,6 +1401,11 @@ impl<'a> ExpansionContext<'a> {
         name: &str,
     ) -> Result<Box<dyn InputSource>, String> {
         self.mark_episode_barrier();
+        self.mark_paragraph_barrier(ParagraphExpansionBarrier::InputOpen);
+        self.record_dependency(ReadDependency::Query {
+            domain: PARAGRAPH_INPUT_OPEN_BARRIER_DOMAIN,
+            identity: 0,
+        });
         let request_index = self.next_resolution_index();
         self.input_resolver
             .as_deref_mut()

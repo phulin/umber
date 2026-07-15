@@ -260,6 +260,13 @@ impl Stores {
         self.source_fragments = fragments;
     }
 
+    pub(crate) fn direct_root_span_id(
+        &self,
+        origin: crate::token::OriginId,
+    ) -> Option<crate::RootSpanId> {
+        self.source_fragments.direct_root_span_id(origin)
+    }
+
     pub(crate) fn can_restore_snapshot(&self, snapshot: &StoreSnapshot) -> bool {
         snapshot.owner == self.owner.snapshot_owner()
             && snapshot.env_snapshot.group_depth() == self.env.group_depth()

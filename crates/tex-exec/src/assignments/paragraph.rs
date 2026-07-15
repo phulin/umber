@@ -40,7 +40,7 @@ pub(super) fn execute_paragraph_command(
                 normal_paragraph(nest, stores);
                 build_page_if_outer_vertical(nest, stores)
             } else {
-                end_paragraph_with_memo(nest, stores, execution)
+                end_paragraph_with_memo(nest, input, stores, execution)
             }
         }
         UnexpandablePrimitive::Indent => start_paragraph(nest, input, stores, true),
@@ -174,12 +174,14 @@ pub(crate) fn end_paragraph(nest: &mut ModeNest, stores: &mut Universe) -> Resul
 
 fn end_paragraph_with_memo(
     nest: &mut ModeNest,
+    input: &mut InputStack,
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<(), ExecError> {
     if nest.current_mode() == Mode::Horizontal {
         flush_pending_hchars(nest, stores)?;
         crate::paragraph_memo::publish_prepared_hlist(
+            input,
             stores,
             execution,
             nest.current_list().nodes(),

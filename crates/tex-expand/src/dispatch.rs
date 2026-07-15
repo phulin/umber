@@ -386,6 +386,14 @@ macro_rules! dispatch_match {
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Scantokens) => {
                 expansion.mark_episode_barrier();
+                expansion.mark_paragraph_barrier(crate::ParagraphExpansionBarrier::Scantokens);
+                crate::record_dependency!(
+                    expansion,
+                    crate::ReadDependency::Query {
+                        domain: crate::PARAGRAPH_SCANTOKENS_BARRIER_DOMAIN,
+                        identity: 0,
+                    }
+                );
                 let raw = crate::scan::scan_general_text_with_expanded_open(
                     input, stores, expansion, mode, call_context,
                 )?;
@@ -680,6 +688,14 @@ macro_rules! dispatch_match {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => $input_arm,
             Meaning::ExpandablePrimitive(ExpandablePrimitive::EndInput) => {
                 expansion.mark_episode_barrier();
+                expansion.mark_paragraph_barrier(crate::ParagraphExpansionBarrier::EndInput);
+                crate::record_dependency!(
+                    expansion,
+                    crate::ReadDependency::Query {
+                        domain: crate::PARAGRAPH_END_INPUT_BARRIER_DOMAIN,
+                        identity: 0,
+                    }
+                );
                 input.end_current_source_after_current_line();
                 Ok(Dispatch::Continue)
             }

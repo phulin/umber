@@ -6,8 +6,8 @@
 
 use crate::env::banks::IntParam;
 use crate::glue::GlueSpec;
-use crate::{ContentHash, DetachedMemoValue};
-use std::collections::{HashMap, VecDeque};
+use crate::{ContentHash, DetachedMemoValue, InputSummary, ObservedDependency, RootSpanId};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PureMemoConfig {
@@ -51,6 +51,12 @@ pub struct PureMemoStats {
     pub paragraph_validation_misses: u64,
     pub paragraph_import_failures: u64,
     pub paragraph_barriers: u64,
+    pub paragraph_eligible_regions: u64,
+    pub paragraph_display_math_barriers: u64,
+    pub paragraph_scantokens_barriers: u64,
+    pub paragraph_input_open_barriers: u64,
+    pub paragraph_untracked_world_barriers: u64,
+    pub paragraph_output_routine_barriers: u64,
     pub page_lookups: u64,
     pub page_hits: u64,
     pub page_inserts: u64,
@@ -85,6 +91,33 @@ pub struct PureParagraphEntry {
     pub mutations: Vec<PureParagraphMutation>,
     pub effects: Vec<crate::DetachedVirtualEffect>,
     pub origin_ordinals: Vec<u32>,
+}
+
+/// Why a cold paragraph trace cannot be replayed. These reasons are stable
+/// telemetry rather than inferred failures at a later cache lookup.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum ParagraphBarrierReason {
+    DisplayMath,
+    Scantokens,
+    MidParagraphInputOpen,
+    EndInput,
+    UntrackedWorldAccess,
+    NestedOutputRoutine,
+    UnsupportedEscapingWrite,
+    UnsupportedInputTransition,
+}
+
+/// Recorder output for one normally executed paragraph. The result nodes are
+/// deliberately not detached here; the prior-generation anchoring layer owns
+/// that reference in the next rollout phase.
+#[derive(Clone, Debug)]
+pub struct RecordedParagraphRegion {
+    pub consumed_spans: Vec<RootSpanId>,
+    pub dependencies: Vec<ObservedDependency>,
+    pub mutations: Vec<PureParagraphMutation>,
+    pub effects: Vec<crate::DetachedVirtualEffect>,
+    pub ending_input: InputSummary,
+    pub barriers: Vec<ParagraphBarrierReason>,
 }
 
 #[derive(Clone, Debug)]
@@ -171,6 +204,8 @@ pub struct PureMemoRuntime {
     page_episodes: bool,
     shipout_episodes: bool,
     paragraph_recording: Option<Vec<PureParagraphMutation>>,
+    recorded_paragraphs: Vec<RecordedParagraphRegion>,
+    paragraph_barrier_reasons: BTreeMap<ParagraphBarrierReason, u64>,
 }
 
 impl PureMemoRuntime {
@@ -512,6 +547,58 @@ impl PureMemoRuntime {
         if let Some(cache) = &mut self.cache {
             cache.stats.paragraph_barriers = cache.stats.paragraph_barriers.saturating_add(1);
         }
+    }
+
+    pub(crate) fn record_paragraph_region(&mut self, region: RecordedParagraphRegion) {
+        let Some(cache) = &mut self.cache else {
+            return;
+        };
+        if region.barriers.is_empty() {
+            cache.stats.paragraph_eligible_regions =
+                cache.stats.paragraph_eligible_regions.saturating_add(1);
+        } else {
+            cache.stats.paragraph_barriers = cache.stats.paragraph_barriers.saturating_add(1);
+            for &reason in &region.barriers {
+                let count = self.paragraph_barrier_reasons.entry(reason).or_default();
+                *count = count.saturating_add(1);
+                match reason {
+                    ParagraphBarrierReason::DisplayMath => {
+                        cache.stats.paragraph_display_math_barriers = cache
+                            .stats
+                            .paragraph_display_math_barriers
+                            .saturating_add(1);
+                    }
+                    ParagraphBarrierReason::Scantokens => {
+                        cache.stats.paragraph_scantokens_barriers =
+                            cache.stats.paragraph_scantokens_barriers.saturating_add(1);
+                    }
+                    ParagraphBarrierReason::MidParagraphInputOpen => {
+                        cache.stats.paragraph_input_open_barriers =
+                            cache.stats.paragraph_input_open_barriers.saturating_add(1);
+                    }
+                    ParagraphBarrierReason::UntrackedWorldAccess => {
+                        cache.stats.paragraph_untracked_world_barriers = cache
+                            .stats
+                            .paragraph_untracked_world_barriers
+                            .saturating_add(1);
+                    }
+                    ParagraphBarrierReason::NestedOutputRoutine => {
+                        cache.stats.paragraph_output_routine_barriers = cache
+                            .stats
+                            .paragraph_output_routine_barriers
+                            .saturating_add(1);
+                    }
+                    ParagraphBarrierReason::EndInput
+                    | ParagraphBarrierReason::UnsupportedEscapingWrite
+                    | ParagraphBarrierReason::UnsupportedInputTransition => {}
+                }
+            }
+        }
+        self.recorded_paragraphs.push(region);
+    }
+
+    pub fn recorded_paragraphs(&self) -> &[RecordedParagraphRegion] {
+        &self.recorded_paragraphs
     }
 
     pub(crate) fn insert_pretolerance(&mut self, key: PureMemoKey, plan: Option<PureBreakPlan>) {

@@ -109,6 +109,13 @@ pub(crate) fn enter_math(
         assignments::flush_pending_hchars(nest, stores)?;
     }
     let interrupt = if display {
+        execution.mark_paragraph_barrier(tex_state::ParagraphBarrierReason::DisplayMath);
+        crate::paragraph_memo::publish_prepared_hlist(
+            input,
+            stores,
+            execution,
+            nest.current_list().nodes(),
+        );
         let paragraph = assignments::interrupt_paragraph_for_display(nest, stores)?;
         let dimensions = assignments::display_line_dimensions(nest, stores);
         let pre_display_size = paragraph

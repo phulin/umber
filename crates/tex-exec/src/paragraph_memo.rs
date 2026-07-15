@@ -1,4 +1,4 @@
-//! Effect-free literal paragraph-front-end memoization.
+//! Recorder-driven paragraph front-end eligibility and transitional detached reuse.
 
 use tex_lex::InputStack;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
@@ -25,7 +25,9 @@ pub(crate) fn try_reuse_literal_paragraph(
 ) -> Result<bool, ExecError> {
     let every_par = stores.tok_param(TokParam::EVERY_PAR);
     if !stores.tokens(every_par).is_empty() {
-        execution.bypass_paragraph_memo_once = true;
+        // Cold execution records `everypar` like any other token-list input.
+        // Until the prior-generation lookup path lands, do not speculate past
+        // it and do not classify it as a barrier.
         return Ok(false);
     }
 
@@ -127,10 +129,7 @@ pub(crate) fn try_reuse_literal_paragraph(
             })
         });
         crate::push_traced_tokens(input, stores, traced);
-        if !boundary_only {
-            execution.paragraph_memo_barrier = true;
-            stores.record_pure_paragraph_barrier();
-        }
+        let _ = boundary_only;
         return Ok(false);
     }
 
@@ -352,14 +351,20 @@ fn rebind_literal_origins(
 }
 
 pub(crate) fn publish_prepared_hlist(
+    input: &mut InputStack,
     stores: &mut Universe,
     execution: &mut ExecutionContext<'_>,
     nodes: &[tex_state::node::Node],
 ) {
+    let (recorded_mutations, recorded_eligible) = publish_recorded_region(input, stores, execution);
     let Some(pending) = execution.pending_paragraph_memo.take() else {
         return;
     };
-    let mutations = stores.finish_pure_paragraph_recording().unwrap_or_default();
+    if !recorded_eligible {
+        return;
+    }
+    let mutations = recorded_mutations
+        .unwrap_or_else(|| stores.finish_pure_paragraph_recording().unwrap_or_default());
     let Some(effects) = detach_effects(&stores.world().effect_records()[pending.effect_start..])
     else {
         return;
@@ -377,6 +382,121 @@ pub(crate) fn publish_prepared_hlist(
             },
         );
     }
+}
+
+fn publish_recorded_region(
+    input: &mut InputStack,
+    stores: &mut Universe,
+    execution: &mut ExecutionContext<'_>,
+) -> (Option<Vec<tex_state::PureParagraphMutation>>, bool) {
+    let Some(mut recording) = execution.cold_paragraph_recording.take() else {
+        return (None, true);
+    };
+    let (mut keys, expansion_barriers) = execution.finish_paragraph_expansion_recording();
+    keys.retain(|key| {
+        let tex_state::DependencyKey::Query { domain, .. } = key else {
+            return true;
+        };
+        let reason = match *domain {
+            tex_expand::PARAGRAPH_SCANTOKENS_BARRIER_DOMAIN => {
+                Some(tex_state::ParagraphBarrierReason::Scantokens)
+            }
+            tex_expand::PARAGRAPH_INPUT_OPEN_BARRIER_DOMAIN => {
+                Some(tex_state::ParagraphBarrierReason::MidParagraphInputOpen)
+            }
+            tex_expand::PARAGRAPH_END_INPUT_BARRIER_DOMAIN => {
+                Some(tex_state::ParagraphBarrierReason::EndInput)
+            }
+            _ => None,
+        };
+        if let Some(reason) = reason {
+            recording.barriers.insert(reason);
+            false
+        } else {
+            true
+        }
+    });
+    keys.extend([
+        tex_state::DependencyKey::Cell {
+            bank: tex_state::DependencyBank::CurrentFont,
+            index: 0,
+        },
+        tex_state::DependencyKey::Cell {
+            bank: tex_state::DependencyBank::TokParam,
+            index: u32::from(TokParam::EVERY_PAR.raw()),
+        },
+    ]);
+    for token in &recording.trace {
+        if let Token::Char { ch, .. } = tex_expand::semantic_token(*token) {
+            keys.push(tex_state::DependencyKey::Code {
+                table: tex_state::DependencyCodeTable::Sfcode,
+                scalar: ch as u32,
+            });
+        }
+    }
+    keys.sort_unstable();
+    keys.dedup();
+    let dependencies = keys
+        .into_iter()
+        .map(|key| {
+            Some(tex_state::ObservedDependency {
+                key,
+                changed_at: stores.track_dependency(key),
+                value: stores.semantic_dependency_value(key)?,
+            })
+        })
+        .collect::<Option<Vec<_>>>();
+    let dependencies = match dependencies {
+        Some(dependencies) => dependencies,
+        None => {
+            recording
+                .barriers
+                .insert(tex_state::ParagraphBarrierReason::UnsupportedInputTransition);
+            Vec::new()
+        }
+    };
+    for barrier in expansion_barriers {
+        recording.barriers.insert(match barrier {
+            tex_expand::ParagraphExpansionBarrier::InputOpen => {
+                tex_state::ParagraphBarrierReason::MidParagraphInputOpen
+            }
+            tex_expand::ParagraphExpansionBarrier::EndInput => {
+                tex_state::ParagraphBarrierReason::EndInput
+            }
+            tex_expand::ParagraphExpansionBarrier::Scantokens => {
+                tex_state::ParagraphBarrierReason::Scantokens
+            }
+        });
+    }
+    let effects = match detach_effects(&stores.world().effect_records()[recording.effect_start..]) {
+        Some(effects) => effects,
+        None => {
+            recording
+                .barriers
+                .insert(tex_state::ParagraphBarrierReason::UntrackedWorldAccess);
+            Vec::new()
+        }
+    };
+    let mutations = stores.finish_pure_paragraph_recording().unwrap_or_default();
+    let mut consumed_spans = Vec::new();
+    for token in &recording.trace {
+        if let Some(span) = stores.root_span_for_origin(token.origin())
+            && !consumed_spans.contains(&span)
+        {
+            consumed_spans.push(span);
+        }
+    }
+    let ending_input = input.publication_summary(stores);
+    let eligible = recording.barriers.is_empty();
+    stores.record_paragraph_region(tex_state::RecordedParagraphRegion {
+        consumed_spans,
+        dependencies,
+        mutations: mutations.clone(),
+        effects,
+        ending_input,
+        barriers: recording.barriers.into_iter().collect(),
+    });
+    (Some(mutations), eligible)
 }
 
 fn paragraph_origin_ordinals(

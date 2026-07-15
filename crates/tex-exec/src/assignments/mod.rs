@@ -1627,6 +1627,9 @@ fn execute_prefixed_command(
             UnexpandablePrimitive::Advance
             | UnexpandablePrimitive::Multiply
             | UnexpandablePrimitive::Divide => {
+                execution.mark_paragraph_barrier(
+                    tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
+                );
                 execute_arithmetic(
                     primitive,
                     prefixes,

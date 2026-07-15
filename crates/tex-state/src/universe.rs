@@ -1779,6 +1779,17 @@ impl Universe {
     }
 
     #[doc(hidden)]
+    pub fn record_paragraph_region(&mut self, region: crate::RecordedParagraphRegion) {
+        self.pure_memo.record_paragraph_region(region);
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn recorded_paragraphs(&self) -> &[crate::RecordedParagraphRegion] {
+        self.pure_memo.recorded_paragraphs()
+    }
+
+    #[doc(hidden)]
     pub fn insert_pure_memo(&mut self, key: crate::PureMemoKey, value: crate::DetachedMemoValue) {
         self.pure_memo.insert_detached(key, value);
     }
@@ -2534,6 +2545,33 @@ impl Universe {
         self.stores
             .install_source_fragments(fragments.metadata_snapshot());
         Ok(())
+    }
+
+    /// Resolves the root editor piece consumed by a token, following bounded
+    /// macro/inserted provenance back to its invocation site.
+    #[must_use]
+    pub fn root_span_for_origin(
+        &self,
+        origin: crate::token::OriginId,
+    ) -> Option<crate::RootSpanId> {
+        let mut current = origin;
+        for _ in 0..68 {
+            if let Some(span) = self.stores.direct_root_span_id(current) {
+                return Some(span);
+            }
+            current = match self.origin_if_live(current)? {
+                crate::provenance::OriginRecord::MacroInvocation(invocation) => {
+                    invocation.invocation()
+                }
+                crate::provenance::OriginRecord::Inserted(inserted) => inserted.parent(),
+                crate::provenance::OriginRecord::Synthesized(synthesized) => synthesized.parent(),
+                crate::provenance::OriginRecord::Source(_)
+                | crate::provenance::OriginRecord::SourceSpan(_)
+                | crate::provenance::OriginRecord::UnknownBootstrap
+                | crate::provenance::OriginRecord::Synthetic(_) => return None,
+            };
+        }
+        None
     }
 
     /// Sets operational editor revision identity outside semantic state.

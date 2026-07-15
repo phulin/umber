@@ -500,6 +500,23 @@ impl FragmentStore {
         })
     }
 
+    pub(crate) fn direct_root_span_id(&self, origin: crate::token::OriginId) -> Option<RootSpanId> {
+        let span = direct_fragment_span(origin, self)?;
+        let (fragment_id, fragment) = self.fragment_at(span.lo())?;
+        if span.hi().raw() > fragment.anchor() {
+            return None;
+        }
+        let start = u32::try_from(span.lo().raw() - fragment.region_start.raw()).ok()?;
+        let end = u32::try_from(span.hi().raw() - fragment.region_start.raw()).ok()?;
+        let bytes = self.bytes(fragment_id)?.get(start as usize..end as usize)?;
+        Some(RootSpanId {
+            piece: PieceId(fragment_id),
+            start,
+            end,
+            content: ContentHash::from_bytes(bytes),
+        })
+    }
+
     /// Returns the allocation-free registration capability for one fragment.
     #[must_use]
     pub fn registration(&self, id: FragmentId) -> Option<RegisteredSource> {

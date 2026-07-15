@@ -403,6 +403,7 @@ fn run_output_routine(
     stats: &mut ExecutionStats,
     output: tex_state::ids::TokenListId,
 ) -> Result<(), ExecError> {
+    execution.mark_paragraph_barrier(tex_state::ParagraphBarrierReason::NestedOutputRoutine);
     let mut transaction = crate::transaction::ExecutionTransaction::begin(nest, stores);
     let mut replay = None;
     let result = {

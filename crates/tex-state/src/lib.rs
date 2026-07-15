@@ -116,8 +116,9 @@ pub use page::{
 };
 pub use provenance_resolver::{ProvenanceResolver, ResolvedSourceLocation};
 pub use pure_memo::{
-    PureBreakDecision, PureBreakPlan, PureMemoConfig, PureMemoKey, PureMemoRuntime, PureMemoStats,
-    PurePageEntry, PureParagraphEntry, PureParagraphMutation, PureShipoutEntry,
+    ParagraphBarrierReason, PureBreakDecision, PureBreakPlan, PureMemoConfig, PureMemoKey,
+    PureMemoRuntime, PureMemoStats, PurePageEntry, PureParagraphEntry, PureParagraphMutation,
+    PureShipoutEntry, RecordedParagraphRegion,
 };
 pub use source_fragments::{
     EditorLayout, EditorLayoutError, FragmentId, FragmentStore, LayoutGeneration,
