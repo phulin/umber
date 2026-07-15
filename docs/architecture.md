@@ -50,6 +50,8 @@ detached output only after the relevant transaction commits.
   planning, final DVI assembly, and artifact replay.
 - `tex-incr`: editor revisions, named-boundary checkpoints, convergence,
   pruning, retained output, and rendered-source queries.
+- `umber-vfs`: canonical virtual paths, immutable file identity and ownership
+  layers, domain-qualified file requests, atomic provisioning, and file limits.
 - `umber`: CLI and host-neutral `VirtualCompileSession`.
 - `umber-wasm`: JavaScript/WASM representation adapter and browser package.
 - `test-support` and `corpus-manifest`: test and corpus tooling support.
@@ -73,6 +75,12 @@ session history.
 Missing files and fonts in virtual sessions become typed resource requests.
 They are sorted, deduplicated, and returned in one `NeedResources` batch;
 Rust never invents URLs or performs asynchronous I/O.
+
+`umber-vfs` owns file request identity, required-versus-hint file batches,
+generic response validation, request-bound resolved origins, and file limits.
+The TeX driver owns extension and search policy and combines the resulting
+file needs with font requests. Native and WASM adapters share the same Rust
+domain/kind wire vocabulary.
 
 ## 4. Lexer
 

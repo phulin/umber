@@ -79,6 +79,13 @@ URLs. Responses repeat their request keys, may arrive in any order, and may
 satisfy only part of a batch. Another `advance` without any newly satisfied
 required request fails with a typed no-progress error.
 
+File identity and registration are implemented in `umber-vfs`. Every file key
+contains a `domain`, `kind`, and normalized relative `name`; the TypeScript
+encoding uses the wire names exported by the same Rust enums. File responses
+may include `expectedContentId`, the domain-separated VFS identity of the exact
+bytes. Native and WASM responses therefore reach the same path, digest, kind,
+conflict, and limit validation.
+
 Registration verifies request identity, type, declared length, exact-object
 digest when supplied, hard limits, and type-specific structure before making a
 resource visible. Re-registering identical bytes and metadata is a no-op.

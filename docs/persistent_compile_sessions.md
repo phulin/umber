@@ -56,6 +56,11 @@ incremental history. A patch that introduces a new include or font may request
 and pin a new immutable resource before acceptance. Rebinding an existing
 resource to different bytes remains an error.
 
+Domain-qualified file request identity, deterministic file batching, generic
+registration, and file limits are owned by `umber-vfs`. The compile session
+adds TeX lookup/default-extension policy and combines file requests with font
+requests, while the WASM layer only adapts the shared Rust wire values.
+
 Clearing the distribution cache preserves the latest root bytes but discards
 accepted incremental history and restarts resource acquisition as a cold
 revision.

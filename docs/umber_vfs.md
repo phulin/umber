@@ -1,7 +1,8 @@
 # Shared virtual filesystem
 
-Status: canonical paths, immutable files, and layered storage implemented;
-resource registration, snapshots, and transactions proposed.
+Status: canonical paths, immutable files, layered storage, typed file requests,
+resource registration, and file limits implemented; snapshots and transactions
+proposed.
 
 This document defines `umber-vfs`, the host-neutral virtual filesystem shared
 by Umber's TeX driver, bibliography processing, native embeddings, and the
@@ -257,9 +258,9 @@ pub struct FileRequestKey {
 
 pub struct ResolvedFile {
     pub request: FileRequestKey,
-    pub virtual_path: VirtualPath,
+    pub virtual_path: String,
     pub bytes: Vec<u8>,
-    pub expected_digest: Option<ContentId>,
+    pub expected_digest: Option<FileContentId>,
 }
 ```
 
@@ -267,6 +268,10 @@ The vocabulary initially covers TeX inputs, TFM files, format images,
 bibliography control files, bibliography data, bibliography configuration,
 XML/schema data, and explicitly typed generic assets. The domain and kind are
 part of identity even when two requests share a normalized name.
+
+The implemented `ResourceDomain` values are TeX, bibliography, and generic.
+Wire names are defined by these Rust values and reused by `umber-wasm`; the
+binding does not maintain a second kind table.
 
 Registration validates:
 
@@ -281,10 +286,13 @@ The VFS performs generic validation and stores the object only after the
 requesting subsystem accepts its structure. Re-registering the same request,
 path, and bytes is a no-op. Any different binding is a typed conflict.
 
-Outstanding requests are stored in sorted sets and returned through the
-existing `NeedResources` required-versus-hint model. Response ordering and
-partial batches do not affect semantics. Advancing without satisfying any
-required request is a typed no-progress error.
+`FileRequestBatch` stores outstanding requests in sorted sets, deduplicates by
+the complete domain/kind/name key, and lets a required request dominate the
+same prefetch hint. `FileProvisioner` accepts partial and permuted responses
+atomically, retains identical duplicate registrations as no-ops, and exposes
+typed unexpected-request, kind, path, digest, conflict, path-conflict, limit,
+and no-progress failures. The combined compile session retains the existing
+`NeedResources` required-versus-hint model around this file-only boundary.
 
 ## Root editor buffer
 
@@ -307,14 +315,16 @@ composable `VfsLimits` value:
 pub struct VfsLimits {
     pub user_files: usize,
     pub resolved_files: usize,
-    pub generated_files: usize,
     pub one_file_bytes: usize,
     pub user_bytes: usize,
     pub resolved_bytes: usize,
-    pub pending_generated_bytes: usize,
-    pub accepted_generated_bytes: usize,
 }
 ```
+
+Generated-file count and byte limits join this value when stage and build
+transactions are implemented. Today `VirtualCompileSession::SessionLimits`
+preserves its public compatibility fields but delegates file hard-ceiling,
+replacement, and provisioning checks to `VfsLimits` and `FileProvisioner`.
 
 Limits use checked arithmetic and are enforced before allocation where the
 declared size is known, during bounded stream growth, at stage commit, and at
@@ -408,8 +418,10 @@ byte-identical generated files and DVI.
 2. **Complete in `umber-vfs`.** Add domain-separated immutable file and path
    binding identity, shared byte ownership, provenance, and deterministic
    user, resolved-resource, accepted-generated, and pending-generated storage.
-3. Move file request keys, resolved-file validation, and file-related limits
-   out of `umber::VirtualCompileSession`.
+3. **Complete.** Move domain-qualified file request keys, deterministic file
+   batches, resolved-file validation/provisioning, request-bound origins, and
+   file-related limit checks into `umber-vfs`. `VirtualCompileSession` consumes
+   this registry and re-exports the shared value types.
 4. Adapt the existing TeX resolver and memory-output collector to VFS
    snapshots and stage transactions without changing public compile behavior.
 5. Add build transactions over the accepted and pending generated layers;
