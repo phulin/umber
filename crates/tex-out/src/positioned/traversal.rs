@@ -38,10 +38,17 @@ pub(super) fn lower(
         node_ordinals: index_nodes(&page.root),
         next_box_id: 0,
         box_stack: Vec::new(),
+        pdf_save_positions: Vec::new(),
+        diagnostics: Vec::new(),
     };
     match kind {
         BoxKind::Horizontal => out.hlist(root, 1)?,
         BoxKind::Vertical => out.vlist(root, 1)?,
+    }
+    if !out.pdf_save_positions.is_empty() {
+        return Err(PositionedError::UnmatchedPdfSaves {
+            count: out.pdf_save_positions.len(),
+        });
     }
     Ok(PositionedPage {
         page_index,
@@ -51,6 +58,7 @@ pub(super) fn lower(
         counts: page.counts,
         fonts: page.fonts.clone(),
         events: out.events,
+        diagnostics: out.diagnostics,
     })
 }
 
@@ -64,6 +72,8 @@ struct Lowerer<'a> {
     node_ordinals: BTreeMap<usize, u32>,
     next_box_id: u32,
     box_stack: Vec<u32>,
+    pdf_save_positions: Vec<(Scaled, Scaled)>,
+    diagnostics: Vec<String>,
 }
 
 impl Lowerer<'_> {
@@ -437,6 +447,23 @@ impl Lowerer<'_> {
             | PageEffect::PdfSetMatrix { .. }
             | PageEffect::PdfSave
             | PageEffect::PdfRestore => {
+                match effect {
+                    PageEffect::PdfSave => self.pdf_save_positions.push((self.cur_h, self.cur_v)),
+                    PageEffect::PdfRestore => match self.pdf_save_positions.pop() {
+                        None => self
+                            .diagnostics
+                            .push("\\pdfrestore: missing \\pdfsave".to_owned()),
+                        Some((x, y)) if x != self.cur_h || y != self.cur_v => {
+                            self.diagnostics.push(format!(
+                                "Misplaced \\pdfrestore by ({}sp, {}sp)",
+                                i64::from(self.cur_h.raw()) - i64::from(x.raw()),
+                                i64::from(self.cur_v.raw()) - i64::from(y.raw())
+                            ));
+                        }
+                        Some(_) => {}
+                    },
+                    _ => {}
+                }
                 self.push(PositionedEvent::PdfGraphics(PositionedPdfGraphics {
                     x: self.cur_h,
                     y: self.cur_v,

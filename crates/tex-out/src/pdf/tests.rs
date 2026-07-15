@@ -1,5 +1,57 @@
 use super::*;
 
+#[test]
+fn ordered_graphics_content_uses_typed_state_and_preserves_literal_bytes() {
+    let bytes = ordered_page_content(&[
+        PdfContentOperation::Save { x: 10.0, y: 20.0 },
+        PdfContentOperation::SetMatrix {
+            x: 10.0,
+            y: 20.0,
+            matrix: [1.0, 0.25, -0.5, 1.0],
+        },
+        PdfContentOperation::Literal {
+            mode: crate::PdfLiteralMode::Direct,
+            x: 99.0,
+            y: 99.0,
+            bytes: b"0.1 g 1 2 m".to_vec(),
+        },
+        PdfContentOperation::Restore { x: 10.0, y: 20.0 },
+    ]);
+    let text = String::from_utf8(bytes).expect("ASCII content");
+    assert_eq!(
+        text,
+        "1 0 0 1 10 20 cm\nq\n1 0.25 -0.5 1 0 0 cm\n0.1 g 1 2 m\nQ"
+    );
+}
+
+#[test]
+fn origin_literal_moves_but_page_and_direct_literals_do_not() {
+    let bytes = ordered_page_content(&[
+        PdfContentOperation::Literal {
+            mode: crate::PdfLiteralMode::Page,
+            x: 10.0,
+            y: 20.0,
+            bytes: b"PAGE".to_vec(),
+        },
+        PdfContentOperation::Literal {
+            mode: crate::PdfLiteralMode::Origin,
+            x: 10.0,
+            y: 20.0,
+            bytes: b"ORIGIN".to_vec(),
+        },
+        PdfContentOperation::Literal {
+            mode: crate::PdfLiteralMode::Direct,
+            x: 30.0,
+            y: 40.0,
+            bytes: b"DIRECT".to_vec(),
+        },
+    ]);
+    assert_eq!(
+        String::from_utf8(bytes).expect("ASCII content"),
+        "PAGE\n1 0 0 1 10 20 cm\nORIGIN\nDIRECT"
+    );
+}
+
 fn id(raw: u32) -> PdfObjectId {
     PdfObjectId::new(raw).expect("nonzero test object id")
 }

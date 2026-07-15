@@ -153,6 +153,7 @@ pub fn page_content(
 pub fn ordered_page_content(operations: &[PdfContentOperation]) -> Vec<u8> {
     let mut content = pdf_writer::Content::new();
     let mut origin = (0.0, 0.0);
+    let mut saved_origins = Vec::new();
     let set_origin = |content: &mut pdf_writer::Content, origin: &mut (f32, f32), x, y| {
         let dx = x - origin.0;
         let dy = y - origin.1;
@@ -188,11 +189,15 @@ pub fn ordered_page_content(operations: &[PdfContentOperation]) -> Vec<u8> {
             }
             PdfContentOperation::Save { x, y } => {
                 set_origin(&mut content, &mut origin, *x, *y);
+                saved_origins.push(origin);
                 content.save_state();
             }
             PdfContentOperation::Restore { x, y } => {
                 set_origin(&mut content, &mut origin, *x, *y);
                 content.restore_state();
+                if let Some(saved) = saved_origins.pop() {
+                    origin = saved;
+                }
             }
         }
     }

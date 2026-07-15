@@ -3997,4 +3997,118 @@ mod tests {
         assert!(bytes.starts_with(b"%PDF-1.4"));
         assert!(!bytes.windows(12).any(|window| window == b"/Type/ObjStm"));
     }
+
+    #[test]
+    fn pdf_graphics_literals_expand_at_the_selected_time_and_survive_artifacts() {
+        let (stores, run) = run(concat!(
+            "\\pdfoutput=1\\pdfcompresslevel=0",
+            "\\def\\value{ONE}",
+            "\\setbox0=\\hbox{",
+            "\\pdfliteral page{IMMEDIATE-\\value}",
+            "\\pdfliteral shipout direct{DEFERRED-\\value}",
+            "}",
+            "\\def\\value{TWO}\\shipout\\box0\\end",
+        ));
+        let artifact = tex_out::PageArtifact::from_bytes(run.committed_artifacts[0].bytes())
+            .expect("artifact parses");
+        assert!(artifact.effects.iter().any(|effect| matches!(
+            effect,
+            tex_out::PageEffect::PdfLiteral { mode: tex_out::PdfLiteralMode::Page, payload }
+                if payload == b"IMMEDIATE-ONE"
+        )));
+        assert!(artifact.effects.iter().any(|effect| matches!(
+            effect,
+            tex_out::PageEffect::PdfLiteral { mode: tex_out::PdfLiteralMode::Direct, payload }
+                if payload == b"DEFERRED-TWO"
+        )));
+
+        let pdf = pdf_from_committed_artifacts(&stores, &run.committed_artifacts)
+            .expect("graphics PDF assembles");
+        assert!(
+            pdf.windows(b"IMMEDIATE-ONE".len())
+                .any(|w| w == b"IMMEDIATE-ONE")
+        );
+        assert!(
+            pdf.windows(b"DEFERRED-TWO".len())
+                .any(|w| w == b"DEFERRED-TWO")
+        );
+    }
+
+    #[test]
+    fn pdf_graphics_matrix_and_state_lower_to_typed_ordered_operators() {
+        let (stores, run) = run(concat!(
+            "\\pdfoutput=1\\pdfcompresslevel=0",
+            "\\shipout\\hbox{\\pdfsave\\pdfsetmatrix{1 .25 -.5 1}",
+            "\\pdfliteral direct{0.1 g}\\pdfrestore}\\end",
+        ));
+        let pdf = pdf_from_committed_artifacts(&stores, &run.committed_artifacts)
+            .expect("graphics PDF assembles");
+        let q = pdf.windows(3).position(|w| w == b"\nq\n").expect("typed q");
+        let cm = pdf
+            .windows(b"1 0.25 -0.5 1 0 0 cm".len())
+            .position(|w| w == b"1 0.25 -0.5 1 0 0 cm")
+            .expect("typed matrix");
+        let literal = pdf.windows(5).position(|w| w == b"0.1 g").expect("literal");
+        let restore = pdf.windows(2).position(|w| w == b"Q\n").expect("typed Q");
+        assert!(q < cm && cm < literal && literal < restore);
+    }
+
+    #[test]
+    fn pdf_graphics_reports_matrix_and_save_restore_failures_at_traversal() {
+        let (stores, run_result) = run("\\pdfoutput=1\\shipout\\hbox{\\pdfsetmatrix{1 0 0}}\\end");
+        assert!(matches!(
+            pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts),
+            Err(PdfBuildError::InvalidMatrix(_))
+        ));
+
+        let (_stores, restore_run) = run("\\pdfoutput=1\\shipout\\hbox{\\pdfrestore}\\end");
+        let artifact =
+            tex_out::PageArtifact::from_bytes(restore_run.committed_artifacts[0].bytes())
+                .expect("restore artifact parses");
+        let positioned = tex_out::positioned::lower_page(&artifact, 0)
+            .expect("missing restore remains a warning");
+        assert_eq!(positioned.diagnostics, ["\\pdfrestore: missing \\pdfsave"]);
+
+        let (_stores, misplaced_run) =
+            run("\\pdfoutput=1\\shipout\\hbox{\\pdfsave\\kern1sp\\pdfrestore}\\end");
+        let artifact =
+            tex_out::PageArtifact::from_bytes(misplaced_run.committed_artifacts[0].bytes())
+                .expect("misplaced restore artifact parses");
+        let positioned = tex_out::positioned::lower_page(&artifact, 0)
+            .expect("misplaced restore remains a warning");
+        assert_eq!(
+            positioned.diagnostics,
+            ["Misplaced \\pdfrestore by (1sp, 0sp)"]
+        );
+
+        let (stores, save_run) = run("\\pdfoutput=1\\shipout\\hbox{\\pdfsave}\\end");
+        assert!(matches!(
+            pdf_from_committed_artifacts(&stores, &save_run.committed_artifacts),
+            Err(PdfBuildError::Positioned(
+                PositionedError::UnmatchedPdfSaves { count: 1 }
+            ))
+        ));
+    }
+
+    #[test]
+    fn pdf_graphics_are_rejected_when_pdf_output_is_disabled() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let error = try_run_in(&mut stores, "\\pdfoutput=0\\pdfliteral{}\\end")
+            .expect_err("DVI-mode literal is rejected");
+        assert!(error.to_string().contains("PDF output is disabled"));
+    }
+
+    #[test]
+    fn pdf_literals_are_legal_in_vertical_horizontal_and_math_modes() {
+        for source in [
+            "\\pdfoutput=1\\shipout\\vbox{\\pdfliteral direct{V}}\\end",
+            "\\pdfoutput=1\\shipout\\hbox{\\pdfliteral direct{H}}\\end",
+            "\\pdfoutput=1\\shipout\\hbox{$\\pdfliteral direct{M}$}\\end",
+        ] {
+            let (stores, run) = run(source);
+            pdf_from_committed_artifacts(&stores, &run.committed_artifacts)
+                .expect("mode-independent literal assembles");
+        }
+    }
 }

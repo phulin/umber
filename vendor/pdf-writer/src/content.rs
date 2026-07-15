@@ -70,9 +70,6 @@ impl Content {
             self.buf.push(b'\n');
         }
         self.buf.inner.extend_from_slice(bytes);
-        if self.buf.last() != Some(&b'\n') {
-            self.buf.push(b'\n');
-        }
         self
     }
 

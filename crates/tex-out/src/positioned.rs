@@ -40,6 +40,7 @@ pub struct PositionedPage {
     pub counts: [i32; 10],
     pub fonts: Vec<FontResource>,
     pub events: Vec<PositionedEvent>,
+    pub diagnostics: Vec<String>,
 }
 
 /// Ordered page event. Event order remains significant at equal coordinates.
@@ -158,6 +159,7 @@ pub enum PositionedError {
     TooManyEvents { limit: usize },
     NestingTooDeep { limit: usize },
     TextRunTooLong { limit: usize },
+    UnmatchedPdfSaves { count: usize },
 }
 
 impl std::fmt::Display for PositionedError {
@@ -181,6 +183,9 @@ impl std::fmt::Display for PositionedError {
             }
             Self::TextRunTooLong { limit } => {
                 write!(f, "positioned text run exceeds unit limit {limit}")
+            }
+            Self::UnmatchedPdfSaves { count } => {
+                write!(f, "page ended with {count} unmatched \\pdfsave node(s)")
             }
         }
     }

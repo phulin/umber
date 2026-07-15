@@ -3,7 +3,7 @@ use crate::{
     CodecLimitKind, ContentHash, DiscKind, EffectSink, FontResource, GlueKind, GlueOrder,
     GlueSetRatio, GlueSign, GlueSpec, JobInfo, KernKind, LeaderPayload, OpenTypeFontResource,
     PageArtifact, PageEffect, PageNode, PageToken, ParseError, PdfAccessibilityEffect,
-    SerializeError, TokenCatcode,
+    PdfLiteralMode, SerializeError, TokenCatcode,
 };
 use tex_arith::Scaled;
 
@@ -688,6 +688,15 @@ fn sample_artifact() -> PageArtifact {
             PageEffect::PdfAccessibility(PdfAccessibilityEffect::InterwordSpaceOn),
             PageEffect::PdfAccessibility(PdfAccessibilityEffect::FakeSpace),
             PageEffect::PdfAccessibility(PdfAccessibilityEffect::InterwordSpaceOff),
+            PageEffect::PdfLiteral {
+                mode: PdfLiteralMode::Origin,
+                payload: b"0.5 g".to_vec(),
+            },
+            PageEffect::PdfSetMatrix {
+                payload: b"1 0 0 1".to_vec(),
+            },
+            PageEffect::PdfSave,
+            PageEffect::PdfRestore,
         ],
     }
     .validate()
