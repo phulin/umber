@@ -601,6 +601,7 @@ mod primitive_mode_tests {
             ("eTeXrevision", ExpandablePrimitive::ETeXRevision),
             ("ifdefined", ExpandablePrimitive::IfDefined),
             ("ifcsname", ExpandablePrimitive::IfCsName),
+            ("ifincsname", ExpandablePrimitive::IfInCsName),
             ("iffontchar", ExpandablePrimitive::IfFontChar),
         ] {
             let symbol = extended.intern(name);

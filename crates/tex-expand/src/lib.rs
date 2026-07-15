@@ -171,6 +171,10 @@ pub fn install_etex_expandable_primitives(stores: &mut Universe) {
             tex_state::meaning::ExpandablePrimitive::IfCsName,
         ),
         (
+            "ifincsname",
+            tex_state::meaning::ExpandablePrimitive::IfInCsName,
+        ),
+        (
             "iffontchar",
             tex_state::meaning::ExpandablePrimitive::IfFontChar,
         ),
@@ -447,6 +451,7 @@ pub enum ExpandableOpcode {
     ETeXRevision,
     IfDefined,
     IfCsName,
+    IfInCsName,
     IfFontChar,
     Input,
     EndInput,
@@ -815,6 +820,7 @@ pub struct ExpansionContext<'a> {
     resolution_index: u64,
     meaning_site_cache: Box<[Option<MeaningSiteCacheEntry>; MEANING_SITE_CACHE_LEN]>,
     last_macro_replay_site: Option<MacroReplaySite>,
+    csname_depth: u32,
 }
 
 impl<'a> ExpansionContext<'a> {
@@ -829,6 +835,7 @@ impl<'a> ExpansionContext<'a> {
             resolution_index: 0,
             meaning_site_cache: Box::new([None; MEANING_SITE_CACHE_LEN]),
             last_macro_replay_site: None,
+            csname_depth: 0,
         }
     }
 
@@ -846,6 +853,7 @@ impl<'a> ExpansionContext<'a> {
             resolution_index: 0,
             meaning_site_cache: Box::new([None; MEANING_SITE_CACHE_LEN]),
             last_macro_replay_site: None,
+            csname_depth: 0,
         }
     }
 
@@ -944,6 +952,7 @@ impl<'a> ExpansionContext<'a> {
             resolution_index: self.resolution_index,
             meaning_site_cache: Box::new([None; MEANING_SITE_CACHE_LEN]),
             last_macro_replay_site: None,
+            csname_depth: self.csname_depth,
         };
         let output = operation(&mut nested);
         self.input_resolver = nested.input_resolver.take();

@@ -39,6 +39,21 @@ pub(crate) fn scan_csname(
     expansion: &mut ExpansionContext<'_>,
     context: TracedTokenWord,
 ) -> Result<String, ExpandError> {
+    expansion.csname_depth = expansion
+        .csname_depth
+        .checked_add(1)
+        .expect("csname nesting depth exhausted");
+    let result = scan_csname_body(input, stores, expansion, context);
+    expansion.csname_depth -= 1;
+    result
+}
+
+fn scan_csname_body(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    context: TracedTokenWord,
+) -> Result<String, ExpandError> {
     let mut name = String::new();
 
     loop {

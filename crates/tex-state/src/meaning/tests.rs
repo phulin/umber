@@ -69,6 +69,9 @@ fn meaning_variants_round_trip() {
     round_trip(Meaning::ExpandablePrimitive(
         ExpandablePrimitive::CreationDate,
     ));
+    round_trip(Meaning::ExpandablePrimitive(
+        ExpandablePrimitive::IfInCsName,
+    ));
     round_trip(Meaning::UnexpandablePrimitive(
         UnexpandablePrimitive::FutureLet,
     ));

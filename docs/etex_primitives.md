@@ -41,8 +41,8 @@ for every primitive and parameter in the family.
 
 ## Environmental and conditional enquiries (manual section 3.3)
 
-`\eTeXversion`, `\eTeXrevision`, `\ifdefined`, and non-creating `\ifcsname`
-are implemented with focused V2 tests. `\currentgrouplevel`,
+`\eTeXversion`, `\eTeXrevision`, `\ifdefined`, non-creating `\ifcsname`, and
+live-name-scan enquiry `\ifincsname` are implemented with focused V2 tests. `\currentgrouplevel`,
 `\currentgrouptype`, `\currentiflevel`, `\currentiftype`, and
 `\currentifbranch` read exact resumable group/conditional state.
 `\lastnodetype` is implemented from the effective current-list/page tail with

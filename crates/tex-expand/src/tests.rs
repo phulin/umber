@@ -1480,6 +1480,35 @@ fn ifdefined_and_ifcsname_test_without_creating_missing_names() {
 }
 
 #[test]
+fn ifincsname_tracks_only_live_csname_scans() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    crate::install_etex_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\ifincsname A\\else B\\fi\
+         \\csname a\\ifincsname T\\else F\\fi b\\endcsname\
+         \\ifincsname C\\else D\\fi%",
+    ));
+
+    let expanded = collect_expanded(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    );
+    let generated = stores
+        .symbol("aTb")
+        .expect("the live csname scan should select its true branch");
+    assert_eq!(
+        expanded,
+        vec![
+            char_token('B'),
+            Token::Cs(generated.symbol()),
+            char_token('D')
+        ]
+    );
+    assert_eq!(stores.meaning(generated), Meaning::Relax);
+}
+
+#[test]
 fn expansion_error_captures_invocation_chain_before_macro_frame_pops() {
     let mut stores = Universe::new();
     let macro_cs = stores.intern("m");

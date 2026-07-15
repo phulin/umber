@@ -779,6 +779,16 @@ macro_rules! dispatch_match {
                     frame_token,
                 )
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::IfInCsName) => {
+                begin_if(
+                    input,
+                    stores,
+                    expansion,
+                    (expansion.csname_depth > 0) ^ $invert,
+                    ConditionMetadata::new(21, $invert),
+                    call_context,
+                )
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfFontChar) => {
                 let frame_token = begin_if_evaluation(
                     input,
@@ -1115,6 +1125,7 @@ fn is_boolean_conditional(primitive: ExpandablePrimitive) -> bool {
             | ExpandablePrimitive::IfEof
             | ExpandablePrimitive::IfDefined
             | ExpandablePrimitive::IfCsName
+            | ExpandablePrimitive::IfInCsName
             | ExpandablePrimitive::IfFontChar
     )
 }
@@ -1145,6 +1156,7 @@ pub fn dispatch_expandable_opcode(opcode: ExpandableOpcode) -> Result<(), Expand
         | ExpandableOpcode::ETeXRevision
         | ExpandableOpcode::IfDefined
         | ExpandableOpcode::IfCsName
+        | ExpandableOpcode::IfInCsName
         | ExpandableOpcode::IfFontChar
         | ExpandableOpcode::Input
         | ExpandableOpcode::EndInput

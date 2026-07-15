@@ -222,6 +222,8 @@ pub enum ExpandablePrimitive {
     ShellEscape,
     /// Immutable UTC job-creation timestamp for the LaTeX extension contract.
     CreationDate,
+    /// e-TeX's enquiry for expansion inside a live `\csname` scan.
+    IfInCsName,
 }
 
 impl ExpandablePrimitive {
@@ -286,6 +288,7 @@ impl ExpandablePrimitive {
             Self::StringCompare => 55,
             Self::ShellEscape => 56,
             Self::CreationDate => 57,
+            Self::IfInCsName => 58,
         }
     }
 
@@ -350,6 +353,7 @@ impl ExpandablePrimitive {
             55 => Some(Self::StringCompare),
             56 => Some(Self::ShellEscape),
             57 => Some(Self::CreationDate),
+            58 => Some(Self::IfInCsName),
             _ => None,
         }
     }
