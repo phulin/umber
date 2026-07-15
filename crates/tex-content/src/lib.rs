@@ -10,6 +10,12 @@ pub enum ContentDomain {
     Input = 1,
     Artifact = 2,
     FontMetric = 3,
+    /// Exact bytes stored as one immutable virtual file.
+    VirtualFile = 4,
+    /// A canonical virtual path bound to immutable file content.
+    VirtualPathBinding = 5,
+    /// The deterministic contents and provenance of layered VFS storage.
+    VirtualFileStorage = 6,
 }
 
 /// Stable fixed-size identity for immutable bytes.
@@ -248,6 +254,14 @@ mod tests {
         assert_ne!(
             ContentIdentity::for_domain(ContentDomain::Artifact, bytes),
             ContentIdentity::legacy(bytes)
+        );
+        assert_ne!(
+            ContentIdentity::for_domain(ContentDomain::VirtualFile, bytes),
+            ContentIdentity::for_domain(ContentDomain::VirtualPathBinding, bytes)
+        );
+        assert_ne!(
+            ContentIdentity::for_domain(ContentDomain::VirtualPathBinding, bytes),
+            ContentIdentity::for_domain(ContentDomain::VirtualFileStorage, bytes)
         );
     }
 

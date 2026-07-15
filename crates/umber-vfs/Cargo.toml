@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 description = "Host-neutral virtual filesystem primitives for Umber"
 
+[dependencies]
+tex-content = { path = "../tex-content" }
+
 [dev-dependencies]
 proptest.workspace = true
 

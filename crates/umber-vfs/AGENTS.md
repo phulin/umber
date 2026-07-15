@@ -6,9 +6,10 @@ document pipelines.
 
 ## Crate Role
 
-`umber-vfs` currently owns canonical `/job` and `/texlive` virtual paths. Its
-future transaction, immutable-file, resource-registration, and accounting
-boundaries are specified in `docs/umber_vfs.md`.
+`umber-vfs` owns canonical `/job` and `/texlive` virtual paths plus immutable
+file identity and deterministic four-layer storage. Its future transaction,
+resource-registration, and accounting boundaries are specified in
+`docs/umber_vfs.md`.
 
 ## Boundaries
 
@@ -21,8 +22,10 @@ boundaries are specified in `docs/umber_vfs.md`.
 ## File Map
 
 - `Cargo.toml`: package metadata, test dependency, and workspace lints.
-- `src/lib.rs`: canonical virtual path and typed error public API.
-- `src/tests.rs`: focused canonicalization parity and property tests.
+- `src/lib.rs`: canonical virtual path API and crate exports.
+- `src/file.rs`: immutable shared file values, provenance, and identities.
+- `src/storage.rs`: deterministic ownership layers and conflict handling.
+- `src/tests.rs`: focused identity, storage, canonicalization, and property tests.
 
 ## Validation
 

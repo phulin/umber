@@ -899,6 +899,7 @@ name = "umber-vfs"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "tex-content",
 ]
 
 [[package]]

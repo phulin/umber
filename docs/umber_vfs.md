@@ -1,6 +1,7 @@
 # Shared virtual filesystem
 
-Status: canonical path boundary implemented; storage and transactions proposed.
+Status: canonical paths, immutable files, and layered storage implemented;
+resource registration, snapshots, and transactions proposed.
 
 This document defines `umber-vfs`, the host-neutral virtual filesystem shared
 by Umber's TeX driver, bibliography processing, native embeddings, and the
@@ -404,17 +405,20 @@ byte-identical generated files and DVI.
 1. **Complete.** Add `umber-vfs` with the current `VirtualPath` behavior and
    exhaustive parity tests. `umber` consumes and re-exports this public path
    API; TeX request-name and extension policy remains in the driver.
-2. Move file request keys, resolved-file validation, immutable byte ownership,
-   and file-related limits out of `umber::VirtualCompileSession`.
-3. Adapt the existing TeX resolver and memory-output collector to VFS
+2. **Complete in `umber-vfs`.** Add domain-separated immutable file and path
+   binding identity, shared byte ownership, provenance, and deterministic
+   user, resolved-resource, accepted-generated, and pending-generated storage.
+3. Move file request keys, resolved-file validation, and file-related limits
+   out of `umber::VirtualCompileSession`.
+4. Adapt the existing TeX resolver and memory-output collector to VFS
    snapshots and stage transactions without changing public compile behavior.
-4. Add accepted and pending generated layers plus build transactions; migrate
-   persistent compile-session atomicity to them.
-5. Add the bibliography resource kinds and adapters defined in
+5. Add build transactions over the accepted and pending generated layers;
+   migrate persistent compile-session atomicity to them.
+6. Add the bibliography resource kinds and adapters defined in
    [`bib.md`](bib.md).
-6. Implement native multi-stage orchestration, then expose the identical state
+7. Implement native multi-stage orchestration, then expose the identical state
    machine through `umber-wasm`.
-7. Remove superseded private file maps and duplicate path/request types after
+8. Remove superseded private file maps and duplicate path/request types after
    all native, incremental, and browser tests use `umber-vfs`.
 
 ## Exit criteria

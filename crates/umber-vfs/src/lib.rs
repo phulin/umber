@@ -3,6 +3,17 @@
 use std::fmt;
 use std::path::Path;
 
+mod file;
+mod storage;
+
+pub use file::{
+    BuildId, FileContentId, FileOrigin, PathBindingId, ProducerId, StageId, VirtualFile,
+};
+pub use storage::{
+    DISTRIBUTION_LAYER_PRECEDENCE, FileLayer, ImmutableBindingError, InsertOutcome,
+    JOB_LAYER_PRECEDENCE, LayerKind, LayeredFileStorage, StorageIdentity,
+};
+
 /// A canonical absolute path in Umber's virtual namespace.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct VirtualPath(String);
