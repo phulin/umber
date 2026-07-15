@@ -197,6 +197,11 @@ impl InputResolver for FileInputResolver {
         name: &str,
         _request_index: u64,
     ) -> Result<Box<dyn InputSource>, String> {
+        if let Some(output) = self.0.read_restricted_pipe(input, name) {
+            return output.map(|text| {
+                Box::new(tex_lex::WorldInput::generated(text)) as Box<dyn InputSource>
+            });
+        }
         self.0
             .read(input, name)
             .map(tex_lex::WorldInput::from_content)

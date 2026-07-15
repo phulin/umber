@@ -58,6 +58,27 @@ impl TexInputSearchPath {
         }
         read_first(input, candidates)
     }
+
+    /// Emulates pdfTeX's restricted `|kpsewhich NAME` pipe without launching
+    /// a process. The existing deterministic search policy resolves `NAME`,
+    /// and the generated input consists only of that resolved path.
+    pub(crate) fn read_restricted_pipe<C: InputReadState + ?Sized>(
+        &self,
+        input: &mut C,
+        name: &str,
+    ) -> Option<Result<String, String>> {
+        let command = name.trim();
+        let requested = command.strip_prefix("|kpsewhich ")?;
+        if requested.is_empty() || requested.chars().any(char::is_whitespace) {
+            return Some(Err(
+                "restricted kpsewhich pipe requires one TeX filename".to_owned()
+            ));
+        }
+        Some(
+            self.read(input, requested)
+                .map(|content| format!("{}\n", content.path().display())),
+        )
+    }
 }
 
 impl TexFontSearchPath {

@@ -89,6 +89,40 @@ fn input_with_non_tex_extension_prefers_the_exact_name() {
 }
 
 #[test]
+fn restricted_kpsewhich_pipe_returns_resolved_path_without_a_process() {
+    let mut world = World::memory();
+    world
+        .set_memory_file("/tree/article.cls", b"class contents".to_vec())
+        .expect("seed class input");
+    let mut universe = tex_state::Universe::with_world(world);
+    let search = TexInputSearchPath::new("/job", [PathBuf::from("/tree")]);
+
+    let output = search
+        .read_restricted_pipe(
+            &mut universe.input_open_context(),
+            " |kpsewhich article.cls ",
+        )
+        .expect("recognize restricted pipe")
+        .expect("resolve restricted pipe target");
+
+    assert_eq!(output, "/tree/article.cls\n");
+    assert!(
+        search
+            .read_restricted_pipe(&mut universe.input_open_context(), "|cat article.cls")
+            .is_none()
+    );
+    assert!(
+        search
+            .read_restricted_pipe(
+                &mut universe.input_open_context(),
+                "|kpsewhich article.cls extra",
+            )
+            .expect("recognize malformed restricted pipe")
+            .is_err()
+    );
+}
+
+#[test]
 fn explicit_area_does_not_fall_through_to_system_areas() {
     let mut world = World::memory();
     world
