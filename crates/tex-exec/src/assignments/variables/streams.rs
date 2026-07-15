@@ -450,6 +450,35 @@ fn scan_file_name(
     let Some(first) = next_non_space_x(input, stores, execution)? else {
         return Err(ExecError::MissingToken { context });
     };
+
+    if is_begin_group(first) {
+        let mut name = String::new();
+        let mut quoted = false;
+        loop {
+            let Some(traced) = get_x_token_with_context(
+                input,
+                &mut tex_state::ExpansionContext::new(stores),
+                execution,
+            )?
+            else {
+                return Err(ExecError::MissingToken { context });
+            };
+            let token = tex_expand::semantic_token(traced);
+            if is_end_group(token) && !quoted {
+                return if name.is_empty() {
+                    Err(ExecError::MissingToken { context })
+                } else {
+                    Ok(name)
+                };
+            }
+            if matches!(token, Token::Char { ch: '"', .. }) {
+                quoted = !quoted;
+                continue;
+            }
+            append_file_name_token(&mut name, token, context)?;
+        }
+    }
+
     let quoted = matches!(first, Token::Char { ch: '"', .. });
     if !quoted {
         append_file_name_token(&mut name, first, context)?;

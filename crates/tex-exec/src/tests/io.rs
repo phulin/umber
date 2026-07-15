@@ -54,6 +54,26 @@ fn openin_accepts_a_quoted_filename_with_spaces() {
 }
 
 #[test]
+fn openin_accepts_a_brace_delimited_filename() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    stores
+        .world_mut()
+        .set_memory_file("stream.tex", b"braced".to_vec())
+        .expect("seed braced stream");
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\openin1={stream.tex}\\read1 to \\foo \\message{\\foo}\\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("read from brace-delimited stream name");
+
+    assert!(terminal_effect_text(&stores).contains("braced"));
+}
+
+#[test]
 fn readline_uses_only_space_and_other_catcodes() {
     // e-TeX short reference manual section 3.2: unlike \read, \readline
     // assigns catcode 10 to spaces and catcode 12 to every other character.
