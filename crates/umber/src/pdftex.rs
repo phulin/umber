@@ -612,6 +612,87 @@ mod tests {
     }
 
     #[test]
+    fn all_page_token_and_dimension_parameters_scan_group_and_display() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let mut source = String::new();
+        for &(name, _, _) in PDFTEX_DIMEN_PARAMETERS {
+            source.push_str(&format!("\\{name}=1pt "));
+        }
+        for &(name, _) in PDFTEX_TOK_PARAMETERS {
+            source.push_str(&format!("\\{name}{{outer-{name}}} "));
+        }
+        source.push('{');
+        for &(name, _, _) in PDFTEX_DIMEN_PARAMETERS {
+            source.push_str(&format!("\\{name}=2pt \\message{{L{name}=\\the\\{name}}} "));
+        }
+        for &(name, _) in PDFTEX_TOK_PARAMETERS {
+            source.push_str(&format!(
+                "\\{name}{{inner-{name}}} \\message{{L{name}=\\the\\{name}}} "
+            ));
+        }
+        source.push_str("} \\end");
+
+        let output = crate::run_memory_with_stores(&source, &mut stores)
+            .expect("all pdfTeX page parameters assign");
+        for &(name, parameter, _) in PDFTEX_DIMEN_PARAMETERS {
+            assert!(
+                output.contains(&format!("L{name}=2.0pt")),
+                "{name}: {output}"
+            );
+            assert_eq!(
+                stores.dimen_param(parameter),
+                Scaled::from_raw(Scaled::UNITY)
+            );
+        }
+        for &(name, parameter) in PDFTEX_TOK_PARAMETERS {
+            assert!(
+                output.contains(&format!("L{name}=inner-{name}")),
+                "{name}: {output}"
+            );
+            assert_eq!(
+                token_list_text(&stores, stores.tok_param(parameter)),
+                format!("outer-{name}")
+            );
+        }
+    }
+
+    #[test]
+    fn pdftex_line_dimension_overrides_follow_ignore_and_precedence_rules() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        crate::run_memory_with_stores(
+            concat!(
+                "\\setbox0=\\vbox{\\hsize=10pt ",
+                "\\pdfeachlineheight=11pt \\pdfeachlinedepth=12pt ",
+                "\\pdffirstlineheight=13pt \\pdflastlinedepth=14pt ",
+                "\\noindent\\hbox to10pt{}\\penalty-10000\\hbox to10pt{}\\par} ",
+                "\\end",
+            ),
+            &mut stores,
+        )
+        .expect("pdfTeX line dimensions");
+
+        let root = stores.box_reg(0).expect("setbox result");
+        let Some(tex_state::node_arena::NodeRef::VList(vbox)) = stores.nodes(root).first() else {
+            panic!("box0 is not a vbox");
+        };
+        let lines = stores
+            .nodes(vbox.children)
+            .into_iter()
+            .filter_map(|node| match node {
+                tex_state::node_arena::NodeRef::HList(line) => Some(line),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].height, Scaled::from_raw(13 * Scaled::UNITY));
+        assert_eq!(lines[0].depth, Scaled::from_raw(12 * Scaled::UNITY));
+        assert_eq!(lines[1].height, Scaled::from_raw(11 * Scaled::UNITY));
+        assert_eq!(lines[1].depth, Scaled::from_raw(14 * Scaled::UNITY));
+    }
+
+    #[test]
     fn pdftex_parameters_survive_snapshots_hashes_and_formats() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);

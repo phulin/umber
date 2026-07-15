@@ -4,7 +4,7 @@ use std::fmt;
 
 use tex_lex::{InputStack, LexError};
 use tex_state::BoxDimension;
-use tex_state::env::banks::GlueParam;
+use tex_state::env::banks::{DimenParam, GlueParam};
 use tex_state::glue::Order;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
@@ -1414,6 +1414,30 @@ where
                 unit: stores.font_parameter(font, 5),
             }))
         }
+        Some(ScannedUnit::PdfPixel { .. }) => {
+            if true_unit {
+                unread_tokens(input, stores, [first, second]);
+                return Ok(UnitScan::Rejected(first.origin()));
+            }
+            let Some(symbol) = stores.symbol("pdfpxdimen") else {
+                unread_tokens(input, stores, [first, second]);
+                return Ok(UnitScan::Rejected(first.origin()));
+            };
+            if stores.meaning(symbol) != Meaning::DimenParam(DimenParam::PDF_PX_DIMEN.raw()) {
+                unread_tokens(input, stores, [first, second]);
+                return Ok(UnitScan::Rejected(first.origin()));
+            }
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Cell {
+                    bank: ReadBank::DimenParam,
+                    index: u32::from(DimenParam::PDF_PX_DIMEN.raw()),
+                }
+            );
+            Ok(UnitScan::Scanned(ScannedUnit::PdfPixel {
+                unit: stores.dimen_param(DimenParam::PDF_PX_DIMEN),
+            }))
+        }
         Some(
             ScannedUnit::Infinite(_)
             | ScannedUnit::Internal(_)
@@ -1482,6 +1506,7 @@ enum ScannedUnit {
     FontRelative { unit: Scaled },
     Em,
     Ex,
+    PdfPixel { unit: Scaled },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1503,6 +1528,9 @@ fn unit_from_tokens(first: Token, second: Token) -> Option<ScannedUnit> {
         ('d', 'd') => Some(physical_unit(PhysicalUnit::Dd)),
         ('c', 'c') => Some(physical_unit(PhysicalUnit::Cc)),
         ('s', 'p') => Some(physical_unit(PhysicalUnit::Sp)),
+        ('p', 'x') => Some(ScannedUnit::PdfPixel {
+            unit: Scaled::from_raw(0),
+        }),
         ('e', 'm') => Some(ScannedUnit::Em),
         ('e', 'x') => Some(ScannedUnit::Ex),
         _ => None,
@@ -1577,6 +1605,7 @@ fn convert_scanned_unit(
             let converted = convert_font_relative_unit(integer, fraction, expression.value())?;
             Ok(prepend_diagnostics(converted, expression))
         }
+        ScannedUnit::PdfPixel { unit } => convert_font_relative_unit(integer, fraction, unit),
         ScannedUnit::Em | ScannedUnit::Ex => unreachable!("font units are handled while scanning"),
     }
 }

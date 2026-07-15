@@ -315,6 +315,75 @@ fn scans_all_physical_units() {
 }
 
 #[test]
+fn pdf_pixel_unit_uses_live_pdfpxdimen_only_when_pdftex_installs_it() {
+    let mut stores = Universe::new();
+    let parameter = stores.intern("pdfpxdimen");
+    stores.set_meaning(
+        parameter,
+        Meaning::DimenParam(DimenParam::PDF_PX_DIMEN.raw()),
+    );
+    stores.set_dimen_param(
+        DimenParam::PDF_PX_DIMEN,
+        Scaled::from_raw(2 * Scaled::UNITY),
+    );
+    assert_eq!(
+        scan_with_stores(
+            "1.5px x",
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        )
+        .0,
+        3 * Scaled::UNITY
+    );
+
+    stores.set_dimen_param(
+        DimenParam::PDF_PX_DIMEN,
+        Scaled::from_raw(3 * Scaled::UNITY),
+    );
+    assert_eq!(
+        scan_with_stores("2px x", &mut tex_state::ExpansionContext::new(&mut stores)).0,
+        6 * Scaled::UNITY
+    );
+
+    let (value, diagnostic, next) = scan_with_stores(
+        "1truepx",
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    );
+    assert_eq!(value, Scaled::UNITY);
+    assert_eq!(
+        diagnostic,
+        Some(DimensionDiagnostic::IllegalUnit {
+            inserted: InsertedUnit::Pt,
+        })
+    );
+    assert_eq!(
+        next,
+        Some(Token::Char {
+            ch: 'p',
+            cat: Catcode::Letter,
+        })
+    );
+}
+
+#[test]
+fn px_is_an_illegal_unit_without_the_pdftex_layer() {
+    let (value, diagnostic, next) = scan("1px");
+    assert_eq!(value, Scaled::UNITY);
+    assert_eq!(
+        diagnostic,
+        Some(DimensionDiagnostic::IllegalUnit {
+            inserted: InsertedUnit::Pt,
+        })
+    );
+    assert_eq!(
+        next,
+        Some(Token::Char {
+            ch: 'p',
+            cat: Catcode::Letter,
+        })
+    );
+}
+
+#[test]
 fn scans_true_units_at_default_magnification_without_rescaling() {
     assert_eq!(scan("1truept x").0, 65_536);
     assert_eq!(scan("1 true in x").0, 4_736_286);

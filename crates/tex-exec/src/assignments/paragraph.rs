@@ -269,11 +269,12 @@ fn break_current_paragraph(
     );
     let mut line_count = 0i32;
     let mut last_line = None;
+    let total_lines = decisions.breaks.len();
+    let pdf_line_dimensions = pdf_line_dimensions(stores);
     let mut materializer = LineMaterializer::new(decisions.nodes, decisions.breaks, post_params);
     let mut line_nodes = Vec::new();
     let mut migrated = Vec::new();
     while let Some(mut broken) = materializer.materialize_next(stores, line_nodes) {
-        line_count += 1;
         extract_migrating_material(stores, &mut broken.nodes, &mut migrated);
         let line = hpack_owned_with_overfull_rule(
             stores,
@@ -282,6 +283,8 @@ fn break_current_paragraph(
         );
         let mut line = line;
         line.shift = broken.dimensions.indent;
+        pdf_line_dimensions.apply(&mut line, line_count as usize, total_lines);
+        line_count += 1;
         last_line = Some(line);
         append_node_to_current_list(nest, stores, Node::HList(line))?;
         for node in migrated.drain(..) {
@@ -302,6 +305,42 @@ fn break_current_paragraph(
         last_line,
         active_directions,
     })
+}
+
+#[derive(Clone, Copy)]
+struct PdfLineDimensions {
+    ignored: Scaled,
+    first_height: Scaled,
+    last_depth: Scaled,
+    each_height: Scaled,
+    each_depth: Scaled,
+}
+
+impl PdfLineDimensions {
+    fn apply(self, line: &mut tex_state::node::BoxNode, index: usize, total: usize) {
+        if self.each_height != self.ignored {
+            line.height = self.each_height;
+        }
+        if self.each_depth != self.ignored {
+            line.depth = self.each_depth;
+        }
+        if index == 0 && self.first_height != self.ignored {
+            line.height = self.first_height;
+        }
+        if index + 1 == total && self.last_depth != self.ignored {
+            line.depth = self.last_depth;
+        }
+    }
+}
+
+fn pdf_line_dimensions(stores: &Universe) -> PdfLineDimensions {
+    PdfLineDimensions {
+        ignored: stores.dimen_param(DimenParam::PDF_IGNORED_DIMEN),
+        first_height: stores.dimen_param(DimenParam::PDF_FIRST_LINE_HEIGHT),
+        last_depth: stores.dimen_param(DimenParam::PDF_LAST_LINE_DEPTH),
+        each_height: stores.dimen_param(DimenParam::PDF_EACH_LINE_HEIGHT),
+        each_depth: stores.dimen_param(DimenParam::PDF_EACH_LINE_DEPTH),
+    }
 }
 
 fn active_text_directions(nodes: &[Node]) -> Vec<Direction> {
