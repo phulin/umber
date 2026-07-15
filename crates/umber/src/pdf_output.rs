@@ -241,21 +241,30 @@ fn pdf_font_objects(
         .resolved_pdf_font_map_lines()
         .into_iter()
         .find(|entry| entry.tex_name == font.name.as_bytes());
-    let program_name = mapped
+    let program_name = mapped.as_ref().and_then(|entry| entry.font_file.as_deref());
+    let resident = mapped
         .as_ref()
-        .and_then(|entry| entry.font_file.as_deref())
-        .ok_or_else(|| PdfBuildError::MissingFontProgram(font.name.as_bytes().to_vec()))?;
-    let is_truetype = program_name
-        .rsplit(|byte| *byte == b'.')
-        .next()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case(b"ttf"));
+        .is_some_and(|entry| entry.program == tex_fonts::PdfFontMapProgram::Resident);
+    if program_name.is_none() && !resident {
+        return Err(PdfBuildError::MissingFontProgram(
+            font.name.as_bytes().to_vec(),
+        ));
+    }
+    let is_truetype = program_name.is_some_and(|name| {
+        name.rsplit(|byte| *byte == b'.')
+            .next()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case(b"ttf"))
+    });
     let type1 = (!is_truetype)
-        .then(|| stores.pdf_type1_program(program_name))
+        .then(|| program_name.and_then(|name| stores.pdf_type1_program(name)))
         .flatten();
     let truetype = is_truetype
-        .then(|| stores.pdf_truetype_program(program_name))
+        .then(|| program_name.and_then(|name| stores.pdf_truetype_program(name)))
         .flatten();
-    if type1.is_none() && truetype.is_none() {
+    if let Some(program_name) = program_name
+        && type1.is_none()
+        && truetype.is_none()
+    {
         return Err(PdfBuildError::MissingFontProgram(program_name.to_vec()));
     }
     let base_font = mapped
@@ -305,6 +314,9 @@ fn pdf_font_objects(
         })
         .collect();
     dictionary.insert("Widths", PdfValue::Array(widths))?;
+    if resident {
+        return Ok(vec![indirect_dictionary(id, dictionary)]);
+    }
     dictionary.insert("FontDescriptor", PdfValue::Reference(descriptor_id))?;
 
     let mut descriptor = PdfDictionary::new();
@@ -934,6 +946,42 @@ mod tests {
             );
         }
         assert!(content.windows(3).any(|window| window == b"ABC"));
+    }
+
+    #[test]
+    fn resident_map_entry_omits_embedded_program_and_descriptor() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        stores
+            .world_mut()
+            .set_memory_file(
+                "cmr10.tfm",
+                include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm").to_vec(),
+            )
+            .expect("seed TFM");
+        let run_result = run_in(
+            &mut stores,
+            concat!(
+                "\\pdfoutput=1\\pdfcompresslevel=0",
+                "\\font\\f=cmr10 ",
+                "\\pdfmapline{=cmr10 Helvetica}",
+                "\\shipout\\hbox{\\f ABC}\\end",
+            ),
+        );
+        let pdf = pdf_from_committed_artifacts(&stores, &run_result.committed_artifacts)
+            .expect("resident-font PDF assembles");
+        assert!(
+            pdf.windows(b"/BaseFont/Helvetica".len())
+                .any(|window| window == b"/BaseFont/Helvetica")
+        );
+        assert!(
+            !pdf.windows(b"/FontDescriptor".len())
+                .any(|window| window == b"/FontDescriptor")
+        );
+        assert!(
+            !pdf.windows(b"/FontFile".len())
+                .any(|window| window == b"/FontFile")
+        );
     }
 
     #[test]
