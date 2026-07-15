@@ -144,7 +144,10 @@ fn stage_font_resources(case: &str, directory: &Path) -> Result<()> {
     )
     .context("failed to stage cmr10.tfm")?;
     match case {
-        "embedded_type1" | "embedded_subset_type1" | "embedded_subset_omit" => {
+        "embedded_type1"
+        | "embedded_subset_type1"
+        | "embedded_subset_omit"
+        | "embedded_subset_controls_negative" => {
             let committed = corpus_root().join("pdf/embedded_type1.pfb");
             if !committed.is_file() {
                 let output = Command::new("kpsewhich")

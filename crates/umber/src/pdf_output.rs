@@ -519,7 +519,7 @@ fn pdf_font_objects(
         PdfValue::Reference(ids.program),
     )?;
     descriptor.set_raw_entries(stores.pdf_font_attribute(font_id).to_vec());
-    if subset_requested && !is_truetype && stores.int_param(IntParam::PDF_OMIT_CHARSET) == 0 {
+    if subset_requested && !is_truetype && !stores.pdf_font_configuration().omits_charset() {
         let charset = glyph_names
             .iter()
             .filter(|name| name.as_slice() != b".notdef")

@@ -70,6 +70,7 @@ fn committed_embedded_font_fixtures_match_bytes_structure_and_attestations() {
         "embedded_subset_type1",
         "embedded_subset_truetype",
         "embedded_subset_omit",
+        "embedded_subset_controls_negative",
     ] {
         check_embedded_font_case(case);
     }
@@ -91,7 +92,10 @@ fn check_embedded_font_case(case: &str) {
     .expect("stage cmr10 TFM");
     if matches!(
         case,
-        "embedded_type1" | "embedded_subset_type1" | "embedded_subset_omit"
+        "embedded_type1"
+            | "embedded_subset_type1"
+            | "embedded_subset_omit"
+            | "embedded_subset_controls_negative"
     ) {
         fs::copy(
             corpus_root().join("pdf/embedded_type1.pfb"),
@@ -140,6 +144,28 @@ fn check_embedded_font_case(case: &str) {
         normalize_structure(&reference).expect("normalize reference font PDF"),
         read_fixture("pdf", case, "ref.structure")
     );
+    let actual_structure = normalize_structure(&actual).expect("normalize embedded-font PDF");
+    let reference_structure =
+        normalize_structure(&reference).expect("normalize reference font PDF");
+    match case {
+        "embedded_subset_type1" => {
+            assert!(actual_structure.contains("/ToUnicode"));
+            assert!(actual_structure.contains("/CharSet"));
+            assert!(reference_structure.contains("/ToUnicode"));
+            assert!(reference_structure.contains("/CharSet"));
+        }
+        "embedded_subset_omit" => {
+            assert!(!actual_structure.contains("/CharSet"));
+            assert!(!reference_structure.contains("/CharSet"));
+        }
+        "embedded_subset_controls_negative" => {
+            assert!(!actual_structure.contains("/ToUnicode"));
+            assert!(!actual_structure.contains("/CharSet"));
+            assert!(!reference_structure.contains("/ToUnicode"));
+            assert!(!reference_structure.contains("/CharSet"));
+        }
+        _ => {}
+    }
     let expected_extract = read_binary_fixture("pdf", case, "extract");
     if case.starts_with("embedded_subset_") {
         assert!(
