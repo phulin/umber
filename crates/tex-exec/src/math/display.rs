@@ -239,7 +239,7 @@ pub(super) fn finish_display_math(
 pub(super) fn finish_display_alignment(
     nest: &mut ModeNest,
     stores: &mut Universe,
-    nodes: Vec<Node>,
+    finished: crate::align::FinishedAlignment,
 ) -> Result<(), ExecError> {
     append_vertical_contribution(
         nest,
@@ -260,9 +260,12 @@ pub(super) fn finish_display_alignment(
     );
 
     let display_indent = stores.dimen_param(DimenParam::DISPLAY_INDENT);
-    for node in nodes {
+    for node in finished.nodes {
         let node = display_alignment_node(node, display_indent);
         append_vertical_contribution(nest, stores, node);
+    }
+    if let Some(prev_depth) = finished.aux_prev_depth {
+        nest.current_list_mut().set_prev_depth(prev_depth);
     }
 
     append_vertical_contribution(

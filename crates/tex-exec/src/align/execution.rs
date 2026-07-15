@@ -91,7 +91,7 @@ pub(super) fn execute_alignment_to_nodes(
     input: &mut InputStack,
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
-) -> Result<Vec<Node>, ExecError> {
+) -> Result<FinishedAlignment, ExecError> {
     {
         let alignment_kind = state.kind();
         let enclosing_prev_depth = nest.current_list().prev_depth();
@@ -116,7 +116,7 @@ pub(super) fn execute_alignment_to_nodes(
             replay_everycr(input, stores);
         }
 
-        Ok(finish_alignment_level(nest, stores)?.nodes)
+        finish_alignment_level(nest, stores)
     }
 }
 

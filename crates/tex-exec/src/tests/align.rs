@@ -1560,6 +1560,53 @@ fn display_halign_appends_display_vertical_material() {
 }
 
 #[test]
+fn display_halign_carries_last_row_depth_into_following_baseline_glue() {
+    let stores = run_alignment_source(
+        "\\setbox0=\\vbox{\\hsize=50pt \\baselineskip=12pt \\lineskiplimit=-100pt \
+         \\noindent before $$\\halign{#\\cr \\vrule height7.5pt depth2.5pt width0pt\\cr}$$after\\par}",
+    );
+    let vbox = box_zero_vlist(&stores);
+    let nodes = stores.nodes(vbox.children).testing_decoded();
+    let below = nodes
+        .iter()
+        .position(|node| {
+            matches!(
+                node,
+                Node::Glue {
+                    kind: GlueKind::BelowDisplaySkip,
+                    ..
+                }
+            )
+        })
+        .expect("below-display glue");
+    let display_depth = nodes[..below]
+        .iter()
+        .rev()
+        .find_map(|node| match node {
+            Node::HList(row) => Some(row.depth),
+            _ => None,
+        })
+        .expect("display alignment row");
+    let (baseline, following_height) = nodes[below + 1..]
+        .windows(2)
+        .find_map(|pair| match pair {
+            [
+                Node::Glue {
+                    spec,
+                    kind: GlueKind::BaselineSkip,
+                    ..
+                },
+                Node::HList(line),
+            ] => Some((stores.glue(*spec).width, line.height)),
+            _ => None,
+        })
+        .expect("baseline glue before following paragraph line");
+
+    assert_eq!(display_depth, sp(2) + Scaled::from_raw(Scaled::UNITY / 2));
+    assert_eq!(baseline, sp(12) - display_depth - following_height);
+}
+
+#[test]
 fn display_halign_exposes_enclosing_prevdepth_to_initial_everycr() {
     let stores = run_alignment_source(
         "\\dimen0=1pt \\setbox0=\\vbox{\\hsize=50pt \\noindent before\\par \

@@ -1,8 +1,9 @@
 //! Alignment stomach machinery.
 
 mod execution;
+pub(crate) use execution::FinishedAlignment;
 #[cfg(test)]
-pub(crate) use execution::{FinishedAlignment, append_finished_alignment};
+pub(crate) use execution::append_finished_alignment;
 
 mod noalign;
 mod packaging;
@@ -64,7 +65,7 @@ pub(crate) fn execute_display_halign(
     input: &mut InputStack,
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
-) -> Result<Vec<tex_state::node::Node>, ExecError> {
+) -> Result<FinishedAlignment, ExecError> {
     if stores.world().execution_tracing_enabled() {
         stores
             .world_mut()
@@ -85,14 +86,14 @@ pub(crate) fn execute_display_halign(
         execution::execute_alignment_to_nodes(state, nest, input, stores, execution)
     })();
     match result {
-        Ok(nodes) => {
+        Ok(finished) => {
             input.finish_alignment();
             input.resume_alignment_cell(suspended);
             transaction.commit();
             stores
                 .world_mut()
                 .trace_execution("alignment", "commit display halign");
-            Ok(nodes)
+            Ok(finished)
         }
         Err(error) => {
             input.abort_alignment_and_resume(suspended);
