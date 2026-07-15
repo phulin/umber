@@ -104,7 +104,9 @@ pub use input::{
     SourceFrameSummary, SourceId, TokenListReplayKind, TracedTokenList,
 };
 pub use memo::{
-    DetachedMemoValue, MEMO_VALUE_SCHEMA_VERSION, MemoValueError, MemoValueKind, MemoValueLimits,
+    DetachedArtifact, DetachedDiagnostic, DetachedInputTransition, DetachedMemoValue,
+    DetachedPageTransition, DetachedPureKernelPlan, DetachedVirtualEffect,
+    MEMO_VALUE_SCHEMA_VERSION, MemoValueError, MemoValueKind, MemoValueLimits,
 };
 pub use page::{
     AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_PENALTY, PageBreak, PageContents, PageDimension,

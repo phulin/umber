@@ -3850,7 +3850,12 @@ impl Universe {
             });
         }
         let rollback = self.capture_scoped_rollback();
-        match self.stores.import_memo_node_list(payload, limits.max_nodes) {
+        match self.stores.import_memo_node_list(
+            payload,
+            limits.max_nodes,
+            limits.max_tokens,
+            limits.max_string_bytes,
+        ) {
             Ok(id)
                 if !require_box
                     || (self.nodes(id).len() == 1

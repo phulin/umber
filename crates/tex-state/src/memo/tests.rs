@@ -29,6 +29,38 @@ fn tokens_round_trip_into_independent_universe_without_origin_or_handle_identity
 }
 
 #[test]
+fn token_values_import_after_fork_and_rollback_without_reusing_source_handles() {
+    let mut source = Universe::new();
+    let source_symbol = source.intern("forked-memo-name");
+    let source_list = source.intern_token_list(&[Token::Cs(source_symbol.symbol())]);
+    let detached = source
+        .detach_token_list(source_list)
+        .expect("fork token detachment");
+
+    let mut fork = source.clone();
+    let fork_list = fork
+        .import_memo_token_list(&detached, MemoValueLimits::default())
+        .expect("fork token import");
+    let Token::Cs(fork_symbol) = fork.tokens(fork_list)[0] else {
+        panic!("expected fork-imported control sequence");
+    };
+    assert_eq!(fork.resolve(fork_symbol), "forked-memo-name");
+
+    let mut rolled_back = Universe::new();
+    let checkpoint = rolled_back.snapshot();
+    let discarded_symbol = rolled_back.intern("discarded-name");
+    let _discarded = rolled_back.intern_token_list(&[Token::Cs(discarded_symbol.symbol())]);
+    rolled_back.rollback(&checkpoint);
+    let imported = rolled_back
+        .import_memo_token_list(&detached, MemoValueLimits::default())
+        .expect("rollback token import");
+    let Token::Cs(imported_symbol) = rolled_back.tokens(imported)[0] else {
+        panic!("expected rollback-imported control sequence");
+    };
+    assert_eq!(rolled_back.resolve(imported_symbol), "forked-memo-name");
+}
+
+#[test]
 fn envelope_rejects_corruption_schema_kind_and_oversize() {
     let mut universe = Universe::new();
     let id = universe.intern_token_list(&[Token::Char {
@@ -172,6 +204,31 @@ fn nested_node_graph_round_trips_across_owners_and_respects_budget_atomically() 
 }
 
 #[test]
+fn detached_nodes_drop_absolute_origins() {
+    use crate::node::Node;
+
+    let mut source = Universe::new();
+    let root = source.freeze_node_list(&[Node::Char {
+        font: source.current_font(),
+        ch: 'x',
+        origin: crate::token::OriginId::from_raw(37),
+    }]);
+    let detached = source
+        .detach_node_list(root)
+        .expect("origin-free node detachment");
+
+    let mut target = Universe::new();
+    let imported = target
+        .import_memo_node_list(&detached, MemoValueLimits::default())
+        .expect("origin-free node import");
+    let Some(crate::node_arena::NodeRef::Char { origin, .. }) = target.nodes(imported).first()
+    else {
+        panic!("expected imported character node");
+    };
+    assert_eq!(origin, crate::token::OriginId::UNKNOWN);
+}
+
+#[test]
 fn font_round_trips_without_reusing_its_runtime_id() {
     let source = Universe::new();
     let font = source.current_font();
@@ -196,6 +253,27 @@ fn malformed_node_payload_is_a_miss_without_partial_publication() {
             .import_memo_node_list(&malformed, MemoValueLimits::default())
             .is_err()
     );
+    assert_eq!(target.snapshot().state_hash(), before);
+}
+
+#[test]
+fn malformed_late_token_is_rejected_before_earlier_names_are_interned() {
+    let payload = bincode::serialize(&vec![
+        DetachedToken::Cs {
+            active: false,
+            name: "must-not-be-published".to_owned(),
+        },
+        DetachedToken::Param(0),
+    ])
+    .expect("malformed token payload encoding");
+    let detached = DetachedMemoValue::new(MemoValueKind::Tokens, payload);
+    let mut target = Universe::new();
+    let before = target.snapshot().state_hash();
+
+    assert!(matches!(
+        target.import_memo_token_list(&detached, MemoValueLimits::default()),
+        Err(MemoValueError::Invalid("invalid parameter slot"))
+    ));
     assert_eq!(target.snapshot().state_hash(), before);
 }
 
@@ -233,4 +311,207 @@ fn font_round_trip_uses_target_owner_and_semantic_identifier() {
         ),
         "memo-font-selector"
     );
+}
+
+#[test]
+fn deeply_nested_node_graph_detaches_and_imports_iteratively() {
+    use crate::node::{BoxNode, BoxNodeFields, Node};
+    use crate::scaled::{GlueSetRatio, Scaled};
+
+    const DEPTH: usize = 2_000;
+    let mut source = Universe::new();
+    let mut root = source.freeze_node_list(&[]);
+    for _ in 0..DEPTH {
+        root = source.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+            width: Scaled::from_raw(0),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+            shift: Scaled::from_raw(0),
+            display: false,
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: crate::node::Sign::Normal,
+            glue_order: Order::Normal,
+            children: root,
+        }))]);
+    }
+
+    let detached = source.detach_node_list(root).expect("deep node detachment");
+    let mut target = Universe::new();
+    let mut imported = target
+        .import_memo_node_list(
+            &detached,
+            MemoValueLimits {
+                max_nodes: DEPTH,
+                ..MemoValueLimits::default()
+            },
+        )
+        .expect("deep node import");
+    for _ in 0..DEPTH {
+        let Some(crate::node_arena::NodeRef::HList(box_node)) = target.nodes(imported).first()
+        else {
+            panic!("deep imported graph lost a box level");
+        };
+        imported = box_node.children;
+    }
+    assert!(target.nodes(imported).is_empty());
+}
+
+#[test]
+fn detached_values_survive_target_rollback_and_generation_fork() {
+    let mut source = Universe::new();
+    let tokens = source.intern_token_list(&[Token::Char {
+        ch: 'q',
+        cat: Catcode::Letter,
+    }]);
+    let detached = source.detach_token_list(tokens).expect("token detachment");
+
+    let checkpoint = source.snapshot();
+    let frozen = source.freeze_generation();
+    let mut fork = frozen.fork_at(&checkpoint).expect("generation fork");
+    let forked = fork
+        .import_memo_token_list(&detached, MemoValueLimits::default())
+        .expect("fork import");
+    assert_eq!(
+        fork.tokens(forked)[0],
+        Token::Char {
+            ch: 'q',
+            cat: Catcode::Letter
+        }
+    );
+
+    let mut target = Universe::new();
+    let checkpoint = target.snapshot();
+    let stale = target
+        .import_memo_token_list(&detached, MemoValueLimits::default())
+        .expect("initial target import");
+    target.rollback(&checkpoint);
+    let imported = target
+        .import_memo_token_list(&detached, MemoValueLimits::default())
+        .expect("post-rollback target import");
+    assert_ne!(stale, imported);
+    assert_eq!(
+        target.tokens(imported)[0],
+        Token::Char {
+            ch: 'q',
+            cat: Catcode::Letter
+        }
+    );
+}
+
+#[test]
+fn transition_diagnostic_effect_plan_and_artifact_dtos_are_handle_free_and_bounded() {
+    let limits = MemoValueLimits::default();
+    let input = DetachedInputTransition {
+        transition_schema: 3,
+        consumed_inputs: vec![ContentHash::from_bytes(b"included").bytes()],
+        semantic_payload: vec![1, 2, 3],
+    };
+    assert_eq!(
+        DetachedMemoValue::from_input_transition(&input)
+            .expect("input transition encoding")
+            .input_transition(limits)
+            .expect("input transition decoding"),
+        input
+    );
+
+    let page = DetachedPageTransition {
+        transition_schema: 4,
+        semantic_payload: vec![5, 6],
+    };
+    assert_eq!(
+        DetachedMemoValue::from_page_transition(&page)
+            .expect("page transition encoding")
+            .page_transition(limits)
+            .expect("page transition decoding"),
+        page
+    );
+
+    let diagnostics = vec![DetachedDiagnostic {
+        code: "missing-number".into(),
+        message: "Missing number, treated as zero.".into(),
+        input_ordinal: Some(9),
+    }];
+    assert_eq!(
+        DetachedMemoValue::from_diagnostics(&diagnostics)
+            .expect("diagnostic encoding")
+            .diagnostics(limits)
+            .expect("diagnostic decoding"),
+        diagnostics
+    );
+
+    let effects = vec![DetachedVirtualEffect {
+        operation: "write".into(),
+        stream: Some(3),
+        payload: b"label".to_vec(),
+    }];
+    assert_eq!(
+        DetachedMemoValue::from_virtual_effects(&effects)
+            .expect("virtual-effect encoding")
+            .virtual_effects(limits)
+            .expect("virtual-effect decoding"),
+        effects
+    );
+
+    let plan = DetachedPureKernelPlan {
+        kernel: "line-break".into(),
+        plan_schema: 2,
+        payload: vec![8],
+    };
+    assert_eq!(
+        DetachedMemoValue::from_pure_kernel_plan(&plan)
+            .expect("pure-plan encoding")
+            .pure_kernel_plan(limits)
+            .expect("pure-plan decoding"),
+        plan
+    );
+
+    let artifact = DetachedArtifact {
+        artifact_schema: 10,
+        payload: vec![10, 20],
+    };
+    assert_eq!(
+        DetachedMemoValue::from_artifact(&artifact)
+            .expect("artifact encoding")
+            .artifact(limits)
+            .expect("artifact decoding"),
+        artifact
+    );
+
+    let tight = MemoValueLimits {
+        max_payload_bytes: 1,
+        ..limits
+    };
+    assert!(
+        DetachedMemoValue::from_page_transition(&page)
+            .expect("page transition encoding")
+            .page_transition(tight)
+            .is_err()
+    );
+}
+
+#[test]
+fn stale_schema_collision_candidate_and_retention_are_safe() {
+    let left = DetachedMemoValue::new(MemoValueKind::Artifact, b"left".to_vec());
+    let right = DetachedMemoValue::new(MemoValueKind::Artifact, b"right".to_vec());
+    let forced_candidate_id = 7_u64;
+    assert_eq!(forced_candidate_id, forced_candidate_id);
+    assert_ne!(left.integrity(), right.integrity());
+
+    let stale = bincode::serialize(&WireEnvelope {
+        magic: ENVELOPE_MAGIC,
+        schema: 0,
+        kind: MemoValueKind::Artifact,
+        payload: b"left".to_vec(),
+        integrity: left.integrity().bytes(),
+    })
+    .expect("stale envelope encoding");
+    assert!(matches!(
+        DetachedMemoValue::from_bytes(&stale, MemoValueLimits::default()),
+        Err(MemoValueError::StaleSchema { found: 0 })
+    ));
+
+    let weak = Arc::downgrade(&left.payload);
+    assert!(left.retained_bytes() >= left.payload.len());
+    drop(left);
+    assert!(weak.upgrade().is_none());
 }

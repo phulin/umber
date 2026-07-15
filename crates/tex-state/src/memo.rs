@@ -37,6 +37,55 @@ pub enum MemoValueKind {
     Artifact = 12,
 }
 
+/// Region-specific ending input state. The payload is a versioned semantic
+/// transition understood by the region that produced it; consumed inputs are
+/// pinned by content identity rather than `InputRecordId`.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DetachedInputTransition {
+    pub transition_schema: u32,
+    pub consumed_inputs: Vec<[u8; 32]>,
+    pub semantic_payload: Vec<u8>,
+}
+
+/// Handle-free page-builder transition consumed by the page replay layer.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DetachedPageTransition {
+    pub transition_schema: u32,
+    pub semantic_payload: Vec<u8>,
+}
+
+/// One deterministic diagnostic with content-relative provenance.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DetachedDiagnostic {
+    pub code: String,
+    pub message: String,
+    /// Character/token ordinal in the current memo input, never an `OriginId`.
+    pub input_ordinal: Option<u32>,
+}
+
+/// A virtual effect record. Decoding this value does not apply or materialize it.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DetachedVirtualEffect {
+    pub operation: String,
+    pub stream: Option<u8>,
+    pub payload: Vec<u8>,
+}
+
+/// A pure-kernel result whose inner schema is owned by that kernel.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DetachedPureKernelPlan {
+    pub kernel: String,
+    pub plan_schema: u32,
+    pub payload: Vec<u8>,
+}
+
+/// Already-detached artifact bytes with their own codec schema.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DetachedArtifact {
+    pub artifact_schema: u32,
+    pub payload: Vec<u8>,
+}
+
 /// Decode and import budgets applied before allocating live state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MemoValueLimits {
@@ -188,6 +237,136 @@ impl DetachedMemoValue {
         bincode::deserialize(&self.payload)
             .map_err(|error| MemoValueError::Codec(error.to_string()))
     }
+
+    fn encode<T: Serialize>(kind: MemoValueKind, value: &T) -> Result<Self, MemoValueError> {
+        let payload =
+            bincode::serialize(value).map_err(|error| MemoValueError::Codec(error.to_string()))?;
+        Ok(Self::new(kind, payload))
+    }
+
+    pub fn from_input_transition(value: &DetachedInputTransition) -> Result<Self, MemoValueError> {
+        Self::encode(MemoValueKind::InputTransition, value)
+    }
+
+    pub fn input_transition(
+        &self,
+        limits: MemoValueLimits,
+    ) -> Result<DetachedInputTransition, MemoValueError> {
+        let value: DetachedInputTransition = self.decode(MemoValueKind::InputTransition)?;
+        validate_payload(value.semantic_payload.len(), limits)?;
+        if value.consumed_inputs.len() > limits.max_tokens {
+            return Err(MemoValueError::Oversized {
+                actual: value.consumed_inputs.len(),
+                limit: limits.max_tokens,
+            });
+        }
+        Ok(value)
+    }
+
+    pub fn from_page_transition(value: &DetachedPageTransition) -> Result<Self, MemoValueError> {
+        Self::encode(MemoValueKind::PageTransition, value)
+    }
+
+    pub fn page_transition(
+        &self,
+        limits: MemoValueLimits,
+    ) -> Result<DetachedPageTransition, MemoValueError> {
+        let value: DetachedPageTransition = self.decode(MemoValueKind::PageTransition)?;
+        validate_payload(value.semantic_payload.len(), limits)?;
+        Ok(value)
+    }
+
+    pub fn from_diagnostics(value: &[DetachedDiagnostic]) -> Result<Self, MemoValueError> {
+        Self::encode(MemoValueKind::Diagnostics, &value)
+    }
+
+    pub fn diagnostics(
+        &self,
+        limits: MemoValueLimits,
+    ) -> Result<Vec<DetachedDiagnostic>, MemoValueError> {
+        let value: Vec<DetachedDiagnostic> = self.decode(MemoValueKind::Diagnostics)?;
+        validate_entry_strings(
+            value.len(),
+            value
+                .iter()
+                .map(|item| item.code.len() + item.message.len()),
+            limits,
+        )?;
+        Ok(value)
+    }
+
+    pub fn from_virtual_effects(value: &[DetachedVirtualEffect]) -> Result<Self, MemoValueError> {
+        Self::encode(MemoValueKind::VirtualEffects, &value)
+    }
+
+    pub fn virtual_effects(
+        &self,
+        limits: MemoValueLimits,
+    ) -> Result<Vec<DetachedVirtualEffect>, MemoValueError> {
+        let value: Vec<DetachedVirtualEffect> = self.decode(MemoValueKind::VirtualEffects)?;
+        validate_entry_strings(
+            value.len(),
+            value
+                .iter()
+                .map(|item| item.operation.len() + item.payload.len()),
+            limits,
+        )?;
+        Ok(value)
+    }
+
+    pub fn from_pure_kernel_plan(value: &DetachedPureKernelPlan) -> Result<Self, MemoValueError> {
+        Self::encode(MemoValueKind::PureKernelPlan, value)
+    }
+
+    pub fn pure_kernel_plan(
+        &self,
+        limits: MemoValueLimits,
+    ) -> Result<DetachedPureKernelPlan, MemoValueError> {
+        let value: DetachedPureKernelPlan = self.decode(MemoValueKind::PureKernelPlan)?;
+        validate_payload(value.kernel.len() + value.payload.len(), limits)?;
+        Ok(value)
+    }
+
+    pub fn from_artifact(value: &DetachedArtifact) -> Result<Self, MemoValueError> {
+        Self::encode(MemoValueKind::Artifact, value)
+    }
+
+    pub fn artifact(&self, limits: MemoValueLimits) -> Result<DetachedArtifact, MemoValueError> {
+        let value: DetachedArtifact = self.decode(MemoValueKind::Artifact)?;
+        validate_payload(value.payload.len(), limits)?;
+        Ok(value)
+    }
+}
+
+fn validate_payload(actual: usize, limits: MemoValueLimits) -> Result<(), MemoValueError> {
+    if actual > limits.max_payload_bytes {
+        return Err(MemoValueError::Oversized {
+            actual,
+            limit: limits.max_payload_bytes,
+        });
+    }
+    Ok(())
+}
+
+fn validate_entry_strings(
+    count: usize,
+    mut lengths: impl Iterator<Item = usize>,
+    limits: MemoValueLimits,
+) -> Result<(), MemoValueError> {
+    if count > limits.max_tokens {
+        return Err(MemoValueError::Oversized {
+            actual: count,
+            limit: limits.max_tokens,
+        });
+    }
+    let bytes = lengths.try_fold(0usize, usize::checked_add);
+    if bytes.is_none_or(|bytes| bytes > limits.max_payload_bytes) {
+        return Err(MemoValueError::Oversized {
+            actual: bytes.unwrap_or(usize::MAX),
+            limit: limits.max_payload_bytes,
+        });
+    }
+    Ok(())
 }
 
 fn memo_integrity(kind: MemoValueKind, payload: &[u8]) -> ContentHash {
@@ -367,6 +546,33 @@ fn validate_tokens(
             actual: string_bytes.unwrap_or(usize::MAX),
             limit: limits.max_string_bytes,
         });
+    }
+    for token in tokens {
+        match token {
+            DetachedToken::Char { cat, .. } => {
+                decode_catcode(*cat)?;
+            }
+            DetachedToken::Cs { active: true, name } => {
+                let mut chars = name.chars();
+                if chars.next().is_none() {
+                    return Err(MemoValueError::Invalid("empty active character"));
+                }
+                if chars.next().is_some() {
+                    return Err(MemoValueError::Invalid(
+                        "active character name is not one scalar",
+                    ));
+                }
+            }
+            DetachedToken::Param(1..=9)
+            | DetachedToken::Frozen(0..=1)
+            | DetachedToken::Cs { active: false, .. } => {}
+            DetachedToken::Param(_) => {
+                return Err(MemoValueError::Invalid("invalid parameter slot"));
+            }
+            DetachedToken::Frozen(_) => {
+                return Err(MemoValueError::Invalid("unknown frozen token"));
+            }
+        }
     }
     Ok(())
 }

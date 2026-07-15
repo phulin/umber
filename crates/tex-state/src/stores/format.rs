@@ -467,6 +467,8 @@ impl Stores {
         &mut self,
         bytes: &[u8],
         max_nodes: usize,
+        max_tokens: usize,
+        max_string_bytes: usize,
     ) -> Result<NodeListId, StoreFormatError> {
         let bundle: MemoNodeBundle = bincode::deserialize(bytes)
             .map_err(|error| StoreFormatError::Codec(error.to_string()))?;
@@ -476,6 +478,22 @@ impl Stores {
             .try_fold(0usize, |total, list| total.checked_add(list.nodes.len()));
         if node_count.is_none_or(|count| count > max_nodes) {
             return Err(StoreFormatError::Invalid("memo node budget exceeded"));
+        }
+        let token_count = bundle
+            .token_lists
+            .iter()
+            .try_fold(0usize, |total, list| total.checked_add(list.len()));
+        if token_count.is_none_or(|count| count > max_tokens) {
+            return Err(StoreFormatError::Invalid("memo token budget exceeded"));
+        }
+        let string_bytes = bundle
+            .names
+            .iter()
+            .map(|name| name.text.len())
+            .chain(bundle.fonts.iter().map(|font| font.name.len()))
+            .try_fold(0usize, usize::checked_add);
+        if string_bytes.is_none_or(|count| count > max_string_bytes) {
+            return Err(StoreFormatError::Invalid("memo string budget exceeded"));
         }
 
         let mut symbols = Vec::with_capacity(bundle.names.len());
@@ -1265,29 +1283,48 @@ fn capture_node_list(
     survivor_roots: &mut std::collections::BTreeMap<crate::ids::SurvivorRootId, u32>,
     out: &mut Vec<FormatNodeList>,
 ) -> Result<(), StoreFormatError> {
-    if seen.contains(&id) {
-        return Ok(());
+    enum Visit {
+        Enter(NodeListId),
+        Exit(NodeListId),
     }
-    if !visiting.insert(id) {
-        return Err(StoreFormatError::Invalid("cyclic node-list graph"));
-    }
-    let nodes = stores.nodes(id).to_vec();
-    for node in &nodes {
-        for child in node_child_ids(node) {
-            capture_node_list(stores, child, seen, visiting, survivor_roots, out)?;
+
+    let mut stack = vec![Visit::Enter(id)];
+    while let Some(visit) = stack.pop() {
+        match visit {
+            Visit::Enter(id) => {
+                if seen.contains(&id) {
+                    continue;
+                }
+                if !visiting.insert(id) {
+                    return Err(StoreFormatError::Invalid("cyclic node-list graph"));
+                }
+                stack.push(Visit::Exit(id));
+                let nodes = stores.nodes(id);
+                for node in nodes.iter().rev() {
+                    let children = node_child_ids(&node.to_owned());
+                    for child in children.into_iter().rev() {
+                        stack.push(Visit::Enter(child));
+                    }
+                }
+            }
+            Visit::Exit(id) => {
+                visiting.remove(&id);
+                if !seen.insert(id) {
+                    continue;
+                }
+                let nodes = stores
+                    .nodes(id)
+                    .iter()
+                    .map(|node| FormatNode::capture(stores, node.to_owned(), survivor_roots))
+                    .collect();
+                out.push(FormatNodeList {
+                    key: FormatListKey::capture(stores, id, survivor_roots),
+                    semantic_id: stores.node_list_semantic_id_value(id),
+                    nodes,
+                });
+            }
         }
     }
-    visiting.remove(&id);
-    seen.insert(id);
-    let nodes = nodes
-        .into_iter()
-        .map(|node| FormatNode::capture(stores, node, survivor_roots))
-        .collect();
-    out.push(FormatNodeList {
-        key: FormatListKey::capture(stores, id, survivor_roots),
-        semantic_id: stores.node_list_semantic_id_value(id),
-        nodes,
-    });
     Ok(())
 }
 
