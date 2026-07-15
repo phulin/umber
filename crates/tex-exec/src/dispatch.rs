@@ -230,7 +230,11 @@ pub(crate) fn dispatch_delivered_token_with_context(
             assignments::execute_assignment_meaning(meaning, traced, input, stores, execution)
         }
         Meaning::MathCharGiven(_) => {
-            unimplemented_typesetting(mode, token, origin, "math character command")
+            crate::math::insert_dollar_sign(traced, input, stores);
+            if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
+                assignments::ensure_horizontal_for_character(nest, input, stores)?;
+            }
+            Ok(DispatchAction::Continue)
         }
         Meaning::Unknown(raw) => Err(ExecError::UnsupportedCommand {
             token,

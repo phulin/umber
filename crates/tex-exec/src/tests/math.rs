@@ -45,6 +45,23 @@ fn char_primitive_scans_as_a_direct_math_field() {
 }
 
 #[test]
+fn mathchar_command_outside_math_inserts_math_shift_and_retries() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(r#"\mathchardef\circ="020E \circ"#));
+    let mut executor = Executor::new();
+
+    executor
+        .run(&mut input, &mut stores)
+        .expect("math character recovery executes");
+
+    assert_eq!(executor.nest().current_mode(), Mode::Math);
+    assert!(terminal_effect_text(&stores).contains("Missing $ inserted"));
+    assert_eq!(math_nodes(&stores, &executor).len(), 1);
+}
+
+#[test]
 fn remove_item_commands_apply_to_math_lists() {
     let (stores, executor) =
         run_math_source(r"$\penalty10\unpenalty\kern1pt\unkern\hskip1pt\unskip");
