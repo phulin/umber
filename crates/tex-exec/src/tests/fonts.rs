@@ -12,6 +12,14 @@ fn pdf_font_output_actions_record_host_neutral_checkpointed_state() {
         ("pdfincludechars", UnexpandablePrimitive::PdfIncludeChars),
         ("pdfmapfile", UnexpandablePrimitive::PdfMapFile),
         ("pdfmapline", UnexpandablePrimitive::PdfMapLine),
+        (
+            "pdfglyphtounicode",
+            UnexpandablePrimitive::PdfGlyphToUnicode,
+        ),
+        (
+            "pdfnobuiltintounicode",
+            UnexpandablePrimitive::PdfNoBuiltinToUnicode,
+        ),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
@@ -21,7 +29,10 @@ fn pdf_font_output_actions_record_host_neutral_checkpointed_state() {
         "\\pdfmapfile{+pdftex.map} ",
         "\\pdfmapline{+cmr10 CMR10 <cmr10.pfb} ",
         "\\pdffontattr\\base{/StemV 70} ",
-        "\\pdfincludechars\\base{CABA} \\end",
+        "\\pdfincludechars\\base{CABA} ",
+        "\\pdfglyphtounicode{A}{0041} ",
+        "\\pdfglyphtounicode{tfm:cmr10/ffi}{0066 0066 0069} ",
+        "\\pdfnobuiltintounicode\\base \\end",
     )));
     Executor::new()
         .run(&mut input, &mut stores)
@@ -30,6 +41,15 @@ fn pdf_font_output_actions_record_host_neutral_checkpointed_state() {
     let font = font_meaning(&stores, "base");
     assert_eq!(stores.pdf_font_attribute(font), b"/StemV 70");
     assert_eq!(stores.included_pdf_font_chars(font), b"ABC");
+    assert_eq!(
+        stores.pdf_glyph_to_unicode(b"cmr10", b"A"),
+        Some([0x41].as_slice())
+    );
+    assert_eq!(
+        stores.pdf_glyph_to_unicode(b"cmr10", b"ffi.alt"),
+        Some([0x66, 0x66, 0x69].as_slice())
+    );
+    assert!(stores.pdf_builtin_to_unicode_disabled(font));
     let maps = stores.pdf_font_maps().collect::<Vec<_>>();
     assert!(matches!(
         maps[0],

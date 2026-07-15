@@ -60,6 +60,15 @@ pub enum PdfFontMapOperation {
     Line(tex_fonts::PdfFontMapEntry),
 }
 
+/// One validated `\pdfglyphtounicode` mapping. A `tfm:` prefix scopes the
+/// mapping to one TeX metric name; otherwise it is global across fonts.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PdfGlyphToUnicode {
+    pub tfm_name: Option<Vec<u8>>,
+    pub glyph_name: Vec<u8>,
+    pub unicode: Vec<u32>,
+}
+
 /// An append-only font-output mutation. The log makes snapshots cheap and
 /// ensures rollback discards the exact suffix produced after a checkpoint.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -72,6 +81,10 @@ enum PdfFontOperation {
     IncludeChars {
         font: FontId,
         chars: Vec<u8>,
+    },
+    GlyphToUnicode(PdfGlyphToUnicode),
+    NoBuiltinToUnicode {
+        font: FontId,
     },
     Type1Program {
         logical_name: Vec<u8>,
@@ -463,6 +476,14 @@ impl PdfState {
         self.push_font_operation(PdfFontOperation::IncludeChars { font, chars });
     }
 
+    pub(crate) fn set_glyph_to_unicode(&mut self, mapping: PdfGlyphToUnicode) {
+        self.push_font_operation(PdfFontOperation::GlyphToUnicode(mapping));
+    }
+
+    pub(crate) fn disable_builtin_to_unicode(&mut self, font: FontId) {
+        self.push_font_operation(PdfFontOperation::NoBuiltinToUnicode { font });
+    }
+
     pub(crate) fn provide_type1_program(
         &mut self,
         logical_name: Vec<u8>,
@@ -626,6 +647,8 @@ impl PdfState {
                 PdfFontOperation::Map(map) => Some(map),
                 PdfFontOperation::Attribute { .. }
                 | PdfFontOperation::IncludeChars { .. }
+                | PdfFontOperation::GlyphToUnicode(_)
+                | PdfFontOperation::NoBuiltinToUnicode { .. }
                 | PdfFontOperation::Type1Program { .. }
                 | PdfFontOperation::Encoding { .. }
                 | PdfFontOperation::TrueTypeProgram { .. } => None,
@@ -705,6 +728,44 @@ impl PdfState {
             .enumerate()
             .filter_map(|(character, present)| present.then_some(character as u8))
             .collect()
+    }
+
+    #[must_use]
+    pub(crate) fn builtin_to_unicode_disabled(&self, font: FontId) -> bool {
+        self.font_operations.iter().any(|operation| {
+            matches!(operation, PdfFontOperation::NoBuiltinToUnicode { font: candidate } if *candidate == font)
+        })
+    }
+
+    #[must_use]
+    pub(crate) fn has_glyph_to_unicode_mappings(&self) -> bool {
+        self.font_operations
+            .iter()
+            .any(|operation| matches!(operation, PdfFontOperation::GlyphToUnicode(_)))
+    }
+
+    #[must_use]
+    pub(crate) fn glyph_to_unicode(&self, tfm_name: &[u8], glyph_name: &[u8]) -> Option<&[u32]> {
+        let glyph_name = glyph_name
+            .split(|byte| *byte == b'.')
+            .next()
+            .unwrap_or(glyph_name);
+        for scoped in [true, false] {
+            if let Some(mapping) = self.font_operations.iter().rev().find_map(|operation| {
+                let PdfFontOperation::GlyphToUnicode(mapping) = operation else {
+                    return None;
+                };
+                let scope_matches = if scoped {
+                    mapping.tfm_name.as_deref() == Some(tfm_name)
+                } else {
+                    mapping.tfm_name.is_none()
+                };
+                (scope_matches && mapping.glyph_name == glyph_name).then_some(mapping)
+            }) {
+                return Some(&mapping.unicode);
+            }
+        }
+        None
     }
 
     #[must_use]
@@ -810,6 +871,21 @@ fn append_font_fingerprint(previous: u64, operation: &PdfFontOperation) -> u64 {
             hasher.tag(3);
             hasher.u32(font.raw());
             hasher.bytes(chars);
+        }
+        PdfFontOperation::GlyphToUnicode(mapping) => {
+            hasher.tag(8);
+            hasher.bool(mapping.tfm_name.is_some());
+            if let Some(name) = &mapping.tfm_name {
+                hasher.bytes(name);
+            }
+            hasher.bytes(&mapping.glyph_name);
+            for value in &mapping.unicode {
+                hasher.u32(*value);
+            }
+        }
+        PdfFontOperation::NoBuiltinToUnicode { font } => {
+            hasher.tag(9);
+            hasher.u32(font.raw());
         }
         PdfFontOperation::Type1Program {
             logical_name,
@@ -1020,22 +1096,43 @@ mod tests {
         let font = crate::font::NULL_FONT;
         state.set_font_attribute(font, b"/StemV 70".to_vec());
         state.include_font_chars(font, vec![b'B', b'A', b'B']);
+        state.set_glyph_to_unicode(PdfGlyphToUnicode {
+            tfm_name: None,
+            glyph_name: b"A".to_vec(),
+            unicode: vec![0x41],
+        });
         let checkpoint = state.snapshot();
         let checkpoint_hash = state.hash_fragment();
 
         state.set_font_attribute(font, b"/StemV 80".to_vec());
         state.include_font_chars(font, vec![b'C']);
+        state.disable_builtin_to_unicode(font);
+        state.set_glyph_to_unicode(PdfGlyphToUnicode {
+            tfm_name: None,
+            glyph_name: b"A".to_vec(),
+            unicode: vec![0x391],
+        });
         state.push_font_map(PdfFontMapOperation::Line(
             tex_fonts::PdfFontMapEntry::parse(b"cmr10 CMR10 <cmr10.pfb").expect("valid map entry"),
         ));
         assert_eq!(state.font_attribute(font), b"/StemV 80");
         assert_eq!(state.included_font_chars(font), b"ABC");
         assert_eq!(state.font_maps().count(), 1);
+        assert_eq!(
+            state.glyph_to_unicode(b"cmr10", b"A"),
+            Some([0x391].as_slice())
+        );
+        assert!(state.builtin_to_unicode_disabled(font));
 
         state.rollback(checkpoint);
         assert_eq!(state.font_attribute(font), b"/StemV 70");
         assert_eq!(state.included_font_chars(font), b"AB");
         assert_eq!(state.font_maps().count(), 0);
+        assert_eq!(
+            state.glyph_to_unicode(b"cmr10", b"A"),
+            Some([0x41].as_slice())
+        );
+        assert!(!state.builtin_to_unicode_disabled(font));
         assert_eq!(state.hash_fragment(), checkpoint_hash);
     }
 

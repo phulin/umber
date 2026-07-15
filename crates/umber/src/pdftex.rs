@@ -351,6 +351,14 @@ pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
         ("pdfincludechars", UnexpandablePrimitive::PdfIncludeChars),
         ("pdfmapfile", UnexpandablePrimitive::PdfMapFile),
         ("pdfmapline", UnexpandablePrimitive::PdfMapLine),
+        (
+            "pdfglyphtounicode",
+            UnexpandablePrimitive::PdfGlyphToUnicode,
+        ),
+        (
+            "pdfnobuiltintounicode",
+            UnexpandablePrimitive::PdfNoBuiltinToUnicode,
+        ),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));

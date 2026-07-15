@@ -615,6 +615,8 @@ pub enum UnexpandablePrimitive {
     PdfIncludeChars,
     PdfMapFile,
     PdfMapLine,
+    PdfGlyphToUnicode,
+    PdfNoBuiltinToUnicode,
     /// A registered pdfTeX name whose semantics belong to a later parity issue.
     PdfTeXUnimplemented,
 }
@@ -850,6 +852,8 @@ impl UnexpandablePrimitive {
             Self::PdfIncludeChars => 224,
             Self::PdfMapFile => 225,
             Self::PdfMapLine => 226,
+            Self::PdfGlyphToUnicode => 227,
+            Self::PdfNoBuiltinToUnicode => 228,
         }
     }
 
@@ -1083,6 +1087,8 @@ impl UnexpandablePrimitive {
             224 => Some(Self::PdfIncludeChars),
             225 => Some(Self::PdfMapFile),
             226 => Some(Self::PdfMapLine),
+            227 => Some(Self::PdfGlyphToUnicode),
+            228 => Some(Self::PdfNoBuiltinToUnicode),
             _ => None,
         }
     }

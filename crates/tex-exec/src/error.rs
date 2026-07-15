@@ -26,6 +26,7 @@ pub enum ExecError {
     World(WorldError),
     FontParse(tex_fonts::ParseError),
     PdfFontMap(tex_fonts::PdfFontMapError),
+    PdfGlyphToUnicode(String),
     FontOpen {
         name: String,
         message: String,
@@ -165,6 +166,9 @@ impl fmt::Display for ExecError {
             Self::World(err) => write!(f, "{err}"),
             Self::FontParse(err) => write!(f, "{err}"),
             Self::PdfFontMap(err) => write!(f, "{err}"),
+            Self::PdfGlyphToUnicode(message) => {
+                write!(f, "pdfTeX error (\\pdfglyphtounicode): {message}")
+            }
             Self::FontOpen { name, message } => {
                 write!(f, "could not open TFM for font {name}: {message}")
             }
@@ -318,6 +322,7 @@ impl std::error::Error for ExecError {
             Self::FontParse(err) => Some(err),
             Self::PdfFontMap(err) => Some(err),
             Self::FontOpen { .. }
+            | Self::PdfGlyphToUnicode(_)
             | Self::EmptyModeNestSummary
             | Self::CannotPopBaseMode
             | Self::UndefinedControlSequence { .. }
@@ -407,6 +412,7 @@ impl ExecError {
             | Self::World(_)
             | Self::FontParse(_)
             | Self::PdfFontMap(_)
+            | Self::PdfGlyphToUnicode(_)
             | Self::FontOpen { .. }
             | Self::FontParameter(_)
             | Self::FontExpansion(_)

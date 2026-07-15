@@ -1775,6 +1775,29 @@ impl Universe {
         self.pdf.included_font_chars(font)
     }
 
+    pub fn set_pdf_glyph_to_unicode(&mut self, mapping: crate::PdfGlyphToUnicode) {
+        self.pdf.set_glyph_to_unicode(mapping);
+    }
+
+    #[must_use]
+    pub fn pdf_glyph_to_unicode(&self, tfm_name: &[u8], glyph_name: &[u8]) -> Option<&[u32]> {
+        self.pdf.glyph_to_unicode(tfm_name, glyph_name)
+    }
+
+    #[must_use]
+    pub fn has_pdf_glyph_to_unicode_mappings(&self) -> bool {
+        self.pdf.has_glyph_to_unicode_mappings()
+    }
+
+    pub fn disable_pdf_builtin_to_unicode(&mut self, font: FontId) {
+        self.pdf.disable_builtin_to_unicode(font);
+    }
+
+    #[must_use]
+    pub fn pdf_builtin_to_unicode_disabled(&self, font: FontId) -> bool {
+        self.pdf.builtin_to_unicode_disabled(font)
+    }
+
     /// Supplies already acquired Type-1 bytes through a typed, host-neutral
     /// boundary. Parsing strips PFB transport framing before publication.
     pub fn provide_pdf_type1_program(

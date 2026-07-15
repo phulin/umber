@@ -670,7 +670,9 @@ fn execute_prefixed_command(
             primitive @ (UnexpandablePrimitive::PdfFontAttr
             | UnexpandablePrimitive::PdfIncludeChars
             | UnexpandablePrimitive::PdfMapFile
-            | UnexpandablePrimitive::PdfMapLine) => {
+            | UnexpandablePrimitive::PdfMapLine
+            | UnexpandablePrimitive::PdfGlyphToUnicode
+            | UnexpandablePrimitive::PdfNoBuiltinToUnicode) => {
                 reject_all_prefixes(prefixes)?;
                 execute_pdf_font_output_action(
                     primitive,

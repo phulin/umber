@@ -19,6 +19,29 @@ pub(super) fn execute_pdf_font_output_action(
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<(), ExecError> {
+    if primitive == UnexpandablePrimitive::PdfNoBuiltinToUnicode {
+        let font = scan_font_selector(input, stores, execution)?;
+        stores.disable_pdf_builtin_to_unicode(font);
+        return Ok(());
+    }
+    if primitive == UnexpandablePrimitive::PdfGlyphToUnicode {
+        let glyph_tokens = scan_general_text_expanded_with_driver(
+            input,
+            &mut tex_state::ExpansionContext::new(stores),
+            execution,
+            context,
+        )?;
+        let glyph = token_list_bytes(stores, glyph_tokens);
+        let unicode_tokens = scan_general_text_expanded_with_driver(
+            input,
+            &mut tex_state::ExpansionContext::new(stores),
+            execution,
+            context,
+        )?;
+        let unicode = token_list_bytes(stores, unicode_tokens);
+        stores.set_pdf_glyph_to_unicode(parse_glyph_to_unicode(&glyph, &unicode)?);
+        return Ok(());
+    }
     let font = match primitive {
         UnexpandablePrimitive::PdfFontAttr | UnexpandablePrimitive::PdfIncludeChars => {
             Some(scan_font_selector(input, stores, execution)?)
@@ -69,6 +92,62 @@ pub(super) fn execute_pdf_font_output_action(
         _ => unreachable!("caller restricts PDF font output actions"),
     }
     Ok(())
+}
+
+fn parse_glyph_to_unicode(
+    glyph: &[u8],
+    unicode: &[u8],
+) -> Result<tex_state::PdfGlyphToUnicode, ExecError> {
+    if glyph.is_empty() || glyph.iter().any(u8::is_ascii_whitespace) {
+        return Err(ExecError::PdfGlyphToUnicode(
+            "glyph name must be one nonempty PostScript name".into(),
+        ));
+    }
+    let (tfm_name, glyph_name) = if let Some(scoped) = glyph.strip_prefix(b"tfm:") {
+        let Some(slash) = scoped.iter().position(|byte| *byte == b'/') else {
+            return Err(ExecError::PdfGlyphToUnicode(
+                "tfm-scoped glyph name must have the form tfm:name/glyph".into(),
+            ));
+        };
+        let (tfm, glyph) = scoped.split_at(slash);
+        if tfm.is_empty() || glyph.len() == 1 {
+            return Err(ExecError::PdfGlyphToUnicode(
+                "tfm-scoped glyph name must have the form tfm:name/glyph".into(),
+            ));
+        }
+        (Some(tfm.to_vec()), glyph[1..].to_vec())
+    } else {
+        (None, glyph.to_vec())
+    };
+    let mut scalars = Vec::new();
+    for value in unicode
+        .split(u8::is_ascii_whitespace)
+        .filter(|part| !part.is_empty())
+    {
+        if !(4..=6).contains(&value.len()) || !value.iter().all(u8::is_ascii_hexdigit) {
+            return Err(ExecError::PdfGlyphToUnicode(
+                "Unicode values must be 4-6 hexadecimal digits separated by spaces".into(),
+            ));
+        }
+        let scalar = std::str::from_utf8(value)
+            .ok()
+            .and_then(|text| u32::from_str_radix(text, 16).ok())
+            .filter(|scalar| char::from_u32(*scalar).is_some())
+            .ok_or_else(|| {
+                ExecError::PdfGlyphToUnicode("Unicode value is not a scalar value".into())
+            })?;
+        scalars.push(scalar);
+    }
+    if scalars.is_empty() {
+        return Err(ExecError::PdfGlyphToUnicode(
+            "at least one Unicode value is required".into(),
+        ));
+    }
+    Ok(tex_state::PdfGlyphToUnicode {
+        tfm_name,
+        glyph_name,
+        unicode: scalars,
+    })
 }
 
 fn token_list_bytes(stores: &Universe, tokens: tex_state::ids::TokenListId) -> Vec<u8> {

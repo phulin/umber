@@ -62,7 +62,8 @@ mod universe;
 
 pub use pdf::{
     PDF_CATALOG_OBJECT_ID, PDF_PAGES_OBJECT_ID, PdfFontConfiguration, PdfFontMapOperation,
-    PdfFontResourceRecord, PdfObjectCapacityError, PdfOutputParameters, PdfPageRecord,
+    PdfFontResourceRecord, PdfGlyphToUnicode, PdfObjectCapacityError, PdfOutputParameters,
+    PdfPageRecord,
 };
 pub mod world;
 
