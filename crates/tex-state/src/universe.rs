@@ -2201,6 +2201,23 @@ impl Universe {
         self.pdf.last_form()
     }
 
+    pub fn set_pdf_form_artifact(&mut self, object: u32, artifact: crate::PdfFormArtifact) {
+        self.pdf.set_form_artifact(object, artifact);
+    }
+
+    #[must_use]
+    pub fn pdf_form_artifact(&self, object: u32) -> Option<&crate::PdfFormArtifact> {
+        self.pdf.form_artifact(object)
+    }
+
+    pub fn begin_pdf_form_color_scope(&self) -> crate::PdfFormColorScope {
+        self.pdf.begin_form_color_scope()
+    }
+
+    pub fn restore_pdf_form_color_scope(&mut self, scope: crate::PdfFormColorScope) {
+        self.pdf.restore_form_color_scope(scope);
+    }
+
     /// Initializes a previously reserved raw object without changing its ID.
     pub fn initialize_pdf_raw_object(
         &mut self,

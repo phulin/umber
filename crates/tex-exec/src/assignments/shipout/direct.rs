@@ -30,6 +30,94 @@ pub(super) struct StagedShipout {
     pub(super) effect_pos: tex_state::EffectPos,
 }
 
+pub(super) fn stage_form(
+    form: tex_state::PdfFormRecord,
+    stores: &mut Universe,
+    expansion: &mut tex_expand::ExpansionContext<'_>,
+) -> Result<tex_state::PdfFormArtifact, ExecError> {
+    let color_scope = stores.begin_pdf_form_color_scope();
+    let result = stage_form_inner(form, stores, expansion);
+    stores.restore_pdf_form_color_scope(color_scope);
+    result
+}
+
+fn stage_form_inner(
+    form: tex_state::PdfFormRecord,
+    stores: &mut Universe,
+    expansion: &mut tex_expand::ExpansionContext<'_>,
+) -> Result<tex_state::PdfFormArtifact, ExecError> {
+    let root_node = stores
+        .nodes(form.box_list())
+        .first()
+        .map(|node| node.to_owned())
+        .ok_or(ExecError::PdfXFormVoidBox)?;
+    let (root, children, vertical) = match root_node {
+        Node::HList(node) => (lower_box_header(&node), node.children, false),
+        Node::VList(node) => (lower_box_header(&node), node.children, true),
+        _ => return Err(ExecError::PdfXFormVoidBox),
+    };
+    let overlay = normalize_page(
+        children,
+        Vec::new(),
+        stores,
+        expansion,
+        tex_state::PdfColorStackTarget::Form,
+    )?;
+    let job = JobInfo {
+        mag: stores.prepared_mag().unwrap_or_else(|| stores.mag()),
+        banner: DEFAULT_BANNER.to_owned(),
+        h_offset: tex_state::scaled::Scaled::from_raw(0),
+        v_offset: tex_state::scaled::Scaled::from_raw(0),
+    };
+    let mut encoder = V10ArtifactBuilder::new(job, [0; 10], &root, vertical);
+    let mut emission = EmissionState {
+        fonts: Vec::new(),
+        live_fonts: Vec::new(),
+        font_slots: Vec::new(),
+        render_origins: vec![Vec::new()],
+        anchor: 0,
+    };
+    encoder.stream_root_nodes(|output| {
+        emit_node_list(
+            stores,
+            &overlay,
+            children,
+            output,
+            None,
+            &mut emission,
+            false,
+            1,
+        )
+    })?;
+    for &font in &emission.live_fonts {
+        stores
+            .ensure_pdf_font_resource(font)
+            .map_err(|_| ExecError::ArithmeticOverflow)?;
+    }
+    let bytes = encoder
+        .finish(&emission.fonts, &overlay.effects)
+        .map_err(invalid_artifact)?;
+    let artifact = tex_out::PageArtifact::from_bytes(&bytes).map_err(invalid_artifact)?;
+    let positioned = tex_out::positioned::lower_page(&artifact, 0).map_err(invalid_artifact)?;
+    let total = root
+        .height
+        .checked_add(root.depth)
+        .ok_or(ExecError::ArithmeticOverflow)?;
+    let convert = |(x, y): (tex_state::scaled::Scaled, tex_state::scaled::Scaled)| {
+        total
+            .checked_sub(y)
+            .map(|y| (x, y))
+            .ok_or(ExecError::ArithmeticOverflow)
+    };
+    let last_position = positioned.last_saved_position.map(convert).transpose()?;
+    let snap_reference = convert(positioned.snap_reference)?;
+    Ok(tex_state::PdfFormArtifact::new(
+        bytes,
+        last_position,
+        snap_reference,
+    ))
+}
+
 pub(super) fn stage_shipout(
     node: Node,
     input: &mut InputStack,
@@ -65,8 +153,15 @@ pub(super) fn stage_shipout(
 
     // Phase A is the only mutable pass. It executes deferred effects, freezes
     // math substitutions, and records the rare direction permutations.
-    let overlay = execution
-        .with_nested(|expansion| normalize_page(children, pending_effects, stores, expansion))?;
+    let overlay = execution.with_nested(|expansion| {
+        normalize_page(
+            children,
+            pending_effects,
+            stores,
+            expansion,
+            tex_state::PdfColorStackTarget::Page,
+        )
+    })?;
 
     // Phase B holds only an immutable state view. One compact-list walk feeds
     // the canonical writer and DVI state machine together.

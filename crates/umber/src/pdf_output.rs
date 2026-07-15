@@ -24,7 +24,7 @@ use tex_state::{
     PdfDocumentFragmentKind, PdfLinkRecord, PdfOutputParameters, Universe, WorldError,
 };
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 pub(crate) const DEFAULT_PDF_PK_RESOLUTION: i32 = 600;
 
@@ -131,6 +131,12 @@ pub fn pdf_from_committed_artifacts_at_dpi(
     let mut interword_space_enabled = false;
     let mut fallback_space_font = None;
     let mut referenced_forms = BTreeSet::<u32>::new();
+    referenced_forms.extend(
+        stores
+            .pdf_forms()
+            .filter(|form| form.immediate())
+            .map(|form| form.object()),
+    );
 
     let mut catalog = PdfDictionary::new();
     catalog.insert("Type", PdfValue::Name("Catalog".into()))?;
@@ -654,15 +660,216 @@ pub fn pdf_from_committed_artifacts_at_dpi(
         objects.push(indirect_dictionary(page_id, page));
     }
 
-    for object in referenced_forms {
+    let mut pending_forms = referenced_forms.into_iter().collect::<VecDeque<_>>();
+    let mut emitted_form_objects = BTreeSet::new();
+    while let Some(object) = pending_forms.pop_front() {
+        if !emitted_form_objects.insert(object) {
+            continue;
+        }
         let form = stores
             .pdf_form(object)
             .ok_or(PdfBuildError::ReferencedFormNotFound(object))?;
+        let staged = stores
+            .pdf_form_artifact(object)
+            .ok_or(PdfBuildError::MissingFormArtifact(object))?;
+        let artifact = tex_out::PageArtifact::from_bytes(staged.bytes())?;
+        let positioned = tex_out::positioned::lower_page(&artifact, 0)?;
+        let total_height = form
+            .height()
+            .checked_add(form.depth())
+            .ok_or(PdfBuildError::PageGeometryOverflow)?;
+        let mut operations = Vec::new();
+        let mut nested_forms = BTreeMap::<u32, PdfObjectId>::new();
+        let mut form_fonts = BTreeMap::<u32, PdfObjectId>::new();
+        for event in positioned.events {
+            match event {
+                PositionedEvent::Rule(rule) => {
+                    operations.push(PdfContentOperation::Rectangle(PdfContentRectangle {
+                        x: scaled_to_bp_f32(rule.x, parameters.decimal_digits),
+                        y: scaled_to_bp_f32(
+                            total_height
+                                .checked_sub(rule.y)
+                                .and_then(|value| value.checked_sub(rule.height))
+                                .ok_or(PdfBuildError::PageGeometryOverflow)?,
+                            parameters.decimal_digits,
+                        ),
+                        width: scaled_to_bp_f32(rule.width, parameters.decimal_digits),
+                        height: scaled_to_bp_f32(rule.height, parameters.decimal_digits),
+                    }))
+                }
+                PositionedEvent::PdfGraphics(graphics) => {
+                    let x = scaled_to_bp_f32(graphics.x, parameters.decimal_digits);
+                    let y = scaled_to_bp_f32(
+                        total_height
+                            .checked_sub(graphics.y)
+                            .ok_or(PdfBuildError::PageGeometryOverflow)?,
+                        parameters.decimal_digits,
+                    );
+                    let operation = match graphics.effect {
+                        tex_out::PageEffect::PdfLiteral { mode, payload } => {
+                            PdfContentOperation::Literal {
+                                mode,
+                                x,
+                                y,
+                                bytes: payload,
+                            }
+                        }
+                        tex_out::PageEffect::PdfSetMatrix { payload } => {
+                            PdfContentOperation::SetMatrix {
+                                x,
+                                y,
+                                matrix: parse_pdf_matrix(&payload)?,
+                            }
+                        }
+                        tex_out::PageEffect::PdfSave => PdfContentOperation::Save { x, y },
+                        tex_out::PageEffect::PdfRestore => PdfContentOperation::Restore { x, y },
+                        tex_out::PageEffect::PdfColorStack { mode, payload, .. } => {
+                            PdfContentOperation::ColorStack {
+                                mode,
+                                x,
+                                y,
+                                bytes: payload,
+                            }
+                        }
+                        tex_out::PageEffect::PdfRefXForm { object, .. } => {
+                            let nested = stores
+                                .pdf_form(object)
+                                .ok_or(PdfBuildError::ReferencedFormNotFound(object))?;
+                            if object == form.object() {
+                                return Err(PdfBuildError::RecursiveForm(object));
+                            }
+                            nested_forms.insert(nested.resource(), object_id(object)?);
+                            pending_forms.push_back(object);
+                            PdfContentOperation::FormXObject {
+                                x,
+                                y,
+                                name: format!("Fm{}", nested.resource()).into_bytes(),
+                            }
+                        }
+                        _ => continue,
+                    };
+                    operations.push(operation);
+                }
+                PositionedEvent::TextRun(run) if !run.units.is_empty() => {
+                    let font = positioned
+                        .fonts
+                        .iter()
+                        .find(|font| font.font_id == run.font_id)
+                        .ok_or(PdfBuildError::MissingPositionedFont(run.font_id))?;
+                    let resource = stores
+                        .pdf_font_resource_by_identity(font.semantic_identity)
+                        .ok_or_else(|| PdfBuildError::MissingFontResource(font.name.clone()))?;
+                    let resource_name = format!("F{}", resource.resource_number()).into_bytes();
+                    let font_id = object_id(resource.object_number())?;
+                    form_fonts.insert(resource.resource_number(), font_id);
+                    if emitted_fonts.insert(resource.object_number()) {
+                        let live_font = stores
+                            .font_by_source_identity(font.semantic_identity)
+                            .ok_or_else(|| PdfBuildError::MissingLiveFont(font.name.clone()))?;
+                        let used_codes = font_usage
+                            .get(&resource.object_number())
+                            .ok_or_else(|| PdfBuildError::MissingFontUsage(font.name.clone()))?;
+                        let mapped = stores
+                            .resolved_pdf_font_map_lines()
+                            .into_iter()
+                            .any(|entry| entry.tex_name == font.name.as_bytes());
+                        let ids = if mapped {
+                            let descriptor = object_id(next_object)?;
+                            let program = object_id(
+                                next_object
+                                    .checked_add(1)
+                                    .ok_or(PdfBuildError::InvalidObjectId(u32::MAX))?,
+                            )?;
+                            let wants_to_unicode =
+                                stores.pdf_font_configuration().generates_to_unicode()
+                                    && !stores.pdf_builtin_to_unicode_disabled(live_font);
+                            let to_unicode = wants_to_unicode
+                                .then(|| object_id(next_object.saturating_add(2)))
+                                .transpose()?;
+                            next_object = next_object
+                                .checked_add(if wants_to_unicode { 3 } else { 2 })
+                                .ok_or(PdfBuildError::InvalidObjectId(u32::MAX))?;
+                            PdfFontObjectIds {
+                                font: font_id,
+                                descriptor: Some(descriptor),
+                                program: Some(program),
+                                to_unicode,
+                                char_procs: BTreeMap::new(),
+                            }
+                        } else {
+                            let mut char_procs = BTreeMap::new();
+                            for &code in used_codes {
+                                char_procs.insert(code, object_id(next_object)?);
+                                next_object = next_object
+                                    .checked_add(1)
+                                    .ok_or(PdfBuildError::InvalidObjectId(u32::MAX))?;
+                            }
+                            PdfFontObjectIds {
+                                font: font_id,
+                                descriptor: None,
+                                program: None,
+                                to_unicode: None,
+                                char_procs,
+                            }
+                        };
+                        objects.extend(pdf_font_objects(
+                            stores,
+                            ids,
+                            font,
+                            &resource_name,
+                            used_codes,
+                            driver_dpi,
+                        )?);
+                    }
+                    let bytes = run
+                        .units
+                        .iter()
+                        .map(|unit| match unit {
+                            tex_out::positioned::TextUnit::Code(code) => *code,
+                            tex_out::positioned::TextUnit::Space => b' ',
+                        })
+                        .collect();
+                    operations.push(PdfContentOperation::Text(PdfContentTextRun {
+                        x: scaled_to_bp_f32(run.x, parameters.decimal_digits),
+                        baseline: scaled_to_bp_f32(
+                            total_height
+                                .checked_sub(run.baseline)
+                                .ok_or(PdfBuildError::PageGeometryOverflow)?,
+                            parameters.decimal_digits,
+                        ),
+                        font_name: resource_name,
+                        font_size: scaled_to_bp_f32(font.at_size, parameters.decimal_digits),
+                        bytes,
+                    }));
+                }
+                PositionedEvent::Special(special) => {
+                    return Err(PdfBuildError::UnsupportedSpecial(special.class));
+                }
+                PositionedEvent::Box(_) | PositionedEvent::TextRun(_) => {}
+            }
+        }
         let mut dictionary = PdfDictionary::new();
         dictionary.insert("FormType", PdfValue::Integer(1))?;
         let mut resources = PdfDictionary::new();
         if let Some(tokens) = form.resources() {
             resources.set_raw_entries(token_list_bytes(stores, tokens));
+        }
+        if !nested_forms.is_empty() {
+            let mut xobjects = PdfDictionary::new();
+            for (resource, object) in nested_forms {
+                xobjects.insert(
+                    format!("Fm{resource}").as_str(),
+                    PdfValue::Reference(object),
+                )?;
+            }
+            resources.insert("XObject", PdfValue::Dictionary(xobjects))?;
+        }
+        if !form_fonts.is_empty() {
+            let mut fonts = PdfDictionary::new();
+            for (resource, object) in form_fonts {
+                fonts.insert(format!("F{resource}").as_str(), PdfValue::Reference(object))?;
+            }
+            resources.insert("Font", PdfValue::Dictionary(fonts))?;
         }
         dictionary.insert("Resources", PdfValue::Dictionary(resources))?;
         if let Some(tokens) = form.attr() {
@@ -670,15 +877,11 @@ pub fn pdf_from_committed_artifacts_at_dpi(
         }
         let zero = PdfNumber::new(0, 0)?;
         let one = PdfNumber::new(1, 0)?;
-        let total_height = form
-            .height()
-            .checked_add(form.depth())
-            .ok_or(PdfBuildError::PageGeometryOverflow)?;
         objects.push(PdfIndirectObject {
             id: object_id(form.object())?,
             object: PdfObject::FormXObject {
                 dictionary,
-                data: Vec::new(),
+                data: ordered_page_content(&operations),
                 bbox: [
                     zero,
                     zero,
@@ -766,6 +969,35 @@ fn collect_font_usage(
                     tex_out::positioned::TextUnit::Space => None,
                 },
             ));
+            let live_font = stores
+                .font_by_source_identity(font.semantic_identity)
+                .ok_or_else(|| PdfBuildError::MissingLiveFont(font.name.clone()))?;
+            codes.extend(stores.included_pdf_font_chars(live_font));
+        }
+    }
+    for form in stores.pdf_forms() {
+        let Some(staged) = stores.pdf_form_artifact(form.object()) else {
+            continue;
+        };
+        let artifact = tex_out::PageArtifact::from_bytes(staged.bytes())?;
+        let positioned = tex_out::positioned::lower_page(&artifact, 0)?;
+        for event in &positioned.events {
+            let PositionedEvent::TextRun(run) = event else {
+                continue;
+            };
+            let font = positioned
+                .fonts
+                .iter()
+                .find(|font| font.font_id == run.font_id)
+                .ok_or(PdfBuildError::MissingPositionedFont(run.font_id))?;
+            let resource = stores
+                .pdf_font_resource_by_identity(font.semantic_identity)
+                .ok_or_else(|| PdfBuildError::MissingFontResource(font.name.clone()))?;
+            let codes = usage.entry(resource.object_number()).or_default();
+            codes.extend(run.units.iter().map(|unit| match unit {
+                tex_out::positioned::TextUnit::Code(code) => *code,
+                tex_out::positioned::TextUnit::Space => b' ',
+            }));
             let live_font = stores
                 .font_by_source_identity(font.semantic_identity)
                 .ok_or_else(|| PdfBuildError::MissingLiveFont(font.name.clone()))?;
@@ -2229,6 +2461,9 @@ pub enum PdfBuildError {
     OpenActionHasNoPage,
     ReferencedRawObjectUninitialized(u32),
     ReferencedFormNotFound(u32),
+    MissingFormArtifact(u32),
+    RecursiveForm(u32),
+    FormTextNotYetLowerable(u32),
     InvalidRawObjectFileName(u32),
     TextRequiresFontResources,
     MissingPositionedFont(u32),
@@ -2302,6 +2537,14 @@ impl std::fmt::Display for PdfBuildError {
             Self::ReferencedFormNotFound(id) => {
                 write!(f, "referenced PDF form object {id} was not captured")
             }
+            Self::MissingFormArtifact(id) => {
+                write!(f, "PDF form {id} was referenced before traversal")
+            }
+            Self::RecursiveForm(id) => write!(f, "PDF form {id} recursively references itself"),
+            Self::FormTextNotYetLowerable(id) => write!(
+                f,
+                "PDF form {id} contains text without form-local font lowering"
+            ),
             Self::InvalidRawObjectFileName(id) => {
                 write!(f, "PDF stream object {id} has a non-UTF-8 file name")
             }
@@ -4087,6 +4330,69 @@ mod tests {
         assert!(pdf.windows(b"/XObject".len()).any(|w| w == b"/XObject"));
         assert!(pdf.windows(b"/Fm1 Do".len()).any(|w| w == b"/Fm1 Do"));
         assert!(pdf.windows(b"/BBox[0 0".len()).any(|w| w == b"/BBox[0 0"));
+        let parsed = lopdf::Document::load_mem(&pdf).expect("parse typed form PDF");
+        let form = parsed
+            .get_object((1, 0))
+            .expect("form object")
+            .as_stream()
+            .expect("form stream");
+        assert!(form.content.windows(2).any(|window| window == b"re"));
+    }
+
+    #[test]
+    fn nested_forms_reuse_recursive_xobjects_and_publish_form_savepos() {
+        let (mut stores, run) = run(concat!(
+            "\\pdfoutput=1\\pdfcompresslevel=0",
+            "\\setbox0=\\hbox{\\kern10pt\\pdfsavepos\\vrule width2pt height3pt}",
+            "\\pdfxform0",
+            "\\setbox1=\\hbox{\\pdfrefxform1}",
+            "\\pdfxform1\\pdfrefxform2\\end",
+        ));
+        assert_eq!(stores.pdf_last_position(), (pt(10), Scaled::from_raw(0)));
+        let pdf = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
+            .expect("serialize nested forms");
+        assert_eq!(
+            pdf.windows(b"/Subtype/Form".len())
+                .filter(|w| *w == b"/Subtype/Form")
+                .count(),
+            2
+        );
+        assert!(pdf.windows(b"/Fm1 Do".len()).any(|w| w == b"/Fm1 Do"));
+        assert!(pdf.windows(b"/Fm2 Do".len()).any(|w| w == b"/Fm2 Do"));
+    }
+
+    #[test]
+    fn form_color_state_is_isolated_and_immediate_forms_serialize_without_references() {
+        let (mut stores, first_run) = run(concat!(
+            "\\pdfoutput=1\\pdfcompresslevel=0",
+            "\\setbox0=\\hbox{\\pdfcolorstack0 push {1 g}}\\pdfxform0",
+            "\\setbox1=\\hbox{\\pdfcolorstack0 current}\\pdfxform1",
+            "\\pdfrefxform1\\pdfrefxform2\\end",
+        ));
+        let second = stores
+            .pdf_form_artifact(2)
+            .expect("second form staged independently");
+        let artifact =
+            tex_out::PageArtifact::from_bytes(second.bytes()).expect("parse form artifact");
+        assert!(artifact.effects.iter().any(|effect| matches!(
+            effect,
+            tex_out::PageEffect::PdfColorStack { payload, .. } if payload == b"0 g 0 G"
+        )));
+        pdf_from_committed_artifacts(&mut stores, &first_run.committed_artifacts)
+            .expect("serialize isolated form colors");
+
+        let (mut stores, run) = run(concat!(
+            "\\pdfoutput=1\\pdfcompresslevel=0",
+            "\\setbox0=\\hbox{\\vrule width2pt height3pt}",
+            "\\immediate\\pdfxform0",
+            "\\shipout\\vbox{\\hrule width1pt height1pt}\\end",
+        ));
+        let pdf = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
+            .expect("serialize immediate unreferenced form");
+        assert!(
+            pdf.windows(b"/Subtype/Form".len())
+                .any(|w| w == b"/Subtype/Form")
+        );
     }
 
     #[test]

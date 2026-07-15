@@ -76,6 +76,9 @@ struct PdfColorStackRuntime {
     pushed: Vec<Vec<u8>>,
 }
 
+#[derive(Clone, Debug)]
+pub struct PdfFormColorScope(Vec<PdfColorStackRuntime>, u64);
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PdfColorStack {
     mode: PdfColorStackMode,
@@ -466,6 +469,40 @@ pub struct PdfFormRecord {
     immediate: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PdfFormArtifact {
+    bytes: Vec<u8>,
+    last_position: Option<(Scaled, Scaled)>,
+    snap_reference: (Scaled, Scaled),
+}
+
+impl PdfFormArtifact {
+    #[must_use]
+    pub fn new(
+        bytes: Vec<u8>,
+        last_position: Option<(Scaled, Scaled)>,
+        snap_reference: (Scaled, Scaled),
+    ) -> Self {
+        Self {
+            bytes,
+            last_position,
+            snap_reference,
+        }
+    }
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+    #[must_use]
+    pub const fn last_position(&self) -> Option<(Scaled, Scaled)> {
+        self.last_position
+    }
+    #[must_use]
+    pub const fn snap_reference(&self) -> (Scaled, Scaled) {
+        self.snap_reference
+    }
+}
+
 impl PdfFormRecord {
     #[must_use]
     pub const fn object(self) -> u32 {
@@ -595,6 +632,7 @@ pub(crate) struct PdfStateCursor {
     snap_reference: (Scaled, Scaled),
     form_fingerprint: u64,
     next_form_resource: u32,
+    form_artifact_fingerprint: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -610,6 +648,7 @@ pub(crate) struct PdfStateSnapshot {
     open_links: Arc<Vec<PdfOpenLink>>,
     color_stacks: Arc<Vec<PdfColorStack>>,
     forms: Arc<Vec<PdfFormRecord>>,
+    form_artifacts: Arc<BTreeMap<u32, PdfFormArtifact>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -659,6 +698,8 @@ pub(crate) struct PdfState {
     forms: Arc<Vec<PdfFormRecord>>,
     form_fingerprint: u64,
     next_form_resource: u32,
+    form_artifacts: Arc<BTreeMap<u32, PdfFormArtifact>>,
+    form_artifact_fingerprint: u64,
 }
 
 impl Default for PdfState {
@@ -700,6 +741,8 @@ impl Default for PdfState {
             forms: Arc::new(Vec::new()),
             form_fingerprint: StateHasher::new(PDF_FORM_DOMAIN).finish(),
             next_form_resource: 1,
+            form_artifacts: Arc::new(BTreeMap::new()),
+            form_artifact_fingerprint: StateHasher::new(0x7064_665f_666d_6172).finish(),
         }
     }
 }
@@ -1366,6 +1409,29 @@ impl PdfState {
         self.forms.last().map_or(0, |form| form.object)
     }
 
+    pub(crate) fn set_form_artifact(&mut self, object: u32, artifact: PdfFormArtifact) {
+        let mut hasher = StateHasher::new(0x7064_665f_666d_6172);
+        hasher.u64(self.form_artifact_fingerprint);
+        hasher.u32(object);
+        hasher.bytes(&artifact.bytes);
+        if let Some((x, y)) = artifact.last_position {
+            hasher.bool(true);
+            hasher.i32(x.raw());
+            hasher.i32(y.raw());
+        } else {
+            hasher.bool(false);
+        }
+        hasher.i32(artifact.snap_reference.0.raw());
+        hasher.i32(artifact.snap_reference.1.raw());
+        self.form_artifact_fingerprint = hasher.finish();
+        Arc::make_mut(&mut self.form_artifacts).insert(object, artifact);
+    }
+
+    #[must_use]
+    pub(crate) fn form_artifact(&self, object: u32) -> Option<&PdfFormArtifact> {
+        self.form_artifacts.get(&object)
+    }
+
     pub(crate) fn initialize_raw_object(
         &mut self,
         id: PdfRawObjectId,
@@ -1531,6 +1597,7 @@ impl PdfState {
             snap_reference: self.snap_reference,
             form_fingerprint: self.form_fingerprint,
             next_form_resource: self.next_form_resource,
+            form_artifact_fingerprint: self.form_artifact_fingerprint,
         }
     }
     #[must_use]
@@ -1547,6 +1614,7 @@ impl PdfState {
             open_links: Arc::clone(&self.open_links),
             color_stacks: Arc::clone(&self.color_stacks),
             forms: Arc::clone(&self.forms),
+            form_artifacts: Arc::clone(&self.form_artifacts),
         }
     }
 
@@ -1598,6 +1666,8 @@ impl PdfState {
         self.forms = snapshot.forms;
         self.form_fingerprint = cursor.form_fingerprint;
         self.next_form_resource = cursor.next_form_resource;
+        self.form_artifacts = snapshot.form_artifacts;
+        self.form_artifact_fingerprint = cursor.form_artifact_fingerprint;
     }
 
     pub(crate) fn set_match(
@@ -1652,6 +1722,7 @@ impl PdfState {
             hasher.u64(cursor.open_link_fingerprint);
             hasher.u64(cursor.form_fingerprint);
             hasher.u32(cursor.next_form_resource);
+            hasher.u64(cursor.form_artifact_fingerprint);
             hasher.bool(cursor.document_objects.pages().is_some());
             if let Some(id) = cursor.document_objects.pages() {
                 hasher.u32(id);
@@ -1693,6 +1764,27 @@ impl PdfState {
             self.last_position = position;
         }
         self.snap_reference = snap_reference;
+    }
+
+    pub(crate) fn begin_form_color_scope(&self) -> PdfFormColorScope {
+        PdfFormColorScope(
+            self.color_stacks
+                .iter()
+                .map(|stack| stack.form.clone())
+                .collect(),
+            self.color_stack_fingerprint,
+        )
+    }
+
+    pub(crate) fn restore_form_color_scope(&mut self, scope: PdfFormColorScope) {
+        let PdfFormColorScope(runtimes, fingerprint) = scope;
+        for (stack, runtime) in Arc::make_mut(&mut self.color_stacks)
+            .iter_mut()
+            .zip(runtimes)
+        {
+            stack.form = runtime;
+        }
+        self.color_stack_fingerprint = fingerprint;
     }
 
     fn ensure_default_color_stack(&mut self) {

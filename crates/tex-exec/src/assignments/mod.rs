@@ -411,9 +411,16 @@ fn execute_pdf_form(
         Some(Node::HList(node) | Node::VList(node)) => (node.width, node.height, node.depth),
         _ => return Err(ExecError::PdfXFormVoidBox),
     };
-    stores
+    let form = stores
         .initialize_pdf_form(identity, list, dimensions, attr, resources, immediate)
         .map_err(|_| ExecError::PdfObjectCapacity)?;
+    if immediate {
+        let artifact =
+            execution.with_nested(|expansion| stage_pdf_form(form, stores, expansion))?;
+        stores
+            .publish_pdf_traversal_positions(artifact.last_position(), stores.pdf_snap_reference());
+        stores.set_pdf_form_artifact(form.object(), artifact);
+    }
     Ok(())
 }
 

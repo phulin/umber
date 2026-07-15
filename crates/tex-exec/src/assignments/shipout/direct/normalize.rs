@@ -5,6 +5,7 @@ pub(super) struct PageOverlay {
     pub(super) effects: Vec<PageEffect>,
     pub(super) math: Vec<MathSubstitution>,
     pub(super) directions: Vec<DirectionPermutation>,
+    color_target: tex_state::PdfColorStackTarget,
 }
 
 pub(super) struct MathSubstitution {
@@ -23,9 +24,17 @@ pub(super) fn normalize_page(
     effects: Vec<PageEffect>,
     stores: &mut Universe,
     expansion: &mut tex_expand::ExpansionContext<'_>,
+    color_target: tex_state::PdfColorStackTarget,
 ) -> Result<PageOverlay, ExecError> {
     let mut effects = effects;
-    let snap_reference = stores.pdf_snap_reference();
+    let snap_reference = if color_target == tex_state::PdfColorStackTarget::Page {
+        stores.pdf_snap_reference()
+    } else {
+        (
+            tex_state::scaled::Scaled::from_raw(0),
+            tex_state::scaled::Scaled::from_raw(0),
+        )
+    };
     if snap_reference
         != (
             tex_state::scaled::Scaled::from_raw(0),
@@ -37,7 +46,11 @@ pub(super) fn normalize_page(
             y: snap_reference.1,
         });
     }
-    for restoration in stores.pdf_page_color_stack_restorations() {
+    for restoration in stores
+        .pdf_page_color_stack_restorations()
+        .into_iter()
+        .filter(|_| color_target == tex_state::PdfColorStackTarget::Page)
+    {
         effects.push(PageEffect::PdfColorStack {
             mode: lower_color_stack_mode(restoration.mode),
             payload: restoration.payload,
@@ -50,6 +63,7 @@ pub(super) fn normalize_page(
         effects,
         math: Vec::new(),
         directions: Vec::new(),
+        color_target,
     };
     normalize_list(stores, expansion, root, false, 1, &mut overlay)?;
     Ok(overlay)
@@ -182,6 +196,7 @@ fn normalize_index(
             &mut overlay.effects,
             whatsit,
             suppress_deferred_streams,
+            overlay.color_target,
         )?,
         NormalizeNode::Math(math) => {
             let mut nodes = crate::math::finish_math_list_node(stores, math, false);
@@ -213,6 +228,7 @@ fn append_whatsit_effect(
     effects: &mut Vec<PageEffect>,
     whatsit: Whatsit,
     suppress_deferred_streams: bool,
+    color_target: tex_state::PdfColorStackTarget,
 ) -> Result<(), ExecError> {
     match whatsit {
         Whatsit::OpenOut { slot, path } if !suppress_deferred_streams => {
@@ -294,7 +310,7 @@ fn append_whatsit_effect(
         Whatsit::PdfSave => effects.push(PageEffect::PdfSave),
         Whatsit::PdfRestore => effects.push(PageEffect::PdfRestore),
         Whatsit::PdfColorStack { id, action } => {
-            match stores.apply_pdf_color_stack(id, tex_state::PdfColorStackTarget::Page, &action) {
+            match stores.apply_pdf_color_stack(id, color_target, &action) {
                 Ok(emission) => effects.push(PageEffect::PdfColorStack {
                     mode: lower_color_stack_mode(emission.mode),
                     payload: emission.payload,
@@ -330,6 +346,17 @@ fn append_whatsit_effect(
             height,
             depth,
         } => {
+            if stores.pdf_form_artifact(object).is_none() {
+                let form = stores
+                    .pdf_form(object)
+                    .ok_or(ExecError::PdfReferencedObjectNotFound)?;
+                let artifact = super::stage_form(form, stores, expansion)?;
+                stores.publish_pdf_traversal_positions(
+                    artifact.last_position(),
+                    stores.pdf_snap_reference(),
+                );
+                stores.set_pdf_form_artifact(object, artifact);
+            }
             effects.push(PageEffect::PdfRefXForm {
                 object,
                 width,

@@ -50,6 +50,14 @@ pub(crate) fn shipout_node(
     }))
 }
 
+pub(super) fn stage_pdf_form(
+    form: tex_state::PdfFormRecord,
+    stores: &mut Universe,
+    expansion: &mut tex_expand::ExpansionContext<'_>,
+) -> Result<tex_state::PdfFormArtifact, ExecError> {
+    direct::stage_form(form, stores, expansion)
+}
+
 fn prepare_pdf_output_policy(stores: &mut Universe) -> Result<(), ExecError> {
     let current_output = stores.int_param(IntParam::PDF_OUTPUT);
     if let Some(fixed) = stores.fixed_pdf_output_parameters() {

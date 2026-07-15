@@ -77,10 +77,10 @@ pub use pdf::{
     PdfColorStackEmission, PdfColorStackMode, PdfColorStackTarget, PdfDocumentFragmentKind,
     PdfDocumentObjectIds, PdfExternalImageId, PdfExternalImageIdError, PdfExternalImageMetadata,
     PdfExternalImageRegistrationError, PdfFontConfiguration, PdfFontMapOperation,
-    PdfFontResourceRecord, PdfGlyphToUnicode, PdfLinkRecord, PdfObjectCapacityError, PdfOpenLink,
-    PdfFormRecord,
-    PdfOutputParameters, PdfPageBox, PdfPageRecord, PdfRawObjectData, PdfRawObjectId,
-    PdfRawObjectInitializeError, PdfRawObjectRecord,
+    PdfFontResourceRecord, PdfFormArtifact, PdfFormColorScope, PdfFormRecord, PdfGlyphToUnicode,
+    PdfLinkRecord, PdfObjectCapacityError, PdfOpenLink, PdfOutputParameters, PdfPageBox,
+    PdfPageRecord, PdfRawObjectData, PdfRawObjectId, PdfRawObjectInitializeError,
+    PdfRawObjectRecord,
 };
 pub mod world;
 
