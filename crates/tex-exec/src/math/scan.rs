@@ -514,7 +514,7 @@ pub(super) fn scan_vcenter_field(
             context: "\\vcenter",
         },
     )?;
-    if !assignments::is_begin_group(opener) {
+    if !assignments::has_catcode_meaning(stores, opener, Catcode::BeginGroup) {
         return Err(ExecError::MissingToken {
             context: "\\vcenter",
         });

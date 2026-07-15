@@ -731,6 +731,19 @@ fn vcenter_accepts_a_spread_pack_specification() {
 }
 
 #[test]
+fn vcenter_accepts_a_begin_group_control_sequence_alias() {
+    let mut stores = support::stores_with_fonts();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"\let\bgroup={\let\egroup=}$\vcenter\bgroup\hrule\egroup$",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("vcenter accepts a begin-group token by meaning");
+}
+
+#[test]
 fn char_primitive_uses_the_characters_mathcode_in_math_mode() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
