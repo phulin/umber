@@ -98,6 +98,8 @@ pub fn pdf_from_committed_artifacts_at_dpi(
         Vec::with_capacity(2 + page_records.len() * 3 + stores.pdf_raw_objects().len() + 2);
     let mut kids = Vec::with_capacity(page_records.len());
     let mut emitted_fonts = std::collections::BTreeSet::new();
+    let mut interword_space_enabled = false;
+    let mut fallback_space_font = None;
 
     let mut catalog = PdfDictionary::new();
     catalog.insert("Type", PdfValue::Name("Catalog".into()))?;
@@ -207,6 +209,7 @@ pub fn pdf_from_committed_artifacts_at_dpi(
         let mut rectangles = Vec::new();
         let mut text_runs = Vec::new();
         let mut page_fonts = std::collections::BTreeMap::new();
+        let mut fallback_space_on_page = false;
         for event in positioned.events {
             match event {
                 PositionedEvent::Rule(rule) => rectangles.push(PdfContentRectangle {
@@ -308,39 +311,128 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                         }
                     };
                     debug_assert_eq!(page_fonts.get(&resource.resource_number()), Some(&font_id));
-                    let bytes = run
-                        .units
-                        .iter()
-                        .map(|unit| match unit {
-                            tex_out::positioned::TextUnit::Code(code) => *code,
-                            tex_out::positioned::TextUnit::Space => b' ',
-                        })
-                        .collect();
-                    text_runs.push(PdfContentTextRun {
-                        x: scaled_to_bp_f32(
-                            run.x
-                                .checked_add(record.h_origin())
-                                .ok_or(PdfBuildError::PageGeometryOverflow)?,
-                            parameters.decimal_digits,
-                        ),
-                        baseline: scaled_to_bp_f32(
-                            page_height
-                                .checked_sub(run.baseline)
-                                .and_then(|value| value.checked_sub(record.v_origin()))
-                                .ok_or(PdfBuildError::PageGeometryOverflow)?,
-                            parameters.decimal_digits,
-                        ),
-                        font_name: resource_name,
-                        font_size: scaled_to_bp_f32(font.at_size, parameters.decimal_digits),
-                        bytes,
-                    });
+                    debug_assert_eq!(run.units.len(), run.positions.len());
+                    let baseline = scaled_to_bp_f32(
+                        page_height
+                            .checked_sub(run.baseline)
+                            .and_then(|value| value.checked_sub(record.v_origin()))
+                            .ok_or(PdfBuildError::PageGeometryOverflow)?,
+                        parameters.decimal_digits,
+                    );
+                    let font_size = scaled_to_bp_f32(font.at_size, parameters.decimal_digits);
+                    let explicit_space = font_has_explicit_space(stores, font.name.as_bytes());
+                    let mut segment = Vec::new();
+                    let mut segment_x = None;
+                    for (unit, position) in run.units.iter().zip(&run.positions) {
+                        match unit {
+                            tex_out::positioned::TextUnit::Code(code) => {
+                                segment_x.get_or_insert(*position);
+                                segment.push(*code);
+                            }
+                            tex_out::positioned::TextUnit::Space => {
+                                if !segment.is_empty() {
+                                    text_runs.push(PdfContentTextRun {
+                                        x: scaled_to_bp_f32(
+                                            segment_x
+                                                .take()
+                                                .expect("nonempty segment has an anchor")
+                                                .checked_add(record.h_origin())
+                                                .ok_or(PdfBuildError::PageGeometryOverflow)?,
+                                            parameters.decimal_digits,
+                                        ),
+                                        baseline,
+                                        font_name: resource_name.clone(),
+                                        font_size,
+                                        bytes: std::mem::take(&mut segment),
+                                    });
+                                }
+                                if interword_space_enabled {
+                                    let (font_name, space_size) = if explicit_space {
+                                        (resource_name.clone(), font_size)
+                                    } else {
+                                        ensure_fallback_space_font(
+                                            stores,
+                                            record.space_font_name_id(),
+                                            &mut next_object,
+                                            &mut objects,
+                                            &mut fallback_space_font,
+                                        )?;
+                                        fallback_space_on_page = true;
+                                        (b"UmberSpace".to_vec(), 10.0)
+                                    };
+                                    text_runs.push(PdfContentTextRun {
+                                        x: scaled_to_bp_f32(
+                                            position
+                                                .checked_add(record.h_origin())
+                                                .ok_or(PdfBuildError::PageGeometryOverflow)?,
+                                            parameters.decimal_digits,
+                                        ),
+                                        baseline,
+                                        font_name,
+                                        font_size: space_size,
+                                        bytes: vec![b' '],
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    if !segment.is_empty() {
+                        text_runs.push(PdfContentTextRun {
+                            x: scaled_to_bp_f32(
+                                segment_x
+                                    .expect("nonempty segment has an anchor")
+                                    .checked_add(record.h_origin())
+                                    .ok_or(PdfBuildError::PageGeometryOverflow)?,
+                                parameters.decimal_digits,
+                            ),
+                            baseline,
+                            font_name: resource_name,
+                            font_size,
+                            bytes: segment,
+                        });
+                    }
                 }
+                PositionedEvent::PdfAccessibility(control) => match control.control {
+                    tex_out::PdfAccessibilityEffect::InterwordSpaceOn => {
+                        interword_space_enabled = true;
+                    }
+                    tex_out::PdfAccessibilityEffect::InterwordSpaceOff => {
+                        interword_space_enabled = false;
+                    }
+                    tex_out::PdfAccessibilityEffect::FakeSpace => {
+                        ensure_fallback_space_font(
+                            stores,
+                            record.space_font_name_id(),
+                            &mut next_object,
+                            &mut objects,
+                            &mut fallback_space_font,
+                        )?;
+                        fallback_space_on_page = true;
+                        text_runs.push(PdfContentTextRun {
+                            x: scaled_to_bp_f32(
+                                control
+                                    .x
+                                    .checked_add(record.h_origin())
+                                    .ok_or(PdfBuildError::PageGeometryOverflow)?,
+                                parameters.decimal_digits,
+                            ),
+                            baseline: scaled_to_bp_f32(
+                                page_height
+                                    .checked_sub(control.y)
+                                    .and_then(|value| value.checked_sub(record.v_origin()))
+                                    .ok_or(PdfBuildError::PageGeometryOverflow)?,
+                                parameters.decimal_digits,
+                            ),
+                            font_name: b"UmberSpace".to_vec(),
+                            font_size: 10.0,
+                            bytes: vec![b' '],
+                        });
+                    }
+                },
                 PositionedEvent::Special(special) => {
                     return Err(PdfBuildError::UnsupportedSpecial(special.class));
                 }
-                PositionedEvent::Box(_)
-                | PositionedEvent::TextRun(_)
-                | PositionedEvent::PdfAccessibility(_) => {}
+                PositionedEvent::Box(_) | PositionedEvent::TextRun(_) => {}
             }
         }
 
@@ -356,13 +448,17 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                 PdfValue::Array(vec![PdfValue::Name("PDF".into())]),
             )?;
         }
-        if !page_fonts.is_empty() {
+        if !page_fonts.is_empty() || fallback_space_on_page {
             let mut fonts = PdfDictionary::new();
             for (resource_number, object) in page_fonts {
                 fonts.insert(
                     format!("F{resource_number}").as_str(),
                     PdfValue::Reference(object),
                 )?;
+            }
+            if fallback_space_on_page {
+                let fallback = fallback_space_font.expect("page fallback use allocated its font");
+                fonts.insert("UmberSpace", PdfValue::Reference(fallback.font))?;
             }
             resources.insert("Font", PdfValue::Dictionary(fonts))?;
         }
@@ -438,12 +534,24 @@ fn collect_font_usage(
     page_records: &[tex_state::PdfPageRecord],
 ) -> Result<BTreeMap<u32, BTreeSet<u8>>, PdfBuildError> {
     let mut usage = BTreeMap::<u32, BTreeSet<u8>>::new();
+    let mut interword_space_enabled = false;
     for (page_index, record) in page_records.iter().copied().enumerate() {
         let bytes = artifact_bytes(stores, artifacts, record.artifact())?;
         let artifact = tex_out::PageArtifact::from_bytes(&bytes)?;
         let positioned = tex_out::positioned::lower_page(&artifact, page_index as u32)?;
         for event in &positioned.events {
             let PositionedEvent::TextRun(run) = event else {
+                if let PositionedEvent::PdfAccessibility(control) = event {
+                    match control.control {
+                        tex_out::PdfAccessibilityEffect::InterwordSpaceOn => {
+                            interword_space_enabled = true;
+                        }
+                        tex_out::PdfAccessibilityEffect::InterwordSpaceOff => {
+                            interword_space_enabled = false;
+                        }
+                        tex_out::PdfAccessibilityEffect::FakeSpace => {}
+                    }
+                }
                 continue;
             };
             let font = positioned
@@ -455,9 +563,12 @@ fn collect_font_usage(
                 .pdf_font_resource_by_identity(font.semantic_identity)
                 .ok_or_else(|| PdfBuildError::MissingFontResource(font.name.clone()))?;
             let codes = usage.entry(resource.object_number()).or_default();
-            codes.extend(run.units.iter().map(|unit| match unit {
-                tex_out::positioned::TextUnit::Code(code) => *code,
-                tex_out::positioned::TextUnit::Space => b' ',
+            let explicit_space =
+                interword_space_enabled && font_has_explicit_space(stores, font.name.as_bytes());
+            codes.extend(run.units.iter().filter_map(|unit| match unit {
+                tex_out::positioned::TextUnit::Code(code) => Some(*code),
+                tex_out::positioned::TextUnit::Space if explicit_space => Some(b' '),
+                tex_out::positioned::TextUnit::Space => None,
             }));
             let live_font = stores
                 .font_by_source_identity(font.semantic_identity)
@@ -475,6 +586,106 @@ struct PdfFontObjectIds {
     program: Option<PdfObjectId>,
     to_unicode: Option<PdfObjectId>,
     char_procs: BTreeMap<u8, PdfObjectId>,
+}
+
+#[derive(Clone, Copy)]
+struct PdfFallbackSpaceFont {
+    font: PdfObjectId,
+}
+
+fn allocate_fallback_space_font(
+    stores: &Universe,
+    space_font_name_id: u32,
+    next_object: &mut u32,
+    objects: &mut Vec<PdfIndirectObject>,
+) -> Result<PdfFallbackSpaceFont, PdfBuildError> {
+    let font = object_id(*next_object)?;
+    let char_proc = object_id(
+        next_object
+            .checked_add(1)
+            .ok_or(PdfBuildError::InvalidObjectId(u32::MAX))?,
+    )?;
+    *next_object = next_object
+        .checked_add(2)
+        .ok_or(PdfBuildError::InvalidObjectId(u32::MAX))?;
+    let selected_name = stores
+        .pdf_space_font_name(space_font_name_id)
+        .ok_or(PdfBuildError::MissingSpaceFontName(space_font_name_id))?;
+
+    objects.push(PdfIndirectObject {
+        id: char_proc,
+        object: PdfObject::Stream {
+            dictionary: PdfDictionary::new(),
+            data: tex_out::pdf::type3_space_glyph_content(333.0),
+        },
+    });
+
+    let matrix = PdfNumber::new(1, 3)?;
+    let mut dictionary = PdfDictionary::new();
+    dictionary.insert("Type", PdfValue::Name("Font".into()))?;
+    dictionary.insert("Subtype", PdfValue::Name("Type3".into()))?;
+    dictionary.insert("Name", PdfValue::Name(PdfName::new(selected_name)))?;
+    dictionary.insert(
+        "FontMatrix",
+        PdfValue::Array(vec![
+            PdfValue::Number(matrix),
+            PdfValue::Integer(0),
+            PdfValue::Integer(0),
+            PdfValue::Number(matrix),
+            PdfValue::Integer(0),
+            PdfValue::Integer(0),
+        ]),
+    )?;
+    dictionary.insert(
+        "FontBBox",
+        PdfValue::Array(vec![
+            PdfValue::Integer(0),
+            PdfValue::Integer(0),
+            PdfValue::Integer(0),
+            PdfValue::Integer(0),
+        ]),
+    )?;
+    dictionary.insert("Resources", PdfValue::Dictionary(PdfDictionary::new()))?;
+    dictionary.insert("FirstChar", PdfValue::Integer(32))?;
+    dictionary.insert("LastChar", PdfValue::Integer(32))?;
+    dictionary.insert("Widths", PdfValue::Array(vec![PdfValue::Integer(333)]))?;
+    let mut encoding = PdfDictionary::new();
+    encoding.insert("Type", PdfValue::Name("Encoding".into()))?;
+    encoding.insert(
+        "Differences",
+        PdfValue::Array(vec![PdfValue::Integer(32), PdfValue::Name("space".into())]),
+    )?;
+    dictionary.insert("Encoding", PdfValue::Dictionary(encoding))?;
+    let mut char_procs = PdfDictionary::new();
+    char_procs.insert("space", PdfValue::Reference(char_proc))?;
+    dictionary.insert("CharProcs", PdfValue::Dictionary(char_procs))?;
+    objects.push(indirect_dictionary(font, dictionary));
+    Ok(PdfFallbackSpaceFont { font })
+}
+
+fn ensure_fallback_space_font(
+    stores: &Universe,
+    space_font_name_id: u32,
+    next_object: &mut u32,
+    objects: &mut Vec<PdfIndirectObject>,
+    fallback: &mut Option<PdfFallbackSpaceFont>,
+) -> Result<PdfFallbackSpaceFont, PdfBuildError> {
+    if let Some(fallback) = *fallback {
+        return Ok(fallback);
+    }
+    let allocated = allocate_fallback_space_font(stores, space_font_name_id, next_object, objects)?;
+    *fallback = Some(allocated);
+    Ok(allocated)
+}
+
+fn font_has_explicit_space(stores: &Universe, tex_name: &[u8]) -> bool {
+    stores
+        .resolved_pdf_font_map_lines()
+        .into_iter()
+        .find(|entry| entry.tex_name == tex_name)
+        .and_then(|entry| entry.encoding_files.first().cloned())
+        .and_then(|encoding| stores.pdf_encoding(&encoding))
+        .is_some_and(|encoding| encoding.glyph_names()[32] == b"space")
 }
 
 fn pdf_font_objects(
@@ -1410,6 +1621,7 @@ pub enum PdfBuildError {
     MissingPkFont(tex_fonts::PdfPkFontRequest),
     MissingPkGlyph { font: String, code: u8 },
     MissingEncoding(Vec<u8>),
+    MissingSpaceFontName(u32),
     MissingBuiltinGlyphName { font: String, code: u8 },
     TrueTypeSubsetRequiresEncoding(String),
     Type1Subset(tex_fonts::PdfType1SubsetError),
@@ -1492,6 +1704,9 @@ impl std::fmt::Display for PdfBuildError {
                 "PDF encoding resource {:?} was not supplied",
                 String::from_utf8_lossy(name)
             ),
+            Self::MissingSpaceFontName(id) => {
+                write!(f, "PDF page references missing space-font name id {id}")
+            }
             Self::MissingBuiltinGlyphName { font, code } => write!(
                 f,
                 "PDF font {font:?} has no built-in glyph name for character code {code}"
@@ -1617,6 +1832,56 @@ mod tests {
             .expect("provide detached encoding");
     }
 
+    fn provide_tagged_spacing_font(stores: &mut Universe, explicit_space: bool) {
+        stores
+            .world_mut()
+            .set_memory_file(
+                "cmr10.tfm",
+                include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm").to_vec(),
+            )
+            .expect("seed TFM");
+        stores
+            .provide_pdf_type1_program(
+                b"cmr10.pfb".to_vec(),
+                include_bytes!("../../../tests/corpus/pdf/embedded_type1.pfb"),
+            )
+            .expect("committed PFB");
+        let mut encoding = b"/TaggedSpacingEncoding [".to_vec();
+        for code in 0..256 {
+            let name = match code {
+                32 if explicit_space => "space",
+                65 => "A",
+                66 => "B",
+                67 => "C",
+                68 => "D",
+                69 => "E",
+                _ => ".notdef",
+            };
+            encoding.extend_from_slice(format!("/{name} ").as_bytes());
+        }
+        encoding.extend_from_slice(b"] def");
+        stores
+            .provide_pdf_encoding(b"tagged-spacing.enc".to_vec(), &encoding)
+            .expect("provide tagged-spacing encoding");
+    }
+
+    fn shown_text_operands(document: &lopdf::Document, page_number: u32) -> Vec<Vec<u8>> {
+        let page = document.get_pages()[&page_number];
+        let bytes = document.get_page_content(page).expect("page content");
+        lopdf::content::Content::decode(&bytes)
+            .expect("decode content operators")
+            .operations
+            .into_iter()
+            .filter(|operation| operation.operator == "Tj")
+            .map(|operation| {
+                operation.operands[0]
+                    .as_str()
+                    .expect("Tj string operand")
+                    .to_vec()
+            })
+            .collect()
+    }
+
     #[test]
     fn minimal_rule_page_emits_deterministic_valid_pdf_structure() {
         let source =
@@ -1707,6 +1972,105 @@ mod tests {
                 tex_out::PdfAccessibilityEffect::FakeSpace,
                 tex_out::PdfAccessibilityEffect::InterwordSpaceOff,
             ]
+        );
+    }
+
+    #[test]
+    fn tagged_spacing_uses_explicit_space_and_reanchors_after_disabled_glue() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        provide_tagged_spacing_font(&mut stores, true);
+        let run = run_in(
+            &mut stores,
+            concat!(
+                "\\pdfoutput=1\\pdfcompresslevel=0 ",
+                "\\font\\f=cmr10 ",
+                "\\pdfmapline{=cmr10 CMR10 <tagged-spacing.enc <<cmr10.pfb}",
+                "\\shipout\\hbox{\\f A\\pdfinterwordspaceon\\hskip3pt ",
+                "B\\pdfinterwordspaceoff\\hskip3pt C}\\end",
+            ),
+        );
+        let pdf = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
+            .expect("tagged PDF assembles");
+        let parsed = lopdf::Document::load_mem(&pdf).expect("tagged PDF parses");
+        assert_eq!(
+            shown_text_operands(&parsed, 1),
+            vec![b"A".to_vec(), b" ".to_vec(), b"B".to_vec(), b"C".to_vec()]
+        );
+        assert!(
+            !pdf.windows(b"/UmberSpace".len())
+                .any(|w| w == b"/UmberSpace")
+        );
+        assert_eq!(
+            parsed.extract_text(&[1]).expect("text extracts").trim(),
+            "A BC"
+        );
+    }
+
+    #[test]
+    fn fallback_space_font_is_lazy_shared_and_keeps_first_selection_across_pages() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        provide_tagged_spacing_font(&mut stores, false);
+        let run = run_in(
+            &mut stores,
+            concat!(
+                "\\pdfoutput=1\\pdfcompresslevel=0 ",
+                "\\font\\f=cmr10 ",
+                "\\pdfmapline{=cmr10 CMR10 <tagged-spacing.enc <<cmr10.pfb}",
+                "\\pdfspacefont{first-space}",
+                "\\shipout\\hbox{\\f A\\pdfinterwordspaceon\\hskip3pt B}",
+                "\\pdfspacefont{second-space}",
+                "\\shipout\\hbox{\\f C\\hskip3pt D\\pdffakespace E",
+                "\\pdfinterwordspaceoff}\\end",
+            ),
+        );
+        let pdf = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
+            .expect("fallback-space PDF assembles");
+        let parsed = lopdf::Document::load_mem(&pdf).expect("fallback-space PDF parses");
+        assert_eq!(
+            shown_text_operands(&parsed, 1),
+            vec![b"A".to_vec(), b" ".to_vec(), b"B".to_vec()]
+        );
+        assert_eq!(
+            shown_text_operands(&parsed, 2),
+            vec![
+                b"C".to_vec(),
+                b" ".to_vec(),
+                b"D".to_vec(),
+                b" ".to_vec(),
+                b"E".to_vec()
+            ]
+        );
+        let fallback_fonts = parsed
+            .objects
+            .values()
+            .filter_map(|object| object.as_dict().ok())
+            .filter(|dictionary| {
+                dictionary
+                    .get(b"Subtype")
+                    .ok()
+                    .and_then(|value| value.as_name().ok())
+                    == Some(b"Type3".as_slice())
+                    && dictionary
+                        .get(b"Name")
+                        .ok()
+                        .and_then(|value| value.as_name().ok())
+                        == Some(b"first-space".as_slice())
+            })
+            .count();
+        assert_eq!(fallback_fonts, 1);
+        assert!(
+            !pdf.windows(b"second-space".len())
+                .any(|w| w == b"second-space")
+        );
+        assert_eq!(
+            parsed.extract_text(&[1]).expect("page one extracts").trim(),
+            "A B"
+        );
+        assert_eq!(
+            parsed.extract_text(&[2]).expect("page two extracts").trim(),
+            "C D E"
         );
     }
 

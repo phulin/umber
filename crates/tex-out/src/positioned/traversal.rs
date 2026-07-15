@@ -34,6 +34,7 @@ pub(super) fn lower(
         limits,
         cur_h: page.job.h_offset,
         cur_v: add(root.height, page.job.v_offset)?,
+        current_font_id: None,
         node_ordinals: index_nodes(&page.root),
     };
     match kind {
@@ -57,6 +58,7 @@ struct Lowerer<'a> {
     limits: PositionedLimits,
     cur_h: Scaled,
     cur_v: Scaled,
+    current_font_id: Option<u32>,
     node_ordinals: BTreeMap<usize, u32>,
 }
 
@@ -99,6 +101,7 @@ impl Lowerer<'_> {
             match child {
                 PageNode::Char { font_id, ch, width } => {
                     if run.font_id.is_some_and(|current| current != *font_id) {
+                        run.resolve_pending_space(self.limits)?;
                         run.flush(self)?;
                     }
                     run.character(
@@ -112,6 +115,7 @@ impl Lowerer<'_> {
                         base_line,
                         self.limits,
                     )?;
+                    self.current_font_id = Some(*font_id);
                     self.cur_h = add(self.cur_h, *width)?;
                 }
                 PageNode::Lig {
@@ -121,6 +125,7 @@ impl Lowerer<'_> {
                     ..
                 } => {
                     if run.font_id.is_some_and(|current| current != *font_id) {
+                        run.resolve_pending_space(self.limits)?;
                         run.flush(self)?;
                     }
                     for (source_index, code) in source.iter().enumerate() {
@@ -140,6 +145,7 @@ impl Lowerer<'_> {
                             self.limits,
                         )?;
                     }
+                    self.current_font_id = Some(*font_id);
                     self.cur_h = add(self.cur_h, *width)?;
                 }
                 PageNode::Kern { amount, kind } => {
@@ -156,7 +162,7 @@ impl Lowerer<'_> {
                             GlueKind::Leaders | GlueKind::Cleaders | GlueKind::Xleaders
                         )
                     {
-                        run.pending_space();
+                        run.pending_space(self.current_font_id, self.cur_h, base_line);
                         self.cur_h = add(self.cur_h, width)?;
                     } else {
                         run.flush(self)?;
@@ -488,8 +494,9 @@ struct RunBuilder {
     x: Option<Scaled>,
     baseline: Option<Scaled>,
     units: Vec<TextUnit>,
+    positions: Vec<Scaled>,
     sources: Vec<Option<PositionedSourceRef>>,
-    pending_space: bool,
+    pending_space: Option<Scaled>,
 }
 
 impl RunBuilder {
@@ -509,16 +516,14 @@ impl RunBuilder {
             self.x = Some(x);
             self.baseline = Some(baseline);
         }
-        if self.pending_space && !self.units.is_empty() {
-            self.add_unit(TextUnit::Space, None, limits)?;
-        }
-        self.pending_space = false;
-        self.add_unit(TextUnit::Code(code), Some(source), limits)
+        self.resolve_pending_space(limits)?;
+        self.add_unit(TextUnit::Code(code), x, Some(source), limits)
     }
 
     fn add_unit(
         &mut self,
         unit: TextUnit,
+        position: Scaled,
         source: Option<PositionedSourceRef>,
         limits: PositionedLimits,
     ) -> Result<(), PositionedError> {
@@ -528,14 +533,27 @@ impl RunBuilder {
             });
         }
         self.units.push(unit);
+        self.positions.push(position);
         self.sources.push(source);
         Ok(())
     }
 
-    fn pending_space(&mut self) {
-        if self.font_id.is_some() {
-            self.pending_space = true;
+    fn pending_space(&mut self, font_id: Option<u32>, position: Scaled, baseline: Scaled) {
+        if let Some(font_id) = font_id {
+            if self.font_id.is_none() {
+                self.font_id = Some(font_id);
+                self.x = Some(position);
+                self.baseline = Some(baseline);
+            }
+            self.pending_space.get_or_insert(position);
         }
+    }
+
+    fn resolve_pending_space(&mut self, limits: PositionedLimits) -> Result<(), PositionedError> {
+        if let Some(position) = self.pending_space.take() {
+            self.add_unit(TextUnit::Space, position, None, limits)?;
+        }
+        Ok(())
     }
 
     fn flush(&mut self, lowerer: &mut Lowerer<'_>) -> Result<(), PositionedError> {
@@ -543,13 +561,15 @@ impl RunBuilder {
             (self.font_id.take(), self.x.take(), self.baseline.take())
         {
             let units = std::mem::take(&mut self.units);
+            let positions = std::mem::take(&mut self.positions);
             let sources = std::mem::take(&mut self.sources);
-            self.pending_space = false;
+            self.pending_space = None;
             lowerer.push(PositionedEvent::TextRun(PositionedTextRun {
                 x,
                 baseline,
                 font_id,
                 units,
+                positions,
                 sources,
             }))?;
         }

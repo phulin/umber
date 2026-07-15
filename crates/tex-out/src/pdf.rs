@@ -79,6 +79,14 @@ pub fn type3_bitmap_glyph_content(glyph: &PdfType3BitmapGlyph<'_>) -> Vec<u8> {
     content.finish().to_vec()
 }
 
+/// Encodes an invisible Type-3 space glyph through `pdf_writer`.
+#[must_use]
+pub fn type3_space_glyph_content(advance: f32) -> Vec<u8> {
+    let mut content = pdf_writer::Content::new();
+    content.start_shape_glyph(advance, 0.0, 0.0, 0.0, 0.0);
+    content.finish().to_vec()
+}
+
 /// Encodes filled rule rectangles exclusively through `pdf_writer`.
 #[must_use]
 pub fn filled_rectangle_content(rectangles: &[PdfContentRectangle]) -> Vec<u8> {

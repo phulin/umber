@@ -13,7 +13,7 @@ fn sp(raw: i32) -> Scaled {
 }
 
 #[test]
-fn text_runs_keep_exact_anchor_and_baseline_but_not_glyph_positions() {
+fn text_runs_keep_exact_unit_anchors_and_baseline() {
     let page = page(PageNode::VList(box_node(
         500,
         100,
@@ -99,6 +99,113 @@ fn text_runs_keep_exact_anchor_and_baseline_but_not_glyph_positions() {
     assert_eq!(runs[1].x, sp(89));
     assert_eq!(runs[1].baseline, sp(70));
     assert_eq!(runs[1].units, vec![TextUnit::Code(b'C')]);
+    assert_eq!(
+        runs[0].positions,
+        vec![sp(0), sp(22), sp(22), sp(22), sp(52), sp(62)]
+    );
+    assert_eq!(runs[1].positions, vec![sp(89)]);
+}
+
+#[test]
+fn interword_glue_survives_a_font_change_with_its_original_font_and_anchor() {
+    let page = page(PageNode::HList(box_node(
+        100,
+        40,
+        10,
+        vec![
+            PageNode::Char {
+                font_id: 1,
+                ch: b'A' as u32,
+                width: sp(20),
+            },
+            PageNode::Glue {
+                spec: GlueSpec {
+                    width: sp(12),
+                    stretch: sp(0),
+                    stretch_order: GlueOrder::Normal,
+                    shrink: sp(0),
+                    shrink_order: GlueOrder::Normal,
+                },
+                kind: GlueKind::Normal,
+                leader: None,
+            },
+            PageNode::Char {
+                font_id: 2,
+                ch: b'B' as u32,
+                width: sp(20),
+            },
+        ],
+    )));
+    let positioned = lower_page(&page, 9).expect("lower page");
+    let runs = positioned
+        .events
+        .iter()
+        .filter_map(|event| match event {
+            PositionedEvent::TextRun(run) => Some(run),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(runs.len(), 2);
+    assert_eq!(runs[0].font_id, 1);
+    assert_eq!(runs[0].units, vec![TextUnit::Code(b'A'), TextUnit::Space]);
+    assert_eq!(runs[0].positions, vec![sp(0), sp(20)]);
+    assert_eq!(runs[1].font_id, 2);
+    assert_eq!(runs[1].positions, vec![sp(32)]);
+}
+
+#[test]
+fn current_output_font_flows_into_leading_glue_in_a_nested_box() {
+    let nested = PageNode::HList(box_node(
+        40,
+        20,
+        5,
+        vec![
+            PageNode::Glue {
+                spec: GlueSpec {
+                    width: sp(7),
+                    stretch: sp(0),
+                    stretch_order: GlueOrder::Normal,
+                    shrink: sp(0),
+                    shrink_order: GlueOrder::Normal,
+                },
+                kind: GlueKind::Normal,
+                leader: None,
+            },
+            PageNode::Char {
+                font_id: 1,
+                ch: b'B' as u32,
+                width: sp(20),
+            },
+        ],
+    ));
+    let page = page(PageNode::HList(box_node(
+        100,
+        40,
+        10,
+        vec![
+            PageNode::Char {
+                font_id: 1,
+                ch: b'A' as u32,
+                width: sp(20),
+            },
+            nested,
+        ],
+    )));
+    let positioned = lower_page(&page, 10).expect("lower page");
+    let nested_run = positioned
+        .events
+        .iter()
+        .filter_map(|event| match event {
+            PositionedEvent::TextRun(run) => Some(run),
+            _ => None,
+        })
+        .nth(1)
+        .expect("nested text run");
+    assert_eq!(
+        nested_run.units,
+        vec![TextUnit::Space, TextUnit::Code(b'B')]
+    );
+    assert_eq!(nested_run.positions, vec![sp(20), sp(27)]);
 }
 
 #[test]
@@ -304,17 +411,19 @@ fn page(root: PageNode) -> crate::PageArtifact {
             h_offset: sp(0),
             v_offset: sp(0),
         },
-        fonts: vec![FontResource {
-            font_id: 1,
-            name: "cmr10".to_owned(),
-            tfm_content_hash: ContentHash::from_bytes(b"cmr10"),
-            tfm_checksum: 0,
-            design_size: sp(655_360),
-            at_size: sp(655_360),
-            opentype: None,
-            semantic_identity: tex_fonts::FontSourceIdentity::from_bytes([1; 32]),
-            construction: crate::FontResourceConstruction::Loaded,
-        }],
+        fonts: (1_u8..=2)
+            .map(|font_id| FontResource {
+                font_id: u32::from(font_id),
+                name: format!("cmr{font_id}0"),
+                tfm_content_hash: ContentHash::from_bytes(&[font_id]),
+                tfm_checksum: 0,
+                design_size: sp(655_360),
+                at_size: sp(655_360),
+                opentype: None,
+                semantic_identity: tex_fonts::FontSourceIdentity::from_bytes([font_id; 32]),
+                construction: crate::FontResourceConstruction::Loaded,
+            })
+            .collect(),
         counts: [0; 10],
         root,
         effects: Vec::new(),

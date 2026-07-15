@@ -1,7 +1,7 @@
 //! Driver-neutral exact page geometry derived from committed artifacts.
 //!
-//! Text events stop at browser-shapeable runs: their anchor and baseline are
-//! exact TeX coordinates, while glyph positions and run widths are absent.
+//! Text events retain browser-shapeable runs together with exact TeX anchors
+//! for each source unit. Driver-specific glyph shaping and widths remain absent.
 
 mod traversal;
 
@@ -74,6 +74,8 @@ pub struct PositionedTextRun {
     pub baseline: Scaled,
     pub font_id: u32,
     pub units: Vec<TextUnit>,
+    /// Exact horizontal TeX coordinates aligned with `units`.
+    pub positions: Vec<Scaled>,
     /// Artifact-node addresses aligned with `units`; spaces have no source.
     pub sources: Vec<Option<PositionedSourceRef>>,
 }
