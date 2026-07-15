@@ -517,6 +517,19 @@ pub enum Whatsit {
         object: u32,
     },
     PdfRunningLink(bool),
+    PdfLiteral {
+        mode: PdfLiteralMode,
+        payload: Vec<u8>,
+    },
+    DeferredPdfLiteral {
+        mode: PdfLiteralMode,
+        tokens: TokenListId,
+    },
+    PdfSetMatrix {
+        payload: Vec<u8>,
+    },
+    PdfSave,
+    PdfRestore,
     Language {
         language: u8,
         left_hyphen_min: u8,
@@ -530,6 +543,13 @@ pub enum PdfAccessibilityControl {
     InterwordSpaceOn,
     InterwordSpaceOff,
     FakeSpace,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PdfLiteralMode {
+    Origin,
+    Page,
+    Direct,
 }
 
 impl Node {

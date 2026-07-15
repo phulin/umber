@@ -256,12 +256,54 @@ fn append_whatsit_effect(
                 tex_out::PdfAnnotationEffect::RunningLink(enabled),
             ));
         }
+        Whatsit::PdfLiteral { mode, payload } => effects.push(PageEffect::PdfLiteral {
+            mode: lower_pdf_literal_mode(mode),
+            payload,
+        }),
+        Whatsit::DeferredPdfLiteral { mode, tokens } => {
+            let payload = expand_pdf_literal_tokens(stores, expansion, tokens)?;
+            effects.push(PageEffect::PdfLiteral {
+                mode: lower_pdf_literal_mode(mode),
+                payload,
+            });
+        }
+        Whatsit::PdfSetMatrix { payload } => effects.push(PageEffect::PdfSetMatrix { payload }),
+        Whatsit::PdfSave => effects.push(PageEffect::PdfSave),
+        Whatsit::PdfRestore => effects.push(PageEffect::PdfRestore),
         Whatsit::OpenOut { .. }
         | Whatsit::CloseOut { .. }
         | Whatsit::DeferredWrite { .. }
         | Whatsit::Language { .. } => {}
     }
     Ok(())
+}
+
+fn lower_pdf_literal_mode(mode: tex_state::node::PdfLiteralMode) -> tex_out::PdfLiteralMode {
+    match mode {
+        tex_state::node::PdfLiteralMode::Origin => tex_out::PdfLiteralMode::Origin,
+        tex_state::node::PdfLiteralMode::Page => tex_out::PdfLiteralMode::Page,
+        tex_state::node::PdfLiteralMode::Direct => tex_out::PdfLiteralMode::Direct,
+    }
+}
+
+fn expand_pdf_literal_tokens(
+    stores: &mut Universe,
+    expansion: &mut tex_expand::ExpansionContext<'_>,
+    tokens: TokenListId,
+) -> Result<Vec<u8>, ExecError> {
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list(tokens, TokenListReplayKind::Inserted);
+    let mut text = String::new();
+    while let Some(token) = get_x_or_protected_with_context(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(stores),
+        expansion,
+    )?
+    .map(tex_expand::semantic_token)
+    {
+        diagnostics::append_token_show_text(stores, token, &mut text);
+    }
+    Ok(text.into_bytes())
 }
 
 fn direction_permutation(stores: &Universe, list: NodeListId) -> Option<Vec<usize>> {

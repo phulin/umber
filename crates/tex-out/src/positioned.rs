@@ -10,7 +10,7 @@ mod tests;
 
 use tex_arith::Scaled;
 
-use crate::{FontResource, PageArtifact};
+use crate::{FontResource, PageArtifact, PageEffect};
 
 /// Limits applied while lowering one committed page.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -52,6 +52,14 @@ pub enum PositionedEvent {
     Special(PositionedSpecial),
     PdfAccessibility(PositionedPdfAccessibility),
     PdfAnnotation(PositionedPdfAnnotation),
+    PdfGraphics(PositionedPdfGraphics),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PositionedPdfGraphics {
+    pub x: Scaled,
+    pub y: Scaled,
+    pub effect: PageEffect,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

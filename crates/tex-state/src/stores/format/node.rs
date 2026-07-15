@@ -7,7 +7,7 @@ use crate::math::{
 };
 use crate::node::{
     BoxNode, DiscKind, GlueKind, KernKind, LeaderPayload, Node, PdfAccessibilityControl, Sign,
-    UnsetKind, UnsetNode, Whatsit,
+    PdfLiteralMode, UnsetKind, UnsetNode, Whatsit,
 };
 use crate::scaled::{GlueSetRatio, Scaled};
 use crate::stores::Stores;
@@ -133,6 +133,19 @@ pub(super) enum FormatWhatsit {
         class: String,
         payload: Vec<u8>,
     },
+    PdfLiteral {
+        mode: u8,
+        payload: Vec<u8>,
+    },
+    DeferredPdfLiteral {
+        mode: u8,
+        tokens: u32,
+    },
+    PdfSetMatrix {
+        payload: Vec<u8>,
+    },
+    PdfSave,
+    PdfRestore,
     Language {
         language: u8,
         left_hyphen_min: u8,
@@ -458,6 +471,17 @@ impl FormatWhatsit {
                 tokens: tokens.raw(),
             },
             Whatsit::Special { class, payload } => Self::Special { class, payload },
+            Whatsit::PdfLiteral { mode, payload } => Self::PdfLiteral {
+                mode: mode as u8,
+                payload,
+            },
+            Whatsit::DeferredPdfLiteral { mode, tokens } => Self::DeferredPdfLiteral {
+                mode: mode as u8,
+                tokens: tokens.raw(),
+            },
+            Whatsit::PdfSetMatrix { payload } => Self::PdfSetMatrix { payload },
+            Whatsit::PdfSave => Self::PdfSave,
+            Whatsit::PdfRestore => Self::PdfRestore,
             Whatsit::Language {
                 language,
                 left_hyphen_min,
@@ -485,6 +509,17 @@ impl FormatWhatsit {
                 tokens: token_list_id(stores, tokens)?,
             },
             Self::Special { class, payload } => Whatsit::Special { class, payload },
+            Self::PdfLiteral { mode, payload } => Whatsit::PdfLiteral {
+                mode: pdf_literal_mode(mode)?,
+                payload,
+            },
+            Self::DeferredPdfLiteral { mode, tokens } => Whatsit::DeferredPdfLiteral {
+                mode: pdf_literal_mode(mode)?,
+                tokens: token_list_id(stores, tokens)?,
+            },
+            Self::PdfSetMatrix { payload } => Whatsit::PdfSetMatrix { payload },
+            Self::PdfSave => Whatsit::PdfSave,
+            Self::PdfRestore => Whatsit::PdfRestore,
             Self::Language {
                 language,
                 left_hyphen_min,
@@ -501,6 +536,15 @@ impl FormatWhatsit {
             Self::PdfLinkEnd { object } => Whatsit::PdfLinkEnd { object },
             Self::PdfRunningLink(enabled) => Whatsit::PdfRunningLink(enabled),
         })
+    }
+}
+
+fn pdf_literal_mode(mode: u8) -> Result<PdfLiteralMode, StoreFormatError> {
+    match mode {
+        0 => Ok(PdfLiteralMode::Origin),
+        1 => Ok(PdfLiteralMode::Page),
+        2 => Ok(PdfLiteralMode::Direct),
+        _ => Err(StoreFormatError::Invalid("PDF literal mode")),
     }
 }
 

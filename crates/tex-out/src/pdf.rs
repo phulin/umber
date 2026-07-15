@@ -34,6 +34,34 @@ pub struct PdfContentTextRun {
     pub bytes: Vec<u8>,
 }
 
+/// One ordered page-content operation. Generated PDF syntax is lowered only
+/// through typed `pdf_writer` methods; only `Literal` contains user-authored
+/// opaque operations.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PdfContentOperation {
+    Rectangle(PdfContentRectangle),
+    Text(PdfContentTextRun),
+    Literal {
+        mode: crate::PdfLiteralMode,
+        x: f32,
+        y: f32,
+        bytes: Vec<u8>,
+    },
+    SetMatrix {
+        x: f32,
+        y: f32,
+        matrix: [f32; 4],
+    },
+    Save {
+        x: f32,
+        y: f32,
+    },
+    Restore {
+        x: f32,
+        y: f32,
+    },
+}
+
 /// One PK-derived monochrome Type-3 glyph procedure.
 pub struct PdfType3BitmapGlyph<'a> {
     pub advance: f32,
@@ -116,6 +144,57 @@ pub fn page_content(
                 .show(Str(&run.bytes));
         }
         content.end_text();
+    }
+    content.finish().to_vec()
+}
+
+/// Encodes ordered pdfTeX page operations through the vendored `pdf_writer`.
+#[must_use]
+pub fn ordered_page_content(operations: &[PdfContentOperation]) -> Vec<u8> {
+    let mut content = pdf_writer::Content::new();
+    let mut origin = (0.0, 0.0);
+    let set_origin = |content: &mut pdf_writer::Content, origin: &mut (f32, f32), x, y| {
+        let dx = x - origin.0;
+        let dy = y - origin.1;
+        if dx != 0.0 || dy != 0.0 {
+            content.transform([1.0, 0.0, 0.0, 1.0, dx, dy]);
+            *origin = (x, y);
+        }
+    };
+    for operation in operations {
+        match operation {
+            PdfContentOperation::Rectangle(rectangle) => {
+                content
+                    .rect(rectangle.x, rectangle.y, rectangle.width, rectangle.height)
+                    .fill_nonzero();
+            }
+            PdfContentOperation::Text(run) => {
+                content
+                    .begin_text()
+                    .set_font(Name(&run.font_name), run.font_size)
+                    .set_text_matrix([1.0, 0.0, 0.0, 1.0, run.x, run.baseline])
+                    .show(Str(&run.bytes))
+                    .end_text();
+            }
+            PdfContentOperation::Literal { mode, x, y, bytes } => {
+                if *mode == crate::PdfLiteralMode::Origin {
+                    set_origin(&mut content, &mut origin, *x, *y);
+                }
+                content.verbatim_operations(bytes);
+            }
+            PdfContentOperation::SetMatrix { x, y, matrix } => {
+                set_origin(&mut content, &mut origin, *x, *y);
+                content.transform([matrix[0], matrix[1], matrix[2], matrix[3], 0.0, 0.0]);
+            }
+            PdfContentOperation::Save { x, y } => {
+                set_origin(&mut content, &mut origin, *x, *y);
+                content.save_state();
+            }
+            PdfContentOperation::Restore { x, y } => {
+                set_origin(&mut content, &mut origin, *x, *y);
+                content.restore_state();
+            }
+        }
     }
     content.finish().to_vec()
 }

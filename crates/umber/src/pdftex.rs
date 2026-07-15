@@ -363,6 +363,10 @@ pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
             "pdfnobuiltintounicode",
             UnexpandablePrimitive::PdfNoBuiltinToUnicode,
         ),
+        ("pdfliteral", UnexpandablePrimitive::PdfLiteral),
+        ("pdfsetmatrix", UnexpandablePrimitive::PdfSetMatrix),
+        ("pdfsave", UnexpandablePrimitive::PdfSave),
+        ("pdfrestore", UnexpandablePrimitive::PdfRestore),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));

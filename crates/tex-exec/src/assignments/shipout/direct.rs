@@ -625,7 +625,12 @@ fn anchor_for_whatsit(
         | Whatsit::PdfAnnotation { .. }
         | Whatsit::PdfLinkStart { .. }
         | Whatsit::PdfLinkEnd { .. }
-        | Whatsit::PdfRunningLink(_) => true,
+        | Whatsit::PdfRunningLink(_)
+        | Whatsit::PdfLiteral { .. }
+        | Whatsit::DeferredPdfLiteral { .. }
+        | Whatsit::PdfSetMatrix { .. }
+        | Whatsit::PdfSave
+        | Whatsit::PdfRestore => true,
     };
     if !anchored {
         return Ok(None);

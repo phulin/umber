@@ -2,10 +2,12 @@ use super::*;
 use std::path::PathBuf;
 
 use tex_expand::token_text;
-use tex_lex::TokenListReplayKind;
+use tex_lex::{MemoryInput, TokenListReplayKind};
+use tex_state::env::banks::IntParam;
 use tex_state::ids::TokenListId;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{Meaning, MeaningFlags};
+use tex_state::node::PdfLiteralMode;
 use tex_state::node::{Node, Whatsit};
 use tex_state::{InputOpenState, PrintSink, StreamSlot};
 
@@ -173,6 +175,64 @@ pub(in crate::assignments) fn execute_special(
             payload,
         }),
     )
+}
+
+pub(in crate::assignments) fn execute_pdf_graphics(
+    primitive: UnexpandablePrimitive,
+    context: TracedTokenWord,
+    nest: &mut ModeNest,
+    input: &mut InputStack,
+    stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
+    if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+        return Err(ExecError::UnimplementedTypesetting {
+            mode: nest.current_mode(),
+            token: tex_expand::semantic_token(context),
+            origin: context.origin(),
+            operation: "PDF graphics primitive while PDF output is disabled",
+        });
+    }
+    let node = match primitive {
+        UnexpandablePrimitive::PdfLiteral => {
+            let deferred = scan_optional_keyword_x(input, stores, execution, "shipout")?;
+            let mode = if scan_optional_keyword_x(input, stores, execution, "direct")? {
+                PdfLiteralMode::Direct
+            } else if scan_optional_keyword_x(input, stores, execution, "page")? {
+                PdfLiteralMode::Page
+            } else {
+                PdfLiteralMode::Origin
+            };
+            if deferred {
+                let scanned = scan_toks(
+                    input,
+                    &mut tex_state::ExpansionContext::new(stores),
+                    MeaningFlags::EMPTY,
+                    context,
+                )?;
+                Node::Whatsit(Whatsit::DeferredPdfLiteral {
+                    mode,
+                    tokens: scanned.meaning().replacement_text(),
+                })
+            } else {
+                let tokens = scan_balanced_expanded_text(input, stores, execution, context)?;
+                Node::Whatsit(Whatsit::PdfLiteral {
+                    mode,
+                    payload: tex_byte_text(&tokens_text(stores, &tokens)),
+                })
+            }
+        }
+        UnexpandablePrimitive::PdfSetMatrix => {
+            let tokens = scan_balanced_expanded_text(input, stores, execution, context)?;
+            Node::Whatsit(Whatsit::PdfSetMatrix {
+                payload: tex_byte_text(&tokens_text(stores, &tokens)),
+            })
+        }
+        UnexpandablePrimitive::PdfSave => Node::Whatsit(Whatsit::PdfSave),
+        UnexpandablePrimitive::PdfRestore => Node::Whatsit(Whatsit::PdfRestore),
+        _ => unreachable!("caller restricts PDF graphics primitive"),
+    };
+    append_node_to_current_list(nest, stores, node)
 }
 
 fn tex_byte_text(text: &str) -> Vec<u8> {

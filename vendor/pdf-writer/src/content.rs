@@ -57,6 +57,25 @@ impl Content {
         self.buf.as_slice()
     }
 
+    /// Append an opaque, caller-authored sequence of complete content-stream
+    /// operations while retaining framing ownership in this writer.
+    ///
+    /// This is intended for compatibility features such as pdfTeX's
+    /// `\pdfliteral`; generated operators should use typed methods instead.
+    pub fn verbatim_operations(&mut self, bytes: &[u8]) -> &mut Self {
+        if bytes.is_empty() {
+            return self;
+        }
+        if !self.buf.inner.is_empty() && self.buf.last() != Some(&b'\n') {
+            self.buf.push(b'\n');
+        }
+        self.buf.inner.extend_from_slice(bytes);
+        if self.buf.last() != Some(&b'\n') {
+            self.buf.push(b'\n');
+        }
+        self
+    }
+
     /// Start writing an arbitrary operation.
     #[inline]
     pub fn op<'a>(&'a mut self, operator: &'a str) -> Operation<'a> {

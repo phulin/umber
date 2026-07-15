@@ -380,6 +380,15 @@ pub enum PageEffect {
     Special { class: String, payload: Vec<u8> },
     PdfAccessibility(PdfAccessibilityEffect),
     PdfAnnotation(PdfAnnotationEffect),
+    PdfLiteral {
+        mode: PdfLiteralMode,
+        payload: Vec<u8>,
+    },
+    PdfSetMatrix {
+        payload: Vec<u8>,
+    },
+    PdfSave,
+    PdfRestore,
 }
 
 /// Ordered PDF-only accessibility control retained at its shipped position.
@@ -397,6 +406,13 @@ pub enum PdfAnnotationEffect {
     LinkStart { object: u32 },
     LinkEnd { object: u32 },
     RunningLink(bool),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PdfLiteralMode {
+    Origin,
+    Page,
+    Direct,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -490,7 +506,11 @@ fn validate_artifact(
             PageEffect::Write { .. }
             | PageEffect::Special { .. }
             | PageEffect::PdfAccessibility(_) => None,
-            PageEffect::PdfAnnotation(_) => None,
+            PageEffect::PdfAnnotation(_)
+            | PageEffect::PdfLiteral { .. }
+            | PageEffect::PdfSetMatrix { .. }
+            | PageEffect::PdfSave
+            | PageEffect::PdfRestore => None,
         };
         if stream.is_some_and(|stream| stream >= 16) {
             return Err(ArtifactValidationError::InvalidStream {

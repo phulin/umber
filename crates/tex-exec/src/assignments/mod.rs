@@ -1422,6 +1422,14 @@ fn execute_prefixed_command(
                 execute_special(command.traced, nest, input, stores, execution)?;
                 Ok(CommandOutcome::continue_only())
             }
+            UnexpandablePrimitive::PdfLiteral
+            | UnexpandablePrimitive::PdfSetMatrix
+            | UnexpandablePrimitive::PdfSave
+            | UnexpandablePrimitive::PdfRestore => {
+                reject_all_prefixes(prefixes)?;
+                execute_pdf_graphics(primitive, command.traced, nest, input, stores, execution)?;
+                Ok(CommandOutcome::continue_only())
+            }
             UnexpandablePrimitive::SetLanguage => {
                 reject_all_prefixes(prefixes)?;
                 if !matches!(

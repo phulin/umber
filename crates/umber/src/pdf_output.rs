@@ -6,11 +6,11 @@ use tex_expand::append_token_string_text;
 use tex_out::PageNode;
 use tex_out::pdf::{
     PdfAnnotationAction, PdfAnnotationObject, PdfAnnotationType, PdfContentRectangle,
-    PdfContentTextRun, PdfDestinationAction, PdfDestinationActionKind, PdfDestinationPage,
-    PdfDestinationStructure, PdfDestinationTarget, PdfDictionary, PdfIndirectObject, PdfModelError,
-    PdfName, PdfNumber, PdfObject, PdfObjectCompression, PdfObjectId, PdfSerializationOptions,
-    PdfSerializeError, PdfStreamCompression, PdfTrailer, PdfValue, PdfVersion,
-    UnvalidatedPdfDocument, page_content,
+    PdfContentOperation, PdfContentTextRun, PdfDestinationAction, PdfDestinationActionKind,
+    PdfDestinationPage, PdfDestinationStructure, PdfDestinationTarget, PdfDictionary,
+    PdfIndirectObject, PdfModelError, PdfName, PdfNumber, PdfObject, PdfObjectCompression,
+    PdfObjectId, PdfSerializationOptions, PdfSerializeError, PdfStreamCompression, PdfTrailer,
+    PdfValue, PdfVersion, UnvalidatedPdfDocument, ordered_page_content,
 };
 use tex_out::positioned::{
     BoxKind, PositionedBox, PositionedError, PositionedEvent, PositionedPage,
@@ -27,6 +27,24 @@ use tex_state::{
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) const DEFAULT_PDF_PK_RESOLUTION: i32 = 600;
+
+fn parse_pdf_matrix(payload: &[u8]) -> Result<[f32; 4], PdfBuildError> {
+    let text =
+        std::str::from_utf8(payload).map_err(|_| PdfBuildError::InvalidMatrix(payload.to_vec()))?;
+    let mut values = text.split_ascii_whitespace();
+    let mut matrix = [0.0; 4];
+    for value in &mut matrix {
+        *value = values
+            .next()
+            .and_then(|word| word.parse::<f32>().ok())
+            .filter(|value| value.is_finite())
+            .ok_or_else(|| PdfBuildError::InvalidMatrix(payload.to_vec()))?;
+    }
+    if values.next().is_some() {
+        return Err(PdfBuildError::InvalidMatrix(payload.to_vec()));
+    }
+    Ok(matrix)
+}
 
 pub(crate) fn pk_font_request(
     stores: &Universe,
@@ -218,30 +236,31 @@ pub fn pdf_from_committed_artifacts_at_dpi(
         let artifact = tex_out::PageArtifact::from_bytes(&bytes)?;
         let positioned = positioned_pages[page_index].clone();
         let (page_width, page_height) = pdf_page_extents(&artifact, record)?;
-        let mut rectangles = Vec::new();
-        let mut text_runs = Vec::new();
+        let mut content_operations = Vec::new();
         let mut page_fonts = std::collections::BTreeMap::new();
         let mut fallback_space_on_page = false;
         for event in positioned.events {
             match event {
-                PositionedEvent::Rule(rule) => rectangles.push(PdfContentRectangle {
-                    x: scaled_to_bp_f32(
-                        rule.x
-                            .checked_add(record.h_origin())
-                            .ok_or(PdfBuildError::PageGeometryOverflow)?,
-                        parameters.decimal_digits,
-                    ),
-                    y: scaled_to_bp_f32(
-                        page_height
-                            .checked_sub(rule.y)
-                            .and_then(|value| value.checked_sub(record.v_origin()))
-                            .and_then(|value| value.checked_sub(rule.height))
-                            .ok_or(PdfBuildError::PageGeometryOverflow)?,
-                        parameters.decimal_digits,
-                    ),
-                    width: scaled_to_bp_f32(rule.width, parameters.decimal_digits),
-                    height: scaled_to_bp_f32(rule.height, parameters.decimal_digits),
-                }),
+                PositionedEvent::Rule(rule) => {
+                    content_operations.push(PdfContentOperation::Rectangle(PdfContentRectangle {
+                        x: scaled_to_bp_f32(
+                            rule.x
+                                .checked_add(record.h_origin())
+                                .ok_or(PdfBuildError::PageGeometryOverflow)?,
+                            parameters.decimal_digits,
+                        ),
+                        y: scaled_to_bp_f32(
+                            page_height
+                                .checked_sub(rule.y)
+                                .and_then(|value| value.checked_sub(record.v_origin()))
+                                .and_then(|value| value.checked_sub(rule.height))
+                                .ok_or(PdfBuildError::PageGeometryOverflow)?,
+                            parameters.decimal_digits,
+                        ),
+                        width: scaled_to_bp_f32(rule.width, parameters.decimal_digits),
+                        height: scaled_to_bp_f32(rule.height, parameters.decimal_digits),
+                    }))
+                }
                 PositionedEvent::TextRun(run) if !run.units.is_empty() => {
                     let font = positioned
                         .fonts
@@ -351,7 +370,8 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                             }
                             tex_out::positioned::TextUnit::Space => {
                                 if !segment.is_empty() {
-                                    text_runs.push(PdfContentTextRun {
+                                    content_operations.push(PdfContentOperation::Text(
+                                        PdfContentTextRun {
                                         x: scaled_to_bp_f32(
                                             segment_x
                                                 .take()
@@ -364,7 +384,8 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                                         font_name: resource_name.clone(),
                                         font_size,
                                         bytes: std::mem::take(&mut segment),
-                                    });
+                                        },
+                                    ));
                                 }
                                 if interword_space_enabled {
                                     let (font_name, space_size) = if explicit_space {
@@ -380,7 +401,8 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                                         fallback_space_on_page = true;
                                         (b"UmberSpace".to_vec(), 10.0)
                                     };
-                                    text_runs.push(PdfContentTextRun {
+                                    content_operations.push(PdfContentOperation::Text(
+                                        PdfContentTextRun {
                                         x: scaled_to_bp_f32(
                                             position
                                                 .checked_add(record.h_origin())
@@ -391,13 +413,14 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                                         font_name,
                                         font_size: space_size,
                                         bytes: vec![b' '],
-                                    });
+                                        },
+                                    ));
                                 }
                             }
                         }
                     }
                     if !segment.is_empty() {
-                        text_runs.push(PdfContentTextRun {
+                        content_operations.push(PdfContentOperation::Text(PdfContentTextRun {
                             x: scaled_to_bp_f32(
                                 segment_x
                                     .expect("nonempty segment has an anchor")
@@ -409,7 +432,7 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                             font_name: resource_name,
                             font_size,
                             bytes: segment,
-                        });
+                        }));
                     }
                 }
                 PositionedEvent::PdfAccessibility(control) => match control.control {
@@ -428,7 +451,7 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                             &mut fallback_space_font,
                         )?;
                         fallback_space_on_page = true;
-                        text_runs.push(PdfContentTextRun {
+                        content_operations.push(PdfContentOperation::Text(PdfContentTextRun {
                             x: scaled_to_bp_f32(
                                 control
                                     .x
@@ -446,12 +469,49 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                             font_name: b"UmberSpace".to_vec(),
                             font_size: 10.0,
                             bytes: vec![b' '],
-                        });
+                        }));
                     }
                 },
                 PositionedEvent::PdfAnnotation(_) => {}
                 PositionedEvent::Special(special) => {
                     return Err(PdfBuildError::UnsupportedSpecial(special.class));
+                }
+                PositionedEvent::PdfGraphics(graphics) => {
+                    let x = scaled_to_bp_f32(
+                        graphics
+                            .x
+                            .checked_add(record.h_origin())
+                            .ok_or(PdfBuildError::PageGeometryOverflow)?,
+                        parameters.decimal_digits,
+                    );
+                    let y = scaled_to_bp_f32(
+                        page_height
+                            .checked_sub(graphics.y)
+                            .and_then(|value| value.checked_sub(record.v_origin()))
+                            .ok_or(PdfBuildError::PageGeometryOverflow)?,
+                        parameters.decimal_digits,
+                    );
+                    let operation = match graphics.effect {
+                        tex_out::PageEffect::PdfLiteral { mode, payload } => {
+                            PdfContentOperation::Literal {
+                                mode,
+                                x,
+                                y,
+                                bytes: payload,
+                            }
+                        }
+                        tex_out::PageEffect::PdfSetMatrix { payload } => {
+                            PdfContentOperation::SetMatrix {
+                                x,
+                                y,
+                                matrix: parse_pdf_matrix(&payload)?,
+                            }
+                        }
+                        tex_out::PageEffect::PdfSave => PdfContentOperation::Save { x, y },
+                        tex_out::PageEffect::PdfRestore => PdfContentOperation::Restore { x, y },
+                        _ => unreachable!("positioned PDF graphics event contains PDF effect"),
+                    };
+                    content_operations.push(operation);
                 }
                 PositionedEvent::Box(_)
                 | PositionedEvent::BoxEnd(_)
@@ -491,7 +551,7 @@ pub fn pdf_from_committed_artifacts_at_dpi(
             id: contents_id,
             object: PdfObject::Stream {
                 dictionary: PdfDictionary::new(),
-                data: page_content(&rectangles, &text_runs),
+                data: ordered_page_content(&content_operations),
             },
         });
 
@@ -2096,6 +2156,7 @@ pub enum PdfBuildError {
     TrueTypeSubset(tex_fonts::PdfTrueTypeSubsetError),
     MissingLiveFont(String),
     UnsupportedSpecial(String),
+    InvalidMatrix(Vec<u8>),
     World(WorldError),
     Parse(tex_out::ParseError),
     Positioned(PositionedError),
@@ -2203,6 +2264,11 @@ impl std::fmt::Display for PdfBuildError {
             Self::UnsupportedSpecial(class) => {
                 write!(f, "PDF output does not support special class {class:?}")
             }
+            Self::InvalidMatrix(payload) => write!(
+                f,
+                "invalid \\pdfsetmatrix payload {:?}; expected exactly four finite numbers",
+                String::from_utf8_lossy(payload)
+            ),
             Self::World(error) => error.fmt(f),
             Self::Parse(error) => error.fmt(f),
             Self::Positioned(error) => error.fmt(f),

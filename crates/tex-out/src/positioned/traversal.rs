@@ -7,7 +7,7 @@ use crate::{BoxNode, GlueKind, KernKind, LeaderPayload, PageArtifact, PageEffect
 use super::{
     BoxKind, PositionedBox, PositionedBoxEnd, PositionedError, PositionedEvent, PositionedLimits,
     PositionedPage, PositionedPdfAccessibility, PositionedPdfAnnotation, PositionedRule,
-    PositionedSourceRef, PositionedSpecial, PositionedTextRun, TextUnit,
+    PositionedPdfGraphics, PositionedSourceRef, PositionedSpecial, PositionedTextRun, TextUnit,
 };
 
 const LEADER_ROUNDING_COMPENSATION: Scaled = Scaled::from_raw(10);
@@ -431,6 +431,16 @@ impl Lowerer<'_> {
                         limit: self.limits.max_depth,
                     })?,
                     marker: *marker,
+                }))?;
+            }
+            PageEffect::PdfLiteral { .. }
+            | PageEffect::PdfSetMatrix { .. }
+            | PageEffect::PdfSave
+            | PageEffect::PdfRestore => {
+                self.push(PositionedEvent::PdfGraphics(PositionedPdfGraphics {
+                    x: self.cur_h,
+                    y: self.cur_v,
+                    effect: effect.clone(),
                 }))?;
             }
             PageEffect::OpenOut { .. } | PageEffect::CloseOut { .. } | PageEffect::Write { .. } => {

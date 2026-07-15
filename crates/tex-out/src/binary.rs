@@ -2,7 +2,7 @@ use crate::{
     BoxNode, ContentHash, DiscKind, EffectSink, FontResource, FontResourceConstruction, GlueKind,
     GlueOrder, GlueSetRatio, GlueSign, GlueSpec, KernKind, LeaderPayload, PageArtifact, PageEffect,
     PageNode, PageToken, PdfAccessibilityEffect, PdfAnnotationEffect, TokenCatcode,
-    UnvalidatedPageArtifact,
+    PdfLiteralMode, UnvalidatedPageArtifact,
 };
 use std::fmt;
 use tex_arith::Scaled;
@@ -47,7 +47,11 @@ mod wire {
         pub const WRITE: u8 = 2;
         pub const SPECIAL: u8 = 3;
         pub const PDF_ACCESSIBILITY: u8 = 4;
-        // Tags 5..=15 are reserved by independently developed artifact effects.
+        pub const PDF_LITERAL: u8 = 5;
+        pub const PDF_SET_MATRIX: u8 = 6;
+        pub const PDF_SAVE: u8 = 7;
+        pub const PDF_RESTORE: u8 = 8;
+        // Tags 9..=15 are reserved by independently developed artifact effects.
         pub const PDF_ANNOTATION: u8 = 16;
     }
 
@@ -1454,6 +1458,21 @@ impl Writer {
                         }
                     }
                 }
+                PageEffect::PdfLiteral { mode, payload } => {
+                    self.u8(wire::effect::PDF_LITERAL);
+                    self.u8(match mode {
+                        PdfLiteralMode::Origin => 0,
+                        PdfLiteralMode::Page => 1,
+                        PdfLiteralMode::Direct => 2,
+                    });
+                    self.bytes(payload);
+                }
+                PageEffect::PdfSetMatrix { payload } => {
+                    self.u8(wire::effect::PDF_SET_MATRIX);
+                    self.bytes(payload);
+                }
+                PageEffect::PdfSave => self.u8(wire::effect::PDF_SAVE),
+                PageEffect::PdfRestore => self.u8(wire::effect::PDF_RESTORE),
             }
         }
     }
@@ -2066,6 +2085,25 @@ impl Reader<'_> {
                         }
                     })
                 }
+                wire::effect::PDF_LITERAL if version >= PRE_ANNOTATION_VERSION => PageEffect::PdfLiteral {
+                    mode: match self.u8()? {
+                        0 => PdfLiteralMode::Origin,
+                        1 => PdfLiteralMode::Page,
+                        2 => PdfLiteralMode::Direct,
+                        tag => {
+                            return Err(ParseError::InvalidTag {
+                                kind: "PDF literal mode",
+                                tag,
+                            });
+                        }
+                    },
+                    payload: self.bytes()?,
+                },
+                wire::effect::PDF_SET_MATRIX if version >= PRE_ANNOTATION_VERSION => PageEffect::PdfSetMatrix {
+                    payload: self.bytes()?,
+                },
+                wire::effect::PDF_SAVE if version >= PRE_ANNOTATION_VERSION => PageEffect::PdfSave,
+                wire::effect::PDF_RESTORE if version >= PRE_ANNOTATION_VERSION => PageEffect::PdfRestore,
                 tag => {
                     return Err(ParseError::InvalidTag {
                         kind: "effect",

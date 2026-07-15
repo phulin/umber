@@ -17,3 +17,8 @@ Umber additionally carries a minimal typed `Content::inline_image` builder for
 the `BI` dictionary, `ID` binary payload, and `EI` terminator. Upstream 0.15.0
 contains an explicit inline-image TODO; keeping the extension here prevents
 Type-3 PK glyph procedures from hand-authoring PDF framing downstream.
+
+Umber also adds `Content::verbatim_operations` as a deliberately narrow
+escape hatch for user-authored pdfTeX `\pdfliteral` payloads. The method owns
+content-stream separation/framing; all engine-generated operators continue to
+use the typed writer API.

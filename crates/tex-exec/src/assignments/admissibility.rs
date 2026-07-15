@@ -137,6 +137,10 @@ const fn admissibility(primitive: UnexpandablePrimitive) -> Admissibility {
         | UnexpandablePrimitive::PdfInterwordSpaceOff
         | UnexpandablePrimitive::PdfFakeSpace
         | UnexpandablePrimitive::PdfSpaceFont
+        | UnexpandablePrimitive::PdfLiteral
+        | UnexpandablePrimitive::PdfSetMatrix
+        | UnexpandablePrimitive::PdfSave
+        | UnexpandablePrimitive::PdfRestore
         | UnexpandablePrimitive::Lowercase
         | UnexpandablePrimitive::Uppercase
         | UnexpandablePrimitive::Cr

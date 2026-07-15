@@ -257,6 +257,11 @@ impl NodeStorage {
                     logical += (class.len() + payload.len()) as u64;
                     retained += (class.capacity() + payload.capacity()) as u64;
                 }
+                crate::node::Whatsit::PdfLiteral { payload, .. }
+                | crate::node::Whatsit::PdfSetMatrix { payload } => {
+                    logical += payload.len() as u64;
+                    retained += payload.capacity() as u64;
+                }
                 crate::node::Whatsit::CloseOut { .. }
                 | crate::node::Whatsit::DeferredWrite { .. }
                 | crate::node::Whatsit::PdfReferenceObject { .. }
@@ -265,6 +270,9 @@ impl NodeStorage {
                 | crate::node::Whatsit::PdfLinkStart { .. }
                 | crate::node::Whatsit::PdfLinkEnd { .. }
                 | crate::node::Whatsit::PdfRunningLink(_)
+                | crate::node::Whatsit::DeferredPdfLiteral { .. }
+                | crate::node::Whatsit::PdfSave
+                | crate::node::Whatsit::PdfRestore
                 | crate::node::Whatsit::Language { .. } => {}
             }
         }
@@ -349,6 +357,11 @@ impl NodeStorage {
                     payload_len += payload.len();
                     payload_capacity += payload.capacity();
                 }
+                crate::node::Whatsit::PdfLiteral { payload, .. }
+                | crate::node::Whatsit::PdfSetMatrix { payload } => {
+                    payload_len += payload.len();
+                    payload_capacity += payload.capacity();
+                }
                 crate::node::Whatsit::CloseOut { .. }
                 | crate::node::Whatsit::DeferredWrite { .. }
                 | crate::node::Whatsit::PdfReferenceObject { .. }
@@ -357,6 +370,9 @@ impl NodeStorage {
                 | crate::node::Whatsit::PdfLinkStart { .. }
                 | crate::node::Whatsit::PdfLinkEnd { .. }
                 | crate::node::Whatsit::PdfRunningLink(_)
+                | crate::node::Whatsit::DeferredPdfLiteral { .. }
+                | crate::node::Whatsit::PdfSave
+                | crate::node::Whatsit::PdfRestore
                 | crate::node::Whatsit::Language { .. } => {}
             }
         }

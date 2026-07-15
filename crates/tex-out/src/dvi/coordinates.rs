@@ -123,6 +123,7 @@ pub fn compare_page(
                 compare_event(positioned, ordinal, dvi.get(cursor), &wanted, "special")?;
                 cursor += 1;
             }
+            PositionedEvent::PdfGraphics(_) => {}
             PositionedEvent::TextRun(actual) => {
                 let first_code_x = actual
                     .units

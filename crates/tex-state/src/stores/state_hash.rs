@@ -1179,6 +1179,22 @@ impl Stores {
                 hasher.bytes(class.as_bytes());
                 hasher.bytes(payload);
             }
+            Whatsit::PdfLiteral { mode, payload } => {
+                hasher.tag(18);
+                hasher.u8(*mode as u8);
+                hasher.bytes(payload);
+            }
+            Whatsit::DeferredPdfLiteral { mode, tokens } => {
+                hasher.tag(19);
+                hasher.u8(*mode as u8);
+                self.hash_token_list_semantic(*tokens, hasher);
+            }
+            Whatsit::PdfSetMatrix { payload } => {
+                hasher.tag(20);
+                hasher.bytes(payload);
+            }
+            Whatsit::PdfSave => hasher.tag(21),
+            Whatsit::PdfRestore => hasher.tag(22),
             Whatsit::Language {
                 language,
                 left_hyphen_min,

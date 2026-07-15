@@ -365,7 +365,10 @@ impl Stores {
                 self.assert_live_child_node_list(choice.script_script);
             }
             Node::MathList(list) => self.assert_live_child_node_list(list.content),
-            Node::Whatsit(crate::node::Whatsit::DeferredWrite { tokens, .. }) => {
+            Node::Whatsit(
+                crate::node::Whatsit::DeferredWrite { tokens, .. }
+                | crate::node::Whatsit::DeferredPdfLiteral { tokens, .. },
+            ) => {
                 self.assert_live_token_list(*tokens);
             }
             Node::Whatsit(
@@ -378,6 +381,10 @@ impl Stores {
                 | crate::node::Whatsit::PdfLinkStart { .. }
                 | crate::node::Whatsit::PdfLinkEnd { .. }
                 | crate::node::Whatsit::PdfRunningLink(_)
+                | crate::node::Whatsit::PdfLiteral { .. }
+                | crate::node::Whatsit::PdfSetMatrix { .. }
+                | crate::node::Whatsit::PdfSave
+                | crate::node::Whatsit::PdfRestore
                 | crate::node::Whatsit::Language { .. },
             ) => {}
             Node::Kern { .. }
