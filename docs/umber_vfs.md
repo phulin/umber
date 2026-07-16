@@ -115,6 +115,12 @@ visible.
 
 Canonicalization is syntax, not search. Default extensions and search-area
 ordering belong to the TeX or bibliography resolver that requested a file.
+TeX names containing a parent component never become virtual paths. The
+compile session instead emits an opaque, canonical request key while retaining
+the original spelling for client-owned lookup policy; any supplied bytes must
+still be registered at a separately validated `/texlive/...` path. This lets a
+native project resolver honor host-relative names without permitting traversal
+inside either VFS root.
 
 ## File representation and identity
 

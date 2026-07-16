@@ -373,7 +373,9 @@ impl<'a> VirtualFileResolver<'a> {
                 self.read_snapshot(input, file)
             }
             RequestedFile::Remote { user_path, key } => {
-                if let Some(file) = self.snapshot_file(&user_path)? {
+                if let Some(user_path) = user_path
+                    && let Some(file) = self.snapshot_file(&user_path)?
+                {
                     return self.read_snapshot(input, file);
                 }
                 if let Some(path) = self.resolved_paths.get(&key) {

@@ -138,10 +138,28 @@ fn virtual_paths_normalize_dots_and_reject_escapes_and_urls() {
 }
 
 #[test]
-fn engine_path_rejections_and_missing_main_are_typed() {
-    let mut traversal = session("\\input ../secret \\end");
+fn parent_relative_paths_are_opaque_requests_and_missing_main_is_typed() {
+    let mut traversal = session("\\input ../secret \\input ../secret.tex \\end");
+    let missing = requests(traversal.compile_attempt());
+    assert_eq!(missing.len(), 1);
+    assert_eq!(missing[0].original_name(), "../secret");
+    assert!(missing[0].key().name().starts_with(".host-path/"));
+    assert!(!missing[0].key().name().contains(".."));
+    traversal
+        .provide_resolved_file(
+            missing[0].key().clone(),
+            "/texlive/local/secret.tex",
+            b"% host-relative input\n".to_vec(),
+        )
+        .expect("host-relative resource");
     assert!(matches!(
         traversal.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+
+    let mut incomplete = session("\\input .. \\end");
+    assert!(matches!(
+        incomplete.compile_attempt(),
         CompileAttemptResult::Error(CompileError::InvalidRequestedPath { .. })
     ));
 
