@@ -33,12 +33,12 @@ the thread dictionary's default `/I << /Title (...) >>` from that identifier.
 
 ## Ownership and reserved codecs
 
-| Surface | Contract | Implementation issue |
-| --- | --- | --- |
-| `\pdfdest`, `\pdfdestmargin`, `\pdfsuppresswarningdupdest` | node scanner, placement, duplicate policy, destinations and name tree | `umber2-kbz0.16.3`, with warning threshold in `.16.1` |
-| `\pdfoutline` | immediate document state, shared action scanner, hierarchy and final outline dictionaries | `umber2-kbz0.16.4` |
-| `\pdfthread`, `\pdfstartthread`, `\pdfendthread`, `\pdfthreadmargin` | bead nodes, page-local running state, thread array and circular bead graph | `umber2-kbz0.16.5` |
-| all structures, diagnostics, replay, and render parity | hermetic INITEX and PDF corpus | `umber2-kbz0.16.6` |
+| Surface                                                              | Contract                                                                                  | Implementation issue                                  |
+| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `\pdfdest`, `\pdfdestmargin`, `\pdfsuppresswarningdupdest`           | node scanner, placement, duplicate policy, destinations and name tree                     | `umber2-kbz0.16.3`, with warning threshold in `.16.1` |
+| `\pdfoutline`                                                        | immediate document state, shared action scanner, hierarchy and final outline dictionaries | `umber2-kbz0.16.4`                                    |
+| `\pdfthread`, `\pdfstartthread`, `\pdfendthread`, `\pdfthreadmargin` | bead nodes, page-local running state, thread array and circular bead graph                | `umber2-kbz0.16.5`                                    |
+| all structures, diagnostics, replay, and render parity               | hermetic INITEX and PDF corpus                                                            | `umber2-kbz0.16.6`                                    |
 
 The five new unexpandable stored meanings are reserved consecutively at
 260 through 264 in source-inventory order: `pdfoutline`, `pdfdest`,
@@ -296,16 +296,16 @@ The `tex_exec` rows run pdfTeX 1.40.27 in INITEX mode and normalize diagnostics;
 the `pdf` rows pin reference PDF, normalized graph, exact Umber bytes, Poppler
 render, digest chain, and retained-session replay.
 
-| Case | Required observations |
-| --- | --- |
-| `pdf_navigation_dest_scan` | name/num and struct identities; all eight kinds; absent/present, zero, and negative zoom; running/explicit `fitr`; longest-keyword order; nonpositive, overflow, missing-id, and missing-kind diagnostics |
-| `pdf_navigation_dest_lifecycle` | page ownership, leaders, Form rejection, matrix/no-matrix coordinates, live positive/zero/negative margin, pre-ship and post-ship duplicates, live suppression `-1/0/1`, missing regular and structure destinations |
-| `pdf_navigation_outline_scan` | all shared action variants and invalid combinations; count absent/zero/positive/negative; byte, escaped, and UTF-8-input title bytes; attr ordering; three-object allocation without changing `pdflastobj` |
-| `pdf_navigation_outline_tree` | multilevel open/closed tree, automatic ascent, root visible count, all sibling/parent/child links, forward page/destination references, empty omission, snapshot replay |
-| `pdf_navigation_thread_scan` | named/numeric ids; dimension permutations and running values; attr placement/expansion; missing/nonpositive/overflow id diagnostics; DVI-mode rejection |
-| `pdf_navigation_thread_lifecycle` | one-shot h/v beads, start/end in a vlist, hlist errors, different-level error, leaders, Form rejection, page reset, automatic vbox beads, live positive/zero/negative margins, failed-page rollback |
-| `pdf_navigation_thread_graph` | page `/B`, catalog `/Threads`, circular one/many-bead links, first-only `/T`, page and rectangle ownership, last nonempty attr wins, default named/numeric titles, missing-thread fixed fallback |
-| `navigation_structures` | more than six deliberately unsorted escaped names, balanced name-tree levels and limits, mixed outline/thread/destination graph, multiple pages, exact deterministic ids, normalized dictionaries/arrays, unchanged page pixels |
+| Case                              | Required observations                                                                                                                                                                                                           |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pdf_navigation_dest_scan`        | name/num and struct identities; all eight kinds; absent/present, zero, and negative zoom; running/explicit `fitr`; longest-keyword order; nonpositive, overflow, missing-id, and missing-kind diagnostics                       |
+| `pdf_navigation_dest_lifecycle`   | page ownership, leaders, Form rejection, matrix/no-matrix coordinates, live positive/zero/negative margin, pre-ship and post-ship duplicates, live suppression `-1/0/1`, missing regular and structure destinations             |
+| `pdf_navigation_outline_scan`     | all shared action variants and invalid combinations; count absent/zero/positive/negative; byte, escaped, and UTF-8-input title bytes; attr ordering; three-object allocation without changing `pdflastobj`                      |
+| `pdf_navigation_outline_tree`     | multilevel open/closed tree, automatic ascent, root visible count, all sibling/parent/child links, forward page/destination references, empty omission, snapshot replay                                                         |
+| `pdf_navigation_thread_scan`      | named/numeric ids; dimension permutations and running values; attr placement/expansion; missing/nonpositive/overflow id diagnostics; DVI-mode rejection                                                                         |
+| `pdf_navigation_thread_lifecycle` | one-shot h/v beads, start/end in a vlist, hlist errors, different-level error, leaders, Form rejection, page reset, automatic vbox beads, live positive/zero/negative margins, failed-page rollback                             |
+| `pdf_navigation_thread_graph`     | page `/B`, catalog `/Threads`, circular one/many-bead links, first-only `/T`, page and rectangle ownership, last nonempty attr wins, default named/numeric titles, missing-thread fixed fallback                                |
+| `navigation_structures`           | more than six deliberately unsorted escaped names, balanced name-tree levels and limits, mixed outline/thread/destination graph, multiple pages, exact deterministic ids, normalized dictionaries/arrays, unchanged page pixels |
 
 The focused completion sequence is the new scanner/state tests, the committed
 navigation corpus, `cargo test --workspace --tests`, and `scripts/check.sh`.

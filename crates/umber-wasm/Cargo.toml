@@ -2,26 +2,26 @@
 name = "umber-wasm"
 version.workspace = true
 edition.workspace = true
-description = "Browser WebAssembly build of the Umber TeX engine"
-repository = "https://github.com/phulin/umber"
 publish = false
+repository = "https://github.com/phulin/umber"
+description = "Browser WebAssembly build of the Umber TeX engine"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 js-sys = "0.3"
+tex-state = { path = "../tex-state" }
 umber = { path = "../umber" }
 wasm-bindgen = "0.2"
-tex-state = { path = "../tex-state" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }
 getrandom04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
 
 [dev-dependencies]
-wasm-bindgen-test = "0.3"
 wasm-bindgen-futures = "0.4"
+wasm-bindgen-test = "0.3"
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = ["-Oz"]

@@ -95,17 +95,17 @@ The initial implementation does not:
 The implementation is split at semantic ownership boundaries:
 
 ```text
-                           bib-engine
-                public session, pipeline, result API
-                                 |
-      +----------+----------+----------+----------+
-      |          |          |          |          |
- bib-input   bib-graph   bib-sort   bib-label  bib-output
-      |          |          |          |          |
-      +----------+----------+----------+----------+
-                              bib-model
-                                 |
-                             bib-unicode
+                          bib-engine
+               public session, pipeline, result API
+                                |
+     +----------+----------+----------+----------+
+     |          |          |          |          |
+bib-input   bib-graph   bib-sort   bib-label  bib-output
+     |          |          |          |          |
+     +----------+----------+----------+----------+
+                             bib-model
+                                |
+                            bib-unicode
 ```
 
 The intended packages are:

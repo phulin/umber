@@ -7,6 +7,7 @@ cd "$repo_root"
 # Local formatting and lint gate. Tests are run explicitly by callers so this
 # script does not duplicate their test execution.
 
+dprint check
 cargo fmt --all --check
 CARGO_TARGET_DIR="${CLIPPY_TARGET_DIR:-target/clippy}" \
   cargo clippy --workspace --all-targets --quiet -- -D warnings

@@ -556,7 +556,7 @@ earlier phases, not merely on their API presence.
 - Salsa's red/green algorithm supplies changed-at validation and backdating of
   semantically unchanged recomputations:
   <https://salsa-rs.github.io/salsa/reference/algorithm.html>.
-- *Fast Typesetting with Incremental Compilation* discusses page counters,
+- _Fast Typesetting with Incremental Compilation_ discusses page counters,
   footnotes, cyclic document dependencies, and constraint-based layout caches:
   <https://doi.org/10.13140/RG.2.2.15606.88642>.
 - The TeX `memoize` package documents why opaque externalized boxes cannot

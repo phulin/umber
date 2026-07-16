@@ -14,7 +14,7 @@ grammar in the pdfTeX manual, the 1.40.22 NEWS entry, and the public-domain
 either `reserveobjnum`, which only reserves an object and updates
 `\pdflastannot`, or an optional `useobjnum <positive integer>`, zero or more
 `width`, `height`, and `depth` clauses in any order, followed by expanded
-general text. Omitted dimensions are *running*, not zero. A normal annotation
+general text. Omitted dimensions are _running_, not zero. A normal annotation
 allocates its object while scanning and appends a whatsit; it is emitted only
 if that whatsit reaches shipout. `useobjnum` must consume a compatible reserved
 object and must not allocate a replacement. A focused 1.40.27 probe observes

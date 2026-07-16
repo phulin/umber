@@ -41,13 +41,13 @@ reverts the representation cleanly while retaining independently useful
 On `aarch64-apple-darwin` with Rust 1.93.0, the original pre-arena layouts at
 the Phase 1 baseline were:
 
-| Type | Size |
-| --- | ---: |
-| `Node` | 72 bytes |
-| `BoxNode` | 44 bytes |
-| `UnsetNode` | 44 bytes |
-| `Whatsit` | 48 bytes |
-| `NodeListId` | 8 bytes |
+| Type         |     Size |
+| ------------ | -------: |
+| `Node`       | 72 bytes |
+| `BoxNode`    | 44 bytes |
+| `UnsetNode`  | 44 bytes |
+| `Whatsit`    | 48 bytes |
+| `NodeListId` |  8 bytes |
 
 Generation-tagged epoch identities later changed the decoded construction
 layouts to `Node` 80 bytes, `BoxNode`/`UnsetNode` 48 bytes, and `NodeListId` 16
@@ -65,33 +65,33 @@ Modern metrics and DVI output. `expand.tex` did not finish its 100,000
 expansion-only iterations in five minutes, so its exact 56-node producing
 suffix was measured separately after the same preamble.
 
-| Workload | Appended nodes |
-| --- | ---: |
-| `dvi.tex` | 4,331,406 |
-| `expand.tex` node-producing suffix | 56 |
-| `paragraph-wide.tex` | 1,275,891 |
-| `paragraph-narrow.tex` | 655,891 |
-| `math.tex` | 6,040,698 |
-| `math-nested.tex` | 4,161,034 |
-| `pages.tex` | 1,611,063 |
-| **Total** | **18,076,039** |
+| Workload                           | Appended nodes |
+| ---------------------------------- | -------------: |
+| `dvi.tex`                          |      4,331,406 |
+| `expand.tex` node-producing suffix |             56 |
+| `paragraph-wide.tex`               |      1,275,891 |
+| `paragraph-narrow.tex`             |        655,891 |
+| `math.tex`                         |      6,040,698 |
+| `math-nested.tex`                  |      4,161,034 |
+| `pages.tex`                        |      1,611,063 |
+| **Total**                          | **18,076,039** |
 
-| Node kind | Count | Share | Proposed storage |
-| --- | ---: | ---: | --- |
-| char | 8,224,274 | 45.50% | inline |
-| ligature | 9,502 | 0.05% | inline |
-| kern | 2,130,236 | 11.78% | inline |
-| glue | 1,608,403 | 8.90% | inline unless leader-bearing |
-| penalty | 61,117 | 0.34% | inline |
-| rule | 374,702 | 2.07% | sidecar |
-| hlist | 2,857,357 | 15.81% | box sidecar |
-| vlist | 561,392 | 3.11% | box sidecar |
-| whatsit | 1,001 | 0.01% | sidecar |
-| mark | 8,043 | 0.04% | sidecar |
-| math on/off | 60,012 | 0.33% | inline |
-| math noad | 1,960,000 | 10.84% | sidecar |
-| fraction noad | 190,000 | 1.05% | sidecar |
-| math style | 30,000 | 0.17% | inline |
+| Node kind     |     Count |  Share | Proposed storage             |
+| ------------- | --------: | -----: | ---------------------------- |
+| char          | 8,224,274 | 45.50% | inline                       |
+| ligature      |     9,502 |  0.05% | inline                       |
+| kern          | 2,130,236 | 11.78% | inline                       |
+| glue          | 1,608,403 |  8.90% | inline unless leader-bearing |
+| penalty       |    61,117 |  0.34% | inline                       |
+| rule          |   374,702 |  2.07% | sidecar                      |
+| hlist         | 2,857,357 | 15.81% | box sidecar                  |
+| vlist         |   561,392 |  3.11% | box sidecar                  |
+| whatsit       |     1,001 |  0.01% | sidecar                      |
+| mark          |     8,043 |  0.04% | sidecar                      |
+| math on/off   |    60,012 |  0.33% | inline                       |
+| math noad     | 1,960,000 | 10.84% | sidecar                      |
+| fraction noad |   190,000 |  1.05% | sidecar                      |
+| math style    |    30,000 |  0.17% | inline                       |
 
 No unset, discretionary, insertion, math-choice, math-list, nonscript, or
 adjust nodes occurred in these fixed workloads; they remain fully supported.
@@ -132,32 +132,32 @@ serialization format.
 +----------------+------------------------------------------+
 ```
 
-| Tag | Kind | Payload, low bits first |
-| ---: | --- | --- |
-| 0 | char | USV 21, `FontId` 32 |
-| 1 | ligature | ch 8, left original 8, right original 8, `FontId` 32 |
-| 2 | kern | signed `Scaled` bits 32, `KernKind` 2 |
-| 3 | glue | `GlueId` 32, `GlueKind` 6; leaderless only |
-| 4 | penalty | signed `i32` bits 32 |
-| 5 | math-on | signed `Scaled` bits 32 |
-| 6 | math-off | signed `Scaled` bits 32 |
-| 7 | math-style | `MathStyle` 2 |
-| 8 | nonscript | zero |
-| 9 | hlist | box sidecar index 32 |
-| 10 | vlist | box sidecar index 32 |
-| 11 | unset | unset sidecar index 32 |
-| 12 | rule | rule sidecar index 32 |
-| 13 | leader glue | leader-glue sidecar index 32 |
-| 14 | discretionary | disc sidecar index 32 |
-| 15 | mark | mark sidecar index 32 |
-| 16 | insertion | insertion sidecar index 32 |
-| 17 | whatsit | whatsit sidecar index 32 |
-| 18 | math noad | noad sidecar index 32 |
-| 19 | fraction noad | fraction sidecar index 32 |
-| 20 | math choice | choice sidecar index 32 |
-| 21 | math list | math-list sidecar index 32 |
-| 22 | adjust | adjust sidecar index 32 |
-| 23..31 | reserved | invalid until a versioned in-memory migration assigns one |
+|    Tag | Kind          | Payload, low bits first                                   |
+| -----: | ------------- | --------------------------------------------------------- |
+|      0 | char          | USV 21, `FontId` 32                                       |
+|      1 | ligature      | ch 8, left original 8, right original 8, `FontId` 32      |
+|      2 | kern          | signed `Scaled` bits 32, `KernKind` 2                     |
+|      3 | glue          | `GlueId` 32, `GlueKind` 6; leaderless only                |
+|      4 | penalty       | signed `i32` bits 32                                      |
+|      5 | math-on       | signed `Scaled` bits 32                                   |
+|      6 | math-off      | signed `Scaled` bits 32                                   |
+|      7 | math-style    | `MathStyle` 2                                             |
+|      8 | nonscript     | zero                                                      |
+|      9 | hlist         | box sidecar index 32                                      |
+|     10 | vlist         | box sidecar index 32                                      |
+|     11 | unset         | unset sidecar index 32                                    |
+|     12 | rule          | rule sidecar index 32                                     |
+|     13 | leader glue   | leader-glue sidecar index 32                              |
+|     14 | discretionary | disc sidecar index 32                                     |
+|     15 | mark          | mark sidecar index 32                                     |
+|     16 | insertion     | insertion sidecar index 32                                |
+|     17 | whatsit       | whatsit sidecar index 32                                  |
+|     18 | math noad     | noad sidecar index 32                                     |
+|     19 | fraction noad | fraction sidecar index 32                                 |
+|     20 | math choice   | choice sidecar index 32                                   |
+|     21 | math list     | math-list sidecar index 32                                |
+|     22 | adjust        | adjust sidecar index 32                                   |
+| 23..31 | reserved      | invalid until a versioned in-memory migration assigns one |
 
 The 32-bit sidecar index is intentionally stricter than the available 59-bit
 payload. It matches Rust vector indexing limits already enforced by the arena,
@@ -505,22 +505,22 @@ code on the same aarch64 Apple host with Rust 1.93.0, clean release builds,
 identical synthetic metrics, and Criterion warmup plus 100 samples. Listed
 intervals are Criterion 95% confidence intervals and are disjoint.
 
-| hpack kernel | Before | After | Change |
-| --- | ---: | ---: | ---: |
-| same font, 64 chars | 125.41 ns [123.73, 128.26] | 79.547 ns [79.449, 79.674] | -36.57% |
-| same font, 4,096 chars | 7.8342 us [7.5418, 8.4064] | 4.5300 us [4.5130, 4.5517] | -42.18% |
+| hpack kernel                   |                     Before |                      After |  Change |
+| ------------------------------ | -------------------------: | -------------------------: | ------: |
+| same font, 64 chars            | 125.41 ns [123.73, 128.26] | 79.547 ns [79.449, 79.674] | -36.57% |
+| same font, 4,096 chars         | 7.8342 us [7.5418, 8.4064] | 4.5300 us [4.5130, 4.5517] | -42.18% |
 | mixed/interrupted, 4,096 nodes | 8.5760 us [8.2778, 9.0159] | 6.8197 us [6.8017, 6.8390] | -20.47% |
 
 End-to-end runs rebuilt each revision outside timing and used one warmup plus
 ten runs with identical committed input, Computer Modern TFM files, and DVI
 validation. These ranges are observed minima/maxima.
 
-| Plain TeX workload | Before | After | Change |
-| --- | ---: | ---: | ---: |
-| paragraph-wide | 0.212 s [0.210, 0.218] | 0.199 s [0.197, 0.201] | -6.13% |
-| paragraph-narrow | 0.112 s [0.109, 0.125] | 0.102 s [0.101, 0.104] | -8.93% |
-| pages | 0.414 s [0.406, 0.448] | 0.425 s [0.403, 0.444] | +2.66% (ranges overlap) |
-| dvi | 0.545 s [0.531, 0.565] | 0.530 s [0.526, 0.535] | -2.75% (ranges overlap) |
+| Plain TeX workload |                 Before |                  After |                  Change |
+| ------------------ | ---------------------: | ---------------------: | ----------------------: |
+| paragraph-wide     | 0.212 s [0.210, 0.218] | 0.199 s [0.197, 0.201] |                  -6.13% |
+| paragraph-narrow   | 0.112 s [0.109, 0.125] | 0.102 s [0.101, 0.104] |                  -8.93% |
+| pages              | 0.414 s [0.406, 0.448] | 0.425 s [0.403, 0.444] | +2.66% (ranges overlap) |
+| dvi                | 0.545 s [0.531, 0.565] | 0.530 s [0.526, 0.535] | -2.75% (ranges overlap) |
 
 No end-to-end workload regressed by 5%. The expansion-only workload was
 excluded after a trial took roughly three minutes per run: its separately
@@ -576,12 +576,12 @@ sample, verifies byte-identical DVI hashes across samples, and runs each input
 in a fresh process. The byte totals and DVI hashes were deterministic across
 all five runs. RSS is the observed five-run range.
 
-| Workload | End logical | End retained payload | Largest storage logical/retained | Promotion scratch logical/retained | RSS range |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| paragraph-wide | 15,531,048 | 17,841,974 | 11,790,224 / 13,731,328 | 4,384 / 8,704 | 64,569,344–67,207,168 |
-| pages | 32,649,279 | 45,834,520 | 19,956,135 / 29,949,952 | 21,536 / 55,296 | 76,513,280–79,855,616 |
-| math | 32,354 | 52,032 | 21,477 / 36,800 | 2,464 / 4,864 | 71,663,616–81,461,248 |
-| math-nested | 57,929 | 105,344 | 38,694 / 74,368 | 4,960 / 9,728 | 44,777,472–49,594,368 |
+| Workload       | End logical | End retained payload | Largest storage logical/retained | Promotion scratch logical/retained |             RSS range |
+| -------------- | ----------: | -------------------: | -------------------------------: | ---------------------------------: | --------------------: |
+| paragraph-wide |  15,531,048 |           17,841,974 |          11,790,224 / 13,731,328 |                      4,384 / 8,704 | 64,569,344–67,207,168 |
+| pages          |  32,649,279 |           45,834,520 |          19,956,135 / 29,949,952 |                    21,536 / 55,296 | 76,513,280–79,855,616 |
+| math           |      32,354 |               52,032 |                  21,477 / 36,800 |                      2,464 / 4,864 | 71,663,616–81,461,248 |
+| math-nested    |      57,929 |              105,344 |                  38,694 / 74,368 |                      4,960 / 9,728 | 44,777,472–49,594,368 |
 
 The math inputs overwrite one survivor root 20,000 and 10,000 times, so their
 small end state is expected rather than missing accounting: only the final
@@ -609,51 +609,51 @@ The peak canonical-storage column distribution follows. Each cell is
 `logical length / retained capacity`; zero-length math rows with capacity show
 real buffers retained after epoch truncation.
 
-| Column | Elem B | paragraph-wide | pages | math | math-nested |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| `words` | 8 | 1,275,891/1,417,216 | 1,611,063/2,162,688 | 698/1,024 | 1,034/2,048 |
-| `boxes.width` | 4 | 24,224/37,376 | 126,453/245,760 | 239/256 | 458/768 |
-| `boxes.height` | 4 | 24,224/37,376 | 126,453/245,760 | 239/256 | 458/768 |
-| `boxes.depth` | 4 | 24,224/37,376 | 126,453/245,760 | 239/256 | 458/768 |
-| `boxes.shift` | 4 | 24,224/37,376 | 126,453/245,760 | 239/256 | 458/768 |
-| `boxes.display` | 1 | 24,224/37,376 | 126,453/245,760 | 239/256 | 458/768 |
-| `boxes.glue_set` | 8 | 24,224/37,376 | 126,453/245,760 | 239/256 | 458/768 |
-| `boxes.glue_sign` | 1 | 24,224/37,376 | 126,453/245,760 | 239/256 | 458/768 |
-| `boxes.glue_order` | 1 | 24,224/37,376 | 126,453/245,760 | 239/256 | 458/768 |
-| `boxes.children` | 16 | 24,224/37,376 | 126,453/245,760 | 239/256 | 458/768 |
-| `unsets.kind` | 1 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `unsets.width` | 4 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `unsets.height` | 4 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `unsets.depth` | 4 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `unsets.span_count` | 2 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `unsets.stretch` | 4 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `unsets.stretch_order` | 1 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `unsets.shrink` | 4 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `unsets.shrink_order` | 1 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `unsets.children` | 16 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `rules` | 24 | 0/0 | 8,545/16,384 | 21/32 | 39/64 |
-| `leaders` | 64 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `discs` | 56 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `marks` | 8 | 0/0 | 8,043/14,336 | 0/0 | 0/0 |
-| `insertions.class` | 2 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `insertions.size` | 4 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `insertions.split_top_skip` | 4 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `insertions.split_max_depth` | 4 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `insertions.floating_penalty` | 4 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `insertions.content` | 16 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `whatsits` | 48 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `noads.kind` | 8 | 0/0 | 0/0 | 0/128 | 0/128 |
-| `noads.nucleus` | 24 | 0/0 | 0/0 | 0/128 | 0/128 |
-| `noads.subscript` | 24 | 0/0 | 0/0 | 0/128 | 0/128 |
-| `noads.superscript` | 24 | 0/0 | 0/0 | 0/128 | 0/128 |
-| `fractions` | 56 | 0/0 | 0/0 | 0/8 | 0/16 |
-| `choices` | 64 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `math_lists` | 24 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `adjusts` | 16 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `whatsits.owned_strings` | 1 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `whatsits.owned_payloads` | 1 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `identity_tags` | 16 | 22,561/32,768 | 56,697/65,536 | 213/256 | 408/512 |
-| `spans` | 8 | 22,561/32,768 | 56,697/65,536 | 213/256 | 408/512 |
+| Column                        | Elem B |      paragraph-wide |               pages |      math | math-nested |
+| ----------------------------- | -----: | ------------------: | ------------------: | --------: | ----------: |
+| `words`                       |      8 | 1,275,891/1,417,216 | 1,611,063/2,162,688 | 698/1,024 | 1,034/2,048 |
+| `boxes.width`                 |      4 |       24,224/37,376 |     126,453/245,760 |   239/256 |     458/768 |
+| `boxes.height`                |      4 |       24,224/37,376 |     126,453/245,760 |   239/256 |     458/768 |
+| `boxes.depth`                 |      4 |       24,224/37,376 |     126,453/245,760 |   239/256 |     458/768 |
+| `boxes.shift`                 |      4 |       24,224/37,376 |     126,453/245,760 |   239/256 |     458/768 |
+| `boxes.display`               |      1 |       24,224/37,376 |     126,453/245,760 |   239/256 |     458/768 |
+| `boxes.glue_set`              |      8 |       24,224/37,376 |     126,453/245,760 |   239/256 |     458/768 |
+| `boxes.glue_sign`             |      1 |       24,224/37,376 |     126,453/245,760 |   239/256 |     458/768 |
+| `boxes.glue_order`            |      1 |       24,224/37,376 |     126,453/245,760 |   239/256 |     458/768 |
+| `boxes.children`              |     16 |       24,224/37,376 |     126,453/245,760 |   239/256 |     458/768 |
+| `unsets.kind`                 |      1 |                 0/0 |                 0/0 |       0/0 |         0/0 |
+| `unsets.width`                |      4 |                 0/0 |                 0/0 |       0/0 |         0/0 |
+| `unsets.height`               |      4 |                 0/0 |                 0/0 |       0/0 |         0/0 |
+| `unsets.depth`                |      4 |                 0/0 |                 0/0 |       0/0 |         0/0 |
+| `unsets.span_count`           |      2 |                 0/0 |                 0/0 |       0/0 |         0/0 |
+| `unsets.stretch`              |      4 |                 0/0 |                 0/0 |       0/0 |         0/0 |
+| `unsets.stretch_order`        |      1 |                 0/0 |                 0/0 |       0/0 |         0/0 |
+| `unsets.shrink`               |      4 |                 0/0 |                 0/0 |       0/0 |         0/0 |
+| `unsets.shrink_order`         |      1 |                 0/0 |                 0/0 |       0/0 |         0/0 |
+| `unsets.children`             |     16 |                 0/0 |                 0/0 |       0/0 |         0/0 |
+| `rules`                       |     24 |                 0/0 |        8,545/16,384 |     21/32 |       39/64 |
+| `leaders`                     |     64 |                 0/0 |                 0/0 |       0/0 |         0/0 |
+| `discs`                       |     56 |                 0/0 |                 0/0 |       0/0 |         0/0 |
+| `marks`                       |      8 |                 0/0 |        8,043/14,336 |       0/0 |         0/0 |
+| `insertions.class`            |      2 |                 0/0 |                 0/0 |       0/0 |         0/0 |
+| `insertions.size`             |      4 |                 0/0 |                 0/0 |       0/0 |         0/0 |
+| `insertions.split_top_skip`   |      4 |                 0/0 |                 0/0 |       0/0 |         0/0 |
+| `insertions.split_max_depth`  |      4 |                 0/0 |                 0/0 |       0/0 |         0/0 |
+| `insertions.floating_penalty` |      4 |                 0/0 |                 0/0 |       0/0 |         0/0 |
+| `insertions.content`          |     16 |                 0/0 |                 0/0 |       0/0 |         0/0 |
+| `whatsits`                    |     48 |                 0/0 |                 0/0 |       0/0 |         0/0 |
+| `noads.kind`                  |      8 |                 0/0 |                 0/0 |     0/128 |       0/128 |
+| `noads.nucleus`               |     24 |                 0/0 |                 0/0 |     0/128 |       0/128 |
+| `noads.subscript`             |     24 |                 0/0 |                 0/0 |     0/128 |       0/128 |
+| `noads.superscript`           |     24 |                 0/0 |                 0/0 |     0/128 |       0/128 |
+| `fractions`                   |     56 |                 0/0 |                 0/0 |       0/8 |        0/16 |
+| `choices`                     |     64 |                 0/0 |                 0/0 |       0/0 |         0/0 |
+| `math_lists`                  |     24 |                 0/0 |                 0/0 |       0/0 |         0/0 |
+| `adjusts`                     |     16 |                 0/0 |                 0/0 |       0/0 |         0/0 |
+| `whatsits.owned_strings`      |      1 |                 0/0 |                 0/0 |       0/0 |         0/0 |
+| `whatsits.owned_payloads`     |      1 |                 0/0 |                 0/0 |       0/0 |         0/0 |
+| `identity_tags`               |     16 |       22,561/32,768 |       56,697/65,536 |   213/256 |     408/512 |
+| `spans`                       |      8 |       22,561/32,768 |       56,697/65,536 |   213/256 |     408/512 |
 
 The remeasurement confirms the current construction layouts: `Node` is 80
 bytes, `BoxNode` and `UnsetNode` are 48 bytes, and `NodeListId` is 16 bytes.
@@ -670,11 +670,11 @@ budget gate; its intervals are Criterion 95% confidence intervals. The
 generation-tagged baseline replaces the earlier packed-handle means and keeps
 the existing 10% cross-run tolerance.
 
-| hpack kernel | Generation-tagged mean | 95% interval |
-| --- | ---: | ---: |
-| same font, 64 chars | 87.431 ns | 85.621–90.465 ns |
-| same font, 4,096 chars | 4.6099 us | 4.5877–4.6355 us |
-| mixed/interrupted, 4,096 nodes | 7.0782 us | 7.0624–7.0954 us |
+| hpack kernel                   | Generation-tagged mean |     95% interval |
+| ------------------------------ | ---------------------: | ---------------: |
+| same font, 64 chars            |              87.431 ns | 85.621–90.465 ns |
+| same font, 4,096 chars         |              4.6099 us | 4.5877–4.6355 us |
+| mixed/interrupted, 4,096 nodes |              7.0782 us | 7.0624–7.0954 us |
 
 The wider live handle and extra arena lookup do not materially change the two
 long-run kernels relative to the earlier packed-handle results; the 64-character
@@ -684,14 +684,14 @@ remain well below the prior Phase 6 ranges, and stale-handle lookup remains one
 bounds check, one tag comparison, and one span-table load. No representation
 optimization was therefore adopted.
 
-| Current Plain TeX workload | Mean | Range |
-| --- | ---: | ---: |
-| paragraph-wide | 0.145 s | 0.144–0.146 s |
-| paragraph-narrow | 0.084 s | 0.083–0.085 s |
-| pages | 0.285 s | 0.275–0.294 s |
-| dvi | 0.510 s | 0.476–0.566 s |
-| math | 0.806 s | 0.795–0.825 s |
-| math-nested | 0.548 s | 0.532–0.567 s |
+| Current Plain TeX workload |    Mean |         Range |
+| -------------------------- | ------: | ------------: |
+| paragraph-wide             | 0.145 s | 0.144–0.146 s |
+| paragraph-narrow           | 0.084 s | 0.083–0.085 s |
+| pages                      | 0.285 s | 0.275–0.294 s |
+| dvi                        | 0.510 s | 0.476–0.566 s |
+| math                       | 0.806 s | 0.795–0.825 s |
+| math-nested                | 0.548 s | 0.532–0.567 s |
 
 All measured invocations completed successfully. The memory suite additionally
 verified one stable DVI SHA-256 per workload across all five fresh processes.
@@ -713,20 +713,20 @@ end-to-end regression ceiling.
 
 ## 11. Validation matrix
 
-| Area | Required cases |
-| --- | --- |
-| Layout | compile-time 16-byte handle and 8-byte node-word assertions; every tag; reserved tags rejected; signed extrema; Unicode scalar validation; TFM ligature bounds |
+| Area            | Required cases                                                                                                                                                                                                                                                                                    |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Layout          | compile-time 16-byte handle and 8-byte node-word assertions; every tag; reserved tags rejected; signed extrema; Unicode scalar validation; TFM ligature bounds                                                                                                                                    |
 | Handle identity | epoch generation/namespace/slot validation; equal and covering reuse; retained prefix; fork ancestry; survivor inherited roots plus sibling-key separation; survivor zero/maxima; start+len overflow; empty lists; max root; optional box-register null; raw constructors inaccessible downstream |
-| Sidecars | every kind; zero/max indexes; character/ligature origin alignment; leader glue; owned whatsit payloads; no word published without a row; column lengths agree |
-| Bottom-up graph | epoch children, mixed survivor children, shared spans, deep graphs, cycles/forward references rejected |
-| Rollback | atomic identity/storage mark; truncate all columns; arbitrary rollback/reappend never revives stale ids; retained capacities distinguished from live bytes; shipout release |
-| Survivors | promotion, process-unique root folding, sibling-fork foreign lookup rejection, deterministic key exhaustion, refcounts, journal-held owners, group exit, root non-reuse, buffer recycling, nested boxes/math/leader payloads |
-| Access boundary | compile-fail probes for raw words, sidecars, constructors, partial marks, mutable views; shadow remains production-like |
-| Hash/replay | equal logical graphs with different sidecar/root/recycling histories hash equally; changed fields differ; rollback convergence; deep iterative traversal |
-| Kernels | hpack/vpack/vtop, vertical breaking, line breaking, diagnostics, page builder, insertion/mark handling, math lowering |
-| Width runs | empty/short/long runs, font switch, missing char, ligature, overflow behavior, scalar/SIMD exact equality |
-| Output | workspace fixtures plus Story/Gentle and fixed Plain TeX DVI corpuses remain byte-identical |
-| Performance | each fixed workload; typesetting kernel and end-to-end time; logical/retained/peak bytes; box/math sidecars; promotion/recycling |
+| Sidecars        | every kind; zero/max indexes; character/ligature origin alignment; leader glue; owned whatsit payloads; no word published without a row; column lengths agree                                                                                                                                     |
+| Bottom-up graph | epoch children, mixed survivor children, shared spans, deep graphs, cycles/forward references rejected                                                                                                                                                                                            |
+| Rollback        | atomic identity/storage mark; truncate all columns; arbitrary rollback/reappend never revives stale ids; retained capacities distinguished from live bytes; shipout release                                                                                                                       |
+| Survivors       | promotion, process-unique root folding, sibling-fork foreign lookup rejection, deterministic key exhaustion, refcounts, journal-held owners, group exit, root non-reuse, buffer recycling, nested boxes/math/leader payloads                                                                      |
+| Access boundary | compile-fail probes for raw words, sidecars, constructors, partial marks, mutable views; shadow remains production-like                                                                                                                                                                           |
+| Hash/replay     | equal logical graphs with different sidecar/root/recycling histories hash equally; changed fields differ; rollback convergence; deep iterative traversal                                                                                                                                          |
+| Kernels         | hpack/vpack/vtop, vertical breaking, line breaking, diagnostics, page builder, insertion/mark handling, math lowering                                                                                                                                                                             |
+| Width runs      | empty/short/long runs, font switch, missing char, ligature, overflow behavior, scalar/SIMD exact equality                                                                                                                                                                                         |
+| Output          | workspace fixtures plus Story/Gentle and fixed Plain TeX DVI corpuses remain byte-identical                                                                                                                                                                                                       |
+| Performance     | each fixed workload; typesetting kernel and end-to-end time; logical/retained/peak bytes; box/math sidecars; promotion/recycling                                                                                                                                                                  |
 
 Use affected crate tests during each phase and `scripts/check-and-test.sh` for
 the full workspace test, format, and clippy gate. Long-running parity corpuses

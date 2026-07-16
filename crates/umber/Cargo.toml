@@ -11,34 +11,34 @@ path = "src/bin/gentle_profile.rs"
 default = []
 shadow = ["tex-state/shadow"]
 profiling-stats = [
-    "tex-exec/profiling-stats",
-    "tex-expand/profiling-stats",
-    "tex-lex/profiling-stats",
-    "tex-state/profiling-stats",
+  "tex-exec/profiling-stats",
+  "tex-expand/profiling-stats",
+  "tex-lex/profiling-stats",
+  "tex-state/profiling-stats",
 ]
 
 [dependencies]
+flate2.workspace = true
+lopdf = { version = "=0.43.0", default-features = false }
+md-5.workspace = true
+sha2.workspace = true
 tex-arith = { path = "../tex-arith" }
 tex-exec = { path = "../tex-exec" }
 tex-expand = { path = "../tex-expand" }
 tex-fonts = { path = "../tex-fonts" }
-tex-lex = { path = "../tex-lex" }
 tex-incr = { path = "../tex-incr" }
+tex-lex = { path = "../tex-lex" }
 tex-out = { path = "../tex-out" }
-sha2.workspace = true
-md-5.workspace = true
 tex-state = { path = "../tex-state" }
 umber-vfs = { path = "../umber-vfs" }
-lopdf = { version = "=0.43.0", default-features = false }
-flate2.workspace = true
 
 [dev-dependencies]
 parity-harness = { path = "../../tools/parity-harness" }
 proptest.workspace = true
 tempfile.workspace = true
 test-support = { path = "../test-support" }
-ttf-parser = "0.25.1"
 tex-state = { path = "../tex-state", features = ["testing"] }
+ttf-parser = "0.25.1"
 
 [lints]
 workspace = true

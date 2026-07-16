@@ -14,6 +14,7 @@ end of your operating instructions under this heading:
 
 ```markdown
 ## Immediate Instructions
+
 {USER_ARGUMENT}
 ```
 
@@ -78,6 +79,7 @@ Your issue: {ISSUE_ID} -- {ISSUE_TITLE}
 coordinator; omit this block if none}
 
 Before editing anything:
+
 1. Read AGENTS.md, the nearest nested AGENTS.md for the code you will
    touch, and the docs/*.md for the affected subsystem(s).
 2. State your understanding of the task and its constraints.
@@ -90,6 +92,7 @@ failing tests, and commit in logical chunks with good commit messages.
 Confirm that clippy and rustfmt pass as well before finishing.
 
 Before finishing, you must complete writeback:
+
 - Close {ISSUE_ID} in bd with a comment covering what changed, why, and
   the affected subsystems.
 - File any discovered work as bd issues.

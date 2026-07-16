@@ -37,6 +37,8 @@ jobs:
           chrome-version: "149"
       - name: Install wasm-pack
         run: cargo install wasm-pack --version 0.14.0 --locked
+      - name: Install dprint
+        run: npm install --global dprint@0.55.2
       - name: Native quality gate
         run: scripts/check-and-test.sh
       - name: Test optimized package in Firefox and Chrome

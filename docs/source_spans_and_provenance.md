@@ -723,19 +723,19 @@ improvements remain.
 Every implementation phase runs the affected crate tests and the repository
 gate. The final phase additionally covers:
 
-| Area | Required cases |
-| --- | --- |
+| Area              | Required cases                                                                                                                                                           |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Lexer coordinates | ASCII, valid UTF-8, invalid UTF-8 error, LF, CRLF, trailing-space stripping, missing final newline, comments, spaces, control sequences, successful/failed `^^` notation |
-| Input resume | byte cursor, column, physical-line metadata, next source id, Unicode `^^` mode, nested-source exhaustion |
-| Source backing | World input, generated/memory input, multiple/empty inputs, missing content, frame pop |
-| Source map | anchor positions, direct-boundary crossing, oversized input, logical overflow, rollback and SourceId/InputRecordId/position reuse, cache alias prevention |
-| Packing | first/last direct source, first/last arena index, unknown, fallback and saturation |
-| Ranges | one scalar, multi-character token, zero-width, multi-line, synthetic suffix, incompatible context, missing source bytes |
-| Diagnostics | primary and labeled related locations, Unicode/tabs, captured trace after frame pop, cold/warm resolution |
-| Expansion | macro body, macro argument, nested invocation, inserted and synthesized tokens, zero body-token writes |
-| Semantics | token equality, `\ifx`, token-list interning, input-summary equality, state hashes |
-| Rollback | discarded direct regions, generated backings, arena records, origin lists, stale caches, diagnostic rendered before provenance rollback |
-| Output | existing fixture and DVI parity corpuses remain byte-identical |
+| Input resume      | byte cursor, column, physical-line metadata, next source id, Unicode `^^` mode, nested-source exhaustion                                                                 |
+| Source backing    | World input, generated/memory input, multiple/empty inputs, missing content, frame pop                                                                                   |
+| Source map        | anchor positions, direct-boundary crossing, oversized input, logical overflow, rollback and SourceId/InputRecordId/position reuse, cache alias prevention                |
+| Packing           | first/last direct source, first/last arena index, unknown, fallback and saturation                                                                                       |
+| Ranges            | one scalar, multi-character token, zero-width, multi-line, synthetic suffix, incompatible context, missing source bytes                                                  |
+| Diagnostics       | primary and labeled related locations, Unicode/tabs, captured trace after frame pop, cold/warm resolution                                                                |
+| Expansion         | macro body, macro argument, nested invocation, inserted and synthesized tokens, zero body-token writes                                                                   |
+| Semantics         | token equality, `\ifx`, token-list interning, input-summary equality, state hashes                                                                                       |
+| Rollback          | discarded direct regions, generated backings, arena records, origin lists, stale caches, diagnostic rendered before provenance rollback                                  |
+| Output            | existing fixture and DVI parity corpuses remain byte-identical                                                                                                           |
 
 Use `scripts/check-and-test.sh` for the workspace tests plus the format and
 clippy gate. Keep long-running parity corpuses in their existing scripts

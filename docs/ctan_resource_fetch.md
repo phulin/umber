@@ -104,7 +104,7 @@ pub enum ResourceResponse {
 }
 ```
 
-Registration binds the key to an immutable *absent* marker in the resolved
+Registration binds the key to an immutable _absent_ marker in the resolved
 layer: the next attempt's resolver reports the ordinary TeX missing-file
 condition instead of re-requesting, duplicates are idempotent, and a later
 attempt to bind bytes to the same key is a typed conflict. An unavailable

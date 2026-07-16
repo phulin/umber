@@ -25,15 +25,15 @@ significant regression greater than 5% in any primary row.
 
 ## Throughput adoption matrix
 
-| Workload | Phase 1 time | Adopted time | Median delta | Adopted throughput |
-| --- | ---: | ---: | ---: | ---: |
-| ASCII source, 23,552 tokens | 350.39-354.88 us | 332.89-333.55 us | -5.43% | 70.68 Mtok/s |
-| Mixed UTF-8, 16,384 tokens | 251.03-253.65 us | 245.12-246.49 us | -2.56% | 66.65 Mtok/s |
-| One 65,536-scalar line, 65,537 tokens | 710.73-719.20 us | 599.38-607.30 us | -15.63% | 108.66 Mtok/s |
-| Control-sequence-heavy, 4,096 tokens | 535.13-537.56 us | 547.23-563.62 us | +3.03% | 7.41 Mtok/s |
-| Macro body replay, 32,768 delivered tokens / 2,048 calls | 1.1618-1.1750 ms | 1.1462-1.1691 ms | -1.03% | 28.34 Mtok/s delivered |
-| Scanner-heavy `\number`, 5,120 outputs / 1,024 runs | 553.10-592.60 us | 504.21-510.97 us | improvement | 10.09 Mtok/s output |
-| Generated `\romannumeral`, 15,360 outputs / 1,024 runs | 840.10-867.10 us | 774.01-811.14 us | improvement | 19.47 Mtok/s output |
+| Workload                                                 |     Phase 1 time |     Adopted time | Median delta |     Adopted throughput |
+| -------------------------------------------------------- | ---------------: | ---------------: | -----------: | ---------------------: |
+| ASCII source, 23,552 tokens                              | 350.39-354.88 us | 332.89-333.55 us |       -5.43% |           70.68 Mtok/s |
+| Mixed UTF-8, 16,384 tokens                               | 251.03-253.65 us | 245.12-246.49 us |       -2.56% |           66.65 Mtok/s |
+| One 65,536-scalar line, 65,537 tokens                    | 710.73-719.20 us | 599.38-607.30 us |      -15.63% |          108.66 Mtok/s |
+| Control-sequence-heavy, 4,096 tokens                     | 535.13-537.56 us | 547.23-563.62 us |       +3.03% |            7.41 Mtok/s |
+| Macro body replay, 32,768 delivered tokens / 2,048 calls | 1.1618-1.1750 ms | 1.1462-1.1691 ms |       -1.03% | 28.34 Mtok/s delivered |
+| Scanner-heavy `\number`, 5,120 outputs / 1,024 runs      | 553.10-592.60 us | 504.21-510.97 us |  improvement |    10.09 Mtok/s output |
+| Generated `\romannumeral`, 15,360 outputs / 1,024 runs   | 840.10-867.10 us | 774.01-811.14 us |  improvement |    19.47 Mtok/s output |
 
 Control-sequence-heavy input is the only slower median. Its confidence interval
 overlaps the Phase 1 neighborhood and its 3.03% median cost is below the 5%
@@ -53,9 +53,9 @@ toolchain, and each measurement used Criterion's 100-sample default. The
 baseline executable was built from commit `e278af20` in a detached worktree;
 the updated executable was measured immediately afterward on the same host.
 
-| Workload | Before time | After time | Median delta | After throughput |
-| --- | ---: | ---: | ---: | ---: |
-| Control-sequence-heavy, 4,096 tokens | 831.45-843.65 us | 813.44-839.44 us | -1.41% | 4.97 Mtok/s |
+| Workload                             |      Before time |       After time | Median delta | After throughput |
+| ------------------------------------ | ---------------: | ---------------: | -----------: | ---------------: |
+| Control-sequence-heavy, 4,096 tokens | 831.45-843.65 us | 813.44-839.44 us |       -1.41% |      4.97 Mtok/s |
 
 Inspection confirms that the registered-frame control-sequence path performs
 zero `SourceMap` region lookups: it validates offsets through the frame's
@@ -146,12 +146,12 @@ The scaling table below is a 20-sample calibration run on the adoption host
 above retains Criterion's 100-sample default.
 
 | Repeated pieces | Warm final-piece current | Indexed in-fragment deleted |
-| ---: | ---: | ---: |
-| 64 | 59.630-59.681 ns | 25.463-25.484 ns |
-| 256 | 64.253-64.768 ns | 37.339-37.446 ns |
-| 1,024 | 71.481-71.842 ns | 76.218-76.759 ns |
-| 4,096 | 86.222-87.710 ns | 195.29-196.15 ns |
-| 16,384 | 124.71-130.00 ns | 657.38-664.20 ns |
+| --------------: | -----------------------: | --------------------------: |
+|              64 |         59.630-59.681 ns |            25.463-25.484 ns |
+|             256 |         64.253-64.768 ns |            37.339-37.446 ns |
+|           1,024 |         71.481-71.842 ns |            76.218-76.759 ns |
+|           4,096 |         86.222-87.710 ns |            195.29-196.15 ns |
+|          16,384 |         124.71-130.00 ns |            657.38-664.20 ns |
 
 The final-piece row grows by about 2.1x while the repeated-view count grows
 256x. Deleted lookup remains sub-microsecond at 16,384 views and follows the
@@ -160,9 +160,9 @@ document-order pieces.
 
 The one-time 4,096-piece rows from the same calibration are recorded below.
 
-| Operation | Time | Effective piece rate |
-| --- | ---: | ---: |
-| `LayoutCursor` construction, 4,096 pieces | 56.700-58.581 us | 69.92-72.24 Mpiece/s |
+| Operation                                   |             Time | Effective piece rate |
+| ------------------------------------------- | ---------------: | -------------------: |
+| `LayoutCursor` construction, 4,096 pieces   | 56.700-58.581 us | 69.92-72.24 Mpiece/s |
 | Resolve final-piece origin, cold line index | 60.215-72.068 us | 56.84-68.02 Mpiece/s |
 
 An epoch rebase is not adopted. Bytes already remain bounded independently of
@@ -186,11 +186,11 @@ UMBER_ACCEPTED_EDIT_REPORT=1 cargo bench \
 ```
 
 | Inherited fragments | Append + snapshot time | Allocations |
-| ---: | ---: | ---: |
-| 128 | 456.22-473.24 ns | 13 |
-| 512 | 531.83-579.12 ns | 15 |
-| 2,048 | 584.74-626.62 ns | 17 |
-| 8,192 | 650.77-707.65 ns | 19 |
+| ------------------: | ---------------------: | ----------: |
+|                 128 |       456.22-473.24 ns |          13 |
+|                 512 |       531.83-579.12 ns |          15 |
+|               2,048 |       584.74-626.62 ns |          17 |
+|               8,192 |       650.77-707.65 ns |          19 |
 
 Each 4x increase adds two persistent-tree levels and exactly two allocations;
 time grows from about 0.46 to 0.68 microseconds across 64x more metadata.
@@ -215,12 +215,12 @@ not charged twice; a duplicate allocation would be charged in full. There is no
 persistent line-index cache, so cache growth is zero and repeated rendering
 recomputes physical line starts.
 
-| Workload | Tokens / direct | Records / list spans / entries | Regions / backing metadata | Logical bytes | Retained / peak bytes | Phase 1 logical bytes | Reduction |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| ASCII | 23,552 / 23,040 | 1,024 / 0 / 0 | 1 / 1 | 32,848 | 33,088 | 770,048 | 95.73% |
-| Mixed UTF-8 | 16,384 / 15,872 | 1,024 / 0 / 0 | 1 / 1 | 32,848 | 33,088 | 540,672 | 93.93% |
-| One long line | 65,537 / 65,536 | 2 / 0 / 0 | 1 / 1 | 144 | 448 | 2,097,184 | 99.99% |
-| Control sequences | 4,096 / 0 | 4,608 / 0 / 0 | 1 / 1 | 147,536 | 262,464 | 147,456 | -0.05% |
+| Workload          | Tokens / direct | Records / list spans / entries | Regions / backing metadata | Logical bytes | Retained / peak bytes | Phase 1 logical bytes | Reduction |
+| ----------------- | --------------: | -----------------------------: | -------------------------: | ------------: | --------------------: | --------------------: | --------: |
+| ASCII             | 23,552 / 23,040 |                  1,024 / 0 / 0 |                      1 / 1 |        32,848 |                33,088 |               770,048 |    95.73% |
+| Mixed UTF-8       | 16,384 / 15,872 |                  1,024 / 0 / 0 |                      1 / 1 |        32,848 |                33,088 |               540,672 |    93.93% |
+| One long line     | 65,537 / 65,536 |                      2 / 0 / 0 |                      1 / 1 |           144 |                   448 |             2,097,184 |    99.99% |
+| Control sequences |       4,096 / 0 |                  4,608 / 0 / 0 |                      1 / 1 |       147,536 |               262,464 |               147,456 |    -0.05% |
 
 The source-heavy ASCII and UTF-8 rows exceed the 80% target. Control words need
 exact arena ranges and therefore do not benefit from point encoding; the 80-byte

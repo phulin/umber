@@ -92,7 +92,7 @@ Memory: four bytes per renderable source character plus one `u32` per event
 boundary, for queried pages only, charged to live retained-output accounting
 when built. The detached accepted output retains its point-in-time metrics;
 the session getter includes maps constructed by subsequent queries.
-The full positioned event list from the one-time lowering pass is *not*
+The full positioned event list from the one-time lowering pass is _not_
 retained — only the compact columns. Runs of consecutive direct origins
 (ordinary text) may later be run-length encoded; that is an optimization,
 not part of the contract.

@@ -7,6 +7,7 @@ The repository uses progressive disclosure: read this file first, then the neare
 The project also uses bd (beads) for issue tracking; see below for full instructions.
 
 ## General Instructions
+
 - Commit as you go in logical chunks. Write good commit messages (a one-line summary and then details below). You have to escalate privileges to commit.
 - Make sure you are writing clean code; don't hesitate to do refactor commits if you find that a certain area of the code has gotten complex or difficult to understand.
 - Don't worry about keeping changes "low-risk" or implementing only "narrow slices", as making clean code will sometimes require big, ambitious, cross-cutting changes, and reimplementing something from scratch means we will need to write complex new features.
@@ -53,7 +54,7 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
   `scripts/check.sh` for the format and clippy gate without rerunning tests.
 - When running tests, make sure to use `cargo test -q` so you don't fill up
   your context window.
-- Direct `cargo build` output to a log file; it has verbose output. 
+- Direct `cargo build` output to a log file; it has verbose output.
 - Use `scripts/check-and-test.sh` when a single command should run the full
   workspace test suite concurrently with the format and clippy gate. Clippy
   uses its own `target/clippy` directory so it does not lock the test build.

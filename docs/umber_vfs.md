@@ -70,17 +70,17 @@ bibliography crates. Higher layers adapt its exact-path and transactional APIs
 to their own lookup rules.
 
 ```text
-                       client resource policy
-                                |
-                         ResourceResponse
-                                |
-                           umber-vfs
-                    /            |             \
-             TeX resolver    bib resolver    output collector
-                    \            |             /
-                         project orchestrator
-                                |
-                        umber / umber-wasm
+          client resource policy
+                   |
+            ResourceResponse
+                   |
+              umber-vfs
+       /            |             \
+TeX resolver    bib resolver    output collector
+       \            |             /
+            project orchestrator
+                   |
+           umber / umber-wasm
 ```
 
 The crate may depend on `tex-content` for versioned, domain-separated content

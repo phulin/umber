@@ -21,8 +21,9 @@ scripts/check-and-test.sh
 
 The warmed `cargo test --tests` target is under 10 seconds on the current
 macOS development workspace; investigate a sustained run above 15 seconds or
-any default test that invokes live TeX. `scripts/check.sh` runs format and
-clippy without rerunning tests and has a warmed two-minute local budget.
+any default test that invokes live TeX. `scripts/check.sh` checks dprint and
+rustfmt formatting, then runs clippy without rerunning tests; it has a warmed
+two-minute local budget.
 `scripts/check-and-test.sh` runs the full workspace test suite followed by that
 quality gate.
 

@@ -34,15 +34,15 @@ The completed design must:
 The engine reports typed needs but never invokes a resolver:
 
 ```text
-                    client-owned resource policy
-                  /            |                \
-             TeX inputs     format images     OpenType fonts
-                  \            |                /
-                   verified ResourceResponse batch
-                                |
-                         host-neutral session
-                         /                  \
-                    TeX execution       HTML/output reuse
+       client-owned resource policy
+     /            |                \
+TeX inputs     format images     OpenType fonts
+     \            |                /
+      verified ResourceResponse batch
+                   |
+            host-neutral session
+            /                  \
+       TeX execution       HTML/output reuse
 ```
 
 Files continue to enter engine I/O through `World`. Fonts enter the immutable

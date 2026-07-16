@@ -4,9 +4,7 @@ This checklist is deliberately separate from the TeX82 primitive inventory.
 Compatibility mode installs only TeX82 meanings; `umber run --etex` selects
 the extended primitive layer.
 
-The behavioral contract is the [e-TeX
-manual](https://tex.org.uk/systems/doc/etex/etex_man.pdf), with the [short
-reference manual](https://mirror.gutenberg-asso.fr/tex.loria.fr/moteurs/etex_ref.html)
+The behavioral contract is the [e-TeX manual](https://tex.org.uk/systems/doc/etex/etex_man.pdf), with the [short reference manual](https://mirror.gutenberg-asso.fr/tex.loria.fr/moteurs/etex_ref.html)
 as its introductory companion.
 The official `etex.ch` change file supplies implementation-level algorithms
 where the manual does not specify them. Focused tests cite the relevant manual
@@ -21,16 +19,16 @@ pass.
 
 ## Expansion and virtual input (manual sections 3.1, 3.2, 3.6, 3.7)
 
-| Primitive | Status | Manual contract / remaining gate |
-| --- | --- | --- |
-| `\protected` | done | Ordinary command demand expands the macro; `\edef`, `\write`, alignment fetches, and analogous expansion-only contexts preserve it. |
-| `\unexpanded` | done | Yields the raw balanced text as token-list expansion does: expansion-only consumers preserve it, while later command demand expands it. |
-| `\detokenize` | done | Produces only catcode-10 spaces and catcode-12 other characters; every control word produces a trailing space, including the last. |
-| `\readline` | done | Reads through the virtualized `\read` path with catcode-10 codepoint 32 and catcode-12 other characters, including `\endlinechar`. |
-| `\scantokens` | done | Serializes unexpanded general text with TeX's `new_string` character behavior, splits `\newlinechar` into pseudo-file records, and reprocesses under current catcodes and `^^` notation. |
-| `\everyeof` | done | Inserts its tokens once at natural EOF for real and generated virtual files, but not for `\endinput`, and remains ordered before the pseudo-file closing trace. Its grouped, snapshot-covered token parameter is distinct from TeX's `\errhelp` cell. |
-| `\unless` | done | Negates every boolean conditional through the shared conditional-frame path and rejects `\ifcase` as the manual requires. |
-| `\tracingscantokens` | done | Positive values trace `( ` at pseudo-file entry and `)` only after any `\everyeof` replay, as specified in section 3.6. |
+| Primitive            | Status | Manual contract / remaining gate                                                                                                                                                                                                                      |
+| -------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `\protected`         | done   | Ordinary command demand expands the macro; `\edef`, `\write`, alignment fetches, and analogous expansion-only contexts preserve it.                                                                                                                   |
+| `\unexpanded`        | done   | Yields the raw balanced text as token-list expansion does: expansion-only consumers preserve it, while later command demand expands it.                                                                                                               |
+| `\detokenize`        | done   | Produces only catcode-10 spaces and catcode-12 other characters; every control word produces a trailing space, including the last.                                                                                                                    |
+| `\readline`          | done   | Reads through the virtualized `\read` path with catcode-10 codepoint 32 and catcode-12 other characters, including `\endlinechar`.                                                                                                                    |
+| `\scantokens`        | done   | Serializes unexpanded general text with TeX's `new_string` character behavior, splits `\newlinechar` into pseudo-file records, and reprocesses under current catcodes and `^^` notation.                                                              |
+| `\everyeof`          | done   | Inserts its tokens once at natural EOF for real and generated virtual files, but not for `\endinput`, and remains ordered before the pseudo-file closing trace. Its grouped, snapshot-covered token parameter is distinct from TeX's `\errhelp` cell. |
+| `\unless`            | done   | Negates every boolean conditional through the shared conditional-frame path and rejects `\ifcase` as the manual requires.                                                                                                                             |
+| `\tracingscantokens` | done   | Positive values trace `(` at pseudo-file entry and `)` only after any `\everyeof` replay, as specified in section 3.6.                                                                                                                                |
 
 The committed `etex_exec/expansion_virtual_input` reference fixture covers
 the observable family against pdfTeX/e-TeX. Focused tests additionally cover

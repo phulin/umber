@@ -30,7 +30,7 @@ follow:
   live `source_path`. After any insert or delete earlier in the document,
   every reused page answers with a plausible, wrong location.
 - **Dead origins on adopted scratch output.** In the convergence branch the
-  session keeps the *old* accepted substrate and adopts the scratch window's
+  session keeps the _old_ accepted substrate and adopts the scratch window's
   pages. Those pages' origins reference the region registered on the
   discarded fork, which the retained substrate never saw. Direct fragment
   positions remain session-live, but scratch-only arena wrappers around those
@@ -48,7 +48,7 @@ retained state.
 
 Invert the coordinate contract. Today a `SourcePos` names a location in a
 document revision; the design makes it name a byte of **content** — a
-position inside an immutable *source fragment* — and makes "where is that
+position inside an immutable _source fragment_ — and makes "where is that
 byte in the current document" a derived, per-revision view:
 
 - **`SourceFragment`**: an immutable byte string that entered the editor
@@ -58,7 +58,7 @@ byte in the current document" a derived, per-revision view:
   or renumbered. Each owns one disjoint range of the logical `SourcePos`
   space, exactly like today's regions.
 - **`EditorLayout`** (a piece table): the ordered list of fragment
-  *views* — `(fragment, byte sub-range)` — whose concatenation is the current
+  _views_ — `(fragment, byte sub-range)` — whose concatenation is the current
   document. Edits mutate only this table. A monotonically increasing
   `LayoutGeneration` stamps each accepted table.
 
@@ -75,7 +75,7 @@ F2: "leaped at\n"                                 doc 0      doc 14   doc 23
 ```
 
 A `SourcePos` inside `F0[23..410)` resolves to the same source text at every
-revision that retains that view, and its *document offset* is recomputed
+revision that retains that view, and its _document offset_ is recomputed
 from the table at read time. A `SourcePos` inside `F1` resolves to a typed
 `Deleted` result instead of a stale or aliased location.
 
@@ -258,7 +258,7 @@ Every cache derived from resolution (the per-page resolved-span cache in
 `rendered_source_map.md` §2.4 included) must be keyed by
 `LayoutGeneration`, which supersedes revision-keying for source-coordinate
 caches. The `data-umber-revision` staleness handshake for event ordinals is
-unaffected — and reused pages' retained maps now stay *correct* across
+unaffected — and reused pages' retained maps now stay _correct_ across
 edits instead of merely detectably stale, because they store `OriginId`s and
 resolve through the live layout at query time.
 
@@ -320,7 +320,7 @@ lookups chase at most one hop. Deferred until measurements demand it.
 - **Per-revision regions + composed `EditMap` chains at read time.** Keeps
   construction untouched but read cost and pinned snapshots grow with
   revision count, delta GC is required, and the compacted fixed point of
-  composing edit deltas *is* a piece table — with extra steps. Also does not
+  composing edit deltas _is_ a piece table — with extra steps. Also does not
   fix fork-dead scratch origins.
 - **Editor-style marker/anchor trees per position.** Per-token allocation
   and pointer chasing on the delivery path; violates the zero-write
@@ -364,7 +364,7 @@ lookups chase at most one hop. Deferred until measurements demand it.
    route `rendered_source_location` (and the retained maps from
    `rendered_source_map.md`, if landed first) through the layout-aware
    resolver. Regression tests prove an edit-before-reused-page scenario
-   resolves reused-page origins to *current* offsets and a
+   resolves reused-page origins to _current_ offsets and a
    convergence-adopted scratch page resolves at all.
 4. **Pruning and measurement (complete).** Fragment byte pruning, retained-memory
    accounting, long-session capacity tests (keystroke storm, alternating

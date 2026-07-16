@@ -98,4 +98,3 @@ names, subsystems, and one-line intent for each}
 Report in <=15 lines: conflicts resolved (file paths), tests, merge
 commit hash. No diffs.
 ```
-

@@ -4,15 +4,15 @@ This directory contains fixed, deterministic end-to-end workloads for a
 TeX82-compatible engine. They are performance benchmarks, not correctness
 tests, and are intentionally excluded from `cargo test`.
 
-| Input | Dominant work |
-| --- | --- |
-| `expand.tex` | macro argument matching, conditionals, `\csname`, token registers, and integer assignments |
-| `paragraph-wide.tex` | natural-language paragraph construction and line breaking at a comfortable width |
-| `paragraph-narrow.tex` | hyphenation and a larger active-breakpoint search at a narrow width |
-| `math.tex` | math-list construction, style changes, fractions, radicals, delimiters, and packing |
-| `math-nested.tex` | deeply nested fractions, radicals, scripts, and bottom-up box lowering |
-| `pages.tex` | vertical-list contribution, marks, insertions, page breaking, and the output routine |
-| `dvi.tex` | traversal and DVI serialization of dense, nested, multi-font pages |
+| Input                  | Dominant work                                                                              |
+| ---------------------- | ------------------------------------------------------------------------------------------ |
+| `expand.tex`           | macro argument matching, conditionals, `\csname`, token registers, and integer assignments |
+| `paragraph-wide.tex`   | natural-language paragraph construction and line breaking at a comfortable width           |
+| `paragraph-narrow.tex` | hyphenation and a larger active-breakpoint search at a narrow width                        |
+| `math.tex`             | math-list construction, style changes, fractions, radicals, delimiters, and packing        |
+| `math-nested.tex`      | deeply nested fractions, radicals, scripts, and bottom-up box lowering                     |
+| `pages.tex`            | vertical-list contribution, marks, insertions, page breaking, and the output routine       |
+| `dvi.tex`              | traversal and DVI serialization of dense, nested, multi-font pages                         |
 
 Each file has one workload size. A successful run writes its expected
 `BENCH` completion marker to the transcript and finishes with a DVI file.

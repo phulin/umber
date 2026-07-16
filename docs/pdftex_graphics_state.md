@@ -26,17 +26,17 @@ a source-inventory parity project rather than a manual-only subset.
 
 ## Primitive ownership checklist
 
-| Primitive | Contract | Implementation owner |
-| --- | --- | --- |
-| `\pdfliteral` | immediate/shipout expansion, origin/page/direct lowering | `umber2-kbz0.12.2` |
-| `\pdfsetmatrix` | four-number scanner and tracked transform | `umber2-kbz0.12.2` |
-| `\pdfsave`, `\pdfrestore` | balanced transform stack and `q`/`Q` | `umber2-kbz0.12.2` |
-| `\pdfcolorstackinit`, `\pdfcolorstack` | allocation, page/form stacks, four operations | `umber2-kbz0.12.3` |
-| `\pdfsavepos`, `\pdflastxpos`, `\pdflastypos` | shipout coordinates in sp | `umber2-kbz0.12.4` |
-| `\pdfsnaprefpoint`, `\pdfsnapy`, `\pdfsnapycomp` | vertical-grid adjustment | `umber2-kbz0.12.4` |
-| `\pdfxform`, `\pdfrefxform`, `\pdflastxform`, `\pdfxformname` | captured boxes and reusable Form XObjects | `umber2-kbz0.14.4` |
-| `\pdfresettimer`, `\pdfelapsedtime` | deterministic monotonic 16.16 timer | `umber2-kbz0.9.5`, integrated by `umber2-kbz0.12.5` |
-| `\pdfsetrandomseed`, `\pdfrandomseed` | global seed and exact RNG reset | `umber2-kbz0.9.5`, integrated by `umber2-kbz0.12.5` |
+| Primitive                                                     | Contract                                                 | Implementation owner                                |
+| ------------------------------------------------------------- | -------------------------------------------------------- | --------------------------------------------------- |
+| `\pdfliteral`                                                 | immediate/shipout expansion, origin/page/direct lowering | `umber2-kbz0.12.2`                                  |
+| `\pdfsetmatrix`                                               | four-number scanner and tracked transform                | `umber2-kbz0.12.2`                                  |
+| `\pdfsave`, `\pdfrestore`                                     | balanced transform stack and `q`/`Q`                     | `umber2-kbz0.12.2`                                  |
+| `\pdfcolorstackinit`, `\pdfcolorstack`                        | allocation, page/form stacks, four operations            | `umber2-kbz0.12.3`                                  |
+| `\pdfsavepos`, `\pdflastxpos`, `\pdflastypos`                 | shipout coordinates in sp                                | `umber2-kbz0.12.4`                                  |
+| `\pdfsnaprefpoint`, `\pdfsnapy`, `\pdfsnapycomp`              | vertical-grid adjustment                                 | `umber2-kbz0.12.4`                                  |
+| `\pdfxform`, `\pdfrefxform`, `\pdflastxform`, `\pdfxformname` | captured boxes and reusable Form XObjects                | `umber2-kbz0.14.4`                                  |
+| `\pdfresettimer`, `\pdfelapsedtime`                           | deterministic monotonic 16.16 timer                      | `umber2-kbz0.9.5`, integrated by `umber2-kbz0.12.5` |
+| `\pdfsetrandomseed`, `\pdfrandomseed`                         | global seed and exact RNG reset                          | `umber2-kbz0.9.5`, integrated by `umber2-kbz0.12.5` |
 
 The stored-meaning codec keeps the previously accepted object/dictionary
 operands unchanged: `\pdfobj` through `\pdftrailerid` occupy unexpandable
@@ -307,14 +307,14 @@ The implementation fixtures use the repository's pinned PDF regeneration
 entry point, `scripts/regen-fixtures.sh --area pdf`, and normalize metadata as
 defined in `pdf_backend.md`. The focused case matrix is:
 
-| Case | Required observations |
-| --- | --- |
-| `graphics_literals` | default/page/direct placement, immediate and shipout expansion, h/v/math nodes, DVI rejection |
-| `graphics_transform` | exact `q`, `Q`, and `a b c d 0 0 cm` order; malformed matrix; missing, misplaced, and unmatched saves; page/form isolation |
+| Case                  | Required observations                                                                                                                        |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `graphics_literals`   | default/page/direct placement, immediate and shipout expansion, h/v/math nodes, DVI rejection                                                |
+| `graphics_transform`  | exact `q`, `Q`, and `a b c d 0 0 cm` order; malformed matrix; missing, misplaced, and unmatched saves; page/form isolation                   |
 | `graphics_colorstack` | stack 0, allocation order, `page page`, direct mode, all four operations, persistent but separate page/form state, invalid IDs and underflow |
-| `graphics_savepos` | initial zero, nested boxes/shifts, origins/page geometry, PDF/form/DVI coordinates, pre/post shipout and failed shipout |
-| `graphics_snap` | reference, finite/infinite stretch/shrink, tie-forward, compensation ratios 0/500/1000, hlist no-op, negative glue |
-| `pdf_utilities` | reset timer, saturation seam, signed seed normalization, enquiry stability, snapshot replay, native/WASM sources; owned by issue 9.5 |
+| `graphics_savepos`    | initial zero, nested boxes/shifts, origins/page geometry, PDF/form/DVI coordinates, pre/post shipout and failed shipout                      |
+| `graphics_snap`       | reference, finite/infinite stretch/shrink, tie-forward, compensation ratios 0/500/1000, hlist no-op, negative glue                           |
+| `pdf_utilities`       | reset timer, saturation seam, signed seed normalization, enquiry stability, snapshot replay, native/WASM sources; owned by issue 9.5         |
 
 A minimal INITEX oracle sets brace/comment catcodes, disables stream and object
 compression, sets explicit page dimensions and origins, builds the relevant
