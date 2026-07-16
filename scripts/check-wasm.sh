@@ -4,6 +4,8 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
+cargo check -p umber-wasm --target wasm32-unknown-unknown
+
 if command -v biome >/dev/null 2>&1; then
   biome check \
     crates/umber-wasm/js \

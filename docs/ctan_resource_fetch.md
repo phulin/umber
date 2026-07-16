@@ -155,6 +155,9 @@ The implemented native boundary is `crates/umber-fetch`. `ObjectCache` stores
 objects and manifests in separate digest-keyed namespaces, re-verifies every
 read, discards corrupt entries as cache misses, and publishes verified bytes
 with same-directory temporary files plus no-clobber atomic persistence.
+`umber` exposes this native CLI resource surface and depends on `umber-fetch`
+only outside `wasm32`, so the browser build retains the shared compile-session
+protocol without compiling the blocking native HTTP client.
 `FetchClient` accepts manifest `ObjectEntry` values paired with request keys
 and per-request limits. It enforces HTTPS (with loopback HTTP only for
 hermetic contract tests), rejects oversized declarations before issuing a

@@ -15,6 +15,7 @@ use tex_state::{
     WorldError,
 };
 
+#[cfg(not(target_arch = "wasm32"))]
 pub mod cli_resource;
 mod html_output;
 mod input_search;
