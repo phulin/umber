@@ -92,7 +92,7 @@ fn fixture_publication_is_byte_stable_and_content_addressed() -> Result<()> {
     assert_eq!(inline.sha256, manifest.files["tfm:cmr10.tfm"].sha256);
     let format = manifest.formats.get("plain").expect("plain format");
     assert_eq!(format.engine, "umber");
-    assert_eq!(format.format_schema, 8);
+    assert_eq!(format.format_schema, 9);
     assert_eq!(
         objects_a.get(&format.object).map(Vec::len),
         Some(format.bytes as usize)
