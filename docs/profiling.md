@@ -162,6 +162,21 @@ checkpoint state and compact page identity no longer serializes the full font
 bundle at every comparison. Treat these two samples as implementation and
 work-count evidence, not a conditioned latency verdict.
 
+The composed-root stage was checked on 2026-07-16 with the same two-pair
+balanced four-edit run and the profiler's dedicated exact-identity timer. The
+inverse third edit performed 73 memo-disabled identities in 0.845 ms total and
+70 memo-enabled identities in 0.909 ms after their component roots were cached.
+The height-preserving fourth edit performed one identity in 0.672 ms disabled
+and two in 0.852 ms total enabled, retyped three pages, adopted the remaining
+83-page suffix, and produced the cold 100-page, 279,176-byte DVI in both modes.
+Its mean total latency was 65.322 ms disabled, 101.352 ms enabled, and 439.497
+ms cold. The follow-up full re-execution also exposes the first-projection cost:
+146/139 identities totaled 84.456/88.113 ms while populating previously unseen
+accepted component roots. Mutable-store and page DTO serialization is absent;
+the counter measures only cached-root projection and composition. Treat the
+two samples as asymptotic and work-accounting evidence, not a stable machine
+benchmark.
+
 A separate two-pair diagnostic enabled `pretolerance,paragraph`. Pretolerance
 reported 834/835, 833/834, and 1,054/1,054 hits over the three edits, retained
 about 200 KiB, and evicted nothing. Treat this only as evidence that the layer
