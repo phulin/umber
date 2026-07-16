@@ -1,71 +1,44 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { webcrypto } from "node:crypto";
 import test from "node:test";
 
-import { selectManifestJobs, validateManifest } from "./manifest-schema.js";
+import { shardIndex, validateRootManifest } from "./manifest-schema.js";
 
-const fixtureRoot = new URL(
-	"../../../tests/corpus/distribution/",
-	import.meta.url,
-);
-
-test("shared Rust and JavaScript fixture selects identical jobs and misses", async () => {
-	const manifestText = await readFile(
-		new URL("manifest.json", fixtureRoot),
-		"utf8",
-	);
-	const manifest = validateManifest(JSON.parse(manifestText));
-	assert.deepEqual(
-		validateManifest(JSON.parse(JSON.stringify(manifest))),
-		manifest,
-	);
-
-	const caseText = await readFile(
-		new URL("selection.case", fixtureRoot),
-		"utf8",
-	);
-	const requests = [];
-	const expectedJobs = [];
-	const expectedMisses = [];
-	for (const line of caseText
-		.split(/\r?\n/u)
-		.filter((line) => line.length > 0 && !line.startsWith("#"))) {
-		const fields = line.split("\t");
-		if (fields[0] === "request" && fields[1] === "file") {
-			requests.push({ kind: fields[2], name: fields[3] });
-		} else if (fields[0] === "request" && fields[1] === "font") {
-			requests.push({
-				type: "font",
-				logicalName: fields[2],
-				faceIndex: 0,
-				variations: [],
-				features: [],
-			});
-		} else if (fields[0] === "job") {
-			expectedJobs.push(fields.slice(1).join("\t"));
-		} else if (fields[0] === "miss") {
-			expectedMisses.push(fields.slice(1).join("\t"));
-		} else {
-			assert.fail(`invalid shared fixture line: ${line}`);
-		}
+test("canonical shard selection matches publisher parity vectors", async () => {
+	const vectors = [
+		["tex:plain.tex", 8, 138],
+		["tfm:cmr10.tfm", 8, 145],
+		["tex:article.cls", 8, 69],
+		["tex:absent.tex", 8, 22],
+	];
+	for (const [key, bits, expected] of vectors) {
+		assert.equal(await shardIndex(key, bits, webcrypto), expected, key);
 	}
+	assert.equal(await shardIndex("tex:plain.tex", 0, webcrypto), 0);
+	assert.equal(await shardIndex("tex:plain.tex", 16, webcrypto), 35536);
+});
 
-	const selection = selectManifestJobs(manifest, requests);
-	assert.deepEqual(
-		selection.jobs.map((job) =>
-			[
-				job.requested ? "required" : "hint",
-				job.type,
-				job.manifestKey,
-				job.entry.sha256,
-			].join("\t"),
-		),
-		expectedJobs,
+test("root validation requires a consistent power-of-two shard table", () => {
+	const root = {
+		schema: 2,
+		distribution: "fixture",
+		objectsBaseUrl: "https://cdn.example.test/objects/",
+		shardBits: 1,
+		shardCount: 2,
+		shards: ["1".repeat(64), "2".repeat(64)],
+		formats: {},
+	};
+	assert.equal(validateRootManifest(root).shardCount, 2);
+	assert.throws(
+		() => validateRootManifest({ ...root, shardCount: 3 }),
+		/inconsistent/,
 	);
-	assert.deepEqual(
-		selection.misses.map(({ type, manifestKey }) =>
-			[type, manifestKey].join("\t"),
-		),
-		expectedMisses,
+	assert.throws(
+		() =>
+			validateRootManifest({
+				...root,
+				shards: [root.shards[0], root.shards[0]],
+			}),
+		/inconsistent/,
 	);
 });

@@ -1,6 +1,9 @@
 import type { PersistentObjectCache } from "./persistent-cache.js";
 import type { ResourceRequest, ResourceResponse } from "./umber_wasm.js";
 
+export const TEXLIVE_2026_MANIFEST_URL: string;
+export const TEXLIVE_2026_MANIFEST_SHA256: string;
+
 export type FileKind = "tex" | "tfm";
 
 export interface FileRequestKey {
@@ -20,6 +23,7 @@ export interface ResolvedDownload {
 
 export interface HttpManifestResolverOptions {
 	manifestUrl: string;
+	manifestSha256: string;
 	persistentCache?: "http" | "indexeddb" | "none";
 	concurrency?: number;
 	maxFiles?: number;
@@ -36,7 +40,11 @@ export interface ManifestFile {
 	object: string;
 	sha256: string;
 	bytes: number;
-	dependencies?: readonly string[];
+	dependencies?: readonly ManifestDependency[];
+}
+
+export interface ManifestDependency extends Omit<ManifestFile, "dependencies"> {
+	key: string;
 }
 
 export interface ManifestFormat {
@@ -51,25 +59,18 @@ export interface ManifestFormat {
 	sourceDateEpoch: number;
 }
 
-export interface ManifestFont {
-	object: string;
-	sha256: string;
-	bytes: number;
-	container: "woff2";
-	provenance?: string;
-}
-
 export interface FormatCompatibility {
 	engineVersion?: string;
 	formatSchema?: number;
 }
 
 export interface TexLiveManifest {
-	schema: 1;
+	schema: 2;
 	distribution: string;
 	objectsBaseUrl: string;
-	files: Readonly<Record<string, ManifestFile>>;
-	fonts?: Readonly<Record<string, ManifestFont>>;
+	shardBits: number;
+	shardCount: number;
+	shards: readonly string[];
 	formats?: Readonly<Record<string, ManifestFormat>>;
 }
 
@@ -83,7 +84,10 @@ export class HttpManifestResolver {
 	): Promise<HttpManifestResolver>;
 	constructor(
 		manifest: TexLiveManifest,
-		options?: Omit<HttpManifestResolverOptions, "manifestUrl" | "signal">,
+		options?: Omit<
+			HttpManifestResolverOptions,
+			"manifestUrl" | "manifestSha256" | "signal"
+		>,
 	);
 	readonly manifest: TexLiveManifest;
 	resolve(

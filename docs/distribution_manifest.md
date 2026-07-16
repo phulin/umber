@@ -1,7 +1,7 @@
 # Sharded Distribution Manifest
 
-Status: publisher contract implemented. Native and browser shard resolution are
-separate rollout work.
+Status: publisher contract and browser shard resolution implemented. Native
+shard resolution remains separate rollout work.
 
 ## Trust root
 
@@ -64,6 +64,17 @@ The new immutable public key is `manifest-v2.json`; the already cached
 schema-1 `manifest.json` is not overwritten. Publication remains manifest-last:
 all content and shard objects are uploaded and checked before that root key.
 
-This phase does not teach `umber-distribution`, the CLI, or authored
-JavaScript to fetch or resolve shards. Those consumers land separately so the
-published schema and production pin are fixed before resolution policy.
+The authored JavaScript resolver requires both the root URL and its lowercase
+SHA-256 pin. It verifies the bounded root bytes before parsing selection
+metadata, hashes each canonical lookup key to its shard, and fetches the
+digest-addressed shard through the same HTTP or IndexedDB verified-object cache
+as content payloads. A verified shard miss becomes a typed unavailable answer;
+HTTP, CORS, cancellation, size, and integrity failures remain errors.
+
+Dependency hints are consumed directly from their full inline fetch metadata,
+without loading the dependency's shard. Shards and payloads remain immutable
+and reusable across compiler sessions. The browser package exports the pinned
+production `manifest-v2.json` URL and digest as
+`TEXLIVE_2026_MANIFEST_URL` and `TEXLIVE_2026_MANIFEST_SHA256`. Native CLI
+adoption remains separate so browser rollout does not alter native cache or
+resolution policy.

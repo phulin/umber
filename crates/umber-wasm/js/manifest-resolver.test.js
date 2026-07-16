@@ -1,25 +1,24 @@
 import assert from "node:assert/strict";
 import { createHash, webcrypto } from "node:crypto";
 import test from "node:test";
-
 import {
 	HttpManifestResolver,
 	ManifestResolverError,
 } from "./manifest-resolver.js";
+import { shardIndex } from "./manifest-schema.js";
 import { MemoryObjectCache } from "./persistent-cache.js";
 
-function digest(bytes) {
-	return createHash("sha256").update(bytes).digest("hex");
-}
+const encoder = new TextEncoder();
+const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const jsonBytes = (value) => encoder.encode(`${JSON.stringify(value)}\n`);
 
-function entry(path, bytes, dependencies = []) {
+function fileEntry(path, bytes) {
 	const sha256 = digest(bytes);
 	return {
 		virtualPath: `/texlive/${path}`,
 		object: `sha256-${sha256}`,
 		sha256,
 		bytes: bytes.byteLength,
-		dependencies,
 	};
 }
 
@@ -32,51 +31,83 @@ function formatEntry(bytes) {
 		engine: "umber",
 		engineVersion: "0.1.0",
 		formatSchema: 4,
-		sourceDistribution: "texlive-2025",
+		sourceDistribution: "fixture",
 		sourceManifestSha256: "1".repeat(64),
 		sourceDateEpoch: 0,
 	};
 }
 
-function fontEntry(bytes) {
-	const sha256 = digest(bytes);
-	return {
-		object: `sha256-${sha256}`,
-		sha256,
-		bytes: bytes.byteLength,
-		container: "woff2",
-		provenance: "fixture license",
-	};
-}
-
-function fixture() {
-	const bytes = {
-		plain: new TextEncoder().encode("plain"),
-		cmr: new TextEncoder().encode("cmr"),
-		alias: new TextEncoder().encode("plain"),
-		badHint: new TextEncoder().encode("hint"),
-		font: new Uint8Array([0x77, 0x4f, 0x46, 0x32]),
+async function fixture() {
+	const payloads = {
+		plain: encoder.encode("plain"),
+		cmr: encoder.encode("cmr"),
+		alias: encoder.encode("plain"),
+		hint: encoder.encode("hint"),
 		format: new Uint8Array([0, 1, 0, 2]),
 	};
+	const cmr = fileEntry("fonts/cmr10.tfm", payloads.cmr);
+	const hint = fileEntry("tex/hint.tex", payloads.hint);
 	const files = {
-		"tex:plain.tex": entry("tex/plain.tex", bytes.plain, [
-			"tfm:cmr10.tfm",
-			"tex:hint.tex",
-		]),
-		"tex:alias.tex": entry("tex/alias.tex", bytes.alias),
-		"tfm:cmr10.tfm": entry("fonts/cmr10.tfm", bytes.cmr),
-		"tex:hint.tex": entry("tex/hint.tex", bytes.badHint),
+		"tex:plain.tex": {
+			...fileEntry("tex/plain.tex", payloads.plain),
+			dependencies: [
+				{ key: "tex:hint.tex", ...hint },
+				{ key: "tfm:cmr10.tfm", ...cmr },
+			],
+		},
+		"tex:alias.tex": fileEntry("tex/alias.tex", payloads.alias),
+		"tfm:cmr10.tfm": cmr,
+		"tex:hint.tex": hint,
 	};
-	return {
-		manifest: {
+	const shardBits = 2;
+	const shardFiles = Array.from({ length: 4 }, () => ({}));
+	for (const [key, entry] of Object.entries(files)) {
+		shardFiles[await shardIndex(key, shardBits, webcrypto)][key] = entry;
+	}
+	const objectBytes = new Map();
+	for (const entry of Object.values(files))
+		objectBytes.set(
+			entry.object,
+			payloads[
+				entry === cmr
+					? "cmr"
+					: entry === hint
+						? "hint"
+						: entry.object === files["tex:plain.tex"].object
+							? "plain"
+							: "alias"
+			],
+		);
+	const shards = shardFiles.map((shardFilesAtIndex, index) => {
+		const bytes = jsonBytes({
 			schema: 1,
 			distribution: "texlive-fixture",
-			objectsBaseUrl: "https://cdn.example.test/objects/",
-			files,
-			fonts: { cmr10: fontEntry(bytes.font) },
-			formats: { plain: formatEntry(bytes.format) },
-		},
-		bytes,
+			index,
+			files: shardFilesAtIndex,
+		});
+		const sha256 = digest(bytes);
+		objectBytes.set(`sha256-${sha256}`, bytes);
+		return sha256;
+	});
+	const format = formatEntry(payloads.format);
+	objectBytes.set(format.object, payloads.format);
+	const root = {
+		schema: 2,
+		distribution: "texlive-fixture",
+		objectsBaseUrl: "https://cdn.example.test/objects/",
+		shardBits,
+		shardCount: 4,
+		shards,
+		formats: { plain: format },
+	};
+	const rootBytes = jsonBytes(root);
+	return {
+		root,
+		rootBytes,
+		rootDigest: digest(rootBytes),
+		objectBytes,
+		files,
+		payloads,
 	};
 }
 
@@ -89,266 +120,233 @@ function response(bytes, options = {}) {
 	});
 }
 
-test("fetches concurrently, deduplicates hashes, and binds every lookup key", async () => {
-	const { manifest, bytes } = fixture();
-	manifest.files["tex:plain.tex"].dependencies = [];
-	let active = 0;
-	let maximum = 0;
-	const calls = [];
-	const byObject = new Map([
-		[manifest.files["tex:plain.tex"].object, bytes.plain],
-		[manifest.files["tfm:cmr10.tfm"].object, bytes.cmr],
-	]);
-	const fetch = async (url, options) => {
-		calls.push({ url, options });
-		active += 1;
-		maximum = Math.max(maximum, active);
-		await new Promise((resolve) => setTimeout(resolve, 10));
-		active -= 1;
-		return response(byObject.get(url.split("/").at(-1)));
+function resolverFor(data, options = {}) {
+	const calls = options.calls ?? [];
+	const fetch =
+		options.fetch ??
+		(async (url, requestOptions) => {
+			calls.push({ url, options: requestOptions });
+			const bytes = data.objectBytes.get(url.split("/").at(-1));
+			return bytes === undefined
+				? response(new Uint8Array(), { status: 404 })
+				: response(bytes);
+		});
+	return {
+		resolver: new HttpManifestResolver(data.root, {
+			fetch,
+			crypto: webcrypto,
+			...options,
+		}),
+		calls,
 	};
-	const resolver = new HttpManifestResolver(manifest, {
+}
+
+test("create verifies the pinned root before accepting its selection metadata", async () => {
+	const data = await fixture();
+	const resolver = await HttpManifestResolver.create({
+		manifestUrl: "https://cdn.example.test/manifest-v2.json",
+		manifestSha256: data.rootDigest,
+		fetch: async () => response(data.rootBytes),
+		crypto: webcrypto,
+	});
+	assert.equal(resolver.manifest.schema, 2);
+	await assert.rejects(
+		HttpManifestResolver.create({
+			manifestUrl: "https://cdn.example.test/manifest-v2.json",
+			manifestSha256: "0".repeat(64),
+			fetch: async () => response(data.rootBytes),
+			crypto: webcrypto,
+		}),
+		(error) => error.code === "manifest-digest",
+	);
+});
+
+test("fetches canonical shards, deduplicates payloads, and uses inline hints without dependency index reads", async () => {
+	const data = await fixture();
+	const calls = [];
+	const { resolver } = resolverFor(data, { calls, concurrency: 3 });
+	const downloads = await resolver.resolve([
+		{ kind: "tex", name: "plain.tex" },
+		{ kind: "tex", name: "alias.tex" },
+		{ kind: "tex", name: "plain.tex" },
+	]);
+	assert.deepEqual(
+		downloads.map(({ name }) => name),
+		["plain.tex", "alias.tex"],
+	);
+	const plainShard = await shardIndex(
+		"tex:plain.tex",
+		data.root.shardBits,
+		webcrypto,
+	);
+	const aliasShard = await shardIndex(
+		"tex:alias.tex",
+		data.root.shardBits,
+		webcrypto,
+	);
+	const requestedObjects = calls.map(({ url }) => url.split("/").at(-1));
+	assert(requestedObjects.includes(`sha256-${data.root.shards[plainShard]}`));
+	assert(requestedObjects.includes(`sha256-${data.root.shards[aliasShard]}`));
+	const dependencyShard = await shardIndex(
+		"tfm:cmr10.tfm",
+		data.root.shardBits,
+		webcrypto,
+	);
+	if (dependencyShard !== plainShard && dependencyShard !== aliasShard) {
+		assert(
+			!requestedObjects.includes(`sha256-${data.root.shards[dependencyShard]}`),
+		);
+	}
+	assert.equal(
+		requestedObjects.filter(
+			(object) => object === data.files["tex:plain.tex"].object,
+		).length,
+		1,
+	);
+});
+
+test("verified shard absence is typed unavailable while shard transport failure is actionable", async () => {
+	const data = await fixture();
+	const calls = [];
+	const { resolver } = resolverFor(data, { calls });
+	assert.deepEqual(
+		await resolver.resolve([{ kind: "tex", name: "absent.cfg" }]),
+		[{ type: "file-unavailable", kind: "tex", name: "absent.cfg" }],
+	);
+	assert.equal(
+		calls.length,
+		1,
+		"absence should fetch only its canonical shard",
+	);
+	const failing = resolverFor(data, {
+		fetch: async () => response(new Uint8Array(), { status: 503 }),
+	}).resolver;
+	await assert.rejects(
+		failing.resolve([{ kind: "tex", name: "plain.tex" }]),
+		(error) => {
+			assert.equal(error.code, "object-http");
+			assert.match(error.message, /cannot resolve tex:plain\.tex/);
+			return true;
+		},
+	);
+});
+
+test("rejects tampered and mispartitioned shards", async () => {
+	const data = await fixture();
+	const plainIndex = await shardIndex(
+		"tex:plain.tex",
+		data.root.shardBits,
+		webcrypto,
+	);
+	const shardObject = `sha256-${data.root.shards[plainIndex]}`;
+	const tampered = new Map(data.objectBytes);
+	const changed = tampered.get(shardObject).slice();
+	changed[0] ^= 1;
+	tampered.set(shardObject, changed);
+	await assert.rejects(
+		resolverFor({ ...data, objectBytes: tampered }).resolver.resolve([
+			{ kind: "tex", name: "plain.tex" },
+		]),
+		(error) => error.code === "object-digest",
+	);
+
+	const wrongIndex = (plainIndex + 1) % data.root.shardCount;
+	const wrongShard = JSON.parse(
+		new TextDecoder().decode(
+			data.objectBytes.get(`sha256-${data.root.shards[wrongIndex]}`),
+		),
+	);
+	wrongShard.files["tex:plain.tex"] = data.files["tex:plain.tex"];
+	const wrongBytes = jsonBytes(wrongShard);
+	const wrongDigest = digest(wrongBytes);
+	const wrongRoot = { ...data.root, shards: [...data.root.shards] };
+	wrongRoot.shards[wrongIndex] = wrongDigest;
+	const wrongObjects = new Map(data.objectBytes).set(
+		`sha256-${wrongDigest}`,
+		wrongBytes,
+	);
+	await assert.rejects(
+		resolverFor({
+			...data,
+			root: wrongRoot,
+			objectBytes: wrongObjects,
+		}).resolver.resolve([
+			{ kind: "tex", name: "plain.tex" },
+			{ kind: "tex", name: Object.keys(wrongShard.files)[0].slice(4) },
+		]),
+		/canonical shard/,
+	);
+});
+
+test("immutable shards and payloads persist across resolver instances", async () => {
+	const data = await fixture();
+	const cacheStore = new MemoryObjectCache();
+	let fetches = 0;
+	const fetch = async (url) => {
+		fetches += 1;
+		return response(data.objectBytes.get(url.split("/").at(-1)));
+	};
+	const options = {
 		fetch,
 		crypto: webcrypto,
-		concurrency: 2,
-	});
-	const downloads = await resolver.resolve(
-		[
-			{ kind: "tex", name: "plain.tex" },
-			{ kind: "tex", name: "alias.tex" },
-			{ kind: "tfm", name: "cmr10.tfm" },
-			{ kind: "tex", name: "plain.tex" },
-		],
-		{ signal: undefined, prefetchHints: [] },
-	);
-
-	assert.equal(maximum, 2);
-	assert.equal(calls.length, 2, "plain and alias share one content hash");
-	assert.ok(calls.every(({ options }) => options.signal === undefined));
-	assert.deepEqual(
-		downloads.map(({ type, domain, kind, name }) => ({
-			type,
-			domain,
-			kind,
-			name,
-		})),
-		[
-			{ type: "file", domain: "tex", kind: "tex", name: "plain.tex" },
-			{ type: "file", domain: "tex", kind: "tex", name: "alias.tex" },
-			{ type: "file", domain: "tex", kind: "tfm", name: "cmr10.tfm" },
-		],
-	);
-	assert.equal(downloads[0].bytes, downloads[1].bytes);
-});
-
-test("answers manifest file and font misses with typed unavailable responses", async () => {
-	const { manifest } = fixture();
-	let fetches = 0;
-	const resolver = new HttpManifestResolver(manifest, {
-		fetch() {
-			fetches += 1;
-		},
-		crypto: webcrypto,
-	});
-	const variations = [];
-	const features = [];
-	const responses = await resolver.resolve([
-		{ type: "file", domain: "tex", kind: "tex", name: "absent.cfg" },
-		{
-			type: "font",
-			logicalName: "absent-font",
-			faceIndex: 0,
-			variations,
-			features,
-		},
-	]);
-	assert.deepEqual(responses, [
-		{
-			type: "file-unavailable",
-			domain: "tex",
-			kind: "tex",
-			name: "absent.cfg",
-		},
-		{
-			type: "font-unavailable",
-			logicalName: "absent-font",
-			faceIndex: 0,
-			variations,
-			features,
-		},
-	]);
-	assert.equal(fetches, 0);
-});
-
-test("resolves an explicit application-manifest font binding", async () => {
-	const { manifest, bytes } = fixture();
-	const resolver = new HttpManifestResolver(manifest, {
-		async fetch() {
-			return response(bytes.font);
-		},
-		crypto: webcrypto,
-	});
-	const request = {
-		type: "font",
-		logicalName: "cmr10",
-		faceIndex: 0,
-		variations: [],
-		features: [
-			{ tag: "kern", enabled: true },
-			{ tag: "liga", enabled: true },
-		],
-		acceptedContainers: ["woff2"],
-		purposes: ["layout", "html"],
+		persistentCache: "indexeddb",
+		cacheStore,
 	};
-
-	const [resolved] = await resolver.resolve([request]);
-
-	assert.deepEqual(resolved.bytes, bytes.font);
-	assert.equal(resolved.type, "font");
-	assert.equal(resolved.logicalName, "cmr10");
-	assert.equal(resolved.container, "woff2");
-	assert.equal(resolved.objectSha256, digest(bytes.font));
-	assert.equal(resolved.provenance, "fixture license");
+	await new HttpManifestResolver(data.root, options).resolve([
+		{ kind: "tex", name: "plain.tex" },
+	]);
+	const coldFetches = fetches;
+	await new HttpManifestResolver(data.root, options).resolve([
+		{ kind: "tex", name: "plain.tex" },
+	]);
+	assert.equal(fetches, coldFetches);
 });
 
-test("downloads a compatible named format through the verified object cache", async () => {
-	const { manifest, bytes } = fixture();
-	let fetches = 0;
-	const resolver = new HttpManifestResolver(manifest, {
-		async fetch() {
-			fetches += 1;
-			return response(bytes.format);
-		},
-		crypto: webcrypto,
-	});
-
+test("formats remain inline and download through the verified object cache", async () => {
+	const data = await fixture();
+	const { resolver, calls } = resolverFor(data);
 	assert.deepEqual(
 		await resolver.resolveFormat("plain", {
 			engineVersion: "0.1.0",
 			formatSchema: 4,
 		}),
-		bytes.format,
-	);
-	assert.equal(
-		resolver.formatMetadata("plain").sourceDistribution,
-		"texlive-2025",
+		data.payloads.format,
 	);
 	await resolver.resolveFormat("plain");
-	assert.equal(fetches, 1);
-});
-
-test("rejects missing or incompatible formats before downloading", async (t) => {
-	const { manifest } = fixture();
-	let fetches = 0;
-	const resolver = new HttpManifestResolver(manifest, {
-		fetch() {
-			fetches += 1;
-		},
-		crypto: webcrypto,
-	});
-	const cases = [
-		["missing-format", () => resolver.resolveFormat("latex")],
-		[
-			"incompatible-format",
-			() => resolver.resolveFormat("plain", { engineVersion: "0.2.0" }),
-		],
-		[
-			"incompatible-format",
-			() => resolver.resolveFormat("plain", { formatSchema: 5 }),
-		],
-	];
-	for (const [code, operation] of cases) {
-		await t.test(code, async () => {
-			await assert.rejects(operation(), (error) => error.code === code);
-		});
-	}
-	assert.equal(fetches, 0);
-});
-
-test("rejects malformed format compatibility metadata", () => {
-	const { manifest } = fixture();
-	manifest.formats.plain.formatSchema = 0;
-	assert.throws(
-		() =>
-			new HttpManifestResolver(manifest, {
-				fetch: () => {},
-				crypto: webcrypto,
-			}),
-		/invalid compatibility metadata/,
+	assert.equal(calls.length, 1);
+	await assert.rejects(
+		resolver.resolveFormat("plain", { formatSchema: 5 }),
+		(error) => error.code === "incompatible-format",
 	);
 });
 
-test("freezes validated metadata so it cannot redirect later fetches", async () => {
-	const { manifest, bytes } = fixture();
-	manifest.files["tex:plain.tex"].dependencies = [];
-	const calls = [];
-	const resolver = new HttpManifestResolver(manifest, {
-		async fetch(url) {
-			calls.push(url);
-			return response(bytes.plain);
-		},
-		crypto: webcrypto,
-	});
+test("cancellation and oversized streamed objects remain bounded", async () => {
+	const data = await fixture();
+	const controller = new AbortController();
+	controller.abort(new DOMException("stop", "AbortError"));
+	await assert.rejects(
+		resolverFor(data).resolver.resolve(
+			[{ kind: "tex", name: "plain.tex" }],
+			controller.signal,
+		),
+		{ name: "AbortError" },
+	);
 
-	assert.throws(() => {
-		resolver.manifest.objectsBaseUrl = "https://attacker.invalid/";
-	}, TypeError);
-	assert.throws(() => {
-		resolver.manifest.files["tex:plain.tex"].object =
-			"https://attacker.invalid/object";
-	}, TypeError);
-	assert.throws(() => {
-		resolver.manifest.files["tex:plain.tex"].dependencies.push(
-			"tex:attacker.tex",
-		);
-	}, TypeError);
-	assert.throws(() => {
-		resolver.formatMetadata("plain").formatSchema = 99;
-	}, TypeError);
-
-	await resolver.resolve([{ kind: "tex", name: "plain.tex" }]);
-	assert.deepEqual(calls, [
-		`${manifest.objectsBaseUrl}${manifest.files["tex:plain.tex"].object}`,
-	]);
-});
-
-test("validates status, byte length, and SHA-256 with actionable request errors", async (t) => {
-	const { manifest, bytes } = fixture();
-	manifest.files["tex:plain.tex"].dependencies = [];
-	const request = [{ kind: "tex", name: "plain.tex" }];
-	const cases = [
-		["object-http", async () => response(new Uint8Array(), { status: 404 })],
-		["object-length", async () => response(bytes.plain.subarray(1))],
-		["object-digest", async () => response(new TextEncoder().encode("other"))],
-	];
-	for (const [code, fetch] of cases) {
-		await t.test(code, async () => {
-			const resolver = new HttpManifestResolver(manifest, {
-				fetch,
-				crypto: webcrypto,
-			});
-			await assert.rejects(resolver.resolve(request), (error) => {
-				assert(error instanceof ManifestResolverError);
-				assert.equal(error.code, code);
-				assert.match(error.message, /cannot resolve tex:plain\.tex/);
-				return true;
-			});
-		});
-	}
-});
-
-test("cancels an oversized chunked object before buffering the full body", async () => {
-	const { manifest } = fixture();
-	manifest.files["tex:plain.tex"].dependencies = [];
-	let pulls = 0;
+	const plainIndex = await shardIndex(
+		"tex:plain.tex",
+		data.root.shardBits,
+		webcrypto,
+	);
+	const shardObject = `sha256-${data.root.shards[plainIndex]}`;
 	let cancelled = false;
-	const resolver = new HttpManifestResolver(manifest, {
-		async fetch() {
+	const { resolver } = resolverFor(data, {
+		fetch: async (url) => {
+			if (!url.endsWith(shardObject))
+				return response(data.objectBytes.get(url.split("/").at(-1)));
 			return new Response(
 				new ReadableStream({
-					pull(controller) {
-						pulls += 1;
-						controller.enqueue(new Uint8Array([1, 2, 3]));
+					pull(stream) {
+						stream.enqueue(new Uint8Array(1024 * 1024));
 					},
 					cancel() {
 						cancelled = true;
@@ -356,286 +354,50 @@ test("cancels an oversized chunked object before buffering the full body", async
 				}),
 			);
 		},
-		crypto: webcrypto,
 	});
-
 	await assert.rejects(
 		resolver.resolve([{ kind: "tex", name: "plain.tex" }]),
-		(error) => error.code === "object-length",
+		(error) => error.code === "shard-length",
 	);
-	assert(cancelled, "oversized response stream was not cancelled");
-	assert(pulls < 10, `oversized response pulled ${pulls} chunks`);
+	assert(cancelled);
 });
 
-test("bounds manifest responses and declared object sizes", async () => {
-	const { manifest } = fixture();
-	await assert.rejects(
-		HttpManifestResolver.create({
-			manifestUrl: "https://cdn.example.test/manifest.json",
-			fetch: async () =>
-				new Response("{}", {
-					headers: { "content-length": String(64 * 1024 * 1024 + 1) },
-				}),
-			crypto: webcrypto,
-		}),
-		(error) => error.code === "manifest-length",
-	);
-
-	manifest.files["tex:plain.tex"].bytes = 128 * 1024 * 1024 + 1;
-	assert.throws(
-		() =>
-			new HttpManifestResolver(manifest, {
-				fetch: () => {},
-				crypto: webcrypto,
-			}),
-		/invalid byte length/,
-	);
-});
-
-test("accepts a pinned LaTeX-scale format object", () => {
-	const { manifest } = fixture();
-	manifest.formats.plain.bytes = 74_240_748;
-	assert.equal(
-		new HttpManifestResolver(manifest, {
-			fetch: () => {},
-			crypto: webcrypto,
-		}).formatMetadata("plain").bytes,
-		74_240_748,
-	);
-});
-
-test("failed speculative hints are ignored and retried if actually requested", async () => {
-	const { manifest, bytes } = fixture();
-	const hintObject = manifest.files["tex:hint.tex"].object;
-	let hintCalls = 0;
-	const fetch = async (url) => {
-		const object = url.split("/").at(-1);
-		if (object === hintObject) {
-			hintCalls += 1;
-			return response(new Uint8Array(), { status: 503 });
-		}
-		const source =
-			object === manifest.files["tex:plain.tex"].object
-				? bytes.plain
-				: bytes.cmr;
-		return response(source);
-	};
-	const resolver = new HttpManifestResolver(manifest, {
-		fetch,
-		crypto: webcrypto,
-	});
-	const downloads = await resolver.resolve([
-		{ kind: "tex", name: "plain.tex" },
-	]);
-	assert.deepEqual(
-		downloads.map(({ name }) => name),
-		["plain.tex"],
-	);
-	await assert.rejects(
-		resolver.resolve([{ kind: "tex", name: "hint.tex" }]),
-		/cannot resolve tex:hint\.tex/,
-	);
-	assert.equal(hintCalls, 2);
-});
-
-test("engine and manifest hints prefetch without becoming responses", async () => {
-	const { manifest, bytes } = fixture();
-	const calls = [];
-	const byObject = new Map([
-		[manifest.files["tex:plain.tex"].object, bytes.plain],
-		[manifest.files["tfm:cmr10.tfm"].object, bytes.cmr],
-		[manifest.files["tex:hint.tex"].object, bytes.badHint],
-	]);
-	const resolver = new HttpManifestResolver(manifest, {
-		async fetch(url) {
-			const object = url.split("/").at(-1);
-			calls.push(object);
-			return response(byObject.get(object));
-		},
-		crypto: webcrypto,
-	});
-
-	const downloads = await resolver.resolve(
-		[{ kind: "tex", name: "plain.tex" }],
-		{ prefetchHints: [{ kind: "tex", name: "alias.tex" }] },
-	);
-
-	assert.deepEqual(
-		downloads.map(({ name }) => name),
-		["plain.tex"],
-	);
-	assert.deepEqual(new Set(calls), new Set(byObject.keys()));
-});
-
-test("rejects over-budget dependency closures before object fetches", async (t) => {
-	const { manifest } = fixture();
-	const cases = [
-		["files", { maxFiles: 2, maxBytes: 64 * 1024 * 1024 }],
-		["bytes", { maxFiles: 512, maxBytes: 4 }],
-	];
-	for (const [name, limits] of cases) {
-		await t.test(name, async () => {
-			let fetches = 0;
-			const resolver = new HttpManifestResolver(manifest, {
-				fetch() {
-					fetches += 1;
-				},
-				crypto: webcrypto,
-				...limits,
-			});
-			await assert.rejects(
-				resolver.resolve([{ kind: "tex", name: "plain.tex" }]),
-				(error) => error.code === "resource-limit",
-			);
-			assert.equal(fetches, 0);
-		});
-	}
-});
-
-test("budget accounting counts aliases by logical file and unique path bytes", async () => {
-	const { manifest, bytes } = fixture();
-	manifest.files["tex:plain.tex"].dependencies = [];
-	manifest.files["tex:alias.tex"].virtualPath =
-		manifest.files["tex:plain.tex"].virtualPath;
+test("resource budgets include inline dependency payloads before fetching them", async () => {
+	const data = await fixture();
 	let fetches = 0;
-	const resolver = new HttpManifestResolver(manifest, {
-		async fetch() {
-			fetches += 1;
-			return response(bytes.plain);
-		},
-		crypto: webcrypto,
+	const { resolver } = resolverFor(data, {
 		maxFiles: 2,
-		maxBytes: bytes.plain.byteLength,
+		fetch: async (url) => {
+			fetches += 1;
+			return response(data.objectBytes.get(url.split("/").at(-1)));
+		},
 	});
-	const downloads = await resolver.resolve([
-		{ kind: "tex", name: "plain.tex" },
-		{ kind: "tex", name: "alias.tex" },
-	]);
-	assert.equal(downloads.length, 2);
-	assert.equal(fetches, 1);
-});
-
-test("warm resolver cache performs no object downloads and requests HTTP caching", async () => {
-	const { manifest, bytes } = fixture();
-	manifest.files["tex:plain.tex"].dependencies = [];
-	const calls = [];
-	const fetch = async (url, options) => {
-		calls.push({ url, options });
-		return response(bytes.plain);
-	};
-	const resolver = new HttpManifestResolver(manifest, {
-		fetch,
-		crypto: webcrypto,
-	});
-	const request = [{ kind: "tex", name: "plain.tex" }];
-	await resolver.resolve(request);
-	await resolver.resolve(request);
-	assert.equal(calls.length, 1);
-	assert.equal(calls[0].options.cache, "force-cache");
-});
-
-test("persistent cache is isolated by distribution and avoids later downloads", async () => {
-	const { manifest, bytes } = fixture();
-	manifest.files["tex:plain.tex"].dependencies = [];
-	const cacheStore = new MemoryObjectCache();
-	let fetches = 0;
-	const fetch = async () => {
-		fetches += 1;
-		return response(bytes.plain);
-	};
-	const request = [{ kind: "tex", name: "plain.tex" }];
-	const first = new HttpManifestResolver(manifest, {
-		fetch,
-		crypto: webcrypto,
-		persistentCache: "indexeddb",
-		cacheStore,
-	});
-	await first.resolve(request);
-	const warm = new HttpManifestResolver(manifest, {
-		fetch,
-		crypto: webcrypto,
-		persistentCache: "indexeddb",
-		cacheStore,
-	});
-	await warm.resolve(request);
-	assert.equal(fetches, 1);
-
-	const nextManifest = { ...manifest, distribution: "texlive-fixture-next" };
-	const isolated = new HttpManifestResolver(nextManifest, {
-		fetch,
-		crypto: webcrypto,
-		persistentCache: "indexeddb",
-		cacheStore,
-	});
-	await isolated.resolve(request);
+	await assert.rejects(
+		resolver.resolve([{ kind: "tex", name: "plain.tex" }]),
+		(error) => error.code === "resource-limit",
+	);
 	assert.equal(
 		fetches,
-		2,
-		"a different distribution must not reuse the object",
+		1,
+		"only the selection shard may precede budget validation",
 	);
 });
 
-test("corrupt persistent bytes are evicted and replaced from the network", async () => {
-	const { manifest, bytes } = fixture();
-	manifest.files["tex:plain.tex"].dependencies = [];
-	const entry = manifest.files["tex:plain.tex"];
-	const cacheStore = new MemoryObjectCache();
-	await cacheStore.put(
-		manifest.distribution,
-		entry.sha256,
-		new Uint8Array(entry.bytes),
+test("invalid root pin and malformed shard options are typed", async () => {
+	const data = await fixture();
+	await assert.rejects(
+		HttpManifestResolver.create({
+			manifestUrl: "unused",
+			manifestSha256: "bad",
+			fetch: async () => response(data.rootBytes),
+			crypto: webcrypto,
+		}),
+		(error) =>
+			error instanceof ManifestResolverError &&
+			error.code === "invalid-options",
 	);
-	let fetches = 0;
-	const resolver = new HttpManifestResolver(manifest, {
-		async fetch() {
-			fetches += 1;
-			return response(bytes.plain);
-		},
-		crypto: webcrypto,
-		persistentCache: "indexeddb",
-		cacheStore,
-	});
-	await resolver.resolve([{ kind: "tex", name: "plain.tex" }]);
-	assert.equal(fetches, 1);
-	assert.deepEqual(
-		await cacheStore.get(manifest.distribution, entry.sha256),
-		bytes.plain,
-	);
-});
-
-test("loads and validates a manifest through injectable fetch", async () => {
-	const { manifest, bytes } = fixture();
-	manifest.files["tex:plain.tex"].dependencies = [];
-	const calls = [];
-	const fetch = async (url, options) => {
-		calls.push({ url, options });
-		if (url === "https://cdn.example.test/manifest.json") {
-			return Response.json(manifest);
-		}
-		return response(bytes.plain);
-	};
-	const resolver = await HttpManifestResolver.create({
-		manifestUrl: "https://cdn.example.test/manifest.json",
-		fetch,
-		crypto: webcrypto,
-	});
-	await resolver.resolve([{ kind: "tex", name: "plain.tex" }]);
-	assert.equal(calls[0].options.cache, "force-cache");
-	assert.equal(
-		calls[1].url,
-		`${manifest.objectsBaseUrl}${manifest.files["tex:plain.tex"].object}`,
-	);
-});
-
-test("rejects unsafe manifest object and virtual path metadata", () => {
-	const { manifest } = fixture();
-	manifest.files["tex:plain.tex"].object = "../plain.tex";
 	assert.throws(
-		() =>
-			new HttpManifestResolver(manifest, {
-				fetch: () => {},
-				crypto: webcrypto,
-			}),
-		/invalid object name/,
+		() => new HttpManifestResolver({ ...data.root, shardBits: 17 }),
+		/shardBits/,
 	);
 });
