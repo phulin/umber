@@ -433,9 +433,13 @@ Chromium, and Firefox.
 Tracked by `umber2-y2ei.8`; depends on stage 6.
 
 Add collections, variation axes, feature policies, script/language selection,
-mark positioning, and the supported shaping boundary. Keep browser ownership
-inside runs explicit and test deterministic engine layout inputs across native
-and WASM.
+mark positioning, and the supported shaping boundary.
+
+This stage's shaping-ownership boundary is superseded by
+`docs/unicode_opentype_shaping.md`: rather than keeping shaping entirely
+inside the browser, the engine shapes OpenType-selected text itself via
+`rustybuzz` so that line-breaking uses real widths, kerning, and ligatures.
+See that document for the full design; TFM-selected fonts are unaffected.
 
 ### Stage 8: add OpenType math support
 
