@@ -156,6 +156,81 @@ export function encodeRequest(request) {
 	return key;
 }
 
+// Pure manifest selection shared by the HTTP resolver and cross-language
+// fixtures. Required jobs retain request order; transitive file hints follow
+// breadth-first in manifest dependency order. Missing required requests are
+// returned as typed values so policy layers can decide how to answer them.
+export function selectManifestJobs(manifest, requests) {
+	const required = [];
+	const misses = [];
+	const seen = new Set();
+	for (const request of requests) {
+		if (request?.type === "font") {
+			const key = fontRequestIdentity(request);
+			if (seen.has(key)) continue;
+			seen.add(key);
+			const manifestKey = request.logicalName;
+			const entry = manifest.fonts[manifestKey];
+			if (entry === undefined) {
+				misses.push({ type: "font", request, manifestKey });
+				continue;
+			}
+			required.push({
+				key,
+				manifestKey,
+				entry,
+				request,
+				requested: true,
+				type: "font",
+			});
+			continue;
+		}
+		const manifestKey = encodeRequest(request);
+		const key = `file:${manifestKey}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		const entry = manifest.files[manifestKey];
+		if (entry === undefined) {
+			misses.push({ type: "file", request, manifestKey });
+			continue;
+		}
+		required.push({
+			key: manifestKey,
+			manifestKey,
+			entry,
+			requested: true,
+			type: "file",
+		});
+	}
+	const hints = [];
+	const seenFiles = new Set(
+		required
+			.filter(({ type }) => type === "file")
+			.map(({ manifestKey }) => manifestKey),
+	);
+	for (let cursor = 0; cursor < required.length + hints.length; cursor += 1) {
+		const parent =
+			cursor < required.length
+				? required[cursor]
+				: hints[cursor - required.length];
+		for (const manifestKey of parent.entry.dependencies ?? []) {
+			if (seenFiles.has(manifestKey)) continue;
+			seenFiles.add(manifestKey);
+			hints.push({
+				key: manifestKey,
+				manifestKey,
+				entry: manifest.files[manifestKey],
+				requested: false,
+				type: "file",
+			});
+		}
+	}
+	return Object.freeze({
+		jobs: Object.freeze([...required, ...hints]),
+		misses: Object.freeze(misses),
+	});
+}
+
 export function decodeKey(key) {
 	const match = KEY_PATTERN.exec(key);
 	return { kind: match[1], name: match[2] };
@@ -163,6 +238,20 @@ export function decodeKey(key) {
 
 export function isFormatName(name) {
 	return typeof name === "string" && FORMAT_NAME_PATTERN.test(name);
+}
+
+function fontRequestIdentity(request) {
+	if (
+		typeof request.logicalName !== "string" ||
+		request.logicalName.length === 0 ||
+		!Number.isSafeInteger(request.faceIndex) ||
+		request.faceIndex < 0 ||
+		!Array.isArray(request.variations) ||
+		!Array.isArray(request.features)
+	) {
+		throw new ManifestResolverError("invalid-request", "invalid font request");
+	}
+	return `font:${request.logicalName}:${request.faceIndex}:${JSON.stringify(request.variations)}:${JSON.stringify(request.features)}`;
 }
 
 function validateObjectEntry(entry, label, hashLengths) {

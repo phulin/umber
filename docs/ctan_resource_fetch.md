@@ -1,9 +1,10 @@
 # Automatic CTAN Resource Fetch
 
-Status: design plan, tracked by the `umber2-mbwq` epic. Builds on the
+Status: partially implemented, tracked by the `umber2-mbwq` epic. Builds on the
 completed VFS substrate ([umber_vfs.md](umber_vfs.md)) and resource session
-protocol ([wasm_resource_acquisition.md](wasm_resource_acquisition.md)).
-Nothing in this document is implemented yet.
+protocol ([wasm_resource_acquisition.md](wasm_resource_acquisition.md)). The
+shared manifest crate in phase 1 is implemented; host fetch, unavailable
+responses, CLI integration, and snapshot deployment remain planned.
 
 ## Problem
 
@@ -65,10 +66,9 @@ Consequences:
 
 ### 2. One shared manifest model in Rust
 
-The manifest schema currently exists twice: in the publisher tool and in the
-authored JavaScript (`manifest-schema.js`). The CLI fetcher needs a third
-consumer. Add a small dependency-free crate, `crates/umber-distribution`,
-owning:
+The manifest schema previously existed twice: in the publisher tool and in the
+authored JavaScript (`manifest-schema.js`). `crates/umber-distribution` now
+owns:
 
 - the manifest data model and strict parser (schema version, distribution
   identity, `objectsBaseUrl`, files, fonts, formats, dependency hints);
@@ -78,10 +78,12 @@ owning:
   objects to acquire (required plus transitive dependency hints) and the
   typed misses.
 
-The crate performs no I/O and compiles for `wasm32-unknown-unknown`. The
-publisher and the CLI fetcher consume it; the JavaScript implementation
-remains authored but gains shared fixtures asserting that both sides
-round-trip the same manifests to the same jobs and misses.
+The crate performs no I/O, has no dependencies, and compiles for
+`wasm32-unknown-unknown`. The publisher consumes its model and canonical JSON
+serialization; the future CLI fetcher will consume the same API. The
+JavaScript implementation remains authored, with fixtures under
+`tests/corpus/distribution` asserting that both sides round-trip the same
+manifest and select the same ordered jobs and typed misses.
 
 ### 3. Distribution absence must be a recoverable engine condition
 
@@ -224,10 +226,11 @@ Each phase is a `bd` issue under the `umber2-mbwq` epic (phase N is
 `umber2-mbwq.N`); each lands with its tests and keeps
 `scripts/check-and-test.sh` and `scripts/check-wasm.sh` green.
 
-1. **Shared manifest crate.** Create `crates/umber-distribution` with the
-   manifest model, parser, request-key encoding, and job/miss selection.
-   Port `tools/texlive-wasm-publish` and the JS fixtures onto it; add
-   cross-language fixture tests.
+1. **Complete — shared manifest crate.** `crates/umber-distribution` owns the
+   manifest model, strict parser, canonical serializer, request-key encoding,
+   and deterministic job/miss selection. `tools/texlive-wasm-publish` uses it,
+   and shared Rust/JavaScript fixtures cover round trips, transitive hints,
+   cycles, duplicate requests, and typed file/font misses.
 2. **Unavailable responses.** Add `FileUnavailable`/`FontUnavailable`
    through `umber-vfs`, the session, the WASM wire types, and the JS facade,
    with idempotence, conflict, progress, and TeX missing-file-semantics

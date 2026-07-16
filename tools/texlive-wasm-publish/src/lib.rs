@@ -9,10 +9,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use umber_distribution::{ManifestFile, ManifestFormat};
 
 pub use scan::tree_sha256;
+pub use umber_distribution::Manifest;
 use scan::{Candidate, scan_roots};
 
 #[derive(Clone, Debug, Deserialize)]
@@ -57,42 +59,6 @@ struct FormatMetadata {
     source_distribution: String,
     source_manifest_sha256: String,
     source_date_epoch: u64,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Manifest {
-    pub schema: u32,
-    pub distribution: String,
-    pub objects_base_url: String,
-    pub files: BTreeMap<String, ManifestFile>,
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub formats: BTreeMap<String, ManifestFormat>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ManifestFile {
-    pub virtual_path: String,
-    pub object: String,
-    pub sha256: String,
-    pub bytes: u64,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub dependencies: Vec<String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ManifestFormat {
-    pub object: String,
-    pub sha256: String,
-    pub bytes: u64,
-    pub engine: String,
-    pub engine_version: String,
-    pub format_schema: u32,
-    pub source_distribution: String,
-    pub source_manifest_sha256: String,
-    pub source_date_epoch: u64,
 }
 
 pub fn publish(config: &PublishConfig, output: &Path) -> Result<Manifest> {
@@ -146,10 +112,11 @@ pub fn publish(config: &PublishConfig, output: &Path) -> Result<Manifest> {
         distribution: config.distribution.clone(),
         objects_base_url: config.objects_base_url.clone(),
         files,
+        fonts: BTreeMap::new(),
         formats,
     };
-    let mut encoded = serde_json::to_vec_pretty(&manifest).context("serialize manifest")?;
-    encoded.push(b'\n');
+    let encoded = manifest.to_json_pretty();
+    Manifest::parse(&encoded).context("validate published manifest")?;
     fs::write(output.join("manifest.json"), encoded).context("write manifest")?;
     Ok(manifest)
 }

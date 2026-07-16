@@ -1,0 +1,646 @@
+use std::collections::{BTreeMap, BTreeSet};
+use std::error::Error;
+use std::fmt;
+
+use crate::json::{self, Value};
+
+pub const MANIFEST_SCHEMA: u32 = 1;
+const MAX_OBJECT_BYTES: u64 = 128 * 1024 * 1024;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Manifest {
+    pub schema: u32,
+    pub distribution: String,
+    pub objects_base_url: String,
+    pub files: BTreeMap<String, ManifestFile>,
+    pub fonts: BTreeMap<String, ManifestFont>,
+    pub formats: BTreeMap<String, ManifestFormat>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ObjectEntry {
+    pub object: String,
+    pub sha256: String,
+    pub bytes: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ManifestFile {
+    pub virtual_path: String,
+    pub object: String,
+    pub sha256: String,
+    pub bytes: u64,
+    pub dependencies: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ManifestFont {
+    pub object: String,
+    pub sha256: String,
+    pub bytes: u64,
+    pub container: String,
+    pub provenance: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ManifestFormat {
+    pub object: String,
+    pub sha256: String,
+    pub bytes: u64,
+    pub engine: String,
+    pub engine_version: String,
+    pub format_schema: u32,
+    pub source_distribution: String,
+    pub source_manifest_sha256: String,
+    pub source_date_epoch: u64,
+}
+
+impl ManifestFile {
+    #[must_use]
+    pub fn object_entry(&self) -> ObjectEntry {
+        ObjectEntry {
+            object: self.object.clone(),
+            sha256: self.sha256.clone(),
+            bytes: self.bytes,
+        }
+    }
+}
+
+impl ManifestFont {
+    #[must_use]
+    pub fn object_entry(&self) -> ObjectEntry {
+        ObjectEntry {
+            object: self.object.clone(),
+            sha256: self.sha256.clone(),
+            bytes: self.bytes,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ManifestParseError {
+    message: String,
+}
+
+impl ManifestParseError {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for ManifestParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl Error for ManifestParseError {}
+
+impl Manifest {
+    pub fn parse(text: &str) -> Result<Self, ManifestParseError> {
+        let value =
+            json::parse(text).map_err(|error| ManifestParseError::new(error.to_string()))?;
+        let mut root = object(value, "manifest")?;
+        let schema = u32_value(take(&mut root, "schema", "manifest")?, "schema")?;
+        if schema != MANIFEST_SCHEMA {
+            return Err(ManifestParseError::new(format!(
+                "unsupported manifest schema {schema}; expected {MANIFEST_SCHEMA}"
+            )));
+        }
+        let distribution = string(take(&mut root, "distribution", "manifest")?, "distribution")?;
+        validate_distribution(&distribution)?;
+        let objects_base_url = string(
+            take(&mut root, "objectsBaseUrl", "manifest")?,
+            "objectsBaseUrl",
+        )?;
+        validate_base_url(&objects_base_url)?;
+        let files = parse_files(take(&mut root, "files", "manifest")?)?;
+        let fonts = optional_object(&mut root, "fonts")?
+            .map(parse_fonts)
+            .transpose()?
+            .unwrap_or_default();
+        let formats = optional_object(&mut root, "formats")?
+            .map(parse_formats)
+            .transpose()?
+            .unwrap_or_default();
+        finish(root, "manifest")?;
+        validate_cross_references(&files, &fonts, &formats)?;
+        Ok(Self {
+            schema,
+            distribution,
+            objects_base_url,
+            files,
+            fonts,
+            formats,
+        })
+    }
+
+    /// Canonical ordered JSON used by the deterministic publisher.
+    #[must_use]
+    pub fn to_json_pretty(&self) -> String {
+        let mut out = String::new();
+        out.push_str("{\n  \"schema\": ");
+        out.push_str(&self.schema.to_string());
+        out.push_str(",\n  \"distribution\": ");
+        json_string(&mut out, &self.distribution);
+        out.push_str(",\n  \"objectsBaseUrl\": ");
+        json_string(&mut out, &self.objects_base_url);
+        out.push_str(",\n  \"files\": {");
+        write_map(&mut out, &self.files, write_file);
+        out.push_str("\n  }");
+        if !self.fonts.is_empty() {
+            out.push_str(",\n  \"fonts\": {");
+            write_map(&mut out, &self.fonts, write_font);
+            out.push_str("\n  }");
+        }
+        if !self.formats.is_empty() {
+            out.push_str(",\n  \"formats\": {");
+            write_map(&mut out, &self.formats, write_format);
+            out.push_str("\n  }");
+        }
+        out.push_str("\n}\n");
+        out
+    }
+}
+
+fn parse_files(value: Value) -> Result<BTreeMap<String, ManifestFile>, ManifestParseError> {
+    let entries = object(value, "files")?;
+    let mut files = BTreeMap::new();
+    let mut paths = BTreeMap::<String, String>::new();
+    for (key, value) in entries {
+        validate_file_key(&key)?;
+        let mut entry = object(value, &format!("file {key}"))?;
+        let virtual_path = string(take(&mut entry, "virtualPath", &key)?, "virtualPath")?;
+        validate_path(&virtual_path, "/texlive/", "virtual path")?;
+        let object_entry = parse_object_entry(&mut entry, &key)?;
+        let dependencies = match entry.remove("dependencies") {
+            Some(value) => string_array(value, &format!("dependencies for {key}"))?,
+            None => Vec::new(),
+        };
+        for dependency in &dependencies {
+            validate_file_key(dependency)?;
+        }
+        finish(entry, &format!("file {key}"))?;
+        if let Some(previous) = paths.insert(virtual_path.clone(), object_entry.sha256.clone())
+            && previous != object_entry.sha256
+        {
+            return Err(ManifestParseError::new(format!(
+                "virtual path {virtual_path} has conflicting objects"
+            )));
+        }
+        files.insert(
+            key,
+            ManifestFile {
+                virtual_path,
+                object: object_entry.object,
+                sha256: object_entry.sha256,
+                bytes: object_entry.bytes,
+                dependencies,
+            },
+        );
+    }
+    Ok(files)
+}
+
+fn parse_fonts(value: Value) -> Result<BTreeMap<String, ManifestFont>, ManifestParseError> {
+    let entries = object(value, "fonts")?;
+    let mut fonts = BTreeMap::new();
+    for (name, value) in entries {
+        validate_font_name(&name)?;
+        let mut entry = object(value, &format!("font {name}"))?;
+        let object_entry = parse_object_entry(&mut entry, &format!("font {name}"))?;
+        let container = string(take(&mut entry, "container", &name)?, "container")?;
+        if container != "woff2" {
+            return Err(ManifestParseError::new(format!(
+                "font {name} container must be woff2"
+            )));
+        }
+        let provenance = entry
+            .remove("provenance")
+            .map(|value| string(value, "provenance"))
+            .transpose()?;
+        finish(entry, &format!("font {name}"))?;
+        fonts.insert(
+            name,
+            ManifestFont {
+                object: object_entry.object,
+                sha256: object_entry.sha256,
+                bytes: object_entry.bytes,
+                container,
+                provenance,
+            },
+        );
+    }
+    Ok(fonts)
+}
+
+fn parse_formats(value: Value) -> Result<BTreeMap<String, ManifestFormat>, ManifestParseError> {
+    let entries = object(value, "formats")?;
+    let mut formats = BTreeMap::new();
+    for (name, value) in entries {
+        validate_format_name(&name)?;
+        let mut entry = object(value, &format!("format {name}"))?;
+        let object_entry = parse_object_entry(&mut entry, &format!("format {name}"))?;
+        let engine = string(take(&mut entry, "engine", &name)?, "engine")?;
+        if engine != "umber" {
+            return Err(ManifestParseError::new(format!(
+                "format {name} engine must be umber"
+            )));
+        }
+        let engine_version = nonempty_string(&mut entry, "engineVersion", &name)?;
+        let format_schema = u32_value(take(&mut entry, "formatSchema", &name)?, "formatSchema")?;
+        if format_schema == 0 {
+            return Err(ManifestParseError::new("formatSchema must be positive"));
+        }
+        let source_distribution = nonempty_string(&mut entry, "sourceDistribution", &name)?;
+        let source_manifest_sha256 = string(
+            take(&mut entry, "sourceManifestSha256", &name)?,
+            "sourceManifestSha256",
+        )?;
+        validate_digest(&source_manifest_sha256, "source manifest digest")?;
+        let source_date_epoch = number(
+            take(&mut entry, "sourceDateEpoch", &name)?,
+            "sourceDateEpoch",
+        )?;
+        finish(entry, &format!("format {name}"))?;
+        formats.insert(
+            name,
+            ManifestFormat {
+                object: object_entry.object,
+                sha256: object_entry.sha256,
+                bytes: object_entry.bytes,
+                engine,
+                engine_version,
+                format_schema,
+                source_distribution,
+                source_manifest_sha256,
+                source_date_epoch,
+            },
+        );
+    }
+    Ok(formats)
+}
+
+fn parse_object_entry(
+    fields: &mut BTreeMap<String, Value>,
+    label: &str,
+) -> Result<ObjectEntry, ManifestParseError> {
+    let object = string(take(fields, "object", label)?, "object")?;
+    let sha256 = string(take(fields, "sha256", label)?, "sha256")?;
+    validate_digest(&sha256, label)?;
+    if object != format!("sha256-{sha256}") {
+        return Err(ManifestParseError::new(format!(
+            "object name for {label} does not match its digest"
+        )));
+    }
+    let bytes = number(take(fields, "bytes", label)?, "bytes")?;
+    if bytes > MAX_OBJECT_BYTES {
+        return Err(ManifestParseError::new(format!(
+            "object {label} exceeds the {MAX_OBJECT_BYTES}-byte manifest limit"
+        )));
+    }
+    Ok(ObjectEntry {
+        object,
+        sha256,
+        bytes,
+    })
+}
+
+fn validate_cross_references(
+    files: &BTreeMap<String, ManifestFile>,
+    fonts: &BTreeMap<String, ManifestFont>,
+    formats: &BTreeMap<String, ManifestFormat>,
+) -> Result<(), ManifestParseError> {
+    let mut digest_lengths = BTreeMap::<&str, u64>::new();
+    for (key, entry) in files {
+        for dependency in &entry.dependencies {
+            if !files.contains_key(dependency) {
+                return Err(ManifestParseError::new(format!(
+                    "dependency {dependency} from {key} is absent"
+                )));
+            }
+        }
+        check_digest_length(&mut digest_lengths, &entry.sha256, entry.bytes)?;
+    }
+    for entry in fonts.values() {
+        check_digest_length(&mut digest_lengths, &entry.sha256, entry.bytes)?;
+    }
+    for entry in formats.values() {
+        check_digest_length(&mut digest_lengths, &entry.sha256, entry.bytes)?;
+    }
+    Ok(())
+}
+
+fn check_digest_length<'a>(
+    lengths: &mut BTreeMap<&'a str, u64>,
+    digest: &'a str,
+    bytes: u64,
+) -> Result<(), ManifestParseError> {
+    if let Some(previous) = lengths.insert(digest, bytes)
+        && previous != bytes
+    {
+        return Err(ManifestParseError::new(format!(
+            "inconsistent byte lengths for digest {digest}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_distribution(value: &str) -> Result<(), ManifestParseError> {
+    if value.is_empty() || value.chars().any(char::is_whitespace) {
+        return Err(ManifestParseError::new(
+            "distribution must be a non-empty identifier without whitespace",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_base_url(value: &str) -> Result<(), ManifestParseError> {
+    let Some((scheme, rest)) = value.split_once(':') else {
+        return Err(ManifestParseError::new("objectsBaseUrl must be absolute"));
+    };
+    if scheme.is_empty()
+        || !scheme.bytes().enumerate().all(|(index, byte)| {
+            byte.is_ascii_alphabetic()
+                || (index > 0 && matches!(byte, b'0'..=b'9' | b'+' | b'-' | b'.'))
+        })
+        || rest.is_empty()
+        || value
+            .chars()
+            .any(|character| character.is_control() || character.is_whitespace())
+    {
+        return Err(ManifestParseError::new("objectsBaseUrl is invalid"));
+    }
+    if !value.ends_with('/') {
+        return Err(ManifestParseError::new("objectsBaseUrl must end with '/'"));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_file_key(key: &str) -> Result<(), ManifestParseError> {
+    let Some((kind, name)) = key.split_once(':') else {
+        return Err(ManifestParseError::new(format!("invalid lookup key {key}")));
+    };
+    if !matches!(kind, "tex" | "tfm") {
+        return Err(ManifestParseError::new(format!("invalid lookup key {key}")));
+    }
+    validate_path(name, "", "lookup key")
+}
+
+pub(crate) fn validate_font_name(name: &str) -> Result<(), ManifestParseError> {
+    if name.is_empty() || name.chars().any(char::is_control) {
+        return Err(ManifestParseError::new(format!(
+            "invalid font name {name:?}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_format_name(name: &str) -> Result<(), ManifestParseError> {
+    if name.is_empty()
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        return Err(ManifestParseError::new(format!(
+            "invalid format name {name:?}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_digest(value: &str, label: &str) -> Result<(), ManifestParseError> {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        return Err(ManifestParseError::new(format!(
+            "{label} must use a 64-character lowercase SHA-256 digest"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_path(value: &str, prefix: &str, label: &str) -> Result<(), ManifestParseError> {
+    let Some(suffix) = value.strip_prefix(prefix) else {
+        return Err(ManifestParseError::new(format!(
+            "invalid {label} {value:?}"
+        )));
+    };
+    if suffix.is_empty()
+        || suffix.contains(['\\', '\0', ':'])
+        || suffix
+            .split('/')
+            .any(|component| component.is_empty() || matches!(component, "." | ".."))
+    {
+        return Err(ManifestParseError::new(format!(
+            "invalid {label} {value:?}"
+        )));
+    }
+    Ok(())
+}
+
+fn object(value: Value, label: &str) -> Result<BTreeMap<String, Value>, ManifestParseError> {
+    match value {
+        Value::Object(fields) => Ok(fields),
+        _ => Err(ManifestParseError::new(format!(
+            "{label} must be an object"
+        ))),
+    }
+}
+
+fn optional_object(
+    fields: &mut BTreeMap<String, Value>,
+    name: &str,
+) -> Result<Option<Value>, ManifestParseError> {
+    match fields.remove(name) {
+        Some(value @ Value::Object(_)) => Ok(Some(value)),
+        Some(_) => Err(ManifestParseError::new(format!("{name} must be an object"))),
+        None => Ok(None),
+    }
+}
+
+fn take(
+    fields: &mut BTreeMap<String, Value>,
+    name: &str,
+    label: &str,
+) -> Result<Value, ManifestParseError> {
+    fields
+        .remove(name)
+        .ok_or_else(|| ManifestParseError::new(format!("{label} is missing required field {name}")))
+}
+
+fn finish(fields: BTreeMap<String, Value>, label: &str) -> Result<(), ManifestParseError> {
+    if fields.is_empty() {
+        Ok(())
+    } else {
+        Err(ManifestParseError::new(format!(
+            "unknown field {:?} in {label}",
+            fields.keys().next().expect("nonempty map")
+        )))
+    }
+}
+
+fn string(value: Value, label: &str) -> Result<String, ManifestParseError> {
+    match value {
+        Value::String(value) => Ok(value),
+        _ => Err(ManifestParseError::new(format!("{label} must be a string"))),
+    }
+}
+
+fn nonempty_string(
+    fields: &mut BTreeMap<String, Value>,
+    name: &str,
+    label: &str,
+) -> Result<String, ManifestParseError> {
+    let value = string(take(fields, name, label)?, name)?;
+    if value.is_empty() {
+        Err(ManifestParseError::new(format!("{name} must not be empty")))
+    } else {
+        Ok(value)
+    }
+}
+
+fn number(value: Value, label: &str) -> Result<u64, ManifestParseError> {
+    match value {
+        Value::Number(value) => Ok(value),
+        _ => Err(ManifestParseError::new(format!(
+            "{label} must be an unsigned integer"
+        ))),
+    }
+}
+
+fn u32_value(value: Value, label: &str) -> Result<u32, ManifestParseError> {
+    u32::try_from(number(value, label)?)
+        .map_err(|_| ManifestParseError::new(format!("{label} exceeds u32")))
+}
+
+fn string_array(value: Value, label: &str) -> Result<Vec<String>, ManifestParseError> {
+    let Value::Array(values) = value else {
+        return Err(ManifestParseError::new(format!("{label} must be an array")));
+    };
+    let mut output = Vec::with_capacity(values.len());
+    let mut seen = BTreeSet::new();
+    for value in values {
+        let value = string(value, label)?;
+        if !seen.insert(value.clone()) {
+            return Err(ManifestParseError::new(format!(
+                "{label} contains duplicate {value}"
+            )));
+        }
+        output.push(value);
+    }
+    Ok(output)
+}
+
+fn write_map<T>(out: &mut String, values: &BTreeMap<String, T>, write: fn(&mut String, &T, usize)) {
+    for (index, (key, value)) in values.iter().enumerate() {
+        out.push_str(if index == 0 { "\n" } else { ",\n" });
+        out.push_str("    ");
+        json_string(out, key);
+        out.push_str(": {");
+        write(out, value, 6);
+        out.push_str("\n    }");
+    }
+}
+
+fn write_file(out: &mut String, entry: &ManifestFile, indent: usize) {
+    field_string(out, "virtualPath", &entry.virtual_path, indent, true);
+    write_object_fields(out, &entry.object_entry(), indent, false);
+    if !entry.dependencies.is_empty() {
+        out.push_str(",\n      \"dependencies\": [");
+        for (index, dependency) in entry.dependencies.iter().enumerate() {
+            if index > 0 {
+                out.push_str(", ");
+            }
+            json_string(out, dependency);
+        }
+        out.push(']');
+    }
+}
+
+fn write_font(out: &mut String, entry: &ManifestFont, indent: usize) {
+    write_object_fields(out, &entry.object_entry(), indent, true);
+    field_string(out, "container", &entry.container, indent, false);
+    if let Some(provenance) = &entry.provenance {
+        field_string(out, "provenance", provenance, indent, false);
+    }
+}
+
+fn write_format(out: &mut String, entry: &ManifestFormat, indent: usize) {
+    write_object_fields(
+        out,
+        &ObjectEntry {
+            object: entry.object.clone(),
+            sha256: entry.sha256.clone(),
+            bytes: entry.bytes,
+        },
+        indent,
+        true,
+    );
+    field_string(out, "engine", &entry.engine, indent, false);
+    field_string(out, "engineVersion", &entry.engine_version, indent, false);
+    field_number(out, "formatSchema", u64::from(entry.format_schema), indent);
+    field_string(
+        out,
+        "sourceDistribution",
+        &entry.source_distribution,
+        indent,
+        false,
+    );
+    field_string(
+        out,
+        "sourceManifestSha256",
+        &entry.source_manifest_sha256,
+        indent,
+        false,
+    );
+    field_number(out, "sourceDateEpoch", entry.source_date_epoch, indent);
+}
+
+fn write_object_fields(out: &mut String, entry: &ObjectEntry, indent: usize, first: bool) {
+    field_string(out, "object", &entry.object, indent, first);
+    field_string(out, "sha256", &entry.sha256, indent, false);
+    field_number(out, "bytes", entry.bytes, indent);
+}
+
+fn field_string(out: &mut String, name: &str, value: &str, indent: usize, first: bool) {
+    out.push_str(if first { "\n" } else { ",\n" });
+    out.push_str(&" ".repeat(indent));
+    json_string(out, name);
+    out.push_str(": ");
+    json_string(out, value);
+}
+
+fn field_number(out: &mut String, name: &str, value: u64, indent: usize) {
+    out.push_str(",\n");
+    out.push_str(&" ".repeat(indent));
+    json_string(out, name);
+    out.push_str(": ");
+    out.push_str(&value.to_string());
+}
+
+fn json_string(out: &mut String, value: &str) {
+    out.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\u{0008}' => out.push_str("\\b"),
+            '\u{000c}' => out.push_str("\\f"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            character if character.is_control() => {
+                use std::fmt::Write as _;
+                write!(out, "\\u{:04x}", u32::from(character))
+                    .expect("writing to String cannot fail");
+            }
+            character => out.push(character),
+        }
+    }
+    out.push('"');
+}

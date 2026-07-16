@@ -1,0 +1,12 @@
+# Shared Rust/JavaScript request and expected-selection fixture.
+request	file	tex	article.cls
+request	font	cmu-serif
+request	file	tfm	missing.tfm
+request	font	missing-font
+request	file	tex	article.cls
+job	required	file	tex:article.cls	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+job	required	font	cmu-serif	dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+job	hint	file	tex:latex.ltx	bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+job	hint	file	tfm:cmr10.tfm	cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+miss	file	tfm:missing.tfm
+miss	font	missing-font

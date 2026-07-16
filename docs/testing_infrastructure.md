@@ -94,6 +94,12 @@ remain under `target/` rather than becoming repository fixtures.
 
 ## Committed DVI Corpora
 
+The hand-authored distribution contract fixtures under
+`tests/corpus/distribution` are consumed directly by both the dependency-free
+`umber-distribution` Rust tests and authored JavaScript schema tests. They pin
+strict manifest round trips and identical ordered acquisition jobs and typed
+misses without network or TeX tooling.
+
 The DVI corpora under `tests/corpus/dvi`, `tests/corpus/page`,
 `tests/corpus/math`, `tests/corpus/align`, and `tests/corpus/leaders` commit TeX
 source files plus `.expected.dvi` reference fixtures. The default `umber` cargo

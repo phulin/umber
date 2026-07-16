@@ -40,6 +40,7 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `crates/umber-wasm`: WebAssembly binding and authored JavaScript browser package.
 - `crates/test-support`: shared fixture and parity-test helpers.
 - `crates/corpus-manifest`: dependency-free parser for the external corpus manifest used by host-side parity tooling.
+- `crates/umber-distribution`: dependency-free immutable distribution manifest parsing, request-key encoding, and acquisition selection.
 - `tools/`: Rust tooling crates.
 - `benchmarks/`: opt-in standalone benchmark crates kept outside the root workspace.
 - `tests/`: committed fixtures and parity test definitions.

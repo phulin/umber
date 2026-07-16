@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "distribution": "texlive-parity-2026",
+  "objectsBaseUrl": "https://cdn.example.test/objects/",
+  "files": {
+    "tex:article.cls": {
+      "virtualPath": "/texlive/tex/latex/base/article.cls",
+      "object": "sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "bytes": 101,
+      "dependencies": ["tex:latex.ltx"]
+    },
+    "tex:latex.ltx": {
+      "virtualPath": "/texlive/tex/latex/base/latex.ltx",
+      "object": "sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "bytes": 202,
+      "dependencies": ["tfm:cmr10.tfm"]
+    },
+    "tfm:cmr10.tfm": {
+      "virtualPath": "/texlive/fonts/tfm/public/cm/cmr10.tfm",
+      "object": "sha256-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "bytes": 303,
+      "dependencies": ["tex:article.cls"]
+    }
+  },
+  "fonts": {
+    "cmu-serif": {
+      "object": "sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "bytes": 404,
+      "container": "woff2",
+      "provenance": "SIL Open Font License"
+    }
+  },
+  "formats": {
+    "plain": {
+      "object": "sha256-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "bytes": 505,
+      "engine": "umber",
+      "engineVersion": "0.1.0",
+      "formatSchema": 6,
+      "sourceDistribution": "texlive-parity-2026",
+      "sourceManifestSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "sourceDateEpoch": 0
+    }
+  }
+}

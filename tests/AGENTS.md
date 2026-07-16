@@ -3,6 +3,11 @@
 `tests/corpus` holds committed inputs and expected reference outputs for
 fast differential tests.
 
+`tests/corpus/distribution` holds the authored-JavaScript/Rust manifest and
+selection fixtures. They are hand-authored contract data, not live-reference
+outputs, and both `umber-distribution` and `manifest-schema.test.js` consume
+the exact same files.
+
 `tests/latex-source.lock` pins the common TeX Live 2025 files plus
 mode-specific repository-local format configuration inputs, byte lengths, and
 SHA-256 identities opened while building the Umber-native `latex.fmt` and
