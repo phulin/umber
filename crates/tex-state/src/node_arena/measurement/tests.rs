@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use super::{NodeStorageObservation, PeakNodeStorageRecorder};
 use crate::ids::{GlueId, TokenListId};
-use crate::node::{Node, Whatsit};
+use crate::node::{Node, PdfDestinationKind, PdfDestinationNode, Whatsit};
 use crate::node_arena::{NodeArena, NodeStorage};
+use crate::{PdfActionIdentifier, PdfColorStackAction};
 
 #[test]
 fn divergent_logical_and_retained_maxima_keep_one_observation() {
@@ -31,11 +32,24 @@ fn owned_whatsit_payloads_participate_in_totals_and_columns() {
     class.push_str("pdf");
     let mut payload = Vec::with_capacity(128);
     payload.extend_from_slice(b"bytes");
+    let mut color_payload = Vec::with_capacity(256);
+    color_payload.extend_from_slice(b"color");
     let mut storage = NodeStorage {
-        whatsits: Vec::with_capacity(3),
+        whatsits: Vec::with_capacity(4),
         ..NodeStorage::default()
     };
     storage.whatsits.push(Whatsit::Special { class, payload });
+    storage.whatsits.push(Whatsit::PdfColorStack {
+        id: 0,
+        action: PdfColorStackAction::Push(color_payload),
+    });
+    storage
+        .whatsits
+        .push(Whatsit::PdfDestination(Box::new(PdfDestinationNode {
+            identifier: PdfActionIdentifier::Number(1),
+            structure: None,
+            kind: PdfDestinationKind::Fit,
+        })));
 
     let measured = observation(&storage);
 
@@ -60,7 +74,19 @@ fn owned_whatsit_payloads_participate_in_totals_and_columns() {
         .expect("owned payload column");
     assert_eq!(
         (payloads.logical_bytes, payloads.retained_payload_bytes),
-        (5, 128)
+        (10, 384)
+    );
+    let boxes = measured
+        .columns
+        .iter()
+        .find(|column| column.name == "peak.whatsits.owned_boxes")
+        .expect("owned box column");
+    assert_eq!(
+        (boxes.logical_bytes, boxes.retained_payload_bytes),
+        (
+            core::mem::size_of::<PdfDestinationNode>(),
+            core::mem::size_of::<PdfDestinationNode>()
+        )
     );
 }
 
