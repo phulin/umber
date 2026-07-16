@@ -1,4 +1,5 @@
 use super::*;
+use crate::ContentHash;
 use serde::{Deserialize, Serialize};
 
 mod node;
@@ -165,6 +166,47 @@ struct StoreFormat {
     hyphenation: HyphenationTable,
     prepared_mag: Option<i32>,
     last_loaded_font: u32,
+}
+
+#[derive(Serialize)]
+struct ImmutableStoreIdentity {
+    names: Vec<FormatName>,
+    token_lists: Vec<Vec<FormatToken>>,
+    macros: Vec<FormatMacro>,
+    glue: Vec<FormatGlue>,
+    fonts: Vec<FormatFont>,
+}
+
+#[derive(Serialize)]
+struct MutableStoreIdentity {
+    node_lists: Vec<FormatNodeList>,
+    env: Vec<FormatEnvEntry>,
+    code_tables: Vec<FormatCodeTables>,
+    hyphenation: HyphenationTable,
+    prepared_mag: Option<i32>,
+    last_loaded_font: u32,
+}
+
+#[derive(Serialize)]
+struct NodeSequenceIdentity {
+    node_lists: Vec<FormatNodeList>,
+    nodes: Vec<FormatNode>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ImmutableStoreMarks {
+    interner: usize,
+    tokens: u32,
+    macros: u32,
+    glue: u32,
+    fonts: (u32, u32, u32, u32),
+}
+
+#[derive(Clone, Debug, Default)]
+pub(super) struct ExactIdentityCache {
+    immutable: Option<(ImmutableStoreMarks, ContentHash)>,
+    #[cfg(test)]
+    immutable_encodes: usize,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -340,18 +382,82 @@ impl Stores {
         // A format captures the reachable box graph below and deliberately
         // drops transient mode/page material, just as TeX's `store_fmt_file`
         // does not serialize the current nest or contribution list.
-        self.encode_semantic_identity()
+        let format = StoreFormat::capture(self)?;
+        bincode::serialize(&format).map_err(|error| StoreFormatError::Codec(error.to_string()))
     }
 
     /// Canonical semantic store bytes for checkpoint verification. Survivor
     /// pins are retention metadata, so unlike a restorable format dump they
     /// neither prevent nor participate in this identity.
-    pub(crate) fn encode_semantic_identity(&self) -> Result<Vec<u8>, StoreFormatError> {
+    pub(crate) fn encode_semantic_identity(
+        &mut self,
+    ) -> Result<(ContentHash, ContentHash), StoreFormatError> {
         if self.env.group_depth() != 0 {
             return Err(StoreFormatError::OpenGroups(self.env.group_depth()));
         }
-        let format = StoreFormat::capture(self)?;
-        bincode::serialize(&format).map_err(|error| StoreFormatError::Codec(error.to_string()))
+        let marks = ImmutableStoreMarks::capture(self);
+        let immutable = {
+            let mut cache = self
+                .exact_identity_cache
+                .lock()
+                .expect("exact store identity cache is not poisoned");
+            if let Some((cached_marks, identity)) = &cache.immutable
+                && *cached_marks == marks
+            {
+                *identity
+            } else {
+                let bytes = bincode::serialize(&ImmutableStoreIdentity::capture(self))
+                    .map_err(|error| StoreFormatError::Codec(error.to_string()))?;
+                let identity = ContentHash::from_bytes(&bytes);
+                cache.immutable = Some((marks, identity));
+                #[cfg(test)]
+                {
+                    cache.immutable_encodes += 1;
+                }
+                identity
+            }
+        };
+        let mutable = bincode::serialize(&MutableStoreIdentity::capture(self)?)
+            .map_err(|error| StoreFormatError::Codec(error.to_string()))?;
+        Ok((immutable, ContentHash::from_bytes(&mutable)))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn testing_exact_immutable_encodes(&self) -> usize {
+        self.exact_identity_cache
+            .lock()
+            .expect("exact store identity cache is not poisoned")
+            .immutable_encodes
+    }
+
+    pub(crate) fn encode_node_sequence_identity(
+        &self,
+        nodes: &[Node],
+    ) -> Result<Vec<u8>, StoreFormatError> {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut visiting = std::collections::BTreeSet::new();
+        let mut survivor_roots = std::collections::BTreeMap::new();
+        let mut node_lists = Vec::new();
+        for node in nodes {
+            for child in node_child_ids(node) {
+                capture_node_list(
+                    self,
+                    child,
+                    &mut seen,
+                    &mut visiting,
+                    &mut survivor_roots,
+                    &mut node_lists,
+                    None,
+                )?;
+            }
+        }
+        let nodes = nodes
+            .iter()
+            .cloned()
+            .map(|node| FormatNode::capture(self, node, &mut survivor_roots))
+            .collect();
+        bincode::serialize(&NodeSequenceIdentity { node_lists, nodes })
+            .map_err(|error| StoreFormatError::Codec(error.to_string()))
     }
 
     #[cfg(test)]
@@ -649,6 +755,38 @@ impl Stores {
 
 impl StoreFormat {
     fn capture(stores: &Stores) -> Result<Self, StoreFormatError> {
+        let immutable = ImmutableStoreIdentity::capture(stores);
+        let mutable = MutableStoreIdentity::capture(stores)?;
+        Ok(Self {
+            names: immutable.names,
+            token_lists: immutable.token_lists,
+            macros: immutable.macros,
+            glue: immutable.glue,
+            fonts: immutable.fonts,
+            node_lists: mutable.node_lists,
+            env: mutable.env,
+            code_tables: mutable.code_tables,
+            hyphenation: mutable.hyphenation,
+            prepared_mag: mutable.prepared_mag,
+            last_loaded_font: mutable.last_loaded_font,
+        })
+    }
+}
+
+impl ImmutableStoreMarks {
+    fn capture(stores: &Stores) -> Self {
+        Self {
+            interner: stores.interner.len(),
+            tokens: stores.tokens.watermark().spans,
+            macros: stores.macros.watermark().definitions,
+            glue: stores.glue.watermark().specs,
+            fonts: stores.fonts.watermark().exact_identity_cache_key(),
+        }
+    }
+}
+
+impl ImmutableStoreIdentity {
+    fn capture(stores: &Stores) -> Self {
         let names = (0..stores.interner.len())
             .map(|raw| {
                 let symbol = stores
@@ -705,6 +843,18 @@ impl StoreFormat {
                 FormatFont::capture(&stores.fonts, stores.resolve_stored_font(FontId::new(raw)))
             })
             .collect();
+        Self {
+            names,
+            token_lists,
+            macros,
+            glue,
+            fonts,
+        }
+    }
+}
+
+impl MutableStoreIdentity {
+    fn capture(stores: &Stores) -> Result<Self, StoreFormatError> {
         let mut env_words = Vec::new();
         stores.env.for_each_semantic_non_default_word(|cell, word| {
             env_words.push(capture_env_word(stores, cell, word));
@@ -763,11 +913,6 @@ impl StoreFormat {
             });
         });
         Ok(Self {
-            names,
-            token_lists,
-            macros,
-            glue,
-            fonts,
             node_lists,
             env,
             code_tables,
@@ -776,7 +921,9 @@ impl StoreFormat {
             last_loaded_font: stores.last_loaded_font.raw(),
         })
     }
+}
 
+impl StoreFormat {
     #[cfg(test)]
     fn restore(self) -> Result<Stores, StoreFormatError> {
         self.validate_references()?;

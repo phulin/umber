@@ -202,6 +202,15 @@ copy-on-write roots, world state, mode/page summaries, and other future-relevant
 scalars. Taking a snapshot is bounded and independent of total live document
 size; rollback cost is proportional to changed or newly allocated state.
 
+The strong canonical identity used for optional suffix adoption is derived
+later, not captured in every snapshot. Executor sinks request it only for a
+schedule-aligned boundary they will compare. Its store projection separates
+append-only interned content from mutable state and shares the immutable
+serialization cache across related generation forks; the cache is derived
+runtime data and never participates in rollback or semantics. Page identity
+uses a compact canonical node-sequence projection and does not publish nodes
+or alter the captured store watermark.
+
 Snapshots are not public restart points. `tex-exec` alone may publish complete
 `EngineCheckpoint`s at `JobStart`, eligible `OuterParagraphEnd`, and outermost
 `ShipoutComplete`. A checkpoint owns or pins every root needed for later

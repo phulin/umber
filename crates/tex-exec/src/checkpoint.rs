@@ -102,6 +102,26 @@ impl EngineCheckpoint {
             && self.modes == other.modes
     }
 
+    /// Returns whether this checkpoint already carries the optional strong
+    /// identity used by exact suffix-adoption comparisons.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn has_exact_state_identity(&self) -> bool {
+        self.universe.has_exact_state_identity()
+    }
+
+    /// Computes the optional strong identity for an already retained
+    /// checkpoint without changing its restart roots.
+    #[doc(hidden)]
+    pub fn with_exact_state_identity(
+        &self,
+        substrate: &GenerationSubstrate,
+    ) -> Result<Self, GenerationForkError> {
+        let mut checkpoint = self.clone();
+        checkpoint.universe = substrate.snapshot_with_exact_identity(&self.universe)?;
+        Ok(checkpoint)
+    }
+
     /// Rehomes revision-relative root metadata after a validated convergence
     /// match while adopting the owner-exact state snapshot by reference.
     pub fn rehome_converged_root(
@@ -202,7 +222,7 @@ pub trait CheckpointSink {
     /// Whether this sink needs strong canonical identities for optional exact
     /// suffix adoption. Ordinary checkpoint consumers leave this false and
     /// retain O(1) state snapshots.
-    fn wants_exact_state_identity(&self) -> bool {
+    fn wants_exact_state_identity(&self, _boundary: EngineBoundary, _root_anchor: usize) -> bool {
         false
     }
 
@@ -270,7 +290,7 @@ impl<'a, C: CheckpointSink> EngineSession<'a, C> {
         let artifact_prefix = universe.world().artifact_pos();
         let root_anchor = input_summary.conservative_root_position();
         let root_content_hash = universe.root_editor_content_hash(&input_summary);
-        let universe = if self.sink.wants_exact_state_identity() {
+        let universe = if self.sink.wants_exact_state_identity(boundary, root_anchor) {
             universe.snapshot_with_exact_identity()
         } else {
             universe.snapshot()

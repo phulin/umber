@@ -481,7 +481,7 @@ pub struct Snapshot {
     interaction_mode: InteractionMode,
     page: PageBuilderState,
     pdf: PdfStateSnapshot,
-    exact_store_identity: Option<ContentHash>,
+    exact_store_identity: Option<(ContentHash, ContentHash)>,
     exact_page_identity: Option<ContentHash>,
     dependency_tracker: DependencyTrackerSnapshot,
     state_hash: u64,
@@ -555,6 +555,12 @@ struct ScopedRollback {
 struct PageMemoWire {
     state: PageMemoState,
     detached_nodes: Vec<u8>,
+}
+
+#[derive(serde::Serialize)]
+struct ExactPageIdentityWire {
+    state: PageMemoState,
+    nodes: Vec<u8>,
 }
 
 /// Opaque allocation mark for one in-progress box-register construction.
@@ -725,6 +731,13 @@ impl Snapshot {
             && self.interaction_mode == other.interaction_mode
             && self.world.exact_future_state_matches(&other.world)
     }
+
+    /// Returns whether both optional canonical projections were captured.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn has_exact_state_identity(&self) -> bool {
+        self.exact_store_identity.is_some() && self.exact_page_identity.is_some()
+    }
 }
 
 impl GenerationSubstrate {
@@ -838,6 +851,18 @@ impl GenerationSubstrate {
             anchor_serial: checkpoint.serial,
         });
         Ok(fork)
+    }
+
+    /// Computes the strong optional identity for one retained O(1) snapshot.
+    /// The accepted generation remains frozen; only a private temporary fork
+    /// is rolled back to the requested roots.
+    #[doc(hidden)]
+    pub fn snapshot_with_exact_identity(
+        &self,
+        checkpoint: &Snapshot,
+    ) -> Result<Snapshot, GenerationForkError> {
+        let mut fork = self.fork_at(checkpoint)?;
+        Ok(fork.snapshot_with_exact_identity())
     }
 
     /// Retargets a source-generation prefix snapshot onto a promoted fork.
@@ -2200,15 +2225,18 @@ impl Universe {
         // The page codec is the allocation-independent semantic projection
         // already used by page replay. Provenance is returned separately and
         // intentionally does not participate in continuation equality.
-        let exact_page_identity =
-            exact
-                .then(|| self.detach_page_memo_transition())
-                .and_then(|result| {
-                    result
-                        .ok()
-                        .and_then(|(value, _)| value.to_bytes().ok())
-                        .map(|bytes| ContentHash::from_bytes(&bytes))
-                });
+        let exact_page_identity = exact
+            .then(|| {
+                let (nodes, state) = self.page.memo_parts();
+                self.stores
+                    .encode_node_sequence_identity(&nodes)
+                    .ok()
+                    .and_then(|nodes| {
+                        bincode::serialize(&ExactPageIdentityWire { state, nodes }).ok()
+                    })
+                    .map(|bytes| ContentHash::from_bytes(&bytes))
+            })
+            .flatten();
         let world = self.world.snapshot();
         let store = self.stores.checkpoint();
         let store_cursor = self.stores.state_hash_cursor_from_snapshot(&store);
@@ -2253,12 +2281,7 @@ impl Universe {
             .checked_add(1)
             .expect("Universe snapshot serial exhausted");
         let exact_store_identity = exact
-            .then(|| {
-                self.stores
-                    .encode_semantic_identity()
-                    .ok()
-                    .map(|bytes| ContentHash::from_bytes(&bytes))
-            })
+            .then(|| self.stores.encode_semantic_identity().ok())
             .flatten();
         Snapshot {
             owner: self.owner.snapshot_owner(),

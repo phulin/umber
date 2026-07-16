@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
@@ -73,6 +74,7 @@ pub struct BoundaryRecord {
     effect_prefix: usize,
     artifact_prefix: usize,
     checkpoint: EngineCheckpoint,
+    exact_checkpoint: Arc<OnceLock<EngineCheckpoint>>,
 }
 
 impl BoundaryRecord {
@@ -104,6 +106,20 @@ impl BoundaryRecord {
     #[must_use]
     pub const fn checkpoint(&self) -> &EngineCheckpoint {
         &self.checkpoint
+    }
+
+    fn exact_checkpoint<'a>(
+        &'a self,
+        substrate: &GenerationSubstrate,
+    ) -> Result<&'a EngineCheckpoint, GenerationForkError> {
+        if self.exact_checkpoint.get().is_none() {
+            let checkpoint = self.checkpoint.with_exact_state_identity(substrate)?;
+            let _ = self.exact_checkpoint.set(checkpoint);
+        }
+        Ok(self
+            .exact_checkpoint
+            .get()
+            .expect("exact checkpoint was initialized or concurrently supplied"))
     }
 }
 
@@ -1313,10 +1329,6 @@ struct HistorySink {
 }
 
 impl CheckpointSink for HistorySink {
-    fn wants_exact_state_identity(&self) -> bool {
-        true
-    }
-
     fn checkpoint(&mut self, checkpoint: EngineCheckpoint) {
         push_checkpoint(&mut self.records, &mut self.occurrences, checkpoint);
     }
@@ -1422,20 +1434,26 @@ struct AdvanceRun {
     expansion_stats: tex_lex::ExpansionStats,
 }
 
-struct ResumeSink {
+struct ResumeSink<'a> {
     records: Vec<BoundaryRecord>,
     occurrences: HashMap<(usize, EngineBoundary), u32>,
-    expected: Vec<(usize, BoundaryKey, EngineCheckpoint)>,
+    expected: Vec<(usize, BoundaryKey, BoundaryRecord)>,
     next_expected: usize,
     convergence_old_index: Option<usize>,
     schedule_diverged: bool,
     changed_new_range: std::ops::Range<usize>,
     same_history_attempts: usize,
     same_history_hash_mismatches: usize,
+    substrate: &'a GenerationSubstrate,
 }
 
-impl ResumeSink {
-    fn new(old: &[BoundaryRecord], restart: usize, map: &EditMap) -> Self {
+impl<'a> ResumeSink<'a> {
+    fn new(
+        old: &[BoundaryRecord],
+        restart: usize,
+        map: &EditMap,
+        substrate: &'a GenerationSubstrate,
+    ) -> Self {
         let mut occurrences = HashMap::new();
         for record in &old[..=restart] {
             occurrences
@@ -1454,7 +1472,7 @@ impl ResumeSink {
                             position,
                             ..record.key
                         },
-                        record.checkpoint().clone(),
+                        record.clone(),
                     )
                 })
             })
@@ -1469,13 +1487,33 @@ impl ResumeSink {
             changed_new_range: map.old.start..map.old.start + map.replacement_len,
             same_history_attempts: 0,
             same_history_hash_mismatches: 0,
+            substrate,
+        }
+    }
+
+    fn prospective_key(&self, boundary: EngineBoundary, position: usize) -> BoundaryKey {
+        BoundaryKey {
+            position,
+            boundary,
+            ordinal: self
+                .occurrences
+                .get(&(position, boundary))
+                .copied()
+                .unwrap_or_default(),
         }
     }
 }
 
-impl CheckpointSink for ResumeSink {
-    fn wants_exact_state_identity(&self) -> bool {
-        true
+impl CheckpointSink for ResumeSink<'_> {
+    fn wants_exact_state_identity(&self, boundary: EngineBoundary, root_anchor: usize) -> bool {
+        if self.schedule_diverged || self.changed_new_range.contains(&root_anchor) {
+            return false;
+        }
+        self.expected
+            .get(self.next_expected)
+            .is_some_and(|(_, expected, _)| {
+                self.prospective_key(boundary, root_anchor) == *expected
+            })
     }
 
     fn stop_requested(&self) -> bool {
@@ -1487,7 +1525,7 @@ impl CheckpointSink for ResumeSink {
         if self.schedule_diverged {
             return;
         }
-        let Some((old_index, expected_key, expected_checkpoint)) =
+        let Some((old_index, expected_key, expected_record)) =
             self.expected.get(self.next_expected)
         else {
             self.schedule_diverged = true;
@@ -1503,10 +1541,11 @@ impl CheckpointSink for ResumeSink {
         }
         self.next_expected += 1;
         self.same_history_attempts += 1;
-        if actual
-            .checkpoint()
-            .exact_future_state_matches(expected_checkpoint)
-        {
+        let exact_match = actual.checkpoint().has_exact_state_identity()
+            && expected_record
+                .exact_checkpoint(self.substrate)
+                .is_ok_and(|expected| actual.checkpoint().exact_future_state_matches(expected));
+        if exact_match {
             self.convergence_old_index = Some(*old_index);
         } else {
             self.same_history_hash_mismatches += 1;
@@ -1528,12 +1567,17 @@ fn push_checkpoint(
         ordinal: *ordinal,
     };
     *ordinal = ordinal.saturating_add(1);
+    let exact_checkpoint = Arc::new(OnceLock::new());
+    if checkpoint.has_exact_state_identity() {
+        let _ = exact_checkpoint.set(checkpoint.clone());
+    }
     records.push(BoundaryRecord {
         revision: RevisionId::new(0),
         key,
         effect_prefix: checkpoint.effect_prefix_len(),
         artifact_prefix: checkpoint.artifact_prefix_len(),
         checkpoint,
+        exact_checkpoint,
     });
 }
 
@@ -1575,7 +1619,7 @@ fn execute_advance(
     for (path, bytes) in registered_inputs {
         scratch.world_mut().set_memory_file(path, bytes.clone())?;
     }
-    let mut sink = ResumeSink::new(old_history, restart, map);
+    let mut sink = ResumeSink::new(old_history, restart, map, substrate);
     let mut context = match image_resolver {
         Some(image_resolver) => ExecutionContext::with_resource_resolvers(
             job_name,

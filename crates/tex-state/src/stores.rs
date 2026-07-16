@@ -197,6 +197,7 @@ pub struct Stores {
     /// owner identity, so neither can validate a cache owned by the source.
     meaning_generation: u64,
     semantic_hash_cache: state_hash::SemanticHashCache,
+    exact_identity_cache: Arc<std::sync::Mutex<format::ExactIdentityCache>>,
 }
 
 /// Recoverable diagnostics from TeX's `prepare_mag` operation.
@@ -253,6 +254,7 @@ impl Clone for Stores {
             last_loaded_font: self.last_loaded_font,
             meaning_generation: self.meaning_generation,
             semantic_hash_cache: self.semantic_hash_cache.clone(),
+            exact_identity_cache: Arc::clone(&self.exact_identity_cache),
         }
     }
 }
@@ -341,6 +343,9 @@ impl Stores {
             last_loaded_font: NULL_FONT,
             meaning_generation: 1,
             semantic_hash_cache: state_hash::SemanticHashCache::default(),
+            exact_identity_cache: Arc::new(std::sync::Mutex::new(
+                format::ExactIdentityCache::default(),
+            )),
         };
         stores.set_int_param(IntParam::MAG, 1000);
         stores.set_int_param(IntParam::TOLERANCE, 10_000);

@@ -96,6 +96,17 @@ pub(crate) struct FontStoreMark {
     identities: IdentityMark,
 }
 
+impl FontStoreMark {
+    pub(crate) const fn exact_identity_cache_key(self) -> (u32, u32, u32, u32) {
+        (
+            self.len,
+            self.identifier_writes_len,
+            self.semantic_seal_writes_len,
+            self.expansion_writes_len,
+        )
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 struct FontKey {
     name: String,

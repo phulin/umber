@@ -2551,6 +2551,32 @@ fn snapshot_state_hash_is_deterministic_for_same_program() {
 }
 
 #[test]
+fn exact_snapshots_reuse_immutable_store_serialization_across_forks() {
+    let mut universe = Universe::new();
+    universe.intern("cached-name");
+
+    assert!(
+        universe
+            .snapshot_with_exact_identity()
+            .has_exact_state_identity()
+    );
+    universe.set_count(0, 42);
+    let checkpoint = universe.snapshot();
+    let substrate = universe.freeze_generation();
+    let mut fork = substrate.fork_at(&checkpoint).expect("retained fork");
+    assert!(
+        fork.snapshot_with_exact_identity()
+            .has_exact_state_identity()
+    );
+
+    assert_eq!(
+        fork.stores.testing_exact_immutable_encodes(),
+        1,
+        "related forks must not reserialize interned content"
+    );
+}
+
+#[test]
 fn snapshot_state_hash_ignores_content_intern_order() {
     let mut first = Universe::new();
     let first_zed = first.intern("z");

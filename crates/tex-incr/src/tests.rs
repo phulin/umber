@@ -743,6 +743,12 @@ fn no_op_revision_converges_at_first_eligible_boundary() {
     )
     .expect("session starts");
     let cold = session.cold().expect("cold execution succeeds");
+    assert!(
+        cold.history
+            .iter()
+            .all(|record| record.exact_checkpoint.get().is_none()),
+        "cold history must retain only O(1) snapshots"
+    );
     let output = session
         .advance(
             RevisionId::new(2),
@@ -764,6 +770,14 @@ fn no_op_revision_converges_at_first_eligible_boundary() {
     assert_eq!(output.reuse.same_history_hash_mismatches, 0);
     assert!(output.reuse.reexecuted_bytes > 0);
     assert!(output.reuse.reexecuted_tokens > 0);
+    assert_eq!(
+        cold.history
+            .iter()
+            .filter(|record| record.exact_checkpoint.get().is_some())
+            .count(),
+        1,
+        "only the compared accepted record should gain a cached identity"
+    );
     assert_eq!(
         output.dvi_bytes().expect("incremental DVI"),
         cold.dvi_bytes().expect("cold DVI")

@@ -124,6 +124,18 @@ disabled, 103.070 ms enabled, and 1,762.488 ms cold. The revision was
 byte-identical to its cold 100-page, 279,176-byte DVI. This small run verifies
 the fast-path workload and parity; it is not a standalone latency verdict.
 
+The lazy exact-identity stage was then checked with the same four-edit fixture
+in a two-run balanced smoke measurement. Cold history computed zero exact
+identities. The two full re-executions requested 73 comparisons each instead
+of publishing identities at roughly 1,100 named boundaries, and the
+height-preserving fourth edit requested one comparison, retyped three pages,
+and again adopted 83. Memo-disabled means for the four edits were 254.056,
+759.960, 349.745, and 89.085 ms on that run, with every revision byte-identical
+to its cold DVI. Immutable store content is cached separately from mutable
+checkpoint state and compact page identity no longer serializes the full font
+bundle at every comparison. Treat these two samples as implementation and
+work-count evidence, not a conditioned latency verdict.
+
 A separate two-pair diagnostic enabled `pretolerance,paragraph`. Pretolerance
 reported 834/835, 833/834, and 1,054/1,054 hits over the three edits, retained
 about 200 KiB, and evicted nothing. Treat this only as evidence that the layer

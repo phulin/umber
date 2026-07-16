@@ -208,6 +208,16 @@ nodes.
 Every checkpoint of a retained generation shares one frozen `Universe`
 substrate. Records are O(1) owner-exact watermark snapshots into that
 substrate, and a retained substrate is never mutated or rolled back in place.
+Strong canonical identities are not part of checkpoint capture. During an
+advance, the resume sink requests them only after the mapped occurrence key
+proves that a boundary will actually be compared. The corresponding accepted
+record computes its identity on that first later comparison and caches it in
+derived record metadata shared by record clones; cold history and boundaries
+that are never compared retain only their O(1) roots. Canonical store identity
+separates append-only interned content from mutable checkpoint state, so stable
+font metrics, token lists, macros, names, and glue are serialized once per
+shared immutable watermark rather than once per comparison. This cache is not
+semantic state and does not change rollback or exact-match results.
 Restart uses one validated aggregate fork operation: clone the retained
 substrate, retarget ownership internally, and roll the clone back to the
 selected checkpoint atomically, rebinding the root frame to the in-progress
@@ -392,9 +402,12 @@ Dropping it is rollback; accepting it performs the existing pruning and
 generation transition once. This is the boundary used to compose editor
 acceptance with VFS build transactions.
 
-Within an accepted generation, records are ordered by schedule and never
-mutated in place. Rehoming creates a new accepted record wrapper rather than
-mutating an old generation's record. `JobStart` is always retained.
+Within an accepted generation, records are ordered by schedule and their
+restart roots and revision metadata are never mutated in place. The one
+derived mutation is publication of a previously absent canonical comparison
+identity into the record's shared one-time cache. Rehoming creates a new
+accepted record wrapper rather than mutating an old generation's checkpoint.
+`JobStart` is always retained.
 
 The host supplies a soft checkpoint-root memory budget. The aggregate state
 layer reports opaque retention units and their charged bytes; `tex-incr` never
@@ -452,13 +465,16 @@ A newly emitted checkpoint is a convergence candidate only when:
 1. its occurrence key equals the prior revision's key after revision mapping;
 2. every named boundary from the restart anchor through the candidate has the
    same mapped key in the same order; and
-3. its schedule-relative `state_hash` equals the prior record's hash.
+3. its complete canonical future-state identity equals the prior record's
+   identity, computed lazily at this comparison.
 
-The second rule is required because the current hash is a fold over checkpoint
-slices, not a canonical fingerprint of state at an arbitrary instruction. A
-changed boundary partition therefore causes missed reuse, never permission to
-reinterpret the hash. Hash collisions retain the ordinary documented 64-bit
-risk; parity tests remain the correctness oracle.
+The second rule is required because the inexpensive `state_hash` remains a
+fold over checkpoint slices, not a canonical fingerprint of state at an
+arbitrary instruction. It remains telemetry and a schedule-relative
+accelerator; suffix adoption uses the stronger canonical identity so changed
+content may rejoin once every future-relevant root is equal. A changed boundary
+partition still causes missed reuse, never permission to reinterpret a hash.
+Parity tests remain the correctness oracle.
 
 The first matching candidate wins. For a no-op edit this is the first eligible
 named boundary emitted after the selected restart anchor. On a match the
