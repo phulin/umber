@@ -173,6 +173,7 @@ HTTPS domain. The release tool accepts that public prefix rather than embedding
 a provider hostname: a snapshot named `texlive-YYYY` is stored below
 `<public-prefix>/texlive-YYYY/`, its manifest points to the sibling `objects/`
 prefix, and both the CLI and web deployment consume that exact manifest URL.
+The project-controlled production origin is `https://assets.umber.ink/`.
 The managed `r2.dev` URL is suitable only for provisioning checks because it is
 rate-limited; the release pin must use the custom domain.
 
@@ -183,15 +184,25 @@ both JSON and digest-named objects; publications attach a one-year immutable
 cache policy. Browser GET/HEAD access uses the bucket CORS policy in
 `scripts/texlive-r2-cors.json`.
 
-`scripts/publish-texlive-r2.sh` is the only supported publication entry point.
-It rebuilds the bundle twice through `build-wasm-latex-bundle.sh`, configures
-CORS, uploads objects under the new snapshot prefix, uploads the manifest last,
-and verifies the public manifest digest. Asset locations are derived solely
-from `--public-prefix`. Before invoking it, an operator must create or select
-the bucket, connect a custom domain in the same Cloudflare account, and confirm
-that the domain is active. `--create-bucket` handles bucket creation when the
-installed Wrangler is already authenticated; custom-domain activation remains
-an explicit dashboard/account operation.
+`scripts/build-texlive-snapshot.sh` is the production staging entry point. It
+publishes every runtime-requestable file below TeX Live's `tex/` tree, TFM
+metrics, maps, encodings, virtual fonts, and Type 1/OpenType/TrueType/PK/AFM
+font areas, plus the Umber-native LaTeX format. TeX Live documentation and
+source trees are excluded. The pinned `texlive.tlpdb` supplies runfile package
+ownership and direct package dependencies; the publisher emits bounded peer
+and cross-package prefetch hints so common package closures start concurrently
+without allowing one large package to exceed client resource limits.
+Production inventory floors reject seed-sized output.
+
+Publication hands the completed staging directory to `rclone` configured for
+R2. Object upload uses bounded transfers and an immutable snapshot prefix;
+re-running the command is the supported resumable, idempotent recovery path.
+The manifest is uploaded only after every digest-named object, then its digest,
+CORS response, and representative objects are verified through
+`https://assets.umber.ink/`. Bucket creation, CORS configuration, and custom-
+domain activation remain explicit account operations outside the staging
+builder. Do not introduce a custom Worker or multipart upload service for this
+path.
 
 Refresh after each annual TeX Live release, or earlier for an urgent corrected
 snapshot. A refresh always uses a new snapshot identifier and updates both the

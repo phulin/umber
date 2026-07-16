@@ -46,6 +46,11 @@ fn main() -> Result<()> {
             format.metadata = parent.join(&format.metadata);
         }
     }
+    if let Some(package_database) = &mut config.package_database
+        && package_database.is_relative()
+    {
+        *package_database = parent.join(&*package_database);
+    }
     publish(&config, Path::new(&output_path))?;
     Ok(())
 }

@@ -243,8 +243,10 @@ formatting false positives.
 
 The explicit LaTeX tier is split by boundary. `scripts/check-latex-corpus.sh`
 builds the pinned native format, runs the four base classes for three passes,
-compares DVI and auxiliary artifacts with TeX Live 2025, and verifies the
-30-input `tests/latex-runtime.lock` closure. `scripts/check-latex-wasm.sh`
+compares DVI and auxiliary artifacts with TeX Live 2026, and verifies the
+30-input `tests/latex-runtime.lock` closure. This seed fixture is not the
+production distribution: `scripts/build-texlive-snapshot.sh` enforces full
+runtime inventory floors and package metadata hints. `scripts/check-latex-wasm.sh`
 publishes that closure with the format, builds the real WASM package, and
 requires three-pass native/WASM article parity. Neither command belongs in the
 ordinary workspace test tier because both intentionally build live pinned

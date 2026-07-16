@@ -50,7 +50,7 @@ pub(crate) fn scan_roots(roots: &[RootConfig]) -> Result<Vec<Candidate>> {
                 bail!("case-fold path collision between {previous:?} and {relative:?}");
             }
             physical_casefold.insert(fold, relative.clone());
-            let kind = kind_for(&source).context("supported file lost its extension")?;
+            let kind = kind_for(Path::new(&relative)).context("supported file lost its kind")?;
             let bytes = fs::read(&source)
                 .with_context(|| format!("read source object {}", source.display()))?;
             all.push(Candidate {
@@ -93,9 +93,11 @@ fn visit(root: &Path, directory: &Path, found: &mut Vec<(String, PathBuf)>) -> R
         }
         if metadata.is_dir() {
             visit(root, &path, found)?;
-        } else if metadata.is_file() && kind_for(&path).is_some() {
+        } else if metadata.is_file() {
             let relative = normalize_relative(path.strip_prefix(root).context("strip root")?)?;
-            found.push((relative, path));
+            if kind_for(Path::new(&relative)).is_some() {
+                found.push((relative, path));
+            }
         }
     }
     Ok(())
@@ -134,17 +136,31 @@ fn digest_entries(entries: &[(String, PathBuf)]) -> Result<String> {
 }
 
 fn kind_for(path: &Path) -> Option<&'static str> {
-    match path.extension().and_then(OsStr::to_str) {
-        Some(extension)
-            if ["tex", "ltx", "sty", "cls", "clo", "cfg", "def", "fd", "dfu"]
-                .iter()
-                .any(|supported| extension.eq_ignore_ascii_case(supported)) =>
-        {
-            Some("tex")
-        }
-        Some(extension) if extension.eq_ignore_ascii_case("tfm") => Some("tfm"),
-        _ => None,
+    let mut components = path.components();
+    let first = components.next()?.as_os_str().to_str()?;
+    if first == "tex" {
+        return Some("tex");
     }
+    if first != "fonts" {
+        return None;
+    }
+    let area = components.next()?.as_os_str().to_str()?;
+    if area == "tfm"
+        && path
+            .extension()
+            .and_then(OsStr::to_str)
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("tfm"))
+    {
+        return Some("tfm");
+    }
+    if [
+        "afm", "enc", "map", "opentype", "pk", "type1", "truetype", "vf",
+    ]
+    .contains(&area)
+    {
+        return Some("tex");
+    }
+    None
 }
 
 fn validate_digest(value: &str) -> Result<()> {

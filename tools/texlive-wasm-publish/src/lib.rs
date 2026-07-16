@@ -3,6 +3,7 @@
 #![allow(clippy::disallowed_methods)] // Host release tooling intentionally owns filesystem I/O.
 
 mod scan;
+mod tlpdb;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -14,8 +15,9 @@ use sha2::{Digest, Sha256};
 use umber_distribution::{ManifestFile, ManifestFormat};
 
 pub use scan::tree_sha256;
-pub use umber_distribution::Manifest;
 use scan::{Candidate, scan_roots};
+use tlpdb::PackageDatabase;
+pub use umber_distribution::Manifest;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -28,6 +30,18 @@ pub struct PublishConfig {
     pub dependencies: BTreeMap<String, Vec<String>>,
     #[serde(default)]
     pub formats: Vec<FormatConfig>,
+    #[serde(default)]
+    pub package_database: Option<PathBuf>,
+    #[serde(default)]
+    pub inventory: Option<InventoryConfig>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct InventoryConfig {
+    pub minimum_logical_files: usize,
+    pub minimum_objects: usize,
+    pub minimum_bytes: u64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -65,7 +79,8 @@ pub fn publish(config: &PublishConfig, output: &Path) -> Result<Manifest> {
     validate_config(config)?;
     let candidates = scan_roots(&config.roots)?;
     let winners = flatten_candidates(candidates)?;
-    validate_dependencies(&config.dependencies, &winners)?;
+    let dependencies = publication_dependencies(config, &winners)?;
+    validate_dependencies(&dependencies, &winners)?;
 
     let objects = output.join("objects");
     fs::create_dir_all(&objects)
@@ -73,6 +88,7 @@ pub fn publish(config: &PublishConfig, output: &Path) -> Result<Manifest> {
 
     let mut files = BTreeMap::new();
     let mut expected_objects = BTreeSet::new();
+    let mut published_bytes = 0_u64;
     for (key, candidate) in winners {
         let bytes = fs::read(&candidate.source)
             .with_context(|| format!("read {}", candidate.source.display()))?;
@@ -80,7 +96,9 @@ pub fn publish(config: &PublishConfig, output: &Path) -> Result<Manifest> {
         let object_path = objects.join(&object);
         fs::write(&object_path, &bytes)
             .with_context(|| format!("write {}", object_path.display()))?;
-        expected_objects.insert(object.clone());
+        if expected_objects.insert(object.clone()) {
+            published_bytes += u64::try_from(bytes.len()).context("file length exceeds u64")?;
+        }
         files.insert(
             key.clone(),
             ManifestFile {
@@ -88,7 +106,7 @@ pub fn publish(config: &PublishConfig, output: &Path) -> Result<Manifest> {
                 object,
                 sha256: candidate.sha256,
                 bytes: u64::try_from(bytes.len()).context("file length exceeds u64")?,
-                dependencies: config.dependencies.get(&key).cloned().unwrap_or_default(),
+                dependencies: dependencies.get(&key).cloned().unwrap_or_default(),
             },
         );
     }
@@ -101,10 +119,18 @@ pub fn publish(config: &PublishConfig, output: &Path) -> Result<Manifest> {
         {
             bail!("duplicate published format name {name:?}");
         }
-        fs::write(objects.join(&manifest_format.object), bytes)
+        fs::write(objects.join(&manifest_format.object), &bytes)
             .with_context(|| format!("write format object {}", manifest_format.object))?;
-        expected_objects.insert(manifest_format.object);
+        if expected_objects.insert(manifest_format.object) {
+            published_bytes += u64::try_from(bytes.len()).context("format length exceeds u64")?;
+        }
     }
+    validate_inventory(
+        config.inventory.as_ref(),
+        files.len(),
+        expected_objects.len(),
+        published_bytes,
+    )?;
     remove_stale_objects(&objects, &expected_objects)?;
 
     let manifest = Manifest {
@@ -119,6 +145,49 @@ pub fn publish(config: &PublishConfig, output: &Path) -> Result<Manifest> {
     Manifest::parse(&encoded).context("validate published manifest")?;
     fs::write(output.join("manifest.json"), encoded).context("write manifest")?;
     Ok(manifest)
+}
+
+fn publication_dependencies(
+    config: &PublishConfig,
+    files: &BTreeMap<String, Candidate>,
+) -> Result<BTreeMap<String, Vec<String>>> {
+    let mut dependencies = if let Some(path) = &config.package_database {
+        let text = fs::read_to_string(path)
+            .with_context(|| format!("read TeX Live package database {}", path.display()))?;
+        PackageDatabase::parse(&text)?.hints(files)
+    } else {
+        BTreeMap::new()
+    };
+    for (owner, hints) in &config.dependencies {
+        let entry = dependencies.entry(owner.clone()).or_default();
+        entry.extend(hints.iter().cloned());
+        entry.sort();
+        entry.dedup();
+    }
+    Ok(dependencies)
+}
+
+fn validate_inventory(
+    expected: Option<&InventoryConfig>,
+    logical_files: usize,
+    objects: usize,
+    bytes: u64,
+) -> Result<()> {
+    let Some(expected) = expected else {
+        return Ok(());
+    };
+    if logical_files < expected.minimum_logical_files
+        || objects < expected.minimum_objects
+        || bytes < expected.minimum_bytes
+    {
+        bail!(
+            "publication inventory is incomplete: logical files {logical_files} (minimum {}), objects {objects} (minimum {}), bytes {bytes} (minimum {})",
+            expected.minimum_logical_files,
+            expected.minimum_objects,
+            expected.minimum_bytes
+        );
+    }
+    Ok(())
 }
 
 fn load_format(config: &FormatConfig) -> Result<(String, ManifestFormat, Vec<u8>)> {
@@ -231,17 +300,9 @@ fn validate_config(config: &PublishConfig) -> Result<()> {
 
 fn flatten_candidates(candidates: Vec<Candidate>) -> Result<BTreeMap<String, Candidate>> {
     let mut winners = BTreeMap::new();
-    let mut folded = BTreeMap::<String, String>::new();
     for candidate in candidates {
         for name in candidate.logical_names() {
             let key = format!("{}:{name}", candidate.kind);
-            let fold = key.to_lowercase();
-            if let Some(previous) = folded.get(&fold)
-                && previous != &key
-            {
-                bail!("case-fold lookup collision between {previous:?} and {key:?}");
-            }
-            folded.insert(fold, key.clone());
             winners.entry(key).or_insert_with(|| candidate.clone());
         }
     }

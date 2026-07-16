@@ -12,6 +12,11 @@
 Its manifest model and canonical serialization come from the workspace
 `umber-distribution` crate; schema changes must keep the shared Rust/JavaScript
 fixtures green.
+Production snapshots use `scripts/build-texlive-snapshot.sh`, which scans the
+full runtime-requestable TeX Live tree, derives bounded package hints from the
+pinned `texlive.tlpdb`, and enforces inventory floors. The smaller
+`build-wasm-latex-bundle.sh` remains a focused LaTeX seed/fixture builder and
+must not be used for production publication.
 
 `tools/parity-harness` is the shared Rust library and compatibility CLI for end-to-end DVI conformance. Oracle-presence-conditional Story, Gentle, TRIP, and e-TRIP tests use it for final artifact comparison against gitignored, locally generated `tests/corpus/e2e` DVI files. Its fixture path stages manifest inputs and calls an in-process Umber runner supplied by the Cargo test; it never launches the Umber binary. The explicit `--write-reference-fixture` CLI path stages manifest-selected documents under live reference TeX for `scripts/regen-fixtures.sh`, verifies manifest-pinned reference hashes, and writes local oracles. Comparison normalizes only DVI preamble comments, requires byte-identical final DVI, and writes automatic bundles under `target/conformance-triage/` or the CLI-selected triage directory.
 
