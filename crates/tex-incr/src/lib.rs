@@ -792,17 +792,45 @@ impl Session {
             .world()
             .validate_recorded_inputs()?;
         let Some(restart_index) = restart_index else {
-            let run = execute_revision(
+            let mut run = execute_revision(
                 &self.template,
                 &mut self.pure_memo,
                 &self.job_name,
                 &next,
-                &self.fragments,
+                &fragments,
                 &next_layout,
                 input_resolver,
                 font_resolver,
+                image_resolver,
             )?;
-            return self.accept_full_reexecution(next_revision, next, next_layout, run);
+            for record in &mut run.history {
+                record.revision = next_revision;
+            }
+            let history = retain_restorable_history(run.history, &run.substrate)?;
+            let reuse = ReuseMetrics {
+                pages_retyped: run.artifacts.len(),
+                reexecuted_bytes: run.executed_bytes,
+                reexecuted_tokens: run.executed_tokens,
+                reexecuted_commands: run.executed_commands,
+                reexecuted_paragraphs: run.executed_paragraphs,
+                ..ReuseMetrics::default()
+            };
+            return Ok(PendingRevision {
+                session_output_id: self.output_id,
+                base_revision: self.revision,
+                base_content_hash: self.content_hash,
+                revision: next_revision,
+                content_hash: ContentHash::from_bytes(next.as_bytes()),
+                source: next,
+                fragments,
+                layout: next_layout,
+                effects: run.effects,
+                artifacts: run.artifacts,
+                dvi_pages: run.dvi_pages,
+                history,
+                substrate: PendingSubstrate::Replaced(run.substrate),
+                reuse,
+            });
         };
         let substrate = self
             .substrate
@@ -1189,59 +1217,6 @@ impl Session {
             },
             retention,
         ))
-    }
-
-    fn accept_full_reexecution(
-        &mut self,
-        next_revision: RevisionId,
-        next_source: String,
-        next_layout: EditorLayout,
-        mut run: RevisionRun,
-    ) -> Result<AcceptedOutput, SessionError> {
-        for record in &mut run.history {
-            record.revision = next_revision;
-        }
-        run.history = retain_restorable_history(run.history, &run.substrate)?;
-        let substrate_bytes = run.substrate.charged_bytes();
-        let diagnostic_bytes = self
-            .fragments
-            .retained_bytes()
-            .saturating_add(next_layout.retained_bytes());
-        let (history, mut retention) = prune_history(
-            run.history,
-            self.checkpoint_budget,
-            substrate_bytes,
-            diagnostic_bytes,
-            run.output_bytes,
-        );
-        retention.memo_result_bytes = self.pure_memo.stats().retained_bytes;
-        let reuse = ReuseMetrics {
-            pages_retyped: run.artifacts.len(),
-            reexecuted_bytes: run.executed_bytes,
-            reexecuted_tokens: run.executed_tokens,
-            reexecuted_commands: run.executed_commands,
-            reexecuted_paragraphs: run.executed_paragraphs,
-            ..ReuseMetrics::default()
-        };
-
-        self.revision = next_revision;
-        self.source = next_source;
-        self.layout = next_layout;
-        self.content_hash = ContentHash::from_bytes(self.source.as_bytes());
-        self.history = history;
-        self.effects = run.effects;
-        self.artifacts = run.artifacts;
-        self.dvi_pages = run.dvi_pages;
-        self.substrate = Some(run.substrate);
-        self.fragments
-            .prune_for_layout(&self.layout, next_revision.raw(), next_revision.raw());
-        retention.diagnostic_bytes = self.diagnostic_retained_bytes();
-        retention.protected_overage_bytes = retention
-            .checkpoint_root_bytes
-            .saturating_add(retention.diagnostic_bytes)
-            .saturating_sub(self.checkpoint_budget);
-        self.accepted_retention = Some(retention);
-        Ok(self.output(reuse, retention))
     }
 
     fn output(&self, reuse: ReuseMetrics, retention: RetentionMetrics) -> AcceptedOutput {

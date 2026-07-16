@@ -163,6 +163,58 @@ fn paragraph_front_end_hit_survives_prefix_shift_and_unrelated_register_write() 
 }
 
 #[test]
+fn paragraph_front_end_hit_replays_nonempty_everypar_across_revision() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = "\\everypar{\\penalty10000}first paragraph text\\par\nsecond paragraph text\\par\nthird paragraph text\\par\n\\vfill\\eject\\end";
+    let mut session = Session::start(
+        universe,
+        "paragraph-everypar-reuse",
+        RevisionId::new(1),
+        source.to_owned(),
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+    let before = session.pure_memo_stats();
+
+    let inserted = "% shift unchanged everypar paragraphs\n";
+    let incremental = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: 0..0,
+                replacement: inserted.to_owned(),
+            },
+        )
+        .expect("prefix edit");
+    let after = session.pure_memo_stats();
+    assert!(
+        after.paragraph_lookups > before.paragraph_lookups,
+        "{after:?}"
+    );
+    assert!(after.paragraph_hits > before.paragraph_hits, "{after:?}");
+
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-everypar-reuse",
+        RevisionId::new(2),
+        format!("{inserted}{source}"),
+        usize::MAX,
+    )
+    .expect("cold comparison");
+    let cold_output = cold.cold().expect("cold edited revision");
+    assert_eq!(
+        incremental.dvi_bytes().expect("incremental DVI"),
+        cold_output.dvi_bytes().expect("cold DVI")
+    );
+}
+
+#[test]
 fn paragraph_post_break_reuse_tiers_match_cold_for_layout_and_hyphenation_changes() {
     fn run_edit(
         source: &str,

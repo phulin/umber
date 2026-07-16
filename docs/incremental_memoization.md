@@ -752,6 +752,35 @@ evicted 6,475 entries. This confirms that the current hierarchy does not pay
 for itself when a large changed paragraph shifts pagination through the rest of
 the document; the opt-in default remains appropriate.
 
+The paragraph-generation verification pass on 2026-07-16 found and repaired
+one release-path defect hidden by that earlier measurement: a nonempty
+`\everypar` still bypassed prior-generation paragraph lookup, and reused
+paragraph installation scheduled `\everypar` a second time even though its
+recorded result was already present. Plain TeX's nonempty `\everypar` therefore
+made Gentle attempt zero paragraph lookups before the repair. Focused
+cross-revision coverage now requires a nonempty `\everypar` paragraph to hit
+and remain cold-DVI-identical; the installer does not leave duplicate replay
+tokens behind.
+
+The repaired 1,792-word stress run remained cold-DVI-identical and attempted
+32 paragraph lookups, with 24 hits, while retyping the 84-page changed suffix.
+The 75% attempted hit rate and 6.3-second enabled versus 2.5-second disabled
+single-sample observation do not satisfy the paragraph release gate. A smaller
+28-word semantic insertion at the same 19.66% position retained 97 pages but
+still walked 83 pages: three interleaved samples averaged 10.124 seconds
+enabled, 3.561 seconds disabled, and 3.739 seconds cold, again with 24 of 32
+paragraph lookups hitting. The limiting defect is candidate selection, not
+recorder eligibility: lookup still recognizes only the old bounded raw-token
+preflight, so macro-bearing downstream paragraphs never attempt validation.
+`umber2-vfqs.15.5` tracks the required stable raw-delivery candidate key.
+
+These runs also strengthen the removal case for the isolated caches. The
+standalone expansion episode has no useful Gentle traffic, while the bounded
+pretolerance plan is subsumed on the editing path by accepted-generation
+finished-line reuse. `umber2-vfqs.17` tracks removal after stable paragraph
+lookup lands. Until those follow-ups complete, paragraph memoization and the
+general cache remain opt-in; the measured release criteria are not met.
+
 ### Dependency-recorder baseline
 
 The state-layer recorder has an explicit disabled branch and no lock or atomic.

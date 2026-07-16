@@ -1506,6 +1506,7 @@ impl Universe {
                         DependencyValue::Integer(i64::from(self.font_skew_char(id)))
                     }
                     DependencyFontField::Metrics => font(id),
+                    DependencyFontField::PdfCode => return None,
                 })
             }
             DependencyKey::InputStream(raw) => {
@@ -4631,6 +4632,16 @@ impl Universe {
                         },
                     }
                 }
+                BankTag::PdfLpCode
+                | BankTag::PdfRpCode
+                | BankTag::PdfEfCode
+                | BankTag::PdfTagCode
+                | BankTag::PdfKnbsCode
+                | BankTag::PdfStbsCode
+                | BankTag::PdfShbsCode
+                | BankTag::PdfKnbcCode
+                | BankTag::PdfKnacCode
+                | BankTag::PdfNoLigatures => continue,
             };
             self.dependencies.mark_changed(key);
         }

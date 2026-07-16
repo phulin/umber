@@ -334,6 +334,22 @@ fn print_incremental_work(name: &str, sample: &IncrementalSample) {
         sample.memo.retained_bytes,
         sample.memo.evictions,
     );
+    println!(
+        "gentle-profile paragraph detail: {name}: eligible={} barriers={} validation_misses={} import_failures={} line_hits={} hlist_fallbacks={} commands_skipped={} imported_bytes={} barrier_display_math={} barrier_scantokens={} barrier_input_open={} barrier_world={} barrier_output={}",
+        sample.memo.paragraph_eligible_regions,
+        sample.memo.paragraph_barriers,
+        sample.memo.paragraph_validation_misses,
+        sample.memo.paragraph_import_failures,
+        sample.memo.paragraph_line_hits,
+        sample.memo.paragraph_hlist_fallbacks,
+        sample.memo.paragraph_commands_skipped,
+        sample.memo.paragraph_imported_bytes,
+        sample.memo.paragraph_display_math_barriers,
+        sample.memo.paragraph_scantokens_barriers,
+        sample.memo.paragraph_input_open_barriers,
+        sample.memo.paragraph_untracked_world_barriers,
+        sample.memo.paragraph_output_routine_barriers,
+    );
 }
 
 #[allow(clippy::disallowed_methods)] // Profiling setup reads the pinned corpus once.

@@ -23,14 +23,6 @@ pub(crate) fn try_reuse_literal_paragraph(
     execution: &mut ExecutionContext<'_>,
     stats: &mut ExecutionStats,
 ) -> Result<bool, ExecError> {
-    let every_par = stores.tok_param(TokParam::EVERY_PAR);
-    if !stores.tokens(every_par).is_empty() {
-        // Cold execution records `everypar` like any other token-list input.
-        // Until the prior-generation lookup path lands, do not speculate past
-        // it and do not classify it as a barrier.
-        return Ok(false);
-    }
-
     let mut traced = Vec::new();
     let mut semantic = Vec::new();
     let mut terminated = false;
@@ -50,9 +42,7 @@ pub(crate) fn try_reuse_literal_paragraph(
             Token::Char {
                 cat: Catcode::Letter | Catcode::Other | Catcode::Space,
                 ..
-            } => {
-                semantic.push(token);
-            }
+            } => semantic.push(token),
             Token::Cs(symbol) => {
                 let meaning = stores.meaning(symbol);
                 semantic.push(token);
@@ -111,25 +101,7 @@ pub(crate) fn try_reuse_literal_paragraph(
             .iter()
             .any(|token| matches!(token, Token::Char { cat, .. } if *cat != Catcode::Space));
     if !eligible {
-        let boundary_only = traced.last().is_some_and(|last| {
-            matches!(
-                tex_expand::semantic_token(*last),
-                Token::Char {
-                    cat: Catcode::BeginGroup | Catcode::EndGroup,
-                    ..
-                }
-            ) && traced[..traced.len() - 1].iter().all(|token| {
-                matches!(
-                    tex_expand::semantic_token(*token),
-                    Token::Char {
-                        cat: Catcode::Space,
-                        ..
-                    }
-                )
-            })
-        });
         crate::push_traced_tokens(input, stores, traced);
-        let _ = boundary_only;
         return Ok(false);
     }
 

@@ -43,11 +43,11 @@ pub(super) fn execute_paragraph_command(
                 end_paragraph_with_memo(nest, input, stores, execution)
             }
         }
-        UnexpandablePrimitive::Indent => start_paragraph(nest, input, stores, true),
-        UnexpandablePrimitive::NoIndent => start_paragraph(nest, input, stores, false),
+        UnexpandablePrimitive::Indent => start_paragraph(nest, input, stores, true, true),
+        UnexpandablePrimitive::NoIndent => start_paragraph(nest, input, stores, false, true),
         UnexpandablePrimitive::QuitVMode => {
             if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
-                start_paragraph(nest, input, stores, true)
+                start_paragraph(nest, input, stores, true, true)
             } else {
                 Ok(())
             }
@@ -80,7 +80,7 @@ pub(crate) fn ensure_horizontal_for_character(
     stores: &mut Universe,
 ) -> Result<(), ExecError> {
     if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
-        start_paragraph(nest, input, stores, true)?;
+        start_paragraph(nest, input, stores, true, true)?;
     }
     Ok(())
 }
@@ -90,6 +90,7 @@ fn start_paragraph(
     input: &mut InputStack,
     stores: &mut Universe,
     indent: bool,
+    replay_everypar: bool,
 ) -> Result<(), ExecError> {
     match nest.current_mode() {
         Mode::Vertical | Mode::InternalVertical => {
@@ -115,7 +116,7 @@ fn start_paragraph(
                 append_indent_box(nest, stores)?;
             }
             let everypar = stores.tok_param(TokParam::EVERY_PAR);
-            if !stores.tokens(everypar).is_empty() {
+            if replay_everypar && !stores.tokens(everypar).is_empty() {
                 input.push_token_list(everypar, TokenListReplayKind::EveryPar);
             }
             Ok(())
@@ -219,7 +220,9 @@ pub(crate) fn install_reused_paragraph_hlist(
     nodes: Vec<Node>,
     finished: Option<(Vec<Node>, i32)>,
 ) -> Result<(), ExecError> {
-    start_paragraph(nest, input, stores, true)?;
+    // The retained hlist already includes the recorded `everypar` execution;
+    // scheduling it again would leave its tokens after the consumed paragraph.
+    start_paragraph(nest, input, stores, true, false)?;
     let _ = nest.current_list_mut().take_nodes();
     nest.current_list_mut().append(nodes);
     let Some((finished, line_count)) = finished else {

@@ -313,6 +313,8 @@ fn pretolerance_memo_hits_and_every_explicit_parameter_changes_its_strong_key() 
         Node::Penalty(-10_000),
     ];
     let base = tex_typeset::linebreak::LineBreakParams {
+        pdf_adjust_spacing: 0,
+        pdf_protrude_chars: 0,
         pretolerance: 10_000,
         tolerance: 9_999,
         line_penalty: 10,
@@ -422,6 +424,8 @@ fn malformed_pretolerance_entry_is_rejected_and_recomputed() {
     stores.enable_pure_memo(PureMemoConfig::default());
     let nodes = vec![Node::Penalty(-10_000)];
     let params = tex_typeset::linebreak::LineBreakParams {
+        pdf_adjust_spacing: 0,
+        pdf_protrude_chars: 0,
         pretolerance: 10_000,
         tolerance: 10_000,
         line_penalty: 0,
@@ -735,6 +739,8 @@ fn randomized_pretolerance_cache_differential_matches_disabled_kernel() {
         }
         nodes.push(Node::Penalty(-10_000));
         let params = tex_typeset::linebreak::LineBreakParams {
+            pdf_adjust_spacing: 0,
+            pdf_protrude_chars: 0,
             pretolerance: 10_000,
             tolerance: 1_000 + (seed % 9_000) as i32,
             line_penalty: (seed % 100) as i32,

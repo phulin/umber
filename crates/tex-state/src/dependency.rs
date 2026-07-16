@@ -62,6 +62,7 @@ pub enum DependencyFontField {
     HyphenChar,
     SkewChar,
     Metrics,
+    PdfCode,
 }
 
 /// Executor-owned state that is not stored in an environment cell.
@@ -79,6 +80,15 @@ pub enum DependencyEngineField {
     ParShape,
     PenaltyArrays,
     InteractionMode,
+    PdfTimer,
+    PdfRandom,
+    PdfShellEscape,
+    PageInsertions,
+    PdfExternalImages,
+    PdfObjects,
+    PdfPositions,
+    PdfForms,
+    PdfPages,
 }
 
 /// Page-builder aggregates whose values are observed as canonical roots.
