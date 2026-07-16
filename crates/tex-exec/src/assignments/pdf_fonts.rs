@@ -119,23 +119,48 @@ fn parse_glyph_to_unicode(
     } else {
         (None, glyph.to_vec())
     };
-    let mut scalars = Vec::new();
-    for value in unicode
+    let values = unicode
         .split(u8::is_ascii_whitespace)
         .filter(|part| !part.is_empty())
-    {
-        if !(4..=6).contains(&value.len()) || !value.iter().all(u8::is_ascii_hexdigit) {
+        .map(|value| {
+            if !(4..=6).contains(&value.len()) || !value.iter().all(u8::is_ascii_hexdigit) {
+                return Err(ExecError::PdfGlyphToUnicode(
+                    "Unicode values must be 4-6 hexadecimal digits separated by spaces".into(),
+                ));
+            }
+            std::str::from_utf8(value)
+                .ok()
+                .and_then(|text| u32::from_str_radix(text, 16).ok())
+                .ok_or_else(|| {
+                    ExecError::PdfGlyphToUnicode("Unicode value is not a scalar value".into())
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut scalars = Vec::with_capacity(values.len());
+    let mut index = 0;
+    while let Some(&value) = values.get(index) {
+        let scalar = if (0xD800..=0xDBFF).contains(&value) {
+            let Some(&low) = values.get(index + 1) else {
+                return Err(ExecError::PdfGlyphToUnicode(
+                    "Unicode value is not a scalar value".into(),
+                ));
+            };
+            if !(0xDC00..=0xDFFF).contains(&low) {
+                return Err(ExecError::PdfGlyphToUnicode(
+                    "Unicode value is not a scalar value".into(),
+                ));
+            }
+            index += 2;
+            0x1_0000 + ((value - 0xD800) << 10) + (low - 0xDC00)
+        } else {
+            index += 1;
+            value
+        };
+        if char::from_u32(scalar).is_none() {
             return Err(ExecError::PdfGlyphToUnicode(
-                "Unicode values must be 4-6 hexadecimal digits separated by spaces".into(),
+                "Unicode value is not a scalar value".into(),
             ));
         }
-        let scalar = std::str::from_utf8(value)
-            .ok()
-            .and_then(|text| u32::from_str_radix(text, 16).ok())
-            .filter(|scalar| char::from_u32(*scalar).is_some())
-            .ok_or_else(|| {
-                ExecError::PdfGlyphToUnicode("Unicode value is not a scalar value".into())
-            })?;
         scalars.push(scalar);
     }
     if scalars.is_empty() {

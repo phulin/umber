@@ -32,6 +32,7 @@ fn pdf_font_output_actions_record_host_neutral_checkpointed_state() {
         "\\pdfincludechars\\base{CABA} ",
         "\\pdfglyphtounicode{A}{0041} ",
         "\\pdfglyphtounicode{tfm:cmr10/ffi}{0066 0066 0069} ",
+        "\\pdfglyphtounicode{Digamma}{D875 DFCB} ",
         "\\pdfnobuiltintounicode\\base \\end",
     )));
     Executor::new()
@@ -48,6 +49,10 @@ fn pdf_font_output_actions_record_host_neutral_checkpointed_state() {
     assert_eq!(
         stores.pdf_glyph_to_unicode(b"cmr10", b"ffi.alt"),
         Some([0x66, 0x66, 0x69].as_slice())
+    );
+    assert_eq!(
+        stores.pdf_glyph_to_unicode(b"cmr10", b"Digamma"),
+        Some([0x2_D7CB].as_slice())
     );
     assert!(stores.pdf_builtin_to_unicode_disabled(font));
     let maps = stores.pdf_font_maps().collect::<Vec<_>>();

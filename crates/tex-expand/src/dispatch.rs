@@ -417,7 +417,7 @@ macro_rules! dispatch_match {
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::NumberOutput,
-                    ".27",
+                    "27",
                     call_origin,
                 ))
             }

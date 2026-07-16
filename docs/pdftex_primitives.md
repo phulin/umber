@@ -227,7 +227,9 @@ fixed `-1000pt` constant.
 The identity utility slice matches pdfTeX 1.40.27's token-level identity:
 `\pdftexversion` is the internal integer 140, while `\pdftexrevision` and
 `\pdftexbanner` expand to other-character tokens (and ordinary space tokens)
-for patch level `.27` and the pinned TeX Live 2025 banner. Original primitive
+for patch level `27` and the pinned TeX Live 2025 banner. A dotted release
+display therefore joins `\pdftexversion`, a literal `.`, and
+`\pdftexrevision`. Original primitive
 meanings live in an immutable driver registry outside grouping and format
 state. `\pdfprimitive` internalizes a frozen original-primitive token, and
 `\ifpdfprimitive` requires both the original spelling and unchanged current

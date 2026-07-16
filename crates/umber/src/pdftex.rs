@@ -1466,7 +1466,7 @@ mod tests {
         }
         assert_eq!(
             output,
-            "140.27|This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025)",
+            "14027|This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025)",
         );
     }
 
@@ -1982,7 +1982,7 @@ mod tests {
             "shadow-false",
             "restored",
             "local-count=12",
-            "result=A.27BC/count=37",
+            "result=A27BC/count=37",
             "num-gt",
             "num-lt",
             "num-eq",
@@ -2018,7 +2018,7 @@ mod tests {
         )
         .expect("run restored primitive registry");
         assert!(output.contains("count-shadowed"), "{output}");
-        assert!(output.contains("x=.27/count=41"), "{output}");
+        assert!(output.contains("x=27/count=41"), "{output}");
         assert!(!output.contains("count-bad"), "{output}");
     }
 

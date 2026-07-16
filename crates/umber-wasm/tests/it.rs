@@ -92,7 +92,7 @@ fn pdftex_engine_option_reports_the_pinned_identity() {
     session
         .add_user_file(
             "main.tex",
-            &bytes(b"\\message{engine=\\the\\pdftexversion\\pdftexrevision}\\end"),
+            &bytes(b"\\message{engine=\\the\\pdftexversion.\\pdftexrevision}\\end"),
         )
         .expect("add identity source");
     let complete = session

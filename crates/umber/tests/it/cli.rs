@@ -729,7 +729,7 @@ fn pdftex_mode_reports_the_pinned_engine_identity() {
     let source = temp_dir.path().join("identity.tex");
     fs::write(
         &source,
-        "\\message{engine=\\the\\pdftexversion\\pdftexrevision}\\end\n",
+        "\\message{engine=\\the\\pdftexversion.\\pdftexrevision}\\end\n",
     )
     .expect("write pdfTeX identity fixture");
 
