@@ -6,9 +6,7 @@ manifest="${repo_root}/tests/latex-parity-manifest.txt"
 source_dir="${repo_root}/third_party/latex2e-parity/source"
 case_list="${repo_root}/third_party/latex2e-parity/dvi-cases.txt"
 texmf_dist="${UMBER_TEXMF_DIST:-/usr/local/texlive/2025/texmf-dist}"
-texmf_var="${UMBER_TEXMF_VAR:-}"
 reference_latex="${UMBER_REF_LATEX:-$(command -v latex || true)}"
-reference_kpsewhich="${UMBER_REF_KPSEWHICH:-$(command -v kpsewhich || true)}"
 format_builder="${UMBER_LATEX_FORMAT_BUILDER:-${repo_root}/scripts/build-latex-format.sh}"
 format_file=""
 case_filter=""
@@ -42,6 +40,8 @@ Options:
   --keep-work         Preserve all reference and Umber work directories.
   --self-test-format-reuse
                       Test the build-once/stage-identically invariant only.
+  --self-test-reference-lookup
+                      Test recorder provenance enforcement without TeX Live.
 
 Without --format, the runner builds and verifies latex.fmt exactly once before
 starting any case. Every case gets an isolated copy of those exact bytes and
@@ -64,6 +64,7 @@ while [[ $# -gt 0 ]]; do
     --offline) offline=1; shift ;;
     --keep-work) keep_work=1; shift ;;
     --self-test-format-reuse) self_test=1; shift ;;
+    --self-test-reference-lookup) self_test=2; shift ;;
     --help|-h) usage; exit 0 ;;
     *) printf 'check-latex-parity.sh: unknown option: %s\n' "$1" >&2; exit 2 ;;
   esac
@@ -72,6 +73,12 @@ done
 fail() {
   printf 'check-latex-parity.sh: %s\n' "$*" >&2
   exit 1
+}
+
+case_error() {
+  local case_name="$1"
+  shift
+  printf 'LaTeX DVI parity failed: %s: %s\n' "$case_name" "$*" >&2
 }
 
 run_with_case_timeout() {
@@ -92,6 +99,55 @@ absolute_file() {
   local directory
   directory="$(cd "$(dirname "$path")" && pwd)"
   printf '%s/%s\n' "$directory" "$(basename "$path")"
+}
+
+canonical_path() {
+  perl -MCwd=abs_path -e '
+    $path = abs_path(shift @ARGV);
+    defined $path or exit 1;
+    print $path;
+  ' "$1"
+}
+
+path_is_within() {
+  local path="$1"
+  local root="$2"
+  [[ "$path" == "$root" || "$path" == "$root/"* ]]
+}
+
+validate_recorder_provenance() {
+  local case_name="$1"
+  local recorder="$2"
+  local reference_root="$3"
+  local snapshot_root="$4"
+  local distribution_root="$5"
+  local generated_root="$6"
+  local distribution_config="$7"
+  local reference_format="$8"
+  local recorded_input resolved_input canonical_input
+
+  while IFS= read -r recorded_input; do
+    resolved_input="$recorded_input"
+    if [[ "$resolved_input" != /* ]]; then
+      resolved_input="${reference_root}/${resolved_input}"
+    fi
+    if ! canonical_input="$(canonical_path "$resolved_input")"; then
+      case_error "$case_name" \
+        "reference recorder input no longer exists: $recorded_input"
+      return 1
+    fi
+    if path_is_within "$canonical_input" "$reference_root" || \
+      path_is_within "$canonical_input" "$snapshot_root" || \
+      path_is_within "$canonical_input" "$distribution_root" || \
+      path_is_within "$canonical_input" "$generated_root" || \
+      [[ "$canonical_input" == "$distribution_config" || \
+         "$canonical_input" == "$reference_format" ]]; then
+      continue
+    fi
+    case_error "$case_name" \
+      "reference recorder input escaped pinned roots: $canonical_input"
+    return 1
+  done < <(sed -n '/^INPUT /s/^INPUT //p' "$recorder")
 }
 
 case_skip_reason() {
@@ -219,8 +275,65 @@ EOF
   printf '%s\n' 'LaTeX parity format-reuse self-test: passed (one build, three identical restores)'
 }
 
+run_reference_lookup_self_test() {
+  local temp
+  mkdir -p "$scratch_parent"
+  temp="$(mktemp -d "${scratch_parent}/lookup-self-test.XXXXXX")"
+  trap "rm -rf '$temp'" EXIT
+  local reference_root="${temp}/reference"
+  local snapshot_root="${temp}/snapshot"
+  local distribution_root="${temp}/texmf-dist"
+  local generated_root="${temp}/generated"
+  local outside_root="${temp}/ambient-home"
+  local distribution_config="${temp}/texmf.cnf"
+  local reference_format="${temp}/latex.fmt"
+  mkdir -p "$reference_root" "$snapshot_root" "$distribution_root" \
+    "$generated_root" "$outside_root"
+  printf '%s\n' local > "${reference_root}/document.tex"
+  printf '%s\n' snapshot > "${snapshot_root}/support.tex"
+  printf '%s\n' distribution > "${distribution_root}/article.cls"
+  printf '%s\n' generated > "${generated_root}/font.tfm"
+  printf '%s\n' config > "$distribution_config"
+  printf '%s\n' format > "$reference_format"
+  printf '%s\n' ambient > "${outside_root}/shadow.sty"
+
+  local allowed="${temp}/allowed.fls"
+  cat > "$allowed" <<EOF
+INPUT document.tex
+INPUT ${snapshot_root}/support.tex
+INPUT ${distribution_root}/article.cls
+INPUT ${generated_root}/font.tfm
+INPUT ${distribution_config}
+INPUT ${reference_format}
+EOF
+  validate_recorder_provenance self-test "$allowed" "$reference_root" \
+    "$snapshot_root" "$distribution_root" "$generated_root" \
+    "$distribution_config" "$reference_format" || \
+    fail "reference lookup self-test rejected a declared input root"
+
+  local escaped="${temp}/escaped.fls"
+  printf 'INPUT %s\n' "${outside_root}/shadow.sty" > "$escaped"
+  if validate_recorder_provenance self-test "$escaped" "$reference_root" \
+    "$snapshot_root" "$distribution_root" "$generated_root" \
+    "$distribution_config" "$reference_format" 2> /dev/null; then
+    fail "reference lookup self-test accepted an ambient input"
+  fi
+  ln -s "${outside_root}/shadow.sty" "${reference_root}/shadow-link.sty"
+  printf '%s\n' 'INPUT shadow-link.sty' > "$escaped"
+  if validate_recorder_provenance self-test "$escaped" "$reference_root" \
+    "$snapshot_root" "$distribution_root" "$generated_root" \
+    "$distribution_config" "$reference_format" 2> /dev/null; then
+    fail "reference lookup self-test accepted a symlink escape"
+  fi
+  printf '%s\n' 'LaTeX parity reference-lookup self-test: passed'
+}
+
 if [[ $self_test -eq 1 ]]; then
   run_format_reuse_self_test
+  exit 0
+fi
+if [[ $self_test -eq 2 ]]; then
+  run_reference_lookup_self_test
   exit 0
 fi
 
@@ -231,8 +344,6 @@ else
   "${repo_root}/scripts/setup-latex-parity-tests.sh" > /dev/null
 fi
 [[ -x "$reference_latex" ]] || fail "missing reference LaTeX; set UMBER_REF_LATEX"
-[[ -x "$reference_kpsewhich" ]] || \
-  fail "missing reference kpsewhich; set UMBER_REF_KPSEWHICH"
 [[ "$case_timeout_seconds" =~ ^[1-9][0-9]*$ ]] || \
   fail "UMBER_LATEX_CASE_TIMEOUT_SECONDS must be a positive integer"
 command -v perl >/dev/null 2>&1 || fail "Perl is required for per-case timeouts"
@@ -240,9 +351,16 @@ reference_version="$($reference_latex --version | sed -n '1p')"
 [[ "$reference_version" == *'TeX Live 2025'* ]] || \
   fail "reference LaTeX is not from pinned TeX Live 2025: $reference_version"
 [[ -d "$texmf_dist" ]] || fail "missing pinned texmf-dist root: $texmf_dist"
-if [[ -z "$texmf_var" ]]; then
-  texmf_var="$("$reference_kpsewhich" -var-value=TEXMFVAR)"
-fi
+texmf_dist="$(canonical_path "$texmf_dist")"
+[[ "$(basename "$texmf_dist")" == texmf-dist ]] || \
+  fail "pinned distribution must end in texmf-dist: $texmf_dist"
+texlive_root="$(dirname "$texmf_dist")"
+texlive_config="$(canonical_path "${texlive_root}/texmf.cnf")" || \
+  fail "missing pinned TeX Live configuration: ${texlive_root}/texmf.cnf"
+texlive_sysvar="${texlive_root}/texmf-var"
+reference_format="$(canonical_path "${texlive_sysvar}/web2c/pdftex/latex.fmt")" || \
+  fail "missing pinned reference format: ${texlive_sysvar}/web2c/pdftex/latex.fmt"
+source_dir="$(canonical_path "$source_dir")"
 
 cd "$repo_root"
 prepare_format
@@ -288,12 +406,6 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-case_error() {
-  local case_name="$1"
-  shift
-  printf 'LaTeX DVI parity failed: %s: %s\n' "$case_name" "$*" >&2
-}
-
 run_one_case() {
   local path="$1"
   local case_name="$2"
@@ -304,7 +416,13 @@ run_one_case() {
   local source_parent
   source_parent="$(dirname "$source_path")"
   local local_inputs=".:${source_parent}:${source_dir}/support:${source_dir}/base:${source_dir}/required/tools:${source_dir}/required/graphics:${source_dir}/required/amsmath:${texinputs}"
-  mkdir -p "$reference_dir" "$umber_dir"
+  local generated_root="${case_root}/reference-state"
+  mkdir -p "$reference_dir" "$umber_dir" \
+    "${generated_root}/home" "${generated_root}/config" \
+    "${generated_root}/var/fonts" "${generated_root}/cache" \
+    "${generated_root}/tmp"
+  reference_dir="$(canonical_path "$reference_dir")"
+  generated_root="$(canonical_path "$generated_root")"
   cp "$source_path" "${reference_dir}/document.tex" || {
     case_error "$case_name" "could not stage reference source"
     return 1
@@ -335,26 +453,41 @@ run_one_case() {
   local reference_status=0
   (
     cd "$reference_dir"
-    run_with_case_timeout env SOURCE_DATE_EPOCH="$source_date_epoch" FORCE_SOURCE_DATE=1 \
-      TEXINPUTS="${local_inputs}:" \
+    run_with_case_timeout env -i PATH="$PATH" HOME="${generated_root}/home" LC_ALL=C \
+      TMPDIR="${generated_root}/tmp" \
+      SOURCE_DATE_EPOCH="$source_date_epoch" FORCE_SOURCE_DATE=1 \
+      TEXMFCNF="${texlive_root}:${texmf_dist}/web2c" \
+      TEXMFROOT="$texlive_root" TEXMFDIST="$texmf_dist" \
+      TEXMFLOCAL="${generated_root}/local" TEXMFHOME="${generated_root}/home" \
+      TEXMFSYSVAR="$texlive_sysvar" TEXMFSYSCONFIG="${generated_root}/sysconfig" \
+      TEXMFVAR="${generated_root}/var" TEXMFCONFIG="${generated_root}/config" \
+      TEXMFCACHE="${generated_root}/cache" \
+      VARTEXFONTS="${generated_root}/var/fonts" \
+      TEXFORMATS="${texlive_sysvar}/web2c/pdftex" \
+      TEXINPUTS="$local_inputs" TEXFONTS="$texfonts" \
       "$reference_latex" -recorder -interaction=batchmode document.tex \
         > document.stdout 2> document.stderr < /dev/null
   ) || reference_status=$?
-  if [[ ! -f "${reference_dir}/document.dvi" ]]; then
-    if [[ $reference_status -eq 142 ]]; then
-      case_error "$case_name" "reference timed out after ${case_timeout_seconds}s"
-      return 1
-    fi
-    return 2
+  if [[ $reference_status -eq 142 ]]; then
+    case_error "$case_name" "reference timed out after ${case_timeout_seconds}s"
+    return 1
   fi
   if [[ ! -f "${reference_dir}/document.fls" ]]; then
     case_error "$case_name" "reference recorder did not emit document.fls"
     return 1
   fi
+  if ! validate_recorder_provenance "$case_name" \
+    "${reference_dir}/document.fls" "$reference_dir" "$source_dir" \
+    "$texmf_dist" "$generated_root" "$texlive_config" "$reference_format"; then
+    return 1
+  fi
+  if [[ ! -f "${reference_dir}/document.dvi" ]]; then
+    return 2
+  fi
 
-  # Mirror every external input directory opened by the reference job. The
-  # trailing colon in reference TEXINPUTS asks kpathsea to search its complete
-  # pinned TeX Live tree; Umber deliberately accepts only explicit directories.
+  # Mirror every declared external input directory opened by the reference job.
+  # The recorder provenance check above rejects ambient user/local trees before
+  # any reference-discovered directory reaches Umber.
   # Exclude the reference work directory so generated files such as document.aux
   # cannot leak from the reference run into the isolated Umber run.
   local case_texinputs="$local_inputs"
@@ -391,16 +524,6 @@ run_one_case() {
   done < <(
     sed -n '/^INPUT .*\.tfm$/s/^INPUT //p' "${reference_dir}/document.fls"
   )
-  if [[ -d "${texmf_var}/fonts/tfm" ]]; then
-    local generated_tfm generated_dir
-    while IFS= read -r generated_tfm; do
-      generated_dir="${generated_tfm%/*}"
-      if [[ ":${case_texfonts}:" != *":${generated_dir}:"* ]]; then
-        case_texfonts+=":${generated_dir}"
-      fi
-    done < <(find "${texmf_var}/fonts/tfm" -type f -name '*.tfm' -print)
-  fi
-
   stage_format "$case_name" "$umber_dir"
 
   local umber_status=0

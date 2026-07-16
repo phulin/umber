@@ -202,6 +202,7 @@ scripts/setup-latex-parity-tests.sh --offline
 scripts/check-latex-parity.sh --offline
 scripts/check-latex-parity.sh --offline --format target/latex-parity/format/latex.fmt
 scripts/check-latex-parity.sh --self-test-format-reuse
+scripts/check-latex-parity.sh --self-test-reference-lookup
 ```
 
 `tests/latex-parity-manifest.txt` pins the complete official
@@ -227,7 +228,24 @@ case does not start an Umber run, so a complete current tier restores the
 format exactly 285 times. The persistent
 `target/latex-parity/last-run-format-receipt.txt` records the builder count,
 source identity, and all 285 per-case identities; the fast self-test asserts
-one build and three identical restores. The runner continues after individual
+one build and three identical restores. A separate fast lookup self-test
+accepts the declared snapshot, distribution, per-case, generated-state,
+configuration, and format inputs while rejecting both a direct ambient input
+and a symlink escape.
+
+Each reference invocation starts from an empty environment with only the host
+executable path and its deterministic clock/locale plus explicit kpathsea
+settings. `TEXINPUTS` and `TEXFONTS` have no default-search suffix;
+`TEXMFHOME`, `TEXMFCONFIG`, `TEXMFVAR`, caches, temporary files, and generated
+fonts all point beneath that case's scratch root. The distribution's one
+prebuilt `latex.fmt` remains an exact allowed file, not a general allowance for
+ambient `texmf-var`. After every reference invocation, including non-DVI
+configurations, the `.fls` recorder paths are canonicalized and must belong to
+the case directory, pinned upstream snapshot, `texmf-dist`, isolated generated
+state, or the two exact distribution configuration/format files. This check
+runs before recorder-discovered input or TFM directories are passed to Umber.
+
+The runner continues after individual
 engine or DVI failures and writes complete persistent census lists to
 `target/latex-parity/last-run-failures.txt` and
 `target/latex-parity/last-run-non-dvi.txt`; explicit exclusions are recorded

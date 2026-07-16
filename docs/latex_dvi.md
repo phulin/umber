@@ -141,7 +141,15 @@ The package example under `examples/latex.html` is the same browser workflow.
   or accepts one with `--format`, then restores byte-identical copies of that
   pregenerated image in 285 fresh case sessions. Logs are diagnostic only;
   after preamble-comment normalization, every DVI byte and therefore every
-  encoded coordinate must match. The checker writes separate persistent
+  encoded coordinate must match. Reference kpathsea lookup is run with a clean
+  environment and explicit TeX, TFM, configuration, and format paths: inputs
+  may come only from the pinned upstream snapshot, the selected TeX Live 2025
+  `texmf-dist`, the exact distribution-owned `latex.fmt` and configuration, or
+  that case's isolated generated-state directory. Every recorder input is
+  canonicalized after the run, including through symlinks, and an input outside
+  those roots fails the case before any discovered directory is mirrored into
+  Umber. `--self-test-reference-lookup` checks that enforcement without needing
+  TeX Live. The checker writes separate persistent
   failure, skip, non-DVI, and format-receipt reports. Unless `--keep-work` is
   requested, it removes each completed case directory immediately and removes
   the run root on success, failure, or interruption. Run
