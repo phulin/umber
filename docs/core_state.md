@@ -206,10 +206,17 @@ The strong canonical identity used for optional suffix adoption is derived
 later, not captured in every snapshot. Executor sinks request it only for a
 schedule-aligned boundary they will compare. Its store projection separates
 append-only interned content from mutable state and shares the immutable
-serialization cache across related generation forks; the cache is derived
-runtime data and never participates in rollback or semantics. Page identity
-uses a compact canonical node-sequence projection and does not publish nodes
-or alter the captured store watermark.
+serialization cache across related generation forks. Environment cells also
+maintain a persistent deterministic Merkle treap keyed by canonical semantic
+cell identity. At a checkpoint, the existing mutation-journal slice identifies
+the distinct dirty cells; only those Merkle paths are replaced, and the root is
+retained in the store snapshot so rollback and generation forks restore it in
+O(1). A full environment walk seeds the root only when a fresh store or format
+image is loaded. The remaining mutable-store serializer currently stays bound
+into the exact identity as an independent verifier until all sibling store
+components have exact roots. Page identity uses a compact canonical
+node-sequence projection and does not publish nodes or alter the captured store
+watermark.
 
 Snapshots are not public restart points. `tex-exec` alone may publish complete
 `EngineCheckpoint`s at `JobStart`, eligible `OuterParagraphEnd`, and outermost

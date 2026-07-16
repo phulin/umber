@@ -419,7 +419,15 @@ impl Stores {
         };
         let mutable = bincode::serialize(&MutableStoreIdentity::capture(self)?)
             .map_err(|error| StoreFormatError::Codec(error.to_string()))?;
-        Ok((immutable, ContentHash::from_bytes(&mutable)))
+        let serialized_identity = ContentHash::from_bytes(&mutable);
+        // Until the remaining mutable components migrate, retain the complete
+        // canonical DTO as a verifier while binding it to the journal-backed
+        // environment Merkle root. The composition child removes this full
+        // serialization once every sibling component has an exact root.
+        let mut composed = [0_u8; 64];
+        composed[..32].copy_from_slice(&self.exact_env_identity().bytes());
+        composed[32..].copy_from_slice(&serialized_identity.bytes());
+        Ok((immutable, ContentHash::from_bytes(&composed)))
     }
 
     #[cfg(test)]
@@ -1122,6 +1130,7 @@ impl StoreFormat {
             record_transitional_format_work(|work| work.assignment_replays += 1);
             stores.env.restore_raw(cell, word);
         }
+        stores.initialize_exact_env_identity();
         Ok(stores)
     }
 }

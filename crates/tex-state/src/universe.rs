@@ -1290,6 +1290,7 @@ impl Universe {
             &mut |param, value| stores.set_int_param(param, value),
             clock,
         );
+        stores.initialize_exact_env_identity();
         let input_summary = InputSummary::default();
         let page = PageBuilderState::default();
         let pdf = PdfState::default();
@@ -2111,6 +2112,7 @@ impl Universe {
             &mut |param, value| stores.set_int_param(param, value),
             clock,
         );
+        stores.initialize_exact_env_identity();
         let input_summary = InputSummary::default();
         let page = PageBuilderState::default();
         let pdf = PdfState::restore_format(format.pdf);
@@ -2238,7 +2240,7 @@ impl Universe {
             })
             .flatten();
         let world = self.world.snapshot();
-        let store = self.stores.checkpoint();
+        let mut store = self.stores.checkpoint();
         let store_cursor = self.stores.state_hash_cursor_from_snapshot(&store);
         let world_cursor = World::state_hash_cursor_from_snapshot(&world);
         let input_cursor = self.input_summary.semantic_root();
@@ -2261,7 +2263,7 @@ impl Universe {
         {
             hash_base.checkpoint_hash
         } else {
-            let slice_hash = self.state_hash_slice(&hash_base, &store, input_fragment);
+            let slice_hash = self.state_hash_slice(&hash_base, &mut store, input_fragment);
             combine(hash_base.checkpoint_hash, slice_hash)
         };
         let next_hash_base = StateHashBase {
@@ -2361,7 +2363,7 @@ impl Universe {
     fn state_hash_slice(
         &mut self,
         hash_base: &StateHashBase,
-        store: &StoreSnapshot,
+        store: &mut StoreSnapshot,
         input: StateHashFragment,
     ) -> u64 {
         let store = self.stores.state_hash_slice(&hash_base.store, store);

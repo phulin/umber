@@ -407,8 +407,8 @@ fn semantic_hash_scratch_reuses_capacity_but_store_clone_does_not_copy_it() {
             Meaning::CharGiven(char::from(b'a' + (index % 26) as u8)),
         );
     }
-    let end = stores.checkpoint();
-    let _ = stores.state_hash_slice(&cursor, &end);
+    let mut end = stores.checkpoint();
+    let _ = stores.state_hash_slice(&cursor, &mut end);
 
     let retained = stores.semantic_hash_cache.testing_scratch_capacities();
     assert!(retained.0 > 0);
@@ -421,11 +421,45 @@ fn semantic_hash_scratch_reuses_capacity_but_store_clone_does_not_copy_it() {
 }
 
 #[test]
+fn exact_environment_identity_updates_distinct_journal_cells_and_rolls_back() {
+    let mut stores = Stores::new();
+    let baseline_cursor = stores.state_hash_cursor();
+    let mut baseline = stores.checkpoint();
+    let _ = stores.state_hash_slice(&baseline_cursor, &mut baseline);
+    let baseline_identity = stores.exact_env_identity();
+    let baseline_updates = stores.testing_exact_env_updates();
+
+    stores.set_count(7, 1);
+    stores.set_count(7, 2);
+    stores.set_count(7, 3);
+    let mut changed = stores.checkpoint();
+    let _ = stores.state_hash_slice(&baseline_cursor, &mut changed);
+    let changed_identity = stores.exact_env_identity();
+    assert_ne!(changed_identity, baseline_identity);
+    assert_eq!(
+        stores.testing_exact_env_updates(),
+        baseline_updates + 1,
+        "one journal slice must update one Merkle path per distinct dirty cell"
+    );
+
+    let mut rebuilt = stores.clone();
+    rebuilt.initialize_exact_env_identity();
+    assert_eq!(rebuilt.exact_env_identity(), changed_identity);
+
+    stores.rollback(&baseline);
+    assert_eq!(stores.exact_env_identity(), baseline_identity);
+    stores.set_count(7, 3);
+    let mut replayed = stores.checkpoint();
+    let _ = stores.state_hash_slice(&baseline_cursor, &mut replayed);
+    assert_eq!(stores.exact_env_identity(), changed_identity);
+}
+
+#[test]
 fn semantic_hash_only_walks_hyphenation_after_root_changes() {
     let mut stores = Stores::new();
     let initial_cursor = stores.state_hash_cursor();
-    let initial = stores.checkpoint();
-    let _ = stores.state_hash_slice(&initial_cursor, &initial);
+    let mut initial = stores.checkpoint();
+    let _ = stores.state_hash_slice(&initial_cursor, &mut initial);
     assert_eq!(
         stores.semantic_hash_cache.testing_hyphenation_hash_calls(),
         1,
@@ -436,8 +470,8 @@ fn semantic_hash_only_walks_hyphenation_after_root_changes() {
         letters: "alpha".chars().collect(),
         values: vec![0, 1, 0, 0, 0, 0],
     });
-    let with_pattern = stores.checkpoint();
-    let _ = stores.state_hash_slice(&initial_cursor, &with_pattern);
+    let mut with_pattern = stores.checkpoint();
+    let _ = stores.state_hash_slice(&initial_cursor, &mut with_pattern);
     assert_eq!(
         stores.semantic_hash_cache.testing_hyphenation_hash_calls(),
         2
@@ -445,8 +479,8 @@ fn semantic_hash_only_walks_hyphenation_after_root_changes() {
 
     let pattern_cursor = stores.state_hash_cursor_from_snapshot(&with_pattern);
     stores.set_count(0, 1);
-    let unrelated_change = stores.checkpoint();
-    let _ = stores.state_hash_slice(&pattern_cursor, &unrelated_change);
+    let mut unrelated_change = stores.checkpoint();
+    let _ = stores.state_hash_slice(&pattern_cursor, &mut unrelated_change);
     assert_eq!(
         stores.semantic_hash_cache.testing_hyphenation_hash_calls(),
         2,
@@ -457,10 +491,10 @@ fn semantic_hash_only_walks_hyphenation_after_root_changes() {
         word: "hyphenation".to_owned(),
         positions: vec![2, 6],
     });
-    let with_exception = stores.checkpoint();
+    let mut with_exception = stores.checkpoint();
     let _ = stores.state_hash_slice(
         &stores.state_hash_cursor_from_snapshot(&unrelated_change),
-        &with_exception,
+        &mut with_exception,
     );
     assert_eq!(
         stores.semantic_hash_cache.testing_hyphenation_hash_calls(),
@@ -469,8 +503,8 @@ fn semantic_hash_only_walks_hyphenation_after_root_changes() {
 
     stores.rollback(&with_pattern);
     stores.set_count(0, 2);
-    let after_rollback = stores.checkpoint();
-    let _ = stores.state_hash_slice(&pattern_cursor, &after_rollback);
+    let mut after_rollback = stores.checkpoint();
+    let _ = stores.state_hash_slice(&pattern_cursor, &mut after_rollback);
     assert_eq!(
         stores.semantic_hash_cache.testing_hyphenation_hash_calls(),
         4,

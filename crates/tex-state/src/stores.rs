@@ -70,6 +70,7 @@ use std::hash::{Hash, Hasher};
 use std::mem;
 use std::sync::Arc;
 
+mod exact_identity;
 mod format;
 mod handles;
 mod node_semantic;
@@ -113,6 +114,7 @@ pub(crate) struct StoreSnapshot {
     hyphenation: Arc<HyphenationTable>,
     prepared_mag: Option<i32>,
     last_loaded_font: FontId,
+    exact_env_identity: exact_identity::ExactEnvIdentity,
 }
 
 impl StoreSnapshot {
@@ -197,6 +199,7 @@ pub struct Stores {
     /// owner identity, so neither can validate a cache owned by the source.
     meaning_generation: u64,
     semantic_hash_cache: state_hash::SemanticHashCache,
+    exact_env_identity: exact_identity::ExactEnvIdentity,
     exact_identity_cache: Arc<std::sync::Mutex<format::ExactIdentityCache>>,
 }
 
@@ -254,6 +257,7 @@ impl Clone for Stores {
             last_loaded_font: self.last_loaded_font,
             meaning_generation: self.meaning_generation,
             semantic_hash_cache: self.semantic_hash_cache.clone(),
+            exact_env_identity: self.exact_env_identity.clone(),
             exact_identity_cache: Arc::clone(&self.exact_identity_cache),
         }
     }
@@ -343,6 +347,7 @@ impl Stores {
             last_loaded_font: NULL_FONT,
             meaning_generation: 1,
             semantic_hash_cache: state_hash::SemanticHashCache::default(),
+            exact_env_identity: exact_identity::ExactEnvIdentity::default(),
             exact_identity_cache: Arc::new(std::sync::Mutex::new(
                 format::ExactIdentityCache::default(),
             )),
@@ -354,6 +359,7 @@ impl Stores {
         stores.set_int_param(IntParam::ESCAPE_CHAR, b'\\'.into());
         stores.set_int_param(IntParam::END_LINE_CHAR, 13);
         stores.initialize_font_banks(NULL_FONT, 7, &[]);
+        stores.initialize_exact_env_identity();
         stores
     }
 
@@ -2253,6 +2259,7 @@ impl Stores {
             hyphenation: self.hyphenation.clone(),
             prepared_mag: self.prepared_mag,
             last_loaded_font: self.last_loaded_font,
+            exact_env_identity: self.exact_env_identity.clone(),
         }
     }
 
@@ -2300,6 +2307,7 @@ impl Stores {
         self.hyphenation = snapshot.hyphenation.clone();
         self.prepared_mag = snapshot.prepared_mag;
         self.last_loaded_font = snapshot.last_loaded_font;
+        self.exact_env_identity = snapshot.exact_env_identity.clone();
         self.bump_meaning_generation();
         #[cfg(feature = "profiling-stats")]
         crate::measurement::record_meaning_cache_invalidation(
