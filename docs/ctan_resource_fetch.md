@@ -4,8 +4,10 @@ Status: partially implemented, tracked by the `umber2-mbwq` epic. Builds on the
 completed VFS substrate ([umber_vfs.md](umber_vfs.md)) and resource session
 protocol ([wasm_resource_acquisition.md](wasm_resource_acquisition.md)). The
 shared manifest crate, typed unavailable responses, native cache/fetch layer,
-and CLI integration in phases 1 through 5 are implemented; snapshot deployment
-remains planned.
+and CLI integration in phases 1 through 5 are implemented. Phase 6 has the R2
+publication path and browser prefetch behavior implemented, but production
+publication remains blocked on Cloudflare authentication, a public custom
+domain, and an updated TeX Live source tree.
 
 ## Problem
 
@@ -164,6 +166,41 @@ succeeds. Manifest acquisition observes the same cancellation token. Verified pe
 downloads may still warm the cache when a batch fails, but no partial response
 is exposed to the compile session.
 
+### 6. Snapshots are immutable Cloudflare R2 prefixes
+
+Production snapshots live in a public Cloudflare R2 bucket behind a custom
+HTTPS domain. The release tool accepts that public prefix rather than embedding
+a provider hostname: a snapshot named `texlive-YYYY` is stored below
+`<public-prefix>/texlive-YYYY/`, its manifest points to the sibling `objects/`
+prefix, and both the CLI and web deployment consume that exact manifest URL.
+The managed `r2.dev` URL is suitable only for provisioning checks because it is
+rate-limited; the release pin must use the custom domain.
+
+R2 was selected because content-addressed objects map directly to immutable
+keys and Internet egress is not billed. The operational budget is storage plus
+Class A publication and Class B read requests. The custom domain must cache
+both JSON and digest-named objects; publications attach a one-year immutable
+cache policy. Browser GET/HEAD access uses the bucket CORS policy in
+`scripts/texlive-r2-cors.json`.
+
+`scripts/publish-texlive-r2.sh` is the only supported publication entry point.
+It rebuilds the bundle twice through `build-wasm-latex-bundle.sh`, configures
+CORS, uploads objects under the new snapshot prefix, uploads the manifest last,
+and verifies the public manifest digest. Asset locations are derived solely
+from `--public-prefix`. Before invoking it, an operator must create or select
+the bucket, connect a custom domain in the same Cloudflare account, and confirm
+that the domain is active. `--create-bucket` handles bucket creation when the
+installed Wrangler is already authenticated; custom-domain activation remains
+an explicit dashboard/account operation.
+
+Refresh after each annual TeX Live release, or earlier for an urgent corrected
+snapshot. A refresh always uses a new snapshot identifier and updates both the
+CLI URL/digest constants and the web deployment in the same release change.
+Published prefixes are never overwritten, lifecycle-expired, or deleted while
+any released CLI version pins them. The bucket must therefore have no deletion
+lifecycle rule. Rollback means restoring the previous URL and digest, not
+mutating objects.
+
 ## CLI user model
 
 - `umber run doc.tex` fetches missing distribution files automatically from
@@ -276,10 +313,11 @@ Each phase is a `bd` issue under the `umber2-mbwq` epic (phase N is
    accepted revision; Ctrl-C uses the same path. Tests verify that a resolved
    distribution file is not reopened or refetched on a later revision and
    that cancelled downloads publish neither bytes nor cache objects.
-6. **Publish and adopt the self-hosted snapshot.** Run the publisher against
-   the most recent TeX Live snapshot, publish the manifest and objects to
-   project-controlled hosting, point the CLI default pin and the web app
-   deployment at it, and forward dependency prefetch hints in the browser.
+6. **In progress — publish and adopt the self-hosted snapshot.** R2 publication
+   tooling and browser dependency/engine prefetch are implemented. Production
+   publication, CLI/web pin rotation, and public verification remain blocked
+   until an authenticated Cloudflare account, active custom-domain prefix, and
+   current TeX Live tree are available.
 7. **Parity gate.** One corpus document requiring distribution packages
    compiles from a cold cache natively and in the browser fixture to
    byte-identical DVI, satisfies repeat runs entirely from cache, and
@@ -304,11 +342,6 @@ Each phase is a `bd` issue under the `umber2-mbwq` epic (phase N is
 
 ## Open questions
 
-- **Hosting details.** Self-hosting the snapshot is decided; the concrete
-  object store/CDN, its bandwidth budget, and the refresh cadence for
-  rotating to newer TeX Live snapshots remain deployment decisions. The pin
-  mechanism assumes only stable HTTPS URLs, and old snapshots must stay
-  available as long as released CLI versions pin them.
 - **Local TeX Live probing.** Whether the CLI should optionally probe an
   existing `kpsewhich`-discoverable installation before the network. Default
   answer is no — it reintroduces machine-dependent bytes — but a
