@@ -16,14 +16,14 @@ data model already accommodates it.
 ## Relationship to the existing OpenType resource architecture
 
 `docs/web_font_bundles.md` (Beads epic `umber2-y2ei`) already defines font
-*acquisition*: `FontRequest`/`ResolvedFont`, content-addressed identity, and a
+_acquisition_: `FontRequest`/`ResolvedFont`, content-addressed identity, and a
 validated `OpenTypeFont { cmap, metrics, shaping: ShapingTables, math,
 metadata }` produced by `crates/tex-fonts/src/opentype/`. That work is done.
 `ShapingTables` retains raw `gdef`/`gsub`/`gpos` table bytes but nothing
 applies them; no shaping engine exists.
 
-That document states its model explicitly: *"browser owns glyph selection,
-advances, kerning, ligatures... inside a run"* — it deliberately avoids an
+That document states its model explicitly: _"browser owns glyph selection,
+advances, kerning, ligatures... inside a run"_ — it deliberately avoids an
 engine-side shaper and accepts that HTML output cannot guarantee
 glyph-coordinate equality inside a text run. This document amends that
 decision for OpenType-selected fonts: the engine shapes text itself, using
