@@ -703,7 +703,7 @@ fn get_x_or_protected_stops_before_protected_macro_expansion() {
 }
 
 #[test]
-fn get_x_or_protected_resumes_ordinary_macros_from_unexpanded_replay() {
+fn get_x_or_protected_preserves_unexpanded_replay_suppression() {
     let mut stores = Universe::new();
     install_expandable_primitives(&mut stores);
     crate::install_etex_expandable_primitives(&mut stores);
@@ -722,9 +722,9 @@ fn get_x_or_protected_resumes_ordinary_macros_from_unexpanded_replay() {
             &mut tex_state::ExpansionContext::new(&mut stores),
             &mut ExpansionContext::new("texput"),
         )
-        .expect("command-demand expansion")
+        .expect("protected-aware expansion")
         .map(crate::semantic_token),
-        Some(char_token('x'))
+        Some(Token::Cs(macro_cs.symbol()))
     );
 }
 
