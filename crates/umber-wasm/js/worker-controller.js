@@ -152,6 +152,12 @@ function prepareMessage(options, userFiles, resolver, wasmUrl) {
 			"resolver.manifestUrl is required",
 		);
 	}
+	if (typeof resolver.manifestSha256 !== "string") {
+		throw new WorkerCompileError(
+			"invalid-options",
+			"resolver.manifestSha256 is required",
+		);
+	}
 	if (clonedOptions.format !== undefined && resolver.format !== undefined) {
 		throw new WorkerCompileError(
 			"invalid-options",
@@ -277,6 +283,7 @@ function prepareMessage(options, userFiles, resolver, wasmUrl) {
 			userFiles: files,
 			resolver: {
 				manifestUrl: resolver.manifestUrl,
+				manifestSha256: resolver.manifestSha256,
 				persistentCache: resolver.persistentCache,
 				concurrency: resolver.concurrency,
 				format: resolver.format,

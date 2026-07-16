@@ -19,7 +19,7 @@ export function compileInWorker(
 	userFiles: ReadonlyMap<string, Uint8Array>,
 	resolver: Pick<
 		HttpManifestResolverOptions,
-		"manifestUrl" | "persistentCache" | "concurrency"
+		"manifestUrl" | "manifestSha256" | "persistentCache" | "concurrency"
 	> & { format?: string },
 	control?: WorkerCompileControl,
 ): Promise<CompileOutput>;

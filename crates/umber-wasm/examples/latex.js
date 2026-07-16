@@ -1,3 +1,7 @@
+import {
+	TEXLIVE_2026_MANIFEST_SHA256,
+	TEXLIVE_2026_MANIFEST_URL,
+} from "../manifest-resolver.js";
 import { compileInWorker } from "../worker-controller.js";
 
 const source = new TextEncoder().encode(
@@ -10,7 +14,8 @@ const output = await compileInWorker(
 		["document.aux", new Uint8Array()],
 	]),
 	{
-		manifestUrl: new URL("./manifest.json", location.href).href,
+		manifestUrl: TEXLIVE_2026_MANIFEST_URL,
+		manifestSha256: TEXLIVE_2026_MANIFEST_SHA256,
 		format: "latex",
 		persistentCache: "indexeddb",
 	},

@@ -1,29 +1,46 @@
 import {
 	decodeKey,
+	encodeRequest,
+	fontRequestIdentity,
 	isFormatName,
 	ManifestResolverError,
-	selectManifestJobs,
-	validateManifest,
+	shardIndex,
+	validateIndexShard,
+	validateRootManifest,
 } from "./manifest-schema.js";
 import { IndexedDbObjectCache } from "./persistent-cache.js";
 
 export { ManifestResolverError } from "./manifest-schema.js";
 
+const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 const MAX_CONCURRENCY = 32;
 const DEFAULT_CONCURRENCY = 8;
-const MAX_MANIFEST_BYTES = 64 * 1024 * 1024;
+const MAX_ROOT_BYTES = 1024 * 1024;
+const MAX_SHARD_BYTES = 64 * 1024 * 1024;
 const DEFAULT_RESOLVED_FILES = 512;
 const MAX_RESOLVED_FILES = 4096;
 const DEFAULT_CACHED_BYTES = 64 * 1024 * 1024;
 const MAX_CACHED_BYTES = 256 * 1024 * 1024;
 
+export const TEXLIVE_2026_MANIFEST_URL =
+	"https://assets.umber.ink/texlive/texlive-2026-r79639/manifest-v2.json";
+export const TEXLIVE_2026_MANIFEST_SHA256 =
+	"7c2784bca891844d37465083b93466b78429c7282d7ba915f40a08d150651fd0";
+
 export class HttpManifestResolver {
 	static async create(options) {
 		const fetchImplementation = options.fetch ?? platformFetch();
-		if (typeof fetchImplementation !== "function") {
+		const crypto = options.crypto ?? globalThis.crypto;
+		if (typeof fetchImplementation !== "function" || !crypto?.subtle) {
 			throw new ManifestResolverError(
 				"invalid-options",
-				"fetch is unavailable",
+				"fetch and Web Crypto SubtleCrypto are required",
+			);
+		}
+		if (!DIGEST_PATTERN.test(options.manifestSha256)) {
+			throw new ManifestResolverError(
+				"invalid-options",
+				"manifestSha256 must be a lowercase SHA-256 digest",
 			);
 		}
 		const response = await fetchImplementation(options.manifestUrl, {
@@ -36,27 +53,31 @@ export class HttpManifestResolver {
 				`manifest request failed with HTTP ${response.status}`,
 			);
 		}
+		const bytes = await boundedResponseBytes(response, {
+			code: "manifest-length",
+			label: "root manifest",
+			limit: MAX_ROOT_BYTES,
+		});
+		const actual = await digestBytes(crypto, bytes);
+		if (actual !== options.manifestSha256) {
+			throw new ManifestResolverError(
+				"manifest-digest",
+				`root manifest digest ${actual} does not match pinned ${options.manifestSha256}`,
+			);
+		}
 		let manifest;
 		try {
-			const bytes = await boundedResponseBytes(response, {
-				code: "manifest-length",
-				label: "manifest",
-				limit: MAX_MANIFEST_BYTES,
-			});
 			manifest = JSON.parse(new TextDecoder().decode(bytes));
 		} catch (error) {
-			if (error instanceof ManifestResolverError) throw error;
 			throw new ManifestResolverError(
 				"invalid-manifest",
-				"manifest is not valid JSON",
-				{
-					cause: error,
-				},
+				"root manifest is not valid JSON",
+				{ cause: error },
 			);
 		}
 		return new HttpManifestResolver(manifest, {
 			fetch: fetchImplementation,
-			crypto: options.crypto ?? globalThis.crypto,
+			crypto,
 			concurrency: options.concurrency,
 			persistentCache: options.persistentCache,
 			cacheStore: options.cacheStore,
@@ -67,7 +88,7 @@ export class HttpManifestResolver {
 	}
 
 	constructor(manifest, options = {}) {
-		this.manifest = validateManifest(manifest);
+		this.manifest = validateRootManifest(manifest);
 		this.fetch = options.fetch ?? platformFetch();
 		this.crypto = options.crypto ?? globalThis.crypto;
 		this.concurrency = validateConcurrency(
@@ -97,6 +118,7 @@ export class HttpManifestResolver {
 			);
 		}
 		this.objectCache = new Map();
+		this.shardCache = new Map();
 	}
 
 	async resolve(requests, options) {
@@ -113,8 +135,14 @@ export class HttpManifestResolver {
 			);
 		}
 		throwIfAborted(signal);
-		const required = selectManifestJobs(this.manifest, requests);
-		const hinted = selectManifestJobs(this.manifest, prefetchHints);
+		const required = await this.#select(requests, signal, true);
+		let hinted = { jobs: [], misses: [] };
+		try {
+			hinted = await this.#select(prefetchHints, signal, false);
+		} catch {
+			throwIfAborted(signal);
+			// Speculative index transport is best effort, like speculative objects.
+		}
 		const unavailable = required.misses.map(({ type, request }) => ({
 			...request,
 			type: `${type}-unavailable`,
@@ -130,44 +158,146 @@ export class HttpManifestResolver {
 				try {
 					const bytes = await this.#object(group[0].entry, signal);
 					for (const job of group) {
-						results.set(
-							job.key,
-							job.type === "font"
-								? {
-										...job.request,
-										container: job.entry.container,
-										bytes,
-										objectSha256: job.entry.sha256,
-										provenance: job.entry.provenance,
-									}
-								: {
-										type: "file",
-										domain: "tex",
-										...decodeKey(job.key),
-										virtualPath: job.entry.virtualPath,
-										bytes,
-									},
-						);
+						results.set(job.key, {
+							type: "file",
+							domain: "tex",
+							...decodeKey(job.key),
+							virtualPath: job.entry.virtualPath,
+							bytes,
+						});
 					}
 				} catch (error) {
 					const requested = group.find((job) => job.blocking);
-					if (requested !== undefined) {
+					if (requested !== undefined)
 						throw actionableError(requested.key, error);
-					}
 				}
 			}
 		};
-		const workers = Array.from(
-			{ length: Math.min(this.concurrency, groups.length) },
-			() => worker(),
+		await Promise.all(
+			Array.from({ length: Math.min(this.concurrency, groups.length) }, () =>
+				worker(),
+			),
 		);
-		await Promise.all(workers);
 		throwIfAborted(signal);
 		return unavailable.concat(
 			required.jobs.flatMap((job) =>
 				job.requested && results.has(job.key) ? [results.get(job.key)] : [],
 			),
 		);
+	}
+
+	async #select(requests, signal, blocking) {
+		const selections = [];
+		const seen = new Set();
+		for (const request of requests) {
+			if (request?.type === "font") {
+				const identity = fontRequestIdentity(request);
+				if (!seen.has(identity)) {
+					seen.add(identity);
+					selections.push(
+						Promise.resolve({ type: "font", request, missing: true }),
+					);
+				}
+				continue;
+			}
+			const key = encodeRequest(request);
+			if (seen.has(key)) continue;
+			seen.add(key);
+			selections.push(
+				(async () => {
+					try {
+						const index = await shardIndex(
+							key,
+							this.manifest.shardBits,
+							this.crypto,
+						);
+						const shard = await this.#shard(index, signal);
+						return { type: "file", request, key, entry: shard.files[key] };
+					} catch (error) {
+						if (blocking) throw actionableError(key, error);
+						throw error;
+					}
+				})(),
+			);
+		}
+		const resolved = await Promise.all(selections);
+		const jobs = [];
+		const misses = [];
+		const hintedKeys = new Set();
+		for (const item of resolved) {
+			if (item.missing || item.entry === undefined) {
+				misses.push({
+					type: item.type,
+					request: item.request,
+					manifestKey: item.key ?? item.request.logicalName,
+				});
+				continue;
+			}
+			jobs.push({
+				key: item.key,
+				manifestKey: item.key,
+				entry: item.entry,
+				request: item.request,
+				requested: true,
+				type: "file",
+			});
+			for (const dependency of item.entry.dependencies) {
+				if (seen.has(dependency.key) || hintedKeys.has(dependency.key))
+					continue;
+				hintedKeys.add(dependency.key);
+				jobs.push({
+					key: dependency.key,
+					manifestKey: dependency.key,
+					entry: dependency,
+					requested: false,
+					type: "file",
+				});
+			}
+		}
+		return { jobs, misses };
+	}
+
+	async #shard(index, signal) {
+		let pending = this.shardCache.get(index);
+		if (pending === undefined) {
+			pending = (async () => {
+				const sha256 = this.manifest.shards[index];
+				const bytes = await this.#object(
+					{ object: `sha256-${sha256}`, sha256 },
+					signal,
+					{ limit: MAX_SHARD_BYTES, code: "shard-length" },
+				);
+				let parsed;
+				try {
+					parsed = JSON.parse(new TextDecoder().decode(bytes));
+				} catch (error) {
+					throw new ManifestResolverError(
+						"invalid-manifest",
+						`index shard ${index} is not valid JSON`,
+						{ cause: error },
+					);
+				}
+				const shard = validateIndexShard(parsed, this.manifest, index);
+				for (const key of Object.keys(shard.files)) {
+					if (
+						(await shardIndex(key, this.manifest.shardBits, this.crypto)) !==
+						index
+					) {
+						throw new ManifestResolverError(
+							"invalid-manifest",
+							`lookup key ${key} is not in canonical shard ${index}`,
+						);
+					}
+				}
+				return shard;
+			})();
+			this.shardCache.set(index, pending);
+			pending.catch(() => {
+				if (this.shardCache.get(index) === pending)
+					this.shardCache.delete(index);
+			});
+		}
+		return pending;
 	}
 
 	async resolveFormat(name, compatibility = {}, signal) {
@@ -199,68 +329,65 @@ export class HttpManifestResolver {
 	}
 
 	formatMetadata(name) {
-		if (!isFormatName(name)) {
+		if (!isFormatName(name))
 			throw new ManifestResolverError(
 				"invalid-format",
 				`invalid format name ${String(name)}`,
 			);
-		}
 		const entry = this.manifest.formats[name];
-		if (entry === undefined) {
+		if (entry === undefined)
 			throw new ManifestResolverError(
 				"missing-format",
 				`manifest has no format named ${name}`,
 			);
-		}
 		return entry;
 	}
 
-	#object(entry, signal) {
+	#object(entry, signal, limits = {}) {
 		let pending = this.objectCache.get(entry.sha256);
 		if (pending === undefined) {
-			pending = this.#download(entry, signal);
+			pending = this.#download(entry, signal, limits);
 			this.objectCache.set(entry.sha256, pending);
 			pending.catch(() => {
-				if (this.objectCache.get(entry.sha256) === pending) {
+				if (this.objectCache.get(entry.sha256) === pending)
 					this.objectCache.delete(entry.sha256);
-				}
 			});
 		}
 		return pending;
 	}
 
-	async #download(entry, signal) {
+	async #download(entry, signal, limits) {
 		throwIfAborted(signal);
-		const cached = await this.#cached(entry);
+		const cached = await this.#cached(entry, limits);
 		if (cached !== undefined) return cached;
-		const url = new URL(entry.object, this.manifest.objectsBaseUrl).href;
-		const response = await this.fetch(url, { cache: this.fetchCache, signal });
-		if (!response.ok) {
+		const response = await this.fetch(
+			new URL(entry.object, this.manifest.objectsBaseUrl).href,
+			{ cache: this.fetchCache, signal },
+		);
+		if (!response.ok)
 			throw new ManifestResolverError(
 				"object-http",
 				`${entry.object} request failed with HTTP ${response.status}`,
 			);
-		}
+		const limit = entry.bytes ?? limits.limit;
 		const bytes = await boundedResponseBytes(response, {
-			code: "object-length",
+			code: limits.code ?? "object-length",
 			label: entry.object,
-			limit: entry.bytes,
+			limit,
 			exact: entry.bytes,
 		});
-		await this.#verify(entry, bytes);
+		await this.#verify(entry, bytes, limits);
 		try {
 			await this.persistentStore?.put(
 				this.manifest.distribution,
 				entry.sha256,
 				bytes,
 			);
-		} catch {
-			// Persistent caching is an optimization and must not invalidate verified bytes.
-		}
+		} catch {}
 		return bytes;
 	}
 
-	async #cached(entry) {
+	async #cached(entry, limits) {
 		if (this.persistentStore === undefined) return undefined;
 		let bytes;
 		try {
@@ -273,7 +400,7 @@ export class HttpManifestResolver {
 		}
 		if (bytes === undefined) return undefined;
 		try {
-			await this.#verify(entry, bytes);
+			await this.#verify(entry, bytes, limits);
 			return bytes;
 		} catch {
 			try {
@@ -281,33 +408,33 @@ export class HttpManifestResolver {
 					this.manifest.distribution,
 					entry.sha256,
 				);
-			} catch {
-				// A corrupt cache entry remains a miss even if eviction fails.
-			}
+			} catch {}
 			return undefined;
 		}
 	}
 
-	async #verify(entry, bytes) {
-		if (!(bytes instanceof Uint8Array)) {
+	async #verify(entry, bytes, limits) {
+		if (!(bytes instanceof Uint8Array))
 			throw new ManifestResolverError(
 				"object-cache",
 				`${entry.object} cache value is not bytes`,
 			);
-		}
-		if (bytes.byteLength !== entry.bytes) {
+		const limit = entry.bytes ?? limits.limit;
+		if (
+			bytes.byteLength > limit ||
+			(entry.bytes !== undefined && bytes.byteLength !== entry.bytes)
+		) {
 			throw new ManifestResolverError(
-				"object-length",
-				`${entry.object} returned ${bytes.byteLength} bytes; expected ${entry.bytes}`,
+				limits.code ?? "object-length",
+				`${entry.object} returned ${bytes.byteLength} bytes; expected ${entry.bytes ?? `at most ${limit}`}`,
 			);
 		}
-		const digest = hex(await this.crypto.subtle.digest("SHA-256", bytes));
-		if (digest !== entry.sha256) {
+		const digest = await digestBytes(this.crypto, bytes);
+		if (digest !== entry.sha256)
 			throw new ManifestResolverError(
 				"object-digest",
 				`${entry.object} digest ${digest} does not match ${entry.sha256}`,
 			);
-		}
 	}
 }
 
@@ -319,14 +446,13 @@ function mergeJobs(required, hinted) {
 		[hinted, false],
 	]) {
 		for (const job of source) {
-			const identity = `${job.type}:${job.key}`;
-			const existing = indexes.get(identity);
+			const existing = indexes.get(job.key);
 			const jobBlocks = blocking && job.requested;
 			if (existing !== undefined) {
 				jobs[existing].blocking ||= jobBlocks;
 				continue;
 			}
-			indexes.set(identity, jobs.length);
+			indexes.set(job.key, jobs.length);
 			jobs.push({ ...job, blocking: jobBlocks });
 		}
 	}
@@ -349,44 +475,40 @@ function groupByObject(jobs) {
 }
 
 function validateJobBudget(jobs, maxFiles, maxBytes) {
-	if (jobs.length > maxFiles) {
+	if (jobs.length > maxFiles)
 		throw new ManifestResolverError(
 			"resource-limit",
 			`resolution requires ${jobs.length} files; limit is ${maxFiles}`,
 		);
-	}
-	const paths = new Map();
+	const paths = new Set();
 	let bytes = 0;
 	for (const job of jobs) {
 		if (paths.has(job.entry.virtualPath)) continue;
-		paths.set(job.entry.virtualPath, true);
+		paths.add(job.entry.virtualPath);
 		bytes += job.entry.bytes;
-		if (bytes > maxBytes) {
+		if (bytes > maxBytes)
 			throw new ManifestResolverError(
 				"resource-limit",
 				`resolution requires ${bytes} cached bytes; limit is ${maxBytes}`,
 			);
-		}
 	}
 }
 
 function validateConcurrency(value) {
-	if (!Number.isInteger(value) || value < 1 || value > MAX_CONCURRENCY) {
+	if (!Number.isInteger(value) || value < 1 || value > MAX_CONCURRENCY)
 		throw new ManifestResolverError(
 			"invalid-options",
 			`concurrency must be an integer from 1 through ${MAX_CONCURRENCY}`,
 		);
-	}
 	return value;
 }
 
 function validateResourceLimit(value, hard, name) {
-	if (!Number.isSafeInteger(value) || value < 0 || value > hard) {
+	if (!Number.isSafeInteger(value) || value < 0 || value > hard)
 		throw new ManifestResolverError(
 			"invalid-options",
 			`${name} must be an integer from 0 through ${hard}`,
 		);
-	}
 	return value;
 }
 
@@ -413,13 +535,11 @@ async function boundedResponseBytes(response, options) {
 		}
 	}
 	if (response.body === null) return new Uint8Array();
-	if (typeof response.body?.getReader !== "function") {
+	if (typeof response.body?.getReader !== "function")
 		throw new ManifestResolverError(
 			"unsupported-response",
 			`${options.label} response body is not a readable byte stream`,
 		);
-	}
-
 	const reader = response.body.getReader();
 	const chunks = [];
 	let total = 0;
@@ -427,12 +547,11 @@ async function boundedResponseBytes(response, options) {
 		while (true) {
 			const { done, value } = await reader.read();
 			if (done) break;
-			if (!(value instanceof Uint8Array)) {
+			if (!(value instanceof Uint8Array))
 				throw new ManifestResolverError(
 					"unsupported-response",
 					`${options.label} response yielded a non-byte chunk`,
 				);
-			}
 			if (value.byteLength > options.limit - total) {
 				await reader.cancel().catch(() => {});
 				throw responseLengthError(
@@ -446,7 +565,6 @@ async function boundedResponseBytes(response, options) {
 	} finally {
 		reader.releaseLock();
 	}
-
 	const bytes = new Uint8Array(total);
 	let offset = 0;
 	for (const chunk of chunks) {
@@ -474,35 +592,30 @@ function platformFetch() {
 }
 
 function actionableError(key, error) {
-	if (error instanceof ManifestResolverError) {
+	if (error instanceof ManifestResolverError)
 		return new ManifestResolverError(
 			error.code,
 			`cannot resolve ${key}: ${error.message}`,
-			{
-				cause: error,
-			},
+			{ cause: error },
 		);
-	}
 	return new ManifestResolverError(
 		"object-fetch",
 		`cannot resolve ${key}: ${error}`,
-		{
-			cause: error,
-		},
+		{ cause: error },
 	);
 }
 
 function throwIfAborted(signal) {
-	if (signal?.aborted) {
+	if (signal?.aborted)
 		throw (
 			signal.reason ??
 			new DOMException("The operation was aborted", "AbortError")
 		);
-	}
 }
 
-function hex(buffer) {
-	return Array.from(new Uint8Array(buffer), (byte) =>
-		byte.toString(16).padStart(2, "0"),
+async function digestBytes(crypto, bytes) {
+	return Array.from(
+		new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)),
+		(byte) => byte.toString(16).padStart(2, "0"),
 	).join("");
 }

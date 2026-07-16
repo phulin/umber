@@ -30,17 +30,6 @@ const objectEntry = (virtualPath, bytes, dependencies = []) => {
 		dependencies,
 	};
 };
-const fontEntry = (bytes) => {
-	const sha256 = digest(bytes);
-	return {
-		object: `sha256-${sha256}`,
-		sha256,
-		bytes: bytes.byteLength,
-		container: "woff2",
-		provenance: "CM Unicode fixture under the SIL OFL",
-	};
-};
-
 await stat(path.join(packageDirectory, "umber_wasm_bg.wasm"));
 await stat(chrome);
 const packageFiles = await readdir(packageDirectory);
@@ -76,9 +65,6 @@ const cmr10 = await readFile(
 const cmtt10 = await readFile(
 	path.join(repository, "crates/tex-fonts/tests/fixtures/cm/cmtt10.tfm"),
 );
-const woff2 = await readFile(
-	path.join(packageDirectory, "assets/cmu-serif-500-roman.woff2"),
-);
 const corruptExpected = encoder.encode("expected object");
 const corruptActual = encoder.encode("tampered object");
 const plain = await readFile(path.join(packageDirectory, "assets/plain.fmt"));
@@ -94,38 +80,44 @@ const files = {
 	"tfm:cmtt10.tfm": objectEntry("/texlive/fonts/cmtt10.tfm", cmtt10),
 	"tex:corrupt.tex": objectEntry("/texlive/tex/corrupt.tex", corruptExpected),
 };
-const fonts = {
-	cmr10: fontEntry(woff2),
-	cmtt10: fontEntry(woff2),
-};
 const objectBytes = new Map([
 	[files["tex:remote.tex"].object, remote],
 	[files["tfm:cmr10.tfm"].object, cmr10],
 	[files["tfm:cmtt10.tfm"].object, cmtt10],
 	[files["tex:corrupt.tex"].object, corruptActual],
-	[fonts.cmr10.object, woff2],
 	[plainMetadata.object, plain],
 ]);
 const { name: formatName, schema: _schema, ...formatMetadata } = plainMetadata;
-const manifest = {
-	schema: 1,
+const shardBytes = encoder.encode(
+	`${JSON.stringify({
+		schema: 1,
+		distribution: "umber-browser-fixture",
+		index: 0,
+		files,
+	})}\n`,
+);
+const shardDigest = digest(shardBytes);
+objectBytes.set(`sha256-${shardDigest}`, shardBytes);
+const manifest = () => ({
+	schema: 2,
 	distribution: "umber-browser-fixture",
-	objectsBaseUrl: "",
-	files,
-	fonts,
+	objectsBaseUrl: `http://127.0.0.1:${server.address().port}/objects/`,
+	shardBits: 0,
+	shardCount: 1,
+	shards: [shardDigest],
 	formats: { [formatName]: formatMetadata },
-};
+});
+const manifestBytes = () => encoder.encode(`${JSON.stringify(manifest())}\n`);
 const statistics = { objectRequests: 0, active: 0, maximumActive: 0 };
 
 const server = http.createServer(async (request, response) => {
 	try {
 		const url = new URL(request.url, "http://fixture.invalid");
 		if (url.pathname === "/manifest.json") {
-			const body = JSON.stringify({
-				...manifest,
-				objectsBaseUrl: `http://127.0.0.1:${server.address().port}/objects/`,
-			});
-			return send(response, 200, body, "application/json");
+			return send(response, 200, manifestBytes(), "application/json");
+		}
+		if (url.pathname === "/manifest.sha256") {
+			return send(response, 200, digest(manifestBytes()), "text/plain");
 		}
 		if (url.pathname === "/stats") {
 			return send(

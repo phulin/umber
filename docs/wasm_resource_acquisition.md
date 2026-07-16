@@ -207,6 +207,14 @@ Persistent eviction policy belongs to the application. It must not delete an
 object still referenced by a live session. Rust independently enforces hard
 per-resource, decoded-font, session-cache, and aggregate-output limits.
 
+The packaged HTTP manifest resolver consumes the schema-2 sharded TeX Live
+catalog. Construction from HTTP requires an explicit root SHA-256 pin. Selected
+shards are digest-addressed immutable objects and use the resolver's existing
+HTTP or IndexedDB cache, while complete inline dependency records prefetch
+payloads without a second index lookup. Only verified absence in the canonical
+shard produces `file-unavailable`; shard transport and verification failures
+remain actionable resolver errors.
+
 ## Client-owned distribution
 
 The client maps logical requests to resources. Valid implementations include:

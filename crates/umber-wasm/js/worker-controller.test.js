@@ -4,6 +4,8 @@ import test from "node:test";
 import { compileInWorker, WorkerCompileError } from "./worker-controller.js";
 import { outputTransfers, runCompileMessage } from "./worker-entry.js";
 
+const manifestSha256 = "1".repeat(64);
+
 function fakeWorker(behavior) {
 	return class FakeWorker {
 		static instances = [];
@@ -46,6 +48,7 @@ function request(Worker, control = {}) {
 		new Map([["main.tex", new Uint8Array([1, 0, 2])]]),
 		{
 			manifestUrl: "https://cdn.example.test/manifest.json",
+			manifestSha256,
 			persistentCache: "http",
 		},
 		{ Worker, workerUrl: "worker.js", timeoutMs: 100, ...control },
@@ -135,7 +138,7 @@ test("owner abort and timeout terminate a worker even while it is unresponsive",
 		const promise = compileInWorker(
 			{ mainPath: "main.tex" },
 			new Map([["main.tex", source]]),
-			{ manifestUrl: "https://cdn.example.test/manifest.json" },
+			{ manifestUrl: "https://cdn.example.test/manifest.json", manifestSha256 },
 			{ Worker, workerUrl: "worker.js", timeoutMs: 5 },
 		);
 		await assert.rejects(
@@ -210,7 +213,10 @@ test("preflights all worker input limits before copying or construction", async 
 				compileInWorker(
 					fixture.options,
 					fixture.files,
-					{ manifestUrl: "https://cdn.example.test/manifest.json" },
+					{
+						manifestUrl: "https://cdn.example.test/manifest.json",
+						manifestSha256,
+					},
 					{ Worker },
 				),
 				(error) =>
@@ -234,7 +240,7 @@ test("worker copies and transfers HTML font assets without detaching caller byte
 			html: { fonts: [{ name: "cmr10", woff2, encoding: [] }] },
 		},
 		new Map(),
-		{ manifestUrl: "https://cdn.example.test/manifest.json" },
+		{ manifestUrl: "https://cdn.example.test/manifest.json", manifestSha256 },
 		{ Worker },
 	);
 	const worker = Worker.instances[0];
@@ -264,6 +270,7 @@ test("rejects ambiguous inline and manifest-selected formats", async () => {
 			new Map(),
 			{
 				manifestUrl: "https://cdn.example.test/manifest.json",
+				manifestSha256,
 				format: "plain",
 			},
 			{ Worker },
@@ -290,6 +297,7 @@ test("controller forwards a named manifest format without transferring bytes", a
 		new Map([["main.tex", new Uint8Array([1])]]),
 		{
 			manifestUrl: "https://cdn.example.test/manifest.json",
+			manifestSha256,
 			format: "plain",
 		},
 		{ Worker, timeoutMs: 100 },
