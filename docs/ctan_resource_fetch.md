@@ -4,7 +4,7 @@ Status: partially implemented, tracked by the `umber2-mbwq` epic. Builds on the
 completed VFS substrate ([umber_vfs.md](umber_vfs.md)) and resource session
 protocol ([wasm_resource_acquisition.md](wasm_resource_acquisition.md)). The
 shared manifest crate, typed unavailable responses, native cache/fetch layer,
-and CLI integration in phases 1 through 4 are implemented; snapshot deployment
+and CLI integration in phases 1 through 5 are implemented; snapshot deployment
 remains planned.
 
 ## Problem
@@ -158,7 +158,9 @@ with same-directory temporary files plus no-clobber atomic persistence.
 and per-request limits. It enforces HTTPS (with loopback HTTP only for
 hermetic contract tests), rejects oversized declarations before issuing a
 request, bounds response reads, retries transient transport/status/integrity
-failures, and returns a batch only if every request succeeds. Verified peer
+failures, observes cooperative cancellation during bounded response reads and
+before cache/session publication, and returns a batch only if every request
+succeeds. Manifest acquisition observes the same cancellation token. Verified peer
 downloads may still warm the cache when a batch fails, but no partial response
 is exposed to the compile session.
 
@@ -176,7 +178,8 @@ is exposed to the compile session.
 - The snapshot pin ships with the release as a default manifest URL plus
   expected manifest digest; a project may override both. A fetched manifest
   whose digest mismatches its pin is a typed error, never silently used.
-- `umber watch` reuses the persistent session: resources resolved once are
+- `umber watch` accepts the same distribution, trust-pin, and offline controls
+  as `run` and reuses the persistent session: resources resolved once are
   retained across revisions by the VFS resolved layer, so edits never
   refetch, and an in-flight fetch aborts when a newer revision supersedes
   the build.
@@ -266,9 +269,13 @@ Each phase is a `bd` issue under the `umber2-mbwq` epic (phase N is
    format-dump, profiling, HTML-asset, and input-receipt postprocessing also
    retain that runner because those outputs require live state not exposed by
    `VirtualCompileSession`.
-5. **Watch and cancellation.** Reuse the retained session in `umber watch`,
-   abort superseded fetches, and verify no refetch across accepted
-   revisions.
+5. **Complete — watch and cancellation.** `umber watch` now drives one retained
+   native resource session across accepted edits. File polling cancels an
+   in-flight manifest/object acquisition when a newer edit appears, discards
+   only the unaccepted patch, and retries the newest source against the last
+   accepted revision; Ctrl-C uses the same path. Tests verify that a resolved
+   distribution file is not reopened or refetched on a later revision and
+   that cancelled downloads publish neither bytes nor cache objects.
 6. **Publish and adopt the self-hosted snapshot.** Run the publisher against
    the most recent TeX Live snapshot, publish the manifest and objects to
    project-controlled hosting, point the CLI default pin and the web app

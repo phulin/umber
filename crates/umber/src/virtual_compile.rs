@@ -629,7 +629,19 @@ impl VirtualCompileSession {
             .map_err(|error| CompileError::Incremental(error.to_string()))?;
         self.pending_patch = Some((patch.next_revision, edit));
         self.awaiting = None;
+        self.attempts = 0;
         Ok(())
+    }
+
+    /// Discards an unaccepted editor revision while retaining the last
+    /// accepted revision and all immutable resource bindings.
+    pub fn cancel_pending_patch(&mut self) -> bool {
+        let cancelled = self.pending_patch.take().is_some();
+        if cancelled {
+            self.awaiting = None;
+            self.attempts = 0;
+        }
+        cancelled
     }
 
     #[must_use]

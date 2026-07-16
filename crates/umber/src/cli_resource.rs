@@ -15,12 +15,15 @@ use umber_distribution::{
     FileKind as DistributionFileKind, FileRequestKey as DistributionFileRequestKey, Manifest,
     ManifestMiss, ManifestRequest, select,
 };
-use umber_fetch::{FetchClient, FetchClientConfig, FetchRequest, ObjectCache, fetch_manifest};
+use umber_fetch::{
+    FetchCancellation, FetchClient, FetchClientConfig, FetchFailure, FetchRequest,
+    ManifestFetchError, ObjectCache, fetch_manifest_cancellable,
+};
 
 use crate::{
     CompileAttemptResult, EngineMode, FileContentId, FileKind, FileRequest, MemoryRunOutput,
-    ResolvedFile, ResourceRequest, ResourceResponse, SessionOptions, TexFontSearchPath,
-    TexInputSearchPath, VirtualCompileSession,
+    ResolvedFile, ResourceRequest, ResourceResponse, SessionOptions, SourcePatch,
+    TexFontSearchPath, TexInputSearchPath, VirtualCompileSession,
 };
 
 pub const DEFAULT_DISTRIBUTION_URL: &str = "https://static.umber.dev/texlive/latest/manifest.json";
@@ -58,6 +61,7 @@ pub enum NativeRunError {
     Fetch(String),
     Compile(String),
     Format(String),
+    Cancelled,
 }
 
 impl fmt::Display for NativeRunError {
@@ -84,6 +88,7 @@ impl fmt::Display for NativeRunError {
             Self::Fetch(message) => f.write_str(message),
             Self::Compile(message) => f.write_str(message),
             Self::Format(message) => write!(f, "format resource error: {message}"),
+            Self::Cancelled => f.write_str("distribution acquisition cancelled"),
         }
     }
 }
@@ -91,65 +96,194 @@ impl fmt::Display for NativeRunError {
 impl Error for NativeRunError {}
 
 pub fn run(options: &NativeRunOptions) -> Result<MemoryRunOutput, NativeRunError> {
-    let main = read(&options.input)?;
-    let cache = ObjectCache::from_environment()
-        .map_err(|error| NativeRunError::Cache(error.to_string()))?;
-    let mut distribution = DistributionResolver::new(
-        &cache,
-        options.distribution.clone(),
-        options.distribution_sha256.clone(),
-        options.offline,
-    );
-    let format = match &options.format {
-        Some(path) if path.exists() => Some(read(path)?),
-        Some(path) => Some(distribution.resolve_format(path, options.engine)?),
-        None => None,
-    };
-    let clock = World::real().job_clock();
-    let name = options
-        .input
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("main.tex");
-    let job_name = options
-        .input
-        .file_stem()
-        .and_then(|name| name.to_str())
-        .unwrap_or("texput")
-        .to_owned();
-    let mut session = VirtualCompileSession::new(SessionOptions {
-        main_path: format!("/job/{name}"),
-        job_name: Some(job_name),
-        format,
-        engine: options.engine,
-        clock,
-        html: options.html,
-        accepted_font_containers: if options.html {
-            AcceptedFontContainers::WASM
-        } else {
-            AcceptedFontContainers::NATIVE_WITH_COLLECTIONS
-        },
-        ..SessionOptions::default()
-    })
-    .map_err(|error| NativeRunError::Compile(error.to_string()))?;
-    session
-        .add_user_file(name, main)
+    NativeCompileSession::new(options, &FetchCancellation::new())?
+        .compile(&FetchCancellation::new())
+}
+
+/// Retained native resource and incremental compile state used by `run` and
+/// long-lived watch sessions.
+pub struct NativeCompileSession {
+    session: VirtualCompileSession,
+    distribution: DistributionResolver,
+    local: LocalResolver,
+    source: String,
+    pending_source: Option<String>,
+}
+
+impl NativeCompileSession {
+    pub fn new(
+        options: &NativeRunOptions,
+        cancellation: &FetchCancellation,
+    ) -> Result<Self, NativeRunError> {
+        let cache = ObjectCache::from_environment()
+            .map_err(|error| NativeRunError::Cache(error.to_string()))?;
+        Self::new_with_cache(options, cancellation, cache)
+    }
+
+    fn new_with_cache(
+        options: &NativeRunOptions,
+        cancellation: &FetchCancellation,
+        cache: ObjectCache,
+    ) -> Result<Self, NativeRunError> {
+        let main = read(&options.input)?;
+        let mut distribution = DistributionResolver::new(
+            cache,
+            options.distribution.clone(),
+            options.distribution_sha256.clone(),
+            options.offline,
+        );
+        let format = match &options.format {
+            Some(path) if path.exists() => Some(read(path)?),
+            Some(path) => Some(distribution.resolve_format(path, options.engine, cancellation)?),
+            None => None,
+        };
+        let clock = World::real().job_clock();
+        let name = options
+            .input
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("main.tex");
+        let job_name = options
+            .input
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("texput")
+            .to_owned();
+        let mut session = VirtualCompileSession::new(SessionOptions {
+            main_path: format!("/job/{name}"),
+            job_name: Some(job_name),
+            format,
+            engine: options.engine,
+            clock,
+            html: options.html,
+            accepted_font_containers: if options.html {
+                AcceptedFontContainers::WASM
+            } else {
+                AcceptedFontContainers::NATIVE_WITH_COLLECTIONS
+            },
+            ..SessionOptions::default()
+        })
         .map_err(|error| NativeRunError::Compile(error.to_string()))?;
-    let local = LocalResolver::from_environment(&options.input);
-    loop {
-        match session.compile_attempt() {
-            CompileAttemptResult::Complete(output) => return Ok(output),
-            CompileAttemptResult::Error(error) => {
-                return Err(NativeRunError::Compile(error.to_string()));
+        session
+            .add_user_file(name, main.clone())
+            .map_err(|error| NativeRunError::Compile(error.to_string()))?;
+        let local = LocalResolver::from_environment(&options.input);
+        let source = String::from_utf8(main).map_err(|error| {
+            NativeRunError::Compile(format!(
+                "the editable main file must be valid UTF-8: {error}"
+            ))
+        })?;
+        Ok(Self {
+            session,
+            distribution,
+            local,
+            source,
+            pending_source: None,
+        })
+    }
+
+    pub fn compile(
+        &mut self,
+        cancellation: &FetchCancellation,
+    ) -> Result<MemoryRunOutput, NativeRunError> {
+        loop {
+            if cancellation.is_cancelled() {
+                return Err(NativeRunError::Cancelled);
             }
-            CompileAttemptResult::NeedResources(batch) => {
-                let responses = distribution.resolve_batch(&local, &batch.required)?;
-                session
-                    .provide_resources(responses)
-                    .map_err(|error| NativeRunError::Compile(error.to_string()))?;
+            match self.session.compile_attempt() {
+                CompileAttemptResult::Complete(output) => {
+                    if let Some(source) = self.pending_source.take() {
+                        self.source = source;
+                    }
+                    return Ok(output);
+                }
+                CompileAttemptResult::Error(error) => {
+                    return Err(NativeRunError::Compile(error.to_string()));
+                }
+                CompileAttemptResult::NeedResources(batch) => {
+                    let responses = self.distribution.resolve_batch(
+                        &self.local,
+                        &batch.required,
+                        cancellation,
+                    )?;
+                    if cancellation.is_cancelled() {
+                        return Err(NativeRunError::Cancelled);
+                    }
+                    self.session
+                        .provide_resources(responses)
+                        .map_err(|error| NativeRunError::Compile(error.to_string()))?;
+                }
             }
         }
     }
+
+    pub fn apply_source(
+        &mut self,
+        next_revision: tex_incr::RevisionId,
+        next: &str,
+    ) -> Result<(), NativeRunError> {
+        let base_revision = self.session.revision().ok_or_else(|| {
+            NativeRunError::Compile("the initial revision has not been accepted".into())
+        })?;
+        let expected_hash = self.session.content_hash().ok_or_else(|| {
+            NativeRunError::Compile("the accepted source has no content hash".into())
+        })?;
+        let (range, replacement) = contiguous_edit(&self.source, next);
+        self.session
+            .apply_patch(SourcePatch {
+                next_revision,
+                base_revision,
+                expected_hash,
+                range,
+                replacement,
+            })
+            .map_err(|error| NativeRunError::Compile(error.to_string()))?;
+        self.pending_source = Some(next.to_owned());
+        Ok(())
+    }
+
+    pub fn cancel_pending_revision(&mut self) -> bool {
+        let cancelled = self.session.cancel_pending_patch();
+        if cancelled {
+            self.pending_source = None;
+        }
+        cancelled
+    }
+
+    #[must_use]
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    #[must_use]
+    pub fn reuse_metrics(&self) -> Option<tex_incr::ReuseMetrics> {
+        self.session.reuse_metrics()
+    }
+
+    #[must_use]
+    pub fn revision(&self) -> Option<tex_incr::RevisionId> {
+        self.session.revision()
+    }
+}
+
+fn contiguous_edit(old: &str, new: &str) -> (std::ops::Range<usize>, String) {
+    let prefix = old
+        .chars()
+        .zip(new.chars())
+        .take_while(|(left, right)| left == right)
+        .map(|(ch, _)| ch.len_utf8())
+        .sum::<usize>();
+    let suffix = old[prefix..]
+        .chars()
+        .rev()
+        .zip(new[prefix..].chars().rev())
+        .take_while(|(left, right)| left == right)
+        .map(|(ch, _)| ch.len_utf8())
+        .sum::<usize>();
+    (
+        prefix..old.len() - suffix,
+        new[prefix..new.len() - suffix].to_owned(),
+    )
 }
 
 struct LocalResolver {
@@ -204,17 +338,17 @@ struct LoadedDistribution {
     local_root: Option<PathBuf>,
 }
 
-struct DistributionResolver<'a> {
-    cache: &'a ObjectCache,
+struct DistributionResolver {
+    cache: ObjectCache,
     source: Option<String>,
     expected: Option<String>,
     offline: bool,
     loaded: Option<LoadedDistribution>,
 }
 
-impl<'a> DistributionResolver<'a> {
+impl DistributionResolver {
     fn new(
-        cache: &'a ObjectCache,
+        cache: ObjectCache,
         source: Option<String>,
         expected: Option<String>,
         offline: bool,
@@ -232,7 +366,9 @@ impl<'a> DistributionResolver<'a> {
         &mut self,
         local: &LocalResolver,
         requests: &[ResourceRequest],
+        cancellation: &FetchCancellation,
     ) -> Result<Vec<ResourceResponse>, NativeRunError> {
+        check_cancelled(cancellation)?;
         let mut responses = Vec::new();
         let mut unresolved = Vec::new();
         for request in requests {
@@ -259,7 +395,7 @@ impl<'a> DistributionResolver<'a> {
         if unresolved.is_empty() {
             return Ok(responses);
         }
-        let loaded = self.load()?.clone();
+        let loaded = self.load(cancellation)?.clone();
         let mut manifest_requests = Vec::new();
         let mut original_files = BTreeMap::new();
         for request in &unresolved {
@@ -299,6 +435,7 @@ impl<'a> DistributionResolver<'a> {
             let mut found = Vec::new();
             let mut missing = Vec::new();
             for request in &fetch_requests {
+                check_cancelled(cancellation)?;
                 match self
                     .cache
                     .load_object(&request.object.sha256, request.object.bytes)
@@ -315,7 +452,9 @@ impl<'a> DistributionResolver<'a> {
         } else if let Some(root) = &loaded.local_root {
             let mut found = Vec::new();
             for request in &fetch_requests {
+                check_cancelled(cancellation)?;
                 let bytes = read(&root.join(&request.object.object))?;
+                check_cancelled(cancellation)?;
                 self.cache
                     .store_object(&request.object.sha256, request.object.bytes, &bytes)
                     .map_err(|error| NativeRunError::Cache(error.to_string()))?;
@@ -326,21 +465,13 @@ impl<'a> DistributionResolver<'a> {
             let client = FetchClient::new(FetchClientConfig::default())
                 .map_err(|error| NativeRunError::Fetch(error.to_string()))?;
             client
-                .fetch_batch(
-                    self.cache,
+                .fetch_batch_cancellable(
+                    &self.cache,
                     &loaded.manifest.objects_base_url,
                     &fetch_requests,
+                    cancellation,
                 )
-                .map_err(|error| {
-                    NativeRunError::Fetch(
-                        error
-                            .diagnostics
-                            .iter()
-                            .map(ToString::to_string)
-                            .collect::<Vec<_>>()
-                            .join("; "),
-                    )
-                })?
+                .map_err(map_fetch_error)?
                 .into_iter()
                 .map(|object| (object.request_key, object.bytes, object.cache_hit))
                 .collect()
@@ -445,12 +576,13 @@ impl<'a> DistributionResolver<'a> {
         &mut self,
         path: &Path,
         engine: EngineMode,
+        cancellation: &FetchCancellation,
     ) -> Result<Vec<u8>, NativeRunError> {
         let name = path
             .file_stem()
             .and_then(|name| name.to_str())
             .ok_or_else(|| NativeRunError::Format("format name is not valid UTF-8".into()))?;
-        let loaded = self.load()?.clone();
+        let loaded = self.load(cancellation)?.clone();
         let entry = loaded
             .manifest
             .formats
@@ -490,6 +622,7 @@ impl<'a> DistributionResolver<'a> {
         };
         if let Some(root) = &loaded.local_root {
             let bytes = read(&root.join(&object.object))?;
+            check_cancelled(cancellation)?;
             self.cache
                 .store_object(&object.sha256, object.bytes, &bytes)
                 .map_err(|error| NativeRunError::Cache(error.to_string()))?;
@@ -503,17 +636,13 @@ impl<'a> DistributionResolver<'a> {
         };
         let object = FetchClient::new(FetchClientConfig::default())
             .map_err(|error| NativeRunError::Fetch(error.to_string()))?
-            .fetch_batch(self.cache, &loaded.manifest.objects_base_url, &[request])
-            .map_err(|error| {
-                NativeRunError::Fetch(
-                    error
-                        .diagnostics
-                        .iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join("; "),
-                )
-            })?
+            .fetch_batch_cancellable(
+                &self.cache,
+                &loaded.manifest.objects_base_url,
+                &[request],
+                cancellation,
+            )
+            .map_err(map_fetch_error)?
             .pop()
             .expect("one format result");
         if !object.cache_hit {
@@ -522,7 +651,11 @@ impl<'a> DistributionResolver<'a> {
         Ok(object.bytes)
     }
 
-    fn load(&mut self) -> Result<&LoadedDistribution, NativeRunError> {
+    fn load(
+        &mut self,
+        cancellation: &FetchCancellation,
+    ) -> Result<&LoadedDistribution, NativeRunError> {
+        check_cancelled(cancellation)?;
         if self.loaded.is_none() {
             let source = self
                 .source
@@ -561,8 +694,17 @@ impl<'a> DistributionResolver<'a> {
                             "manifest".into(),
                         ]));
                     }
-                    let bytes = fetch_manifest(&source, &expected, Duration::from_secs(30))
-                        .map_err(|error| NativeRunError::ManifestFetch(error.to_string()))?;
+                    let bytes = fetch_manifest_cancellable(
+                        &source,
+                        &expected,
+                        Duration::from_secs(30),
+                        cancellation,
+                    )
+                    .map_err(|error| match error {
+                        ManifestFetchError::Cancelled => NativeRunError::Cancelled,
+                        error => NativeRunError::ManifestFetch(error.to_string()),
+                    })?;
+                    check_cancelled(cancellation)?;
                     self.cache
                         .store_manifest(&expected, &bytes)
                         .map_err(|error| NativeRunError::Cache(error.to_string()))?;
@@ -580,6 +722,33 @@ impl<'a> DistributionResolver<'a> {
             });
         }
         Ok(self.loaded.as_ref().expect("distribution loaded"))
+    }
+}
+
+fn check_cancelled(cancellation: &FetchCancellation) -> Result<(), NativeRunError> {
+    if cancellation.is_cancelled() {
+        Err(NativeRunError::Cancelled)
+    } else {
+        Ok(())
+    }
+}
+
+fn map_fetch_error(error: umber_fetch::BatchFetchError) -> NativeRunError {
+    if error
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.failure == FetchFailure::Cancelled)
+    {
+        NativeRunError::Cancelled
+    } else {
+        NativeRunError::Fetch(
+            error
+                .diagnostics
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("; "),
+        )
     }
 }
 
@@ -610,3 +779,6 @@ fn read(path: &Path) -> Result<Vec<u8>, NativeRunError> {
         source,
     })
 }
+
+#[cfg(test)]
+mod tests;

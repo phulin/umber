@@ -53,7 +53,11 @@ or a resource request leaves the accepted revision unchanged. The prior
 accepted output remains retained while a patch waits for resources. A terminal
 compile or output failure rejects the pending patch and makes that output
 immediately observable again; a resource suspension keeps the private patch
-retryable without publishing its root or stage writes.
+retryable without publishing its root or stage writes. A host may explicitly
+cancel that pending patch when a newer editor revision supersedes it. This
+clears only candidate/awaiting state and the per-revision attempt count; the
+accepted root, output, incremental checkpoints, and immutable resolved-resource
+bindings remain intact for the replacement patch.
 
 The initial revision is `1`. Public revision numbers use JavaScript-safe
 unsigned 32-bit integers at the WASM boundary and widen to the engine's `u64`

@@ -1,8 +1,13 @@
-use std::path::PathBuf;
+use std::env;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use tex_incr::{AcceptedOutput, Edit, RevisionId, Session};
-use tex_state::{Universe, World};
+use tex_incr::RevisionId;
+use umber::EngineMode;
+use umber::cli_resource::{NativeCompileSession, NativeRunError, NativeRunOptions};
+use umber_fetch::FetchCancellation;
 
 #[allow(clippy::disallowed_methods)] // Host-side polling and latency reporting.
 pub(super) fn run(mut args: impl Iterator<Item = String>) -> Result<(), WatchError> {
@@ -13,6 +18,9 @@ pub(super) fn run(mut args: impl Iterator<Item = String>) -> Result<(), WatchErr
     let mut output = input.with_extension("dvi");
     let mut poll = Duration::from_millis(100);
     let mut format = None;
+    let mut distribution = None;
+    let mut distribution_sha256 = None;
+    let mut offline = env::var_os("UMBER_OFFLINE").is_some_and(|value| value == "1");
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--dvi" => {
@@ -38,104 +46,199 @@ pub(super) fn run(mut args: impl Iterator<Item = String>) -> Result<(), WatchErr
                         .ok_or(WatchError::Usage("missing input path for --format"))?,
                 );
             }
+            "--distribution" => {
+                distribution = Some(
+                    args.next()
+                        .ok_or(WatchError::Usage("missing URL or path for --distribution"))?,
+                );
+            }
+            "--distribution-sha256" => {
+                distribution_sha256 = Some(args.next().ok_or(WatchError::Usage(
+                    "missing digest for --distribution-sha256",
+                ))?);
+            }
+            "--offline" => offline = true,
             _ => {
                 return Err(WatchError::Usage(
-                    "watch accepts --dvi, --format, and --poll-ms",
+                    "watch accepts --dvi, --format, --poll-ms, --distribution, --distribution-sha256, and --offline",
                 ));
             }
         }
     }
 
-    let source = std::fs::read_to_string(&input)?;
-    let template = if let Some(format) = format {
-        Universe::from_format(World::real(), &std::fs::read(format)?)?
-    } else {
-        let mut template = Universe::with_world(World::real());
-        umber::prepare_run_stores(&mut template);
-        template
+    let options = NativeRunOptions {
+        input: input.clone(),
+        format,
+        engine: EngineMode::Tex82,
+        html: false,
+        distribution,
+        distribution_sha256,
+        offline,
     };
-    let job_name = input
-        .file_stem()
-        .and_then(std::ffi::OsStr::to_str)
-        .unwrap_or("texput");
-    let mut session = Session::start(
-        template,
-        job_name,
-        RevisionId::new(1),
-        source.clone(),
-        usize::MAX,
-    )?;
-    let cold = session.cold()?;
-    std::fs::write(&output, cold.dvi_bytes()?)?;
-    eprintln!("watching {} -> {}", input.display(), output.display());
+    let interrupted = Arc::new(AtomicBool::new(false));
+    let active = Arc::new(Mutex::new(None::<FetchCancellation>));
+    install_interrupt_handler(Arc::clone(&interrupted), Arc::clone(&active))?;
 
-    let mut revision = 1;
+    let mut candidate_source = std::fs::read_to_string(&input)?;
+    let startup_cancellation = FetchCancellation::new();
+    set_active(&active, Some(startup_cancellation.clone()));
+    let mut session = NativeCompileSession::new(&options, &startup_cancellation)?;
+    set_active(&active, None);
+    if interrupted.load(Ordering::Acquire) {
+        return Ok(());
+    }
+
+    let mut next_revision = 1_u64;
+    let mut announced = false;
     loop {
-        std::thread::sleep(poll);
-        let next = std::fs::read_to_string(&input)?;
-        if next == session.source() {
-            continue;
-        }
-        revision += 1;
         let total_started = Instant::now();
-        let (accepted, dvi_latency) =
-            advance_and_write(&mut session, RevisionId::new(revision), &next, &output)?;
-        eprintln!(
-            "revision={revision} total_us={} fork_us={} reexecute_us={} splice_us={} dvi_write_us={} pages_reused={} pages_retyped={}",
-            total_started.elapsed().as_micros(),
-            accepted.reuse.restart_fork_latency.as_micros(),
-            accepted.reuse.reexecution_latency.as_micros(),
-            accepted.reuse.splice_latency.as_micros(),
-            dvi_latency.as_micros(),
-            accepted.reuse.pages_reused,
-            accepted.reuse.pages_retyped,
-        );
+        match compile_monitored(
+            &mut session,
+            &input,
+            &candidate_source,
+            poll,
+            &interrupted,
+            &active,
+        )? {
+            CompileRound::Complete(run) => {
+                let dvi_started = Instant::now();
+                std::fs::write(&output, &run.dvi)?;
+                let dvi_latency = dvi_started.elapsed();
+                if !announced {
+                    eprintln!("watching {} -> {}", input.display(), output.display());
+                    announced = true;
+                } else if let Some(reuse) = session.reuse_metrics() {
+                    eprintln!(
+                        "revision={next_revision} total_us={} fork_us={} reexecute_us={} splice_us={} dvi_write_us={} pages_reused={} pages_retyped={}",
+                        total_started.elapsed().as_micros(),
+                        reuse.restart_fork_latency.as_micros(),
+                        reuse.reexecution_latency.as_micros(),
+                        reuse.splice_latency.as_micros(),
+                        dvi_latency.as_micros(),
+                        reuse.pages_reused,
+                        reuse.pages_retyped,
+                    );
+                }
+                match wait_for_edit(&input, &candidate_source, poll, &interrupted)? {
+                    Some(next) => {
+                        next_revision += 1;
+                        session.apply_source(RevisionId::new(next_revision), &next)?;
+                        candidate_source = next;
+                    }
+                    None => return Ok(()),
+                }
+            }
+            CompileRound::Superseded(next) => {
+                if session.cancel_pending_revision() {
+                    next_revision += 1;
+                    session.apply_source(RevisionId::new(next_revision), &next)?;
+                } else {
+                    let cancellation = FetchCancellation::new();
+                    set_active(&active, Some(cancellation.clone()));
+                    session = NativeCompileSession::new(&options, &cancellation)?;
+                    set_active(&active, None);
+                }
+                candidate_source = next;
+            }
+            CompileRound::Interrupted => return Ok(()),
+        }
     }
 }
 
-#[allow(clippy::disallowed_methods)] // Host-side DVI write latency reporting.
-fn advance_and_write(
-    session: &mut Session,
-    revision: RevisionId,
-    next: &str,
-    output: &std::path::Path,
-) -> Result<(AcceptedOutput, Duration), WatchError> {
-    let edit = contiguous_edit(
-        session.source(),
-        next,
-        session.revision(),
-        session.content_hash(),
-    );
-    let accepted = session.advance(revision, edit)?;
-    let dvi_started = Instant::now();
-    std::fs::write(output, accepted.dvi_bytes()?)?;
-    Ok((accepted, dvi_started.elapsed()))
+enum CompileRound {
+    Complete(umber::MemoryRunOutput),
+    Superseded(String),
+    Interrupted,
 }
 
-fn contiguous_edit(
-    old: &str,
-    new: &str,
-    revision: RevisionId,
-    expected_hash: tex_state::ContentHash,
-) -> Edit {
-    let prefix = old
-        .chars()
-        .zip(new.chars())
-        .take_while(|(left, right)| left == right)
-        .map(|(ch, _)| ch.len_utf8())
-        .sum::<usize>();
-    let suffix = old[prefix..]
-        .chars()
-        .rev()
-        .zip(new[prefix..].chars().rev())
-        .take_while(|(left, right)| left == right)
-        .map(|(ch, _)| ch.len_utf8())
-        .sum::<usize>();
-    Edit {
-        base_revision: revision,
-        expected_hash,
-        range: prefix..old.len() - suffix,
-        replacement: new[prefix..new.len() - suffix].to_owned(),
+#[allow(clippy::disallowed_methods)] // Host-side polling is the watch contract.
+fn compile_monitored(
+    session: &mut NativeCompileSession,
+    input: &Path,
+    candidate_source: &str,
+    poll: Duration,
+    interrupted: &AtomicBool,
+    active: &Mutex<Option<FetchCancellation>>,
+) -> Result<CompileRound, WatchError> {
+    let cancellation = FetchCancellation::new();
+    set_active(active, Some(cancellation.clone()));
+    let mut superseded = None;
+    let mut read_error = None;
+    let result = std::thread::scope(|scope| {
+        let worker_cancellation = cancellation.clone();
+        let worker = scope.spawn(move || session.compile(&worker_cancellation));
+        while !worker.is_finished() {
+            std::thread::sleep(poll);
+            if interrupted.load(Ordering::Acquire) {
+                cancellation.cancel();
+                continue;
+            }
+            match std::fs::read_to_string(input) {
+                Ok(next) if next != candidate_source => {
+                    superseded = Some(next);
+                    cancellation.cancel();
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    read_error = Some(error);
+                    cancellation.cancel();
+                }
+            }
+        }
+        worker.join().map_err(|_| WatchError::WorkerPanic)
+    })?;
+    set_active(active, None);
+    if let Some(error) = read_error {
+        return Err(error.into());
+    }
+    if interrupted.load(Ordering::Acquire) {
+        return Ok(CompileRound::Interrupted);
+    }
+    if let Some(next) = superseded {
+        return Ok(CompileRound::Superseded(next));
+    }
+    result
+        .map(CompileRound::Complete)
+        .map_err(WatchError::Native)
+}
+
+#[allow(clippy::disallowed_methods)] // Host-side polling is the watch contract.
+fn wait_for_edit(
+    input: &Path,
+    current: &str,
+    poll: Duration,
+    interrupted: &AtomicBool,
+) -> Result<Option<String>, std::io::Error> {
+    loop {
+        std::thread::sleep(poll);
+        if interrupted.load(Ordering::Acquire) {
+            return Ok(None);
+        }
+        let next = std::fs::read_to_string(input)?;
+        if next != current {
+            return Ok(Some(next));
+        }
+    }
+}
+
+fn install_interrupt_handler(
+    interrupted: Arc<AtomicBool>,
+    active: Arc<Mutex<Option<FetchCancellation>>>,
+) -> Result<(), WatchError> {
+    ctrlc::set_handler(move || {
+        interrupted.store(true, Ordering::Release);
+        if let Ok(active) = active.lock()
+            && let Some(cancellation) = active.as_ref()
+        {
+            cancellation.cancel();
+        }
+    })
+    .map_err(WatchError::InterruptHandler)
+}
+
+fn set_active(active: &Mutex<Option<FetchCancellation>>, cancellation: Option<FetchCancellation>) {
+    if let Ok(mut active) = active.lock() {
+        *active = cancellation;
     }
 }
 
@@ -143,9 +246,9 @@ fn contiguous_edit(
 pub(super) enum WatchError {
     Usage(&'static str),
     Io(std::io::Error),
-    Session(tex_incr::SessionError),
-    Dvi(tex_out::dvi::DviError),
-    Format(tex_state::FormatError),
+    Native(NativeRunError),
+    InterruptHandler(ctrlc::Error),
+    WorkerPanic,
 }
 
 impl std::fmt::Display for WatchError {
@@ -153,9 +256,11 @@ impl std::fmt::Display for WatchError {
         match self {
             Self::Usage(message) => f.write_str(message),
             Self::Io(error) => write!(f, "watch I/O failed: {error}"),
-            Self::Session(error) => write!(f, "watch execution failed: {error}"),
-            Self::Dvi(error) => write!(f, "watch DVI failed: {error}"),
-            Self::Format(error) => write!(f, "watch format failed: {error}"),
+            Self::Native(error) => write!(f, "watch execution failed: {error}"),
+            Self::InterruptHandler(error) => {
+                write!(f, "watch interrupt handler failed: {error}")
+            }
+            Self::WorkerPanic => f.write_str("watch compile worker panicked"),
         }
     }
 }
@@ -168,71 +273,28 @@ impl From<std::io::Error> for WatchError {
     }
 }
 
-impl From<tex_incr::SessionError> for WatchError {
-    fn from(value: tex_incr::SessionError) -> Self {
-        Self::Session(value)
-    }
-}
-
-impl From<tex_out::dvi::DviError> for WatchError {
-    fn from(value: tex_out::dvi::DviError) -> Self {
-        Self::Dvi(value)
-    }
-}
-
-impl From<tex_state::FormatError> for WatchError {
-    fn from(value: tex_state::FormatError) -> Self {
-        Self::Format(value)
+impl From<NativeRunError> for WatchError {
+    fn from(value: NativeRunError) -> Self {
+        Self::Native(value)
     }
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)] // Host-side watch polling fixture.
 mod tests {
     use super::*;
 
     #[test]
-    fn contiguous_edit_preserves_unicode_boundaries() {
-        let edit = contiguous_edit(
-            "abécd",
-            "abΩcd",
-            RevisionId::new(7),
-            tex_state::ContentHash::from_bytes("abécd".as_bytes()),
-        );
-        assert_eq!(&"abécd"[edit.range], "é");
-        assert_eq!(edit.replacement, "Ω");
-    }
+    fn wait_for_edit_stops_after_interrupt() {
+        let directory = tempfile::tempdir().expect("temporary input directory");
+        let path = directory.path().join("watch.tex");
+        std::fs::write(&path, "original").expect("write input");
+        let interrupted = AtomicBool::new(true);
 
-    #[test]
-    #[allow(clippy::disallowed_methods)] // Host-side watch-output smoke test.
-    fn one_watched_edit_writes_cold_identical_dvi() {
-        let original = "\\shipout\\vbox{\\hrule height 1pt}\\end";
-        let edited = "\\shipout\\vbox{\\hrule height 2pt}\\end";
-        let mut template = Universe::with_world(World::memory());
-        umber::prepare_run_stores(&mut template);
-        let mut watched = Session::start(
-            template.clone(),
-            "watch",
-            RevisionId::new(1),
-            original,
-            usize::MAX,
-        )
-        .expect("watch session");
-        watched.cold().expect("initial run");
-        let directory = tempfile::tempdir().expect("temporary output directory");
-        let path = directory.path().join("watch.dvi");
-        let (incremental, _) = advance_and_write(&mut watched, RevisionId::new(2), edited, &path)
-            .expect("watched edit");
-
-        let mut cold = Session::start(template, "watch", RevisionId::new(2), edited, usize::MAX)
-            .expect("cold session");
-        let cold = cold.cold().expect("cold run");
-        assert_eq!(
-            std::fs::read(path).expect("watched output"),
-            cold.dvi_bytes().expect("cold DVI")
-        );
-        assert_eq!(
-            incremental.dvi_bytes().expect("incremental DVI"),
-            cold.dvi_bytes().expect("cold DVI")
+        assert!(
+            wait_for_edit(&path, "original", Duration::ZERO, &interrupted)
+                .expect("wait")
+                .is_none()
         );
     }
 }
