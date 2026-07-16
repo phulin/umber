@@ -352,7 +352,26 @@ fn execute_cell(
         match terminator {
             CellTerminator::Span => {
                 flush_pending_hchars(nest, stores)?;
-                column = column.checked_add(1).ok_or(ExecError::ArithmeticOverflow)?;
+                let next_column = column.checked_add(1).ok_or(ExecError::ArithmeticOverflow)?;
+                if align_state(nest, align_level)?
+                    .column_for(next_column)
+                    .is_none()
+                {
+                    stores.world_mut().write_text(
+                        PrintSink::TerminalAndLog,
+                        "\n! Extra alignment tab has been changed to \\cr.\n",
+                    );
+                    package_cell(align_level, kind, span_count, next_column, nest, stores)?;
+                    leave_group(input, stores, tex_state::GroupKind::Align)?;
+                    stores.enter_group_with_kind(tex_state::GroupKind::Align);
+                    align_state_mut(nest, align_level)?.finish_cell(next_column);
+                    return Ok(CellResult {
+                        next_column,
+                        ended_row: true,
+                        extra_alignment_tab: true,
+                    });
+                }
+                column = next_column;
                 span_count = span_count
                     .checked_add(1)
                     .ok_or(ExecError::ArithmeticOverflow)?;

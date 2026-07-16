@@ -694,6 +694,23 @@ fn extra_alignment_tab_is_changed_to_row_terminator() {
 }
 
 #[test]
+fn extra_span_is_changed_to_row_terminator() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\halign{#\\cr a\\span\\cr}"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("extra span ends the row recoverably");
+
+    assert!(
+        support::terminal_effect_text(&stores)
+            .contains("Extra alignment tab has been changed to \\cr")
+    );
+}
+
+#[test]
 fn trip_missing_cr_recovery_does_not_start_a_third_row() {
     let stores = run_boxed_alignment_source(
         "\\long\\def\\l#1{}\\let\\PAR=\\par\\def\\par{\\relax\\PAR}\
