@@ -44,9 +44,10 @@ time.
 Instead, both frontends fetch from a **published snapshot**: a pinned,
 reproducible, content-addressed object store plus manifest derived from a
 distribution tree. This is exactly the model `tools/texlive-wasm-publish`
-already implements for the browser: objects named by SHA-256, an ordered
-manifest mapping `kind:name` request keys to objects, byte counts, and
-dependency hints.
+implements: objects named by SHA-256 and a
+[sharded manifest](distribution_manifest.md) whose pinned root transitively
+authenticates sorted `kind:name` index shards, object metadata, and complete
+inline dependency hints.
 
 The initial distribution is the **most recent TeX Live snapshot,
 self-hosted by this project**: the publisher runs against a current TeX Live
@@ -58,7 +59,7 @@ snapshot and rotating the default pin.
 
 Consequences:
 
-- one manifest digest pins the complete distribution for a compile, so
+- one small root-manifest digest pins the complete distribution for a compile, so
   native and web builds of the same document from the same snapshot are
   reproducible and byte-identical;
 - the engine keeps its existing guarantee that no Rust code derives a URL
@@ -205,10 +206,10 @@ builder. Do not introduce a custom Worker or multipart upload service for this
 path.
 
 The production command is `scripts/publish-texlive-r2.sh`. Its checked-in
-defaults pin the verified `texlive-2026-r79639` staging bundle, bucket
-`umber-assets`, public origin `https://assets.umber.ink`, 153,897 objects,
-3,507,703,184 object bytes, and manifest SHA-256
-`602736c8d6f745972ad5d61acfab90b20ed0f4e67fd3b02a8ff7d260a34dee60`.
+defaults pin the verified 8-bit-sharded `texlive-2026-r79639` staging bundle,
+bucket `umber-assets`, public origin `https://assets.umber.ink`, 154,153
+objects, 3,672,643,852 object bytes, and `manifest-v2.json` SHA-256
+`7c2784bca891844d37465083b93466b78429c7282d7ba915f40a08d150651fd0`.
 The ignored repository `.env` must contain `CLOUDFLARE_ACCOUNT_ID`,
 `R2_ACCESS_KEY_ID`, and `R2_SECRET_ACCESS_KEY`; the latter two are the R2 S3
 access-key pair, not a Wrangler API token. The script parses only those exact
@@ -348,10 +349,10 @@ Each phase is a `bd` issue under the `umber2-mbwq` epic (phase N is
    distribution file is not reopened or refetched on a later revision and
    that cancelled downloads publish neither bytes nor cache objects.
 6. **In progress — publish and adopt the self-hosted snapshot.** The verified
-   TeX Live 2026 staging bundle and resumable rclone publication tooling are
-   complete. Production publication and CLI/web pin rotation remain explicit
-   coordinator work; the publication command performs public digest, object,
-   and CORS verification before a pin can be adopted.
+   TeX Live 2026 staging bundle, sharded-root publisher contract, and resumable
+   rclone publication tooling are complete. Native and browser shard
+   resolution and pin adoption remain separate work; publication performs
+   structural, public digest, object, and CORS verification before adoption.
 7. **Parity gate.** One corpus document requiring distribution packages
    compiles from a cold cache natively and in the browser fixture to
    byte-identical DVI, satisfies repeat runs entirely from cache, and
