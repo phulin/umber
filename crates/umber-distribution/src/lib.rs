@@ -5,8 +5,9 @@ mod manifest;
 mod selection;
 
 pub use manifest::{
-    MANIFEST_SCHEMA, Manifest, ManifestFile, ManifestFont, ManifestFormat, ManifestParseError,
-    ObjectEntry,
+    DependencyHint, INDEX_SHARD_SCHEMA, MANIFEST_SCHEMA, MAX_SHARD_BITS, Manifest, ManifestFile,
+    ManifestFont, ManifestFormat, ManifestParseError, ManifestShard, ObjectEntry,
+    SHARDED_ROOT_SCHEMA, ShardFile, ShardedManifestRoot,
 };
 pub use selection::{
     AcquisitionJob, FileKind, FileRequestKey, FontRequestKey, JobRequirement, ManifestLogicalKey,
