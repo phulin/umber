@@ -109,12 +109,15 @@ pub(super) fn run(mut args: impl Iterator<Item = String>) -> Result<(), WatchErr
                     announced = true;
                 } else if let Some(reuse) = session.reuse_metrics() {
                     eprintln!(
-                        "revision={next_revision} total_us={} fork_us={} reexecute_us={} splice_us={} dvi_write_us={} pages_reused={} pages_retyped={} reexecuted_bytes={} reexecuted_tokens={} reexecuted_commands={} reexecuted_macro_text_span_tokens={} reexecuted_source_text_span_tokens={} reexecuted_paragraphs={} same_history_attempts={} same_history_hash_mismatches={} same_history_stop={:?}",
+                        "revision={next_revision} total_us={} fork_us={} reexecute_us={} trace_validation_us={} trace_replay_us={} splice_us={} dvi_write_us={} pages_retained_prefix={} pages_reused={} pages_retyped={} reexecuted_bytes={} reexecuted_tokens={} reexecuted_commands={} reexecuted_macro_text_span_tokens={} reexecuted_source_text_span_tokens={} reexecuted_paragraphs={} trace_nodes_walked={} trace_leaf_hits={} trace_subtree_hits={} trace_bytes={} same_history_attempts={} same_history_hash_mismatches={} same_history_stop={:?}",
                         total_started.elapsed().as_micros(),
                         reuse.restart_fork_latency.as_micros(),
                         reuse.reexecution_latency.as_micros(),
+                        reuse.trace_validation_latency.as_micros(),
+                        reuse.trace_replay_latency.as_micros(),
                         reuse.splice_latency.as_micros(),
                         dvi_latency.as_micros(),
+                        reuse.pages_retained_prefix,
                         reuse.pages_reused,
                         reuse.pages_retyped,
                         reuse.reexecuted_bytes,
@@ -123,6 +126,10 @@ pub(super) fn run(mut args: impl Iterator<Item = String>) -> Result<(), WatchErr
                         reuse.reexecuted_macro_text_span_tokens,
                         reuse.reexecuted_source_text_span_tokens,
                         reuse.reexecuted_paragraphs,
+                        reuse.trace_nodes_walked,
+                        reuse.trace_leaf_hits,
+                        reuse.trace_subtree_hits,
+                        reuse.trace_retained_bytes,
                         reuse.same_history_attempts,
                         reuse.same_history_hash_mismatches,
                         reuse.same_history_stop,

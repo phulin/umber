@@ -45,7 +45,10 @@ follow-up, and an equal-width word substitution. Adjacent disabled/enabled
 samples alternate AB/BA order, so the iteration count must be even. The runner
 reports paired latency differences for each revision. Both modes must produce
 the exact DVI bytes of a fresh cold compile of the corresponding revision; the
-equal-width revision must also adopt the unchanged page suffix:
+equal-width revision must also reconverge at the changed page's shipout,
+re-ship the pinned three changed pages, and adopt every page in the unchanged
+suffix. Its final summary reports the retained prefix, re-shipped and adopted
+page counts, leaf/subtree hits, and incremental-to-cold latency ratios:
 
 ```bash
 cargo run --profile profiling -p umber --bin gentle-profile -- \
@@ -176,6 +179,17 @@ accepted component roots. Mutable-store and page DTO serialization is absent;
 the counter measures only cached-root projection and composition. Treat the
 two samples as asymptotic and work-accounting evidence, not a stable machine
 benchmark.
+
+The hierarchical-trace acceptance rerun on 2026-07-16 added explicit
+prefix/re-ship/suffix accounting and leaf/subtree telemetry. In both modes the
+fourth edit retained the first 14 pages, re-shipped exactly three pages through
+the matching `ShipoutComplete`, and adopted all 83 remaining pages as one
+verified subtree. The output remained byte-identical to the cold 100-page,
+279,176-byte DVI. Over two AB/BA pairs, memo-disabled incremental execution
+averaged 146.774 ms, paragraph-recording execution averaged 225.502 ms, and
+cold execution averaged 1,978.659 ms: 0.074x and 0.114x cold latency. Treat the
+small sample as fast-path work and parity evidence, not a conditioned latency
+verdict.
 
 A separate two-pair diagnostic enabled `pretolerance,paragraph`. Pretolerance
 reported 834/835, 833/834, and 1,054/1,054 hits over the three edits, retained

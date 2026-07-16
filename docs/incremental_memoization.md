@@ -599,9 +599,16 @@ external constraints contain only values required from before the subtree;
 its redo log and outputs compose children in order. Once composition is proven,
 an entire unchanged subtree can validate and replay at once.
 
-The trace begins flat and gains hierarchy only after leaf correctness and
-overhead are measured. Parent summaries are derived accelerators and may be
-dropped without invalidating leaf entries.
+The retained named-boundary walk remains flat. `tex-incr::TraceSummary` now
+provides the derived hierarchy over reusable leaves: it composes ordered read
+and write operations, removes a child read only when an earlier child write has
+the identical semantic value, and rejects conflicting external or internal
+observations. Redo, input, effect, and output transitions remain in child
+order. Validation of every external read completes before any transition is
+applied, so a failed parent is an atomic miss. Focused tests replay nested
+parents and the corresponding leaves independently and require identical
+state, write order, input, effects, and outputs. Summaries own no correctness
+state and may be discarded to recover leaf-by-leaf walking.
 
 ## Optional exact-state splice
 
@@ -682,11 +689,21 @@ Every accepted revision reports per layer:
   and
 - disabled-path overhead under order-balanced paired interleaved measurement.
 
-The Gentle runner measures three accepted revisions in one session—the pinned
-edit, a follow-up edit, and removal of that follow-up—and verifies every mode
-against a fresh cold DVI for the corresponding revision. Adjacent disabled and
-enabled samples alternate AB/BA order, and conclusions use their paired
-differences rather than independent sequential means.
+Trace telemetry distinguishes named nodes walked, adopted page leaves, adopted
+suffix subtrees, shallow retained trace bytes, exact dependency-validation
+time, and ordered suffix-replay time. Prefix-retained, re-shipped, and adopted
+page counts are separate, so their sum can attest that a verified splice
+accounts for every output page.
+
+The Gentle runner measures four accepted revisions in one session—the pinned
+edit, a follow-up edit, removal of that follow-up, and the equal-width
+height-preserving substitution—and verifies every mode against a fresh cold
+DVI for the corresponding revision. Adjacent disabled and enabled samples
+alternate AB/BA order, and conclusions use their paired differences rather
+than independent sequential means. The fourth edit must reconverge at a
+`ShipoutComplete` boundary, re-ship exactly the three changed pages, account
+for the complete retained prefix, and adopt every remaining page as one suffix
+subtree; the report prints both incremental-to-cold latency ratios.
 
 The edit corpus includes:
 

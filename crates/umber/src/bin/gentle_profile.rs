@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
-use tex_exec::{CheckpointSink, EngineCheckpoint};
+use tex_exec::{CheckpointSink, EngineBoundary, EngineCheckpoint};
 use tex_incr::{AcceptedOutput, Edit, ReuseMetrics, RevisionId, Session};
 #[cfg(feature = "profiling-stats")]
 use tex_lex::ExpansionStats;
@@ -30,6 +30,7 @@ const GENTLE_EDIT_REPETITIONS: usize = 64;
 const GENTLE_FOLLOW_UP: &str = " A measured follow-up changes this paragraph again.";
 const GENTLE_EQUAL_WIDTH_OLD: &str = "words";
 const GENTLE_EQUAL_WIDTH_NEW: &str = "sword";
+const GENTLE_FAST_PATH_RETYPED_PAGES: usize = 3;
 
 #[derive(Debug)]
 struct Options {
@@ -307,6 +308,36 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
                 "{name} height-preserving edit did not adopt a page suffix"
             ));
         }
+        if fast_path.reuse.convergence_boundary.map(|key| key.boundary)
+            != Some(EngineBoundary::ShipoutComplete)
+        {
+            return Err(format!(
+                "{name} height-preserving edit did not reconverge at shipout"
+            ));
+        }
+        if fast_path.reuse.pages_retyped != GENTLE_FAST_PATH_RETYPED_PAGES {
+            return Err(format!(
+                "{name} height-preserving edit re-shipped {} pages instead of the pinned {GENTLE_FAST_PATH_RETYPED_PAGES}",
+                fast_path.reuse.pages_retyped,
+            ));
+        }
+        if fast_path.reuse.pages_retained_prefix
+            + fast_path.reuse.pages_retyped
+            + fast_path.reuse.pages_reused
+            != fast_path.pages
+        {
+            return Err(format!(
+                "{name} height-preserving edit did not account for the complete retained prefix, changed pages, and adopted suffix"
+            ));
+        }
+        if fast_path.reuse.trace_subtree_hits != 1
+            || fast_path.reuse.trace_leaf_hits != fast_path.reuse.pages_reused
+            || fast_path.reuse.trace_nodes_walked != fast_path.reuse.same_history_attempts
+        {
+            return Err(format!(
+                "{name} height-preserving edit reported inconsistent trace replay telemetry"
+            ));
+        }
     }
 
     println!(
@@ -349,10 +380,22 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
             enabled_sample.steps[index].dvi.len(),
         );
     }
+    let fast = fixture.suffix_adoption_edit;
+    let disabled_fast = duration_stats(&disabled[fast]);
+    let enabled_fast = duration_stats(&enabled[fast]);
+    let cold_fast = duration_stats(&cold[fast]);
+    let work = disabled_sample.steps[fast].reuse;
     println!(
-        "gentle-profile fast path verified: edit={} ({}) adopted the remaining page suffix in both incremental modes",
+        "gentle-profile fast path verified: edit={} ({}) retained_prefix={} re-shipped={} adopted={} convergence=shipout leaf_hits={} subtree_hits={} disabled_vs_cold={:.3}x enabled_vs_cold={:.3}x",
         fixture.suffix_adoption_edit + 1,
         fixture.edit_names[fixture.suffix_adoption_edit],
+        work.pages_retained_prefix,
+        work.pages_retyped,
+        work.pages_reused,
+        work.trace_leaf_hits,
+        work.trace_subtree_hits,
+        disabled_fast.mean / cold_fast.mean,
+        enabled_fast.mean / cold_fast.mean,
     );
     Ok(())
 }
@@ -403,7 +446,8 @@ fn print_incremental_work(name: &str, edit: usize, sample: &IncrementalStep) {
         };
     }
     println!(
-        "gentle-profile incremental work: {name}: edit={edit} pages_retyped={} pages_reused={} paragraphs_reexecuted={} bytes_reexecuted={} tokens_reexecuted={} commands_reexecuted={} macro_text_span_tokens={} source_text_span_tokens={} exact_checks={} suffixes_adopted={} fork_us={} reexecute_us={} splice_us={}",
+        "gentle-profile incremental work: {name}: edit={edit} pages_retained_prefix={} pages_retyped={} pages_reused={} paragraphs_reexecuted={} bytes_reexecuted={} tokens_reexecuted={} commands_reexecuted={} macro_text_span_tokens={} source_text_span_tokens={} trace_nodes_walked={} trace_leaf_hits={} trace_subtree_hits={} trace_bytes={} exact_checks={} suffixes_adopted={} fork_us={} reexecute_us={} trace_validation_us={} trace_replay_us={} splice_us={}",
+        reuse.pages_retained_prefix,
         reuse.pages_retyped,
         reuse.pages_reused,
         reuse.reexecuted_paragraphs,
@@ -412,10 +456,16 @@ fn print_incremental_work(name: &str, edit: usize, sample: &IncrementalStep) {
         reuse.reexecuted_commands,
         reuse.reexecuted_macro_text_span_tokens,
         reuse.reexecuted_source_text_span_tokens,
+        reuse.trace_nodes_walked,
+        reuse.trace_leaf_hits,
+        reuse.trace_subtree_hits,
+        reuse.trace_retained_bytes,
         reuse.same_history_attempts,
         reuse.suffixes_adopted,
         reuse.restart_fork_latency.as_micros(),
         reuse.reexecution_latency.as_micros(),
+        reuse.trace_validation_latency.as_micros(),
+        reuse.trace_replay_latency.as_micros(),
         reuse.splice_latency.as_micros(),
     );
     #[cfg(feature = "profiling-stats")]

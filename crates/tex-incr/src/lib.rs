@@ -29,9 +29,11 @@ use tex_state::{
 
 mod delivery;
 mod episode;
+mod trace;
 
 pub use delivery::{DeliveryIdentity, SyntheticDeliveryKind};
 pub use episode::TransientTokenEpisode;
+pub use trace::{TraceCompositionError, TraceOperation, TraceSummary, TraceValidationError};
 
 /// Monotonic identity of an immutable editor buffer.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -138,6 +140,8 @@ pub struct RetentionMetrics {
 pub struct ReuseMetrics {
     pub restart_boundary: Option<BoundaryKey>,
     pub convergence_boundary: Option<BoundaryKey>,
+    /// Accepted pages before the restart checkpoint, retained without replay.
+    pub pages_retained_prefix: usize,
     pub pages_reused: usize,
     pub pages_retyped: usize,
     pub reexecuted_bytes: usize,
@@ -153,10 +157,18 @@ pub struct ReuseMetrics {
     pub same_history_attempts: usize,
     pub same_history_hash_mismatches: usize,
     pub trace_nodes_walked: usize,
+    /// Adopted page leaves below a verified suffix summary.
+    pub trace_leaf_hits: usize,
+    /// Verified parent summaries replayed as a unit.
+    pub trace_subtree_hits: usize,
+    /// Shallow bytes retained by the accepted ordered boundary trace.
+    pub trace_retained_bytes: usize,
     pub suffixes_adopted: usize,
     pub same_history_stop: SameHistoryStop,
     pub restart_fork_latency: Duration,
     pub reexecution_latency: Duration,
+    pub trace_validation_latency: Duration,
+    pub trace_replay_latency: Duration,
     pub splice_latency: Duration,
 }
 
@@ -886,6 +898,7 @@ impl Session {
         let reexecuted_paragraphs = advance.reexecuted_paragraphs;
         let same_history_attempts = advance.same_history_attempts;
         let same_history_hash_mismatches = advance.same_history_hash_mismatches;
+        let trace_validation_latency = advance.trace_validation_latency;
         let same_history_stop = advance.same_history_stop;
         if advance.convergence_old_index.is_some() {
             self.pure_memo.discard_paragraph_generation();
@@ -965,6 +978,7 @@ impl Session {
                     ReuseMetrics {
                         restart_boundary: old_history.get(restart_index).map(BoundaryRecord::key),
                         convergence_boundary,
+                        pages_retained_prefix: restart_artifact_prefix,
                         pages_reused: old_artifacts.len().saturating_sub(old_prefix),
                         pages_retyped: scratch_artifact_count,
                         reexecuted_bytes,
@@ -976,10 +990,13 @@ impl Session {
                         same_history_attempts,
                         same_history_hash_mismatches,
                         trace_nodes_walked: same_history_attempts,
+                        trace_leaf_hits: old_artifacts.len().saturating_sub(old_prefix),
+                        trace_subtree_hits: 1,
                         suffixes_adopted: 1,
                         same_history_stop,
                         restart_fork_latency,
                         reexecution_latency,
+                        trace_validation_latency,
                         ..ReuseMetrics::default()
                     },
                 )
@@ -1016,6 +1033,7 @@ impl Session {
                     ReuseMetrics {
                         restart_boundary: old_history.get(restart_index).map(BoundaryRecord::key),
                         convergence_boundary: None,
+                        pages_retained_prefix: old_history[restart_index].artifact_prefix,
                         pages_reused: 0,
                         pages_retyped,
                         reexecuted_bytes,
@@ -1027,15 +1045,19 @@ impl Session {
                         same_history_attempts,
                         same_history_hash_mismatches,
                         trace_nodes_walked: same_history_attempts,
+                        trace_leaf_hits: 0,
+                        trace_subtree_hits: 0,
                         suffixes_adopted: 0,
                         same_history_stop,
                         restart_fork_latency,
                         reexecution_latency,
+                        trace_validation_latency,
                         ..ReuseMetrics::default()
                     },
                 )
             };
         reuse.splice_latency = splice_started.elapsed();
+        reuse.trace_replay_latency = reuse.splice_latency;
         for record in &mut history {
             record.revision = next_revision;
         }
@@ -1047,6 +1069,7 @@ impl Session {
             PendingSubstrate::Replaced(substrate) => substrate,
         };
         let history = retain_restorable_history(history, retained_substrate)?;
+        reuse.trace_retained_bytes = std::mem::size_of_val(history.as_slice());
         let content_hash = ContentHash::from_bytes(next.as_bytes());
         Ok(PendingRevision {
             session_output_id: self.output_id,
@@ -1451,6 +1474,7 @@ struct AdvanceRun {
     reexecuted_paragraphs: usize,
     same_history_attempts: usize,
     same_history_hash_mismatches: usize,
+    trace_validation_latency: Duration,
     same_history_stop: SameHistoryStop,
     restart_fork_latency: Duration,
     reexecution_latency: Duration,
@@ -1468,6 +1492,7 @@ struct ResumeSink<'a> {
     changed_new_range: std::ops::Range<usize>,
     same_history_attempts: usize,
     same_history_hash_mismatches: usize,
+    trace_validation_latency: Duration,
     substrate: &'a GenerationSubstrate,
 }
 
@@ -1511,6 +1536,7 @@ impl<'a> ResumeSink<'a> {
             changed_new_range: map.old.start..map.old.start + map.replacement_len,
             same_history_attempts: 0,
             same_history_hash_mismatches: 0,
+            trace_validation_latency: Duration::ZERO,
             substrate,
         }
     }
@@ -1565,10 +1591,14 @@ impl CheckpointSink for ResumeSink<'_> {
         }
         self.next_expected += 1;
         self.same_history_attempts += 1;
+        let validation_started = Timer::start();
         let exact_match = actual.checkpoint().has_exact_state_identity()
             && expected_record
                 .exact_checkpoint(self.substrate)
                 .is_ok_and(|expected| actual.checkpoint().exact_future_state_matches(expected));
+        self.trace_validation_latency = self
+            .trace_validation_latency
+            .saturating_add(validation_started.elapsed());
         if exact_match {
             self.convergence_old_index = Some(*old_index);
         } else {
@@ -1718,6 +1748,7 @@ fn execute_advance(
         reexecuted_paragraphs,
         same_history_attempts: sink.same_history_attempts,
         same_history_hash_mismatches: sink.same_history_hash_mismatches,
+        trace_validation_latency: sink.trace_validation_latency,
         same_history_stop,
         restart_fork_latency,
         reexecution_latency,

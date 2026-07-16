@@ -924,6 +924,20 @@ fn multi_page_baseline_distinguishes_comment_and_semantic_edits() {
     assert!(semantic.reuse.pages_reused > 0);
     assert!(semantic.reuse.pages_retyped > 0);
     assert!(semantic.reuse.pages_retyped < 20);
+    assert_eq!(
+        semantic.reuse.pages_retained_prefix
+            + semantic.reuse.pages_retyped
+            + semantic.reuse.pages_reused,
+        20
+    );
+    assert_eq!(semantic.reuse.trace_nodes_walked, 2);
+    assert_eq!(semantic.reuse.trace_leaf_hits, semantic.reuse.pages_reused);
+    assert_eq!(semantic.reuse.trace_subtree_hits, 1);
+    assert!(semantic.reuse.trace_retained_bytes > 0);
+    assert_eq!(
+        semantic.reuse.convergence_boundary.map(|key| key.boundary),
+        Some(EngineBoundary::ShipoutComplete)
+    );
     assert!(semantic.reuse.same_history_hash_mismatches > 0);
     assert!(semantic.reuse.reexecuted_bytes < original.len());
 }
