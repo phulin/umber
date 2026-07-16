@@ -28,7 +28,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/assignments/hyphenation.rs`: `\patterns`, `\hyphenation`, and `\showhyphens` execution support.
 - `src/assignments/macros.rs`: macro-definition primitives plus `\aftergroup` and `\afterassignment`.
 - `src/assignments/mod.rs`: assignment dispatcher, prefix handling, group commands, and shared scan helpers.
-- `src/assignments/paragraph.rs`: paragraph start/end, parshape, line breaking, indentation, prevdepth logic, and the optional detached pretolerance-plan cache boundary.
+- `src/assignments/paragraph.rs`: paragraph start/end, parshape, line breaking, indentation, prevdepth logic, and the optional detached pretolerance-plan experiment.
 - `src/assignments/pdf_fonts.rs`: pdfTeX map, font-attribute, and forced-character action scanning into host-neutral state.
 - `src/assignments/pdf_actions.rs`: shared pdfTeX action scanner for catalog, link, and outline consumers.
 - `src/assignments/primitives.rs`: registration table for unexpandable primitive meanings.

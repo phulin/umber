@@ -417,24 +417,6 @@ impl<'a> ExpansionContext<'a> {
     pub fn origin_is_inserted_kind(&self, id: OriginId, kind: InsertedOriginKind) -> bool {
         self.universe.origin_is_inserted_kind(id, kind)
     }
-
-    /// Captures an opaque owner identity and canonical semantic state hash for
-    /// bounded expansion-episode validation.
-    pub fn memo_validation_stamp(&self) -> crate::MemoValidationStamp {
-        // Validation must not publish a semantic checkpoint. Even restoring
-        // the hash base would leave other snapshot cursors advanced, so project
-        // through an isolated owner fork instead.
-        let mut projection = self.universe.clone();
-        let state_hash = projection.snapshot().state_hash();
-        crate::MemoValidationStamp::new(self.universe.owner.0.nonce, state_hash)
-    }
-
-    /// Returns the cheap process-local identity used by owner-fast memo checks.
-    #[must_use]
-    pub const fn memo_owner_nonce(&self) -> u64 {
-        self.universe.owner.0.nonce
-    }
-
     /// Returns the mutation stamp for one previously recorded expansion read.
     #[must_use]
     pub fn dependency_changed_at(&self, key: DependencyKey) -> ChangedAt {

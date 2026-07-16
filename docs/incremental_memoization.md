@@ -328,39 +328,14 @@ An eager memo layer was removed after measurement showed that copying the
 definition and arguments, hashing them, materializing a replacement, and
 interning that replacement duplicated more work than it avoided.
 
-Recursive expanded-stream reuse is recorded as an expansion episode with a
-stable input trace, dynamic read constraints, returned semantic tokens, and an
-ending input transition. Episodes are initially bounded by outer executor
-dispatch or a caller-owned scanner operation; the cache does not manufacture
-arbitrary durable Rust continuations.
+Recursive expanded-stream caching was removed after its supported general-text
+boundary repeatedly reported zero Gentle lookups, hits, entries, retained
+bytes, and evictions. Expansion continues through ordinary lazy token-list
+replay. Dynamic expansion dependency recording remains at the shared facade
+boundary because accepted-generation paragraph traces consume those reads; it
+is not coupled to a standalone result cache.
 
-Expansion episodes that open inputs, perform untracked relaxed interning,
-consume interactive input, or cross a barrier execute normally until those
-operations gain explicit replay semantics.
-
-The implemented expansion-episode cache is session-local, bounded by entry
-count and retained bytes, hash-indexed, and opt-in through `ExecutionContext`.
-The initial recursive episode boundary is deliberately narrower than the
-design maximum: it surrounds caller-owned frozen general-text expansion, uses
-dynamic changed-at dependencies and executor facts in its key. Entries retain
-allocation-independent semantic observations for meanings, registers, code
-cells, fonts, groups, page enquiries, and streams. Same-owner hits take the
-changed-at fast path and backdate changed-then-restored values; cross-owner hits
-compare only the recorded observations, so unrelated state does not invalidate
-them and no whole-Universe projection is needed. Dependencies owned by an
-unsupported input or executor surface make the episode an explicit barrier.
-It rejects input opens,
-`\csname`, `\scantokens`,
-`\endinput`, unsupported provenance, and malformed entries atomically. Full-key
-verification handles candidate collisions. Cache-on/off execution tests compare
-final semantic state and effects; offset-shifting and allocation-distinct tests
-verify provenance rebinding.
-
-The losing substitution layer is no longer part of enabled execution. Gentle
-now reports zero substitution lookups and retains zero memo bytes because its
-main `\edef` path does not cross the supported recursive episode boundary. The
-layer remains opt-in while paragraph and hierarchical trace phases add broader
-caller-owned boundaries. A repeated ABBA rerun after removing eager
+A repeated ABBA rerun after removing eager
 substitution produced six stable 10-run blocks: disabled averaged 131.62 ms and
 enabled averaged 131.24 ms. The 0.29% difference is noise-level parity, while
 both enabled runs reported zero lookups and zero retained bytes; the earlier
@@ -396,7 +371,7 @@ root-piece spans, deduplicated semantic observations, supported escaping
 count/integer writes, virtual stream writes, and the ending input summary, then
 classifies the region at `\par`. `\everypar` is an ordinary token-parameter
 dependency, and a symbol constructed by `\csname` contributes its observed
-meaning instead of inheriting the standalone expansion-episode barrier.
+meaning directly to the paragraph recorder.
 Display math, `\scantokens`, mid-paragraph input opens/`\endinput`, untracked
 World effects, unsupported escaping writes, and nested output routines retain
 explicit, counted barrier reasons. Group-closed work remains part of normal
@@ -490,6 +465,16 @@ wide intervals and no detected difference. This removes the demonstrated
 hot-path regression but does not establish a win. The epic nevertheless
 continues into paragraph-front-end reuse; measurements select default
 enablement at the release gate rather than stopping implementation phases.
+
+The 2026-07-16 removal review compared paragraph-only against
+paragraph-plus-pretolerance in a bounded ABBA sequence of two-run incremental
+blocks. The first adjacent pair favored pretolerance on all four edits, while
+the reverse pair lost heavily under visible host contention; the direction
+therefore reversed instead of establishing neutral or positive removal.
+Pretolerance remained active at 936/937 and 937/937 hits on the large and
+inverse edits, retained about 200 KiB, and spent measurable time constructing
+and validating keys. The layer remains opt-in pending conditioned evidence;
+this inconclusive result does not justify deleting useful traffic.
 
 The shipout profile was also rechecked before widening the cache boundary:
 1,024-node ordinary lowering measured 269.75 us and deferred-math shipout
@@ -863,12 +848,12 @@ latencies plus the complete reason taxonomy remain tracked by
 criterion even though it demonstrates that the stable-start candidate repair
 engages the intended population.
 
-These runs also strengthen the removal case for the isolated caches. The
-standalone expansion episode has no useful Gentle traffic, while the bounded
-pretolerance plan is subsumed on the editing path by accepted-generation
-finished-line reuse. `umber2-vfqs.17` tracks removal after stable paragraph
-lookup lands. Until those follow-ups complete, paragraph memoization and the
-general cache remain opt-in; the measured release criteria are not met.
+These runs also strengthen the removal case for the standalone expansion
+episode, which has no useful Gentle traffic. The pretolerance plan is
+architecturally overlapped by accepted-generation finished-line reuse, but its
+measured traffic requires a separate marginal verdict. Paragraph memoization
+and the remaining detached experiments stay opt-in; the measured release
+criteria are not met.
 
 A post-main rerun on 2026-07-16 used six optimized AB/BA pairs, three accepted
 edits per session, and a fresh cold DVI comparison for every revision. The
@@ -908,6 +893,12 @@ pretolerance cache was not idle: a two-pair diagnostic run reported 834/835,
 and no eviction. That small sample is not an enablement verdict; it means
 `umber2-vfqs.17` must isolate the cache's marginal end-to-end value before
 removing it rather than treating removal as mechanically free.
+
+`umber2-vfqs.17` subsequently removed the expansion cache, its public
+configuration/statistics surface, and profiler flag while retaining paragraph
+dependency recording. Its bounded ABBA pretolerance comparison reversed
+direction under host contention, so pretolerance remains as an opt-in
+experiment rather than being removed on inconclusive evidence.
 
 The apparently inflated memo-enabled command count is actual main-control
 work. `ExecutionStats::main_control_dispatches` increments only immediately
@@ -956,8 +947,9 @@ distributions differ.
    values without cross-generation handles.
 5. **Pure-kernel memoization.** Land and measure line breaking,
    post-line-break/packing, math/box kernels, and shipout/DVI planning.
-6. **Expansion memoization.** Add pure macro substitution followed by tracked
-   expanded-token episodes and supported input transitions.
+6. **Expansion memoization experiment.** Measure pure macro substitution and
+   tracked expanded-token episodes; remove standalone layers without useful
+   traffic while retaining shared dependency recording.
 7. **Paragraph-front-end reuse.** Cache simple effect-free paragraphs, then add
    semantic redo and virtual-effect replay.
 8. **Page-builder episodes.** Record and replay page transitions including

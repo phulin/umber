@@ -96,8 +96,7 @@ pub mod world;
 pub use dependency::{
     ChangedAt, DependencyBank, DependencyCodeTable, DependencyEngineField, DependencyFontField,
     DependencyKey, DependencyPageField, DependencyRegion, DependencyRuntime, DependencyTracker,
-    DependencyValidation, DependencyValue, DependencyWorldField, MemoValidationStamp,
-    ObservedDependency,
+    DependencyValidation, DependencyValue, DependencyWorldField, ObservedDependency,
 };
 pub use font::PdfFontCode;
 pub use input::{

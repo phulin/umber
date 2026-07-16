@@ -111,7 +111,6 @@ macro_rules! dispatch_match {
                 )))
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::CsName) => {
-                expansion.mark_episode_barrier();
                 let name = scan_csname(input, stores, expansion, call_context)?;
                 let symbol = stores.intern_relaxed_control_sequence(&name);
                 let origin = stores.synthesized_origin(
@@ -385,7 +384,6 @@ macro_rules! dispatch_match {
                 mode.dispatch_inverted_raw_token(target, input, stores, expansion)
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Scantokens) => {
-                expansion.mark_episode_barrier();
                 expansion.mark_paragraph_barrier(crate::ParagraphExpansionBarrier::Scantokens);
                 crate::record_dependency!(
                     expansion,
@@ -687,7 +685,6 @@ macro_rules! dispatch_match {
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => $input_arm,
             Meaning::ExpandablePrimitive(ExpandablePrimitive::EndInput) => {
-                expansion.mark_episode_barrier();
                 expansion.mark_paragraph_barrier(crate::ParagraphExpansionBarrier::EndInput);
                 crate::record_dependency!(
                     expansion,

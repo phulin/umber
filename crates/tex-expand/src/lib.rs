@@ -70,7 +70,6 @@ pub mod scan_int;
 
 mod conditionals;
 mod dispatch;
-mod memo;
 mod pdf_files;
 mod pdf_random;
 mod pdf_regex;
@@ -82,7 +81,6 @@ mod tests;
 mod values;
 
 pub use dispatch::{dispatch, dispatch_expandable_opcode, dispatch_with_context};
-pub use memo::{ExpansionMemoConfig, ExpansionMemoStats};
 pub use scan_helpers::scan_optional_keyword_with_context;
 pub use values::{
     append_token_show_text, append_token_string_text, meaning_text, scan_the_text_with_context,
@@ -1057,9 +1055,6 @@ pub struct ExpansionContext<'a> {
     fuel_limit: u64,
     remaining_fuel: u64,
     fuel_scope_depth: u32,
-    memo: Option<memo::ExpansionMemoCache>,
-    episode_reads: Option<ReadSetRecorder>,
-    episode_barrier: bool,
     paragraph_reads: Option<ReadSetRecorder>,
     paragraph_barriers: BTreeSet<ParagraphExpansionBarrier>,
 }
@@ -1084,9 +1079,6 @@ impl<'a> ExpansionContext<'a> {
             fuel_limit: DEFAULT_EXPANSION_FUEL,
             remaining_fuel: DEFAULT_EXPANSION_FUEL,
             fuel_scope_depth: 0,
-            memo: None,
-            episode_reads: None,
-            episode_barrier: false,
             paragraph_reads: None,
             paragraph_barriers: BTreeSet::new(),
         }
@@ -1111,9 +1103,6 @@ impl<'a> ExpansionContext<'a> {
             fuel_limit: DEFAULT_EXPANSION_FUEL,
             remaining_fuel: DEFAULT_EXPANSION_FUEL,
             fuel_scope_depth: 0,
-            memo: None,
-            episode_reads: None,
-            episode_barrier: false,
             paragraph_reads: None,
             paragraph_barriers: BTreeSet::new(),
         }
@@ -1160,48 +1149,6 @@ impl<'a> ExpansionContext<'a> {
         self
     }
 
-    /// Enables bounded session-local expansion memoization.
-    #[must_use]
-    pub fn memoizing(mut self, config: ExpansionMemoConfig) -> Self {
-        self.memo = Some(memo::ExpansionMemoCache::new(config));
-        self
-    }
-
-    /// Returns counters for the enabled memo layer.
-    #[must_use]
-    pub fn memo_stats(&self) -> Option<ExpansionMemoStats> {
-        self.memo.as_ref().map(memo::ExpansionMemoCache::stats)
-    }
-
-    /// Drops every retained expansion entry while keeping counters enabled.
-    pub fn clear_memoization(&mut self) {
-        if let Some(memo) = &mut self.memo {
-            memo.clear();
-        }
-    }
-
-    fn begin_episode_recording(&mut self) {
-        assert!(self.episode_reads.is_none(), "nested expansion episode");
-        self.episode_reads = Some(ReadSetRecorder::default());
-        self.episode_barrier = false;
-    }
-
-    fn finish_episode_recording(&mut self) -> (Vec<ReadDependency>, bool) {
-        let reads = self
-            .episode_reads
-            .take()
-            .expect("no expansion episode is active")
-            .dependencies()
-            .collect();
-        (reads, std::mem::take(&mut self.episode_barrier))
-    }
-
-    fn mark_episode_barrier(&mut self) {
-        if self.episode_reads.is_some() {
-            self.episode_barrier = true;
-        }
-    }
-
     #[doc(hidden)]
     pub fn begin_paragraph_recording(&mut self) {
         debug_assert!(self.paragraph_reads.is_none());
@@ -1232,9 +1179,6 @@ impl<'a> ExpansionContext<'a> {
     #[inline(always)]
     fn record_dependency(&mut self, dependency: ReadDependency) {
         if let Some(recorder) = self.recorder.as_deref_mut() {
-            recorder.record_dependency(dependency);
-        }
-        if let Some(recorder) = &mut self.episode_reads {
             recorder.record_dependency(dependency);
         }
         if let Some(recorder) = &mut self.paragraph_reads {
@@ -1335,9 +1279,6 @@ impl<'a> ExpansionContext<'a> {
             fuel_limit: self.fuel_limit,
             remaining_fuel: self.remaining_fuel,
             fuel_scope_depth: self.fuel_scope_depth,
-            memo: self.memo.take(),
-            episode_reads: self.episode_reads.take(),
-            episode_barrier: self.episode_barrier,
             paragraph_reads: self.paragraph_reads.take(),
             paragraph_barriers: std::mem::take(&mut self.paragraph_barriers),
         };
@@ -1348,9 +1289,6 @@ impl<'a> ExpansionContext<'a> {
         self.remaining_fuel = nested.remaining_fuel;
         self.recoverable_diagnostics
             .append(&mut nested.recoverable_diagnostics);
-        self.memo = nested.memo.take();
-        self.episode_reads = nested.episode_reads.take();
-        self.episode_barrier = nested.episode_barrier;
         self.paragraph_reads = nested.paragraph_reads.take();
         self.paragraph_barriers = std::mem::take(&mut nested.paragraph_barriers);
         output
@@ -1387,9 +1325,6 @@ impl<'a> ExpansionContext<'a> {
         if let Some(recorder) = self.recorder.as_deref_mut() {
             recorder.record_meaning(symbol, meaning);
         }
-        if let Some(recorder) = &mut self.episode_reads {
-            recorder.record_meaning(symbol, meaning);
-        }
         if let Some(recorder) = &mut self.paragraph_reads {
             recorder.record_meaning(symbol, meaning);
         }
@@ -1400,7 +1335,6 @@ impl<'a> ExpansionContext<'a> {
         input: &mut dyn InputReadState,
         name: &str,
     ) -> Result<Box<dyn InputSource>, String> {
-        self.mark_episode_barrier();
         self.mark_paragraph_barrier(ParagraphExpansionBarrier::InputOpen);
         self.record_dependency(ReadDependency::Query {
             domain: PARAGRAPH_INPUT_OPEN_BARRIER_DOMAIN,
@@ -1465,8 +1399,6 @@ impl<'a> ExpansionContext<'a> {
 /// [`ExpansionState`]-only helper boundary. Scanner functions take this as a
 /// trait object so the policy does not become a monomorphization axis.
 pub trait ExpansionMode {
-    fn memo_tag(&self) -> u8;
-
     fn next_expanded_token(
         &mut self,
         input: &mut InputStack,
@@ -1522,10 +1454,6 @@ pub trait ExpansionMode {
 pub struct RestrictedExpansionMode;
 
 impl ExpansionMode for RestrictedExpansionMode {
-    fn memo_tag(&self) -> u8 {
-        0
-    }
-
     fn next_expanded_token(
         &mut self,
         input: &mut InputStack,
@@ -1590,10 +1518,6 @@ impl ExpansionMode for RestrictedExpansionMode {
 pub struct DriverExpansionMode;
 
 impl ExpansionMode for DriverExpansionMode {
-    fn memo_tag(&self) -> u8 {
-        1
-    }
-
     fn next_expanded_token(
         &mut self,
         input: &mut InputStack,

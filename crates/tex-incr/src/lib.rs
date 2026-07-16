@@ -28,11 +28,9 @@ use tex_state::{
 };
 
 mod delivery;
-mod episode;
 mod trace;
 
 pub use delivery::{DeliveryIdentity, SyntheticDeliveryKind};
-pub use episode::TransientTokenEpisode;
 pub use trace::{TraceCompositionError, TraceOperation, TraceSummary, TraceValidationError};
 
 /// Monotonic identity of an immutable editor buffer.

@@ -190,42 +190,6 @@ fn deferred_write_shipouts_are_counted_barriers_and_expand_each_time() {
 }
 
 #[test]
-fn expansion_memo_preserves_execution_state_and_effects() {
-    let source = r"\def\m#1{A#1B}
-\edef\first{\m{x}}\edef\second{\m{x}}
-\setbox0=\vbox{\mark{Q}}\setbox0=\vbox{\mark{Q}}
-\ifx\first\second\message{SAME}\else\message{DIFFERENT}\fi\end";
-    let run = |memoized: bool| {
-        let mut stores = Universe::new();
-        tex_expand::install_expandable_primitives(&mut stores);
-        tex_expand::install_etex_expandable_primitives(&mut stores);
-        crate::install_unexpandable_primitives(&mut stores);
-        let mut input = InputStack::new(MemoryInput::new(source));
-        let mut executor = Executor::new();
-        let mut context = crate::ExecutionContext::new("texput");
-        if memoized {
-            context = context.memoizing(tex_expand::ExpansionMemoConfig::default());
-        }
-        let stats = executor
-            .run_with_context(&mut input, &mut stores, &mut context)
-            .expect("memo differential source executes");
-        let memo = context.expansion_memo_stats();
-        let state_hash = stores.snapshot().state_hash();
-        (stats, state_hash, terminal_effect_text(&stores), memo)
-    };
-
-    let (cold_stats, cold_hash, cold_effects, cold_memo) = run(false);
-    let (memo_stats, memo_hash, memo_effects, memo) = run(true);
-    assert_eq!(memo_stats, cold_stats);
-    assert_eq!(memo_hash, cold_hash);
-    assert_eq!(memo_effects, cold_effects);
-    assert!(cold_memo.is_none());
-    let memo = memo.expect("memo stats enabled");
-    assert_eq!(memo.substitution_lookups, 0, "{memo:?}");
-    assert!(memo.episode_hits >= 1, "{memo:?}");
-}
-
-#[test]
 fn expl3_primitive_alias_pattern_consumes_its_conditional_terminator() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

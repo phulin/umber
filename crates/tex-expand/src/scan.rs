@@ -638,20 +638,6 @@ fn expand_replacement_text(
     expansion: &mut ExpansionContext<'_>,
     mode: &mut dyn ExpansionMode,
 ) -> Result<TracedTokenList, ScanToksError> {
-    let input_value = TracedTokenList::new(replacement_text, replacement_origins);
-    let input_before = input.summary();
-    let episode_attempt = if expansion.memo.is_some() {
-        match crate::memo::start_expansion_episode(stores, expansion, input_value, mode.memo_tag())
-        {
-            crate::memo::EpisodeStart::Hit(value) => return Ok(value),
-            crate::memo::EpisodeStart::Miss(attempt) => {
-                expansion.begin_episode_recording();
-                Some(attempt)
-            }
-        }
-    } else {
-        None
-    };
     let replay = input.push_token_list_with_origins(
         replacement_text,
         replacement_origins,
@@ -666,20 +652,6 @@ fn expand_replacement_text(
     );
     if result.is_err() {
         input.abort_token_list_replay(replay);
-    }
-    if let Some(attempt) = episode_attempt {
-        let (dependencies, barrier) = expansion.finish_episode_recording();
-        if let Ok(output) = result {
-            let input_unchanged = input.summary() == input_before;
-            crate::memo::finish_expansion_episode(
-                stores,
-                expansion,
-                attempt,
-                output,
-                dependencies,
-                !barrier && input_unchanged,
-            );
-        }
     }
     result
 }

@@ -191,45 +191,6 @@ pub struct ObservedDependency {
     pub value: DependencyValue,
 }
 
-/// Opaque validation identity for a memoized interpreter episode.
-///
-/// The universe nonce is process-local and never serialized. The state hash is
-/// canonical and permits a detached entry to be reconsidered in an
-/// allocation-distinct universe with equal semantic state.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct MemoValidationStamp {
-    universe_nonce: u64,
-    state_hash: u64,
-}
-
-impl MemoValidationStamp {
-    pub(crate) const fn new(universe_nonce: u64, state_hash: u64) -> Self {
-        Self {
-            universe_nonce,
-            state_hash,
-        }
-    }
-
-    /// Builds an owner-only probe for the fast path; its hash is not observed.
-    #[must_use]
-    pub const fn new_for_owner(universe_nonce: u64) -> Self {
-        Self {
-            universe_nonce,
-            state_hash: 0,
-        }
-    }
-
-    #[must_use]
-    pub const fn same_universe(self, other: Self) -> bool {
-        self.universe_nonce == other.universe_nonce
-    }
-
-    #[must_use]
-    pub const fn state_hash(self) -> u64 {
-        self.state_hash
-    }
-}
-
 /// Deterministic, deduplicating recorder for one active computation region.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct DependencyRegion {

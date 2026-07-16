@@ -38,7 +38,6 @@ struct Options {
     iterations: usize,
     warmups: usize,
     checkpoints: bool,
-    expansion_memo: bool,
     incremental_edit: bool,
     memo_recording: PureMemoRecordingPolicy,
 }
@@ -49,7 +48,6 @@ impl Options {
         let mut iterations = DEFAULT_ITERATIONS;
         let mut warmups = DEFAULT_WARMUPS;
         let mut checkpoints = false;
-        let mut expansion_memo = false;
         let mut incremental_edit = false;
         let mut memo_recording = PureMemoRecordingPolicy::default();
         let mut args = env::args().skip(1);
@@ -69,7 +67,6 @@ impl Options {
                         parse_positive_count(&next_value(&mut args, "--warmups")?, "--warmups")?;
                 }
                 "--checkpoints" => checkpoints = true,
-                "--expansion-memo" => expansion_memo = true,
                 "--incremental-edit" => incremental_edit = true,
                 "--memo-layers" => {
                     memo_recording = parse_memo_layers(&next_value(&mut args, "--memo-layers")?)?;
@@ -93,7 +90,6 @@ impl Options {
             iterations,
             warmups,
             checkpoints,
-            expansion_memo,
             incremental_edit,
             memo_recording,
         }))
@@ -105,7 +101,6 @@ struct RunOutput {
     pages: usize,
     checkpoints: usize,
     checkpoint_hash: u64,
-    expansion_memo: Option<tex_expand::ExpansionMemoStats>,
     #[cfg(feature = "profiling-stats")]
     expansion_stats: ExpansionStats,
 }
@@ -144,21 +139,21 @@ fn run() -> Result<(), String> {
         return run_incremental_edit(&options, &template);
     }
 
-    let reference = execute_once(&template, options.checkpoints, options.expansion_memo)?;
+    let reference = execute_once(&template, options.checkpoints)?;
     for _ in 1..options.warmups {
-        let output = execute_once(&template, options.checkpoints, options.expansion_memo)?;
+        let output = execute_once(&template, options.checkpoints)?;
         if output.dvi != reference.dvi {
             return Err("a warm-up DVI differs from the first warm-up DVI".to_owned());
         }
     }
 
     let started = Instant::now();
-    let mut last = execute_once(&template, options.checkpoints, options.expansion_memo)?;
+    let mut last = execute_once(&template, options.checkpoints)?;
     let _ = black_box(last.pages);
     let _ = black_box(last.dvi.len());
     let _ = black_box((last.checkpoints, last.checkpoint_hash));
     for _ in 1..options.iterations {
-        last = execute_once(&template, options.checkpoints, options.expansion_memo)?;
+        last = execute_once(&template, options.checkpoints)?;
         let _ = black_box(last.pages);
         let _ = black_box(last.dvi.len());
         let _ = black_box((last.checkpoints, last.checkpoint_hash));
@@ -200,11 +195,8 @@ struct IncrementalStep {
 }
 
 fn run_incremental_edit(options: &Options, template: &World) -> Result<(), String> {
-    if options.checkpoints || options.expansion_memo {
-        return Err(
-            "--incremental-edit cannot be combined with --checkpoints or --expansion-memo"
-                .to_owned(),
-        );
+    if options.checkpoints {
+        return Err("--incremental-edit cannot be combined with --checkpoints".to_owned());
     }
     if !options.iterations.is_multiple_of(2) {
         return Err(
@@ -818,11 +810,7 @@ fn seed_font_dir(world: &mut World, dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn execute_once(
-    template: &World,
-    capture_checkpoints: bool,
-    expansion_memo: bool,
-) -> Result<RunOutput, String> {
+fn execute_once(template: &World, capture_checkpoints: bool) -> Result<RunOutput, String> {
     let mut stores = Universe::with_world(template.clone());
     prepare_run_stores(&mut stores);
     let path = Path::new(JOB_DIR).join(JOB_FILE);
@@ -833,10 +821,7 @@ fn execute_once(
     let mut input = InputStack::new(WorldInput::from_content(content));
     let mut resolvers = FileSessionResolvers::new(&path, Vec::new(), Vec::new());
     let mut checkpoints = ProfileCheckpointSink::default();
-    let mut context = resolvers.context();
-    if expansion_memo {
-        context = context.memoizing(tex_expand::ExpansionMemoConfig::default());
-    }
+    let context = resolvers.context();
     let mut session = EngineSession::new(&mut input, &mut stores, context);
     let run = if capture_checkpoints {
         session.execute_with_checkpoints(&mut checkpoints)
@@ -847,7 +832,6 @@ fn execute_once(
         Ok(run) => run,
         Err(error) => return Err(error.format_with_provenance(session.stores())),
     };
-    let expansion_memo = session.expansion_memo_stats();
     if run.artifacts.is_empty() {
         return Err("Gentle produced no page artifacts".to_owned());
     }
@@ -857,7 +841,6 @@ fn execute_once(
         pages: run.artifacts.len(),
         checkpoints: checkpoints.count,
         checkpoint_hash: checkpoints.hash,
-        expansion_memo,
         #[cfg(feature = "profiling-stats")]
         expansion_stats: input.expansion_stats(),
     })
@@ -875,21 +858,6 @@ fn print_summary(options: &Options, output: &RunOutput, elapsed: Duration) {
         output.dvi.len(),
         output.checkpoints
     );
-    if let Some(memo) = output.expansion_memo {
-        println!(
-            "gentle-profile expansion memo: substitution={}/{} episode={}/{} reused_tokens={} retained_entries={} retained_bytes={} evictions={} lookup_ns={}",
-            memo.substitution_hits,
-            memo.substitution_lookups,
-            memo.episode_hits,
-            memo.episode_lookups,
-            memo.substituted_tokens_reused
-                .saturating_add(memo.expanded_tokens_reused),
-            memo.retained_entries,
-            memo.retained_bytes,
-            memo.evictions,
-            memo.lookup_nanos,
-        );
-    }
     #[cfg(feature = "profiling-stats")]
     println!(
         "gentle-profile expansion: token_frame_steps={} provenance_resolutions={} character_tokens={} character_fraction={:.6} meaning_lookups={} meaning_cache_hits={} meaning_cache_misses={} literal_spans={} literal_tokens={} mean_literal_run={:.6} segmentation_cache_hits={} segmentation_cache_misses={} builder_appends={} source_text_span_attempts={} source_text_spans={} source_text_tokens={} mean_source_text_run={:.6}",
@@ -981,12 +949,11 @@ fn parse_memo_layers(value: &str) -> Result<PureMemoRecordingPolicy, String> {
 
 fn print_help() {
     println!(
-        "Usage: gentle-profile [--iterations N] [--warmups N] [--repo-root PATH] [--checkpoints] [--expansion-memo] [--incremental-edit] [--memo-layers LIST]\n\n\
+        "Usage: gentle-profile [--iterations N] [--warmups N] [--repo-root PATH] [--checkpoints] [--incremental-edit] [--memo-layers LIST]\n\n\
          Loads Gentle and its support files once, then executes fresh deterministic\n\
          in-memory Umber sessions for profiling. Defaults: {DEFAULT_ITERATIONS} measured\n\
          iterations and {DEFAULT_WARMUPS} warm-up. --checkpoints captures and hashes every\n\
-         named executor checkpoint through a bounded profiling sink. --expansion-memo enables\n\
-         the bounded session-local expansion caches and reports their work and retention.\n\
+         named executor checkpoint through a bounded profiling sink.\n\
          --incremental-edit compares memo-disabled, memo-enabled, and cold compilation for\n\
          four accepted edits/session using balanced AB/BA pairs and DVI parity verification.\n\
          --memo-layers configures enabled recording layers; the default is paragraph."

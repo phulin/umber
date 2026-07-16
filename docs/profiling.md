@@ -96,9 +96,10 @@ observations did not support a per-layer verdict: they used weak unpaired
 samples, measured only the first accepted edit, and bundled recording with
 reuse. They remain provenance for the instrumentation change, not the current
 release conclusion. The runner now supplies the missing taxonomy, phase
-timings, steady-state edits, and paired ordering described above. Removal of
-the standalone expansion-episode and pretolerance caches remains tracked by
-`umber2-vfqs.17`.
+timings, steady-state edits, and paired ordering described above. The
+standalone expansion-episode cache was removed after repeated zero-traffic
+measurements; pretolerance remains an opt-in experiment after its isolated
+comparison failed to establish a removal win.
 
 The first post-main run with the complete methodology used six optimized AB/BA
 pairs. Memo-disabled versus paragraph-memo means were 1,700.926 versus
@@ -198,8 +199,18 @@ has traffic; the sample is too small and does not isolate its marginal latency.
 Conversely, two disabled and two enabled ten-run whole-Gentle blocks again
 reported zero expansion-episode lookups, hits, entries, retained bytes, and
 evictions while preserving the pinned 97-page/263,424-byte DVI. The expansion
-layer has no measured signal; the pretolerance layer requires the isolated
-comparison tracked by `umber2-vfqs.17` before removal.
+layer had no measured signal and was removed with its profiler option and
+counters.
+
+The follow-up bounded ABBA comparison ran two-iteration incremental blocks for
+paragraph-only (A) and paragraph-plus-pretolerance (B), with every revision
+checked against cold DVI and the fourth edit still adopting the 83-page suffix.
+The first A/B pair favored B on every edit, but the reverse B/A pair lost by
+large margins during visible host contention. Pretolerance consistently made
+936/937 and 937/937 hits on the large and inverse edits, retained about 200
+KiB, and paid measurable validation cost. Because the paired direction
+reversed, the result is not evidence that removal is neutral or positive;
+pretolerance remains opt-in pending a conditioned rerun.
 
 The runner requires the same external inputs as Gentle conformance. Populate
 them with `scripts/setup-conformance-tests.sh` if necessary.

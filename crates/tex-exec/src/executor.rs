@@ -173,18 +173,6 @@ impl<'a> ExecutionContext<'a> {
         self
     }
 
-    /// Enables bounded session-local expansion memoization.
-    #[must_use]
-    pub fn memoizing(mut self, config: tex_expand::ExpansionMemoConfig) -> Self {
-        self.expansion = self.expansion.memoizing(config);
-        self
-    }
-
-    /// Returns expansion memo statistics when memoization is enabled.
-    pub fn expansion_memo_stats(&self) -> Option<tex_expand::ExpansionMemoStats> {
-        self.expansion.memo_stats()
-    }
-
     pub(crate) fn open_font(
         &mut self,
         input: &mut dyn InputReadState,
