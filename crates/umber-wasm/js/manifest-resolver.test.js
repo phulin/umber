@@ -460,7 +460,10 @@ test("engine and manifest hints prefetch without becoming responses", async () =
 		{ prefetchHints: [{ kind: "tex", name: "alias.tex" }] },
 	);
 
-	assert.deepEqual(downloads.map(({ name }) => name), ["plain.tex"]);
+	assert.deepEqual(
+		downloads.map(({ name }) => name),
+		["plain.tex"],
+	);
 	assert.deepEqual(new Set(calls), new Set(byObject.keys()));
 });
 
