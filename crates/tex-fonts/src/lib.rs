@@ -15,6 +15,7 @@ pub use metrics::{
     FontMetricsValidationError, FontSourceIdentity, LigKernChar, LigKernCommand,
     LigKernInstruction, LigKernIter, LigKernStep as MetricLigKernStep, LigatureCommand, LoadedFont,
     MAX_LIG_KERN_PROGRAM_LEN, OpenTypeFontSelection, OpenTypeFontShaped, OpenTypeProgramSelection,
+    ShapingFont,
 };
 pub use opentype::{
     AcceptedFontContainers, CharacterMap, FeatureSetting, FontContainer, FontFeaturePolicy,

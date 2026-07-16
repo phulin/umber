@@ -1,6 +1,6 @@
 # Native Unicode and OpenType/TrueType Shaping
 
-Status: staged implementation; Stage 1 is implemented. This document amends the
+Status: staged implementation; Stages 1 and 2 are implemented. This document amends the
 shaping-ownership decision in `docs/web_font_bundles.md` for OpenType-selected
 fonts and defines the engine-side shaping architecture that supersedes its
 Stage 7.
@@ -87,19 +87,21 @@ pub struct ShapedRun {
 }
 
 pub fn shape_run(
-    font: &OpenTypeFont,
+    font: ShapingFont<'_>,
     text: &str,
     features: &FontFeaturePolicy,
     direction: Direction,
 ) -> ShapedRun;
 ```
 
-Font-unit-to-scaled-point conversion routes through `tex-arith`, not a local
-rounding routine — today `OpenTypeMetrics::units_to_sp` in `tex-fonts`
-performs its own rounding independent of `tex-arith`; unifying that is part
-of this work. A `rustybuzz::Face` is built from the already-validated SFNT
-bytes and cached alongside `LoadedFont`, so no second untrusted parse pass is
-introduced.
+`ShapingFont` is the validated OpenType program plus the size of its enclosing
+`LoadedFont`; classic TFM records cannot produce one. Font-unit-to-scaled-point
+conversion routes through `tex-arith`. A `rustybuzz::Face` is built only after
+the bounded SFNT validation pass and cached with its owned decoded SFNT bytes
+inside the OpenType record shared by `LoadedFont`, so shaping never decodes or
+parses an untrusted transport object. Stage 2 also provides deterministic
+script detection and first-strong base-direction detection for callers
+preparing one run; full bidi run reordering remains Stage 5.
 
 ## Font-metrics abstraction split
 
@@ -251,8 +253,8 @@ none of Stages 1-4 need revisiting to support it.
 1. **Implemented.** Character-existence and width dispatch fix (font-metrics
    abstraction split above) — fixes the Unicode cmap/advance bug independent
    of shaping and keeps DVI's byte opcode boundary intact.
-2. `tex-shape` crate and rustybuzz integration: single-run shaping API, no
-   line-break integration yet.
+2. **Implemented.** `tex-shape` crate and rustybuzz integration: single-run
+   shaping API, no line-break integration yet.
 3. OpenType-only `\font` path and fontdimen synthesis.
 4. Two-pass shape/linebreak/reshape integration into `tex-exec` and
    `tex-typeset` — the largest chunk of this plan.

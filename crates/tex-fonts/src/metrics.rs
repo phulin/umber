@@ -225,6 +225,21 @@ pub struct OpenTypeFontSelection {
     pub container: FontContainer,
 }
 
+/// A validated OpenType program paired with one loaded TeX font size.
+#[derive(Clone, Copy, Debug)]
+pub struct ShapingFont<'a> {
+    font: &'a OpenTypeFont,
+    size: Scaled,
+}
+
+impl<'a> ShapingFont<'a> {
+    /// Exposes the immutable program and requested size to shaping kernels.
+    #[must_use]
+    pub const fn parts(self) -> (&'a OpenTypeFont, Scaled) {
+        (self.font, self.size)
+    }
+}
+
 impl LoadedFont {
     #[allow(clippy::too_many_arguments)]
     #[must_use]
@@ -297,6 +312,18 @@ impl LoadedFont {
     #[must_use]
     pub const fn opentype(&self) -> Option<&OpenTypeFontSelection> {
         self.opentype.as_ref()
+    }
+
+    /// Returns the selected validated OpenType program and its requested size.
+    #[must_use]
+    pub const fn shaping_font(&self) -> Option<ShapingFont<'_>> {
+        match &self.metrics {
+            FontMetricsSource::OpenType(font) => Some(ShapingFont {
+                font: &font.font,
+                size: self.size,
+            }),
+            FontMetricsSource::Tfm(_) => None,
+        }
     }
 
     #[must_use]

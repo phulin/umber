@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 
+use self_cell::self_cell;
 use sha2::{Digest, Sha256};
 use tex_arith::{Scaled, font_units_to_scaled};
 use ttf_parser::{Face, GlyphId, OutlineBuilder, RawFace, Tag};
@@ -10,6 +11,8 @@ use super::contract::{
     FONT_PROGRAM_IDENTITY_VERSION, FontContainer, FontLimits, FontObjectIdentity,
     FontProgramIdentity, FontRequest, OpenTypeTag, ResolvedFont, VariationSelection,
 };
+
+type RustybuzzFace<'a> = rustybuzz::Face<'a>;
 
 const IDENTITY_TABLES: &[OpenTypeTag] = &[
     OpenTypeTag::new(*b"avar"),
@@ -100,6 +103,74 @@ pub struct FontMetadata {
     pub italic: bool,
 }
 
+self_cell!(
+    struct ShapingFaceCell {
+        owner: Arc<[u8]>,
+
+        #[covariant]
+        dependent: RustybuzzFace,
+    }
+);
+
+/// A cached rustybuzz face borrowing the validated decoded SFNT bytes it owns.
+///
+/// Construction is private to [`OpenTypeFont::parse`], after the complete
+/// bounded validation pass. Shaping consumers therefore cannot accidentally
+/// feed a transport object or unvalidated byte stream to rustybuzz.
+struct ShapingFace {
+    cell: ShapingFaceCell,
+}
+
+impl ShapingFace {
+    fn new(
+        sfnt: Arc<[u8]>,
+        face_index: u32,
+        variation: &VariationSelection,
+    ) -> Result<Self, FontParseError> {
+        let coordinates = variation.coordinates().to_vec();
+        let cell = ShapingFaceCell::try_new(sfnt, move |bytes| {
+            let mut face = rustybuzz::Face::from_slice(bytes, face_index)
+                .ok_or_else(|| FontParseError::InvalidSfnt("rustybuzz face".into()))?;
+            let variations = coordinates
+                .iter()
+                .map(|coordinate| rustybuzz::Variation {
+                    tag: rustybuzz::ttf_parser::Tag::from_bytes(&coordinate.tag.bytes()),
+                    value: coordinate.value as f32 / 65_536.0,
+                })
+                .collect::<Vec<_>>();
+            face.set_variations(&variations);
+            Ok(face)
+        })?;
+        Ok(Self { cell })
+    }
+
+    /// Borrows the cached face for one shaping operation.
+    pub fn with_face<T>(&self, shape: impl FnOnce(&rustybuzz::Face<'_>) -> T) -> T {
+        self.cell.with_dependent(|_, face| shape(face))
+    }
+
+    fn sfnt_bytes(&self) -> &[u8] {
+        self.cell.borrow_owner()
+    }
+}
+
+impl std::fmt::Debug for ShapingFace {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ShapingFace")
+            .field("sfnt_len", &self.sfnt_bytes().len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for ShapingFace {
+    fn eq(&self, other: &Self) -> bool {
+        self.sfnt_bytes() == other.sfnt_bytes()
+    }
+}
+
+impl Eq for ShapingFace {}
+
 /// Immutable, fully validated font program plus the retained transport object.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OpenTypeFont {
@@ -111,11 +182,17 @@ pub struct OpenTypeFont {
     pub shaping: ShapingTables,
     pub math: Option<Arc<[u8]>>,
     pub metadata: FontMetadata,
+    shaping_face: Arc<ShapingFace>,
     pub container: FontContainer,
     pub transport_bytes: Arc<[u8]>,
 }
 
 impl OpenTypeFont {
+    /// Borrows the cached rustybuzz face built after SFNT validation.
+    pub fn with_shaping_face<T>(&self, shape: impl FnOnce(&rustybuzz::Face<'_>) -> T) -> T {
+        self.shaping_face.with_face(shape)
+    }
+
     pub fn parse(
         request: &FontRequest,
         response: ResolvedFont,
@@ -216,6 +293,11 @@ impl OpenTypeFont {
             is_monospaced: face.is_monospaced(),
             italic: face.is_italic(),
         };
+        let shaping_face = Arc::new(ShapingFace::new(
+            Arc::from(decoded),
+            request.key.face_index,
+            &request.key.variation,
+        )?);
         Ok(Self {
             identity,
             object_identity,
@@ -225,6 +307,7 @@ impl OpenTypeFont {
             shaping,
             math,
             metadata,
+            shaping_face,
             container: response.container,
             transport_bytes: Arc::from(response.bytes),
         })

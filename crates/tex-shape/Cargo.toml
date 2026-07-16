@@ -1,0 +1,14 @@
+[package]
+name = "tex-shape"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rustybuzz.workspace = true
+tex-arith = { path = "../tex-arith" }
+tex-fonts = { path = "../tex-fonts" }
+unicode-bidi.workspace = true
+unicode-script.workspace = true
+
+[lints]
+workspace = true
