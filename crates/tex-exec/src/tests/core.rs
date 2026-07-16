@@ -1012,6 +1012,32 @@ fn horizontal_main_control_batches_direct_physical_source_text() {
 }
 
 #[test]
+fn paragraph_preflight_miss_replays_source_text_through_real_dispatch() {
+    fn run(memo: bool) -> ExecutionStats {
+        let mut stores = Universe::new();
+        install_unexpandable_primitives(&mut stores);
+        if memo {
+            stores.enable_pure_memo(tex_state::PureMemoConfig::default());
+        }
+        let mut input = InputStack::new(MemoryInput::new("abcdef\\par"));
+        Executor::new()
+            .run(&mut input, &mut stores)
+            .expect("literal paragraph executes")
+    }
+
+    let ordinary = run(false);
+    let memo_miss = run(true);
+    assert_eq!(ordinary.delivered_tokens, memo_miss.delivered_tokens);
+    assert!(ordinary.source_text_span_tokens > memo_miss.source_text_span_tokens);
+    assert!(memo_miss.main_control_dispatches > ordinary.main_control_dispatches);
+    assert_eq!(
+        ordinary.main_control_dispatches + ordinary.source_text_span_tokens,
+        memo_miss.main_control_dispatches + memo_miss.source_text_span_tokens,
+        "preflight replay changes the delivery path, not the token population"
+    );
+}
+
+#[test]
 fn horizontal_main_control_deopts_macro_text_when_alignment_scanner_is_active() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

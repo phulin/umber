@@ -141,8 +141,14 @@ pub struct ReuseMetrics {
     pub pages_reused: usize,
     pub pages_retyped: usize,
     pub reexecuted_bytes: usize,
+    /// Tokens accounted during reexecution, including text spans and memo-hit traces.
     pub reexecuted_tokens: usize,
+    /// Tokens that required scalar main-control dispatch.
     pub reexecuted_commands: usize,
+    /// Ordinary macro-body character tokens handled by the batched text path.
+    pub reexecuted_macro_text_span_tokens: usize,
+    /// Ordinary physical-source character tokens handled by the batched text path.
+    pub reexecuted_source_text_span_tokens: usize,
     pub reexecuted_paragraphs: usize,
     pub same_history_attempts: usize,
     pub same_history_hash_mismatches: usize,
@@ -825,6 +831,8 @@ impl Session {
                 reexecuted_bytes: run.executed_bytes,
                 reexecuted_tokens: run.executed_tokens,
                 reexecuted_commands: run.executed_commands,
+                reexecuted_macro_text_span_tokens: run.executed_macro_text_span_tokens,
+                reexecuted_source_text_span_tokens: run.executed_source_text_span_tokens,
                 reexecuted_paragraphs: run.executed_paragraphs,
                 ..ReuseMetrics::default()
             };
@@ -873,6 +881,8 @@ impl Session {
         let reexecuted_bytes = advance.reexecuted_bytes;
         let reexecuted_tokens = advance.reexecuted_tokens;
         let reexecuted_commands = advance.reexecuted_commands;
+        let reexecuted_macro_text_span_tokens = advance.reexecuted_macro_text_span_tokens;
+        let reexecuted_source_text_span_tokens = advance.reexecuted_source_text_span_tokens;
         let reexecuted_paragraphs = advance.reexecuted_paragraphs;
         let same_history_attempts = advance.same_history_attempts;
         let same_history_hash_mismatches = advance.same_history_hash_mismatches;
@@ -960,6 +970,8 @@ impl Session {
                         reexecuted_bytes,
                         reexecuted_tokens,
                         reexecuted_commands,
+                        reexecuted_macro_text_span_tokens,
+                        reexecuted_source_text_span_tokens,
                         reexecuted_paragraphs,
                         same_history_attempts,
                         same_history_hash_mismatches,
@@ -1009,6 +1021,8 @@ impl Session {
                         reexecuted_bytes,
                         reexecuted_tokens,
                         reexecuted_commands,
+                        reexecuted_macro_text_span_tokens,
+                        reexecuted_source_text_span_tokens,
                         reexecuted_paragraphs,
                         same_history_attempts,
                         same_history_hash_mismatches,
@@ -1225,6 +1239,8 @@ impl Session {
                 reexecuted_bytes: run.executed_bytes,
                 reexecuted_tokens: run.executed_tokens,
                 reexecuted_commands: run.executed_commands,
+                reexecuted_macro_text_span_tokens: run.executed_macro_text_span_tokens,
+                reexecuted_source_text_span_tokens: run.executed_source_text_span_tokens,
                 reexecuted_paragraphs: run.executed_paragraphs,
                 ..ReuseMetrics::default()
             },
@@ -1319,6 +1335,8 @@ struct RevisionRun {
     executed_bytes: usize,
     executed_tokens: usize,
     executed_commands: usize,
+    executed_macro_text_span_tokens: usize,
+    executed_source_text_span_tokens: usize,
     executed_paragraphs: usize,
 }
 
@@ -1383,6 +1401,8 @@ fn execute_revision(
         dumped_format,
         delivered_tokens,
         main_control_dispatches,
+        macro_text_span_tokens,
+        source_text_span_tokens,
         ..
     } = execution_result?;
     let expansion_stats = input.expansion_stats();
@@ -1409,6 +1429,8 @@ fn execute_revision(
         executed_bytes: source.len(),
         executed_tokens: delivered_tokens,
         executed_commands: main_control_dispatches,
+        executed_macro_text_span_tokens: macro_text_span_tokens,
+        executed_source_text_span_tokens: source_text_span_tokens,
         executed_paragraphs,
     })
 }
@@ -1424,6 +1446,8 @@ struct AdvanceRun {
     reexecuted_bytes: usize,
     reexecuted_tokens: usize,
     reexecuted_commands: usize,
+    reexecuted_macro_text_span_tokens: usize,
+    reexecuted_source_text_span_tokens: usize,
     reexecuted_paragraphs: usize,
     same_history_attempts: usize,
     same_history_hash_mismatches: usize,
@@ -1648,6 +1672,8 @@ fn execute_advance(
         dumped_format,
         delivered_tokens,
         main_control_dispatches,
+        macro_text_span_tokens,
+        source_text_span_tokens,
         ..
     } = execution_result?;
     let reexecution_latency = reexecution_started.elapsed();
@@ -1687,6 +1713,8 @@ fn execute_advance(
         reexecuted_bytes,
         reexecuted_tokens: delivered_tokens,
         reexecuted_commands: main_control_dispatches,
+        reexecuted_macro_text_span_tokens: macro_text_span_tokens,
+        reexecuted_source_text_span_tokens: source_text_span_tokens,
         reexecuted_paragraphs,
         same_history_attempts: sink.same_history_attempts,
         same_history_hash_mismatches: sink.same_history_hash_mismatches,

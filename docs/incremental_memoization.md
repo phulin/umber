@@ -892,6 +892,20 @@ and no eviction. That small sample is not an enablement verdict; it means
 `umber2-vfqs.17` must isolate the cache's marginal end-to-end value before
 removing it rather than treating removal as mechanically free.
 
+The apparently inflated memo-enabled command count is actual main-control
+work. `ExecutionStats::main_control_dispatches` increments only immediately
+before scalar token dispatch; paragraph validation and import do not increment
+it, and a successful paragraph replay contributes only to the separate
+paragraph `commands_skipped` telemetry. On a paragraph key or validation miss,
+however, preflight restores the scanned traced tokens to the input stack for
+ordinary execution. Physical-source character runs restored this way cannot
+use the direct source-span path, so they are subsequently dispatched one token
+at a time. The incremental metrics expose macro and source text-span token
+counts alongside scalar commands to make this phase shift visible. This audit
+does not change replay semantics or DVI output; eliminating the extra work
+would require a source-span-preserving preflight design rather than a counter
+correction.
+
 ### Dependency-recorder baseline
 
 The state-layer recorder has an explicit disabled branch and no lock or atomic.

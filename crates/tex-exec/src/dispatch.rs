@@ -11,8 +11,14 @@ use crate::{ExecError, Mode, ModeNest, assignments};
 /// Main-control progress counters.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ExecutionStats {
+    /// Tokens accounted by execution, including batched text and memo-hit traces.
     pub delivered_tokens: usize,
     /// Tokens processed through full main-control dispatch rather than a text span.
+    ///
+    /// This counts actual scalar dispatch calls. Paragraph memo preflight is not
+    /// counted, but tokens pushed back after a preflight miss are counted when
+    /// main control subsequently dispatches them. That replay can turn physical
+    /// source text that was previously batchable into scalar dispatch work.
     pub main_control_dispatches: usize,
     /// Ordinary macro-body characters delivered through the batched main path.
     pub macro_text_span_tokens: usize,

@@ -399,13 +399,15 @@ fn print_incremental_work(name: &str, edit: usize, sample: &IncrementalStep) {
         };
     }
     println!(
-        "gentle-profile incremental work: {name}: edit={edit} pages_retyped={} pages_reused={} paragraphs_reexecuted={} bytes_reexecuted={} tokens_reexecuted={} commands_reexecuted={} exact_checks={} suffixes_adopted={} fork_us={} reexecute_us={} splice_us={}",
+        "gentle-profile incremental work: {name}: edit={edit} pages_retyped={} pages_reused={} paragraphs_reexecuted={} bytes_reexecuted={} tokens_reexecuted={} commands_reexecuted={} macro_text_span_tokens={} source_text_span_tokens={} exact_checks={} suffixes_adopted={} fork_us={} reexecute_us={} splice_us={}",
         reuse.pages_retyped,
         reuse.pages_reused,
         reuse.reexecuted_paragraphs,
         reuse.reexecuted_bytes,
         reuse.reexecuted_tokens,
         reuse.reexecuted_commands,
+        reuse.reexecuted_macro_text_span_tokens,
+        reuse.reexecuted_source_text_span_tokens,
         reuse.same_history_attempts,
         reuse.suffixes_adopted,
         reuse.restart_fork_latency.as_micros(),

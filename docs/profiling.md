@@ -113,6 +113,32 @@ retention and evictions remained zero under the default paragraph-only policy.
 This is a negative release result even though the validation/import cost clause
 passes on revisions that engage lookup.
 
+`commands_reexecuted` is the number of tokens that reached scalar
+main-control dispatch; it is not a count of paragraph preflight probes and it
+is not interchangeable with `tokens_reexecuted`. The latter also includes
+ordinary character tokens consumed by the macro-body and physical-source text
+span paths. Incremental work output therefore reports
+`macro_text_span_tokens` and `source_text_span_tokens` beside the command
+count.
+
+A focused audit of the Gentle large-edit anomaly found real dispatch work, not
+double accounting. With memoization disabled, main control can consume much of
+a literal paragraph directly from physical-source text spans. A paragraph
+memo lookup must first scan a candidate; after a key or validation miss it
+pushes those traced tokens back for normal execution. That replay preserves
+semantics and provenance but is no longer a physical-source span, so the same
+characters take the scalar dispatch path. A two-run AB/BA diagnostic at the
+post-`vfqs.19` baseline reproduced 129,370 accounted tokens, 41,334 scalar
+dispatches, 3,641 macro-span tokens, and 84,395 source-span tokens disabled.
+The enabled side reported 129,906 accounted tokens, 71,776 scalar dispatches,
+3,358 macro-span tokens, 52,023 source-span tokens, and 2,749 skipped paragraph
+commands. These buckets reconcile exactly on both sides: the disabled token
+total is scalar plus both span paths, while the enabled total also includes
+the skipped hit traces. The approximately 30,000-command delta is consequently
+attributable to paragraph-preflight miss replay and lost span batching.
+Paragraph hits remain excluded from the dispatch count; their avoided commands
+continue to be reported separately as `commands_skipped`.
+
 The fixture now appends a fourth, height-preserving edit after that inverse
 removal. It changes `words` to `sword`; the two words contain the same cmr10
 glyphs, retain the same `wo` kern, and introduce no other kern or ligature pair,

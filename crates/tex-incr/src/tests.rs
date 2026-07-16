@@ -115,6 +115,40 @@ fn pure_memo_runtime_survives_accepted_revisions() {
 }
 
 #[test]
+fn reuse_metrics_attribute_paragraph_preflight_replay_dispatches() {
+    fn cold(memo: bool) -> ReuseMetrics {
+        let mut universe = template();
+        if memo {
+            universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+        }
+        Session::start(
+            universe,
+            "paragraph-command-accounting",
+            RevisionId::new(1),
+            "abcdef\\par\\end".to_owned(),
+            usize::MAX,
+        )
+        .expect("session starts")
+        .cold()
+        .expect("cold revision")
+        .reuse
+    }
+
+    let ordinary = cold(false);
+    let memo_miss = cold(true);
+    assert_eq!(ordinary.reexecuted_tokens, memo_miss.reexecuted_tokens);
+    assert!(
+        ordinary.reexecuted_source_text_span_tokens > memo_miss.reexecuted_source_text_span_tokens
+    );
+    assert!(memo_miss.reexecuted_commands > ordinary.reexecuted_commands);
+    assert_eq!(
+        ordinary.reexecuted_commands + ordinary.reexecuted_source_text_span_tokens,
+        memo_miss.reexecuted_commands + memo_miss.reexecuted_source_text_span_tokens,
+        "public metrics expose the preflight replay delivery-path shift"
+    );
+}
+
+#[test]
 fn paragraph_front_end_hit_survives_prefix_shift_and_unrelated_register_write() {
     let mut universe = template();
     universe.enable_pure_memo(tex_state::PureMemoConfig::default());
