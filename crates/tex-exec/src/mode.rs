@@ -521,6 +521,8 @@ pub(crate) struct PendingHRun {
     pub(crate) first: PendingHChar,
     pub(crate) current: PendingHRunChar,
     pub(crate) node_start: usize,
+    pub(crate) source: Vec<PendingHChar>,
+    pub(crate) script: tex_shape::Script,
 }
 
 impl PendingHRun {
@@ -529,6 +531,8 @@ impl PendingHRun {
             first: PendingHChar { font, ch, origin },
             current: PendingHRunChar::new(font, ch, origin),
             node_start,
+            source: vec![PendingHChar { font, ch, origin }],
+            script: tex_shape::character_script(ch),
         }
     }
 }
@@ -744,6 +748,11 @@ fn hash_mode_list(list: &ModeList, projection: &mut EngineBoundaryHasher<'_>) {
             projection.font(pending.first.font);
             projection.u32(pending.first.ch as u32);
             projection.usize(pending.node_start);
+            projection.usize(pending.source.len());
+            for source in &pending.source {
+                projection.font(source.font);
+                projection.u32(source.ch as u32);
+            }
             projection.font(pending.current.font);
             projection.u32(pending.current.ch as u32);
             projection.usize(pending.current.orig.len());

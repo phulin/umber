@@ -184,6 +184,14 @@ carry an OpenType program alongside TFM tables for compatibility selection.
 
 This is the hardest part of the design.
 
+This pipeline is now implemented. Horizontal construction retains Unicode
+character nodes for output compatibility and places a font-kern adjustment at
+the end of each shaped cluster. The character widths plus that adjustment are
+exactly the cluster advance returned by `tex-shape`, so `tex-typeset` can keep
+its zero-copy prefix-width traversal while consuming pass-1 shaped widths.
+These adjustments are provisional: post-line-break processing removes and
+rebuilds them by reshaping every materialized line independently.
+
 **Run segmentation.** Maximal runs of the same font, direction, and script
 are built while horizontal-mode list construction walks characters
 (`tex-exec/src/assignments/hmode.rs`), analogous to the existing per-character
@@ -201,6 +209,12 @@ LuaTeX, and adopted here:
 2. Once `tex-typeset` selects final breakpoints, reshape each output line's
    runs independently for final glyph output, so a ligature that would have
    spanned a chosen break point is correctly not formed.
+
+In implementation terms, glue, explicit kerns, discretionaries, font changes,
+and strong-script changes terminate a shaping run. Common and inherited
+characters inherit the surrounding run script. The pass-2 materializer uses
+the same segmentation rules, so list surgery cannot accidentally join text
+across an explicit TeX boundary.
 
 Badness estimates from pass 1 can differ very slightly from the pass-2
 reshape at interior candidate breakpoints; this is a bounded, accepted
@@ -276,9 +290,9 @@ none of Stages 1-4 need revisiting to support it.
    of shaping and keeps DVI's byte opcode boundary intact.
 2. **Implemented.** `tex-shape` crate and rustybuzz integration: single-run
    shaping API, no line-break integration yet.
-3. OpenType-only `\font` path and fontdimen synthesis.
-4. Two-pass shape/linebreak/reshape integration into `tex-exec` and
-   `tex-typeset` — the largest chunk of this plan.
+3. **Implemented.** OpenType-only `\font` path and fontdimen synthesis.
+4. **Implemented.** Two-pass shape/linebreak/reshape integration into
+   `tex-exec` and `tex-typeset` — the largest chunk of this plan.
 5. Complex-script and bidi follow-on (separate stage).
 6. Glyph-exact PDF output via Type0/CID font embedding driven by
    `tex-shape` (separate stage, depends on the PDF backend's font-embedding

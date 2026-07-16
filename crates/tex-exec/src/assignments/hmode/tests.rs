@@ -173,6 +173,171 @@ fn opentype_cmap_accepts_a_non_byte_horizontal_character() {
     ));
 }
 
+fn opentype_test_font(stores: &mut Universe, points: i32) -> tex_state::ids::FontId {
+    use tex_fonts::{
+        AcceptedFontContainers, FontFeaturePolicy, FontLimits, FontPurposes, FontRequest,
+        FontRequestKey, OpenTypeFont, OpenTypeProgramSelection, ResolvedFont, VariationSelection,
+        WritingDirection,
+    };
+
+    let features = FontFeaturePolicy::default();
+    let key = FontRequestKey::new(
+        format!("cmu-serif-shaping-{points}"),
+        0,
+        VariationSelection::default(),
+        features.clone(),
+    )
+    .expect("font key");
+    let font = OpenTypeFont::parse(
+        &FontRequest {
+            key: key.clone(),
+            accepted_containers: AcceptedFontContainers::WASM,
+            purposes: FontPurposes::LAYOUT_AND_HTML,
+        },
+        ResolvedFont {
+            request: key,
+            container: tex_fonts::FontContainer::Woff2,
+            declared_object_sha256: None,
+            declared_program_identity: None,
+            provenance: None,
+            bytes: include_bytes!("../../../../umber-wasm/assets/cmu-serif-500-roman.woff2")
+                .to_vec(),
+        },
+        FontLimits::default(),
+    )
+    .expect("fixture font");
+    let size = Scaled::from_raw(points * Scaled::UNITY);
+    stores.intern_font(tex_fonts::LoadedFont::new_opentype(
+        "cmu-serif-shaping",
+        "cmu-serif-shaping.woff2",
+        size,
+        size,
+        OpenTypeProgramSelection {
+            font,
+            variation: VariationSelection::default(),
+            features,
+            direction: WritingDirection::LeftToRight,
+        },
+    ))
+}
+
+#[test]
+fn opentype_run_is_batched_and_uses_shaped_cluster_advance() {
+    let mut stores = Universe::new();
+    let font = opentype_test_font(&mut stores, 10);
+    stores.set_current_font(font);
+    let mut nest = ModeNest::new();
+
+    for ch in "ffi".chars() {
+        append_hchar(&mut nest, &mut stores, ch, OriginId::UNKNOWN);
+    }
+    flush_pending_hchars(&mut nest, &mut stores).expect("run flushes");
+
+    let nodes = nest.current_list().nodes();
+    assert_eq!(
+        nodes
+            .iter()
+            .filter(|node| matches!(node, Node::Char { .. }))
+            .count(),
+        3
+    );
+    assert!(nodes.iter().any(|node| matches!(
+        node,
+        Node::Kern {
+            kind: KernKind::Font,
+            ..
+        }
+    )));
+    let shaped = tex_shape::shape_run(
+        stores.font(font).shaping_font().expect("fixture shapes"),
+        "ffi",
+        stores
+            .font(font)
+            .shaping_features()
+            .expect("feature policy"),
+        tex_shape::Direction::LeftToRight,
+    );
+    let expected: i32 = shaped
+        .glyphs
+        .iter()
+        .map(|glyph| glyph.x_advance.raw())
+        .sum();
+    let actual: i32 = nodes
+        .iter()
+        .map(|node| match node {
+            Node::Char { ch, .. } => stores
+                .font_character_metrics(font, *ch)
+                .expect("mapped character")
+                .width
+                .raw(),
+            Node::Kern { amount, .. } => amount.raw(),
+            _ => 0,
+        })
+        .sum();
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn reshaping_respects_font_kern_glue_and_discretionary_boundaries() {
+    let mut stores = Universe::new();
+    let first = opentype_test_font(&mut stores, 10);
+    let second = opentype_test_font(&mut stores, 12);
+    let empty = stores.freeze_node_list(&[]);
+    let glue = stores.glue_param(GlueParam::SPACE_SKIP);
+    let boundary_nodes = [
+        Node::Kern {
+            amount: Scaled::from_raw(17),
+            kind: KernKind::Explicit,
+        },
+        Node::Glue {
+            spec: glue,
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+        Node::Disc {
+            kind: DiscKind::Discretionary,
+            pre: empty,
+            post: empty,
+            replace: empty,
+        },
+    ];
+
+    for boundary in boundary_nodes {
+        let mut nodes = vec![
+            Node::Char {
+                font: first,
+                ch: 'f',
+                origin: OriginId::UNKNOWN,
+            },
+            boundary.clone(),
+            Node::Char {
+                font: first,
+                ch: 'i',
+                origin: OriginId::UNKNOWN,
+            },
+            Node::Char {
+                font: second,
+                ch: 'f',
+                origin: OriginId::UNKNOWN,
+            },
+        ];
+        reshape_open_type_runs(&stores, &mut nodes);
+        let boundary_index = nodes
+            .iter()
+            .position(|node| node == &boundary)
+            .expect("boundary retained");
+        assert!(matches!(
+            nodes[boundary_index - 1],
+            Node::Char { ch: 'f', .. }
+        ));
+        assert!(
+            nodes[boundary_index + 1..]
+                .iter()
+                .any(|node| matches!(node, Node::Char { ch: 'i', .. }))
+        );
+    }
+}
+
 #[test]
 fn flushing_a_character_run_appends_its_right_boundary_kern() {
     use tex_fonts::metrics::CharTag;

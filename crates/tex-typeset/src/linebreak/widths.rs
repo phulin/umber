@@ -171,6 +171,10 @@ pub(super) fn node_width_at<S: TypesetState>(state: &S, nodes: &[Node], index: u
             }
         }
         Node::Kern { amount, kind } => {
+            // OpenType pass-1 cluster advances are carried as Font kern
+            // adjustments beside their source character nodes. Counting the
+            // adjustment here makes the accumulated width equal the shaped
+            // cluster advance rather than the sum of cmap glyph advances.
             widths.natural = add_scaled(widths.natural, *amount);
             if *kind == tex_state::node::KernKind::Font {
                 add_font_kern_expansion(state, &mut widths, nodes, index, *amount);

@@ -230,6 +230,8 @@ pub struct OpenTypeFontSelection {
     pub object_identity: FontObjectIdentity,
     pub instance_identity: FontInstanceIdentity,
     pub container: FontContainer,
+    features: FontFeaturePolicy,
+    direction: WritingDirection,
 }
 
 /// A validated OpenType program paired with one loaded TeX font size.
@@ -379,6 +381,8 @@ impl LoadedFont {
                 direction,
             ),
             container,
+            features,
+            direction,
         });
         self
     }
@@ -398,6 +402,18 @@ impl LoadedFont {
             }),
             FontMetricsSource::Tfm(_) => None,
         }
+    }
+
+    /// OpenType feature policy selected for this immutable font instance.
+    #[must_use]
+    pub fn shaping_features(&self) -> Option<&FontFeaturePolicy> {
+        self.opentype.as_ref().map(|selection| &selection.features)
+    }
+
+    /// Logical writing direction selected for this immutable font instance.
+    #[must_use]
+    pub fn shaping_direction(&self) -> Option<WritingDirection> {
+        self.opentype.as_ref().map(|selection| selection.direction)
     }
 
     #[must_use]

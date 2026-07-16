@@ -76,6 +76,38 @@ pub(crate) fn hyphenated_hlist(stores: &mut Universe, nodes: &[Node]) -> Vec<Nod
     out
 }
 
+/// Returns legal character boundaries for pass-1 OpenType shaping.
+pub(super) fn candidate_positions_for_chars(
+    stores: &Universe,
+    language: u8,
+    chars: &[PendingHChar],
+    left: usize,
+    right: usize,
+) -> Vec<usize> {
+    if chars.len() > 63 || chars.len() < left.saturating_add(right) {
+        return Vec::new();
+    }
+    let Some(first) = chars.first() else {
+        return Vec::new();
+    };
+    if !(0..=255).contains(&stores.font_hyphen_char(first.font))
+        || chars.iter().any(|entry| entry.font != first.font)
+    {
+        return Vec::new();
+    }
+    let Some(normalized) = chars
+        .iter()
+        .map(|entry| normalized_hyphen_code(stores, language, entry.ch))
+        .collect::<Option<String>>()
+    else {
+        return Vec::new();
+    };
+    if !normalized.starts_with(first.ch) && stores.int_param(IntParam::UC_HYPH) <= 0 {
+        return Vec::new();
+    }
+    stores.hyphen_positions_for_language(language, &normalized, left, right)
+}
+
 #[cfg(test)]
 pub(crate) fn test_hyphenated_word(stores: &mut Universe, nodes: &[Node]) -> Vec<Node> {
     let glue = stores.glue_param(tex_state::env::banks::GlueParam::PAR_SKIP);

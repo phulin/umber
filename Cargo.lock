@@ -1160,6 +1160,7 @@ dependencies = [
  "tex-fonts",
  "tex-lex",
  "tex-out",
+ "tex-shape",
  "tex-state",
  "tex-typeset",
 ]

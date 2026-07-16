@@ -289,6 +289,7 @@ fn break_current_paragraph(
     let mut line_nodes = Vec::new();
     let mut migrated = Vec::new();
     while let Some(mut broken) = materializer.materialize_next(stores, line_nodes) {
+        super::hmode::reshape_open_type_runs(stores, &mut broken.nodes);
         if adjusts_spacing {
             apply_line_expansion(stores, &mut broken.nodes, broken.dimensions.width)?;
         }
@@ -470,7 +471,8 @@ pub(crate) fn break_hlist(
     if let Some(first) = try_line_break_without_hyphenation(stores, &hlist, &line_params) {
         first.with_nodes(hlist)
     } else {
-        let hyphenated = super::hyphenation::hyphenated_hlist(stores, &hlist);
+        let mut hyphenated = super::hyphenation::hyphenated_hlist(stores, &hlist);
+        super::hmode::reshape_open_type_runs(stores, &mut hyphenated);
         line_break_hyphenated(stores, &hyphenated, &line_params).with_nodes(hyphenated)
     }
 }

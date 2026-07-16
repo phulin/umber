@@ -61,13 +61,28 @@ pub fn shape_run(
     features: &FontFeaturePolicy,
     direction: Direction,
 ) -> ShapedRun {
+    shape_run_with_breaks(font, text, features, direction, &[])
+}
+
+/// Shapes a run while suppressing optional ligatures across candidate breaks.
+///
+/// Breaks are UTF-8 byte offsets between source characters. The range-limited
+/// feature toggles are the standard HarfBuzz mechanism used by paragraph
+/// builders to keep shaped clusters from straddling legal hyphenation points.
+pub fn shape_run_with_breaks(
+    font: ShapingFont<'_>,
+    text: &str,
+    features: &FontFeaturePolicy,
+    direction: Direction,
+    breaks: &[usize],
+) -> ShapedRun {
     let (font, size) = font.parts();
     let script = run_script(text);
     let mut buffer = UnicodeBuffer::new();
     buffer.push_str(text);
     buffer.set_direction(to_rustybuzz_direction(direction));
     buffer.set_script(to_rustybuzz_script(script));
-    let features = features
+    let mut features = features
         .settings()
         .iter()
         .map(|setting| {
@@ -78,6 +93,26 @@ pub fn shape_run(
             )
         })
         .collect::<Vec<_>>();
+    for &boundary in breaks {
+        if boundary > text.len() || !text.is_char_boundary(boundary) {
+            continue;
+        }
+        let Some(start) = text[..boundary]
+            .char_indices()
+            .next_back()
+            .map(|(index, _)| index)
+        else {
+            continue;
+        };
+        for tag in [*b"liga", *b"clig", *b"dlig", *b"hlig"] {
+            features.push(Feature {
+                tag: rustybuzz::ttf_parser::Tag::from_bytes(&tag),
+                value: 0,
+                start: start as u32,
+                end: boundary as u32,
+            });
+        }
+    }
 
     let glyphs = font.with_shaping_face(|face| {
         let output = rustybuzz::shape(face, &features, buffer);
@@ -108,11 +143,18 @@ fn project(units: i32, size: Scaled, units_per_em: u16) -> Scaled {
         .expect("validated font units and TeX font size fit scaled arithmetic")
 }
 
-fn run_script(text: &str) -> Script {
+#[must_use]
+pub fn run_script(text: &str) -> Script {
     text.chars()
         .map(|character| character.script())
         .find(|script| !matches!(script, Script::Common | Script::Inherited))
         .unwrap_or(Script::Common)
+}
+
+/// Returns the Unicode script property used by execution-side run itemization.
+#[must_use]
+pub fn character_script(character: char) -> Script {
+    character.script()
 }
 
 fn to_rustybuzz_direction(direction: Direction) -> rustybuzz::Direction {

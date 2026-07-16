@@ -11,6 +11,7 @@ tex-expand = { path = "../tex-expand" }
 tex-fonts = { path = "../tex-fonts" }
 tex-lex = { path = "../tex-lex" }
 tex-out = { path = "../tex-out" }
+tex-shape = { path = "../tex-shape" }
 tex-state = { path = "../tex-state" }
 tex-typeset = { path = "../tex-typeset" }
 

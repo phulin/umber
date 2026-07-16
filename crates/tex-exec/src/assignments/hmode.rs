@@ -80,6 +80,27 @@ fn flush_pending_hchar_run(nest: &mut ModeNest, stores: &mut Universe, insert_hy
     let Some(pending) = nest.current_list().pending_hchars() else {
         return;
     };
+    if is_ltr_shaping_font(stores, pending.first.font) && is_supported_script(pending.script) {
+        let language = nest.current_list().hyphen_language();
+        let breaks = if insert_hyphen_discs {
+            super::hyphenation::candidate_positions_for_chars(
+                stores,
+                language,
+                &pending.source,
+                stores.int_param(IntParam::LEFT_HYPHEN_MIN).max(1) as usize,
+                stores.int_param(IntParam::RIGHT_HYPHEN_MIN).max(1) as usize,
+            )
+        } else {
+            Vec::new()
+        };
+        let shaped = shape_open_type_chars(stores, &pending.source, &breaks);
+        let list = nest.current_list_mut();
+        let removed = list.take_pending_hchars();
+        debug_assert_eq!(removed, Some(pending));
+        list.set_no_boundary(false);
+        list.append(shaped);
+        return;
+    }
     let no_boundary = nest.current_list().no_boundary();
     let boundary = (!no_boundary)
         .then(|| boundary_command_node(stores, pending.first, true))
@@ -444,6 +465,15 @@ fn append_hchar(nest: &mut ModeNest, stores: &mut Universe, ch: char, origin: Or
     }
     let font = stores.current_font();
     if stores.font_character_exists(font, ch) {
+        if let Some(pending) = nest.current_list().pending_hchars()
+            && (is_ltr_shaping_font(stores, font)
+                || is_ltr_shaping_font(stores, pending.first.font))
+            && (pending.first.font != font
+                || !scripts_compatible(pending.script, tex_shape::character_script(ch)))
+        {
+            let insert_hyphen_discs = nest.current_mode() == Mode::Horizontal;
+            flush_pending_hchar_run(nest, stores, insert_hyphen_discs);
+        }
         append_pending_hchar(nest, stores, font, ch, origin);
         update_space_factor(nest, stores, ch);
         return;
@@ -466,6 +496,21 @@ fn append_pending_hchar(
             .begin_pending_hchars(font, ch, origin);
         return;
     };
+    if is_ltr_shaping_font(stores, font)
+        && is_supported_script(pending.script)
+        && is_supported_script(tex_shape::character_script(ch))
+    {
+        let script = tex_shape::character_script(ch);
+        if is_strong_script(script) {
+            pending.script = script;
+        }
+        pending
+            .source
+            .push(crate::mode::PendingHChar { font, ch, origin });
+        pending.current = PendingHRunChar::new(font, ch, origin);
+        nest.current_list_mut().set_pending_hchars(pending);
+        return;
+    }
     let next = PendingHRunChar::new(font, ch, origin);
     let emitted = match reconstitution_step(stores, pending.current, next.clone()) {
         ReconstitutionStep::Merge(merged) => {
@@ -498,6 +543,169 @@ fn append_pending_hchar(
         }
     }
     list.set_pending_hchars(pending);
+}
+
+fn is_strong_script(script: tex_shape::Script) -> bool {
+    !matches!(
+        script,
+        tex_shape::Script::Common | tex_shape::Script::Inherited | tex_shape::Script::Unknown
+    )
+}
+
+fn scripts_compatible(left: tex_shape::Script, right: tex_shape::Script) -> bool {
+    !is_strong_script(left) || !is_strong_script(right) || left == right
+}
+
+fn is_supported_script(script: tex_shape::Script) -> bool {
+    matches!(
+        script,
+        tex_shape::Script::Common
+            | tex_shape::Script::Inherited
+            | tex_shape::Script::Latin
+            | tex_shape::Script::Cyrillic
+            | tex_shape::Script::Greek
+            | tex_shape::Script::Han
+            | tex_shape::Script::Hiragana
+            | tex_shape::Script::Katakana
+            | tex_shape::Script::Hangul
+            | tex_shape::Script::Bopomofo
+    )
+}
+
+fn is_ltr_shaping_font(stores: &Universe, font: FontId) -> bool {
+    stores.font(font).shaping_font().is_some()
+        && stores.font(font).shaping_direction() == Some(tex_fonts::WritingDirection::LeftToRight)
+}
+
+fn shape_open_type_chars(
+    stores: &Universe,
+    chars: &[crate::mode::PendingHChar],
+    break_positions: &[usize],
+) -> Vec<Node> {
+    use std::collections::BTreeMap;
+
+    let Some(first) = chars.first() else {
+        return Vec::new();
+    };
+    let font = stores.font(first.font);
+    let shaping_font = font.shaping_font().expect("OpenType run font");
+    let features = font.shaping_features().expect("OpenType feature policy");
+    let text = chars.iter().map(|entry| entry.ch).collect::<String>();
+    let byte_starts = text
+        .char_indices()
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    let break_bytes = break_positions
+        .iter()
+        .filter_map(|&position| byte_starts.get(position).copied())
+        .collect::<Vec<_>>();
+    let shaped = tex_shape::shape_run_with_breaks(
+        shaping_font,
+        &text,
+        features,
+        tex_shape::Direction::LeftToRight,
+        &break_bytes,
+    );
+    let mut cluster_advances = BTreeMap::<usize, i64>::new();
+    for glyph in shaped.glyphs {
+        *cluster_advances.entry(glyph.cluster as usize).or_default() +=
+            i64::from(glyph.x_advance.raw());
+    }
+    let cluster_starts = cluster_advances.keys().copied().collect::<Vec<_>>();
+    let mut adjustments = vec![Scaled::from_raw(0); chars.len()];
+    for (cluster_index, &start_byte) in cluster_starts.iter().enumerate() {
+        let end_byte = cluster_starts
+            .get(cluster_index + 1)
+            .copied()
+            .unwrap_or(text.len());
+        let start = byte_starts.partition_point(|&byte| byte < start_byte);
+        let end = byte_starts.partition_point(|&byte| byte < end_byte);
+        if start >= end {
+            continue;
+        }
+        let nominal = chars[start..end].iter().fold(0_i64, |sum, entry| {
+            sum + i64::from(
+                stores
+                    .font_character_metrics(entry.font, entry.ch)
+                    .map_or(0, |metrics| metrics.width.raw()),
+            )
+        });
+        let shaped = cluster_advances[&start_byte];
+        adjustments[end - 1] = Scaled::from_raw(
+            i32::try_from(shaped - nominal).expect("shaped cluster adjustment fits Scaled"),
+        );
+    }
+    let mut nodes = Vec::with_capacity(chars.len() * 2);
+    for (entry, adjustment) in chars.iter().zip(adjustments) {
+        nodes.push(Node::Char {
+            font: entry.font,
+            ch: entry.ch,
+            origin: entry.origin,
+        });
+        if adjustment.raw() != 0 {
+            nodes.push(Node::Kern {
+                amount: adjustment,
+                kind: KernKind::Font,
+            });
+        }
+    }
+    nodes
+}
+
+/// Replaces provisional OpenType shaping adjustments in a materialized list.
+///
+/// Every call shapes caller-delimited runs independently. Paragraph code uses
+/// this after break selection, which restores ligatures on each unsplit side
+/// while preventing a glyph cluster from crossing the chosen line boundary.
+pub(super) fn reshape_open_type_runs(stores: &Universe, nodes: &mut Vec<Node>) {
+    let mut index = 0;
+    while index < nodes.len() {
+        let Node::Char { font, ch, origin } = nodes[index] else {
+            index += 1;
+            continue;
+        };
+        if !is_ltr_shaping_font(stores, font)
+            || !is_supported_script(tex_shape::character_script(ch))
+        {
+            index += 1;
+            continue;
+        }
+        let mut chars = vec![crate::mode::PendingHChar { font, ch, origin }];
+        let mut script = tex_shape::character_script(ch);
+        let start = index;
+        index += 1;
+        while index < nodes.len() {
+            match nodes[index] {
+                Node::Kern {
+                    kind: KernKind::Font,
+                    ..
+                } => index += 1,
+                Node::Char {
+                    font: next_font,
+                    ch: next_ch,
+                    origin: next_origin,
+                } if next_font == font
+                    && scripts_compatible(script, tex_shape::character_script(next_ch)) =>
+                {
+                    let next_script = tex_shape::character_script(next_ch);
+                    if is_strong_script(next_script) {
+                        script = next_script;
+                    }
+                    chars.push(crate::mode::PendingHChar {
+                        font,
+                        ch: next_ch,
+                        origin: next_origin,
+                    });
+                    index += 1;
+                }
+                _ => break,
+            }
+        }
+        let shaped = shape_open_type_chars(stores, &chars, &[]);
+        let shaped_len = shaped.len();
+        nodes.splice(start..index, shaped);
+        index = start + shaped_len;
+    }
 }
 
 pub(crate) fn reconstitute(

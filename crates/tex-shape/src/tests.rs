@@ -178,6 +178,29 @@ fn feature_policy_can_disable_ligatures() {
     );
 }
 
+#[test]
+fn candidate_break_suppresses_only_the_ligature_crossing_it() {
+    let features = FontFeaturePolicy::default();
+    let font = cmu_serif(features.clone());
+    let shaping_font = font.shaping_font().expect("OpenType fixture");
+    let unbroken = shape_run(shaping_font, "office", &features, Direction::LeftToRight);
+    let candidate = shape_run_with_breaks(
+        shaping_font,
+        "office",
+        &features,
+        Direction::LeftToRight,
+        &[2],
+    );
+
+    assert!(!unbroken.glyphs.iter().any(|glyph| glyph.cluster == 2));
+    assert!(
+        candidate.glyphs.iter().any(|glyph| glyph.cluster == 2),
+        "{:?}",
+        candidate.glyphs
+    );
+    assert!(candidate.glyphs.len() > unbroken.glyphs.len());
+}
+
 fn glyph(glyph_id: u32, cluster: u32, x_advance: i32, x_offset: i32) -> ShapedGlyph {
     glyph_full(glyph_id, cluster, x_advance, x_offset, 0)
 }
