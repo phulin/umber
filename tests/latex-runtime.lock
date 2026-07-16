@@ -1,6 +1,6 @@
-# Exact TeX Live 2025 inputs opened by the format-loaded LaTeX base corpus.
+# Exact TeX Live 2026 inputs opened by the format-loaded LaTeX base corpus.
 # Fields: source <kind> <texmf-dist-relative-path> <bytes> <sha256>.
-distribution texlive-2025
+distribution texlive-2026-r79639
 source tfm fonts/tfm/public/cm/cmbx10.tfm 1328 ae296e8e41b2b0f73e9a17fdc42c743b9ddcc58d23c30acaa3411206f7824780
 source tfm fonts/tfm/public/cm/cmbx12.tfm 1324 0eb2f13840155007c2d3c59b074322a3aa7358b9643aa314f3146468ae7f0806
 source tfm fonts/tfm/public/cm/cmex10.tfm 992 0890bccea1dd4d27f001ac30e86c63af35bc803e0557c35aafb1903c8d208e92
@@ -24,10 +24,10 @@ source tfm fonts/tfm/public/cm/cmsy7.tfm 1120 4f59bbf683e947c807158641621982dc83
 source tfm fonts/tfm/public/cm/cmsy8.tfm 1120 84c37f07ca360c41ad0a0fba7387d279d72457c69bdae03653208c683d8de6bc
 source tfm fonts/tfm/public/cm/cmti10.tfm 1480 46a66e937f809c4fbe317947b583a14b408aca41ecb835eca3be46391190432a
 source tfm fonts/tfm/public/cm/cmtt10.tfm 768 11f3331c958b696fd484fe45c28285622617a2593d7a34511a1d6b279e1578a2
-source tex tex/latex/base/article.cls 20144 44171ebeb4bbfd734a0fff29351073a0b51ed7407cd09dbd7a4530c669d3f833
-source tex tex/latex/base/bk10.clo 8288 06835bf7589e050c5e21100ca39a118f2027fbe2c4d2ae79a3b52fbd2981fdd6
-source tex tex/latex/base/book.cls 23268 53d9f87705424867adcb8d6e65c2b278df26a052b72adedb444b59acc9c9402d
-source tex tex/latex/base/letter.cls 13728 3986cac0a5b5264c8fe12e826cebce4d93fdd425dd2ac5faed6e077d7cf1bf49
-source tex tex/latex/base/report.cls 23203 91b6beec64fa747dd2494eae31148334956e1e1feb7afbaa43fc7e79b5782008
-source tex tex/latex/base/size10.clo 8448 ae73585b23be32320e6dba47659ebc7300922fd87abdc50eb1eb81cf7faaac4e
-source tex tex/latex/l3backend/l3backend-dvips.def 35454 3ffeb954071101c10422995800913dec324c06acc25f1d151bf56d849f1ad511
+source tex tex/latex/base/article.cls 20144 c09f5982893f8a092e69435caa151eef0d3cb4d7495abf23f08b640191cf81f6
+source tex tex/latex/base/bk10.clo 8288 c44ca4b67cc1ffe7d15b3e3d838f568c64bdb8e9d783767c1099653c1eaebbe3
+source tex tex/latex/base/book.cls 23268 ff9dcfb536554e5afd36ba4dd1fb8f15ac634c4ef108b0531475523f0d5d6762
+source tex tex/latex/base/letter.cls 13728 ee860156436b44919429b3068c7e0d5e91d219f405b6d3dc1a4448aa3b57b15a
+source tex tex/latex/base/report.cls 23203 15e827454ad6316cf9a7eceea4cfdb7c28c4428b6907f01c742f5dd86fa32790
+source tex tex/latex/base/size10.clo 8448 7a5ab9aa1794b8864e2963db211ca03b48a455c706190c7f85124c6ca9714183
+source tex tex/latex/l3backend/l3backend-dvips.def 36507 86d1f1ad37d84c76e90dfc3e8be115f066a611db5604eff41fb6a162a7ad78de

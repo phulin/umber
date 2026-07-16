@@ -8,7 +8,7 @@ selection fixtures. They are hand-authored contract data, not live-reference
 outputs, and both `umber-distribution` and `manifest-schema.test.js` consume
 the exact same files.
 
-`tests/latex-source.lock` pins the common TeX Live 2025 files plus
+`tests/latex-source.lock` pins the common TeX Live 2026 files plus
 mode-specific repository-local format configuration inputs, byte lengths, and
 SHA-256 identities opened while building the Umber-native `latex.fmt` and
 `pdflatex.fmt`. Common `source`/`local` records apply to both modes;
@@ -40,7 +40,7 @@ equivalence gate, while `pdftexconfig.tex` pins pdfLaTeX's output policy without
 depending on mutable TeX Live configuration state.
 The four base-class documents are run for three clean passes by
 `scripts/check-latex-corpus.sh`, which requires banner-normalized byte-identical
-DVI and exact `.aux`/`.toc`/`.lof`/`.lot`/`.out` file parity with TeX Live 2025.
+DVI and exact `.aux`/`.toc`/`.lof`/`.lot`/`.out` file parity with TeX Live 2026.
 Their union of format-loaded TeX/TFM inputs must exactly match
 `latex-runtime.lock`; `scripts/build-wasm-latex-bundle.sh` publishes that same
 typed closure and the generated native format through the WASM manifest.

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
-texmf_dist=/usr/local/texlive/2025/texmf-dist
+texmf_dist=/usr/local/texlive/2026/texmf-dist
 keep_work=false
 expected_first_error=
 
@@ -64,15 +64,16 @@ check_hash() {
   }
 }
 
-check_hash "$latex_ltx" 8420904f06764a8cc2ec81e13215c22fec8e599c269160dcc02ad84507851f32
-check_hash "$expl3_ltx" 5fe990d648915d271e08c1576f2e8f01ec72b0d769efce7f290915fab9bfbfeb
-check_hash "$expl3_code" 7e765c50730451ddf9f1d4dec8a167ba6a3af567325caacb6a74cde3e1e1cab7
-check_hash "$unicode_data/UnicodeData.txt" ff58e5823bd095166564a006e47d111130813dcf8bf234ef79fa51a870edb48f
-check_hash "$unicode_data/CaseFolding.txt" 6f1f9c588eb4a5c718d9e8f93b782685e5c7fec872cf05e8e6878053599e09bb
-check_hash "$unicode_data/SpecialCasing.txt" 8d5de354eef79f2395a54c9c7dcebbaf3d30fc962d0f85611ea97aa973a0c451
-check_hash "$unicode_data/GraphemeBreakProperty.txt" c29360bd6f7132811d701d29069541e827eb44bfc4c8fbde8c370d6982689dc1
-check_hash "$babel_area/hyphen.cfg" 402fa9a57546f67f24a4c047ee387e6d6a4bb74bddf8434f15d3b72bb3550788
-check_hash "$babel_area/switch.def" 57655f356d92882f0ea91f9e613fab999ea5a779a81841151c3bc6bb18539b6d
+check_hash "$latex_ltx" 19d3b75884681539e1ef7a427af472bfe80d9ff214b84b9ca45e790d3e89c5c4
+check_hash "$expl3_ltx" 822839097244afbd63ee1bfdf17f079717e35c349a77aa13437aaf7b7f62b31b
+check_hash "$expl3_code" f32e3b68513ff880ad4aaa2822df00526f73b28bc008fa0d4ae11aa74c53945d
+check_hash "$unicode_data/UnicodeData.txt" 2e1efc1dcb59c575eedf5ccae60f95229f706ee6d031835247d843c11d96470c
+check_hash "$unicode_data/CaseFolding.txt" ff8d8fefbf123574205085d6714c36149eb946d717a0c585c27f0f4ef58c4183
+check_hash "$unicode_data/SpecialCasing.txt" efc25faf19de21b92c1194c111c932e03d2a5eaf18194e33f1156e96de4c9588
+check_hash "$unicode_data/GraphemeBreakProperty.txt" d6b51d1d2ae5c33b451b7ed994b48f1f4dc62b2272a5831e7fd418514a6bae89
+check_hash "$unicode_data/WordBreakProperty.txt" 72274cac1e6b919507db35655c3e175aa27274668a1ece95c28d2069f2ad9852
+check_hash "$babel_area/hyphen.cfg" 0451f25065b15542fb2703281ac8442739eb5d0658fb8c1a3be41a01e5c8be1b
+check_hash "$babel_area/switch.def" 38b68dcf48519643a5bd7e09c20fbf1307a92c2470bd129397db7c11c0bf6c19
 check_hash "$hyphen_area/hyphen.tex" 2c18acdc04c1a066aeb1759905e7ca449f0616c314b5ed6aebe55b9d4a89b8d4
 [[ -d "$font_area" ]] || { echo "missing pinned font area: $font_area" >&2; exit 2; }
 [[ -d "$latex_font_area" ]] || { echo "missing pinned font area: $latex_font_area" >&2; exit 2; }

@@ -5,7 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 lock_file="${repo_root}/tests/latex-source.lock"
 engine="latex"
 output_dir=""
-texmf_dist="${UMBER_TEXMF_DIST:-/usr/local/texlive/2025/texmf-dist}"
+texmf_dist="${UMBER_TEXMF_DIST:-/usr/local/texlive/2026/texmf-dist}"
 
 usage() {
   cat <<'EOF'

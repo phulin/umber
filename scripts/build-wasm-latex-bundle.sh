@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-texmf_dist="${UMBER_TEXMF_DIST:-/usr/local/texlive/2025/texmf-dist}"
+texmf_dist="${UMBER_TEXMF_DIST:-/usr/local/texlive/2026/texmf-dist}"
 runtime_lock="${repo_root}/tests/latex-runtime.lock"
 output_dir="${repo_root}/target/latex-wasm"
 objects_base_url="https://example.invalid/umber/latex/objects/"
