@@ -1,9 +1,9 @@
 # Automatic CTAN Resource Fetch
 
-Status: design plan. Builds on the completed VFS substrate
-([umber_vfs.md](umber_vfs.md)) and resource session protocol
-([wasm_resource_acquisition.md](wasm_resource_acquisition.md)). Nothing in
-this document is implemented yet.
+Status: design plan, tracked by the `umber2-mbwq` epic. Builds on the
+completed VFS substrate ([umber_vfs.md](umber_vfs.md)) and resource session
+protocol ([wasm_resource_acquisition.md](wasm_resource_acquisition.md)).
+Nothing in this document is implemented yet.
 
 ## Problem
 
@@ -220,9 +220,9 @@ policy, not architecture:
 
 ## Implementation phases
 
-Each phase should become a `bd` issue under one epic when work starts; each
-lands with its tests and keeps `scripts/check-and-test.sh` and
-`scripts/check-wasm.sh` green.
+Each phase is a `bd` issue under the `umber2-mbwq` epic (phase N is
+`umber2-mbwq.N`); each lands with its tests and keeps
+`scripts/check-and-test.sh` and `scripts/check-wasm.sh` green.
 
 1. **Shared manifest crate.** Create `crates/umber-distribution` with the
    manifest model, parser, request-key encoding, and job/miss selection.
