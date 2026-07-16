@@ -5,7 +5,47 @@ use std::fmt;
 use crate::json::{self, Value};
 
 pub const MANIFEST_SCHEMA: u32 = 1;
+pub const SHARDED_ROOT_SCHEMA: u32 = 2;
+pub const INDEX_SHARD_SCHEMA: u32 = 1;
+pub const MAX_SHARD_BITS: u8 = 16;
 const MAX_OBJECT_BYTES: u64 = 128 * 1024 * 1024;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ShardedManifestRoot {
+    pub schema: u32,
+    pub distribution: String,
+    pub objects_base_url: String,
+    pub shard_bits: u8,
+    pub shard_count: u32,
+    pub shards: Vec<String>,
+    pub formats: BTreeMap<String, ManifestFormat>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ManifestShard {
+    pub schema: u32,
+    pub distribution: String,
+    pub index: u32,
+    pub files: BTreeMap<String, ShardFile>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ShardFile {
+    pub virtual_path: String,
+    pub object: String,
+    pub sha256: String,
+    pub bytes: u64,
+    pub dependencies: Vec<DependencyHint>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DependencyHint {
+    pub key: String,
+    pub virtual_path: String,
+    pub object: String,
+    pub sha256: String,
+    pub bytes: u64,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Manifest {
@@ -56,6 +96,28 @@ pub struct ManifestFormat {
 }
 
 impl ManifestFile {
+    #[must_use]
+    pub fn object_entry(&self) -> ObjectEntry {
+        ObjectEntry {
+            object: self.object.clone(),
+            sha256: self.sha256.clone(),
+            bytes: self.bytes,
+        }
+    }
+}
+
+impl ShardFile {
+    #[must_use]
+    pub fn object_entry(&self) -> ObjectEntry {
+        ObjectEntry {
+            object: self.object.clone(),
+            sha256: self.sha256.clone(),
+            bytes: self.bytes,
+        }
+    }
+}
+
+impl DependencyHint {
     #[must_use]
     pub fn object_entry(&self) -> ObjectEntry {
         ObjectEntry {
@@ -163,6 +225,175 @@ impl Manifest {
         out.push_str("\n}\n");
         out
     }
+}
+
+impl ShardedManifestRoot {
+    pub fn parse(text: &str) -> Result<Self, ManifestParseError> {
+        let value =
+            json::parse(text).map_err(|error| ManifestParseError::new(error.to_string()))?;
+        let mut root = object(value, "root manifest")?;
+        let schema = u32_value(take(&mut root, "schema", "root manifest")?, "schema")?;
+        if schema != SHARDED_ROOT_SCHEMA {
+            return Err(ManifestParseError::new(format!(
+                "unsupported root manifest schema {schema}; expected {SHARDED_ROOT_SCHEMA}"
+            )));
+        }
+        let distribution = string(
+            take(&mut root, "distribution", "root manifest")?,
+            "distribution",
+        )?;
+        validate_distribution(&distribution)?;
+        let objects_base_url = string(
+            take(&mut root, "objectsBaseUrl", "root manifest")?,
+            "objectsBaseUrl",
+        )?;
+        validate_base_url(&objects_base_url)?;
+        let shard_bits = u8::try_from(number(
+            take(&mut root, "shardBits", "root manifest")?,
+            "shardBits",
+        )?)
+        .map_err(|_| ManifestParseError::new("shardBits exceeds u8"))?;
+        if shard_bits > MAX_SHARD_BITS {
+            return Err(ManifestParseError::new(format!(
+                "shardBits must be between 0 and {MAX_SHARD_BITS}"
+            )));
+        }
+        let shard_count = u32_value(
+            take(&mut root, "shardCount", "root manifest")?,
+            "shardCount",
+        )?;
+        let shards = digest_array(take(&mut root, "shards", "root manifest")?, "shards")?;
+        let expected_count = 1_u32 << shard_bits;
+        if shard_count != expected_count || shards.len() != expected_count as usize {
+            return Err(ManifestParseError::new(
+                "root manifest shard metadata is inconsistent",
+            ));
+        }
+        let formats = optional_object(&mut root, "formats")?
+            .map(parse_formats)
+            .transpose()?
+            .unwrap_or_default();
+        finish(root, "root manifest")?;
+        validate_cross_references(&BTreeMap::new(), &BTreeMap::new(), &formats)?;
+        Ok(Self {
+            schema,
+            distribution,
+            objects_base_url,
+            shard_bits,
+            shard_count,
+            shards,
+            formats,
+        })
+    }
+
+    #[must_use]
+    pub fn shard_digest(&self, index: u32) -> Option<&str> {
+        self.shards.get(index as usize).map(String::as_str)
+    }
+}
+
+impl ManifestShard {
+    pub fn parse(text: &str) -> Result<Self, ManifestParseError> {
+        let value =
+            json::parse(text).map_err(|error| ManifestParseError::new(error.to_string()))?;
+        let mut root = object(value, "index shard")?;
+        let schema = u32_value(take(&mut root, "schema", "index shard")?, "schema")?;
+        if schema != INDEX_SHARD_SCHEMA {
+            return Err(ManifestParseError::new(format!(
+                "unsupported index shard schema {schema}; expected {INDEX_SHARD_SCHEMA}"
+            )));
+        }
+        let distribution = string(
+            take(&mut root, "distribution", "index shard")?,
+            "distribution",
+        )?;
+        validate_distribution(&distribution)?;
+        let index = u32_value(take(&mut root, "index", "index shard")?, "index")?;
+        let files = parse_shard_files(take(&mut root, "files", "index shard")?)?;
+        finish(root, "index shard")?;
+        Ok(Self {
+            schema,
+            distribution,
+            index,
+            files,
+        })
+    }
+
+    pub fn validate_identity(
+        &self,
+        root: &ShardedManifestRoot,
+        expected_index: u32,
+    ) -> Result<(), ManifestParseError> {
+        if self.distribution != root.distribution || self.index != expected_index {
+            return Err(ManifestParseError::new(format!(
+                "index shard {expected_index} identity does not match root manifest"
+            )));
+        }
+        Ok(())
+    }
+}
+
+fn parse_shard_files(value: Value) -> Result<BTreeMap<String, ShardFile>, ManifestParseError> {
+    let entries = object(value, "files")?;
+    let mut files = BTreeMap::new();
+    for (key, value) in entries {
+        validate_file_key(&key)?;
+        let mut entry = object(value, &format!("file {key}"))?;
+        let virtual_path = string(take(&mut entry, "virtualPath", &key)?, "virtualPath")?;
+        validate_path(&virtual_path, "/texlive/", "virtual path")?;
+        let object_entry = parse_object_entry(&mut entry, &key)?;
+        let dependencies = match entry.remove("dependencies") {
+            Some(value) => parse_dependency_hints(value, &key)?,
+            None => Vec::new(),
+        };
+        finish(entry, &format!("file {key}"))?;
+        files.insert(
+            key,
+            ShardFile {
+                virtual_path,
+                object: object_entry.object,
+                sha256: object_entry.sha256,
+                bytes: object_entry.bytes,
+                dependencies,
+            },
+        );
+    }
+    Ok(files)
+}
+
+fn parse_dependency_hints(
+    value: Value,
+    owner: &str,
+) -> Result<Vec<DependencyHint>, ManifestParseError> {
+    let Value::Array(values) = value else {
+        return Err(ManifestParseError::new(format!(
+            "dependencies for {owner} must be an array"
+        )));
+    };
+    let mut output = Vec::with_capacity(values.len());
+    let mut seen = BTreeSet::new();
+    for value in values {
+        let mut entry = object(value, &format!("dependency for {owner}"))?;
+        let key = string(take(&mut entry, "key", owner)?, "key")?;
+        validate_file_key(&key)?;
+        if !seen.insert(key.clone()) {
+            return Err(ManifestParseError::new(format!(
+                "dependencies for {owner} contains duplicate {key}"
+            )));
+        }
+        let virtual_path = string(take(&mut entry, "virtualPath", &key)?, "virtualPath")?;
+        validate_path(&virtual_path, "/texlive/", "virtual path")?;
+        let object_entry = parse_object_entry(&mut entry, &key)?;
+        finish(entry, &format!("dependency {key}"))?;
+        output.push(DependencyHint {
+            key,
+            virtual_path,
+            object: object_entry.object,
+            sha256: object_entry.sha256,
+            bytes: object_entry.bytes,
+        });
+    }
+    Ok(output)
 }
 
 fn parse_files(value: Value) -> Result<BTreeMap<String, ManifestFile>, ManifestParseError> {
@@ -534,6 +765,14 @@ fn string_array(value: Value, label: &str) -> Result<Vec<String>, ManifestParseE
         output.push(value);
     }
     Ok(output)
+}
+
+fn digest_array(value: Value, label: &str) -> Result<Vec<String>, ManifestParseError> {
+    let values = string_array(value, label)?;
+    for digest in &values {
+        validate_digest(digest, label)?;
+    }
+    Ok(values)
 }
 
 fn write_map<T>(out: &mut String, values: &BTreeMap<String, T>, write: fn(&mut String, &T, usize)) {

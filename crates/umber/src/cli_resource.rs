@@ -9,11 +9,11 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use sha2::{Digest, Sha256};
-use tex_fonts::{AcceptedFontContainers, FontContainer, FontObjectIdentity, ResolvedFont};
+use tex_fonts::AcceptedFontContainers;
 use tex_state::World;
 use umber_distribution::{
-    FileKind as DistributionFileKind, FileRequestKey as DistributionFileRequestKey, Manifest,
-    ManifestMiss, ManifestRequest, select,
+    DependencyHint, FileKind as DistributionFileKind, FileRequestKey as DistributionFileRequestKey,
+    ManifestShard, ShardFile, ShardedManifestRoot,
 };
 use umber_fetch::{
     FetchCancellation, FetchClient, FetchClientConfig, FetchFailure, FetchRequest,
@@ -26,10 +26,12 @@ use crate::{
     TexFontSearchPath, TexInputSearchPath, VirtualCompileSession,
 };
 
-pub const DEFAULT_DISTRIBUTION_URL: &str = "https://assets.umber.ink/texlive/latest/manifest.json";
-// Phase 6 rotates this placeholder to the digest of the first published snapshot.
+pub const DEFAULT_DISTRIBUTION_URL: &str =
+    "https://assets.umber.ink/texlive/texlive-2026-r79639/manifest-v2.json";
 pub const DEFAULT_DISTRIBUTION_SHA256: &str =
-    "0000000000000000000000000000000000000000000000000000000000000000";
+    "7c2784bca891844d37465083b93466b78429c7282d7ba915f40a08d150651fd0";
+
+const MAX_INDEX_SHARD_BYTES: u64 = 32 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct NativeRunOptions {
@@ -55,6 +57,10 @@ pub enum NativeRunError {
         actual: String,
     },
     ManifestParse(String),
+    ManifestTooLarge {
+        label: String,
+        limit: u64,
+    },
     DistributionPinRequired(String),
     DistributionUnavailable(Vec<String>),
     Selection(String),
@@ -75,6 +81,9 @@ impl fmt::Display for NativeRunError {
                 "distribution manifest digest mismatch: expected {expected}, received {actual}"
             ),
             Self::ManifestParse(message) => write!(f, "invalid distribution manifest: {message}"),
+            Self::ManifestTooLarge { label, limit } => {
+                write!(f, "{label} exceeds the {limit}-byte limit")
+            }
             Self::DistributionPinRequired(source) => write!(
                 f,
                 "distribution {source} requires --distribution-sha256 (or UMBER_DISTRIBUTION_SHA256)"
@@ -334,8 +343,9 @@ impl LocalResolver {
 
 #[derive(Clone)]
 struct LoadedDistribution {
-    manifest: Manifest,
+    root: ShardedManifestRoot,
     local_root: Option<PathBuf>,
+    shards: BTreeMap<u32, ManifestShard>,
 }
 
 struct DistributionResolver {
@@ -395,8 +405,7 @@ impl DistributionResolver {
         if unresolved.is_empty() {
             return Ok(responses);
         }
-        let loaded = self.load(cancellation)?.clone();
-        let mut manifest_requests = Vec::new();
+        let root = self.load(cancellation)?.root.clone();
         let mut original_files = BTreeMap::new();
         for request in &unresolved {
             let kind = match request.key().kind() {
@@ -411,71 +420,58 @@ impl DistributionResolver {
             let key = DistributionFileRequestKey::new(kind, request.key().name())
                 .map_err(|error| NativeRunError::Selection(error.to_string()))?;
             original_files.insert(key.manifest_key().to_string(), request.key().clone());
-            manifest_requests.push(ManifestRequest::File(key));
         }
         for request in requests {
             if let ResourceRequest::Font(request) = request {
-                manifest_requests.push(ManifestRequest::Font(
-                    umber_distribution::FontRequestKey::new(request.key.logical_name())
-                        .map_err(|error| NativeRunError::Selection(error.to_string()))?,
-                ));
+                responses.push(ResourceResponse::FontUnavailable(request.key.clone()));
             }
         }
-        let selection = select(&loaded.manifest, &manifest_requests);
-        let mut jobs = selection.jobs;
-        let fetch_requests = jobs
+        let mut keys_by_shard = BTreeMap::<u32, Vec<String>>::new();
+        for key in original_files.keys() {
+            keys_by_shard
+                .entry(shard_index(key, root.shard_bits))
+                .or_default()
+                .push(key.clone());
+        }
+        let mut required = BTreeMap::<String, ShardFile>::new();
+        let mut hints = BTreeMap::<String, DependencyHint>::new();
+        for (index, keys) in keys_by_shard {
+            let shard = self.load_shard(index, cancellation)?;
+            for key in keys {
+                let Some(entry) = shard.files.get(&key) else {
+                    let original = original_files
+                        .remove(&key)
+                        .expect("requested key has an original file request");
+                    responses.push(ResourceResponse::FileUnavailable(original));
+                    continue;
+                };
+                required.insert(key.clone(), entry.clone());
+                for dependency in &entry.dependencies {
+                    hints
+                        .entry(dependency.key.clone())
+                        .or_insert_with(|| dependency.clone());
+                }
+            }
+        }
+        let mut fetch_requests = required
             .iter()
-            .map(|job| FetchRequest {
-                request_key: job.manifest_key.to_string(),
-                object: job.object.clone(),
+            .map(|(key, entry)| FetchRequest {
+                request_key: key.clone(),
+                object: entry.object_entry(),
                 max_bytes: crate::SessionLimits::default().one_file_bytes as u64,
             })
             .collect::<Vec<_>>();
-        let fetched = if self.offline {
-            let mut found = Vec::new();
-            let mut missing = Vec::new();
-            for request in &fetch_requests {
-                check_cancelled(cancellation)?;
-                match self
-                    .cache
-                    .load_object(&request.object.sha256, request.object.bytes)
-                {
-                    Ok(Some(bytes)) => found.push((request.request_key.clone(), bytes, true)),
-                    Ok(None) => missing.push(request.request_key.clone()),
-                    Err(error) => return Err(NativeRunError::Cache(error.to_string())),
-                }
-            }
-            if !missing.is_empty() {
-                return Err(NativeRunError::DistributionUnavailable(missing));
-            }
-            found
-        } else if let Some(root) = &loaded.local_root {
-            let mut found = Vec::new();
-            for request in &fetch_requests {
-                check_cancelled(cancellation)?;
-                let bytes = read(&root.join(&request.object.object))?;
-                check_cancelled(cancellation)?;
-                self.cache
-                    .store_object(&request.object.sha256, request.object.bytes, &bytes)
-                    .map_err(|error| NativeRunError::Cache(error.to_string()))?;
-                found.push((request.request_key.clone(), bytes, false));
-            }
-            found
-        } else {
-            let client = FetchClient::new(FetchClientConfig::default())
-                .map_err(|error| NativeRunError::Fetch(error.to_string()))?;
-            client
-                .fetch_batch_cancellable(
-                    &self.cache,
-                    &loaded.manifest.objects_base_url,
-                    &fetch_requests,
-                    cancellation,
-                )
-                .map_err(map_fetch_error)?
-                .into_iter()
-                .map(|object| (object.request_key, object.bytes, object.cache_hit))
-                .collect()
-        };
+        fetch_requests.extend(
+            hints
+                .iter()
+                .filter(|(key, _)| !required.contains_key(*key))
+                .map(|(key, entry)| FetchRequest {
+                    request_key: key.clone(),
+                    object: entry.object_entry(),
+                    max_bytes: crate::SessionLimits::default().one_file_bytes as u64,
+                }),
+        );
+        let fetched = self.fetch_objects(&root, &fetch_requests, cancellation)?;
         if fetched.iter().any(|(_, _, cache_hit)| !cache_hit) {
             eprintln!("umber: acquired {} distribution resource(s)", fetched.len());
         }
@@ -483,91 +479,19 @@ impl DistributionResolver {
             .into_iter()
             .map(|(key, bytes, _)| (key, bytes))
             .collect::<BTreeMap<_, _>>();
-        for job in jobs
-            .drain(..)
-            .filter(|job| job.requirement == umber_distribution::JobRequirement::Required)
-        {
+        for (manifest_key, entry) in required {
             let data = bytes
-                .remove(job.manifest_key.as_str())
+                .remove(&manifest_key)
                 .expect("fetched required object");
-            match job.request {
-                ManifestRequest::File(_) => {
-                    let key = original_files
-                        .remove(job.manifest_key.as_str())
-                        .expect("original file request");
-                    let path = loaded
-                        .manifest
-                        .files
-                        .get(job.manifest_key.as_str())
-                        .expect("selected file")
-                        .virtual_path
-                        .clone();
-                    responses.push(ResourceResponse::File(ResolvedFile {
-                        request: key,
-                        expected_digest: Some(FileContentId::for_bytes(&data)),
-                        virtual_path: path,
-                        bytes: data,
-                    }));
-                }
-                ManifestRequest::Font(key) => {
-                    let entry = loaded
-                        .manifest
-                        .fonts
-                        .get(job.manifest_key.as_str())
-                        .expect("selected font");
-                    let container = match entry.container.as_str() {
-                        "woff2" => FontContainer::Woff2,
-                        "otf" => FontContainer::OpenType,
-                        "ttf" => FontContainer::TrueType,
-                        "ttc" => FontContainer::Collection,
-                        other => {
-                            return Err(NativeRunError::Selection(format!(
-                                "unsupported font container {other}"
-                            )));
-                        }
-                    };
-                    let request = requests
-                        .iter()
-                        .find_map(|request| match request {
-                            ResourceRequest::Font(request)
-                                if request.key.logical_name() == key.logical_name() =>
-                            {
-                                Some(request.key.clone())
-                            }
-                            _ => None,
-                        })
-                        .expect("original font request");
-                    responses.push(ResourceResponse::Font(ResolvedFont {
-                        request,
-                        container,
-                        declared_object_sha256: Some(FontObjectIdentity::for_bytes(&data)),
-                        declared_program_identity: None,
-                        provenance: entry.provenance.clone(),
-                        bytes: data,
-                    }));
-                }
-            }
-        }
-        for miss in selection.misses {
-            match miss {
-                ManifestMiss::File(key) => {
-                    if let Some(original) = original_files.remove(key.manifest_key().as_str()) {
-                        responses.push(ResourceResponse::FileUnavailable(original));
-                    }
-                }
-                ManifestMiss::Font(key) => {
-                    if let Some(request) = requests.iter().find_map(|request| match request {
-                        ResourceRequest::Font(request)
-                            if request.key.logical_name() == key.logical_name() =>
-                        {
-                            Some(request.key.clone())
-                        }
-                        _ => None,
-                    }) {
-                        responses.push(ResourceResponse::FontUnavailable(request));
-                    }
-                }
-            }
+            let key = original_files
+                .remove(&manifest_key)
+                .expect("original file request");
+            responses.push(ResourceResponse::File(ResolvedFile {
+                request: key,
+                expected_digest: Some(FileContentId::for_bytes(&data)),
+                virtual_path: entry.virtual_path,
+                bytes: data,
+            }));
         }
         Ok(responses)
     }
@@ -584,7 +508,7 @@ impl DistributionResolver {
             .ok_or_else(|| NativeRunError::Format("format name is not valid UTF-8".into()))?;
         let loaded = self.load(cancellation)?.clone();
         let entry = loaded
-            .manifest
+            .root
             .formats
             .get(name)
             .ok_or_else(|| NativeRunError::Format(format!("manifest has no format named {name}")))?
@@ -621,7 +545,7 @@ impl DistributionResolver {
             bytes: entry.bytes,
         };
         if let Some(root) = &loaded.local_root {
-            let bytes = read(&root.join(&object.object))?;
+            let bytes = read(&local_object_path(root, &object.object))?;
             check_cancelled(cancellation)?;
             self.cache
                 .store_object(&object.sha256, object.bytes, &bytes)
@@ -638,7 +562,7 @@ impl DistributionResolver {
             .map_err(|error| NativeRunError::Fetch(error.to_string()))?
             .fetch_batch_cancellable(
                 &self.cache,
-                &loaded.manifest.objects_base_url,
+                &loaded.root.objects_base_url,
                 &[request],
                 cancellation,
             )
@@ -649,6 +573,133 @@ impl DistributionResolver {
             eprintln!("umber: acquired 1 distribution resource(s)");
         }
         Ok(object.bytes)
+    }
+
+    fn fetch_objects(
+        &self,
+        root: &ShardedManifestRoot,
+        requests: &[FetchRequest],
+        cancellation: &FetchCancellation,
+    ) -> Result<Vec<(String, Vec<u8>, bool)>, NativeRunError> {
+        if requests.is_empty() {
+            return Ok(Vec::new());
+        }
+        if self.offline {
+            let mut found = Vec::new();
+            let mut missing = Vec::new();
+            for request in requests {
+                check_cancelled(cancellation)?;
+                match self
+                    .cache
+                    .load_object(&request.object.sha256, request.object.bytes)
+                {
+                    Ok(Some(bytes)) => found.push((request.request_key.clone(), bytes, true)),
+                    Ok(None) => missing.push(request.request_key.clone()),
+                    Err(error) => return Err(NativeRunError::Cache(error.to_string())),
+                }
+            }
+            if !missing.is_empty() {
+                return Err(NativeRunError::DistributionUnavailable(missing));
+            }
+            return Ok(found);
+        }
+        if let Some(local_root) = self
+            .loaded
+            .as_ref()
+            .and_then(|loaded| loaded.local_root.as_ref())
+        {
+            let mut found = Vec::new();
+            for request in requests {
+                check_cancelled(cancellation)?;
+                let bytes = read(&local_object_path(local_root, &request.object.object))?;
+                check_cancelled(cancellation)?;
+                self.cache
+                    .store_object(&request.object.sha256, request.object.bytes, &bytes)
+                    .map_err(|error| NativeRunError::Cache(error.to_string()))?;
+                found.push((request.request_key.clone(), bytes, false));
+            }
+            return Ok(found);
+        }
+        let client = FetchClient::new(FetchClientConfig::default())
+            .map_err(|error| NativeRunError::Fetch(error.to_string()))?;
+        client
+            .fetch_batch_cancellable(&self.cache, &root.objects_base_url, requests, cancellation)
+            .map_err(map_fetch_error)
+            .map(|objects| {
+                objects
+                    .into_iter()
+                    .map(|object| (object.request_key, object.bytes, object.cache_hit))
+                    .collect()
+            })
+    }
+
+    fn load_shard(
+        &mut self,
+        index: u32,
+        cancellation: &FetchCancellation,
+    ) -> Result<ManifestShard, NativeRunError> {
+        check_cancelled(cancellation)?;
+        let loaded = self.load(cancellation)?;
+        if let Some(shard) = loaded.shards.get(&index) {
+            return Ok(shard.clone());
+        }
+        let root = loaded.root.clone();
+        let local_root = loaded.local_root.clone();
+        let digest = root
+            .shard_digest(index)
+            .expect("canonical shard index is bounded by shardBits")
+            .to_owned();
+        let bytes = if let Some(bytes) = self
+            .cache
+            .load_manifest(&digest)
+            .map_err(|error| NativeRunError::Cache(error.to_string()))?
+        {
+            bytes
+        } else {
+            let bytes = if let Some(local_root) = &local_root {
+                let path = local_object_path(local_root, &format!("sha256-{digest}"));
+                let bytes = read_bounded(&path, MAX_INDEX_SHARD_BYTES, "distribution index shard")?;
+                verify_manifest_digest(&bytes, &digest)?;
+                bytes
+            } else if self.offline {
+                return Err(NativeRunError::DistributionUnavailable(vec![format!(
+                    "shard:{index}"
+                )]));
+            } else {
+                let url = format!("{}sha256-{digest}", root.objects_base_url);
+                fetch_manifest_cancellable(&url, &digest, Duration::from_secs(30), cancellation)
+                    .map_err(|error| match error {
+                        ManifestFetchError::Cancelled => NativeRunError::Cancelled,
+                        error => NativeRunError::ManifestFetch(error.to_string()),
+                    })?
+            };
+            check_cancelled(cancellation)?;
+            self.cache
+                .store_manifest(&digest, &bytes)
+                .map_err(|error| NativeRunError::Cache(error.to_string()))?;
+            bytes
+        };
+        check_cancelled(cancellation)?;
+        let text = std::str::from_utf8(&bytes)
+            .map_err(|error| NativeRunError::ManifestParse(error.to_string()))?;
+        let shard = ManifestShard::parse(text)
+            .map_err(|error| NativeRunError::ManifestParse(error.to_string()))?;
+        shard
+            .validate_identity(&root, index)
+            .map_err(|error| NativeRunError::ManifestParse(error.to_string()))?;
+        for key in shard.files.keys() {
+            if shard_index(key, root.shard_bits) != index {
+                return Err(NativeRunError::ManifestParse(format!(
+                    "lookup key {key} is not in its canonical shard"
+                )));
+            }
+        }
+        self.loaded
+            .as_mut()
+            .expect("root loaded before shard")
+            .shards
+            .insert(index, shard.clone());
+        Ok(shard)
     }
 
     fn load(
@@ -664,7 +715,12 @@ impl DistributionResolver {
             let explicit = self.source.is_some();
             let path = PathBuf::from(&source);
             let local_path = if path.is_dir() {
-                path.join("manifest.json")
+                let versioned = path.join("manifest-v2.json");
+                if versioned.exists() {
+                    versioned
+                } else {
+                    path.join("manifest.json")
+                }
             } else {
                 path.clone()
             };
@@ -674,7 +730,11 @@ impl DistributionResolver {
                 .clone()
                 .or_else(|| (!explicit).then(|| DEFAULT_DISTRIBUTION_SHA256.to_owned()));
             let (manifest_bytes, local_root) = if is_local {
-                let bytes = read(&local_path)?;
+                let bytes = read_bounded(
+                    &local_path,
+                    MAX_INDEX_SHARD_BYTES,
+                    "distribution root manifest",
+                )?;
                 if let Some(expected) = &expected {
                     verify_manifest_digest(&bytes, expected)?;
                 }
@@ -714,11 +774,12 @@ impl DistributionResolver {
             };
             let text = std::str::from_utf8(&manifest_bytes)
                 .map_err(|error| NativeRunError::ManifestParse(error.to_string()))?;
-            let manifest = Manifest::parse(text)
+            let root = ShardedManifestRoot::parse(text)
                 .map_err(|error| NativeRunError::ManifestParse(error.to_string()))?;
             self.loaded = Some(LoadedDistribution {
-                manifest,
+                root,
                 local_root,
+                shards: BTreeMap::new(),
             });
         }
         Ok(self.loaded.as_ref().expect("distribution loaded"))
@@ -731,6 +792,45 @@ fn check_cancelled(cancellation: &FetchCancellation) -> Result<(), NativeRunErro
     } else {
         Ok(())
     }
+}
+
+fn shard_index(key: &str, shard_bits: u8) -> u32 {
+    if shard_bits == 0 {
+        return 0;
+    }
+    let digest = Sha256::digest(key.as_bytes());
+    let prefix = u16::from_be_bytes([digest[0], digest[1]]);
+    u32::from(prefix >> (16 - shard_bits))
+}
+
+fn local_object_path(root: &Path, object: &str) -> PathBuf {
+    let objects = root.join("objects").join(object);
+    if objects.exists() {
+        objects
+    } else {
+        root.join(object)
+    }
+}
+
+fn read_bounded(path: &Path, limit: u64, label: &str) -> Result<Vec<u8>, NativeRunError> {
+    let metadata = fs::metadata(path).map_err(|source| NativeRunError::Io {
+        path: path.to_owned(),
+        source,
+    })?;
+    if metadata.len() > limit {
+        return Err(NativeRunError::ManifestTooLarge {
+            label: label.to_owned(),
+            limit,
+        });
+    }
+    let bytes = read(path)?;
+    if bytes.len() as u64 > limit {
+        return Err(NativeRunError::ManifestTooLarge {
+            label: label.to_owned(),
+            limit,
+        });
+    }
+    Ok(bytes)
 }
 
 fn map_fetch_error(error: umber_fetch::BatchFetchError) -> NativeRunError {

@@ -1,7 +1,6 @@
 # Sharded Distribution Manifest
 
-Status: publisher contract and browser shard resolution implemented. Native
-shard resolution remains separate rollout work.
+Status: publisher contract plus browser and native shard resolution implemented.
 
 ## Trust root
 
@@ -75,6 +74,13 @@ Dependency hints are consumed directly from their full inline fetch metadata,
 without loading the dependency's shard. Shards and payloads remain immutable
 and reusable across compiler sessions. The browser package exports the pinned
 production `manifest-v2.json` URL and digest as
-`TEXLIVE_2026_MANIFEST_URL` and `TEXLIVE_2026_MANIFEST_SHA256`. Native CLI
-adoption remains separate so browser rollout does not alter native cache or
-resolution policy.
+`TEXLIVE_2026_MANIFEST_URL` and `TEXLIVE_2026_MANIFEST_SHA256`.
+
+`umber-distribution` strictly parses the pinned root and individual index
+shards without performing I/O. The native CLI verifies the root pin, hashes
+each unresolved canonical lookup key to its one shard, and verifies that shard
+through the digest-keyed manifest cache before treating absence as
+authoritative. It fetches inline dependency records directly, so dependency
+hints never require another index lookup. Root, shard, and ordinary object
+cache entries are all reverified on read; an offline compile succeeds with a
+fully warm cache without network access.

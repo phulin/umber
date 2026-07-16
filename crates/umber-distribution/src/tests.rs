@@ -91,3 +91,37 @@ fn request_key_encoding_is_canonical() {
     assert!(FileRequestKey::new(FileKind::Tex, "../article.cls").is_err());
     assert!(FontRequestKey::new("bad\0font").is_err());
 }
+
+#[test]
+fn parses_sharded_root_and_full_inline_dependency_metadata() {
+    let root = ShardedManifestRoot::parse(
+        r#"{"schema":2,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]}"#,
+    )
+    .expect("root manifest");
+    assert_eq!(
+        root.shard_digest(0),
+        Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+    );
+
+    let shard = ManifestShard::parse(
+        r#"{"schema":1,"distribution":"test","index":0,"files":{"tex:plain.tex":{"virtualPath":"/texlive/tex/plain.tex","object":"sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","bytes":10,"dependencies":[{"key":"tfm:cmr10.tfm","virtualPath":"/texlive/fonts/cmr10.tfm","object":"sha256-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","bytes":20}]}}}"#,
+    )
+    .expect("index shard");
+    shard.validate_identity(&root, 0).expect("shard identity");
+    let dependency = &shard.files["tex:plain.tex"].dependencies[0];
+    assert_eq!(dependency.key, "tfm:cmr10.tfm");
+    assert_eq!(dependency.object_entry().bytes, 20);
+}
+
+#[test]
+fn rejects_inconsistent_roots_and_mismatched_shard_identity() {
+    let inconsistent = r#"{"schema":2,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":1,"shardCount":1,"shards":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]}"#;
+    assert!(ShardedManifestRoot::parse(inconsistent).is_err());
+    let root = ShardedManifestRoot::parse(
+        r#"{"schema":2,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]}"#,
+    )
+    .expect("root manifest");
+    let shard = ManifestShard::parse(r#"{"schema":1,"distribution":"other","index":0,"files":{}}"#)
+        .expect("structurally valid shard");
+    assert!(shard.validate_identity(&root, 0).is_err());
+}
