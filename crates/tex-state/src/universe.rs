@@ -387,6 +387,13 @@ impl<'a> ExpansionContext<'a> {
     pub fn origin(&self, id: OriginId) -> OriginRecord {
         self.universe.origin(id)
     }
+
+    /// Tests expansion-control provenance without resolving direct source
+    /// positions, which may belong to the retained editor-fragment timeline.
+    #[must_use]
+    pub fn origin_is_inserted_kind(&self, id: OriginId, kind: InsertedOriginKind) -> bool {
+        self.universe.origin_is_inserted_kind(id, kind)
+    }
 }
 
 /// Production input-open capability over a [`Universe`].
@@ -3172,11 +3179,15 @@ impl Universe {
     /// Tests an inserted-origin classification without resolving source origins.
     #[must_use]
     pub fn origin_is_inserted_kind(&self, id: OriginId, kind: InsertedOriginKind) -> bool {
-        matches!(id.decode(), crate::token::OriginEncoding::Arena(_))
-            && matches!(
-                self.stores.origin_if_live(id),
-                Some(OriginRecord::Inserted(inserted)) if inserted.kind() == kind
-            )
+        match id.decode() {
+            crate::token::OriginEncoding::DirectSource(_)
+            | crate::token::OriginEncoding::Unknown => false,
+            crate::token::OriginEncoding::Arena(_) => match self.stores.origin_if_live(id) {
+                Some(OriginRecord::Inserted(inserted)) => inserted.kind() == kind,
+                Some(_) => false,
+                None => panic!("origin id is not live in this Universe timeline"),
+            },
+        }
     }
 
     pub(crate) fn source_origin_at_position(

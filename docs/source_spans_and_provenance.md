@@ -350,6 +350,10 @@ Consumers should retain the narrowest provenance needed by an actual
 diagnostic:
 
 - An error about one offending token uses that token's origin.
+- Expansion-control classification inspects arena-backed inserted origins
+  without resolving direct source positions. This keeps editor-fragment
+  positions on their session-owned layout timeline while stale arena origins
+  still fail liveness validation.
 - When scanner recovery backs up expanded tokens, later diagnostics use the
   first token at that replay frontier; they do not replace it with the mutable
   source cursor's current position.

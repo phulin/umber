@@ -13,7 +13,7 @@ use tex_lex::{
 use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
-use tex_state::provenance::{InsertedOriginKind, OriginListBuilder, OriginRecord};
+use tex_state::provenance::{InsertedOriginKind, OriginListBuilder};
 use tex_state::token::{Catcode, Token, TracedTokenWord};
 use tex_state::token_store::TokenListBuilder;
 use tex_state::{ExpansionState, TracedTokenList};
@@ -868,10 +868,7 @@ fn normalize_stored_noexpand_origin(
     traced: TracedTokenWord,
     token: Token,
 ) -> TracedTokenWord {
-    if matches!(
-        stores.origin(traced.origin()),
-        OriginRecord::Inserted(inserted) if inserted.kind() == InsertedOriginKind::NoExpand
-    ) {
+    if stores.origin_is_inserted_kind(traced.origin(), InsertedOriginKind::NoExpand) {
         let origin = stores.inserted_origin(InsertedOriginKind::Unexpanded, token, traced.origin());
         TracedTokenWord::pack(token, origin)
     } else {
