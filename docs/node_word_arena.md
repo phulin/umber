@@ -540,12 +540,13 @@ The follow-up audit measures canonical storage rather than inferring it from
 process RSS. `profiling-stats` computes an on-demand report over the actual epoch
 storage, its dense generation-tag and span tables, every live survivor root,
 and every cleared recycled buffer. Each vector reports logical length and
-allocator capacity in elements and bytes. Owned whatsit strings, byte payloads,
-and boxed destination/thread records are separate rows; shared glue, token,
-font, and child-list storage is not charged again. The report excludes vector
-headers, allocator metadata,
-process code/stacks, and shared stores, so it is intentionally distinct from
-RSS. Cleared recycled vectors have zero logical bytes but retain capacity.
+allocator capacity in elements and bytes. Owned ligature source and origin
+buffers, whatsit strings, byte payloads, and boxed navigation records are
+separate rows; shared glue, token, font, and child-list storage is not charged
+again. The report excludes vector headers,
+allocator metadata, process code/stacks, and shared stores, so it is
+intentionally distinct from RSS. Cleared recycled vectors have zero logical
+bytes but retain capacity.
 
 Process-local relaxed counters separately record fresh and recycled promotion
 time, release-to-recycling time, the largest canonical storage observation,

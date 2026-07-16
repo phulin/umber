@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use super::{NodeStorageObservation, PeakNodeStorageRecorder};
-use crate::ids::{GlueId, TokenListId};
+use crate::ids::{FontId, GlueId, TokenListId};
 use crate::node::{Node, PdfDestinationKind, PdfDestinationNode, Whatsit};
 use crate::node_arena::{NodeArena, NodeStorage};
+use crate::token::OriginId;
 use crate::{PdfActionIdentifier, PdfColorStackAction};
 
 #[test]
@@ -132,6 +133,38 @@ fn newer_whatsit_payloads_are_exhaustively_measured() {
         "peak.whatsits.owned_boxes",
         boxed_bytes,
         boxed_bytes,
+    );
+}
+
+#[test]
+fn owned_ligature_payloads_participate_in_totals_and_columns() {
+    let mut arena = NodeArena::new();
+    arena.append(&[Node::Lig {
+        font: FontId::new(1),
+        ch: 'f',
+        orig: vec!['f', 'i'],
+        origins: vec![OriginId::from_raw(1), OriginId::from_raw(2)],
+    }]);
+
+    let measured = NodeStorageObservation::from_columns(arena.memory_columns());
+
+    assert_column_sums(&measured);
+    let sources = measured
+        .columns
+        .iter()
+        .find(|column| column.name == "epoch.ligatures.owned_sources")
+        .expect("owned ligature-source column");
+    assert_eq!(sources.logical_bytes, 2 * core::mem::size_of::<char>());
+    let origins = measured
+        .columns
+        .iter()
+        .find(|column| column.name == "epoch.ligatures.owned_origins")
+        .expect("owned ligature-origin column");
+    assert_eq!(origins.logical_bytes, 2 * core::mem::size_of::<OriginId>());
+    assert_eq!(
+        arena.measurement_payload_bytes(),
+        measured.order_key(),
+        "payload totals must equal the sum of canonical columns"
     );
 }
 

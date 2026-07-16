@@ -427,6 +427,21 @@ impl NodeStorage {
                 .map(|(_, _, source, _)| source.capacity() * core::mem::size_of::<char>())
                 .sum(),
         ));
+        out.push(NodeMemoryColumn::byte_payload(
+            format!("{prefix}.ligatures.owned_origins"),
+            self.ligatures
+                .iter()
+                .map(|(_, _, _, origins)| {
+                    origins.len() * core::mem::size_of::<crate::token::OriginId>()
+                })
+                .sum(),
+            self.ligatures
+                .iter()
+                .map(|(_, _, _, origins)| {
+                    origins.capacity() * core::mem::size_of::<crate::token::OriginId>()
+                })
+                .sum(),
+        ));
 
         let mut strings = RetainedBytes::default();
         let mut payloads = RetainedBytes::default();
