@@ -1218,17 +1218,20 @@ fn patch_can_request_and_pin_a_new_resource_before_acceptance() {
 
 #[test]
 fn pdfximage_uses_typed_image_retry_and_accepts_png_metadata() {
+    let source = "\\pdfoutput=1 \\
+        \\message{INITIAL=\\the\\pdflastximagepages/\\the\\pdflastximagecolordepth} \\
+        \\pdfximage width 20pt height 10pt depth 2pt \"figure.png\" \\
+        \\message{IMAGE=\\the\\pdflastximage/\\the\\pdflastximagepages/\\the\\pdflastximagecolordepth} \\
+        \\pdfrefximage\\pdflastximage \\
+        \\message{REUSE=\\the\\pdflastximagepages/\\the\\pdflastximagecolordepth} \\
+        \\end";
     let mut session = VirtualCompileSession::new(SessionOptions {
         engine: EngineMode::PdfTex,
         ..SessionOptions::default()
     })
     .expect("session");
     session
-        .add_user_file(
-            "main.tex",
-            b"\\pdfoutput=1 \\pdfximage width 20pt height 10pt depth 2pt \"figure.png\"\\message{IMAGE=\\the\\pdflastximage}\\end"
-                .to_vec(),
-        )
+        .add_user_file("main.tex", source.as_bytes().to_vec())
         .expect("main file");
 
     let requested = requests(session.compile_attempt());
@@ -1248,5 +1251,24 @@ fn pdfximage_uses_typed_image_retry_and_accepts_png_metadata() {
     let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
         panic!("retried image compile should complete");
     };
-    assert!(String::from_utf8_lossy(&output.terminal).contains("IMAGE=1"));
+    let terminal = String::from_utf8_lossy(&output.terminal);
+    assert!(terminal.contains("INITIAL=0/0"), "{terminal}");
+    assert!(terminal.contains("IMAGE=1/1/8"), "{terminal}");
+    assert!(terminal.contains("REUSE=1/8"), "{terminal}");
+
+    let end = source.find("\\end").expect("end marker");
+    session
+        .apply_patch(SourcePatch {
+            next_revision: RevisionId::new(2),
+            base_revision: RevisionId::new(1),
+            expected_hash: session.content_hash().expect("accepted hash"),
+            range: end..end,
+            replacement: "% retained replay\n".to_owned(),
+        })
+        .expect("comment-only patch");
+    let CompileAttemptResult::Complete(replayed) = session.compile_attempt() else {
+        panic!("retained image compile should complete without another request");
+    };
+    assert_eq!(replayed.terminal, output.terminal);
+    assert_eq!(session.revision(), Some(RevisionId::new(2)));
 }

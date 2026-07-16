@@ -32,14 +32,13 @@ The prerequisite count is nominal control-sequence coverage; its behavioral
 gates remain the TeX and e-TeX corpora. `umber run --pdftex` and the native or
 WASM session option `engine: "pdftex"` select this layer and its truthful
 1.40.27 identity. All 158 names are registered in that mode; names whose
-semantics remain in later checklist issues fail explicitly as unsupported
-rather than behaving like `\relax`.
+semantics were implemented by the dependency-ordered checklist have no
+unsupported-placeholder meanings.
 
-In addition to `\expanded` and `\ifincsname`, the parameter slices now
-implements `\pdfoutput`, PDF major/minor version, stream/object compression,
-decimal precision, page geometry/attributes, and image-configuration state.
-The other parameter effects remain assigned to checklist issues 6--8; the
-remaining exact names still fail explicitly until their issue is complete.
+In addition to `\expanded` and `\ifincsname`, the completed layer implements
+the parameter banks, enquiries and conversions, font and microtype controls,
+graphics and navigation actions, external images, and the detached PDF output
+backend.
 There are two intentional pre-existing visibility overlaps: e-TeX mode keeps
 `\ifincsname`, and the supported LaTeX-DVI contract keeps `\expanded` (and
 inherits `\ifincsname` through e-TeX). The source-set gate therefore requires
@@ -58,15 +57,15 @@ oracle-backed test. Every name in a missing row is missing.
 | Family (source registration block) | Count | Status | Primitive names |
 | --- | ---: | --- | --- |
 | PDF token-list parameters | 4 | done | `\pdfpagesattr`, `\pdfpageattr`, `\pdfpageresources`, `\pdfpkmode` |
-| PDF integer parameters | 38 | partial (output policy, metadata effects, and microtype/font configuration contract done) | `\pdfoutput`, `\pdfcompresslevel`, `\pdfobjcompresslevel`, `\pdfdecimaldigits`, `\pdfmovechars`, `\pdfimageresolution`, `\pdfpkresolution`, `\pdfuniqueresname`, `\pdfoptionpdfminorversion`, `\pdfoptionalwaysusepdfpagebox`, `\pdfoptionpdfinclusionerrorlevel`, `\pdfmajorversion`, `\pdfminorversion`, `\pdfforcepagebox`, `\pdfpagebox`, `\pdfinclusionerrorlevel`, `\pdfgamma`, `\pdfimagegamma`, `\pdfimagehicolor`, `\pdfimageapplygamma`, `\pdfadjustspacing`, `\pdfprotrudechars`, `\pdftracingfonts`, `\pdfadjustinterwordglue`, `\pdfprependkern`, `\pdfappendkern`, `\pdfgentounicode`, `\pdfdraftmode`, `\pdfinclusioncopyfonts`, `\pdfsuppresswarningdupdest`, `\pdfsuppresswarningdupmap`, `\pdfsuppresswarningpagegroup`, `\pdfinfoomitdate`, `\pdfsuppressptexinfo`, `\pdfomitcharset`, `\pdfomitinfodict`, `\pdfomitprocset`, `\pdfptexuseunderscore` |
+| PDF integer parameters | 38 | done | `\pdfoutput`, `\pdfcompresslevel`, `\pdfobjcompresslevel`, `\pdfdecimaldigits`, `\pdfmovechars`, `\pdfimageresolution`, `\pdfpkresolution`, `\pdfuniqueresname`, `\pdfoptionpdfminorversion`, `\pdfoptionalwaysusepdfpagebox`, `\pdfoptionpdfinclusionerrorlevel`, `\pdfmajorversion`, `\pdfminorversion`, `\pdfforcepagebox`, `\pdfpagebox`, `\pdfinclusionerrorlevel`, `\pdfgamma`, `\pdfimagegamma`, `\pdfimagehicolor`, `\pdfimageapplygamma`, `\pdfadjustspacing`, `\pdfprotrudechars`, `\pdftracingfonts`, `\pdfadjustinterwordglue`, `\pdfprependkern`, `\pdfappendkern`, `\pdfgentounicode`, `\pdfdraftmode`, `\pdfinclusioncopyfonts`, `\pdfsuppresswarningdupdest`, `\pdfsuppresswarningdupmap`, `\pdfsuppresswarningpagegroup`, `\pdfinfoomitdate`, `\pdfsuppressptexinfo`, `\pdfomitcharset`, `\pdfomitinfodict`, `\pdfomitprocset`, `\pdfptexuseunderscore` |
 | PDF dimension parameters | 13 | done | `\pdfhorigin`, `\pdfvorigin`, `\pdfpagewidth`, `\pdfpageheight`, `\pdflinkmargin`, `\pdfdestmargin`, `\pdfthreadmargin`, `\pdffirstlineheight`, `\pdflastlinedepth`, `\pdfeachlineheight`, `\pdfeachlinedepth`, `\pdfignoreddimen`, `\pdfpxdimen` |
 | Font construction and primitive recovery | 3 | done | `\pdfprimitive`, `\letterspacefont`, `\pdfcopyfont` |
-| Read-only integer enquiries | 14 | partial (9 done) | `\pdftexversion`, `\pdfelapsedtime`, `\pdfshellescape`, `\pdfrandomseed`, `\pdflastobj`, `\pdflastxform`, `\pdflastxpos`, `\pdflastypos`, `\pdfretval` (done); `\pdflastximage`, `\pdflastximagepages`, `\pdflastannot`, `\pdflastximagecolordepth`, `\pdflastlink` |
-| Expandable conversions and enquiries | 27 | partial (26 done) | `\expanded`, `\pdftexrevision`, `\pdftexbanner`, `\pdffontsize`, `\pdffontname`, `\pdffontobjnum`, `\leftmarginkern`, `\rightmarginkern`, `\pdfescapestring`, `\pdfescapename`, `\pdfescapehex`, `\pdfunescapehex`, `\pdfcreationdate`, `\pdffilemoddate`, `\pdffilesize`, `\pdfmdfivesum`, `\pdffiledump`, `\pdfstrcmp`, `\pdfmatch`, `\pdflastmatch`, `\pdfuniformdeviate`, `\pdfnormaldeviate`, `\pdfinsertht`, `\pdfximagebbox`, `\pdfcolorstackinit`, `\pdfxformname` (done); `\pdfpageref` |
+| Read-only integer enquiries | 14 | done | `\pdftexversion`, `\pdfelapsedtime`, `\pdfshellescape`, `\pdfrandomseed`, `\pdflastobj`, `\pdflastxform`, `\pdflastxpos`, `\pdflastypos`, `\pdfretval`, `\pdflastximage`, `\pdflastximagepages`, `\pdflastannot`, `\pdflastximagecolordepth`, `\pdflastlink` |
+| Expandable conversions and enquiries | 27 | done | `\expanded`, `\pdftexrevision`, `\pdftexbanner`, `\pdffontsize`, `\pdffontname`, `\pdffontobjnum`, `\leftmarginkern`, `\rightmarginkern`, `\pdfescapestring`, `\pdfescapename`, `\pdfescapehex`, `\pdfunescapehex`, `\pdfcreationdate`, `\pdffilemoddate`, `\pdffilesize`, `\pdfmdfivesum`, `\pdffiledump`, `\pdfstrcmp`, `\pdfmatch`, `\pdflastmatch`, `\pdfuniformdeviate`, `\pdfnormaldeviate`, `\pdfinsertht`, `\pdfximagebbox`, `\pdfcolorstackinit`, `\pdfxformname`, `\pdfpageref` |
 | Primitive-identity conditional | 1 | done | `\ifpdfprimitive` |
 | Horizontal-mode normalization | 1 | done | `\quitvmode` |
 | Character codes and ligature control | 10 | done | `\lpcode`, `\rpcode`, `\efcode`, `\tagcode`, `\knbscode`, `\stbscode`, `\shbscode`, `\knbccode`, `\knaccode`, `\pdfnoligatures` |
-| PDF backend actions | 43 | partial (29 done) | `\pdffontexpand`, `\pdfincludechars`, `\pdffontattr`, `\pdfmapfile`, `\pdfmapline`, `\pdfglyphtounicode`, `\pdfnobuiltintounicode`, `\pdfresettimer`, `\pdfsetrandomseed`, `\pdfobj`, `\pdfrefobj`, `\pdfinfo`, `\pdfcatalog`, `\pdfnames`, `\pdftrailer`, `\pdftrailerid`, `\pdfliteral`, `\pdfcolorstack`, `\pdfsetmatrix`, `\pdfsave`, `\pdfrestore`, `\pdfsavepos`, `\pdfsnaprefpoint`, `\pdfsnapy`, `\pdfsnapycomp`, `\pdfxform`, `\pdfrefxform`, `\pdfximage`, `\pdfrefximage` (done); `\pdfannot`, `\pdfstartlink`, `\pdfendlink`, `\pdfoutline`, `\pdfdest`, `\pdfthread`, `\pdfstartthread`, `\pdfendthread`, `\pdfinterwordspaceon`, `\pdfinterwordspaceoff`, `\pdffakespace`, `\pdfrunninglinkoff`, `\pdfrunninglinkon`, `\pdfspacefont` |
+| PDF backend actions | 43 | done | `\pdffontexpand`, `\pdfincludechars`, `\pdffontattr`, `\pdfmapfile`, `\pdfmapline`, `\pdfglyphtounicode`, `\pdfnobuiltintounicode`, `\pdfresettimer`, `\pdfsetrandomseed`, `\pdfobj`, `\pdfrefobj`, `\pdfinfo`, `\pdfcatalog`, `\pdfnames`, `\pdftrailer`, `\pdftrailerid`, `\pdfliteral`, `\pdfcolorstack`, `\pdfsetmatrix`, `\pdfsave`, `\pdfrestore`, `\pdfsavepos`, `\pdfsnaprefpoint`, `\pdfsnapy`, `\pdfsnapycomp`, `\pdfxform`, `\pdfrefxform`, `\pdfximage`, `\pdfrefximage`, `\pdfannot`, `\pdfstartlink`, `\pdfendlink`, `\pdfoutline`, `\pdfdest`, `\pdfthread`, `\pdfstartthread`, `\pdfendthread`, `\pdfinterwordspaceon`, `\pdfinterwordspaceoff`, `\pdffakespace`, `\pdfrunninglinkoff`, `\pdfrunninglinkon`, `\pdfspacefont` |
 | Compatibility error policy | 1 | done | `\ignoreprimitiveerror` |
 | Late expansion conditionals | 3 | done | `\ifincsname`, `\ifpdfabsnum`, `\ifpdfabsdim` |
 
@@ -199,6 +198,17 @@ object and PDF-page resources and transparency groups are recursively
 remapped. Final PDF dictionaries, streams, resource entries, and content
 operations are serialized exclusively through `pdf_writer` at the detached
 output boundary.
+
+The companion integer enquiries `\pdflastximagepages` and
+`\pdflastximagecolordepth` start at zero and update only after a successful
+`\pdfximage` read. Raster images report one page and their PNG bit depth or
+JPEG sample precision; included PDFs report the source document's total page
+count and zero color depth. `\pdfrefximage` leaves both values unchanged, as
+does a resource-acquisition retry before the image has been decoded. The
+checkpointed external-image metadata carries these values through rollback,
+semantic hashing, and retained native/WASM compilation. The live 1.40.27
+oracle fixture `tests/corpus/tex_exec/pdf_ximage_enquiries` generates its
+three-page input exclusively through the vendored typed `pdf_writer` API.
 
 The four PDF token parameters follow pdfTeX's distinct consumption scopes:
 `\pdfpageattr` and `\pdfpageresources` are captured in each successful

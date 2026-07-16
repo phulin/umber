@@ -139,6 +139,53 @@ fn pdftex_return_value_reports_invalid_object_recovery() {
 }
 
 #[wasm_bindgen_test]
+fn pdftex_ximage_enquiries_survive_binary_resource_retry() {
+    let session_options = options("main.tex");
+    set(&session_options, "engine", &JsValue::from_str("pdftex"));
+    let mut session = CompilerSession::new(session_options.unchecked_ref::<JsSessionOptions>())
+        .expect("pdfTeX session");
+    session
+        .add_user_file(
+            "main.tex",
+            &bytes(
+                b"\\pdfoutput=1 \\message{initial=\\the\\pdflastximagepages/\\the\\pdflastximagecolordepth} \\pdfximage{figure.png} \\message{image=\\the\\pdflastximagepages/\\the\\pdflastximagecolordepth} \\pdfrefximage\\pdflastximage \\message{reuse=\\the\\pdflastximagepages/\\the\\pdflastximagecolordepth} \\end",
+            ),
+        )
+        .expect("add ximage source");
+
+    let missing = session.compile_attempt().expect("image request");
+    assert_eq!(string_field(missing.as_ref(), "kind"), "need-resources");
+    let required = Array::from(&field(missing.as_ref(), "required"));
+    assert_eq!(required.length(), 1);
+    let request = required.get(0);
+    assert_eq!(string_field(&request, "kind"), "image");
+    assert_eq!(string_field(&request, "name"), "figure.png");
+
+    let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+    png.extend_from_slice(&13_u32.to_be_bytes());
+    png.extend_from_slice(b"IHDR");
+    png.extend_from_slice(&40_u32.to_be_bytes());
+    png.extend_from_slice(&20_u32.to_be_bytes());
+    png.extend_from_slice(&[8, 2, 0, 0, 0]);
+    session
+        .provide_resolved_file(
+            request.unchecked_ref::<JsFileRequestKey>(),
+            "/texlive/figure.png",
+            &bytes(&png),
+        )
+        .expect("provide PNG");
+
+    let complete = session.compile_attempt().expect("complete retry");
+    assert_eq!(string_field(complete.as_ref(), "kind"), "complete");
+    let terminal = field(&field(complete.as_ref(), "output"), "terminal")
+        .as_string()
+        .expect("terminal text");
+    assert!(terminal.contains("initial=0/0"), "{terminal}");
+    assert!(terminal.contains("image=1/8"), "{terminal}");
+    assert!(terminal.contains("reuse=1/8"), "{terminal}");
+}
+
+#[wasm_bindgen_test]
 async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
     let session_options = options("main.tex");
     set(&session_options, "html", Object::new().as_ref());
