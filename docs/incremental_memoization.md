@@ -779,13 +779,25 @@ live physical-source cursor immediately before expansion begins. The input
 stack prepares the next physical line when necessary, so an unchanged line
 keeps its fragment-local anchor even when the preceding edited line was
 reminted. This pre-delivery lookup neither tokenizes the cold paragraph nor
-allocates diagnostic provenance. Only a matching prior-generation anchor
-starts a bounded raw scan; that scan must cover every recorded stable source
-span and reach the recorded ending input continuation before dependency,
-redo-log, effect, and retained-result validation may import anything. The
-recorded expanded trace also keeps its source ancestry so imported node
-provenance is rebound through current raw deliveries rather than assuming raw
-and expanded token ordinals coincide.
+allocates diagnostic provenance. A matching prior-generation anchor first
+validates dependencies, redo logs, and effects, then maps every recorded raw
+source span through the current editor layout. The opaque prepared transition
+can advance the physical reader and restore the recorded lexer cursor without
+delivering tokens or observing catcodes; a validation miss leaves the live
+input stack untouched. Paragraphs whose ending continuation still contains a
+token-list or conditional frame carry `UnsupportedInputTransition` and remain
+cold, because those arena-backed continuations cannot cross a generation
+rollback. The recorded expanded trace also keeps its source ancestry so
+imported node provenance is rebuilt from current root spans rather than
+assuming raw and expanded token ordinals coincide.
+
+The pinned 1,792-word Gentle edit now attempts the pre-delivery lookup for the
+unchanged downstream macro-bearing population. In the optimized verification
+run, 121 source-transition-eligible macro paragraphs hit; including the eight
+conservatively unsupported token-frame continuations gives 121 of 129
+otherwise-valid downstream candidates (93.8%). The memo-enabled incremental
+DVI was byte-identical to both memo-disabled incremental execution and the cold
+edited 98-page, 278,000-byte result.
 
 These runs also strengthen the removal case for the isolated caches. The
 standalone expansion episode has no useful Gentle traffic, while the bounded
