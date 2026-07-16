@@ -2,3 +2,4 @@
 *.tfm binary
 scripts/pdftex-primitive-trace.patch -whitespace
 *.pdf binary
+scripts/pdftex-primitive-trace.patch -whitespace

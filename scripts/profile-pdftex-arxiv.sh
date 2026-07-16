@@ -21,6 +21,56 @@ require() {
   }
 }
 
+usage() {
+  cat <<EOF
+usage: $0 [setup|smoke|all|check-sample]
+
+Build a pinned instrumented pdfTeX and profile the committed 100-paper sample.
+
+  setup         build pdfTeX and the pdflatex format under PDFTEX_PROFILE_ROOT
+  smoke         download/profile the sample with the existing build
+  all           run setup followed by smoke (default)
+  check-sample  validate the sample header, row count, and unique identifiers
+
+Environment:
+  PDFTEX_PROFILE_ROOT    disposable build/cache root (default: /tmp/umber-pdftex-primitive-trace)
+  PDFTEX_PROFILE_SAMPLE  alternate TSV sample manifest
+  PDFTEX_PROFILE_JOBS    concurrent profiling jobs (default: 8)
+EOF
+}
+
+validate_sample() {
+  [[ -f "$SAMPLE" ]] || {
+    echo "sample manifest not found: $SAMPLE" >&2
+    return 1
+  }
+  awk -F '\t' '
+    NR == 1 {
+      if ($0 != "id\tcategories") {
+        print "invalid sample header: " $0 > "/dev/stderr"
+        exit 1
+      }
+      next
+    }
+    NF != 2 || $1 == "" || $2 == "" {
+      print "invalid sample row " NR > "/dev/stderr"
+      exit 1
+    }
+    seen[$1]++ {
+      print "duplicate sample identifier at row " NR ": " $1 > "/dev/stderr"
+      exit 1
+    }
+    { rows++ }
+    END {
+      if (rows != 100) {
+        print "sample must contain exactly 100 rows; found " rows > "/dev/stderr"
+        exit 1
+      }
+    }
+  ' "$SAMPLE"
+  echo "sample ok: 100 unique papers ($SAMPLE)"
+}
+
 tex_env() {
   local texmfroot texmflocal texmfsysvar texmfsysconfig
   texmfroot="$(kpsewhich -var-value=TEXMFROOT)"
@@ -111,45 +161,46 @@ entrypoint() {
 }
 
 process_sample() {
-    local id=$1 category=$2
-    local key=${id//\//_}
-    local archive="$ROOT/samples/$key.src"
-    local directory="$ROOT/samples/$key"
-    local result="$ROOT/results/$key"
-    if [[ ! -f "$archive" ]]; then
-      curl -L --fail --show-error --silent --retry 3 \
-        -o "$archive" "https://export.arxiv.org/e-print/$id"
-    fi
-    if [[ ! -d "$directory" ]]; then
-      unpack_source "$archive" "$directory"
-    fi
-    local main
-    main="$(entrypoint "$directory")"
-    [[ -n "$main" ]] || {
-      echo "no TeX entrypoint found for $id" >&2
-      return
-    }
-    mkdir -p "$result"
-    set +e
-    (
-      cd "$(dirname "$main")"
-      tex_env "$PDFTEX" \
-        --progname=pdflatex \
-        -fmt="$FORMAT" \
-        -interaction=nonstopmode \
-        -halt-on-error \
-        "$(basename "$main")"
-    ) >"$result/pdftex.stdout" 2>&1
-    local rc=$?
-    set -e
-    rg '^PDFTEX_PRIMITIVE_USED \\' "$result/pdftex.stdout" \
-      | sed 's/^PDFTEX_PRIMITIVE_USED //' \
-      | sort -u >"$result/primitives.txt" || true
-    local count
-    count="$(wc -l <"$result/primitives.txt" | tr -d ' ')"
-    printf '%s\t%s\t%s\t%s\t%s\n' \
-      "$id" "$category" "${main#"$directory/"}" "$rc" "$count" \
-      | tee -a "$ROOT/results/summary.tsv"
+  local id=$1 category=$2
+  local key=${id//\//_}
+  local archive="$ROOT/samples/$key.src"
+  local directory="$ROOT/samples/$key"
+  local result="$ROOT/results/$key"
+  rm -f "$result/summary.tsv"
+  if [[ ! -f "$archive" ]]; then
+    curl -L --fail --show-error --silent --retry 3 \
+      -o "$archive" "https://export.arxiv.org/e-print/$id"
+  fi
+  if [[ ! -d "$directory" ]]; then
+    unpack_source "$archive" "$directory"
+  fi
+  local main
+  main="$(entrypoint "$directory")"
+  [[ -n "$main" ]] || {
+    echo "no TeX entrypoint found for $id" >&2
+    return
+  }
+  mkdir -p "$result"
+  set +e
+  (
+    cd "$(dirname "$main")"
+    tex_env "$PDFTEX" \
+      --progname=pdflatex \
+      -fmt="$FORMAT" \
+      -interaction=nonstopmode \
+      -halt-on-error \
+      "$(basename "$main")"
+  ) >"$result/pdftex.stdout" 2>&1
+  local rc=$?
+  set -e
+  rg '^PDFTEX_PRIMITIVE_USED \\' "$result/pdftex.stdout" \
+    | sed 's/^PDFTEX_PRIMITIVE_USED //' \
+    | sort -u >"$result/primitives.txt" || true
+  local count
+  count="$(wc -l <"$result/primitives.txt" | tr -d ' ')"
+  printf '%s\t%s\t%s\t%s\t%s\n' \
+    "$id" "$category" "${main#"$directory/"}" "$rc" "$count" \
+    | tee "$result/summary.tsv"
 }
 
 smoke() {
@@ -157,14 +208,14 @@ smoke() {
     echo "run '$0 setup' first" >&2
     exit 1
   }
-  [[ -f "$SAMPLE" ]] || {
-    echo "sample manifest not found: $SAMPLE" >&2
-    exit 1
-  }
+  validate_sample
   mkdir -p "$ROOT/samples" "$ROOT/results"
-  printf 'id\tcategory\tentrypoint\texit\tprimitive_count\n' >"$ROOT/results/summary.tsv"
 
   local jobs=${PDFTEX_PROFILE_JOBS:-8}
+  [[ "$jobs" =~ ^[1-9][0-9]*$ ]] || {
+    echo "PDFTEX_PROFILE_JOBS must be a positive integer: $jobs" >&2
+    exit 1
+  }
   while IFS=$'\t' read -r id category; do
     while (( $(jobs -pr | wc -l) >= jobs )); do
       sleep 0.1
@@ -173,19 +224,42 @@ smoke() {
   done < <(sed '1d' "$SAMPLE")
   wait
 
-  awk '{ seen[$0]++ } END { for (primitive in seen) print seen[primitive], primitive }' \
-    "$ROOT"/results/*/primitives.txt \
-    | sort -k1,1nr -k2,2 >"$ROOT/results/prevalence.txt"
+  local key
+  local -a primitive_files=()
+  printf 'id\tcategory\tentrypoint\texit\tprimitive_count\n' >"$ROOT/results/summary.tsv"
+  while IFS=$'\t' read -r id _; do
+    key=${id//\//_}
+    if [[ -f "$ROOT/results/$key/summary.tsv" ]]; then
+      cat "$ROOT/results/$key/summary.tsv" >>"$ROOT/results/summary.tsv"
+      primitive_files+=("$ROOT/results/$key/primitives.txt")
+    fi
+  done < <(sed '1d' "$SAMPLE")
+
+  if (( ${#primitive_files[@]} > 0 )); then
+    awk '{ seen[$0]++ } END { for (primitive in seen) print seen[primitive], primitive }' \
+      "${primitive_files[@]}" \
+      | LC_ALL=C sort -k1,1nr -k2,2 >"$ROOT/results/prevalence.txt"
+  else
+    : >"$ROOT/results/prevalence.txt"
+  fi
   echo "results: $ROOT/results"
 }
 
-for command in git curl make rg tar gzip kpsewhich; do
-  require "$command"
-done
+readonly ACTION=${1:-all}
+case "$ACTION" in
+  -h|--help|help) usage; exit 0 ;;
+  setup|smoke|all)
+    for command in git curl make rg tar gzip kpsewhich; do
+      require "$command"
+    done
+    ;;
+  check-sample) require awk ;;
+  *) usage >&2; exit 2 ;;
+esac
 
-case "${1:-all}" in
+case "$ACTION" in
   setup) setup ;;
   smoke) smoke ;;
   all) setup; smoke ;;
-  *) echo "usage: $0 [setup|smoke|all]" >&2; exit 2 ;;
+  check-sample) validate_sample ;;
 esac

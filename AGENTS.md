@@ -44,6 +44,7 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `tests/corpus/pdf/`: pinned minimal pdfTeX references, deterministic Umber PDFs, normalized structure, and rendered-page parity fixtures.
 - `docs/`: architecture, phase, and design documents.
 - `scripts/`: local development scripts and versioned git hook templates.
+- `scripts/profile-pdftex-arxiv.sh`: disposable pinned pdfTeX primitive tracer build and deterministic 100-paper arXiv source profile.
 - `third_party/`: ignored reference downloads and external source archives.
 - `vendor/pdf-writer/`: pinned source fork of `pdf-writer` 0.15.0 with object-stream and type-2 xref support; see its provenance README.
 
