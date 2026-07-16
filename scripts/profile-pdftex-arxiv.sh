@@ -36,6 +36,7 @@ Environment:
   PDFTEX_PROFILE_ROOT    disposable build/cache root (default: /tmp/umber-pdftex-primitive-trace)
   PDFTEX_PROFILE_SAMPLE  alternate TSV sample manifest
   PDFTEX_PROFILE_JOBS    concurrent profiling jobs (default: 8)
+  PDFTEX_PROFILE_LIMIT   deterministic sample prefix to profile (default: 100)
 EOF
 }
 
@@ -69,6 +70,10 @@ validate_sample() {
     }
   ' "$SAMPLE"
   echo "sample ok: 100 unique papers ($SAMPLE)"
+}
+
+sample_rows() {
+  awk -v limit="$1" 'NR > 1 && NR <= limit + 1' "$SAMPLE"
 }
 
 tex_env() {
@@ -216,12 +221,17 @@ smoke() {
     echo "PDFTEX_PROFILE_JOBS must be a positive integer: $jobs" >&2
     exit 1
   }
+  local limit=${PDFTEX_PROFILE_LIMIT:-100}
+  [[ "$limit" =~ ^[1-9][0-9]*$ ]] && (( limit <= 100 )) || {
+    echo "PDFTEX_PROFILE_LIMIT must be an integer from 1 through 100: $limit" >&2
+    exit 1
+  }
   while IFS=$'\t' read -r id category; do
     while (( $(jobs -pr | wc -l) >= jobs )); do
       sleep 0.1
     done
     process_sample "$id" "$category" &
-  done < <(sed '1d' "$SAMPLE")
+  done < <(sample_rows "$limit")
   wait
 
   local key
@@ -233,7 +243,7 @@ smoke() {
       cat "$ROOT/results/$key/summary.tsv" >>"$ROOT/results/summary.tsv"
       primitive_files+=("$ROOT/results/$key/primitives.txt")
     fi
-  done < <(sed '1d' "$SAMPLE")
+  done < <(sample_rows "$limit")
 
   if (( ${#primitive_files[@]} > 0 )); then
     awk '{ seen[$0]++ } END { for (primitive in seen) print seen[primitive], primitive }' \
