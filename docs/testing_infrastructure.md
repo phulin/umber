@@ -211,24 +211,33 @@ LPPL snapshot under gitignored `third_party/latex2e-parity/`, then derives every
 same-stem standard-`.tlg` shipout candidate under `base`, `required/tools`,
 `required/graphics`, and `required/amsmath`. The pinned tree yields 295
 candidates. A live classic-LaTeX census emits DVIs for 286 of them and records
-the nine alternate-configuration cases separately. Offline mode rejects a
-missing or changed archive cache without accessing the network.
+the nine alternate-configuration cases separately. The manifest retains
+`base/testfiles/sx172785.lvt` in that 286-case reference-DVI cohort but skips it
+explicitly as `unsupported-pdftex-primitives:pdfprotrudechars,rpcode`; this is
+the only unsupported case, leaving 285 applicable classic-DVI comparisons.
+Offline mode rejects a missing or changed archive cache without accessing the
+network.
 
 Without `--format`, the checker invokes the verified format builder exactly
 once before entering the case loop. With `--format`, it invokes the builder
 zero times. It hashes that pregenerated image, copies those exact bytes into a
-fresh directory for every reference/Umber pair, and each of the 286 Umber DVI
-runs loads the local copy with `--format latex.fmt`. The persistent
+fresh directory for every applicable reference/Umber pair, and each of the 285
+Umber DVI runs loads the local copy with `--format latex.fmt`. The unsupported
+case does not start an Umber run, so a complete current tier restores the
+format exactly 285 times. The persistent
 `target/latex-parity/last-run-format-receipt.txt` records the builder count,
-source identity, and all 286 per-case identities; the fast self-test asserts
+source identity, and all 285 per-case identities; the fast self-test asserts
 one build and three identical restores. The runner continues after individual
 engine or DVI failures and writes complete persistent census lists to
 `target/latex-parity/last-run-failures.txt` and
-`target/latex-parity/last-run-non-dvi.txt`. Unless `--keep-work` is explicit,
-each isolated reference/Umber pair is removed as soon as its result and compact
+`target/latex-parity/last-run-non-dvi.txt`; explicit exclusions are recorded
+separately in `target/latex-parity/last-run-skipped.txt`. The full-cohort
+accounting requires tested plus skipped classic-DVI cases to equal the
+manifest's 286-case reference-DVI count. Unless `--keep-work` is explicit, each
+isolated reference/Umber pair is removed as soon as its result and compact
 triage artifacts have been recorded, and the scratch root is removed on both
 success and failure. This bounds temporary format-copy storage to one active
-case instead of retaining all 286 copies after an expected census failure.
+case instead of retaining all 285 copies after an expected census failure.
 Reference and Umber cases have a 60-second timeout so one recovery loop cannot
 stall the census without misclassifying the slower tools cases under
 full-corpus load; set `UMBER_LATEX_CASE_TIMEOUT_SECONDS` to tune that explicit

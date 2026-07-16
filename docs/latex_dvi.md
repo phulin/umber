@@ -132,12 +132,19 @@ The package example under `examples/latex.html` is the same browser workflow.
   requires exact native DVI/AUX/TOC parity.
 - `scripts/check-latex-parity.sh` derives a whole-repository LaTeX2e DVI cohort
   from one hash-pinned upstream archive and runs it against TeX Live 2025. The
-  pinned scopes yield 295 shipout-log candidates and 286 actual classic-LaTeX
-  DVIs; nine alternate test configurations are reported separately. It builds
-  one verified format before the suite, or accepts one with `--format`, then
-  restores byte-identical copies of that pregenerated image in fresh case
-  sessions. Logs are diagnostic only; after preamble-comment normalization,
-  every DVI byte and therefore every encoded coordinate must match. Run
+  pinned scopes yield 295 shipout-log candidates: 286 actual classic-LaTeX
+  DVIs and nine alternate test configurations. One reference-DVI case,
+  `base/testfiles/sx172785.lvt`, is retained in the census but explicitly
+  skipped because it requires the unsupported pdfTeX-only
+  `\pdfprotrudechars` and `\rpcode` primitives. All 285 applicable cases are
+  coordinate-exact. The checker builds one verified format before the suite,
+  or accepts one with `--format`, then restores byte-identical copies of that
+  pregenerated image in 285 fresh case sessions. Logs are diagnostic only;
+  after preamble-comment normalization, every DVI byte and therefore every
+  encoded coordinate must match. The checker writes separate persistent
+  failure, skip, non-DVI, and format-receipt reports. Unless `--keep-work` is
+  requested, it removes each completed case directory immediately and removes
+  the run root on success, failure, or interruption. Run
   `scripts/setup-latex-parity-tests.sh` first, or use both commands with
   `--offline` after the archive is cached.
 - `scripts/discover-latex-kernel.sh` remains the progressive bootstrap
