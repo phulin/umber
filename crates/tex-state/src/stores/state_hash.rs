@@ -196,6 +196,57 @@ struct FontSelectionCursor {
 }
 
 impl Stores {
+    /// Canonical identity of the rollback-coupled mutable store roots.
+    ///
+    /// Environment cells already carry a persistent Merkle root. The other
+    /// components reuse the same root-keyed canonical projections as the
+    /// rolling checkpoint hash, so an exact comparison visits only roots that
+    /// have changed since their last projection.
+    pub(crate) fn exact_mutable_identity(&mut self) -> ContentHash {
+        let cursor = self.state_hash_cursor();
+        let mut cache = std::mem::take(&mut self.semantic_hash_cache);
+        let code_tables: [StateHashFragment; 6] = core::array::from_fn(|table| {
+            cached_code_table_projection(
+                &mut cache.code_tables[table],
+                &cursor.code_tables,
+                table,
+                |projection| self.hash_code_table(table, projection),
+            )
+        });
+        let hyphenation = cached_projection(
+            &mut cache.hyphenation,
+            &cursor.hyphenation_root,
+            HYPHENATION_DOMAIN,
+            StateHashComponent::Hyphenation,
+            |projection| self.hyphenation.hash_semantic(projection),
+        );
+        let prepared_mag = StateHashFragment::from_builder(PREPARED_MAG_DOMAIN, |projection| {
+            hash_prepared_mag(self.prepared_mag, projection);
+        });
+        let last_loaded_font = cached_projection(
+            &mut cache.last_loaded_font,
+            &cursor.last_loaded_font,
+            FONT_SELECTION_DOMAIN,
+            StateHashComponent::FontSelection,
+            |projection| {
+                self.hash_font(self.last_loaded_font, projection);
+                1
+            },
+        );
+        self.semantic_hash_cache = cache;
+
+        let mut framed = Vec::with_capacity(32 + 8 * 9);
+        framed.extend_from_slice(b"umber-exact-mutable-store-v1");
+        framed.extend_from_slice(&self.exact_env_identity().bytes());
+        for fragment in code_tables {
+            framed.extend_from_slice(&fragment.fingerprint().to_le_bytes());
+        }
+        framed.extend_from_slice(&hyphenation.fingerprint().to_le_bytes());
+        framed.extend_from_slice(&prepared_mag.fingerprint().to_le_bytes());
+        framed.extend_from_slice(&last_loaded_font.fingerprint().to_le_bytes());
+        ContentHash::from_bytes(&framed)
+    }
+
     #[must_use]
     pub(crate) fn state_hash_cursor(&self) -> StoreStateHashCursor {
         StoreStateHashCursor {

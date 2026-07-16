@@ -186,12 +186,6 @@ struct MutableStoreIdentity {
     last_loaded_font: u32,
 }
 
-#[derive(Serialize)]
-struct NodeSequenceIdentity {
-    node_lists: Vec<FormatNodeList>,
-    nodes: Vec<FormatNode>,
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ImmutableStoreMarks {
     interner: InternerMark,
@@ -567,12 +561,10 @@ impl Stores {
         bincode::serialize(&format).map_err(|error| StoreFormatError::Codec(error.to_string()))
     }
 
-    /// Canonical semantic store bytes for checkpoint verification. Survivor
+    /// Canonical semantic store root for checkpoint verification. Survivor
     /// pins are retention metadata, so unlike a restorable format dump they
     /// neither prevent nor participate in this identity.
-    pub(crate) fn encode_semantic_identity(
-        &mut self,
-    ) -> Result<(ContentHash, ContentHash), StoreFormatError> {
+    pub(crate) fn semantic_identity(&mut self) -> Result<ContentHash, StoreFormatError> {
         if self.env.group_depth() != 0 {
             return Err(StoreFormatError::OpenGroups(self.env.group_depth()));
         }
@@ -659,17 +651,12 @@ impl Stores {
                 )
             }
         };
-        let mutable = bincode::serialize(&MutableStoreIdentity::capture(self)?)
-            .map_err(|error| StoreFormatError::Codec(error.to_string()))?;
-        let serialized_identity = ContentHash::from_bytes(&mutable);
-        // Until the remaining mutable components migrate, retain the complete
-        // canonical DTO as a verifier while binding it to the journal-backed
-        // environment Merkle root. The composition child removes this full
-        // serialization once every sibling component has an exact root.
-        let mut composed = [0_u8; 64];
-        composed[..32].copy_from_slice(&self.exact_env_identity().bytes());
-        composed[32..].copy_from_slice(&serialized_identity.bytes());
-        Ok((immutable, ContentHash::from_bytes(&composed)))
+        let mutable = self.exact_mutable_identity();
+        let mut composed = Vec::with_capacity(96);
+        composed.extend_from_slice(b"umber-exact-store-v1");
+        composed.extend_from_slice(&immutable.bytes());
+        composed.extend_from_slice(&mutable.bytes());
+        Ok(ContentHash::from_bytes(&composed))
     }
 
     #[cfg(test)]

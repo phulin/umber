@@ -38,6 +38,12 @@ pub struct StateHashComponentMeasurement {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ExactIdentityMeasurement {
+    pub calls: u64,
+    pub nanos: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct TracedListMeasurement {
     pub finishes: u64,
     pub tokens: u64,
@@ -91,6 +97,8 @@ static HASH_COMPONENT_VISITS: [AtomicU64; StateHashComponent::COUNT] =
     [const { AtomicU64::new(0) }; StateHashComponent::COUNT];
 static HASH_COMPONENT_NANOS: [AtomicU64; StateHashComponent::COUNT] =
     [const { AtomicU64::new(0) }; StateHashComponent::COUNT];
+static EXACT_IDENTITY_CALLS: AtomicU64 = AtomicU64::new(0);
+static EXACT_IDENTITY_NANOS: AtomicU64 = AtomicU64::new(0);
 
 static TRACED_FINISHES: AtomicU64 = AtomicU64::new(0);
 static TRACED_TOKENS: AtomicU64 = AtomicU64::new(0);
@@ -146,6 +154,14 @@ pub(crate) fn record_state_hash_component(
     HASH_COMPONENT_CALLS[index].fetch_add(1, Ordering::Relaxed);
     HASH_COMPONENT_VISITS[index].fetch_add(visits as u64, Ordering::Relaxed);
     HASH_COMPONENT_NANOS[index].fetch_add(
+        elapsed.as_nanos().min(u128::from(u64::MAX)) as u64,
+        Ordering::Relaxed,
+    );
+}
+
+pub(crate) fn record_exact_identity(elapsed: std::time::Duration) {
+    EXACT_IDENTITY_CALLS.fetch_add(1, Ordering::Relaxed);
+    EXACT_IDENTITY_NANOS.fetch_add(
         elapsed.as_nanos().min(u128::from(u64::MAX)) as u64,
         Ordering::Relaxed,
     );
@@ -237,6 +253,14 @@ pub fn state_hash_measurement() -> StateHashMeasurement {
             visits: HASH_COMPONENT_VISITS[index].load(Ordering::Relaxed),
             nanos: HASH_COMPONENT_NANOS[index].load(Ordering::Relaxed),
         }),
+    }
+}
+
+#[must_use]
+pub fn exact_identity_measurement() -> ExactIdentityMeasurement {
+    ExactIdentityMeasurement {
+        calls: EXACT_IDENTITY_CALLS.load(Ordering::Relaxed),
+        nanos: EXACT_IDENTITY_NANOS.load(Ordering::Relaxed),
     }
 }
 

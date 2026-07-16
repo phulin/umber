@@ -2209,6 +2209,10 @@ impl PdfState {
             hasher.u32(cursor.next_object);
             hasher.usize(cursor.page_count);
             hash_output_parameters(hasher, cursor.output_parameters);
+            hasher.bool(cursor.pk_mode.is_some());
+            if let Some(pk_mode) = cursor.pk_mode {
+                hasher.u64(pk_mode.semantic_id);
+            }
             hasher.usize(cursor.font_operation_count);
             hasher.usize(cursor.font_resource_count);
             hasher.u64(cursor.fingerprint);
@@ -2218,6 +2222,8 @@ impl PdfState {
             hasher.u64(cursor.document_fragment_fingerprint);
             hasher.u64(cursor.action_fingerprint);
             hasher.u64(cursor.page_reservation_fingerprint);
+            hasher.usize(cursor.space_font_name_count);
+            hasher.u32(cursor.current_space_font_name);
             hasher.u64(cursor.space_font_name_fingerprint);
             hasher.u64(cursor.annotation_fingerprint);
             hasher.u64(cursor.link_fingerprint);

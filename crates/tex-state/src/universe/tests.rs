@@ -2551,7 +2551,7 @@ fn snapshot_state_hash_is_deterministic_for_same_program() {
 }
 
 #[test]
-fn exact_snapshots_reuse_immutable_store_serialization_across_forks() {
+fn exact_snapshots_reuse_immutable_store_projection_across_forks() {
     let mut universe = Universe::new();
     universe.intern("cached-name");
 
@@ -2599,19 +2599,76 @@ fn exact_immutable_store_root_survives_format_reconstruction() {
     original.intern_token_list(&[Token::Cs(name.symbol())]);
     let expected = original
         .snapshot_with_exact_identity()
-        .exact_store_identity
-        .expect("closed state has exact identity")
-        .0;
+        .exact_state_identity
+        .expect("closed state has exact identity");
     let format = original.dump_format().expect("format capture");
 
     let mut restored = Universe::from_format(World::memory(), &format).expect("format restore");
     let actual = restored
         .snapshot_with_exact_identity()
-        .exact_store_identity
-        .expect("restored state has exact identity")
-        .0;
+        .exact_state_identity
+        .expect("restored state has exact identity");
 
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn exact_checkpoint_identity_composes_every_future_state_root() {
+    fn identity(universe: &mut Universe) -> ContentHash {
+        universe
+            .snapshot_with_exact_identity()
+            .exact_state_identity
+            .expect("closed checkpoint has exact identity")
+    }
+
+    fn assert_change(mut change: impl FnMut(&mut Universe)) {
+        let mut universe = Universe::new();
+        let baseline = identity(&mut universe);
+        change(&mut universe);
+        assert_ne!(identity(&mut universe), baseline);
+    }
+
+    assert_change(|universe| {
+        universe.intern("immutable-component");
+    });
+    assert_change(|universe| universe.set_count(0, 1));
+    assert_change(|universe| universe.set_catcode('x', Catcode::Active));
+    assert_change(|universe| {
+        universe.add_hyphenation_pattern(PatternSpec {
+            letters: "identity".chars().collect(),
+            values: vec![0, 0, 1, 0, 0, 0, 0, 0, 0],
+        });
+    });
+    assert_change(|universe| universe.set_input_summary(condition_input_summary(1)));
+    assert_change(|universe| {
+        universe
+            .world_mut()
+            .open_out(StreamSlot::new(2), "identity.aux");
+    });
+    assert_change(|universe| {
+        universe.set_page_dimension(PageDimension::Total, Scaled::from_raw(17));
+    });
+    assert_change(|universe| universe.set_interaction_mode(super::InteractionMode::Batch));
+    assert_change(Universe::enable_pdf_output);
+}
+
+#[test]
+fn exact_checkpoint_identity_restores_after_inverse_mutation() {
+    let mut universe = Universe::new();
+    let original = universe.snapshot();
+    let baseline = identity_of(&mut universe);
+    universe.set_count(9, 99);
+    universe.set_pdf_return_value(17);
+    assert_ne!(identity_of(&mut universe), baseline);
+    universe.rollback(&original);
+    assert_eq!(identity_of(&mut universe), baseline);
+}
+
+fn identity_of(universe: &mut Universe) -> ContentHash {
+    universe
+        .snapshot_with_exact_identity()
+        .exact_state_identity
+        .expect("closed checkpoint has exact identity")
 }
 
 #[test]

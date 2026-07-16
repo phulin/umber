@@ -219,7 +219,13 @@ font data is strongly identified once at load, and new token-list, macro,
 name, glue, and font entries add only canonical leaves and prefix roots to a
 cache shared by related forks. Allocator ancestry prevents a divergent
 post-rollback suffix from reusing the wrong derived root. This cache is not
-semantic state and does not change rollback or exact-match results.
+semantic state and does not change rollback or exact-match results. Mutable
+environment state contributes its journal-maintained persistent Merkle root;
+code-table, hyphenation, page, input, World, interaction, and PDF components
+contribute cached canonical roots or rolling semantic fingerprints. A single
+versioned checkpoint identity composes those components. Exact comparison does
+not serialize the full mutable store or page graph, and therefore visits only
+component roots dirtied since their prior projection.
 Restart uses one validated aggregate fork operation: clone the retained
 substrate, retarget ownership internally, and roll the clone back to the
 selected checkpoint atomically, rebinding the root frame to the in-progress

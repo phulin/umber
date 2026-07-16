@@ -12,6 +12,8 @@ use tex_incr::{AcceptedOutput, Edit, ReuseMetrics, RevisionId, Session};
 #[cfg(feature = "profiling-stats")]
 use tex_lex::ExpansionStats;
 use tex_lex::{InputStack, WorldInput};
+#[cfg(feature = "profiling-stats")]
+use tex_state::measurement::{ExactIdentityMeasurement, exact_identity_measurement};
 use tex_state::{
     ContentHash, JobClock, PureMemoConfig, PureMemoRecordingPolicy, PureMemoStats, Universe, World,
 };
@@ -192,6 +194,8 @@ struct IncrementalStep {
     reuse: ReuseMetrics,
     memo: PureMemoStats,
     previous_memo: PureMemoStats,
+    #[cfg(feature = "profiling-stats")]
+    exact_identity: ExactIdentityMeasurement,
 }
 
 fn run_incremental_edit(options: &Options, template: &World) -> Result<(), String> {
@@ -414,6 +418,11 @@ fn print_incremental_work(name: &str, edit: usize, sample: &IncrementalStep) {
         reuse.reexecution_latency.as_micros(),
         reuse.splice_latency.as_micros(),
     );
+    #[cfg(feature = "profiling-stats")]
+    println!(
+        "gentle-profile exact identity: {name}: edit={edit} calls={} nanos={}",
+        sample.exact_identity.calls, sample.exact_identity.nanos,
+    );
     for (layer_name, layer) in [
         ("pretolerance", PureMemoLayer::Pretolerance),
         ("paragraph", PureMemoLayer::Paragraph),
@@ -633,6 +642,8 @@ fn execute_incremental_sample(
     let mut steps = Vec::with_capacity(fixture.edits.len());
     for (index, edit) in fixture.edits.iter().enumerate() {
         let previous_memo = session.pure_memo_stats();
+        #[cfg(feature = "profiling-stats")]
+        let exact_before = exact_identity_measurement();
         let mut resolvers = FileSessionResolvers::new(&path, Vec::new(), Vec::new());
         let started = Instant::now();
         let (input, font) = resolvers.resolvers();
@@ -641,6 +652,8 @@ fn execute_incremental_sample(
             .map_err(|error| format!("advance incremental edit {}: {error}", index + 1))?;
         let elapsed = started.elapsed();
         let memo = session.pure_memo_stats();
+        #[cfg(feature = "profiling-stats")]
+        let exact_after = exact_identity_measurement();
         let dvi = accepted.dvi_bytes().map_err(|error| error.to_string())?;
         let _ = black_box(accepted.artifacts.len());
         steps.push(IncrementalStep {
@@ -650,6 +663,11 @@ fn execute_incremental_sample(
             reuse: accepted.reuse,
             memo,
             previous_memo,
+            #[cfg(feature = "profiling-stats")]
+            exact_identity: ExactIdentityMeasurement {
+                calls: exact_after.calls.saturating_sub(exact_before.calls),
+                nanos: exact_after.nanos.saturating_sub(exact_before.nanos),
+            },
         });
     }
     Ok(IncrementalSample { steps })

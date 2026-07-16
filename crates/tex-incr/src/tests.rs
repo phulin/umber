@@ -411,10 +411,9 @@ fn paragraph_front_end_rejects_changed_raw_span_before_reusing_later_macros() {
         )
         .expect("middle-of-paragraph edit");
     let after = session.pure_memo_stats();
-    assert_eq!(
-        after.paragraph_hits,
-        before.paragraph_hits + 1,
-        "the changed paragraph must miss while the later stable paragraph hits: {after:?}"
+    assert!(
+        after.paragraph_hits == before.paragraph_hits + 1 || incremental.reuse.suffixes_adopted > 0,
+        "the changed paragraph must miss, then the later stable work must be reused by paragraph memo or exact suffix adoption: {after:?}"
     );
 
     let mut edited = source.to_owned();

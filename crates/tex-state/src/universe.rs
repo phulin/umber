@@ -481,8 +481,7 @@ pub struct Snapshot {
     interaction_mode: InteractionMode,
     page: PageBuilderState,
     pdf: PdfStateSnapshot,
-    exact_store_identity: Option<(ContentHash, ContentHash)>,
-    exact_page_identity: Option<ContentHash>,
+    exact_state_identity: Option<ContentHash>,
     dependency_tracker: DependencyTrackerSnapshot,
     state_hash: u64,
     state_hash_base: StateHashBase,
@@ -555,12 +554,6 @@ struct ScopedRollback {
 struct PageMemoWire {
     state: PageMemoState,
     detached_nodes: Vec<u8>,
-}
-
-#[derive(serde::Serialize)]
-struct ExactPageIdentityWire {
-    state: PageMemoState,
-    nodes: Vec<u8>,
 }
 
 /// Opaque allocation mark for one in-progress box-register construction.
@@ -714,29 +707,21 @@ impl Snapshot {
     /// Verifies equality of every future-relevant root retained by two named
     /// checkpoints without treating the folded 64-bit history hash as proof.
     ///
-    /// The canonical store identity is deliberately optional: open groups
-    /// cannot currently be encoded by the format codec, and that case is a
-    /// safe miss. Detached effect and artifact history is excluded; callers
-    /// splice those ordered prefixes separately.
+    /// The canonical store identity is deliberately unavailable inside open
+    /// groups, which are not named convergence boundaries; that case is a safe
+    /// miss. Detached effect and artifact history is excluded; callers splice
+    /// those ordered prefixes separately.
     #[must_use]
     pub fn exact_future_state_matches(&self, other: &Self) -> bool {
-        matches!(
-            (self.exact_store_identity, other.exact_store_identity),
-            (Some(left), Some(right)) if left == right
-        ) && self.exact_page_identity.is_some()
-            && self.exact_page_identity == other.exact_page_identity
-            && self
-                .input_summary
-                .exact_future_state_matches(&other.input_summary)
-            && self.interaction_mode == other.interaction_mode
-            && self.world.exact_future_state_matches(&other.world)
+        self.exact_state_identity.is_some()
+            && self.exact_state_identity == other.exact_state_identity
     }
 
-    /// Returns whether both optional canonical projections were captured.
+    /// Returns whether the optional composed canonical projection was captured.
     #[doc(hidden)]
     #[must_use]
     pub fn has_exact_state_identity(&self) -> bool {
-        self.exact_store_identity.is_some() && self.exact_page_identity.is_some()
+        self.exact_state_identity.is_some()
     }
 }
 
@@ -2224,21 +2209,6 @@ impl Universe {
     }
 
     fn checkpoint_from_hash_base(&mut self, hash_base: StateHashBase, exact: bool) -> Snapshot {
-        // The page codec is the allocation-independent semantic projection
-        // already used by page replay. Provenance is returned separately and
-        // intentionally does not participate in continuation equality.
-        let exact_page_identity = exact
-            .then(|| {
-                let (nodes, state) = self.page.memo_parts();
-                self.stores
-                    .encode_node_sequence_identity(&nodes)
-                    .ok()
-                    .and_then(|nodes| {
-                        bincode::serialize(&ExactPageIdentityWire { state, nodes }).ok()
-                    })
-                    .map(|bytes| ContentHash::from_bytes(&bytes))
-            })
-            .flatten();
         let world = self.world.snapshot();
         let mut store = self.stores.checkpoint();
         let store_cursor = self.stores.state_hash_cursor_from_snapshot(&store);
@@ -2282,8 +2252,8 @@ impl Universe {
             .next_snapshot_serial
             .checked_add(1)
             .expect("Universe snapshot serial exhausted");
-        let exact_store_identity = exact
-            .then(|| self.stores.encode_semantic_identity().ok())
+        let exact_state_identity = exact
+            .then(|| self.exact_checkpoint_identity().ok())
             .flatten();
         Snapshot {
             owner: self.owner.snapshot_owner(),
@@ -2295,8 +2265,7 @@ impl Universe {
             interaction_mode: self.interaction_mode,
             page: self.page.clone(),
             pdf: self.pdf.snapshot(),
-            exact_store_identity,
-            exact_page_identity,
+            exact_state_identity,
             dependency_tracker: self.dependencies.snapshot_tracker(),
             state_hash,
             state_hash_base: next_hash_base,
@@ -2466,6 +2435,40 @@ impl Universe {
         })
     }
 
+    fn hash_exact_world_state(&self, cache: &mut StateHashProjectionCache) -> StateHashFragment {
+        let stream_root = self.world.stream_bufs_root();
+        let streams = cache
+            .world_streams
+            .as_ref()
+            .and_then(|cached| cached.fragment_if(|root| Arc::ptr_eq(root, &stream_root)))
+            .unwrap_or_else(|| {
+                let fragment = StateHashFragment::from_measured_builder(
+                    WORLD_STREAMS_DOMAIN,
+                    StateHashComponent::WorldStreams,
+                    crate::world::STREAM_SLOT_COUNT,
+                    |projection| hash_stream_bufs(&stream_root, projection),
+                );
+                cache.world_streams = Some(CachedProjection::new(stream_root, fragment));
+                fragment
+            });
+        let scalars = StateHashFragment::from_builder(WORLD_SCALARS_DOMAIN, |projection| {
+            hash_rng_state(self.world.rng_state(), projection);
+            hash_pdf_random_state(&self.world, projection);
+            hash_pdf_timer_state(&self.world, projection);
+            hash_job_clock(self.world.job_clock(), projection);
+            hash_shell_escape_policy(self.world.shell_escape_policy(), projection);
+            projection.u8(match self.world.commit_mode() {
+                WorldCommitMode::Eager => 0,
+                WorldCommitMode::Retained => 1,
+                WorldCommitMode::Exported => 2,
+            });
+        });
+        StateHashFragment::from_builder(WORLD_SLICE_DOMAIN ^ 0x6578_6163_7400, |projection| {
+            streams.apply(projection);
+            scalars.apply(projection);
+        })
+    }
+
     fn hash_effect_record(&self, record: &EffectRecord, hasher: &mut StateHasher) {
         match record {
             EffectRecord::StreamOpen { slot, target } => {
@@ -2532,6 +2535,33 @@ impl Universe {
                 |id, hasher| self.stores.hash_token_list_semantic(id, hasher),
             );
         })
+    }
+
+    fn exact_checkpoint_identity(&mut self) -> Result<ContentHash, StoreFormatError> {
+        #[cfg(feature = "profiling-stats")]
+        let started = std::time::Instant::now();
+        let store = self.stores.semantic_identity()?;
+        let mut cache = std::mem::take(&mut self.state_hash_projection_cache);
+        let input = self.hash_input_summary(&mut cache);
+        let world = self.hash_exact_world_state(&mut cache);
+        let interaction =
+            StateHashFragment::from_builder(INTERACTION_PROJECTION_DOMAIN, |projection| {
+                hash_interaction_mode(self.interaction_mode, projection)
+            });
+        let page = self.hash_page_state(&mut cache.page);
+        let pdf = self.pdf.hash_fragment();
+        self.state_hash_projection_cache = cache;
+
+        let mut framed = Vec::with_capacity(128);
+        framed.extend_from_slice(b"umber-exact-checkpoint-v1");
+        framed.extend_from_slice(&store.bytes());
+        for component in [input, world, interaction, page, pdf] {
+            framed.extend_from_slice(&component.fingerprint().to_le_bytes());
+        }
+        let identity = ContentHash::from_bytes(&framed);
+        #[cfg(feature = "profiling-stats")]
+        crate::measurement::record_exact_identity(started.elapsed());
+        Ok(identity)
     }
 
     /// Canonical allocation-independent identity of the complete live page root.
