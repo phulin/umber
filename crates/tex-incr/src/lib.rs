@@ -1511,7 +1511,7 @@ impl tex_exec::FontResolver for DirectFontResolver {
     ) -> Result<tex_exec::FontSource, String> {
         input
             .read_input_file(path)
-            .map(|metrics| tex_exec::FontSource {
+            .map(|metrics| tex_exec::FontSource::Tfm {
                 metrics,
                 opentype: None,
             })

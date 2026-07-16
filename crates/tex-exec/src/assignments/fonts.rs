@@ -17,7 +17,12 @@ pub(super) fn execute_font_definition(
     skip_optional_equals_x(input, stores, execution)?;
     let font_name = scan_font_file_name(input, stores, execution)?;
     let size_spec = scan_font_size_spec(input, stores, execution, context)?;
-    let path = tfm_path(&font_name);
+    let opentype_name = font_name.strip_prefix("opentype:");
+    let path = if opentype_name.is_some() {
+        PathBuf::from(&font_name)
+    } else {
+        tfm_path(&font_name)
+    };
     let source = match execution.open_font(&mut stores.input_open_context(), &path) {
         Ok(content) => content,
         Err(_) => {
@@ -25,11 +30,22 @@ pub(super) fn execute_font_definition(
             // `null_font` after a TFM open failure and continues after the
             // ordinary recoverable font diagnostic.
             let selector = stores.resolve(target).to_owned();
+            let (kind, detail) = if opentype_name.is_some() {
+                (
+                    "OpenType resource not found",
+                    "I wasn't able to resolve the requested OpenType font",
+                )
+            } else {
+                (
+                    "Metric (TFM) file not found",
+                    "I wasn't able to read the size data for this font",
+                )
+            };
             stores.world_mut().write_text(
                 tex_state::PrintSink::TerminalAndLog,
                 &format!(
-                    "\n! Font \\{}={} not loadable: Metric (TFM) file not found.\nI wasn't able to read the size data for this font,\nso I will ignore the font specification.\n",
-                    selector, font_name
+                    "\n! Font \\{}={} not loadable: {kind}.\n{detail},\nso I will ignore the font specification.\n",
+                    selector, font_name,
                 ),
             );
             let meaning = Meaning::Font(tex_state::font::NULL_FONT);
@@ -41,27 +57,38 @@ pub(super) fn execute_font_definition(
             return Ok(());
         }
     };
-    let content = source.metrics;
-    let tfm = tex_fonts::TfmFont::parse_with_size(content.bytes(), size_spec)?;
-    let parameters = tfm
-        .parameters
-        .values
-        .iter()
-        .map(|parameter| parameter.value)
-        .collect();
-    let mut loaded = LoadedFont::new(
-        font_display_name(&font_name),
-        content.path().to_owned(),
-        content.hash().bytes(),
-        tfm.header.checksum,
-        tfm.header.design_size,
-        tfm.font_size,
-        parameters,
-        tfm.font_metrics(),
-    );
-    if let Some(selection) = source.opentype {
-        loaded = loaded.with_opentype(selection);
-    }
+    let loaded = match source {
+        crate::FontSource::Tfm { metrics, opentype } => {
+            let tfm = tex_fonts::TfmFont::parse_with_size(metrics.bytes(), size_spec)?;
+            let parameters = tfm
+                .parameters
+                .values
+                .iter()
+                .map(|parameter| parameter.value)
+                .collect();
+            let mut loaded = LoadedFont::new(
+                font_display_name(&font_name),
+                metrics.path().to_owned(),
+                metrics.hash().bytes(),
+                tfm.header.checksum,
+                tfm.header.design_size,
+                tfm.font_size,
+                parameters,
+                tfm.font_metrics(),
+            );
+            if let Some(selection) = opentype {
+                loaded = loaded.with_opentype(selection);
+            }
+            loaded
+        }
+        crate::FontSource::OpenType(selection) => {
+            let logical_name = opentype_name.unwrap_or(&font_name);
+            let design_size = Scaled::from_raw(10 * Scaled::UNITY);
+            let size = tex_state::scaled::tfm_font_size(design_size, size_spec)
+                .map_err(|_| ExecError::ArithmeticOverflow)?;
+            LoadedFont::new_opentype(logical_name, logical_name, design_size, size, selection)
+        }
+    };
     let id = stores.try_intern_font_with_identifier(loaded, target)?;
     let meaning = Meaning::Font(id);
     if apply_globaldefs(prefixes.global, stores) {
@@ -214,6 +241,9 @@ pub(super) fn execute_math_family_font_assignment(
     let family = scan_math_family(input, stores, execution, context)?;
     skip_optional_equals_x(input, stores, execution)?;
     let font = scan_font_selector(input, stores, execution)?;
+    if !stores.font(font).supports_classic_math() {
+        return Err(ExecError::OpenTypeMathUnsupported);
+    }
     stores.set_math_family_font(
         size,
         family,

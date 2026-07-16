@@ -35,6 +35,7 @@ pub enum ExecError {
     FontExpansion(tex_typeset::expansion::FontExpansionError),
     FontExpansionConfig(tex_state::font::FontExpansionConfigError),
     CannotCopyFont(&'static str),
+    OpenTypeMathUnsupported,
     EmptyModeNestSummary,
     CannotPopBaseMode,
     UndefinedControlSequence {
@@ -203,6 +204,10 @@ impl fmt::Display for ExecError {
             Self::CannotCopyFont(reason) => {
                 write!(f, "pdfTeX error (\\pdfcopyfont): {reason}")
             }
+            Self::OpenTypeMathUnsupported => write!(
+                f,
+                "OpenType-only fonts cannot be assigned to classic TeX math families; MATH parameter synthesis is not implemented"
+            ),
             Self::EmptyModeNestSummary => write!(f, "mode nest summary has no levels"),
             Self::CannotPopBaseMode => write!(f, "cannot pop the base vertical mode level"),
             Self::UndefinedControlSequence { name, .. } => {
@@ -447,6 +452,7 @@ impl std::error::Error for ExecError {
             | Self::FontExpansion(_)
             | Self::FontExpansionConfig(_)
             | Self::CannotCopyFont(_)
+            | Self::OpenTypeMathUnsupported
             | Self::UnimplementedTypesetting { .. }
             | Self::UnsupportedShipoutNode { .. }
             | Self::InvalidShipoutArtifact(_)
@@ -519,6 +525,7 @@ impl ExecError {
             | Self::FontExpansion(_)
             | Self::FontExpansionConfig(_)
             | Self::CannotCopyFont(_)
+            | Self::OpenTypeMathUnsupported
             | Self::EmptyModeNestSummary
             | Self::CannotPopBaseMode
             | Self::MissingPrefixedCommand

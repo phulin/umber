@@ -78,7 +78,7 @@ impl FontResolver for InProcessFontResolver {
         }
         input
             .read_input_file(&self.base_dir.join(path))
-            .map(|metrics| tex_exec::FontSource {
+            .map(|metrics| tex_exec::FontSource::Tfm {
                 metrics,
                 opentype: None,
             })

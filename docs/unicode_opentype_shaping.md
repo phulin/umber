@@ -144,20 +144,41 @@ classically come from a TFM's param section: interword space/stretch/shrink
 symbol/extension arrays. A font selected from OpenType data alone has none of
 this.
 
-This plan synthesizes a documented, versioned mapping from OpenType metrics
-to the classic fontdimen slots when a font is selected without a TFM:
-interword space from the space glyph's advance, stretch/shrink as a
-documented fraction of it, quad and x-height from `hhea`/OS/2 fields already
-extracted into `FontMetadata`. Math-font parameter synthesis (the MATH table)
-is out of scope here and left as a seam for the existing Stage 8 (OpenType
-math support) work.
+OpenType-only selection uses the explicit syntax
+`\font\name=opentype:<logical-name>`, followed by the ordinary optional
+`at <dimension>` or `scaled <integer>` size clause. The prefix is part of the
+engine syntax, not the logical resource name. An unprefixed `\font` remains a
+TFM request with byte-for-byte compatible behavior; the engine does not probe
+one source type and fall back to the other.
 
-`execute_font_definition` (`tex-exec/src/assignments/fonts.rs`) currently
-requires TFM bytes unconditionally. This plan extends `FontSource` with a
-variant carrying only a `ResolvedFont`/`OpenTypeFont` and no TFM, selected
-through new `\font` syntax that distinguishes a TFM font from an
-OpenType-only one, rather than continuing to bolt OpenType on as a sidecar to
-a TFM-required path.
+The current mapping is **OpenType fontdimen synthesis version 1**, exposed as
+`tex_fonts::OPENTYPE_FONTDIMEN_SYNTHESIS_VERSION`. At the selected size it is:
+
+| Slot                       | Value                                                                |
+| -------------------------- | -------------------------------------------------------------------- |
+| `fontdimen1` (slant)       | zero                                                                 |
+| `fontdimen2` (space)       | horizontal advance of the cmap-selected U+0020 glyph; zero if absent |
+| `fontdimen3` (stretch)     | one half of `fontdimen2`, rounded to nearest scaled point            |
+| `fontdimen4` (shrink)      | one third of `fontdimen2`, rounded to nearest scaled point           |
+| `fontdimen5` (x-height)    | OS/2 `sxHeight`; zero when absent                                    |
+| `fontdimen6` (quad)        | one em (the selected font size)                                      |
+| `fontdimen7` (extra space) | zero                                                                 |
+
+OpenType fonts have no intrinsic TeX design size, so an omitted size and
+`scaled 1000` both use a 10pt nominal design size. The mapping is host-neutral
+and computed only from validated cmap/metric metadata. A future mapping change
+must increment the version constant and document the compatibility impact.
+
+Math-font parameter synthesis from the OpenType MATH table is out of scope.
+Assigning an OpenType-only font through `\textfont`, `\scriptfont`, or
+`\scriptscriptfont` fails with an explicit capability error; TFM-backed fonts
+that also select OpenType shaping retain their classic math parameters. This
+is the seam for the existing Stage 8 (OpenType math support) work.
+
+`execute_font_definition` (`tex-exec/src/assignments/fonts.rs`) receives an
+explicit `FontSource::OpenType` variant carrying the selected validated
+`OpenTypeFont` and no TFM. The existing `FontSource::Tfm` variant may still
+carry an OpenType program alongside TFM tables for compatibility selection.
 
 ## Shaping pipeline integration into horizontal-mode construction
 

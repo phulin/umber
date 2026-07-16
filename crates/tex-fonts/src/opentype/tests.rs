@@ -107,6 +107,67 @@ fn woff2_and_decoded_ttf_have_one_program_identity_and_projection() {
 }
 
 #[test]
+fn opentype_only_font_synthesizes_versioned_text_fontdimens() {
+    let request = wasm_request();
+    let font = OpenTypeFont::parse(
+        &request,
+        ResolvedFont {
+            request: request.key.clone(),
+            container: FontContainer::Woff2,
+            bytes: include_bytes!("../../../umber-wasm/assets/cmu-serif-500-roman.woff2").to_vec(),
+            declared_object_sha256: None,
+            declared_program_identity: None,
+            provenance: None,
+        },
+        FontLimits::default(),
+    )
+    .expect("fixture font");
+    let size = tex_arith::Scaled::from_raw(10 * tex_arith::Scaled::UNITY);
+    let space_glyph = font.cmap.glyph(' ').expect("space glyph");
+    let space = tex_arith::Scaled::from_raw(
+        font.metrics
+            .units_to_sp(
+                i32::from(font.metrics.horizontal_advances[usize::from(space_glyph)]),
+                size.raw(),
+            )
+            .expect("space advance scales"),
+    );
+    let x_height = font.metadata.x_height.map(|height| {
+        tex_arith::Scaled::from_raw(
+            font.metrics
+                .units_to_sp(i32::from(height), size.raw())
+                .expect("x-height scales"),
+        )
+    });
+    let loaded = crate::LoadedFont::new_opentype(
+        "cmu-serif-roman",
+        "cmu-serif-roman",
+        size,
+        size,
+        crate::OpenTypeProgramSelection {
+            font,
+            variation: VariationSelection::default(),
+            features: FontFeaturePolicy::default(),
+            direction: WritingDirection::LeftToRight,
+        },
+    );
+
+    assert_eq!(crate::OPENTYPE_FONTDIMEN_SYNTHESIS_VERSION, 1);
+    assert_eq!(loaded.parameters()[0], tex_arith::Scaled::from_raw(0));
+    assert_eq!(loaded.parameters()[1], space);
+    assert_eq!(loaded.parameters()[2].raw(), (space.raw() + 1) / 2);
+    assert_eq!(loaded.parameters()[3].raw(), (space.raw() + 1) / 3);
+    assert_eq!(
+        loaded.parameters()[4],
+        x_height.unwrap_or(tex_arith::Scaled::from_raw(0))
+    );
+    assert_eq!(loaded.parameters()[5], size);
+    assert_eq!(loaded.parameters()[6], tex_arith::Scaled::from_raw(0));
+    assert!(!loaded.supports_classic_math());
+    assert!(loaded.character_exists('A'));
+}
+
+#[test]
 fn opentype_unit_scaling_uses_shared_boundary_rounding() {
     let metrics = OpenTypeMetrics {
         units_per_em: 2,

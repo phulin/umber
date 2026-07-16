@@ -72,10 +72,16 @@ pub trait PdfImageResolver {
     ) -> Result<tex_state::PdfExternalImageSource, String>;
 }
 
-/// Font inputs selected atomically by the host before TFM-dependent layout.
-pub struct FontSource {
-    pub metrics: FileContent,
-    pub opentype: Option<tex_fonts::OpenTypeProgramSelection>,
+/// Font inputs selected atomically by the host.
+pub enum FontSource {
+    /// Classic TFM metrics, optionally paired with an OpenType program for
+    /// Unicode character queries and shaping.
+    Tfm {
+        metrics: FileContent,
+        opentype: Option<tex_fonts::OpenTypeProgramSelection>,
+    },
+    /// A validated OpenType program selected without any TFM dependency.
+    OpenType(tex_fonts::OpenTypeProgramSelection),
 }
 
 /// Concrete execution-session context shared by stomach operations.
@@ -143,7 +149,7 @@ impl<'a> ExecutionContext<'a> {
             Some(resolver) => resolver.open_font(input, path, request_index),
             None => input
                 .read_input_file(path)
-                .map(|metrics| FontSource {
+                .map(|metrics| FontSource::Tfm {
                     metrics,
                     opentype: None,
                 })

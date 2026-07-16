@@ -101,6 +101,8 @@ pub struct FontMetadata {
     pub is_variable: bool,
     pub is_monospaced: bool,
     pub italic: bool,
+    /// OS/2 `sxHeight`, in font units, when the table supplies it.
+    pub x_height: Option<i16>,
 }
 
 self_cell!(
@@ -292,6 +294,7 @@ impl OpenTypeFont {
             is_variable: face.is_variable(),
             is_monospaced: face.is_monospaced(),
             italic: face.is_italic(),
+            x_height: face.x_height(),
         };
         let shaping_face = Arc::new(ShapingFace::new(
             Arc::from(decoded),

@@ -487,17 +487,25 @@ impl FontResolver for VirtualFontResolver<'_> {
             self.files.record_fatal(failure.clone());
             return Err(failure.to_string());
         };
-        let tfm = self.files.open(input, FileKind::Tfm, name, request_index);
-        if !self.require_opentype {
-            return tfm.map(|metrics| tex_exec::FontSource {
-                metrics,
-                opentype: None,
-            });
+        let opentype_only = name.strip_prefix("opentype:");
+        let tfm = if opentype_only.is_some() {
+            None
+        } else {
+            Some(self.files.open(input, FileKind::Tfm, name, request_index))
+        };
+        if !self.require_opentype && opentype_only.is_none() {
+            return tfm
+                .expect("classic selection has a TFM request")
+                .map(|metrics| tex_exec::FontSource::Tfm {
+                    metrics,
+                    opentype: None,
+                });
         }
-        let logical_name = path
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .unwrap_or(name);
+        let logical_name = opentype_only.unwrap_or_else(|| {
+            path.file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or(name)
+        });
         let key = FontRequestKey::new(
             logical_name,
             0,
@@ -513,15 +521,19 @@ impl FontResolver for VirtualFontResolver<'_> {
             });
             return Err(format!("OpenType font {logical_name} is not cached"));
         };
-        tfm.map(|metrics| tex_exec::FontSource {
-            metrics,
-            opentype: Some(tex_fonts::OpenTypeProgramSelection {
-                font: font.clone(),
-                variation: key.variation,
-                features: key.feature_policy,
-                direction: tex_fonts::WritingDirection::LeftToRight,
+        let selection = tex_fonts::OpenTypeProgramSelection {
+            font: font.clone(),
+            variation: key.variation,
+            features: key.feature_policy,
+            direction: tex_fonts::WritingDirection::LeftToRight,
+        };
+        match tfm {
+            Some(tfm) => tfm.map(|metrics| tex_exec::FontSource::Tfm {
+                metrics,
+                opentype: Some(selection),
             }),
-        })
+            None => Ok(tex_exec::FontSource::OpenType(selection)),
+        }
     }
 }
 

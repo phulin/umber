@@ -133,7 +133,7 @@ impl crate::FontResolver for WorldFontResolver {
             .map_or_else(|| path.to_owned(), |root| root.join(path));
         input
             .read_input_file(&path)
-            .map(|metrics| crate::FontSource {
+            .map(|metrics| crate::FontSource::Tfm {
                 metrics,
                 opentype: None,
             })

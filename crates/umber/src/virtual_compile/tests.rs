@@ -565,6 +565,73 @@ fn valid_tfm_produces_a_nonempty_dvi() {
 }
 
 #[test]
+fn opentype_only_font_needs_no_tfm_and_exposes_synthesized_fontdimens() {
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        html: true,
+        ..SessionOptions::default()
+    })
+    .expect("HTML session");
+    session
+        .add_user_file(
+            "main.tex",
+            br"\font\ot=opentype:cmu-serif-roman at 10pt \ot
+               \message{space=\the\fontdimen2\ot,stretch=\the\fontdimen3\ot,shrink=\the\fontdimen4\ot,quad=\the\fontdimen6\ot}
+               \shipout\hbox{A B}\end"
+                .to_vec(),
+        )
+        .expect("main source");
+
+    let missing = resources(session.compile_attempt());
+    assert_eq!(missing.len(), 1);
+    let font = match missing.into_iter().next().expect("font request") {
+        ResourceRequest::Font(font) => font,
+        ResourceRequest::File(file) => panic!("unexpected TFM request: {file:?}"),
+    };
+    provide_cmu_font(&mut session, font);
+    let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+        panic!("OpenType-only compile should complete");
+    };
+    let terminal = String::from_utf8(output.terminal).expect("terminal UTF-8");
+    assert!(terminal.contains("space="));
+    assert!(terminal.contains("stretch="));
+    assert!(terminal.contains("shrink="));
+    assert!(terminal.contains("quad=10.0pt"));
+    let html = String::from_utf8(output.html.expect("HTML output")).expect("HTML UTF-8");
+    assert!(html.contains(">A B</text>"));
+}
+
+#[test]
+fn opentype_only_font_rejects_classic_math_family_assignment() {
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        html: true,
+        ..SessionOptions::default()
+    })
+    .expect("HTML session");
+    session
+        .add_user_file(
+            "main.tex",
+            br"\font\ot=opentype:cmu-serif-roman \textfont0=\ot\end".to_vec(),
+        )
+        .expect("main source");
+    let font = resources(session.compile_attempt())
+        .into_iter()
+        .find_map(|request| match request {
+            ResourceRequest::Font(font) => Some(font),
+            ResourceRequest::File(_) => None,
+        })
+        .expect("font request");
+    provide_cmu_font(&mut session, font);
+    let CompileAttemptResult::Error(error) = session.compile_attempt() else {
+        panic!("classic math assignment should fail");
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("OpenType-only fonts cannot be assigned")
+    );
+}
+
+#[test]
 fn font_batches_accept_partial_unordered_responses_and_reject_conflicts() {
     let mut session = VirtualCompileSession::new(SessionOptions {
         html: true,

@@ -12,6 +12,12 @@ use tex_arith::Scaled;
 /// TeX82 guarantees `fontdimen1` through `fontdimen7` for every loaded font.
 pub const MIN_TEX_FONT_PARAMETERS: usize = 7;
 
+/// Version of the OpenType-only to classic TeX `fontdimen` mapping.
+///
+/// Changing the mapping is a semantic compatibility change and must introduce
+/// a new version rather than silently changing existing document layout.
+pub const OPENTYPE_FONTDIMEN_SYNTHESIS_VERSION: u8 = 1;
+
 /// Maximum lig/kern program length addressable by the runtime `u16` cursor.
 ///
 /// Length 65,536 is valid: its final instruction has index `u16::MAX` and
@@ -36,6 +42,7 @@ pub struct LoadedFont {
     metrics: FontMetricsSource,
     opentype: Option<OpenTypeFontSelection>,
     construction: FontConstruction,
+    classic_math_capable: bool,
 }
 
 /// Host-neutral provenance for an immutable font instance.
@@ -270,7 +277,74 @@ impl LoadedFont {
             metrics: FontMetricsSource::Tfm(metrics),
             opentype: None,
             construction: FontConstruction::Loaded,
+            classic_math_capable: true,
         }
+    }
+
+    /// Builds a font selected from OpenType data alone, without compatibility
+    /// TFM tables. The text `fontdimen` bank follows synthesis mapping v1.
+    #[must_use]
+    pub fn new_opentype(
+        name: impl Into<String>,
+        path: impl Into<PathBuf>,
+        design_size: Scaled,
+        size: Scaled,
+        selection: OpenTypeProgramSelection,
+    ) -> Self {
+        let space = selection
+            .font
+            .cmap
+            .glyph(' ')
+            .and_then(|glyph| {
+                selection
+                    .font
+                    .metrics
+                    .horizontal_advances
+                    .get(usize::from(glyph))
+            })
+            .and_then(|advance| {
+                selection
+                    .font
+                    .metrics
+                    .units_to_sp(i32::from(*advance), size.raw())
+                    .ok()
+            })
+            .map_or(Scaled::from_raw(0), Scaled::from_raw);
+        let x_height = selection
+            .font
+            .metadata
+            .x_height
+            .and_then(|height| {
+                selection
+                    .font
+                    .metrics
+                    .units_to_sp(i32::from(height), size.raw())
+                    .ok()
+            })
+            .map_or(Scaled::from_raw(0), Scaled::from_raw);
+        let parameters = vec![
+            Scaled::from_raw(0),
+            space,
+            round_scaled_ratio(space, 1, 2),
+            round_scaled_ratio(space, 1, 3),
+            x_height,
+            size,
+            Scaled::from_raw(0),
+        ];
+        let content_hash = selection.font.object_identity.bytes();
+        let mut loaded = Self::new(
+            name,
+            path,
+            content_hash,
+            0,
+            design_size,
+            size,
+            parameters,
+            FontMetrics::default(),
+        )
+        .with_opentype(selection);
+        loaded.classic_math_capable = false;
+        loaded
     }
 
     #[must_use]
@@ -329,6 +403,13 @@ impl LoadedFont {
     #[must_use]
     pub const fn construction(&self) -> &FontConstruction {
         &self.construction
+    }
+
+    /// Whether this font carries TFM-derived parameters suitable for classic
+    /// TeX math-family assignment.
+    #[must_use]
+    pub const fn supports_classic_math(&self) -> bool {
+        self.classic_math_capable
     }
 
     /// Deterministic, host-neutral identity for generated-font ancestry.
