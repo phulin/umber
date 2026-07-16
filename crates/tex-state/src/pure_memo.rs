@@ -214,6 +214,7 @@ pub struct PureMemoStats {
     pub paragraph_endinput_barriers: u64,
     pub paragraph_unsupported_write_barriers: u64,
     pub paragraph_unsupported_input_transition_barriers: u64,
+    pub paragraph_unsupported_group_transition_barriers: u64,
     pub page_lookups: u64,
     pub page_hits: u64,
     pub page_inserts: u64,
@@ -260,6 +261,7 @@ pub enum ParagraphBarrierReason {
     NestedOutputRoutine,
     UnsupportedEscapingWrite,
     UnsupportedInputTransition,
+    UnsupportedGroupTransition,
 }
 
 /// Recorder output for one normally executed paragraph. The result nodes are
@@ -855,6 +857,12 @@ impl PureMemoRuntime {
                         cache.stats.paragraph_unsupported_input_transition_barriers = cache
                             .stats
                             .paragraph_unsupported_input_transition_barriers
+                            .saturating_add(1);
+                    }
+                    ParagraphBarrierReason::UnsupportedGroupTransition => {
+                        cache.stats.paragraph_unsupported_group_transition_barriers = cache
+                            .stats
+                            .paragraph_unsupported_group_transition_barriers
                             .saturating_add(1);
                     }
                 }

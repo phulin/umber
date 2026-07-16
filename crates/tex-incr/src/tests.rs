@@ -222,6 +222,78 @@ fn paragraph_front_end_hit_replays_nonempty_everypar_across_revision() {
 }
 
 #[test]
+fn paragraph_region_that_replaces_its_entry_group_is_not_replayed() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = concat!(
+        "\\def\\replacegroup{\\endgroup\\begingroup grouped paragraph text\\par}\n",
+        "% header a\n",
+        "\\begingroup\\replacegroup\\endgroup\n",
+        "stable literal paragraph text\\par\n",
+        "\\vfill\\eject\\end",
+    );
+    let mut session = Session::start(
+        universe,
+        "paragraph-group-transition-barrier",
+        RevisionId::new(1),
+        source,
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+    let after_cold = session.pure_memo_stats();
+    assert!(
+        after_cold.paragraph_unsupported_group_transition_barriers > 0,
+        "a region that replaces its entry group cannot be replayed without a group redo log"
+    );
+
+    let header = source.find("header a").expect("header marker") + "header ".len();
+    let first = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: header..header + 1,
+                replacement: "b".to_owned(),
+            },
+        )
+        .expect("header edit");
+    assert!(first.reuse.restart_boundary.is_some());
+    let edited = format!("{}b{}", &source[..header], &source[header + 1..]);
+
+    let second = session
+        .advance(
+            RevisionId::new(3),
+            Edit {
+                base_revision: RevisionId::new(2),
+                expected_hash: ContentHash::from_bytes(edited.as_bytes()),
+                range: header..header + 1,
+                replacement: "a".to_owned(),
+            },
+        )
+        .expect("inverse header edit");
+    assert!(second.reuse.restart_boundary.is_some());
+
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-group-transition-barrier",
+        RevisionId::new(3),
+        source,
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    let expected = cold.cold().expect("cold comparison");
+    assert_eq!(
+        second.dvi_bytes().expect("incremental DVI"),
+        expected.dvi_bytes().expect("cold DVI")
+    );
+    assert_eq!(second.effects, expected.effects);
+}
+
+#[test]
 fn paragraph_front_end_keys_macro_paragraphs_before_expansion() {
     let mut universe = template();
     universe.enable_pure_memo(tex_state::PureMemoConfig::default());

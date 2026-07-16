@@ -100,6 +100,8 @@ pub(crate) struct PendingParagraphMemo {
 pub(crate) struct ColdParagraphRecording {
     pub(crate) effect_start: usize,
     pub(crate) starting_span: Option<tex_state::RootSpanId>,
+    pub(crate) starting_group_depth: u32,
+    pub(crate) starting_group_changed_at: tex_state::ChangedAt,
     pub(crate) macro_bearing: bool,
     pub(crate) trace: Vec<TracedTokenWord>,
     pub(crate) barriers: std::collections::BTreeSet<ParagraphBarrierReason>,
@@ -217,6 +219,8 @@ impl<'a> ExecutionContext<'a> {
         &mut self,
         effect_start: usize,
         starting_span: Option<tex_state::RootSpanId>,
+        starting_group_depth: u32,
+        starting_group_changed_at: tex_state::ChangedAt,
     ) -> bool {
         if self.cold_paragraph_recording.is_some() {
             return false;
@@ -225,6 +229,8 @@ impl<'a> ExecutionContext<'a> {
         self.cold_paragraph_recording = Some(ColdParagraphRecording {
             effect_start,
             starting_span,
+            starting_group_depth,
+            starting_group_changed_at,
             macro_bearing: false,
             trace: Vec::new(),
             barriers: std::collections::BTreeSet::new(),
@@ -241,12 +247,16 @@ impl<'a> ExecutionContext<'a> {
     pub(crate) fn update_cold_paragraph_start(
         &mut self,
         starting_span: Option<tex_state::RootSpanId>,
+        starting_group_depth: u32,
+        starting_group_changed_at: tex_state::ChangedAt,
     ) -> bool {
         if let Some(recording) = &mut self.cold_paragraph_recording
             && !recording.macro_bearing
             && starting_span.is_some()
         {
             recording.starting_span = starting_span;
+            recording.starting_group_depth = starting_group_depth;
+            recording.starting_group_changed_at = starting_group_changed_at;
             return true;
         }
         false
@@ -580,14 +590,23 @@ where
             && stores.paragraph_memo_enabled()
         {
             let starting_span = input.current_root_delivery_anchor(stores)?;
+            let group_key =
+                tex_state::DependencyKey::Engine(tex_state::DependencyEngineField::GroupLevel);
+            let starting_group_changed_at = stores.track_dependency(group_key);
             if execution.begin_cold_paragraph_recording(
                 stores.world().effect_records().len(),
                 starting_span,
+                tex_state::ExpansionState::execution_group_depth(stores),
+                starting_group_changed_at,
             ) {
                 input.begin_paragraph_source_recording();
                 stores.begin_pure_paragraph_recording();
             }
-            if execution.update_cold_paragraph_start(starting_span) {
+            if execution.update_cold_paragraph_start(
+                starting_span,
+                tex_state::ExpansionState::execution_group_depth(stores),
+                starting_group_changed_at,
+            ) {
                 input.ensure_paragraph_source_recording();
             }
             if execution.bypass_paragraph_memo_once {

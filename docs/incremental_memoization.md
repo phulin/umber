@@ -402,6 +402,16 @@ World effects, unsupported escaping writes, and nested output routines retain
 explicit, counted barrier reasons. Group-closed work remains part of normal
 cold execution and does not require a whitelist exception.
 
+The pre-paragraph source region may also contain vertical-mode commands before
+the paragraph actually starts. Because paragraph redo does not yet represent
+group entry or exit, recording captures the execution-group depth and its
+changed-at stamp at the stable candidate anchor and rejects a region after any
+group-stack mutation, including a balanced exit/entry pair whose net depth is
+unchanged. This explicit group-transition barrier prevents replay
+from skipping a macro-expanded `\endgroup` (or `\begingroup`) and preserves the
+group lineage required by retained named checkpoints. Regions that only read
+or mutate ordinary state within an unchanged group remain eligible.
+
 Prepared paragraph hlists are anchored as survivor graphs owned by exactly one
 accepted generation. These roots are deliberately independent of checkpoint
 rollback pins, so a fork may roll back to an earlier paragraph boundary and

@@ -392,7 +392,7 @@ fn print_incremental_work(name: &str, edit: usize, sample: &IncrementalStep) {
         print_memo_layer(name, edit, layer_name, current.saturating_since(previous));
     }
     println!(
-        "gentle-profile paragraph detail: {name}: edit={edit} eligible={} barriers={} validation_misses={} import_failures={} line_hits={} hlist_fallbacks={} commands_skipped={} imported_bytes={} barrier_display_math={} barrier_scantokens={} barrier_input_open={} barrier_endinput={} barrier_world={} barrier_output={} barrier_unsupported_write={} barrier_unsupported_input_transition={} validation_reasons={}",
+        "gentle-profile paragraph detail: {name}: edit={edit} eligible={} barriers={} validation_misses={} import_failures={} line_hits={} hlist_fallbacks={} commands_skipped={} imported_bytes={} barrier_display_math={} barrier_scantokens={} barrier_input_open={} barrier_endinput={} barrier_world={} barrier_output={} barrier_unsupported_write={} barrier_unsupported_input_transition={} barrier_unsupported_group_transition={} validation_reasons={}",
         memo_delta!(paragraph_eligible_regions),
         memo_delta!(paragraph_barriers),
         memo_delta!(paragraph_validation_misses),
@@ -409,6 +409,7 @@ fn print_incremental_work(name: &str, edit: usize, sample: &IncrementalStep) {
         memo_delta!(paragraph_output_routine_barriers),
         memo_delta!(paragraph_unsupported_write_barriers),
         memo_delta!(paragraph_unsupported_input_transition_barriers),
+        memo_delta!(paragraph_unsupported_group_transition_barriers),
         paragraph_validation_reasons(&sample.memo, &sample.previous_memo),
     );
     println!(

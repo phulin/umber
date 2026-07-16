@@ -29,7 +29,14 @@ pub(crate) fn try_reuse_literal_paragraph(
     let mut preselected = None;
     for _ in 0..MAX_PREFLIGHT_TOKENS {
         let starting_span = input.current_root_delivery_anchor(stores)?;
-        if execution.update_cold_paragraph_start(starting_span) {
+        let group_key =
+            tex_state::DependencyKey::Engine(tex_state::DependencyEngineField::GroupLevel);
+        let starting_group_changed_at = stores.track_dependency(group_key);
+        if execution.update_cold_paragraph_start(
+            starting_span,
+            tex_state::ExpansionState::execution_group_depth(stores),
+            starting_group_changed_at,
+        ) {
             input.ensure_paragraph_source_recording();
         }
         preselected = starting_span
@@ -725,6 +732,16 @@ fn publish_recorded_region(
         });
     }
     let ending_input = input.publication_summary(stores);
+    let group_key = tex_state::DependencyKey::Engine(tex_state::DependencyEngineField::GroupLevel);
+    if recording.starting_span.is_some()
+        && (recording.starting_group_depth
+            != tex_state::ExpansionState::execution_group_depth(stores)
+            || recording.starting_group_changed_at != stores.track_dependency(group_key))
+    {
+        recording
+            .barriers
+            .insert(tex_state::ParagraphBarrierReason::UnsupportedGroupTransition);
+    }
     if recording.macro_bearing && ending_input.frames().len() != 1 {
         recording
             .barriers
