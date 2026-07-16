@@ -26,7 +26,7 @@ use crate::{
     TexFontSearchPath, TexInputSearchPath, VirtualCompileSession,
 };
 
-pub const DEFAULT_DISTRIBUTION_URL: &str = "https://static.umber.dev/texlive/latest/manifest.json";
+pub const DEFAULT_DISTRIBUTION_URL: &str = "https://assets.umber.ink/texlive/latest/manifest.json";
 // Phase 6 rotates this placeholder to the digest of the first published snapshot.
 pub const DEFAULT_DISTRIBUTION_SHA256: &str =
     "0000000000000000000000000000000000000000000000000000000000000000";
