@@ -1824,6 +1824,31 @@ fn group_exit_and_rollback_restore_box_refs_once() {
 }
 
 #[test]
+fn same_level_box_journal_keeps_value_live_across_nested_group_exit() {
+    let mut stores = Stores::new();
+    let outer = one_char(&mut stores, 'o');
+    stores.set_box_reg(0, outer);
+    let baseline = stores.box_reg(0).expect("outer box should be stored");
+
+    stores.enter_group();
+    let inner = one_char(&mut stores, 'i');
+    stores.set_box_reg(0, inner);
+    let local = stores.box_reg(0).expect("local box should be stored");
+    stores.enter_group();
+    assert_eq!(stores.take_box_reg_same_level(0), Some(local));
+    assert_eq!(stores.testing_survivor_refcount(local), 1);
+
+    assert_eq!(stores.leave_group(), Vec::<Token>::new());
+    assert_eq!(stores.box_reg(0), None);
+    assert_eq!(stores.testing_survivor_refcount(local), 1);
+
+    assert_eq!(stores.leave_group(), Vec::<Token>::new());
+    assert_eq!(stores.box_reg(0), Some(baseline));
+    assert_eq!(stores.testing_live_survivor_slot_count(), 1);
+    assert_eq!(stores.testing_survivor_refcount(baseline), 1);
+}
+
+#[test]
 fn global_box_assignment_survives_group_and_journal_owner_survives_rollback() {
     let mut stores = Stores::new();
     let outer = one_char(&mut stores, 'o');

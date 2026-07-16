@@ -500,13 +500,16 @@ impl Stores {
         let Some(pos) = self.env.last_group_marker_pos() else {
             return;
         };
+        let leaving_depth = self.env.group_depth();
         let dropped: Vec<_> = self
             .env
             .journal_entries_since(pos)
             .iter()
             .rev()
             .filter_map(|entry| match entry {
-                crate::journal::Entry::BoxUndo(id) if !self.env.box_undo(*id).is_global() => {
+                crate::journal::Entry::BoxUndo(id)
+                    if !self.env.box_undo(*id).survives_group(leaving_depth) =>
+                {
                     Some(self.env.box_undo(*id).new_value().value())
                 }
                 _ => None,

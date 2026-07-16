@@ -67,7 +67,9 @@ Destructive `\box`, `\unhbox`, `\unvbox`, and `\vsplit` updates preserve that
 owner depth even when executed inside a nested box-construction group: the
 void or remainder value crosses inner boundaries, then the prior value is
 restored only when its owning group ends. Journal records therefore carry a
-box restore depth independently of whether an ordinary assignment was global.
+box restore depth independently of whether an ordinary assignment was global;
+survivor-reference cleanup uses that same depth so a refiled entry keeps its
+box node root live across intervening group exits.
 
 ## 5. Meaning, sparse tier: the code tables
 
