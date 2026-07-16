@@ -13,8 +13,9 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - In general, try to keep source files short (goal is under roughly 600 lines, but it's okay if a file gets somewhat larger; test files can be as long as needed, they should only be split logically).
 - When writing code, prefer principled solutions, clean architecture, and fast, optimized implementation. Avoid hacks.
 - For complex features, build design/technical documentation in advance and place in docs/ for your own planning and for reference later, but don't commit temporary task plans or notes.
-- Prefer `#[cfg(test)] mod tests;` with separate `src/.../tests.rs` files for nontrivial crate-internal tests. Internal library crates should avoid crate-level `tests/`; crates that keep external-boundary integration tests should consolidate them under one `tests/it.rs` binary. See `docs/testing_policy.md`.
+- Prefer `#[cfg(test)] mod tests;` with separate `src/.../tests.rs` files for nontrivial crate-internal tests. If writing tests, read `docs/testing_policy.md`.
 - Make sure you can run the test suite very quickly so we don't gate our progress on test su ite speed. Run `cargo test` with `--tests` so you don't run the doctests.
+- Limit `rg` output aggressively - you can easily fill up your context with it.
 
 ## Directory Map
 
@@ -48,6 +49,7 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
   `scripts/check.sh` for the format and clippy gate without rerunning tests.
 - When running tests, make sure to use `cargo test -q` so you don't fill up
   your context window.
+- Direct `cargo build` output to a log file; it has verbose output. 
 - Use `scripts/check-and-test.sh` when a single command should run the full
   workspace test suite concurrently with the format and clippy gate. Clippy
   uses its own `target/clippy` directory so it does not lock the test build.
