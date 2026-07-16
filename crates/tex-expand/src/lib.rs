@@ -1157,7 +1157,10 @@ impl ExpansionMode for DriverExpansionMode {
         stores: &mut tex_state::ExpansionContext<'_>,
         expansion: &mut ExpansionContext<'_>,
     ) -> Result<Option<TracedTokenWord>, ExpandError> {
-        get_command_token_with_context(input, stores, expansion)
+        // This is the ordinary TeX `get_x_token` path used by general
+        // scanners. Only callers that are explicitly fetching the command
+        // after a prefix may override `\unexpanded` replay suppression.
+        get_x_token_with_context(input, stores, expansion)
     }
 
     fn dispatch_raw_token(

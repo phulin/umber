@@ -1,6 +1,7 @@
 use crate::{
-    EngineMode, ExpandableOpcode, ExpansionContext, ReadRecorder, dispatch,
-    dispatch_expandable_opcode, dispatch_with_context, install_expandable_primitives,
+    DriverExpansionMode, EngineMode, ExpandableOpcode, ExpansionContext, ExpansionMode,
+    ReadRecorder, dispatch, dispatch_expandable_opcode, dispatch_with_context,
+    install_expandable_primitives, semantic_token,
 };
 use ahash::AHashMap;
 #[cfg(feature = "profiling-stats")]
@@ -756,6 +757,32 @@ fn keyword_scanner_resumes_a_macro_from_unexpanded_replay() {
         )
         .expect("keyword command demand")
     );
+}
+
+#[test]
+fn general_driver_scans_preserve_unexpanded_replay_suppression() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    crate::install_etex_expandable_primitives(&mut stores);
+    let macro_cs = stores.intern("ordinarymacro");
+    let empty = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[char_token('x')]);
+    stores.set_macro_meaning(
+        macro_cs,
+        MacroMeaning::new(MeaningFlags::EMPTY, empty, body),
+    );
+    let mut input = InputStack::new(MemoryInput::new("\\unexpanded{\\ordinarymacro}"));
+
+    let delivered = DriverExpansionMode
+        .next_expanded_token(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores),
+            &mut ExpansionContext::new("texput"),
+        )
+        .expect("driver expansion")
+        .expect("suppressed macro token");
+
+    assert_eq!(semantic_token(delivered), Token::Cs(macro_cs.symbol()));
 }
 
 #[test]
