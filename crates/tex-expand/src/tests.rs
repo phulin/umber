@@ -729,6 +729,32 @@ fn get_x_or_protected_preserves_unexpanded_replay_suppression() {
 }
 
 #[test]
+fn alignment_x_or_protected_resumes_unexpanded_macro_replay() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    crate::install_etex_expandable_primitives(&mut stores);
+    let macro_cs = stores.intern("ordinarymacro");
+    let empty = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[char_token('x')]);
+    stores.set_macro_meaning(
+        macro_cs,
+        MacroMeaning::new(MeaningFlags::EMPTY, empty, body),
+    );
+    let mut input = InputStack::new(MemoryInput::new("\\unexpanded{\\ordinarymacro}"));
+
+    assert_eq!(
+        crate::get_alignment_x_or_protected_with_context(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores),
+            &mut ExpansionContext::new("texput"),
+        )
+        .expect("alignment command-demand expansion")
+        .map(crate::semantic_token),
+        Some(char_token('x'))
+    );
+}
+
+#[test]
 fn keyword_scanner_resumes_a_macro_from_unexpanded_replay() {
     let mut stores = Universe::new();
     install_expandable_primitives(&mut stores);

@@ -1297,6 +1297,24 @@ pub fn get_x_or_protected_with_context(
     }
 }
 
+/// Pulls the next alignment-lookahead token while leaving protected macros
+/// unexpanded.
+///
+/// Unlike expanded-definition scanning, TeX's alignment command demand must
+/// resume an ordinary macro replayed by `\unexpanded`. Keep this override at
+/// the alignment boundary instead of changing every `get_x_or_protected`
+/// consumer.
+pub fn get_alignment_x_or_protected_with_context(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+) -> Result<Option<TracedTokenWord>, ExpandError> {
+    match get_x_token_with_context_inner(input, stores, expansion, true, true, None) {
+        Ok(token) => Ok(token),
+        Err(error) => Err(error.capture(input)),
+    }
+}
+
 /// A token whose alignment-sensitive `get_next` work has already completed.
 ///
 /// This is the synchronous, stack-local equivalent of TeX82's `cur_cmd`,

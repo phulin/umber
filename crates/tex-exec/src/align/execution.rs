@@ -1,4 +1,4 @@
-use tex_expand::{get_x_or_protected_with_context, get_x_token_with_context};
+use tex_expand::{get_alignment_x_or_protected_with_context, get_x_token_with_context};
 use tex_lex::{InputStack, TokenListReplayKind};
 use tex_state::env::banks::TokParam;
 use tex_state::node::{GlueKind, Node};
@@ -397,7 +397,7 @@ fn next_non_space_protected(
     loop {
         let token = {
             let mut expansion = ExpansionContext::new(stores);
-            get_x_or_protected_with_context(input, &mut expansion, execution)?
+            get_alignment_x_or_protected_with_context(input, &mut expansion, execution)?
         };
         match token {
             Some(token)
