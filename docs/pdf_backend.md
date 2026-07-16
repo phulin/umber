@@ -127,7 +127,7 @@ handwrites `BI`, `ID`, or `EI` framing.
 
 The selected 0.15.0 source fork is `phulin/pdf-writer` commit
 `030c3b1ad0e528b13ee3e6ca4605c91fbeaa3d91`, revision-pinned through
-`[patch.crates-io]` in the workspace manifest and lockfile. It descends
+the direct workspace dependency and lockfile. It descends
 directly from upstream 0.15.0 source commit
 `639214e1745f2b1ff29ad0621da151807118d7bc`, whose crates.io package checksum
 is `f5e456864a7a304047bff84977dc6fb162bd956475d40ba50b2dcecaada7f753`, and
