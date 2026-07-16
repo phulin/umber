@@ -9,6 +9,7 @@ use sha2::{Digest, Sha256};
 
 const OBJECTS: &str = "objects";
 const MANIFESTS: &str = "manifests";
+const MAX_MANIFEST_BYTES: u64 = 32 * 1024 * 1024;
 
 #[derive(Debug)]
 pub struct CacheError {
@@ -81,7 +82,7 @@ impl ObjectCache {
         digest: &str,
         expected_bytes: u64,
     ) -> Result<Option<Vec<u8>>, CacheError> {
-        self.load_verified(OBJECTS, digest, Some(expected_bytes))
+        self.load_verified(OBJECTS, digest, Some(expected_bytes), expected_bytes)
     }
 
     pub fn store_object(
@@ -104,11 +105,11 @@ impl ObjectCache {
     }
 
     pub fn load_manifest(&self, digest: &str) -> Result<Option<Vec<u8>>, CacheError> {
-        self.load_verified(MANIFESTS, digest, None)
+        self.load_verified(MANIFESTS, digest, None, MAX_MANIFEST_BYTES)
     }
 
     pub fn store_manifest(&self, digest: &str, bytes: &[u8]) -> Result<(), CacheError> {
-        if !matches_blob(bytes, digest, None) {
+        if bytes.len() as u64 > MAX_MANIFEST_BYTES || !matches_blob(bytes, digest, None) {
             return Err(CacheError::new(
                 "verify manifest before storing",
                 self.path(MANIFESTS, digest),
@@ -127,6 +128,7 @@ impl ObjectCache {
         namespace: &str,
         digest: &str,
         expected_bytes: Option<u64>,
+        max_bytes: u64,
     ) -> Result<Option<Vec<u8>>, CacheError> {
         validate_digest(digest).map_err(|source| {
             CacheError::new("validate digest for", self.path(namespace, digest), source)
@@ -137,17 +139,22 @@ impl ObjectCache {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(CacheError::new("read", path, error)),
         };
+        if file
+            .metadata()
+            .map_err(|error| CacheError::new("inspect", &path, error))?
+            .len()
+            > max_bytes
+        {
+            drop(file);
+            return remove_invalid(&path);
+        }
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)
             .map_err(|error| CacheError::new("read", &path, error))?;
         if matches_blob(&bytes, digest, expected_bytes) {
             return Ok(Some(bytes));
         }
-        match fs::remove_file(&path) {
-            Ok(()) => Ok(None),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(CacheError::new("remove corrupt", path, error)),
-        }
+        remove_invalid(&path)
     }
 
     fn store_verified(
@@ -181,6 +188,14 @@ impl ObjectCache {
 
     fn path(&self, namespace: &str, digest: &str) -> PathBuf {
         self.root.join(namespace).join(format!("sha256-{digest}"))
+    }
+}
+
+fn remove_invalid(path: &Path) -> Result<Option<Vec<u8>>, CacheError> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(None),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(CacheError::new("remove corrupt", path, error)),
     }
 }
 

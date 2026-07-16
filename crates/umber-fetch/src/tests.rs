@@ -528,6 +528,16 @@ fn manifest_cache_is_digest_keyed_and_reverified() {
     );
 }
 
+#[test]
+fn manifest_cache_rejects_oversized_entries() {
+    let temp = TempDir::new().expect("cache tempdir");
+    let cache = ObjectCache::new(temp.path());
+    let bytes = vec![0_u8; 32 * 1024 * 1024 + 1];
+    let digest = hex_digest(&bytes);
+    assert!(cache.store_manifest(&digest, &bytes).is_err());
+    assert_eq!(cache.load_manifest(&digest).expect("load manifest"), None);
+}
+
 const RACE_BYTES: &[u8] = b"concurrent process cache object";
 
 #[test]
