@@ -3,9 +3,9 @@
 Status: partially implemented, tracked by the `umber2-mbwq` epic. Builds on the
 completed VFS substrate ([umber_vfs.md](umber_vfs.md)) and resource session
 protocol ([wasm_resource_acquisition.md](wasm_resource_acquisition.md)). The
-shared manifest crate and typed unavailable responses in phases 1 and 2 are
-implemented; host fetch, CLI integration, and snapshot deployment remain
-planned.
+shared manifest crate, typed unavailable responses, and native cache/fetch
+layer in phases 1 through 3 are implemented; CLI integration and snapshot
+deployment remain planned.
 
 ## Problem
 
@@ -150,6 +150,18 @@ and `umber-distribution` remain free of filesystem, network, and environment
 access. The WASM build keeps JavaScript-owned fetch; nothing network-related
 compiles into the browser package.
 
+The implemented native boundary is `crates/umber-fetch`. `ObjectCache` stores
+objects and manifests in separate digest-keyed namespaces, re-verifies every
+read, discards corrupt entries as cache misses, and publishes verified bytes
+with same-directory temporary files plus no-clobber atomic persistence.
+`FetchClient` accepts manifest `ObjectEntry` values paired with request keys
+and per-request limits. It enforces HTTPS (with loopback HTTP only for
+hermetic contract tests), rejects oversized declarations before issuing a
+request, bounds response reads, retries transient transport/status/integrity
+failures, and returns a batch only if every request succeeds. Verified peer
+downloads may still warm the cache when a batch fails, but no partial response
+is exposed to the compile session.
+
 ## CLI user model
 
 - `umber run doc.tex` fetches missing distribution files automatically from
@@ -237,11 +249,12 @@ Each phase is a `bd` issue under the `umber2-mbwq` epic (phase N is
    facade. Immutable negative bindings provide idempotence, conflict, progress,
    and TeX missing-file semantics, and web manifest misses now produce typed
    negative responses instead of `missing-key` failures.
-3. **Native cache and fetcher.** Implement the content-addressed cache and
-   blocking HTTP fetch layer with bounded concurrency, atomic writes,
-   digest verification, and typed failures; contract-test against a local
-   fixture HTTP server, including corruption, truncation, 404, and
-   concurrent-process races.
+3. **Complete — native cache and fetcher.** `crates/umber-fetch` implements the
+   content-addressed cache and blocking HTTPS fetch layer with bounded
+   concurrency, atomic writes, digest verification, and typed failures.
+   Local fixture-server and child-process contract tests cover success, cache
+   reuse and corruption, 404, truncation, oversized declarations and response
+   lengths, timeout/retry, concurrency bounds, and concurrent-process races.
 4. **CLI session migration.** Drive `umber run` through
    `VirtualCompileSession` with the layered resolver chain, `--distribution`,
    `--offline`, and pin verification. Existing local-only invocations must
