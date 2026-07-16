@@ -224,6 +224,30 @@ fn fetches_then_reuses_verified_object_cache() {
 }
 
 #[test]
+fn fetches_a_manifest_only_when_it_matches_the_trust_pin() {
+    let bytes = br#"{"schema":1}"#;
+    let server = FixtureServer::new(vec![Reply::ok(bytes)]);
+    let fetched = fetch_manifest(
+        &format!("{}manifest.json", server.base_url),
+        &hex_digest(bytes),
+        Duration::from_secs(1),
+    )
+    .expect("verified manifest");
+    assert_eq!(fetched, bytes);
+    server.finish();
+
+    let server = FixtureServer::new(vec![Reply::ok(bytes)]);
+    let error = fetch_manifest(
+        &format!("{}manifest.json", server.base_url),
+        &"0".repeat(64),
+        Duration::from_secs(1),
+    )
+    .expect_err("mismatched manifest pin");
+    assert!(matches!(error, ManifestFetchError::DigestMismatch { .. }));
+    server.finish();
+}
+
+#[test]
 fn returns_typed_404_with_key_and_digest() {
     let bytes = b"absent";
     let server = FixtureServer::new(vec![Reply {
