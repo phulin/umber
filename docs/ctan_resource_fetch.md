@@ -4,10 +4,8 @@ Status: partially implemented, tracked by the `umber2-mbwq` epic. Builds on the
 completed VFS substrate ([umber_vfs.md](umber_vfs.md)) and resource session
 protocol ([wasm_resource_acquisition.md](wasm_resource_acquisition.md)). The
 shared manifest crate, typed unavailable responses, native cache/fetch layer,
-and CLI integration in phases 1 through 5 are implemented. Phase 6 has the R2
-publication path and browser prefetch behavior implemented, but production
-publication remains an explicit coordinator operation, followed by CLI and web
-pin rotation.
+CLI integration, sharded R2 publication, and native production pin are
+implemented. Browser sharded resolution remains separate rollout work.
 
 ## Problem
 
@@ -166,6 +164,16 @@ before cache/session publication, and returns a batch only if every request
 succeeds. Manifest acquisition observes the same cancellation token. Verified peer
 downloads may still warm the cache when a batch fails, but no partial response
 is exposed to the compile session.
+
+The native resolver treats schema-v2 index shards as digest-keyed manifest
+cache entries. It loads only the canonical shard for each unresolved file key,
+validates shard distribution/index identity and partition membership, and
+treats a missing key in that verified shard as `FileUnavailable`. Schema v2
+does not publish logical OpenType font entries, so a verified root answers
+those requests as `FontUnavailable`. Complete inline dependency metadata is
+sent straight to the object fetch batch without consulting the dependency's
+own shard. A batch is still published to the VFS only after every required and
+hint object succeeds.
 
 ### 6. Snapshots are immutable Cloudflare R2 prefixes
 

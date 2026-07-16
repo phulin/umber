@@ -1014,17 +1014,23 @@ fn run_acquires_from_a_local_distribution_then_reuses_cache_offline() {
     let source = temp_dir.path().join("main.tex");
     let distribution = temp_dir.path().join("distribution");
     let cache = temp_dir.path().join("cache");
-    fs::create_dir_all(&distribution).expect("create distribution");
+    let objects = distribution.join("objects");
+    fs::create_dir_all(&objects).expect("create distribution");
     fs::write(&source, "\\input remote \\message{after-remote}\\end\n").expect("write source");
     let remote = b"\\message{from-distribution}\n";
     let object_digest = hex_sha256(remote);
     let object = format!("sha256-{object_digest}");
-    fs::write(distribution.join(&object), remote).expect("write object");
-    let manifest = format!(
-        "{{\n  \"schema\": 1,\n  \"distribution\": \"test-snapshot\",\n  \"objectsBaseUrl\": \"https://example.invalid/objects/\",\n  \"files\": {{\n    \"tex:remote.tex\": {{\n      \"virtualPath\": \"/texlive/tex/remote.tex\",\n      \"object\": \"{object}\",\n      \"sha256\": \"{object_digest}\",\n      \"bytes\": {}\n    }}\n  }}\n}}\n",
+    fs::write(objects.join(&object), remote).expect("write object");
+    let shard = format!(
+        "{{\"schema\":1,\"distribution\":\"test-snapshot\",\"index\":0,\"files\":{{\"tex:remote.tex\":{{\"virtualPath\":\"/texlive/tex/remote.tex\",\"object\":\"{object}\",\"sha256\":\"{object_digest}\",\"bytes\":{}}}}}}}\n",
         remote.len()
     );
-    fs::write(distribution.join("manifest.json"), &manifest).expect("write manifest");
+    let shard_digest = hex_sha256(shard.as_bytes());
+    fs::write(objects.join(format!("sha256-{shard_digest}")), shard).expect("write shard");
+    let manifest = format!(
+        "{{\"schema\":2,\"distribution\":\"test-snapshot\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"]}}\n"
+    );
+    fs::write(distribution.join("manifest-v2.json"), &manifest).expect("write manifest");
 
     let first = Command::new(env!("CARGO_BIN_EXE_umber"))
         .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
@@ -1045,7 +1051,7 @@ fn run_acquires_from_a_local_distribution_then_reuses_cache_offline() {
         "umber: acquired 1 distribution resource(s)\n"
     );
 
-    fs::remove_file(distribution.join(object)).expect("remove source object after warming");
+    fs::remove_file(objects.join(object)).expect("remove source object after warming");
     let second = Command::new(env!("CARGO_BIN_EXE_umber"))
         .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
         .env("XDG_CACHE_HOME", &cache)
@@ -1099,7 +1105,8 @@ fn run_offline_miss_names_the_exact_manifest_request_key() {
     let temp_dir = tempfile::tempdir().expect("create offline miss temp dir");
     let source = temp_dir.path().join("main.tex");
     let distribution = temp_dir.path().join("distribution");
-    fs::create_dir_all(&distribution).expect("create distribution");
+    let objects = distribution.join("objects");
+    fs::create_dir_all(&objects).expect("create distribution");
     fs::write(&source, "\\input remote \\end\n").expect("write source");
     let bytes = b"\\relax\n";
     let digest = hex_sha256(bytes);
@@ -1107,10 +1114,14 @@ fn run_offline_miss_names_the_exact_manifest_request_key() {
         "\"tex:remote.tex\":{{\"virtualPath\":\"/texlive/remote.tex\",\"object\":\"sha256-{digest}\",\"sha256\":\"{digest}\",\"bytes\":{}}}",
         bytes.len()
     );
+    let shard =
+        format!("{{\"schema\":1,\"distribution\":\"test\",\"index\":0,\"files\":{{{entry}}}}}\n");
+    let shard_digest = hex_sha256(shard.as_bytes());
+    fs::write(objects.join(format!("sha256-{shard_digest}")), shard).expect("write shard");
     fs::write(
-        distribution.join("manifest.json"),
+        distribution.join("manifest-v2.json"),
         format!(
-            "{{\"schema\":1,\"distribution\":\"test\",\"objectsBaseUrl\":\"https://example.invalid/\",\"files\":{{{entry}}}}}"
+            "{{\"schema\":2,\"distribution\":\"test\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"]}}\n"
         ),
     )
     .expect("write manifest");

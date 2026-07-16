@@ -1,7 +1,7 @@
 # Sharded Distribution Manifest
 
-Status: publisher contract implemented. Native and browser shard resolution are
-separate rollout work.
+Status: publisher contract and native shard resolution implemented. Browser
+shard resolution is separate rollout work.
 
 ## Trust root
 
@@ -64,6 +64,12 @@ The new immutable public key is `manifest-v2.json`; the already cached
 schema-1 `manifest.json` is not overwritten. Publication remains manifest-last:
 all content and shard objects are uploaded and checked before that root key.
 
-This phase does not teach `umber-distribution`, the CLI, or authored
-JavaScript to fetch or resolve shards. Those consumers land separately so the
-published schema and production pin are fixed before resolution policy.
+`umber-distribution` strictly parses the pinned root and individual index
+shards without performing I/O. The native CLI verifies the root pin, hashes
+each unresolved canonical lookup key to its one shard, and verifies that shard
+through the digest-keyed manifest cache before treating absence as
+authoritative. It fetches inline dependency records directly, so dependency
+hints never require another index lookup. Root, shard, and ordinary object
+cache entries are all reverified on read; an offline compile succeeds with a
+fully warm cache without network access. Authored browser JavaScript adopts
+the same contract in its separate rollout.
