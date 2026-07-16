@@ -455,6 +455,53 @@ fn exact_environment_identity_updates_distinct_journal_cells_and_rolls_back() {
 }
 
 #[test]
+fn exact_environment_identity_ignores_intern_allocation_order() {
+    fn build(filler_first: bool) -> Stores {
+        let mut stores = Stores::new();
+        if filler_first {
+            let _filler = stores.intern("filler");
+            let _filler_tokens = stores.intern_token_list(&[Token::param(1)]);
+            let _filler_glue = stores.intern_glue(GlueSpec {
+                width: Scaled::from_raw(99),
+                ..GlueSpec::ZERO
+            });
+        }
+
+        let target = stores.intern("target");
+        let alpha = stores.intern("alpha");
+        let tokens = stores.intern_token_list(&[
+            Token::Cs(alpha.symbol()),
+            Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            },
+        ]);
+        let glue = stores.intern_glue(GlueSpec {
+            width: Scaled::from_raw(7),
+            ..GlueSpec::ZERO
+        });
+        let definition =
+            stores.intern_macro(MacroMeaning::new(MeaningFlags::PROTECTED, tokens, tokens));
+        stores.set_meaning(
+            target,
+            Meaning::Macro {
+                flags: MeaningFlags::PROTECTED,
+                definition,
+            },
+        );
+        stores.set_toks(0, tokens);
+        stores.set_skip(0, glue);
+        stores.initialize_exact_env_identity();
+        stores
+    }
+
+    assert_eq!(
+        build(false).exact_env_identity(),
+        build(true).exact_env_identity()
+    );
+}
+
+#[test]
 fn semantic_hash_only_walks_hyphenation_after_root_changes() {
     let mut stores = Stores::new();
     let initial_cursor = stores.state_hash_cursor();
