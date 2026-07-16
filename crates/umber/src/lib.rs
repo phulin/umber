@@ -504,16 +504,38 @@ pub fn install_pdftex_format_primitives(stores: &mut Universe) {
     stores.enable_pdf_output();
 }
 
+fn install_latex_compatibility_layer(stores: &mut Universe) {
+    tex_expand::install_latex_expandable_primitives(stores);
+    for ch in ['{', '}', '$', '&', '#', '^', '_'] {
+        stores.set_catcode(ch, tex_state::token::Catcode::Other);
+    }
+}
+
+/// Restores driver-selected LaTeX meanings after loading a format image.
+pub fn install_latex_format_primitives(stores: &mut Universe) {
+    tex_exec::install_etex_unexpandable_primitives(stores);
+    tex_expand::install_latex_expandable_primitives(stores);
+}
+
 /// Installs the primitive/state setup used by supported LaTeX-DVI runs.
 ///
 /// This is an Umber extension layer over e-TeX. It intentionally does not
 /// install pdfTeX identity or PDF-backend primitives.
 pub fn prepare_latex_run_stores(stores: &mut Universe) {
     prepare_etex_run_stores(stores);
+    install_latex_compatibility_layer(stores);
+}
+
+/// Installs the composed pdfTeX and LaTeX setup used by pdfLaTeX runs.
+pub fn prepare_pdflatex_run_stores(stores: &mut Universe) {
+    prepare_pdftex_run_stores(stores);
+    install_latex_compatibility_layer(stores);
+}
+
+/// Restores composed pdfTeX and LaTeX meanings after loading a format image.
+pub fn install_pdflatex_format_primitives(stores: &mut Universe) {
+    install_pdftex_format_primitives(stores);
     tex_expand::install_latex_expandable_primitives(stores);
-    for ch in ['{', '}', '$', '&', '#', '^', '_'] {
-        stores.set_catcode(ch, tex_state::token::Catcode::Other);
-    }
 }
 
 #[cfg(test)]
@@ -675,6 +697,26 @@ mod primitive_mode_tests {
         assert_eq!(latex.catcode('#'), Catcode::Other);
         assert_eq!(latex.catcode('A'), Catcode::Letter);
         assert_eq!(latex.catcode('\\'), Catcode::Escape);
+    }
+
+    #[test]
+    fn pdflatex_composes_pdftex_and_latex_layers() {
+        let mut stores = Universe::default();
+        prepare_pdflatex_run_stores(&mut stores);
+
+        let pdfoutput = stores.intern("pdfoutput");
+        assert_eq!(
+            stores.meaning(pdfoutput),
+            Meaning::IntParam(IntParam::PDF_OUTPUT.raw())
+        );
+        let strcmp = stores.intern("strcmp");
+        assert_eq!(
+            stores.meaning(strcmp),
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::StringCompare)
+        );
+        assert_eq!(stores.catcode('{'), Catcode::Other);
+        assert_eq!(stores.catcode('#'), Catcode::Other);
+        assert!(stores.pdf_output_enabled());
     }
 
     #[test]

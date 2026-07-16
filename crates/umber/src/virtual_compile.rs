@@ -9,9 +9,10 @@ use tex_out::html::{HtmlFontKey, HtmlFontResolver, WebFont};
 use tex_state::{ContentHash, JobClock, Universe, World};
 
 use crate::{
-    MemoryOutputCollectionError, MemoryRunOutput, install_pdftex_format_primitives,
+    MemoryOutputCollectionError, MemoryRunOutput, install_latex_format_primitives,
+    install_pdflatex_format_primitives, install_pdftex_format_primitives,
     memory_output::publish_auxiliary_outputs, prepare_etex_run_stores, prepare_latex_run_stores,
-    prepare_pdftex_run_stores, prepare_run_stores,
+    prepare_pdflatex_run_stores, prepare_pdftex_run_stores, prepare_run_stores,
 };
 
 mod path;
@@ -160,6 +161,7 @@ pub enum EngineMode {
     ETex,
     PdfTex,
     Latex,
+    PdfLatex,
 }
 
 impl EngineMode {
@@ -170,6 +172,7 @@ impl EngineMode {
             Self::ETex => "etex",
             Self::PdfTex => "pdftex",
             Self::Latex => "latex",
+            Self::PdfLatex => "pdflatex",
         }
     }
 
@@ -180,28 +183,42 @@ impl EngineMode {
             Self::ETex => "2.6",
             Self::PdfTex => "1.40.27",
             Self::Latex => "1",
+            Self::PdfLatex => "1.40.27",
         }
     }
 
-    fn prepare_fresh(self, stores: &mut Universe) {
+    /// Installs the primitive and state layers selected for a fresh run.
+    pub fn prepare_fresh(self, stores: &mut Universe) {
         match self {
             Self::Tex82 => prepare_run_stores(stores),
             Self::ETex => prepare_etex_run_stores(stores),
             Self::PdfTex => prepare_pdftex_run_stores(stores),
             Self::Latex => prepare_latex_run_stores(stores),
+            Self::PdfLatex => prepare_pdflatex_run_stores(stores),
         }
     }
 
-    fn install_after_format(self, stores: &mut Universe) {
+    /// Restores driver-owned primitive implementations after a format load.
+    pub fn install_after_format(self, stores: &mut Universe) {
         match self {
             Self::Tex82 => {}
             Self::ETex => tex_exec::install_etex_unexpandable_primitives(stores),
             Self::PdfTex => install_pdftex_format_primitives(stores),
-            Self::Latex => {
-                tex_exec::install_etex_unexpandable_primitives(stores);
-                tex_expand::install_latex_expandable_primitives(stores);
-            }
+            Self::Latex => install_latex_format_primitives(stores),
+            Self::PdfLatex => install_pdflatex_format_primitives(stores),
         }
+    }
+
+    /// Whether this compatibility contract uses LaTeX's byte-oriented UTF-8 input layer.
+    #[must_use]
+    pub const fn uses_latex_input(self) -> bool {
+        matches!(self, Self::Latex | Self::PdfLatex)
+    }
+
+    /// Whether this compatibility contract can publish PDF output.
+    #[must_use]
+    pub const fn supports_pdf_output(self) -> bool {
+        matches!(self, Self::PdfTex | Self::PdfLatex)
     }
 }
 

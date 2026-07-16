@@ -82,29 +82,16 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
         Universe::from_format(world, content.bytes())?
     } else {
         let mut stores = Universe::with_world(world);
-        match opts.engine {
-            RunEngine::Tex82 => umber::prepare_run_stores(&mut stores),
-            RunEngine::ETex => umber::prepare_etex_run_stores(&mut stores),
-            RunEngine::PdfTex => umber::prepare_pdftex_run_stores(&mut stores),
-            RunEngine::Latex => umber::prepare_latex_run_stores(&mut stores),
-        }
+        opts.engine.prepare_fresh(&mut stores);
         stores
     };
     if opts.format.is_some() {
-        match opts.engine {
-            RunEngine::Tex82 => {}
-            RunEngine::ETex => tex_exec::install_etex_unexpandable_primitives(&mut stores),
-            RunEngine::PdfTex => umber::install_pdftex_format_primitives(&mut stores),
-            RunEngine::Latex => {
-                tex_exec::install_etex_unexpandable_primitives(&mut stores);
-                tex_expand::install_latex_expandable_primitives(&mut stores);
-            }
-        }
+        opts.engine.install_after_format(&mut stores);
     }
     let content = stores.world_mut().read_file(path)?;
 
     let mut input = InputStack::new(WorldInput::from_content(content));
-    if opts.engine == RunEngine::Latex {
+    if opts.engine.uses_latex_input() {
         input.set_utf8_input_as_bytes(true);
     }
     let mut resolvers = FileSessionResolvers::from_environment(path);
@@ -389,6 +376,12 @@ impl RunCliOptions {
                     }
                     engine = RunEngine::Latex;
                 }
+                "--pdflatex" => {
+                    if engine != RunEngine::Tex82 {
+                        return Err(CliError::Usage("run accepts only one engine mode flag"));
+                    }
+                    engine = RunEngine::PdfLatex;
+                }
                 #[cfg(feature = "profiling-stats")]
                 "--profiling-stats" => {
                     profiling_stats = true;
@@ -489,8 +482,8 @@ impl RunCliOptions {
             }
         }
         let input = input.ok_or(CliError::Usage("missing input path for run"))?;
-        if pdf.is_some() && engine != RunEngine::PdfTex {
-            return Err(CliError::Usage("--pdf requires --pdftex"));
+        if pdf.is_some() && !engine.supports_pdf_output() {
+            return Err(CliError::Usage("--pdf requires --pdftex or --pdflatex"));
         }
         if dvi
             .as_ref()

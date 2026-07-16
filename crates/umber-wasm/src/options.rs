@@ -23,9 +23,10 @@ pub(crate) fn parse_options(value: &JsValue) -> Result<SessionOptions, JsValue> 
             "etex" => EngineMode::ETex,
             "pdftex" => EngineMode::PdfTex,
             "latex" => EngineMode::Latex,
+            "pdflatex" => EngineMode::PdfLatex,
             _ => {
                 return Err(js_error(
-                    "engine must be 'tex82', 'etex', 'pdftex', or 'latex'",
+                    "engine must be 'tex82', 'etex', 'pdftex', 'latex', or 'pdflatex'",
                 ));
             }
         };

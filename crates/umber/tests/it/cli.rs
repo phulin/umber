@@ -67,8 +67,40 @@ fn pdftex_rule_page_is_published_only_to_an_explicit_distinct_pdf_path() {
     assert!(!rejected.status.success());
     assert_eq!(
         String::from_utf8(rejected.stderr).expect("stderr is utf-8"),
-        "umber: --pdf requires --pdftex\n"
+        "umber: --pdf requires --pdftex or --pdflatex\n"
     );
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn pdflatex_mode_composes_latex_compatibility_with_pdf_output() {
+    let temp_dir = tempfile::tempdir().expect("create pdfLaTeX output temp dir");
+    let source = temp_dir.path().join("composed.tex");
+    let pdf = temp_dir.path().join("composed.pdf");
+    fs::write(
+        &source,
+        "\\catcode123=1\\catcode125=2\\pdfoutput=1\\ifnum\\strcmp{same}{same}=0\\shipout\\vbox{\\hrule width10pt height5pt}\\fi\\end\n",
+    )
+    .expect("write composed pdfLaTeX fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .arg("run")
+        .arg("--pdflatex")
+        .arg("--pdf")
+        .arg(&pdf)
+        .arg(&source)
+        .output()
+        .expect("run composed pdfLaTeX fixture");
+
+    assert!(
+        output.status.success(),
+        "pdfLaTeX run failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let pdf_bytes = fs::read(&pdf).expect("read composed pdfLaTeX PDF");
+    assert!(pdf_bytes.starts_with(b"%PDF-1.4"));
+    assert!(pdf_bytes.ends_with(b"%%EOF"));
 }
 
 #[test]
