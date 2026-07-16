@@ -153,8 +153,8 @@ uncommitted unless their redistribution policy explicitly permits committing
 them.
 
 See `tests/AGENTS.md` for fixture layout and regeneration instructions, and
-[Testing Infrastructure](testing_infrastructure.md) for the current corpora
-and harness inventory.
+[Testing Infrastructure](testing_infrastructure.md) (reference doc only, read
+only if necessary) for the current corpora and harness inventory.
 
 ## 8. Documentation Tests
 
