@@ -183,6 +183,22 @@ fn hpack_records_zero_badness_for_empty_underfull_box() {
         },
     );
     assert_eq!(glue_packed.badness, INF_BAD);
+
+    let kern_list = universe.freeze_node_list(&[Node::Kern {
+        amount: sp(1),
+        kind: KernKind::Explicit,
+    }]);
+    let kern_packed = hpack(
+        &universe,
+        kern_list,
+        PackSpec::Exactly(sp(10)),
+        HpackParams {
+            hbadness: INF_BAD,
+            hfuzz: sp(0),
+            overfull_rule: sp(0),
+        },
+    );
+    assert_eq!(kern_packed.badness, INF_BAD);
 }
 
 #[test]
@@ -416,11 +432,33 @@ fn hpack_reports_insufficient_normal_shrink_even_below_infinite_badness() {
     );
 
     assert_eq!(packed.node.glue_set, GlueSetRatio::UNITY);
-    assert_eq!(packed.badness, 533);
+    assert_eq!(packed.badness, OVERFULL_BADNESS);
     assert_eq!(
         packed.diagnostics,
         vec![PackDiagnostic::Overfull { excess: sp(3) }]
     );
+}
+
+#[test]
+fn vpack_records_overfull_badness_when_normal_shrink_is_insufficient() {
+    let mut universe = Universe::new();
+    let list = universe.freeze_node_list(&[Node::Kern {
+        amount: sp(20),
+        kind: KernKind::Explicit,
+    }]);
+    let packed = vpack(
+        &universe,
+        list,
+        PackSpec::Exactly(sp(10)),
+        VpackParams {
+            vbadness: INF_BAD,
+            vfuzz: sp(20),
+            box_max_depth: sp(100),
+        },
+    );
+
+    assert_eq!(packed.badness, OVERFULL_BADNESS);
+    assert!(packed.diagnostics.is_empty());
 }
 
 #[test]

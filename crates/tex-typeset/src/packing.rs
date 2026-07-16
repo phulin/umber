@@ -8,7 +8,7 @@ use tex_state::scaled::{GlueSetRatio, Scaled};
 
 #[cfg(test)]
 use crate::INF_BAD;
-use crate::{TypesetState, badness};
+use crate::{OVERFULL_BADNESS, TypesetState, badness};
 
 /// A requested box size.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -126,9 +126,11 @@ pub fn hpack(
     spec: PackSpec,
     params: HpackParams,
 ) -> PackedBox {
-    let meas = measure_hlist(state, state.nodes(list));
+    let nodes = state.nodes(list);
+    let has_content = !nodes.is_empty();
+    let meas = measure_hlist(state, nodes);
     let width = target_size(meas.width, spec);
-    let glue = set_glue(width, meas.width, &meas);
+    let glue = set_glue(width, meas.width, &meas, has_content);
     let diagnostics = hpack_diagnostics(glue, params);
     PackedBox {
         node: BoxNode::new(BoxNodeFields {
@@ -157,7 +159,7 @@ pub fn plan_hpack_nodes(
 ) -> HpackPlan {
     let meas = measure_hlist_nodes(state, nodes);
     let width = target_size(meas.width, spec);
-    let glue = set_glue(width, meas.width, &meas);
+    let glue = set_glue(width, meas.width, &meas, !nodes.is_empty());
     HpackPlan {
         width,
         height: meas.height,
@@ -174,10 +176,12 @@ pub fn vpack(
     spec: PackSpec,
     params: VpackParams,
 ) -> PackedBox {
-    let mut meas = measure_vlist(state, state.nodes(list));
+    let nodes = state.nodes(list);
+    let has_content = !nodes.is_empty();
+    let mut meas = measure_vlist(state, nodes);
     clamp_depth(&mut meas, params.box_max_depth);
     let height = target_size(meas.height, spec);
-    let glue = set_glue(height, meas.height, &meas);
+    let glue = set_glue(height, meas.height, &meas, has_content);
     let diagnostics = vpack_diagnostics(glue, params);
     PackedBox {
         node: BoxNode::new(BoxNodeFields {
@@ -249,9 +253,9 @@ fn target_size(natural: Scaled, spec: PackSpec) -> Scaled {
     }
 }
 
-fn set_glue(target: Scaled, natural: Scaled, meas: &Measurement) -> GlueSetting {
+fn set_glue(target: Scaled, natural: Scaled, meas: &Measurement, has_content: bool) -> GlueSetting {
     let diff = target.raw() - natural.raw();
-    if diff == 0 || (diff > 0 && !meas.has_glue) {
+    if diff == 0 || !has_content {
         return GlueSetting {
             ratio: GlueSetRatio::ZERO,
             sign: Sign::Normal,
@@ -286,7 +290,11 @@ fn set_glue(target: Scaled, natural: Scaled, meas: &Measurement) -> GlueSetting 
         ratio,
         sign,
         order,
-        badness: if order == Order::Normal {
+        badness: if overfull_excess.raw() > 0 {
+            // TeX.web §§664 and 676 reserve 1000000 for a nonempty
+            // box whose normal-order glue cannot shrink far enough.
+            OVERFULL_BADNESS
+        } else if order == Order::Normal {
             badness(excess, Scaled::from_raw(total))
         } else {
             0
@@ -318,10 +326,14 @@ fn common_diagnostics(
     badness_threshold: i32,
     fuzz: Scaled,
 ) -> Vec<PackDiagnostic> {
-    if glue.overfull_excess.raw() > fuzz.raw() {
-        return vec![PackDiagnostic::Overfull {
-            excess: glue.overfull_excess,
-        }];
+    if glue.overfull_excess.raw() > 0 {
+        return if glue.overfull_excess.raw() > fuzz.raw() || badness_threshold < 100 {
+            vec![PackDiagnostic::Overfull {
+                excess: glue.overfull_excess,
+            }]
+        } else {
+            Vec::new()
+        };
     }
     if glue.badness <= badness_threshold {
         return Vec::new();

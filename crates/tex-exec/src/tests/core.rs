@@ -1942,6 +1942,21 @@ fn badness_reads_most_recent_pack_and_is_not_assignable() {
 }
 
 #[test]
+fn vbox_sets_overfull_badness_when_the_box_cannot_shrink() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\setbox0=\\vbox to10pt{\\hrule height20pt}\\count0=\\badness",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("overfull vbox executes");
+
+    assert_eq!(stores.count(0), tex_typeset::OVERFULL_BADNESS);
+}
+
+#[test]
 fn etex_lastnodetype_tracks_effective_outer_vertical_tail() {
     // e-TeX short reference manual section 3.3 assigns -1 to an empty list
     // and the e-TRIP node codes 1, 12, and 13 to hlist, kern, and penalty.

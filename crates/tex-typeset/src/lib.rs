@@ -25,6 +25,9 @@ pub use vertical_break::{VerticalBreak, VerticalBreakError, vert_break};
 /// TeX's infinite badness sentinel.
 pub const INF_BAD: i32 = 10_000;
 
+/// TeX's `\badness` value for a nonempty overfull packed box.
+pub const OVERFULL_BADNESS: i32 = 1_000_000;
+
 /// Immutable state access needed by the packing kernels.
 pub trait TypesetState {
     fn nodes(&self, id: NodeListId) -> NodeList<'_>;

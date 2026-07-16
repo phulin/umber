@@ -43,7 +43,9 @@ detached output only after the relevant transaction commits.
 - `tex-exec`: stomach execution, mode nest, assignments, page building,
   output routines, and committed shipout lowering.
 - `tex-typeset`: pure packing, line breaking, alignment planning, vertical
-  breaking, and Appendix G math conversion.
+  breaking, and Appendix G math conversion. Packing preserves TeX's distinct
+  `\badness` results: 10000 for infinitely bad adjustment and 1000000 for a
+  nonempty overfull box whose normal-order glue cannot shrink far enough.
 - `tex-out`: detached artifact schema 13, positioned output, HTML, DVI page
   planning, final DVI assembly, and artifact replay.
 - `tex-incr`: editor revisions, named-boundary checkpoints, convergence,
