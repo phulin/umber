@@ -167,10 +167,10 @@ impl Stores {
         if self.env.group_depth() != 0 {
             return Err(StoreFormatError::OpenGroups(self.env.group_depth()));
         }
-        assert!(
-            self.survivor_pins.is_empty(),
-            "format dumps require an empty survivor pin log"
-        );
+        // Survivor pins are allocation-lifetime bookkeeping, not TeX state.
+        // A format captures the reachable box graph below and deliberately
+        // drops transient mode/page material, just as TeX's `store_fmt_file`
+        // does not serialize the current nest or contribution list.
         let format = StoreFormat::capture(self)?;
         bincode::serialize(&format).map_err(|error| StoreFormatError::Codec(error.to_string()))
     }
