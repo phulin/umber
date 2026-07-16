@@ -285,7 +285,7 @@ before lowering this slice:
 - typed title/default-info setters that preserve pdfTeX's exact string-syntax
   compatibility rules.
 
-These extensions belong in `vendor/pdf-writer` with focused byte tests. Generic
+These extensions belong in the pinned `pdf-writer` fork with focused byte tests. Generic
 `Dict::pair` calls or opaque fragments in `tex-out` are not an acceptable
 substitute for a missing navigation API.
 

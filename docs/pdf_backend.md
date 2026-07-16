@@ -112,7 +112,7 @@ Compact, uncompressed output is the default. Options can request
 at levels 0--9; the adapter supplies compressed bytes and declares
 `/FlateDecode` through the crate's stream API. Automatic compression rejects
 streams that already declare `/Filter` or `/DecodeParms`. Object streams are a
-PDF 1.5-or-newer adapter policy over the same structural graph. The pinned local
+PDF 1.5-or-newer adapter policy over the same structural graph. The pinned
 `pdf-writer` fork exposes an object-stream builder that serializes eligible
 non-stream values through `Obj`, registers their container and index, and emits
 matching type-2 entries from `finish_with_xref_stream`. Positive
@@ -120,15 +120,19 @@ matching type-2 entries from `finish_with_xref_stream`. Positive
 ordinary type-1 entries. When stream compression is enabled, ordinary,
 object, and cross-reference streams all declare deterministic Flate encoding
 through `pdf_writer`. None of these byte policies change semantic identity.
-Type3 bitmap glyph streams also remain crate-owned: the vendored content
+Type3 bitmap glyph streams also remain crate-owned: the fork's content
 builder accepts typed width, height, image-mask, bit depth, decode array, and
 payload inputs and writes the complete inline-image operation. Umber never
 handwrites `BI`, `ID`, or `EI` framing.
 
-The selected 0.15.0 source fork is path-pinned in the workspace manifest and
-lockfile, retains both upstream licenses, and records its crates.io checksum
-and modifications in `vendor/pdf-writer/PROVENANCE.md`. It is upgraded only
-with deterministic-byte and fixture review. Its small extension adds typed
+The selected 0.15.0 source fork is `phulin/pdf-writer` commit
+`030c3b1ad0e528b13ee3e6ca4605c91fbeaa3d91`, revision-pinned through
+`[patch.crates-io]` in the workspace manifest and lockfile. It descends
+directly from upstream 0.15.0 source commit
+`639214e1745f2b1ff29ad0621da151807118d7bc`, whose crates.io package checksum
+is `f5e456864a7a304047bff84977dc6fb162bd956475d40ba50b2dcecaada7f753`, and
+retains both upstream licenses. It is upgraded only with deterministic-byte
+and fixture review. Its small extension adds typed
 object-stream construction and compressed-object registration so all PDF and
 xref bytes remain owned by `pdf_writer`. It also exposes a dictionary-entry
 escape hatch that keeps pdfTeX's verbatim attribute fragments inside the

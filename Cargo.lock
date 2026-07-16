@@ -704,11 +704,11 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 [[package]]
 name = "pdf-writer"
 version = "0.15.0"
+source = "git+https://github.com/phulin/pdf-writer.git?rev=030c3b1ad0e528b13ee3e6ca4605c91fbeaa3d91#030c3b1ad0e528b13ee3e6ca4605c91fbeaa3d91"
 dependencies = [
  "bitflags",
  "itoa",
  "memchr",
- "miniz_oxide",
  "ryu",
 ]
 

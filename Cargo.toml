@@ -30,9 +30,12 @@ serde_json = "1"
 flate2 = "1"
 bincode = "1"
 unicode-width = "0.2"
-pdf-writer = { path = "vendor/pdf-writer", version = "=0.15.0" }
+pdf-writer = "=0.15.0"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 posix-regex = "0.1.4"
+
+[patch.crates-io]
+pdf-writer = { git = "https://github.com/phulin/pdf-writer.git", rev = "030c3b1ad0e528b13ee3e6ca4605c91fbeaa3d91" }
 
 [profile.dev]
 debug = "line-tables-only"
