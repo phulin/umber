@@ -50,16 +50,14 @@ pub(super) fn normalize_page(
             y: snap_reference.1,
         });
     }
-    for restoration in stores
-        .pdf_page_color_stack_restorations()
-        .into_iter()
-        .filter(|_| color_target == tex_state::PdfColorStackTarget::Page)
-    {
-        effects.push(PageEffect::PdfColorStack {
-            mode: lower_color_stack_mode(restoration.mode),
-            payload: restoration.payload,
-            page_start: true,
-        });
+    if color_target == tex_state::PdfColorStackTarget::Page {
+        for restoration in stores.pdf_page_color_stack_restorations() {
+            effects.push(PageEffect::PdfColorStack {
+                mode: lower_color_stack_mode(restoration.mode),
+                payload: restoration.payload,
+                page_start: true,
+            });
+        }
     }
     let pending_effect_count = effects.len();
     let mut overlay = PageOverlay {

@@ -2365,6 +2365,9 @@ impl PdfState {
     }
 
     pub(crate) fn page_color_stack_restorations(&mut self) -> Vec<PdfColorStackEmission> {
+        if !self.enabled {
+            return Vec::new();
+        }
         self.ensure_default_color_stack();
         self.color_stacks
             .iter()
@@ -3614,6 +3617,18 @@ mod tests {
             Ok(1)
         );
         assert_eq!(state.hash_fragment(), allocated_hash);
+    }
+
+    #[test]
+    fn disabled_page_color_restoration_query_is_observationally_inert() {
+        let mut state = PdfState::default();
+        let before = state.cursor();
+        let before_hash = state.hash_fragment();
+
+        assert!(state.page_color_stack_restorations().is_empty());
+        assert_eq!(state.cursor(), before);
+        assert_eq!(state.hash_fragment(), before_hash);
+        assert!(state.is_format_empty());
     }
 
     #[test]
