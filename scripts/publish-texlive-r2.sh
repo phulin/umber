@@ -9,12 +9,13 @@ public_origin="https://assets.umber.ink"
 env_file="$repo_root/.env"
 rclone="${RCLONE:-rclone}"
 curl="${CURL:-curl}"
+publisher="${PUBLISHER:-$repo_root/tools/texlive-wasm-publish/target/release/texlive-wasm-publish}"
 transfers=8
 checkers=16
 retries=5
-expected_objects=153897
-expected_bytes=3507703184
-expected_manifest_sha256="602736c8d6f745972ad5d61acfab90b20ed0f4e67fd3b02a8ff7d260a34dee60"
+expected_objects=154153
+expected_bytes=3672643852
+expected_manifest_sha256="7c2784bca891844d37465083b93466b78429c7282d7ba915f40a08d150651fd0"
 dry_run=0
 
 usage() {
@@ -40,6 +41,7 @@ options:
   --expected-manifest-sha256 H  exact manifest digest
   --rclone PATH                 rclone executable
   --curl PATH                   curl executable
+  --publisher PATH              sharded-manifest verifier executable
 
 The dotenv file must define CLOUDFLARE_ACCOUNT_ID, R2_ACCESS_KEY_ID, and
 R2_SECRET_ACCESS_KEY. It is parsed as data, never sourced. Credentials are
@@ -109,6 +111,7 @@ while [[ $# -gt 0 ]]; do
     --dry-run) dry_run=1; shift ;;
     --rclone) rclone="${2:-}"; shift 2 ;;
     --curl) curl="${2:-}"; shift 2 ;;
+    --publisher) publisher="${2:-}"; shift 2 ;;
     --help|-h) usage; exit 0 ;;
     *) fail "unknown option: $1" ;;
   esac
@@ -129,6 +132,9 @@ positive_integer "$expected_bytes" || fail "--expected-bytes must be a positive 
 [[ -f "$env_file" ]] || fail "credential file not found: $env_file"
 command -v "$rclone" >/dev/null 2>&1 || fail "rclone executable not found: $rclone"
 command -v "$curl" >/dev/null 2>&1 || fail "curl executable not found: $curl"
+[[ -x "$publisher" ]] || fail "publisher/verifier executable not found: $publisher"
+
+"$publisher" --verify-sharded "$staging" || fail "staged sharded manifest verification failed"
 
 account_id="$(dotenv_value CLOUDFLARE_ACCOUNT_ID)"
 access_key_id="$(dotenv_value R2_ACCESS_KEY_ID)"
@@ -170,7 +176,7 @@ common_flags=(
   --stats 30s
 )
 remote_objects="umber_r2:${bucket}/${snapshot}/objects"
-remote_manifest="umber_r2:${bucket}/${snapshot}/manifest.json"
+remote_manifest="umber_r2:${bucket}/${snapshot}/manifest-v2.json"
 
 printf 'Validated staging: objects=%s bytes=%s manifest_sha256=%s\n' \
   "$local_objects" "$local_bytes" "$actual_manifest_sha256"
@@ -219,7 +225,7 @@ public_manifest="$tmp_root/manifest.json"
   --retry 10 --retry-all-errors --retry-delay 5 \
   --header 'Origin: https://browser.example' \
   --dump-header "$headers" \
-  "$public_prefix/manifest.json" \
+  "$public_prefix/manifest-v2.json" \
   --output "$public_manifest"
 public_manifest_sha256="$(sha256 "$public_manifest")"
 [[ "$public_manifest_sha256" == "$expected_manifest_sha256" ]] || fail "public manifest digest $public_manifest_sha256 does not match expected $expected_manifest_sha256"
@@ -243,4 +249,4 @@ for line in "${representative_lines[@]}"; do
 done
 
 printf 'Published %s: objects=%s bytes=%s manifest=%s digest=%s\n' \
-  "$snapshot" "$remote_count" "$remote_bytes" "$public_prefix/manifest.json" "$expected_manifest_sha256"
+  "$snapshot" "$remote_count" "$remote_bytes" "$public_prefix/manifest-v2.json" "$expected_manifest_sha256"

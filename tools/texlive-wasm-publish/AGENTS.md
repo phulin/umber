@@ -15,7 +15,8 @@ manifest format objects.
 
 ## File map
 
-- `src/lib.rs`: publication orchestration and public configuration/schema.
+- `src/lib.rs`: publication orchestration and public configuration.
+- `src/sharded.rs`: canonical root/shard schema, partitioning, writing, and staged verification.
 - `src/scan.rs`: deterministic root scanning, pin verification, and precedence.
 - `src/tlpdb.rs`: TeX Live runfile ownership and bounded package dependency-hint derivation.
 - `src/tests.rs`: fixture publication, collision, path, and precedence tests.

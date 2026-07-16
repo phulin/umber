@@ -83,13 +83,20 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 printf 'HTTP/2 200\r\nAccess-Control-Allow-Origin: *\r\n\r\n' > "$headers"
-if [[ "$url" == */manifest.json ]]; then
+if [[ "$url" == */manifest-v2.json ]]; then
   cp "$MOCK_REMOTE/manifest.json" "$output"
 else
   cp "$MOCK_REMOTE/objects/${url##*/}" "$output"
 fi
 EOF
 chmod +x "$tmp_root/bin/curl"
+
+cat > "$tmp_root/bin/publisher" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == --verify-sharded && -d "$2/objects" && -f "$2/manifest.json" ]]
+EOF
+chmod +x "$tmp_root/bin/publisher"
 
 export MOCK_RCLONE_LOG="$log"
 export MOCK_REMOTE="$remote"
@@ -105,6 +112,7 @@ common=(
   --retries 2
   --rclone "$tmp_root/bin/rclone"
   --curl "$tmp_root/bin/curl"
+  --publisher "$tmp_root/bin/publisher"
 )
 
 dry_output="$tmp_root/dry-output"

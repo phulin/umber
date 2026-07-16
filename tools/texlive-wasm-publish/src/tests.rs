@@ -5,7 +5,10 @@ use std::path::Path;
 use anyhow::Result;
 use tempfile::TempDir;
 
-use super::{FormatConfig, InventoryConfig, PublishConfig, RootConfig, publish, tree_sha256};
+use super::{
+    FormatConfig, InventoryConfig, PublishConfig, RootConfig, publish, shard_index, tree_sha256,
+    verify_sharded_snapshot,
+};
 
 fn write(root: &Path, relative: &str, bytes: &[u8]) -> Result<()> {
     let path = root.join(relative);
@@ -24,9 +27,10 @@ fn root(name: &str, path: &Path) -> Result<RootConfig> {
 
 fn config(roots: Vec<RootConfig>) -> PublishConfig {
     PublishConfig {
-        schema: 1,
+        schema: 2,
         distribution: "texlive-fixture-2026".to_owned(),
         objects_base_url: "https://cdn.example.test/texlive/objects/".to_owned(),
+        shard_bits: 3,
         roots,
         dependencies: BTreeMap::from([(
             "tex:plain.tex".to_owned(),
@@ -78,6 +82,14 @@ fn fixture_publication_is_byte_stable_and_content_addressed() -> Result<()> {
     assert!(manifest.files.contains_key("tex:tex/other/plain.tex"));
     assert!(manifest.files.contains_key("tex:article.cls"));
     assert_eq!(plain.dependencies, ["tfm:cmr10.tfm"]);
+    let shard = &manifest.shards[shard_index("tex:plain.tex", config.shard_bits)];
+    let inline = &shard.files["tex:plain.tex"].dependencies[0];
+    assert_eq!(inline.key, "tfm:cmr10.tfm");
+    assert_eq!(
+        inline.virtual_path,
+        manifest.files["tfm:cmr10.tfm"].virtual_path
+    );
+    assert_eq!(inline.sha256, manifest.files["tfm:cmr10.tfm"].sha256);
     let format = manifest.formats.get("plain").expect("plain format");
     assert_eq!(format.engine, "umber");
     assert_eq!(format.format_schema, 8);
@@ -85,6 +97,66 @@ fn fixture_publication_is_byte_stable_and_content_addressed() -> Result<()> {
         objects_a.get(&format.object).map(Vec::len),
         Some(format.bytes as usize)
     );
+    Ok(())
+}
+
+#[test]
+fn partitions_by_leading_sha256_bits_and_proves_authoritative_absence() -> Result<()> {
+    let fixture = TempDir::new()?;
+    let root_path = fixture.path().join("root");
+    fs::create_dir_all(&root_path)?;
+    for name in ["alpha.tex", "beta.tex", "gamma.tex", "delta.tex"] {
+        write(&root_path, &format!("tex/{name}"), name.as_bytes())?;
+    }
+    let mut config = config(vec![root("runtime", &root_path)?]);
+    config.dependencies.clear();
+    config.shard_bits = 4;
+    let output = fixture.path().join("out");
+    let publication = publish(&config, &output)?;
+    assert_eq!(publication.root.shard_count, 16);
+    assert_eq!(publication.root.shards.len(), 16);
+    for (index, shard) in publication.shards.iter().enumerate() {
+        for key in shard.files.keys() {
+            assert_eq!(shard_index(key, config.shard_bits), index);
+        }
+    }
+    let absent = "tex:absent.tex";
+    assert!(
+        !publication.shards[shard_index(absent, config.shard_bits)]
+            .files
+            .contains_key(absent)
+    );
+    verify_sharded_snapshot(&output)?;
+    Ok(())
+}
+
+#[test]
+fn verifier_rejects_noncanonical_and_tampered_shards() -> Result<()> {
+    let fixture = TempDir::new()?;
+    let root_path = fixture.path().join("root");
+    fs::create_dir_all(&root_path)?;
+    write(&root_path, "tex/plain.tex", b"plain")?;
+    let mut config = config(vec![root("runtime", &root_path)?]);
+    config.dependencies.clear();
+    config.shard_bits = 0;
+    let output = fixture.path().join("out");
+    let publication = publish(&config, &output)?;
+    let shard_path = output
+        .join("objects")
+        .join(format!("sha256-{}", publication.root.shards[0]));
+    let canonical = fs::read(&shard_path)?;
+
+    let mut noncanonical = canonical.clone();
+    noncanonical.push(b' ');
+    fs::write(&shard_path, &noncanonical)?;
+    let error = verify_sharded_snapshot(&output).expect_err("changed shard must fail its root pin");
+    assert!(error.to_string().contains("declared digest"));
+
+    fs::write(&shard_path, canonical)?;
+    let object = &publication.files["tex:plain.tex"].object;
+    fs::write(output.join("objects").join(object), b"corrupt")?;
+    let error = verify_sharded_snapshot(&output).expect_err("changed content object must fail");
+    assert!(error.to_string().contains("digest and length"));
     Ok(())
 }
 

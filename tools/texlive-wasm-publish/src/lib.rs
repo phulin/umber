@@ -3,6 +3,7 @@
 #![allow(clippy::disallowed_methods)] // Host release tooling intentionally owns filesystem I/O.
 
 mod scan;
+mod sharded;
 mod tlpdb;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -13,6 +14,11 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use umber_distribution::{ManifestFile, ManifestFormat};
+
+pub use sharded::{
+    IndexShard, RootManifest, ShardedPublication, prune_unreferenced_objects, shard_index,
+    verify_sharded_snapshot, write_sharded_manifest,
+};
 
 pub use scan::tree_sha256;
 use scan::{Candidate, scan_roots};
@@ -25,6 +31,7 @@ pub struct PublishConfig {
     pub schema: u32,
     pub distribution: String,
     pub objects_base_url: String,
+    pub shard_bits: u8,
     pub roots: Vec<RootConfig>,
     #[serde(default)]
     pub dependencies: BTreeMap<String, Vec<String>>,
@@ -75,7 +82,7 @@ struct FormatMetadata {
     source_date_epoch: u64,
 }
 
-pub fn publish(config: &PublishConfig, output: &Path) -> Result<Manifest> {
+pub fn publish(config: &PublishConfig, output: &Path) -> Result<ShardedPublication> {
     validate_config(config)?;
     let candidates = scan_roots(&config.roots)?;
     let winners = flatten_candidates(candidates)?;
@@ -134,7 +141,7 @@ pub fn publish(config: &PublishConfig, output: &Path) -> Result<Manifest> {
     remove_stale_objects(&objects, &expected_objects)?;
 
     let manifest = Manifest {
-        schema: config.schema,
+        schema: umber_distribution::MANIFEST_SCHEMA,
         distribution: config.distribution.clone(),
         objects_base_url: config.objects_base_url.clone(),
         files,
@@ -142,9 +149,10 @@ pub fn publish(config: &PublishConfig, output: &Path) -> Result<Manifest> {
         formats,
     };
     let encoded = manifest.to_json_pretty();
-    Manifest::parse(&encoded).context("validate published manifest")?;
-    fs::write(output.join("manifest.json"), encoded).context("write manifest")?;
-    Ok(manifest)
+    Manifest::parse(&encoded).context("validate publication entries")?;
+    let publication = sharded::write_sharded_manifest(&manifest, config.shard_bits, output)?;
+    remove_stale_objects(&objects, &sharded::referenced_objects(&publication))?;
+    sharded::verify_sharded_snapshot(output).context("verify staged sharded snapshot")
 }
 
 fn publication_dependencies(
@@ -283,8 +291,12 @@ fn remove_stale_objects(objects: &Path, expected: &BTreeSet<String>) -> Result<(
 }
 
 fn validate_config(config: &PublishConfig) -> Result<()> {
-    if config.schema != 1 {
-        bail!("unsupported manifest schema {}; expected 1", config.schema);
+    if config.schema != sharded::ROOT_SCHEMA {
+        bail!(
+            "unsupported root manifest schema {}; expected {}",
+            config.schema,
+            sharded::ROOT_SCHEMA
+        );
     }
     if config.distribution.is_empty() || config.distribution.contains(char::is_whitespace) {
         bail!("distribution must be a non-empty identifier without whitespace");
