@@ -192,11 +192,14 @@ fn parse_pdf_image(
         .get_dictionary(page_id)
         .map_err(|error| error.to_string())?;
     let has_page_group = page_dictionary.get(b"Group").is_ok();
+    let total_pages = u32::try_from(document.get_pages().len())
+        .map_err(|_| "external PDF page count exceeds u32".to_owned())?;
     Ok(PdfExternalImageSource {
         identity: content.hash(),
         metadata: PdfExternalImageMetadata::PdfPage {
             page_box,
             page: request.page,
+            total_pages,
             has_page_group,
             pdf_version,
         },

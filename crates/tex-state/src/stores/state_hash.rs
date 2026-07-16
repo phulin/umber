@@ -1764,6 +1764,8 @@ fn hash_internal_integer(integer: InternalInteger, hasher: &mut StateHasher) {
         InternalInteger::PdfLastXForm => hasher.tag(16),
         InternalInteger::PdfLastXImage => hasher.tag(21),
         InternalInteger::PdfReturnValue => hasher.tag(22),
+        InternalInteger::PdfLastXImagePages => hasher.tag(23),
+        InternalInteger::PdfLastXImageColorDepth => hasher.tag(24),
         InternalInteger::CurrentGroupLevel => hasher.tag(3),
         InternalInteger::CurrentGroupType => hasher.tag(4),
         InternalInteger::CurrentIfLevel => hasher.tag(5),

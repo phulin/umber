@@ -31,11 +31,12 @@
 /// user objects, pages, and final document dictionaries.
 /// Version 21 adds checkpointed pdfTeX color-stack allocation and traversal
 /// state. Version 22 adds saved-position enquiries and snapping reference
-/// coordinates. Version 23 adds pdfTeX's session-global return value.
+/// coordinates. Version 23 adds pdfTeX's session-global return value. Version
+/// 24 adds total-page and color-depth facts to external-image metadata.
 /// Hashes are
 /// comparable only when both this version and the named-boundary schedule
 /// match.
-pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 23;
+pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 24;
 
 pub mod cell;
 pub mod code_tables;

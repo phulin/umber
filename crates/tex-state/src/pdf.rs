@@ -145,6 +145,7 @@ pub enum PdfExternalImageMetadata {
     PdfPage {
         page_box: PdfPageBox,
         page: u32,
+        total_pages: u32,
         has_page_group: bool,
         pdf_version: (u8, u8),
     },
@@ -209,6 +210,24 @@ pub struct PdfExternalImageDimensions {
 }
 
 impl PdfExternalImageMetadata {
+    /// Returns pdfTeX's `\pdflastximagepages` value for this image.
+    #[must_use]
+    pub const fn page_count(self) -> u32 {
+        match self {
+            Self::PdfPage { total_pages, .. } => total_pages,
+            Self::Raster(_) => 1,
+        }
+    }
+
+    /// Returns pdfTeX's `\pdflastximagecolordepth` value for this image.
+    #[must_use]
+    pub const fn color_depth(self) -> u8 {
+        match self {
+            Self::PdfPage { .. } => 0,
+            Self::Raster(metadata) => metadata.bits_per_component,
+        }
+    }
+
     #[must_use]
     pub const fn bbox_coordinate(self, index: u8) -> Option<Scaled> {
         match (self, index) {
@@ -2542,6 +2561,7 @@ fn external_image_fingerprint(images: &[PdfExternalImageRecord]) -> u64 {
             PdfExternalImageMetadata::PdfPage {
                 page_box,
                 page,
+                total_pages,
                 has_page_group,
                 pdf_version,
             } => {
@@ -2551,6 +2571,7 @@ fn external_image_fingerprint(images: &[PdfExternalImageRecord]) -> u64 {
                 hasher.i32(page_box.right.raw());
                 hasher.i32(page_box.top.raw());
                 hasher.u32(page);
+                hasher.u32(total_pages);
                 hasher.bool(has_page_group);
                 hasher.u8(pdf_version.0);
                 hasher.u8(pdf_version.1);
@@ -3127,6 +3148,7 @@ mod tests {
                 top: Scaled::from_raw(50),
             },
             page: 1,
+            total_pages: 3,
             has_page_group: false,
             pdf_version: (1, 4),
         };

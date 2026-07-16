@@ -392,6 +392,11 @@ pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
         ("pdflastxform", InternalInteger::PdfLastXForm),
         ("pdflastximage", InternalInteger::PdfLastXImage),
         ("pdfretval", InternalInteger::PdfReturnValue),
+        ("pdflastximagepages", InternalInteger::PdfLastXImagePages),
+        (
+            "pdflastximagecolordepth",
+            InternalInteger::PdfLastXImageColorDepth,
+        ),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::InternalInteger(integer));
@@ -1062,6 +1067,141 @@ mod tests {
     }
 
     #[test]
+    fn ximage_enquiry_meanings_survive_formats_with_fresh_runtime_values() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        for (name, integer, operand) in [
+            (
+                "pdflastximagepages",
+                InternalInteger::PdfLastXImagePages,
+                23,
+            ),
+            (
+                "pdflastximagecolordepth",
+                InternalInteger::PdfLastXImageColorDepth,
+                24,
+            ),
+        ] {
+            assert_eq!(integer.operand(), operand);
+            let symbol = stores.intern(name);
+            assert_eq!(stores.meaning(symbol), Meaning::InternalInteger(integer));
+        }
+
+        let format = stores
+            .dump_format()
+            .expect("runtime image state is not dumped");
+        let mut loaded = Universe::from_format(World::default(), &format).expect("load format");
+        assert_eq!(loaded.pdf_last_ximage_pages(), 0);
+        assert_eq!(loaded.pdf_last_ximage_color_depth(), 0);
+        for (name, integer) in [
+            ("pdflastximagepages", InternalInteger::PdfLastXImagePages),
+            (
+                "pdflastximagecolordepth",
+                InternalInteger::PdfLastXImageColorDepth,
+            ),
+        ] {
+            let symbol = loaded.intern(name);
+            assert_eq!(loaded.meaning(symbol), Meaning::InternalInteger(integer));
+        }
+    }
+
+    #[test]
+    fn ximage_enquiries_follow_success_reuse_and_checkpoint_rollback() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+        stores.enable_pdf_output();
+        let initial = crate::run_memory_with_stores(
+            "\\message{initial=\\the\\pdflastximagepages/\\the\\pdflastximagecolordepth}",
+            &mut stores,
+        )
+        .expect("initial image enquiries");
+        assert!(initial.contains("initial=0/0"), "{initial}");
+
+        let raster_metadata = tex_state::PdfRasterImageMetadata {
+            format: tex_state::PdfRasterFormat::Png,
+            width: 1,
+            height: 1,
+            bits_per_component: 16,
+            color_space: tex_state::PdfRasterColorSpace::Gray,
+            alpha: false,
+            png_color_type: Some(0),
+        };
+        let raster = stores
+            .allocate_pdf_external_image(
+                tex_state::PdfExternalImageSource {
+                    identity: tex_state::ContentHash::from_bytes(b"raster"),
+                    metadata: tex_state::PdfExternalImageMetadata::Raster(raster_metadata),
+                    natural_width: Scaled::from_raw(Scaled::UNITY),
+                    natural_height: Scaled::from_raw(Scaled::UNITY),
+                    bytes: Vec::new().into(),
+                },
+                tex_state::PdfExternalImageDimensions {
+                    width: Scaled::from_raw(Scaled::UNITY),
+                    height: Scaled::from_raw(Scaled::UNITY),
+                    depth: Scaled::from_raw(0),
+                },
+            )
+            .expect("allocate raster image");
+        let raster_snapshot = stores.snapshot();
+        let raster_hash = stores.testing_state_hash();
+        let raster_output = crate::run_memory_with_stores(
+            concat!(
+                "\\message{raster=\\the\\pdflastximagepages/",
+                "\\the\\pdflastximagecolordepth}",
+                "\\pdfrefximage1",
+                "\\message{reuse=\\the\\pdflastximagepages/",
+                "\\the\\pdflastximagecolordepth}",
+            ),
+            &mut stores,
+        )
+        .expect("raster enquiries");
+        assert!(raster_output.contains("raster=1/16"), "{raster_output}");
+        assert!(raster_output.contains("reuse=1/16"), "{raster_output}");
+
+        let page_box = tex_state::PdfPageBox {
+            left: Scaled::from_raw(0),
+            bottom: Scaled::from_raw(0),
+            right: Scaled::from_raw(Scaled::UNITY),
+            top: Scaled::from_raw(Scaled::UNITY),
+        };
+        stores
+            .allocate_pdf_external_image(
+                tex_state::PdfExternalImageSource {
+                    identity: tex_state::ContentHash::from_bytes(b"pdf"),
+                    metadata: tex_state::PdfExternalImageMetadata::PdfPage {
+                        page_box,
+                        page: 2,
+                        total_pages: 3,
+                        has_page_group: false,
+                        pdf_version: (1, 5),
+                    },
+                    natural_width: page_box.right,
+                    natural_height: page_box.top,
+                    bytes: Vec::new().into(),
+                },
+                tex_state::PdfExternalImageDimensions {
+                    width: page_box.right,
+                    height: page_box.top,
+                    depth: Scaled::from_raw(0),
+                },
+            )
+            .expect("allocate PDF image");
+        let pdf_output = crate::run_memory_with_stores(
+            "\\message{pdf=\\the\\pdflastximagepages/\\the\\pdflastximagecolordepth}",
+            &mut stores,
+        )
+        .expect("PDF enquiries");
+        assert!(pdf_output.contains("pdf=3/0"), "{pdf_output}");
+
+        stores.rollback(&raster_snapshot);
+        assert_eq!(stores.testing_state_hash(), raster_hash);
+        assert_eq!(stores.pdf_last_ximage(), raster.id().raw());
+        assert_eq!(stores.pdf_last_ximage_pages(), 1);
+        assert_eq!(stores.pdf_last_ximage_color_depth(), 16);
+    }
+
+    #[test]
     fn pdfrefobj_is_applied_only_when_its_owning_list_ships() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
@@ -1292,6 +1432,11 @@ mod tests {
         for &name in PDFTEX_PRIMITIVE_NAMES {
             let symbol = stores.intern(name);
             assert_ne!(stores.meaning(symbol), Meaning::Undefined, "{name}");
+            assert_ne!(
+                stores.meaning(symbol),
+                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfTeXUnimplemented),
+                "pdfTeX inventory placeholder remains reachable: {name}",
+            );
         }
         let revision = stores.intern("pdftexrevision");
         assert_eq!(
@@ -2289,6 +2434,7 @@ mod tests {
                         top: Scaled::from_raw(327_659),
                     },
                     page: 1,
+                    total_pages: 1,
                     has_page_group: false,
                     pdf_version: (1, 4),
                 },

@@ -808,6 +808,26 @@ where
             );
             Ok(ScannedInt::new(stores.pdf_return_value(), token))
         }
+        Meaning::InternalInteger(InternalInteger::PdfLastXImagePages) => {
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Engine(ReadEngineField::PdfObjects)
+            );
+            Ok(ScannedInt::new(
+                i32::try_from(stores.pdf_last_ximage_pages()).unwrap_or(i32::MAX),
+                token,
+            ))
+        }
+        Meaning::InternalInteger(InternalInteger::PdfLastXImageColorDepth) => {
+            crate::record_dependency!(
+                expansion,
+                ReadDependency::Engine(ReadEngineField::PdfObjects)
+            );
+            Ok(ScannedInt::new(
+                i32::from(stores.pdf_last_ximage_color_depth()),
+                token,
+            ))
+        }
         Meaning::InternalInteger(InternalInteger::CurrentGroupLevel) => {
             crate::record_dependency!(
                 expansion,

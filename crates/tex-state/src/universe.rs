@@ -246,6 +246,12 @@ pub trait ExpansionState {
     fn pdf_last_ximage(&self) -> u32 {
         0
     }
+    fn pdf_last_ximage_pages(&self) -> u32 {
+        0
+    }
+    fn pdf_last_ximage_color_depth(&self) -> u8 {
+        0
+    }
     fn pdf_return_value(&self) -> i32 {
         0
     }
@@ -2466,6 +2472,22 @@ impl Universe {
             .map_or(0, |record| record.id().raw())
     }
 
+    /// Returns the page count reported by the most recently registered image.
+    #[must_use]
+    pub fn pdf_last_ximage_pages(&self) -> u32 {
+        self.pdf
+            .last_external_image()
+            .map_or(0, |record| record.metadata().page_count())
+    }
+
+    /// Returns the raster bits-per-component reported by the last image.
+    #[must_use]
+    pub fn pdf_last_ximage_color_depth(&self) -> u8 {
+        self.pdf
+            .last_external_image()
+            .map_or(0, |record| record.metadata().color_depth())
+    }
+
     /// Returns pdfTeX's session-global result value.
     #[must_use]
     pub const fn pdf_return_value(&self) -> i32 {
@@ -4684,6 +4706,14 @@ impl ExpansionState for Universe {
         Self::pdf_last_ximage(self)
     }
 
+    fn pdf_last_ximage_pages(&self) -> u32 {
+        Self::pdf_last_ximage_pages(self)
+    }
+
+    fn pdf_last_ximage_color_depth(&self) -> u8 {
+        Self::pdf_last_ximage_color_depth(self)
+    }
+
     fn pdf_return_value(&self) -> i32 {
         Self::pdf_return_value(self)
     }
@@ -5202,6 +5232,14 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn pdf_last_ximage(&self) -> u32 {
         self.universe.pdf_last_ximage()
+    }
+
+    fn pdf_last_ximage_pages(&self) -> u32 {
+        self.universe.pdf_last_ximage_pages()
+    }
+
+    fn pdf_last_ximage_color_depth(&self) -> u8 {
+        self.universe.pdf_last_ximage_color_depth()
     }
 
     fn pdf_return_value(&self) -> i32 {

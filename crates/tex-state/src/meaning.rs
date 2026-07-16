@@ -126,6 +126,10 @@ pub enum InternalInteger {
     PdfLastXImage,
     /// pdfTeX's global multi-purpose return value.
     PdfReturnValue,
+    /// Number of pages in the most recently registered external image.
+    PdfLastXImagePages,
+    /// Bits per component in the most recently registered raster image.
+    PdfLastXImageColorDepth,
     CurrentGroupLevel,
     CurrentGroupType,
     CurrentIfLevel,
@@ -153,6 +157,8 @@ impl InternalInteger {
             Self::PdfLastLink => 18,
             Self::PdfLastXImage => 21,
             Self::PdfReturnValue => 22,
+            Self::PdfLastXImagePages => 23,
+            Self::PdfLastXImageColorDepth => 24,
             Self::CurrentGroupLevel => 3,
             Self::CurrentGroupType => 4,
             Self::CurrentIfLevel => 5,
@@ -180,6 +186,8 @@ impl InternalInteger {
             18 => Some(Self::PdfLastLink),
             21 => Some(Self::PdfLastXImage),
             22 => Some(Self::PdfReturnValue),
+            23 => Some(Self::PdfLastXImagePages),
+            24 => Some(Self::PdfLastXImageColorDepth),
             3 => Some(Self::CurrentGroupLevel),
             4 => Some(Self::CurrentGroupType),
             5 => Some(Self::CurrentIfLevel),

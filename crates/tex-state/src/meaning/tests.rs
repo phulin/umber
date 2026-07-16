@@ -212,6 +212,8 @@ fn complete_primitive_codecs_are_unique_through_navigation_and_compatibility_reg
         (18, InternalInteger::PdfLastLink),
         (21, InternalInteger::PdfLastXImage),
         (22, InternalInteger::PdfReturnValue),
+        (23, InternalInteger::PdfLastXImagePages),
+        (24, InternalInteger::PdfLastXImageColorDepth),
     ];
     for (operand, integer) in internals {
         assert_eq!(integer.operand(), operand);
@@ -222,7 +224,7 @@ fn complete_primitive_codecs_are_unique_through_navigation_and_compatibility_reg
     for reserved in 19..=20 {
         assert_eq!(InternalInteger::from_operand(reserved), None);
     }
-    for operand in 0..=22 {
+    for operand in 0..=24 {
         if let Some(integer) = InternalInteger::from_operand(operand) {
             assert_eq!(integer.operand(), operand);
             assert!(

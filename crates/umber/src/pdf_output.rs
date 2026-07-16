@@ -4298,6 +4298,7 @@ mod tests {
             metadata: PdfExternalImageMetadata::PdfPage {
                 page_box,
                 page: 1,
+                total_pages: 1,
                 has_page_group: has_group,
                 pdf_version: (1, 5),
             },
