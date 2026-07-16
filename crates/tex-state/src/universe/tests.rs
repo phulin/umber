@@ -121,6 +121,24 @@ fn inserted_origin_classification_skips_direct_source_resolution() {
 }
 
 #[test]
+#[should_panic(expected = "origin id is not live in this Universe timeline")]
+fn inserted_origin_classification_rejects_rolled_back_arena_origin() {
+    let mut universe = Universe::new();
+    let snapshot = universe.snapshot();
+    let noexpand = universe.inserted_origin(
+        InsertedOriginKind::NoExpand,
+        Token::Char {
+            ch: 'x',
+            cat: Catcode::Other,
+        },
+        OriginId::UNKNOWN,
+    );
+    universe.rollback(&snapshot);
+
+    let _ = universe.origin_is_inserted_kind(noexpand, InsertedOriginKind::NoExpand);
+}
+
+#[test]
 fn unknown_meaning_flags_participate_in_semantic_hashes() {
     let mut universe = Universe::new();
     let symbol = universe.intern("future-extension");

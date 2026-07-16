@@ -23,6 +23,16 @@ fn session(main: &str) -> VirtualCompileSession {
     session
 }
 
+#[test]
+fn expanded_definition_classifies_noexpand_across_editor_fragment_origins() {
+    let source = "\\def\\a{A}\n\\toks0={T}\n\\edef\\e{\\noexpand\\a:\\the\\toks0:\\number7}\n\\show\\e\n\\end\n";
+    let CompileAttemptResult::Complete(output) = session(source).compile_attempt() else {
+        panic!("expanded definition should compile in a retained virtual session");
+    };
+
+    assert!(String::from_utf8_lossy(&output.terminal).contains("->\\a :T:7."));
+}
+
 fn requests(result: CompileAttemptResult) -> Vec<FileRequest> {
     match result {
         CompileAttemptResult::NeedResources(resources) => resources
