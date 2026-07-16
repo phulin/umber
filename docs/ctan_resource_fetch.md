@@ -39,11 +39,18 @@ time.
 
 Instead, both frontends fetch from a **published snapshot**: a pinned,
 reproducible, content-addressed object store plus manifest derived from a
-CTAN/TeX Live distribution tree. This is exactly the model
-`tools/texlive-wasm-publish` already implements for the browser: objects
-named by SHA-256, an ordered manifest mapping `kind:name` request keys to
-objects, byte counts, and dependency hints. CTAN (or a TeX Live snapshot
-built from it) is the upstream of the publisher, not a runtime dependency.
+distribution tree. This is exactly the model `tools/texlive-wasm-publish`
+already implements for the browser: objects named by SHA-256, an ordered
+manifest mapping `kind:name` request keys to objects, byte counts, and
+dependency hints.
+
+The initial distribution is the **most recent TeX Live snapshot,
+self-hosted by this project**: the publisher runs against a current TeX Live
+tree (whose runtime files are already generated from CTAN sources), and the
+resulting manifest and objects are published to project-controlled hosting.
+TeX Live is the upstream of the publisher, not a runtime dependency, and
+refreshing the distribution means running the publisher against a newer
+snapshot and rotating the default pin.
 
 Consequences:
 
@@ -143,7 +150,8 @@ compiles into the browser package.
 ## CLI user model
 
 - `umber run doc.tex` fetches missing distribution files automatically from
-  the default pinned snapshot, printing one line per acquired batch.
+  the default pin — the self-hosted TeX Live snapshot — printing one line
+  per acquired batch.
 - `--distribution <url-or-path>` selects a different snapshot: an HTTPS
   manifest URL or a local manifest path (air-gapped mirrors work by pointing
   at a directory).
@@ -163,8 +171,8 @@ compiles into the browser package.
 The browser stack already implements the loop; the work is coverage and
 policy, not architecture:
 
-- host a published snapshot (manifest + objects) built by the same publisher
-  from the same pinned CTAN/TeX Live tree the CLI defaults to, so both
+- serve the same self-hosted snapshot (manifest + objects) the CLI defaults
+  to, built by the same publisher from the same TeX Live tree, so both
   frontends resolve identical bytes;
 - replace the `missing-key` throw with `FileUnavailable` responses;
 - forward manifest dependency entries as prefetch hints through the existing
@@ -237,10 +245,10 @@ lands with its tests and keeps `scripts/check-and-test.sh` and
 5. **Watch and cancellation.** Reuse the retained session in `umber watch`,
    abort superseded fetches, and verify no refetch across accepted
    revisions.
-6. **Publish and adopt a real snapshot.** Build and host a pinned snapshot
-   from the reference CTAN/TeX Live tree; point the CLI default pin and the
-   web app deployment at it; forward dependency prefetch hints in the
-   browser.
+6. **Publish and adopt the self-hosted snapshot.** Run the publisher against
+   the most recent TeX Live snapshot, publish the manifest and objects to
+   project-controlled hosting, point the CLI default pin and the web app
+   deployment at it, and forward dependency prefetch hints in the browser.
 7. **Parity gate.** One corpus document requiring distribution packages
    compiles from a cold cache natively and in the browser fixture to
    byte-identical DVI, satisfies repeat runs entirely from cache, and
@@ -265,9 +273,11 @@ lands with its tests and keeps `scripts/check-and-test.sh` and
 
 ## Open questions
 
-- **Hosting.** Where the published snapshot lives (object store/CDN, project
-  infrastructure) and its versioning cadence are deployment decisions
-  outside this design; the pin mechanism assumes only stable HTTPS URLs.
+- **Hosting details.** Self-hosting the snapshot is decided; the concrete
+  object store/CDN, its bandwidth budget, and the refresh cadence for
+  rotating to newer TeX Live snapshots remain deployment decisions. The pin
+  mechanism assumes only stable HTTPS URLs, and old snapshots must stay
+  available as long as released CLI versions pin them.
 - **Local TeX Live probing.** Whether the CLI should optionally probe an
   existing `kpsewhich`-discoverable installation before the network. Default
   answer is no — it reintroduces machine-dependent bytes — but a
