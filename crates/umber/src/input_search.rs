@@ -60,6 +60,24 @@ impl TexInputSearchPath {
         read_first(input, candidates)
     }
 
+    pub fn read_from_world(&self, world: &mut World, name: &str) -> Result<FileContent, String> {
+        let name = Path::new(name);
+        let requested = with_default_extension(name, "tex");
+        let mut candidates = search_candidates(&self.user_area, &self.system_areas, &requested);
+        if name.extension().is_some_and(|extension| extension != "tex") {
+            for candidate in search_candidates(
+                &self.user_area,
+                &self.system_areas,
+                &append_extension(name, "tex"),
+            ) {
+                if !candidates.contains(&candidate) {
+                    candidates.push(candidate);
+                }
+            }
+        }
+        read_first_world(world, candidates)
+    }
+
     /// Emulates pdfTeX's restricted `|kpsewhich NAME` pipe without launching
     /// a process. The existing deterministic search policy resolves `NAME`,
     /// and the generated input consists only of that resolved path.
@@ -104,6 +122,14 @@ impl TexFontSearchPath {
         let requested = with_default_extension(path, "tfm");
         let candidates = font_candidates(&self.user_area, &self.system_areas, &requested);
         read_first(input, candidates)
+    }
+
+    pub fn read_from_world(&self, world: &mut World, path: &Path) -> Result<FileContent, String> {
+        let requested = with_default_extension(path, "tfm");
+        read_first_world(
+            world,
+            font_candidates(&self.user_area, &self.system_areas, &requested),
+        )
     }
 
     /// Resolves an output font program by its exact logical map name. Unlike
@@ -187,6 +213,17 @@ fn read_first<C: InputReadState + ?Sized>(
         match input.read_input_file(&path) {
             Ok(content) => return Ok(content),
             Err(err) => failures.push(format!("{} ({err})", path.display())),
+        }
+    }
+    Err(failures.join("; "))
+}
+
+fn read_first_world(world: &mut World, candidates: Vec<PathBuf>) -> Result<FileContent, String> {
+    let mut failures = Vec::with_capacity(candidates.len());
+    for path in candidates {
+        match world.read_file(&path) {
+            Ok(content) => return Ok(content),
+            Err(error) => failures.push(format!("{} ({error})", path.display())),
         }
     }
     Err(failures.join("; "))

@@ -31,6 +31,10 @@ tex-lex = { path = "../tex-lex" }
 tex-out = { path = "../tex-out" }
 tex-state = { path = "../tex-state" }
 umber-vfs = { path = "../umber-vfs" }
+umber-distribution = { path = "../umber-distribution" }
+umber-fetch = { path = "../umber-fetch" }
+lopdf = { version = "=0.43.0", default-features = false }
+flate2.workspace = true
 
 [dev-dependencies]
 parity-harness = { path = "../../tools/parity-harness" }

@@ -3,9 +3,9 @@
 Status: partially implemented, tracked by the `umber2-mbwq` epic. Builds on the
 completed VFS substrate ([umber_vfs.md](umber_vfs.md)) and resource session
 protocol ([wasm_resource_acquisition.md](wasm_resource_acquisition.md)). The
-shared manifest crate, typed unavailable responses, and native cache/fetch
-layer in phases 1 through 3 are implemented; CLI integration and snapshot
-deployment remain planned.
+shared manifest crate, typed unavailable responses, native cache/fetch layer,
+and CLI integration in phases 1 through 4 are implemented; snapshot deployment
+remains planned.
 
 ## Problem
 
@@ -255,11 +255,17 @@ Each phase is a `bd` issue under the `umber2-mbwq` epic (phase N is
    Local fixture-server and child-process contract tests cover success, cache
    reuse and corruption, 404, truncation, oversized declarations and response
    lengths, timeout/retry, concurrency bounds, and concurrent-process races.
-4. **CLI session migration.** Drive `umber run` through
-   `VirtualCompileSession` with the layered resolver chain, `--distribution`,
-   `--offline`, and pin verification. Existing local-only invocations must
-   behave identically (same outputs, same diagnostics) when every file
-   resolves locally.
+4. **Complete — CLI session migration.** `umber run --distribution ...` and
+   offline runs drive `VirtualCompileSession` through project search,
+   content-addressed cache, and verified distribution acquisition. The CLI
+   accepts pinned HTTPS or local manifests, resolves formats through the same
+   manifest, reports one progress line per acquired batch, and gives typed
+   pin-mismatch and offline-unavailable errors. The release-default URL and
+   digest slots are present; until phase 6 replaces the zero placeholder pin,
+   flagless local-only invocations retain the existing direct runner. PDF,
+   format-dump, profiling, HTML-asset, and input-receipt postprocessing also
+   retain that runner because those outputs require live state not exposed by
+   `VirtualCompileSession`.
 5. **Watch and cancellation.** Reuse the retained session in `umber watch`,
    abort superseded fetches, and verify no refetch across accepted
    revisions.

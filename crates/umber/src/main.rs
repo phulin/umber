@@ -75,6 +75,48 @@ fn lex_dump(path: &str) -> Result<(), CliError> {
 }
 
 fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
+    #[cfg(feature = "profiling-stats")]
+    let profiling_stats = opts.profiling_stats;
+    #[cfg(not(feature = "profiling-stats"))]
+    let profiling_stats = false;
+    let requires_legacy_postprocessing = opts.pdf.is_some()
+        || opts.html.is_some()
+        || opts.format_out.is_some()
+        || opts.input_records_out.is_some()
+        || (opts.show_fixtures && opts.distribution.is_none() && !opts.offline)
+        || (opts.engine == RunEngine::ETex && opts.distribution.is_none() && !opts.offline)
+        || (opts.distribution.is_none()
+            && !opts.offline
+            && umber::cli_resource::DEFAULT_DISTRIBUTION_SHA256
+                == "0000000000000000000000000000000000000000000000000000000000000000")
+        || profiling_stats;
+    if requires_legacy_postprocessing {
+        return run_tex_legacy(opts);
+    }
+    let output = umber::cli_resource::run(&umber::cli_resource::NativeRunOptions {
+        input: opts.input.clone(),
+        format: opts.format.clone(),
+        engine: opts.engine,
+        html: false,
+        distribution: opts.distribution.clone(),
+        distribution_sha256: opts.distribution_sha256.clone(),
+        offline: opts.offline,
+    })?;
+    print!("{}", String::from_utf8_lossy(&output.terminal));
+    if opts.show_fixtures {
+        return Ok(());
+    }
+    let mut files = output.files;
+    if let Some(path) = &opts.dvi {
+        files.push(umber::MemoryOutputFile {
+            path: path.clone(),
+            bytes: output.dvi,
+        });
+    }
+    materialize_memory_files(files)
+}
+
+fn run_tex_legacy(opts: &RunCliOptions) -> Result<(), CliError> {
     let path = opts.input.as_path();
     let mut world = World::real();
     let mut stores = if let Some(format) = &opts.format {
@@ -333,6 +375,9 @@ struct RunCliOptions {
     format_out: Option<PathBuf>,
     input_records_out: Option<PathBuf>,
     engine: RunEngine,
+    distribution: Option<String>,
+    distribution_sha256: Option<String>,
+    offline: bool,
     #[cfg(feature = "profiling-stats")]
     profiling_stats: bool,
 }
@@ -350,6 +395,9 @@ impl RunCliOptions {
         let mut format_out = None;
         let mut input_records_out = None;
         let mut engine = RunEngine::Tex82;
+        let mut distribution = None;
+        let mut distribution_sha256 = None;
+        let mut offline = env::var_os("UMBER_OFFLINE").is_some_and(|value| value == "1");
         #[cfg(feature = "profiling-stats")]
         let mut profiling_stats = false;
         let mut args = args.peekable();
@@ -357,6 +405,27 @@ impl RunCliOptions {
             match arg.as_str() {
                 "--show-fixtures" => {
                     show_fixtures = true;
+                }
+                "--offline" => offline = true,
+                "--distribution" => {
+                    if distribution.is_some() {
+                        return Err(CliError::Usage("run accepts at most one --distribution"));
+                    }
+                    distribution = Some(
+                        args.next()
+                            .ok_or(CliError::Usage("missing URL or path for --distribution"))?,
+                    );
+                }
+                "--distribution-sha256" => {
+                    if distribution_sha256.is_some() {
+                        return Err(CliError::Usage(
+                            "run accepts at most one --distribution-sha256",
+                        ));
+                    }
+                    distribution_sha256 = Some(
+                        args.next()
+                            .ok_or(CliError::Usage("missing digest for --distribution-sha256"))?,
+                    );
                 }
                 "--etex" => {
                     if engine != RunEngine::Tex82 {
@@ -482,6 +551,9 @@ impl RunCliOptions {
             }
         }
         let input = input.ok_or(CliError::Usage("missing input path for run"))?;
+        if distribution_sha256.is_none() {
+            distribution_sha256 = env::var("UMBER_DISTRIBUTION_SHA256").ok();
+        }
         if pdf.is_some() && !engine.supports_pdf_output() {
             return Err(CliError::Usage("--pdf requires --pdftex or --pdflatex"));
         }
@@ -530,6 +602,9 @@ impl RunCliOptions {
             format_out,
             input_records_out,
             engine,
+            distribution,
+            distribution_sha256,
+            offline,
             #[cfg(feature = "profiling-stats")]
             profiling_stats,
         })
@@ -602,6 +677,8 @@ enum CliError {
     Finalization(umber::FinalizationError),
     InputReceipt(String),
     Watch(watch::WatchError),
+    NativeRun(umber::cli_resource::NativeRunError),
+    OutputIo(String),
 }
 
 impl std::fmt::Display for CliError {
@@ -621,6 +698,8 @@ impl std::fmt::Display for CliError {
             Self::Finalization(err) => write!(f, "{err}"),
             Self::InputReceipt(message) => f.write_str(message),
             Self::Watch(err) => write!(f, "{err}"),
+            Self::NativeRun(err) => write!(f, "{err}"),
+            Self::OutputIo(message) => f.write_str(message),
         }
     }
 }
@@ -673,4 +752,30 @@ impl From<umber::FinalizationError> for CliError {
     fn from(value: umber::FinalizationError) -> Self {
         Self::Finalization(value)
     }
+}
+
+impl From<umber::cli_resource::NativeRunError> for CliError {
+    fn from(value: umber::cli_resource::NativeRunError) -> Self {
+        Self::NativeRun(value)
+    }
+}
+
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the CLI is the native output I/O boundary"
+)]
+fn materialize_memory_files(files: Vec<umber::MemoryOutputFile>) -> Result<(), CliError> {
+    for file in files {
+        if let Some(parent) = file.path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                CliError::OutputIo(format!("failed to create {}: {error}", parent.display()))
+            })?;
+        }
+        std::fs::write(&file.path, file.bytes).map_err(|error| {
+            CliError::OutputIo(format!("failed to write {}: {error}", file.path.display()))
+        })?;
+    }
+    Ok(())
 }

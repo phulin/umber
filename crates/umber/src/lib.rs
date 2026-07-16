@@ -15,6 +15,7 @@ use tex_state::{
     WorldError,
 };
 
+pub mod cli_resource;
 mod html_output;
 mod input_search;
 mod memory_output;

@@ -76,6 +76,11 @@ Missing files and fonts in virtual sessions become typed resource requests.
 They are sorted, deduplicated, and returned in one `NeedResources` batch;
 Rust never invents URLs or performs asynchronous I/O.
 
+The native CLI's resource host policy lives in `umber::cli_resource`: it
+preserves `TEXINPUTS`/`TEXFONTS` candidate ordering, then consults the verified
+native object cache and a pinned HTTPS or explicit local manifest. Network and
+cache I/O remain above the session and engine boundaries in `umber-fetch`.
+
 `umber-vfs` owns file request identity, required-versus-hint file batches,
 generic response validation, request-bound resolved origins, layered session
 input storage, snapshots, generated-output transactions, and file limits.

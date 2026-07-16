@@ -1992,6 +1992,8 @@ dependencies = [
  "tex-out",
  "tex-state",
  "ttf-parser",
+ "umber-distribution",
+ "umber-fetch",
  "umber-vfs",
 ]
 

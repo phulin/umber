@@ -1008,6 +1008,129 @@ fn run_resolves_area_less_input_through_texinputs_and_advances() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary distribution and command execution.
+fn run_acquires_from_a_local_distribution_then_reuses_cache_offline() {
+    let temp_dir = tempfile::tempdir().expect("create distribution temp dir");
+    let source = temp_dir.path().join("main.tex");
+    let distribution = temp_dir.path().join("distribution");
+    let cache = temp_dir.path().join("cache");
+    fs::create_dir_all(&distribution).expect("create distribution");
+    fs::write(&source, "\\input remote \\message{after-remote}\\end\n").expect("write source");
+    let remote = b"\\message{from-distribution}\n";
+    let object_digest = hex_sha256(remote);
+    let object = format!("sha256-{object_digest}");
+    fs::write(distribution.join(&object), remote).expect("write object");
+    let manifest = format!(
+        "{{\n  \"schema\": 1,\n  \"distribution\": \"test-snapshot\",\n  \"objectsBaseUrl\": \"https://example.invalid/objects/\",\n  \"files\": {{\n    \"tex:remote.tex\": {{\n      \"virtualPath\": \"/texlive/tex/remote.tex\",\n      \"object\": \"{object}\",\n      \"sha256\": \"{object_digest}\",\n      \"bytes\": {}\n    }}\n  }}\n}}\n",
+        remote.len()
+    );
+    fs::write(distribution.join("manifest.json"), &manifest).expect("write manifest");
+
+    let first = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .env("XDG_CACHE_HOME", &cache)
+        .args(["run", "--show-fixtures", "--distribution"])
+        .arg(&distribution)
+        .arg(&source)
+        .output()
+        .expect("run cold local distribution");
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    assert!(String::from_utf8_lossy(&first.stdout).contains("from-distribution"));
+    assert_eq!(
+        String::from_utf8(first.stderr).expect("stderr UTF-8"),
+        "umber: acquired 1 distribution resource(s)\n"
+    );
+
+    fs::remove_file(distribution.join(object)).expect("remove source object after warming");
+    let second = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .env("XDG_CACHE_HOME", &cache)
+        .env("UMBER_OFFLINE", "1")
+        .args(["run", "--show-fixtures", "--distribution"])
+        .arg(&distribution)
+        .arg(&source)
+        .output()
+        .expect("run warm offline distribution");
+    assert!(
+        second.status.success(),
+        "{}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    assert!(second.stderr.is_empty());
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary distribution and command execution.
+fn run_rejects_a_manifest_that_mismatches_its_pin() {
+    let temp_dir = tempfile::tempdir().expect("create manifest mismatch temp dir");
+    let source = temp_dir.path().join("main.tex");
+    let manifest = temp_dir.path().join("manifest.json");
+    fs::write(&source, "\\input absent \\end\n").expect("write source");
+    fs::write(
+        &manifest,
+        "{\"schema\":1,\"distribution\":\"test\",\"objectsBaseUrl\":\"https://example.invalid/\",\"files\":{}}",
+    )
+    .expect("write manifest");
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("XDG_CACHE_HOME", temp_dir.path().join("cache"))
+        .args([
+            "run",
+            "--distribution",
+            manifest.to_str().expect("UTF-8 path"),
+            "--distribution-sha256",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        ])
+        .arg(&source)
+        .output()
+        .expect("run mismatched manifest");
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("distribution manifest digest mismatch")
+    );
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary distribution and command execution.
+fn run_offline_miss_names_the_exact_manifest_request_key() {
+    let temp_dir = tempfile::tempdir().expect("create offline miss temp dir");
+    let source = temp_dir.path().join("main.tex");
+    let distribution = temp_dir.path().join("distribution");
+    fs::create_dir_all(&distribution).expect("create distribution");
+    fs::write(&source, "\\input remote \\end\n").expect("write source");
+    let bytes = b"\\relax\n";
+    let digest = hex_sha256(bytes);
+    let entry = format!(
+        "\"tex:remote.tex\":{{\"virtualPath\":\"/texlive/remote.tex\",\"object\":\"sha256-{digest}\",\"sha256\":\"{digest}\",\"bytes\":{}}}",
+        bytes.len()
+    );
+    fs::write(
+        distribution.join("manifest.json"),
+        format!(
+            "{{\"schema\":1,\"distribution\":\"test\",\"objectsBaseUrl\":\"https://example.invalid/\",\"files\":{{{entry}}}}}"
+        ),
+    )
+    .expect("write manifest");
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("XDG_CACHE_HOME", temp_dir.path().join("empty-cache"))
+        .args(["run", "--offline", "--distribution"])
+        .arg(&distribution)
+        .arg(&source)
+        .output()
+        .expect("run offline miss");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("tex:remote.tex"));
+}
+
+fn hex_sha256(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+#[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn run_writes_a_sorted_deduplicated_input_record_receipt() {
     let temp_dir = tempfile::tempdir().expect("create input receipt temp dir");
