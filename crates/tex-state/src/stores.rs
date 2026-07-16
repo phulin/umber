@@ -70,6 +70,7 @@ use std::hash::{Hash, Hasher};
 use std::mem;
 use std::sync::Arc;
 
+mod exact_collection;
 mod exact_identity;
 mod format;
 mod handles;

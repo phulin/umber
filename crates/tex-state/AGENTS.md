@@ -91,6 +91,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/stores.rs`: Internal aggregate store tuple that coordinates interner, env, token, provenance, glue, node, font, accepted-generation paragraph roots/auxiliaries, survivor pins, input, and rollback/shipout scope state.
 - `src/stores/handles.rs`: Store-boundary liveness checks for symbols, token lists, origins, glue, fonts, macros, and node handles.
 - `src/stores/exact_identity.rs`: Persistent deterministic Merkle treap for canonical environment-cell identities retained by checkpoints.
+- `src/stores/exact_collection.rs`: Persistent deterministic Merkle collection for allocation-order-independent immutable-store roots.
 - `src/stores/node_semantic.rs`: Canonical node encoding and bottom-up semantic-identity composition at aggregate freeze.
 - `src/stores/format.rs`: Deterministic versioned format-image DTO capture/validation and fresh-store reconstruction.
 - `src/stores/format/frozen_core.rs`: Fixed-width schema-10 names, token-list, macro, and glue section codecs plus direct validated dense-store restoration.

@@ -206,11 +206,17 @@ The strong canonical identity used for optional suffix adoption is derived
 later, not captured in every snapshot. Executor sinks request it only for a
 schedule-aligned boundary they will compare. Its store projection separates
 append-only interned content from mutable state. Names, token lists, macros,
-glue, and fonts contribute canonical leaf identities to per-store append-only
-prefix trees; watermark growth hashes only new leaves and their prefix roots.
+glue, and fonts contribute canonical leaf identities to per-store deterministic
+Merkle collections. Collection shape and root depend only on the set of content
+identities, never runtime slot or insertion order. The current append watermark
+retains a persistent collection root, so growth hashes only new leaves and
+logarithmic collection paths. Token leaves bind canonical control-sequence-name identities,
+macro leaves bind parameter and replacement token-list identities, and font
+annotations bind canonical identifier-name identities rather than runtime
+handles.
 Loaded fonts retain their immutable strong identity at load, while the small
 rollback-coupled identifier and expansion projection is composed separately.
-The derived prefix caches are shared across related generation forks, validate
+The derived collection caches are shared across related generation forks, validate
 allocator ancestry before extending, and fall back to canonical reconstruction
 after divergent rollback allocation. They are not semantic state. Environment
 cells also maintain a persistent deterministic Merkle treap keyed by canonical

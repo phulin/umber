@@ -2613,6 +2613,40 @@ fn exact_immutable_store_root_survives_format_reconstruction() {
 }
 
 #[test]
+fn exact_immutable_store_root_rebuilds_after_divergent_rollback_allocation() {
+    let mut replayed = Universe::new();
+    let baseline = replayed.snapshot();
+    replayed.intern("discarded-branch-name");
+    let _ = identity_of(&mut replayed);
+    replayed.rollback(&baseline);
+    replayed.intern("replacement-name");
+
+    let mut cold = Universe::new();
+    cold.intern("replacement-name");
+    assert_eq!(identity_of(&mut replayed), identity_of(&mut cold));
+}
+
+#[test]
+fn exact_immutable_font_collection_ignores_allocation_order() {
+    let mut first = Universe::new();
+    let first_target_name = first.intern("target-font");
+    first.intern_font(test_font("filler", b"filler"));
+    let first_target = first.intern_font(test_font("target", b"target"));
+    first.intern_font(test_font("target", b"target"));
+    first.set_meaning(first_target_name, Meaning::Font(first_target));
+
+    let mut second = Universe::new();
+    let second_target = second.intern_font(test_font("target", b"target"));
+    second.intern_font(test_font("filler", b"filler"));
+    second.intern_font(test_font("target", b"target"));
+    let second_target_name = second.intern("target-font");
+    second.set_meaning(second_target_name, Meaning::Font(second_target));
+
+    assert_ne!(first_target.raw(), second_target.raw());
+    assert_eq!(identity_of(&mut first), identity_of(&mut second));
+}
+
+#[test]
 fn exact_checkpoint_identity_composes_every_future_state_root() {
     fn identity(universe: &mut Universe) -> ContentHash {
         universe
@@ -2679,7 +2713,8 @@ fn snapshot_state_hash_ignores_content_intern_order() {
     let macro_target = first.intern("macro_target");
     first.set_meaning(first_zed, Meaning::Relax);
     let filler_tokens = first.intern_token_list(&[Token::param(1)]);
-    let target_tokens = first.intern_token_list(&[
+    let target_parameters = first.intern_token_list(&[Token::param(1)]);
+    let target_replacement = first.intern_token_list(&[
         Token::Cs(alpha.symbol()),
         Token::Char {
             ch: 'x',
@@ -2695,10 +2730,10 @@ fn snapshot_state_hash_ignores_content_intern_order() {
     ));
     let target_macro = first.intern_macro(MacroMeaning::new(
         MeaningFlags::PROTECTED,
-        target_tokens,
-        target_tokens,
+        target_parameters,
+        target_replacement,
     ));
-    first.set_toks(0, target_tokens);
+    first.set_toks(0, target_replacement);
     first.set_skip(0, target_glue);
     first.set_meaning(
         macro_target,
@@ -2714,7 +2749,7 @@ fn snapshot_state_hash_ignores_content_intern_order() {
     let mut second = Universe::new();
     let macro_target = second.intern("macro_target");
     let alpha = second.intern("alpha");
-    let target_tokens = second.intern_token_list(&[
+    let target_replacement = second.intern_token_list(&[
         Token::Cs(alpha.symbol()),
         Token::Char {
             ch: 'x',
@@ -2722,12 +2757,13 @@ fn snapshot_state_hash_ignores_content_intern_order() {
         },
     ]);
     let filler_tokens = second.intern_token_list(&[Token::param(1)]);
+    let target_parameters = second.intern_token_list(&[Token::param(1)]);
     let target_glue = second.intern_glue(glue(7));
     let filler_glue = second.intern_glue(glue(99));
     let target_macro = second.intern_macro(MacroMeaning::new(
         MeaningFlags::PROTECTED,
-        target_tokens,
-        target_tokens,
+        target_parameters,
+        target_replacement,
     ));
     let filler_macro = second.intern_macro(MacroMeaning::new(
         MeaningFlags::LONG,
@@ -2736,7 +2772,7 @@ fn snapshot_state_hash_ignores_content_intern_order() {
     ));
     let second_zed = second.intern("z");
     second.set_meaning(second_zed, Meaning::Relax);
-    second.set_toks(0, target_tokens);
+    second.set_toks(0, target_replacement);
     second.set_skip(0, target_glue);
     second.set_meaning(
         macro_target,
@@ -2749,6 +2785,11 @@ fn snapshot_state_hash_ignores_content_intern_order() {
     assert_ne!(filler_macro, target_macro);
 
     assert_eq!(first_hash, second.snapshot().state_hash());
+    assert_eq!(
+        identity_of(&mut first),
+        identity_of(&mut second),
+        "exact identity must ignore immutable allocation order and child handles"
+    );
 
     // The next slice reads these keys from the incremental baseline cache.
     // Dense symbol ids differ between the two stores, but semantic ordering

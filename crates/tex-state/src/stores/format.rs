@@ -1,3 +1,4 @@
+use super::exact_collection::CanonicalCollectionRoot;
 use super::*;
 use crate::ContentHash;
 use serde::{Deserialize, Serialize};
@@ -211,8 +212,7 @@ pub(super) struct ExactIdentityCache {
 
 #[derive(Clone, Debug, Default)]
 struct AppendOnlyIdentityCache {
-    leaves: Vec<ContentHash>,
-    roots: Vec<ContentHash>,
+    root: CanonicalCollectionRoot,
     logical_len: usize,
 }
 
@@ -224,30 +224,19 @@ impl AppendOnlyIdentityCache {
         mut leaf: impl FnMut(usize) -> Result<ContentHash, StoreFormatError>,
     ) -> Result<(), StoreFormatError> {
         if !can_extend || self.logical_len > len {
-            self.leaves.clear();
-            self.roots.clear();
+            self.root = CanonicalCollectionRoot::default();
             self.logical_len = 0;
         }
         for raw in self.logical_len..len {
             let identity = leaf(raw)?;
-            let previous = self.roots.last().copied().unwrap_or_default();
-            let mut framed = Vec::with_capacity(88);
-            framed.extend_from_slice(b"umber-exact-append-prefix-v1");
-            framed.extend_from_slice(&(raw as u64 + 1).to_le_bytes());
-            framed.extend_from_slice(&previous.bytes());
-            framed.extend_from_slice(&identity.bytes());
-            self.leaves.push(identity);
-            self.roots.push(ContentHash::from_bytes(&framed));
+            self.root.insert(identity);
         }
         self.logical_len = len;
         Ok(())
     }
 
     fn identity(&self) -> ContentHash {
-        self.roots
-            .get(self.logical_len.saturating_sub(1))
-            .copied()
-            .unwrap_or_else(|| ContentHash::from_bytes(b"umber-exact-append-empty-v1"))
+        self.root.identity()
     }
 }
 
@@ -292,13 +281,7 @@ fn exact_token_leaf(stores: &Stores, raw: usize) -> Result<ContentHash, StoreFor
             Token::Cs(symbol) => {
                 framed.push(1);
                 let symbol = stores.resolve_stored_symbol(symbol);
-                framed.push(match stores.interner.kind_id(symbol) {
-                    ControlSequenceKind::Named => 0,
-                    ControlSequenceKind::ActiveCharacter => 1,
-                });
-                let name = stores.interner.resolve_id(symbol).as_bytes();
-                framed.extend_from_slice(&(name.len() as u64).to_le_bytes());
-                framed.extend_from_slice(name);
+                framed.extend_from_slice(&exact_name_leaf(stores, symbol.raw() as usize)?.bytes());
             }
             Token::Param(slot) => framed.extend_from_slice(&[2, slot]),
             Token::Frozen(crate::token::FrozenToken::END_TEMPLATE) => {
@@ -320,14 +303,14 @@ fn exact_macro_leaf(stores: &Stores, raw: usize) -> Result<ContentHash, StoreFor
             .resolve_stored(MacroDefinitionId::new(raw as u32))
             .expect("exact macro slot should be live"),
     );
-    exact_serialized_leaf(
-        b"umber-exact-macro-v1",
-        &FormatMacro {
-            flags: meaning.flags().bits(),
-            parameter_text: meaning.parameter_text().raw(),
-            replacement_text: meaning.replacement_text().raw(),
-        },
-    )
+    let parameter = stores.resolve_stored_token_list(meaning.parameter_text());
+    let replacement = stores.resolve_stored_token_list(meaning.replacement_text());
+    let mut framed = Vec::with_capacity(96);
+    framed.extend_from_slice(b"umber-exact-macro-v2");
+    framed.push(meaning.flags().bits());
+    framed.extend_from_slice(&exact_token_leaf(stores, parameter.raw() as usize)?.bytes());
+    framed.extend_from_slice(&exact_token_leaf(stores, replacement.raw() as usize)?.bytes());
+    Ok(ContentHash::from_bytes(&framed))
 }
 
 fn exact_glue_leaf(stores: &Stores, raw: usize) -> Result<ContentHash, StoreFormatError> {
@@ -346,26 +329,22 @@ fn exact_font_leaf(stores: &Stores, raw: usize) -> Result<ContentHash, StoreForm
     let base = stores.fonts.immutable_exact_identity(id);
     let identifier = stores.fonts.identifier(id).map(|symbol| {
         let symbol = stores.resolve_stored_symbol(symbol.symbol());
-        (
-            stores.interner.kind_id(symbol),
-            stores.interner.resolve_id(symbol),
-        )
+        exact_name_leaf(stores, symbol.raw() as usize)
     });
-    let annotation = (
-        identifier.map(|(kind, name)| {
-            (
-                matches!(kind, ControlSequenceKind::ActiveCharacter),
-                name.to_owned(),
-            )
-        }),
-        stores.fonts.expansion(id),
-    );
-    let annotation = bincode::serialize(&annotation)
+    let identifier = identifier.transpose()?;
+    let expansion = bincode::serialize(&stores.fonts.expansion(id))
         .map_err(|error| StoreFormatError::Codec(error.to_string()))?;
-    let mut framed = Vec::with_capacity(64 + annotation.len());
-    framed.extend_from_slice(b"umber-exact-font-v1");
+    let mut framed = Vec::with_capacity(96 + expansion.len());
+    framed.extend_from_slice(b"umber-exact-font-v2");
     framed.extend_from_slice(&base.bytes());
-    framed.extend_from_slice(&annotation);
+    match identifier {
+        Some(identifier) => {
+            framed.push(1);
+            framed.extend_from_slice(&identifier.bytes());
+        }
+        None => framed.push(0),
+    }
+    framed.extend_from_slice(&expansion);
     Ok(ContentHash::from_bytes(&framed))
 }
 
