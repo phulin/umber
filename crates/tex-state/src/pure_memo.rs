@@ -6,6 +6,7 @@
 
 use crate::env::banks::IntParam;
 use crate::glue::GlueSpec;
+use crate::ids::NodeListId;
 use crate::{ContentHash, DetachedMemoValue, InputSummary, ObservedDependency, RootSpanId};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
@@ -85,14 +86,6 @@ pub struct PureBreakPlan {
     pub last_line_fill: Option<GlueSpec>,
 }
 
-#[derive(Clone, Debug)]
-pub struct PureParagraphEntry {
-    pub hlist: DetachedMemoValue,
-    pub mutations: Vec<PureParagraphMutation>,
-    pub effects: Vec<crate::DetachedVirtualEffect>,
-    pub origin_ordinals: Vec<u32>,
-}
-
 /// Why a cold paragraph trace cannot be replayed. These reasons are stable
 /// telemetry rather than inferred failures at a later cache lookup.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -112,12 +105,15 @@ pub enum ParagraphBarrierReason {
 /// that reference in the next rollout phase.
 #[derive(Clone, Debug)]
 pub struct RecordedParagraphRegion {
+    pub key: PureMemoKey,
     pub consumed_spans: Vec<RootSpanId>,
     pub dependencies: Vec<ObservedDependency>,
     pub mutations: Vec<PureParagraphMutation>,
     pub effects: Vec<crate::DetachedVirtualEffect>,
     pub ending_input: InputSummary,
     pub barriers: Vec<ParagraphBarrierReason>,
+    pub hlist: Option<NodeListId>,
+    pub origin_ordinals: Vec<u32>,
 }
 
 #[derive(Clone, Debug)]
@@ -178,7 +174,6 @@ struct Entry {
 #[derive(Clone, Debug)]
 enum PureMemoValue {
     Pretolerance(Option<PureBreakPlan>),
-    Paragraph(PureParagraphEntry),
     Page(PurePageEntry),
     Shipout(PureShipoutEntry),
     Detached,
@@ -204,7 +199,9 @@ pub struct PureMemoRuntime {
     page_episodes: bool,
     shipout_episodes: bool,
     paragraph_recording: Option<Vec<PureParagraphMutation>>,
+    prior_paragraphs: Vec<RecordedParagraphRegion>,
     recorded_paragraphs: Vec<RecordedParagraphRegion>,
+    reuse_prior_paragraphs: bool,
     paragraph_barrier_reasons: BTreeMap<ParagraphBarrierReason, u64>,
 }
 
@@ -271,10 +268,9 @@ impl PureMemoRuntime {
                     entry.referenced = true;
                     Some(plan.clone())
                 }
-                PureMemoValue::Paragraph(_)
-                | PureMemoValue::Page(_)
-                | PureMemoValue::Shipout(_)
-                | PureMemoValue::Detached => None,
+                PureMemoValue::Page(_) | PureMemoValue::Shipout(_) | PureMemoValue::Detached => {
+                    None
+                }
             });
         if hit.is_some() {
             cache.stats.hits = cache.stats.hits.saturating_add(1);
@@ -285,35 +281,6 @@ impl PureMemoRuntime {
             cache.stats.malformed = cache.stats.malformed.saturating_add(1);
             cache.remove(key, false);
             cache.stats.misses = cache.stats.misses.saturating_add(1);
-        } else {
-            cache.stats.misses = cache.stats.misses.saturating_add(1);
-        }
-        hit
-    }
-
-    pub(crate) fn lookup_paragraph(&mut self, key: PureMemoKey) -> Option<PureParagraphEntry> {
-        if !self.paragraph_front_ends {
-            return None;
-        }
-        let cache = self.cache.as_mut()?;
-        cache.stats.lookups = cache.stats.lookups.saturating_add(1);
-        cache.stats.paragraph_lookups = cache.stats.paragraph_lookups.saturating_add(1);
-        let hit = cache
-            .entries
-            .get_mut(&key)
-            .and_then(|entry| match &entry.value {
-                PureMemoValue::Paragraph(value) => {
-                    entry.referenced = true;
-                    Some(value.clone())
-                }
-                PureMemoValue::Pretolerance(_)
-                | PureMemoValue::Page(_)
-                | PureMemoValue::Shipout(_)
-                | PureMemoValue::Detached => None,
-            });
-        if hit.is_some() {
-            cache.stats.hits = cache.stats.hits.saturating_add(1);
-            cache.stats.paragraph_hits = cache.stats.paragraph_hits.saturating_add(1);
         } else {
             cache.stats.misses = cache.stats.misses.saturating_add(1);
         }
@@ -455,41 +422,6 @@ impl PureMemoRuntime {
         }
     }
 
-    pub(crate) fn insert_paragraph(&mut self, key: PureMemoKey, value: PureParagraphEntry) {
-        if !self.paragraph_front_ends {
-            return;
-        }
-        let owned_bytes = value
-            .hlist
-            .retained_bytes()
-            .saturating_sub(std::mem::size_of::<DetachedMemoValue>())
-            .saturating_add(
-                value
-                    .mutations
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<PureParagraphMutation>()),
-            )
-            .saturating_add(
-                value
-                    .effects
-                    .iter()
-                    .map(|effect| {
-                        effect.operation.capacity()
-                            + effect.payload.capacity()
-                            + std::mem::size_of::<crate::DetachedVirtualEffect>()
-                    })
-                    .sum::<usize>(),
-            )
-            .saturating_add(value.origin_ordinals.capacity().saturating_mul(4));
-        let before = self.cache.as_ref().map_or(0, |cache| cache.stats.inserts);
-        self.insert_value(key, PureMemoValue::Paragraph(value), owned_bytes);
-        if let Some(cache) = &mut self.cache
-            && cache.stats.inserts != before
-        {
-            cache.stats.paragraph_inserts = cache.stats.paragraph_inserts.saturating_add(1);
-        }
-    }
-
     pub(crate) fn begin_paragraph_recording(&mut self) {
         if self.paragraph_front_ends_enabled() {
             self.paragraph_recording = Some(Vec::new());
@@ -515,6 +447,8 @@ impl PureMemoRuntime {
         let Some(cache) = &mut self.cache else {
             return;
         };
+        cache.stats.hits = cache.stats.hits.saturating_add(1);
+        cache.stats.paragraph_hits = cache.stats.paragraph_hits.saturating_add(1);
         cache.stats.paragraph_commands_skipped = cache
             .stats
             .paragraph_commands_skipped
@@ -595,6 +529,47 @@ impl PureMemoRuntime {
             }
         }
         self.recorded_paragraphs.push(region);
+    }
+
+    pub(crate) fn lookup_recorded_paragraph(
+        &mut self,
+        key: PureMemoKey,
+    ) -> Option<RecordedParagraphRegion> {
+        if !self.reuse_prior_paragraphs || !self.paragraph_front_ends {
+            return None;
+        }
+        let cache = self.cache.as_mut()?;
+        cache.stats.lookups = cache.stats.lookups.saturating_add(1);
+        cache.stats.paragraph_lookups = cache.stats.paragraph_lookups.saturating_add(1);
+        let result = self
+            .prior_paragraphs
+            .iter()
+            .find(|region| region.key == key && region.barriers.is_empty())
+            .cloned();
+        if result.is_none() {
+            cache.stats.misses = cache.stats.misses.saturating_add(1);
+        }
+        result
+    }
+
+    /// Starts one speculative generation trace. Only a fork of the prior
+    /// accepted substrate may resolve the retained node handles.
+    pub fn begin_paragraph_generation(&mut self, reuse_prior: bool) {
+        self.recorded_paragraphs.clear();
+        self.reuse_prior_paragraphs = reuse_prior;
+    }
+
+    /// Publishes the speculative trace wholesale after its owning Universe is
+    /// accepted as the new retained generation.
+    pub fn accept_paragraph_generation(&mut self) {
+        self.prior_paragraphs = std::mem::take(&mut self.recorded_paragraphs);
+        self.reuse_prior_paragraphs = false;
+    }
+
+    /// Drops all trace metadata produced by an abandoned execution branch.
+    pub fn discard_paragraph_generation(&mut self) {
+        self.recorded_paragraphs.clear();
+        self.reuse_prior_paragraphs = false;
     }
 
     pub fn recorded_paragraphs(&self) -> &[RecordedParagraphRegion] {
@@ -716,7 +691,6 @@ impl PureMemoCache {
 #[derive(Clone, Copy)]
 enum PureMemoKind {
     Pretolerance,
-    Paragraph,
     Page,
     Shipout,
 }
@@ -725,7 +699,6 @@ impl PureMemoValue {
     fn kind(&self) -> PureMemoKind {
         match self {
             Self::Pretolerance(_) | Self::Detached => PureMemoKind::Pretolerance,
-            Self::Paragraph(_) => PureMemoKind::Paragraph,
             Self::Page(_) => PureMemoKind::Page,
             Self::Shipout(_) => PureMemoKind::Shipout,
         }
@@ -736,7 +709,6 @@ impl PureMemoStats {
     fn add_kind_charge(&mut self, kind: PureMemoKind, charge: usize) {
         let retained = match kind {
             PureMemoKind::Pretolerance => &mut self.pretolerance_retained_bytes,
-            PureMemoKind::Paragraph => &mut self.paragraph_retained_bytes,
             PureMemoKind::Page => &mut self.page_retained_bytes,
             PureMemoKind::Shipout => &mut self.shipout_retained_bytes,
         };
@@ -748,10 +720,6 @@ impl PureMemoStats {
             PureMemoKind::Pretolerance => (
                 &mut self.pretolerance_retained_bytes,
                 &mut self.pretolerance_evictions,
-            ),
-            PureMemoKind::Paragraph => (
-                &mut self.paragraph_retained_bytes,
-                &mut self.paragraph_evictions,
             ),
             PureMemoKind::Page => (&mut self.page_retained_bytes, &mut self.page_evictions),
             PureMemoKind::Shipout => (

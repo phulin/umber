@@ -454,7 +454,7 @@ impl InputSummary {
     /// excluded. The editor checkpoint restore separately proves the mapped
     /// root suffix; this comparison retains line/token content and lexer state
     /// so buffered tokens from a semantic edit cannot spuriously converge.
-    pub(crate) fn exact_future_state_matches(&self, other: &Self) -> bool {
+    pub fn exact_future_state_matches(&self, other: &Self) -> bool {
         let left = &self.semantic_root.0;
         let right = &other.semantic_root.0;
         left.unicode_superscript_notation == right.unicode_superscript_notation
@@ -466,6 +466,35 @@ impl InputSummary {
                 .all(|(left, right)| input_frame_future_eq(left, right))
             && match (&left.last_source_frame, &right.last_source_frame) {
                 (Some(left), Some(right)) => source_frame_future_eq(left, right),
+                (None, None) => true,
+                _ => false,
+            }
+    }
+
+    /// Compares the input continuation after a replayable paragraph while
+    /// ignoring revision-relative coordinates and already-consumed line text.
+    #[must_use]
+    pub fn paragraph_transition_matches(&self, other: &Self) -> bool {
+        let left = &self.semantic_root.0;
+        let right = &other.semantic_root.0;
+        let left_frames = left
+            .frames
+            .iter()
+            .filter(|frame| !empty_transient_frame(frame))
+            .collect::<Vec<_>>();
+        let right_frames = right
+            .frames
+            .iter()
+            .filter(|frame| !empty_transient_frame(frame))
+            .collect::<Vec<_>>();
+        left.unicode_superscript_notation == right.unicode_superscript_notation
+            && left_frames.len() == right_frames.len()
+            && left_frames
+                .iter()
+                .zip(right_frames)
+                .all(|(left, right)| paragraph_input_frame_eq(left, right))
+            && match (&left.last_source_frame, &right.last_source_frame) {
+                (Some(left), Some(right)) => paragraph_source_frame_eq(left, right),
                 (None, None) => true,
                 _ => false,
             }
@@ -707,6 +736,13 @@ impl InputSummary {
     }
 }
 
+fn empty_transient_frame(frame: &InputFrameSummary) -> bool {
+    matches!(
+        frame,
+        InputFrameSummary::TransientTokenList { tokens, .. } if tokens.is_empty()
+    )
+}
+
 fn input_frame_future_eq(left: &InputFrameSummary, right: &InputFrameSummary) -> bool {
     match (left, right) {
         (
@@ -756,6 +792,25 @@ fn input_frame_future_eq(left: &InputFrameSummary, right: &InputFrameSummary) ->
         ) => left == right,
         _ => false,
     }
+}
+
+fn paragraph_input_frame_eq(left: &InputFrameSummary, right: &InputFrameSummary) -> bool {
+    match (left, right) {
+        (
+            InputFrameSummary::Source { source: left, .. },
+            InputFrameSummary::Source { source: right, .. },
+        ) => paragraph_source_frame_eq(left, right),
+        _ => input_frame_future_eq(left, right),
+    }
+}
+
+fn paragraph_source_frame_eq(left: &SourceFrameSummary, right: &SourceFrameSummary) -> bool {
+    left.lexer_state == right.lexer_state
+        && left.normalized_line.get(left.line_byte_offset..)
+            == right.normalized_line.get(right.line_byte_offset..)
+        && left.end_after_current_line == right.end_after_current_line
+        && left.scantokens == right.scantokens
+        && traced_pending_tokens_eq(&left.pending, &right.pending)
 }
 
 fn source_frame_future_eq(left: &SourceFrameSummary, right: &SourceFrameSummary) -> bool {

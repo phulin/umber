@@ -402,11 +402,21 @@ World effects, unsupported escaping writes, and nested output routines retain
 explicit, counted barrier reasons. Group-closed work remains part of normal
 cold execution and does not require a whitelist exception.
 
-The older detached literal-entry lookup remains only as the transitional hit
-path while paragraph results are anchored in the retained prior generation.
-The recorder metadata is already shaped for that next phase: importing the
-prior hlist and applying its ending input transition will replace speculative
-token preflight without adding node detachment or hashing to the cold path.
+Prepared paragraph hlists are anchored as survivor graphs owned by exactly one
+accepted generation. These roots are deliberately independent of checkpoint
+rollback pins, so a fork may roll back to an earlier paragraph boundary and
+still import a later prior-generation result through the aggregate state
+facade. A hit validates stable consumed spans, semantic dependencies, the
+ordered redo log, detached effects, and the revision-relative ending input
+continuation before importing any nodes or replaying any mutation. Invalid or
+stale metadata leaves the live state untouched and runs the paragraph cold.
+
+The operational runtime keeps separate prior-accepted and speculative trace
+vectors. Acceptance replaces the trace and its generation roots wholesale;
+failed branches discard the speculative vector, while exact suffix convergence
+continues to use the still-retained prior generation. Paragraph results no
+longer occupy detached per-entry memo payloads, and a cold generation cannot
+hit entries that it is still recording.
 
 The second implementation allows semantic redo and virtual effects. The third
 composes repeated command/expansion children beneath the paragraph trace node.

@@ -5,8 +5,8 @@ use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::token::{Catcode, Token, TracedTokenWord};
 use tex_state::{
-    ContentHash, DetachedVirtualEffect, EffectRecord, ExpansionState, MemoValueLimits, PrintSink,
-    PureMemoKey, Universe,
+    ContentHash, DetachedVirtualEffect, EffectRecord, ExpansionState, PrintSink, PureMemoKey,
+    Universe,
 };
 
 use crate::{ExecError, ExecutionContext, ExecutionStats, ModeNest};
@@ -134,47 +134,67 @@ pub(crate) fn try_reuse_literal_paragraph(
     }
 
     let key = paragraph_key(stores, &semantic);
-    let Some(entry) = stores.lookup_pure_paragraph(key) else {
+    let Some(mut entry) = stores.lookup_recorded_paragraph(key) else {
         let trace_origins = traced.iter().map(|token| token.origin()).collect();
         crate::push_traced_tokens(input, stores, traced);
-        execution.pending_paragraph_memo = Some(crate::executor::PendingParagraphMemo {
-            key,
-            effect_start: stores.world().effect_records().len(),
-            trace_origins,
-        });
+        execution.pending_paragraph_memo =
+            Some(crate::executor::PendingParagraphMemo { key, trace_origins });
         stores.begin_pure_paragraph_recording();
         return Ok(false);
     };
 
-    if !validate_mutations(stores, &entry.mutations) {
+    let current_spans = traced
+        .iter()
+        .filter_map(|token| stores.root_span_for_origin(token.origin()))
+        .fold(Vec::new(), |mut spans, span| {
+            if !spans.contains(&span) {
+                spans.push(span);
+            }
+            spans
+        });
+    let dependencies_valid = stores.validate_dependencies(&mut entry.dependencies, |key| {
+        stores
+            .semantic_dependency_value(key)
+            .unwrap_or(tex_state::DependencyValue::Absent)
+    });
+    let current_input = input.publication_summary(stores);
+    let input_valid = current_input.paragraph_transition_matches(&entry.ending_input);
+    if current_spans != entry.consumed_spans
+        || !dependencies_valid
+        || !validate_mutations(stores, &entry.mutations)
+        || !validate_effects(&entry.effects)
+        || !input_valid
+    {
         stores.record_pure_paragraph_validation_miss();
         let trace_origins = traced.iter().map(|token| token.origin()).collect();
         crate::push_traced_tokens(input, stores, traced);
-        execution.pending_paragraph_memo = Some(crate::executor::PendingParagraphMemo {
-            key,
-            effect_start: stores.world().effect_records().len(),
-            trace_origins,
-        });
+        execution.pending_paragraph_memo =
+            Some(crate::executor::PendingParagraphMemo { key, trace_origins });
         stores.begin_pure_paragraph_recording();
         return Ok(false);
     }
-    let imported_bytes = entry.hlist.retained_bytes();
-    let list = match stores.import_memo_node_list(&entry.hlist, MemoValueLimits::default()) {
-        Ok(list) => list,
-        Err(_) => {
+    let Some(retained) = entry.hlist else {
+        stores.record_pure_paragraph_validation_miss();
+        crate::push_traced_tokens(input, stores, traced);
+        return Ok(false);
+    };
+    let list = match stores.import_retained_paragraph_result(retained) {
+        Some(list) => list,
+        None => {
             stores.record_pure_paragraph_import_failure();
-            stores.reject_pure_memo(key);
             let trace_origins = traced.iter().map(|token| token.origin()).collect();
             crate::push_traced_tokens(input, stores, traced);
-            execution.pending_paragraph_memo = Some(crate::executor::PendingParagraphMemo {
-                key,
-                effect_start: stores.world().effect_records().len(),
-                trace_origins,
-            });
+            execution.pending_paragraph_memo =
+                Some(crate::executor::PendingParagraphMemo { key, trace_origins });
             stores.begin_pure_paragraph_recording();
             return Ok(false);
         }
     };
+    let imported_bytes = stores
+        .nodes(list)
+        .len()
+        .saturating_mul(std::mem::size_of::<tex_state::node::Node>());
+    let _ = stores.finish_pure_paragraph_recording();
     replay_mutations(stores, &entry.mutations);
     replay_effects(stores, &entry.effects);
     let mut nodes: Vec<_> = stores
@@ -183,10 +203,22 @@ pub(crate) fn try_reuse_literal_paragraph(
         .map(|node| node.to_owned())
         .collect();
     rebind_literal_origins(&mut nodes, &traced, &entry.origin_ordinals);
+    execution.abandon_cold_paragraph_recording();
+    execution.pending_paragraph_memo = None;
     crate::assignments::install_reused_paragraph_hlist(nest, input, stores, nodes)?;
     stats.delivered_tokens = stats.delivered_tokens.saturating_add(traced.len());
     stores.record_pure_paragraph_hit(traced.len(), entry.mutations.len(), imported_bytes);
     Ok(true)
+}
+
+fn validate_effects(effects: &[DetachedVirtualEffect]) -> bool {
+    effects.iter().all(|effect| {
+        std::str::from_utf8(&effect.payload).is_ok()
+            && matches!(
+                (effect.operation.as_str(), effect.stream),
+                ("terminal" | "log" | "terminal-and-log", None) | ("stream", Some(_))
+            )
+    })
 }
 
 fn validate_mutations(stores: &Universe, mutations: &[tex_state::PureParagraphMutation]) -> bool {
@@ -306,8 +338,13 @@ fn paragraph_key(stores: &Universe, tokens: &[Token]) -> PureMemoKey {
                 bytes.extend_from_slice(&(name.len() as u64).to_le_bytes());
                 bytes.extend_from_slice(name.as_bytes());
             }
-            Token::Param(_) | Token::Frozen(_) => {
-                unreachable!("literal paragraph preflight rejects non-literal tokens")
+            Token::Param(slot) => {
+                bytes.push(2);
+                bytes.push(*slot);
+            }
+            Token::Frozen(kind) => {
+                bytes.push(3);
+                bytes.extend_from_slice(format!("{kind:?}").as_bytes());
             }
         }
     }
@@ -356,41 +393,19 @@ pub(crate) fn publish_prepared_hlist(
     execution: &mut ExecutionContext<'_>,
     nodes: &[tex_state::node::Node],
 ) {
-    let (recorded_mutations, recorded_eligible) = publish_recorded_region(input, stores, execution);
-    let Some(pending) = execution.pending_paragraph_memo.take() else {
-        return;
-    };
-    if !recorded_eligible {
-        return;
-    }
-    let mutations = recorded_mutations
-        .unwrap_or_else(|| stores.finish_pure_paragraph_recording().unwrap_or_default());
-    let Some(effects) = detach_effects(&stores.world().effect_records()[pending.effect_start..])
-    else {
-        return;
-    };
-    let origin_ordinals = paragraph_origin_ordinals(nodes, &pending.trace_origins);
-    let list = stores.freeze_node_list(nodes);
-    if let Ok(detached) = stores.detach_node_list(list) {
-        stores.insert_pure_paragraph(
-            pending.key,
-            tex_state::PureParagraphEntry {
-                hlist: detached,
-                mutations,
-                effects,
-                origin_ordinals,
-            },
-        );
-    }
+    publish_recorded_region(input, stores, execution, nodes);
+    execution.pending_paragraph_memo = None;
 }
 
 fn publish_recorded_region(
     input: &mut InputStack,
     stores: &mut Universe,
     execution: &mut ExecutionContext<'_>,
-) -> (Option<Vec<tex_state::PureParagraphMutation>>, bool) {
+    nodes: &[tex_state::node::Node],
+) {
     let Some(mut recording) = execution.cold_paragraph_recording.take() else {
-        return (None, true);
+        let _ = stores.finish_pure_paragraph_recording();
+        return;
     };
     let (mut keys, expansion_barriers) = execution.finish_paragraph_expansion_recording();
     keys.retain(|key| {
@@ -488,15 +503,42 @@ fn publish_recorded_region(
     }
     let ending_input = input.publication_summary(stores);
     let eligible = recording.barriers.is_empty();
+    let pending = execution.pending_paragraph_memo.as_ref();
+    let key = pending.map_or_else(
+        || {
+            let semantic = recording
+                .trace
+                .iter()
+                .map(|token| tex_expand::semantic_token(*token))
+                .collect::<Vec<_>>();
+            paragraph_key(stores, &semantic)
+        },
+        |pending| pending.key,
+    );
+    let trace_origins = pending.map_or_else(
+        || recording.trace.iter().map(|token| token.origin()).collect(),
+        |pending| pending.trace_origins.clone(),
+    );
+    let (hlist, origin_ordinals) = if eligible {
+        let list = stores.freeze_node_list(nodes);
+        (
+            Some(stores.retain_paragraph_result(list)),
+            paragraph_origin_ordinals(nodes, &trace_origins),
+        )
+    } else {
+        (None, Vec::new())
+    };
     stores.record_paragraph_region(tex_state::RecordedParagraphRegion {
+        key,
         consumed_spans,
         dependencies,
         mutations: mutations.clone(),
         effects,
         ending_input,
         barriers: recording.barriers.into_iter().collect(),
+        hlist,
+        origin_ordinals,
     });
-    (Some(mutations), eligible)
 }
 
 fn paragraph_origin_ordinals(

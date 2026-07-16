@@ -93,7 +93,6 @@ pub enum FontSource {
 /// operation and is invoked solely by `\font` assignment.
 pub(crate) struct PendingParagraphMemo {
     pub(crate) key: tex_state::PureMemoKey,
-    pub(crate) effect_start: usize,
     pub(crate) trace_origins: Vec<tex_state::token::OriginId>,
 }
 
@@ -228,6 +227,11 @@ impl<'a> ExecutionContext<'a> {
         if let Some(recording) = &mut self.cold_paragraph_recording {
             recording.trace.push(token);
         }
+    }
+
+    pub(crate) fn abandon_cold_paragraph_recording(&mut self) {
+        self.cold_paragraph_recording = None;
+        let _ = self.expansion.finish_paragraph_recording();
     }
 
     pub(crate) fn mark_paragraph_barrier(&mut self, reason: ParagraphBarrierReason) {

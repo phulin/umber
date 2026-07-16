@@ -1452,6 +1452,34 @@ fn generation_charge_covers_source_backing_and_releases_it_with_the_substrate() 
 }
 
 #[test]
+fn paragraph_generation_roots_survive_rollback_and_supersede_wholesale() {
+    let mut universe = Universe::new();
+    let before = universe.snapshot();
+    let old_epoch = universe.freeze_node_list(&[crate::node::Node::Penalty(11)]);
+    let old = universe.retain_paragraph_result(old_epoch);
+
+    universe.rollback(&before);
+    assert!(
+        universe.import_retained_paragraph_result(old).is_some(),
+        "generation-owned paragraph roots must outlive checkpoint rollback"
+    );
+
+    let next_start = universe.paragraph_result_generation_mark();
+    let new_epoch = universe.freeze_node_list(&[crate::node::Node::Penalty(22)]);
+    let new = universe.retain_paragraph_result(new_epoch);
+    universe.accept_paragraph_result_generation(next_start);
+
+    assert!(universe.import_retained_paragraph_result(old).is_none());
+    let imported = universe
+        .import_retained_paragraph_result(new)
+        .expect("new accepted generation root");
+    assert!(matches!(
+        universe.nodes(imported).first(),
+        Some(crate::node_arena::NodeRef::Penalty(22))
+    ));
+}
+
+#[test]
 fn generation_fork_detaches_the_accepted_effect_prefix() {
     let mut universe = Universe::new();
     universe.begin_retained_session().expect("retained session");

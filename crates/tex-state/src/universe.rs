@@ -1673,23 +1673,6 @@ impl Universe {
     }
 
     #[doc(hidden)]
-    pub fn lookup_pure_paragraph(
-        &mut self,
-        key: crate::PureMemoKey,
-    ) -> Option<crate::PureParagraphEntry> {
-        self.pure_memo.lookup_paragraph(key)
-    }
-
-    #[doc(hidden)]
-    pub fn insert_pure_paragraph(
-        &mut self,
-        key: crate::PureMemoKey,
-        value: crate::PureParagraphEntry,
-    ) {
-        self.pure_memo.insert_paragraph(key, value);
-    }
-
-    #[doc(hidden)]
     pub fn lookup_pure_page(&mut self, key: crate::PureMemoKey) -> Option<crate::PurePageEntry> {
         self.pure_memo.lookup_page(key)
     }
@@ -1787,6 +1770,14 @@ impl Universe {
     #[must_use]
     pub fn recorded_paragraphs(&self) -> &[crate::RecordedParagraphRegion] {
         self.pure_memo.recorded_paragraphs()
+    }
+
+    #[doc(hidden)]
+    pub fn lookup_recorded_paragraph(
+        &mut self,
+        key: crate::PureMemoKey,
+    ) -> Option<crate::RecordedParagraphRegion> {
+        self.pure_memo.lookup_recorded_paragraph(key)
     }
 
     #[doc(hidden)]
@@ -4376,6 +4367,29 @@ impl Universe {
 
     pub fn freeze_node_list_owned(&mut self, nodes: &mut Vec<Node>) -> NodeListId {
         self.stores.freeze_node_list_owned(nodes)
+    }
+
+    /// Retains a prepared paragraph graph for the lifetime of the accepted
+    /// generation, independently of rollback-coupled survivor pins.
+    pub fn retain_paragraph_result(&mut self, id: NodeListId) -> NodeListId {
+        self.stores.retain_paragraph_result(id)
+    }
+
+    /// Imports one validated prior-generation paragraph graph into the active
+    /// epoch without consuming its generation-owned root.
+    pub fn import_retained_paragraph_result(&mut self, id: NodeListId) -> Option<NodeListId> {
+        self.stores.import_retained_paragraph_result(id)
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn paragraph_result_generation_mark(&self) -> usize {
+        self.stores.paragraph_result_generation_mark()
+    }
+
+    #[doc(hidden)]
+    pub fn accept_paragraph_result_generation(&mut self, new_start: usize) {
+        self.stores.accept_paragraph_result_generation(new_start);
     }
 
     pub fn finish_node_list(&mut self, builder: &mut NodeListBuilder) -> NodeListId {

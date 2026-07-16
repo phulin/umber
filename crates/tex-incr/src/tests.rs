@@ -124,7 +124,10 @@ fn paragraph_front_end_hit_survives_prefix_shift_and_unrelated_register_write() 
     .expect("session starts");
     session.cold().expect("cold revision");
     let before = session.pure_memo_stats();
-    assert!(before.paragraph_hits >= 1);
+    assert_eq!(
+        before.paragraph_hits, 0,
+        "cold generation cannot hit itself"
+    );
 
     let inserted = "\\count77=123 ";
     let incremental = session
@@ -175,7 +178,10 @@ fn stateful_paragraph_redo_survives_a_later_prefix_edit() {
     .expect("session starts");
     session.cold().expect("cold revision");
     let before = session.pure_memo_stats();
-    assert!(before.paragraph_mutations_replayed > 0, "{before:?}");
+    assert_eq!(
+        before.paragraph_mutations_replayed, 0,
+        "cold generation cannot replay itself: {before:?}"
+    );
 
     let incremental = session
         .advance(

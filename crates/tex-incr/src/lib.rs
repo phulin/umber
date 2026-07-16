@@ -808,7 +808,7 @@ impl Session {
             .substrate
             .as_ref()
             .ok_or(SessionError::MissingAcceptedSubstrate)?;
-        let advance = execute_advance(
+        let mut advance = execute_advance(
             &self.template,
             &mut self.pure_memo,
             substrate,
@@ -836,6 +836,14 @@ impl Session {
         let same_history_attempts = advance.same_history_attempts;
         let same_history_hash_mismatches = advance.same_history_hash_mismatches;
         let same_history_stop = advance.same_history_stop;
+        if advance.convergence_old_index.is_some() {
+            self.pure_memo.discard_paragraph_generation();
+        } else {
+            advance
+                .scratch
+                .accept_paragraph_result_generation(advance.paragraph_generation_mark);
+            self.pure_memo.accept_paragraph_generation();
+        }
         let splice_started = Timer::start();
         let (effects, artifacts, pages, mut history, pending_substrate, mut reuse) =
             if let Some(old_index) = advance.convergence_old_index {
@@ -1373,6 +1381,8 @@ fn execute_revision(
         ),
         None => ExecutionContext::with_resolvers(job_name, input_resolver, font_resolver),
     };
+    let paragraph_generation_mark = universe.paragraph_result_generation_mark();
+    pure_memo.begin_paragraph_generation(false);
     universe.install_pure_memo_runtime(std::mem::take(pure_memo));
     let execution_result = executor.run_with_context_and_checkpoints(
         &mut input,
@@ -1381,6 +1391,9 @@ fn execute_revision(
         &mut sink,
     );
     *pure_memo = universe.take_pure_memo_runtime();
+    if execution_result.is_err() {
+        pure_memo.discard_paragraph_generation();
+    }
     let ExecutionStats {
         dvi_pages,
         dumped_format,
@@ -1389,6 +1402,8 @@ fn execute_revision(
         ..
     } = execution_result?;
     let expansion_stats = input.expansion_stats();
+    universe.accept_paragraph_result_generation(paragraph_generation_mark);
+    pure_memo.accept_paragraph_generation();
     let effects = universe.world().effect_records().to_vec();
     let artifacts = universe.world().committed_artifacts().to_vec();
     let output_bytes = universe.retained_output_bytes();
@@ -1416,6 +1431,7 @@ fn execute_revision(
 
 struct AdvanceRun {
     scratch: Universe,
+    paragraph_generation_mark: usize,
     new_records: Vec<BoundaryRecord>,
     effects: Vec<EffectRecord>,
     artifacts: Vec<CommittedArtifact>,
@@ -1598,6 +1614,8 @@ fn execute_advance(
         None => ExecutionContext::with_resolvers(job_name, input_resolver, font_resolver),
     };
     let reexecution_started = Timer::start();
+    let paragraph_generation_mark = scratch.paragraph_result_generation_mark();
+    pure_memo.begin_paragraph_generation(true);
     scratch.install_pure_memo_runtime(std::mem::take(pure_memo));
     let execution_result = executor.resume_with_context_and_checkpoints(
         &mut input,
@@ -1606,6 +1624,9 @@ fn execute_advance(
         &mut sink,
     );
     *pure_memo = scratch.take_pure_memo_runtime();
+    if execution_result.is_err() {
+        pure_memo.discard_paragraph_generation();
+    }
     let ExecutionStats {
         dvi_pages,
         dumped_format,
@@ -1641,6 +1662,7 @@ fn execute_advance(
     pages_through_stop.extend(dvi_pages);
     Ok(AdvanceRun {
         scratch,
+        paragraph_generation_mark,
         new_records: sink.records,
         effects,
         artifacts,

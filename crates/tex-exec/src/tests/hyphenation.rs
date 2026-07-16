@@ -527,10 +527,11 @@ fn literal_paragraph_front_end_reuses_hlist_and_preserves_output() {
     let (memo_dvi, memo_hash, stats) = run(true);
     assert_eq!(memo_dvi, cold_dvi);
     assert_eq!(memo_hash, cold_hash);
-    assert!(stats.paragraph_hits >= 1, "{stats:?}");
-    assert_eq!(stats.paragraph_inserts, 1, "{stats:?}");
-    assert!(stats.paragraph_commands_skipped > 20);
-    assert!(stats.paragraph_imported_bytes > 0);
+    assert_eq!(stats.paragraph_hits, 0, "{stats:?}");
+    assert_eq!(stats.paragraph_inserts, 0, "{stats:?}");
+    assert_eq!(stats.paragraph_commands_skipped, 0);
+    assert_eq!(stats.paragraph_imported_bytes, 0);
+    assert_eq!(stats.paragraph_eligible_regions, 3, "{stats:?}");
 }
 
 #[test]
@@ -566,8 +567,9 @@ fn paragraph_front_end_replays_validated_count_mutations() {
     let (memo_local, memo_global, memo_dvi, stats) = run(true);
     assert_eq!((memo_local, memo_global), (cold_local, cold_global));
     assert_eq!(memo_dvi, cold_dvi);
-    assert!(stats.paragraph_hits >= 1, "{stats:?}");
-    assert!(stats.paragraph_mutations_replayed >= 3, "{stats:?}");
+    assert_eq!(stats.paragraph_hits, 0, "{stats:?}");
+    assert_eq!(stats.paragraph_mutations_replayed, 0, "{stats:?}");
+    assert_eq!(stats.paragraph_eligible_regions, 4, "{stats:?}");
 }
 
 #[test]
@@ -591,8 +593,9 @@ fn grouped_paragraph_redo_preserves_local_and_global_assignment_scope() {
     );
     assert_eq!(stores.count(6), 9, "global replay must survive group exit");
     let stats = stores.pure_memo_stats();
-    assert!(stats.paragraph_hits >= 2, "{stats:?}");
-    assert!(stats.paragraph_mutations_replayed >= 2, "{stats:?}");
+    assert_eq!(stats.paragraph_hits, 0, "{stats:?}");
+    assert_eq!(stats.paragraph_mutations_replayed, 0, "{stats:?}");
+    assert_eq!(stats.paragraph_eligible_regions, 6, "{stats:?}");
 }
 
 #[test]
@@ -629,7 +632,8 @@ fn deterministic_message_effects_replay_in_original_order() {
         .expect("message paragraphs");
     assert_eq!(terminal_effect_text(&stores).matches("visible").count(), 3);
     let stats = stores.pure_memo_stats();
-    assert!(stats.paragraph_hits >= 1, "{stats:?}");
+    assert_eq!(stats.paragraph_hits, 0, "{stats:?}");
+    assert_eq!(stats.paragraph_eligible_regions, 3, "{stats:?}");
 }
 
 #[test]

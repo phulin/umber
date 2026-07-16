@@ -179,6 +179,7 @@ pub struct Stores {
     nodes: NodeArena,
     survivors: SurvivorArena,
     survivor_pins: Vec<NodeListId>,
+    paragraph_generation_pins: Vec<NodeListId>,
     code_tables: CodeTables,
     hyphenation: Arc<HyphenationTable>,
     prepared_mag: Option<i32>,
@@ -240,6 +241,7 @@ impl Clone for Stores {
             nodes: self.nodes.clone(),
             survivors: self.survivors.clone(),
             survivor_pins: self.survivor_pins.clone(),
+            paragraph_generation_pins: self.paragraph_generation_pins.clone(),
             code_tables: self.code_tables.clone(),
             hyphenation: self.hyphenation.clone(),
             prepared_mag: self.prepared_mag,
@@ -309,6 +311,7 @@ impl Stores {
             nodes: NodeArena::new(),
             survivors: SurvivorArena::new(),
             survivor_pins: Vec::new(),
+            paragraph_generation_pins: Vec::new(),
             code_tables: CodeTables::new(),
             hyphenation: Arc::new(HyphenationTable::new()),
             prepared_mag: None,
@@ -1694,6 +1697,48 @@ impl Stores {
         self.survivor_pins.push(id);
     }
 
+    /// Promotes one paragraph result graph into storage owned by the accepted
+    /// generation rather than by an individual rollback checkpoint.
+    pub fn retain_paragraph_result(&mut self, id: NodeListId) -> NodeListId {
+        let retained = self.prepare_box_value(id);
+        self.paragraph_generation_pins.push(retained);
+        retained
+    }
+
+    /// Imports a retained paragraph root into the active epoch only after its
+    /// complete graph has been proven live. The retained root remains owned by
+    /// the prior accepted generation.
+    pub fn import_retained_paragraph_result(&mut self, id: NodeListId) -> Option<NodeListId> {
+        if !self.survivors.contains(id) {
+            return None;
+        }
+        let nodes = self
+            .survivors
+            .get(id)
+            .into_iter()
+            .map(|node| node.to_owned())
+            .collect::<Vec<_>>();
+        Some(self.freeze_node_list(&nodes))
+    }
+
+    /// Replaces the generation-owned paragraph roots wholesale after a run is
+    /// accepted. Newly recorded roots are the suffix after `new_start`.
+    pub fn accept_paragraph_result_generation(&mut self, new_start: usize) {
+        assert!(new_start <= self.paragraph_generation_pins.len());
+        let old = self
+            .paragraph_generation_pins
+            .drain(..new_start)
+            .collect::<Vec<_>>();
+        for id in old {
+            self.survivors.dec_ref(id);
+        }
+    }
+
+    #[must_use]
+    pub fn paragraph_result_generation_mark(&self) -> usize {
+        self.paragraph_generation_pins.len()
+    }
+
     /// Enters a TeX group.
     pub fn enter_group(&mut self) {
         self.code_tables.enter_group();
@@ -2130,7 +2175,9 @@ impl Stores {
         // format capture forbids them because formats have a stricter job-start
         // contract. Use the serialized-size proxy only when that contract is
         // satisfied instead of turning retention accounting into a panic.
-        let serialized = if self.survivor_pins.is_empty() {
+        let serialized = if self.survivor_pins.is_empty()
+            && self.paragraph_generation_pins.is_empty()
+        {
             self.encode_frozen_format()
                 .map_or(0, |format| format.payload_len())
         } else {
@@ -2145,6 +2192,11 @@ impl Stores {
             .saturating_add(self.survivors.retained_payload_bytes())
             .saturating_add(
                 self.survivor_pins
+                    .capacity()
+                    .saturating_mul(mem::size_of::<NodeListId>()),
+            )
+            .saturating_add(
+                self.paragraph_generation_pins
                     .capacity()
                     .saturating_mul(mem::size_of::<NodeListId>()),
             );
