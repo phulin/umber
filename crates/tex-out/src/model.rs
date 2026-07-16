@@ -535,10 +535,13 @@ fn validate_artifact(
         });
     }
 
-    let mut font_ids = std::collections::BTreeSet::new();
+    let mut font_ids = std::collections::BTreeMap::new();
     let mut font_identities = std::collections::BTreeMap::new();
     for font in &artifact.fonts {
-        if !font_ids.insert(font.font_id) {
+        if font_ids
+            .insert(font.font_id, font.opentype.is_some())
+            .is_some()
+        {
             return Err(ArtifactValidationError::DuplicateFont {
                 font_id: font.font_id,
             });
@@ -658,7 +661,8 @@ fn validate_artifact(
                     });
                 }
                 for source in source {
-                    validate_character(*source)?;
+                    let allows_unicode = font_ids.get(font_id).copied().unwrap_or(false);
+                    validate_character(*source, allows_unicode)?;
                 }
             }
             PageNode::HList(box_node) | PageNode::VList(box_node) => {
@@ -715,18 +719,18 @@ fn validate_artifact(
 }
 
 fn validate_font_and_char(
-    fonts: &std::collections::BTreeSet<u32>,
+    fonts: &std::collections::BTreeMap<u32, bool>,
     font_id: u32,
     ch: u32,
 ) -> Result<(), ArtifactValidationError> {
-    if !fonts.contains(&font_id) {
+    let Some(allows_unicode) = fonts.get(&font_id).copied() else {
         return Err(ArtifactValidationError::MissingFont { font_id });
-    }
-    validate_character(ch)
+    };
+    validate_character(ch, allows_unicode)
 }
 
-fn validate_character(ch: u32) -> Result<(), ArtifactValidationError> {
-    if ch > u8::MAX.into() {
+fn validate_character(ch: u32, allows_unicode: bool) -> Result<(), ArtifactValidationError> {
+    if (!allows_unicode && ch > u8::MAX.into()) || char::from_u32(ch).is_none() {
         return Err(ArtifactValidationError::CharacterOutOfRange { ch });
     }
     Ok(())

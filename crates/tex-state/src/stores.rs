@@ -1314,12 +1314,27 @@ impl Stores {
 
     #[must_use]
     pub fn font_char_exists(&self, font: FontId, code: u8) -> bool {
-        self.font(font).metrics().char_exists(code)
+        self.font(font).character_exists(char::from(code))
     }
 
     #[must_use]
     pub fn font_char_metrics(&self, font: FontId, code: u8) -> Option<CharMetrics> {
-        self.font(font).metrics().character(code)
+        self.font(font).character_metrics(char::from(code))
+    }
+
+    #[must_use]
+    pub fn font_character_exists(&self, font: FontId, ch: char) -> bool {
+        self.font(font).character_exists(ch)
+    }
+
+    #[must_use]
+    pub fn font_character_metrics(&self, font: FontId, ch: char) -> Option<CharMetrics> {
+        self.font(font).character_metrics(ch)
+    }
+
+    #[must_use]
+    pub fn font_uses_tfm_metrics(&self, font: FontId) -> bool {
+        self.font(font).uses_tfm_metrics()
     }
 
     #[must_use]

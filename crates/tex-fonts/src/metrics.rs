@@ -2,9 +2,10 @@
 
 use crate::opentype::{
     FontContainer, FontFeaturePolicy, FontInstanceIdentity, FontObjectIdentity,
-    FontProgramIdentity, VariationSelection, WritingDirection,
+    FontProgramIdentity, OpenTypeFont, VariationSelection, WritingDirection,
 };
 use sha2::{Digest, Sha256};
+use std::hash::Hash;
 use std::path::PathBuf;
 use tex_arith::Scaled;
 
@@ -32,7 +33,7 @@ pub struct LoadedFont {
     size: Scaled,
     parameters: Vec<Scaled>,
     source_parameters: Vec<Scaled>,
-    metrics: FontMetrics,
+    metrics: FontMetricsSource,
     opentype: Option<OpenTypeFontSelection>,
     construction: FontConstruction,
 }
@@ -97,15 +98,123 @@ impl std::fmt::Display for FontConstructionError {
 impl std::error::Error for FontConstructionError {}
 
 /// OpenType program selected alongside classic TeX metrics for artifact/output reuse.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OpenTypeProgramSelection {
-    pub program_identity: FontProgramIdentity,
-    pub object_identity: FontObjectIdentity,
-    pub container: FontContainer,
-    pub face_index: u32,
+    pub font: OpenTypeFont,
     pub variation: VariationSelection,
     pub features: FontFeaturePolicy,
     pub direction: WritingDirection,
+}
+
+/// Metrics selected for character existence and width queries.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FontMetricsSource {
+    Tfm(FontMetrics),
+    OpenType(OpenTypeFontShaped),
+}
+
+impl std::hash::Hash for FontMetricsSource {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            Self::Tfm(metrics) => {
+                0_u8.hash(state);
+                metrics.hash(state);
+            }
+            Self::OpenType(font) => {
+                1_u8.hash(state);
+                font.font.identity.hash(state);
+                font.classic_metrics.hash(state);
+            }
+        }
+    }
+}
+
+/// Validated OpenType metrics prepared for layout queries.
+///
+/// Stage 1 retains the selected TFM tables for classic-only enquiries such as
+/// lig/kern and math while character existence and advances dispatch through
+/// the OpenType program. A later OpenType-only selection stage replaces that
+/// compatibility input with synthesized TeX font parameters.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OpenTypeFontShaped {
+    font: Box<OpenTypeFont>,
+    classic_metrics: FontMetrics,
+}
+
+impl OpenTypeFontShaped {
+    #[must_use]
+    pub const fn font(&self) -> &OpenTypeFont {
+        &self.font
+    }
+
+    fn character_width(&self, ch: char, size: Scaled) -> Option<Scaled> {
+        let glyph = usize::from(self.font.cmap.glyph(ch)?);
+        let advance = *self.font.metrics.horizontal_advances.get(glyph)?;
+        self.font
+            .metrics
+            .units_to_sp(i32::from(advance), size.raw())
+            .ok()
+            .map(Scaled::from_raw)
+    }
+
+    fn character_metrics(&self, ch: char, size: Scaled) -> Option<CharMetrics> {
+        let glyph = usize::from(self.font.cmap.glyph(ch)?);
+        let width = self.character_width(ch, size)?;
+        let bounds = self.font.metrics.glyph_bounds.get(glyph).copied().flatten();
+        let (height, depth, italic_correction) = if let Some((_, y_min, x_max, y_max)) = bounds {
+            let project = |units| {
+                self.font
+                    .metrics
+                    .units_to_sp(units, size.raw())
+                    .ok()
+                    .map(Scaled::from_raw)
+            };
+            (
+                project(i32::from(y_max).max(0))?,
+                project((-i32::from(y_min)).max(0))?,
+                project(
+                    (i32::from(x_max)
+                        - i32::from(*self.font.metrics.horizontal_advances.get(glyph)?))
+                    .max(0),
+                )?,
+            )
+        } else {
+            (
+                Scaled::from_raw(0),
+                Scaled::from_raw(0),
+                Scaled::from_raw(0),
+            )
+        };
+        Some(CharMetrics {
+            width,
+            height,
+            depth,
+            italic_correction,
+            tag: CharTag::None,
+        })
+    }
+}
+
+impl FontMetricsSource {
+    fn with_added_width(&self, delta: Scaled) -> Result<Self, FontConstructionError> {
+        Ok(match self {
+            Self::Tfm(metrics) => Self::Tfm(metrics.with_added_width(delta)?),
+            Self::OpenType(font) => Self::OpenType(OpenTypeFontShaped {
+                font: font.font.clone(),
+                classic_metrics: font.classic_metrics.with_added_width(delta)?,
+            }),
+        })
+    }
+
+    fn with_expansion_ratio(&self, ratio: i16) -> Self {
+        match self {
+            Self::Tfm(metrics) => Self::Tfm(metrics.with_expansion_ratio(ratio)),
+            Self::OpenType(font) => Self::OpenType(OpenTypeFontShaped {
+                font: font.font.clone(),
+                classic_metrics: font.classic_metrics.with_expansion_ratio(ratio),
+            }),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -143,7 +252,7 @@ impl LoadedFont {
             size,
             parameters,
             source_parameters,
-            metrics,
+            metrics: FontMetricsSource::Tfm(metrics),
             opentype: None,
             construction: FontConstruction::Loaded,
         }
@@ -151,18 +260,36 @@ impl LoadedFont {
 
     #[must_use]
     pub fn with_opentype(mut self, selection: OpenTypeProgramSelection) -> Self {
+        let OpenTypeProgramSelection {
+            font,
+            variation,
+            features,
+            direction,
+        } = selection;
+        let program_identity = font.identity;
+        let object_identity = font.object_identity;
+        let face_index = font.face_index;
+        let container = font.container;
+        let classic_metrics = match self.metrics {
+            FontMetricsSource::Tfm(metrics) => metrics,
+            FontMetricsSource::OpenType(font) => font.classic_metrics,
+        };
+        self.metrics = FontMetricsSource::OpenType(OpenTypeFontShaped {
+            font: Box::new(font),
+            classic_metrics,
+        });
         self.opentype = Some(OpenTypeFontSelection {
-            program_identity: selection.program_identity,
-            object_identity: selection.object_identity,
+            program_identity,
+            object_identity,
             instance_identity: FontInstanceIdentity::new(
-                selection.program_identity,
-                selection.face_index,
+                program_identity,
+                face_index,
                 self.size.raw(),
-                &selection.variation,
-                &selection.features,
-                selection.direction,
+                &variation,
+                &features,
+                direction,
             ),
-            container: selection.container,
+            container,
         });
         self
     }
@@ -346,7 +473,49 @@ impl LoadedFont {
 
     #[must_use]
     pub const fn metrics(&self) -> &FontMetrics {
+        match &self.metrics {
+            FontMetricsSource::Tfm(metrics) => metrics,
+            FontMetricsSource::OpenType(font) => &font.classic_metrics,
+        }
+    }
+
+    #[must_use]
+    pub const fn metrics_source(&self) -> &FontMetricsSource {
         &self.metrics
+    }
+
+    #[must_use]
+    pub fn character_exists(&self, ch: char) -> bool {
+        match &self.metrics {
+            FontMetricsSource::Tfm(metrics) => u8::try_from(ch as u32)
+                .ok()
+                .is_some_and(|code| metrics.char_exists(code)),
+            FontMetricsSource::OpenType(font) => font.font.cmap.glyph(ch).is_some(),
+        }
+    }
+
+    #[must_use]
+    pub fn character_width(&self, ch: char) -> Option<Scaled> {
+        match &self.metrics {
+            FontMetricsSource::Tfm(metrics) => {
+                let code = u8::try_from(ch as u32).ok()?;
+                metrics.character(code).map(|metrics| metrics.width)
+            }
+            FontMetricsSource::OpenType(font) => font.character_width(ch, self.size),
+        }
+    }
+
+    #[must_use]
+    pub fn character_metrics(&self, ch: char) -> Option<CharMetrics> {
+        match &self.metrics {
+            FontMetricsSource::Tfm(metrics) => metrics.character(u8::try_from(ch as u32).ok()?),
+            FontMetricsSource::OpenType(font) => font.character_metrics(ch, self.size),
+        }
+    }
+
+    #[must_use]
+    pub const fn uses_tfm_metrics(&self) -> bool {
+        matches!(self.metrics, FontMetricsSource::Tfm(_))
     }
 
     #[must_use]

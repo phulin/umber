@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 pub use tex_fonts::metrics::{
     CharMetrics, CharTag, ExtensibleRecipe, FontConstruction, FontContentHash, FontMetrics,
-    FontMetricsValidationError, FontSourceIdentity, LigKernChar, LigKernCommand,
+    FontMetricsSource, FontMetricsValidationError, FontSourceIdentity, LigKernChar, LigKernCommand,
     LigKernInstruction, LigKernIter, LigKernStep, LigatureCommand, LoadedFont,
 };
 
@@ -485,7 +485,7 @@ impl FontStore {
             for parameter in font.source_parameters() {
                 parameter.raw().hash(hasher);
             }
-            font.metrics().hash(hasher);
+            font.metrics_source().hash(hasher);
             identifier.hash(hasher);
             expansion.hash(hasher);
         }

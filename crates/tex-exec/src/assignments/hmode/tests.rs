@@ -100,6 +100,80 @@ fn sentence_space_factor_does_not_jump_after_an_uppercase_letter() {
 }
 
 #[test]
+fn opentype_cmap_accepts_a_non_byte_horizontal_character() {
+    use tex_fonts::{
+        AcceptedFontContainers, FontFeaturePolicy, FontLimits, FontMetrics, FontPurposes,
+        FontRequest, FontRequestKey, OpenTypeFont, OpenTypeProgramSelection, ResolvedFont,
+        VariationSelection, WritingDirection,
+    };
+
+    let key = FontRequestKey::new(
+        "cmu-serif-roman",
+        0,
+        VariationSelection::default(),
+        FontFeaturePolicy::default(),
+    )
+    .expect("font key");
+    let request = FontRequest {
+        key: key.clone(),
+        accepted_containers: AcceptedFontContainers::WASM,
+        purposes: FontPurposes::LAYOUT_AND_HTML,
+    };
+    let font = OpenTypeFont::parse(
+        &request,
+        ResolvedFont {
+            request: key,
+            container: tex_fonts::FontContainer::Woff2,
+            declared_object_sha256: None,
+            declared_program_identity: None,
+            provenance: None,
+            bytes: include_bytes!("../../../../umber-wasm/assets/cmu-serif-500-roman.woff2")
+                .to_vec(),
+        },
+        FontLimits::default(),
+    )
+    .expect("fixture font");
+    let ch = font
+        .cmap
+        .mappings()
+        .keys()
+        .copied()
+        .find(|scalar| *scalar > u32::from(u8::MAX))
+        .and_then(char::from_u32)
+        .expect("fixture has a non-byte mapping");
+    let size = Scaled::from_raw(10 * Scaled::UNITY);
+    let loaded = tex_fonts::LoadedFont::new(
+        "cmu-serif",
+        "cmu-serif.tfm",
+        [0; 32],
+        0,
+        size,
+        size,
+        vec![Scaled::from_raw(0); 7],
+        FontMetrics::new(Vec::new(), Vec::new(), None, None, Vec::new()),
+    )
+    .with_opentype(OpenTypeProgramSelection {
+        font,
+        variation: VariationSelection::default(),
+        features: FontFeaturePolicy::default(),
+        direction: WritingDirection::LeftToRight,
+    });
+    let mut stores = Universe::new();
+    let font = stores.intern_font(loaded);
+    stores.set_current_font(font);
+    let mut nest = ModeNest::new();
+
+    append_hchar(&mut nest, &mut stores, ch, OriginId::UNKNOWN);
+    flush_pending_hchars(&mut nest, &mut stores).expect("OpenType character flushes");
+
+    assert!(matches!(
+        nest.current_list().nodes(),
+        [Node::Char { font: actual_font, ch: actual_ch, .. }]
+            if *actual_font == font && *actual_ch == ch
+    ));
+}
+
+#[test]
 fn flushing_a_character_run_appends_its_right_boundary_kern() {
     use tex_fonts::metrics::CharTag;
     use tex_fonts::{CharMetrics, FontMetrics, LigKernInstruction, LoadedFont};

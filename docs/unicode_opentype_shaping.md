@@ -1,6 +1,6 @@
 # Native Unicode and OpenType/TrueType Shaping
 
-Status: proposed design, not yet implemented. This document amends the
+Status: staged implementation; Stage 1 is implemented. This document amends the
 shaping-ownership decision in `docs/web_font_bundles.md` for OpenType-selected
 fonts and defines the engine-side shaping architecture that supersedes its
 Stage 7.
@@ -103,23 +103,26 @@ introduced.
 
 ## Font-metrics abstraction split
 
-Today `LoadedFont` requires TFM metrics unconditionally and treats OpenType
-data as an identity-only sidecar (`LoadedFont::with_opentype`). Every
-consumer gates character lookups on `u8::try_from(ch)` before touching
-metrics — in `tex-exec`'s `append_hchar` and in `tex-typeset`'s
-`linebreak/widths.rs`. That cast is the single choke point enforcing 8-bit
-semantics everywhere downstream, and it means any codepoint above U+00FF is
-unconditionally treated as "missing" even when an attached OpenType font has
-a real cmap entry for it.
+`LoadedFont` now selects character metrics through `FontMetricsSource`.
+Before Stage 1, OpenType data was only an identity sidecar and consumers
+gated lookups on `u8::try_from(ch)`, so every codepoint above U+00FF was
+reported missing even when the selected OpenType program had a cmap entry.
 
 Introduce a small enum so callers stop assuming TFM:
 
 ```rust
 pub enum FontMetricsSource {
     Tfm(FontMetrics),             // existing, unchanged, u8-indexed
-    OpenType(OpenTypeFontShaped), // new: metrics + cached rustybuzz face
+    OpenType(OpenTypeFontShaped), // validated cmap/metrics; cached face follows in Stage 2
 }
 ```
+
+During Stage 1, `OpenTypeFontShaped` also retains the accompanying TFM tables
+for classic-only lig/kern, math, and font-parameter enquiries. Character
+existence, dimensions, packing, line-breaking, and artifact emission dispatch
+to the OpenType cmap and advances. Stage 3 removes the need for that
+compatibility TFM when it adds OpenType-only font selection and synthesized
+fontdimens.
 
 - TFM-selected fonts keep their exact current behavior: 256-character cap,
   existing lig/kern automaton, no DVI/TRIP/e-TRIP fixture risk.
@@ -245,9 +248,9 @@ none of Stages 1-4 need revisiting to support it.
 
 ## Staged rollout
 
-1. Character-existence and width dispatch fix (font-metrics abstraction
-   split above) — smallest, highest-value, fixes a real bug independent of
-   shaping.
+1. **Implemented.** Character-existence and width dispatch fix (font-metrics
+   abstraction split above) — fixes the Unicode cmap/advance bug independent
+   of shaping and keeps DVI's byte opcode boundary intact.
 2. `tex-shape` crate and rustybuzz integration: single-run shaping API, no
    line-break integration yet.
 3. OpenType-only `\font` path and fontdimen synthesis.

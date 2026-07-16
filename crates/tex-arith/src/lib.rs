@@ -644,6 +644,30 @@ pub fn xn_over_d(x: Scaled, n: i32, d: i32) -> Result<XnOverD, DimensionError> {
     })
 }
 
+/// Scales signed OpenType font units to scaled points.
+///
+/// The quotient is rounded to nearest, with exact halves rounded away from
+/// zero. This is the shared projection used by font parsing and shaping so
+/// every OpenType metric observes one rounding policy.
+pub fn font_units_to_scaled(
+    units: i32,
+    size: Scaled,
+    units_per_em: u16,
+) -> Result<Scaled, ArithmeticError> {
+    if units_per_em == 0 {
+        return Err(ArithmeticError::DivisionByZero);
+    }
+    let product = i64::from(units) * i64::from(size.raw());
+    let denominator = i64::from(units_per_em);
+    let rounded = if product >= 0 {
+        (product + denominator / 2) / denominator
+    } else {
+        -((-product + denominator / 2) / denominator)
+    };
+    let raw = i32::try_from(rounded).map_err(|_| ArithmeticError::Overflow)?;
+    Ok(Scaled::from_raw(raw))
+}
+
 /// Converts decimal fraction digits to TeX's correctly rounded scaled fraction.
 ///
 /// TeX keeps only the first 17 decimal digits; later digits cannot affect the

@@ -1,9 +1,9 @@
 use crate::{
     ArithmeticError, DimensionError, FontSizeSpec, GLUE_SET_RATIO_SCALE, GlueSetRatio,
-    GlueSetRatioError, PhysicalUnit, Scaled, TfmConversionError, WideScaled, XOverN, XnOverD, half,
-    mult_and_add, nx_plus_y, round_decimal_fraction, saturating_add, saturating_mul,
-    saturating_sub, scale_true_dimension_parts, scaled_from_decimal_parts, text_accent_delta,
-    tfm_design_size_from_fix_word, tfm_fix_word_to_scaled, tfm_font_size,
+    GlueSetRatioError, PhysicalUnit, Scaled, TfmConversionError, WideScaled, XOverN, XnOverD,
+    font_units_to_scaled, half, mult_and_add, nx_plus_y, round_decimal_fraction, saturating_add,
+    saturating_mul, saturating_sub, scale_true_dimension_parts, scaled_from_decimal_parts,
+    text_accent_delta, tfm_design_size_from_fix_word, tfm_fix_word_to_scaled, tfm_font_size,
     tfm_slant_fix_word_to_scaled_ratio, x_over_n, xn_over_d,
 };
 
@@ -212,6 +212,30 @@ fn xn_over_d_matches_tex_remainder_and_overflow_rules() {
     assert_eq!(
         xn_over_d(Scaled::MAX_DIMEN, Scaled::UNITY, 1),
         Err(DimensionError::TooLarge)
+    );
+}
+
+#[test]
+fn font_unit_scaling_rounds_half_away_from_zero_and_checks_bounds() {
+    assert_eq!(
+        font_units_to_scaled(1, Scaled::from_raw(5), 2),
+        Ok(Scaled::from_raw(3))
+    );
+    assert_eq!(
+        font_units_to_scaled(-1, Scaled::from_raw(5), 2),
+        Ok(Scaled::from_raw(-3))
+    );
+    assert_eq!(
+        font_units_to_scaled(1, Scaled::from_raw(4), 3),
+        Ok(Scaled::from_raw(1))
+    );
+    assert_eq!(
+        font_units_to_scaled(i32::MAX, Scaled::from_raw(i32::MAX), 1),
+        Err(ArithmeticError::Overflow)
+    );
+    assert_eq!(
+        font_units_to_scaled(1, Scaled::from_raw(1), 0),
+        Err(ArithmeticError::DivisionByZero)
     );
 }
 

@@ -36,6 +36,12 @@ pub trait TypesetState {
     fn nodes(&self, id: NodeListId) -> NodeList<'_>;
     fn glue(&self, id: tex_state::ids::GlueId) -> GlueSpec;
     fn font_char_metrics(&self, font: FontId, code: u8) -> Option<tex_fonts::CharMetrics>;
+    fn font_character_metrics(&self, font: FontId, ch: char) -> Option<tex_fonts::CharMetrics> {
+        self.font_char_metrics(font, u8::try_from(ch as u32).ok()?)
+    }
+    fn font_uses_tfm_metrics(&self, _font: FontId) -> bool {
+        true
+    }
     fn font_widths(&self, font: FontId) -> &[Scaled; 256];
     fn font_characters(&self, font: FontId) -> &[Option<tex_fonts::CharMetrics>];
     fn font_parameter_value(&self, _font: FontId, _number: u32) -> Scaled {
@@ -63,6 +69,14 @@ impl TypesetState for Universe {
 
     fn font_char_metrics(&self, font: FontId, code: u8) -> Option<tex_fonts::CharMetrics> {
         Universe::font_char_metrics(self, font, code)
+    }
+
+    fn font_character_metrics(&self, font: FontId, ch: char) -> Option<tex_fonts::CharMetrics> {
+        Universe::font_character_metrics(self, font, ch)
+    }
+
+    fn font_uses_tfm_metrics(&self, font: FontId) -> bool {
+        Universe::font_uses_tfm_metrics(self, font)
     }
 
     fn font_widths(&self, font: FontId) -> &[Scaled; 256] {

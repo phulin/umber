@@ -221,12 +221,12 @@ pub(super) fn materialize_node_list(
 fn materialize_glyph(
     stores: &Universe,
     font: FontId,
-    code: u8,
+    ch: u32,
     width: tex_state::scaled::Scaled,
     ligature_source: Option<&[char]>,
     emission: &mut EmissionState,
 ) -> Result<Vec<PageNode>, ExecError> {
-    let projection = glyph_projection(stores, font, code, width, emission)?;
+    let projection = glyph_projection(stores, font, ch, width, emission)?;
     let mut nodes = Vec::with_capacity(3);
     if projection.left.raw() != 0 {
         nodes.push(PageNode::Kern {
@@ -237,13 +237,13 @@ fn materialize_glyph(
     nodes.push(match ligature_source {
         Some(source) => PageNode::Lig {
             font_id: projection.font_id,
-            ch: u32::from(code),
+            ch,
             source: source.iter().map(|source| *source as u32).collect(),
             width: projection.width,
         },
         None => PageNode::Char {
             font_id: projection.font_id,
-            ch: u32::from(code),
+            ch,
             width: projection.width,
         },
     });

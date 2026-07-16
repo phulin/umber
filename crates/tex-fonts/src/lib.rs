@@ -11,10 +11,10 @@ pub mod type1;
 
 pub use metrics::{
     CharMetrics, CharTag as MetricCharTag, ExtensibleRecipe as MetricExtensibleRecipe,
-    FontConstruction, FontConstructionError, FontContentHash, FontMetrics,
+    FontConstruction, FontConstructionError, FontContentHash, FontMetrics, FontMetricsSource,
     FontMetricsValidationError, FontSourceIdentity, LigKernChar, LigKernCommand,
     LigKernInstruction, LigKernIter, LigKernStep as MetricLigKernStep, LigatureCommand, LoadedFont,
-    MAX_LIG_KERN_PROGRAM_LEN, OpenTypeFontSelection, OpenTypeProgramSelection,
+    MAX_LIG_KERN_PROGRAM_LEN, OpenTypeFontSelection, OpenTypeFontShaped, OpenTypeProgramSelection,
 };
 pub use opentype::{
     AcceptedFontContainers, CharacterMap, FeatureSetting, FontContainer, FontFeaturePolicy,

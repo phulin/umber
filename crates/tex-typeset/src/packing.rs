@@ -366,14 +366,17 @@ fn measure_hlist(state: &impl TypesetState, nodes: NodeList<'_>) -> Measurement 
     while index < nodes.len() {
         if let Some(run) = nodes.char_codes(index) {
             let font = run.font();
-            let widths = state.font_widths(font);
-            let characters = state.font_characters(font);
             let mut run_len = 0;
             for code in run {
                 // Keep TeX's saturating additions in source order. The compact
                 // run removes tag/font dispatch without changing overflow.
-                meas.width = add(meas.width, widths[usize::from(code)]);
-                if let Some(metrics) = characters.get(usize::from(code)).copied().flatten() {
+                let metrics = if state.font_uses_tfm_metrics(font) {
+                    state.font_characters(font)[usize::from(code)]
+                } else {
+                    state.font_character_metrics(font, char::from(code))
+                };
+                if let Some(metrics) = metrics {
+                    meas.width = add(meas.width, metrics.width);
                     meas.height = meas.height.max(metrics.height);
                     meas.depth = meas.depth.max(metrics.depth);
                 }
@@ -385,9 +388,7 @@ fn measure_hlist(state: &impl TypesetState, nodes: NodeList<'_>) -> Measurement 
         let node = nodes.get(index).expect("index is within node list");
         match node {
             NodeRef::Char { font, ch, .. } | NodeRef::Lig { font, ch, .. } => {
-                if let Ok(code) = u8::try_from(ch as u32)
-                    && let Some(metrics) = state.font_char_metrics(font, code)
-                {
+                if let Some(metrics) = state.font_character_metrics(font, ch) {
                     meas.width = add(meas.width, metrics.width);
                     meas.height = meas.height.max(metrics.height);
                     meas.depth = meas.depth.max(metrics.depth);
@@ -468,9 +469,7 @@ fn measure_hlist_nodes(state: &impl TypesetState, nodes: &[Node]) -> Measurement
     for node in nodes {
         match node {
             Node::Char { font, ch, .. } | Node::Lig { font, ch, .. } => {
-                if let Ok(code) = u8::try_from(*ch as u32)
-                    && let Some(metrics) = state.font_char_metrics(*font, code)
-                {
+                if let Some(metrics) = state.font_character_metrics(*font, *ch) {
                     meas.width = add(meas.width, metrics.width);
                     meas.height = meas.height.max(metrics.height);
                     meas.depth = meas.depth.max(metrics.depth);

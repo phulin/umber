@@ -3312,6 +3312,21 @@ impl Universe {
         self.stores.font_char_metrics(font, code)
     }
 
+    #[must_use]
+    pub fn font_character_exists(&self, font: FontId, ch: char) -> bool {
+        self.stores.font_character_exists(font, ch)
+    }
+
+    #[must_use]
+    pub fn font_character_metrics(&self, font: FontId, ch: char) -> Option<CharMetrics> {
+        self.stores.font_character_metrics(font, ch)
+    }
+
+    #[must_use]
+    pub fn font_uses_tfm_metrics(&self, font: FontId) -> bool {
+        self.stores.font_uses_tfm_metrics(font)
+    }
+
     /// Returns the immutable dense TFM-byte width projection for a live font.
     #[must_use]
     pub fn font_widths(&self, font: FontId) -> &[Scaled; 256] {

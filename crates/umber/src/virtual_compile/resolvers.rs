@@ -516,10 +516,7 @@ impl FontResolver for VirtualFontResolver<'_> {
         tfm.map(|metrics| tex_exec::FontSource {
             metrics,
             opentype: Some(tex_fonts::OpenTypeProgramSelection {
-                program_identity: font.identity,
-                object_identity: font.object_identity,
-                container: font.container,
-                face_index: key.face_index,
+                font: font.clone(),
                 variation: key.variation,
                 features: key.feature_policy,
                 direction: tex_fonts::WritingDirection::LeftToRight,

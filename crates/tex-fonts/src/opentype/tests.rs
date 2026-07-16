@@ -62,6 +62,67 @@ fn woff2_and_decoded_ttf_have_one_program_identity_and_projection() {
     assert_eq!(web.cmap, native.cmap);
     assert_eq!(web.metrics, native.metrics);
     assert_eq!(web.shaping, native.shaping);
+
+    let (scalar, glyph) = web
+        .cmap
+        .mappings()
+        .iter()
+        .find_map(|(&scalar, &glyph)| {
+            (scalar > u32::from(u8::MAX))
+                .then(|| char::from_u32(scalar).map(|ch| (ch, glyph)))
+                .flatten()
+        })
+        .expect("fixture has a non-Latin-1 Unicode mapping");
+    let size = tex_arith::Scaled::from_raw(655_360);
+    let loaded = crate::LoadedFont::new(
+        "cmu-serif",
+        "cmu-serif.tfm",
+        [0; 32],
+        0,
+        size,
+        size,
+        vec![tex_arith::Scaled::from_raw(0); 7],
+        crate::FontMetrics::new(Vec::new(), Vec::new(), None, None, Vec::new()),
+    )
+    .with_opentype(crate::OpenTypeProgramSelection {
+        font: web.clone(),
+        variation: VariationSelection::default(),
+        features: FontFeaturePolicy::default(),
+        direction: WritingDirection::LeftToRight,
+    });
+    let advance = web.metrics.horizontal_advances[usize::from(glyph)];
+    assert!(loaded.character_exists(scalar));
+    assert_eq!(
+        loaded.character_width(scalar),
+        Some(tex_arith::Scaled::from_raw(
+            web.metrics
+                .units_to_sp(i32::from(advance), size.raw())
+                .expect("fixture advance scales")
+        ))
+    );
+    assert!(matches!(
+        loaded.metrics_source(),
+        crate::FontMetricsSource::OpenType(_)
+    ));
+}
+
+#[test]
+fn opentype_unit_scaling_uses_shared_boundary_rounding() {
+    let metrics = OpenTypeMetrics {
+        units_per_em: 2,
+        ascender: 0,
+        descender: 0,
+        line_gap: 0,
+        global_bounds: None,
+        horizontal_advances: Vec::new(),
+        glyph_bounds: Vec::new(),
+    };
+    assert_eq!(metrics.units_to_sp(1, 5), Ok(3));
+    assert_eq!(metrics.units_to_sp(-1, 5), Ok(-3));
+    assert_eq!(
+        metrics.units_to_sp(i32::MAX, i32::MAX),
+        Err(FontParseError::ArithmeticOverflow)
+    );
 }
 
 #[test]

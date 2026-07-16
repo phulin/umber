@@ -401,19 +401,17 @@ fn emit_char_run(
     emission: &mut EmissionState,
 ) -> Result<(), ExecError> {
     let font = run.font();
-    let widths = stores.font_widths(font);
-    let characters = stores.font_characters(font);
     for (code, origin) in run.codes().zip(run.origins()) {
-        if characters[usize::from(code)].is_none() {
-            return Err(ExecError::UnsupportedShipoutNode {
+        let width = stores
+            .font_character_metrics(font, char::from(code))
+            .map(|metrics| metrics.width)
+            .ok_or(ExecError::UnsupportedShipoutNode {
                 node: "missing character metrics",
-            });
-        }
-        let width = widths[usize::from(code)];
+            })?;
         emit_glyph(
             stores,
             font,
-            code,
+            u32::from(code),
             width,
             [origin],
             output,
@@ -883,7 +881,7 @@ struct GlyphProjection {
 fn glyph_projection(
     stores: &Universe,
     font: FontId,
-    code: u8,
+    ch: u32,
     logical_width: tex_state::scaled::Scaled,
     emission: &mut EmissionState,
 ) -> Result<GlyphProjection, ExecError> {
@@ -901,6 +899,9 @@ fn glyph_projection(
     let source_font = stores
         .font_by_source_identity(*source)
         .expect("validated letterspaced font source is live");
+    let code = u8::try_from(ch).map_err(|_| ExecError::UnsupportedShipoutNode {
+        node: "non-byte generated font character",
+    })?;
     let source_width = stores
         .font_char_metrics(source_font, code)
         .map(|metrics| metrics.width)
@@ -925,20 +926,20 @@ fn glyph_projection(
 fn emit_glyph(
     stores: &Universe,
     font: FontId,
-    code: u8,
+    ch: u32,
     logical_width: tex_state::scaled::Scaled,
     origins: impl IntoIterator<Item = OriginId>,
     output: &mut V10NodeListWriter<'_>,
     mut dvi: Option<&mut DviPagePlanBuilder>,
     emission: &mut EmissionState,
 ) -> Result<(), ExecError> {
-    let projection = glyph_projection(stores, font, code, logical_width, emission)?;
+    let projection = glyph_projection(stores, font, ch, logical_width, emission)?;
     emit_projection_kern(projection.left, output, dvi.as_deref_mut(), emission)?;
     emission.node(origins);
-    output.char(projection.font_id, u32::from(code), projection.width)?;
+    output.char(projection.font_id, ch, projection.width)?;
     if let Some(dvi) = dvi.as_deref_mut() {
         dvi.add_fonts(&emission.fonts).map_err(invalid_artifact)?;
-        dvi.char(projection.font_id, u32::from(code), projection.width)
+        dvi.char(projection.font_id, ch, projection.width)
             .map_err(invalid_artifact)?;
     }
     emit_projection_kern(projection.right, output, dvi, emission)
@@ -948,7 +949,7 @@ fn emit_glyph(
 fn emit_ligature(
     stores: &Universe,
     font: FontId,
-    code: u8,
+    ch: u32,
     source: &[char],
     logical_width: tex_state::scaled::Scaled,
     origins: impl IntoIterator<Item = OriginId>,
@@ -956,18 +957,18 @@ fn emit_ligature(
     mut dvi: Option<&mut DviPagePlanBuilder>,
     emission: &mut EmissionState,
 ) -> Result<(), ExecError> {
-    let projection = glyph_projection(stores, font, code, logical_width, emission)?;
+    let projection = glyph_projection(stores, font, ch, logical_width, emission)?;
     emit_projection_kern(projection.left, output, dvi.as_deref_mut(), emission)?;
     emission.node(origins);
     output.lig(
         projection.font_id,
-        u32::from(code),
+        ch,
         source.iter().map(|source| *source as u32),
         projection.width,
     )?;
     if let Some(dvi) = dvi.as_deref_mut() {
         dvi.add_fonts(&emission.fonts).map_err(invalid_artifact)?;
-        dvi.char(projection.font_id, u32::from(code), projection.width)
+        dvi.char(projection.font_id, ch, projection.width)
             .map_err(invalid_artifact)?;
     }
     emit_projection_kern(projection.right, output, dvi, emission)
@@ -1079,17 +1080,14 @@ fn glyph(
     stores: &Universe,
     font: FontId,
     ch: char,
-) -> Result<(u8, tex_state::scaled::Scaled), ExecError> {
-    let code = u8::try_from(ch as u32).map_err(|_| ExecError::UnsupportedShipoutNode {
-        node: "non-TeX82 character",
-    })?;
+) -> Result<(u32, tex_state::scaled::Scaled), ExecError> {
     let width = stores
-        .font_char_metrics(font, code)
+        .font_character_metrics(font, ch)
         .map(|metrics| metrics.width)
         .ok_or(ExecError::UnsupportedShipoutNode {
             node: "missing character metrics",
         })?;
-    Ok((code, width))
+    Ok((ch as u32, width))
 }
 
 fn check_depth(depth: usize) -> Result<(), ExecError> {

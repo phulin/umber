@@ -127,11 +127,16 @@ pub(super) fn line_widths_view<S: TypesetState>(
     while index < limit {
         if let Some(run) = nodes.char_codes(index) {
             let font = run.font();
-            let table = state.font_widths(font);
             let mut run_len = 0;
             for code in run.take(limit - index) {
                 // Preserve the scalar saturating-add order exactly.
-                let natural = table[usize::from(code)];
+                let natural = if state.font_uses_tfm_metrics(font) {
+                    state.font_widths(font)[usize::from(code)]
+                } else {
+                    state
+                        .font_character_metrics(font, char::from(code))
+                        .map_or(Scaled::from_raw(0), |metrics| metrics.width)
+                };
                 widths.natural = add_scaled(widths.natural, natural);
                 add_char_expansion(state, &mut widths, font, code, natural);
                 run_len += 1;
@@ -158,11 +163,11 @@ pub(super) fn node_width_at<S: TypesetState>(state: &S, nodes: &[Node], index: u
     let mut widths = Widths::zero();
     match node {
         Node::Char { font, ch, .. } | Node::Lig { font, ch, .. } => {
-            if let Ok(code) = u8::try_from(*ch as u32)
-                && let Some(metrics) = state.font_char_metrics(*font, code)
-            {
+            if let Some(metrics) = state.font_character_metrics(*font, *ch) {
                 widths.natural = add_scaled(widths.natural, metrics.width);
-                add_char_expansion(state, &mut widths, *font, code, metrics.width);
+                if let Ok(code) = u8::try_from(*ch as u32) {
+                    add_char_expansion(state, &mut widths, *font, code, metrics.width);
+                }
             }
         }
         Node::Kern { amount, kind } => {
@@ -218,11 +223,11 @@ fn node_width_ref_at<S: TypesetState>(state: &S, nodes: NodeList<'_>, index: usi
     let mut widths = Widths::zero();
     match node {
         NodeRef::Char { font, ch, .. } | NodeRef::Lig { font, ch, .. } => {
-            if let Ok(code) = u8::try_from(ch as u32)
-                && let Some(metrics) = state.font_char_metrics(font, code)
-            {
+            if let Some(metrics) = state.font_character_metrics(font, ch) {
                 widths.natural = add_scaled(widths.natural, metrics.width);
-                add_char_expansion(state, &mut widths, font, code, metrics.width);
+                if let Ok(code) = u8::try_from(ch as u32) {
+                    add_char_expansion(state, &mut widths, font, code, metrics.width);
+                }
             }
         }
         NodeRef::Kern { amount, kind } => {

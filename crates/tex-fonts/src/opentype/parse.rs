@@ -3,6 +3,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
+use tex_arith::{Scaled, font_units_to_scaled};
 use ttf_parser::{Face, GlyphId, OutlineBuilder, RawFace, Tag};
 
 use super::contract::{
@@ -78,18 +79,9 @@ pub struct OpenTypeMetrics {
 impl OpenTypeMetrics {
     /// Converts font units into scaled points using round-half-away-from-zero.
     pub fn units_to_sp(&self, units: i32, size_sp: i32) -> Result<i32, FontParseError> {
-        let numerator = i64::from(units)
-            .checked_mul(i64::from(size_sp))
-            .ok_or(FontParseError::ArithmeticOverflow)?;
-        let denominator = i64::from(self.units_per_em);
-        let magnitude = numerator.unsigned_abs();
-        let rounded = (magnitude + (denominator as u64 / 2)) / denominator as u64;
-        let signed = if numerator < 0 {
-            -(rounded as i64)
-        } else {
-            rounded as i64
-        };
-        i32::try_from(signed).map_err(|_| FontParseError::ArithmeticOverflow)
+        font_units_to_scaled(units, Scaled::from_raw(size_sp), self.units_per_em)
+            .map(Scaled::raw)
+            .map_err(|_| FontParseError::ArithmeticOverflow)
     }
 }
 

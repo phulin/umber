@@ -445,6 +445,28 @@ fn validation_rejects_malformed_graph_references() {
 }
 
 #[test]
+fn validation_allows_unicode_only_for_opentype_fonts() {
+    let mut opentype = (*sample_artifact()).clone();
+    let PageNode::VList(root) = &mut opentype.root else {
+        unreachable!("sample root is a vlist");
+    };
+    let PageNode::HList(line) = &mut root.children[0] else {
+        unreachable!("sample first child is an hlist");
+    };
+    let PageNode::Char { ch, .. } = &mut line.children[0] else {
+        unreachable!("sample first line child is a character");
+    };
+    *ch = 'Ж' as u32;
+    assert!(opentype.clone().validate().is_ok());
+
+    opentype.fonts[0].opentype = None;
+    assert_eq!(
+        opentype.validate(),
+        Err(ArtifactValidationError::CharacterOutOfRange { ch: 'Ж' as u32 })
+    );
+}
+
+#[test]
 fn validation_rejects_invalid_roots_and_duplicate_resources() {
     let mut invalid_root = (*sample_artifact()).clone();
     invalid_root.root = PageNode::Penalty(0);
