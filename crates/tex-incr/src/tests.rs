@@ -163,6 +163,87 @@ fn paragraph_front_end_hit_survives_prefix_shift_and_unrelated_register_write() 
 }
 
 #[test]
+fn paragraph_post_break_reuse_tiers_match_cold_for_layout_and_hyphenation_changes() {
+    fn run_edit(
+        source: &str,
+        range: std::ops::Range<usize>,
+        replacement: &str,
+    ) -> (tex_state::PureMemoStats, Vec<u8>) {
+        let mut universe = template();
+        universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+        let mut session = Session::start(
+            universe,
+            "paragraph-post-break-tiers",
+            RevisionId::new(1),
+            source,
+            usize::MAX,
+        )
+        .expect("session starts");
+        session
+            .register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+            .expect("font fixture");
+        session.cold().expect("cold paragraph generation");
+        let edited = format!(
+            "{}{}{}",
+            &source[..range.start],
+            replacement,
+            &source[range.end..]
+        );
+        let output = session
+            .advance(
+                RevisionId::new(2),
+                Edit {
+                    base_revision: RevisionId::new(1),
+                    expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                    range,
+                    replacement: replacement.to_owned(),
+                },
+            )
+            .expect("edited generation");
+        let mut cold_universe = template();
+        cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+        let mut cold = Session::start(
+            cold_universe,
+            "paragraph-post-break-tiers",
+            RevisionId::new(2),
+            edited,
+            usize::MAX,
+        )
+        .expect("cold comparison starts");
+        cold.register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+            .expect("cold font fixture");
+        let expected = cold.cold().expect("cold comparison");
+        let actual = output.dvi_bytes().expect("incremental DVI");
+        assert_eq!(actual, expected.dvi_bytes().expect("cold DVI"));
+        assert_eq!(output.effects, expected.effects);
+        assert_eq!(output.artifacts, expected.artifacts);
+        (session.pure_memo_stats(), actual)
+    }
+
+    let prose = "hyphenation demonstration hyphenation demonstration hyphenation demonstration";
+    let source = format!(
+        "\\font\\tenrm=cmr10\\relax \\tenrm \\hsize=70pt \\hyphenation{{hy-phen-a-tion}}\n{prose}\\par\n{prose}\\par\n\\end"
+    );
+    let hsize = source.find("70pt").expect("hsize value");
+    let (layout, _) = run_edit(&source, hsize..hsize + 2, "45");
+    assert!(layout.paragraph_hits > 0, "{layout:?}");
+    assert!(layout.paragraph_hlist_fallbacks > 0, "{layout:?}");
+
+    let hyphens = source.find("hy-phen-a-tion").expect("exception");
+    let (hyphenation, _) = run_edit(
+        &source,
+        hyphens..hyphens + "hy-phen-a-tion".len(),
+        "hyphen-ation",
+    );
+    assert!(hyphenation.paragraph_hits > 0, "{hyphenation:?}");
+    assert!(hyphenation.paragraph_hlist_fallbacks > 0, "{hyphenation:?}");
+
+    let insertion = source.find(prose).expect("first paragraph");
+    let (full, _) = run_edit(&source, insertion..insertion, "\\count77=1 ");
+    assert!(full.paragraph_line_hits > 0, "{full:?}");
+}
+
+#[test]
 fn stateful_paragraph_redo_survives_a_later_prefix_edit() {
     let mut universe = template();
     universe.enable_pure_memo(tex_state::PureMemoConfig::default());

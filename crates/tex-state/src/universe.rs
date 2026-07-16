@@ -1588,10 +1588,19 @@ impl Universe {
             DependencyKey::Engine(DependencyEngineField::InteractionMode) => Some(
                 DependencyValue::Integer(i64::from(encode_interaction_mode(self.interaction_mode))),
             ),
-            DependencyKey::HyphenationPatterns(_)
-            | DependencyKey::HyphenationExceptions(_)
-            | DependencyKey::HyphenationCodes(_)
-            | DependencyKey::InputRecord(_)
+            DependencyKey::HyphenationPatterns(language) => Some(DependencyValue::Projection {
+                schema: 1,
+                fingerprint: self.stores.hyphenation_dependency_fingerprint(language, 0),
+            }),
+            DependencyKey::HyphenationExceptions(language) => Some(DependencyValue::Projection {
+                schema: 1,
+                fingerprint: self.stores.hyphenation_dependency_fingerprint(language, 1),
+            }),
+            DependencyKey::HyphenationCodes(language) => Some(DependencyValue::Projection {
+                schema: 1,
+                fingerprint: self.stores.hyphenation_dependency_fingerprint(language, 2),
+            }),
+            DependencyKey::InputRecord(_)
             | DependencyKey::PhysicalLine { .. }
             | DependencyKey::InputLine
             | DependencyKey::InputStack
@@ -1744,6 +1753,27 @@ impl Universe {
     ) {
         self.pure_memo
             .record_paragraph_hit(commands, mutations, imported_bytes);
+    }
+
+    #[doc(hidden)]
+    pub fn record_pure_paragraph_line_hit(&mut self, fallback: bool) {
+        self.pure_memo.record_paragraph_line_hit(fallback);
+    }
+
+    #[doc(hidden)]
+    pub fn finish_recorded_paragraph_lines(
+        &mut self,
+        dependencies: Vec<crate::ObservedDependency>,
+        lines: NodeListId,
+        line_count: i32,
+        origin_ordinals: Vec<u32>,
+    ) {
+        self.pure_memo.finish_recorded_paragraph_lines(
+            dependencies,
+            lines,
+            line_count,
+            origin_ordinals,
+        );
     }
 
     #[doc(hidden)]

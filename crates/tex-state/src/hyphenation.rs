@@ -227,6 +227,56 @@ impl HyphenationTable {
         }
         visits
     }
+
+    pub(crate) fn dependency_fingerprint(&self, language: u8, kind: u8) -> u64 {
+        let mut hasher =
+            crate::state_hash::StateHasher::new(0x6879_7068_6465_7000_u64 | u64::from(kind));
+        hasher.u8(language);
+        match kind {
+            0 => {
+                let nodes = self.languages.get(&language).map(|table| &table.nodes);
+                hasher.usize(nodes.map_or(0, Vec::len));
+                if let Some(nodes) = nodes {
+                    for node in nodes {
+                        hasher.usize(node.edges.len());
+                        for (ch, target) in &node.edges {
+                            hasher.u32(*ch as u32);
+                            hasher.usize(*target);
+                        }
+                        hasher.usize(node.values.len());
+                        for value in &node.values {
+                            hasher.u8(*value);
+                        }
+                    }
+                }
+            }
+            1 => {
+                let exceptions = self.languages.get(&language).map(|table| &table.exceptions);
+                hasher.usize(exceptions.map_or(0, BTreeMap::len));
+                if let Some(exceptions) = exceptions {
+                    for (word, positions) in exceptions {
+                        hasher.str(word);
+                        hasher.usize(positions.len());
+                        for position in positions {
+                            hasher.usize(*position);
+                        }
+                    }
+                }
+            }
+            2 => {
+                let codes = self.hyphen_codes.get(&language);
+                hasher.usize(codes.map_or(0, BTreeMap::len));
+                if let Some(codes) = codes {
+                    for (from, to) in codes {
+                        hasher.u32(*from as u32);
+                        hasher.u32(*to as u32);
+                    }
+                }
+            }
+            _ => unreachable!("hyphenation dependency kind is fixed"),
+        }
+        hasher.finish()
+    }
 }
 
 impl LanguageHyphenation {

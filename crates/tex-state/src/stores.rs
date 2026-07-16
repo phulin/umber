@@ -44,7 +44,7 @@ use crate::macro_store::{
 };
 use crate::math::MathFontSize;
 use crate::meaning::Meaning;
-use crate::node::Node;
+use crate::node::{LeaderPayload, Node};
 #[cfg(feature = "profiling-stats")]
 use crate::node_arena::NodeMemoryColumn;
 use crate::node_arena::{NodeArena, NodeArenaMark, NodeList, NodeListBuilder};
@@ -64,6 +64,7 @@ use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::token_store::{
     TokenListBuilder, TokenSemanticId, TokenSemanticIdBuilder, TokenStore, TokenStoreMark,
 };
+use std::collections::HashMap;
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
 use std::hash::{Hash, Hasher};
 use std::mem;
@@ -180,6 +181,8 @@ pub struct Stores {
     survivors: SurvivorArena,
     survivor_pins: Vec<NodeListId>,
     paragraph_generation_pins: Vec<NodeListId>,
+    paragraph_generation_pin_glues: Vec<Vec<GlueId>>,
+    paragraph_generation_glues: HashMap<GlueId, (GlueSpec, usize)>,
     code_tables: CodeTables,
     hyphenation: Arc<HyphenationTable>,
     prepared_mag: Option<i32>,
@@ -242,6 +245,8 @@ impl Clone for Stores {
             survivors: self.survivors.clone(),
             survivor_pins: self.survivor_pins.clone(),
             paragraph_generation_pins: self.paragraph_generation_pins.clone(),
+            paragraph_generation_pin_glues: self.paragraph_generation_pin_glues.clone(),
+            paragraph_generation_glues: self.paragraph_generation_glues.clone(),
             code_tables: self.code_tables.clone(),
             hyphenation: self.hyphenation.clone(),
             prepared_mag: self.prepared_mag,
@@ -312,6 +317,8 @@ impl Stores {
             survivors: SurvivorArena::new(),
             survivor_pins: Vec::new(),
             paragraph_generation_pins: Vec::new(),
+            paragraph_generation_pin_glues: Vec::new(),
+            paragraph_generation_glues: HashMap::new(),
             code_tables: CodeTables::new(),
             hyphenation: Arc::new(HyphenationTable::new()),
             prepared_mag: None,
@@ -451,6 +458,10 @@ impl Stores {
     #[must_use]
     pub fn saved_hyphenation_code(&self, language: u8, ch: char) -> Option<Option<char>> {
         self.hyphenation.saved_hyphen_code(language, ch)
+    }
+
+    pub(crate) fn hyphenation_dependency_fingerprint(&self, language: u8, kind: u8) -> u64 {
+        self.hyphenation.dependency_fingerprint(language, kind)
     }
 
     #[must_use]
@@ -1700,8 +1711,21 @@ impl Stores {
     /// Promotes one paragraph result graph into storage owned by the accepted
     /// generation rather than by an individual rollback checkpoint.
     pub fn retain_paragraph_result(&mut self, id: NodeListId) -> NodeListId {
+        let mut glues = Vec::new();
+        self.collect_paragraph_glues(id, &mut glues);
+        glues.sort_unstable();
+        glues.dedup();
+        for &id in &glues {
+            let spec = self.glue(id);
+            let (_, refs) = self
+                .paragraph_generation_glues
+                .entry(id)
+                .or_insert((spec, 0));
+            *refs = refs.saturating_add(1);
+        }
         let retained = self.prepare_box_value(id);
         self.paragraph_generation_pins.push(retained);
+        self.paragraph_generation_pin_glues.push(glues);
         retained
     }
 
@@ -1718,19 +1742,130 @@ impl Stores {
             .into_iter()
             .map(|node| node.to_owned())
             .collect::<Vec<_>>();
+        let mut nodes = nodes;
+        self.restore_paragraph_glues(&mut nodes)?;
         Some(self.freeze_node_list(&nodes))
+    }
+
+    fn collect_paragraph_glues(&self, id: NodeListId, glues: &mut Vec<GlueId>) {
+        let nodes = self.nodes(id).to_vec();
+        for node in nodes {
+            match node {
+                Node::Glue { spec, leader, .. } => {
+                    glues.push(spec);
+                    if let Some(LeaderPayload::HList(box_node) | LeaderPayload::VList(box_node)) =
+                        leader
+                    {
+                        self.collect_paragraph_glues(box_node.children, glues);
+                    }
+                }
+                Node::HList(box_node) | Node::VList(box_node) => {
+                    self.collect_paragraph_glues(box_node.children, glues);
+                }
+                Node::Unset(unset) => self.collect_paragraph_glues(unset.children, glues),
+                Node::Disc {
+                    pre, post, replace, ..
+                } => {
+                    self.collect_paragraph_glues(pre, glues);
+                    self.collect_paragraph_glues(post, glues);
+                    self.collect_paragraph_glues(replace, glues);
+                }
+                Node::Ins {
+                    split_top_skip,
+                    content,
+                    ..
+                } => {
+                    glues.push(split_top_skip);
+                    self.collect_paragraph_glues(content, glues);
+                }
+                Node::Adjust(content) => self.collect_paragraph_glues(content, glues),
+                _ => {}
+            }
+        }
+    }
+
+    fn restore_paragraph_glues(&mut self, nodes: &mut [Node]) -> Option<()> {
+        let restore = |stores: &mut Self, id: GlueId| {
+            stores.glue.resolve_stored(id).or_else(|| {
+                stores
+                    .paragraph_generation_glues
+                    .get(&id)
+                    .map(|(spec, _)| *spec)
+                    .map(|spec| stores.glue.intern(spec))
+            })
+        };
+        let rebuild = |stores: &mut Self, id: NodeListId| {
+            let mut children = stores.nodes(id).to_vec();
+            stores.restore_paragraph_glues(&mut children)?;
+            Some(stores.freeze_node_list(&children))
+        };
+        for node in nodes {
+            match node {
+                Node::Glue { spec, leader, .. } => {
+                    *spec = restore(self, *spec)?;
+                    if let Some(LeaderPayload::HList(box_node) | LeaderPayload::VList(box_node)) =
+                        leader
+                    {
+                        box_node.children = rebuild(self, box_node.children)?;
+                    }
+                }
+                Node::HList(box_node) | Node::VList(box_node) => {
+                    box_node.children = rebuild(self, box_node.children)?;
+                }
+                Node::Unset(unset) => unset.children = rebuild(self, unset.children)?,
+                Node::Disc {
+                    pre, post, replace, ..
+                } => {
+                    *pre = rebuild(self, *pre)?;
+                    *post = rebuild(self, *post)?;
+                    *replace = rebuild(self, *replace)?;
+                }
+                Node::Ins {
+                    split_top_skip,
+                    content,
+                    ..
+                } => {
+                    *split_top_skip = restore(self, *split_top_skip)?;
+                    *content = rebuild(self, *content)?;
+                }
+                Node::Adjust(content) => *content = rebuild(self, *content)?,
+                _ => {}
+            }
+        }
+        Some(())
     }
 
     /// Replaces the generation-owned paragraph roots wholesale after a run is
     /// accepted. Newly recorded roots are the suffix after `new_start`.
     pub fn accept_paragraph_result_generation(&mut self, new_start: usize) {
         assert!(new_start <= self.paragraph_generation_pins.len());
+        assert_eq!(
+            self.paragraph_generation_pins.len(),
+            self.paragraph_generation_pin_glues.len()
+        );
         let old = self
             .paragraph_generation_pins
             .drain(..new_start)
             .collect::<Vec<_>>();
         for id in old {
             self.survivors.dec_ref(id);
+        }
+        let old_glues = self
+            .paragraph_generation_pin_glues
+            .drain(..new_start)
+            .collect::<Vec<_>>();
+        for glues in old_glues {
+            for id in glues {
+                let remove = if let Some((_, refs)) = self.paragraph_generation_glues.get_mut(&id) {
+                    *refs = refs.saturating_sub(1);
+                    *refs == 0
+                } else {
+                    false
+                };
+                if remove {
+                    self.paragraph_generation_glues.remove(&id);
+                }
+            }
         }
     }
 
@@ -2199,6 +2334,17 @@ impl Stores {
                 self.paragraph_generation_pins
                     .capacity()
                     .saturating_mul(mem::size_of::<NodeListId>()),
+            )
+            .saturating_add(
+                self.paragraph_generation_pin_glues
+                    .iter()
+                    .map(|glues| glues.capacity().saturating_mul(mem::size_of::<GlueId>()))
+                    .sum::<usize>(),
+            )
+            .saturating_add(
+                self.paragraph_generation_glues
+                    .capacity()
+                    .saturating_mul(mem::size_of::<(GlueId, (GlueSpec, usize))>()),
             );
         std::mem::size_of::<Self>()
             .saturating_add(serialized)

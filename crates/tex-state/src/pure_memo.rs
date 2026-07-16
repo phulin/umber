@@ -49,6 +49,8 @@ pub struct PureMemoStats {
     pub paragraph_commands_skipped: u64,
     pub paragraph_mutations_replayed: u64,
     pub paragraph_imported_bytes: u64,
+    pub paragraph_line_hits: u64,
+    pub paragraph_hlist_fallbacks: u64,
     pub paragraph_validation_misses: u64,
     pub paragraph_import_failures: u64,
     pub paragraph_barriers: u64,
@@ -114,6 +116,13 @@ pub struct RecordedParagraphRegion {
     pub barriers: Vec<ParagraphBarrierReason>,
     pub hlist: Option<NodeListId>,
     pub origin_ordinals: Vec<u32>,
+    /// Dependencies observed only by line breaking, materialization, and
+    /// horizontal packing. A mismatch here still permits prepared-hlist reuse.
+    pub break_dependencies: Vec<ObservedDependency>,
+    /// Finished line boxes interleaved with migrating material and penalties.
+    pub lines: Option<NodeListId>,
+    pub line_count: i32,
+    pub line_origin_ordinals: Vec<u32>,
 }
 
 #[derive(Clone, Debug)]
@@ -461,6 +470,36 @@ impl PureMemoRuntime {
             .stats
             .paragraph_imported_bytes
             .saturating_add(imported_bytes as u64);
+    }
+
+    pub(crate) fn record_paragraph_line_hit(&mut self, fallback: bool) {
+        let Some(cache) = &mut self.cache else {
+            return;
+        };
+        if fallback {
+            cache.stats.paragraph_hlist_fallbacks =
+                cache.stats.paragraph_hlist_fallbacks.saturating_add(1);
+        } else {
+            cache.stats.paragraph_line_hits = cache.stats.paragraph_line_hits.saturating_add(1);
+        }
+    }
+
+    pub(crate) fn finish_recorded_paragraph_lines(
+        &mut self,
+        dependencies: Vec<ObservedDependency>,
+        lines: NodeListId,
+        line_count: i32,
+        origin_ordinals: Vec<u32>,
+    ) {
+        let Some(region) = self.recorded_paragraphs.last_mut() else {
+            return;
+        };
+        if region.barriers.is_empty() && region.lines.is_none() {
+            region.break_dependencies = dependencies;
+            region.lines = Some(lines);
+            region.line_count = line_count;
+            region.line_origin_ordinals = origin_ordinals;
+        }
     }
 
     pub(crate) fn record_paragraph_validation_miss(&mut self) {

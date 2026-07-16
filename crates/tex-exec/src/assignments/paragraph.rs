@@ -168,6 +168,7 @@ pub(crate) fn end_paragraph(nest: &mut ModeNest, stores: &mut Universe) -> Resul
         final_widow_penalty,
         final_widow_penalties,
         true,
+        None,
     )?;
     Ok(())
 }
@@ -189,19 +190,60 @@ fn end_paragraph_with_memo(
     } else {
         execution.pending_paragraph_memo = None;
     }
-    end_paragraph(nest, stores)
+    if nest.current_mode() != Mode::Horizontal {
+        execution.pending_paragraph_memo = None;
+        return end_paragraph(nest, stores);
+    }
+    if nest.current_list().is_empty() {
+        execution.pending_paragraph_memo = None;
+        return end_paragraph(nest, stores);
+    }
+    let final_widow_penalty = stores.int_param(IntParam::WIDOW_PENALTY);
+    let final_widow_penalties = stores.penalty_array(PenaltyArrayKind::Widow);
+    let _ = break_current_paragraph(
+        nest,
+        stores,
+        final_widow_penalty,
+        final_widow_penalties,
+        true,
+        Some(execution),
+    )?;
+    Ok(())
 }
 
 pub(crate) fn install_reused_paragraph_hlist(
     nest: &mut ModeNest,
     input: &mut InputStack,
     stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
     nodes: Vec<Node>,
+    finished: Option<(Vec<Node>, i32)>,
 ) -> Result<(), ExecError> {
     start_paragraph(nest, input, stores, true)?;
     let _ = nest.current_list_mut().take_nodes();
     nest.current_list_mut().append(nodes);
-    end_paragraph(nest, stores)
+    let Some((finished, line_count)) = finished else {
+        let final_widow_penalty = stores.int_param(IntParam::WIDOW_PENALTY);
+        let final_widow_penalties = stores.penalty_array(PenaltyArrayKind::Widow);
+        let _ = break_current_paragraph(
+            nest,
+            stores,
+            final_widow_penalty,
+            final_widow_penalties,
+            true,
+            Some(execution),
+        )?;
+        return Ok(());
+    };
+    let _ = nest.pop()?;
+    for node in finished {
+        append_node_to_current_list(nest, stores, node)?;
+    }
+    let prev_graf = nest.enclosing_vertical_prev_graf();
+    nest.current_list_mut()
+        .set_prev_graf(prev_graf.saturating_add(line_count));
+    reset_after_par(nest, stores);
+    build_page_if_outer_vertical(nest, stores)
 }
 
 pub(crate) struct ParagraphBreakResult {
@@ -229,6 +271,7 @@ pub(crate) fn interrupt_paragraph_for_display(
         final_widow_penalty,
         final_widow_penalties,
         false,
+        None,
     )
 }
 
@@ -271,6 +314,7 @@ fn break_current_paragraph(
     final_widow_penalty: i32,
     final_widow_penalties: Vec<i32>,
     reset_paragraph: bool,
+    mut memo: Option<&mut crate::ExecutionContext<'_>>,
 ) -> Result<ParagraphBreakResult, ExecError> {
     flush_pending_hchars(nest, stores)?;
     let active_directions = active_text_directions(nest.current_list().nodes());
@@ -321,6 +365,7 @@ fn break_current_paragraph(
     let mut materializer = LineMaterializer::new(decisions.nodes, decisions.breaks, post_params);
     let mut line_nodes = Vec::new();
     let mut migrated = Vec::new();
+    let mut finished_nodes = Vec::new();
     while let Some(mut broken) = materializer.materialize_next(stores, line_nodes) {
         super::hmode::reshape_open_type_runs(stores, &mut broken.nodes);
         if adjusts_spacing {
@@ -342,12 +387,17 @@ fn break_current_paragraph(
             .checked_add(1)
             .expect("paragraph line count exceeds i32");
         last_line = Some(line);
-        append_node_to_current_list(nest, stores, Node::HList(line))?;
+        let line_node = Node::HList(line);
+        finished_nodes.push(line_node.clone());
+        append_node_to_current_list(nest, stores, line_node)?;
         for node in migrated.drain(..) {
+            finished_nodes.push(node.clone());
             append_migrated_contribution(nest, stores, node);
         }
         if let Some(penalty) = broken.penalty_after {
-            append_vertical_contribution(nest, stores, Node::Penalty(penalty));
+            let penalty = Node::Penalty(penalty);
+            finished_nodes.push(penalty.clone());
+            append_vertical_contribution(nest, stores, penalty);
         }
         line_nodes = broken.nodes;
     }
@@ -357,6 +407,14 @@ fn break_current_paragraph(
             .checked_add(line_count)
             .expect("TeX prev_graf overflow"),
     );
+    if let Some(execution) = memo.take() {
+        crate::paragraph_memo::publish_finished_lines(
+            stores,
+            execution,
+            &finished_nodes,
+            line_count,
+        );
+    }
     if reset_paragraph {
         reset_after_par(nest, stores);
     }

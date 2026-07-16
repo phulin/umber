@@ -406,7 +406,9 @@ Prepared paragraph hlists are anchored as survivor graphs owned by exactly one
 accepted generation. These roots are deliberately independent of checkpoint
 rollback pins, so a fork may roll back to an earlier paragraph boundary and
 still import a later prior-generation result through the aggregate state
-facade. A hit validates stable consumed spans, semantic dependencies, the
+facade. Generation retention also preserves immutable glue content referenced
+by those graphs and remaps it into the scratch timeline during import. A hit
+validates stable consumed spans, semantic dependencies, the
 ordered redo log, detached effects, and the revision-relative ending input
 continuation before importing any nodes or replaying any mutation. Invalid or
 stale metadata leaves the live state untouched and runs the paragraph cold.
@@ -417,6 +419,18 @@ failed branches discard the speculative vector, while exact suffix convergence
 continues to use the still-retained prior generation. Paragraph results no
 longer occupy detached per-entry memo payloads, and a cold generation cannot
 hit entries that it is still recording.
+
+The accepted-generation result now has a second, dependency-tiered root for
+finished line boxes, migrating material, and interline penalties. Its explicit
+read set covers line dimensions and shape, scalar and e-TeX penalty arrays,
+line-breaking and packing parameters, font metrics and hyphen characters,
+language-local patterns/exceptions/saved codes, and the lccodes of paragraph
+characters. If that set validates, replay imports current-provenance finished
+lines and contributes them to the live vertical/page-builder boundary. If only
+that set fails, replay imports the prepared hlist and performs line breaking
+and materialization again. A front-end dependency, mutation, effect, input, or
+barrier failure remains a completely cold paragraph. Both hit tiers publish
+new generation-owned roots, so reuse remains available over later edits.
 
 The second implementation allows semantic redo and virtual effects. The third
 composes repeated command/expansion children beneath the paragraph trace node.

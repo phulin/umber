@@ -194,6 +194,9 @@ pub(crate) fn try_reuse_literal_paragraph(
         .nodes(list)
         .len()
         .saturating_mul(std::mem::size_of::<tex_state::node::Node>());
+    let imported_lines = entry
+        .lines
+        .and_then(|lines| stores.import_retained_paragraph_result(lines));
     let _ = stores.finish_pure_paragraph_recording();
     replay_mutations(stores, &entry.mutations);
     replay_effects(stores, &entry.effects);
@@ -203,11 +206,56 @@ pub(crate) fn try_reuse_literal_paragraph(
         .map(|node| node.to_owned())
         .collect();
     rebind_literal_origins(&mut nodes, &traced, &entry.origin_ordinals);
+    let lines_valid = imported_lines.is_some()
+        && stores.validate_dependencies(&mut entry.break_dependencies, |key| {
+            stores
+                .semantic_dependency_value(key)
+                .unwrap_or(tex_state::DependencyValue::Absent)
+        });
+    let mut lines = imported_lines.map(|list| {
+        stores
+            .nodes(list)
+            .into_iter()
+            .map(|node| node.to_owned())
+            .collect::<Vec<_>>()
+    });
+    if lines_valid {
+        rebind_graph_origins(
+            stores,
+            lines.as_mut().expect("validated imported lines"),
+            &traced,
+            &entry.line_origin_ordinals,
+        );
+    }
     execution.abandon_cold_paragraph_recording();
-    execution.pending_paragraph_memo = None;
-    crate::assignments::install_reused_paragraph_hlist(nest, input, stores, nodes)?;
+    entry.consumed_spans = current_spans;
+    entry.ending_input = current_input;
+    entry.hlist = Some(stores.retain_paragraph_result(list));
+    entry.lines = if lines_valid {
+        let current_lines = stores.freeze_node_list(lines.as_deref().unwrap_or_default());
+        Some(stores.retain_paragraph_result(current_lines))
+    } else {
+        None
+    };
+    let line_count = entry.line_count;
+    let mutation_count = entry.mutations.len();
+    stores.record_paragraph_region(entry);
+    execution.pending_paragraph_memo =
+        (!lines_valid).then(|| crate::executor::PendingParagraphMemo {
+            key,
+            trace_origins: traced.iter().map(|token| token.origin()).collect(),
+        });
+    crate::assignments::install_reused_paragraph_hlist(
+        nest,
+        input,
+        stores,
+        execution,
+        nodes,
+        lines_valid.then_some((lines.expect("validated imported lines"), line_count)),
+    )?;
     stats.delivered_tokens = stats.delivered_tokens.saturating_add(traced.len());
-    stores.record_pure_paragraph_hit(traced.len(), entry.mutations.len(), imported_bytes);
+    stores.record_pure_paragraph_hit(traced.len(), mutation_count, imported_bytes);
+    stores.record_pure_paragraph_line_hit(!lines_valid);
     Ok(true)
 }
 
@@ -387,6 +435,78 @@ fn rebind_literal_origins(
     }
 }
 
+fn rebind_graph_origins(
+    stores: &mut Universe,
+    nodes: &mut [tex_state::node::Node],
+    traced: &[TracedTokenWord],
+    ordinals: &[u32],
+) {
+    let mut ordinals = ordinals.iter().copied();
+    rebind_graph_origins_inner(stores, nodes, traced, &mut ordinals);
+}
+
+fn rebind_graph_origins_inner(
+    stores: &mut Universe,
+    nodes: &mut [tex_state::node::Node],
+    traced: &[TracedTokenWord],
+    ordinals: &mut impl Iterator<Item = u32>,
+) {
+    let origin_at = |ordinal: u32| {
+        usize::try_from(ordinal)
+            .ok()
+            .and_then(|ordinal| traced.get(ordinal))
+            .map_or(tex_state::token::OriginId::UNKNOWN, |token| token.origin())
+    };
+    let rebuild = |stores: &mut Universe,
+                   id: tex_state::ids::NodeListId,
+                   traced: &[TracedTokenWord],
+                   ordinals: &mut _| {
+        let mut children = stores.nodes(id).to_vec();
+        rebind_graph_origins_inner(stores, &mut children, traced, ordinals);
+        stores.freeze_node_list(&children)
+    };
+    for node in nodes {
+        match node {
+            tex_state::node::Node::Char { origin, .. } => {
+                *origin = origin_at(ordinals.next().unwrap_or(u32::MAX));
+            }
+            tex_state::node::Node::Lig { orig, origins, .. } => {
+                origins.clear();
+                origins.extend(
+                    (0..orig.len()).map(|_| origin_at(ordinals.next().unwrap_or(u32::MAX))),
+                );
+            }
+            tex_state::node::Node::HList(box_node) | tex_state::node::Node::VList(box_node) => {
+                box_node.children = rebuild(stores, box_node.children, traced, ordinals);
+            }
+            tex_state::node::Node::Glue {
+                leader:
+                    Some(
+                        tex_state::node::LeaderPayload::HList(box_node)
+                        | tex_state::node::LeaderPayload::VList(box_node),
+                    ),
+                ..
+            } => {
+                box_node.children = rebuild(stores, box_node.children, traced, ordinals);
+            }
+            tex_state::node::Node::Unset(unset) => {
+                unset.children = rebuild(stores, unset.children, traced, ordinals);
+            }
+            tex_state::node::Node::Disc {
+                pre, post, replace, ..
+            } => {
+                *pre = rebuild(stores, *pre, traced, ordinals);
+                *post = rebuild(stores, *post, traced, ordinals);
+                *replace = rebuild(stores, *replace, traced, ordinals);
+            }
+            tex_state::node::Node::Ins { content, .. } | tex_state::node::Node::Adjust(content) => {
+                *content = rebuild(stores, *content, traced, ordinals);
+            }
+            _ => {}
+        }
+    }
+}
+
 pub(crate) fn publish_prepared_hlist(
     input: &mut InputStack,
     stores: &mut Universe,
@@ -394,7 +514,6 @@ pub(crate) fn publish_prepared_hlist(
     nodes: &[tex_state::node::Node],
 ) {
     publish_recorded_region(input, stores, execution, nodes);
-    execution.pending_paragraph_memo = None;
 }
 
 fn publish_recorded_region(
@@ -538,7 +657,15 @@ fn publish_recorded_region(
         barriers: recording.barriers.into_iter().collect(),
         hlist,
         origin_ordinals,
+        break_dependencies: Vec::new(),
+        lines: None,
+        line_count: 0,
+        line_origin_ordinals: Vec::new(),
     });
+    if eligible && execution.pending_paragraph_memo.is_none() {
+        execution.pending_paragraph_memo =
+            Some(crate::executor::PendingParagraphMemo { key, trace_origins });
+    }
 }
 
 fn paragraph_origin_ordinals(
@@ -563,6 +690,204 @@ fn paragraph_origin_ordinals(
         }
     }
     ordinals
+}
+
+pub(crate) fn publish_finished_lines(
+    stores: &mut Universe,
+    execution: &mut ExecutionContext<'_>,
+    nodes: &[tex_state::node::Node],
+    line_count: i32,
+) {
+    let Some(pending) = execution.pending_paragraph_memo.take() else {
+        return;
+    };
+    let Some(dependencies) = paragraph_break_dependencies(stores, nodes) else {
+        return;
+    };
+    let list = stores.freeze_node_list(nodes);
+    let retained = stores.retain_paragraph_result(list);
+    let ordinals = paragraph_graph_origin_ordinals(stores, nodes, &pending.trace_origins);
+    stores.finish_recorded_paragraph_lines(dependencies, retained, line_count, ordinals);
+}
+
+fn paragraph_graph_origin_ordinals(
+    stores: &Universe,
+    nodes: &[tex_state::node::Node],
+    trace_origins: &[tex_state::token::OriginId],
+) -> Vec<u32> {
+    fn visit(
+        stores: &Universe,
+        nodes: &[tex_state::node::Node],
+        trace_origins: &[tex_state::token::OriginId],
+        out: &mut Vec<u32>,
+    ) {
+        let ordinal = |origin| {
+            trace_origins
+                .iter()
+                .position(|candidate| *candidate == origin)
+                .and_then(|index| u32::try_from(index).ok())
+                .unwrap_or(u32::MAX)
+        };
+        let child = |id, out: &mut Vec<u32>| {
+            let nodes = stores.nodes(id).to_vec();
+            visit(stores, &nodes, trace_origins, out);
+        };
+        for node in nodes {
+            match node {
+                tex_state::node::Node::Char { origin, .. } => out.push(ordinal(*origin)),
+                tex_state::node::Node::Lig { origins, .. } => {
+                    out.extend(origins.iter().map(|origin| ordinal(*origin)));
+                }
+                tex_state::node::Node::HList(box_node) | tex_state::node::Node::VList(box_node) => {
+                    child(box_node.children, out)
+                }
+                tex_state::node::Node::Glue {
+                    leader:
+                        Some(
+                            tex_state::node::LeaderPayload::HList(box_node)
+                            | tex_state::node::LeaderPayload::VList(box_node),
+                        ),
+                    ..
+                } => child(box_node.children, out),
+                tex_state::node::Node::Unset(unset) => child(unset.children, out),
+                tex_state::node::Node::Disc {
+                    pre, post, replace, ..
+                } => {
+                    child(*pre, out);
+                    child(*post, out);
+                    child(*replace, out);
+                }
+                tex_state::node::Node::Ins { content, .. }
+                | tex_state::node::Node::Adjust(content) => child(*content, out),
+                _ => {}
+            }
+        }
+    }
+    let mut out = Vec::new();
+    visit(stores, nodes, trace_origins, &mut out);
+    out
+}
+
+fn paragraph_break_dependencies(
+    stores: &mut Universe,
+    nodes: &[tex_state::node::Node],
+) -> Option<Vec<tex_state::ObservedDependency>> {
+    use tex_state::{
+        DependencyBank as Bank, DependencyCodeTable as Code, DependencyEngineField as Engine,
+        DependencyFontField as Font, DependencyKey as Key,
+    };
+
+    let mut keys = Vec::new();
+    for param in [
+        IntParam::PRETOLERANCE,
+        IntParam::TOLERANCE,
+        IntParam::LINE_PENALTY,
+        IntParam::HYPHEN_PENALTY,
+        IntParam::EX_HYPHEN_PENALTY,
+        IntParam::ADJ_DEMERITS,
+        IntParam::DOUBLE_HYPHEN_DEMERITS,
+        IntParam::FINAL_HYPHEN_DEMERITS,
+        IntParam::LAST_LINE_FIT,
+        IntParam::LOOSENESS,
+        IntParam::INTERLINE_PENALTY,
+        IntParam::CLUB_PENALTY,
+        IntParam::WIDOW_PENALTY,
+        IntParam::BROKEN_PENALTY,
+        IntParam::HBADNESS,
+        IntParam::LANGUAGE,
+        IntParam::LEFT_HYPHEN_MIN,
+        IntParam::RIGHT_HYPHEN_MIN,
+        IntParam::UC_HYPH,
+    ] {
+        keys.push(Key::Cell {
+            bank: Bank::IntParam,
+            index: u32::from(param.raw()),
+        });
+    }
+    for param in [
+        DimenParam::EMERGENCY_STRETCH,
+        DimenParam::H_SIZE,
+        DimenParam::HANG_INDENT,
+        DimenParam::HFUZZ,
+        DimenParam::OVERFULL_RULE,
+    ] {
+        keys.push(Key::Cell {
+            bank: Bank::DimenParam,
+            index: u32::from(param.raw()),
+        });
+    }
+    for param in [
+        GlueParam::LEFT_SKIP,
+        GlueParam::RIGHT_SKIP,
+        GlueParam::PAR_FILL_SKIP,
+    ] {
+        keys.push(Key::Cell {
+            bank: Bank::GlueParam,
+            index: u32::from(param.raw()),
+        });
+    }
+    keys.push(Key::Engine(Engine::ParShape));
+    keys.push(Key::Engine(Engine::PenaltyArrays));
+
+    let mut languages = vec![0_u8];
+    let mut fonts = Vec::new();
+    let mut chars = Vec::new();
+    for node in nodes {
+        match node {
+            tex_state::node::Node::Char { font, ch, .. } => {
+                fonts.push(*font);
+                chars.push(*ch);
+            }
+            tex_state::node::Node::Lig { font, orig, .. } => {
+                fonts.push(*font);
+                chars.extend(orig.iter().copied());
+            }
+            tex_state::node::Node::Whatsit(tex_state::node::Whatsit::Language {
+                language, ..
+            }) => languages.push(*language),
+            _ => {}
+        }
+    }
+    fonts.sort_unstable_by_key(|font| font.raw());
+    fonts.dedup();
+    for font in fonts {
+        keys.push(Key::Font {
+            field: Font::Metrics,
+            font: font.raw(),
+            index: 0,
+        });
+        keys.push(Key::Font {
+            field: Font::HyphenChar,
+            font: font.raw(),
+            index: 0,
+        });
+    }
+    chars.sort_unstable();
+    chars.dedup();
+    for ch in chars {
+        keys.push(Key::Code {
+            table: Code::Lccode,
+            scalar: ch as u32,
+        });
+    }
+    languages.sort_unstable();
+    languages.dedup();
+    for language in languages {
+        keys.push(Key::HyphenationPatterns(language));
+        keys.push(Key::HyphenationExceptions(language));
+        keys.push(Key::HyphenationCodes(language));
+    }
+    keys.sort_unstable();
+    keys.dedup();
+    keys.into_iter()
+        .map(|key| {
+            Some(tex_state::ObservedDependency {
+                key,
+                changed_at: stores.track_dependency(key),
+                value: stores.semantic_dependency_value(key)?,
+            })
+        })
+        .collect()
 }
 
 fn detach_effects(records: &[EffectRecord]) -> Option<Vec<DetachedVirtualEffect>> {
