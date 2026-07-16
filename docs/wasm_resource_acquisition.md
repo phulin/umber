@@ -71,7 +71,9 @@ pub enum SessionAdvance {
 
 pub enum ResourceResponse {
     File(ResolvedFile),
+    FileUnavailable(FileRequestKey),
     Font(ResolvedFont),
+    FontUnavailable(FontRequestKey),
 }
 ```
 
@@ -79,6 +81,11 @@ Requests are sorted and deduplicated by complete typed identity and contain no
 URLs. Responses repeat their request keys, may arrive in any order, and may
 satisfy only part of a batch. Another `advance` without any newly satisfied
 required request fails with a typed no-progress error.
+An unavailable response satisfies its required key for progress purposes and
+stores an immutable negative binding. On the next attempt the resolver reports
+the ordinary TeX missing-file or missing-font condition without requesting the
+key again. Duplicate negative answers are idempotent, while changing a key
+between bytes and unavailable is a typed conflict.
 
 File identity and registration are implemented in `umber-vfs`. Every file key
 contains a `domain`, `kind`, and normalized relative `name`; the TypeScript
@@ -148,6 +155,8 @@ not the engine protocol. For each batch it:
 The WASM adapter parses the wire representation into the same Rust request
 keys and responses used by native callers. `umber-vfs` owns file path,
 identity, duplicate, conflict, limit, partial-batch, and progress semantics.
+The discriminated wire union uses `file-unavailable` and `font-unavailable` for
+negative answers; those variants carry only their complete request key.
 The facade therefore has no file-kind table, path canonicalizer, duplicate
 map, or resource-byte counter that could drift from native behavior.
 
@@ -236,7 +245,7 @@ authenticate a malicious catalog.
 
 Required typed failures include:
 
-- unknown or unavailable resource request;
+- unexpected resource responses and conflicting availability bindings;
 - HTTP, CORS, authentication, and abort failures reported by the client;
 - declared-length or object-digest mismatch;
 - resource and aggregate limit violations;

@@ -691,6 +691,78 @@ fn font_batches_accept_partial_unordered_responses_and_reject_conflicts() {
 }
 
 #[test]
+fn unavailable_openin_retries_into_tex_missing_file_semantics() {
+    let mut session = session(
+        "\\openin0=optional.cfg \\ifeof0 \\message{OPTIONAL-MISSING}\\else \\errmessage{unexpected optional file}\\fi \\end",
+    );
+    let missing = requests(session.compile_attempt());
+    assert_eq!(missing.len(), 1);
+    let key = missing[0].key().clone();
+    session
+        .provide_resources(vec![ResourceResponse::FileUnavailable(key.clone())])
+        .expect("negative file response");
+    session
+        .provide_resources(vec![ResourceResponse::FileUnavailable(key.clone())])
+        .expect("duplicate negative file response");
+    assert!(matches!(
+        session.provide_resources(vec![ResourceResponse::File(ResolvedFile {
+            request: key,
+            virtual_path: "/texlive/optional.cfg".to_owned(),
+            bytes: Vec::new(),
+            expected_digest: None,
+        })]),
+        Err(CompileError::ConflictingResolvedBinding(_))
+    ));
+    let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+        panic!("negative response should allow optional probe to complete");
+    };
+    assert!(
+        output
+            .terminal
+            .windows(b"OPTIONAL-MISSING".len())
+            .any(|window| window == b"OPTIONAL-MISSING")
+    );
+}
+
+#[test]
+fn unavailable_font_answers_are_idempotent_and_conflict_with_bytes() {
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        html: true,
+        ..SessionOptions::default()
+    })
+    .expect("HTML session");
+    session
+        .add_user_file("main.tex", b"\\font\\tenrm=cmr10\\relax \\end".to_vec())
+        .expect("main source");
+    let missing = resources(session.compile_attempt());
+    let font = missing
+        .iter()
+        .find_map(|request| match request {
+            ResourceRequest::Font(request) => Some(request.clone()),
+            ResourceRequest::File(_) => None,
+        })
+        .expect("font request");
+    session
+        .provide_resources(vec![ResourceResponse::FontUnavailable(font.key.clone())])
+        .expect("negative font response");
+    session
+        .provide_resources(vec![ResourceResponse::FontUnavailable(font.key.clone())])
+        .expect("duplicate negative font response");
+    assert!(matches!(
+        session.provide_resources(vec![ResourceResponse::Font(cmu_response(font))]),
+        Err(CompileError::ConflictingResolvedBinding(_))
+    ));
+    if let CompileAttemptResult::NeedResources(resources) = session.compile_attempt() {
+        assert!(
+            resources
+                .required
+                .iter()
+                .all(|request| matches!(request, ResourceRequest::File(_)))
+        );
+    }
+}
+
+#[test]
 fn invalid_mixed_batch_publishes_nothing() {
     let mut session = VirtualCompileSession::new(SessionOptions {
         html: true,

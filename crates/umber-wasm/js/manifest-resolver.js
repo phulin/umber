@@ -105,15 +105,10 @@ export class HttpManifestResolver {
 			: options;
 		throwIfAborted(signal);
 		const selection = selectManifestJobs(this.manifest, requests);
-		const missing = selection.misses[0];
-		if (missing !== undefined) {
-			throw new ManifestResolverError(
-				"missing-key",
-				missing.type === "font"
-					? `manifest has no font entry for ${missing.manifestKey}`
-					: `manifest has no entry for ${missing.manifestKey}`,
-			);
-		}
+		const unavailable = selection.misses.map(({ type, request }) => ({
+			...request,
+			type: `${type}-unavailable`,
+		}));
 		const jobs = selection.jobs;
 		validateJobBudget(jobs, this.maxFiles, this.maxBytes);
 		const groups = groupByObject(jobs);
@@ -158,8 +153,10 @@ export class HttpManifestResolver {
 		);
 		await Promise.all(workers);
 		throwIfAborted(signal);
-		return jobs.flatMap((job) =>
-			results.has(job.key) ? [results.get(job.key)] : [],
+		return unavailable.concat(
+			jobs.flatMap((job) =>
+				results.has(job.key) ? [results.get(job.key)] : [],
+			),
 		);
 	}
 

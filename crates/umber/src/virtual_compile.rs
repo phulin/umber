@@ -39,7 +39,9 @@ pub enum ResourceRequest {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResourceResponse {
     File(ResolvedFile),
+    FileUnavailable(FileRequestKey),
     Font(ResolvedFont),
+    FontUnavailable(FontRequestKey),
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -428,6 +430,7 @@ pub struct VirtualCompileSession {
     awaiting: Option<BTreeSet<ResourceRequestKey>>,
     font_requests: BTreeMap<FontRequestKey, FontRequest>,
     resolved_fonts: BTreeMap<FontRequestKey, OpenTypeFont>,
+    unavailable_fonts: BTreeSet<FontRequestKey>,
     font_responses: BTreeMap<FontRequestKey, FontResponseFingerprint>,
     accepted_font_containers: AcceptedFontContainers,
     html: bool,
@@ -532,6 +535,7 @@ impl VirtualCompileSession {
             awaiting: None,
             font_requests: BTreeMap::new(),
             resolved_fonts: BTreeMap::new(),
+            unavailable_fonts: BTreeSet::new(),
             font_responses: BTreeMap::new(),
             accepted_font_containers: options.accepted_font_containers,
             html: options.html,
@@ -746,9 +750,12 @@ impl VirtualCompileSession {
     ) -> Result<(), CompileError> {
         let mut staged_files = self.files.clone();
         let mut staged_fonts = self.resolved_fonts.clone();
+        let mut staged_unavailable_fonts = self.unavailable_fonts.clone();
         let mut staged_font_responses = self.font_responses.clone();
         let original_files = std::mem::replace(&mut self.files, staged_files);
         let original_fonts = std::mem::replace(&mut self.resolved_fonts, staged_fonts);
+        let original_unavailable_fonts =
+            std::mem::replace(&mut self.unavailable_fonts, staged_unavailable_fonts);
         let original_font_responses =
             std::mem::replace(&mut self.font_responses, staged_font_responses);
         let original_font_cached_bytes = self.font_cached_bytes;
@@ -756,14 +763,29 @@ impl VirtualCompileSession {
             .into_iter()
             .try_for_each(|response| match response {
                 ResourceResponse::File(file) => self.provide_file_inner(file, true, false),
+                ResourceResponse::FileUnavailable(request) => self
+                    .files
+                    .provision_unavailable(request)
+                    .map(|_| ())
+                    .map_err(map_provision),
                 ResourceResponse::Font(font) => self.provide_resolved_font(font),
+                ResourceResponse::FontUnavailable(request) => {
+                    self.provide_unavailable_font(request)
+                }
             });
         if result.is_err() {
             staged_files = std::mem::replace(&mut self.files, original_files);
             staged_fonts = std::mem::replace(&mut self.resolved_fonts, original_fonts);
+            staged_unavailable_fonts =
+                std::mem::replace(&mut self.unavailable_fonts, original_unavailable_fonts);
             staged_font_responses =
                 std::mem::replace(&mut self.font_responses, original_font_responses);
-            drop((staged_files, staged_fonts, staged_font_responses));
+            drop((
+                staged_files,
+                staged_fonts,
+                staged_unavailable_fonts,
+                staged_font_responses,
+            ));
             self.font_cached_bytes = original_font_cached_bytes;
         } else if let Some(session) = &mut self.incremental {
             for (request, file) in self.files.files() {
@@ -782,6 +804,11 @@ impl VirtualCompileSession {
         let request = self.font_requests.get(&key).ok_or_else(|| {
             CompileError::UnexpectedResourceResponse(key.logical_name().to_owned())
         })?;
+        if self.unavailable_fonts.contains(&key) {
+            return Err(CompileError::ConflictingResolvedBinding(
+                key.logical_name().to_owned(),
+            ));
+        }
         let fingerprint = FontResponseFingerprint {
             container: response.container,
             object: tex_fonts::FontObjectIdentity::for_bytes(&response.bytes),
@@ -819,6 +846,24 @@ impl VirtualCompileSession {
             .font_cached_bytes
             .checked_add(font_bytes)
             .expect("combined cache limit checked overflow");
+        Ok(())
+    }
+
+    fn provide_unavailable_font(&mut self, key: FontRequestKey) -> Result<(), CompileError> {
+        if self.unavailable_fonts.contains(&key) {
+            return Ok(());
+        }
+        if self.resolved_fonts.contains_key(&key) {
+            return Err(CompileError::ConflictingResolvedBinding(
+                key.logical_name().to_owned(),
+            ));
+        }
+        if !self.font_requests.contains_key(&key) {
+            return Err(CompileError::UnexpectedResourceResponse(
+                key.logical_name().to_owned(),
+            ));
+        }
+        self.unavailable_fonts.insert(key);
         Ok(())
     }
 
@@ -879,9 +924,12 @@ impl VirtualCompileSession {
             let progressed = awaiting.iter().any(|key| match key {
                 ResourceRequestKey::File(key) => {
                     self.files.get(key).is_some()
+                        || self.files.is_unavailable(key)
                         || user_path_for_key(key).is_ok_and(|path| self.files.contains_user(&path))
                 }
-                ResourceRequestKey::Font(key) => self.resolved_fonts.contains_key(key),
+                ResourceRequestKey::Font(key) => {
+                    self.resolved_fonts.contains_key(key) || self.unavailable_fonts.contains(key)
+                }
             });
             if !progressed {
                 if self.accepted_output.is_some() {
@@ -957,6 +1005,10 @@ impl VirtualCompileSession {
             .resolved_paths()
             .map(|(key, path)| (key.clone(), path.clone()))
             .collect::<BTreeMap<_, _>>();
+        let unavailable_files = pending_files
+            .unavailable_keys()
+            .cloned()
+            .collect::<BTreeSet<_>>();
         let mut build =
             pending_files.begin_build(BuildPlan::new(BuildId::new(u64::from(self.attempts))));
         let mut stage = build
@@ -966,7 +1018,9 @@ impl VirtualCompileSession {
         let mut resolvers = VirtualRunResolvers::new(
             &snapshot,
             &resolved_paths,
+            &unavailable_files,
             &self.resolved_fonts,
+            &self.unavailable_fonts,
             self.accepted_font_containers,
             self.html,
         );
@@ -1178,6 +1232,7 @@ impl VirtualCompileSession {
         self.files.clear();
         self.files.clear_generated_outputs();
         self.resolved_fonts.clear();
+        self.unavailable_fonts.clear();
         self.font_responses.clear();
         self.font_requests.clear();
         self.font_cached_bytes = 0;
@@ -1382,6 +1437,9 @@ fn map_provision(error: ProvisionError) -> CompileError {
     match error {
         ProvisionError::Limit(error) => map_vfs_limit(error),
         ProvisionError::Conflict { request, .. } => {
+            CompileError::ConflictingResolvedBinding(request.name().to_owned())
+        }
+        ProvisionError::AvailabilityConflict { request } => {
             CompileError::ConflictingResolvedBinding(request.name().to_owned())
         }
         ProvisionError::PathConflict { path, .. } => {

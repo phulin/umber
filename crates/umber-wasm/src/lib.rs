@@ -40,6 +40,7 @@ export interface FontRequest extends FontRequestKey {
 export type ResourceRequest = FileRequest | FontRequest;
 export type ResourceResponse =
   | (FileRequestKey & { type: "file"; virtualPath: string; bytes: Uint8Array; expectedContentId?: string })
+  | (FileRequestKey & { type: "file-unavailable" })
   | (FontRequestKey & {
       type: "font";
       container: "woff2";
@@ -47,7 +48,8 @@ export type ResourceResponse =
       objectSha256?: string;
       programIdentity?: string;
       provenance?: string;
-    });
+    })
+  | (FontRequestKey & { type: "font-unavailable" });
 
 export interface SessionLimits {
   attempts: number;

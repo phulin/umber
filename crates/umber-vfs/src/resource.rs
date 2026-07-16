@@ -326,6 +326,9 @@ pub enum ProvisionError {
         existing: FileContentId,
         incoming: FileContentId,
     },
+    AvailabilityConflict {
+        request: FileRequestKey,
+    },
     PathConflict {
         path: Box<VirtualPath>,
         existing_request: Box<FileRequestKey>,
@@ -366,6 +369,11 @@ impl fmt::Display for ProvisionError {
                 "resolved request {} was rebound to different content",
                 request.name()
             ),
+            Self::AvailabilityConflict { request } => write!(
+                f,
+                "resolved request {} was rebound between available and unavailable",
+                request.name()
+            ),
             Self::PathConflict { path, .. } => write!(
                 f,
                 "distribution path {path} is already bound to different content"
@@ -402,6 +410,7 @@ pub struct FileProvisioner {
     limits: VfsLimits,
     storage: LayeredFileStorage,
     files: BTreeMap<FileRequestKey, VirtualPath>,
+    unavailable: BTreeSet<FileRequestKey>,
     paths: BTreeMap<VirtualPath, FileRequestKey>,
     user_bytes: usize,
     resolved_bytes: usize,
@@ -416,6 +425,7 @@ impl FileProvisioner {
             limits: limits.validate()?,
             storage: LayeredFileStorage::new(),
             files: BTreeMap::new(),
+            unavailable: BTreeSet::new(),
             paths: BTreeMap::new(),
             user_bytes: 0,
             resolved_bytes: 0,
@@ -471,6 +481,11 @@ impl FileProvisioner {
         self.files.iter()
     }
 
+    /// Enumerates request keys authoritatively bound as absent.
+    pub fn unavailable_keys(&self) -> impl Iterator<Item = &FileRequestKey> {
+        self.unavailable.iter()
+    }
+
     #[must_use]
     pub fn user_file_count(&self) -> usize {
         self.storage.layer(LayerKind::User).len()
@@ -493,6 +508,7 @@ impl FileProvisioner {
             .required
             .iter()
             .filter(|key| !self.files.contains_key(*key))
+            .filter(|key| !self.unavailable.contains(*key))
             .count();
     }
 
@@ -502,6 +518,29 @@ impl FileProvisioner {
         response: ResolvedFile,
     ) -> Result<ProvisionOutcome, ProvisionError> {
         self.provision_inner(response, true)
+    }
+
+    /// Binds an outstanding request to an immutable absent marker.
+    pub fn provision_unavailable(
+        &mut self,
+        request: FileRequestKey,
+    ) -> Result<ProvisionOutcome, ProvisionError> {
+        if self.unavailable.contains(&request) {
+            return Ok(ProvisionOutcome::AlreadyPresent);
+        }
+        if self.files.contains_key(&request) {
+            return Err(ProvisionError::AvailabilityConflict { request });
+        }
+        self.require_expected(&request)?;
+        self.limits.check(
+            VfsLimitKind::ResolvedFiles,
+            self.files
+                .len()
+                .saturating_add(self.unavailable.len())
+                .saturating_add(1),
+        )?;
+        self.unavailable.insert(request);
+        Ok(ProvisionOutcome::Inserted)
     }
 
     /// Preserves the explicit native preload API while applying all generic checks.
@@ -564,21 +603,20 @@ impl FileProvisioner {
                 incoming: content_id,
             });
         }
-        if require_expected && !self.expected.contains(&response.request) {
-            if let Some(expected) = self.expected.iter().find(|expected| {
-                expected.domain == response.request.domain
-                    && expected.normalized_name == response.request.normalized_name
-            }) {
-                return Err(ProvisionError::KindMismatch {
-                    expected: expected.clone(),
-                    actual: response.request,
-                });
-            }
-            return Err(ProvisionError::UnexpectedRequest(response.request));
+        if self.unavailable.contains(&response.request) {
+            return Err(ProvisionError::AvailabilityConflict {
+                request: response.request,
+            });
+        }
+        if require_expected {
+            self.require_expected(&response.request)?;
         }
         self.limits.check(
             VfsLimitKind::ResolvedFiles,
-            self.files.len().saturating_add(1),
+            self.files
+                .len()
+                .saturating_add(self.unavailable.len())
+                .saturating_add(1),
         )?;
         let shared = if let Some(existing_request) = self.paths.get(&path) {
             let existing = self
@@ -632,6 +670,7 @@ impl FileProvisioner {
             .required
             .iter()
             .filter(|key| !self.files.contains_key(*key))
+            .filter(|key| !self.unavailable.contains(*key))
             .count();
         if remaining == self.required_at_batch_start && remaining != 0 {
             return Err(RetryError::NoProgress);
@@ -644,6 +683,11 @@ impl FileProvisioner {
     pub fn get(&self, key: &FileRequestKey) -> Option<&VirtualFile> {
         let path = self.files.get(key)?;
         self.storage.layer(LayerKind::ResolvedResource).get(path)
+    }
+
+    #[must_use]
+    pub fn is_unavailable(&self, key: &FileRequestKey) -> bool {
+        self.unavailable.contains(key)
     }
 
     pub fn files(&self) -> impl Iterator<Item = (&FileRequestKey, &VirtualFile)> {
@@ -659,12 +703,12 @@ impl FileProvisioner {
 
     #[must_use]
     pub fn len(&self) -> usize {
-        self.files.len()
+        self.files.len() + self.unavailable.len()
     }
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.files.is_empty()
+        self.files.is_empty() && self.unavailable.is_empty()
     }
 
     #[must_use]
@@ -674,6 +718,7 @@ impl FileProvisioner {
 
     pub fn clear(&mut self) {
         self.files.clear();
+        self.unavailable.clear();
         self.paths.clear();
         self.storage.clear_layer(LayerKind::ResolvedResource);
         self.resolved_bytes = 0;
@@ -687,6 +732,21 @@ impl FileProvisioner {
     pub fn clear_generated_outputs(&mut self) {
         self.storage.clear_layer(LayerKind::AcceptedGenerated);
         self.storage.clear_layer(LayerKind::PendingGenerated);
+    }
+
+    fn require_expected(&self, request: &FileRequestKey) -> Result<(), ProvisionError> {
+        if self.expected.contains(request) {
+            return Ok(());
+        }
+        if let Some(expected) = self.expected.iter().find(|expected| {
+            expected.domain == request.domain && expected.normalized_name == request.normalized_name
+        }) {
+            return Err(ProvisionError::KindMismatch {
+                expected: expected.clone(),
+                actual: request.clone(),
+            });
+        }
+        Err(ProvisionError::UnexpectedRequest(request.clone()))
     }
 }
 

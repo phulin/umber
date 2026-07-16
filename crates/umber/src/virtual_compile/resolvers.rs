@@ -26,6 +26,7 @@ pub(super) struct VirtualRunResolvers<'a> {
 struct VirtualFileResolver<'a> {
     snapshot: &'a VfsSnapshot,
     resolved_paths: &'a BTreeMap<FileRequestKey, VirtualPath>,
+    unavailable: &'a BTreeSet<FileRequestKey>,
     misses: Vec<(u64, FileRequest)>,
     seen: BTreeSet<FileRequestKey>,
     fatal: Option<CompileError>,
@@ -35,21 +36,25 @@ impl<'a> VirtualRunResolvers<'a> {
     pub(super) fn new(
         snapshot: &'a VfsSnapshot,
         resolved_paths: &'a BTreeMap<FileRequestKey, VirtualPath>,
+        unavailable_files: &'a BTreeSet<FileRequestKey>,
         resolved_fonts: &'a BTreeMap<FontRequestKey, OpenTypeFont>,
+        unavailable_fonts: &'a BTreeSet<FontRequestKey>,
         accepted_font_containers: AcceptedFontContainers,
         require_opentype: bool,
     ) -> Self {
         Self {
-            input: VirtualFileResolver::new(snapshot, resolved_paths),
+            input: VirtualFileResolver::new(snapshot, resolved_paths, unavailable_files),
             font: VirtualFontResolver::new(
                 snapshot,
                 resolved_paths,
+                unavailable_files,
                 resolved_fonts,
+                unavailable_fonts,
                 accepted_font_containers,
                 require_opentype,
             ),
             image: VirtualImageResolver {
-                files: VirtualFileResolver::new(snapshot, resolved_paths),
+                files: VirtualFileResolver::new(snapshot, resolved_paths, unavailable_files),
             },
         }
     }
@@ -327,10 +332,12 @@ impl<'a> VirtualFileResolver<'a> {
     fn new(
         snapshot: &'a VfsSnapshot,
         resolved_paths: &'a BTreeMap<FileRequestKey, VirtualPath>,
+        unavailable: &'a BTreeSet<FileRequestKey>,
     ) -> Self {
         Self {
             snapshot,
             resolved_paths,
+            unavailable,
             misses: Vec::new(),
             seen: BTreeSet::new(),
             fatal: None,
@@ -378,6 +385,9 @@ impl<'a> VirtualFileResolver<'a> {
                         return Err(failure.to_string());
                     };
                     return self.read_snapshot(input, file);
+                }
+                if self.unavailable.contains(&key) {
+                    return Err(format!("{kind} file {original_name} is unavailable"));
                 }
                 if self.seen.insert(key.clone()) {
                     self.misses
@@ -441,14 +451,24 @@ impl InputResolver for VirtualFileResolver<'_> {
         name: &str,
         request_index: u64,
     ) -> Result<Option<FileContent>, String> {
+        if self.request_is_unavailable(FileKind::TexInput, name) {
+            return Ok(None);
+        }
         self.open(input, FileKind::TexInput, name, request_index)
             .map(Some)
+    }
+}
+
+impl VirtualFileResolver<'_> {
+    fn request_is_unavailable(&self, kind: FileKind, name: &str) -> bool {
+        matches!(RequestedFile::parse(kind, name), Ok(RequestedFile::Remote { key, .. }) if self.unavailable.contains(&key))
     }
 }
 
 struct VirtualFontResolver<'a> {
     files: VirtualFileResolver<'a>,
     resolved_fonts: &'a BTreeMap<FontRequestKey, OpenTypeFont>,
+    unavailable_fonts: &'a BTreeSet<FontRequestKey>,
     accepted_font_containers: AcceptedFontContainers,
     require_opentype: bool,
     font_misses: BTreeMap<FontRequestKey, FontRequest>,
@@ -458,13 +478,16 @@ impl<'a> VirtualFontResolver<'a> {
     fn new(
         snapshot: &'a VfsSnapshot,
         resolved_paths: &'a BTreeMap<FileRequestKey, VirtualPath>,
+        unavailable_files: &'a BTreeSet<FileRequestKey>,
         resolved_fonts: &'a BTreeMap<FontRequestKey, OpenTypeFont>,
+        unavailable_fonts: &'a BTreeSet<FontRequestKey>,
         accepted_font_containers: AcceptedFontContainers,
         require_opentype: bool,
     ) -> Self {
         Self {
-            files: VirtualFileResolver::new(snapshot, resolved_paths),
+            files: VirtualFileResolver::new(snapshot, resolved_paths, unavailable_files),
             resolved_fonts,
+            unavailable_fonts,
             accepted_font_containers,
             require_opentype,
             font_misses: BTreeMap::new(),
@@ -514,6 +537,9 @@ impl FontResolver for VirtualFontResolver<'_> {
         )
         .map_err(|error| error.to_string())?;
         let Some(font) = self.resolved_fonts.get(&key) else {
+            if self.unavailable_fonts.contains(&key) {
+                return Err(format!("OpenType font {logical_name} is unavailable"));
+            }
             self.font_misses.entry(key.clone()).or_insert(FontRequest {
                 key,
                 accepted_containers: self.accepted_font_containers,

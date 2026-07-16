@@ -148,8 +148,16 @@ pub(crate) fn parse_resource_responses(value: &JsValue) -> Result<Vec<ResourceRe
                         .map(|digest| parse_digest(&digest).map(FileContentId::from_identity_bytes))
                         .transpose()?,
                 })),
+                "file-unavailable" => Ok(ResourceResponse::FileUnavailable(parse_request_key(
+                    &response,
+                )?)),
                 "font" => Ok(ResourceResponse::Font(parse_resolved_font(&response)?)),
-                _ => Err(js_error("resource response type must be 'file' or 'font'")),
+                "font-unavailable" => Ok(ResourceResponse::FontUnavailable(
+                    parse_font_request_key(&response)?,
+                )),
+                _ => Err(js_error(
+                    "resource response type must be 'file', 'file-unavailable', 'font', or 'font-unavailable'",
+                )),
             }
         })
         .collect()

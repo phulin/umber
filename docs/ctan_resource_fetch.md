@@ -3,8 +3,9 @@
 Status: partially implemented, tracked by the `umber2-mbwq` epic. Builds on the
 completed VFS substrate ([umber_vfs.md](umber_vfs.md)) and resource session
 protocol ([wasm_resource_acquisition.md](wasm_resource_acquisition.md)). The
-shared manifest crate in phase 1 is implemented; host fetch, unavailable
-responses, CLI integration, and snapshot deployment remain planned.
+shared manifest crate and typed unavailable responses in phases 1 and 2 are
+implemented; host fetch, CLI integration, and snapshot deployment remain
+planned.
 
 ## Problem
 
@@ -231,10 +232,11 @@ Each phase is a `bd` issue under the `umber2-mbwq` epic (phase N is
    and deterministic job/miss selection. `tools/texlive-wasm-publish` uses it,
    and shared Rust/JavaScript fixtures cover round trips, transitive hints,
    cycles, duplicate requests, and typed file/font misses.
-2. **Unavailable responses.** Add `FileUnavailable`/`FontUnavailable`
-   through `umber-vfs`, the session, the WASM wire types, and the JS facade,
-   with idempotence, conflict, progress, and TeX missing-file-semantics
-   coverage (`\IfFileExists`, `\openin`, optional `.fd` probes).
+2. **Complete — unavailable responses.** `FileUnavailable`/`FontUnavailable`
+   flow through `umber-vfs`, the session, the WASM wire types, and the JS
+   facade. Immutable negative bindings provide idempotence, conflict, progress,
+   and TeX missing-file semantics, and web manifest misses now produce typed
+   negative responses instead of `missing-key` failures.
 3. **Native cache and fetcher.** Implement the content-addressed cache and
    blocking HTTP fetch layer with bounded concurrency, atomic writes,
    digest verification, and typed failures; contract-test against a local

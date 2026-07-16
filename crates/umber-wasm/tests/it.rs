@@ -461,6 +461,33 @@ fn resource_batches_use_rust_validation_and_retry_state() {
 }
 
 #[wasm_bindgen_test]
+fn unavailable_file_response_crosses_the_wire_and_counts_as_progress() {
+    let mut session = session("main.tex");
+    session
+        .add_user_file("main.tex", &bytes(b"\\input absent \\end"))
+        .expect("main source");
+    let missing = session.advance().expect("resource request");
+    let request = Array::from(&field(missing.as_ref(), "required")).get(0);
+    let unavailable = Object::new();
+    for field_name in ["domain", "kind", "name"] {
+        set(&unavailable, field_name, &field(&request, field_name));
+    }
+    set(&unavailable, "type", &JsValue::from_str("file-unavailable"));
+    session
+        .provide_resources(&Array::of1(&unavailable))
+        .expect("negative response");
+    session
+        .provide_resources(&Array::of1(&unavailable))
+        .expect("duplicate negative response");
+    let result = session.advance().expect("retry after negative response");
+    assert_eq!(string_field(result.as_ref(), "kind"), "error");
+    assert_ne!(
+        string_field(&field(result.as_ref(), "diagnostic"), "code"),
+        "no-progress"
+    );
+}
+
+#[wasm_bindgen_test]
 fn committed_plain_format_loads_and_rejects_incompatible_bytes() {
     assert_eq!(package_version(), env!("CARGO_PKG_VERSION"));
     assert_eq!(format_schema_version(), 8);

@@ -424,6 +424,59 @@ fn retry_requires_progress_on_required_requests_not_hints() {
 }
 
 #[test]
+fn unavailable_bindings_are_progress_idempotent_and_immutable() {
+    let required = key(FileKind::TexInput, "optional.cfg");
+    let batch = FileRequestBatch::new([FileRequest::new(required.clone(), "optional.cfg")], []);
+    let mut registry = FileProvisioner::new(VfsLimits::default()).expect("registry");
+    registry.expect(&batch);
+
+    assert_eq!(
+        registry
+            .provision_unavailable(required.clone())
+            .expect("negative response"),
+        ProvisionOutcome::Inserted
+    );
+    assert!(registry.is_unavailable(&required));
+    assert_eq!(registry.retry(), Ok(()));
+    assert_eq!(
+        registry
+            .provision_unavailable(required.clone())
+            .expect("duplicate negative response"),
+        ProvisionOutcome::AlreadyPresent
+    );
+    assert!(matches!(
+        registry.provision(response(
+            FileKind::TexInput,
+            "optional.cfg",
+            "/texlive/optional.cfg",
+            b"later",
+        )),
+        Err(ProvisionError::AvailabilityConflict { .. })
+    ));
+    assert_eq!(registry.resolved_bytes(), 0);
+}
+
+#[test]
+fn available_binding_rejects_later_unavailable_answer() {
+    let required = key(FileKind::TexInput, "present.tex");
+    let batch = FileRequestBatch::new([FileRequest::new(required.clone(), "present.tex")], []);
+    let mut registry = FileProvisioner::new(VfsLimits::default()).expect("registry");
+    registry.expect(&batch);
+    registry
+        .provision(response(
+            FileKind::TexInput,
+            "present.tex",
+            "/texlive/present.tex",
+            b"present",
+        ))
+        .expect("positive response");
+    assert!(matches!(
+        registry.provision_unavailable(required),
+        Err(ProvisionError::AvailabilityConflict { .. })
+    ));
+}
+
+#[test]
 fn an_invalid_batch_publishes_nothing() {
     let batch = FileRequestBatch::new(
         [

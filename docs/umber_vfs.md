@@ -41,6 +41,8 @@ distribution selection.
 - report missing resources as deterministic typed batches;
 - accept byte-identical duplicate provisioning idempotently and reject
   conflicting rebinding;
+- retain authoritative unavailable answers as immutable negative bindings so
+  optional probes reach the requesting engine's ordinary missing-file path;
 - use content identity for immutable bytes and cache keys;
 - enforce per-file, per-layer, transaction, and aggregate limits before
   publication;
@@ -295,6 +297,11 @@ pub struct ResolvedFile {
     pub bytes: Vec<u8>,
     pub expected_digest: Option<FileContentId>,
 }
+
+pub enum FileResourceResponse {
+    File(ResolvedFile),
+    FileUnavailable(FileRequestKey),
+}
 ```
 
 The vocabulary initially covers TeX inputs, TFM files, format images,
@@ -318,6 +325,11 @@ Registration validates:
 The VFS performs generic validation and stores the object only after the
 requesting subsystem accepts its structure. Re-registering the same request,
 path, and bytes is a no-op. Any different binding is a typed conflict.
+Registering `FileUnavailable` instead binds the request key to an absent marker
+in the resolved-resource layer. The marker has no path or bytes, consumes one
+resolved binding slot, and is retained across attempts and revisions. Repeating
+the same negative answer is a no-op; changing a key between available and
+unavailable is a typed conflict.
 
 `FileRequestBatch` stores outstanding requests in sorted sets, deduplicates by
 the complete domain/kind/name key, and lets a required request dominate the
@@ -326,6 +338,9 @@ atomically, retains identical duplicate registrations as no-ops, and exposes
 typed unexpected-request, kind, path, digest, conflict, path-conflict, limit,
 and no-progress failures. The combined compile session retains the existing
 `NeedResources` required-versus-hint model around this file-only boundary.
+Both positive and negative answers to outstanding required keys count as retry
+progress. Resolvers suppress new requests for negative keys and report the
+ordinary domain-level missing-file result instead.
 
 ## Root editor buffer
 

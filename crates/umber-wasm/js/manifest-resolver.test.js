@@ -141,6 +141,45 @@ test("fetches concurrently, deduplicates hashes, and binds every lookup key", as
 	assert.equal(downloads[0].bytes, downloads[1].bytes);
 });
 
+test("answers manifest file and font misses with typed unavailable responses", async () => {
+	const { manifest } = fixture();
+	let fetches = 0;
+	const resolver = new HttpManifestResolver(manifest, {
+		fetch() {
+			fetches += 1;
+		},
+		crypto: webcrypto,
+	});
+	const variations = [];
+	const features = [];
+	const responses = await resolver.resolve([
+		{ type: "file", domain: "tex", kind: "tex", name: "absent.cfg" },
+		{
+			type: "font",
+			logicalName: "absent-font",
+			faceIndex: 0,
+			variations,
+			features,
+		},
+	]);
+	assert.deepEqual(responses, [
+		{
+			type: "file-unavailable",
+			domain: "tex",
+			kind: "tex",
+			name: "absent.cfg",
+		},
+		{
+			type: "font-unavailable",
+			logicalName: "absent-font",
+			faceIndex: 0,
+			variations,
+			features,
+		},
+	]);
+	assert.equal(fetches, 0);
+});
+
 test("resolves an explicit application-manifest font binding", async () => {
 	const { manifest, bytes } = fixture();
 	const resolver = new HttpManifestResolver(manifest, {
