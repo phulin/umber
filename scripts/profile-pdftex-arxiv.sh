@@ -171,21 +171,22 @@ process_sample() {
   local archive="$ROOT/samples/$key.src"
   local directory="$ROOT/samples/$key"
   local result="$ROOT/results/$key"
+  mkdir -p "$result"
   rm -f "$result/summary.tsv"
   if [[ ! -f "$archive" ]]; then
     curl -L --fail --show-error --silent --retry 3 \
       -o "$archive" "https://export.arxiv.org/e-print/$id"
   fi
-  if [[ ! -d "$directory" ]]; then
-    unpack_source "$archive" "$directory"
-  fi
+  # Generated aux files can change the primitive set on a second run. Keep the
+  # downloaded archive, but profile a freshly extracted source tree every time.
+  rm -rf "$directory"
+  unpack_source "$archive" "$directory"
   local main
   main="$(entrypoint "$directory")"
   [[ -n "$main" ]] || {
     echo "no TeX entrypoint found for $id" >&2
     return
   }
-  mkdir -p "$result"
   set +e
   (
     cd "$(dirname "$main")"
