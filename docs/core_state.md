@@ -205,10 +205,16 @@ size; rollback cost is proportional to changed or newly allocated state.
 The strong canonical identity used for optional suffix adoption is derived
 later, not captured in every snapshot. Executor sinks request it only for a
 schedule-aligned boundary they will compare. Its store projection separates
-append-only interned content from mutable state and shares the immutable
-serialization cache across related generation forks. Environment cells also
-maintain a persistent deterministic Merkle treap keyed by canonical semantic
-cell identity. At a checkpoint, the existing mutation-journal slice identifies
+append-only interned content from mutable state. Names, token lists, macros,
+glue, and fonts contribute canonical leaf identities to per-store append-only
+prefix trees; watermark growth hashes only new leaves and their prefix roots.
+Loaded fonts retain their immutable strong identity at load, while the small
+rollback-coupled identifier and expansion projection is composed separately.
+The derived prefix caches are shared across related generation forks, validate
+allocator ancestry before extending, and fall back to canonical reconstruction
+after divergent rollback allocation. They are not semantic state. Environment
+cells also maintain a persistent deterministic Merkle treap keyed by canonical
+semantic cell identity. At a checkpoint, the existing mutation-journal slice identifies
 the distinct dirty cells; only those Merkle paths are replaced, and the root is
 retained in the store snapshot so rollback and generation forks restore it in
 O(1). A full environment walk seeds the root only when a fresh store or format

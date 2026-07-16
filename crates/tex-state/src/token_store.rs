@@ -217,6 +217,12 @@ impl Clone for TokenStore {
 }
 
 impl TokenStore {
+    pub(crate) fn retains_mark(&self, mark: TokenStoreMark) -> bool {
+        self.identities.retains(mark.identities)
+            && mark.spans as usize <= self.spans.len()
+            && mark.tokens as usize <= self.arena.len()
+    }
+
     /// Creates a token store containing the canonical empty list.
     #[must_use]
     pub(crate) fn new() -> Self {

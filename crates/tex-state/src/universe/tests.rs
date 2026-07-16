@@ -2577,6 +2577,44 @@ fn exact_snapshots_reuse_immutable_store_serialization_across_forks() {
 }
 
 #[test]
+fn exact_immutable_store_growth_hashes_only_new_append_entries() {
+    let mut universe = Universe::new();
+    let _ = universe.snapshot_with_exact_identity();
+    let before = universe.stores.testing_exact_immutable_leaves();
+
+    universe.intern("one-new-name");
+    let _ = universe.snapshot_with_exact_identity();
+
+    assert_eq!(
+        universe.stores.testing_exact_immutable_leaves(),
+        before + 1,
+        "one append must hash one leaf instead of recapturing every immutable store"
+    );
+}
+
+#[test]
+fn exact_immutable_store_root_survives_format_reconstruction() {
+    let mut original = Universe::new();
+    let name = original.intern("format-root-name");
+    original.intern_token_list(&[Token::Cs(name.symbol())]);
+    let expected = original
+        .snapshot_with_exact_identity()
+        .exact_store_identity
+        .expect("closed state has exact identity")
+        .0;
+    let format = original.dump_format().expect("format capture");
+
+    let mut restored = Universe::from_format(World::memory(), &format).expect("format restore");
+    let actual = restored
+        .snapshot_with_exact_identity()
+        .exact_store_identity
+        .expect("restored state has exact identity")
+        .0;
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
 fn snapshot_state_hash_ignores_content_intern_order() {
     let mut first = Universe::new();
     let first_zed = first.intern("z");

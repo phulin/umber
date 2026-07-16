@@ -227,6 +227,19 @@ impl IdentityAllocator {
         }
     }
 
+    /// Returns whether `mark` still names an exact live prefix of this
+    /// allocator. Derived append-only caches use this to distinguish ordinary
+    /// suffix growth from allocation after rollback or on another fork.
+    pub(crate) fn retains(&self, mark: IdentityMark) -> bool {
+        mark.len >= self.builtin_slots as usize
+            && mark.len <= self.slots.len()
+            && if mark.len == 0 {
+                mark.frontier.is_none()
+            } else {
+                self.slots.get(mark.len - 1).copied() == mark.frontier
+            }
+    }
+
     pub(crate) fn measurement_shape(&self) -> (usize, usize, usize) {
         (
             self.slots.len(),

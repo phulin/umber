@@ -205,6 +205,11 @@ impl Clone for MacroStore {
 }
 
 impl MacroStore {
+    pub(crate) fn retains_mark(&self, mark: MacroStoreMark) -> bool {
+        self.identities.retains(mark.identities)
+            && mark.definitions as usize <= self.definitions.len()
+    }
+
     #[must_use]
     pub(crate) fn new() -> Self {
         Self {

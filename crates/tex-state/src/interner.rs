@@ -159,6 +159,12 @@ impl Clone for Interner {
 }
 
 impl Interner {
+    pub(crate) fn retains_mark(&self, mark: InternerMark) -> bool {
+        self.identities.retains(mark.identities)
+            && mark.spans as usize <= self.spans.len()
+            && mark.bytes as usize <= self.arena.len()
+    }
+
     /// Creates an empty interner.
     #[must_use]
     pub(crate) fn new() -> Self {

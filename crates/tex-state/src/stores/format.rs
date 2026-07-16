@@ -168,7 +168,6 @@ struct StoreFormat {
     last_loaded_font: u32,
 }
 
-#[derive(Serialize)]
 struct ImmutableStoreIdentity {
     names: Vec<FormatName>,
     token_lists: Vec<Vec<FormatToken>>,
@@ -193,20 +192,202 @@ struct NodeSequenceIdentity {
     nodes: Vec<FormatNode>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ImmutableStoreMarks {
-    interner: usize,
-    tokens: u32,
-    macros: u32,
-    glue: u32,
-    fonts: (u32, u32, u32, u32),
+    interner: InternerMark,
+    tokens: TokenStoreMark,
+    macros: MacroStoreMark,
+    glue: GlueStoreMark,
+    fonts: FontStoreMark,
 }
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct ExactIdentityCache {
-    immutable: Option<(ImmutableStoreMarks, ContentHash)>,
+    marks: Option<ImmutableStoreMarks>,
+    names: AppendOnlyIdentityCache,
+    tokens: AppendOnlyIdentityCache,
+    macros: AppendOnlyIdentityCache,
+    glue: AppendOnlyIdentityCache,
+    fonts: AppendOnlyIdentityCache,
     #[cfg(test)]
     immutable_encodes: usize,
+    #[cfg(test)]
+    immutable_leaves: usize,
+}
+
+#[derive(Clone, Debug, Default)]
+struct AppendOnlyIdentityCache {
+    leaves: Vec<ContentHash>,
+    roots: Vec<ContentHash>,
+    logical_len: usize,
+}
+
+impl AppendOnlyIdentityCache {
+    fn update(
+        &mut self,
+        len: usize,
+        can_extend: bool,
+        mut leaf: impl FnMut(usize) -> Result<ContentHash, StoreFormatError>,
+    ) -> Result<(), StoreFormatError> {
+        if !can_extend || self.logical_len > len {
+            self.leaves.clear();
+            self.roots.clear();
+            self.logical_len = 0;
+        }
+        for raw in self.logical_len..len {
+            let identity = leaf(raw)?;
+            let previous = self.roots.last().copied().unwrap_or_default();
+            let mut framed = Vec::with_capacity(88);
+            framed.extend_from_slice(b"umber-exact-append-prefix-v1");
+            framed.extend_from_slice(&(raw as u64 + 1).to_le_bytes());
+            framed.extend_from_slice(&previous.bytes());
+            framed.extend_from_slice(&identity.bytes());
+            self.leaves.push(identity);
+            self.roots.push(ContentHash::from_bytes(&framed));
+        }
+        self.logical_len = len;
+        Ok(())
+    }
+
+    fn identity(&self) -> ContentHash {
+        self.roots
+            .get(self.logical_len.saturating_sub(1))
+            .copied()
+            .unwrap_or_else(|| ContentHash::from_bytes(b"umber-exact-append-empty-v1"))
+    }
+}
+
+fn exact_serialized_leaf<T: Serialize>(
+    domain: &[u8],
+    value: &T,
+) -> Result<ContentHash, StoreFormatError> {
+    let encoded =
+        bincode::serialize(value).map_err(|error| StoreFormatError::Codec(error.to_string()))?;
+    let mut framed = Vec::with_capacity(domain.len() + encoded.len());
+    framed.extend_from_slice(domain);
+    framed.extend_from_slice(&encoded);
+    Ok(ContentHash::from_bytes(&framed))
+}
+
+fn exact_name_leaf(stores: &Stores, raw: usize) -> Result<ContentHash, StoreFormatError> {
+    let symbol = stores
+        .interner
+        .symbol_at_slot(raw as u32)
+        .expect("exact name slot should be live");
+    exact_serialized_leaf(
+        b"umber-exact-name-v1",
+        &FormatName {
+            active: stores.interner.kind(symbol) == ControlSequenceKind::ActiveCharacter,
+            text: stores.interner.resolve(symbol).to_owned(),
+        },
+    )
+}
+
+fn exact_token_leaf(stores: &Stores, raw: usize) -> Result<ContentHash, StoreFormatError> {
+    let id = stores.resolve_stored_token_list(TokenListId::new(raw as u32));
+    let mut framed = Vec::new();
+    framed.extend_from_slice(b"umber-exact-token-list-v1");
+    framed.extend_from_slice(&(stores.tokens.get(id).len() as u64).to_le_bytes());
+    for &token in stores.tokens.get(id) {
+        match token {
+            Token::Char { ch, cat } => {
+                framed.push(0);
+                framed.extend_from_slice(&(ch as u32).to_le_bytes());
+                framed.push(cat as u8);
+            }
+            Token::Cs(symbol) => {
+                framed.push(1);
+                let symbol = stores.resolve_stored_symbol(symbol);
+                framed.push(match stores.interner.kind_id(symbol) {
+                    ControlSequenceKind::Named => 0,
+                    ControlSequenceKind::ActiveCharacter => 1,
+                });
+                let name = stores.interner.resolve_id(symbol).as_bytes();
+                framed.extend_from_slice(&(name.len() as u64).to_le_bytes());
+                framed.extend_from_slice(name);
+            }
+            Token::Param(slot) => framed.extend_from_slice(&[2, slot]),
+            Token::Frozen(crate::token::FrozenToken::END_TEMPLATE) => {
+                framed.extend_from_slice(&[3, 0]);
+            }
+            Token::Frozen(crate::token::FrozenToken::END_V) => {
+                framed.extend_from_slice(&[3, 1]);
+            }
+            Token::Frozen(_) => unreachable!("invalid frozen token payload"),
+        }
+    }
+    Ok(ContentHash::from_bytes(&framed))
+}
+
+fn exact_macro_leaf(stores: &Stores, raw: usize) -> Result<ContentHash, StoreFormatError> {
+    let meaning = stores.macros.get(
+        stores
+            .macros
+            .resolve_stored(MacroDefinitionId::new(raw as u32))
+            .expect("exact macro slot should be live"),
+    );
+    exact_serialized_leaf(
+        b"umber-exact-macro-v1",
+        &FormatMacro {
+            flags: meaning.flags().bits(),
+            parameter_text: meaning.parameter_text().raw(),
+            replacement_text: meaning.replacement_text().raw(),
+        },
+    )
+}
+
+fn exact_glue_leaf(stores: &Stores, raw: usize) -> Result<ContentHash, StoreFormatError> {
+    exact_serialized_leaf(
+        b"umber-exact-glue-v1",
+        &FormatGlue::capture(
+            stores
+                .glue
+                .get(stores.resolve_stored_glue(GlueId::new(raw as u32))),
+        ),
+    )
+}
+
+fn exact_font_leaf(stores: &Stores, raw: usize) -> Result<ContentHash, StoreFormatError> {
+    let id = stores.resolve_stored_font(FontId::new(raw as u32));
+    let base = stores.fonts.immutable_exact_identity(id);
+    let identifier = stores.fonts.identifier(id).map(|symbol| {
+        let symbol = stores.resolve_stored_symbol(symbol.symbol());
+        (
+            stores.interner.kind_id(symbol),
+            stores.interner.resolve_id(symbol),
+        )
+    });
+    let annotation = (
+        identifier.map(|(kind, name)| {
+            (
+                matches!(kind, ControlSequenceKind::ActiveCharacter),
+                name.to_owned(),
+            )
+        }),
+        stores.fonts.expansion(id),
+    );
+    let annotation = bincode::serialize(&annotation)
+        .map_err(|error| StoreFormatError::Codec(error.to_string()))?;
+    let mut framed = Vec::with_capacity(64 + annotation.len());
+    framed.extend_from_slice(b"umber-exact-font-v1");
+    framed.extend_from_slice(&base.bytes());
+    framed.extend_from_slice(&annotation);
+    Ok(ContentHash::from_bytes(&framed))
+}
+
+fn compose_immutable_store_root(
+    names: ContentHash,
+    tokens: ContentHash,
+    macros: ContentHash,
+    glue: ContentHash,
+    fonts: ContentHash,
+) -> ContentHash {
+    let mut framed = Vec::with_capacity(192);
+    framed.extend_from_slice(b"umber-exact-immutable-store-v1");
+    for identity in [names, tokens, macros, glue, fonts] {
+        framed.extend_from_slice(&identity.bytes());
+    }
+    ContentHash::from_bytes(&framed)
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -395,26 +576,87 @@ impl Stores {
         if self.env.group_depth() != 0 {
             return Err(StoreFormatError::OpenGroups(self.env.group_depth()));
         }
-        let marks = ImmutableStoreMarks::capture(self);
+        let current_marks = ImmutableStoreMarks::capture(self);
         let immutable = {
             let mut cache = self
                 .exact_identity_cache
                 .lock()
                 .expect("exact store identity cache is not poisoned");
-            if let Some((cached_marks, identity)) = &cache.immutable
-                && *cached_marks == marks
-            {
-                *identity
+            if cache.marks == Some(current_marks) {
+                compose_immutable_store_root(
+                    cache.names.identity(),
+                    cache.tokens.identity(),
+                    cache.macros.identity(),
+                    cache.glue.identity(),
+                    cache.fonts.identity(),
+                )
             } else {
-                let bytes = bincode::serialize(&ImmutableStoreIdentity::capture(self))
-                    .map_err(|error| StoreFormatError::Codec(error.to_string()))?;
-                let identity = ContentHash::from_bytes(&bytes);
-                cache.immutable = Some((marks, identity));
+                let old_marks = cache.marks;
+                let mut leaves = 0;
+                let name_len = self.interner.len();
+                cache.names.update(
+                    name_len,
+                    old_marks.is_some_and(|old| self.interner.retains_mark(old.interner)),
+                    |raw| {
+                        leaves += 1;
+                        exact_name_leaf(self, raw)
+                    },
+                )?;
+                let token_len = current_marks.tokens.spans as usize;
+                cache.tokens.update(
+                    token_len,
+                    old_marks.is_some_and(|old| self.tokens.retains_mark(old.tokens)),
+                    |raw| {
+                        leaves += 1;
+                        exact_token_leaf(self, raw)
+                    },
+                )?;
+                let macro_len = current_marks.macros.definitions as usize;
+                cache.macros.update(
+                    macro_len,
+                    old_marks.is_some_and(|old| self.macros.retains_mark(old.macros)),
+                    |raw| {
+                        leaves += 1;
+                        exact_macro_leaf(self, raw)
+                    },
+                )?;
+                let glue_len = current_marks.glue.specs as usize;
+                cache.glue.update(
+                    glue_len,
+                    old_marks.is_some_and(|old| self.glue.retains_mark(old.glue)),
+                    |raw| {
+                        leaves += 1;
+                        exact_glue_leaf(self, raw)
+                    },
+                )?;
+                let font_len = current_marks.fonts.len as usize;
+                let font_metadata_unchanged = old_marks.is_some_and(|old| {
+                    old.fonts.identifier_writes_len == current_marks.fonts.identifier_writes_len
+                        && old.fonts.expansion_writes_len
+                            == current_marks.fonts.expansion_writes_len
+                });
+                cache.fonts.update(
+                    font_len,
+                    font_metadata_unchanged
+                        && old_marks.is_some_and(|old| self.fonts.retains_mark(old.fonts)),
+                    |raw| {
+                        leaves += 1;
+                        exact_font_leaf(self, raw)
+                    },
+                )?;
+                cache.marks = Some(current_marks);
                 #[cfg(test)]
                 {
                     cache.immutable_encodes += 1;
+                    cache.immutable_leaves += leaves;
                 }
-                identity
+                compose_immutable_store_root(
+                    cache.names.identity(),
+                    cache.tokens.identity(),
+                    cache.macros.identity(),
+                    cache.glue.identity(),
+                    cache.fonts.identity(),
+                )
             }
         };
         let mutable = bincode::serialize(&MutableStoreIdentity::capture(self)?)
@@ -436,6 +678,14 @@ impl Stores {
             .lock()
             .expect("exact store identity cache is not poisoned")
             .immutable_encodes
+    }
+
+    #[cfg(test)]
+    pub(crate) fn testing_exact_immutable_leaves(&self) -> usize {
+        self.exact_identity_cache
+            .lock()
+            .expect("exact store identity cache is not poisoned")
+            .immutable_leaves
     }
 
     pub(crate) fn encode_node_sequence_identity(
@@ -784,11 +1034,11 @@ impl StoreFormat {
 impl ImmutableStoreMarks {
     fn capture(stores: &Stores) -> Self {
         Self {
-            interner: stores.interner.len(),
-            tokens: stores.tokens.watermark().spans,
-            macros: stores.macros.watermark().definitions,
-            glue: stores.glue.watermark().specs,
-            fonts: stores.fonts.watermark().exact_identity_cache_key(),
+            interner: stores.interner.watermark(),
+            tokens: stores.tokens.watermark(),
+            macros: stores.macros.watermark(),
+            glue: stores.glue.watermark(),
+            fonts: stores.fonts.watermark(),
         }
     }
 }

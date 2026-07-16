@@ -214,9 +214,11 @@ proves that a boundary will actually be compared. The corresponding accepted
 record computes its identity on that first later comparison and caches it in
 derived record metadata shared by record clones; cold history and boundaries
 that are never compared retain only their O(1) roots. Canonical store identity
-separates append-only interned content from mutable checkpoint state, so stable
-font metrics, token lists, macros, names, and glue are serialized once per
-shared immutable watermark rather than once per comparison. This cache is not
+separates append-only interned content from mutable checkpoint state. Stable
+font data is strongly identified once at load, and new token-list, macro,
+name, glue, and font entries add only canonical leaves and prefix roots to a
+cache shared by related forks. Allocator ancestry prevents a divergent
+post-rollback suffix from reusing the wrong derived root. This cache is not
 semantic state and does not change rollback or exact-match results.
 Restart uses one validated aggregate fork operation: clone the retained
 substrate, retarget ownership internally, and roll the clone back to the
