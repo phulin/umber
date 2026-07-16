@@ -1,56 +1,56 @@
 {
-  "name": "@umber/umber-wasm",
-  "version": "0.1.0",
-  "description": "Browser WebAssembly build of the Umber TeX engine",
-  "type": "module",
-  "license": "UNLICENSED",
-  "private": true,
-  "exports": {
-    ".": {
-      "types": "./compile.d.ts",
-      "import": "./compile.js"
-    },
-    "./worker": {
-      "types": "./worker-controller.d.ts",
-      "import": "./worker-controller.js"
-    },
-    "./low-level": {
-      "types": "./umber_wasm.d.ts",
-      "import": "./umber_wasm.js"
-    },
-    "./manifest-resolver": {
-      "types": "./manifest-resolver.d.ts",
-      "import": "./manifest-resolver.js"
-    },
-    "./persistent-cache": {
-      "types": "./persistent-cache.d.ts",
-      "import": "./persistent-cache.js"
-    },
-    "./html-preview": {
-      "types": "./html-preview.d.ts",
-      "import": "./html-preview.js"
-    },
-    "./cm-fonts": {
-      "types": "./cm-fonts.d.ts",
-      "import": "./cm-fonts.js"
-    },
-    "./source-map": {
-      "types": "./source-map.d.ts",
-      "import": "./source-map.js"
-    },
-    "./plain.fmt": "./assets/plain.fmt",
-    "./plain-format.json": "./assets/plain-format.json",
-    "./cmu-serif.woff2": "./assets/cmu-serif-500-roman.woff2"
-  },
-  "files": [
-    "*.js",
-    "*.d.ts",
-    "*.wasm",
-    "assets/",
-    "examples/",
-    "THIRD_PARTY_NOTICES.md"
-  ],
-  "sideEffects": [
-    "./worker-entry.js"
-  ]
+	"name": "@umber/umber-wasm",
+	"version": "0.1.0",
+	"description": "Browser WebAssembly build of the Umber TeX engine",
+	"type": "module",
+	"license": "UNLICENSED",
+	"private": true,
+	"exports": {
+		".": {
+			"types": "./compile.d.ts",
+			"import": "./compile.js"
+		},
+		"./worker": {
+			"types": "./worker-controller.d.ts",
+			"import": "./worker-controller.js"
+		},
+		"./low-level": {
+			"types": "./umber_wasm.d.ts",
+			"import": "./umber_wasm.js"
+		},
+		"./manifest-resolver": {
+			"types": "./manifest-resolver.d.ts",
+			"import": "./manifest-resolver.js"
+		},
+		"./persistent-cache": {
+			"types": "./persistent-cache.d.ts",
+			"import": "./persistent-cache.js"
+		},
+		"./html-preview": {
+			"types": "./html-preview.d.ts",
+			"import": "./html-preview.js"
+		},
+		"./cm-fonts": {
+			"types": "./cm-fonts.d.ts",
+			"import": "./cm-fonts.js"
+		},
+		"./source-map": {
+			"types": "./source-map.d.ts",
+			"import": "./source-map.js"
+		},
+		"./plain.fmt": "./assets/plain.fmt",
+		"./plain-format.json": "./assets/plain-format.json",
+		"./cmu-serif.woff2": "./assets/cmu-serif-500-roman.woff2"
+	},
+	"files": [
+		"*.js",
+		"*.d.ts",
+		"*.wasm",
+		"assets/",
+		"examples/",
+		"THIRD_PARTY_NOTICES.md"
+	],
+	"sideEffects": [
+		"./worker-entry.js"
+	]
 }
