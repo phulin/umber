@@ -429,13 +429,39 @@ test("failed speculative hints are ignored and retried if actually requested", a
 	]);
 	assert.deepEqual(
 		downloads.map(({ name }) => name),
-		["plain.tex", "cmr10.tfm"],
+		["plain.tex"],
 	);
 	await assert.rejects(
 		resolver.resolve([{ kind: "tex", name: "hint.tex" }]),
 		/cannot resolve tex:hint\.tex/,
 	);
 	assert.equal(hintCalls, 2);
+});
+
+test("engine and manifest hints prefetch without becoming responses", async () => {
+	const { manifest, bytes } = fixture();
+	const calls = [];
+	const byObject = new Map([
+		[manifest.files["tex:plain.tex"].object, bytes.plain],
+		[manifest.files["tfm:cmr10.tfm"].object, bytes.cmr],
+		[manifest.files["tex:hint.tex"].object, bytes.badHint],
+	]);
+	const resolver = new HttpManifestResolver(manifest, {
+		async fetch(url) {
+			const object = url.split("/").at(-1);
+			calls.push(object);
+			return response(byObject.get(object));
+		},
+		crypto: webcrypto,
+	});
+
+	const downloads = await resolver.resolve(
+		[{ kind: "tex", name: "plain.tex" }],
+		{ prefetchHints: [{ kind: "tex", name: "alias.tex" }] },
+	);
+
+	assert.deepEqual(downloads.map(({ name }) => name), ["plain.tex"]);
+	assert.deepEqual(new Set(calls), new Set(byObject.keys()));
 });
 
 test("rejects over-budget dependency closures before object fetches", async (t) => {

@@ -88,7 +88,12 @@ export class HttpManifestResolver {
 	readonly manifest: TexLiveManifest;
 	resolve(
 		requests: readonly ResourceRequest[],
-		options?: AbortSignal | { signal?: AbortSignal },
+		options?:
+			| AbortSignal
+			| {
+					signal?: AbortSignal;
+					prefetchHints?: readonly ResourceRequest[];
+			  },
 	): Promise<readonly (ResolvedDownload | ResourceResponse)[]>;
 	resolveFormat(
 		name: string,

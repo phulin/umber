@@ -103,13 +103,23 @@ export class HttpManifestResolver {
 		const signal = Object.hasOwn(options ?? {}, "signal")
 			? options.signal
 			: options;
+		const prefetchHints = Object.hasOwn(options ?? {}, "prefetchHints")
+			? options.prefetchHints
+			: [];
+		if (!Array.isArray(prefetchHints)) {
+			throw new ManifestResolverError(
+				"invalid-options",
+				"prefetchHints must be an array",
+			);
+		}
 		throwIfAborted(signal);
-		const selection = selectManifestJobs(this.manifest, requests);
-		const unavailable = selection.misses.map(({ type, request }) => ({
+		const required = selectManifestJobs(this.manifest, requests);
+		const hinted = selectManifestJobs(this.manifest, prefetchHints);
+		const unavailable = required.misses.map(({ type, request }) => ({
 			...request,
 			type: `${type}-unavailable`,
 		}));
-		const jobs = selection.jobs;
+		const jobs = mergeJobs(required.jobs, hinted.jobs);
 		validateJobBudget(jobs, this.maxFiles, this.maxBytes);
 		const groups = groupByObject(jobs);
 		const results = new Map();
@@ -140,7 +150,7 @@ export class HttpManifestResolver {
 						);
 					}
 				} catch (error) {
-					const requested = group.find((job) => job.requested);
+					const requested = group.find((job) => job.blocking);
 					if (requested !== undefined) {
 						throw actionableError(requested.key, error);
 					}
@@ -154,8 +164,8 @@ export class HttpManifestResolver {
 		await Promise.all(workers);
 		throwIfAborted(signal);
 		return unavailable.concat(
-			jobs.flatMap((job) =>
-				results.has(job.key) ? [results.get(job.key)] : [],
+			required.jobs.flatMap((job) =>
+				job.requested && results.has(job.key) ? [results.get(job.key)] : [],
 			),
 		);
 	}
@@ -299,6 +309,28 @@ export class HttpManifestResolver {
 			);
 		}
 	}
+}
+
+function mergeJobs(required, hinted) {
+	const jobs = [];
+	const indexes = new Map();
+	for (const [source, blocking] of [
+		[required, true],
+		[hinted, false],
+	]) {
+		for (const job of source) {
+			const identity = `${job.type}:${job.key}`;
+			const existing = indexes.get(identity);
+			const jobBlocks = blocking && job.requested;
+			if (existing !== undefined) {
+				jobs[existing].blocking ||= jobBlocks;
+				continue;
+			}
+			indexes.set(identity, jobs.length);
+			jobs.push({ ...job, blocking: jobBlocks });
+		}
+	}
+	return jobs;
 }
 
 function groupByObject(jobs) {
