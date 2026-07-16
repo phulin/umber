@@ -252,6 +252,15 @@ requires three-pass native/WASM article parity. Neither command belongs in the
 ordinary workspace test tier because both intentionally build live pinned
 distribution artifacts.
 
+`scripts/test-publish-texlive-r2.sh` is the hermetic contract test for the R2
+release command and runs in `scripts/check-and-test.sh`. Mock rclone and curl
+boundaries cover dry-run behavior, failure followed by resumable rerun,
+credential non-disclosure, bounded transfer/checker/retry flags, non-deleting
+immutable copies, exact remote inventory checks, manifest-last ordering, and
+public digest/CORS verification. It performs no network requests and uploads
+nothing. The production staging and public origin are verified only by an
+explicit coordinator invocation of `scripts/publish-texlive-r2.sh`.
+
 The upstream LaTeX2e DVI tier is also explicit:
 
 ```bash

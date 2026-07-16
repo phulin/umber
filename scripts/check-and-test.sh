@@ -53,6 +53,8 @@ warn_missing_e2e_case \
   "$repo_root/third_party/trip/trip.tfm" \
   "$repo_root/tests/corpus/e2e/etrip.expected.dvi"
 
+scripts/test-publish-texlive-r2.sh
+
 cargo test --workspace --tests --quiet &
 test_pid=$!
 scripts/check.sh &

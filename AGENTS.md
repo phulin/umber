@@ -49,7 +49,8 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `docs/`: architecture, phase, and design documents.
 - `scripts/`: local development scripts and versioned git hook templates.
 - `scripts/profile-pdftex-arxiv.sh`: disposable pinned pdfTeX primitive tracer build and deterministic 100-paper arXiv source profile.
-- `scripts/publish-texlive-r2.sh`: deterministic TeX Live snapshot build and immutable Cloudflare R2 publication/verification entry point; browser CORS policy lives beside it in `scripts/texlive-r2-cors.json`.
+- `scripts/publish-texlive-r2.sh`: verified staged TeX Live snapshot publication to an immutable Cloudflare R2 prefix; browser CORS policy lives beside it in `scripts/texlive-r2-cors.json`.
+- `scripts/test-publish-texlive-r2.sh`: hermetic mock-rclone/curl contract test for resumable, manifest-last R2 publication.
 - `scripts/build-texlive-snapshot.sh`: deterministic full TeX Live runtime snapshot staging with package dependency hints and production inventory floors.
 - `third_party/`: ignored reference downloads and external source archives.
 

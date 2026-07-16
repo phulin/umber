@@ -6,8 +6,8 @@ protocol ([wasm_resource_acquisition.md](wasm_resource_acquisition.md)). The
 shared manifest crate, typed unavailable responses, native cache/fetch layer,
 and CLI integration in phases 1 through 5 are implemented. Phase 6 has the R2
 publication path and browser prefetch behavior implemented, but production
-publication remains blocked on Cloudflare authentication, a public custom
-domain, and an updated TeX Live source tree.
+publication remains an explicit coordinator operation, followed by CLI and web
+pin rotation.
 
 ## Problem
 
@@ -204,6 +204,29 @@ domain activation remain explicit account operations outside the staging
 builder. Do not introduce a custom Worker or multipart upload service for this
 path.
 
+The production command is `scripts/publish-texlive-r2.sh`. Its checked-in
+defaults pin the verified `texlive-2026-r79639` staging bundle, bucket
+`umber-assets`, public origin `https://assets.umber.ink`, 153,897 objects,
+3,507,703,184 object bytes, and manifest SHA-256
+`602736c8d6f745972ad5d61acfab90b20ed0f4e67fd3b02a8ff7d260a34dee60`.
+The ignored repository `.env` must contain `CLOUDFLARE_ACCOUNT_ID`,
+`R2_ACCESS_KEY_ID`, and `R2_SECRET_ACCESS_KEY`; the latter two are the R2 S3
+access-key pair, not a Wrangler API token. The script parses only those exact
+dotenv keys, passes them through rclone's process environment, and neither
+prints them nor creates a persistent rclone config.
+
+Run `scripts/publish-texlive-r2.sh --dry-run` first, then rerun without
+`--dry-run` for publication or after any interruption. The command uses
+`rclone copy`, never `sync`, so it does not delete older release prefixes or
+extra remote keys. It bounds transfers, checkers, and retries; refuses to
+overwrite a conflicting digest key; checks every staged object against the
+remote; and requires exact object count and byte totals before the first
+manifest write. It then fetches the public manifest and three deterministic
+objects from the first, middle, and last digest-name positions and verifies
+their digests and CORS headers. Bucket creation, the checked-in
+`scripts/texlive-r2-cors.json` policy, custom-domain attachment, and credential
+creation are one-time Cloudflare account operations outside this script.
+
 Refresh after each annual TeX Live release, or earlier for an urgent corrected
 snapshot. A refresh always uses a new snapshot identifier and updates both the
 CLI URL/digest constants and the web deployment in the same release change.
@@ -324,11 +347,11 @@ Each phase is a `bd` issue under the `umber2-mbwq` epic (phase N is
    accepted revision; Ctrl-C uses the same path. Tests verify that a resolved
    distribution file is not reopened or refetched on a later revision and
    that cancelled downloads publish neither bytes nor cache objects.
-6. **In progress — publish and adopt the self-hosted snapshot.** R2 publication
-   tooling and browser dependency/engine prefetch are implemented. Production
-   publication, CLI/web pin rotation, and public verification remain blocked
-   until an authenticated Cloudflare account, active custom-domain prefix, and
-   current TeX Live tree are available.
+6. **In progress — publish and adopt the self-hosted snapshot.** The verified
+   TeX Live 2026 staging bundle and resumable rclone publication tooling are
+   complete. Production publication and CLI/web pin rotation remain explicit
+   coordinator work; the publication command performs public digest, object,
+   and CORS verification before a pin can be adopted.
 7. **Parity gate.** One corpus document requiring distribution packages
    compiles from a cold cache natively and in the browser fixture to
    byte-identical DVI, satisfies repeat runs entirely from cache, and
