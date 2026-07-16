@@ -283,6 +283,13 @@ impl Stores {
             .registered_root_span_id(registration, range)
     }
 
+    pub(crate) fn source_span_for_root(
+        &self,
+        span: crate::RootSpanId,
+    ) -> Option<crate::source_map::SourceSpan> {
+        self.source_fragments.source_span_for_root(span)
+    }
+
     pub(crate) fn can_restore_snapshot(&self, snapshot: &StoreSnapshot) -> bool {
         snapshot.owner == self.owner.snapshot_owner()
             && snapshot.env_snapshot.group_depth() == self.env.group_depth()

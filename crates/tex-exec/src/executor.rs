@@ -588,7 +588,7 @@ where
                 stores.begin_pure_paragraph_recording();
             }
             if execution.update_cold_paragraph_start(starting_span) {
-                input.begin_paragraph_source_recording();
+                input.ensure_paragraph_source_recording();
             }
             if execution.bypass_paragraph_memo_once {
                 execution.bypass_paragraph_memo_once = false;

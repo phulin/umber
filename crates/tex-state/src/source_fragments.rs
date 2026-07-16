@@ -491,12 +491,10 @@ impl FragmentStore {
         }
         let start = u32::try_from(range.start).ok()?;
         let end = u32::try_from(range.end).ok()?;
-        let content = if start == end {
-            ContentHash::from_bytes(&[])
-        } else {
-            let bytes = self.bytes(fragment_id)?.get(start as usize..end as usize)?;
-            ContentHash::from_bytes(bytes)
-        };
+        let content = self
+            .bytes(fragment_id)
+            .and_then(|bytes| bytes.get(start as usize..end as usize))
+            .map_or_else(|| ContentHash::from_bytes(&[]), ContentHash::from_bytes);
         Some(RootSpanId {
             piece: PieceId(fragment_id),
             start,
@@ -513,13 +511,23 @@ impl FragmentStore {
         }
         let start = u32::try_from(span.lo().raw() - fragment.region_start.raw()).ok()?;
         let end = u32::try_from(span.hi().raw() - fragment.region_start.raw()).ok()?;
-        let bytes = self.bytes(fragment_id)?.get(start as usize..end as usize)?;
+        let content = self
+            .bytes(fragment_id)
+            .and_then(|bytes| bytes.get(start as usize..end as usize))
+            .map_or_else(|| ContentHash::from_bytes(&[]), ContentHash::from_bytes);
         Some(RootSpanId {
             piece: PieceId(fragment_id),
             start,
             end,
-            content: ContentHash::from_bytes(bytes),
+            content,
         })
+    }
+
+    pub(crate) fn source_span_for_root(&self, span: RootSpanId) -> Option<SourceSpan> {
+        let registration = self.registration(span.piece.fragment())?;
+        registration
+            .span(u64::from(span.start), u64::from(span.end))
+            .ok()
     }
 
     /// Returns the allocation-free registration capability for one fragment.

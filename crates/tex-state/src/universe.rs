@@ -2618,6 +2618,13 @@ impl Universe {
         None
     }
 
+    /// Recreates a diagnostic source origin from validated stable root identity.
+    #[doc(hidden)]
+    pub fn origin_for_root_span(&mut self, span: crate::RootSpanId) -> Option<OriginId> {
+        let source_span = self.stores.source_span_for_root(span)?;
+        Some(self.stores.source_span_origin(source_span))
+    }
+
     /// Sets operational editor revision identity outside semantic state.
     pub fn set_root_editor_content_hash(&mut self, hash: ContentHash) {
         self.editor_content_hash = Some(hash);
@@ -7119,6 +7126,7 @@ fn hash_input_summary_fields(
                 macro_arguments,
                 macro_invocation: _,
                 parent_macro_invocation: _,
+                ..
             } => {
                 hasher.tag(1);
                 stores.hash_token_list_semantic(*token_list, hasher);

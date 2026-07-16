@@ -25,13 +25,12 @@ pub(crate) fn try_reuse_literal_paragraph(
 ) -> Result<bool, ExecError> {
     let mut traced = Vec::new();
     let mut semantic = Vec::new();
-    let mut terminated = false;
     let mut saw_macro = false;
     let mut preselected = None;
     for _ in 0..MAX_PREFLIGHT_TOKENS {
         let starting_span = input.current_root_delivery_anchor(stores)?;
         if execution.update_cold_paragraph_start(starting_span) {
-            input.begin_paragraph_source_recording();
+            input.ensure_paragraph_source_recording();
         }
         preselected = starting_span
             .and_then(|start| stores.lookup_recorded_paragraph_start(start))
@@ -58,38 +57,7 @@ pub(crate) fn try_reuse_literal_paragraph(
         crate::push_traced_tokens(input, stores, [next]);
         break;
     }
-    if let Some(entry) = &preselected {
-        for _ in 0..MAX_PREFLIGHT_TOKENS {
-            let next = tex_expand::next_semantic_raw_token(
-                input,
-                &mut tex_state::ExpansionContext::new(stores),
-            )?;
-            let Some(next) = next else {
-                break;
-            };
-            traced.push(next);
-            let anchor = input.current_root_delivery_anchor(stores)?;
-            if anchor == entry.ending_span
-                && input
-                    .publication_summary(stores)
-                    .paragraph_transition_matches(&entry.ending_input)
-            {
-                terminated = true;
-                break;
-            }
-            if let Token::Cs(symbol) = tex_expand::semantic_token(next)
-                && matches!(
-                    stores.meaning(symbol),
-                    Meaning::UnexpandablePrimitive(
-                        UnexpandablePrimitive::Par | UnexpandablePrimitive::EndGraf
-                    )
-                )
-            {
-                terminated = true;
-                break;
-            }
-        }
-    }
+    let mut terminated = preselected.is_some();
     let mut effect_argument_depth = 0usize;
     let mut expects_effect_argument = false;
     for _ in 0..if preselected.is_some() {
@@ -113,7 +81,9 @@ pub(crate) fn try_reuse_literal_paragraph(
             } => semantic.push(token),
             Token::Cs(symbol) => {
                 let meaning = stores.meaning(symbol);
-                saw_macro |= matches!(meaning, Meaning::Macro { .. });
+                if matches!(meaning, Meaning::Macro { .. }) {
+                    saw_macro = true;
+                }
                 semantic.push(token);
                 if effect_argument_depth == 0
                     && matches!(
@@ -178,6 +148,7 @@ pub(crate) fn try_reuse_literal_paragraph(
         return Ok(false);
     }
 
+    let stable_candidate = preselected.is_some();
     let key = preselected
         .as_ref()
         .map_or_else(|| paragraph_key(stores, &semantic), |entry| entry.key);
@@ -192,55 +163,36 @@ pub(crate) fn try_reuse_literal_paragraph(
         stores.begin_pure_paragraph_recording();
         return Ok(false);
     };
-    let current_trace_origins = if entry.trace_spans.is_empty() {
-        traced
-            .iter()
-            .map(|token| token.origin())
-            .collect::<Vec<_>>()
-    } else {
-        entry
-            .trace_spans
-            .iter()
-            .map(|expected| {
-                expected
-                    .and_then(|expected| {
-                        traced.iter().find_map(|token| {
-                            (stores.root_span_for_origin(token.origin()) == Some(expected))
-                                .then_some(token.origin())
-                        })
-                    })
-                    .unwrap_or(tex_state::token::OriginId::UNKNOWN)
-            })
-            .collect()
-    };
-
-    let current_spans = input
-        .paragraph_source_spans()
-        .map_or_else(Vec::new, <[tex_state::RootSpanId]>::to_vec);
-    let trace_ancestry_valid = entry
-        .trace_spans
-        .iter()
-        .flatten()
-        .all(|span| current_spans.contains(span));
     let dependencies_valid = stores.validate_dependencies(&mut entry.dependencies, |key| {
         stores
             .semantic_dependency_value(key)
             .unwrap_or(tex_state::DependencyValue::Absent)
     });
-    let current_input = input.publication_summary(stores);
-    let input_valid = current_input.paragraph_transition_matches(&entry.ending_input);
-    if current_spans != entry.consumed_spans
-        || !trace_ancestry_valid
-        || !dependencies_valid
+    let prepared_input = stable_candidate.then(|| {
+        entry
+            .starting_span
+            .zip(entry.ending_span)
+            .and_then(|(start, end)| {
+                input.prepare_paragraph_transition(
+                    start,
+                    &entry.consumed_spans,
+                    end,
+                    &entry.ending_input,
+                )
+            })
+    });
+    let scanned_input = (!stable_candidate).then(|| input.publication_summary(stores));
+    let input_valid = prepared_input.as_ref().is_some_and(Option::is_some)
+        || scanned_input
+            .as_ref()
+            .is_some_and(|current| current.paragraph_transition_matches(&entry.ending_input));
+    if !dependencies_valid
         || !validate_mutations(stores, &entry.mutations)
         || !validate_effects(&entry.effects)
         || !input_valid
     {
         stores.record_pure_paragraph_validation_miss();
-        let trace_origins = traced.iter().map(|token| token.origin()).collect();
         crate::push_traced_tokens(input, stores, traced);
-        execution.pending_paragraph_memo =
-            Some(crate::executor::PendingParagraphMemo { key, trace_origins });
         stores.begin_pure_paragraph_recording();
         return Ok(false);
     }
@@ -253,10 +205,7 @@ pub(crate) fn try_reuse_literal_paragraph(
         Some(list) => list,
         None => {
             stores.record_pure_paragraph_import_failure();
-            let trace_origins = traced.iter().map(|token| token.origin()).collect();
             crate::push_traced_tokens(input, stores, traced);
-            execution.pending_paragraph_memo =
-                Some(crate::executor::PendingParagraphMemo { key, trace_origins });
             stores.begin_pure_paragraph_recording();
             return Ok(false);
         }
@@ -268,6 +217,26 @@ pub(crate) fn try_reuse_literal_paragraph(
     let imported_lines = entry
         .lines
         .and_then(|lines| stores.import_retained_paragraph_result(lines));
+    if let Some(prepared) = prepared_input.flatten() {
+        let transition_applied = input.apply_paragraph_transition(stores, prepared)?;
+        assert!(
+            transition_applied,
+            "validated paragraph source transition must apply"
+        );
+    }
+    let current_input = scanned_input.unwrap_or_else(|| input.publication_summary(stores));
+    let current_trace_origins = if stable_candidate {
+        entry
+            .trace_spans
+            .iter()
+            .map(|span| {
+                span.and_then(|span| stores.origin_for_root_span(span))
+                    .unwrap_or(tex_state::token::OriginId::UNKNOWN)
+            })
+            .collect::<Vec<_>>()
+    } else {
+        traced.iter().map(|token| token.origin()).collect()
+    };
     let _ = stores.finish_pure_paragraph_recording();
     replay_mutations(stores, &entry.mutations);
     replay_effects(stores, &entry.effects);
@@ -300,7 +269,6 @@ pub(crate) fn try_reuse_literal_paragraph(
     }
     let _ = input.finish_paragraph_source_recording();
     execution.abandon_cold_paragraph_recording();
-    entry.consumed_spans = current_spans;
     entry.ending_input = current_input;
     entry.hlist = Some(stores.retain_paragraph_result(list));
     entry.lines = if lines_valid {
@@ -687,11 +655,43 @@ fn publish_recorded_region(
         }
     };
     let mutations = stores.finish_pure_paragraph_recording().unwrap_or_default();
-    let consumed_spans = input
+    let mut consumed_spans = input
         .finish_paragraph_source_recording()
         .unwrap_or_default();
-    let ending_span = input.current_root_delivery_anchor(stores).ok().flatten();
+    let trace_spans = recording
+        .trace
+        .iter()
+        .map(|token| stores.root_span_for_origin(token.origin()))
+        .collect::<Vec<_>>();
+    if !recording.macro_bearing {
+        consumed_spans.clear();
+    } else {
+        for span in trace_spans.iter().flatten().copied() {
+            if !consumed_spans.contains(&span) {
+                consumed_spans.push(span);
+            }
+        }
+    }
+    let ending_span = if recording.macro_bearing {
+        input.root_source_delivery_anchor(stores).ok().flatten()
+    } else {
+        input.current_root_delivery_anchor(stores).ok().flatten()
+    };
+    if let Some((start, end)) = recording.starting_span.zip(ending_span)
+        && start.piece() == end.piece()
+    {
+        consumed_spans.retain(|span| {
+            span.piece() == start.piece()
+                && span.start() >= start.start()
+                && span.end() <= end.start()
+        });
+    }
     let ending_input = input.publication_summary(stores);
+    if recording.macro_bearing && ending_input.frames().len() != 1 {
+        recording
+            .barriers
+            .insert(tex_state::ParagraphBarrierReason::UnsupportedInputTransition);
+    }
     let eligible = recording.barriers.is_empty();
     let pending = execution.pending_paragraph_memo.as_ref();
     let key = pending.map_or_else(
@@ -723,11 +723,7 @@ fn publish_recorded_region(
         starting_span: recording.starting_span,
         ending_span,
         consumed_spans,
-        trace_spans: recording
-            .trace
-            .iter()
-            .map(|token| stores.root_span_for_origin(token.origin()))
-            .collect(),
+        trace_spans,
         macro_bearing: recording.macro_bearing,
         dependencies,
         mutations: mutations.clone(),

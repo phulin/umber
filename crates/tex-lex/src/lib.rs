@@ -66,6 +66,7 @@ impl std::error::Error for LayoutCursorError {}
 struct LayoutCursorSegment {
     document_start: usize,
     document_end: usize,
+    fragment: tex_state::FragmentId,
     registration: RegisteredSource,
     fragment_start: u64,
 }
@@ -117,6 +118,7 @@ impl LayoutCursor {
             segments.push(LayoutCursorSegment {
                 document_start,
                 document_end,
+                fragment: piece.fragment(),
                 registration,
                 fragment_start: piece.start().into(),
             });
@@ -158,6 +160,33 @@ impl LayoutCursor {
             segment.registration,
             segment.fragment_start.checked_add(within)?,
         ))
+    }
+
+    fn document_range_at_or_after(
+        &self,
+        span: RootSpanId,
+        minimum: usize,
+    ) -> Option<std::ops::Range<usize>> {
+        let start = u64::from(span.start());
+        let end = u64::from(span.end());
+        self.segments.iter().find_map(|segment| {
+            if segment.fragment != span.piece().fragment()
+                || start < segment.fragment_start
+                || end
+                    > segment.fragment_start.checked_add(
+                        u64::try_from(segment.document_end - segment.document_start).ok()?,
+                    )?
+            {
+                return None;
+            }
+            let document_start = segment
+                .document_start
+                .checked_add(usize::try_from(start - segment.fragment_start).ok()?)?;
+            let document_end = segment
+                .document_start
+                .checked_add(usize::try_from(end - segment.fragment_start).ok()?)?;
+            (document_start >= minimum).then_some(document_start..document_end)
+        })
     }
 }
 
@@ -1392,6 +1421,21 @@ pub struct DirectSourceDelivery {
     generated_content: Option<ContentHash>,
 }
 
+/// Validated non-tokenizing advancement to a recorded paragraph continuation.
+///
+/// Construction proves stable editor-fragment coverage without changing the
+/// live stack. The private fields prevent callers from manufacturing a skip.
+#[derive(Clone, Debug)]
+pub struct PreparedParagraphTransition {
+    frame_index: usize,
+    ending: SourceFrameSummary,
+    document_line_start: usize,
+    document_content_end: usize,
+    document_terminator_start: usize,
+    document_terminator_end: usize,
+    document_normalized_end_anchor: usize,
+}
+
 /// Stable class of immutable non-editor input.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ImmutableSourceKind {
@@ -1544,6 +1588,12 @@ impl InputStack {
         self.paragraph_source_spans = Some(Vec::new());
     }
 
+    /// Keeps an in-progress paragraph source recording active without losing
+    /// deliveries observed by an earlier vertical-mode preflight.
+    pub fn ensure_paragraph_source_recording(&mut self) {
+        self.paragraph_source_spans.get_or_insert_with(Vec::new);
+    }
+
     /// Returns the physical-source deliveries collected for the active paragraph.
     #[must_use]
     pub fn paragraph_source_spans(&self) -> Option<&[RootSpanId]> {
@@ -1693,6 +1743,7 @@ impl InputStack {
                     macro_arguments,
                     macro_invocation,
                     parent_macro_invocation,
+                    ..
                 } => frames.push(InputFrame::TokenList(TokenListInputFrame {
                     payload: ReplayPayload::Stored {
                         token_list: *token_list,
@@ -2754,6 +2805,15 @@ impl InputStack {
         };
         ensure_source_registered(source, stores);
         if source.frame.pending.is_empty()
+            && source.frame.state == LexerState::SkippingBlanks
+            && source
+                .frame
+                .synthetic_endline_start
+                .is_some_and(|start| source.frame.byte_offset >= start)
+        {
+            source.frame.byte_offset = source.frame.cursor_len();
+        }
+        if source.frame.pending.is_empty()
             && source.frame.byte_offset >= source.frame.line.len()
             && !source.frame.end_after_current_line
             && !load_next_line(source, stores)?
@@ -2765,6 +2825,243 @@ impl InputStack {
         };
         let offset = source_coordinate(source).byte_offset;
         Ok(stores.registered_root_span_id(registration, offset..offset))
+    }
+
+    /// Returns the root physical-source cursor even while a replay frame is
+    /// the active token input. This is used only to record an ending
+    /// continuation that also retains those replay frames.
+    pub fn root_source_delivery_anchor(
+        &mut self,
+        stores: &mut impl ExpansionState,
+    ) -> Result<Option<RootSpanId>, LexError> {
+        let Some((frame_index, _)) = self
+            .frames
+            .iter_indexed_from(0)
+            .rev()
+            .find(|(_, frame)| matches!(frame, InputFrame::Source(_)))
+        else {
+            return Ok(None);
+        };
+        let InputFrame::Source(source) = &mut self.frames[frame_index] else {
+            unreachable!();
+        };
+        ensure_source_registered(source, stores);
+        if source.frame.pending.is_empty()
+            && source.frame.state == LexerState::SkippingBlanks
+            && source
+                .frame
+                .synthetic_endline_start
+                .is_some_and(|start| source.frame.byte_offset >= start)
+        {
+            source.frame.byte_offset = source.frame.cursor_len();
+        }
+        if source.frame.pending.is_empty()
+            && source.frame.byte_offset >= source.frame.line.len()
+            && !source.frame.end_after_current_line
+            && !load_next_line(source, stores)?
+        {
+            return Ok(None);
+        }
+        let Some(registration) = source.registration else {
+            return Ok(None);
+        };
+        let offset = source_coordinate(source).byte_offset;
+        Ok(stores.registered_root_span_id(registration, offset..offset))
+    }
+
+    /// Validates a prior paragraph's complete raw source coverage without
+    /// tokenizing or mutating the input stack.
+    #[must_use]
+    pub fn prepare_paragraph_transition(
+        &self,
+        starting_span: RootSpanId,
+        consumed_spans: &[RootSpanId],
+        ending_span: RootSpanId,
+        ending_input: &InputSummary,
+    ) -> Option<PreparedParagraphTransition> {
+        if self.source_frame_count != 1 || self.frames.len() != 1 {
+            return None;
+        }
+        let frame_index = self.current_token_frame_index()?;
+        let InputFrame::Source(source) = &self.frames[frame_index] else {
+            return None;
+        };
+        if source.input_record.is_some()
+            || source.scantokens
+            || !source.frame.pending.is_empty()
+            || source.layout_cursor.is_none()
+        {
+            return None;
+        }
+        let source_summary_index = ending_input
+            .frames()
+            .iter()
+            .position(|frame| matches!(frame, InputFrameSummary::Source { .. }))?;
+        if ending_input
+            .frames()
+            .iter()
+            .filter(|frame| matches!(frame, InputFrameSummary::Source { .. }))
+            .count()
+            != 1
+            || ending_input.frames().len() != 1
+        {
+            return None;
+        }
+        let InputFrameSummary::Source {
+            input_record,
+            source: ending,
+            ..
+        } = &ending_input.frames()[source_summary_index]
+        else {
+            return None;
+        };
+        if input_record.is_some() || ending.is_scantokens() || !ending.pending().is_empty() {
+            return None;
+        }
+        let cursor = source.layout_cursor.as_ref()?;
+        let current_document_offset = source.frame.physical_line_start.checked_add(
+            usize::try_from(
+                source_coordinate(source)
+                    .byte_offset
+                    .checked_sub(source.frame.origin_line_start)?,
+            )
+            .ok()?,
+        )?;
+        let start = cursor.document_range_at_or_after(starting_span, current_document_offset)?;
+        if start.start != current_document_offset || start.start != start.end {
+            return None;
+        }
+        let mut minimum = current_document_offset;
+        for &span in consumed_spans {
+            let range = cursor.document_range_at_or_after(span, minimum)?;
+            minimum = range.start;
+        }
+        let ending_range = cursor.document_range_at_or_after(ending_span, minimum)?;
+        if ending_range.start != ending_range.end {
+            return None;
+        }
+
+        let ending_line_offset = ending
+            .synthetic_endline_start()
+            .filter(|start| ending.line_byte_offset() >= *start)
+            .map_or(ending.line_byte_offset(), |_| {
+                ending
+                    .normalized_end_anchor()
+                    .checked_sub(ending.buffer_offset())
+                    .unwrap_or(usize::MAX)
+            });
+        let expected_fragment_offset = ending
+            .origin_line_start()
+            .checked_add(u64::try_from(ending_line_offset).ok()?)?;
+        if expected_fragment_offset != u64::from(ending_span.start()) {
+            return None;
+        }
+        let document_line_start = ending_range.start.checked_sub(ending_line_offset)?;
+        let rebase = |offset: usize| {
+            document_line_start.checked_add(offset.checked_sub(ending.buffer_offset())?)
+        };
+        Some(PreparedParagraphTransition {
+            frame_index,
+            ending: ending.clone(),
+            document_line_start,
+            document_content_end: rebase(ending.physical_content_end())?,
+            document_terminator_start: rebase(ending.terminator_start())?,
+            document_terminator_end: rebase(ending.terminator_end())?,
+            document_normalized_end_anchor: rebase(ending.normalized_end_anchor())?,
+        })
+    }
+
+    /// Applies a previously validated paragraph transition by advancing the
+    /// root reader by physical lines and installing the recorded lexer state.
+    /// No bytes are tokenized and no catcodes are observed.
+    pub fn apply_paragraph_transition(
+        &mut self,
+        stores: &impl ExpansionState,
+        transition: PreparedParagraphTransition,
+    ) -> Result<bool, LexError> {
+        let InputFrame::Source(source) = &mut self.frames[transition.frame_index] else {
+            return Ok(false);
+        };
+        let mut line_number = source.frame.line_number;
+        let normalized = if transition.document_line_start == source.frame.physical_line_start {
+            if transition.document_terminator_end != source.frame.terminator_end {
+                return Ok(false);
+            }
+            NormalizedLine {
+                text: source.frame.line.clone(),
+                bytes_as_chars: source.frame.bytes_as_chars,
+                physical_start: source.frame.physical_line_start,
+                physical_content_end: source.frame.physical_content_end,
+                terminator_start: source.frame.terminator_start,
+                terminator_end: source.frame.terminator_end,
+                normalized_end_anchor: source.frame.normalized_end_anchor,
+                synthetic_endline_start: source.frame.synthetic_endline_start,
+            }
+        } else {
+            let context = next_line_source_context(source);
+            let physical = loop {
+                let Some(line) = source
+                    .lines
+                    .source
+                    .read_line()
+                    .map_err(|error| map_input_source_error(source, error, context))?
+                else {
+                    return Ok(false);
+                };
+                line_number = line_number.saturating_add(1);
+                if line.start == transition.document_line_start {
+                    break line;
+                }
+                if line.start > transition.document_line_start {
+                    return Ok(false);
+                }
+            };
+            source
+                .lines
+                .normalization_cache
+                .normalize(&physical, stores.endlinechar(), false)
+        };
+        if normalized.text != transition.ending.normalized_line()
+            || normalized.physical_content_end != transition.document_content_end
+            || normalized.terminator_start != transition.document_terminator_start
+            || normalized.terminator_end != transition.document_terminator_end
+            || normalized.normalized_end_anchor != transition.document_normalized_end_anchor
+            || normalized.synthetic_endline_start != transition.ending.synthetic_endline_start()
+            || normalized.bytes_as_chars != transition.ending.bytes_as_chars()
+        {
+            return Ok(false);
+        }
+        let cursor = source
+            .layout_cursor
+            .as_mut()
+            .expect("validated root layout cursor");
+        cursor.seek(transition.document_line_start);
+        let Some((registration, origin_line_start)) = cursor.line_registration(
+            transition.document_line_start,
+            transition.document_terminator_end,
+        ) else {
+            return Ok(false);
+        };
+        source.registration = Some(registration);
+        source.frame = SourceFrame {
+            state: transition.ending.lexer_state(),
+            line: normalized.text,
+            bytes_as_chars: normalized.bytes_as_chars,
+            byte_offset: transition.ending.line_byte_offset(),
+            pending: VecDeque::new(),
+            physical_line_start: transition.document_line_start,
+            origin_line_start,
+            physical_content_end: transition.document_content_end,
+            terminator_start: transition.document_terminator_start,
+            terminator_end: transition.document_terminator_end,
+            normalized_end_anchor: transition.document_normalized_end_anchor,
+            synthetic_endline_start: normalized.synthetic_endline_start,
+            line_number,
+            column: transition.ending.column(),
+            end_after_current_line: transition.ending.end_after_current_line(),
+        };
+        source.next_source_offset = transition.document_terminator_end;
+        Ok(true)
     }
 
     #[must_use]
