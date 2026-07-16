@@ -7,6 +7,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1"
+pdf-writer = { path = "../../vendor/pdf-writer", version = "=0.15.0" }
 refexec = { path = "../refexec" }
 sha2 = "0.10"
 tempfile = "3"

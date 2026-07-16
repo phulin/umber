@@ -1,0 +1,14 @@
+\catcode`\{=1
+\catcode`\}=2
+\newlinechar=10
+\pdfoutput=1
+\message{initial=\the\pdflastximage/\the\pdflastximagepages/\the\pdflastximagecolordepth}
+\pdfximage{depth8.png}
+\message{png=\the\pdflastximage/\the\pdflastximagepages/\the\pdflastximagecolordepth}
+\pdfximage{depth12.jpg}
+\message{jpeg=\the\pdflastximage/\the\pdflastximagepages/\the\pdflastximagecolordepth}
+\pdfximage page 2 {three-pages.pdf}
+\message{pdf=\the\pdflastximage/\the\pdflastximagepages/\the\pdflastximagecolordepth}
+\pdfrefximage\pdflastximage
+\message{reuse=\the\pdflastximage/\the\pdflastximagepages/\the\pdflastximagecolordepth}
+\end

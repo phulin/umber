@@ -97,6 +97,9 @@ recovery, font diagnostics, and effective microtype nodes do not inherit
 format-file assignments; their fixtures anchor the corresponding Umber policy
 tests. The seven `pdf_navigation_*` cases pin destination, outline, and
 article-thread scanner and lifecycle observations in that same INITEX mode.
+The `pdf_ximage_enquiries` case uses deterministic fixturegen-owned PNG, JPEG,
+and typed `pdf_writer` three-page PDF inputs to pin the two last-image metadata
+enquiries without committing opaque binary support assets.
 
 `tests/corpus/tex_exec_io` contains small file-effect and DVI special-payload
 sources plus reference observations used by `tex-exec` I/O and shipout tests.

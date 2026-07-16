@@ -77,7 +77,8 @@ fn crosscheck_synthetic_validation(tex: &RefTex, tftopl: &RefTftopl) -> Result<(
         // case, and require cleanly accepted files to produce usable PL.
         let tftopl_result = tftopl.to_pl(&path);
         if case.accept {
-            tftopl_result.with_context(|| format!("TFtoPL rejected accepted case {}", case.name))?;
+            tftopl_result
+                .with_context(|| format!("TFtoPL rejected accepted case {}", case.name))?;
         }
     }
     Ok(())

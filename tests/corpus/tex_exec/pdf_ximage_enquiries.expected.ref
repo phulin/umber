@@ -1,0 +1,13 @@
+success: true
+stdout:
+initial=0/0/0 png=1/1/8 jpeg=3/1/12
+
+pdfTeX warning: /Library/TeX/texbin/pdftex (file ./three-pages.pdf): PDF inclus
+ion: found PDF version <1.7>, but at most version <1.4> allowed
+pdf=4/3/0 reuse=4/3/0
+log:
+initial=0/0/0 png=1/1/8 jpeg=3/1/12
+
+pdfTeX warning: /Library/TeX/texbin/pdftex (file ./three-pages.pdf): PDF inclus
+ion: found PDF version <1.7>, but at most version <1.4> allowed
+pdf=4/3/0 reuse=4/3/0

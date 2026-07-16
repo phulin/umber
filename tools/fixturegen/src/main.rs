@@ -209,6 +209,14 @@ fn regenerate_etex_reference_log_case(case: &str) -> Result<()> {
 
 fn regenerate_tex_exec_case(case: &str) -> Result<()> {
     let mut opts = RunOpts::default();
+    let generated_images = if case == "pdf_ximage_enquiries" {
+        Some(ximage_enquiry_inputs()?)
+    } else {
+        None
+    };
+    if let Some(inputs) = &generated_images {
+        opts.extra_inputs.extend(inputs.paths.iter().cloned());
+    }
     if matches!(
         case,
         "pdf_output_policy"
@@ -229,6 +237,7 @@ fn regenerate_tex_exec_case(case: &str) -> Result<()> {
             | "pdf_navigation_thread_scan"
             | "pdf_navigation_thread_lifecycle"
             | "pdf_navigation_thread_graph"
+            | "pdf_ximage_enquiries"
     ) {
         opts.ini = true;
     }
@@ -237,6 +246,55 @@ fn regenerate_tex_exec_case(case: &str) -> Result<()> {
     }
     let output = RefTex::locate()?.run(&source_path("tex_exec", case), &opts)?;
     write_text_fixture("tex_exec", case, "ref", &format_micro_reference(&output))
+}
+
+struct GeneratedXImageInputs {
+    _directory: TempDir,
+    paths: Vec<PathBuf>,
+}
+
+fn ximage_enquiry_inputs() -> Result<GeneratedXImageInputs> {
+    const PNG: &[u8] = &[
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x04, 0x00, 0x00, 0x00, 0xb5,
+        0x1c, 0x0c, 0x02, 0x00, 0x00, 0x00, 0x0b, 0x49, 0x44, 0x41, 0x54, 0x78, 0xda, 0x63, 0x64,
+        0xf8, 0x0f, 0x00, 0x01, 0x05, 0x01, 0x01, 0x27, 0x18, 0xe3, 0x66, 0x00, 0x00, 0x00, 0x00,
+        0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+    ];
+    const JPEG: &[u8] = &[
+        0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x0c, 0x00, 0x01, 0x00, 0x01, 0x03, 0x01, 0x11, 0x00,
+        0x02, 0x11, 0x00, 0x03, 0x11, 0x00, 0xff, 0xd9,
+    ];
+
+    let directory = TempDir::new().context("create ximage enquiry inputs")?;
+    let png = directory.path().join("depth8.png");
+    let jpeg = directory.path().join("depth12.jpg");
+    let pdf_path = directory.path().join("three-pages.pdf");
+    fs::write(&png, PNG).context("write generated PNG enquiry input")?;
+    fs::write(&jpeg, JPEG).context("write generated JPEG enquiry input")?;
+
+    let catalog = pdf_writer::Ref::new(1);
+    let pages = pdf_writer::Ref::new(2);
+    let page_ids = [
+        pdf_writer::Ref::new(3),
+        pdf_writer::Ref::new(4),
+        pdf_writer::Ref::new(5),
+    ];
+    let mut pdf = pdf_writer::Pdf::new();
+    pdf.catalog(catalog).pages(pages);
+    pdf.pages(pages).kids(page_ids).count(3);
+    for page in page_ids {
+        pdf.page(page)
+            .parent(pages)
+            .media_box(pdf_writer::Rect::new(0.0, 0.0, 10.0, 20.0))
+            .resources();
+    }
+    fs::write(&pdf_path, pdf.finish()).context("write typed three-page PDF enquiry input")?;
+
+    Ok(GeneratedXImageInputs {
+        _directory: directory,
+        paths: vec![png, jpeg, pdf_path],
+    })
 }
 
 fn regenerate_tex_exec_io_case(case: &str) -> Result<()> {
