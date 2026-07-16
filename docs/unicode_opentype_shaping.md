@@ -5,6 +5,14 @@ shaping-ownership decision in `docs/web_font_bundles.md` for OpenType-selected
 fonts and defines the engine-side shaping architecture that supersedes its
 Stage 7.
 
+**Scope of this pass.** Implementation work (Stages 1-4 below) targets the
+HTML backend only. The shaping kernel's data model deliberately carries no
+HTML- or DOM-specific concepts — glyph IDs and absolute positions in scaled
+points, nothing else — so that a later PDF consumer (Stage 6) can read
+`tex-shape`'s output directly instead of requiring a redesign. PDF output is
+not implemented as part of this pass; see "Output side" below for why the
+data model already accommodates it.
+
 ## Relationship to the existing OpenType resource architecture
 
 `docs/web_font_bundles.md` (Beads epic `umber2-y2ei`) already defines font
@@ -206,10 +214,14 @@ embedding with glyph-ID-addressed text showing. Embedding validated OpenType
 programs as Type0/CID-keyed fonts and emitting glyph-show operators driven
 directly by `tex-shape`'s `ShapedRun` output is the natural next home for
 glyph-exact rendering, since PDF (unlike HTML) can address glyphs by ID. That
-work is deliberately out of scope for this plan and left as a documented
-extension point: `tex-shape`'s output type is designed so a PDF (or future
-XDV-style) consumer can use it directly without redesigning the shaping
-kernel.
+work is deliberately out of scope for this pass, but the reason it stays
+cheap later is structural, not aspirational: `ShapedGlyph`/`ShapedRun`
+already contain exactly what a PDF glyph-show operator needs (glyph ID, x/y
+advance, x/y offset, all in `Scaled`) and nothing HTML-specific (no DOM
+node, no CSS unit, no string). A future PDF consumer reads `tex-shape`'s
+output the same way the HTML path will; only Stage 6's own new code
+(font embedding, subsetting, `ToUnicode` CMap construction) is net-new, and
+none of Stages 1-4 need revisiting to support it.
 
 ## Testing strategy
 
