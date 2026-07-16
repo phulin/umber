@@ -182,6 +182,9 @@ INITEX and format-loaded TRIP phases.
 Cargo conformance tests do not invoke `scripts/trip.sh` or launch Umber as a
 subprocess. Story and Gentle call the engine directly through the staged
 fixture callback; TRIP and e-TRIP share one in-process two-phase format helper.
+`scripts/check-and-test.sh` checks these conditional corpus prerequisites before
+starting the workspace gate and prints a warning naming every e2e case that
+will be skipped and each missing file.
 
 This tier requires Knuth's special TRIP INITEX build described in
 `tripman.tex` Appendix A. Stock `pdftex -ini` or `tex -ini` is useful only as a
