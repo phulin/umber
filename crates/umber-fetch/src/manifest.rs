@@ -6,6 +6,8 @@ use std::time::Duration;
 use reqwest::blocking::Client;
 use sha2::{Digest, Sha256};
 
+use crate::FetchCancellation;
+
 const MAX_MANIFEST_BYTES: u64 = 32 * 1024 * 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -15,6 +17,7 @@ pub enum ManifestFetchError {
     Transport(String),
     TooLarge { limit: u64 },
     DigestMismatch { expected: String, actual: String },
+    Cancelled,
 }
 
 impl fmt::Display for ManifestFetchError {
@@ -28,6 +31,7 @@ impl fmt::Display for ManifestFetchError {
                 f,
                 "manifest digest mismatch: expected {expected}, received {actual}"
             ),
+            Self::Cancelled => f.write_str("manifest acquisition cancelled"),
         }
     }
 }
@@ -40,6 +44,19 @@ pub fn fetch_manifest(
     expected_sha256: &str,
     timeout: Duration,
 ) -> Result<Vec<u8>, ManifestFetchError> {
+    fetch_manifest_cancellable(url, expected_sha256, timeout, &FetchCancellation::new())
+}
+
+/// Downloads and verifies a manifest while observing cooperative cancellation.
+pub fn fetch_manifest_cancellable(
+    url: &str,
+    expected_sha256: &str,
+    timeout: Duration,
+    cancellation: &FetchCancellation,
+) -> Result<Vec<u8>, ManifestFetchError> {
+    if cancellation.is_cancelled() {
+        return Err(ManifestFetchError::Cancelled);
+    }
     let url = reqwest::Url::parse(url)
         .map_err(|error| ManifestFetchError::InvalidUrl(error.to_string()))?;
     if url.scheme() != "https"
@@ -73,10 +90,23 @@ pub fn fetch_manifest(
         });
     }
     let mut bytes = Vec::new();
-    response
-        .take(MAX_MANIFEST_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|error| ManifestFetchError::Transport(error.to_string()))?;
+    let mut reader = response.take(MAX_MANIFEST_BYTES + 1);
+    let mut chunk = [0_u8; 64 * 1024];
+    loop {
+        if cancellation.is_cancelled() {
+            return Err(ManifestFetchError::Cancelled);
+        }
+        let count = reader
+            .read(&mut chunk)
+            .map_err(|error| ManifestFetchError::Transport(error.to_string()))?;
+        if count == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&chunk[..count]);
+    }
+    if cancellation.is_cancelled() {
+        return Err(ManifestFetchError::Cancelled);
+    }
     if bytes.len() as u64 > MAX_MANIFEST_BYTES {
         return Err(ManifestFetchError::TooLarge {
             limit: MAX_MANIFEST_BYTES,

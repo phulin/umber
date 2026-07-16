@@ -248,6 +248,33 @@ fn fetches_a_manifest_only_when_it_matches_the_trust_pin() {
 }
 
 #[test]
+fn cancelled_manifest_is_not_returned() {
+    let bytes = br#"{"schema":1}"#;
+    let server = FixtureServer::new(vec![Reply {
+        delay: Duration::from_millis(120),
+        ..Reply::ok(bytes)
+    }]);
+    let cancellation = FetchCancellation::new();
+    let cancel_from_thread = cancellation.clone();
+    let canceller = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(20));
+        cancel_from_thread.cancel();
+    });
+
+    let error = fetch_manifest_cancellable(
+        &format!("{}manifest.json", server.base_url),
+        &hex_digest(bytes),
+        Duration::from_secs(1),
+        &cancellation,
+    )
+    .expect_err("cancelled manifest must not be returned");
+
+    canceller.join().expect("canceller");
+    assert_eq!(error, ManifestFetchError::Cancelled);
+    server.finish();
+}
+
+#[test]
 fn returns_typed_404_with_key_and_digest() {
     let bytes = b"absent";
     let server = FixtureServer::new(vec![Reply {
@@ -394,6 +421,49 @@ fn retries_timeout_and_succeeds() {
 
     assert_eq!(fetched[0].bytes, bytes);
     assert_eq!(server.finish().0, 2);
+}
+
+#[test]
+fn cancellation_after_download_does_not_publish_or_return_bytes() {
+    let bytes = b"cancelled object";
+    let server = FixtureServer::new(vec![Reply {
+        delay: Duration::from_millis(120),
+        ..Reply::ok(bytes)
+    }]);
+    let temp = TempDir::new().expect("cache tempdir");
+    let cache = ObjectCache::new(temp.path());
+    let request = request("tex:cancelled.sty", bytes, 1024);
+    let cancellation = FetchCancellation::new();
+    let cancel_from_thread = cancellation.clone();
+    let canceller = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(20));
+        cancel_from_thread.cancel();
+    });
+
+    let error = client(1, Duration::from_secs(1), 0)
+        .fetch_batch_cancellable(
+            &cache,
+            &server.base_url,
+            std::slice::from_ref(&request),
+            &cancellation,
+        )
+        .expect_err("cancelled fetch must not return bytes");
+
+    canceller.join().expect("canceller");
+    assert!(
+        error
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.failure == FetchFailure::Cancelled)
+    );
+    assert!(
+        cache
+            .load_object(&request.object.sha256, request.object.bytes)
+            .expect("load cache")
+            .is_none(),
+        "cancelled download must not be published"
+    );
+    server.finish();
 }
 
 #[test]

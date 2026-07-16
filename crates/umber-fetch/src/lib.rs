@@ -6,10 +6,10 @@ mod manifest;
 
 pub use cache::{CacheError, ObjectCache};
 pub use fetch::{
-    BatchFetchError, FetchClient, FetchClientConfig, FetchDiagnostic, FetchFailure, FetchRequest,
-    FetchedObject,
+    BatchFetchError, FetchCancellation, FetchClient, FetchClientConfig, FetchDiagnostic,
+    FetchFailure, FetchRequest, FetchedObject,
 };
-pub use manifest::{ManifestFetchError, fetch_manifest};
+pub use manifest::{ManifestFetchError, fetch_manifest, fetch_manifest_cancellable};
 
 #[cfg(test)]
 mod tests;

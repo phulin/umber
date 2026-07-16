@@ -2,6 +2,7 @@ use std::error::Error;
 use std::fmt;
 use std::io::Read;
 use std::num::NonZeroUsize;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -44,6 +45,39 @@ pub struct FetchedObject {
     pub cache_hit: bool,
 }
 
+/// Shared cooperative cancellation for one native acquisition operation.
+#[derive(Clone, Debug, Default)]
+pub struct FetchCancellation {
+    state: Arc<FetchCancellationState>,
+}
+
+#[derive(Debug, Default)]
+struct FetchCancellationState {
+    cancelled: AtomicBool,
+    publication: Mutex<()>,
+}
+
+impl FetchCancellation {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn cancel(&self) {
+        let _publication = self
+            .state
+            .publication
+            .lock()
+            .expect("cancellation publication mutex poisoned");
+        self.state.cancelled.store(true, Ordering::Release);
+    }
+
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.state.cancelled.load(Ordering::Acquire)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FetchFailure {
     Oversized { declared: u64, limit: u64 },
@@ -53,6 +87,7 @@ pub enum FetchFailure {
     LengthMismatch { expected: u64, actual: u64 },
     DigestMismatch { actual: String },
     Cache(String),
+    Cancelled,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -83,6 +118,7 @@ impl fmt::Display for FetchDiagnostic {
                 write!(f, "digest mismatch (received {actual})")
             }
             FetchFailure::Cache(message) => write!(f, "cache failure: {message}"),
+            FetchFailure::Cancelled => f.write_str("cancelled"),
         }
     }
 }
@@ -127,6 +163,21 @@ impl FetchClient {
         objects_base_url: &str,
         requests: &[FetchRequest],
     ) -> Result<Vec<FetchedObject>, BatchFetchError> {
+        self.fetch_batch_cancellable(cache, objects_base_url, requests, &FetchCancellation::new())
+    }
+
+    /// Acquires a complete batch while observing `cancellation`. Cancelled
+    /// bytes are never published to the cache or returned to the caller.
+    pub fn fetch_batch_cancellable(
+        &self,
+        cache: &ObjectCache,
+        objects_base_url: &str,
+        requests: &[FetchRequest],
+        cancellation: &FetchCancellation,
+    ) -> Result<Vec<FetchedObject>, BatchFetchError> {
+        if cancellation.is_cancelled() {
+            return Err(cancelled_batch(requests));
+        }
         let base_url = match reqwest::Url::parse(objects_base_url)
             .map_err(|error| error.to_string())
             .and_then(validate_transport)
@@ -161,7 +212,7 @@ impl FetchClient {
                         let Some(request) = requests.get(index) else {
                             break;
                         };
-                        let result = self.fetch_one(cache, &base_url, request);
+                        let result = self.fetch_one(cache, &base_url, request, cancellation);
                         results.lock().expect("result mutex poisoned")[index] = Some(result);
                     }
                 });
@@ -179,7 +230,33 @@ impl FetchClient {
                 Err(error) => diagnostics.push(error),
             }
         }
-        if diagnostics.is_empty() {
+        if cancellation.is_cancelled() {
+            Err(cancelled_batch(requests))
+        } else if diagnostics.is_empty() {
+            let _publication = cancellation
+                .state
+                .publication
+                .lock()
+                .expect("cancellation publication mutex poisoned");
+            if cancellation.is_cancelled() {
+                return Err(cancelled_batch(requests));
+            }
+            for object in &successes {
+                if object.cache_hit {
+                    continue;
+                }
+                let request = requests
+                    .iter()
+                    .find(|request| request.request_key == object.request_key)
+                    .expect("fetched object came from the input batch");
+                if let Err(error) =
+                    cache.store_object(&request.object.sha256, request.object.bytes, &object.bytes)
+                {
+                    return Err(BatchFetchError {
+                        diagnostics: vec![cache_diagnostic(request, error)],
+                    });
+                }
+            }
             Ok(successes)
         } else {
             Err(BatchFetchError { diagnostics })
@@ -191,7 +268,9 @@ impl FetchClient {
         cache: &ObjectCache,
         base_url: &reqwest::Url,
         request: &FetchRequest,
+        cancellation: &FetchCancellation,
     ) -> Result<FetchedObject, FetchDiagnostic> {
+        check_cancelled(request, cancellation)?;
         if request.object.bytes > request.max_bytes {
             return Err(diagnostic(
                 request,
@@ -208,7 +287,10 @@ impl FetchClient {
             ));
         }
         match cache.load_object(&request.object.sha256, request.object.bytes) {
-            Ok(Some(bytes)) => return Ok(fetched(request, bytes, true)),
+            Ok(Some(bytes)) => {
+                check_cancelled(request, cancellation)?;
+                return Ok(fetched(request, bytes, true));
+            }
             Ok(None) => {}
             Err(error) => return Err(cache_diagnostic(request, error)),
         }
@@ -219,11 +301,10 @@ impl FetchClient {
             .map_err(|error| diagnostic(request, FetchFailure::InvalidUrl(error)))?;
         let mut last_failure = None;
         for attempt in 0..=self.config.retries {
-            match self.download(&url, request) {
+            check_cancelled(request, cancellation)?;
+            match self.download(&url, request, cancellation) {
                 Ok(bytes) => {
-                    cache
-                        .store_object(&request.object.sha256, request.object.bytes, &bytes)
-                        .map_err(|error| cache_diagnostic(request, error))?;
+                    check_cancelled(request, cancellation)?;
                     return Ok(fetched(request, bytes, false));
                 }
                 Err(failure) => {
@@ -245,6 +326,7 @@ impl FetchClient {
         &self,
         url: &reqwest::Url,
         request: &FetchRequest,
+        cancellation: &FetchCancellation,
     ) -> Result<Vec<u8>, FetchFailure> {
         let response = self
             .client
@@ -263,7 +345,7 @@ impl FetchClient {
                 actual: length,
             });
         }
-        read_and_verify(response, request)
+        read_and_verify(response, request, cancellation)
     }
 }
 
@@ -285,16 +367,29 @@ fn validate_transport(url: reqwest::Url) -> Result<reqwest::Url, String> {
 fn read_and_verify(
     mut response: Response,
     request: &FetchRequest,
+    cancellation: &FetchCancellation,
 ) -> Result<Vec<u8>, FetchFailure> {
     let bound = request.object.bytes.saturating_add(1);
     let mut bytes = Vec::with_capacity(
         usize::try_from(request.object.bytes.min(1024 * 1024)).unwrap_or(1024 * 1024),
     );
-    response
-        .by_ref()
-        .take(bound)
-        .read_to_end(&mut bytes)
-        .map_err(|error| FetchFailure::Transport(error.to_string()))?;
+    let mut reader = response.by_ref().take(bound);
+    let mut chunk = [0_u8; 64 * 1024];
+    loop {
+        if cancellation.is_cancelled() {
+            return Err(FetchFailure::Cancelled);
+        }
+        let count = reader
+            .read(&mut chunk)
+            .map_err(|error| FetchFailure::Transport(error.to_string()))?;
+        if count == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&chunk[..count]);
+    }
+    if cancellation.is_cancelled() {
+        return Err(FetchFailure::Cancelled);
+    }
     if bytes.len() as u64 != request.object.bytes {
         return Err(FetchFailure::LengthMismatch {
             expected: request.object.bytes,
@@ -314,7 +409,28 @@ fn retryable(failure: &FetchFailure) -> bool {
         | FetchFailure::LengthMismatch { .. }
         | FetchFailure::DigestMismatch { .. } => true,
         FetchFailure::HttpStatus(status) => matches!(*status, 408 | 429 | 500..=599),
+        FetchFailure::Cancelled => false,
         _ => false,
+    }
+}
+
+fn check_cancelled(
+    request: &FetchRequest,
+    cancellation: &FetchCancellation,
+) -> Result<(), FetchDiagnostic> {
+    if cancellation.is_cancelled() {
+        Err(diagnostic(request, FetchFailure::Cancelled))
+    } else {
+        Ok(())
+    }
+}
+
+fn cancelled_batch(requests: &[FetchRequest]) -> BatchFetchError {
+    BatchFetchError {
+        diagnostics: requests
+            .iter()
+            .map(|request| diagnostic(request, FetchFailure::Cancelled))
+            .collect(),
     }
 }
 
