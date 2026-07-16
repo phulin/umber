@@ -28,6 +28,8 @@ pub use thread::{PdfThreadBeadRecord, PdfThreadRecord};
 
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
+
 use crate::ContentHash;
 use crate::ids::{FontId, NodeListId, TokenListId};
 use crate::scaled::Scaled;
@@ -428,11 +430,17 @@ pub enum PdfFontMapOperation {
 
 /// One validated `\pdfglyphtounicode` mapping. A `tfm:` prefix scopes the
 /// mapping to one TeX metric name; otherwise it is global across fonts.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct PdfGlyphToUnicode {
     pub tfm_name: Option<Vec<u8>>,
     pub glyph_name: Vec<u8>,
     pub unicode: Vec<u32>,
+}
+
+/// PDF state that pdfTeX deliberately retains in a dumped format.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub(crate) struct PdfFormatState {
+    glyph_to_unicode: Vec<PdfGlyphToUnicode>,
 }
 
 /// An append-only font-output mutation. The log makes snapshots cheap and
@@ -1016,12 +1024,19 @@ impl PdfState {
         self.next_object
     }
     #[must_use]
-    pub(crate) fn is_format_empty(&self) -> bool {
-        self.pages.is_empty()
+    pub(crate) fn capture_format(&self) -> Option<PdfFormatState> {
+        let glyph_to_unicode = self
+            .font_operations
+            .iter()
+            .map(|operation| match operation {
+                PdfFontOperation::GlyphToUnicode(mapping) => Some(mapping.clone()),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let has_only_format_state = self.pages.is_empty()
             && self.next_object == FIRST_DYNAMIC_OBJECT
             && self.output_parameters.is_none()
             && self.pk_mode.is_none()
-            && self.font_operations.is_empty()
             && self.font_resources.is_empty()
             && self.external_images.is_empty()
             && self.raw_objects.is_empty()
@@ -1038,7 +1053,22 @@ impl PdfState {
             && self.last_position == (Scaled::from_raw(0), Scaled::from_raw(0))
             && self.snap_reference == (Scaled::from_raw(0), Scaled::from_raw(0))
             && self.forms.is_empty()
-            && self.threads.is_empty()
+            && self.threads.is_empty();
+        has_only_format_state.then_some(PdfFormatState { glyph_to_unicode })
+    }
+
+    pub(crate) fn restore_format(format: PdfFormatState) -> Self {
+        let mut state = Self::default();
+        for mapping in format.glyph_to_unicode {
+            state.set_glyph_to_unicode(mapping);
+        }
+        state
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_format_empty(&self) -> bool {
+        self.capture_format()
+            .is_some_and(|format| format.glyph_to_unicode.is_empty())
     }
 
     pub(crate) fn ensure_page_capacity(&self, parameters: PdfOutputParameters) -> Result<(), ()> {

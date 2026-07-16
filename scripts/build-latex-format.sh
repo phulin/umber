@@ -3,23 +3,29 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 lock_file="${repo_root}/tests/latex-source.lock"
-fixture="${repo_root}/tests/latex/format-equivalence.tex"
-output_dir="${repo_root}/target/latex-format"
+engine="latex"
+output_dir=""
 texmf_dist="${UMBER_TEXMF_DIST:-/usr/local/texlive/2025/texmf-dist}"
 
 usage() {
   cat <<'EOF'
-usage: scripts/build-latex-format.sh [--texmf-dist PATH] [--output-dir PATH]
+usage: scripts/build-latex-format.sh [--engine latex|pdflatex]
+                                     [--texmf-dist PATH] [--output-dir PATH]
 
-Builds the pinned Umber-native LaTeX format twice, requires byte identity and
-the exact locked input closure, then compares a source-initialized
-representative document with the format-loaded job. The generated latex.fmt
-and latex-format.json are written under target/latex-format by default.
+Builds one pinned Umber-native LaTeX format twice, requires byte identity and
+the exact mode-specific locked input closure, then compares a source-initialized
+representative document with the format-loaded job. The default output is
+target/<engine>-format.
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --engine)
+      [[ $# -ge 2 ]] || { printf '%s\n' 'missing mode after --engine' >&2; exit 2; }
+      engine="$2"
+      shift 2
+      ;;
     --texmf-dist)
       [[ $# -ge 2 ]] || { printf '%s\n' 'missing path after --texmf-dist' >&2; exit 2; }
       texmf_dist="$2"
@@ -42,6 +48,26 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+case "$engine" in
+  latex)
+    fixture="${repo_root}/tests/latex/format-equivalence.tex"
+    format_input="${texmf_dist}/tex/latex/base/latex.ltx"
+    output_extension=dvi
+    ;;
+  pdflatex)
+    fixture="${repo_root}/tests/latex/pdflatex-smoke.tex"
+    format_input="${texmf_dist}/tex/latex/tex-ini-files/pdflatex.ini"
+    output_extension=pdf
+    ;;
+  *)
+    printf 'build-latex-format.sh: unsupported engine: %s\n' "$engine" >&2
+    usage >&2
+    exit 2
+    ;;
+esac
+format_name="$engine"
+output_dir="${output_dir:-${repo_root}/target/${format_name}-format}"
+
 fail() {
   printf 'build-latex-format.sh: %s\n' "$*" >&2
   exit 1
@@ -58,6 +84,7 @@ sha256() {
 [[ -d "$texmf_dist" ]] || fail "missing pinned texmf-dist root: $texmf_dist"
 [[ -f "$lock_file" ]] || fail "missing source lock: $lock_file"
 [[ -f "$fixture" ]] || fail "missing equivalence fixture: $fixture"
+[[ -f "$format_input" ]] || fail "missing format entry point: $format_input"
 
 distribution="$(awk '$1 == "distribution" { print $2 }' "$lock_file")"
 format_schema="$(awk '$1 == "format_schema" { print $2 }' "$lock_file")"
@@ -83,15 +110,28 @@ expected_index="${tmp_root}/expected.index"
 
 while read -r kind relative expected_bytes expected_hash extra; do
   [[ -z "${kind:-}" || "$kind" == \#* ]] && continue
-  [[ "$kind" != source && "$kind" != local ]] && continue
+  case "$kind" in
+    source)
+      source="${texmf_dist}/${relative}"
+      ;;
+    local)
+      source="${repo_root}/${relative}"
+      ;;
+    pdflatex-source)
+      [[ "$engine" == pdflatex ]] || continue
+      source="${texmf_dist}/${relative}"
+      ;;
+    pdflatex-local)
+      [[ "$engine" == pdflatex ]] || continue
+      source="${repo_root}/${relative}"
+      ;;
+    *)
+      continue
+      ;;
+  esac
   [[ -z "${extra:-}" ]] || fail "invalid source lock entry for $relative"
   [[ "$relative" != /* && "$relative" != *..* && "$relative" != *\\* ]] || \
     fail "unsafe source path in lock: $relative"
-  if [[ "$kind" == source ]]; then
-    source="${texmf_dist}/${relative}"
-  else
-    source="${repo_root}/${relative}"
-  fi
   [[ -f "$source" ]] || fail "missing pinned source: $source"
   actual_bytes="$(wc -c < "$source" | tr -d ' ')"
   [[ "$actual_bytes" == "$expected_bytes" ]] || \
@@ -103,7 +143,7 @@ while read -r kind relative expected_bytes expected_hash extra; do
 done < "$lock_file"
 LC_ALL=C sort -k1,1 "$expected_index" | awk -F '\t' '{ print $2 "\t" $1 }' > "$expected_receipt"
 
-texinputs="${repo_root}/tests/latex:${texmf_dist}/tex/latex/base:${texmf_dist}/tex/latex/l3kernel:${texmf_dist}/tex/latex/l3backend:${texmf_dist}/tex/generic/unicode-data:${texmf_dist}/tex/generic/babel:${texmf_dist}/tex/generic/hyphen"
+texinputs="${repo_root}/tests/latex:${texmf_dist}/tex/latex/base:${texmf_dist}/tex/latex/l3kernel:${texmf_dist}/tex/latex/l3backend:${texmf_dist}/tex/generic/unicode-data:${texmf_dist}/tex/generic/babel:${texmf_dist}/tex/generic/hyphen:${texmf_dist}/tex/generic/pdftex"
 texfonts="${texmf_dist}/fonts/tfm/public/cm:${texmf_dist}/fonts/tfm/public/latex-fonts:${texmf_dist}/fonts/tfm/jknappen/ec"
 latex_ltx="${texmf_dist}/tex/latex/base/latex.ltx"
 
@@ -112,20 +152,20 @@ cargo build --release -p umber
 umber_bin="${CARGO_TARGET_DIR:-${repo_root}/target}/release/umber"
 [[ -x "$umber_bin" ]] || fail "Umber binary was not built at $umber_bin"
 
-run_latex() {
+run_engine() {
   local directory="$1"
   shift
   (
     cd "$directory"
     env SOURCE_DATE_EPOCH="$source_date_epoch" TEXINPUTS="$texinputs" TEXFONTS="$texfonts" \
-      "$umber_bin" run --latex "$@"
+      "$umber_bin" run "--${engine}" "$@"
   )
 }
 
 build_one() {
   local directory="$1"
   mkdir -p "$directory"
-  run_latex "$directory" "$latex_ltx" --format-out latex.fmt \
+  run_engine "$directory" "$format_input" --format-out "${format_name}.fmt" \
     --input-records-out build.inputs > "${directory}/build.stdout" 2> "${directory}/build.stderr"
   if grep -q '^! ' "${directory}/build.stdout"; then
     grep -m1 '^! ' "${directory}/build.stdout" >&2
@@ -137,10 +177,10 @@ build_one() {
 
 build_one "${tmp_root}/first"
 build_one "${tmp_root}/second"
-cmp "${tmp_root}/first/latex.fmt" "${tmp_root}/second/latex.fmt" || \
-  fail "two clean LaTeX format generations were not byte-identical"
+cmp "${tmp_root}/first/${format_name}.fmt" "${tmp_root}/second/${format_name}.fmt" || \
+  fail "two clean ${format_name} format generations were not byte-identical"
 
-format_file="${tmp_root}/first/latex.fmt"
+format_file="${tmp_root}/first/${format_name}.fmt"
 magic="$(od -An -t x1 -N 8 "$format_file" | tr -d ' \n')"
 actual_schema="$(od -An -t u4 -j 8 -N 4 "$format_file" | tr -d ' \n')"
 [[ "$magic" == 554d4252464d5400 ]] || fail "generated file lacks Umber format magic"
@@ -152,7 +192,7 @@ loaded_dir="${tmp_root}/loaded"
 mkdir -p "$source_dir" "$loaded_dir"
 cp "$fixture" "${source_dir}/representative.tex"
 cp "$fixture" "${loaded_dir}/representative.tex"
-cp "$format_file" "${loaded_dir}/latex.fmt"
+cp "$format_file" "${loaded_dir}/${format_name}.fmt"
 awk '
   $0 == sprintf("%c%s", 92, "dump") {
     print sprintf("%c%s", 92, "input representative")
@@ -160,12 +200,17 @@ awk '
   }
   { print }
 ' "$latex_ltx" > "${source_dir}/latex-source.ltx"
-printf '\\input latex-source.ltx\n' > "${source_dir}/document.tex"
+if [[ "$engine" == pdflatex ]]; then
+  printf '\\input pdftexconfig.tex\n\\input latex-source.ltx\n' > "${source_dir}/document.tex"
+else
+  printf '\\input latex-source.ltx\n' > "${source_dir}/document.tex"
+fi
 printf '\input representative\n' > "${loaded_dir}/document.tex"
 
-run_latex "$source_dir" document.tex --dvi document.dvi \
+output_args=("--${output_extension}" "document.${output_extension}")
+run_engine "$source_dir" document.tex "${output_args[@]}" \
   > "${source_dir}/document.stdout" 2> "${source_dir}/document.stderr"
-run_latex "$loaded_dir" document.tex --format latex.fmt --dvi document.dvi \
+run_engine "$loaded_dir" document.tex --format "${format_name}.fmt" "${output_args[@]}" \
   > "${loaded_dir}/document.stdout" 2> "${loaded_dir}/document.stderr"
 for directory in "$source_dir" "$loaded_dir"; do
   if grep -q '^! ' "${directory}/document.stdout"; then
@@ -173,10 +218,10 @@ for directory in "$source_dir" "$loaded_dir"; do
     fail "representative LaTeX job emitted a diagnostic"
   fi
 done
-cmp "${source_dir}/document.dvi" "${loaded_dir}/document.dvi" || \
-  fail "source-initialized and format-loaded LaTeX DVI differ"
+cmp "${source_dir}/document.${output_extension}" "${loaded_dir}/document.${output_extension}" || \
+  fail "source-initialized and format-loaded ${format_name} ${output_extension^^} differ"
 cmp "${source_dir}/document.aux" "${loaded_dir}/document.aux" || \
-  fail "source-initialized and format-loaded LaTeX auxiliary effects differ"
+  fail "source-initialized and format-loaded ${format_name} auxiliary effects differ"
 
 format_sha256="$(sha256 "$format_file")"
 format_bytes="$(wc -c < "$format_file" | tr -d ' ')"
@@ -184,10 +229,10 @@ source_manifest_sha256="$(sha256 "$lock_file")"
 package_id="$(cargo pkgid -p umber)"
 engine_version="${package_id##*#}"
 
-cat > "${tmp_root}/latex-format.json" <<EOF
+cat > "${tmp_root}/${format_name}-format.json" <<EOF
 {
   "schema": 1,
-  "name": "latex",
+  "name": "${format_name}",
   "object": "sha256-${format_sha256}",
   "sha256": "${format_sha256}",
   "bytes": ${format_bytes},
@@ -201,8 +246,8 @@ cat > "${tmp_root}/latex-format.json" <<EOF
 EOF
 
 mkdir -p "$output_dir"
-cp "$format_file" "${output_dir}/latex.fmt"
-cp "${tmp_root}/latex-format.json" "${output_dir}/latex-format.json"
+cp "$format_file" "${output_dir}/${format_name}.fmt"
+cp "${tmp_root}/${format_name}-format.json" "${output_dir}/${format_name}-format.json"
 
-printf 'Umber LaTeX format: sha256=%s bytes=%s schema=%s source=%s\n' \
-  "$format_sha256" "$format_bytes" "$format_schema" "$distribution"
+printf 'Umber %s format: sha256=%s bytes=%s schema=%s source=%s\n' \
+  "$format_name" "$format_sha256" "$format_bytes" "$format_schema" "$distribution"

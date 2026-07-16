@@ -1,7 +1,7 @@
-# LaTeX-DVI Support Contract
+# LaTeX Engine Support Contract
 
-Status: supported for the pinned kernel and base-class corpus
-Contract version: 1  
+Status: LaTeX-DVI supported; pdfLaTeX mode and deterministic format supported
+Contract version: 2
 Reference distribution: TeX Live 2025 LaTeX2e kernel and base files
 
 ## Engine identity
@@ -11,6 +11,13 @@ explicit extension layer over Umber's e-TeX V2 mode and produces classic DVI.
 It does not identify itself as pdfTeX, XeTeX, LuaTeX, or any other engine, and
 it does not install another engine's identity primitive merely to satisfy a
 feature probe.
+
+`umber run --pdflatex` selects the **Umber pdfLaTeX** engine contract. It
+composes that same LaTeX compatibility layer with the complete pdfTeX layer;
+the composition owns LaTeX's byte-oriented UTF-8 input behavior and can
+publish PDF through the deterministic PDF backend. `--latex` and `--pdflatex`
+remain distinct because the selected engine contract controls primitive
+visibility even after a format image is loaded.
 
 The supported contract consists of:
 
@@ -31,8 +38,9 @@ the kernel itself establishes its format-time category-code regime.
 
 ## Extension primitive inventory
 
-These control sequences are visible only in LaTeX mode. They remain undefined
-in TeX82 compatibility mode and plain e-TeX mode.
+These neutral control sequences are visible in both LaTeX contracts. They
+remain undefined in TeX82 compatibility mode and plain e-TeX mode; pdfLaTeX
+additionally exposes the documented pdfTeX-prefixed primitive surface.
 
 | Primitive | Status | Observable contract |
 | --- | --- | --- |
@@ -49,9 +57,12 @@ accepted by the kernel.
 
 ## Compatibility and parity
 
-Support means more than accepting LaTeX syntax. The pinned kernel must build a
-byte-reproducible Umber-native format, and representative source-initialized
-and format-loaded jobs must have identical effects and DVI. The base corpus
+Support means more than accepting LaTeX syntax. Each pinned kernel mode must
+build a byte-reproducible Umber-native format. Representative
+source-initialized and format-loaded jobs must have identical effects and
+driver output: DVI for `latex.fmt`, PDF for `pdflatex.fmt`. PDF formats retain
+the kernel's canonical glyph-to-Unicode mappings while rejecting live pages,
+objects, resources, or other document-local PDF state at `\dump`. The DVI base corpus
 must match the pinned reference engine byte-for-byte in DVI after the existing
 preamble-comment normalization and exactly in required multi-pass auxiliary
 files.
@@ -83,10 +94,27 @@ TEXFONTS=/usr/local/texlive/2025/texmf-dist/fonts/tfm/public/cm \
 Umber-generated image. The output is DVI, never PDF. Repeat the command when a
 document needs multiple AUX/TOC passes.
 
+Build and run the corresponding pdfLaTeX mode with the same pinned common
+source closure plus its explicitly locked PDF configuration inputs:
+
+```sh
+scripts/build-latex-format.sh --engine pdflatex
+TEXINPUTS=/usr/local/texlive/2025/texmf-dist/tex/latex/base:/usr/local/texlive/2025/texmf-dist/tex/latex/l3kernel:/usr/local/texlive/2025/texmf-dist/tex/latex/l3backend \
+TEXFONTS=/usr/local/texlive/2025/texmf-dist/fonts/tfm/public/cm \
+  cargo run-dev -p umber -- run --pdflatex document.tex \
+    --format target/pdflatex-format/pdflatex.fmt --pdf document.pdf
+```
+
+The builder performs two clean format generations and exact source-versus-
+format PDF and auxiliary-file equivalence. Cross-engine pdfTeX parity uses
+normalized structure and rendered pages rather than requiring serializer-byte
+identity.
+
 ### Rust library
 
 Source initialization selects the extension contract explicitly with
-`umber::prepare_latex_run_stores(&mut stores)`. Normal applications should load
+`umber::prepare_latex_run_stores(&mut stores)` or
+`umber::prepare_pdflatex_run_stores(&mut stores)`. Normal applications should load
 the pinned bytes with `Universe::from_format(world, &format_bytes)` and execute
 through `EngineSession` plus `FileSessionResolvers`; this is the same composed
 path used by the CLI. A library embedding remains responsible for labeling the
@@ -162,8 +190,8 @@ The package example under `examples/latex.html` is the same browser workflow.
 
 ## Explicit non-goals
 
-- PDF output or a native PDF backend;
-- claiming pdfLaTeX primitive compatibility;
+- whole-upstream-corpus pdfLaTeX structural and rendering parity in this
+  initial engine-mode milestone;
 - unrestricted compatibility with the full CTAN package ecosystem;
 - shell escape; and
 - automatic execution of bibliography or index tools.

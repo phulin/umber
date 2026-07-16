@@ -527,6 +527,33 @@ fn pdf_font_codes_round_trip_and_change_checkpoint_identity() {
 }
 
 #[test]
+fn pdf_glyph_to_unicode_mappings_round_trip_through_formats() {
+    let mut universe = Universe::new();
+    universe.set_pdf_glyph_to_unicode(crate::PdfGlyphToUnicode {
+        tfm_name: None,
+        glyph_name: b"Digamma".to_vec(),
+        unicode: vec![0x2_D7CB],
+    });
+    universe.set_pdf_glyph_to_unicode(crate::PdfGlyphToUnicode {
+        tfm_name: Some(b"cmr10".to_vec()),
+        glyph_name: b"ffi".to_vec(),
+        unicode: vec![0x66, 0x66, 0x69],
+    });
+
+    let image = universe.dump_format().expect("PDF glyph format");
+    let restored = Universe::from_format(World::memory(), &image).expect("PDF glyph restore");
+    assert_eq!(
+        restored.pdf_glyph_to_unicode(b"cmr10", b"Digamma"),
+        Some([0x2_D7CB].as_slice())
+    );
+    assert_eq!(
+        restored.pdf_glyph_to_unicode(b"cmr10", b"ffi"),
+        Some([0x66, 0x66, 0x69].as_slice())
+    );
+    assert_eq!(restored.dump_format().expect("canonical redump"), image);
+}
+
+#[test]
 fn semantic_format_rejects_live_input_and_page_state() {
     let mut with_input = Universe::new();
     with_input.set_input_summary(InputSummary::new(
@@ -547,6 +574,16 @@ fn semantic_format_rejects_live_input_and_page_state() {
     let mut with_page = Universe::new();
     with_page.set_page_integer(PageInteger::DeadCycles, 1);
     assert_eq!(with_page.dump_format(), Err(FormatError::NonEmptyPage));
+
+    let mut with_pdf_object = Universe::new();
+    with_pdf_object.enable_pdf_output();
+    with_pdf_object
+        .reserve_pdf_raw_object()
+        .expect("reserve PDF object");
+    assert_eq!(
+        with_pdf_object.dump_format(),
+        Err(FormatError::NonEmptyPdfDocument)
+    );
 }
 
 #[test]
@@ -714,10 +751,7 @@ fn checksum_valid_malformed_font_formats_fail_with_structured_errors() {
         (Corruption::LastLoadedFont, "last loaded font"),
     ] {
         let mut bytes = valid.clone();
-        replace_store_format_payload(
-            &mut bytes,
-            crate::stores::testing_corrupt_font_format(&valid[29..], corruption),
-        );
+        replace_store_format_payload(&mut bytes, corrupt_font_store_payload(&valid, corruption));
         let error = Universe::from_format(World::memory(), &bytes)
             .expect_err("malformed font format must fail closed");
         assert!(
@@ -743,10 +777,7 @@ fn checksum_valid_font_formats_accept_both_lig_kern_cursor_length_edges() {
         let mut bytes = valid.clone();
         replace_store_format_payload(
             &mut bytes,
-            crate::stores::testing_corrupt_font_format(
-                &valid[29..],
-                Corruption::LigKernProgramLength { len, start },
-            ),
+            corrupt_font_store_payload(&valid, Corruption::LigKernProgramLength { len, start }),
         );
         let restored = Universe::from_format(World::memory(), &bytes)
             .expect("addressable lig/kern program restores");
@@ -807,7 +838,7 @@ fn format_with_box_glue_set(glue_set: GlueSetRatio) -> Vec<u8> {
 }
 
 #[test]
-fn format_v8_round_trips_tex_web_box_shift_and_rejects_v7() {
+fn format_v9_round_trips_tex_web_box_shift_and_rejects_v8() {
     let mut universe = Universe::with_world(World::memory());
     let children = universe.freeze_node_list(&[]);
     let root = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
@@ -824,19 +855,19 @@ fn format_v8_round_trips_tex_web_box_shift_and_rejects_v7() {
     universe.set_box_reg(19, root);
 
     let bytes = universe.dump_format().expect("format encodes");
-    assert_eq!(&bytes[8..12], &8_u32.to_le_bytes());
-    let restored = Universe::from_format(World::memory(), &bytes).expect("v8 format restores");
+    assert_eq!(&bytes[8..12], &9_u32.to_le_bytes());
+    let restored = Universe::from_format(World::memory(), &bytes).expect("v9 format restores");
     let restored_root = restored.box_reg(19).expect("box register restores");
     let [Node::HList(boxed)] = restored.nodes(restored_root).testing_decoded() else {
         panic!("box register should contain an hlist");
     };
     assert_eq!(boxed.shift, Scaled::from_raw(-4));
 
-    let mut v7 = bytes;
-    v7[8..12].copy_from_slice(&7_u32.to_le_bytes());
+    let mut v8 = bytes;
+    v8[8..12].copy_from_slice(&8_u32.to_le_bytes());
     assert!(matches!(
-        Universe::from_format(World::memory(), &v7),
-        Err(super::FormatError::UnsupportedVersion(7))
+        Universe::from_format(World::memory(), &v8),
+        Err(super::FormatError::UnsupportedVersion(8))
     ));
 }
 
@@ -865,6 +896,16 @@ fn replace_store_format_payload(bytes: &mut Vec<u8>, payload: Vec<u8>) {
     bytes[13..21].copy_from_slice(&(payload.len() as u64).to_le_bytes());
     bytes.extend_from_slice(&payload);
     refresh_format_checksum(bytes);
+}
+
+fn corrupt_font_store_payload(
+    bytes: &[u8],
+    corruption: crate::stores::TestingFontFormatCorruption,
+) -> Vec<u8> {
+    let mut format: super::UniverseFormatPayload =
+        bincode::deserialize(&bytes[29..]).expect("test universe format payload");
+    format.stores = crate::stores::testing_corrupt_font_format(&format.stores, corruption);
+    bincode::serialize(&format).expect("corrupted universe format payload")
 }
 
 #[cfg(feature = "profiling-stats")]

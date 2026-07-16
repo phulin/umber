@@ -76,6 +76,21 @@ Poppler `pdftoppm` 25.08.0; its `--area fonts` mode owns the explicit live
 See `tests/AGENTS.md` for the supported areas and cases, required tools,
 copied support files, and validation performed after a rewrite.
 
+The LaTeX format builder is a separate deterministic integration tier:
+
+```bash
+scripts/build-latex-format.sh --engine latex
+scripts/build-latex-format.sh --engine pdflatex
+```
+
+Both modes verify that two clean format builds are byte-identical and that a
+source-loaded smoke document exactly matches the corresponding format-loaded
+document. The LaTeX mode compares DVI; the pdfLaTeX mode compares PDF. The
+builder reads the common and mode-specific TeX Live input closure from
+`tests/latex-source.lock`; its pdfLaTeX configuration is pinned locally in
+`tests/latex/pdftexconfig.tex`. Generated formats and comparison artifacts
+remain under `target/` rather than becoming repository fixtures.
+
 ## Committed DVI Corpora
 
 The DVI corpora under `tests/corpus/dvi`, `tests/corpus/page`,

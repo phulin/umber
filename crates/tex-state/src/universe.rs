@@ -34,10 +34,10 @@ use crate::page::{
 };
 use crate::pdf::{
     PdfDocumentFragmentKind, PdfDocumentObjectIds, PdfExternalImageId, PdfExternalImageMetadata,
-    PdfExternalImageRegistrationError, PdfFontResourceRecord, PdfObjectCapacityError,
-    PdfOutputParameters, PdfPageParameters, PdfRawObjectData, PdfRawObjectId,
-    PdfRawObjectInitializeError, PdfRawObjectRecord, PdfState, PdfStateCursor, PdfStateSnapshot,
-    PdfTokenParameter,
+    PdfExternalImageRegistrationError, PdfFontResourceRecord, PdfFormatState,
+    PdfObjectCapacityError, PdfOutputParameters, PdfPageParameters, PdfRawObjectData,
+    PdfRawObjectId, PdfRawObjectInitializeError, PdfRawObjectRecord, PdfState, PdfStateCursor,
+    PdfStateSnapshot, PdfTokenParameter,
 };
 use crate::provenance::ProvenanceStats;
 use crate::provenance::{
@@ -68,6 +68,8 @@ use std::collections::HashMap;
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
 
 /// State operations available to TeX's lexer and expansion engine.
 ///
@@ -881,6 +883,12 @@ pub enum FormatError {
     InvalidState(String),
 }
 
+#[derive(Deserialize, Serialize)]
+struct UniverseFormatPayload {
+    stores: Vec<u8>,
+    pdf: PdfFormatState,
+}
+
 impl std::fmt::Display for FormatError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -888,7 +896,7 @@ impl std::fmt::Display for FormatError {
             Self::NonEmptyInput => f.write_str("cannot dump a format with live input state"),
             Self::NonEmptyPage => f.write_str("cannot dump a format with page-builder material"),
             Self::NonEmptyPdfDocument => {
-                f.write_str("cannot dump a format after PDF object allocation")
+                f.write_str("cannot dump a format with non-format PDF document state")
             }
             Self::BadMagic => f.write_str("not an Umber format file"),
             Self::UnsupportedVersion(version) => {
@@ -1107,7 +1115,7 @@ impl Default for Universe {
 
 impl Universe {
     const FORMAT_MAGIC: [u8; 8] = *b"UMBRFMT\0";
-    pub const FORMAT_SCHEMA_VERSION: u32 = 8;
+    pub const FORMAT_SCHEMA_VERSION: u32 = 9;
 
     /// Creates an isolated TeX state timeline.
     #[must_use]
@@ -1245,13 +1253,15 @@ impl Universe {
         if !self.page.is_format_empty() {
             return Err(FormatError::NonEmptyPage);
         }
-        if !self.pdf.is_format_empty() {
+        let Some(pdf) = self.pdf.capture_format() else {
             return Err(FormatError::NonEmptyPdfDocument);
-        }
-        let payload = self
+        };
+        let stores = self
             .stores
             .encode_format()
             .map_err(map_store_format_error)?;
+        let payload = bincode::serialize(&UniverseFormatPayload { stores, pdf })
+            .map_err(|error| FormatError::InvalidState(error.to_string()))?;
         let mode = encode_interaction_mode(self.interaction_mode);
         let checksum = format_checksum(mode, &payload);
         let mut bytes = Vec::with_capacity(29 + payload.len());
@@ -1293,7 +1303,9 @@ impl Universe {
         if checksum != format_checksum(mode_byte, payload) {
             return Err(FormatError::Checksum);
         }
-        let mut stores = Stores::decode_format(payload).map_err(map_store_format_error)?;
+        let format: UniverseFormatPayload = bincode::deserialize(payload)
+            .map_err(|error| FormatError::InvalidState(error.to_string()))?;
+        let mut stores = Stores::decode_format(&format.stores).map_err(map_store_format_error)?;
         let clock = world.job_clock();
         install_job_clock_params(
             &mut |param, value| stores.set_int_param(param, value),
@@ -1301,7 +1313,7 @@ impl Universe {
         );
         let input_summary = InputSummary::default();
         let page = PageBuilderState::default();
-        let pdf = PdfState::default();
+        let pdf = PdfState::restore_format(format.pdf);
         let input_fragment = hash_input_summary_fragment(&stores, &world, &input_summary);
         let state_hash_base = StateHashBase {
             store: stores.state_hash_cursor(),

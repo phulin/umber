@@ -3,10 +3,13 @@
 `tests/corpus` holds committed inputs and expected reference outputs for
 fast differential tests.
 
-`tests/latex-source.lock` pins the exact TeX Live 2025 files plus repository-local
-format configuration inputs, byte lengths, and SHA-256 identities opened while
-building the Umber-native LaTeX format. The explicit LaTeX format builder
-verifies this closure before every build. `tests/latex/language.dat` keeps the
+`tests/latex-source.lock` pins the common TeX Live 2025 files plus
+mode-specific repository-local format configuration inputs, byte lengths, and
+SHA-256 identities opened while building the Umber-native `latex.fmt` and
+`pdflatex.fmt`. Common `source`/`local` records apply to both modes;
+`pdflatex-source`/`pdflatex-local` records extend only the PDF format closure.
+The explicit LaTeX format builder verifies the selected closure before every
+build. `tests/latex/language.dat` keeps the
 format's English language slot and hyphenation minima deterministic without
 depending on generated TeX Live `texmf-var` state.
 
@@ -27,6 +30,9 @@ modify individual upstream LPPL files in the repository.
 `tests/latex/` contains committed, compact LaTeX-DVI inputs used by explicit
 format and corpus gates. `format-equivalence.tex` must remain deterministic
 and is run both from source-initialized kernel state and the serialized format.
+`pdflatex-smoke.tex` provides the corresponding font-independent PDF format
+equivalence gate, while `pdftexconfig.tex` pins pdfLaTeX's output policy without
+depending on mutable TeX Live configuration state.
 The four base-class documents are run for three clean passes by
 `scripts/check-latex-corpus.sh`, which requires banner-normalized byte-identical
 DVI and exact `.aux`/`.toc`/`.lof`/`.lot`/`.out` file parity with TeX Live 2025.

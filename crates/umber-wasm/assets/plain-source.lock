@@ -1,7 +1,7 @@
 # Exact TeX Live 2025 texmf-dist inputs for the Umber Plain format.
 # Fields are: source <staged-name> <texmf-dist-relative-path> <sha256>.
 distribution texlive-2025
-format_schema 8
+format_schema 9
 source_date_epoch 0
 source plain.tex tex/plain/base/plain.tex 7c1223b880fa513542a616b86c4fa02d5ee703839427951982d7e311fd9049b2
 source hyphen.tex tex/generic/hyphen/hyphen.tex 2c18acdc04c1a066aeb1759905e7ca449f0616c314b5ed6aebe55b9d4a89b8d4

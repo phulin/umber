@@ -4,7 +4,7 @@ Read the repository-level `AGENTS.md` before editing here. This crate is the com
 
 ## Crate Role
 
-`umber` wires the engine crates into user-facing commands. The binary currently provides `lex-dump`, `expand-dump`, and `run`; `run` can also write DVI by collecting shipped artifact ids and invoking `tex-out` downstream. The library exposes the shared engine-session orchestration boundary, localized file resolvers, typed finalization phases, in-memory helpers, and DVI construction from committed artifacts. It owns CLI argument handling, job-name/base-directory policy, downstream output-driver composition, and the final effect commit for real runs.
+`umber` wires the engine crates into user-facing commands. The binary currently provides `lex-dump`, `expand-dump`, and `run`; `run` composes TeX82, e-TeX, pdfTeX, LaTeX-DVI, and pdfLaTeX engine layers and can publish DVI or PDF from committed artifacts. The library exposes the shared engine-session orchestration boundary, localized file resolvers, typed finalization phases, in-memory helpers, and downstream artifact construction. It owns CLI argument handling, job-name/base-directory policy, engine capability composition, downstream output-driver composition, and the final effect commit for real runs.
 
 Use this crate when behavior is about driving the engine, presenting CLI output, or providing integration-test harnesses over multiple lower-level crates.
 

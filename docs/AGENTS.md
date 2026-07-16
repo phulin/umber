@@ -73,9 +73,9 @@ snapping, and the timer/random integration boundary.
 hierarchy and actions, article-thread bead lifecycles, object ownership,
 diagnostics, reserved codecs, and the typed PDF writer boundary.
 
-`latex_dvi.md` defines the supported LaTeX-DVI engine identity, extension
-inventory, pinned distribution boundary, parity contract, and explicit
-non-goals such as pdfLaTeX identity and PDF output.
+`latex_dvi.md` defines the separate LaTeX-DVI and pdfLaTeX engine identities,
+their shared extension inventory, pinned format boundaries, output contracts,
+and parity tiers.
 
 `umber_vfs.md` defines the partially implemented host-neutral shared virtual
 filesystem, including canonical paths, immutable input layers, generated-file

@@ -1,7 +1,8 @@
 # Exact opened inputs for the Umber TeX Live 2025 LaTeX format.
-# Fields: source <texmf-dist-relative-path> <bytes> <sha256>.
+# Common fields: source|local <path> <bytes> <sha256>.
+# pdfLaTeX-only fields: pdflatex-source|pdflatex-local <path> <bytes> <sha256>.
 distribution texlive-2025
-format_schema 7
+format_schema 9
 source_date_epoch 1784066400
 source fonts/tfm/public/cm/cmex10.tfm 992 0890bccea1dd4d27f001ac30e86c63af35bc803e0557c35aafb1903c8d208e92
 source fonts/tfm/public/cm/cmmi10.tfm 1528 e442c5487f84df70218ff37f775c87060856f5b6e04c011b6cadbbadfcf46645
@@ -59,3 +60,6 @@ source tex/latex/base/ucmr.fd 3680 db0bcaa76c20a89d8a47df51532cad944b48d57137c46
 source tex/latex/base/utf8.def 11506 391ea8a922cedd4aab7f7843b0156e56192c9030ba93359679ea0d6de53b43c2
 source tex/latex/l3kernel/expl3-code.tex 1300486 7e765c50730451ddf9f1d4dec8a167ba6a3af567325caacb6a74cde3e1e1cab7
 source tex/latex/l3kernel/expl3.ltx 5639 5fe990d648915d271e08c1576f2e8f01ec72b0d769efce7f290915fab9bfbfeb
+pdflatex-source tex/latex/tex-ini-files/pdflatex.ini 130 fbdd461feb0f9579b7c0f9b300685c11fe4d5e963b3adfc25d756f35fbc13799
+pdflatex-local tests/latex/pdftexconfig.tex 284 b8f7665c57a0c4a69629a93b982241422fc07e7f888560acd0b12ad3cbc34c35
+pdflatex-source tex/generic/pdftex/glyphtounicode.tex 216747 395e568c1f4db5e89013e6aa4aac22a668b543256a20b4349436070356870851
