@@ -12,9 +12,9 @@ stats_alloc = "0.1"
 tex-exec = { path = "../../crates/tex-exec" }
 tex-expand = { path = "../../crates/tex-expand" }
 tex-fonts = { path = "../../crates/tex-fonts" }
+tex-incr = { path = "../../crates/tex-incr" }
 tex-lex = { path = "../../crates/tex-lex" }
 tex-state = { path = "../../crates/tex-state" }
-tex-incr = { path = "../../crates/tex-incr" }
 tex-typeset = { path = "../../crates/tex-typeset" }
 
 [[bench]]

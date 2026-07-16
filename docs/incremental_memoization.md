@@ -728,10 +728,10 @@ An optimized macOS run on 2026-07-15 recorded the following diagnostic sample;
 the work counters are deterministic, while the timings are observations rather
 than performance gates:
 
-| Edit | Fork | Re-execute | Splice | Bytes / tokens / dispatches | Exact checks | Pages retyped / reused | Retained checkpoint / memo / diagnostic / output bytes |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| comment-only | 109 us | 267 us | 111 us | 53 / 2 / 2 | 1 match | 1 / 9 | 166,130 / 0 / 1,772 / 3,500 |
-| semantic rule-width change | 122 us | 498 us | 111 us | 106 / 4 / 4 | 1 miss, then match | 2 / 8 | 164,378 / 0 / 1,805 / 3,500 |
+| Edit                       |   Fork | Re-execute | Splice | Bytes / tokens / dispatches |       Exact checks | Pages retyped / reused | Retained checkpoint / memo / diagnostic / output bytes |
+| -------------------------- | -----: | ---------: | -----: | --------------------------: | -----------------: | ---------------------: | -----------------------------------------------------: |
+| comment-only               | 109 us |     267 us | 111 us |                  53 / 2 / 2 |            1 match |                  1 / 9 |                            166,130 / 0 / 1,772 / 3,500 |
+| semantic rule-width change | 122 us |     498 us | 111 us |                 106 / 4 / 4 | 1 miss, then match |                  2 / 8 |                            164,378 / 0 / 1,805 / 3,500 |
 
 The semantic case now demonstrates the intended hierarchy: the changed page
 misses, the next exact boundary matches, and the remaining eight-page suffix is
@@ -842,6 +842,45 @@ pretolerance plan is subsumed on the editing path by accepted-generation
 finished-line reuse. `umber2-vfqs.17` tracks removal after stable paragraph
 lookup lands. Until those follow-ups complete, paragraph memoization and the
 general cache remain opt-in; the measured release criteria are not met.
+
+A post-main rerun on 2026-07-16 used six optimized AB/BA pairs, three accepted
+edits per session, and a fresh cold DVI comparison for every revision. The
+first large edit measured 1,700.926 ms disabled and 1,776.852 ms enabled by the
+means (a 75.926 ms, 4.5% loss). The follow-up insertion measured 1,671.180 ms
+disabled and 1,567.323 ms enabled (a 103.857 ms, 6.2% win). Removing the
+follow-up measured 1,689.310 ms disabled and 2,043.332 ms enabled (a 354.022
+ms, 21.0% loss). All modes matched the corresponding cold DVI exactly: the
+three revisions emitted 100 pages and 279,176, 279,248, and 279,176 bytes.
+
+The first two enabled revisions retained the expected macro-paragraph traffic:
+121 and 122 finished-line hits, with no hlist fallback or import failure.
+Dependency validation plus import cost 9.959 ms and 10.008 ms respectively,
+well below their roughly 1.5--1.6 second reexecution phases. The first edit's
+45 validation failures were 29 cell, 13 mutation, two input-transition, and one
+meaning failures; the second edit's 22 failures were 20 cell and two mutation
+failures. Each of those revisions recorded 571 barrier-reason events: 255
+unsupported input transitions, 219 unsupported writes, 50 displays, and 47
+output routines. Paragraph generation metadata retained 19,234,304 and
+19,799,668 bytes, detached retention was zero, and no eviction occurred.
+
+The removal revision did not preserve that behavior. It attempted no paragraph
+lookup, reported 1,781 not-attempted regions, retyped all 100 pages, and retained
+23,589,481 bytes of new generation metadata. Its 631 barrier-reason events were
+285 unsupported input transitions, 238 unsupported writes, 54 output routines,
+53 displays, and one input open. This complete lookup loss, together with the
+end-to-end losses on two of the three revisions, leaves the release gate open.
+No tuning was performed before recording this result.
+
+The same post-main pass refined the isolated-cache decision. Expansion memo
+remained entirely idle across two disabled and two enabled ten-run Gentle
+blocks: zero lookups, hits, entries, bytes, and evictions, with exact
+97-page/263,424-byte parity. Its apparent wall-time variation therefore
+contains no cache signal, and the removal follow-up remains justified. The
+pretolerance cache was not idle: a two-pair diagnostic run reported 834/835,
+833/834, and 1,054/1,054 hits across the three edits, about 200 KiB retained,
+and no eviction. That small sample is not an enablement verdict; it means
+`umber2-vfqs.17` must isolate the cache's marginal end-to-end value before
+removing it rather than treating removal as mechanically free.
 
 ### Dependency-recorder baseline
 

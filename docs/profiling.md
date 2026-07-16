@@ -93,6 +93,30 @@ timings, steady-state edits, and paired ordering described above. Removal of
 the standalone expansion-episode and pretolerance caches remains tracked by
 `umber2-vfqs.17`.
 
+The first post-main run with the complete methodology used six optimized AB/BA
+pairs. Memo-disabled versus paragraph-memo means were 1,700.926 versus
+1,776.852 ms for the large edit, 1,671.180 versus 1,567.323 ms for the follow-up,
+and 1,689.310 versus 2,043.332 ms for its removal. The paired enabled-minus-
+disabled means were therefore +75.926, -103.857, and +354.022 ms. Every
+revision remained byte-identical to its cold 100-page DVI. The first two edits
+made 121 and 122 finished-line hits and spent only 9.959 and 10.008 ms in
+validation plus import, but the removal attempted no paragraph lookup, reported
+1,781 not-attempted regions, and retyped the complete document. Paragraph
+generation metadata grew from 19.2 MiB to 19.8 MiB and then 23.6 MiB; detached
+retention and evictions remained zero under the default paragraph-only policy.
+This is a negative release result even though the validation/import cost clause
+passes on revisions that engage lookup.
+
+A separate two-pair diagnostic enabled `pretolerance,paragraph`. Pretolerance
+reported 834/835, 833/834, and 1,054/1,054 hits over the three edits, retained
+about 200 KiB, and evicted nothing. Treat this only as evidence that the layer
+has traffic; the sample is too small and does not isolate its marginal latency.
+Conversely, two disabled and two enabled ten-run whole-Gentle blocks again
+reported zero expansion-episode lookups, hits, entries, retained bytes, and
+evictions while preserving the pinned 97-page/263,424-byte DVI. The expansion
+layer has no measured signal; the pretolerance layer requires the isolated
+comparison tracked by `umber2-vfqs.17` before removal.
+
 The runner requires the same external inputs as Gentle conformance. Populate
 them with `scripts/setup-conformance-tests.sh` if necessary.
 
