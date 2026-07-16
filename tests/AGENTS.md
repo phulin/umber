@@ -17,6 +17,9 @@ scopes, then the live reference run distinguishes actual classic-LaTeX DVI
 cases from alternate test configurations. Explicit manifest `skip` records
 must name a concrete unsupported engine layer and remain visible in the census
 summary; they are not expected-failure aliases for TeX/e-TeX/LaTeX bugs.
+Exact `non_dvi` records pin every alternate configuration by path; any
+unmarked case must emit a reference DVI, and skipped cases must first be
+verified as members of that reference-DVI cohort.
 `scripts/setup-latex-parity-tests.sh`
 owns acquisition under gitignored `third_party/latex2e-parity/`; do not copy or
 modify individual upstream LPPL files in the repository.

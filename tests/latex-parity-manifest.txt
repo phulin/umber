@@ -18,6 +18,15 @@ source_date_epoch 1730419200
 selection standard-tlg-shipout
 expected_cases 295
 expected_dvi_cases 286
+non_dvi base/testfiles-disabled/shipout-001.lvt
+non_dvi base/testfiles-disabled/shipout-003.lvt
+non_dvi base/testfiles-lthooks2/ltpara-001.lvt
+non_dvi base/testfiles-lthooks2/ltpara-002.lvt
+non_dvi base/testfiles-lthooks2/ltpara-003.lvt
+non_dvi base/testfiles-lthooks2/ltpara-006.lvt
+non_dvi base/testfiles-lthooks2/ltpara-007.lvt
+non_dvi base/testfiles-lthooks2/ltpara-008.lvt
+non_dvi required/tools/testfiles/github-1245.lvt
 skip base/testfiles/sx172785.lvt unsupported-pdftex-primitives:pdfprotrudechars,rpcode
 scope base
 scope required/tools

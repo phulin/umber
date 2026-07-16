@@ -137,7 +137,9 @@ The package example under `examples/latex.html` is the same browser workflow.
   `base/testfiles/sx172785.lvt`, is retained in the census but explicitly
   skipped because it requires the unsupported pdfTeX-only
   `\pdfprotrudechars` and `\rpcode` primitives. All 285 applicable cases are
-  coordinate-exact. The checker builds one verified format before the suite,
+  coordinate-exact. The manifest pins the exact nine non-DVI paths; an
+  unexpected missing or present reference DVI fails instead of changing a
+  case's classification. The checker builds one verified format before the suite,
   or accepts one with `--format`, then restores byte-identical copies of that
   pregenerated image in 285 fresh case sessions. Logs are diagnostic only;
   after preamble-comment normalization, every DVI byte and therefore every

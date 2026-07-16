@@ -212,7 +212,8 @@ LPPL snapshot under gitignored `third_party/latex2e-parity/`, then derives every
 same-stem standard-`.tlg` shipout candidate under `base`, `required/tools`,
 `required/graphics`, and `required/amsmath`. The pinned tree yields 295
 candidates. A live classic-LaTeX census emits DVIs for 286 of them and records
-the nine alternate-configuration cases separately. The manifest retains
+the nine exact manifest-pinned alternate-configuration paths separately;
+unexpected reference DVI absence or presence fails the tier. The manifest retains
 `base/testfiles/sx172785.lvt` in that 286-case reference-DVI cohort but skips it
 explicitly as `unsupported-pdftex-primitives:pdfprotrudechars,rpcode`; this is
 the only unsupported case, leaving 285 applicable classic-DVI comparisons.

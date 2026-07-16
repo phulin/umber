@@ -163,6 +163,38 @@ case_skip_reason() {
   ' "$manifest"
 }
 
+case_expected_reference_kind() {
+  local path="$1"
+  if awk -v path="$path" '$1 == "non_dvi" && $2 == path { found = 1 } END { exit !found }' \
+    "$manifest"; then
+    printf '%s\n' non-dvi
+  else
+    printf '%s\n' dvi
+  fi
+}
+
+validate_case_classifications() {
+  local expected_cases expected_dvi_cases expected_non_dvi actual_non_dvi path
+  expected_cases="$(awk '$1 == "expected_cases" { print $2 }' "$manifest")"
+  expected_dvi_cases="$(awk '$1 == "expected_dvi_cases" { print $2 }' "$manifest")"
+  expected_non_dvi=$((expected_cases - expected_dvi_cases))
+  actual_non_dvi="$(awk '$1 == "non_dvi" { count++ } END { print count + 0 }' "$manifest")"
+  [[ "$actual_non_dvi" == "$expected_non_dvi" ]] || \
+    fail "manifest pins $actual_non_dvi non-DVI cases; expected $expected_non_dvi"
+  [[ "$(awk '$1 == "non_dvi" { print $2 }' "$manifest" | sort -u | wc -l | tr -d ' ')" == "$actual_non_dvi" ]] || \
+    fail "manifest contains duplicate non-DVI classifications"
+  while read -r path; do
+    [[ -n "$path" ]] || continue
+    grep -Fqx "$path" "$case_list" || fail "classified path is not a derived case: $path"
+    [[ -z "$(case_skip_reason "$path")" ]] || \
+      fail "case cannot be both non-DVI and skipped: $path"
+  done < <(awk '$1 == "non_dvi" { print $2 }' "$manifest")
+  while read -r path; do
+    [[ -n "$path" ]] || continue
+    grep -Fqx "$path" "$case_list" || fail "skipped path is not a derived case: $path"
+  done < <(awk '$1 == "skip" { print $2 }' "$manifest")
+}
+
 reap_abandoned_work_roots() {
   local stale owner
   mkdir -p "$scratch_parent"
@@ -409,6 +441,8 @@ trap 'exit 143' TERM
 run_one_case() {
   local path="$1"
   local case_name="$2"
+  local skip_umber="$3"
+  local expected_reference_kind="$4"
   local case_root="${work_root}/${case_name}"
   local reference_dir="${case_root}/reference"
   local umber_dir="${case_root}/umber"
@@ -475,6 +509,13 @@ run_one_case() {
   fi
   if [[ ! -f "${reference_dir}/document.dvi" ]]; then
     return 2
+  fi
+  if [[ "$expected_reference_kind" == non-dvi ]]; then
+    case_error "$case_name" "reference unexpectedly emitted DVI for pinned non-DVI case"
+    return 4
+  fi
+  if [[ "$skip_umber" -eq 1 ]]; then
+    return 3
   fi
 
   # Mirror every declared external input directory opened by the reference job.
@@ -544,6 +585,7 @@ run_one_case() {
 }
 
 [[ -f "$case_list" ]] || fail "setup did not produce case list: $case_list"
+validate_case_classifications
 selected=0
 dvi_selected=0
 failed=0
@@ -562,19 +604,26 @@ while IFS= read -r path; do
   [[ -z "$case_filter" || "$case_name" == "$case_filter" || "$path" == "$case_filter" ]] || continue
   selected=$((selected + 1))
   skip_reason="$(case_skip_reason "$path")"
-  if [[ -n "$skip_reason" ]]; then
+  expected_reference_kind="$(case_expected_reference_kind "$path")"
+  skip_umber=0
+  [[ -z "$skip_reason" ]] || skip_umber=1
+  status=0
+  run_one_case "$path" "$case_name" "$skip_umber" "$expected_reference_kind" || status=$?
+  if [[ $status -eq 2 ]]; then
+    if [[ "$expected_reference_kind" == non-dvi ]]; then
+      printf '%s\t%s\n' "$case_name" "$path" >> "$non_dvi"
+    else
+      case_error "$case_name" "reference emitted no DVI but manifest requires DVI"
+      failed=$((failed + 1))
+      printf '%s\t%s\n' "$case_name" "$path" >> "$failures"
+    fi
+  elif [[ $status -eq 3 ]]; then
     skipped_count=$((skipped_count + 1))
     printf '%s\t%s\t%s\n' "$case_name" "$path" "$skip_reason" >> "$skipped"
-    continue
-  fi
-  status=0
-  run_one_case "$path" "$case_name" || status=$?
-  if [[ $status -eq 2 ]]; then
-    printf '%s\t%s\n' "$case_name" "$path" >> "$non_dvi"
-  else
+  elif [[ $status -eq 0 || $status -eq 1 ]]; then
     dvi_selected=$((dvi_selected + 1))
   fi
-  if [[ $status -eq 1 ]]; then
+  if [[ $status -eq 1 || $status -eq 4 ]]; then
     failed=$((failed + 1))
     printf '%s\t%s\n' "$case_name" "$path" >> "$failures"
   fi
