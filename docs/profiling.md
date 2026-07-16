@@ -61,6 +61,22 @@ experiments may select comma-separated
 `pretolerance,paragraph,page,shipout`, `all`, or `none`. Detached layers are
 off by default until they demonstrate steady-state value and budget fit.
 
+For a direct marginal comparison between two recording policies, pass
+`--baseline-memo-layers` as well. Both policies then run inside the same
+alternating AB/BA loop, and the paired delta is reported as candidate minus
+baseline. For example, the isolated pretolerance comparison uses:
+
+```bash
+cargo run --profile profiling -p umber --bin gentle-profile -- \
+  --repo-root /path/to/umber2 --incremental-edit --iterations 6 --warmups 2 \
+  --baseline-memo-layers paragraph \
+  --memo-layers pretolerance,paragraph
+```
+
+This mode retains the per-revision cold-DVI comparison and suffix-adoption
+assertions. It reduces process-level drift but does not make samples taken
+during thermal pressure or unrelated host contention admissible.
+
 For every accepted edit, each layer reports lookups, hits, inserts, evictions,
 retained bytes, and misses split into not attempted, ineligible barrier, key
 miss, first validation failure, evicted before reuse, and import failure.

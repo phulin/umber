@@ -39,6 +39,7 @@ struct Options {
     warmups: usize,
     checkpoints: bool,
     incremental_edit: bool,
+    baseline_memo_recording: Option<PureMemoRecordingPolicy>,
     memo_recording: PureMemoRecordingPolicy,
 }
 
@@ -49,6 +50,7 @@ impl Options {
         let mut warmups = DEFAULT_WARMUPS;
         let mut checkpoints = false;
         let mut incremental_edit = false;
+        let mut baseline_memo_recording = None;
         let mut memo_recording = PureMemoRecordingPolicy::default();
         let mut args = env::args().skip(1);
         while let Some(arg) = args.next() {
@@ -71,6 +73,12 @@ impl Options {
                 "--memo-layers" => {
                     memo_recording = parse_memo_layers(&next_value(&mut args, "--memo-layers")?)?;
                 }
+                "--baseline-memo-layers" => {
+                    baseline_memo_recording = Some(parse_memo_layers(&next_value(
+                        &mut args,
+                        "--baseline-memo-layers",
+                    )?)?);
+                }
                 "-h" | "--help" => {
                     print_help();
                     return Ok(None);
@@ -91,6 +99,7 @@ impl Options {
             warmups,
             checkpoints,
             incremental_edit,
+            baseline_memo_recording,
             memo_recording,
         }))
     }
@@ -205,9 +214,16 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
         );
     }
     let fixture = incremental_fixture(&options.repo_root)?;
+    let baseline_recording = options.baseline_memo_recording.unwrap_or_default();
+    let baseline_memo = options.baseline_memo_recording.is_some();
+    let (baseline_name, candidate_name, delta_name) = if baseline_memo {
+        ("memo baseline", "memo candidate", "candidate-baseline")
+    } else {
+        ("memo disabled", "memo enabled", "enabled-disabled")
+    };
 
     for _ in 0..options.warmups {
-        let _ = execute_incremental_sample(template, &fixture, false, options.memo_recording)?;
+        let _ = execute_incremental_sample(template, &fixture, baseline_memo, baseline_recording)?;
         let _ = execute_incremental_sample(template, &fixture, true, options.memo_recording)?;
         for (index, source) in fixture.revisions.iter().enumerate() {
             let _ = execute_cold_sample(template, source, RevisionId::new(index as u64 + 2))?;
@@ -230,8 +246,13 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
         };
         let mut pair = [None, None];
         for memo in order {
+            let recording = if memo {
+                options.memo_recording
+            } else {
+                baseline_recording
+            };
             let sample =
-                execute_incremental_sample(template, &fixture, memo, options.memo_recording)?;
+                execute_incremental_sample(template, &fixture, memo || baseline_memo, recording)?;
             for (index, step) in sample.steps.iter().enumerate() {
                 if memo {
                     enabled[index].push(step.elapsed);
@@ -273,8 +294,8 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
         let cold_output = cold_output.as_ref().expect("at least one cold sample");
         let expected = cold_output.dvi_bytes().map_err(|error| error.to_string())?;
         for (name, sample) in [
-            ("memo-disabled", &disabled_sample),
-            ("memo-enabled", &enabled_sample),
+            (baseline_name, &disabled_sample),
+            (candidate_name, &enabled_sample),
         ] {
             if sample.steps[index].dvi != expected {
                 return Err(format!(
@@ -285,8 +306,8 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
         }
     }
     for (name, sample) in [
-        ("memo-disabled", &disabled_sample),
-        ("memo-enabled", &enabled_sample),
+        (baseline_name, &disabled_sample),
+        (candidate_name, &enabled_sample),
     ] {
         let fast_path = &sample.steps[fixture.suffix_adoption_edit];
         let previous = &sample.steps[fixture.suffix_adoption_edit - 1];
@@ -352,19 +373,19 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
             index + 1,
             fixture.edit_names[index]
         );
-        print_duration_stats("memo disabled", disabled_stats);
-        print_duration_stats("memo enabled", enabled_stats);
+        print_duration_stats(baseline_name, disabled_stats);
+        print_duration_stats(candidate_name, enabled_stats);
         print_duration_stats("cold", cold_stats);
         println!(
-            "gentle-profile paired delta: edit={}: enabled-disabled mean={:+.3}ms median={:+.3}ms min={:+.3}ms max={:+.3}ms",
+            "gentle-profile paired delta: edit={}: {delta_name} mean={:+.3}ms median={:+.3}ms min={:+.3}ms max={:+.3}ms",
             index + 1,
             paired.mean,
             paired.median,
             paired.min,
             paired.max,
         );
-        print_incremental_work("memo disabled", index + 1, &disabled_sample.steps[index]);
-        print_incremental_work("memo enabled", index + 1, &enabled_sample.steps[index]);
+        print_incremental_work(baseline_name, index + 1, &disabled_sample.steps[index]);
+        print_incremental_work(candidate_name, index + 1, &enabled_sample.steps[index]);
         println!(
             "gentle-profile incremental output: edit={}: {} pages, {} DVI bytes; both incremental modes are byte-identical to cold",
             index + 1,
@@ -378,7 +399,7 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
     let cold_fast = duration_stats(&cold[fast]);
     let work = disabled_sample.steps[fast].reuse;
     println!(
-        "gentle-profile fast path verified: edit={} ({}) retained_prefix={} re-shipped={} adopted={} convergence=shipout leaf_hits={} subtree_hits={} disabled_vs_cold={:.3}x enabled_vs_cold={:.3}x",
+        "gentle-profile fast path verified: edit={} ({}) retained_prefix={} re-shipped={} adopted={} convergence=shipout leaf_hits={} subtree_hits={} baseline_vs_cold={:.3}x candidate_vs_cold={:.3}x",
         fixture.suffix_adoption_edit + 1,
         fixture.edit_names[fixture.suffix_adoption_edit],
         work.pages_retained_prefix,
@@ -949,13 +970,15 @@ fn parse_memo_layers(value: &str) -> Result<PureMemoRecordingPolicy, String> {
 
 fn print_help() {
     println!(
-        "Usage: gentle-profile [--iterations N] [--warmups N] [--repo-root PATH] [--checkpoints] [--incremental-edit] [--memo-layers LIST]\n\n\
+        "Usage: gentle-profile [--iterations N] [--warmups N] [--repo-root PATH] [--checkpoints] [--incremental-edit] [--baseline-memo-layers LIST] [--memo-layers LIST]\n\n\
          Loads Gentle and its support files once, then executes fresh deterministic\n\
          in-memory Umber sessions for profiling. Defaults: {DEFAULT_ITERATIONS} measured\n\
          iterations and {DEFAULT_WARMUPS} warm-up. --checkpoints captures and hashes every\n\
          named executor checkpoint through a bounded profiling sink.\n\
-         --incremental-edit compares memo-disabled, memo-enabled, and cold compilation for\n\
+         --incremental-edit compares a memo baseline, memo candidate, and cold compilation\n\
          four accepted edits/session using balanced AB/BA pairs and DVI parity verification.\n\
-         --memo-layers configures enabled recording layers; the default is paragraph."
+         --memo-layers configures enabled recording layers; the default is paragraph.\n\
+         --baseline-memo-layers replaces the disabled control with an explicit recording\n\
+         policy for direct marginal layer comparisons."
     );
 }
