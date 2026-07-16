@@ -409,7 +409,7 @@ from parameter names. The exact producer map is:
 | PNG gamma/high color | `pdftex.web:15477-15480`; `writepng.c:524-545` | exact gamma ramp and PDF 1.4/1.5 16-bit tests |
 | duplicate map warning | `mapfile.c:185-198` (`> 0` suppresses) | exact `-1/0/1` diagnostic test |
 | page-group warning | `pdftoepdf.cc:934-936` (`!= 0` suppresses) | exact `-1/0/1` included-page-group test |
-| duplicate destination warning | `pdftex.web:35015-35030` (`> 0` suppresses) | dependency `umber2-kbz0.16.1` owns both navigation collision timings |
+| duplicate destination warning | `pdftex.web:35015-35030` (`> 0` suppresses) | exact `-1/0/1` diagnostic tests cover both shipout-time and post-ship scan-time collisions |
 | Info/date/pTeX controls | `pdftex.web:20341-20358`, `20427`, and `20463` | default, signed omission, odd suppression, key spelling, and Info removal tests |
 | `\pdfomitcharset` | `writefont.c:487-515` | positive and negative Type-1 subset fixtures |
 | `\pdfomitprocset` | `pdftex.web:19356-19359` | signed, zero, grouped, per-page, and PDF-2 tests |

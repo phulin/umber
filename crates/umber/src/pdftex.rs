@@ -822,6 +822,7 @@ mod tests {
 
     #[test]
     fn pdf_destinations_claim_on_ship_and_use_positive_only_duplicate_suppression() {
+        const WARNING: &str = "\npdfTeX warning (ext4): destination with the same identifier (name{same}) has been already used, duplicate ignored\n";
         for (suppression, warns) in [(-1, true), (0, true), (1, false)] {
             let mut stores = Universe::default();
             prepare_pdftex_run_stores(&mut stores);
@@ -832,7 +833,11 @@ mod tests {
                 &mut stores,
             )
             .expect("destination duplicate is recoverable");
-            assert_eq!(output.contains("duplicate ignored"), warns, "{output}");
+            assert_eq!(
+                output.matches(WARNING).count(),
+                usize::from(warns),
+                "{output}"
+            );
             assert_eq!(stores.pdf_destinations(false).len(), 1);
             assert!(stores.pdf_destinations(false)[0].defined());
             let bytes = stores
@@ -966,18 +971,24 @@ mod tests {
 
     #[test]
     fn pdf_destination_duplicate_scanned_after_ship_uses_current_suppression() {
-        let mut stores = Universe::default();
-        prepare_pdftex_run_stores(&mut stores);
-        let output = crate::run_memory_with_stores(
-            "\\pdfoutput=1\\shipout\\hbox{\\pdfdest num 7 fit}\\pdfsuppresswarningdupdest=-1\\setbox0=\\hbox{\\pdfdest num 7 fit}\\end",
-            &mut stores,
-        )
-        .expect("scan-time duplicate is recoverable");
-        assert!(
-            output.contains("(num7) has been already used, duplicate ignored"),
-            "{output}"
-        );
-        assert_eq!(stores.pdf_destinations(false).len(), 1);
+        const WARNING: &str = "\npdfTeX warning (ext4): destination with the same identifier (num7) has been already used, duplicate ignored\n";
+        for (suppression, warns) in [(-1, true), (0, true), (1, false)] {
+            let mut stores = Universe::default();
+            prepare_pdftex_run_stores(&mut stores);
+            let output = crate::run_memory_with_stores(
+                &format!(
+                    "\\pdfoutput=1\\shipout\\hbox{{\\pdfdest num 7 fit}}\\pdfsuppresswarningdupdest={suppression}\\setbox0=\\hbox{{\\pdfdest num 7 fit}}\\end"
+                ),
+                &mut stores,
+            )
+            .expect("scan-time duplicate is recoverable");
+            assert_eq!(
+                output.matches(WARNING).count(),
+                usize::from(warns),
+                "{output}"
+            );
+            assert_eq!(stores.pdf_destinations(false).len(), 1);
+        }
     }
 
     #[test]
