@@ -385,11 +385,21 @@ impl Env {
         index: u16,
         value: Option<NodeListId>,
     ) -> BoxWriteOutcome {
-        if self.box_reg_is_local_to_current_group(index) {
-            self.set_box_reg(index, value)
-        } else {
-            self.set_box_reg_global(index, value)
+        let owner_depth = self.boxes.get(index).owner_depth();
+        if owner_depth == 0 {
+            return self.set_box_reg_global(index, value);
         }
+        if owner_depth == self.group_depth {
+            return self.set_box_reg(index, value);
+        }
+        let outcome = self.boxes.write_same_level(index, value, &mut self.journal);
+        #[cfg(feature = "shadow")]
+        shadow_set(
+            &mut self.shadow,
+            CellId::new(BankTag::Box, u32::from(index)),
+            NodeListId::encode_box_word(value),
+        );
+        outcome
     }
 
     /// Takes a box register at TeX's current box level.
@@ -402,10 +412,13 @@ impl Env {
         index: u16,
     ) -> (Option<NodeListId>, BoxWriteOutcome) {
         let old = self.box_reg(index);
-        let rec = if self.box_reg_is_local_to_current_group(index) {
+        let owner_depth = self.boxes.get(index).owner_depth();
+        let rec = if owner_depth == 0 {
+            self.set_box_reg_global(index, None)
+        } else if owner_depth == self.group_depth {
             self.set_box_reg_local(index, None, false)
         } else {
-            self.set_box_reg_global(index, None)
+            self.set_box_reg_same_level(index, None)
         };
         (old, rec)
     }
@@ -418,6 +431,7 @@ impl Env {
         (old, outcome)
     }
 
+    #[cfg(test)]
     fn box_reg_is_local_to_current_group(&self, index: u16) -> bool {
         self.group_depth != 0 && self.boxes.get(index).is_owned_by(self.group_depth)
     }

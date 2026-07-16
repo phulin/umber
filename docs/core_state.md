@@ -62,6 +62,13 @@ local restoration. Sparse e-TeX registers obey the same rules as dense cells.
 Meaning caches are owned above the environment but invalidate through exact
 generation signals returned by aggregate mutation and restoration.
 
+Box slots additionally retain the group depth that owns their visible value.
+Destructive `\box`, `\unhbox`, `\unvbox`, and `\vsplit` updates preserve that
+owner depth even when executed inside a nested box-construction group: the
+void or remainder value crosses inner boundaries, then the prior value is
+restored only when its owning group ends. Journal records therefore carry a
+box restore depth independently of whether an ordinary assignment was global.
+
 ## 5. Meaning, sparse tier: the code tables
 
 Unicode code tables use sparse copy-on-write pages with TeX-compatible default

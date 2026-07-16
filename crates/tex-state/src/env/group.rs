@@ -353,6 +353,7 @@ impl Env {
         };
         let marker_pos = boundary.marker_pos;
         let aftergroup_start = boundary.aftergroup_start;
+        let leaving_depth = self.group_depth;
         self.group_depth = self
             .group_depth
             .checked_sub(1)
@@ -362,12 +363,17 @@ impl Env {
         let has_globals =
             (marker_index + 1..group_end).any(|index| match self.journal.entry(index) {
                 Entry::Undo(rec) => rec.cell().is_global(),
-                Entry::BoxUndo(id) => self.journal.box_undo(id).is_global(),
+                Entry::BoxUndo(id) => self.journal.box_undo(id).survives_group(leaving_depth),
                 Entry::Marker(_) => false,
             });
 
         let meaning_changed = if has_globals {
-            self.leave_group_with_globals(marker_index, group_end, boundary.box_undo_len)
+            self.leave_group_with_globals(
+                marker_index,
+                group_end,
+                boundary.box_undo_len,
+                leaving_depth,
+            )
         } else {
             let mut meaning_changed = false;
             for index in (marker_index + 1..group_end).rev() {
@@ -399,6 +405,7 @@ impl Env {
         marker_index: usize,
         group_end: usize,
         box_undo_len: u32,
+        leaving_depth: u32,
     ) -> bool {
         let mut globals = Vec::new();
         let mut box_globals = Vec::new();
@@ -439,7 +446,7 @@ impl Env {
                 }
                 Entry::BoxUndo(id) => {
                     let rec = self.journal.box_undo(id);
-                    if rec.is_global() {
+                    if rec.survives_group(leaving_depth) {
                         box_states
                             .get_mut(&rec.index())
                             .expect("box undo was indexed before group compaction")
@@ -490,8 +497,11 @@ impl Env {
                 state.refiled = true;
                 state.first_old
             };
-            self.journal
-                .push_box_undo(BoxUndoRec::new(rec.index(), true, old, rec.new_value()));
+            self.journal.push_box_undo(if rec.is_global() {
+                BoxUndoRec::new(rec.index(), true, old, rec.new_value())
+            } else {
+                BoxUndoRec::new_at_depth(rec.index(), rec.restore_depth(), old, rec.new_value())
+            });
         }
         meaning_changed
     }

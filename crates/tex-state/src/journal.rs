@@ -24,6 +24,7 @@ pub(crate) struct BoxUndoId(u32);
 pub(crate) struct BoxUndoRec {
     index: u16,
     global: bool,
+    restore_depth: u32,
     old: BoxSlot,
     new: BoxSlot,
 }
@@ -33,6 +34,21 @@ impl BoxUndoRec {
         Self {
             index,
             global,
+            restore_depth: if global { 0 } else { new.owner_depth() },
+            old,
+            new,
+        }
+    }
+    pub(crate) const fn new_at_depth(
+        index: u16,
+        restore_depth: u32,
+        old: BoxSlot,
+        new: BoxSlot,
+    ) -> Self {
+        Self {
+            index,
+            global: false,
+            restore_depth,
             old,
             new,
         }
@@ -42,6 +58,12 @@ impl BoxUndoRec {
     }
     pub(crate) const fn is_global(self) -> bool {
         self.global
+    }
+    pub(crate) const fn survives_group(self, leaving_depth: u32) -> bool {
+        self.global || self.restore_depth < leaving_depth
+    }
+    pub(crate) const fn restore_depth(self) -> u32 {
+        self.restore_depth
     }
     pub(crate) const fn old(self) -> BoxSlot {
         self.old

@@ -2695,6 +2695,37 @@ fn grouped_box_take_pins_nested_survivor_children_before_coalesced_release() {
 }
 
 #[test]
+fn same_level_box_take_crosses_nested_group_but_restores_at_owner_group() {
+    let mut universe = Universe::new();
+    let baseline = universe.freeze_node_list(&[Node::Char {
+        font: NULL_FONT,
+        ch: 'o',
+        origin: crate::token::OriginId::UNKNOWN,
+    }]);
+    universe.set_box_reg(0, baseline);
+    let baseline = universe.box_reg(0).expect("root box");
+
+    universe.enter_group();
+    let local = universe.freeze_node_list(&[Node::Char {
+        font: NULL_FONT,
+        ch: 'l',
+        origin: crate::token::OriginId::UNKNOWN,
+    }]);
+    universe.set_box_reg(0, local);
+    universe.enter_group();
+    assert!(universe.take_box_reg_same_level(0).is_some());
+    assert!(universe.box_reg(0).is_none());
+
+    let _ = universe.leave_group();
+    assert!(
+        universe.box_reg(0).is_none(),
+        "the destructive take must survive the nested construction group"
+    );
+    let _ = universe.leave_group();
+    assert_eq!(universe.box_reg(0), Some(baseline));
+}
+
+#[test]
 fn destructive_unbox_transfers_only_children_before_same_level_clear() {
     let mut universe = Universe::new();
     let baseline = universe.freeze_node_list(&[Node::Char {

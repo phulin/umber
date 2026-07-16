@@ -13,13 +13,6 @@ use super::banks::{BoxWriteOutcome, DENSE_REGISTER_COUNT};
 const PAGE_LEN: usize = 256;
 const PAGE_COUNT: usize = 128;
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) enum BoxOwner {
-    #[default]
-    Root,
-    Group(u32),
-}
-
 /// Complete live state for one box register.
 ///
 /// Invariants:
@@ -50,16 +43,13 @@ impl BoxSlot {
         self.value
     }
 
+    #[cfg(test)]
     pub(super) fn is_owned_by(self, depth: u32) -> bool {
-        self.owner() == BoxOwner::Group(depth)
+        depth != 0 && self.owner_depth == depth
     }
 
-    fn owner(self) -> BoxOwner {
-        if self.owner_depth == 0 {
-            BoxOwner::Root
-        } else {
-            BoxOwner::Group(self.owner_depth)
-        }
+    pub(crate) const fn owner_depth(self) -> u32 {
+        self.owner_depth
     }
 }
 
@@ -153,6 +143,44 @@ impl BoxBank {
             *self.get_mut(index) = new;
             BoxWriteOutcome::Journaled { rec, pos }
         }
+    }
+
+    pub(super) fn write_same_level(
+        &mut self,
+        index: u16,
+        value: Option<NodeListId>,
+        journal: &mut Journal,
+    ) -> BoxWriteOutcome {
+        let old = self.get(index);
+        if old.owner_depth == 0 {
+            return self.write(
+                index,
+                value,
+                BoxWriteContext {
+                    global: true,
+                    coalesce: false,
+                    journal,
+                    epoch: Epoch::ZERO,
+                    group_depth: 0,
+                },
+            );
+        }
+        let value = NodeListId::encode_box_word(value);
+        if old.value == value {
+            return BoxWriteOutcome::Unchanged;
+        }
+        let pos = journal.pos();
+        let new = BoxSlot {
+            value,
+            owner_depth: old.owner_depth,
+            coalesce_epoch: Epoch::ZERO,
+            coalesce_pos: pos.raw(),
+        };
+        let (rec, actual_pos) =
+            journal.push_box_undo(BoxUndoRec::new_at_depth(index, old.owner_depth, old, new));
+        debug_assert_eq!(pos, actual_pos);
+        *self.get_mut(index) = new;
+        BoxWriteOutcome::Journaled { rec, pos }
     }
 
     pub(super) fn restore(&mut self, index: u16, slot: BoxSlot) {
