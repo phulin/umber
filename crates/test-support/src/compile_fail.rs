@@ -75,6 +75,9 @@ pub fn assert_compile_fail(
     .unwrap_or_else(|error| panic!("failed to write compile-fail manifest: {error}"));
 
     let output = Command::new(cargo_command())
+        // CI commonly forces colored Cargo output. ANSI escapes can split the
+        // diagnostic substrings this harness intentionally matches.
+        .env("CARGO_TERM_COLOR", "never")
         .arg("check")
         .arg("--quiet")
         .arg("--manifest-path")
