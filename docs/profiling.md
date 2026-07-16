@@ -39,12 +39,13 @@ GENTLE_PROFILE_ITERATIONS=200 scripts/profile-gentle.sh --checkpoints
 ```
 
 Pass `--incremental-edit` to measure a fixed semantic prose edit 20% through
-`gentle.tex`. Every sample keeps one session alive for three accepted revisions:
-the pinned large edit, a follow-up insertion in that paragraph, and removal of
-the follow-up. Adjacent disabled/enabled samples alternate AB/BA order, so the
-iteration count must be even. The runner reports paired latency differences
-for each revision. Both modes must produce the exact DVI bytes of a fresh cold
-compile of the corresponding revision:
+`gentle.tex`. Every sample keeps one session alive for four accepted revisions:
+the pinned large edit, a follow-up insertion in that paragraph, removal of the
+follow-up, and an equal-width word substitution. Adjacent disabled/enabled
+samples alternate AB/BA order, so the iteration count must be even. The runner
+reports paired latency differences for each revision. Both modes must produce
+the exact DVI bytes of a fresh cold compile of the corresponding revision; the
+equal-width revision must also adopt the unchanged page suffix:
 
 ```bash
 cargo run --profile profiling -p umber --bin gentle-profile -- \
@@ -66,23 +67,26 @@ reported independently. Generation-anchored paragraph metadata bytes are
 reported separately from detached-cache bytes.
 
 The fixed edit inserts 1,792 words into one paragraph beginning 19.66% through
-the source. It deliberately changes both line and page breaking: the pinned
-document grows from 97 to 98 pages, so the later 84-page suffix cannot be
-adopted. A five-sample optimized run on 2026-07-15 measured 3.986 seconds mean
-(2.940 seconds median) with memoization disabled, 7.304 seconds mean (7.222
-seconds median) with memoization enabled, and 2.875 seconds mean (2.740 seconds
-median) for a cold compile of the edited document. Memoization was therefore
-83% slower by the means and 146% slower by the medians. It made 7,140 lookups
-but only 385 hits, reached 67,008,455 retained bytes, and evicted 6,475 entries.
-Both incremental modes produced the cold compile's exact 98-page, 278,000-byte
-DVI. This is an intentional page-divergence stress case, not the expected case
-for suffix reuse.
+the source. It deliberately changes both line and page breaking: with corrected
+line-break widths the pinned document grows from 97 to 100 pages, and the
+downstream 86-page region is retyped rather than adopted. A five-sample
+optimized run on 2026-07-15, before that width correction, measured 3.986
+seconds mean (2.940 seconds median) with memoization disabled, 7.304 seconds
+mean (7.222 seconds median) with memoization enabled, and 2.875 seconds mean
+(2.740 seconds median) for a cold compile of the edited document. Memoization
+was therefore 83% slower by the means and 146% slower by the medians. It made
+7,140 lookups but only 385 hits, reached 67,008,455 retained bytes, and evicted
+6,475 entries.
+Those absolute timings predate the current fixture output and are historical
+only. Both current incremental modes produce the cold compile's exact 100-page,
+279,176-byte DVI. This is an intentional page-divergence stress case, not the
+expected case for suffix reuse.
 
 After stable pre-delivery paragraph anchors landed, an independent five-sample
-rerun on 2026-07-16 preserved that exact DVI and raised the downstream eligible
-paragraph result to 121 of 129 candidates (93.8%). Memo-enabled execution still
-lost to memo-disabled execution: 9.446 versus 6.409 seconds by the means and
-8.562 versus 2.967 seconds by the medians. The general detached cache retained
+rerun on 2026-07-16 (also before the width correction) raised the downstream
+eligible paragraph result to 121 of 129 candidates (93.8%). Memo-enabled
+execution still lost to memo-disabled execution: 9.446 versus 6.409 seconds by
+the means and 8.562 versus 2.967 seconds by the medians. The general detached cache retained
 66,899,304 bytes and evicted 6,721 entries; page episodes made 5,378 lookups for
 30 hits on the deliberately pagination-shifting edit. These historical
 observations did not support a per-layer verdict: they used weak unpaired
@@ -98,7 +102,9 @@ pairs. Memo-disabled versus paragraph-memo means were 1,700.926 versus
 1,776.852 ms for the large edit, 1,671.180 versus 1,567.323 ms for the follow-up,
 and 1,689.310 versus 2,043.332 ms for its removal. The paired enabled-minus-
 disabled means were therefore +75.926, -103.857, and +354.022 ms. Every
-revision remained byte-identical to its cold 100-page DVI. The first two edits
+revision remained byte-identical to its cold 100-page DVI: 279,176 bytes for
+the large insertion and inverse removal, and 279,248 bytes for the follow-up.
+The first two edits
 made 121 and 122 finished-line hits and spent only 9.959 and 10.008 ms in
 validation plus import, but the removal attempted no paragraph lookup, reported
 1,781 not-attempted regions, and retyped the complete document. Paragraph
@@ -106,6 +112,17 @@ generation metadata grew from 19.2 MiB to 19.8 MiB and then 23.6 MiB; detached
 retention and evictions remained zero under the default paragraph-only policy.
 This is a negative release result even though the validation/import cost clause
 passes on revisions that engage lookup.
+
+The fixture now appends a fourth, height-preserving edit after that inverse
+removal. It changes `words` to `sword`; the two words contain the same cmr10
+glyphs, retain the same `wo` kern, and introduce no other kern or ligature pair,
+so the changed page has different content but identical broken height. A
+two-pair balanced acceptance run on 2026-07-16 retyped three pages, performed
+one exact-state check without memo recording (two with paragraph recording),
+and adopted the remaining 83 pages in both modes. Mean latency was 66.550 ms
+disabled, 103.070 ms enabled, and 1,762.488 ms cold. The revision was
+byte-identical to its cold 100-page, 279,176-byte DVI. This small run verifies
+the fast-path workload and parity; it is not a standalone latency verdict.
 
 A separate two-pair diagnostic enabled `pretolerance,paragraph`. Pretolerance
 reported 834/835, 833/834, and 1,054/1,054 hits over the three edits, retained

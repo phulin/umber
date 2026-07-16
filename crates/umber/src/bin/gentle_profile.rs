@@ -26,6 +26,8 @@ const GENTLE_EDIT_OLD: &str = "There are ten characters which, like the backslas
 const GENTLE_EDIT_SENTENCE: &str = "This deliberately extended explanation adds ordinary words to the same paragraph so that TeX must reconsider many line breaks and carry the resulting vertical material across page boundaries.";
 const GENTLE_EDIT_REPETITIONS: usize = 64;
 const GENTLE_FOLLOW_UP: &str = " A measured follow-up changes this paragraph again.";
+const GENTLE_EQUAL_WIDTH_OLD: &str = "words";
+const GENTLE_EQUAL_WIDTH_NEW: &str = "sword";
 
 #[derive(Debug)]
 struct Options {
@@ -171,6 +173,8 @@ struct IncrementalFixture {
     original: String,
     revisions: Vec<String>,
     edits: Vec<Edit>,
+    edit_names: Vec<&'static str>,
+    suffix_adoption_edit: usize,
     body_offset: usize,
     body_len: usize,
     inserted_bytes: usize,
@@ -283,13 +287,31 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
             }
         }
     }
+    for (name, sample) in [
+        ("memo-disabled", &disabled_sample),
+        ("memo-enabled", &enabled_sample),
+    ] {
+        let fast_path = &sample.steps[fixture.suffix_adoption_edit];
+        let previous = &sample.steps[fixture.suffix_adoption_edit - 1];
+        if fast_path.dvi == previous.dvi || fast_path.pages != previous.pages {
+            return Err(format!(
+                "{name} equal-width edit did not change page content while preserving page count"
+            ));
+        }
+        if fast_path.reuse.suffixes_adopted == 0 || fast_path.reuse.pages_reused == 0 {
+            return Err(format!(
+                "{name} height-preserving edit did not adopt a page suffix"
+            ));
+        }
+    }
 
     println!(
-        "gentle-profile incremental edit: byte={} ({:.2}% through gentle.tex), inserted_bytes={} inserted_words={} into one paragraph; three accepted edits/session; {} AB/BA-paired runs after {} warm-up(s)",
+        "gentle-profile incremental edit: byte={} ({:.2}% through gentle.tex), inserted_bytes={} inserted_words={} into one paragraph; {} accepted edits/session; {} AB/BA-paired runs after {} warm-up(s)",
         fixture.body_offset,
         fixture.body_offset as f64 * 100.0 / fixture.body_len as f64,
         fixture.inserted_bytes,
         fixture.inserted_words,
+        fixture.edits.len(),
         options.iterations,
         options.warmups,
     );
@@ -298,7 +320,11 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
         let enabled_stats = duration_stats(&enabled[index]);
         let cold_stats = duration_stats(&cold[index]);
         let paired = scalar_stats(&paired_millis[index]);
-        println!("gentle-profile accepted edit {}:", index + 1);
+        println!(
+            "gentle-profile accepted edit {}: {}",
+            index + 1,
+            fixture.edit_names[index]
+        );
         print_duration_stats("memo disabled", disabled_stats);
         print_duration_stats("memo enabled", enabled_stats);
         print_duration_stats("cold", cold_stats);
@@ -319,6 +345,11 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
             enabled_sample.steps[index].dvi.len(),
         );
     }
+    println!(
+        "gentle-profile fast path verified: edit={} ({}) adopted the remaining page suffix in both incremental modes",
+        fixture.suffix_adoption_edit + 1,
+        fixture.edit_names[fixture.suffix_adoption_edit],
+    );
     Ok(())
 }
 
@@ -517,10 +548,33 @@ fn incremental_fixture(repo_root: &Path) -> Result<IncrementalFixture, String> {
         range: follow_up_start..follow_up_start + GENTLE_FOLLOW_UP.len(),
         replacement: String::new(),
     };
+    // `words` and `sword` contain the same cmr10 glyphs, with the same `wo`
+    // kern and no other kern or ligature pairs. Reordering the leading `s`
+    // therefore changes the shipped page while preserving every line width.
+    let equal_width_start = edited[start..]
+        .find(GENTLE_EQUAL_WIDTH_OLD)
+        .map(|offset| start + offset)
+        .ok_or_else(|| "the equal-width edit word was not found in the insertion".to_owned())?;
+    let equal_width_end = equal_width_start + GENTLE_EQUAL_WIDTH_OLD.len();
+    let mut equal_width_edited = edited.clone();
+    equal_width_edited.replace_range(equal_width_start..equal_width_end, GENTLE_EQUAL_WIDTH_NEW);
+    let edit_four = Edit {
+        base_revision: RevisionId::new(4),
+        expected_hash: ContentHash::from_bytes(edited.as_bytes()),
+        range: equal_width_start..equal_width_end,
+        replacement: GENTLE_EQUAL_WIDTH_NEW.to_owned(),
+    };
     Ok(IncrementalFixture {
         original,
-        revisions: vec![edited.clone(), followed_up, edited],
-        edits: vec![edit_one, edit_two, edit_three],
+        revisions: vec![edited.clone(), followed_up, edited, equal_width_edited],
+        edits: vec![edit_one, edit_two, edit_three, edit_four],
+        edit_names: vec![
+            "large pagination-changing insertion",
+            "follow-up insertion",
+            "inverse removal",
+            "height-preserving equal-width substitution",
+        ],
+        suffix_adoption_edit: 3,
         body_offset,
         body_len: body.len(),
         inserted_bytes: insertion.len() + 1,
@@ -864,7 +918,7 @@ fn print_help() {
          named executor checkpoint through a bounded profiling sink. --expansion-memo enables\n\
          the bounded session-local expansion caches and reports their work and retention.\n\
          --incremental-edit compares memo-disabled, memo-enabled, and cold compilation for\n\
-         three accepted edits/session using balanced AB/BA pairs and DVI parity verification.\n\
+         four accepted edits/session using balanced AB/BA pairs and DVI parity verification.\n\
          --memo-layers configures enabled recording layers; the default is paragraph."
     );
 }
