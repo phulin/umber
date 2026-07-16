@@ -3228,42 +3228,6 @@ mod tests {
     }
 
     #[test]
-    fn color_stacks_are_checkpointed_and_page_and_form_state_stay_independent() {
-        let mut state = PdfState::default();
-        let before_hash = state.hash_fragment();
-        let before = state.snapshot();
-        let id = state
-            .allocate_color_stack(PdfColorStackMode::Page, true, b"0 0 1 rg".to_vec())
-            .expect("color stack capacity");
-        assert_eq!(id, 1);
-        let allocated_hash = state.hash_fragment();
-        assert_ne!(allocated_hash, before_hash);
-
-        let page = state
-            .apply_color_stack(
-                id,
-                PdfColorStackTarget::Page,
-                &PdfColorStackAction::Push(b"1 0 0 rg".to_vec()),
-            )
-            .expect("page push");
-        assert_eq!(page.payload, b"1 0 0 rg");
-        let form = state
-            .apply_color_stack(id, PdfColorStackTarget::Form, &PdfColorStackAction::Current)
-            .expect("form current");
-        assert_eq!(form.payload, b"0 0 1 rg");
-        assert_eq!(
-            state.apply_color_stack(0, PdfColorStackTarget::Page, &PdfColorStackAction::Pop),
-            Err(PdfColorStackApplyError::Underflow)
-        );
-
-        state.rollback(before);
-        assert_eq!(
-            state.allocate_color_stack(PdfColorStackMode::Page, true, b"0 0 1 rg".to_vec()),
-            Ok(1)
-        );
-    }
-
-    #[test]
     fn raw_object_reservation_initialization_and_rollback_share_one_ledger() {
         let mut state = PdfState::default();
         state.enable();

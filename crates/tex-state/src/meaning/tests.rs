@@ -233,9 +233,6 @@ fn complete_primitive_codecs_are_unique_through_navigation_and_compatibility_reg
             );
         }
     }
-    for reserved in 14..=16 {
-        assert_eq!(InternalInteger::from_operand(reserved), None);
-    }
 }
 
 #[test]

@@ -211,7 +211,8 @@ pub(super) fn stage_shipout(
         .map_err(invalid_artifact)?;
     let streamed_dvi_plan = dvi.finish(&emission.fonts).map_err(invalid_artifact)?;
     let artifact = tex_out::PageArtifact::from_bytes(&artifact_bytes).map_err(invalid_artifact)?;
-    let positioned = tex_out::positioned::lower_page(&artifact, 0).map_err(invalid_artifact)?;
+    let positioned =
+        tex_out::positioned::lower_page_for_shipout(&artifact, 0).map_err(invalid_artifact)?;
     let snapping = overlay.effects.iter().any(|effect| {
         matches!(
             effect,

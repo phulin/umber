@@ -220,10 +220,19 @@ pub fn lower_page(page: &PageArtifact, page_index: u32) -> Result<PositionedPage
     lower_page_with_limits(page, page_index, PositionedLimits::default())
 }
 
+/// Lowers a page for shipout bookkeeping while deferring unmatched PDF graphics
+/// saves to the PDF driver, which reports them when the artifact is assembled.
+pub fn lower_page_for_shipout(
+    page: &PageArtifact,
+    page_index: u32,
+) -> Result<PositionedPage, PositionedError> {
+    traversal::lower(page, page_index, PositionedLimits::default(), false)
+}
+
 pub fn lower_page_with_limits(
     page: &PageArtifact,
     page_index: u32,
     limits: PositionedLimits,
 ) -> Result<PositionedPage, PositionedError> {
-    traversal::lower(page, page_index, limits)
+    traversal::lower(page, page_index, limits, true)
 }

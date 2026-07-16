@@ -10,6 +10,7 @@ fn generated(bytes: &[u8]) -> SourceDescriptor {
 #[test]
 fn regions_reserve_distinct_anchor_positions_and_validate_spans() {
     let mut map = SourceMap::default();
+    map.set_next_position_for_test(0);
     let first = map
         .register(SourceId::new(0), generated(b"abc"))
         .expect("source-map operation succeeds");

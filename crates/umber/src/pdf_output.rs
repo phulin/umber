@@ -4866,6 +4866,9 @@ mod tests {
             counts: [0; 10],
             fonts: Vec::new(),
             events,
+            diagnostics: Vec::new(),
+            last_saved_position: None,
+            snap_reference: (Scaled::from_raw(0), Scaled::from_raw(0)),
         }
     }
 
@@ -6673,7 +6676,7 @@ mod tests {
 
     #[test]
     fn pdf_graphics_literals_expand_at_the_selected_time_and_survive_artifacts() {
-        let (stores, run) = run(concat!(
+        let (mut stores, run) = run(concat!(
             "\\pdfoutput=1\\pdfcompresslevel=0",
             "\\def\\value{ONE}",
             "\\setbox0=\\hbox{",
@@ -6695,7 +6698,7 @@ mod tests {
                 if payload == b"DEFERRED-TWO"
         )));
 
-        let pdf = pdf_from_committed_artifacts(&stores, &run.committed_artifacts)
+        let pdf = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
             .expect("graphics PDF assembles");
         assert!(
             pdf.windows(b"IMMEDIATE-ONE".len())
@@ -6773,12 +6776,12 @@ mod tests {
 
     #[test]
     fn pdf_graphics_matrix_and_state_lower_to_typed_ordered_operators() {
-        let (stores, run) = run(concat!(
+        let (mut stores, run) = run(concat!(
             "\\pdfoutput=1\\pdfcompresslevel=0",
             "\\shipout\\hbox{\\pdfsave\\pdfsetmatrix{1 .25 -.5 1}",
             "\\pdfliteral direct{0.1 g}\\pdfrestore}\\end",
         ));
-        let pdf = pdf_from_committed_artifacts(&stores, &run.committed_artifacts)
+        let pdf = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
             .expect("graphics PDF assembles");
         let q = pdf.windows(3).position(|w| w == b"\nq\n").expect("typed q");
         let cm = pdf
@@ -6792,7 +6795,7 @@ mod tests {
 
     #[test]
     fn pdf_color_stacks_mutate_at_traversal_and_restore_on_the_next_page() {
-        let (stores, run) = run(concat!(
+        let (mut stores, run) = run(concat!(
             "\\pdfoutput=1\\pdfcompresslevel=0",
             "\\edef\\colors{\\pdfcolorstackinit page page{0 0 1 rg}}",
             "\\shipout\\vbox{\\pdfcolorstack\\colors push{1 0 0 rg}",
@@ -6825,7 +6828,7 @@ mod tests {
                 if payload == b"0 0 1 rg"
         )));
 
-        let pdf = pdf_from_committed_artifacts(&stores, &run.committed_artifacts)
+        let pdf = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
             .expect("color stack PDF assembles");
         assert!(pdf.windows(8).any(|window| window == b"1 0 0 rg"));
     }
@@ -7142,9 +7145,9 @@ mod tests {
             ["Misplaced \\pdfrestore by (1sp, 0sp)"]
         );
 
-        let (stores, save_run) = run("\\pdfoutput=1\\shipout\\hbox{\\pdfsave}\\end");
+        let (mut stores, save_run) = run("\\pdfoutput=1\\shipout\\hbox{\\pdfsave}\\end");
         assert!(matches!(
-            pdf_from_committed_artifacts(&stores, &save_run.committed_artifacts),
+            pdf_from_committed_artifacts(&mut stores, &save_run.committed_artifacts),
             Err(PdfBuildError::Positioned(
                 PositionedError::UnmatchedPdfSaves { count: 1 }
             ))
@@ -7198,8 +7201,8 @@ mod tests {
             "\\pdfoutput=1\\shipout\\hbox{\\pdfliteral direct{H}}\\end",
             "\\pdfoutput=1\\shipout\\hbox{$\\pdfliteral direct{M}$}\\end",
         ] {
-            let (stores, run) = run(source);
-            pdf_from_committed_artifacts(&stores, &run.committed_artifacts)
+            let (mut stores, run) = run(source);
+            pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
                 .expect("mode-independent literal assembles");
         }
     }

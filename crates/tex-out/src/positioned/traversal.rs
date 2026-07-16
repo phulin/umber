@@ -17,6 +17,7 @@ pub(super) fn lower(
     page: &PageArtifact,
     page_index: u32,
     limits: PositionedLimits,
+    require_balanced_pdf_saves: bool,
 ) -> Result<PositionedPage, PositionedError> {
     if page.job.mag <= 0 {
         return Err(PositionedError::InvalidMagnification { mag: page.job.mag });
@@ -48,7 +49,7 @@ pub(super) fn lower(
         BoxKind::Horizontal => out.hlist(root, 1)?,
         BoxKind::Vertical => out.vlist(root, 1)?,
     }
-    if !out.pdf_save_positions.is_empty() {
+    if require_balanced_pdf_saves && !out.pdf_save_positions.is_empty() {
         return Err(PositionedError::UnmatchedPdfSaves {
             count: out.pdf_save_positions.len(),
         });

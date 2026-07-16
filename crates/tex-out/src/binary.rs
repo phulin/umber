@@ -10,8 +10,8 @@ use tex_arith::Scaled;
 
 const MAGIC: &[u8; 4] = b"UMPG";
 const VERSION: u8 = 19;
-const ANNOTATION_VERSION: u8 = 18;
-const IMAGE_VERSION: u8 = 17;
+const IMAGE_VERSION: u8 = 18;
+const ANNOTATION_VERSION: u8 = 17;
 const PRE_ANNOTATION_VERSION: u8 = 16;
 const PDF_ACCESSIBILITY_VERSION: u8 = 15;
 const FONT_CONSTRUCTION_VERSION: u8 = 14;
@@ -2208,7 +2208,7 @@ impl Reader<'_> {
     }
 
     fn effects(&mut self, version: u8) -> Result<Vec<PageEffect>, ParseError> {
-        let len = self.collection_len(2)?;
+        let len = self.collection_len(1)?;
         let mut effects = Vec::with_capacity(len);
         for _ in 0..len {
             let tag = self.u8()?;
@@ -2239,7 +2239,7 @@ impl Reader<'_> {
                         }
                     })
                 }
-                wire::effect::PDF_ANNOTATION if version >= VERSION => {
+                wire::effect::PDF_ANNOTATION if version >= ANNOTATION_VERSION => {
                     PageEffect::PdfAnnotation(match self.u8()? {
                         0 => PdfAnnotationEffect::Annotation {
                             object: self.u32()?,
@@ -2319,16 +2319,26 @@ impl Reader<'_> {
                         payload: self.bytes()?,
                     }
                 }
-                wire::effect::PDF_SAVE_POSITION => PageEffect::PdfSavePosition,
-                wire::effect::PDF_SNAP_STATE => PageEffect::PdfSnapState {
-                    x: self.scaled()?,
-                    y: self.scaled()?,
-                },
-                wire::effect::PDF_SNAP_REF_POINT => PageEffect::PdfSnapRefPoint,
-                wire::effect::PDF_SNAP_Y => PageEffect::PdfSnapY {
-                    spec: self.glue_spec()?,
-                },
-                wire::effect::PDF_SNAP_Y_COMP => PageEffect::PdfSnapYComp { ratio: self.u16()? },
+                wire::effect::PDF_SAVE_POSITION if version >= PRE_ANNOTATION_VERSION => {
+                    PageEffect::PdfSavePosition
+                }
+                wire::effect::PDF_SNAP_STATE if version >= PRE_ANNOTATION_VERSION => {
+                    PageEffect::PdfSnapState {
+                        x: self.scaled()?,
+                        y: self.scaled()?,
+                    }
+                }
+                wire::effect::PDF_SNAP_REF_POINT if version >= PRE_ANNOTATION_VERSION => {
+                    PageEffect::PdfSnapRefPoint
+                }
+                wire::effect::PDF_SNAP_Y if version >= PRE_ANNOTATION_VERSION => {
+                    PageEffect::PdfSnapY {
+                        spec: self.glue_spec()?,
+                    }
+                }
+                wire::effect::PDF_SNAP_Y_COMP if version >= PRE_ANNOTATION_VERSION => {
+                    PageEffect::PdfSnapYComp { ratio: self.u16()? }
+                }
                 wire::effect::PDF_REF_XFORM if version >= PRE_ANNOTATION_VERSION => {
                     PageEffect::PdfRefXForm {
                         object: self.u32()?,

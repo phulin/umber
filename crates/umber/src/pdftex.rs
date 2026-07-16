@@ -816,11 +816,13 @@ mod tests {
             &mut stores,
         )
         .expect("level mismatch is recoverable");
+        let terminal = stores.world().memory_terminal_output().unwrap_or_default();
+        let observed = format!("{}{}", String::from_utf8_lossy(terminal), output);
         assert!(
-            output.contains(
+            observed.contains(
                 "pdfTeX warning: \\pdfendlink ended up in different nesting level than \\pdfstartlink"
             ),
-            "{output}"
+            "{observed}"
         );
         assert!(stores.open_pdf_links().is_empty());
     }
@@ -1710,12 +1712,17 @@ mod tests {
             &mut stores,
         )
         .expect("recover pdfTeX regex diagnostics");
-        assert!(output.contains("before=1->a"), "{output}");
-        assert!(output.contains("group=1->b"), "{output}");
-        assert!(output.contains("brackets ([ ]) not balanced"), "{output}");
-        assert!(output.contains("bad=1->b"), "{output}");
-        assert!(output.contains("Bad match number (-2)."), "{output}");
-        assert!(output.contains("negative=1->b"), "{output}");
+        let terminal = stores.world().memory_terminal_output().unwrap_or_default();
+        let observed = format!("{}{}", String::from_utf8_lossy(terminal), output);
+        assert!(observed.contains("before=1->a"), "{observed}");
+        assert!(observed.contains("group=1->b"), "{observed}");
+        assert!(
+            observed.contains("brackets ([ ]) not balanced"),
+            "{observed}"
+        );
+        assert!(observed.contains("bad=1->b"), "{observed}");
+        assert!(observed.contains("Bad match number (-2)."), "{observed}");
+        assert!(observed.contains("negative=1->b"), "{observed}");
     }
 
     #[test]
