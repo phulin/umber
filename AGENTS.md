@@ -11,17 +11,15 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - Make sure you are writing clean code; don't hesitate to do refactor commits if you find that a certain area of the code has gotten complex or difficult to understand.
 - Don't worry about keeping changes "low-risk" or implementing only "narrow slices", as making clean code will sometimes require big, ambitious, cross-cutting changes, and reimplementing something from scratch means we will need to write complex new features.
 - In general, try to keep source files short (goal is under roughly 600 lines, but it's okay if a file gets somewhat larger; test files can be as long as needed, they should only be split logically).
-- Prefer `#[cfg(test)] mod tests;` with separate `src/.../tests.rs` files for nontrivial crate-internal tests. Internal library crates should avoid crate-level `tests/`; crates that keep external-boundary integration tests should consolidate them under one `tests/it.rs` binary. See `docs/testing_policy.md`.
-- Document todos and stubs in the code clearly with a TODO.
-- For complex features, build design/technical documentation in advance and place in docs/ for your own planning and for reference later, but don't commit temporary task plans or notes.
 - When writing code, prefer principled solutions, clean architecture, and fast, optimized implementation. Avoid hacks.
+- For complex features, build design/technical documentation in advance and place in docs/ for your own planning and for reference later, but don't commit temporary task plans or notes.
+- Prefer `#[cfg(test)] mod tests;` with separate `src/.../tests.rs` files for nontrivial crate-internal tests. Internal library crates should avoid crate-level `tests/`; crates that keep external-boundary integration tests should consolidate them under one `tests/it.rs` binary. See `docs/testing_policy.md`.
 - Make sure you can run the test suite very quickly so we don't gate our progress on test su ite speed. Run `cargo test` with `--tests` so you don't run the doctests.
 
 ## Directory Map
 
 - `.cargo/`: target-specific Cargo configuration; browser randomness selection must remain scoped to `wasm32-unknown-unknown`.
 - `.agents/`: project-local agent skills and coordination workflow guidance.
-- `.github/workflows/wasm.yml`: browser-package CI gate for authored JavaScript, Firefox bindings, and the optimized Chrome integration fixture.
 - `crates/`: Rust workspace crates.
 - `crates/tex-arith`: shared TeX scaled-point and TFM arithmetic.
 - `crates/tex-content`: shared versioned, domain-separated content identity.
@@ -37,24 +35,11 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `crates/umber-wasm`: WebAssembly binding and authored JavaScript browser package.
 - `crates/test-support`: shared fixture and parity-test helpers.
 - `crates/corpus-manifest`: dependency-free parser for the external corpus manifest used by host-side parity tooling.
-- `tools/`: Rust tooling crates. `refexec` remains in the root workspace for committed DVI fixture comparison; regeneration-only tools such as `fixturegen` and external-corpus tools such as `corpus-sync` are standalone and built explicitly by scripts.
-- `tools/texlive-wasm-publish`: standalone deterministic publisher for pinned browser TeX Live manifests and content-addressed objects.
+- `tools/`: Rust tooling crates.
 - `benchmarks/`: opt-in standalone benchmark crates kept outside the root workspace.
-- `benchmarks/plain-tex`: fixed end-to-end Plain TeX engine workloads and runner.
-- `benchmarks/tex-exec`: focused execution-layer Criterion benchmarks, including shipout lowering.
-- `benchmarks/tex-state`: focused state-layer latency and allocation-budget benchmarks.
 - `tests/`: committed fixtures and parity test definitions.
 - `docs/`: architecture, phase, and design documents.
 - `scripts/`: local development scripts and versioned git hook templates.
-- `scripts/build-wasm-plain-format.sh`: reproducible pinned TeX Live 2025 to Umber-native Plain format build and equivalence gate.
-- `scripts/build-wasm-package.sh`: optimized npm-shaped WASM package assembler.
-- `scripts/check-wasm.sh`: complete Firefox, Chrome, Node, and package-content WASM gate.
-- `scripts/discover-latex-kernel.sh`: pinned TeX Live 2025 LaTeX kernel bootstrap discovery and first-diagnostic gate.
-- `scripts/setup-latex-parity-tests.sh`: hash-pinned acquisition and offline verification for the upstream LaTeX2e regression snapshot.
-- `scripts/check-latex-parity.sh`: explicit coordinate-exact upstream LaTeX DVI tier that builds or accepts one pregenerated format and restores it for every isolated case.
-- `scripts/setup-conformance-tests.sh`: pinned third-party acquisition plus local Story, Gentle, TRIP, and e-TRIP DVI-oracle generation with pdfTeX.
-- `scripts/profile-pdftex-arxiv.sh`: disposable `/tmp` pdfTeX primitive tracer build and reproducible 100-document arXiv source profile.
-- `scripts/test-wasm-browser.sh`: optimized-package local HTTP integration runner.
 - `third_party/`: ignored reference downloads and external source archives.
 
 ## Development
@@ -68,14 +53,8 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
   uses its own `target/clippy` directory so it does not lock the test build.
 - Use `cargo run-dev -p umber -- <args>` for local CLI runs that should share
   optimized artifacts with the test build.
-- For fixture regeneration, follow `tests/AGENTS.md` and use
-  `scripts/regen-fixtures.sh`.
 - Run `scripts/check-snapshot-budgets.sh` in the explicit performance tier;
   snapshot allocation and latency gates do not run under ordinary cargo tests.
-- Compile expansion and node instrumentation only through the unified
-  `profiling-stats` feature with `--profile profiling`; ordinary builds must
-  retain zero-cost disabled instrumentation. The CLI reports collected data
-  only when `umber run --profiling-stats` is also passed.
 
 ## Beads Issue Tracker
 
