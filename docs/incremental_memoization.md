@@ -772,7 +772,20 @@ enabled, 3.561 seconds disabled, and 3.739 seconds cold, again with 24 of 32
 paragraph lookups hitting. The limiting defect is candidate selection, not
 recorder eligibility: lookup still recognizes only the old bounded raw-token
 preflight, so macro-bearing downstream paragraphs never attempt validation.
-`umber2-vfqs.15.5` tracks the required stable raw-delivery candidate key.
+`umber2-vfqs.15.5` implements the required stable raw-delivery candidate key.
+
+Paragraph candidate selection now records a zero-width `RootSpanId` at the
+live physical-source cursor immediately before expansion begins. The input
+stack prepares the next physical line when necessary, so an unchanged line
+keeps its fragment-local anchor even when the preceding edited line was
+reminted. This pre-delivery lookup neither tokenizes the cold paragraph nor
+allocates diagnostic provenance. Only a matching prior-generation anchor
+starts a bounded raw scan; that scan must cover every recorded stable source
+span and reach the recorded ending input continuation before dependency,
+redo-log, effect, and retained-result validation may import anything. The
+recorded expanded trace also keeps its source ancestry so imported node
+provenance is rebound through current raw deliveries rather than assuming raw
+and expanded token ordinals coincide.
 
 These runs also strengthen the removal case for the isolated caches. The
 standalone expansion episode has no useful Gentle traffic, while the bounded

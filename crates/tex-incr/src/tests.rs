@@ -215,6 +215,116 @@ fn paragraph_front_end_hit_replays_nonempty_everypar_across_revision() {
 }
 
 #[test]
+fn paragraph_front_end_keys_macro_paragraphs_before_expansion() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = "\\def\\body#1{macro #1 paragraph text}\n\\body{one}\\par\n\\body{two}\\par\n\\body{three}\\par\n\\vfill\\eject\\end";
+    let mut session = Session::start(
+        universe,
+        "paragraph-macro-raw-key",
+        RevisionId::new(1),
+        source.to_owned(),
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+    let before = session.pure_memo_stats();
+
+    let inserted = "% unchanged macro paragraphs keep fragment identity\n";
+    let incremental = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: 0..0,
+                replacement: inserted.to_owned(),
+            },
+        )
+        .expect("prefix edit");
+    let after = session.pure_memo_stats();
+    assert!(
+        after.paragraph_lookups >= before.paragraph_lookups + 3,
+        "{after:?}"
+    );
+    assert!(
+        after.paragraph_hits >= before.paragraph_hits + 2,
+        "{after:?}"
+    );
+
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-macro-raw-key",
+        RevisionId::new(2),
+        format!("{inserted}{source}"),
+        usize::MAX,
+    )
+    .expect("cold comparison");
+    let cold_output = cold.cold().expect("cold edited revision");
+    assert_eq!(
+        incremental.dvi_bytes().expect("incremental DVI"),
+        cold_output.dvi_bytes().expect("cold DVI")
+    );
+}
+
+#[test]
+fn paragraph_front_end_rejects_changed_raw_span_before_reusing_later_macros() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = "\\def\\body#1{macro #1 paragraph text}\n\\body{one}\\par\n\\body{two\ncontinued}\\par\n\\body{three}\\par\n\\vfill\\eject\\end";
+    let mut session = Session::start(
+        universe,
+        "paragraph-macro-span-validation",
+        RevisionId::new(1),
+        source.to_owned(),
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+    let before = session.pure_memo_stats();
+    let start = source.find("continued").expect("changed continuation");
+
+    let incremental = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: start..start + "continued".len(),
+                replacement: "altered".to_owned(),
+            },
+        )
+        .expect("middle-of-paragraph edit");
+    let after = session.pure_memo_stats();
+    assert_eq!(
+        after.paragraph_hits,
+        before.paragraph_hits + 1,
+        "the changed paragraph must miss while the later stable paragraph hits: {after:?}"
+    );
+
+    let mut edited = source.to_owned();
+    edited.replace_range(start..start + "continued".len(), "altered");
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-macro-span-validation",
+        RevisionId::new(2),
+        edited,
+        usize::MAX,
+    )
+    .expect("cold comparison");
+    let cold_output = cold.cold().expect("cold edited revision");
+    assert_eq!(incremental.effects, cold_output.effects);
+    assert_eq!(
+        incremental.dvi_bytes().expect("incremental DVI"),
+        cold_output.dvi_bytes().expect("cold DVI")
+    );
+}
+
+#[test]
 fn paragraph_post_break_reuse_tiers_match_cold_for_layout_and_hyphenation_changes() {
     fn run_edit(
         source: &str,

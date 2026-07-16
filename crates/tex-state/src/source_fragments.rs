@@ -491,12 +491,17 @@ impl FragmentStore {
         }
         let start = u32::try_from(range.start).ok()?;
         let end = u32::try_from(range.end).ok()?;
-        let bytes = self.bytes(fragment_id)?.get(start as usize..end as usize)?;
+        let content = if start == end {
+            ContentHash::from_bytes(&[])
+        } else {
+            let bytes = self.bytes(fragment_id)?.get(start as usize..end as usize)?;
+            ContentHash::from_bytes(bytes)
+        };
         Some(RootSpanId {
             piece: PieceId(fragment_id),
             start,
             end,
-            content: ContentHash::from_bytes(bytes),
+            content,
         })
     }
 

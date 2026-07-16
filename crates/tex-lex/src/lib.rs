@@ -1375,6 +1375,8 @@ pub struct InputStack {
     expansion_stats: ExpansionStats,
     active_macro_invocation: OriginId,
     recently_popped_invocation: Option<OriginId>,
+    /// Stable physical-source deliveries observed while one paragraph records.
+    paragraph_source_spans: Option<Vec<RootSpanId>>,
 }
 
 /// Proof that one token was delivered directly from a physical source frame.
@@ -1533,7 +1535,24 @@ impl InputStack {
             expansion_stats: ExpansionStats::default(),
             active_macro_invocation: OriginId::UNKNOWN,
             recently_popped_invocation: None,
+            paragraph_source_spans: None,
         }
+    }
+
+    /// Starts collecting stable physical-source deliveries for one paragraph.
+    pub fn begin_paragraph_source_recording(&mut self) {
+        self.paragraph_source_spans = Some(Vec::new());
+    }
+
+    /// Returns the physical-source deliveries collected for the active paragraph.
+    #[must_use]
+    pub fn paragraph_source_spans(&self) -> Option<&[RootSpanId]> {
+        self.paragraph_source_spans.as_deref()
+    }
+
+    /// Finishes physical-source delivery collection for one paragraph.
+    pub fn finish_paragraph_source_recording(&mut self) -> Option<Vec<RootSpanId>> {
+        self.paragraph_source_spans.take()
     }
 
     /// Rebases a fresh, not-yet-registered stack into the aggregate source-id
@@ -1782,6 +1801,7 @@ impl InputStack {
             expansion_stats: ExpansionStats::default(),
             active_macro_invocation,
             recently_popped_invocation: None,
+            paragraph_source_spans: None,
         })
     }
 
@@ -2720,6 +2740,33 @@ impl InputStack {
         self.summary()
     }
 
+    /// Returns stable editor-fragment identity at the next raw source cursor
+    /// without tokenizing input or allocating diagnostic provenance.
+    pub fn current_root_delivery_anchor(
+        &mut self,
+        stores: &mut impl ExpansionState,
+    ) -> Result<Option<RootSpanId>, LexError> {
+        let Some(frame_index) = self.current_token_frame_index() else {
+            return Ok(None);
+        };
+        let InputFrame::Source(source) = &mut self.frames[frame_index] else {
+            return Ok(None);
+        };
+        ensure_source_registered(source, stores);
+        if source.frame.pending.is_empty()
+            && source.frame.byte_offset >= source.frame.line.len()
+            && !source.frame.end_after_current_line
+            && !load_next_line(source, stores)?
+        {
+            return Ok(None);
+        }
+        let Some(registration) = source.registration else {
+            return Ok(None);
+        };
+        let offset = source_coordinate(source).byte_offset;
+        Ok(stores.registered_root_span_id(registration, offset..offset))
+    }
+
     #[must_use]
     pub fn current_source_frame(&self) -> Option<&SourceFrame> {
         let current = self.frames.iter().rev().find_map(|frame| match frame {
@@ -3174,6 +3221,11 @@ impl InputStack {
                 InputFrame::Source(source) => {
                     ensure_source_registered(source, stores);
                     if let Some(token) = source.frame.pending.pop_front() {
+                        record_paragraph_source_delivery(
+                            &mut self.paragraph_source_spans,
+                            stores,
+                            token,
+                        );
                         return Ok(Some(token));
                     }
 
@@ -3234,7 +3286,13 @@ impl InputStack {
                     else {
                         continue;
                     };
-                    return Ok(Some(token.packed()));
+                    let token = token.packed();
+                    record_paragraph_source_delivery(
+                        &mut self.paragraph_source_spans,
+                        stores,
+                        token,
+                    );
+                    return Ok(Some(token));
                 }
                 InputFrame::Condition { .. } => {
                     unreachable!("current_token_frame_index skips conditions")
@@ -3359,6 +3417,11 @@ impl InputStack {
                 InputFrame::Source(source) => {
                     ensure_source_registered(source, stores);
                     if let Some(token) = source.frame.pending.pop_front() {
+                        record_paragraph_source_delivery(
+                            &mut self.paragraph_source_spans,
+                            stores,
+                            token,
+                        );
                         return Ok(Some(TracedExpansionToken::new(token, false)));
                     }
 
@@ -3419,6 +3482,12 @@ impl InputStack {
                     else {
                         continue;
                     };
+                    let packed = token.packed();
+                    record_paragraph_source_delivery(
+                        &mut self.paragraph_source_spans,
+                        stores,
+                        packed,
+                    );
                     return Ok(Some(TracedExpansionToken::from_decoded(
                         token, false, false, None,
                     )));
@@ -4092,6 +4161,19 @@ fn decode_traced_token(token: TracedTokenWord) -> Token {
     token
         .token()
         .expect("input stack must only deliver valid traced tokens")
+}
+
+#[inline(always)]
+fn record_paragraph_source_delivery(
+    recording: &mut Option<Vec<RootSpanId>>,
+    stores: &impl ExpansionState,
+    token: TracedTokenWord,
+) {
+    if let Some(recording) = recording
+        && let Some(span) = stores.root_span_for_origin(token.origin())
+    {
+        recording.push(span);
+    }
 }
 
 fn next_token_from_line(

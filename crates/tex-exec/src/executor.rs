@@ -9,7 +9,8 @@ use tex_state::ids::TokenListId;
 use tex_state::node::Node;
 use tex_state::token::TracedTokenWord;
 use tex_state::{
-    FileContent, InputReadState, InputSummary, ParagraphBarrierReason, TokenListReplayKind, Universe,
+    FileContent, InputReadState, InputSummary, ParagraphBarrierReason, TokenListReplayKind,
+    Universe,
 };
 
 use crate::checkpoint::{CheckpointSink, EngineBoundary, EngineSession, NoopCheckpointSink};
@@ -98,6 +99,8 @@ pub(crate) struct PendingParagraphMemo {
 
 pub(crate) struct ColdParagraphRecording {
     pub(crate) effect_start: usize,
+    pub(crate) starting_span: Option<tex_state::RootSpanId>,
+    pub(crate) macro_bearing: bool,
     pub(crate) trace: Vec<TracedTokenWord>,
     pub(crate) barriers: std::collections::BTreeSet<ParagraphBarrierReason>,
 }
@@ -210,13 +213,19 @@ impl<'a> ExecutionContext<'a> {
             .open_image(input, request, request_index)
     }
 
-    pub(crate) fn begin_cold_paragraph_recording(&mut self, effect_start: usize) -> bool {
+    pub(crate) fn begin_cold_paragraph_recording(
+        &mut self,
+        effect_start: usize,
+        starting_span: Option<tex_state::RootSpanId>,
+    ) -> bool {
         if self.cold_paragraph_recording.is_some() {
             return false;
         }
         self.expansion.begin_paragraph_recording();
         self.cold_paragraph_recording = Some(ColdParagraphRecording {
             effect_start,
+            starting_span,
+            macro_bearing: false,
             trace: Vec::new(),
             barriers: std::collections::BTreeSet::new(),
         });
@@ -226,6 +235,26 @@ impl<'a> ExecutionContext<'a> {
     pub(crate) fn observe_paragraph_token(&mut self, token: TracedTokenWord) {
         if let Some(recording) = &mut self.cold_paragraph_recording {
             recording.trace.push(token);
+        }
+    }
+
+    pub(crate) fn update_cold_paragraph_start(
+        &mut self,
+        starting_span: Option<tex_state::RootSpanId>,
+    ) -> bool {
+        if let Some(recording) = &mut self.cold_paragraph_recording
+            && !recording.macro_bearing
+            && starting_span.is_some()
+        {
+            recording.starting_span = starting_span;
+            return true;
+        }
+        false
+    }
+
+    pub(crate) fn mark_cold_paragraph_macro(&mut self) {
+        if let Some(recording) = &mut self.cold_paragraph_recording {
+            recording.macro_bearing = true;
         }
     }
 
@@ -550,8 +579,16 @@ where
             && !execution.paragraph_memo_barrier
             && stores.paragraph_memo_enabled()
         {
-            if execution.begin_cold_paragraph_recording(stores.world().effect_records().len()) {
+            let starting_span = input.current_root_delivery_anchor(stores)?;
+            if execution.begin_cold_paragraph_recording(
+                stores.world().effect_records().len(),
+                starting_span,
+            ) {
+                input.begin_paragraph_source_recording();
                 stores.begin_pure_paragraph_recording();
+            }
+            if execution.update_cold_paragraph_start(starting_span) {
+                input.begin_paragraph_source_recording();
             }
             if execution.bypass_paragraph_memo_once {
                 execution.bypass_paragraph_memo_once = false;

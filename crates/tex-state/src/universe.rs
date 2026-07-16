@@ -285,6 +285,19 @@ pub trait ExpansionState {
     fn input_content_identity(&self, _record: crate::InputRecordId) -> Option<ContentHash> {
         None
     }
+    /// Resolves a registered editor-fragment range without allocating a
+    /// diagnostic origin.
+    fn registered_root_span_id(
+        &self,
+        _registration: RegisteredSource,
+        _range: std::ops::Range<u64>,
+    ) -> Option<crate::RootSpanId> {
+        None
+    }
+    /// Follows a delivered token's provenance to stable root-editor backing.
+    fn root_span_for_origin(&self, _origin: OriginId) -> Option<crate::RootSpanId> {
+        None
+    }
     fn bootstrap_origin(&self) -> OriginId;
     fn synthetic_origin(&mut self, kind: SyntheticOriginKind) -> OriginId;
     fn synthesized_origin(&mut self, kind: SynthesizedOriginKind, parent: OriginId) -> OriginId;
@@ -1809,6 +1822,15 @@ impl Universe {
         key: crate::PureMemoKey,
     ) -> Option<crate::RecordedParagraphRegion> {
         self.pure_memo.lookup_recorded_paragraph(key)
+    }
+
+    #[doc(hidden)]
+    pub fn lookup_recorded_paragraph_start(
+        &mut self,
+        starting_span: crate::RootSpanId,
+    ) -> Option<crate::RecordedParagraphRegion> {
+        self.pure_memo
+            .lookup_recorded_paragraph_start(starting_span)
     }
 
     #[doc(hidden)]
@@ -5808,6 +5830,18 @@ fn set_box_dimension_in_node(node: &mut Node, dimension: BoxDimension, value: Sc
 }
 
 impl ExpansionState for Universe {
+    fn registered_root_span_id(
+        &self,
+        registration: RegisteredSource,
+        range: std::ops::Range<u64>,
+    ) -> Option<crate::RootSpanId> {
+        self.stores.registered_root_span_id(registration, range)
+    }
+
+    fn root_span_for_origin(&self, origin: OriginId) -> Option<crate::RootSpanId> {
+        Universe::root_span_for_origin(self, origin)
+    }
+
     fn execution_group_depth(&self) -> u32 {
         self.stores.env_group_depth()
     }

@@ -3,7 +3,7 @@
 use tex_lex::InputStack;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
-use tex_state::token::{Catcode, Token, TracedTokenWord};
+use tex_state::token::{Catcode, Token};
 use tex_state::{
     ContentHash, DetachedVirtualEffect, EffectRecord, ExpansionState, PrintSink, PureMemoKey,
     Universe,
@@ -26,9 +26,77 @@ pub(crate) fn try_reuse_literal_paragraph(
     let mut traced = Vec::new();
     let mut semantic = Vec::new();
     let mut terminated = false;
+    let mut saw_macro = false;
+    let mut preselected = None;
+    for _ in 0..MAX_PREFLIGHT_TOKENS {
+        let starting_span = input.current_root_delivery_anchor(stores)?;
+        if execution.update_cold_paragraph_start(starting_span) {
+            input.begin_paragraph_source_recording();
+        }
+        preselected = starting_span
+            .and_then(|start| stores.lookup_recorded_paragraph_start(start))
+            .filter(|entry| entry.macro_bearing);
+        if preselected.is_some() {
+            break;
+        }
+        let next = tex_expand::next_semantic_raw_token(
+            input,
+            &mut tex_state::ExpansionContext::new(stores),
+        )?;
+        let Some(next) = next else {
+            break;
+        };
+        if matches!(
+            tex_expand::semantic_token(next),
+            Token::Char {
+                cat: Catcode::Space,
+                ..
+            }
+        ) {
+            continue;
+        }
+        crate::push_traced_tokens(input, stores, [next]);
+        break;
+    }
+    if let Some(entry) = &preselected {
+        for _ in 0..MAX_PREFLIGHT_TOKENS {
+            let next = tex_expand::next_semantic_raw_token(
+                input,
+                &mut tex_state::ExpansionContext::new(stores),
+            )?;
+            let Some(next) = next else {
+                break;
+            };
+            traced.push(next);
+            let anchor = input.current_root_delivery_anchor(stores)?;
+            if anchor == entry.ending_span
+                && input
+                    .publication_summary(stores)
+                    .paragraph_transition_matches(&entry.ending_input)
+            {
+                terminated = true;
+                break;
+            }
+            if let Token::Cs(symbol) = tex_expand::semantic_token(next)
+                && matches!(
+                    stores.meaning(symbol),
+                    Meaning::UnexpandablePrimitive(
+                        UnexpandablePrimitive::Par | UnexpandablePrimitive::EndGraf
+                    )
+                )
+            {
+                terminated = true;
+                break;
+            }
+        }
+    }
     let mut effect_argument_depth = 0usize;
     let mut expects_effect_argument = false;
-    for _ in 0..MAX_PREFLIGHT_TOKENS {
+    for _ in 0..if preselected.is_some() {
+        0
+    } else {
+        MAX_PREFLIGHT_TOKENS
+    } {
         let next = tex_expand::next_semantic_raw_token(
             input,
             &mut tex_state::ExpansionContext::new(stores),
@@ -45,6 +113,7 @@ pub(crate) fn try_reuse_literal_paragraph(
             } => semantic.push(token),
             Token::Cs(symbol) => {
                 let meaning = stores.meaning(symbol);
+                saw_macro |= matches!(meaning, Meaning::Macro { .. });
                 semantic.push(token);
                 if effect_argument_depth == 0
                     && matches!(
@@ -96,17 +165,26 @@ pub(crate) fn try_reuse_literal_paragraph(
         }
     }
 
+    if saw_macro {
+        execution.mark_cold_paragraph_macro();
+    }
     let eligible = terminated
-        && semantic
-            .iter()
-            .any(|token| matches!(token, Token::Char { cat, .. } if *cat != Catcode::Space));
+        && (preselected.is_some()
+            || semantic
+                .iter()
+                .any(|token| matches!(token, Token::Char { cat, .. } if *cat != Catcode::Space)));
     if !eligible {
         crate::push_traced_tokens(input, stores, traced);
         return Ok(false);
     }
 
-    let key = paragraph_key(stores, &semantic);
-    let Some(mut entry) = stores.lookup_recorded_paragraph(key) else {
+    let key = preselected
+        .as_ref()
+        .map_or_else(|| paragraph_key(stores, &semantic), |entry| entry.key);
+    let Some(mut entry) = preselected
+        .take()
+        .or_else(|| stores.lookup_recorded_paragraph(key))
+    else {
         let trace_origins = traced.iter().map(|token| token.origin()).collect();
         crate::push_traced_tokens(input, stores, traced);
         execution.pending_paragraph_memo =
@@ -114,16 +192,36 @@ pub(crate) fn try_reuse_literal_paragraph(
         stores.begin_pure_paragraph_recording();
         return Ok(false);
     };
+    let current_trace_origins = if entry.trace_spans.is_empty() {
+        traced
+            .iter()
+            .map(|token| token.origin())
+            .collect::<Vec<_>>()
+    } else {
+        entry
+            .trace_spans
+            .iter()
+            .map(|expected| {
+                expected
+                    .and_then(|expected| {
+                        traced.iter().find_map(|token| {
+                            (stores.root_span_for_origin(token.origin()) == Some(expected))
+                                .then_some(token.origin())
+                        })
+                    })
+                    .unwrap_or(tex_state::token::OriginId::UNKNOWN)
+            })
+            .collect()
+    };
 
-    let current_spans = traced
+    let current_spans = input
+        .paragraph_source_spans()
+        .map_or_else(Vec::new, <[tex_state::RootSpanId]>::to_vec);
+    let trace_ancestry_valid = entry
+        .trace_spans
         .iter()
-        .filter_map(|token| stores.root_span_for_origin(token.origin()))
-        .fold(Vec::new(), |mut spans, span| {
-            if !spans.contains(&span) {
-                spans.push(span);
-            }
-            spans
-        });
+        .flatten()
+        .all(|span| current_spans.contains(span));
     let dependencies_valid = stores.validate_dependencies(&mut entry.dependencies, |key| {
         stores
             .semantic_dependency_value(key)
@@ -132,6 +230,7 @@ pub(crate) fn try_reuse_literal_paragraph(
     let current_input = input.publication_summary(stores);
     let input_valid = current_input.paragraph_transition_matches(&entry.ending_input);
     if current_spans != entry.consumed_spans
+        || !trace_ancestry_valid
         || !dependencies_valid
         || !validate_mutations(stores, &entry.mutations)
         || !validate_effects(&entry.effects)
@@ -177,7 +276,7 @@ pub(crate) fn try_reuse_literal_paragraph(
         .into_iter()
         .map(|node| node.to_owned())
         .collect();
-    rebind_literal_origins(&mut nodes, &traced, &entry.origin_ordinals);
+    rebind_literal_origins(&mut nodes, &current_trace_origins, &entry.origin_ordinals);
     let lines_valid = imported_lines.is_some()
         && stores.validate_dependencies(&mut entry.break_dependencies, |key| {
             stores
@@ -195,10 +294,11 @@ pub(crate) fn try_reuse_literal_paragraph(
         rebind_graph_origins(
             stores,
             lines.as_mut().expect("validated imported lines"),
-            &traced,
+            &current_trace_origins,
             &entry.line_origin_ordinals,
         );
     }
+    let _ = input.finish_paragraph_source_recording();
     execution.abandon_cold_paragraph_recording();
     entry.consumed_spans = current_spans;
     entry.ending_input = current_input;
@@ -213,9 +313,9 @@ pub(crate) fn try_reuse_literal_paragraph(
     let mutation_count = entry.mutations.len();
     stores.record_paragraph_region(entry);
     execution.pending_paragraph_memo =
-        (!lines_valid).then(|| crate::executor::PendingParagraphMemo {
+        (!lines_valid).then_some(crate::executor::PendingParagraphMemo {
             key,
-            trace_origins: traced.iter().map(|token| token.origin()).collect(),
+            trace_origins: current_trace_origins,
         });
     crate::assignments::install_reused_paragraph_hlist(
         nest,
@@ -377,15 +477,16 @@ fn paragraph_key(stores: &Universe, tokens: &[Token]) -> PureMemoKey {
 
 fn rebind_literal_origins(
     nodes: &mut [tex_state::node::Node],
-    traced: &[TracedTokenWord],
+    trace_origins: &[tex_state::token::OriginId],
     ordinals: &[u32],
 ) {
     let mut ordinals = ordinals.iter().copied();
     let origin_at = |ordinal: u32| {
         usize::try_from(ordinal)
             .ok()
-            .and_then(|ordinal| traced.get(ordinal))
-            .map_or(tex_state::token::OriginId::UNKNOWN, |token| token.origin())
+            .and_then(|ordinal| trace_origins.get(ordinal))
+            .copied()
+            .unwrap_or(tex_state::token::OriginId::UNKNOWN)
     };
     for node in nodes {
         match node {
@@ -410,31 +511,32 @@ fn rebind_literal_origins(
 fn rebind_graph_origins(
     stores: &mut Universe,
     nodes: &mut [tex_state::node::Node],
-    traced: &[TracedTokenWord],
+    trace_origins: &[tex_state::token::OriginId],
     ordinals: &[u32],
 ) {
     let mut ordinals = ordinals.iter().copied();
-    rebind_graph_origins_inner(stores, nodes, traced, &mut ordinals);
+    rebind_graph_origins_inner(stores, nodes, trace_origins, &mut ordinals);
 }
 
 fn rebind_graph_origins_inner(
     stores: &mut Universe,
     nodes: &mut [tex_state::node::Node],
-    traced: &[TracedTokenWord],
+    trace_origins: &[tex_state::token::OriginId],
     ordinals: &mut impl Iterator<Item = u32>,
 ) {
     let origin_at = |ordinal: u32| {
         usize::try_from(ordinal)
             .ok()
-            .and_then(|ordinal| traced.get(ordinal))
-            .map_or(tex_state::token::OriginId::UNKNOWN, |token| token.origin())
+            .and_then(|ordinal| trace_origins.get(ordinal))
+            .copied()
+            .unwrap_or(tex_state::token::OriginId::UNKNOWN)
     };
     let rebuild = |stores: &mut Universe,
                    id: tex_state::ids::NodeListId,
-                   traced: &[TracedTokenWord],
+                   trace_origins: &[tex_state::token::OriginId],
                    ordinals: &mut _| {
         let mut children = stores.nodes(id).to_vec();
-        rebind_graph_origins_inner(stores, &mut children, traced, ordinals);
+        rebind_graph_origins_inner(stores, &mut children, trace_origins, ordinals);
         stores.freeze_node_list(&children)
     };
     for node in nodes {
@@ -449,7 +551,7 @@ fn rebind_graph_origins_inner(
                 );
             }
             tex_state::node::Node::HList(box_node) | tex_state::node::Node::VList(box_node) => {
-                box_node.children = rebuild(stores, box_node.children, traced, ordinals);
+                box_node.children = rebuild(stores, box_node.children, trace_origins, ordinals);
             }
             tex_state::node::Node::Glue {
                 leader:
@@ -459,20 +561,20 @@ fn rebind_graph_origins_inner(
                     ),
                 ..
             } => {
-                box_node.children = rebuild(stores, box_node.children, traced, ordinals);
+                box_node.children = rebuild(stores, box_node.children, trace_origins, ordinals);
             }
             tex_state::node::Node::Unset(unset) => {
-                unset.children = rebuild(stores, unset.children, traced, ordinals);
+                unset.children = rebuild(stores, unset.children, trace_origins, ordinals);
             }
             tex_state::node::Node::Disc {
                 pre, post, replace, ..
             } => {
-                *pre = rebuild(stores, *pre, traced, ordinals);
-                *post = rebuild(stores, *post, traced, ordinals);
-                *replace = rebuild(stores, *replace, traced, ordinals);
+                *pre = rebuild(stores, *pre, trace_origins, ordinals);
+                *post = rebuild(stores, *post, trace_origins, ordinals);
+                *replace = rebuild(stores, *replace, trace_origins, ordinals);
             }
             tex_state::node::Node::Ins { content, .. } | tex_state::node::Node::Adjust(content) => {
-                *content = rebuild(stores, *content, traced, ordinals);
+                *content = rebuild(stores, *content, trace_origins, ordinals);
             }
             _ => {}
         }
@@ -495,6 +597,7 @@ fn publish_recorded_region(
     nodes: &[tex_state::node::Node],
 ) {
     let Some(mut recording) = execution.cold_paragraph_recording.take() else {
+        let _ = input.finish_paragraph_source_recording();
         let _ = stores.finish_pure_paragraph_recording();
         return;
     };
@@ -584,14 +687,10 @@ fn publish_recorded_region(
         }
     };
     let mutations = stores.finish_pure_paragraph_recording().unwrap_or_default();
-    let mut consumed_spans = Vec::new();
-    for token in &recording.trace {
-        if let Some(span) = stores.root_span_for_origin(token.origin())
-            && !consumed_spans.contains(&span)
-        {
-            consumed_spans.push(span);
-        }
-    }
+    let consumed_spans = input
+        .finish_paragraph_source_recording()
+        .unwrap_or_default();
+    let ending_span = input.current_root_delivery_anchor(stores).ok().flatten();
     let ending_input = input.publication_summary(stores);
     let eligible = recording.barriers.is_empty();
     let pending = execution.pending_paragraph_memo.as_ref();
@@ -621,7 +720,15 @@ fn publish_recorded_region(
     };
     stores.record_paragraph_region(tex_state::RecordedParagraphRegion {
         key,
+        starting_span: recording.starting_span,
+        ending_span,
         consumed_spans,
+        trace_spans: recording
+            .trace
+            .iter()
+            .map(|token| stores.root_span_for_origin(token.origin()))
+            .collect(),
+        macro_bearing: recording.macro_bearing,
         dependencies,
         mutations: mutations.clone(),
         effects,

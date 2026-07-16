@@ -108,7 +108,15 @@ pub enum ParagraphBarrierReason {
 #[derive(Clone, Debug)]
 pub struct RecordedParagraphRegion {
     pub key: PureMemoKey,
+    /// Cheap candidate identity captured before the first raw delivery.
+    pub starting_span: Option<RootSpanId>,
+    /// Stable raw cursor reached after the paragraph terminator.
+    pub ending_span: Option<RootSpanId>,
     pub consumed_spans: Vec<RootSpanId>,
+    /// Stable source ancestry parallel to the expanded delivery trace.
+    pub trace_spans: Vec<Option<RootSpanId>>,
+    /// Expanded delivery crossed at least one macro invocation.
+    pub macro_bearing: bool,
     pub dependencies: Vec<ObservedDependency>,
     pub mutations: Vec<PureParagraphMutation>,
     pub effects: Vec<crate::DetachedVirtualEffect>,
@@ -209,6 +217,8 @@ pub struct PureMemoRuntime {
     shipout_episodes: bool,
     paragraph_recording: Option<Vec<PureParagraphMutation>>,
     prior_paragraphs: Vec<RecordedParagraphRegion>,
+    /// O(1) pre-delivery candidate selection for accepted macro paragraphs.
+    prior_paragraph_starts: HashMap<RootSpanId, usize>,
     recorded_paragraphs: Vec<RecordedParagraphRegion>,
     reuse_prior_paragraphs: bool,
     paragraph_barrier_reasons: BTreeMap<ParagraphBarrierReason, u64>,
@@ -591,6 +601,27 @@ impl PureMemoRuntime {
         result
     }
 
+    pub(crate) fn lookup_recorded_paragraph_start(
+        &mut self,
+        starting_span: RootSpanId,
+    ) -> Option<RecordedParagraphRegion> {
+        if !self.reuse_prior_paragraphs || !self.paragraph_front_ends {
+            return None;
+        }
+        let cache = self.cache.as_mut()?;
+        cache.stats.lookups = cache.stats.lookups.saturating_add(1);
+        cache.stats.paragraph_lookups = cache.stats.paragraph_lookups.saturating_add(1);
+        let result = self
+            .prior_paragraph_starts
+            .get(&starting_span)
+            .and_then(|&index| self.prior_paragraphs.get(index))
+            .cloned();
+        if result.is_none() {
+            cache.stats.misses = cache.stats.misses.saturating_add(1);
+        }
+        result
+    }
+
     /// Starts one speculative generation trace. Only a fork of the prior
     /// accepted substrate may resolve the retained node handles.
     pub fn begin_paragraph_generation(&mut self, reuse_prior: bool) {
@@ -602,6 +633,15 @@ impl PureMemoRuntime {
     /// accepted as the new retained generation.
     pub fn accept_paragraph_generation(&mut self) {
         self.prior_paragraphs = std::mem::take(&mut self.recorded_paragraphs);
+        self.prior_paragraph_starts.clear();
+        for (index, region) in self.prior_paragraphs.iter().enumerate() {
+            if region.macro_bearing
+                && region.barriers.is_empty()
+                && let Some(start) = region.starting_span
+            {
+                self.prior_paragraph_starts.entry(start).or_insert(index);
+            }
+        }
         self.reuse_prior_paragraphs = false;
     }
 
