@@ -1,4 +1,4 @@
-use tex_arith::{saturating_add as add, saturating_sub as sub_scaled};
+use tex_arith::WideScaled;
 use tex_state::glue::GlueSpec;
 use tex_state::ids::{GlueId, NodeListId};
 use tex_state::node::{KernKind, Node};
@@ -9,6 +9,16 @@ use crate::{INF_BAD, TypesetState};
 const EJECT_PENALTY: i32 = -10_000;
 const INF_PENALTY: i32 = 10_000;
 const AWFUL_BAD: i32 = 0o7777777777;
+
+fn add(left: Scaled, right: Scaled) -> Scaled {
+    left.checked_add(right)
+        .expect("line-local scaled addition overflow")
+}
+
+fn sub_scaled(left: Scaled, right: Scaled) -> Scaled {
+    left.checked_sub(right)
+        .expect("line-local scaled subtraction overflow")
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LineBreakParams {
@@ -91,11 +101,14 @@ impl LineShape {
 
     #[must_use]
     pub fn dimensions(&self, line_no: usize) -> LineDimensions {
-        let one_based = line_no.max(1).saturating_add(self.line_offset);
+        let one_based = line_no
+            .max(1)
+            .checked_add(self.line_offset)
+            .expect("line number exceeds usize");
         if let Some(parshape) = &self.parshape
             && !parshape.lines.is_empty()
         {
-            let index = one_based.saturating_sub(1).min(parshape.lines.len() - 1);
+            let index = (one_based - 1).min(parshape.lines.len() - 1);
             let entry = parshape.lines[index];
             return LineDimensions {
                 indent: entry.indent,
@@ -302,14 +315,24 @@ fn observe_expansion_fonts<S: TypesetState>(
 #[must_use]
 pub fn plan_line_expansion<S: TypesetState>(state: &S, nodes: &[Node], target: Scaled) -> i32 {
     let widths = line_widths_nodes(state, nodes);
-    let shortfall = Scaled::from_raw(target.raw().saturating_sub(widths.natural.raw()));
+    let shortfall = WideScaled::from_scaled(target)
+        .checked_sub(widths.natural)
+        .expect("line shortfall fits the wide scaled domain")
+        .to_scaled()
+        .expect("a finalized line width fits the stored scaled domain");
     crate::expansion::line_expansion_ratio(
         shortfall,
         crate::expansion::ExpansionCapacity {
-            stretch: widths.font_stretch,
-            shrink: widths.font_shrink,
+            stretch: widths
+                .font_stretch
+                .to_scaled()
+                .expect("finalized line expansion capacity fits Scaled"),
+            shrink: widths
+                .font_shrink
+                .to_scaled()
+                .expect("finalized line expansion capacity fits Scaled"),
         },
-        widths.has_infinite_adjustment(shortfall.raw()),
+        widths.has_infinite_adjustment(i64::from(shortfall.raw())),
     )
 }
 
@@ -419,7 +442,9 @@ fn run_pass<S: TypesetState>(
                 let start = active_candidate.width_position.min(nodes.len());
                 let end = bp.position.min(nodes.len()).max(start);
                 let protrusion = crate::protrusion::line_protrusion(state, &nodes[start..end]);
-                Scaled::from_raw(target.raw().saturating_add(protrusion.total().raw()))
+                target
+                    .checked_add(protrusion.total())
+                    .expect("pdfTeX protruded line target fits Scaled")
             } else {
                 target
             };
@@ -438,7 +463,11 @@ fn run_pass<S: TypesetState>(
                     let badness = normal_b.min(INF_BAD);
                     (
                         normal_b,
-                        fitness_class(badness, widths.natural.raw(), scoring_target.raw()),
+                        fitness_class(
+                            badness,
+                            widths.natural.raw(),
+                            i64::from(scoring_target.raw()),
+                        ),
                     )
                 });
             let artificial = final_pass
@@ -478,7 +507,7 @@ fn run_pass<S: TypesetState>(
                     line_shortfall: if terminal && fitted.is_none() {
                         Scaled::from_raw(0)
                     } else {
-                        Scaled::from_raw(scoring_target.raw().saturating_sub(widths.natural.raw()))
+                        line_shortfall_for_route(scoring_target, widths.natural)
                     },
                     line_glue: fitted.map_or_else(
                         || candidate_line_glue(widths, scoring_target, b),
@@ -546,7 +575,7 @@ fn tex_easy_line(params: &LineBreakParams) -> usize {
         return usize::MAX;
     }
     if let Some(parshape) = &params.shape.parshape {
-        return parshape.lines.len().saturating_sub(1);
+        return parshape.lines.len() - 1;
     }
     if params.shape.hang_indent.raw() == 0 {
         0
@@ -567,8 +596,9 @@ fn sort_active_candidates(active: &mut [Candidate], params: &LineBreakParams, ea
             .then_with(|| {
                 let effective_line = left
                     .line
-                    .saturating_add(1)
-                    .saturating_add(params.shape.line_offset);
+                    .checked_add(1)
+                    .and_then(|line| line.checked_add(params.shape.line_offset))
+                    .expect("line number exceeds usize");
                 if effective_line > easy_line {
                     left.position.cmp(&right.position)
                 } else {
@@ -587,20 +617,21 @@ fn sort_active_candidates(active: &mut [Candidate], params: &LineBreakParams, ea
 struct LastLineFit {
     amount: i32,
     par_fill: GlueSpec,
-    fill_width: [Scaled; 3],
+    fill_width: [WideScaled; 3],
     enabled: bool,
 }
 
 impl LastLineFit {
     fn new(params: &LineBreakParams, background: Widths) -> Self {
-        let mut fill_width = [Scaled::from_raw(0); 3];
+        let mut fill_width = [WideScaled::ZERO; 3];
         let par_fill = params.par_fill_skip;
         let enabled = params.last_line_fit > 0
             && par_fill.stretch.raw() > 0
             && par_fill.stretch_order != tex_state::glue::Order::Normal
             && background.infinite_stretch_is_zero();
         if enabled {
-            fill_width[par_fill.stretch_order as usize - 1] = par_fill.stretch;
+            fill_width[par_fill.stretch_order as usize - 1] =
+                WideScaled::from_scaled(par_fill.stretch);
         }
         Self {
             amount: params.last_line_fit,
@@ -631,6 +662,9 @@ impl LastLineFit {
         if available.raw() <= 0 {
             return None;
         }
+        let available = available
+            .to_scaled()
+            .expect("a feasible line's finite glue fits Scaled");
         let mut adjustment = rounded_fraction(
             available.raw(),
             previous.line_shortfall.raw(),
@@ -640,7 +674,9 @@ impl LastLineFit {
             adjustment = rounded_fraction(adjustment, self.amount, 1000);
         }
         if adjustment > 0 {
-            adjustment = adjustment.min(target.raw().saturating_sub(widths.natural.raw()));
+            let remaining = i64::from(target.raw()) - widths.natural.raw();
+            adjustment = adjustment
+                .min(i32::try_from(remaining).expect("last-line-fit adjustment fits Scaled"));
             let bad = crate::badness(Scaled::from_raw(adjustment), available);
             let fitness = if bad > 99 {
                 Fitness::VeryLoose
@@ -669,13 +705,12 @@ impl LastLineFit {
 
     fn adjusted_fill(self, chosen: &Candidate) -> Option<GlueSpec> {
         (self.enabled && chosen.line_shortfall.raw() != 0).then(|| GlueSpec {
-            width: Scaled::from_raw(
-                self.par_fill
-                    .width
-                    .raw()
-                    .saturating_add(chosen.line_shortfall.raw())
-                    .saturating_sub(chosen.line_glue.raw()),
-            ),
+            width: self
+                .par_fill
+                .width
+                .checked_add(chosen.line_shortfall)
+                .and_then(|width| width.checked_sub(chosen.line_glue))
+                .expect("last-line-fit parfill width fits Scaled"),
             stretch: Scaled::from_raw(0),
             ..self.par_fill
         })
@@ -702,16 +737,32 @@ fn rounded_fraction(x: i32, n: i32, d: i32) -> i32 {
 }
 
 fn candidate_line_glue(widths: Widths, target: Scaled, badness: i32) -> Scaled {
-    let shortfall = target.raw().saturating_sub(widths.natural.raw());
+    let shortfall = i64::from(target.raw()) - widths.natural.raw();
     if badness > INF_BAD || widths.has_infinite_adjustment(shortfall) {
         Scaled::from_raw(0)
     } else if shortfall > 0 {
-        widths.normal_stretch()
+        widths
+            .normal_stretch()
+            .to_scaled()
+            .expect("feasible line stretch fits Scaled")
     } else if shortfall < 0 {
-        widths.normal_shrink()
+        widths
+            .normal_shrink()
+            .to_scaled()
+            .expect("feasible line shrink fits Scaled")
     } else {
         Scaled::from_raw(0)
     }
+}
+
+fn line_shortfall_for_route(target: Scaled, natural: WideScaled) -> Scaled {
+    WideScaled::from_scaled(target)
+        .checked_sub(natural)
+        .expect("line shortfall fits the wide scaled domain")
+        .to_scaled()
+        // Only TeX's artificial final-pass route can retain an infeasible
+        // line this wide. Zero disables last-line-fit reuse of that value.
+        .unwrap_or(Scaled::from_raw(0))
 }
 
 fn discretionary_post_is_nonempty<S: TypesetState>(
@@ -742,28 +793,31 @@ fn compute_demerits(
     bp: Breakpoint,
     terminal: bool,
 ) -> i32 {
-    let line_bad = params.line_penalty.saturating_add(bad);
-    let mut dem = if line_bad.abs() >= INF_BAD {
-        100_000_000
+    let line_bad = i64::from(params.line_penalty) + i64::from(bad);
+    let mut dem = if line_bad.abs() >= i64::from(INF_BAD) {
+        100_000_000_i64
     } else {
-        line_bad.saturating_mul(line_bad)
+        line_bad * line_bad
     };
     if penalty > 0 {
-        dem = dem.saturating_add(penalty.saturating_mul(penalty));
+        dem += i64::from(penalty) * i64::from(penalty);
     } else if penalty > EJECT_PENALTY {
-        dem = dem.saturating_sub(penalty.saturating_mul(penalty));
+        dem -= i64::from(penalty) * i64::from(penalty);
     }
     if active.hyphenated {
         if terminal {
-            dem = dem.saturating_add(params.final_hyphen_demerits);
+            dem += i64::from(params.final_hyphen_demerits);
         } else if bp.hyphenated {
-            dem = dem.saturating_add(params.double_hyphen_demerits);
+            dem += i64::from(params.double_hyphen_demerits);
         }
     }
     if incompatible(active.fitness, fitness) {
-        dem = dem.saturating_add(params.adj_demerits);
+        dem += i64::from(params.adj_demerits);
     }
-    dem.saturating_add(active.path_demerits)
+    dem += i64::from(active.path_demerits);
+    // TeX.web's line breaker caps accumulated demerits at `awful_bad`.
+    i32::try_from(dem.clamp(i64::from(i32::MIN), i64::from(AWFUL_BAD)))
+        .expect("clamped demerits fit i32")
 }
 
 fn discretionary_penalty(pre_is_empty: bool, params: &LineBreakParams) -> i32 {
@@ -952,7 +1006,7 @@ fn is_discardable(node: &Node) -> bool {
     )
 }
 
-fn fitness_class(bad: i32, natural: i32, target: i32) -> Fitness {
+fn fitness_class(bad: i32, natural: i64, target: i64) -> Fitness {
     if bad > 12 {
         if natural > target {
             Fitness::Tight

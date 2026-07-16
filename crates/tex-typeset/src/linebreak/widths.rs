@@ -1,20 +1,19 @@
+use tex_arith::WideScaled;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::Node;
 use tex_state::node_arena::{NodeList, NodeRef};
 use tex_state::scaled::Scaled;
 
+use crate::TypesetState;
 use crate::expansion::{ExpansionCapacity, FontExpansionSpec};
-use crate::{TypesetState, badness};
-
-use super::{add, sub_scaled};
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Widths {
-    pub(super) natural: Scaled,
-    stretch: [Scaled; 4],
-    shrink: [Scaled; 4],
-    pub(super) font_stretch: Scaled,
-    pub(super) font_shrink: Scaled,
+    pub(super) natural: WideScaled,
+    stretch: [WideScaled; 4],
+    shrink: [WideScaled; 4],
+    pub(super) font_stretch: WideScaled,
+    pub(super) font_shrink: WideScaled,
     pub(super) expansion_step: Option<i32>,
     pub(super) expansion_stretch_limit: Option<i32>,
     pub(super) expansion_shrink_limit: Option<i32>,
@@ -23,11 +22,11 @@ pub(super) struct Widths {
 impl Widths {
     pub(super) fn zero() -> Self {
         Self {
-            natural: Scaled::from_raw(0),
-            stretch: [Scaled::from_raw(0); 4],
-            shrink: [Scaled::from_raw(0); 4],
-            font_stretch: Scaled::from_raw(0),
-            font_shrink: Scaled::from_raw(0),
+            natural: WideScaled::ZERO,
+            stretch: [WideScaled::ZERO; 4],
+            shrink: [WideScaled::ZERO; 4],
+            font_stretch: WideScaled::ZERO,
+            font_shrink: WideScaled::ZERO,
             expansion_step: None,
             expansion_stretch_limit: None,
             expansion_shrink_limit: None,
@@ -35,13 +34,13 @@ impl Widths {
     }
 
     pub(super) fn add_assign(&mut self, other: Self) {
-        self.natural = add(self.natural, other.natural);
+        self.natural = wide_add(self.natural, other.natural);
         for order in 0..4 {
-            self.stretch[order] = add(self.stretch[order], other.stretch[order]);
-            self.shrink[order] = add(self.shrink[order], other.shrink[order]);
+            self.stretch[order] = wide_add(self.stretch[order], other.stretch[order]);
+            self.shrink[order] = wide_add(self.shrink[order], other.shrink[order]);
         }
-        self.font_stretch = add(self.font_stretch, other.font_stretch);
-        self.font_shrink = add(self.font_shrink, other.font_shrink);
+        self.font_stretch = wide_add(self.font_stretch, other.font_stretch);
+        self.font_shrink = wide_add(self.font_shrink, other.font_shrink);
         merge_expansion_metadata(self, other);
     }
 
@@ -53,13 +52,13 @@ impl Widths {
 
     pub(super) fn sub(self, other: Self) -> Self {
         let mut out = Self::zero();
-        out.natural = sub_scaled(self.natural, other.natural);
+        out.natural = wide_sub(self.natural, other.natural);
         for order in 0..4 {
-            out.stretch[order] = sub_scaled(self.stretch[order], other.stretch[order]);
-            out.shrink[order] = sub_scaled(self.shrink[order], other.shrink[order]);
+            out.stretch[order] = wide_sub(self.stretch[order], other.stretch[order]);
+            out.shrink[order] = wide_sub(self.shrink[order], other.shrink[order]);
         }
-        out.font_stretch = sub_scaled(self.font_stretch, other.font_stretch);
-        out.font_shrink = sub_scaled(self.font_shrink, other.font_shrink);
+        out.font_stretch = wide_sub(self.font_stretch, other.font_stretch);
+        out.font_shrink = wide_sub(self.font_shrink, other.font_shrink);
         out.expansion_step = self.expansion_step.or(other.expansion_step);
         out.expansion_stretch_limit = self
             .expansion_stretch_limit
@@ -68,19 +67,22 @@ impl Widths {
         out
     }
 
-    pub(super) fn normal_stretch(self) -> Scaled {
+    pub(super) fn normal_stretch(self) -> WideScaled {
         self.stretch[Order::Normal as usize]
     }
 
     pub(super) fn add_normal_stretch(&mut self, amount: Scaled) {
-        self.stretch[Order::Normal as usize] = add(self.stretch[Order::Normal as usize], amount);
+        self.stretch[Order::Normal as usize] = wide_add(
+            self.stretch[Order::Normal as usize],
+            WideScaled::from_scaled(amount),
+        );
     }
 
-    pub(super) fn normal_shrink(self) -> Scaled {
+    pub(super) fn normal_shrink(self) -> WideScaled {
         self.shrink[Order::Normal as usize]
     }
 
-    pub(super) fn infinite_stretch(self) -> [Scaled; 3] {
+    pub(super) fn infinite_stretch(self) -> [WideScaled; 3] {
         [self.stretch[1], self.stretch[2], self.stretch[3]]
     }
 
@@ -88,7 +90,7 @@ impl Widths {
         self.infinite_stretch().iter().all(|value| value.raw() == 0)
     }
 
-    pub(super) fn has_infinite_adjustment(self, shortfall: i32) -> bool {
+    pub(super) fn has_infinite_adjustment(self, shortfall: i64) -> bool {
         if shortfall > 0 {
             !self.infinite_stretch_is_zero()
         } else if shortfall < 0 {
@@ -97,6 +99,20 @@ impl Widths {
             false
         }
     }
+}
+
+fn wide_add(left: WideScaled, right: WideScaled) -> WideScaled {
+    left.checked_add(right)
+        .expect("scaled accumulator exceeds the addressable node-list domain")
+}
+
+fn wide_sub(left: WideScaled, right: WideScaled) -> WideScaled {
+    left.checked_sub(right)
+        .expect("scaled accumulator exceeds the addressable node-list domain")
+}
+
+fn add_scaled(total: WideScaled, value: Scaled) -> WideScaled {
+    wide_add(total, WideScaled::from_scaled(value))
 }
 
 pub(super) fn line_widths_view<S: TypesetState>(
@@ -116,7 +132,7 @@ pub(super) fn line_widths_view<S: TypesetState>(
             for code in run.take(limit - index) {
                 // Preserve the scalar saturating-add order exactly.
                 let natural = table[usize::from(code)];
-                widths.natural = add(widths.natural, natural);
+                widths.natural = add_scaled(widths.natural, natural);
                 add_char_expansion(state, &mut widths, font, code, natural);
                 run_len += 1;
             }
@@ -145,28 +161,30 @@ pub(super) fn node_width_at<S: TypesetState>(state: &S, nodes: &[Node], index: u
             if let Ok(code) = u8::try_from(*ch as u32)
                 && let Some(metrics) = state.font_char_metrics(*font, code)
             {
-                widths.natural = add(widths.natural, metrics.width);
+                widths.natural = add_scaled(widths.natural, metrics.width);
                 add_char_expansion(state, &mut widths, *font, code, metrics.width);
             }
         }
         Node::Kern { amount, kind } => {
-            widths.natural = add(widths.natural, *amount);
+            widths.natural = add_scaled(widths.natural, *amount);
             if *kind == tex_state::node::KernKind::Font {
                 add_font_kern_expansion(state, &mut widths, nodes, index, *amount);
             }
         }
-        Node::MathOn(width) | Node::MathOff(width) => widths.natural = add(widths.natural, *width),
+        Node::MathOn(width) | Node::MathOff(width) => {
+            widths.natural = add_scaled(widths.natural, *width)
+        }
         Node::Glue { spec, .. } => add_glue(&mut widths, state.glue(*spec)),
         Node::Rule { width, .. } => {
             if let Some(width) = width {
-                widths.natural = add(widths.natural, *width);
+                widths.natural = add_scaled(widths.natural, *width);
             }
         }
         Node::HList(box_node) | Node::VList(box_node) => {
-            widths.natural = add(widths.natural, box_node.width);
+            widths.natural = add_scaled(widths.natural, box_node.width);
         }
         Node::Unset(unset) => {
-            widths.natural = add(widths.natural, unset.width);
+            widths.natural = add_scaled(widths.natural, unset.width);
         }
         Node::Disc { replace, .. } => {
             widths.add_assign(line_widths_view(
@@ -177,7 +195,7 @@ pub(super) fn node_width_at<S: TypesetState>(state: &S, nodes: &[Node], index: u
             ));
         }
         Node::Whatsit(tex_state::node::Whatsit::PdfRefXForm { width, .. }) => {
-            widths.natural = add(widths.natural, *width);
+            widths.natural = add_scaled(widths.natural, *width);
         }
         Node::Penalty(_)
         | Node::Mark { .. }
@@ -203,27 +221,27 @@ fn node_width_ref_at<S: TypesetState>(state: &S, nodes: NodeList<'_>, index: usi
             if let Ok(code) = u8::try_from(ch as u32)
                 && let Some(metrics) = state.font_char_metrics(font, code)
             {
-                widths.natural = add(widths.natural, metrics.width);
+                widths.natural = add_scaled(widths.natural, metrics.width);
                 add_char_expansion(state, &mut widths, font, code, metrics.width);
             }
         }
         NodeRef::Kern { amount, kind } => {
-            widths.natural = add(widths.natural, amount);
+            widths.natural = add_scaled(widths.natural, amount);
             if kind == tex_state::node::KernKind::Font {
                 add_font_kern_expansion_ref(state, &mut widths, nodes, index, amount);
             }
         }
         NodeRef::MathOn(amount) | NodeRef::MathOff(amount) => {
-            widths.natural = add(widths.natural, amount)
+            widths.natural = add_scaled(widths.natural, amount)
         }
         NodeRef::Glue { spec, .. } => add_glue(&mut widths, state.glue(spec)),
         NodeRef::Rule {
             width: Some(width), ..
-        } => widths.natural = add(widths.natural, width),
+        } => widths.natural = add_scaled(widths.natural, width),
         NodeRef::HList(box_node) | NodeRef::VList(box_node) => {
-            widths.natural = add(widths.natural, box_node.width)
+            widths.natural = add_scaled(widths.natural, box_node.width)
         }
-        NodeRef::Unset(unset) => widths.natural = add(widths.natural, unset.width),
+        NodeRef::Unset(unset) => widths.natural = add_scaled(widths.natural, unset.width),
         NodeRef::Disc { replace, .. } => {
             let list = state.nodes(replace);
             widths.add_assign(line_widths_view(state, list, 0, list.len()));
@@ -254,11 +272,11 @@ fn add_font_kern_expansion_ref<S: TypesetState>(
 }
 
 fn add_glue(widths: &mut Widths, spec: GlueSpec) {
-    widths.natural = add(widths.natural, spec.width);
+    widths.natural = add_scaled(widths.natural, spec.width);
     widths.stretch[spec.stretch_order as usize] =
-        add(widths.stretch[spec.stretch_order as usize], spec.stretch);
+        add_scaled(widths.stretch[spec.stretch_order as usize], spec.stretch);
     widths.shrink[spec.shrink_order as usize] =
-        add(widths.shrink[spec.shrink_order as usize], spec.shrink);
+        add_scaled(widths.shrink[spec.shrink_order as usize], spec.shrink);
 }
 
 fn add_char_expansion<S: TypesetState>(
@@ -277,8 +295,8 @@ fn add_char_expansion<S: TypesetState>(
         spec,
         state.pdf_font_code(tex_state::font::PdfFontCode::Ef, font, code),
     );
-    widths.font_stretch = add(widths.font_stretch, capacity.stretch);
-    widths.font_shrink = add(widths.font_shrink, capacity.shrink);
+    widths.font_stretch = add_scaled(widths.font_stretch, capacity.stretch);
+    widths.font_shrink = add_scaled(widths.font_shrink, capacity.shrink);
 }
 
 fn add_font_kern_expansion<S: TypesetState>(
@@ -319,11 +337,11 @@ fn add_font_kern_capacity<S: TypesetState>(
     let shrunk = crate::expansion::scaled_at_ratio(endpoint, -spec.shrink());
     let stretch = ((stretched.raw() - natural.raw()).max(0), efcode);
     let shrink = ((natural.raw() - shrunk.raw()).max(0), efcode);
-    widths.font_stretch = add(
+    widths.font_stretch = add_scaled(
         widths.font_stretch,
         rounded_positive_ratio(stretch.0, stretch.1),
     );
-    widths.font_shrink = add(
+    widths.font_shrink = add_scaled(
         widths.font_shrink,
         rounded_positive_ratio(shrink.0, shrink.1),
     );
@@ -381,7 +399,7 @@ pub(super) fn line_badness(
     emergency: Scaled,
     expansion_steps: Option<(i32, i32)>,
 ) -> i32 {
-    let mut diff = target.raw() - widths.natural.raw();
+    let mut diff = i64::from(target.raw()) - widths.natural.raw();
     if let Some((stretch_steps, shrink_steps)) = expansion_steps {
         if diff > 0 && widths.font_stretch.raw() > 0 {
             diff = expansion_adjusted_shortfall(diff, widths.font_stretch.raw(), stretch_steps);
@@ -394,9 +412,9 @@ pub(super) fn line_badness(
         if stretch_order != Order::Normal && widths.stretch[stretch_order as usize].raw() > 0 {
             0
         } else {
-            badness(
-                Scaled::from_raw(diff),
-                add(widths.stretch[Order::Normal as usize], emergency),
+            tex_badness_wide(
+                diff,
+                add_scaled(widths.stretch[Order::Normal as usize], emergency).raw(),
             )
         }
     } else {
@@ -406,27 +424,52 @@ pub(super) fn line_badness(
         } else if diff.saturating_abs() > widths.shrink[Order::Normal as usize].raw() {
             crate::INF_BAD + 1
         } else {
-            badness(
-                Scaled::from_raw(diff.saturating_abs()),
-                widths.shrink[Order::Normal as usize],
-            )
+            tex_badness_wide(diff.abs(), widths.shrink[Order::Normal as usize].raw())
         }
     }
 }
 
-fn expansion_adjusted_shortfall(shortfall: i32, capacity: i32, steps: i32) -> i32 {
+fn expansion_adjusted_shortfall(shortfall: i64, capacity: i64, steps: i32) -> i64 {
     if capacity > shortfall && steps > 0 {
-        (capacity / steps) / 2
+        (capacity / i64::from(steps)) / 2
     } else {
-        shortfall.saturating_sub(capacity)
+        shortfall
+            .checked_sub(capacity)
+            .expect("line shortfall fits the wide scaled domain")
     }
 }
 
-fn highest_order(values: [Scaled; 4]) -> Order {
+fn highest_order(values: [WideScaled; 4]) -> Order {
     for order in [Order::Filll, Order::Fill, Order::Fil, Order::Normal] {
         if values[order as usize].raw() != 0 {
             return order;
         }
     }
     Order::Normal
+}
+
+/// TeX.web section 108 badness with widened inputs. Prefix subtraction can
+/// produce a value outside `Scaled`; such a line is simply maximally bad,
+/// while ordinary inputs retain TeX's exact integer operation order.
+fn tex_badness_wide(t: i64, s: i64) -> i32 {
+    if t == 0 {
+        0
+    } else if s <= 0 {
+        crate::INF_BAD
+    } else {
+        let r = if t <= 7_230_584 {
+            (t * 297) / s
+        } else if s >= 1_663_497 {
+            t / (s / 297)
+        } else {
+            t
+        };
+        if r > 1290 {
+            crate::INF_BAD
+        } else {
+            i32::try_from((r * r * r + 0o400000) / 0o1000000)
+                .expect("bounded TeX badness fits i32")
+                .min(crate::INF_BAD)
+        }
+    }
 }

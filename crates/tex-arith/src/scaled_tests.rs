@@ -1,6 +1,6 @@
 use crate::{
     ArithmeticError, DimensionError, FontSizeSpec, GLUE_SET_RATIO_SCALE, GlueSetRatio,
-    GlueSetRatioError, PhysicalUnit, Scaled, TfmConversionError, XOverN, XnOverD, half,
+    GlueSetRatioError, PhysicalUnit, Scaled, TfmConversionError, WideScaled, XOverN, XnOverD, half,
     mult_and_add, nx_plus_y, round_decimal_fraction, saturating_add, saturating_mul,
     saturating_sub, scale_true_dimension_parts, scaled_from_decimal_parts, text_accent_delta,
     tfm_design_size_from_fix_word, tfm_fix_word_to_scaled, tfm_font_size,
@@ -21,6 +21,23 @@ fn scaled_add_sub_neg_and_checked_variants() {
 
     assert_eq!(Scaled::MAX.checked_add(Scaled::from_raw(1)), None);
     assert_eq!(Scaled::from_raw(i32::MIN).checked_neg(), None);
+}
+
+#[test]
+fn wide_scaled_preserves_prefix_information_past_i32() {
+    let max = WideScaled::from_scaled(Scaled::MAX);
+    let total = max
+        .checked_add(WideScaled::from_scaled(Scaled::from_raw(123)))
+        .expect("small wide addition fits i64");
+    assert_eq!(total.raw(), i64::from(i32::MAX) + 123);
+    assert_eq!(total.to_scaled(), None);
+    assert_eq!(
+        total
+            .checked_sub(max)
+            .expect("small wide subtraction fits i64")
+            .to_scaled(),
+        Some(Scaled::from_raw(123))
+    );
 }
 
 #[test]

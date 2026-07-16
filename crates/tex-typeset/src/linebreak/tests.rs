@@ -209,6 +209,35 @@ fn breaks_at_legal_glue() {
 }
 
 #[test]
+fn paragraph_prefix_widths_remain_exact_past_i32_max() {
+    let mut universe = Universe::new();
+    let zero = universe.intern_glue(GlueSpec::ZERO);
+    let mut nodes = Vec::new();
+    for index in 0..6 {
+        nodes.push(rule(700_000_000));
+        if index != 5 {
+            nodes.push(Node::Glue {
+                spec: zero,
+                kind: GlueKind::Normal,
+                leader: None,
+            });
+        }
+    }
+    let mut hook = NoHyphenation;
+
+    let result = line_break(&universe, &nodes, params(700_000_000), &mut hook);
+
+    assert_eq!(
+        result
+            .breaks
+            .iter()
+            .map(|decision| decision.position)
+            .collect::<Vec<_>>(),
+        vec![2, 4, 6, 8, 10, 11]
+    );
+}
+
+#[test]
 fn final_pass_keeps_last_active_route_when_every_route_is_overfull() {
     let mut universe = Universe::new();
     let glue = universe.intern_glue(GlueSpec::ZERO);

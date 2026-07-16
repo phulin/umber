@@ -83,6 +83,64 @@ impl Scaled {
     }
 }
 
+/// A widened scaled-point accumulator for transient bookkeeping quantities.
+///
+/// TeX stores dimensions in 32 bits, but implementations often materialize
+/// totals (for example paragraph prefix sums) that TeX.web never stores as a
+/// single dimension. Those totals must not saturate: doing so destroys the
+/// information needed when two prefixes are subtracted. Keep nodes and state
+/// compact as [`Scaled`], and use this type only while accumulating.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct WideScaled(i64);
+
+impl WideScaled {
+    /// The additive identity.
+    pub const ZERO: Self = Self(0);
+
+    /// Widens a stored scaled-point value exactly.
+    #[must_use]
+    pub const fn from_scaled(value: Scaled) -> Self {
+        Self(value.raw() as i64)
+    }
+
+    /// Returns the raw widened scaled-point representation.
+    #[must_use]
+    pub const fn raw(self) -> i64 {
+        self.0
+    }
+
+    /// Adds another accumulator, failing loudly if even the wide domain is
+    /// exhausted. An `i64` overflow requires more material than can be held by
+    /// an addressable node list on supported targets.
+    #[must_use]
+    pub const fn checked_add(self, rhs: Self) -> Option<Self> {
+        match self.0.checked_add(rhs.0) {
+            Some(value) => Some(Self(value)),
+            None => None,
+        }
+    }
+
+    /// Subtracts another accumulator without narrowing the result.
+    #[must_use]
+    pub const fn checked_sub(self, rhs: Self) -> Option<Self> {
+        match self.0.checked_sub(rhs.0) {
+            Some(value) => Some(Self(value)),
+            None => None,
+        }
+    }
+
+    /// Narrows a transient result when it returns to TeX's stored dimension
+    /// domain.
+    #[must_use]
+    pub const fn to_scaled(self) -> Option<Scaled> {
+        if self.0 < i32::MIN as i64 || self.0 > i32::MAX as i64 {
+            None
+        } else {
+            Some(Scaled::from_raw(self.0 as i32))
+        }
+    }
+}
+
 const fn scaled_from_wide_saturating(value: i64) -> Scaled {
     scaled_from_widest_saturating(value as i128)
 }
@@ -97,26 +155,27 @@ const fn scaled_from_widest_saturating(value: i128) -> Scaled {
     }
 }
 
-/// Adds two scaled values with a widened intermediate and saturates only at
-/// the representable `i32` boundary.
+/// Adds two scaled values and clamps at the representable `i32` boundary.
 ///
-/// TeX's legal dimension range keeps ordinary semantic values away from this
-/// boundary. The saturation makes defensive layout accumulation deterministic
-/// instead of allowing a Rust debug overflow or release-mode wrap.
+/// This helper is reserved for code implementing a documented TeX.web or
+/// pdfTeX arithmetic clamp. It must not be used as a generic overflow guard or
+/// for implementation-only totals; use [`WideScaled`] for those.
 #[must_use]
 pub const fn saturating_add(left: Scaled, right: Scaled) -> Scaled {
     scaled_from_wide_saturating(left.0 as i64 + right.0 as i64)
 }
 
-/// Subtracts two scaled values with a widened intermediate and saturates only
-/// at the representable `i32` boundary.
+/// Subtracts two scaled values for a documented TeX.web/pdfTeX clamp.
+///
+/// See [`saturating_add`] for the restriction on this API.
 #[must_use]
 pub const fn saturating_sub(left: Scaled, right: Scaled) -> Scaled {
     scaled_from_wide_saturating(left.0 as i64 - right.0 as i64)
 }
 
-/// Multiplies a scaled value by an integer with a widened intermediate and
-/// saturates only at the representable `i32` boundary.
+/// Multiplies a scaled value for a documented TeX.web/pdfTeX clamp.
+///
+/// See [`saturating_add`] for the restriction on this API.
 #[must_use]
 pub const fn saturating_mul(factor: i32, value: Scaled) -> Scaled {
     scaled_from_wide_saturating(factor as i64 * value.0 as i64)
