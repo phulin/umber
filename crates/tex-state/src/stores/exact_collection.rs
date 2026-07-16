@@ -1,4 +1,5 @@
 use crate::ContentHash;
+use crate::state_hash::strong_identity_bytes;
 use std::sync::Arc;
 
 const EMPTY_DOMAIN: &[u8] = b"umber-exact-canonical-collection-empty-v1";
@@ -20,7 +21,7 @@ impl CanonicalCollectionRoot {
 
     pub(super) fn identity(&self) -> ContentHash {
         self.0.as_ref().map_or_else(
-            || ContentHash::from_bytes(EMPTY_DOMAIN),
+            || strong_identity_bytes(EMPTY_DOMAIN, &[]),
             |root| root.identity,
         )
     }
@@ -52,7 +53,7 @@ impl Node {
             left,
             right,
             len,
-            identity: ContentHash::from_bytes(&framed),
+            identity: strong_identity_bytes(NODE_DOMAIN, &framed),
         })
     }
 }
@@ -61,7 +62,7 @@ fn priority(key: ContentHash) -> [u8; 32] {
     let mut framed = Vec::with_capacity(80);
     framed.extend_from_slice(PRIORITY_DOMAIN);
     framed.extend_from_slice(&key.bytes());
-    ContentHash::from_bytes(&framed).bytes()
+    strong_identity_bytes(PRIORITY_DOMAIN, &framed).bytes()
 }
 
 fn node_len(node: &Option<Arc<Node>>) -> usize {

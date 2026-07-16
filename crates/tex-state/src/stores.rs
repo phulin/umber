@@ -16,6 +16,7 @@ use crate::font::{
     LoadedFont, MissingCharacter, NULL_FONT, complete_font_hash_fragment,
 };
 use crate::font::{FontExpansion, FontExpansionConfigError, PdfFontCode};
+use crate::state_hash::StateHashFragment;
 
 fn pdf_font_code_bank(table: PdfFontCode) -> crate::cell::BankTag {
     use crate::cell::BankTag;
@@ -824,6 +825,11 @@ impl Stores {
         self.tokens.semantic_id(id).value()
     }
 
+    pub(crate) fn token_list_semantic_fragment(&self, id: TokenListId) -> StateHashFragment {
+        let id = self.resolve_stored_token_list(id);
+        self.tokens.semantic_id(id).fragment()
+    }
+
     #[cfg(test)]
     pub(crate) fn testing_token_semantic_id(&self, id: TokenListId) -> TokenSemanticId {
         let id = self.resolve_stored_token_list(id);
@@ -834,11 +840,26 @@ impl Stores {
         let mut identity = TokenSemanticIdBuilder::new();
         for token in tokens {
             let atom = match token {
-                Token::Cs(symbol) => Some(
-                    self.interner
+                Token::Cs(symbol) => {
+                    let fingerprint = self
+                        .interner
                         .semantic_atom(symbol)
-                        .expect("symbol is not live in this Universe timeline"),
-                ),
+                        .expect("symbol is not live in this Universe timeline");
+                    let symbol = self.resolve_stored_symbol(symbol);
+                    let mut bytes = Vec::with_capacity(self.interner.resolve_id(symbol).len() + 1);
+                    bytes.push(match self.interner.kind_id(symbol) {
+                        ControlSequenceKind::Named => 0,
+                        ControlSequenceKind::ActiveCharacter => 1,
+                    });
+                    bytes.extend_from_slice(self.interner.resolve_id(symbol).as_bytes());
+                    Some((
+                        fingerprint,
+                        crate::state_hash::strong_identity_bytes(
+                            b"umber-control-sequence-v1",
+                            &bytes,
+                        ),
+                    ))
+                }
                 _ => None,
             };
             identity.push(token, atom);
@@ -1724,9 +1745,9 @@ impl Stores {
         self.nodes.get(id, &self.survivors)
     }
 
-    pub(crate) fn node_list_semantic_id_value(&self, id: NodeListId) -> u64 {
+    pub(crate) fn node_list_semantic_fragment(&self, id: NodeListId) -> StateHashFragment {
         self.assert_live_node_list(id);
-        self.nodes.semantic_id(id, &self.survivors).value()
+        self.nodes.semantic_id(id, &self.survivors).fragment()
     }
 
     /// Keeps a survivor root alive until its enclosing allocation scope ends.
@@ -2340,14 +2361,13 @@ impl Stores {
         // format capture forbids them because formats have a stricter job-start
         // contract. Use the serialized-size proxy only when that contract is
         // satisfied instead of turning retention accounting into a panic.
-        let serialized = if self.survivor_pins.is_empty()
-            && self.paragraph_generation_pins.is_empty()
-        {
-            self.encode_frozen_format()
-                .map_or(0, |format| format.payload_len())
-        } else {
-            0
-        };
+        let serialized =
+            if self.survivor_pins.is_empty() && self.paragraph_generation_pins.is_empty() {
+                self.encode_frozen_format()
+                    .map_or(0, |format| format.payload_len())
+            } else {
+                0
+            };
         let provenance = self.provenance_stats().retained_bytes();
         let source_map = self.source_map.stats().retained_bytes;
         let source_fragment_metadata = self.source_fragments.metadata_retained_bytes();

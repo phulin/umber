@@ -6,8 +6,8 @@ use ahash::AHashMap;
 use proptest::prelude::*;
 
 #[test]
-fn semantic_identity_is_one_word_per_token_list() {
-    assert_eq!(core::mem::size_of::<TokenSemanticId>(), 8);
+fn semantic_identity_carries_a_strong_digest_per_token_list() {
+    assert_eq!(core::mem::size_of::<TokenSemanticId>(), 40);
     let store = TokenStore::new();
     assert_eq!(store.semantic_ids.len(), store.spans.len());
 }
@@ -194,7 +194,7 @@ fn same_hash_bucket_still_compares_token_list_content() {
 
     store
         .index
-        .entry(TokenSemanticId(distinct_hash))
+        .entry(TokenSemanticId::testing(distinct_hash))
         .or_default()
         .push(existing_id);
 

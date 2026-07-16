@@ -239,12 +239,12 @@ impl Stores {
         framed.extend_from_slice(b"umber-exact-mutable-store-v1");
         framed.extend_from_slice(&self.exact_env_identity().bytes());
         for fragment in code_tables {
-            framed.extend_from_slice(&fragment.fingerprint().to_le_bytes());
+            framed.extend_from_slice(&fragment.identity().bytes());
         }
-        framed.extend_from_slice(&hyphenation.fingerprint().to_le_bytes());
-        framed.extend_from_slice(&prepared_mag.fingerprint().to_le_bytes());
-        framed.extend_from_slice(&last_loaded_font.fingerprint().to_le_bytes());
-        ContentHash::from_bytes(&framed)
+        framed.extend_from_slice(&hyphenation.identity().bytes());
+        framed.extend_from_slice(&prepared_mag.identity().bytes());
+        framed.extend_from_slice(&last_loaded_font.identity().bytes());
+        crate::state_hash::strong_identity_bytes(b"umber-exact-mutable-store-v2", &framed)
     }
 
     #[must_use]
@@ -424,7 +424,7 @@ impl Stores {
     pub(crate) fn hash_token_list_semantic(&self, id: TokenListId, hasher: &mut StateHasher) {
         let id = self.resolve_stored_token_list(id);
         hasher.tag(0x50);
-        hasher.u64(self.tokens.semantic_id(id).value());
+        self.tokens.semantic_id(id).apply(hasher);
     }
 
     pub(crate) fn hash_node_slice_semantic(
@@ -1483,7 +1483,7 @@ impl Stores {
                 self.interner.resolve_id(symbol).to_owned(),
             )
         });
-        let complete_hash = self.fonts.complete_hash_fragment(font).fingerprint();
+        let complete_hash = self.fonts.complete_hash_fragment(font).identity();
         let font = self.fonts.get(font);
         FontSemanticKey {
             name: font.name().to_owned(),
@@ -1645,19 +1645,9 @@ fn exact_identity_from_hashers(
     domain: u64,
     mut write: impl FnMut(&mut StateHasher),
 ) -> ContentHash {
-    const LANES: [u64; 4] = [
-        0x243f_6a88_85a3_08d3,
-        0x1319_8a2e_0370_7344,
-        0xa409_3822_299f_31d0,
-        0x082e_fa98_ec4e_6c89,
-    ];
-    let mut bytes = [0_u8; 32];
-    for (lane, salt) in LANES.into_iter().enumerate() {
-        let mut hasher = StateHasher::new(domain ^ salt);
-        write(&mut hasher);
-        bytes[lane * 8..(lane + 1) * 8].copy_from_slice(&hasher.finish().to_le_bytes());
-    }
-    ContentHash::new(bytes)
+    let mut hasher = StateHasher::new(domain);
+    write(&mut hasher);
+    hasher.finish_identity()
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -1691,7 +1681,7 @@ struct FontSemanticKey {
     checksum: u32,
     design_size: i32,
     size: i32,
-    complete_hash: u64,
+    complete_hash: ContentHash,
     identifier: Option<(ControlSequenceKind, String)>,
 }
 
@@ -1746,7 +1736,7 @@ fn hash_catcode(cat: Catcode, hasher: &mut StateHasher) {
 
 fn hash_font_semantic_key(font: &FontSemanticKey, hasher: &mut StateHasher) {
     hasher.tag(0x68);
-    hasher.u64(font.complete_hash);
+    hasher.bytes(&font.complete_hash.bytes());
 }
 
 pub(super) fn hash_kern_kind(kind: KernKind, hasher: &mut StateHasher) {

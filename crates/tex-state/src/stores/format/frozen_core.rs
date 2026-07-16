@@ -322,12 +322,13 @@ fn decode_tokens(
             semantic.push(runtime, atom);
         }
         let expected = read_u64(bytes, record + 8);
-        if semantic.finish().value() != expected {
+        let semantic_id = semantic.finish();
+        if semantic_id.value() != expected {
             return Err(StoreFormatError::Invalid("frozen token semantic identity"));
         }
         rows.push(row);
         spans.push((start, len));
-        semantic_ids.push(TokenSemanticId::from_value(expected));
+        semantic_ids.push(semantic_id);
         keys.push(key);
     }
     if cursor as usize != word_count {

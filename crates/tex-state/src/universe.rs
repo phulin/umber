@@ -2552,13 +2552,14 @@ impl Universe {
         let pdf = self.pdf.hash_fragment();
         self.state_hash_projection_cache = cache;
 
-        let mut framed = Vec::with_capacity(128);
-        framed.extend_from_slice(b"umber-exact-checkpoint-v1");
+        let mut framed = Vec::with_capacity(192);
+        framed.extend_from_slice(b"umber-exact-checkpoint-v2");
         framed.extend_from_slice(&store.bytes());
         for component in [input, world, interaction, page, pdf] {
-            framed.extend_from_slice(&component.fingerprint().to_le_bytes());
+            framed.extend_from_slice(&component.identity().bytes());
         }
-        let identity = ContentHash::from_bytes(&framed);
+        let identity =
+            crate::state_hash::strong_identity_bytes(b"umber-exact-checkpoint-v2", &framed);
         #[cfg(feature = "profiling-stats")]
         crate::measurement::record_exact_identity(started.elapsed());
         Ok(identity)
@@ -3160,7 +3161,7 @@ impl Universe {
         resources: Option<TokenListId>,
         immediate: bool,
     ) -> Result<crate::PdfFormRecord, PdfObjectCapacityError> {
-        let semantic_id = self.stores.node_list_semantic_id_value(box_list);
+        let semantic_id = self.stores.node_list_semantic_fragment(box_list);
         let attr = attr.map(|tokens| self.pdf_token_parameter(tokens));
         let resources = resources.map(|tokens| self.pdf_token_parameter(tokens));
         self.pdf.initialize_form(
@@ -3267,7 +3268,7 @@ impl Universe {
         object: u32,
         data: crate::PdfAnnotationData,
     ) -> Result<crate::PdfAnnotationRecord, crate::PdfAnnotationInitializeError> {
-        let semantic_id = self.stores.token_list_semantic_id_value(data.entries);
+        let semantic_id = self.stores.token_list_semantic_fragment(data.entries);
         self.pdf.initialize_annotation(object, data, semantic_id)
     }
 
@@ -3342,10 +3343,10 @@ impl Universe {
         count: i32,
         title: TokenListId,
     ) -> Result<crate::PdfOutlineRecord, PdfObjectCapacityError> {
-        let attributes_semantic_id = self.stores.token_list_semantic_id_value(attributes);
+        let attributes_semantic_id = self.stores.token_list_semantic_fragment(attributes);
         let action_semantic_id =
-            action.fingerprint(|tokens| self.stores.token_list_semantic_id_value(tokens));
-        let title_semantic_id = self.stores.token_list_semantic_id_value(title);
+            action.fingerprint(|tokens| self.stores.token_list_semantic_fragment(tokens));
+        let title_semantic_id = self.stores.token_list_semantic_fragment(title);
         self.pdf.create_outline(
             attributes,
             action,
@@ -3371,9 +3372,9 @@ impl Universe {
         action: crate::PdfActionSpec,
         nesting_depth: u32,
     ) -> Result<crate::PdfLinkRecord, PdfObjectCapacityError> {
-        let attributes_semantic_id = self.stores.token_list_semantic_id_value(attributes);
+        let attributes_semantic_id = self.stores.token_list_semantic_fragment(attributes);
         let action_semantic_id =
-            action.fingerprint(|tokens| self.stores.token_list_semantic_id_value(tokens));
+            action.fingerprint(|tokens| self.stores.token_list_semantic_fragment(tokens));
         self.pdf.create_link(
             dimensions,
             attributes,
@@ -3475,7 +3476,7 @@ impl Universe {
         structure_identity: Option<crate::PdfDestinationIdentity>,
     ) -> Result<crate::PdfActionRecord, PdfObjectCapacityError> {
         let fingerprint =
-            spec.fingerprint(|tokens| self.stores.token_list_semantic_id_value(tokens));
+            spec.fingerprint(|tokens| self.stores.token_list_semantic_fragment(tokens));
         self.pdf.set_catalog_open_action(
             spec,
             fingerprint,
@@ -3521,7 +3522,7 @@ impl Universe {
         let _ = self.tokens(tokens);
         PdfTokenParameter {
             tokens,
-            semantic_id: self.stores.token_list_semantic_id_value(tokens),
+            semantic_id: self.stores.token_list_semantic_fragment(tokens),
         }
     }
 

@@ -3,16 +3,15 @@
 //! Token-list watermarks are crate-private so rollback can stay coupled to
 //! the aggregate `Universe` boundary.
 
+use crate::ContentHash;
 use crate::identity::{IdentityAllocator, IdentityMark};
 use crate::ids::TokenListId;
-use crate::state_hash::StateHasher;
+use crate::state_hash::{StateHashFragment, StateHasher};
 use crate::token::{Token, TracedTokenWord};
 #[cfg(test)]
 use ahash::RandomState;
 use std::collections::HashMap;
-#[cfg(test)]
-use std::hash::Hash;
-use std::hash::{BuildHasherDefault, Hasher};
+use std::hash::{BuildHasherDefault, Hash, Hasher};
 
 type TokenIndex =
     HashMap<TokenSemanticId, Vec<TokenListId>, BuildHasherDefault<PrehashedU64Hasher>>;
@@ -21,19 +20,43 @@ type TokenIndex =
 ///
 /// Control sequences contribute their namespace and spelling through the
 /// interner's semantic atom; compact runtime symbol keys never participate.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-#[repr(transparent)]
-pub(crate) struct TokenSemanticId(u64);
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct TokenSemanticId {
+    fingerprint: u64,
+    identity: ContentHash,
+}
 
 impl TokenSemanticId {
     #[must_use]
     pub(crate) const fn value(self) -> u64 {
-        self.0
+        self.fingerprint
     }
 
     #[must_use]
-    pub(crate) const fn from_value(value: u64) -> Self {
-        Self(value)
+    pub(crate) const fn fragment(self) -> StateHashFragment {
+        StateHashFragment::from_parts(self.fingerprint, self.identity)
+    }
+
+    pub(crate) fn apply(self, hasher: &mut StateHasher) {
+        hasher.u64(self.fingerprint);
+        hasher.strong_identity(self.identity);
+    }
+
+    #[cfg(test)]
+    fn testing(fingerprint: u64) -> Self {
+        Self {
+            fingerprint,
+            identity: crate::state_hash::strong_identity_bytes(
+                b"umber-testing-token-id",
+                &fingerprint.to_le_bytes(),
+            ),
+        }
+    }
+}
+
+impl Hash for TokenSemanticId {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_u64(self.fingerprint);
     }
 }
 
@@ -58,7 +81,7 @@ impl TokenSemanticIdBuilder {
         }
     }
 
-    pub(crate) fn push(&mut self, token: Token, symbol_atom: Option<u64>) {
+    pub(crate) fn push(&mut self, token: Token, symbol_atom: Option<(u64, ContentHash)>) {
         match token {
             Token::Char { ch, cat } => {
                 self.stream.tag(0);
@@ -67,8 +90,10 @@ impl TokenSemanticIdBuilder {
             }
             Token::Cs(_) => {
                 self.stream.tag(1);
-                self.stream
-                    .u64(symbol_atom.expect("control-sequence token requires semantic atom"));
+                let (fingerprint, identity) =
+                    symbol_atom.expect("control-sequence token requires semantic atom");
+                self.stream.u64(fingerprint);
+                self.stream.strong_identity(identity);
             }
             Token::Param(slot) => {
                 self.stream.tag(2);
@@ -86,8 +111,12 @@ impl TokenSemanticIdBuilder {
         let mut hasher = StateHasher::new(TOKEN_ID_V1_DOMAIN);
         hasher.u8(TOKEN_SEMANTIC_ID_VERSION);
         hasher.usize(self.len);
-        hasher.u64(self.stream.finish());
-        TokenSemanticId(hasher.finish())
+        self.stream.finish_fragment().apply(&mut hasher);
+        let fragment = hasher.finish_fragment();
+        TokenSemanticId {
+            fingerprint: fragment.fingerprint(),
+            identity: fragment.identity(),
+        }
     }
 }
 
@@ -293,7 +322,7 @@ impl TokenStore {
     #[cfg(test)]
     pub(crate) fn intern(&mut self, tokens: &[Token]) -> TokenListId {
         let hash = self.content_hash(tokens);
-        self.intern_with_semantic_id(tokens, TokenSemanticId(hash), &[])
+        self.intern_with_semantic_id(tokens, TokenSemanticId::testing(hash), &[])
     }
 
     /// Interns tokens using their aggregate-computed canonical semantic identity.
@@ -365,7 +394,7 @@ impl TokenStore {
     #[cfg(test)]
     pub(crate) fn intern_traced(&mut self, traced: &[TracedTokenWord]) -> TokenListId {
         let hash = self.hash_state.hash_one(TracedTokenProjection(traced));
-        self.intern_traced_with_semantic_id(traced, TokenSemanticId(hash), &[])
+        self.intern_traced_with_semantic_id(traced, TokenSemanticId::testing(hash), &[])
     }
 
     /// Interns traced tokens using their aggregate-computed canonical semantic identity.

@@ -249,7 +249,7 @@ fn exact_serialized_leaf<T: Serialize>(
     let mut framed = Vec::with_capacity(domain.len() + encoded.len());
     framed.extend_from_slice(domain);
     framed.extend_from_slice(&encoded);
-    Ok(ContentHash::from_bytes(&framed))
+    Ok(crate::state_hash::strong_identity_bytes(domain, &framed))
 }
 
 fn exact_name_leaf(stores: &Stores, raw: usize) -> Result<ContentHash, StoreFormatError> {
@@ -293,7 +293,10 @@ fn exact_token_leaf(stores: &Stores, raw: usize) -> Result<ContentHash, StoreFor
             Token::Frozen(_) => unreachable!("invalid frozen token payload"),
         }
     }
-    Ok(ContentHash::from_bytes(&framed))
+    Ok(crate::state_hash::strong_identity_bytes(
+        b"umber-exact-token-list-v2",
+        &framed,
+    ))
 }
 
 fn exact_macro_leaf(stores: &Stores, raw: usize) -> Result<ContentHash, StoreFormatError> {
@@ -310,7 +313,10 @@ fn exact_macro_leaf(stores: &Stores, raw: usize) -> Result<ContentHash, StoreFor
     framed.push(meaning.flags().bits());
     framed.extend_from_slice(&exact_token_leaf(stores, parameter.raw() as usize)?.bytes());
     framed.extend_from_slice(&exact_token_leaf(stores, replacement.raw() as usize)?.bytes());
-    Ok(ContentHash::from_bytes(&framed))
+    Ok(crate::state_hash::strong_identity_bytes(
+        b"umber-exact-macro-v3",
+        &framed,
+    ))
 }
 
 fn exact_glue_leaf(stores: &Stores, raw: usize) -> Result<ContentHash, StoreFormatError> {
@@ -345,7 +351,10 @@ fn exact_font_leaf(stores: &Stores, raw: usize) -> Result<ContentHash, StoreForm
         None => framed.push(0),
     }
     framed.extend_from_slice(&expansion);
-    Ok(ContentHash::from_bytes(&framed))
+    Ok(crate::state_hash::strong_identity_bytes(
+        b"umber-exact-font-v3",
+        &framed,
+    ))
 }
 
 fn compose_immutable_store_root(
@@ -360,7 +369,7 @@ fn compose_immutable_store_root(
     for identity in [names, tokens, macros, glue, fonts] {
         framed.extend_from_slice(&identity.bytes());
     }
-    ContentHash::from_bytes(&framed)
+    crate::state_hash::strong_identity_bytes(b"umber-exact-immutable-store-v2", &framed)
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -635,7 +644,10 @@ impl Stores {
         composed.extend_from_slice(b"umber-exact-store-v1");
         composed.extend_from_slice(&immutable.bytes());
         composed.extend_from_slice(&mutable.bytes());
-        Ok(ContentHash::from_bytes(&composed))
+        Ok(crate::state_hash::strong_identity_bytes(
+            b"umber-exact-store-v2",
+            &composed,
+        ))
     }
 
     #[cfg(test)]
@@ -652,36 +664,6 @@ impl Stores {
             .lock()
             .expect("exact store identity cache is not poisoned")
             .immutable_leaves
-    }
-
-    pub(crate) fn encode_node_sequence_identity(
-        &self,
-        nodes: &[Node],
-    ) -> Result<Vec<u8>, StoreFormatError> {
-        let mut seen = std::collections::BTreeSet::new();
-        let mut visiting = std::collections::BTreeSet::new();
-        let mut survivor_roots = std::collections::BTreeMap::new();
-        let mut node_lists = Vec::new();
-        for node in nodes {
-            for child in node_child_ids(node) {
-                capture_node_list(
-                    self,
-                    child,
-                    &mut seen,
-                    &mut visiting,
-                    &mut survivor_roots,
-                    &mut node_lists,
-                    None,
-                )?;
-            }
-        }
-        let nodes = nodes
-            .iter()
-            .cloned()
-            .map(|node| FormatNode::capture(self, node, &mut survivor_roots))
-            .collect();
-        bincode::serialize(&NodeSequenceIdentity { node_lists, nodes })
-            .map_err(|error| StoreFormatError::Codec(error.to_string()))
     }
 
     #[cfg(test)]

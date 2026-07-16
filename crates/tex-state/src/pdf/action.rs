@@ -1,7 +1,7 @@
 //! Typed PDF action specifications shared by catalog, link, and outline users.
 
 use crate::ids::TokenListId;
-use crate::state_hash::StateHasher;
+use crate::state_hash::{StateHashFragment, StateHasher};
 
 const PDF_ACTION_DOMAIN: u64 = 0x7064_665f_6163_746e;
 
@@ -67,12 +67,15 @@ impl PdfActionSpec {
         )
     }
 
-    pub(crate) fn fingerprint(self, mut semantic_id: impl FnMut(TokenListId) -> u64) -> u64 {
+    pub(crate) fn fingerprint(
+        self,
+        mut semantic_id: impl FnMut(TokenListId) -> StateHashFragment,
+    ) -> StateHashFragment {
         let mut hasher = StateHasher::new(PDF_ACTION_DOMAIN);
         match self {
             Self::User(tokens) => {
                 hasher.u8(0);
-                hasher.u64(semantic_id(tokens));
+                hasher.bytes(&semantic_id(tokens).bytes());
             }
             Self::GoTo(action) => {
                 hasher.u8(1);
@@ -83,14 +86,14 @@ impl PdfActionSpec {
                 hash_destination(action, &mut hasher, &mut semantic_id);
             }
         }
-        hasher.finish()
+        hasher.finish_fragment()
     }
 }
 
 fn hash_destination(
     action: PdfActionDestination,
     hasher: &mut StateHasher,
-    semantic_id: &mut impl FnMut(TokenListId) -> u64,
+    semantic_id: &mut impl FnMut(TokenListId) -> StateHashFragment,
 ) {
     hash_optional_tokens(action.file, hasher, semantic_id);
     hasher.bool(action.structure.is_some());
@@ -101,7 +104,7 @@ fn hash_destination(
         PdfActionTarget::Page { number, view } => {
             hasher.u8(0);
             hasher.u32(number);
-            hasher.u64(semantic_id(view));
+            hasher.bytes(&semantic_id(view).bytes());
         }
         PdfActionTarget::Destination(identifier) => {
             hasher.u8(1);
@@ -118,12 +121,12 @@ fn hash_destination(
 fn hash_identifier(
     identifier: PdfActionIdentifier,
     hasher: &mut StateHasher,
-    semantic_id: &mut impl FnMut(TokenListId) -> u64,
+    semantic_id: &mut impl FnMut(TokenListId) -> StateHashFragment,
 ) {
     match identifier {
         PdfActionIdentifier::Name(tokens) => {
             hasher.u8(0);
-            hasher.u64(semantic_id(tokens));
+            hasher.bytes(&semantic_id(tokens).bytes());
         }
         PdfActionIdentifier::Number(number) => {
             hasher.u8(1);
@@ -131,7 +134,7 @@ fn hash_identifier(
         }
         PdfActionIdentifier::Raw(tokens) => {
             hasher.u8(2);
-            hasher.u64(semantic_id(tokens));
+            hasher.bytes(&semantic_id(tokens).bytes());
         }
     }
 }
@@ -139,11 +142,11 @@ fn hash_identifier(
 fn hash_optional_tokens(
     tokens: Option<TokenListId>,
     hasher: &mut StateHasher,
-    semantic_id: &mut impl FnMut(TokenListId) -> u64,
+    semantic_id: &mut impl FnMut(TokenListId) -> StateHashFragment,
 ) {
     hasher.bool(tokens.is_some());
     if let Some(tokens) = tokens {
-        hasher.u64(semantic_id(tokens));
+        hasher.bytes(&semantic_id(tokens).bytes());
     }
 }
 

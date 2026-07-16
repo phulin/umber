@@ -1,3 +1,4 @@
+use crate::ContentHash;
 use crate::state_hash::StateHasher;
 
 /// Versioned, allocation-independent identity of one immutable node list.
@@ -5,13 +6,20 @@ use crate::state_hash::StateHasher;
 /// Runtime node handles, arena positions, generations, and provenance never
 /// participate. Child lists contribute their own already-frozen identities.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-#[repr(transparent)]
-pub(crate) struct NodeSemanticId(u64);
+pub(crate) struct NodeSemanticId {
+    fingerprint: u64,
+    identity: ContentHash,
+}
 
 impl NodeSemanticId {
     #[must_use]
-    pub(crate) const fn value(self) -> u64 {
-        self.0
+    pub(crate) const fn fragment(self) -> crate::state_hash::StateHashFragment {
+        crate::state_hash::StateHashFragment::from_parts(self.fingerprint, self.identity)
+    }
+
+    pub(crate) fn apply(self, hasher: &mut StateHasher) {
+        hasher.u64(self.fingerprint);
+        hasher.strong_identity(self.identity);
     }
 
     /// Constructs an identity whose bytes were independently validated by a
@@ -27,8 +35,14 @@ impl NodeSemanticId {
     }
 
     #[cfg(test)]
-    pub(super) const fn testing(value: u64) -> Self {
-        Self(value)
+    pub(super) fn testing(value: u64) -> Self {
+        Self {
+            fingerprint: value,
+            identity: crate::state_hash::strong_identity_bytes(
+                b"umber-testing-node-id",
+                &value.to_le_bytes(),
+            ),
+        }
     }
 }
 
@@ -62,7 +76,11 @@ impl NodeSemanticIdBuilder {
         let mut hasher = StateHasher::new(NODE_ID_V1_DOMAIN);
         hasher.u8(NODE_SEMANTIC_ID_VERSION);
         hasher.usize(self.len);
-        hasher.u64(self.stream.finish());
-        NodeSemanticId(hasher.finish())
+        self.stream.finish_fragment().apply(&mut hasher);
+        let fragment = hasher.finish_fragment();
+        NodeSemanticId {
+            fingerprint: fragment.fingerprint(),
+            identity: fragment.identity(),
+        }
     }
 }

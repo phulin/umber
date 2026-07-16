@@ -1,4 +1,5 @@
 use crate::ContentHash;
+use crate::state_hash::strong_identity_bytes;
 use std::sync::Arc;
 
 const EMPTY_ENV_DOMAIN: &[u8] = b"umber-exact-env-empty-v1";
@@ -19,7 +20,7 @@ pub(super) struct ExactEnvIdentity {
 impl ExactEnvIdentity {
     pub(super) fn identity(&self) -> ContentHash {
         self.root.as_ref().map_or_else(
-            || ContentHash::from_bytes(EMPTY_ENV_DOMAIN),
+            || strong_identity_bytes(EMPTY_ENV_DOMAIN, &[]),
             |root| root.identity,
         )
     }
@@ -81,7 +82,7 @@ impl Node {
             left,
             right,
             len,
-            identity: ContentHash::from_bytes(&bytes[..offset]),
+            identity: strong_identity_bytes(ENV_NODE_DOMAIN, &bytes[..offset]),
         })
     }
 }

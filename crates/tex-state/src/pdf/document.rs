@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::ids::TokenListId;
-use crate::state_hash::StateHasher;
+use crate::state_hash::{StateHashFragment, StateHasher};
 
 use super::PdfTokenParameter;
 
@@ -88,14 +88,14 @@ struct PdfDocumentFragment {
 #[derive(Clone, Debug)]
 pub(crate) struct PdfDocumentFragments {
     fragments: Arc<Vec<PdfDocumentFragment>>,
-    fingerprint: u64,
+    fingerprint: StateHashFragment,
 }
 
 impl Default for PdfDocumentFragments {
     fn default() -> Self {
         Self {
             fragments: Arc::new(Vec::new()),
-            fingerprint: StateHasher::new(PDF_DOCUMENT_FRAGMENTS_DOMAIN).finish(),
+            fingerprint: StateHasher::new(PDF_DOCUMENT_FRAGMENTS_DOMAIN).finish_fragment(),
         }
     }
 }
@@ -107,7 +107,7 @@ impl PdfDocumentFragments {
     }
 
     #[must_use]
-    pub(crate) const fn fingerprint(&self) -> u64 {
+    pub(crate) const fn fingerprint(&self) -> StateHashFragment {
         self.fingerprint
     }
 
@@ -127,12 +127,12 @@ impl PdfDocumentFragments {
     }
 }
 
-fn fingerprint(fragments: &[PdfDocumentFragment]) -> u64 {
+fn fingerprint(fragments: &[PdfDocumentFragment]) -> StateHashFragment {
     let mut hasher = StateHasher::new(PDF_DOCUMENT_FRAGMENTS_DOMAIN);
     hasher.usize(fragments.len());
     for fragment in fragments {
         hasher.u8(fragment.kind.tag());
-        hasher.u64(fragment.value.semantic_id);
+        hasher.bytes(&fragment.value.semantic_id.bytes());
     }
-    hasher.finish()
+    hasher.finish_fragment()
 }

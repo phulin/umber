@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::ids::TokenListId;
-use crate::state_hash::StateHasher;
+use crate::state_hash::{StateHashFragment, StateHasher};
 
 use super::PdfTokenParameter;
 
@@ -109,7 +109,7 @@ impl PdfRawObjectRecord {
 struct PdfRawObjectState {
     records: Vec<PdfRawObjectRecord>,
     last_object: u32,
-    fingerprint: u64,
+    fingerprint: StateHashFragment,
 }
 
 /// Copy-on-write raw-object table shared by PDF snapshots.
@@ -121,7 +121,7 @@ impl Default for PdfRawObjects {
         Self(Arc::new(PdfRawObjectState {
             records: Vec::new(),
             last_object: 0,
-            fingerprint: StateHasher::new(PDF_RAW_OBJECT_DOMAIN).finish(),
+            fingerprint: StateHasher::new(PDF_RAW_OBJECT_DOMAIN).finish_fragment(),
         }))
     }
 }
@@ -133,7 +133,7 @@ impl PdfRawObjects {
     }
 
     #[must_use]
-    pub(crate) fn fingerprint(&self) -> u64 {
+    pub(crate) fn fingerprint(&self) -> StateHashFragment {
         self.0.fingerprint
     }
 
@@ -211,7 +211,7 @@ pub enum PdfRawObjectInitializeError {
     AlreadyInitialized(PdfRawObjectId),
 }
 
-fn fingerprint(state: &PdfRawObjectState) -> u64 {
+fn fingerprint(state: &PdfRawObjectState) -> StateHashFragment {
     let mut hasher = StateHasher::new(PDF_RAW_OBJECT_DOMAIN);
     hasher.u32(state.last_object);
     hasher.usize(state.records.len());
@@ -222,13 +222,13 @@ fn fingerprint(state: &PdfRawObjectState) -> u64 {
             hasher.bool(data.stream);
             hasher.bool(data.stream_attr.is_some());
             if let Some(attr) = data.stream_attr {
-                hasher.u64(attr.semantic_id);
+                hasher.bytes(&attr.semantic_id.bytes());
             }
             hasher.bool(data.file);
-            hasher.u64(data.data.semantic_id);
+            hasher.bytes(&data.data.semantic_id.bytes());
         }
         hasher.bool(record.immediate);
         hasher.bool(record.referenced);
     }
-    hasher.finish()
+    hasher.finish_fragment()
 }

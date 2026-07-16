@@ -213,7 +213,7 @@ impl Stores {
     pub(super) fn hash_node_list_identity(&self, id: NodeListId, hasher: &mut StateHasher) {
         let semantic_id = self.node_semantic_id(id);
         hasher.tag(0x70);
-        hasher.u64(semantic_id.value());
+        semantic_id.apply(hasher);
     }
 
     fn hash_box_identity(&self, tag: u8, box_node: &BoxNode, hasher: &mut StateHasher) {
