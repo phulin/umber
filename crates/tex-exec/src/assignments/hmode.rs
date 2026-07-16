@@ -626,7 +626,8 @@ fn auto_kern_codes(
 }
 
 fn add_scaled(left: Scaled, right: Scaled) -> Scaled {
-    Scaled::from_raw(left.raw().saturating_add(right.raw()))
+    left.checked_add(right)
+        .expect("pdfTeX inter-character kern adjustment fits Scaled")
 }
 
 fn adjust_interword_glue(stores: &Universe, nodes: &[Node], spec: &mut GlueSpec) {
@@ -662,9 +663,18 @@ fn adjust_interword_glue(stores: &Universe, nodes: &[Node], spec: &mut GlueSpec)
         font,
         stores.pdf_font_code(tex_state::PdfFontCode::Shbs, font, code),
     );
-    spec.width = Scaled::from_raw(spec.width.raw().saturating_add(width.raw()));
-    spec.stretch = Scaled::from_raw(spec.stretch.raw().saturating_add(stretch.raw()));
-    spec.shrink = Scaled::from_raw(spec.shrink.raw().saturating_add(shrink.raw()));
+    spec.width = spec
+        .width
+        .checked_add(width)
+        .expect("pdfTeX interword width adjustment fits Scaled");
+    spec.stretch = spec
+        .stretch
+        .checked_add(stretch)
+        .expect("pdfTeX interword stretch adjustment fits Scaled");
+    spec.shrink = spec
+        .shrink
+        .checked_add(shrink)
+        .expect("pdfTeX interword shrink adjustment fits Scaled");
 }
 
 fn scaled_font_code(stores: &Universe, font: FontId, code: i32) -> Scaled {

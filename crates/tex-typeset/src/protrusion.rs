@@ -17,7 +17,9 @@ impl LineProtrusion {
     /// The signed amount added to pdfTeX's line-breaking shortfall.
     #[must_use]
     pub fn total(self) -> Scaled {
-        Scaled::from_raw(self.left.raw().saturating_add(self.right.raw()))
+        self.left
+            .checked_add(self.right)
+            .expect("the two glyph-edge protrusions fit Scaled")
     }
 }
 
@@ -46,7 +48,10 @@ pub fn insert_margin_kerns(state: &impl TypesetState, nodes: &mut Vec<Node>) {
         nodes.insert(
             at,
             Node::Kern {
-                amount: Scaled::from_raw(protrusion.right.raw().saturating_neg()),
+                amount: protrusion
+                    .right
+                    .checked_neg()
+                    .expect("a legal protrusion can be negated"),
                 kind: KernKind::RightMargin,
             },
         );
@@ -57,7 +62,10 @@ pub fn insert_margin_kerns(state: &impl TypesetState, nodes: &mut Vec<Node>) {
         nodes.insert(
             at,
             Node::Kern {
-                amount: Scaled::from_raw(protrusion.left.raw().saturating_neg()),
+                amount: protrusion
+                    .left
+                    .checked_neg()
+                    .expect("a legal protrusion can be negated"),
                 kind: KernKind::LeftMargin,
             },
         );

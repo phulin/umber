@@ -259,7 +259,10 @@ fn split_page_insertion(
 }
 
 fn add_insert_penalty(stores: &mut Universe, penalty: i32) {
-    let value = stores.insert_penalties().saturating_add(penalty);
+    let value = stores
+        .insert_penalties()
+        .checked_add(penalty)
+        .expect("page insertion penalty total overflow");
     stores.set_page_integer(tex_state::page::PageInteger::InsertPenalties, value);
 }
 

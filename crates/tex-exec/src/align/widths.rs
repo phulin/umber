@@ -54,7 +54,13 @@ fn pack_prototype(
 }
 
 fn prototype_nodes(kind: AlignmentKind, resolved: &ResolvedWidths, empty: NodeListId) -> Vec<Node> {
-    let mut nodes = Vec::with_capacity(resolved.columns.len().saturating_mul(2) + 1);
+    let capacity = resolved
+        .columns
+        .len()
+        .checked_mul(2)
+        .and_then(|len| len.checked_add(1))
+        .expect("alignment node capacity fits usize");
+    let mut nodes = Vec::with_capacity(capacity);
     nodes.push(tabskip_node(resolved.tabskips[0]));
     for (column, width) in resolved.columns.iter().copied().enumerate() {
         nodes.push(empty_column_box(kind, width, empty));

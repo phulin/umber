@@ -4,10 +4,7 @@ use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::glue::Order;
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{BoxNode, GlueKind, KernKind, Node, Sign};
-use tex_state::scaled::{
-    Scaled, saturating_add as scaled_add, saturating_mul as scaled_mul,
-    saturating_sub as scaled_sub,
-};
+use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token};
 use tex_typeset::PackSpec;
 use tex_typeset::math::{MathParams, Style};
@@ -19,6 +16,21 @@ use crate::vertical::{
     append_node_to_vertical_list, append_vertical_contribution, build_page_if_outer_vertical,
 };
 use crate::{ExecError, Mode, ModeNest};
+
+fn scaled_add(left: Scaled, right: Scaled) -> Scaled {
+    left.checked_add(right)
+        .expect("display-math scaled addition overflow")
+}
+
+fn scaled_sub(left: Scaled, right: Scaled) -> Scaled {
+    left.checked_sub(right)
+        .expect("display-math scaled subtraction overflow")
+}
+
+fn scaled_mul(factor: i32, value: Scaled) -> Scaled {
+    let product = i64::from(factor) * i64::from(value.raw());
+    Scaled::from_raw(i32::try_from(product).expect("display-math scaled multiplication overflow"))
+}
 
 use super::lower::convert_math_hlist;
 use super::scan::finish_current_math_list;
@@ -301,7 +313,10 @@ pub(super) fn resume_after_display_alignment(
     stores: &mut Universe,
     active_directions: Vec<tex_state::node::Direction>,
 ) -> Result<(), ExecError> {
-    let prev_graf = nest.enclosing_vertical_prev_graf().saturating_add(3);
+    let prev_graf = nest
+        .enclosing_vertical_prev_graf()
+        .checked_add(3)
+        .expect("display-math prev_graf overflow");
     nest.set_enclosing_vertical_prev_graf(prev_graf);
     let next = loop {
         match input.next_traced_token(stores)? {
@@ -384,7 +399,10 @@ pub(super) fn resume_after_display(
     stores: &mut Universe,
     active_directions: Vec<tex_state::node::Direction>,
 ) -> Result<(), ExecError> {
-    let prev_graf = nest.enclosing_vertical_prev_graf().saturating_add(3);
+    let prev_graf = nest
+        .enclosing_vertical_prev_graf()
+        .checked_add(3)
+        .expect("display-math prev_graf overflow");
     nest.set_enclosing_vertical_prev_graf(prev_graf);
     nest.push(Mode::Horizontal);
     nest.current_list_mut().set_space_factor(1000);

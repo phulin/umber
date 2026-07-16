@@ -24,7 +24,7 @@ use tex_state::scaled::Scaled;
 
 use crate::TypesetState;
 
-pub(crate) use arithmetic::{add, neg, sub};
+pub(crate) use arithmetic::{add, mul, neg, sub};
 pub(crate) use convert::{
     Context, FetchedChar, char_box, clean_box, fetch, make_character_nucleus, source_list,
 };

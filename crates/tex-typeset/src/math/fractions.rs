@@ -1,11 +1,10 @@
-use tex_arith::saturating_mul;
 use tex_state::math::{FractionThickness, MathField, MathFraction};
 use tex_state::node::KernKind;
 use tex_state::scaled::Scaled;
 
 use super::delimiters::make_delimiter;
 use super::{
-    Context, FrozenHList, MathBox, MathNode, MathTypesetState, add, boxed_node, clean_box, sub,
+    Context, FrozenHList, MathBox, MathNode, MathTypesetState, add, boxed_node, clean_box, mul, sub,
 };
 
 pub(super) fn make_fraction(
@@ -100,7 +99,7 @@ fn adjust_without_rule(
 ) {
     // AppG rule 15c
     let multiplier: i32 = if display { 7 } else { 3 };
-    let clearance = saturating_mul(multiplier, default_rule_thickness);
+    let clearance = mul(multiplier, default_rule_thickness);
     let actual = sub(
         sub(*shift_up, numerator.depth),
         sub(denominator.height, *shift_down),
@@ -123,7 +122,7 @@ fn adjust_with_rule(
 ) {
     // AppG rule 15d
     let multiplier: i32 = if display { 3 } else { 1 };
-    let clearance = saturating_mul(multiplier, thickness);
+    let clearance = mul(multiplier, thickness);
     let delta = Scaled::from_raw(tex_arith::half(thickness.raw()));
     let above_actual = sub(sub(*shift_up, numerator.depth), add(axis_height, delta));
     let below_actual = sub(

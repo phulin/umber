@@ -885,11 +885,19 @@ fn validate_document(
                 if dictionary.get(b"Length").is_some() {
                     return Err(PdfModelError::ReservedStreamLength(indirect.id));
                 }
-                stream_bytes = stream_bytes.saturating_add(data.len());
+                stream_bytes = stream_bytes
+                    .checked_add(data.len())
+                    .expect("addressable PDF streams fit usize");
             }
-            PdfObject::Raw(data) => stream_bytes = stream_bytes.saturating_add(data.len()),
+            PdfObject::Raw(data) => {
+                stream_bytes = stream_bytes
+                    .checked_add(data.len())
+                    .expect("addressable PDF streams fit usize");
+            }
             PdfObject::ImageXObject { data, .. } => {
-                stream_bytes = stream_bytes.saturating_add(data.len());
+                stream_bytes = stream_bytes
+                    .checked_add(data.len())
+                    .expect("addressable PDF streams fit usize");
             }
             PdfObject::Value(_)
             | PdfObject::Annotation(_)
@@ -1077,7 +1085,9 @@ fn validate_object_values(
                 limit: max_depth,
             });
         }
-        *value_count = value_count.saturating_add(1);
+        *value_count = value_count
+            .checked_add(1)
+            .expect("an addressable PDF cannot contain usize::MAX values");
         if *value_count > max_values {
             return Err(PdfModelError::TooManyValues {
                 actual: *value_count,

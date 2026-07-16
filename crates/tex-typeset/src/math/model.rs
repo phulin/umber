@@ -290,44 +290,70 @@ impl MathLayoutBuilder {
         for node in &self.nodes[start..end] {
             match node {
                 MathNode::Sequence(list) => {
-                    meas.node_count = meas.node_count.saturating_add(list.node_count);
+                    meas.node_count = meas
+                        .node_count
+                        .checked_add(list.node_count)
+                        .expect("math node count exceeds u32");
                     meas.width = add(meas.width, list.width);
                     meas.height = meas.height.max(list.height);
                     meas.depth = meas.depth.max(list.depth);
                 }
                 MathNode::Char { metrics, .. } => {
-                    meas.node_count = meas.node_count.saturating_add(1);
+                    meas.node_count = meas
+                        .node_count
+                        .checked_add(1)
+                        .expect("math node count exceeds u32");
                     meas.width = add(meas.width, metrics.width);
                     meas.height = meas.height.max(metrics.height);
                     meas.depth = meas.depth.max(metrics.depth);
                 }
                 MathNode::Kern { amount, .. } => {
-                    meas.node_count = meas.node_count.saturating_add(1);
+                    meas.node_count = meas
+                        .node_count
+                        .checked_add(1)
+                        .expect("math node count exceeds u32");
                     meas.width = add(meas.width, *amount);
                 }
                 MathNode::Glue { spec, .. } => {
-                    meas.node_count = meas.node_count.saturating_add(1);
+                    meas.node_count = meas
+                        .node_count
+                        .checked_add(1)
+                        .expect("math node count exceeds u32");
                     meas.width = add(meas.width, spec.width);
                 }
-                MathNode::Penalty(_) => meas.node_count = meas.node_count.saturating_add(1),
+                MathNode::Penalty(_) => {
+                    meas.node_count = meas
+                        .node_count
+                        .checked_add(1)
+                        .expect("math node count exceeds u32");
+                }
                 MathNode::Rule {
                     width,
                     height,
                     depth,
                 } => {
-                    meas.node_count = meas.node_count.saturating_add(1);
+                    meas.node_count = meas
+                        .node_count
+                        .checked_add(1)
+                        .expect("math node count exceeds u32");
                     meas.width = add(meas.width, width.unwrap_or(Scaled::from_raw(0)));
                     meas.height = meas.height.max(height.unwrap_or(Scaled::from_raw(0)));
                     meas.depth = meas.depth.max(depth.unwrap_or(Scaled::from_raw(0)));
                 }
                 MathNode::HList(boxed) | MathNode::VList(boxed) => {
-                    meas.node_count = meas.node_count.saturating_add(1);
+                    meas.node_count = meas
+                        .node_count
+                        .checked_add(1)
+                        .expect("math node count exceeds u32");
                     meas.width = add(meas.width, boxed.width);
                     meas.height = meas.height.max(sub(boxed.height, boxed.shift));
                     meas.depth = meas.depth.max(add(boxed.depth, boxed.shift));
                 }
                 MathNode::Opaque(node) => {
-                    meas.node_count = meas.node_count.saturating_add(1);
+                    meas.node_count = meas
+                        .node_count
+                        .checked_add(1)
+                        .expect("math node count exceeds u32");
                     measure_opaque_hnode(node, meas);
                 }
             }

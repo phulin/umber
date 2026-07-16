@@ -536,7 +536,12 @@ fn build_assets(
         if by_digest.contains_key(&font.digest_hex) {
             continue;
         }
-        total = total.saturating_add(font.web.woff2.len());
+        total = total
+            .checked_add(font.web.woff2.len())
+            .ok_or(HtmlError::AssetsTooLarge {
+                bytes: usize::MAX,
+                limit: options.max_total_asset_bytes,
+            })?;
         if total > options.max_total_asset_bytes {
             return Err(HtmlError::AssetsTooLarge {
                 bytes: total,
@@ -569,10 +574,26 @@ fn write_font_css(
         out.push_str("';src:url('");
         match &options.asset_mode {
             AssetMode::Embedded => {
-                let encoded = font.web.woff2.len().saturating_add(2) / 3 * 4;
-                if out.len().saturating_add(encoded) > options.max_html_bytes {
+                let encoded = font
+                    .web
+                    .woff2
+                    .len()
+                    .checked_add(2)
+                    .and_then(|len| (len / 3).checked_mul(4))
+                    .ok_or(HtmlError::HtmlTooLarge {
+                        bytes: usize::MAX,
+                        limit: options.max_html_bytes,
+                    })?;
+                let projected = out
+                    .len()
+                    .checked_add(encoded)
+                    .ok_or(HtmlError::HtmlTooLarge {
+                        bytes: usize::MAX,
+                        limit: options.max_html_bytes,
+                    })?;
+                if projected > options.max_html_bytes {
                     return Err(HtmlError::HtmlTooLarge {
-                        bytes: out.len().saturating_add(encoded),
+                        bytes: projected,
                         limit: options.max_html_bytes,
                     });
                 }
@@ -670,8 +691,9 @@ fn write_page(
                 )?;
                 let text_budget = options
                     .max_html_bytes
-                    .saturating_sub(out.len())
-                    .saturating_sub(accessible.len())
+                    .checked_sub(out.len())
+                    .and_then(|remaining| remaining.checked_sub(accessible.len()))
+                    .unwrap_or(0)
                     / 6;
                 let text = map_text(event.units.as_slice(), font, text_budget)?;
                 accessible.push_str(&text);
@@ -918,9 +940,13 @@ fn map_text(
     for unit in units {
         match unit {
             TextUnit::Space => {
+                let projected = text.len().checked_add(1).ok_or(HtmlError::HtmlTooLarge {
+                    bytes: usize::MAX,
+                    limit: max_bytes,
+                })?;
                 if text.len() >= max_bytes {
                     return Err(HtmlError::HtmlTooLarge {
-                        bytes: text.len().saturating_add(1),
+                        bytes: projected,
                         limit: max_bytes,
                     });
                 }
@@ -942,9 +968,16 @@ fn map_text(
                         code: *code,
                     });
                 }
-                if text.len().saturating_add(mapping.len()) > max_bytes {
+                let projected =
+                    text.len()
+                        .checked_add(mapping.len())
+                        .ok_or(HtmlError::HtmlTooLarge {
+                            bytes: usize::MAX,
+                            limit: max_bytes,
+                        })?;
+                if projected > max_bytes {
                     return Err(HtmlError::HtmlTooLarge {
-                        bytes: text.len().saturating_add(mapping.len()),
+                        bytes: projected,
                         limit: max_bytes,
                     });
                 }
@@ -956,15 +989,25 @@ fn map_text(
 }
 
 fn validate_options(options: &HtmlOptions) -> Result<(), HtmlError> {
-    if options.title.len().saturating_mul(6) > options.max_html_bytes
-        || options.language.len().saturating_mul(6) > options.max_html_bytes
-    {
+    let title_bytes = options
+        .title
+        .len()
+        .checked_mul(6)
+        .ok_or(HtmlError::HtmlTooLarge {
+            bytes: usize::MAX,
+            limit: options.max_html_bytes,
+        })?;
+    let language_bytes = options
+        .language
+        .len()
+        .checked_mul(6)
+        .ok_or(HtmlError::HtmlTooLarge {
+            bytes: usize::MAX,
+            limit: options.max_html_bytes,
+        })?;
+    if title_bytes > options.max_html_bytes || language_bytes > options.max_html_bytes {
         return Err(HtmlError::HtmlTooLarge {
-            bytes: options
-                .title
-                .len()
-                .max(options.language.len())
-                .saturating_mul(6),
+            bytes: title_bytes.max(language_bytes),
             limit: options.max_html_bytes,
         });
     }

@@ -53,9 +53,10 @@ impl LineMaterializer {
         let end = decision.position.min(self.node_count);
         let start = self.nodes.peek().map_or(end, |(index, _)| *index);
         let required = end
-            .saturating_sub(start)
-            .saturating_add(self.pending_post.len())
-            .saturating_add(2);
+            .checked_sub(start)
+            .and_then(|len| len.checked_add(self.pending_post.len()))
+            .and_then(|len| len.checked_add(2))
+            .expect("materialized line capacity fits usize");
         line.clear();
         line.reserve(required);
 
@@ -218,25 +219,29 @@ pub(super) fn line_penalty_after(
     let current_line = params.prev_graf.max(0) as usize + line_no + 1;
     let mut penalty = penalty_array_value(&params.interline_penalties, current_line)
         .unwrap_or(params.interline_penalty);
-    penalty = penalty.saturating_add(
-        penalty_array_value(&params.club_penalties, line_no + 1).unwrap_or(if line_no == 0 {
-            params.club_penalty
-        } else {
-            0
-        }),
-    );
+    penalty =
+        penalty
+            .checked_add(
+                penalty_array_value(&params.club_penalties, line_no + 1)
+                    .unwrap_or(if line_no == 0 { params.club_penalty } else { 0 }),
+            )
+            .expect("interline and club penalties fit TeX integer range");
     let lines_from_end = breaks.len() - line_no - 1;
-    penalty = penalty.saturating_add(
-        penalty_array_value(&params.widow_penalties, lines_from_end).unwrap_or(
-            if line_no + 2 == breaks.len() {
-                params.widow_penalty
-            } else {
-                0
-            },
-        ),
-    );
+    penalty = penalty
+        .checked_add(
+            penalty_array_value(&params.widow_penalties, lines_from_end).unwrap_or(
+                if line_no + 2 == breaks.len() {
+                    params.widow_penalty
+                } else {
+                    0
+                },
+            ),
+        )
+        .expect("interline and widow penalties fit TeX integer range");
     if hyphenated {
-        penalty = penalty.saturating_add(params.broken_penalty);
+        penalty = penalty
+            .checked_add(params.broken_penalty)
+            .expect("broken-line penalty fits TeX integer range");
     }
     (penalty != 0).then_some(penalty)
 }

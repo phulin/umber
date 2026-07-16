@@ -134,7 +134,8 @@ fn hyphenate_after_glue(
         }
     };
 
-    if left.saturating_add(right) > 63 {
+    let minima = left.checked_add(right)?;
+    if minima > 63 {
         return None;
     }
     let hyphen = stores.font_hyphen_char(font);
@@ -171,7 +172,11 @@ fn hyphenate_after_glue(
                 origins,
             } if *node_font == font => {
                 let chars = orig.clone();
-                if word.len().saturating_add(chars.len()) > 63 {
+                if word
+                    .len()
+                    .checked_add(chars.len())
+                    .is_none_or(|len| len > 63)
+                {
                     break;
                 }
                 let Some(normalized) = chars
@@ -203,7 +208,7 @@ fn hyphenate_after_glue(
         }
     }
 
-    if word.len() < left.saturating_add(right) || !permitted_word_terminator(nodes, index) {
+    if word.len() < minima || !permitted_word_terminator(nodes, index) {
         return None;
     }
 

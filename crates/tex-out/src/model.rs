@@ -626,7 +626,9 @@ fn validate_artifact(
     let mut stack = vec![(&artifact.root, 1usize)];
     let mut count = 0usize;
     while let Some((node, depth)) = stack.pop() {
-        count = count.saturating_add(1);
+        count = count
+            .checked_add(1)
+            .expect("an addressable artifact cannot contain usize::MAX nodes");
         if count > limits.max_nodes {
             return Err(ArtifactValidationError::TooManyNodes {
                 count,

@@ -69,7 +69,7 @@ fn scalar_hlist(state: &impl TypesetState, nodes: NodeList<'_>) -> Measurement {
 }
 
 #[test]
-fn compact_char_runs_differentially_match_scalar_mixed_lists_and_overflow() {
+fn compact_char_runs_differentially_match_scalar_mixed_lists() {
     let mut universe = Universe::new();
     let fonts = [
         universe.intern_font(width_font("width-a", 1)),
@@ -82,12 +82,6 @@ fn compact_char_runs_differentially_match_scalar_mixed_lists_and_overflow() {
     let mut seed = 0x8bad_f00d_dead_beef_u64;
     for case in 0..256 {
         let mut nodes = Vec::new();
-        if case == 0 {
-            nodes.push(Node::Kern {
-                amount: sp(i32::MAX),
-                kind: KernKind::Explicit,
-            });
-        }
         for _ in 0..(case % 97) {
             seed ^= seed << 13;
             seed ^= seed >> 7;
@@ -107,7 +101,7 @@ fn compact_char_runs_differentially_match_scalar_mixed_lists_and_overflow() {
                     origins: vec![tex_state::token::OriginId::UNKNOWN; 2],
                 }),
                 2 => nodes.push(Node::Kern {
-                    amount: sp(seed as i32),
+                    amount: sp((seed as i32) % 100_000),
                     kind: KernKind::Font,
                 }),
                 3 => nodes.push(Node::Glue {
@@ -141,6 +135,33 @@ fn compact_char_runs_differentially_match_scalar_mixed_lists_and_overflow() {
         assert_eq!(fast.has_glue, scalar.has_glue, "glue case {case}");
         assert_eq!(decoded, compact, "packing case {case}");
     }
+}
+
+#[test]
+#[should_panic(expected = "packed dimension overflow must be reported, not saturated")]
+fn packing_overflow_fails_loudly() {
+    let mut universe = Universe::new();
+    let nodes = vec![
+        Node::Kern {
+            amount: sp(i32::MAX),
+            kind: KernKind::Explicit,
+        },
+        Node::Kern {
+            amount: sp(1),
+            kind: KernKind::Explicit,
+        },
+    ];
+    let id = universe.freeze_node_list(&nodes);
+    let _ = hpack(
+        &universe,
+        id,
+        PackSpec::Natural,
+        HpackParams {
+            hbadness: 0,
+            hfuzz: sp(0),
+            overfull_rule: sp(0),
+        },
+    );
 }
 
 #[test]

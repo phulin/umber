@@ -558,7 +558,11 @@ fn second_pass<S: MathTypesetState>(
     max_depth: Scaled,
 ) -> FrozenHList {
     // AppG rule 20
-    let mut output = Vec::with_capacity(work.len().saturating_mul(2));
+    let mut output = Vec::with_capacity(
+        work.len()
+            .checked_mul(2)
+            .expect("math conversion capacity fits usize"),
+    );
     let mut previous = None;
     let mut work = work.into_iter().peekable();
     while let Some(item) = work.next() {

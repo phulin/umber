@@ -89,7 +89,12 @@ fn fire_up_page(
         build_page(stores)?;
         return Ok(());
     }
-    stores.set_page_integer(PageInteger::DeadCycles, dead_cycles.saturating_add(1));
+    stores.set_page_integer(
+        PageInteger::DeadCycles,
+        dead_cycles
+            .checked_add(1)
+            .expect("dead-cycle count is bounded by max_dead_cycles"),
+    );
     run_output_routine(nest, input, stores, execution, stats, output)?;
     stores.clear_page_discards();
     build_page(stores)?;

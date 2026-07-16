@@ -1,4 +1,3 @@
-use tex_arith::{saturating_add as add, saturating_sub as sub};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::NodeListId;
 use tex_state::node::Node;
@@ -9,6 +8,16 @@ use tex_state::scaled::{GlueSetRatio, Scaled};
 #[cfg(test)]
 use crate::INF_BAD;
 use crate::{OVERFULL_BADNESS, TypesetState, badness};
+
+fn add(left: Scaled, right: Scaled) -> Scaled {
+    left.checked_add(right)
+        .expect("packed dimension overflow must be reported, not saturated")
+}
+
+fn sub(left: Scaled, right: Scaled) -> Scaled {
+    left.checked_sub(right)
+        .expect("packed dimension overflow must be reported, not saturated")
+}
 
 /// A requested box size.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

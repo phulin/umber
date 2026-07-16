@@ -304,7 +304,9 @@ fn break_current_paragraph(
         let mut line = line;
         line.shift = broken.dimensions.indent;
         pdf_line_dimensions.apply(&mut line, line_count as usize, total_lines);
-        line_count += 1;
+        line_count = line_count
+            .checked_add(1)
+            .expect("paragraph line count exceeds i32");
         last_line = Some(line);
         append_node_to_current_list(nest, stores, Node::HList(line))?;
         for node in migrated.drain(..) {
@@ -315,8 +317,12 @@ fn break_current_paragraph(
         }
         line_nodes = broken.nodes;
     }
-    nest.current_list_mut()
-        .set_prev_graf(params.prev_graf.saturating_add(line_count));
+    nest.current_list_mut().set_prev_graf(
+        params
+            .prev_graf
+            .checked_add(line_count)
+            .expect("TeX prev_graf overflow"),
+    );
     if reset_paragraph {
         reset_after_par(nest, stores);
     }
@@ -358,7 +364,10 @@ pub(crate) fn apply_line_expansion(
             _ => unreachable!("glyph identity restricts expansion substitution"),
         }
     }
-    for index in 1..nodes.len().saturating_sub(1) {
+    let Some(interior_end) = nodes.len().checked_sub(1) else {
+        return Ok(());
+    };
+    for index in 1..interior_end {
         if !matches!(
             nodes[index],
             Node::Kern {
