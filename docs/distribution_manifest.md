@@ -56,12 +56,58 @@ requires byte-identical directory trees. `--shard-existing STAGING
 re-reading TeX Live, while `--verify-sharded STAGING` performs the complete
 offline integrity check used by the R2 publication script.
 
-The profiled `texlive-2026-r79639` 8-bit output has 154,153 unique objects,
+The production `texlive-2026-r79639` 8-bit output has 154,153 unique objects,
 3,672,643,852 object bytes, and root digest
 `7c2784bca891844d37465083b93466b78429c7282d7ba915f40a08d150651fd0`.
 The new immutable public key is `manifest-v2.json`; the already cached
 schema-1 `manifest.json` is not overwritten. Publication remains manifest-last:
 all content and shard objects are uploaded and checked before that root key.
+
+### Production shard selection and publication evidence
+
+The 2026 snapshot uses 256 shards (`shardBits = 8`). Candidate layouts were
+regenerated from the same verified schema-1 staging manifest with
+`--shard-existing` and passed `--verify-sharded`. The sizes below use the
+canonical uncompressed JSON and the sum of independently compressed roots or
+shards from `gzip -n -c`; the shard totals include package-complete inline
+dependency metadata.
+
+| Shards | Root bytes | Root gzip bytes | All shard bytes | All shard gzip bytes | Cold requests / bytes |
+| ---: | ---: | ---: | ---: | ---: | :--- |
+| 64 | 4,878 | 2,840 | 164,926,880 | 30,453,157 | unavailable: no file-access trace corpus was present |
+| 256 | 17,743 | 10,276 | 164,940,668 | 33,415,396 | unavailable: no file-access trace corpus was present |
+| 1,024 | 69,201 | 39,809 | 164,995,988 | 36,025,682 | unavailable: no file-access trace corpus was present |
+
+These whole-index sizes are reproducible layout evidence, not a substitute
+for replaying the cold working set. The checked-in
+`scripts/profile-pdftex-arxiv.sh` records primitive use rather than file
+access, and neither its 100-paper sources nor separate file-access traces were
+available during the production run. Consequently the release retained the
+requested 256-shard production prior; it does not claim an empirical knee
+between the three candidates. Follow-up `umber2-mbwq.6.6` owns deterministic
+file-access capture and replay. Core-pack warming was not added because there
+was no trace evidence to justify expanding the existing dependency-hint
+working set.
+
+On 2026-07-16 the 256 shard objects were uploaded through the configured R2
+profile with immutable writes after an existing 548-byte object passed both
+R2 and public-HTTPS digest checks. All 256 remote shard sizes matched staging,
+and public HTTPS digest plus CORS checks passed for shards 0, 127, and 255.
+Only then was `manifest-v2.json` published. Its public response is 17,743
+bytes, has SHA-256
+`7c2784bca891844d37465083b93466b78429c7282d7ba915f40a08d150651fd0`,
+uses `application/json`, and permits cross-origin reads. The old
+`manifest.json` and all older content-addressed objects remain intact.
+
+Cross-frontend verification uses the shared distribution fixture to assert the
+same canonical request keys, shard partitions, selected objects, dependency
+hints, and typed misses in Rust and authored JavaScript. At the production pin,
+native resolver tests cover clean shard selection, inline hints, warm-cache
+offline reuse, authoritative absence, and corrupt-shard rejection; browser
+tests cover the corresponding root-pin, shard, hint, persistent-cache,
+absence, and tamper paths. Both frontends pin the URL above and the same root
+digest, so a successful resolution supplies identical authenticated bytes to
+the shared compile session and preserves engine-output parity.
 
 The authored JavaScript resolver requires both the root URL and its lowercase
 SHA-256 pin. It verifies the bounded root bytes before parsing selection
