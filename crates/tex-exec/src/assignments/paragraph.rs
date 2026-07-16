@@ -584,10 +584,20 @@ pub fn cached_pretolerance_plan(
     hlist: &[Node],
     line_params: &LineBreakParams,
 ) -> Option<tex_typeset::linebreak::BreakPlan> {
-    if !stores.pure_memo_enabled() {
+    if !stores.pretolerance_memo_enabled() {
+        if stores.pure_memo_enabled() {
+            stores.record_pure_memo_not_attempted(tex_state::PureMemoLayer::Pretolerance);
+        }
         return try_line_break_without_hyphenation(stores, hlist, line_params);
     }
+    #[allow(clippy::disallowed_methods)]
+    let validation_started = std::time::Instant::now();
     let key = pretolerance_memo_key(stores, hlist, line_params);
+    stores.record_pure_memo_timing(
+        tex_state::PureMemoLayer::Pretolerance,
+        tex_state::MemoTimingPhase::Validation,
+        validation_started.elapsed(),
+    );
     match stores.lookup_pure_pretolerance(key) {
         Some(plan) => plan,
         None => compute_and_cache_pretolerance(stores, key, hlist, line_params),

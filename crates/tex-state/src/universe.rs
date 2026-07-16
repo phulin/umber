@@ -1393,6 +1393,17 @@ impl Universe {
             .validate_region(observations, read_current)
     }
 
+    /// Validates a recorded region and identifies its first changed dependency.
+    pub fn validate_dependencies_with_failure(
+        &self,
+        observations: &mut [ObservedDependency],
+        read_current: impl FnMut(DependencyKey) -> DependencyValue,
+    ) -> Option<DependencyKey> {
+        self.dependencies
+            .tracker()
+            .validate_region_failure(observations, read_current)
+    }
+
     /// Reads one state-owned dependency as an allocation-independent value.
     ///
     /// Executor/input-stack facts return `None`; their owning layer must add
@@ -1423,7 +1434,7 @@ impl Universe {
         };
         match key {
             DependencyKey::Meaning(raw) => {
-                let symbol = self.stores.resolve_stored_symbol(Symbol::new(raw));
+                let symbol = self.stores.try_resolve_stored_symbol(Symbol::new(raw))?;
                 let meaning = self.meaning(symbol);
                 let mut build = |hash: &mut EngineBoundaryHasher<'_>| hash.meaning(meaning);
                 Some(projection(&mut build))
@@ -1676,6 +1687,44 @@ impl Universe {
     #[must_use]
     pub const fn paragraph_memo_enabled(&self) -> bool {
         self.pure_memo.paragraph_front_ends_enabled()
+    }
+
+    #[must_use]
+    pub const fn pretolerance_memo_enabled(&self) -> bool {
+        self.pure_memo.pretolerance_enabled()
+    }
+
+    #[must_use]
+    pub const fn page_memo_enabled(&self) -> bool {
+        self.pure_memo.page_episodes_enabled()
+    }
+
+    #[must_use]
+    pub const fn shipout_memo_enabled(&self) -> bool {
+        self.pure_memo.shipout_episodes_enabled()
+    }
+
+    #[doc(hidden)]
+    pub fn record_pure_memo_timing(
+        &mut self,
+        layer: crate::PureMemoLayer,
+        phase: crate::MemoTimingPhase,
+        elapsed: std::time::Duration,
+    ) {
+        self.pure_memo.record_timing(layer, phase, elapsed);
+    }
+
+    #[doc(hidden)]
+    pub fn record_pure_memo_not_attempted(&mut self, layer: crate::PureMemoLayer) {
+        self.pure_memo.record_not_attempted(layer);
+    }
+
+    #[doc(hidden)]
+    pub fn record_pure_paragraph_validation_failure(
+        &mut self,
+        reason: crate::ParagraphValidationFailure,
+    ) {
+        self.pure_memo.record_paragraph_validation_failure(reason);
     }
 
     #[doc(hidden)]

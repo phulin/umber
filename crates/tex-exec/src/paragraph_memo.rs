@@ -5,8 +5,8 @@ use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::token::{Catcode, Token};
 use tex_state::{
-    ContentHash, DetachedVirtualEffect, EffectRecord, ExpansionState, PrintSink, PureMemoKey,
-    Universe,
+    ContentHash, DetachedVirtualEffect, EffectRecord, ExpansionState, MemoTimingPhase,
+    ParagraphValidationFailure, PrintSink, PureMemoKey, PureMemoLayer, Universe,
 };
 
 use crate::{ExecError, ExecutionContext, ExecutionStats, ModeNest};
@@ -163,11 +163,14 @@ pub(crate) fn try_reuse_literal_paragraph(
         stores.begin_pure_paragraph_recording();
         return Ok(false);
     };
-    let dependencies_valid = stores.validate_dependencies(&mut entry.dependencies, |key| {
-        stores
-            .semantic_dependency_value(key)
-            .unwrap_or(tex_state::DependencyValue::Absent)
-    });
+    #[allow(clippy::disallowed_methods)]
+    let validation_started = std::time::Instant::now();
+    let dependency_failure =
+        stores.validate_dependencies_with_failure(&mut entry.dependencies, |key| {
+            stores
+                .semantic_dependency_value(key)
+                .unwrap_or(tex_state::DependencyValue::Absent)
+        });
     let prepared_input = stable_candidate.then(|| {
         entry
             .starting_span
@@ -186,24 +189,42 @@ pub(crate) fn try_reuse_literal_paragraph(
         || scanned_input
             .as_ref()
             .is_some_and(|current| current.paragraph_transition_matches(&entry.ending_input));
-    if !dependencies_valid
-        || !validate_mutations(stores, &entry.mutations)
-        || !validate_effects(&entry.effects)
-        || !input_valid
-    {
-        stores.record_pure_paragraph_validation_miss();
+    let validation_failure = dependency_failure
+        .map(ParagraphValidationFailure::from_dependency)
+        .or_else(|| {
+            (!validate_mutations(stores, &entry.mutations))
+                .then_some(ParagraphValidationFailure::Mutation)
+        })
+        .or_else(|| {
+            (!validate_effects(&entry.effects)).then_some(ParagraphValidationFailure::Effect)
+        })
+        .or_else(|| (!input_valid).then_some(ParagraphValidationFailure::InputTransition));
+    stores.record_pure_memo_timing(
+        PureMemoLayer::Paragraph,
+        MemoTimingPhase::Validation,
+        validation_started.elapsed(),
+    );
+    if let Some(failure) = validation_failure {
+        stores.record_pure_paragraph_validation_failure(failure);
         crate::push_traced_tokens(input, stores, traced);
         stores.begin_pure_paragraph_recording();
         return Ok(false);
     }
     let Some(retained) = entry.hlist else {
-        stores.record_pure_paragraph_validation_miss();
+        stores.record_pure_paragraph_validation_failure(ParagraphValidationFailure::RetainedResult);
         crate::push_traced_tokens(input, stores, traced);
         return Ok(false);
     };
+    #[allow(clippy::disallowed_methods)]
+    let import_started = std::time::Instant::now();
     let list = match stores.import_retained_paragraph_result(retained) {
         Some(list) => list,
         None => {
+            stores.record_pure_memo_timing(
+                PureMemoLayer::Paragraph,
+                MemoTimingPhase::Import,
+                import_started.elapsed(),
+            );
             stores.record_pure_paragraph_import_failure();
             crate::push_traced_tokens(input, stores, traced);
             stores.begin_pure_paragraph_recording();
@@ -217,6 +238,11 @@ pub(crate) fn try_reuse_literal_paragraph(
     let imported_lines = entry
         .lines
         .and_then(|lines| stores.import_retained_paragraph_result(lines));
+    stores.record_pure_memo_timing(
+        PureMemoLayer::Paragraph,
+        MemoTimingPhase::Import,
+        import_started.elapsed(),
+    );
     if let Some(prepared) = prepared_input.flatten() {
         let transition_applied = input.apply_paragraph_transition(stores, prepared)?;
         assert!(
@@ -246,12 +272,24 @@ pub(crate) fn try_reuse_literal_paragraph(
         .map(|node| node.to_owned())
         .collect();
     rebind_literal_origins(&mut nodes, &current_trace_origins, &entry.origin_ordinals);
-    let lines_valid = imported_lines.is_some()
-        && stores.validate_dependencies(&mut entry.break_dependencies, |key| {
+    #[allow(clippy::disallowed_methods)]
+    let line_validation_started = std::time::Instant::now();
+    let line_dependency_failure =
+        stores.validate_dependencies_with_failure(&mut entry.break_dependencies, |key| {
             stores
                 .semantic_dependency_value(key)
                 .unwrap_or(tex_state::DependencyValue::Absent)
         });
+    let lines_valid = imported_lines.is_some() && line_dependency_failure.is_none();
+    stores.record_pure_memo_timing(
+        PureMemoLayer::Paragraph,
+        MemoTimingPhase::Validation,
+        line_validation_started.elapsed(),
+    );
+    if line_dependency_failure.is_some() {
+        stores
+            .record_pure_paragraph_validation_failure(ParagraphValidationFailure::BreakDependency);
+    }
     let mut lines = imported_lines.map(|list| {
         stores
             .nodes(list)

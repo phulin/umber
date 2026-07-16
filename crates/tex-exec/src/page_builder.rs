@@ -8,7 +8,10 @@ use tex_state::page::{
     PageInsertionStatus,
 };
 use tex_state::scaled::{Scaled, nx_plus_y, x_over_n};
-use tex_state::{ContentHash, MemoValueLimits, PureMemoKey, PurePageEntry, Universe};
+use tex_state::{
+    ContentHash, MemoTimingPhase, MemoValueLimits, PureMemoKey, PureMemoLayer, PurePageEntry,
+    Universe,
+};
 use tex_typeset::{INF_BAD, VerticalBreakError, badness, vert_break};
 
 use crate::{ExecError, diagnostics};
@@ -21,12 +24,27 @@ pub(crate) fn build_page(stores: &mut Universe) -> Result<(), ExecError> {
     if stores.page_fire_up().is_some() {
         return Ok(());
     }
-    if stores.page_contributions().is_empty() || !stores.pure_memo_enabled() {
+    if stores.page_contributions().is_empty() {
         return build_page_cold(stores);
     }
+    if !stores.page_memo_enabled() {
+        if stores.pure_memo_enabled() {
+            stores.record_pure_memo_not_attempted(PureMemoLayer::Page);
+        }
+        return build_page_cold(stores);
+    }
+    #[allow(clippy::disallowed_methods)]
+    let validation_started = std::time::Instant::now();
     let key = page_episode_key(stores);
+    stores.record_pure_memo_timing(
+        PureMemoLayer::Page,
+        MemoTimingPhase::Validation,
+        validation_started.elapsed(),
+    );
     let input_origins = stores.page_memo_origins().ok();
     if let Some(entry) = stores.lookup_pure_page(key) {
+        #[allow(clippy::disallowed_methods)]
+        let import_started = std::time::Instant::now();
         let imported_bytes = entry.transition.retained_bytes();
         let replay_origins = input_origins.as_ref().map(|input_origins| {
             entry
@@ -41,11 +59,17 @@ pub(crate) fn build_page(stores: &mut Universe) -> Result<(), ExecError> {
                 })
                 .collect::<Vec<_>>()
         });
-        if replay_origins.as_ref().is_some_and(|origins| {
+        let imported = replay_origins.as_ref().is_some_and(|origins| {
             stores
                 .import_page_memo_transition(&entry.transition, MemoValueLimits::default(), origins)
                 .is_ok()
-        }) {
+        });
+        stores.record_pure_memo_timing(
+            PureMemoLayer::Page,
+            MemoTimingPhase::Import,
+            import_started.elapsed(),
+        );
+        if imported {
             stores.record_pure_page_hit(entry.contributions, imported_bytes);
             return Ok(());
         }

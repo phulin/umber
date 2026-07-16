@@ -3,8 +3,8 @@ use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::node::Node;
 use tex_state::token::TracedTokenWord;
 use tex_state::{
-    ContentHash, DetachedArtifact, MemoValueLimits, PrintSink, PureMemoKey, PureShipoutEntry,
-    Universe,
+    ContentHash, DetachedArtifact, MemoTimingPhase, MemoValueLimits, PrintSink, PureMemoKey,
+    PureMemoLayer, PureShipoutEntry, Universe,
 };
 
 use super::scan_required_box_node;
@@ -47,10 +47,23 @@ pub(crate) fn shipout_node(
         );
         return Ok(None);
     }
-    let cacheable = effect_free_shipout_graph(stores, &node)
+    if stores.pure_memo_enabled() && !stores.shipout_memo_enabled() {
+        stores.record_pure_memo_not_attempted(PureMemoLayer::Shipout);
+    }
+    let cacheable = stores.shipout_memo_enabled()
+        && effect_free_shipout_graph(stores, &node)
         && stores.world().effect_records().is_empty()
         && (1..=32_768).contains(&stores.int_param(IntParam::MAG));
+    #[allow(clippy::disallowed_methods)]
+    let validation_started = std::time::Instant::now();
     let key = cacheable.then(|| shipout_key(stores, &node));
+    if cacheable {
+        stores.record_pure_memo_timing(
+            PureMemoLayer::Shipout,
+            MemoTimingPhase::Validation,
+            validation_started.elapsed(),
+        );
+    }
     let input_origins = if cacheable {
         stores.node_memo_origins(&node).ok()
     } else {
@@ -60,6 +73,8 @@ pub(crate) fn shipout_node(
     if let (Some(key), Some(input_origins)) = (key, input_origins.as_ref())
         && let Some(entry) = stores.lookup_pure_shipout(key)
     {
+        #[allow(clippy::disallowed_methods)]
+        let import_started = std::time::Instant::now();
         let detached = entry.artifact.artifact(MemoValueLimits::default());
         if let Ok(detached) = detached {
             let render_origins = entry
@@ -80,9 +95,19 @@ pub(crate) fn shipout_node(
                 .collect();
             let imported_bytes = entry.artifact.retained_bytes();
             stores.commit_replayed_artifact(detached.payload, render_origins)?;
+            stores.record_pure_memo_timing(
+                PureMemoLayer::Shipout,
+                MemoTimingPhase::Import,
+                import_started.elapsed(),
+            );
             stores.record_pure_shipout_hit(imported_bytes);
             return Ok(None);
         }
+        stores.record_pure_memo_timing(
+            PureMemoLayer::Shipout,
+            MemoTimingPhase::Import,
+            import_started.elapsed(),
+        );
         stores.reject_pure_memo(key);
     }
     let effect_start = stores.world().effect_records().len();

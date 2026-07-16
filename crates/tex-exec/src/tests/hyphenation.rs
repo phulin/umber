@@ -1,5 +1,17 @@
 use super::support::*;
 use super::*;
+
+fn pretolerance_memo_config() -> tex_state::PureMemoConfig {
+    tex_state::PureMemoConfig {
+        recording: tex_state::PureMemoRecordingPolicy {
+            pretolerance: true,
+            paragraphs: false,
+            pages: false,
+            shipouts: false,
+        },
+        ..tex_state::PureMemoConfig::default()
+    }
+}
 use tex_state::node::{GlueKind, Node};
 use tex_state::scaled::Scaled;
 
@@ -298,12 +310,11 @@ fn successful_pretolerance_does_not_allocate_hyphenation_nodes() {
 
 #[test]
 fn pretolerance_memo_hits_and_every_explicit_parameter_changes_its_strong_key() {
-    use tex_state::PureMemoConfig;
     use tex_state::glue::GlueSpec;
     use tex_typeset::linebreak::{LineShape, LineShapeEntry, ParagraphShape};
 
     let mut stores = Universe::new();
-    stores.enable_pure_memo(PureMemoConfig::default());
+    stores.enable_pure_memo(pretolerance_memo_config());
     let nodes = vec![
         Node::Rule {
             width: Some(Scaled::from_raw(10)),
@@ -418,10 +429,10 @@ fn pretolerance_memo_hits_and_every_explicit_parameter_changes_its_strong_key() 
 
 #[test]
 fn malformed_pretolerance_entry_is_rejected_and_recomputed() {
-    use tex_state::{DetachedMemoValue, DetachedPureKernelPlan, PureMemoConfig, PureMemoStats};
+    use tex_state::{DetachedMemoValue, DetachedPureKernelPlan, PureMemoStats};
 
     let mut stores = Universe::new();
-    stores.enable_pure_memo(PureMemoConfig::default());
+    stores.enable_pure_memo(pretolerance_memo_config());
     let nodes = vec![Node::Penalty(-10_000)];
     let params = tex_typeset::linebreak::LineBreakParams {
         pdf_adjust_spacing: 0,
@@ -471,7 +482,7 @@ fn enabled_pretolerance_memo_preserves_end_to_end_state_effects_and_dvi() {
         tex_expand::install_expandable_primitives(&mut stores);
         install_unexpandable_primitives(&mut stores);
         if enabled {
-            stores.enable_pure_memo(tex_state::PureMemoConfig::default());
+            stores.enable_pure_memo(pretolerance_memo_config());
         }
         let source = r"\hsize=20pt \pretolerance=10000
             identical paragraph text\par
@@ -532,7 +543,7 @@ fn literal_paragraph_front_end_reuses_hlist_and_preserves_output() {
     assert_eq!(memo_dvi, cold_dvi);
     assert_eq!(memo_hash, cold_hash);
     assert_eq!(stats.paragraph_hits, 0, "{stats:?}");
-    assert_eq!(stats.paragraph_inserts, 0, "{stats:?}");
+    assert_eq!(stats.paragraph_inserts, 3, "{stats:?}");
     assert_eq!(stats.paragraph_commands_skipped, 0);
     assert_eq!(stats.paragraph_imported_bytes, 0);
     assert_eq!(stats.paragraph_eligible_regions, 3, "{stats:?}");
@@ -716,7 +727,7 @@ fn randomized_pretolerance_cache_differential_matches_disabled_kernel() {
         ..tex_state::glue::GlueSpec::ZERO
     });
     let mut enabled = disabled.clone();
-    enabled.enable_pure_memo(tex_state::PureMemoConfig::default());
+    enabled.enable_pure_memo(pretolerance_memo_config());
     let mut seed = 0x9e37_79b9_u32;
 
     for case in 0..128 {

@@ -623,14 +623,24 @@ retain the O(1) snapshot path.
 
 ## Cache ownership, trust, and eviction
 
-The first cache is session-local, single-threaded, and byte-budgeted. It owns
-detached semantic values and stable input metadata independently of one
-`Universe` generation. It uses deterministic LRU or clock eviction with
-per-kind retained-byte and hit/miss accounting.
+The detached cache is session-local, single-threaded, and byte-budgeted. It
+owns detached semantic values independently of one `Universe` generation.
+Recording policy is configured per layer. The default records only paragraph
+regions, which are not detached-cache entries: their trace metadata and node
+roots belong to the prior accepted generation and are replaced wholesale on
+acceptance. Pretolerance, page, and shipout recording are opt-in experiments.
 
-Checkpoint-root retention, memo-result retention, and required accepted-output
-retention are reported separately. Evicting a memo entry never evicts accepted
-output or the named checkpoints required for correctness fallback.
+Detached admission is scan resistant through a first-reuse protection rule.
+Once admitted, an entry cannot be evicted until it has received its first
+lookup opportunity. If the protected working set fills the byte or entry
+budget, later values are not admitted instead of evicting earlier values before
+they can possibly hit. Focused state tests cover this budget-fit invariant.
+After first lookup, deterministic CLOCK eviction applies normally.
+
+Checkpoint-root retention, detached memo-result retention,
+generation-anchored paragraph metadata, and required accepted-output retention
+are reported separately. Evicting a memo entry never evicts accepted output,
+paragraph-generation roots, or named checkpoints required for fallback.
 
 Cross-run persistence is considered only after session-local measurements show
 material benefit. Persistent entries include:
@@ -650,14 +660,23 @@ cache entry may authorize a host-visible effect.
 
 Every accepted revision reports per layer:
 
-- lookup count, hit count, miss count, and invalidation reason;
+- lookup count, hit count, and misses split into not-attempted, barrier (with
+  barrier kind), key miss, validation failure (with first failing dependency
+  family), evicted-before-reuse, and import failure;
 - bytes mapped, tokens delivered, commands skipped, paragraphs reused,
   line-breaking plans reused, page episodes reused, and pages adopted;
-- lookup, dependency-validation, semantic-comparison, import, replay,
+- record, lookup, dependency-validation/key-construction, import, replay,
   execution, page-building, splice, and output-write latency;
-- cache-entry count, logical bytes, retained bytes, evictions, and protected
-  output/checkpoint bytes; and
-- disabled-path overhead under paired interleaved measurement.
+- detached-cache entry count, logical bytes, retained bytes, evictions,
+  generation paragraph-metadata bytes, and protected output/checkpoint bytes;
+  and
+- disabled-path overhead under order-balanced paired interleaved measurement.
+
+The Gentle runner measures three accepted revisions in one session—the pinned
+edit, a follow-up edit, and removal of that follow-up—and verifies every mode
+against a fresh cold DVI for the corresponding revision. Adjacent disabled and
+enabled samples alternate AB/BA order, and conclusions use their paired
+differences rather than independent sequential means.
 
 The edit corpus includes:
 

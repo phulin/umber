@@ -452,10 +452,21 @@ impl DependencyTracker {
     pub fn validate_region(
         &self,
         observations: &mut [ObservedDependency],
-        mut read_current: impl FnMut(DependencyKey) -> DependencyValue,
+        read_current: impl FnMut(DependencyKey) -> DependencyValue,
     ) -> bool {
-        observations.iter_mut().all(|observation| {
-            self.validate(observation, &mut read_current) != DependencyValidation::Changed
+        self.validate_region_failure(observations, read_current)
+            .is_none()
+    }
+
+    /// Validates a deterministic region and returns its first red key.
+    pub fn validate_region_failure(
+        &self,
+        observations: &mut [ObservedDependency],
+        mut read_current: impl FnMut(DependencyKey) -> DependencyValue,
+    ) -> Option<DependencyKey> {
+        observations.iter_mut().find_map(|observation| {
+            (self.validate(observation, &mut read_current) == DependencyValidation::Changed)
+                .then_some(observation.key)
         })
     }
 }

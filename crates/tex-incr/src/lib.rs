@@ -376,10 +376,7 @@ impl Session {
         let mut output_id = [0; 16];
         getrandom::fill(&mut output_id).map_err(SessionError::OutputIdentity)?;
         let mut template = template;
-        let mut pure_memo = template.take_pure_memo_runtime();
-        pure_memo.enable_paragraph_front_ends();
-        pure_memo.enable_page_episodes();
-        pure_memo.enable_shipout_episodes();
+        let pure_memo = template.take_pure_memo_runtime();
         Ok(Self {
             template,
             pure_memo,

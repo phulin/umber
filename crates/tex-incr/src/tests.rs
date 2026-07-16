@@ -1,5 +1,12 @@
 use super::*;
 
+fn all_memo_layers() -> tex_state::PureMemoConfig {
+    tex_state::PureMemoConfig {
+        recording: tex_state::PureMemoRecordingPolicy::all(),
+        ..tex_state::PureMemoConfig::default()
+    }
+}
+
 use tex_state::RootSpanId;
 use tex_state::input::SourceId;
 use tex_state::token::{Catcode, Token, TracedTokenWord};
@@ -59,7 +66,7 @@ fn root_span_at(session: &Session, range: std::ops::Range<usize>) -> RootSpanId 
 #[test]
 fn pure_memo_runtime_survives_accepted_revisions() {
     let mut universe = template();
-    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    universe.enable_pure_memo(all_memo_layers());
     let paragraph = "\\vrule width1pt height1pt \\vrule width1pt height1pt";
     let source = format!(
         "\\hsize=20pt\\pretolerance=10000 {paragraph}\\par\n\\prevgraf=0 {paragraph}\\par\n\\vfill\\eject\\end"
@@ -272,7 +279,7 @@ fn paragraph_front_end_keys_macro_paragraphs_before_expansion() {
 #[test]
 fn paragraph_front_end_rejects_changed_raw_span_before_reusing_later_macros() {
     let mut universe = template();
-    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    universe.enable_pure_memo(all_memo_layers());
     let source = "\\def\\body#1{macro #1 paragraph text}\n\\body{one}\\par\n\\body{two\ncontinued}\\par\n\\body{three}\\par\n\\vfill\\eject\\end";
     let mut session = Session::start(
         universe,
@@ -307,7 +314,7 @@ fn paragraph_front_end_rejects_changed_raw_span_before_reusing_later_macros() {
     let mut edited = source.to_owned();
     edited.replace_range(start..start + "continued".len(), "altered");
     let mut cold_universe = template();
-    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    cold_universe.enable_pure_memo(all_memo_layers());
     let mut cold = Session::start(
         cold_universe,
         "paragraph-macro-span-validation",

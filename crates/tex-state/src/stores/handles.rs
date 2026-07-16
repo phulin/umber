@@ -183,6 +183,10 @@ impl Stores {
             .expect("stored symbol slot is not live")
     }
 
+    pub(crate) fn try_resolve_stored_symbol(&self, symbol: Symbol) -> Option<SymbolId> {
+        self.interner.resolve_stored(symbol)
+    }
+
     pub(crate) fn resolve_symbol_reference(&self, symbol: impl SymbolReference) -> SymbolId {
         if let Some(id) = symbol.live_id() {
             self.assert_live_symbol(id);
