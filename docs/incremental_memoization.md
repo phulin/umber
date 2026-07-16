@@ -799,6 +799,24 @@ otherwise-valid downstream candidates (93.8%). The memo-enabled incremental
 DVI was byte-identical to both memo-disabled incremental execution and the cold
 edited 98-page, 278,000-byte result.
 
+An independent five-sample rerun on 2026-07-16 confirmed the 121 full-line
+paragraph hits, zero hlist fallbacks, zero import failures, and the same exact
+98-page DVI parity, but did not satisfy the latency gate. Memo-disabled
+incremental execution measured 6.409 seconds mean and 2.967 seconds median;
+memo-enabled measured 9.446 seconds mean and 8.562 seconds median. The enabled
+path therefore lost by 47.4% on the means and 188.6% on the medians. Its
+remaining detached cache made 8,754 lookups, retained 66,899,304 bytes, and
+evicted 6,721 entries; page episodes alone made 5,378 lookups for 30 hits while
+the pagination-shifting edit necessarily retyped 84 pages. Paragraph telemetry
+reported 45 validation misses and no import failures. Of 845 recorded barrier
+events, the runner attributed 103 to display math, one to a mid-paragraph input
+open, and 104 to output routines; the remaining reason distribution is not yet
+printed by the runner. Separated lookup, validation, import, and recording
+latencies plus the complete reason taxonomy remain tracked by
+`umber2-vfqs.16`, so this run cannot independently prove the per-paragraph cost
+criterion even though it demonstrates that the stable-start candidate repair
+engages the intended population.
+
 These runs also strengthen the removal case for the isolated caches. The
 standalone expansion episode has no useful Gentle traffic, while the bounded
 pretolerance plan is subsumed on the editing path by accepted-generation

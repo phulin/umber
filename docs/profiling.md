@@ -62,6 +62,19 @@ Both incremental modes produced the cold compile's exact 98-page, 278,000-byte
 DVI. This is an intentional page-divergence stress case, not the expected case
 for suffix reuse.
 
+After stable pre-delivery paragraph anchors landed, an independent five-sample
+rerun on 2026-07-16 preserved that exact DVI and raised the downstream eligible
+paragraph result to 121 of 129 candidates (93.8%). Memo-enabled execution still
+lost to memo-disabled execution: 9.446 versus 6.409 seconds by the means and
+8.562 versus 2.967 seconds by the medians. The general detached cache retained
+66,899,304 bytes and evicted 6,721 entries; page episodes made 5,378 lookups for
+30 hits on the deliberately pagination-shifting edit. These observations do
+not close the performance gate. Complete per-layer miss reasons and separated
+record, lookup, validation, and import timings are required before attributing
+the paragraph layer's own cost; that instrumentation is tracked by
+`umber2-vfqs.16`. Removal of the standalone expansion-episode and pretolerance
+caches remains tracked by `umber2-vfqs.17`.
+
 The runner requires the same external inputs as Gentle conformance. Populate
 them with `scripts/setup-conformance-tests.sh` if necessary.
 
