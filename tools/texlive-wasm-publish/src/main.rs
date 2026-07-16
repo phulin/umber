@@ -5,7 +5,8 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use texlive_wasm_publish::{PublishConfig, publish, tree_sha256};
+use texlive_wasm_publish::{PublishConfig, publish, tree_sha256, verify_sharded_snapshot};
+use umber_distribution::Manifest;
 
 fn main() -> Result<()> {
     let mut arguments = env::args_os().skip(1);
@@ -20,6 +21,45 @@ fn main() -> Result<()> {
             bail!("unexpected argument after --tree-sha256 ROOT");
         }
         println!("{}", tree_sha256(Path::new(&root))?);
+        return Ok(());
+    }
+    if config_path == "--shard-existing" {
+        let Some(staging) = arguments.next() else {
+            bail!("missing STAGING after --shard-existing");
+        };
+        let Some(flag) = arguments.next() else {
+            bail!("missing --shard-bits after --shard-existing STAGING");
+        };
+        if flag != "--shard-bits" {
+            bail!("expected --shard-bits after --shard-existing STAGING");
+        }
+        let Some(bits) = arguments.next() else {
+            bail!("missing BITS after --shard-bits");
+        };
+        if arguments.next().is_some() {
+            bail!("unexpected argument after --shard-bits BITS");
+        }
+        let bits = bits
+            .to_string_lossy()
+            .parse::<u8>()
+            .context("parse shard bits")?;
+        let staging = Path::new(&staging);
+        let text = fs::read_to_string(staging.join("manifest.json"))
+            .context("read existing monolithic manifest")?;
+        let manifest = Manifest::parse(&text).context("parse existing monolithic manifest")?;
+        let publication = texlive_wasm_publish::write_sharded_manifest(&manifest, bits, staging)?;
+        texlive_wasm_publish::prune_unreferenced_objects(staging, &publication)?;
+        verify_sharded_snapshot(staging)?;
+        return Ok(());
+    }
+    if config_path == "--verify-sharded" {
+        let Some(staging) = arguments.next() else {
+            bail!("missing STAGING after --verify-sharded");
+        };
+        if arguments.next().is_some() {
+            bail!("unexpected argument after --verify-sharded STAGING");
+        }
+        verify_sharded_snapshot(Path::new(&staging))?;
         return Ok(());
     }
     let Some(output_path) = arguments.next() else {
