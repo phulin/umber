@@ -39,15 +39,31 @@ GENTLE_PROFILE_ITERATIONS=200 scripts/profile-gentle.sh --checkpoints
 ```
 
 Pass `--incremental-edit` to measure a fixed semantic prose edit 20% through
-`gentle.tex`. The runner interleaves memo-disabled incremental execution,
-memo-enabled incremental execution, and a cold compile of the edited document;
-it reports latency and reuse/memo telemetry and requires both incremental modes
-to produce the cold compile's exact DVI bytes:
+`gentle.tex`. Every sample keeps one session alive for three accepted revisions:
+the pinned large edit, a follow-up insertion in that paragraph, and removal of
+the follow-up. Adjacent disabled/enabled samples alternate AB/BA order, so the
+iteration count must be even. The runner reports paired latency differences
+for each revision. Both modes must produce the exact DVI bytes of a fresh cold
+compile of the corresponding revision:
 
 ```bash
 cargo run --profile profiling -p umber --bin gentle-profile -- \
-  --repo-root /path/to/umber2 --incremental-edit --iterations 5 --warmups 1
+  --repo-root /path/to/umber2 --incremental-edit --iterations 6 --warmups 1
 ```
+
+Select recording layers with `--memo-layers`. The default is `paragraph`, whose
+results and trace metadata belong to the accepted generation. Explicit
+experiments may select comma-separated
+`pretolerance,paragraph,page,shipout`, `all`, or `none`. Detached layers are
+off by default until they demonstrate steady-state value and budget fit.
+
+For every accepted edit, each layer reports lookups, hits, inserts, evictions,
+retained bytes, and misses split into not attempted, ineligible barrier, key
+miss, first validation failure, evicted before reuse, and import failure.
+Paragraph barrier reasons and the first failing dependency family are printed
+separately. Record, lookup, validation/key construction, and import time are
+reported independently. Generation-anchored paragraph metadata bytes are
+reported separately from detached-cache bytes.
 
 The fixed edit inserts 1,792 words into one paragraph beginning 19.66% through
 the source. It deliberately changes both line and page breaking: the pinned
@@ -68,12 +84,14 @@ paragraph result to 121 of 129 candidates (93.8%). Memo-enabled execution still
 lost to memo-disabled execution: 9.446 versus 6.409 seconds by the means and
 8.562 versus 2.967 seconds by the medians. The general detached cache retained
 66,899,304 bytes and evicted 6,721 entries; page episodes made 5,378 lookups for
-30 hits on the deliberately pagination-shifting edit. These observations do
-not close the performance gate. Complete per-layer miss reasons and separated
-record, lookup, validation, and import timings are required before attributing
-the paragraph layer's own cost; that instrumentation is tracked by
-`umber2-vfqs.16`. Removal of the standalone expansion-episode and pretolerance
-caches remains tracked by `umber2-vfqs.17`.
+30 hits on the deliberately pagination-shifting edit. These historical
+observations did not support a per-layer verdict: they used weak unpaired
+samples, measured only the first accepted edit, and bundled recording with
+reuse. They remain provenance for the instrumentation change, not the current
+release conclusion. The runner now supplies the missing taxonomy, phase
+timings, steady-state edits, and paired ordering described above. Removal of
+the standalone expansion-episode and pretolerance caches remains tracked by
+`umber2-vfqs.17`.
 
 The runner requires the same external inputs as Gentle conformance. Populate
 them with `scripts/setup-conformance-tests.sh` if necessary.
