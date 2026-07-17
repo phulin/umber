@@ -2630,34 +2630,31 @@ fn exact_immutable_store_growth_hashes_only_new_append_entries() {
 }
 
 #[test]
-fn exact_immutable_store_cache_retains_accepted_and_scratch_lineages() {
+fn exact_immutable_store_cache_tracks_live_accepted_and_scratch_lineages() {
     let mut universe = Universe::new();
-    let anchor = universe.snapshot();
-    let mut accepted = Vec::new();
+    let anchor = universe.snapshot_with_exact_identity();
+    let accepted_before = universe.stores.testing_exact_immutable_leaves();
     for index in 0..8 {
         universe.intern(&format!("accepted-{index}"));
-        accepted.push(universe.snapshot());
+        let _ = universe.snapshot_with_exact_identity();
     }
+    assert_eq!(
+        universe.stores.testing_exact_immutable_leaves() - accepted_before,
+        8,
+        "live accepted boundaries must hash each new append entry once"
+    );
+
     let substrate = universe.freeze_generation();
     let mut scratch = substrate.fork_at(&anchor).expect("scratch fork");
-    let _ = scratch.snapshot_with_exact_identity();
-    let before = scratch.stores.testing_exact_immutable_leaves();
-
-    for (index, checkpoint) in accepted.iter().enumerate() {
-        let _ = substrate
-            .snapshot_with_exact_identity(checkpoint)
-            .expect("accepted exact identity");
+    let scratch_before = scratch.stores.testing_exact_immutable_leaves();
+    for index in 0..8 {
         scratch.intern(&format!("scratch-{index}"));
         let _ = scratch.snapshot_with_exact_identity();
     }
-
-    let encoded = scratch
-        .stores
-        .testing_exact_immutable_leaves()
-        .saturating_sub(before);
-    assert!(
-        encoded <= 16,
-        "the two append-only lineages must each encode every new name at most once; encoded {encoded} leaves"
+    assert_eq!(
+        scratch.stores.testing_exact_immutable_leaves() - scratch_before,
+        8,
+        "live scratch boundaries must hash each new append entry once"
     );
 }
 

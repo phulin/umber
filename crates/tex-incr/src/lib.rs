@@ -7,7 +7,6 @@ use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::OnceLock;
 use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
@@ -74,7 +73,6 @@ pub struct BoundaryRecord {
     effect_prefix: usize,
     artifact_prefix: usize,
     checkpoint: EngineCheckpoint,
-    exact_checkpoint: Arc<OnceLock<EngineCheckpoint>>,
 }
 
 impl BoundaryRecord {
@@ -106,20 +104,6 @@ impl BoundaryRecord {
     #[must_use]
     pub const fn checkpoint(&self) -> &EngineCheckpoint {
         &self.checkpoint
-    }
-
-    fn exact_checkpoint<'a>(
-        &'a self,
-        substrate: &GenerationSubstrate,
-    ) -> Result<&'a EngineCheckpoint, GenerationForkError> {
-        if self.exact_checkpoint.get().is_none() {
-            let checkpoint = self.checkpoint.with_exact_state_identity(substrate)?;
-            let _ = self.exact_checkpoint.set(checkpoint);
-        }
-        Ok(self
-            .exact_checkpoint
-            .get()
-            .expect("exact checkpoint was initialized or concurrently supplied"))
     }
 }
 
@@ -1422,6 +1406,10 @@ struct HistorySink {
 }
 
 impl CheckpointSink for HistorySink {
+    fn wants_exact_state_identity(&self, _boundary: EngineBoundary, _root_anchor: usize) -> bool {
+        true
+    }
+
     fn checkpoint(&mut self, checkpoint: EngineCheckpoint) {
         push_checkpoint(&mut self.records, &mut self.occurrences, checkpoint);
     }
@@ -1539,7 +1527,7 @@ struct AdvanceRun {
     output_snapshot_latency: Duration,
 }
 
-struct ResumeSink<'a> {
+struct ResumeSink {
     records: Vec<BoundaryRecord>,
     occurrences: HashMap<(usize, EngineBoundary), u32>,
     expected: Vec<(usize, BoundaryKey, BoundaryRecord)>,
@@ -1550,16 +1538,10 @@ struct ResumeSink<'a> {
     same_history_attempts: usize,
     same_history_hash_mismatches: usize,
     trace_validation_latency: Duration,
-    substrate: &'a GenerationSubstrate,
 }
 
-impl<'a> ResumeSink<'a> {
-    fn new(
-        old: &[BoundaryRecord],
-        restart: usize,
-        map: &EditMap,
-        substrate: &'a GenerationSubstrate,
-    ) -> Self {
+impl ResumeSink {
+    fn new(old: &[BoundaryRecord], restart: usize, map: &EditMap) -> Self {
         let mut occurrences = HashMap::new();
         for record in &old[..=restart] {
             occurrences
@@ -1594,33 +1576,16 @@ impl<'a> ResumeSink<'a> {
             same_history_attempts: 0,
             same_history_hash_mismatches: 0,
             trace_validation_latency: Duration::ZERO,
-            substrate,
-        }
-    }
-
-    fn prospective_key(&self, boundary: EngineBoundary, position: usize) -> BoundaryKey {
-        BoundaryKey {
-            position,
-            boundary,
-            ordinal: self
-                .occurrences
-                .get(&(position, boundary))
-                .copied()
-                .unwrap_or_default(),
         }
     }
 }
 
-impl CheckpointSink for ResumeSink<'_> {
-    fn wants_exact_state_identity(&self, boundary: EngineBoundary, root_anchor: usize) -> bool {
-        if self.schedule_diverged || self.changed_new_range.contains(&root_anchor) {
-            return false;
-        }
-        self.expected
-            .get(self.next_expected)
-            .is_some_and(|(_, expected, _)| {
-                self.prospective_key(boundary, root_anchor) == *expected
-            })
+impl CheckpointSink for ResumeSink {
+    fn wants_exact_state_identity(&self, _boundary: EngineBoundary, _root_anchor: usize) -> bool {
+        // Every checkpoint may become accepted history if this revision does not
+        // converge. Capture its canonical identity while its Universe state is
+        // live so a later revision never has to reconstruct it by rollback.
+        true
     }
 
     fn stop_requested(&self) -> bool {
@@ -1649,10 +1614,9 @@ impl CheckpointSink for ResumeSink<'_> {
         self.next_expected += 1;
         self.same_history_attempts += 1;
         let validation_started = Timer::start();
-        let exact_match = actual.checkpoint().has_exact_state_identity()
-            && expected_record
-                .exact_checkpoint(self.substrate)
-                .is_ok_and(|expected| actual.checkpoint().exact_future_state_matches(expected));
+        let exact_match = actual
+            .checkpoint()
+            .exact_future_state_matches(expected_record.checkpoint());
         self.trace_validation_latency = self
             .trace_validation_latency
             .saturating_add(validation_started.elapsed());
@@ -1678,17 +1642,12 @@ fn push_checkpoint(
         ordinal: *ordinal,
     };
     *ordinal = ordinal.saturating_add(1);
-    let exact_checkpoint = Arc::new(OnceLock::new());
-    if checkpoint.has_exact_state_identity() {
-        let _ = exact_checkpoint.set(checkpoint.clone());
-    }
     records.push(BoundaryRecord {
         revision: RevisionId::new(0),
         key,
         effect_prefix: checkpoint.effect_prefix_len(),
         artifact_prefix: checkpoint.artifact_prefix_len(),
         checkpoint,
-        exact_checkpoint,
     });
 }
 
@@ -1730,7 +1689,7 @@ fn execute_advance(
     for (path, bytes) in registered_inputs {
         scratch.world_mut().set_memory_file(path, bytes.clone())?;
     }
-    let mut sink = ResumeSink::new(old_history, restart, map, substrate);
+    let mut sink = ResumeSink::new(old_history, restart, map);
     let mut context = match image_resolver {
         Some(image_resolver) => ExecutionContext::with_resource_resolvers(
             job_name,

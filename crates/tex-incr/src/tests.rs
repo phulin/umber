@@ -845,7 +845,7 @@ fn rendered_source_queries_reject_another_revision_one_session() {
 }
 
 #[test]
-fn no_op_revision_converges_at_first_eligible_boundary() {
+fn accepted_history_retains_live_identities_for_direct_convergence() {
     let text = source("a");
     let mut session = Session::start(
         template(),
@@ -859,8 +859,8 @@ fn no_op_revision_converges_at_first_eligible_boundary() {
     assert!(
         cold.history
             .iter()
-            .all(|record| record.exact_checkpoint.get().is_none()),
-        "cold history must retain only O(1) snapshots"
+            .all(|record| record.checkpoint().has_exact_state_identity()),
+        "cold history must capture canonical identities while each boundary is live"
     );
     let output = session
         .advance(
@@ -883,13 +883,12 @@ fn no_op_revision_converges_at_first_eligible_boundary() {
     assert_eq!(output.reuse.same_history_hash_mismatches, 0);
     assert!(output.reuse.reexecuted_bytes > 0);
     assert!(output.reuse.reexecuted_tokens > 0);
-    assert_eq!(
-        cold.history
+    assert!(
+        output
+            .history
             .iter()
-            .filter(|record| record.exact_checkpoint.get().is_some())
-            .count(),
-        1,
-        "only the compared accepted record should gain a cached identity"
+            .all(|record| record.checkpoint().has_exact_state_identity()),
+        "convergence must retain the already captured identities"
     );
     assert_eq!(
         output.dvi_bytes().expect("incremental DVI"),
@@ -1447,6 +1446,13 @@ fn nonconvergent_advance_prunes_fully_replaced_fragment_bytes() {
     assert_eq!(output.reuse.pages_reused, 0);
     assert!(output.reuse.reexecuted_bytes > 0);
     assert!(output.reuse.reexecuted_tokens > 0);
+    assert!(
+        session
+            .history
+            .iter()
+            .all(|record| record.checkpoint().has_exact_state_identity()),
+        "a nonconvergent revision must publish live identities for its new accepted history"
+    );
     assert_eq!(session.fragments.bytes(initial), None);
     assert_eq!(session.fragments.source_bytes(), replacement.len());
 }

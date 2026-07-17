@@ -825,18 +825,6 @@ impl GenerationSubstrate {
         Ok(fork)
     }
 
-    /// Computes the strong optional identity for one retained O(1) snapshot.
-    /// The accepted generation remains frozen; only a private temporary fork
-    /// is rolled back to the requested roots.
-    #[doc(hidden)]
-    pub fn snapshot_with_exact_identity(
-        &self,
-        checkpoint: &Snapshot,
-    ) -> Result<Snapshot, GenerationForkError> {
-        let mut fork = self.fork_at(checkpoint)?;
-        Ok(fork.snapshot_with_exact_identity())
-    }
-
     /// Retargets a source-generation prefix snapshot onto a promoted fork.
     /// This is deliberately limited to records at or before the exact fork anchor.
     pub fn retarget_prefix_from(

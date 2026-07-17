@@ -112,18 +112,6 @@ impl EngineCheckpoint {
         self.universe.has_exact_state_identity()
     }
 
-    /// Computes the optional session-local probabilistic identity for an
-    /// already retained checkpoint without changing its restart roots.
-    #[doc(hidden)]
-    pub fn with_exact_state_identity(
-        &self,
-        substrate: &GenerationSubstrate,
-    ) -> Result<Self, GenerationForkError> {
-        let mut checkpoint = self.clone();
-        checkpoint.universe = substrate.snapshot_with_exact_identity(&self.universe)?;
-        Ok(checkpoint)
-    }
-
     /// Rehomes revision-relative root metadata after a validated convergence
     /// match while adopting the owner-owned state snapshot by reference.
     pub fn rehome_converged_root(
