@@ -61,7 +61,7 @@ fn token_values_import_after_fork_and_rollback_without_reusing_source_handles() 
 }
 
 #[test]
-fn envelope_rejects_corruption_schema_kind_and_oversize() {
+fn envelope_rejects_corruption_truncation_schema_kind_and_oversize() {
     let mut universe = Universe::new();
     let id = universe.intern_token_list(&[Token::Char {
         ch: 'x',
@@ -71,6 +71,10 @@ fn envelope_rejects_corruption_schema_kind_and_oversize() {
     let mut bytes = detached.to_bytes().expect("memo encoding");
     *bytes.last_mut().expect("encoded envelope is nonempty") ^= 1;
     assert!(DetachedMemoValue::from_bytes(&bytes, MemoValueLimits::default()).is_err());
+
+    let mut truncated = detached.to_bytes().expect("memo encoding");
+    truncated.truncate(truncated.len() - 1);
+    assert!(DetachedMemoValue::from_bytes(&truncated, MemoValueLimits::default()).is_err());
 
     assert!(matches!(
         universe.import_memo_glue(&detached),
