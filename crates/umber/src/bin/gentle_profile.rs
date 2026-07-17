@@ -8,7 +8,7 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use tex_exec::{CheckpointSink, EngineBoundary, EngineCheckpoint};
-use tex_incr::{AcceptedOutput, Edit, ReuseMetrics, RevisionId, Session};
+use tex_incr::{AcceptedOutput, BoundaryKey, Edit, ReuseMetrics, RevisionId, Session};
 #[cfg(feature = "profiling-stats")]
 use tex_lex::ExpansionStats;
 use tex_lex::{InputStack, WorldInput};
@@ -181,11 +181,31 @@ struct IncrementalFixture {
     revisions: Vec<String>,
     edits: Vec<Edit>,
     edit_names: Vec<&'static str>,
+    edit_paths: Vec<IncrementalPath>,
     suffix_adoption_edit: usize,
     body_offset: usize,
     body_len: usize,
     inserted_bytes: usize,
     inserted_words: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum IncrementalPath {
+    Slow,
+    Interaction,
+    Fast,
+}
+
+impl IncrementalPath {
+    const ALL: [Self; 3] = [Self::Slow, Self::Interaction, Self::Fast];
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Slow => "slow",
+            Self::Interaction => "interaction",
+            Self::Fast => "fast",
+        }
+    }
 }
 
 struct IncrementalSample {
@@ -200,6 +220,7 @@ struct IncrementalStep {
     dvi: Vec<u8>,
     pages: usize,
     reuse: ReuseMetrics,
+    history: Vec<(BoundaryKey, usize, usize)>,
     memo: PureMemoStats,
     previous_memo: PureMemoStats,
     #[cfg(feature = "profiling-stats")]
@@ -426,9 +447,56 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
             ));
         }
     }
+    for index in 0..edit_count {
+        let baseline = &disabled_sample.steps[index];
+        let candidate = &enabled_sample.steps[index];
+        if baseline.history != candidate.history {
+            return Err(format!(
+                "{} edit {} produced different baseline and candidate named-boundary schedules",
+                fixture.edit_paths[index].name(),
+                index + 1,
+            ));
+        }
+        match fixture.edit_paths[index] {
+            IncrementalPath::Slow => {
+                if baseline.reuse.suffixes_adopted != 0
+                    || candidate.reuse.suffixes_adopted != 0
+                    || baseline.reuse.pages_reused != 0
+                    || candidate.reuse.pages_reused != 0
+                {
+                    return Err(format!(
+                        "slow edit {} unexpectedly adopted a page suffix",
+                        index + 1,
+                    ));
+                }
+            }
+            IncrementalPath::Interaction | IncrementalPath::Fast => {
+                let baseline_pages = (
+                    baseline.reuse.pages_retained_prefix,
+                    baseline.reuse.pages_retyped,
+                    baseline.reuse.pages_reused,
+                );
+                let candidate_pages = (
+                    candidate.reuse.pages_retained_prefix,
+                    candidate.reuse.pages_retyped,
+                    candidate.reuse.pages_reused,
+                );
+                if baseline.reuse.suffixes_adopted == 0
+                    || candidate.reuse.suffixes_adopted == 0
+                    || baseline_pages != candidate_pages
+                {
+                    return Err(format!(
+                        "{} edit {} did not preserve equivalent suffix adoption: baseline={baseline_pages:?} candidate={candidate_pages:?}",
+                        fixture.edit_paths[index].name(),
+                        index + 1,
+                    ));
+                }
+            }
+        }
+    }
 
     println!(
-        "gentle-profile incremental edit: byte={} ({:.2}% through gentle.tex), inserted_bytes={} inserted_words={} into one paragraph; {} accepted edits/session; {} AB/BA-paired runs after {} warm-up(s)",
+        "gentle-profile incremental edit: byte={} ({:.2}% through gentle.tex), inserted_bytes={} inserted_words={} into one paragraph; {} accepted edits/session; {} AB/BA-paired runs after {} warm-up(s); profiling_stats={}",
         fixture.body_offset,
         fixture.body_offset as f64 * 100.0 / fixture.body_len as f64,
         fixture.inserted_bytes,
@@ -436,6 +504,7 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
         fixture.edits.len(),
         options.iterations,
         options.warmups,
+        cfg!(feature = "profiling-stats"),
     );
     print_duration_stats(
         &format!("{baseline_name} priming"),
@@ -450,6 +519,45 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
         "gentle-profile baseline-inclusive paired delta: {delta_name} mean={:+.3}ms median={:+.3}ms min={:+.3}ms max={:+.3}ms",
         total.mean, total.median, total.min, total.max,
     );
+    for path in IncrementalPath::ALL {
+        let paired = (0..options.iterations)
+            .map(|iteration| {
+                fixture
+                    .edit_paths
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, candidate)| **candidate == path)
+                    .map(|(index, _)| paired_millis[index][iteration])
+                    .sum::<f64>()
+            })
+            .collect::<Vec<_>>();
+        let stats = scalar_stats(&paired);
+        println!(
+            "gentle-profile path paired delta: path={} {delta_name} mean={:+.3}ms median={:+.3}ms min={:+.3}ms max={:+.3}ms",
+            path.name(),
+            stats.mean,
+            stats.median,
+            stats.min,
+            stats.max,
+        );
+        if path == IncrementalPath::Slow {
+            let priming_inclusive = paired
+                .iter()
+                .enumerate()
+                .map(|(iteration, delta)| {
+                    delta
+                        + (enabled_priming[iteration].as_secs_f64()
+                            - disabled_priming[iteration].as_secs_f64())
+                            * 1_000.0
+                })
+                .collect::<Vec<_>>();
+            let stats = scalar_stats(&priming_inclusive);
+            println!(
+                "gentle-profile path paired delta: path=slow-priming-inclusive {delta_name} mean={:+.3}ms median={:+.3}ms min={:+.3}ms max={:+.3}ms",
+                stats.mean, stats.median, stats.min, stats.max,
+            );
+        }
+    }
     print_paragraph_opportunities(
         baseline_name,
         "priming",
@@ -466,8 +574,9 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
         let cold_stats = duration_stats(&cold[index]);
         let paired = scalar_stats(&paired_millis[index]);
         println!(
-            "gentle-profile accepted edit {}: {}",
+            "gentle-profile accepted edit {}: path={} {}",
             index + 1,
+            fixture.edit_paths[index].name(),
             fixture.edit_names[index]
         );
         print_duration_stats(baseline_name, disabled_stats);
@@ -488,6 +597,13 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
             delta_name,
             &disabled_stages[index],
             &enabled_stages[index],
+        );
+        print_history_comparison(
+            index + 1,
+            baseline_name,
+            candidate_name,
+            &disabled_sample.steps[index].history,
+            &enabled_sample.steps[index].history,
         );
         print_incremental_work(
             baseline_name,
@@ -526,6 +642,35 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
         enabled_fast.mean / cold_fast.mean,
     );
     Ok(())
+}
+
+fn print_history_comparison(
+    edit: usize,
+    baseline_name: &str,
+    candidate_name: &str,
+    baseline: &[(BoundaryKey, usize, usize)],
+    candidate: &[(BoundaryKey, usize, usize)],
+) {
+    let first_mismatch = baseline
+        .iter()
+        .zip(candidate)
+        .position(|(left, right)| left != right)
+        .or_else(|| {
+            (baseline.len() != candidate.len()).then_some(baseline.len().min(candidate.len()))
+        });
+    let describe = |schedule: &[(BoundaryKey, usize, usize)]| {
+        first_mismatch
+            .and_then(|index| schedule.get(index))
+            .copied()
+    };
+    println!(
+        "gentle-profile boundary schedule: edit={edit} baseline={baseline_name:?} candidate={candidate_name:?} equivalent={} baseline_entries={} candidate_entries={} first_mismatch={first_mismatch:?} baseline_entry={:?} candidate_entry={:?}",
+        first_mismatch.is_none(),
+        baseline.len(),
+        candidate.len(),
+        describe(baseline),
+        describe(candidate),
+    );
 }
 
 #[derive(Clone, Copy)]
@@ -636,7 +781,7 @@ fn print_incremental_work(
         };
     }
     println!(
-        "gentle-profile incremental work: {name}: edit={edit} pages_retained_prefix={} pages_retyped={} pages_reused={} paragraphs_reexecuted={} bytes_reexecuted={} tokens_reexecuted={} commands_reexecuted={} macro_text_span_tokens={} source_text_span_tokens={} paragraph_source_recording_calls={} paragraph_source_recording_timer_samples={} trace_nodes_walked={} trace_leaf_hits={} trace_subtree_hits={} trace_bytes={} exact_checks={} suffixes_adopted={} revision_setup_us={} fork_us={} executor_us={} paragraph_source_recording_us={} reexecute_us={} diagnostics_effects_snapshot_us={} paragraph_generation_publish_drop_us={} trace_validation_us={} trace_replay_us={} splice_us={} substrate_publish_drop_us={} acceptance_us={} dvi_materialization_us={}",
+        "gentle-profile incremental work: {name}: edit={edit} pages_retained_prefix={} pages_retyped={} pages_reused={} paragraphs_reexecuted={} bytes_reexecuted={} tokens_reexecuted={} commands_reexecuted={} macro_text_span_tokens={} source_text_span_tokens={} paragraph_source_recording_calls={} paragraph_source_recording_timer_samples={} trace_nodes_walked={} trace_leaf_hits={} trace_subtree_hits={} trace_bytes={} exact_checks={} suffixes_adopted={} same_history_stop={:?} revision_setup_us={} fork_us={} executor_us={} paragraph_source_recording_us={} reexecute_us={} diagnostics_effects_snapshot_us={} paragraph_generation_publish_drop_us={} trace_validation_us={} trace_replay_us={} splice_us={} substrate_publish_drop_us={} acceptance_us={} dvi_materialization_us={}",
         reuse.pages_retained_prefix,
         reuse.pages_retyped,
         reuse.pages_reused,
@@ -654,6 +799,7 @@ fn print_incremental_work(
         reuse.trace_retained_bytes,
         reuse.same_history_attempts,
         reuse.suffixes_adopted,
+        reuse.same_history_stop,
         reuse.revision_setup_latency.as_micros(),
         reuse.restart_fork_latency.as_micros(),
         reuse.executor_latency.as_micros(),
@@ -894,6 +1040,12 @@ fn incremental_fixture(repo_root: &Path) -> Result<IncrementalFixture, String> {
             "inverse removal",
             "height-preserving equal-width substitution",
         ],
+        edit_paths: vec![
+            IncrementalPath::Slow,
+            IncrementalPath::Interaction,
+            IncrementalPath::Slow,
+            IncrementalPath::Fast,
+        ],
         suffix_adoption_edit: 3,
         body_offset,
         body_len: body.len(),
@@ -976,6 +1128,17 @@ fn execute_incremental_sample(
             dvi,
             pages: accepted.artifacts.len(),
             reuse: accepted.reuse,
+            history: accepted
+                .history
+                .iter()
+                .map(|record| {
+                    (
+                        record.key(),
+                        record.effect_prefix(),
+                        record.artifact_prefix(),
+                    )
+                })
+                .collect(),
             memo,
             previous_memo,
             #[cfg(feature = "profiling-stats")]

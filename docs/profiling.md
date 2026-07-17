@@ -43,17 +43,29 @@ Pass `--incremental-edit` to measure a fixed semantic prose edit 20% through
 the pinned large edit, a follow-up insertion in that paragraph, removal of the
 follow-up, and an equal-width word substitution. Adjacent disabled/enabled
 samples alternate AB/BA order, so the iteration count must be even. The runner
-reports paired latency differences for each revision. Both modes must produce
-the exact DVI bytes of a fresh cold compile of the corresponding revision; the
-equal-width revision must also reconverge at the changed page's shipout,
-re-ship the pinned three changed pages, and adopt every page in the unchanged
-suffix. Its final summary reports the retained prefix, re-shipped and adopted
-page counts, leaf/subtree hits, and incremental-to-cold latency ratios:
+reports paired latency differences for each revision and separate aggregate
+totals for three paths. The large insertion and inverse removal are the slow
+paragraph path: pagination changes and neither policy may adopt a suffix. The
+follow-up insertion is the interaction path: both policies must publish the
+same named-boundary schedule and retain/re-ship/adopt the same page counts
+after earlier paragraph hits. The equal-width substitution is the fast path:
+both policies must preserve the same schedule, reconverge at shipout, re-ship
+the pinned three changed pages, and adopt every page in the unchanged suffix.
+Both modes must also produce the exact DVI bytes of a fresh cold compile for
+every revision. The summary reports steady-state slow, interaction, and fast
+paired totals, a priming-inclusive slow total, boundary-schedule equivalence,
+page reuse, trace hits, and incremental-to-cold latency ratios:
 
 ```bash
 cargo run --profile profiling -p umber --bin gentle-profile -- \
   --repo-root /path/to/umber2 --incremental-edit --iterations 6 --warmups 1
 ```
+
+Use the build without `profiling-stats` for release latency. The first summary
+line prints `profiling_stats=false` so an attributed diagnostic run cannot be
+mistaken for the release comparison. Rebuild with `--features profiling-stats`
+only when the named recording phases and exact-identity counters are needed to
+explain a losing path.
 
 Select recording layers with `--memo-layers`. For this profiler's explicitly
 memo-enabled candidate, the default is `paragraph`, whose results and trace
