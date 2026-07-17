@@ -145,3 +145,82 @@ fn compiler_rejects_direct_recursion_before_execution() {
         ))
     );
 }
+
+#[test]
+fn string_and_text_builtins_preserve_classic_tex_units() {
+    let result = run(
+        br#"ENTRY {} {} {}
+FUNCTION {main} {
+  "A" "B" * write$ "Hello" add.period$ write$
+  "{\i}bc" text.length$ int.to.str$ write$
+  "{\i}bc" #2 text.prefix$ write$
+  "abcdef" #2 #3 substring$ write$
+  "{\i} -- {\oe}" purify$ write$
+  "MiXeD: A TITLE" "t" change.case$ write$
+}
+READ EXECUTE {main}"#,
+        b"@book{one}",
+    );
+    assert!(!result.is_fatal(), "{:?}", result.diagnostics());
+    assert_eq!(
+        result.bbl(),
+        Some("ABHello.3{\\i}bbcdi    oeMixed: A title")
+    );
+}
+
+#[test]
+fn conversion_names_entry_dispatch_and_width_are_available() {
+    let result = run(
+        br#"ENTRY {} {} {}
+FUNCTION {book} { "typed" write$ }
+FUNCTION {default.type} { "default" write$ }
+FUNCTION {item} {
+  "start" write$ call.type$ cite$ write$ type$ write$
+  "John von Neumann and Jane Doe" num.names$ int.to.str$ write$
+  "John von Neumann and Jane Doe" #1 "{vv }{ll}, {f}" format.name$ write$
+  #65 int.to.chr$ chr.to.int$ int.to.str$ write$
+  "A" width$ int.to.str$ write$
+}
+READ ITERATE {item}"#,
+        b"@book{one, title = \"one\"}",
+    );
+    assert!(!result.is_fatal(), "{:?}", result.diagnostics());
+    assert_eq!(
+        result.bbl(),
+        Some("starttypedonebook2von Neumann, J65750"),
+        "{:?}",
+        result.diagnostics()
+    );
+}
+
+#[test]
+fn builtin_errors_and_output_limits_remain_bounded() {
+    let wrong_type = run(
+        b"ENTRY {} {} {} FUNCTION {bad} { #1 purify$ } READ EXECUTE {bad}",
+        b"@book{one}",
+    );
+    assert!(wrong_type.is_fatal());
+    assert_eq!(
+        wrong_type.diagnostics()[0].kind(),
+        ClassicVmDiagnosticKind::WrongType
+    );
+
+    let compiled = compile(
+        b"ENTRY {} {} {} FUNCTION {out} { \"abcd\" write$ } READ EXECUTE {out}",
+        CompileLimits::default(),
+    );
+    let style = compiled.program().expect("style");
+    let result = execute_classic_style(
+        style,
+        &database(style, b"@book{one}", &["*"]),
+        ClassicVmLimits {
+            bbl_bytes: 3,
+            ..ClassicVmLimits::default()
+        },
+    );
+    assert!(result.is_fatal());
+    assert_eq!(
+        result.diagnostics()[0].kind(),
+        ClassicVmDiagnosticKind::Limit
+    );
+}

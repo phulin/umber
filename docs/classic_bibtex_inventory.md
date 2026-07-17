@@ -108,7 +108,7 @@ identity; and the final bounded legal-program differential generator. Later
 issues must refine these families into individual source branches and state
 transitions without deleting or reassigning an owner invisibly.
 
-## Phase 6 VM core
+## VM core and built-in completion
 
 `umber2-ild0.8` supplies the bounded execution core in
 `bib-engine/src/classic_vm.rs`. It consumes immutable `bib-bst` programs and
@@ -116,8 +116,16 @@ prepared classic database state, with explicit operand and call stacks rather
 than user-controlled Rust recursion. It owns command lifecycle, current-entry
 state, variables and assignment, core control flow, stable `SORT`, and
 detached bounded BBL/BLG effects. Fatal results retain inspection-only partial
-effects while withholding publishable artifacts. Text, name, layout, and the
-remaining compatibility built-ins remain Phase 7 work.
+effects while withholding publishable artifacts.
+
+`umber2-ild0.9` completes the remaining dispatch entries in that VM: classic
+string concatenation and slicing, period and whitespace rules, case and
+purification handling, character conversion, name counting and formatting,
+entry-type dispatch, stack diagnostics, text units, and CMR10 width values.
+The fixed `entry.max$` and `global.max$` values remain visible independently of
+Umber's safety limits. Focused VM coverage lives in
+`bib-engine/src/classic_vm/tests.rs`; fixture-level output/diagnostic parity
+continues to be owned by the later command-parity phase.
 
 ## Upstream test inventory
 
