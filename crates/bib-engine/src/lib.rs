@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 mod bibliography;
 mod classic;
+mod classic_database;
 mod command;
 mod session;
 mod tool;
@@ -36,12 +37,17 @@ pub use bibliography::{
     BibliographyDocument, BibliographyFailure, BibliographyHistory, BibliographyJob,
     BibliographyResult, BibliographyResultError, BibliographySession, BibliographySourceLocation,
     BibliographyStats, ClassicBibFailure, ClassicBibJob, ClassicBibLimits, ClassicBibOptions,
-    ClassicBibSession, ClassicBibliography, ClassicBibliographyStats, ClassicDiagnosticCode,
-    ClassicSourceLocation,
+    ClassicBibSession, ClassicBibliography, ClassicBibliographyStats, ClassicDatabaseLimits,
+    ClassicDatabaseOptions, ClassicDiagnosticCode, ClassicSourceLocation,
 };
 pub use classic::{
     BibliographyDetection, BibliographyDetector, BibliographyDetectorOptions, BibliographyMode,
     ClassicControl,
+};
+pub use classic_database::{
+    ClassicDatabase, ClassicDatabaseCache, ClassicDatabaseDiagnostic,
+    ClassicDatabaseDiagnosticKind, ClassicDatabaseEntry, ClassicDatabaseSource,
+    prepare_classic_database,
 };
 pub use command::{BibCommand, BibCommandError, BibCommandMode, BibCommandOutput, BibExitStatus};
 pub use session::{BibInitFailure, BibSession, BibSessionOptions};

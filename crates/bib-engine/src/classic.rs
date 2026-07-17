@@ -224,6 +224,19 @@ impl ClassicControl {
             _ => ControlCompleteness::Incomplete,
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn for_read_test(citations: &[&str]) -> Self {
+        Self {
+            aux_files: Arc::new([]),
+            databases: Arc::new([]),
+            style: None,
+            citations: citations
+                .iter()
+                .map(|citation| (*citation).to_owned())
+                .collect(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

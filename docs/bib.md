@@ -368,10 +368,15 @@ order and resumes at the same logical boundary as the reference tests.
 Parsing produces a datasource-local `RawBibDatabase`, then makes an explicit
 backend conversion. Biber receives its retained eager `BibTexSource` adapter;
 classic `READ` receives the raw record view and owns its macro expansion,
-preamble, duplicate, missing-field, and entry-selection semantics. Entry
-selection, dependency traversal, inheritance, and sorting therefore occur
-later; the syntax parser does not silently bake backend processing policy into
-field values.
+preamble, duplicate, missing-field, and entry-selection semantics. It now
+prepares immutable VM-visible records from the compiled `ENTRY` schema:
+citation order (including `*`), declared-field projection, crossref threshold
+inclusion, inherited fields, and preamble order all remain classic-local.
+Prepared-database cache keys include ordered datasource identities, citations,
+the `ENTRY`/`MACRO` read schema, and every `READ` option and bound. Biber
+continues to consume only its eager `BibTexSource` adapter. Sorting remains a
+later style-VM operation; the syntax parser does not silently bake either
+backend's processing policy into field values.
 
 ### BibLaTeXML datasource
 

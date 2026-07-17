@@ -99,6 +99,7 @@ version = "0.1.0"
 name = "bib-engine"
 version = "0.1.0"
 dependencies = [
+ "bib-bst",
  "bib-graph",
  "bib-input",
  "bib-label",

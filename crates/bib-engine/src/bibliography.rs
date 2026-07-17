@@ -47,6 +47,91 @@ pub struct ClassicBibLimits {
     pub aux_depth: usize,
 }
 
+/// Bounds for classic `READ` database preparation.
+///
+/// These limits are deliberately independent from the raw parser bounds: the
+/// parser preserves syntax, while `READ` bounds the work and retained state of
+/// classic selection, expansion, and inheritance.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ClassicDatabaseLimits {
+    pub entries: usize,
+    pub fields_per_entry: usize,
+    pub macros: usize,
+    pub value_bytes: usize,
+    pub preamble_bytes: usize,
+    pub crossref_depth: usize,
+    pub diagnostics: usize,
+    pub work: usize,
+}
+
+impl Default for ClassicDatabaseLimits {
+    fn default() -> Self {
+        Self {
+            entries: 100_000,
+            fields_per_entry: 1_000,
+            macros: 10_000,
+            value_bytes: 1024 * 1024,
+            preamble_bytes: 8 * 1024 * 1024,
+            crossref_depth: 64,
+            diagnostics: 1_000,
+            work: 64 * 1024 * 1024,
+        }
+    }
+}
+
+/// Semantic policy for classic `READ` preparation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClassicDatabaseOptions {
+    min_crossrefs: usize,
+    limits: ClassicDatabaseLimits,
+    bibtex: crate::BibTexOptions,
+}
+
+impl Default for ClassicDatabaseOptions {
+    fn default() -> Self {
+        Self {
+            min_crossrefs: 2,
+            limits: ClassicDatabaseLimits::default(),
+            bibtex: crate::BibTexOptions::default(),
+        }
+    }
+}
+
+impl ClassicDatabaseOptions {
+    #[must_use]
+    pub const fn min_crossrefs(&self) -> usize {
+        self.min_crossrefs
+    }
+
+    #[must_use]
+    pub const fn with_min_crossrefs(mut self, min_crossrefs: usize) -> Self {
+        self.min_crossrefs = min_crossrefs;
+        self
+    }
+
+    #[must_use]
+    pub const fn limits(&self) -> ClassicDatabaseLimits {
+        self.limits
+    }
+
+    #[must_use]
+    pub const fn with_limits(mut self, limits: ClassicDatabaseLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    #[must_use]
+    pub const fn bibtex_options(&self) -> crate::BibTexOptions {
+        self.bibtex
+    }
+
+    #[must_use]
+    pub const fn with_bibtex_options(mut self, options: crate::BibTexOptions) -> Self {
+        self.bibtex = options;
+        self
+    }
+}
+
 impl Default for ClassicBibLimits {
     fn default() -> Self {
         Self {
@@ -61,6 +146,7 @@ impl Default for ClassicBibLimits {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClassicBibOptions {
     limits: ClassicBibLimits,
+    database: ClassicDatabaseOptions,
     cache_entries: usize,
 }
 
@@ -68,6 +154,7 @@ impl Default for ClassicBibOptions {
     fn default() -> Self {
         Self {
             limits: ClassicBibLimits::default(),
+            database: ClassicDatabaseOptions::default(),
             cache_entries: 32,
         }
     }
@@ -82,6 +169,17 @@ impl ClassicBibOptions {
     #[must_use]
     pub const fn with_limits(mut self, limits: ClassicBibLimits) -> Self {
         self.limits = limits;
+        self
+    }
+
+    #[must_use]
+    pub const fn database_options(&self) -> &ClassicDatabaseOptions {
+        &self.database
+    }
+
+    #[must_use]
+    pub fn with_database_options(mut self, options: ClassicDatabaseOptions) -> Self {
+        self.database = options;
         self
     }
 
@@ -568,7 +666,7 @@ pub enum ClassicBibFailure {
 #[derive(Debug)]
 pub enum BibliographySession {
     Biblatex(Box<BibSession>),
-    Classic(ClassicBibSession),
+    Classic(Box<ClassicBibSession>),
 }
 
 impl BibliographySession {
@@ -578,7 +676,7 @@ impl BibliographySession {
 
     #[must_use]
     pub fn classic() -> Self {
-        Self::Classic(ClassicBibSession::new())
+        Self::Classic(Box::new(ClassicBibSession::new()))
     }
 
     pub fn process(
