@@ -232,7 +232,6 @@ struct IncrementalStages {
     revision_setup: Duration,
     restart_fork: Duration,
     executor: Duration,
-    paragraph_source_recording: Duration,
     executor_shell: Duration,
     output_snapshot: Duration,
     generation_transition: Duration,
@@ -262,9 +261,6 @@ impl IncrementalStages {
             revision_setup: reuse.revision_setup_latency,
             restart_fork: reuse.restart_fork_latency,
             executor: reuse.executor_latency,
-            paragraph_source_recording: Duration::from_nanos(
-                reuse.paragraph_source_recording_nanos,
-            ),
             executor_shell,
             output_snapshot: reuse.output_snapshot_latency,
             generation_transition: reuse.generation_transition_latency,
@@ -737,11 +733,10 @@ fn print_stage_attribution(
         }};
     }
     println!(
-        "gentle-profile stage attribution (baseline/candidate/delta ms): edit={edit} baseline={baseline_name:?} candidate={candidate_name:?} delta={delta_name:?} revision_setup={} restart_fork={} executor={} paragraph_source_recording={} executor_shell={} diagnostics_effects_snapshot={} paragraph_generation_publish_drop={} splice={} substrate_publish_drop={} acceptance={} unaccounted_system_noise={} dvi_materialization={}",
+        "gentle-profile stage attribution (baseline/candidate/delta ms): edit={edit} baseline={baseline_name:?} candidate={candidate_name:?} delta={delta_name:?} revision_setup={} restart_fork={} executor={} executor_shell={} diagnostics_effects_snapshot={} paragraph_history_publish_drop={} splice={} substrate_publish_drop={} acceptance={} unaccounted_system_noise={} dvi_materialization={}",
         stage!(revision_setup),
         stage!(restart_fork),
         stage!(executor),
-        stage!(paragraph_source_recording),
         stage!(executor_shell),
         stage!(output_snapshot),
         stage!(generation_transition),
@@ -781,7 +776,7 @@ fn print_incremental_work(
         };
     }
     println!(
-        "gentle-profile incremental work: {name}: edit={edit} pages_retained_prefix={} pages_retyped={} pages_reused={} paragraphs_reexecuted={} bytes_reexecuted={} tokens_reexecuted={} commands_reexecuted={} macro_text_span_tokens={} source_text_span_tokens={} paragraph_source_recording_calls={} paragraph_source_recording_timer_samples={} trace_nodes_walked={} trace_leaf_hits={} trace_subtree_hits={} trace_bytes={} exact_checks={} suffixes_adopted={} same_history_stop={:?} revision_setup_us={} fork_us={} executor_us={} paragraph_source_recording_us={} reexecute_us={} diagnostics_effects_snapshot_us={} paragraph_generation_publish_drop_us={} trace_validation_us={} trace_replay_us={} splice_us={} substrate_publish_drop_us={} acceptance_us={} dvi_materialization_us={}",
+        "gentle-profile incremental work: {name}: edit={edit} pages_retained_prefix={} pages_retyped={} pages_reused={} paragraphs_reexecuted={} bytes_reexecuted={} tokens_reexecuted={} commands_reexecuted={} macro_text_span_tokens={} source_text_span_tokens={} trace_nodes_walked={} trace_leaf_hits={} trace_subtree_hits={} trace_bytes={} exact_checks={} suffixes_adopted={} same_history_stop={:?} revision_setup_us={} fork_us={} executor_us={} reexecute_us={} diagnostics_effects_snapshot_us={} paragraph_history_publish_drop_us={} trace_validation_us={} trace_replay_us={} splice_us={} substrate_publish_drop_us={} acceptance_us={} dvi_materialization_us={}",
         reuse.pages_retained_prefix,
         reuse.pages_retyped,
         reuse.pages_reused,
@@ -791,8 +786,6 @@ fn print_incremental_work(
         reuse.reexecuted_commands,
         reuse.reexecuted_macro_text_span_tokens,
         reuse.reexecuted_source_text_span_tokens,
-        reuse.paragraph_source_recording_calls,
-        reuse.paragraph_source_recording_timer_samples,
         reuse.trace_nodes_walked,
         reuse.trace_leaf_hits,
         reuse.trace_subtree_hits,
@@ -803,7 +796,6 @@ fn print_incremental_work(
         reuse.revision_setup_latency.as_micros(),
         reuse.restart_fork_latency.as_micros(),
         reuse.executor_latency.as_micros(),
-        Duration::from_nanos(reuse.paragraph_source_recording_nanos).as_micros(),
         reuse.reexecution_latency.as_micros(),
         reuse.output_snapshot_latency.as_micros(),
         reuse.generation_transition_latency.as_micros(),
@@ -866,8 +858,8 @@ fn print_incremental_work(
         paragraph_validation_reasons(&sample.memo, &sample.previous_memo),
     );
     println!(
-        "gentle-profile memo retention: {name}: edit={edit} detached_cache_bytes={} paragraph_generation_metadata_bytes={}",
-        sample.memo.retained_bytes, sample.memo.paragraph_generation_metadata_bytes,
+        "gentle-profile memo retention: {name}: edit={edit} detached_cache_bytes={} paragraph_history_metadata_bytes={}",
+        sample.memo.retained_bytes, sample.memo.paragraph_history_metadata_bytes,
     );
     #[cfg(feature = "profiling-stats")]
     {
@@ -905,13 +897,9 @@ fn print_paragraph_opportunities(
         format!("{}/{}/{}", metric.regions, metric.bytes, metric.nanos)
     };
     println!(
-        "gentle-profile paragraph opportunities: {name}: stage={stage} metric=regions/bytes/nanos census_only={} fully_armed={} carried_forward={} seeded={} published={} declined={}",
-        metric(stats.census_only),
-        metric(stats.fully_armed),
+        "gentle-profile paragraph history: {name}: stage={stage} metric=regions/bytes/nanos carried_forward={} published={}",
         metric(stats.carried_forward),
-        metric(stats.seeded),
         metric(stats.published),
-        metric(stats.declined),
     );
 }
 
@@ -1339,7 +1327,7 @@ fn print_summary(options: &Options, output: &RunOutput, elapsed: Duration) {
     );
     #[cfg(feature = "profiling-stats")]
     println!(
-        "gentle-profile expansion timers (ns): frame_step={} frame_step_samples={} provenance={} provenance_samples={} classification_meaning={} classification_meaning_samples={} builder_append={} builder_append_samples={} paragraph_source_recording={} paragraph_source_recording_calls={} paragraph_source_recording_samples={} attributed_total={}",
+        "gentle-profile expansion timers (ns): frame_step={} frame_step_samples={} provenance={} provenance_samples={} classification_meaning={} classification_meaning_samples={} builder_append={} builder_append_samples={} attributed_total={}",
         output.expansion_stats.frame_step_nanos,
         output.expansion_stats.frame_step_timer_samples,
         output.expansion_stats.provenance_nanos,
@@ -1348,11 +1336,6 @@ fn print_summary(options: &Options, output: &RunOutput, elapsed: Duration) {
         output.expansion_stats.classification_meaning_timer_samples,
         output.expansion_stats.builder_append_nanos,
         output.expansion_stats.builder_append_timer_samples,
-        output.expansion_stats.paragraph_source_recording_nanos,
-        output.expansion_stats.paragraph_source_recording_calls,
-        output
-            .expansion_stats
-            .paragraph_source_recording_timer_samples,
         output.expansion_stats.attributed_nanos(),
     );
     #[cfg(feature = "profiling-stats")]

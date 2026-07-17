@@ -2070,23 +2070,6 @@ pub fn back_input<I>(
     back_input_with_kind(input, stores, tokens, TokenListReplayKind::Inserted);
 }
 
-/// Restores tokens consumed by paragraph preflight while retaining their
-/// physical-source replay class for horizontal text-span delivery.
-pub fn back_paragraph_preflight<I>(
-    input: &mut InputStack,
-    stores: &mut tex_state::ExpansionContext<'_>,
-    tokens: I,
-) where
-    I: IntoIterator<Item = TracedTokenWord>,
-{
-    back_input_with_kind(
-        input,
-        stores,
-        tokens,
-        TokenListReplayKind::ParagraphPreflight,
-    );
-}
-
 fn back_input_with_kind<I>(
     input: &mut InputStack,
     stores: &mut tex_state::ExpansionContext<'_>,

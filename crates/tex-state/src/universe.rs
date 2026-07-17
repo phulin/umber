@@ -1793,30 +1793,6 @@ impl Universe {
     }
 
     #[doc(hidden)]
-    pub fn paragraph_recording_admission(
-        &mut self,
-        starting_span: Option<crate::RootSpanId>,
-    ) -> crate::ParagraphAdmission {
-        self.pure_memo.paragraph_admission(starting_span)
-    }
-
-    #[doc(hidden)]
-    pub fn record_declined_paragraph_census(&mut self) {
-        self.pure_memo.record_declined_paragraph_census();
-    }
-
-    #[doc(hidden)]
-    pub fn record_armed_paragraph_cost(
-        &mut self,
-        admission: crate::ParagraphAdmission,
-        bytes: usize,
-        elapsed: std::time::Duration,
-    ) {
-        self.pure_memo
-            .record_armed_paragraph_cost(admission, bytes, elapsed);
-    }
-
-    #[doc(hidden)]
     pub fn record_carried_paragraph(&mut self, region: &crate::RecordedParagraphRegion) {
         self.pure_memo.record_carried_paragraph(region);
     }
@@ -1886,14 +1862,6 @@ impl Universe {
     #[must_use]
     pub fn recorded_paragraphs(&self) -> &[crate::RecordedParagraphRegion] {
         self.pure_memo.recorded_paragraphs()
-    }
-
-    #[doc(hidden)]
-    pub fn lookup_recorded_paragraph(
-        &mut self,
-        key: crate::PureMemoKey,
-    ) -> Option<crate::RecordedParagraphRegion> {
-        self.pure_memo.lookup_recorded_paragraph(key)
     }
 
     #[doc(hidden)]
@@ -7431,7 +7399,6 @@ fn hash_token_list_replay_kind(kind: TokenListReplayKind, hasher: &mut StateHash
         TokenListReplayKind::Inserted => 7,
         TokenListReplayKind::AlignmentUTemplate => 8,
         TokenListReplayKind::ScantokensEveryEof => 9,
-        TokenListReplayKind::ParagraphPreflight => 12,
     });
 }
 

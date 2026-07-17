@@ -15,19 +15,12 @@ pub struct ExecutionStats {
     pub delivered_tokens: usize,
     /// Tokens processed through full main-control dispatch rather than a text span.
     ///
-    /// This counts actual scalar dispatch calls. Paragraph memo preflight is not
-    /// counted. Physical-source characters restored after a preflight miss keep
-    /// a dedicated replay class so horizontal main control can still batch them.
+    /// This counts actual scalar dispatch calls; batched text spans are separate.
     pub main_control_dispatches: usize,
     /// Ordinary macro-body characters delivered through the batched main path.
     pub macro_text_span_tokens: usize,
     /// Ordinary physical-source characters delivered through the batched path.
     pub source_text_span_tokens: usize,
-    /// Physical deliveries inspected for stable paragraph-source recording.
-    pub paragraph_source_recording_calls: u64,
-    /// Sparse-sampled estimate of paragraph-source recording work.
-    pub paragraph_source_recording_nanos: u64,
-    pub paragraph_source_recording_timer_samples: u64,
     pub shipped_artifacts: Vec<ContentHash>,
     /// Precompiled DVI pages aligned with `shipped_artifacts`.
     pub dvi_pages: Vec<DviPagePlan>,

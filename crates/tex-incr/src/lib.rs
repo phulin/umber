@@ -135,9 +135,6 @@ pub struct ReuseMetrics {
     pub reexecuted_macro_text_span_tokens: usize,
     /// Ordinary physical-source character tokens handled by the batched text path.
     pub reexecuted_source_text_span_tokens: usize,
-    pub paragraph_source_recording_calls: u64,
-    pub paragraph_source_recording_nanos: u64,
-    pub paragraph_source_recording_timer_samples: u64,
     pub reexecuted_paragraphs: usize,
     pub same_history_attempts: usize,
     pub same_history_hash_mismatches: usize,
@@ -903,10 +900,6 @@ impl Session {
         let reexecuted_commands = advance.reexecuted_commands;
         let reexecuted_macro_text_span_tokens = advance.reexecuted_macro_text_span_tokens;
         let reexecuted_source_text_span_tokens = advance.reexecuted_source_text_span_tokens;
-        let paragraph_source_recording_calls = advance.paragraph_source_recording_calls;
-        let paragraph_source_recording_nanos = advance.paragraph_source_recording_nanos;
-        let paragraph_source_recording_timer_samples =
-            advance.paragraph_source_recording_timer_samples;
         let reexecuted_paragraphs = advance.reexecuted_paragraphs;
         let same_history_attempts = advance.same_history_attempts;
         let same_history_hash_mismatches = advance.same_history_hash_mismatches;
@@ -914,12 +907,12 @@ impl Session {
         let same_history_stop = advance.same_history_stop;
         let generation_transition_started = Timer::start();
         if advance.convergence_old_index.is_some() {
-            self.pure_memo.discard_paragraph_generation();
+            self.pure_memo.discard_paragraph_history();
         } else {
             advance
                 .scratch
                 .accept_paragraph_result_generation(advance.paragraph_generation_mark);
-            self.pure_memo.accept_paragraph_generation();
+            self.pure_memo.accept_paragraph_history();
         }
         let generation_transition_latency = generation_transition_started.elapsed();
         let splice_started = Timer::start();
@@ -1000,9 +993,6 @@ impl Session {
                         reexecuted_commands,
                         reexecuted_macro_text_span_tokens,
                         reexecuted_source_text_span_tokens,
-                        paragraph_source_recording_calls,
-                        paragraph_source_recording_nanos,
-                        paragraph_source_recording_timer_samples,
                         reexecuted_paragraphs,
                         same_history_attempts,
                         same_history_hash_mismatches,
@@ -1062,9 +1052,6 @@ impl Session {
                         reexecuted_commands,
                         reexecuted_macro_text_span_tokens,
                         reexecuted_source_text_span_tokens,
-                        paragraph_source_recording_calls,
-                        paragraph_source_recording_nanos,
-                        paragraph_source_recording_timer_samples,
                         reexecuted_paragraphs,
                         same_history_attempts,
                         same_history_hash_mismatches,
@@ -1447,7 +1434,7 @@ fn execute_revision(
         None => ExecutionContext::with_resolvers(job_name, input_resolver, font_resolver),
     };
     let paragraph_generation_mark = universe.paragraph_result_generation_mark();
-    pure_memo.begin_paragraph_generation(false);
+    pure_memo.begin_paragraph_history(false);
     universe.install_pure_memo_runtime(std::mem::take(pure_memo));
     let execution_result = executor.run_with_context_and_checkpoints(
         &mut input,
@@ -1457,7 +1444,7 @@ fn execute_revision(
     );
     *pure_memo = universe.take_pure_memo_runtime();
     if execution_result.is_err() {
-        pure_memo.discard_paragraph_generation();
+        pure_memo.discard_paragraph_history();
     }
     let ExecutionStats {
         dvi_pages,
@@ -1470,7 +1457,7 @@ fn execute_revision(
     } = execution_result?;
     let expansion_stats = input.expansion_stats();
     universe.accept_paragraph_result_generation(paragraph_generation_mark);
-    pure_memo.accept_paragraph_generation();
+    pure_memo.accept_paragraph_history();
     let effects = universe.world().effect_records().to_vec();
     let artifacts = universe.world().committed_artifacts().to_vec();
     let output_bytes = universe.retained_output_bytes();
@@ -1511,9 +1498,6 @@ struct AdvanceRun {
     reexecuted_commands: usize,
     reexecuted_macro_text_span_tokens: usize,
     reexecuted_source_text_span_tokens: usize,
-    paragraph_source_recording_calls: u64,
-    paragraph_source_recording_nanos: u64,
-    paragraph_source_recording_timer_samples: u64,
     reexecuted_paragraphs: usize,
     same_history_attempts: usize,
     same_history_hash_mismatches: usize,
@@ -1701,7 +1685,7 @@ fn execute_advance(
     };
     let reexecution_started = Timer::start();
     let paragraph_generation_mark = scratch.paragraph_result_generation_mark();
-    pure_memo.begin_paragraph_generation(true);
+    pure_memo.begin_paragraph_history(true);
     scratch.install_pure_memo_runtime(std::mem::take(pure_memo));
     let executor_started = Timer::start();
     let execution_result = executor.resume_with_context_and_checkpoints(
@@ -1713,7 +1697,7 @@ fn execute_advance(
     let executor_latency = executor_started.elapsed();
     *pure_memo = scratch.take_pure_memo_runtime();
     if execution_result.is_err() {
-        pure_memo.discard_paragraph_generation();
+        pure_memo.discard_paragraph_history();
     }
     let ExecutionStats {
         dvi_pages,
@@ -1722,9 +1706,6 @@ fn execute_advance(
         main_control_dispatches,
         macro_text_span_tokens,
         source_text_span_tokens,
-        paragraph_source_recording_calls,
-        paragraph_source_recording_nanos,
-        paragraph_source_recording_timer_samples,
         ..
     } = execution_result?;
     let reexecution_latency = reexecution_started.elapsed();
@@ -1767,9 +1748,6 @@ fn execute_advance(
         reexecuted_commands: main_control_dispatches,
         reexecuted_macro_text_span_tokens: macro_text_span_tokens,
         reexecuted_source_text_span_tokens: source_text_span_tokens,
-        paragraph_source_recording_calls,
-        paragraph_source_recording_nanos,
-        paragraph_source_recording_timer_samples,
         reexecuted_paragraphs,
         same_history_attempts: sink.same_history_attempts,
         same_history_hash_mismatches: sink.same_history_hash_mismatches,

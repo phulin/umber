@@ -93,7 +93,6 @@ pub enum FontSource {
 /// [`tex_expand::ExpansionContext`]; font resolution remains an execution-only
 /// operation and is invoked solely by `\font` assignment.
 pub(crate) struct PendingParagraphMemo {
-    pub(crate) key: tex_state::PureMemoKey,
     pub(crate) trace_origins: Vec<tex_state::token::OriginId>,
 }
 
@@ -102,12 +101,8 @@ pub(crate) struct ColdParagraphRecording {
     pub(crate) starting_span: Option<tex_state::RootSpanId>,
     pub(crate) starting_group_depth: u32,
     pub(crate) starting_group_changed_at: tex_state::ChangedAt,
-    pub(crate) macro_bearing: bool,
     pub(crate) trace: Vec<TracedTokenWord>,
     pub(crate) barriers: std::collections::BTreeSet<ParagraphBarrierReason>,
-    pub(crate) admission: tex_state::ParagraphAdmission,
-    #[cfg(feature = "profiling-stats")]
-    pub(crate) started: std::time::Instant,
     #[cfg(feature = "profiling-stats")]
     pub(crate) trace_capture_nanos: u64,
     #[cfg(feature = "profiling-stats")]
@@ -119,10 +114,8 @@ pub struct ExecutionContext<'a> {
     font_resolver: Option<&'a mut dyn FontResolver>,
     image_resolver: Option<&'a mut dyn PdfImageResolver>,
     pub(crate) pending_paragraph_memo: Option<PendingParagraphMemo>,
-    pub(crate) bypass_paragraph_memo_once: bool,
     pub(crate) paragraph_memo_barrier: bool,
     pub(crate) cold_paragraph_recording: Option<ColdParagraphRecording>,
-    pub(crate) declined_paragraph_census: bool,
     /// Detached paragraph observations reusable only while their authoritative
     /// changed-at stamps remain equal during this execution run.
     pub(crate) paragraph_dependency_cache:
@@ -137,10 +130,8 @@ impl<'a> ExecutionContext<'a> {
             font_resolver: None,
             image_resolver: None,
             pending_paragraph_memo: None,
-            bypass_paragraph_memo_once: false,
             paragraph_memo_barrier: false,
             cold_paragraph_recording: None,
-            declined_paragraph_census: false,
             paragraph_dependency_cache: BTreeMap::new(),
         }
     }
@@ -156,10 +147,8 @@ impl<'a> ExecutionContext<'a> {
             font_resolver: Some(font_resolver),
             image_resolver: None,
             pending_paragraph_memo: None,
-            bypass_paragraph_memo_once: false,
             paragraph_memo_barrier: false,
             cold_paragraph_recording: None,
-            declined_paragraph_census: false,
             paragraph_dependency_cache: BTreeMap::new(),
         }
     }
@@ -176,10 +165,8 @@ impl<'a> ExecutionContext<'a> {
             font_resolver: Some(font_resolver),
             image_resolver: Some(image_resolver),
             pending_paragraph_memo: None,
-            bypass_paragraph_memo_once: false,
             paragraph_memo_barrier: false,
             cold_paragraph_recording: None,
-            declined_paragraph_census: false,
             paragraph_dependency_cache: BTreeMap::new(),
         }
     }
@@ -227,7 +214,6 @@ impl<'a> ExecutionContext<'a> {
         starting_span: Option<tex_state::RootSpanId>,
         starting_group_depth: u32,
         starting_group_changed_at: tex_state::ChangedAt,
-        admission: tex_state::ParagraphAdmission,
     ) -> bool {
         if self.cold_paragraph_recording.is_some() {
             return false;
@@ -238,35 +224,14 @@ impl<'a> ExecutionContext<'a> {
             starting_span,
             starting_group_depth,
             starting_group_changed_at,
-            macro_bearing: false,
             trace: Vec::new(),
             barriers: std::collections::BTreeSet::new(),
-            admission,
-            #[cfg(feature = "profiling-stats")]
-            started: std::time::Instant::now(),
             #[cfg(feature = "profiling-stats")]
             trace_capture_nanos: 0,
             #[cfg(feature = "profiling-stats")]
             trace_capture_samples: 0,
         });
         true
-    }
-
-    pub(crate) fn observe_declined_paragraph_census(&mut self) {
-        if !self.declined_paragraph_census {
-            self.declined_paragraph_census = true;
-        }
-    }
-
-    pub(crate) fn arm_paragraph_census(&mut self) {
-        self.declined_paragraph_census = false;
-    }
-
-    pub(crate) fn finish_declined_paragraph_census(&mut self, stores: &mut Universe) {
-        if !std::mem::take(&mut self.declined_paragraph_census) {
-            return;
-        }
-        stores.record_declined_paragraph_census();
     }
 
     pub(crate) fn observe_paragraph_token(&mut self, token: TracedTokenWord) {
@@ -289,17 +254,14 @@ impl<'a> ExecutionContext<'a> {
         starting_span: Option<tex_state::RootSpanId>,
         starting_group_depth: u32,
         starting_group_changed_at: tex_state::ChangedAt,
-    ) -> bool {
+    ) {
         if let Some(recording) = &mut self.cold_paragraph_recording
-            && !recording.macro_bearing
             && starting_span.is_some()
         {
             recording.starting_span = starting_span;
             recording.starting_group_depth = starting_group_depth;
             recording.starting_group_changed_at = starting_group_changed_at;
-            return true;
         }
-        false
     }
 
     pub(crate) fn abandon_cold_paragraph_recording(&mut self) {
@@ -499,13 +461,6 @@ where {
         }
         stores.set_input_summary(summary);
         result.and_then(|mut stats| {
-            let expansion_stats = input.expansion_stats();
-            stats.paragraph_source_recording_calls =
-                expansion_stats.paragraph_source_recording_calls;
-            stats.paragraph_source_recording_nanos =
-                expansion_stats.paragraph_source_recording_nanos;
-            stats.paragraph_source_recording_timer_samples =
-                expansion_stats.paragraph_source_recording_timer_samples;
             stats.shipped_artifacts = stores.world().artifact_commits()[artifact_start..].to_vec();
             let mut prepared = BTreeMap::<_, VecDeque<_>>::new();
             for page in std::mem::take(&mut stats.prepared_dvi_pages) {
@@ -631,62 +586,51 @@ where
             && stores.paragraph_memo_enabled()
         {
             let starting_span = input.current_root_delivery_anchor(stores)?;
-            let group_key =
-                tex_state::DependencyKey::Engine(tex_state::DependencyEngineField::GroupLevel);
-            let starting_group_changed_at = stores.track_dependency(group_key);
-            if execution.cold_paragraph_recording.is_none() {
-                let admission = stores.paragraph_recording_admission(starting_span);
-                if admission == tex_state::ParagraphAdmission::Declined {
-                    execution.observe_declined_paragraph_census();
-                } else if execution.begin_cold_paragraph_recording(
-                    stores.world().effect_records().len(),
-                    starting_span,
-                    tex_state::ExpansionState::execution_group_depth(stores),
-                    starting_group_changed_at,
-                    admission,
-                ) {
-                    execution.arm_paragraph_census();
-                    input.begin_paragraph_source_recording();
+            if let Some(starting_span) = starting_span {
+                let group_key =
+                    tex_state::DependencyKey::Engine(tex_state::DependencyEngineField::GroupLevel);
+                let starting_group_changed_at = stores.track_dependency(group_key);
+                if execution.cold_paragraph_recording.is_none()
+                    && execution.begin_cold_paragraph_recording(
+                        stores.world().effect_records().len(),
+                        Some(starting_span),
+                        tex_state::ExpansionState::execution_group_depth(stores),
+                        starting_group_changed_at,
+                    )
+                {
                     stores.begin_pure_paragraph_recording();
                 }
-            }
-            if execution.update_cold_paragraph_start(
-                starting_span,
-                tex_state::ExpansionState::execution_group_depth(stores),
-                starting_group_changed_at,
-            ) {
-                input.ensure_paragraph_source_recording();
-            }
-            if execution.cold_paragraph_recording.is_none() {
-                // Census-only regions execute normally without dependency,
-                // provenance, break, or result recording.
-            } else if execution.bypass_paragraph_memo_once {
-                execution.bypass_paragraph_memo_once = false;
-            } else {
-                let before_artifacts = stores.world().artifact_commits().len();
-                if crate::paragraph_memo::try_reuse_aligned_paragraph(
-                    starting_span,
-                    nest,
-                    input,
-                    stores,
-                    execution,
-                    stats,
-                )? {
-                    output::drain_pending_output(nest, input, stores, execution, stats)?;
-                    execution.paragraph_memo_barrier = false;
-                    if observe(
+                execution.update_cold_paragraph_start(
+                    Some(starting_span),
+                    tex_state::ExpansionState::execution_group_depth(stores),
+                    starting_group_changed_at,
+                );
+                if execution.cold_paragraph_recording.is_some() {
+                    let before_artifacts = stores.world().artifact_commits().len();
+                    if crate::paragraph_memo::try_reuse_aligned_paragraph(
+                        Some(starting_span),
                         nest,
                         input,
                         stores,
-                        BoundaryEvent {
-                            outer_paragraph_end: true,
-                            shipout_complete: stores.world().artifact_commits().len()
-                                != before_artifacts,
-                        },
-                    ) {
-                        return Ok(MainControlExit::Stopped);
+                        execution,
+                        stats,
+                    )? {
+                        output::drain_pending_output(nest, input, stores, execution, stats)?;
+                        execution.paragraph_memo_barrier = false;
+                        if observe(
+                            nest,
+                            input,
+                            stores,
+                            BoundaryEvent {
+                                outer_paragraph_end: true,
+                                shipout_complete: stores.world().artifact_commits().len()
+                                    != before_artifacts,
+                            },
+                        ) {
+                            return Ok(MainControlExit::Stopped);
+                        }
+                        continue;
                     }
-                    continue;
                 }
             }
         }
@@ -958,7 +902,6 @@ where
             && nest.depth() == 1
         {
             execution.paragraph_memo_barrier = false;
-            execution.finish_declined_paragraph_census(stores);
         }
         if observe(
             nest,

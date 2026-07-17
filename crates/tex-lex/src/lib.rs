@@ -1228,18 +1228,14 @@ pub struct ExpansionStats {
     pub provenance_nanos: u64,
     pub classification_meaning_nanos: u64,
     pub builder_append_nanos: u64,
-    pub paragraph_source_recording_nanos: u64,
     pub frame_step_timer_samples: u64,
     pub provenance_timer_samples: u64,
     pub classification_meaning_timer_samples: u64,
     pub builder_append_timer_samples: u64,
-    pub paragraph_source_recording_calls: u64,
-    pub paragraph_source_recording_timer_samples: u64,
     frame_step_timer_events: u64,
     provenance_timer_events: u64,
     classification_meaning_timer_events: u64,
     builder_append_timer_events: u64,
-    paragraph_source_recording_timer_events: u64,
 }
 
 #[cfg(feature = "profiling-stats")]
@@ -1270,7 +1266,6 @@ impl ExpansionStats {
             .saturating_add(self.provenance_nanos)
             .saturating_add(self.classification_meaning_nanos)
             .saturating_add(self.builder_append_nanos)
-            .saturating_add(self.paragraph_source_recording_nanos)
     }
 
     #[must_use]
@@ -1467,8 +1462,6 @@ pub struct InputStack {
     expansion_stats: ExpansionStats,
     active_macro_invocation: OriginId,
     recently_popped_invocation: Option<OriginId>,
-    /// Stable physical-source deliveries observed while one paragraph records.
-    paragraph_source_spans: Option<Vec<RootSpanId>>,
 }
 
 /// Proof that one token was delivered directly from a physical source frame.
@@ -1642,30 +1635,7 @@ impl InputStack {
             expansion_stats: ExpansionStats::default(),
             active_macro_invocation: OriginId::UNKNOWN,
             recently_popped_invocation: None,
-            paragraph_source_spans: None,
         }
-    }
-
-    /// Starts collecting stable physical-source deliveries for one paragraph.
-    pub fn begin_paragraph_source_recording(&mut self) {
-        self.paragraph_source_spans = Some(Vec::new());
-    }
-
-    /// Keeps an in-progress paragraph source recording active without losing
-    /// deliveries observed by an earlier vertical-mode preflight.
-    pub fn ensure_paragraph_source_recording(&mut self) {
-        self.paragraph_source_spans.get_or_insert_with(Vec::new);
-    }
-
-    /// Returns the physical-source deliveries collected for the active paragraph.
-    #[must_use]
-    pub fn paragraph_source_spans(&self) -> Option<&[RootSpanId]> {
-        self.paragraph_source_spans.as_deref()
-    }
-
-    /// Finishes physical-source delivery collection for one paragraph.
-    pub fn finish_paragraph_source_recording(&mut self) -> Option<Vec<RootSpanId>> {
-        self.paragraph_source_spans.take()
     }
 
     /// Rebases a fresh, not-yet-registered stack into the aggregate source-id
@@ -1915,7 +1885,6 @@ impl InputStack {
             expansion_stats: ExpansionStats::default(),
             active_macro_invocation,
             recently_popped_invocation: None,
-            paragraph_source_spans: None,
         })
     }
 
@@ -2518,68 +2487,6 @@ impl InputStack {
             self.expansion_stats.source_text_tokens += u64::try_from(appended).unwrap_or(u64::MAX);
         }
         appended
-    }
-
-    /// Appends a maximal ordinary-character run restored after paragraph
-    /// preflight consumed it from a physical source.
-    ///
-    /// The transient frame retains the original traced words, so this changes
-    /// only delivery granularity: expansion, provenance, and input ordering are
-    /// identical to scalar replay.
-    pub fn append_paragraph_preflight_text_span(
-        &mut self,
-        tokens_out: &mut Vec<TracedTokenWord>,
-    ) -> usize {
-        if self.has_active_alignment() {
-            return 0;
-        }
-        loop {
-            let Some(frame_index) = self.current_token_frame_index() else {
-                return 0;
-            };
-            let exhausted = matches!(
-                &self.frames[frame_index],
-                InputFrame::TokenList(TokenListInputFrame {
-                    payload: ReplayPayload::Transient { tokens },
-                    replay_kind: TokenListReplayKind::ParagraphPreflight,
-                    index,
-                    ..
-                }) if *index >= tokens.len()
-            );
-            if exhausted {
-                let frame = self.discard_token_list_frame(frame_index);
-                self.retire_token_list_frame(frame);
-                continue;
-            }
-            let InputFrame::TokenList(frame) = &mut self.frames[frame_index] else {
-                return 0;
-            };
-            if frame.replay_kind != TokenListReplayKind::ParagraphPreflight {
-                return 0;
-            }
-            let ReplayPayload::Transient { tokens } = &frame.payload else {
-                return 0;
-            };
-            let start = frame.index;
-            let mut end = start;
-            while let Some(token) = tokens.get(end)
-                && matches!(
-                    token.token(),
-                    Some(Token::Char {
-                        cat: Catcode::Letter | Catcode::Other,
-                        ..
-                    })
-                )
-            {
-                end += 1;
-            }
-            if end == start {
-                return 0;
-            }
-            tokens_out.extend_from_slice(&tokens[start..end]);
-            frame.index = end;
-            return end - start;
-        }
     }
 
     fn take_macro_literal_span(
@@ -3691,13 +3598,6 @@ impl InputStack {
                 InputFrame::Source(source) => {
                     ensure_source_registered(source, stores);
                     if let Some(token) = source.frame.pending.pop_front() {
-                        record_paragraph_source_delivery(
-                            &mut self.paragraph_source_spans,
-                            #[cfg(feature = "profiling-stats")]
-                            &mut self.expansion_stats,
-                            stores,
-                            token,
-                        );
                         return Ok(Some(token));
                     }
 
@@ -3759,13 +3659,6 @@ impl InputStack {
                         continue;
                     };
                     let token = token.packed();
-                    record_paragraph_source_delivery(
-                        &mut self.paragraph_source_spans,
-                        #[cfg(feature = "profiling-stats")]
-                        &mut self.expansion_stats,
-                        stores,
-                        token,
-                    );
                     return Ok(Some(token));
                 }
                 InputFrame::Condition { .. } => {
@@ -3891,13 +3784,6 @@ impl InputStack {
                 InputFrame::Source(source) => {
                     ensure_source_registered(source, stores);
                     if let Some(token) = source.frame.pending.pop_front() {
-                        record_paragraph_source_delivery(
-                            &mut self.paragraph_source_spans,
-                            #[cfg(feature = "profiling-stats")]
-                            &mut self.expansion_stats,
-                            stores,
-                            token,
-                        );
                         return Ok(Some(TracedExpansionToken::new(token, false)));
                     }
 
@@ -3958,14 +3844,6 @@ impl InputStack {
                     else {
                         continue;
                     };
-                    let packed = token.packed();
-                    record_paragraph_source_delivery(
-                        &mut self.paragraph_source_spans,
-                        #[cfg(feature = "profiling-stats")]
-                        &mut self.expansion_stats,
-                        stores,
-                        packed,
-                    );
                     return Ok(Some(TracedExpansionToken::from_decoded(
                         token, false, false, None,
                     )));
@@ -4639,35 +4517,6 @@ fn decode_traced_token(token: TracedTokenWord) -> Token {
     token
         .token()
         .expect("input stack must only deliver valid traced tokens")
-}
-
-#[inline(always)]
-fn record_paragraph_source_delivery(
-    recording: &mut Option<Vec<RootSpanId>>,
-    #[cfg(feature = "profiling-stats")] stats: &mut ExpansionStats,
-    stores: &impl ExpansionState,
-    token: TracedTokenWord,
-) {
-    #[cfg(feature = "profiling-stats")]
-    let started = if recording.is_some() {
-        stats.paragraph_source_recording_calls =
-            stats.paragraph_source_recording_calls.saturating_add(1);
-        should_sample_timer(&mut stats.paragraph_source_recording_timer_events).then(Instant::now)
-    } else {
-        None
-    };
-    if let Some(recording) = recording
-        && let Some(span) = stores.root_span_for_origin(token.origin())
-    {
-        recording.push(span);
-    }
-    #[cfg(feature = "profiling-stats")]
-    if let Some(started) = started {
-        stats.paragraph_source_recording_timer_samples = stats
-            .paragraph_source_recording_timer_samples
-            .saturating_add(1);
-        add_elapsed(&mut stats.paragraph_source_recording_nanos, started);
-    }
 }
 
 fn next_token_from_line(

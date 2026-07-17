@@ -2,18 +2,14 @@
 
 use tex_lex::InputStack;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
-use tex_state::token::{Catcode, Token};
+use tex_state::token::Token;
 use tex_state::{
-    ContentHash, DetachedVirtualEffect, EffectRecord, ExpansionState, MemoTimingPhase,
-    ParagraphRecordingPhase, ParagraphValidationFailure, PrintSink, PureMemoKey, PureMemoLayer,
-    Universe,
+    DetachedVirtualEffect, EffectRecord, MemoTimingPhase, ParagraphRecordingPhase,
+    ParagraphValidationFailure, PrintSink, PureMemoLayer, Universe,
 };
 
 use crate::{ExecError, ExecutionContext, ExecutionStats, ModeNest};
 
-const PARAGRAPH_FRONT_END_DOMAIN: u32 = 2;
-const PARAGRAPH_FRONT_END_SCHEMA: u32 = 1;
-const PARAGRAPH_ENV_HASH_DOMAIN: u64 = 0x7061_7261_656e_7601;
 const MAX_PARAGRAPH_DEPENDENCY_CACHE_ENTRIES: usize = 4_096;
 
 #[cfg(feature = "profiling-stats")]
@@ -185,7 +181,6 @@ pub(crate) fn try_reuse_aligned_paragraph(
             &entry.line_origin_ordinals,
         );
     }
-    let _ = input.finish_paragraph_source_recording();
     execution.abandon_cold_paragraph_recording();
     entry.ending_input = current_input;
     entry.hlist = Some(stores.retain_paragraph_result(list));
@@ -197,13 +192,11 @@ pub(crate) fn try_reuse_aligned_paragraph(
     };
     let line_count = entry.line_count;
     let mutation_count = entry.mutations.len();
-    let key = entry.key;
     let trace_len = entry.trace_spans.len();
     stores.record_carried_paragraph(&entry);
     stores.record_paragraph_region(entry);
     execution.pending_paragraph_memo =
         (!lines_valid).then_some(crate::executor::PendingParagraphMemo {
-            key,
             trace_origins: current_trace_origins,
         });
     crate::assignments::install_reused_paragraph_hlist(
@@ -299,68 +292,6 @@ fn replay_effects(stores: &mut Universe, effects: &[DetachedVirtualEffect]) {
         };
         stores.world_mut().write_text(sink, text);
     }
-}
-
-fn paragraph_key(stores: &Universe, tokens: &[Token]) -> PureMemoKey {
-    let mut chars: Vec<char> = tokens
-        .iter()
-        .filter_map(|token| match token {
-            Token::Char { ch, cat } if *cat != Catcode::Space => Some(*ch),
-            _ => None,
-        })
-        .collect();
-    chars.sort_unstable();
-    chars.dedup();
-    let environment = stores.engine_boundary_hash(PARAGRAPH_ENV_HASH_DOMAIN, |hash| {
-        hash.font(stores.current_font());
-        hash.glue(stores.glue_param(GlueParam::SPACE_SKIP));
-        hash.glue(stores.glue_param(GlueParam::XSPACE_SKIP));
-        hash.i32(stores.dimen_param(DimenParam::PAR_INDENT).raw());
-        hash.i32(stores.int_param(IntParam::LANGUAGE));
-        hash.i32(stores.int_param(IntParam::LEFT_HYPHEN_MIN));
-        hash.i32(stores.int_param(IntParam::RIGHT_HYPHEN_MIN));
-        hash.u32(stores.execution_group_depth());
-        hash.i32(
-            stores
-                .innermost_group_kind()
-                .map_or(0, |kind| kind.etex_code()),
-        );
-        for ch in &chars {
-            hash.u32(*ch as u32);
-            hash.u16(stores.sfcode(*ch));
-        }
-    });
-    let mut bytes = Vec::with_capacity(tokens.len().saturating_mul(8).saturating_add(24));
-    bytes.extend_from_slice(&PARAGRAPH_FRONT_END_SCHEMA.to_le_bytes());
-    bytes.extend_from_slice(&environment.to_le_bytes());
-    for token in tokens {
-        match token {
-            Token::Char { ch, cat } => {
-                bytes.push(0);
-                bytes.extend_from_slice(&(*ch as u32).to_le_bytes());
-                bytes.push(*cat as u8);
-            }
-            Token::Cs(symbol) => {
-                bytes.push(1);
-                let name = stores.resolve(*symbol);
-                bytes.extend_from_slice(&(name.len() as u64).to_le_bytes());
-                bytes.extend_from_slice(name.as_bytes());
-            }
-            Token::Param(slot) => {
-                bytes.push(2);
-                bytes.push(*slot);
-            }
-            Token::Frozen(kind) => {
-                bytes.push(3);
-                bytes.extend_from_slice(format!("{kind:?}").as_bytes());
-            }
-        }
-    }
-    PureMemoKey::new(
-        PARAGRAPH_FRONT_END_DOMAIN,
-        environment,
-        ContentHash::from_bytes(&bytes),
-    )
 }
 
 fn rebind_literal_origins(
@@ -485,7 +416,6 @@ fn publish_recorded_region(
     nodes: &[tex_state::node::Node],
 ) {
     let Some(mut recording) = execution.cold_paragraph_recording.take() else {
-        let _ = input.finish_paragraph_source_recording();
         let _ = stores.finish_pure_paragraph_recording();
         return;
     };
@@ -588,7 +518,6 @@ fn publish_recorded_region(
         }
     };
     let mutations = stores.finish_pure_paragraph_recording().unwrap_or_default();
-    let _delivered_spans = input.finish_paragraph_source_recording();
     finish_phase(
         stores,
         ParagraphRecordingPhase::InputTransition,
@@ -630,24 +559,13 @@ fn publish_recorded_region(
             .barriers
             .insert(tex_state::ParagraphBarrierReason::UnsupportedGroupTransition);
     }
-    if recording.macro_bearing && ending_input.frames().len() != 1 {
+    if ending_input.frames().len() != 1 {
         recording
             .barriers
             .insert(tex_state::ParagraphBarrierReason::UnsupportedInputTransition);
     }
     let eligible = recording.barriers.is_empty();
     let pending = execution.pending_paragraph_memo.as_ref();
-    let key = pending.map_or_else(
-        || {
-            let semantic = recording
-                .trace
-                .iter()
-                .map(|token| tex_expand::semantic_token(*token))
-                .collect::<Vec<_>>();
-            paragraph_key(stores, &semantic)
-        },
-        |pending| pending.key,
-    );
     let trace_origins = pending.map_or_else(
         || recording.trace.iter().map(|token| token.origin()).collect(),
         |pending| pending.trace_origins.clone(),
@@ -668,28 +586,11 @@ fn publish_recorded_region(
         retention_started,
     );
     let publication_started = start_phase();
-    let armed_bytes = recording
-        .trace
-        .capacity()
-        .saturating_mul(std::mem::size_of::<tex_state::token::TracedTokenWord>())
-        .saturating_add(
-            recording
-                .barriers
-                .len()
-                .saturating_mul(std::mem::size_of::<tex_state::ParagraphBarrierReason>()),
-        );
-    let admission = recording.admission;
-    #[cfg(feature = "profiling-stats")]
-    let armed_elapsed = recording.started.elapsed();
-    #[cfg(not(feature = "profiling-stats"))]
-    let armed_elapsed = std::time::Duration::ZERO;
     stores.record_paragraph_region(tex_state::RecordedParagraphRegion {
-        key,
         starting_span: recording.starting_span,
         ending_span,
         consumed_spans,
         trace_spans,
-        macro_bearing: recording.macro_bearing,
         dependencies,
         mutations: mutations.clone(),
         effects,
@@ -707,10 +608,9 @@ fn publish_recorded_region(
         ParagraphRecordingPhase::RegionPublication,
         publication_started,
     );
-    stores.record_armed_paragraph_cost(admission, armed_bytes, armed_elapsed);
     if eligible && execution.pending_paragraph_memo.is_none() {
         execution.pending_paragraph_memo =
-            Some(crate::executor::PendingParagraphMemo { key, trace_origins });
+            Some(crate::executor::PendingParagraphMemo { trace_origins });
     }
 }
 

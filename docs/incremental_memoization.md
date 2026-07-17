@@ -306,10 +306,13 @@ read-set or provenance contract.
    reconstruction. This is implemented by commit `b2fbbb84`.
 2. **Accepted-history cursor.** Expose ordered prior paragraph records to the
    executor, align them by stable source anchors, and replay sequentially with
-   current per-record validation. Preserve cold boundary publication.
+   current per-record validation. Preserve cold boundary publication. This is
+   implemented by commit `a9bfee13`.
 3. **Remove lookup/admission machinery.** Delete global paragraph key lookup,
    token preflight, census/seeding/probation, and redundant paragraph
-   generation ownership once the cursor covers accepted-history reuse.
+   generation ownership once the cursor covers accepted-history reuse. The
+   implementation now retains only ordered accepted-history publication and
+   carry-forward telemetry; the old discovery and admission layers are gone.
 4. **Path-separated verification.** Re-run slow pagination-changing,
    cross-generation interaction, and fast height/page-preserving Gentle
    cases. Require cold parity, exact page accounting, and the explicit
