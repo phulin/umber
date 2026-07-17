@@ -1,12 +1,14 @@
 use std::path::Path;
 
+use sha2::{Digest, Sha256};
+
 use super::{FileKind, FileRequestKey};
 use umber_vfs::{VirtualPath, VirtualPathError};
 
 pub(crate) enum RequestedFile {
     UserOnly(VirtualPath),
     Remote {
-        user_path: VirtualPath,
+        user_path: Option<VirtualPath>,
         key: FileRequestKey,
     },
 }
@@ -19,7 +21,23 @@ impl RequestedFile {
             return Ok(Self::UserOnly(path));
         }
 
-        let normalized = normalize_components(name)?;
+        let normalized = match normalize_components(name) {
+            Ok(normalized) => normalized,
+            Err(_) if has_parent_component(name) => {
+                let normalized = normalize_external_path(name, extension(kind))?;
+                let digest = Sha256::digest(normalized.as_bytes())
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>();
+                let key = FileRequestKey::new(kind, &format!(".host-path/{digest}"))
+                    .expect("opaque host-path keys are valid VFS request keys");
+                return Ok(Self::Remote {
+                    user_path: None,
+                    key,
+                });
+            }
+            Err(error) => return Err(error),
+        };
         if normalized.is_empty() {
             return Err(VirtualPathError::new("path does not name a file"));
         }
@@ -27,8 +45,42 @@ impl RequestedFile {
         let user_path = VirtualPath::user(&normalized)?;
         let key = FileRequestKey::new(kind, &normalized)
             .expect("TeX-normalized relative names are valid VFS request keys");
-        Ok(Self::Remote { user_path, key })
+        Ok(Self::Remote {
+            user_path: Some(user_path),
+            key,
+        })
     }
+}
+
+fn has_parent_component(path: &str) -> bool {
+    path.split('/').any(|component| component == "..")
+}
+
+fn normalize_external_path(path: &str, extension: &str) -> Result<String, VirtualPathError> {
+    if path.is_empty() {
+        return Err(VirtualPathError::new("path is empty"));
+    }
+    if path.contains('\0') || path.contains('\\') || path.contains(':') {
+        return Err(VirtualPathError::new(
+            "NUL, backslash, colon, and URL-shaped paths are not allowed",
+        ));
+    }
+    let mut components = path
+        .split('/')
+        .filter(|component| !component.is_empty() && *component != ".")
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let Some(file_name) = components.last_mut() else {
+        return Err(VirtualPathError::new("path does not name a file"));
+    };
+    if file_name == ".." {
+        return Err(VirtualPathError::new("path does not name a file"));
+    }
+    if !extension.is_empty() && Path::new(file_name.as_str()).extension().is_none() {
+        file_name.push('.');
+        file_name.push_str(extension);
+    }
+    Ok(components.join("/"))
 }
 
 fn extension(kind: FileKind) -> &'static str {
