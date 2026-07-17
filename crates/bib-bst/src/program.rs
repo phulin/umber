@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::{ClassicStringPool, StringPoolLimits, StringPoolUsage};
+use crate::{ClassicStringPool, SourceLocation, StringPoolLimits, StringPoolUsage};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct FunctionId(pub u32);
@@ -219,6 +219,7 @@ pub struct CompiledStyle {
     declarations: Declarations,
     functions: Vec<CompiledFunction>,
     commands: Vec<CompiledCommand>,
+    command_locations: Vec<SourceLocation>,
     charge: ProgramCharge,
     pool_trace: Vec<String>,
 }
@@ -234,6 +235,10 @@ impl CompiledStyle {
     #[must_use]
     pub fn commands(&self) -> &[CompiledCommand] {
         &self.commands
+    }
+    #[must_use]
+    pub fn command_location(&self, index: usize) -> Option<SourceLocation> {
+        self.command_locations.get(index).copied()
     }
     #[must_use]
     pub const fn charge(&self) -> ProgramCharge {
@@ -255,17 +260,20 @@ impl CompiledStyle {
         self.apply_pool_trace(&mut pool);
         pool.usage()
     }
-    pub(crate) fn new(
+    pub(crate) fn with_command_locations(
         declarations: Declarations,
         functions: Vec<CompiledFunction>,
         commands: Vec<CompiledCommand>,
+        command_locations: Vec<SourceLocation>,
         charge: ProgramCharge,
         pool_trace: Vec<String>,
     ) -> Self {
+        debug_assert_eq!(commands.len(), command_locations.len());
         Self {
             declarations,
             functions,
             commands,
+            command_locations,
             charge,
             pool_trace,
         }

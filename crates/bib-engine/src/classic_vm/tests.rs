@@ -1,4 +1,4 @@
-use bib_bst::{CompileLimits, compile};
+use bib_bst::{Builtin, CompileLimits, compile};
 use bib_input::{BibTexOptions, parse_raw_bibtex_bytes};
 use umber_vfs::{FileContentId, VirtualPath};
 
@@ -110,17 +110,47 @@ READ EXECUTE {main}"#,
 }
 
 #[test]
-fn wrong_types_and_underflow_are_fatal_and_transactional() {
+fn underflow_is_recoverable_and_wrong_types_remain_fatal() {
     let result = run(
         b"ENTRY {} {} {} FUNCTION {bad} { pop$ } READ EXECUTE {bad}",
         b"@book{one}",
     );
-    assert!(result.is_fatal());
-    assert_eq!(result.bbl(), None);
+    assert!(!result.is_fatal());
+    assert_eq!(result.bbl(), Some(""));
     assert_eq!(
         result.diagnostics()[0].kind(),
         ClassicVmDiagnosticKind::Underflow
     );
+
+    let wrong_type = run(
+        b"ENTRY {} {} {} FUNCTION {bad} { \"x\" #1 + } READ EXECUTE {bad}",
+        b"@book{one}",
+    );
+    assert!(wrong_type.is_fatal());
+}
+
+#[test]
+fn stack_underflow_continues_through_all_entry_traversals() {
+    let result = run(
+        br#"ENTRY {} {} {}
+FUNCTION {item} { #1 stack$ pop$ "entry" write$ newline$ }
+READ ITERATE {item} REVERSE {item} SORT ITERATE {item}"#,
+        b"@book{alpha,} @book{beta,}",
+    );
+    assert!(!result.is_fatal(), "{:?}", result.diagnostics());
+    assert_eq!(
+        result.bbl(),
+        Some("entry\nentry\nentry\nentry\nentry\nentry\n")
+    );
+    assert_eq!(result.diagnostics().len(), 6);
+    assert!(
+        result
+            .diagnostics()
+            .iter()
+            .all(|diagnostic| diagnostic.kind() == ClassicVmDiagnosticKind::Underflow)
+    );
+    assert_eq!(result.builtin_calls()[Builtin::Stack as usize], 6);
+    assert_eq!(result.builtin_calls()[Builtin::Pop as usize], 6);
 }
 
 #[test]

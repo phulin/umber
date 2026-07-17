@@ -388,7 +388,8 @@ fn run_umber(case: &GeneratedCase) -> Result<Output> {
     };
     let status = match result.history() {
         BibliographyHistory::Spotless | BibliographyHistory::Warning => BibExitStatus::Success,
-        BibliographyHistory::Error | BibliographyHistory::Fatal => BibExitStatus::OperationalFailure,
+        BibliographyHistory::Error => BibExitStatus::ClassicExecutionError,
+        BibliographyHistory::Fatal => BibExitStatus::OperationalFailure,
     }
     .code() as i32;
     let artifacts = result

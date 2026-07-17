@@ -6,7 +6,8 @@
 //! text unit, and ordinary strings retain their original TeX spelling.
 
 use bib_bst::{
-    Builtin, CompiledCommand, CompiledStyle, FunctionId, Instruction, SymbolId, SymbolKind,
+    Builtin, CompiledCommand, CompiledStyle, FunctionId, Instruction, SourceLocation, SymbolId,
+    SymbolKind,
 };
 
 use crate::ClassicDatabase;
@@ -106,6 +107,8 @@ pub enum ClassicVmDiagnosticKind {
 pub struct ClassicVmDiagnostic {
     kind: ClassicVmDiagnosticKind,
     message: String,
+    source: Option<SourceLocation>,
+    entry: Option<String>,
 }
 
 impl ClassicVmDiagnostic {
@@ -117,6 +120,18 @@ impl ClassicVmDiagnostic {
     pub fn message(&self) -> &str {
         &self.message
     }
+    pub(crate) const fn source(&self) -> Option<SourceLocation> {
+        self.source
+    }
+    pub(crate) fn entry(&self) -> Option<&str> {
+        self.entry.as_deref()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum ClassicVmLogEvent {
+    Stack(String),
+    Diagnostic(ClassicVmDiagnostic),
 }
 
 /// Detached effects and audit state produced by a VM attempt.
@@ -129,6 +144,7 @@ pub struct ClassicVmResult {
     bbl: String,
     blg: String,
     diagnostics: Vec<ClassicVmDiagnostic>,
+    log_events: Vec<ClassicVmLogEvent>,
     entry_order: Vec<String>,
     builtin_calls: [usize; CLASSIC_BUILTINS.len()],
     work: usize,
@@ -158,6 +174,9 @@ impl ClassicVmResult {
     #[must_use]
     pub fn diagnostics(&self) -> &[ClassicVmDiagnostic] {
         &self.diagnostics
+    }
+    pub(crate) fn log_events(&self) -> &[ClassicVmLogEvent] {
+        &self.log_events
     }
     #[must_use]
     pub fn entry_order(&self) -> &[String] {
@@ -231,9 +250,11 @@ struct Vm<'a> {
     bbl: String,
     blg: String,
     diagnostics: Vec<ClassicVmDiagnostic>,
+    log_events: Vec<ClassicVmLogEvent>,
     builtin_calls: [usize; CLASSIC_BUILTINS.len()],
     work: usize,
     fatal: bool,
+    instruction_source: Option<SourceLocation>,
 }
 
 impl<'a> Vm<'a> {
@@ -264,9 +285,11 @@ impl<'a> Vm<'a> {
             bbl: String::new(),
             blg: String::new(),
             diagnostics: Vec::new(),
+            log_events: Vec::new(),
             builtin_calls: [0; CLASSIC_BUILTINS.len()],
             work: 0,
             fatal: false,
+            instruction_source: None,
         }
     }
 
@@ -288,6 +311,7 @@ impl<'a> Vm<'a> {
             bbl: self.bbl,
             blg: self.blg,
             diagnostics: self.diagnostics,
+            log_events: self.log_events,
             entry_order,
             builtin_calls: self.builtin_calls,
             work: self.work,
@@ -295,13 +319,14 @@ impl<'a> Vm<'a> {
     }
 
     fn run(&mut self) {
-        for command in self.style.commands() {
+        for (command_index, command) in self.style.commands().iter().enumerate() {
             if self.fatal {
                 break;
             }
             if !self.charge() {
                 break;
             }
+            self.instruction_source = self.style.command_location(command_index);
             match *command {
                 CompiledCommand::Read => {}
                 CompiledCommand::Execute(function) => {
@@ -516,12 +541,7 @@ impl<'a> Vm<'a> {
             Builtin::Newline => self.effect(false, "\n"),
             Builtin::Warning => {
                 if let Some(value) = self.pop_string() {
-                    if self.diagnostics.len() < self.limits.diagnostics {
-                        self.diagnostics.push(ClassicVmDiagnostic {
-                            kind: ClassicVmDiagnosticKind::Warning,
-                            message: value.clone(),
-                        });
-                    }
+                    self.report(ClassicVmDiagnosticKind::Warning, &value);
                     self.effect(true, &value);
                     self.effect(true, "\n");
                 }
@@ -714,7 +734,9 @@ impl<'a> Vm<'a> {
 
     fn print_stack(&mut self) {
         while let Some(value) = self.stack.pop() {
-            self.effect(true, &format!("{value:?}\n"));
+            let text = value.stack_text();
+            self.effect(true, &format!("{text}\n"));
+            self.log_events.push(ClassicVmLogEvent::Stack(text));
             if self.fatal {
                 return;
             }
@@ -1028,7 +1050,7 @@ impl<'a> Vm<'a> {
         }
     }
     fn underflow(&mut self) {
-        self.fail(
+        self.report(
             ClassicVmDiagnosticKind::Underflow,
             "BST operand stack underflow",
         );
@@ -1046,17 +1068,33 @@ impl<'a> Vm<'a> {
         );
     }
     fn fail(&mut self, kind: ClassicVmDiagnosticKind, message: &str) {
+        self.report(kind, message);
+        self.fatal = true;
+    }
+    fn report(&mut self, kind: ClassicVmDiagnosticKind, message: &str) {
         if self.diagnostics.len() < self.limits.diagnostics {
-            self.diagnostics.push(ClassicVmDiagnostic {
+            let diagnostic = ClassicVmDiagnostic {
                 kind,
                 message: message.to_owned(),
-            });
+                source: self.instruction_source,
+                entry: self.current_entry().map(|entry| entry.key().to_owned()),
+            };
+            self.log_events
+                .push(ClassicVmLogEvent::Diagnostic(diagnostic.clone()));
+            self.diagnostics.push(diagnostic);
         }
-        self.fatal = true;
     }
 }
 
 impl VmValue {
+    fn stack_text(&self) -> String {
+        match self {
+            Self::Integer(value) => value.to_string(),
+            Self::String(value) => value.clone(),
+            Self::Function(_) | Self::Variable(_) => "function".to_owned(),
+            Self::Missing => "missing".to_owned(),
+        }
+    }
     fn into_sort_string(self) -> Option<String> {
         match self {
             Self::String(value) => Some(value),

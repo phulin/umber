@@ -81,6 +81,7 @@ struct Compiler {
     declarations: Declarations,
     functions: Vec<CompiledFunction>,
     commands: Vec<CompiledCommand>,
+    command_locations: Vec<SourceLocation>,
     entry_seen: bool,
     read_seen: bool,
     source_bytes: usize,
@@ -118,6 +119,7 @@ impl Compiler {
             declarations,
             functions: Vec::new(),
             commands: Vec::new(),
+            command_locations: Vec::new(),
             entry_seen: false,
             read_seen: false,
             source_bytes,
@@ -287,7 +289,7 @@ impl Compiler {
             return;
         }
         self.read_seen = true;
-        self.commands.push(CompiledCommand::Read);
+        self.push_command(CompiledCommand::Read, location);
     }
     fn invoke(&mut self, location: SourceLocation, kind: Invoke) {
         if !self.read_seen {
@@ -305,18 +307,25 @@ impl Compiler {
         let Some(id) = self.function_id(&name, location) else {
             return;
         };
-        self.commands.push(match kind {
-            Invoke::Execute => CompiledCommand::Execute(id),
-            Invoke::Iterate => CompiledCommand::Iterate(id),
-            Invoke::Reverse => CompiledCommand::Reverse(id),
-        });
+        self.push_command(
+            match kind {
+                Invoke::Execute => CompiledCommand::Execute(id),
+                Invoke::Iterate => CompiledCommand::Iterate(id),
+                Invoke::Reverse => CompiledCommand::Reverse(id),
+            },
+            location,
+        );
     }
     fn sort(&mut self, location: SourceLocation) {
         if !self.read_seen {
             self.error(DiagnosticKind::Phase, location, "SORT requires READ first");
         } else {
-            self.commands.push(CompiledCommand::Sort);
+            self.push_command(CompiledCommand::Sort, location);
         }
+    }
+    fn push_command(&mut self, command: CompiledCommand, location: SourceLocation) {
+        self.commands.push(command);
+        self.command_locations.push(location);
     }
     fn lower_body(&mut self, body: Vec<Token>, current: FunctionId) -> Vec<Instruction> {
         let mut instructions = Vec::new();
@@ -741,10 +750,11 @@ impl Compiler {
         }
         CompileResult {
             program: success.then(|| {
-                Arc::new(CompiledStyle::new(
+                Arc::new(CompiledStyle::with_command_locations(
                     self.declarations,
                     self.functions,
                     self.commands,
+                    self.command_locations,
                     charge,
                     self.pool_trace,
                 ))

@@ -87,9 +87,12 @@ history rendering, and process status. Typed diagnostics are rendered into BLG
 and terminal bytes only after semantic ordering is fixed.
 
 The four reference histories are `spotless`, `warning`, `error`, and `fatal`.
-Warnings and recoverable errors can still yield a complete BBL. Infrastructure
-failure remains outside this history model, and fatal partial files are never
-published by a project transaction. `umber2-ild0.2` owns the typed history;
+Warnings and recoverable errors can still yield a complete BBL. In particular,
+operand-stack underflow is a recoverable VM error: execution continues through
+later entries and commands, preserves ordered stack/error log events, and the
+classic command returns the reference error exit status. Infrastructure failure
+remains outside this history model, and fatal partial files are never published
+by a project transaction. `umber2-ild0.2` owns the typed history;
 `umber2-ild0.11` owns exact terminal, BLG, status, and partial-artifact parity.
 
 Historical capacities are observations, not Umber's safety policy. The

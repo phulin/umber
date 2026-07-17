@@ -86,7 +86,12 @@ impl ClassicExecutionSession {
             .diagnostics()
             .iter()
             .map(|diagnostic| {
-                diagnostic_message("BST_COMPILE", diagnostic.message().to_owned(), None)
+                diagnostic_message(
+                    "BST_COMPILE",
+                    crate::BibSeverity::Warning,
+                    diagnostic.message().to_owned(),
+                    None,
+                )
             })
             .collect::<Vec<_>>();
         let Some(style) = compile.program() else {
@@ -129,7 +134,12 @@ impl ClassicExecutionSession {
                 vec![GeneratedFile::new(blg_path, Arc::<[u8]>::from(blg))],
             );
         }
-        let history = if diagnostics.is_empty() {
+        let history = if diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.severity() == crate::BibSeverity::Error)
+        {
+            BibliographyHistory::Error
+        } else if diagnostics.is_empty() {
             BibliographyHistory::Spotless
         } else {
             BibliographyHistory::Warning
@@ -256,11 +266,12 @@ fn output_path(aux: &VirtualPath, extension: &str) -> VirtualPath {
 
 fn diagnostic_message(
     code: &str,
+    severity: crate::BibSeverity,
     message: String,
     source: Option<crate::BibliographySourceLocation>,
 ) -> BibliographyDiagnostic {
     BibliographyDiagnostic::new(
-        crate::BibSeverity::Warning,
+        severity,
         BibliographyDiagnosticCode::Classic(
             ClassicDiagnosticCode::new(code).expect("fixed classic diagnostic code is valid"),
         ),
@@ -272,6 +283,7 @@ fn diagnostic_message(
 fn database_diagnostic(diagnostic: &ClassicDatabaseDiagnostic) -> BibliographyDiagnostic {
     diagnostic_message(
         "CLASSIC_READ",
+        crate::BibSeverity::Warning,
         diagnostic.message().to_owned(),
         diagnostic
             .source()
@@ -290,7 +302,12 @@ fn vm_diagnostic(diagnostic: &ClassicVmDiagnostic) -> BibliographyDiagnostic {
         ClassicVmDiagnosticKind::Limit => "CLASSIC_VM_LIMIT",
         ClassicVmDiagnosticKind::Arithmetic => "CLASSIC_VM_ARITHMETIC",
     };
-    diagnostic_message(code, diagnostic.message().to_owned(), None)
+    let severity = if diagnostic.kind() == ClassicVmDiagnosticKind::Underflow {
+        crate::BibSeverity::Error
+    } else {
+        crate::BibSeverity::Warning
+    };
+    diagnostic_message(code, severity, diagnostic.message().to_owned(), None)
 }
 
 fn render_log(
@@ -305,8 +322,16 @@ fn render_log(
     for diagnostic in database.diagnostics() {
         render_warning(&mut log, diagnostic.message(), diagnostic.source());
     }
-    for diagnostic in vm.diagnostics() {
-        render_warning(&mut log, diagnostic.message(), None);
+    for event in vm.log_events() {
+        match event {
+            crate::classic_vm::ClassicVmLogEvent::Stack(value) => {
+                log.push_str(value);
+                log.push('\n');
+            }
+            crate::classic_vm::ClassicVmLogEvent::Diagnostic(diagnostic) => {
+                render_vm_diagnostic(&mut log, diagnostic, control)
+            }
+        }
     }
     let entries = database.entries().len();
     let wiz_locations = wiz_defined_locations(style);
@@ -331,11 +356,47 @@ fn render_log(
     {
         log.push_str(&format!("{name} -- {calls}\n"));
     }
-    render_history(
-        &mut log,
-        database.diagnostics().len() + vm.diagnostics().len(),
-    );
+    let errors = vm
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| diagnostic.kind() == ClassicVmDiagnosticKind::Underflow)
+        .count();
+    if errors == 0 {
+        render_history(
+            &mut log,
+            database.diagnostics().len() + vm.diagnostics().len(),
+        );
+    } else {
+        render_error_history(&mut log, errors);
+    }
     log.into_bytes()
+}
+
+fn render_vm_diagnostic(
+    log: &mut String,
+    diagnostic: &ClassicVmDiagnostic,
+    control: &ClassicControl,
+) {
+    if diagnostic.kind() != ClassicVmDiagnosticKind::Underflow {
+        render_warning(log, diagnostic.message(), None);
+        return;
+    }
+    log.push_str("You can't pop an empty literal stack");
+    if let Some(entry) = diagnostic.entry() {
+        log.push_str(" for entry ");
+        log.push_str(entry);
+    }
+    log.push('\n');
+    if let (Some(line), Some(style)) = (
+        diagnostic.source().map(|source| source.line()),
+        control.style(),
+    ) {
+        log.push_str(&format!("while executing---line {line} of file {style}"));
+        if !style.ends_with(".bst") {
+            log.push_str(".bst");
+        }
+        log.push('\n');
+    }
 }
 
 pub(crate) fn render_control_header(log: &mut String, control: &ClassicControl) {
@@ -384,6 +445,14 @@ pub(crate) fn render_history(output: &mut String, warnings: usize) {
         0 => {}
         1 => output.push_str("(There was 1 warning)\n"),
         count => output.push_str(&format!("(There were {count} warnings)\n")),
+    }
+}
+
+pub(crate) fn render_error_history(output: &mut String, errors: usize) {
+    match errors {
+        0 => {}
+        1 => output.push_str("(There was 1 error message)\n"),
+        count => output.push_str(&format!("(There were {count} error messages)\n")),
     }
 }
 

@@ -91,9 +91,8 @@ impl ClassicBibCommand {
                     BibliographyHistory::Spotless | BibliographyHistory::Warning => {
                         BibExitStatus::Success
                     }
-                    BibliographyHistory::Error | BibliographyHistory::Fatal => {
-                        BibExitStatus::OperationalFailure
-                    }
+                    BibliographyHistory::Error => BibExitStatus::ClassicExecutionError,
+                    BibliographyHistory::Fatal => BibExitStatus::OperationalFailure,
                 };
                 let terminal = render_terminal(&result);
                 ClassicBibCommandOutput::new(status, terminal, Some(result))

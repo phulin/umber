@@ -9,17 +9,22 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(u8)]
 pub enum BibExitStatus {
-    Success = 0,
-    OperationalFailure = 1,
-    InvalidInvocation = 2,
+    Success,
+    OperationalFailure,
+    InvalidInvocation,
+    /// Classic BibTeX completed with recoverable execution errors.
+    ClassicExecutionError,
 }
 
 impl BibExitStatus {
     #[must_use]
     pub const fn code(self) -> u8 {
-        self as u8
+        match self {
+            Self::Success => 0,
+            Self::OperationalFailure => 1,
+            Self::InvalidInvocation | Self::ClassicExecutionError => 2,
+        }
     }
 }
 
