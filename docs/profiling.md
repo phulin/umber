@@ -895,3 +895,28 @@ priming medians were 267.313/282.726 ms. The result does not change the
 default-disabled release decision; it records the closure's large metadata
 win, sub-millisecond-per-edit replay provenance cost, and exact-output guard
 under a noisy timing environment rather than claiming an end-to-end win.
+
+### Direct paragraph root-state recorder
+
+Issue `umber2-q02h.60` replaced count/integer mutation inference from journal
+suffixes with an Env-owned setter recorder. Paragraph recording no longer
+advances the global rollback epoch. The Gentle profiler now reports the
+existing state-hash journal counters for priming and every accepted edit, so
+journal work is measured independently of paragraph census or hit counts.
+
+In the instrumented two-pair pass, disabled and enabled priming each made 1,084
+state-hash calls, examined 11,822 journal entries, and projected 2,212 changed
+cells. Each memo-enabled slow edit examined 9,104 entries versus 9,180 in the
+disabled control. The corpus retained 420 unsupported-group barriers in both
+slow edits; inspection and focused tests classify these as conservative
+nonzero-entry ownership. The balanced-depth-zero group regression has zero
+group barriers and a real later line hit, so journal-independent recovery is
+covered even though this Gentle history adds no recovered group candidates.
+
+The optimized six-pair AB/BA run reported paragraph-enabled minus disabled
+medians of -9.292 ms for the combined slow edits, +25.577 ms including priming,
+-1.005 ms interaction, and -0.160 ms fast. Priming medians were
+240.270/278.726 ms. Both passes kept 132 finished-line hits and 42,183 skipped
+commands on each slow edit, preserved the disabled boundary schedules, and
+emitted cold-identical DVI for every revision. The priming-inclusive result
+continues to keep paragraph recording default-disabled.

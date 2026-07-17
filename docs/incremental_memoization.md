@@ -214,11 +214,14 @@ new cache or correctness identity.
 
 The implemented paragraph subset may replay count-register and
 integer-parameter survivors plus supported detached stream text. Cold setters
-do not append paragraph-specific records. Instead, paragraph entry opens a
-fresh environment-journal epoch and captures a lazy 64-bit aHash fingerprint
-of the complete count/integer state. At paragraph exit, the compacted journal
-suffix yields one final-value redo per surviving root/global cell; writes that
-were local to a balanced group have already disappeared.
+feed an Env-owned recorder while paragraph recording is active. Paragraph
+entry captures a lazy 64-bit aHash fingerprint of the complete count/integer
+state without advancing the rollback epoch. On the first observed setter for a
+cell, the recorder saves its paragraph-entry value. Global writes escape at
+every group depth; local writes escape only at depth zero. At paragraph exit,
+one final-value redo is retained for each escaping cell whose root value differs
+from entry. Balanced-group locals and root writes restored to their entry value
+therefore disappear without inspecting or depending on journal storage.
 
 The common replay path compares the incoming fingerprint once and applies the
 compact redo. If the fingerprint differs, only the surviving cells' recorded
@@ -232,7 +235,7 @@ routines, display math, `\scantokens`, mid-paragraph input opening,
 `\endinput`, and untracked World access remain explicit barriers. A paragraph
 that starts and finishes at group depth zero may contain fully discharged
 groups, including local count/integer writes: there is no entry frame to
-replace, and group compaction removes local writes before redo extraction.
+replace, and the direct recorder omits writes that do not escape to the root.
 Inside an open group, any surviving count/integer write remains conservative
 because final values alone cannot reproduce assignment ownership.
 
@@ -397,6 +400,41 @@ were 267.313/282.726 ms. A separate instrumented telemetry pass charged
 0.65--0.75 ms total import/mount work to each 132-hit slow edit. These costs
 preserve the default-disabled decision; the evidence establishes bounded
 output-scaled provenance rather than a new enablement claim.
+
+### Direct root-state delta recording
+
+Paragraph mutation recording no longer opens a rollback epoch or derives redo
+from a journal suffix. The count-register and integer-parameter setters record
+entry values only while a paragraph recorder is active; final root equality
+removes no-op and restored cells. The complete count/int fingerprint remains
+the common replay validation. Only a fingerprint mismatch reads the compact
+recorded entry preconditions before replaying final values.
+
+The focused state tests prove that starting a recorder leaves the Env epoch
+unchanged, nested globals survive, balanced nested locals disappear, root
+writes restored to entry disappear, abandonment releases recorder state, and
+writes made by a paragraph entering inside an open group remain conservative.
+The incremental balanced-depth-zero group regression records zero group
+barriers and produces a later line hit; it verifies an actual replay candidate,
+not just mutation counts.
+
+The 2026-07-17 instrumented two-pair Gentle pass found identical priming
+state-hash journal work with paragraph recording disabled and enabled: 1,084
+hash calls examined 11,822 journal entries and projected 2,212 changed cells in
+both modes. On each slow edit, replay examined 9,104 entries versus 9,180 for
+disabled execution. Thus recording adds no journal-scan volume, while reuse
+avoids 76 examined entries. The Gentle corpus recovered no additional group
+candidates: its 420 group barriers are unchanged conservative nonzero-entry
+ownership cases, rather than journal-rewind rejection. Slow edits still mounted
+132 finished-line hits, skipped 42,183 commands, and retained 1,997,576 bytes
+of paragraph metadata.
+
+A six-pair optimized AB/BA run preserved every named-boundary schedule and cold
+DVI. Paragraph-enabled minus disabled medians were -9.292 ms for the combined
+slow edits, +25.577 ms including priming, -1.005 ms for interaction, and
+-0.160 ms for the independent fast path. Disabled/enabled priming medians were
+240.270/278.726 ms. This keeps the layer default-disabled: the steady slow path
+won in this run, but priming remains a net cost.
 
 ## Implementation sequence
 

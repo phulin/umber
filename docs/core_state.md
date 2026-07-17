@@ -106,6 +106,15 @@ There is one semantic mutation boundary:
 No downstream crate receives `&mut Env`, raw restore hooks, partial checkpoint
 mutation, or constructors for opaque handles.
 
+Optional paragraph replay recording overlays this boundary without changing
+rollback history. While active, count-register and integer-parameter setters
+save each touched cell's paragraph-entry value in an Env-owned recorder.
+Depth-zero locals and globals at any depth may contribute a final root
+transition; balanced nested locals and values restored to entry are omitted.
+Starting the recorder does not advance the Env epoch, and finishing it does not
+inspect journal suffix positions. Paragraphs entering inside an existing group
+retain a conservative write-observed ownership barrier.
+
 ## 7. Content: token, provenance, source, glue, font, and node stores
 
 Immutable content follows builder-then-freeze. Builders are private to the

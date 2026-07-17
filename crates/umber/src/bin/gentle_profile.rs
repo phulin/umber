@@ -13,7 +13,10 @@ use tex_incr::{AcceptedOutput, BoundaryKey, Edit, ReuseMetrics, RevisionId, Sess
 use tex_lex::ExpansionStats;
 use tex_lex::{InputStack, WorldInput};
 #[cfg(feature = "profiling-stats")]
-use tex_state::measurement::{ExactIdentityMeasurement, exact_identity_measurement};
+use tex_state::measurement::{
+    ExactIdentityMeasurement, StateHashMeasurement, exact_identity_measurement,
+    state_hash_measurement,
+};
 #[cfg(feature = "profiling-stats")]
 use tex_state::survivor::{SurvivorMeasurement, survivor_measurement};
 use tex_state::{
@@ -213,6 +216,8 @@ impl IncrementalPath {
 struct IncrementalSample {
     priming_elapsed: Duration,
     priming_memo: PureMemoStats,
+    #[cfg(feature = "profiling-stats")]
+    priming_state_hash: StateHashMeasurement,
     steps: Vec<IncrementalStep>,
 }
 
@@ -227,6 +232,8 @@ struct IncrementalStep {
     previous_memo: PureMemoStats,
     #[cfg(feature = "profiling-stats")]
     exact_identity: ExactIdentityMeasurement,
+    #[cfg(feature = "profiling-stats")]
+    state_hash: StateHashMeasurement,
     #[cfg(feature = "profiling-stats")]
     survivor: SurvivorMeasurement,
 }
@@ -581,6 +588,19 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
         "priming",
         enabled_sample.priming_memo.paragraph_opportunities,
     );
+    #[cfg(feature = "profiling-stats")]
+    for (name, sample) in [
+        (baseline_name, &disabled_sample),
+        (candidate_name, &enabled_sample),
+    ] {
+        println!(
+            "gentle-profile priming state hash journal: {name}: calls={} journal_entries={} changed_cells={} peak_changed_scratch_bytes={}",
+            sample.priming_state_hash.calls,
+            sample.priming_state_hash.journal_entries,
+            sample.priming_state_hash.changed_cells,
+            sample.priming_state_hash.peak_changed_cell_scratch_bytes,
+        );
+    }
     for index in 0..edit_count {
         let disabled_stats = duration_stats(&disabled[index]);
         let enabled_stats = duration_stats(&enabled[index]);
@@ -842,6 +862,14 @@ fn print_incremental_work(
         sample.exact_identity.root_cache_hits,
         sample.exact_identity.root_cache_misses,
         sample.exact_identity.dirty_leaves,
+    );
+    #[cfg(feature = "profiling-stats")]
+    println!(
+        "gentle-profile state hash journal: {name}: edit={edit} calls={} journal_entries={} changed_cells={} peak_changed_scratch_bytes={}",
+        sample.state_hash.calls,
+        sample.state_hash.journal_entries,
+        sample.state_hash.changed_cells,
+        sample.state_hash.peak_changed_cell_scratch_bytes,
     );
     #[cfg(feature = "profiling-stats")]
     println!(
@@ -1116,18 +1144,24 @@ fn execute_incremental_sample(
         recording,
     )?;
     let mut resolvers = FileSessionResolvers::new(&path, Vec::new(), Vec::new());
+    #[cfg(feature = "profiling-stats")]
+    let priming_state_hash_before = state_hash_measurement();
     let priming_started = Instant::now();
     let (input, font) = resolvers.resolvers();
     session
         .cold_with_resolvers(input, font)
         .map_err(|error| format!("prepare incremental baseline: {error}"))?;
     let priming_elapsed = priming_started.elapsed();
+    #[cfg(feature = "profiling-stats")]
+    let priming_state_hash = state_hash_delta(state_hash_measurement(), priming_state_hash_before);
     let priming_memo = session.pure_memo_stats();
     let mut steps = Vec::with_capacity(fixture.edits.len());
     for (index, edit) in fixture.edits.iter().enumerate() {
         let previous_memo = session.pure_memo_stats();
         #[cfg(feature = "profiling-stats")]
         let exact_before = exact_identity_measurement();
+        #[cfg(feature = "profiling-stats")]
+        let state_hash_before = state_hash_measurement();
         #[cfg(feature = "profiling-stats")]
         let survivor_before = survivor_measurement();
         let mut resolvers = FileSessionResolvers::new(&path, Vec::new(), Vec::new());
@@ -1140,6 +1174,8 @@ fn execute_incremental_sample(
         let memo = session.pure_memo_stats();
         #[cfg(feature = "profiling-stats")]
         let exact_after = exact_identity_measurement();
+        #[cfg(feature = "profiling-stats")]
+        let state_hash_after = state_hash_measurement();
         #[cfg(feature = "profiling-stats")]
         let survivor_after = survivor_measurement();
         let dvi_started = Instant::now();
@@ -1189,14 +1225,50 @@ fn execute_incremental_sample(
                     .saturating_sub(exact_before.dirty_leaves),
             },
             #[cfg(feature = "profiling-stats")]
+            state_hash: state_hash_delta(state_hash_after, state_hash_before),
+            #[cfg(feature = "profiling-stats")]
             survivor: survivor_delta(survivor_after, survivor_before),
         });
     }
     Ok(IncrementalSample {
         priming_elapsed,
         priming_memo,
+        #[cfg(feature = "profiling-stats")]
+        priming_state_hash,
         steps,
     })
+}
+
+#[cfg(feature = "profiling-stats")]
+fn state_hash_delta(
+    after: StateHashMeasurement,
+    before: StateHashMeasurement,
+) -> StateHashMeasurement {
+    StateHashMeasurement {
+        calls: after.calls.saturating_sub(before.calls),
+        journal_entries: after.journal_entries.saturating_sub(before.journal_entries),
+        changed_cells: after.changed_cells.saturating_sub(before.changed_cells),
+        node_frames: after.node_frames.saturating_sub(before.node_frames),
+        owned_node_bytes: after
+            .owned_node_bytes
+            .saturating_sub(before.owned_node_bytes),
+        owned_font_keys: after.owned_font_keys.saturating_sub(before.owned_font_keys),
+        peak_changed_cell_scratch_bytes: after.peak_changed_cell_scratch_bytes,
+        peak_node_scratch_bytes: after.peak_node_scratch_bytes,
+        components: core::array::from_fn(|index| {
+            tex_state::measurement::StateHashComponentMeasurement {
+                calls: after.components[index]
+                    .calls
+                    .saturating_sub(before.components[index].calls),
+                visits: after.components[index]
+                    .visits
+                    .saturating_sub(before.components[index].visits),
+                nanos: after.components[index]
+                    .nanos
+                    .saturating_sub(before.components[index].nanos),
+            }
+        }),
+    }
 }
 
 #[cfg(feature = "profiling-stats")]
