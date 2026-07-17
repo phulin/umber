@@ -883,6 +883,8 @@ impl Session {
                 history,
                 substrate: PendingSubstrate::Replaced(run.substrate),
                 reuse,
+                dumped_format: run.dumped_format,
+                expansion_stats: run.expansion_stats,
             });
         };
         let substrate = self
@@ -1767,7 +1769,6 @@ fn execute_advance(
         ..
     } = execution_result?;
     let reexecution_latency = reexecution_started.elapsed();
-    let expansion_stats = input.expansion_stats();
     let reexecuted_paragraphs = sink
         .records
         .iter()
