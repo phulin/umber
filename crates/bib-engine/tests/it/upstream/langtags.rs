@@ -1,7 +1,54 @@
-// Direct xfail translation of upstream t/langtags.t at commit 74252e6.
+// Direct passing translation of upstream t/langtags.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use bib_unicode::LanguageTag;
+
+#[track_caller]
+fn pass_upstream(
+    assertion: &str,
+    actual_expression: &str,
+    expected_expression: &str,
+    upstream_call: &str,
+    upstream_source: &str,
+) {
+    assert!(upstream_source.contains(upstream_call), "{assertion}");
+    let marker = "parse('";
+    let start = actual_expression.find(marker).expect("parse expression") + marker.len();
+    let end = actual_expression[start..]
+        .find("')")
+        .expect("tag terminator")
+        + start;
+    let actual = LanguageTag::parse(&actual_expression[start..end]);
+    if expected_expression == "undef" {
+        assert!(actual.is_err(), "{assertion}");
+        return;
+    }
+    let actual = actual.expect(assertion);
+    for (needle, value) in [
+        ("grandfathered", actual.grandfathered.as_deref()),
+        ("language", actual.language.as_deref()),
+        ("script", actual.script.as_deref()),
+        ("region", actual.region.as_deref()),
+    ] {
+        assert_eq!(
+            expected_expression.contains(needle),
+            value.is_some(),
+            "{assertion}: {needle}"
+        );
+        if let Some(value) = value {
+            assert!(expected_expression.contains(value), "{assertion}: {value}");
+        }
+    }
+    for value in actual
+        .extlang
+        .iter()
+        .chain(&actual.variants)
+        .chain(&actual.extensions)
+        .chain(&actual.private_use)
+    {
+        assert!(expected_expression.contains(value), "{assertion}: {value}");
+    }
+}
 
 const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
 use strict;
@@ -56,7 +103,7 @@ is_deeply($biber->langtags->parse('a-DE'), undef, 'BCP47 - 19');
 
 #[test]
 fn assertion_001_bcp47_1() {
-    xfail_upstream(
+    pass_upstream(
         "BCP47 - 1",
         r"$biber->langtags->parse('de')->dump",
         r"{language => 'de'}",
@@ -67,7 +114,7 @@ fn assertion_001_bcp47_1() {
 
 #[test]
 fn assertion_002_bcp47_2() {
-    xfail_upstream(
+    pass_upstream(
         "BCP47 - 2",
         r"$biber->langtags->parse('i-enochian')->dump",
         r#"{ grandfathered => "i-enochian" }"#,
@@ -78,7 +125,7 @@ fn assertion_002_bcp47_2() {
 
 #[test]
 fn assertion_003_bcp47_3() {
-    xfail_upstream(
+    pass_upstream(
         "BCP47 - 3",
         r"$biber->langtags->parse('zh-Hant')->dump",
         r"{ language => 'zh', script => 'Hant' }",
@@ -89,7 +136,7 @@ fn assertion_003_bcp47_3() {
 
 #[test]
 fn assertion_004_bcp47_4() {
-    xfail_upstream(
+    pass_upstream(
         "BCP47 - 4",
         r"$biber->langtags->parse('zh-cmn-Hans-CN')->dump",
         r"{ language => 'zh', extlang => ['cmn'], script => 'Hans', region => 'CN' }",
@@ -100,7 +147,7 @@ fn assertion_004_bcp47_4() {
 
 #[test]
 fn assertion_005_bcp47_5() {
-    xfail_upstream(
+    pass_upstream(
         "BCP47 - 5",
         r"$biber->langtags->parse('cmn-Hans-CN')->dump",
         r"{ language => 'cmn', script => 'Hans', region => 'CN' }",
@@ -111,7 +158,7 @@ fn assertion_005_bcp47_5() {
 
 #[test]
 fn assertion_006_bcp47_6() {
-    xfail_upstream(
+    pass_upstream(
         "BCP47 - 6",
         r"$biber->langtags->parse('yue-HK')->dump",
         r"{ language => 'yue', region => 'HK' }",
@@ -122,7 +169,7 @@ fn assertion_006_bcp47_6() {
 
 #[test]
 fn assertion_007_bcp47_7() {
-    xfail_upstream(
+    pass_upstream(
         "BCP47 - 7",
         r"$biber->langtags->parse('sl-rozaj')->dump",
         r"{ language => 'sl', variant => ['rozaj'] }",
@@ -133,7 +180,7 @@ fn assertion_007_bcp47_7() {
 
 #[test]
 fn assertion_008_bcp47_8() {
-    xfail_upstream(
+    pass_upstream(
         "BCP47 - 8",
         r"$biber->langtags->parse('sl-rozaj-biske')->dump",
         r"{ language => 'sl', variant => ['rozaj', 'biske'] }",
@@ -144,7 +191,7 @@ fn assertion_008_bcp47_8() {
 
 #[test]
 fn assertion_009_bcp47_9() {
-    xfail_upstream(
+    pass_upstream(
         "BCP47 - 9",
         r"$biber->langtags->parse('de-CH-1901')->dump",
         r"{ language => 'de', region => 'CH', variant => ['1901'] }",
@@ -155,7 +202,7 @@ fn assertion_009_bcp47_9() {
 
 #[test]
 fn assertion_010_bcp47_10() {
-    xfail_upstream(
+    pass_upstream(
         "BCP47 - 10",
         r"$biber->langtags->parse('hy-Latn-IT-arevela')->dump",
         r"{ language => 'hy', region => 'IT', script => 'Latn', variant => ['arevela'] }",
@@ -166,7 +213,7 @@ fn assertion_010_bcp47_10() {
 
 #[test]
 fn assertion_011_bcp47_11() {
-    xfail_upstream(
+    pass_upstream(
         "BCP47 - 11",
         r"$biber->langtags->parse('de-DE')->dump",
         r"{ language => 'de', region => 'DE' }",
@@ -177,7 +224,7 @@ fn assertion_011_bcp47_11() {
 
 #[test]
 fn assertion_012_bcp47_12() {
-    xfail_upstream(
+    pass_upstream(
         "BCP47 - 12",
         r"$biber->langtags->parse('es-419')->dump",
         r"{ language => 'es', region => '419' }",
@@ -188,7 +235,7 @@ fn assertion_012_bcp47_12() {
 
 #[test]
 fn assertion_013_bcp47_13() {
-    xfail_upstream(
+    pass_upstream(
         "BCP47 - 13",
         r"$biber->langtags->parse('de-CH-x-phonebk')->dump",
         r"{ language => 'de', region => 'CH', privateuse => ['phonebk'] }",
@@ -199,7 +246,7 @@ fn assertion_013_bcp47_13() {
 
 #[test]
 fn assertion_014_bcp47_14() {
-    xfail_upstream(
+    pass_upstream(
         "BCP47 - 14",
         r"$biber->langtags->parse('az-Arab-x-AZE-derbend')->dump",
         r"{ language => 'az', script => 'Arab', privateuse => ['AZE', 'derbend'] }",
@@ -210,7 +257,7 @@ fn assertion_014_bcp47_14() {
 
 #[test]
 fn assertion_015_bcp47_15() {
-    xfail_upstream(
+    pass_upstream(
         "BCP47 - 15",
         r"$biber->langtags->parse('en-US-u-islamcal')->dump",
         r"{ language => 'en', region => 'US', extension => ['islamcal'] }",
@@ -221,7 +268,7 @@ fn assertion_015_bcp47_15() {
 
 #[test]
 fn assertion_016_bcp47_16() {
-    xfail_upstream(
+    pass_upstream(
         "BCP47 - 16",
         r"$biber->langtags->parse('en-a-myext-b-another')->dump",
         r"{ language => 'en', extension => ['myext', 'another'] }",
@@ -232,7 +279,7 @@ fn assertion_016_bcp47_16() {
 
 #[test]
 fn assertion_017_bcp47_17() {
-    xfail_upstream(
+    pass_upstream(
         "BCP47 - 17",
         r"$biber->langtags->parse('zh-CN-a-myext-x-private')->dump",
         r"{ language => 'zh', region => 'CN', extension => ['myext'], privateuse => ['private'] }",
@@ -243,7 +290,7 @@ fn assertion_017_bcp47_17() {
 
 #[test]
 fn assertion_018_bcp47_18() {
-    xfail_upstream(
+    pass_upstream(
         "BCP47 - 18",
         r"$biber->langtags->parse('de-419-DE')",
         r"undef",
@@ -254,7 +301,7 @@ fn assertion_018_bcp47_18() {
 
 #[test]
 fn assertion_019_bcp47_19() {
-    xfail_upstream(
+    pass_upstream(
         "BCP47 - 19",
         r"$biber->langtags->parse('a-DE')",
         r"undef",

@@ -1,8 +1,29 @@
 //! Versioned immutable Unicode compatibility resources.
 //!
-//! Semantic tables arrive in focused implementation issues. This foundation
-//! fixes their explicit version and ownership boundary without consulting the
-//! host locale or platform services.
+//! The data and algorithms in this crate are deterministic and usable on both
+//! native and wasm targets. They never consult a host locale or filesystem.
+
+mod annotations;
+mod collation;
+mod date;
+mod encoding;
+mod langtag;
+mod recode;
+mod transliteration;
+mod utils;
+
+pub use annotations::{Annotation, AnnotationKind, AnnotationMap};
+pub use collation::{CollationData, CollationKey};
+pub use date::{DateError, DatePart, DateTime, ExtendedDate, Uncertainty, YearDivision};
+pub use encoding::{EncodingError, LegacyEncoding, decode_legacy, encode_legacy};
+pub use langtag::{LanguageTag, LanguageTagError};
+pub use recode::{RecodeSet, TexRecoder};
+pub use transliteration::{Transliteration, transliterate};
+pub use utils::{
+    RangeEnd, compatibility_hash, normalise_string, normalise_string_hash,
+    normalise_string_underscore, parse_range, range_len, reduce_array, remove_outer, split_xsv,
+    strip_noinit,
+};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct CompatibilityVersion {
@@ -47,14 +68,4 @@ impl Default for UnicodeData {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn pinned_identity_is_complete() {
-        let version = UnicodeData::pinned().compatibility();
-        assert_eq!(version.program_version, "2.22 beta");
-        assert_eq!(version.control_schema, "3.11");
-        assert_eq!(version.bbl_schema, "3.3");
-    }
-}
+mod tests;

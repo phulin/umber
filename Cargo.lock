@@ -160,6 +160,11 @@ dependencies = [
 [[package]]
 name = "bib-unicode"
 version = "0.1.0"
+dependencies = [
+ "encoding_rs",
+ "md-5 0.10.6",
+ "unicode-normalization",
+]
 
 [[package]]
 name = "bincode"
