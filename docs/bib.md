@@ -33,6 +33,15 @@ Upgrades are explicit versioned migrations with differential fixtures. The
 reference program may run only in setup and fixture-regeneration tooling. It
 is never a runtime component of a native or browser build.
 
+The first compatibility scaffold is implemented in `bib-engine`. Its single
+Cargo integration binary verifies the committed upstream `t/tdata` import and
+Artistic-2.0 license against `tests/corpus/bib/upstream-2.22/manifest.json`.
+That manifest pins the full commit identity, byte length, and SHA-256 of every
+imported file. The same test binary provides strict assertion-level xfail
+comparisons for exact strings, bytes, deep values, and structured diagnostics
+plus rendered diagnostic text. An xfailed comparison must differ; equality is
+an XPASS and panics so that the test becomes red.
+
 For the pinned target, exact compatibility includes:
 
 - control and configuration semantics;
@@ -605,6 +614,11 @@ Reference regeneration runs the pinned Perl implementation in an isolated,
 dependency-locked environment with a fixed locale, clock policy, virtualized
 paths, and network disabled except for explicit remote-resource fixtures.
 `scripts/regen-fixtures.sh` is the only write path.
+
+The committed upstream input export is refreshed with
+`scripts/regen-fixtures.sh --area bib`. That mode reads the pinned Git object
+from a local clone selected by `UMBER_REF_BIBER_SOURCE`, ignores working-tree
+state, rebuilds the complete manifest, and runs the hermetic manifest gate.
 
 Parity closes in four tiers:
 

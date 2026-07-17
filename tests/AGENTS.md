@@ -163,6 +163,15 @@ The `navigation_structures` case pins the composed multipage destination name
 tree, outline hierarchy, thread/bead graph, deterministic bytes, and unchanged
 page pixels.
 
+`tests/corpus/bib/upstream-2.22` contains the verbatim redistributable test
+data from the pinned bibliography compatibility baseline plus its upstream
+Artistic-2.0 license. `manifest.json` records the full upstream commit, byte
+length, and SHA-256 of every imported file. The `bib-engine` integration test
+verifies that the manifest names exactly the committed import, with no missing
+or extra bytes. Regenerate the complete import only with
+`scripts/regen-fixtures.sh --area bib` and a local upstream clone selected by
+`UMBER_REF_BIBER_SOURCE`; ordinary Cargo tests never run the reference program.
+
 `tests/corpus/e2e` receives gitignored final-DVI oracles for Story, Gentle,
 TRIP, and e-TRIP. Their Cargo integration tests run Umber directly in process
 and return cleanly when an
@@ -201,7 +210,10 @@ Modes:
 - `--all` regenerates all committed fixture areas.
 - `--area AREA` regenerates one area, such as `hello`, `lexer`, `expand`,
   `lexer_dynamic`, `exec`, `typeset`, `dvi`, `page`, `math`, `align`,
-  `leaders`, `pdf`, `e2e`, `etex_exec`, `tex_exec`, or `tex_exec_io`.
+  `leaders`, `pdf`, `e2e`, `bib`, `etex_exec`, `tex_exec`, or `tex_exec_io`.
+- `--area bib` re-exports the pinned upstream bibliography test data directly
+  from its fixed Git commit, rebuilds its SHA-256 manifest, and validates the
+  hermetic `bib-engine` integration test.
 - `--case AREA/CASE` regenerates one case exactly for text/native and DVI
   areas.
 

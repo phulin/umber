@@ -80,6 +80,16 @@ Poppler `pdftoppm` 25.08.0; its `--area fonts` mode owns the explicit live
 See `tests/AGENTS.md` for the supported areas and cases, required tools,
 copied support files, and validation performed after a rewrite.
 
+The bibliography compatibility scaffold has one `bib-engine` Cargo
+integration binary. It verifies all committed files below
+`tests/corpus/bib/upstream-2.22` against a machine-readable SHA-256 manifest
+that pins upstream commit `74252e608e5f8115375c532eb25416430a9f52eb` and the
+Artistic-2.0 license. Its assertion-level xfail helpers cover exact strings,
+bytes, deep values, and structured plus rendered diagnostics; a comparison
+that unexpectedly matches is an XPASS and fails the test. Refreshing the
+verbatim upstream input set is an explicit live-reference operation through
+`scripts/regen-fixtures.sh --area bib`, never an ordinary Cargo-test action.
+
 The LaTeX format builder is a separate deterministic integration tier:
 
 ```bash

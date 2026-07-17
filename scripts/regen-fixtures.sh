@@ -8,6 +8,8 @@ text_areas=(hello lexer expand lexer_dynamic exec etex_exec typeset tex_exec tex
 dvi_areas=(dvi page math align leaders)
 pdf_area=pdf
 e2e_area=e2e
+bib_area=bib
+readonly bib_upstream_commit=74252e608e5f8115375c532eb25416430a9f52eb
 
 target_dir="${CARGO_TARGET_DIR:-target}"
 if [[ "$target_dir" != /* ]]; then
@@ -37,6 +39,7 @@ Fixture areas:
   text/native: hello lexer expand lexer_dynamic exec etex_exec typeset tex_exec tex_exec_io
   DVI:         dvi page math align leaders
   PDF:         pdf  (pinned pdfTeX structure plus exact Poppler grayscale pixels)
+  bibliography: bib  (verbatim pinned upstream test data and SHA-256 manifest)
   end-to-end:  e2e  (story, gentle, trip, and e-trip local DVI oracles)
   live check:  fonts  (runs the tftopl cross-check; it does not rewrite fixtures)
 
@@ -62,6 +65,11 @@ Reference tools:
   Regeneration pins SOURCE_DATE_EPOCH by default so Umber and the reference
   TeX observe the same job-start clock. Set SOURCE_DATE_EPOCH explicitly to
   override the default fixed timestamp.
+
+  Bibliography fixture regeneration requires a local clone of the upstream
+  repository. Set UMBER_REF_BIBER_SOURCE=/absolute/path/to/clone. The script
+  exports commit 74252e608e5f8115375c532eb25416430a9f52eb directly from Git;
+  the clone's checkout and working-tree modifications are ignored.
 EOF
 }
 
@@ -92,7 +100,8 @@ is_dvi_area() {
 
 is_known_area() {
   is_text_area "$1" || is_dvi_area "$1" || \
-    [[ "$1" == "$pdf_area" || "$1" == "$e2e_area" || "$1" == "fonts" ]]
+    [[ "$1" == "$pdf_area" || "$1" == "$e2e_area" || \
+       "$1" == "$bib_area" || "$1" == "fonts" ]]
 }
 
 test_command_for_area() {
@@ -142,6 +151,9 @@ test_command_for_area() {
       ;;
     pdf)
       printf '%s\n' 'cargo test -p umber --test it pdf_parity'
+      ;;
+    bib)
+      printf '%s\n' 'cargo test -p bib-engine --test it fixture_manifest_is_complete_and_pinned'
       ;;
     *)
       die "unknown fixture area: ${area}"
@@ -502,6 +514,74 @@ run_fonts_live_check() {
   run_command 'Running live tftopl font cross-check' "$fixturegen_bin" --area fonts
 }
 
+sha256_file() {
+  openssl dgst -sha256 -r "$1" | awk '{print $1}'
+}
+
+regen_bib_area() {
+  local upstream="${UMBER_REF_BIBER_SOURCE:-}"
+  local fixture_dir="${repo_root}/tests/corpus/bib/upstream-2.22"
+  local staged_dir
+  local manifest
+  local file
+  local relative
+  local upstream_path
+  local separator=""
+  local bytes
+  local digest
+
+  [[ -n "$upstream" && -d "$upstream/.git" ]] || \
+    die 'set UMBER_REF_BIBER_SOURCE to a local clone of the upstream repository'
+  git -C "$upstream" cat-file -e "${bib_upstream_commit}^{commit}" 2>/dev/null || \
+    die "upstream clone does not contain commit ${bib_upstream_commit}"
+  command -v openssl >/dev/null || die 'openssl is required to hash bibliography fixtures'
+
+  staged_dir="$(mktemp -d)"
+  git -C "$upstream" archive "$bib_upstream_commit" LICENSE t/tdata | tar -x -C "$staged_dir"
+  mkdir -p "$staged_dir/tdata"
+  mv "$staged_dir/LICENSE" "$staged_dir/LICENSE.Artistic-2.0"
+  mv "$staged_dir/t/tdata"/* "$staged_dir/tdata/"
+  rmdir "$staged_dir/t/tdata" "$staged_dir/t"
+
+  manifest="$staged_dir/manifest.json"
+  {
+    printf '%s\n' '{'
+    printf '%s\n' '  "schema": 1,'
+    printf '%s\n' '  "upstream_repository": "https://github.com/plk/biber.git",'
+    printf '  "upstream_commit": "%s",\n' "$bib_upstream_commit"
+    printf '%s\n' '  "compatibility_version": "2.22 beta",'
+    printf '%s\n' '  "license": "Artistic-2.0",'
+    printf '%s\n' '  "files": ['
+    while IFS= read -r file; do
+      relative="${file#"$staged_dir"/}"
+      [[ "$relative" != "manifest.json" ]] || continue
+      if [[ "$relative" == "LICENSE.Artistic-2.0" ]]; then
+        upstream_path="LICENSE"
+      else
+        upstream_path="t/${relative}"
+      fi
+      bytes="$(wc -c < "$file" | tr -d ' ')"
+      digest="$(sha256_file "$file")"
+      printf '%s' "$separator"
+      printf '%s\n' '    {'
+      printf '      "path": "%s",\n' "$relative"
+      printf '      "upstream_path": "%s",\n' "$upstream_path"
+      printf '      "bytes": %s,\n' "$bytes"
+      printf '      "sha256": "%s"\n' "$digest"
+      printf '%s' '    }'
+      separator=$',\n'
+    done < <(find "$staged_dir" -type f | LC_ALL=C sort)
+    printf '\n%s\n' '  ]'
+    printf '%s\n' '}'
+  } > "$manifest"
+
+  rm -rf "$fixture_dir"
+  mkdir -p "$(dirname "$fixture_dir")"
+  mv "$staged_dir" "$fixture_dir"
+  run_command 'Validating pinned bibliography fixtures' \
+    cargo test -p bib-engine --test it fixture_manifest_is_complete_and_pinned
+}
+
 regen_area() {
   local area="$1"
   is_known_area "$area" || die "unknown fixture area: ${area}"
@@ -513,6 +593,8 @@ regen_area() {
     regen_pdf_area
   elif [[ "$area" == "$e2e_area" ]]; then
     regen_e2e_area
+  elif [[ "$area" == "$bib_area" ]]; then
+    regen_bib_area
   else
     run_fonts_live_check
   fi
@@ -555,6 +637,8 @@ regen_case() {
     command_string="$(test_command_for_area pdf)"
     # shellcheck disable=SC2086
     run_command 'Validating hermetic PDF parity fixtures' $command_string
+  elif [[ "$area" == "$bib_area" ]]; then
+    die '--case is not meaningful for the pinned bibliography fixture set'
   elif is_text_area "$area"; then
     printf 'Regenerating text area %s for requested case %s\n' "$area" "$case" >&2
     build_fixturegen_once
@@ -704,6 +788,7 @@ case "$mode" in
     done
     regen_area "$pdf_area"
     regen_area "$e2e_area"
+    regen_area "$bib_area"
     ;;
   area)
     regen_area "$area_arg"

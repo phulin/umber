@@ -1,5 +1,6 @@
 *.dvi binary
 *.tfm binary
 scripts/pdftex-primitive-trace.patch -whitespace
+tests/corpus/bib/upstream-2.22/** -whitespace
 *.pdf binary
 scripts/pdftex-primitive-trace.patch -whitespace
