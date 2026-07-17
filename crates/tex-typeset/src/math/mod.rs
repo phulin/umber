@@ -11,6 +11,7 @@ mod radicals;
 mod scripts;
 mod spacing;
 mod style;
+mod variants;
 
 use tex_fonts::metrics::ExtensibleRecipe as MetricExtensibleRecipe;
 use tex_fonts::{LigKernChar, LigKernCommand, MathMetricsSource};
@@ -39,6 +40,7 @@ pub(crate) use model::{MathLayoutBuilder, boxed_node, hlist_extents, node_is_cha
 pub use params::{ExtensionParams, MathParamState, MathParams, SizeParams, SymbolParams};
 pub use spacing::{SpacingKind, inter_noad_spacing, math_glue, math_kern};
 pub use style::{Style, StyleFamily};
+pub(crate) use variants::variant_box;
 
 /// Immutable state access needed by the math typesetting kernel.
 pub trait MathTypesetState: TypesetState {

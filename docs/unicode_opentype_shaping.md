@@ -25,8 +25,9 @@ returns validated, size-bound MATH data when present and the explicit
 constants and glyph records (including `ssty`, italic correction, four-corner
 math kern, and top-accent attachment) without synthesizing TeX's 22 math
 fontdimens. Exact selected glyph ids remain in the backend-neutral math layout
-arena; variant/assembly selection and positioned HTML lowering are subsequent
-stages of `umber2-y2ei.9`.
+arena. Variant selection and deterministic horizontal/vertical assembly are
+now part of that layout; positioned HTML lowering is the remaining stage of
+`umber2-y2ei.9`.
 
 That document states its model explicitly: _"browser owns glyph selection,
 advances, kerning, ligatures... inside a run"_ — it deliberately avoids an
@@ -302,8 +303,9 @@ outside the linear HTML epic and does not block its release.
 3. **Implemented.** OpenType-only `\font` path and fontdimen synthesis.
 4. **Implemented.** Two-pass shape/linebreak/reshape integration into
    `tex-exec` and `tex-typeset` — the largest chunk of this plan.
-5. **Next.** Positioned OpenType MATH layout and HTML rendering
-   (`umber2-y2ei.9`).
+5. **In progress.** Positioned OpenType MATH layout and HTML rendering
+   (`umber2-y2ei.9`): formula geometry, variants, and assemblies are
+   implemented; fixed positioned artifact/HTML lowering remains.
 6. OpenType-preferred mappings for TFM-style text (`umber2-y2ei.12`).
 7. Advanced instances, variations, and feature policy (`umber2-y2ei.8`).
 8. Complex-script and bidi reordering (`umber2-y2ei.11.7`).

@@ -145,6 +145,56 @@ fn stix_math_is_identical_from_woff2_and_native_sfnt() {
 
     assert_eq!(web.identity, native.identity);
     assert_eq!(web.math, native.math);
+    let size = tex_arith::Scaled::from_raw(10 * tex_arith::Scaled::UNITY);
+    let web_loaded = crate::LoadedFont::new_opentype(
+        "stix-web-math",
+        "stix-two-math.woff2",
+        size,
+        size,
+        crate::OpenTypeProgramSelection {
+            font: web.clone(),
+            variation: VariationSelection::default(),
+            features: FontFeaturePolicy::default(),
+            direction: WritingDirection::LeftToRight,
+        },
+    );
+    let native_loaded = crate::LoadedFont::new_opentype(
+        "stix-native-math",
+        "stix-two-math.ttf",
+        size,
+        size,
+        crate::OpenTypeProgramSelection {
+            font: native.clone(),
+            variation: VariationSelection::default(),
+            features: FontFeaturePolicy::default(),
+            direction: WritingDirection::LeftToRight,
+        },
+    );
+    let crate::MathMetricsSource::OpenType(web_metrics) = web_loaded.math_metrics_source() else {
+        panic!("web MATH metrics");
+    };
+    let crate::MathMetricsSource::OpenType(native_metrics) = native_loaded.math_metrics_source()
+    else {
+        panic!("native MATH metrics");
+    };
+    for ch in ['∑', '(', '⏞'] {
+        let web_glyph = web_metrics
+            .glyph(ch, 0)
+            .expect("fixture construction glyph");
+        let native_glyph = native_metrics
+            .glyph(ch, 0)
+            .expect("fixture construction glyph");
+        assert_eq!(web_glyph, native_glyph);
+        for direction in [
+            crate::MathVariantDirection::Horizontal,
+            crate::MathVariantDirection::Vertical,
+        ] {
+            assert_eq!(
+                web_metrics.construction(web_glyph.glyph_id, direction),
+                native_metrics.construction(native_glyph.glyph_id, direction)
+            );
+        }
+    }
     let math = web.math.expect("fixture MATH table");
     assert!(!math.constants.values().is_empty());
     assert!(math.glyph_info.is_some());

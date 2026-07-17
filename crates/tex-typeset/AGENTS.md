@@ -17,6 +17,8 @@ Use this crate for layout algorithms whose correctness can be tested as pure fun
 - `src/alignment/tests.rs`: unit tests for independent alignment width planning.
 - `src/expansion.rs`: pure pdfTeX font-expansion validation, capacity, final-ratio, and discrete-step arithmetic.
 - `src/math/`: pure Appendix G math-list conversion helpers, including the iterative choice/view pass driver, style transitions, math parameter snapshots, compound fractions/operators/radicals/delimiters/accents, script placement, iterative arena traversal, and inter-noad spacing over owned hlist output.
+- `src/math/variants.rs`: deterministic OpenType MATH size-variant selection and horizontal/vertical glyph-assembly planning.
+- `src/math/variants/tests.rs`: connector, overlap, extender-repetition, and malformed-construction tests.
 - `src/math/arithmetic.rs`: documented shared saturating scaled-arithmetic policy for Appendix G.
 - `src/packing.rs`: hpack/vpack/vtop kernels, pack parameters, measurements, glue setting, and diagnostics.
 - `src/packing/tests.rs`: unit tests for badness, packing dimensions, glue settings, diagnostics, and vtop behavior.

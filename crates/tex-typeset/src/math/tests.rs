@@ -82,6 +82,15 @@ fn pinned_opentype_math_fixture_drives_basic_formula_layout_deterministically() 
             direction: WritingDirection::LeftToRight,
         },
     );
+    let MathMetricsSource::OpenType(stix_math) = loaded.math_metrics_source() else {
+        panic!("fixture has MATH metrics");
+    };
+    let base_sum = stix_math.glyph('∑', 0).expect("sum glyph").glyph_id;
+    assert!(
+        stix_math
+            .construction(base_sum, tex_fonts::MathVariantDirection::Vertical)
+            .is_some()
+    );
     let mut universe = Universe::new();
     let font = universe.intern_font(loaded);
     for size in [
@@ -128,6 +137,39 @@ fn pinned_opentype_math_fixture_drives_basic_formula_layout_deterministically() 
     assert!(params.text.extension.default_rule_thickness.raw() > 0);
     assert!(all_math_glyphs(&first).iter().all(Option::is_some));
     assert!(all_math_glyphs(&first).len() >= 7);
+    assert!(!all_math_glyphs(&first).contains(&Some(base_sum)));
+
+    let delimiter = delimiter_code(1, b'(', 1, b'(');
+    let (delimiter_layout, delimiter_box) = test_var_delimiter(
+        &universe,
+        &params,
+        delimiter,
+        MathFontSize::Text,
+        sc(100 * Scaled::UNITY),
+    );
+    assert_eq!(delimiter_box.axis, BoxAxis::Vertical);
+    assert!(all_math_glyphs(&delimiter_layout).len() > 1);
+
+    let radical_input = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::Radical { delimiter },
+        MathField::MathChar(math_char('A')),
+    ))]);
+    let radical = mlist_to_hlist(&universe, radical_input, Style::DISPLAY, false, &params);
+    assert!(all_math_glyphs(&radical).len() >= 2);
+
+    let wide_base = universe.freeze_node_list(
+        &(0..20)
+            .map(|_| Node::MathNoad(noad(NoadClass::Ord, 'A')))
+            .collect::<Vec<_>>(),
+    );
+    let wide_accent = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::Accent {
+            accent: math_char('⏞'),
+        },
+        MathField::SubMlist(wide_base),
+    ))]);
+    let accent = mlist_to_hlist(&universe, wide_accent, Style::DISPLAY, false, &params);
+    assert!(all_math_glyphs(&accent).len() > 20);
 }
 
 fn all_math_glyphs(layout: &MathLayout) -> Vec<Option<u16>> {

@@ -1,4 +1,6 @@
-use tex_fonts::{LigKernChar, LigKernCommand, LigatureCommand};
+use tex_fonts::{
+    LigKernChar, LigKernCommand, LigatureCommand, MathMetricsSource, MathVariantDirection,
+};
 use tex_state::math::{LimitType, MathChar, MathField, MathNoad, NoadClass, NoadKind};
 use tex_state::node::{KernKind, Node};
 use tex_state::scaled::Scaled;
@@ -6,7 +8,7 @@ use tex_state::scaled::Scaled;
 use super::convert::convert_mlist;
 use super::{
     BoxAxis, Context, FrozenHList, MathBox, MathNode, MathTypesetState, add, boxed_node, char_box,
-    clean_box, fetch, neg, sub,
+    clean_box, fetch, neg, sub, variant_box,
 };
 
 pub(super) struct OperatorResult {
@@ -121,8 +123,25 @@ fn operator_nucleus(
             let Some(fetched) = fetch(ctx.state, ch, ctx.style) else {
                 return ctx.layout.hpack(ctx.layout.empty());
             };
-            *delta = fetched.metrics.italic_correction;
-            let mut boxed = char_box(ctx, fetched, ch.origin);
+            let (mut boxed, selected_delta) = if ctx.style.is_display()
+                && let MathMetricsSource::OpenType(math) =
+                    ctx.state.math_metrics_source(fetched.font)
+                && let Some(variant) = variant_box(
+                    ctx,
+                    fetched.font,
+                    fetched,
+                    math.display_operator_min_height(),
+                    MathVariantDirection::Vertical,
+                    ch.origin,
+                ) {
+                variant
+            } else {
+                (
+                    char_box(ctx, fetched, ch.origin),
+                    fetched.metrics.italic_correction,
+                )
+            };
+            *delta = selected_delta;
             if !matches!(effective_limits, LimitType::Limits)
                 && !matches!(noad.subscript, MathField::Empty)
             {

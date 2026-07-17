@@ -1,12 +1,14 @@
+use tex_fonts::{MathMetricsSource, MathVariantDirection};
 use tex_state::font::NULL_FONT;
 use tex_state::ids::FontId;
 use tex_state::math::MathFontSize;
 use tex_state::scaled::Scaled;
+use tex_state::token::OriginId;
 
 use super::style::Style;
 use super::{
     BoxAxis, Context, FetchedChar, MathBox, MathParams, MathTypesetState, add, boxed_node,
-    char_box, sub,
+    char_box, sub, variant_box,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -55,6 +57,14 @@ pub(crate) fn var_delimiter(
 ) -> MathBox {
     // AppG rule 15, rule 19
     let code = decode_delimiter(delimiter);
+    if let Some(mut boxed) = open_type_delimiter(ctx, code, size, target) {
+        let axis = ctx.params.for_size(size).symbols.axis_height;
+        boxed.shift = sub(
+            Scaled::from_raw(tex_arith::half(sub(boxed.height, boxed.depth).raw())),
+            axis,
+        );
+        return boxed;
+    }
     let mut best = None;
     let candidate = search_variant_chain(
         ctx.state,
@@ -111,6 +121,58 @@ pub(crate) fn var_delimiter(
         axis,
     );
     boxed
+}
+
+fn open_type_delimiter(
+    ctx: &mut Context<'_, impl MathTypesetState>,
+    code: DelimiterCode,
+    size: MathFontSize,
+    target: Scaled,
+) -> Option<MathBox> {
+    for (family, code) in [
+        (code.small_family, code.small_char),
+        (code.large_family, code.large_char),
+    ] {
+        if family == 0 && code == 0 {
+            continue;
+        }
+        for size in delimiter_font_sizes(size) {
+            let font = ctx.state.math_family_font(size, family);
+            let MathMetricsSource::OpenType(math) = ctx.state.math_metrics_source(font) else {
+                continue;
+            };
+            let ch = char::from(code);
+            let Some(glyph) = math.glyph(ch, math_script_level(size)) else {
+                continue;
+            };
+            let fetched = FetchedChar {
+                font,
+                ch,
+                metrics: glyph.metrics,
+                glyph_id: Some(glyph.glyph_id),
+                top_accent_attachment: glyph.top_accent_attachment,
+            };
+            if let Some((boxed, _)) = variant_box(
+                ctx,
+                font,
+                fetched,
+                target,
+                MathVariantDirection::Vertical,
+                OriginId::UNKNOWN,
+            ) {
+                return Some(boxed);
+            }
+        }
+    }
+    None
+}
+
+const fn math_script_level(size: MathFontSize) -> u8 {
+    match size {
+        MathFontSize::Text => 0,
+        MathFontSize::Script => 1,
+        MathFontSize::ScriptScript => 2,
+    }
 }
 
 #[cfg(test)]

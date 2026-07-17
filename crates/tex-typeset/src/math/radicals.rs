@@ -1,4 +1,4 @@
-use tex_fonts::{LigKernChar, LigKernCommand};
+use tex_fonts::{LigKernChar, LigKernCommand, MathVariantDirection};
 use tex_state::math::{MathChar, MathField, MathNoad};
 use tex_state::node::KernKind;
 use tex_state::scaled::Scaled;
@@ -7,6 +7,7 @@ use super::delimiters::make_delimiter;
 use super::{
     BoxAxis, Context, FetchedChar, FrozenHList, MathBox, MathNode, MathTypesetState, add,
     boxed_node, char_box, clean_box, fetch, make_character_nucleus, neg, scripts, source_list, sub,
+    variant_box,
 };
 
 pub(super) struct AccentResult {
@@ -211,19 +212,29 @@ pub(super) fn make_math_accent(
         scripts_handled = true;
     }
 
-    let mut accent_box = char_box(
-        ctx,
-        FetchedChar {
-            font: accent_font,
-            ch: char::from(accent_code),
-            metrics: accent_metrics,
-            glyph_id: accent_glyph_id,
-            top_accent_attachment: accent_attachment,
-        },
-        accent.origin,
-    );
-    accent_box.shift = match (base_attachment, accent_attachment) {
-        (Some(base), Some(accent)) => sub(base, accent),
+    let accent_fetched = FetchedChar {
+        font: accent_font,
+        ch: char::from(accent_code),
+        metrics: accent_metrics,
+        glyph_id: accent_glyph_id,
+        top_accent_attachment: accent_attachment,
+    };
+    let selected_variant = accent_glyph_id.and_then(|_| {
+        variant_box(
+            ctx,
+            accent_font,
+            accent_fetched,
+            accentee_width,
+            MathVariantDirection::Horizontal,
+            accent.origin,
+        )
+    });
+    let mut accent_box = selected_variant
+        .as_ref()
+        .map(|(boxed, _)| boxed.clone())
+        .unwrap_or_else(|| char_box(ctx, accent_fetched, accent.origin));
+    accent_box.shift = match (selected_variant, base_attachment, accent_attachment) {
+        (None, Some(base), Some(accent)) => sub(base, accent),
         _ => add(
             skew,
             Scaled::from_raw(tex_arith::half(sub(accentee_width, accent_box.width).raw())),

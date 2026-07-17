@@ -278,6 +278,45 @@ pub enum MathKernCorner {
     BottomLeft,
 }
 
+/// Direction in which an OpenType MATH construction grows.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum MathVariantDirection {
+    Horizontal,
+    Vertical,
+}
+
+/// One projected size variant in an OpenType MATH construction.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct OpenTypeMathVariant {
+    pub glyph: OpenTypeMathGlyph,
+    pub advance: Scaled,
+}
+
+/// One projected glyph-assembly part.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct OpenTypeMathAssemblyPart {
+    pub glyph: OpenTypeMathGlyph,
+    pub start_connector: Scaled,
+    pub end_connector: Scaled,
+    pub full_advance: Scaled,
+    pub extender: bool,
+}
+
+/// A projected glyph assembly and its construction-wide measurements.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OpenTypeMathAssembly {
+    pub italic_correction: Scaled,
+    pub min_connector_overlap: Scaled,
+    pub parts: Vec<OpenTypeMathAssemblyPart>,
+}
+
+/// Projected variants and optional assembly for one base glyph.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OpenTypeMathConstruction {
+    pub variants: Vec<OpenTypeMathVariant>,
+    pub assembly: Option<OpenTypeMathAssembly>,
+}
+
 impl OpenTypeMathMetrics<'_> {
     #[must_use]
     pub const fn program_identity(self) -> FontProgramIdentity {
@@ -316,6 +355,30 @@ impl OpenTypeMathMetrics<'_> {
             .script_script_percent_scale_down
     }
 
+    #[must_use]
+    pub fn delimited_sub_formula_min_height(self) -> Scaled {
+        self.project_units(i32::from(
+            self.font
+                .math
+                .as_ref()
+                .expect("MATH source")
+                .constants
+                .delimited_sub_formula_min_height,
+        ))
+    }
+
+    #[must_use]
+    pub fn display_operator_min_height(self) -> Scaled {
+        self.project_units(i32::from(
+            self.font
+                .math
+                .as_ref()
+                .expect("MATH source")
+                .constants
+                .display_operator_min_height,
+        ))
+    }
+
     /// Selects the cmap glyph, applying the standard `ssty` feature for script
     /// levels one and two, and returns native MATH glyph information.
     #[must_use]
@@ -339,6 +402,12 @@ impl OpenTypeMathMetrics<'_> {
                     .and_then(|info| u16::try_from(info.glyph_id).ok())
             })?
         };
+        self.glyph_by_id(glyph_id)
+    }
+
+    /// Returns selected-size metrics for an exact glyph id.
+    #[must_use]
+    pub fn glyph_by_id(self, glyph_id: u16) -> Option<OpenTypeMathGlyph> {
         let index = usize::from(glyph_id);
         let advance = *self.font.metrics.horizontal_advances.get(index)?;
         let width = self.project_units(i32::from(advance));
@@ -375,6 +444,55 @@ impl OpenTypeMathMetrics<'_> {
             },
             italic_correction,
             top_accent_attachment,
+        })
+    }
+
+    /// Returns the selected-size construction for an exact base glyph.
+    #[must_use]
+    pub fn construction(
+        self,
+        glyph_id: u16,
+        direction: MathVariantDirection,
+    ) -> Option<OpenTypeMathConstruction> {
+        let variants = self.font.math.as_ref()?.variants.as_ref()?;
+        let construction = match direction {
+            MathVariantDirection::Horizontal => variants.horizontal.get(&glyph_id),
+            MathVariantDirection::Vertical => variants.vertical.get(&glyph_id),
+        }?;
+        let projected_variants = construction
+            .variants
+            .iter()
+            .filter_map(|variant| {
+                Some(OpenTypeMathVariant {
+                    glyph: self.glyph_by_id(variant.glyph_id)?,
+                    advance: self.project_units(i32::from(variant.advance_measurement)),
+                })
+            })
+            .collect();
+        let assembly = construction.assembly.as_ref().and_then(|assembly| {
+            Some(OpenTypeMathAssembly {
+                italic_correction: self.project_value(&assembly.italic_correction),
+                min_connector_overlap: self
+                    .project_units(i32::from(variants.min_connector_overlap)),
+                parts: assembly
+                    .parts
+                    .iter()
+                    .map(|part| {
+                        Some(OpenTypeMathAssemblyPart {
+                            glyph: self.glyph_by_id(part.glyph_id)?,
+                            start_connector: self
+                                .project_units(i32::from(part.start_connector_length)),
+                            end_connector: self.project_units(i32::from(part.end_connector_length)),
+                            full_advance: self.project_units(i32::from(part.full_advance)),
+                            extender: part.extender,
+                        })
+                    })
+                    .collect::<Option<Vec<_>>>()?,
+            })
+        });
+        Some(OpenTypeMathConstruction {
+            variants: projected_variants,
+            assembly,
         })
     }
 
