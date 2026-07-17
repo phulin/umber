@@ -344,13 +344,37 @@ fn classic_smoke_executes_through_the_public_session_with_cold_and_cached_bytes(
 
 #[test]
 fn classic_plain_executes_through_the_public_session() {
-    let aux = VirtualPath::user("plain.aux").expect("fixture path");
+    execute_standard_style(
+        "plain",
+        include_bytes!("../../../../tests/corpus/bibtex/cases/plain/plain.aux"),
+        include_bytes!("../../../../tests/corpus/bibtex/cases/plain/references.bib"),
+        include_bytes!("../../../../tests/corpus/bibtex/styles/plain.bst"),
+        include_bytes!("../../../../tests/corpus/bibtex/cases/plain/plain.bbl"),
+    );
+}
+
+#[test]
+fn classic_apalike_executes_through_the_public_session() {
+    execute_standard_style(
+        "apalike",
+        include_bytes!("../../../../tests/corpus/bibtex/cases/apalike/apalike.aux"),
+        include_bytes!("../../../../tests/corpus/bibtex/cases/apalike/references.bib"),
+        include_bytes!("../../../../tests/corpus/bibtex/styles/apalike.bst"),
+        include_bytes!("../../../../tests/corpus/bibtex/cases/apalike/apalike.bbl"),
+    );
+}
+
+fn execute_standard_style(
+    name: &str,
+    aux_bytes: &[u8],
+    database_bytes: &[u8],
+    style_bytes: &[u8],
+    expected_bbl: &[u8],
+) {
+    let aux = VirtualPath::user(&format!("{name}.aux")).expect("fixture path");
     let mut provisioner = FileProvisioner::new(VfsLimits::default()).expect("VFS");
     provisioner
-        .register_user(
-            aux.clone(),
-            include_bytes!("../../../../tests/corpus/bibtex/cases/plain/plain.aux").to_vec(),
-        )
+        .register_user(aux.clone(), aux_bytes.to_vec())
         .expect("fixture AUX");
     let job = ClassicBibJob::new(aux, ClassicBibOptions::default());
     let mut session = BibliographySession::classic();
@@ -364,13 +388,8 @@ fn classic_plain_executes_through_the_public_session() {
     provisioner.expect(&needs);
     for request in &needs.required {
         let bytes = match request.key().kind() {
-            FileKind::ClassicBibData => {
-                include_bytes!("../../../../tests/corpus/bibtex/cases/plain/references.bib")
-                    .to_vec()
-            }
-            FileKind::BibStyle => {
-                include_bytes!("../../../../tests/corpus/bibtex/styles/plain.bst").to_vec()
-            }
+            FileKind::ClassicBibData => database_bytes.to_vec(),
+            FileKind::BibStyle => style_bytes.to_vec(),
             kind => panic!("unexpected classic resource kind: {kind:?}"),
         };
         provisioner
@@ -394,9 +413,9 @@ fn classic_plain_executes_through_the_public_session() {
     assert_eq!(
         result
             .files()
-            .find(|file| file.path().as_str() == "/job/plain.bbl")
+            .find(|file| file.path().as_str() == format!("/job/{name}.bbl"))
             .expect("BBL")
             .bytes(),
-        include_bytes!("../../../../tests/corpus/bibtex/cases/plain/plain.bbl"),
+        expected_bbl,
     );
 }

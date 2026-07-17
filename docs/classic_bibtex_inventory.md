@@ -151,10 +151,11 @@ replaced with normalized or compatibility-allowance tests while remaining
 whole-style blockers are resolved.
 
 The focused VM matrix covers the `plain.bst` `{ff~}` and `apalike.bst` `{f.}`
-patterns. Exact public-session BBL parity for those pinned styles remains
-blocked by the separate VM operand-ordering failure in
-`umber2-ild0.25`; it must be restored without weakening the committed fixture
-comparison.
+patterns, including `substring$` negative offsets. Exact public-session BBL
+parity for both pinned styles is enforced against the committed fixtures:
+`umber2-ild0.25` restores quoted-variable control operands and
+`umber2-ild0.26` makes negative `substring$` starts count relative to the
+right edge, as required by apalike's four-digit year label.
 
 ## Upstream test inventory
 

@@ -1088,17 +1088,19 @@ fn classic_substring(value: &str, start: i64, count: i64) -> String {
     }
     let chars: Vec<char> = value.chars().collect();
     let start = if start > 0 {
-        start - 1
+        i128::from(start - 1)
     } else {
-        chars.len() as i64 + start
+        // A negative start identifies the right edge of the requested slice.
+        // Thus `#-1 #4 substring$` retains the final four characters.
+        chars.len() as i128 + i128::from(start) - i128::from(count) + 1
     };
-    if start < 0 || start as usize >= chars.len() {
+    if start < 0 || start >= chars.len() as i128 {
         return String::new();
     }
     chars
         .into_iter()
         .skip(start as usize)
-        .take(count as usize)
+        .take(usize::try_from(count).unwrap_or(usize::MAX))
         .collect()
 }
 
