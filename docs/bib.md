@@ -2,9 +2,9 @@
 
 Status: foundation contracts, pinned Unicode utilities, bounded XML and
 BibTeX inputs, deterministic cross-entry graphs, structured names,
-data-list/sorting, labeling/uniqueness, and exact BBL 3.3 serialization are
-implemented; secondary serializers, session, and project integration continue
-in dependency order.
+data-list/sorting, labeling/uniqueness, exact BBL 3.3 serialization, and exact
+detached BibTeX serialization are implemented; the remaining secondary
+serializers, session, and project integration continue in dependency order.
 
 This document defines Umber's pure-Rust bibliography subsystem. Every Rust
 package uses the `bib-*` prefix, and modules, types, commands, features, and
@@ -146,8 +146,8 @@ The workspace now contains these packages and dependency boundaries:
   presort, sort initials, and stable ordering;
 - `bib-label`: static and context-dependent entry processing, name visibility,
   hashes, label fields, extradate/title values, and uniqueness;
-- `bib-output`: detached deterministic BBL 3.3 serialization, followed by the
-  separately tracked secondary output formats; and
+- `bib-output`: detached deterministic BBL 3.3 and BibTeX serialization,
+  followed by the separately tracked XML and DOT output formats; and
 - `bib-engine`: the only ordinary dependency of `umber`, composing the stages
   and exposing resource-session and one-shot APIs.
 
@@ -612,6 +612,21 @@ table/schema detection, and unrepresentable characters return typed failures
 with stable ordered diagnostics; serializers read no VFS, host locale, mutable
 option state, or process global.
 
+The implemented BibTeX writer uses the same detached boundary. Its immutable
+serializer policy fixes field alignment, entry/field case, TeX safe-character
+recoding, ordered string macros and their eligible fields, and ordered output
+comments. The explicit `OutputRequest` continues to own legacy encoding,
+LF/CRLF selection, destination identity, and the exact byte limit. Entries are
+emitted by declared data-list order with deterministic first-occurrence
+deduplication; sections without a list retain frozen entry order. Typed values
+have format-specific codecs for classic names, `others`, literal/URI lists,
+key lists, ranges, dates, booleans, integers, and verbatim values. Targeted
+annotations retain their field in the frozen model so BibTeX can interleave
+exact `FIELD+an:name` assignments. Structural identifiers, balanced values,
+comments, encoding failures, compatibility mismatches, and checked work/output
+limits return typed ordered diagnostics without consulting input sources or
+mutable configuration.
+
 Diagnostics have stable codes and structured data:
 
 ```rust
@@ -795,6 +810,14 @@ assertions transferred from `basic-misc.t` execute normally with no BBL-output
 xfails. The complete committed `full-bbl.bbl` is regenerated from a frozen
 document and compared byte for byte, including its three list contexts, alias,
 undefined key, header, and trailing newlines.
+
+All six `bibtex-output.t` assertions and both development-gated
+`full-bibtex.t` assertions execute normally with no BibTeX-output xfails. The
+committed `full-bibtex_biber.bib` fixture is regenerated from a frozen
+document and compared byte for byte, including its string macro, aligned
+fields, sorted dependency closure, structured names, ranges, and trailing
+newlines. Focused exact-entry tests additionally cover annotated fields and
+key-list rendering from `bibtex-output.t`.
 
 The two upstream files that exercise several stages use assertion-level
 ownership rather than file-level ownership. Their Rust modules enforce the

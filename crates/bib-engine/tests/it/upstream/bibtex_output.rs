@@ -1,7 +1,7 @@
 // Direct xfail translation of upstream t/bibtex-output.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream;
 
 const UPSTREAM_SOURCE: &str = r########"# -*- cperl -*-
 use strict;
@@ -114,7 +114,7 @@ is_deeply($main->get_keys, ['murray', 'kant:ku', 'b1', 'xd1', 'bo1', 'mv1'], 'no
 "########;
 #[test]
 fn assertion_001_bibtex_output_1() {
-    xfail_upstream(
+    pass_upstream(
         "bibtex output 1",
         r########"$out->get_output_entry('murray',)"########,
         r########"$b1"########,
@@ -125,7 +125,7 @@ fn assertion_001_bibtex_output_1() {
 
 #[test]
 fn assertion_002_bibtex_output_2() {
-    xfail_upstream(
+    pass_upstream(
         "bibtex output 2",
         r########"$out->get_output_entry('b1',)"########,
         r########"$b2"########,
@@ -136,7 +136,7 @@ fn assertion_002_bibtex_output_2() {
 
 #[test]
 fn assertion_003_bibtex_output_3() {
-    xfail_upstream(
+    pass_upstream(
         "bibtex output 3",
         r########"$out->get_output_entry('xd1',)"########,
         r########"$b3"########,
@@ -147,7 +147,7 @@ fn assertion_003_bibtex_output_3() {
 
 #[test]
 fn assertion_004_bibtex_output_4() {
-    xfail_upstream(
+    pass_upstream(
         "bibtex output 4",
         r########"$out->get_output_entry('bo1',)"########,
         r########"$bo1"########,
@@ -158,7 +158,7 @@ fn assertion_004_bibtex_output_4() {
 
 #[test]
 fn assertion_005_bibtex_output_5() {
-    xfail_upstream(
+    pass_upstream(
         "bibtex output 5",
         r########"is_undef($out->get_output_entry('reese'))"########,
         r########"true"########,
@@ -169,7 +169,7 @@ fn assertion_005_bibtex_output_5() {
 
 #[test]
 fn assertion_006_non_tool_mode_bibtex_output_sorting() {
-    xfail_upstream(
+    pass_upstream(
         "non-tool mode bibtex output sorting",
         r########"$main->get_keys"########,
         r########"['murray', 'kant:ku', 'b1', 'xd1', 'bo1', 'mv1']"########,

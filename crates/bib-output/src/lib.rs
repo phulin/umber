@@ -1,11 +1,16 @@
 //! Detached deterministic bibliography serializer boundary.
 
 mod bbl;
+mod bibtex;
 
 use bib_model::{GeneratedFile, OutputRequest, ProcessedBibliography};
 use bib_unicode::UnicodeData;
 
 pub use bbl::{BblOutputFailure, BblOutputFailureKind, BblSerializer};
+pub use bibtex::{
+    BibtexCase, BibtexMacro, BibtexOptions, BibtexOutputFailure, BibtexOutputFailureKind,
+    BibtexSerializer,
+};
 
 #[derive(Clone, Copy, Debug)]
 pub struct OutputContext<'a> {

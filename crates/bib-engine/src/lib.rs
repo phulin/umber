@@ -17,9 +17,10 @@ pub use bib_model::{
     ProcessedSectionBuilder, SectionId, SourceSpan, VirtualPath,
 };
 pub use bib_output::{
-    BblOutputFailure, BblOutputFailureKind, BblSerializer, OutputContext, Serializer,
+    BblOutputFailure, BblOutputFailureKind, BblSerializer, BibtexCase, BibtexMacro, BibtexOptions,
+    BibtexOutputFailure, BibtexOutputFailureKind, BibtexSerializer, OutputContext, Serializer,
 };
-pub use bib_unicode::{LegacyEncoding, UnicodeData};
+pub use bib_unicode::{LegacyEncoding, RecodeSet, UnicodeData};
 use umber_vfs::FileRequestBatch;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

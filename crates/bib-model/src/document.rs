@@ -11,6 +11,7 @@ use crate::{
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Annotation {
+    field: Option<FieldId>,
     name: FieldId,
     value: String,
 }
@@ -21,7 +22,26 @@ impl Annotation {
         if value.contains('\0') {
             return Err(BuildError::Invalid("annotation values cannot contain NUL"));
         }
-        Ok(Self { name, value })
+        Ok(Self {
+            field: None,
+            name,
+            value,
+        })
+    }
+
+    pub fn for_field(
+        field: FieldId,
+        name: FieldId,
+        value: impl Into<String>,
+    ) -> Result<Self, BuildError> {
+        let mut annotation = Self::new(name, value)?;
+        annotation.field = Some(field);
+        Ok(annotation)
+    }
+
+    #[must_use]
+    pub const fn field(&self) -> Option<&FieldId> {
+        self.field.as_ref()
     }
 
     #[must_use]
@@ -117,7 +137,7 @@ impl EntryBuilder {
         if self
             .annotations
             .iter()
-            .any(|existing| existing.name == annotation.name)
+            .any(|existing| existing.field == annotation.field && existing.name == annotation.name)
         {
             return Err(BuildError::DuplicateAnnotation(annotation.name));
         }

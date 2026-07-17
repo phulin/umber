@@ -7,7 +7,10 @@ use bib_model::{
 };
 use bib_unicode::{LegacyEncoding, UnicodeData};
 
-use crate::{BblOutputFailureKind, BblSerializer, OutputContext, Serializer};
+use crate::{
+    BblOutputFailureKind, BblSerializer, BibtexMacro, BibtexOptions, BibtexOutputFailureKind,
+    BibtexSerializer, OutputContext, Serializer,
+};
 
 fn source() -> BibSourceLocation {
     BibSourceLocation::new(
@@ -70,6 +73,35 @@ fn serialize(
         OutputContext::new(document, &UnicodeData::pinned()),
         request,
     )
+}
+
+fn bibtex_request() -> OutputRequest {
+    OutputRequest::new(
+        VirtualPath::user("main.bib").expect("valid output path"),
+        OutputFormat::Bibtex,
+    )
+}
+
+fn person(family: &str, given: &str) -> bib_model::Name {
+    let mut name = NameBuilder::new();
+    name.family(Literal::new(family));
+    name.given(Literal::new(given));
+    name.freeze().expect("complete name")
+}
+
+fn add_field(entry: &mut EntryBuilder, name: &str, value: FieldValue) {
+    entry
+        .field(
+            FieldId::new(name).expect("valid field"),
+            value,
+            FieldValueStage::Computed,
+            provenance(),
+        )
+        .expect("unique field");
+}
+
+fn add_literal(entry: &mut EntryBuilder, name: &str, value: &str) {
+    add_field(entry, name, FieldValue::Literal(Literal::new(value)));
 }
 
 #[test]
@@ -341,4 +373,412 @@ fn applies_newline_encoding_and_output_limits_with_typed_diagnostics() {
     )
     .expect_err("unrepresentable value fails");
     assert_eq!(error.kind(), BblOutputFailureKind::Unrepresentable);
+}
+
+#[test]
+fn full_bibtex_fixture_is_byte_exact() {
+    let mut space = EntryBuilder::new(
+        EntryId::new("westfahl:space").expect("valid entry"),
+        EntryType::new("incollection").expect("valid type"),
+        source(),
+    );
+    add_field(
+        &mut space,
+        "author",
+        FieldValue::NameList(NameList::new([person("Westfahl", "Gary")], false)),
+    );
+    add_literal(
+        &mut space,
+        "annotation",
+        "A cross-referenced article from a \\texttt{collection}. This is an \\texttt{incollection} entry with a \\texttt{crossref} field. Note the \\texttt{subtitle} and \\texttt{indextitle} fields",
+    );
+    add_literal(&mut space, "crossref", "westfahl:frontier");
+    add_literal(&mut space, "indextitle", "True Frontier, The");
+    add_literal(&mut space, "langid", "english");
+    add_literal(&mut space, "langidopts", "variant=american");
+    add_field(
+        &mut space,
+        "pages",
+        FieldValue::RangeList(vec![Range::new(
+            RangeEndpoint::Integer(55),
+            RangeEndpoint::Integer(65),
+        )]),
+    );
+    add_literal(
+        &mut space,
+        "subtitle",
+        "Confronting and Avoiding the Realities of Space in American Science Fiction Films",
+    );
+    add_literal(&mut space, "title", "The True Frontier");
+
+    let mut article = EntryBuilder::new(
+        EntryId::new("kastenholz").expect("valid entry"),
+        EntryType::new("article").expect("valid type"),
+        source(),
+    );
+    add_literal(
+        &mut article,
+        "abstract",
+        "The computation of ionic solvation free energies from atomistic simulations is a surprisingly difficult problem that has found no satisfactory solution for more than 15 years. The reason is that the charging free energies evaluated from such simulations are affected by very large errors. One of these is related to the choice of a specific convention for summing up the contributions of solvent charges to the electrostatic potential in the ionic cavity, namely, on the basis of point charges within entire solvent molecules (M scheme) or on the basis of individual point charges (P scheme). The use of an inappropriate convention may lead to a charge-independent offset in the calculated potential, which depends on the details of the summation scheme, on the quadrupole-moment trace of the solvent molecule, and on the approximate form used to represent electrostatic interactions in the system. However, whether the M or P scheme (if any) represents the appropriate convention is still a matter of on-going debate. The goal of the present article is to settle this long-standing controversy by carefully analyzing (both analytically and numerically) the properties of the electrostatic potential in molecular liquids (and inside cavities within them).",
+    );
+    add_field(
+        &mut article,
+        "author",
+        FieldValue::NameList(NameList::new(
+            [
+                person("Kastenholz", "M. A."),
+                person("Hünenberger", "Philippe H."),
+            ],
+            false,
+        )),
+    );
+    add_literal(
+        &mut article,
+        "annotation",
+        "An \\texttt{article} entry with an \\texttt{eid} and a \\texttt{doi} field. Note that the \\textsc{doi} is transformed into a clickable link if \\texttt{hyperref} support has been enabled",
+    );
+    add_field(
+        &mut article,
+        "date",
+        FieldValue::Date(DateValue::new(2006, None, None).expect("valid date")),
+    );
+    add_literal(&mut article, "doi", "10.1063/1.2172593");
+    add_field(&mut article, "eid", FieldValue::Integer(124106));
+    add_literal(
+        &mut article,
+        "indextitle",
+        "Computation of ionic solvation free energies",
+    );
+    add_literal(&mut article, "journaltitle", "J.~Chem. Phys.");
+    add_literal(&mut article, "langid", "english");
+    add_literal(&mut article, "langidopts", "variant=american");
+    add_literal(
+        &mut article,
+        "subtitle",
+        "I. The electrostatic potential in molecular liquids",
+    );
+    add_literal(
+        &mut article,
+        "title",
+        "Computation of methodology\\hyphen independent ionic solvation free energies from molecular simulations",
+    );
+    add_field(&mut article, "volume", FieldValue::Integer(124));
+
+    let mut collection = EntryBuilder::new(
+        EntryId::new("westfahl:frontier").expect("valid entry"),
+        EntryType::new("collection").expect("valid type"),
+        source(),
+    );
+    add_field(
+        &mut collection,
+        "editor",
+        FieldValue::NameList(NameList::new([person("Westfahl", "Gary")], false)),
+    );
+    add_field(
+        &mut collection,
+        "location",
+        FieldValue::LiteralList(vec![
+            Literal::new("Westport, Conn."),
+            Literal::new("London"),
+        ]),
+    );
+    add_literal(&mut collection, "publisher", "Greenwood");
+    add_literal(
+        &mut collection,
+        "annotation",
+        "This is a \\texttt{collection} entry. Note the format of the \\texttt{location} field as well as the \\texttt{subtitle} and \\texttt{booksubtitle} fields",
+    );
+    add_literal(
+        &mut collection,
+        "booksubtitle",
+        "The Frontier Theme in Science Fiction",
+    );
+    add_literal(&mut collection, "booktitle", "Space and Beyond");
+    add_field(
+        &mut collection,
+        "date",
+        FieldValue::Date(DateValue::new(2000, None, None).expect("valid date")),
+    );
+    add_literal(&mut collection, "langid", "english");
+    add_literal(&mut collection, "langidopts", "variant=american");
+    add_literal(
+        &mut collection,
+        "subtitle",
+        "The Frontier Theme in Science Fiction",
+    );
+    add_literal(&mut collection, "title", "Space and Beyond");
+
+    let entries = [space.freeze(), article.freeze(), collection.freeze()];
+    let ids = entries
+        .iter()
+        .map(|entry| entry.id().clone())
+        .collect::<Vec<_>>();
+    let mut section = ProcessedSectionBuilder::new(SectionId::new(0));
+    for entry in entries {
+        section.entry(entry).expect("unique entry");
+    }
+    section
+        .list(
+            DataList::new(
+                DataListId::new("nty/global//global/global/global").expect("valid list"),
+                ids,
+            )
+            .expect("valid list"),
+        )
+        .expect("known entries");
+    let mut document = ProcessedBibliographyBuilder::new(
+        BibConfigurationBuilder::new(COMPATIBILITY_VERSION).freeze(),
+    );
+    document.section(section.freeze()).expect("unique section");
+    let serializer =
+        BibtexSerializer::new(BibtexOptions::default().with_alignment(true).with_macros([
+            BibtexMacro::new("JCHPH", "J.~Chem. Phys.").with_fields(["journaltitle"]),
+        ]));
+    let actual = serializer
+        .serialize(
+            OutputContext::new(&document.freeze(), &UnicodeData::pinned()),
+            &bibtex_request(),
+        )
+        .expect("serializes");
+    assert_eq!(
+        actual.bytes(),
+        include_bytes!("../../../tests/corpus/bib/upstream-2.22/tdata/full-bibtex_biber.bib")
+    );
+}
+
+#[test]
+fn bibtex_renders_typed_fields_comments_options_and_failures() {
+    let mut entry = EntryBuilder::new(
+        EntryId::new("typed").expect("valid entry"),
+        EntryType::new("misc").expect("valid type"),
+        source(),
+    );
+    add_field(&mut entry, "enabled", FieldValue::Boolean(true));
+    add_field(
+        &mut entry,
+        "keys",
+        FieldValue::KeyList(vec![
+            EntryId::new("a").expect("valid key"),
+            EntryId::new("b").expect("valid key"),
+        ]),
+    );
+    add_field(
+        &mut entry,
+        "names",
+        FieldValue::NameList(NameList::new([person("Doe", "Jane")], true)),
+    );
+    add_literal(&mut entry, "symbol", "α");
+    entry
+        .annotation(
+            bib_model::Annotation::for_field(
+                FieldId::new("names").expect("valid annotation target"),
+                FieldId::new("default").expect("valid annotation name"),
+                "1=primary",
+            )
+            .expect("valid annotation"),
+        )
+        .expect("unique annotation");
+    let document = document_with_entry(entry.freeze());
+    let serializer = BibtexSerializer::new(
+        BibtexOptions::default()
+            .with_comments(["generated deterministically"])
+            .with_field_case(crate::BibtexCase::Lower)
+            .with_escape(bib_unicode::RecodeSet::Full),
+    );
+    let output = serializer
+        .serialize(
+            OutputContext::new(&document, &UnicodeData::pinned()),
+            &bibtex_request().with_newline(OutputNewline::CrLf),
+        )
+        .expect("serializes");
+    let text = String::from_utf8(output.bytes().to_vec()).expect("UTF-8");
+    assert!(text.starts_with("% generated deterministically\r\n\r\n@MISC{typed,"));
+    assert!(text.contains("  enabled = {true},\r\n"));
+    assert!(text.contains("  keys = {a,b},\r\n"));
+    assert!(text.contains("  names = {Doe, Jane and others},\r\n"));
+    assert!(text.contains("  names+an:default = {1=primary},\r\n"));
+    assert!(text.contains("  symbol = {{$\\alpha$}},\r\n"));
+
+    let error = serializer
+        .serialize(
+            OutputContext::new(&document, &UnicodeData::pinned()),
+            &bibtex_request().with_max_bytes(8),
+        )
+        .expect_err("limit fails");
+    assert_eq!(error.kind(), BibtexOutputFailureKind::Limit);
+
+    let mut emoji = EntryBuilder::new(
+        EntryId::new("emoji").expect("valid entry"),
+        EntryType::new("misc").expect("valid type"),
+        source(),
+    );
+    add_literal(&mut emoji, "title", "🦀");
+    let error = BibtexSerializer::default()
+        .serialize(
+            OutputContext::new(&document_with_entry(emoji.freeze()), &UnicodeData::pinned()),
+            &bibtex_request().with_encoding(LegacyEncoding::Latin1),
+        )
+        .expect_err("encoding fails");
+    assert_eq!(error.kind(), BibtexOutputFailureKind::Unrepresentable);
+
+    let mut malformed = EntryBuilder::new(
+        EntryId::new("malformed").expect("valid entry"),
+        EntryType::new("misc").expect("valid type"),
+        source(),
+    );
+    add_literal(&mut malformed, "title", "unbalanced {");
+    let error = BibtexSerializer::default()
+        .serialize(
+            OutputContext::new(
+                &document_with_entry(malformed.freeze()),
+                &UnicodeData::pinned(),
+            ),
+            &bibtex_request(),
+        )
+        .expect_err("malformed value fails");
+    assert_eq!(error.kind(), BibtexOutputFailureKind::MalformedValue);
+}
+
+#[test]
+fn bibtex_output_entries_match_upstream_exactly() {
+    let serializer = BibtexSerializer::new(BibtexOptions::default().with_alignment(true));
+    let mut murray = EntryBuilder::new(
+        EntryId::new("murray").expect("valid entry"),
+        EntryType::new("article").expect("valid type"),
+        source(),
+    );
+    let authors = [
+        ("Hostetler", "Michael J."),
+        ("Wingate", "Julia E."),
+        ("Zhong", "Chuan-Jian"),
+        ("Harris", "Jay E."),
+        ("Vachet", "Richard W."),
+        ("Clark", "Michael R."),
+        ("Londono", "J. David"),
+        ("Green", "Stephen J."),
+        ("Stokes", "Jennifer J."),
+        ("Wignall", "George D."),
+        ("Glish", "Gary L."),
+        ("Porter", "Marc D."),
+        ("Evans", "Neal D."),
+        ("Murray", "Royce W."),
+    ]
+    .map(|(family, given)| person(family, given));
+    add_field(
+        &mut murray,
+        "author",
+        FieldValue::NameList(NameList::new(authors, false)),
+    );
+    add_literal(
+        &mut murray,
+        "annotation",
+        "An \\texttt{article} entry with \\arabic{author} authors. By default, long author and editor lists are automatically truncated. This is configurable",
+    );
+    add_field(
+        &mut murray,
+        "date",
+        FieldValue::Date(DateValue::new(1998, None, None).expect("valid date")),
+    );
+    add_literal(
+        &mut murray,
+        "indextitle",
+        "Alkanethiolate gold cluster molecules",
+    );
+    add_literal(&mut murray, "journaltitle", "Langmuir");
+    add_literal(&mut murray, "langid", "english");
+    add_literal(&mut murray, "langidopts", "variant=american");
+    add_field(&mut murray, "number", FieldValue::Integer(1));
+    add_field(
+        &mut murray,
+        "pages",
+        FieldValue::RangeList(vec![Range::new(
+            RangeEndpoint::Integer(17),
+            RangeEndpoint::Integer(30),
+        )]),
+    );
+    add_literal(
+        &mut murray,
+        "shorttitle",
+        "Alkanethiolate gold cluster molecules",
+    );
+    add_literal(
+        &mut murray,
+        "subtitle",
+        "Core and monolayer properties as a function of core size",
+    );
+    add_literal(
+        &mut murray,
+        "title",
+        "Alkanethiolate gold cluster molecules with core diameters from 1.5 to 5.2~nm",
+    );
+    add_field(&mut murray, "volume", FieldValue::Integer(14));
+    assert_eq!(
+        serializer.serialize_entry(&murray.freeze()).expect("entry"),
+        "@ARTICLE{murray,\n  AUTHOR       = {Hostetler, Michael J. and Wingate, Julia E. and Zhong, Chuan-Jian and Harris, Jay E. and Vachet, Richard W. and Clark, Michael R. and Londono, J. David and Green, Stephen J. and Stokes, Jennifer J. and Wignall, George D. and Glish, Gary L. and Porter, Marc D. and Evans, Neal D. and Murray, Royce W.},\n  ANNOTATION   = {An \\texttt{article} entry with \\arabic{author} authors. By default, long author and editor lists are automatically truncated. This is configurable},\n  DATE         = {1998},\n  INDEXTITLE   = {Alkanethiolate gold cluster molecules},\n  JOURNALTITLE = {Langmuir},\n  LANGID       = {english},\n  LANGIDOPTS   = {variant=american},\n  NUMBER       = {1},\n  PAGES        = {17--30},\n  SHORTTITLE   = {Alkanethiolate gold cluster molecules},\n  SUBTITLE     = {Core and monolayer properties as a function of core size},\n  TITLE        = {Alkanethiolate gold cluster molecules with core diameters from 1.5 to 5.2~nm},\n  VOLUME       = {14},\n}\n\n"
+    );
+
+    let mut book = EntryBuilder::new(
+        EntryId::new("b1").expect("valid entry"),
+        EntryType::new("book").expect("valid type"),
+        source(),
+    );
+    add_field(
+        &mut book,
+        "location",
+        FieldValue::LiteralList(vec![Literal::new("London"), Literal::new("Edinburgh")]),
+    );
+    book.annotation(
+        bib_model::Annotation::for_field(
+            FieldId::new("location").expect("valid target"),
+            FieldId::new("default").expect("valid annotation"),
+            "1=ann1;2=ann2",
+        )
+        .expect("valid annotation"),
+    )
+    .expect("unique annotation");
+    add_field(
+        &mut book,
+        "date",
+        FieldValue::Date(DateValue::new(1999, None, None).expect("valid date")),
+    );
+    add_literal(&mut book, "mainsubtitle", "Mainsubtitle");
+    add_literal(&mut book, "maintitle", "Maintitle");
+    add_literal(&mut book, "maintitleaddon", "Maintitleaddon");
+    add_literal(&mut book, "title", "Booktitle");
+    book.annotation(
+        bib_model::Annotation::for_field(
+            FieldId::new("title").expect("valid target"),
+            FieldId::new("default").expect("valid annotation"),
+            "=ann1, ann2",
+        )
+        .expect("valid annotation"),
+    )
+    .expect("unique annotation");
+    assert_eq!(
+        serializer.serialize_entry(&book.freeze()).expect("entry"),
+        "@BOOK{b1,\n  LOCATION            = {London and Edinburgh},\n  LOCATION+an:default = {1=ann1;2=ann2},\n  DATE                = {1999},\n  MAINSUBTITLE        = {Mainsubtitle},\n  MAINTITLE           = {Maintitle},\n  MAINTITLEADDON      = {Maintitleaddon},\n  TITLE               = {Booktitle},\n  TITLE+an:default    = {=ann1, ann2},\n}\n\n"
+    );
+
+    let mut ids = EntryBuilder::new(
+        EntryId::new("bo1").expect("valid entry"),
+        EntryType::new("book").expect("valid type"),
+        source(),
+    );
+    add_field(
+        &mut ids,
+        "author",
+        FieldValue::NameList(NameList::new([person("Smith", "Simon")], false)),
+    );
+    add_field(
+        &mut ids,
+        "ids",
+        FieldValue::KeyList(vec![
+            EntryId::new("box1").expect("valid key"),
+            EntryId::new("box2").expect("valid key"),
+        ]),
+    );
+    assert_eq!(
+        serializer.serialize_entry(&ids.freeze()).expect("entry"),
+        "@BOOK{bo1,\n  AUTHOR = {Smith, Simon},\n  IDS    = {box1,box2},\n}\n\n"
+    );
 }

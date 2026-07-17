@@ -1,7 +1,7 @@
 // Direct xfail translation of upstream t/full-bibtex.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream;
 
 const UPSTREAM_SOURCE: &str = r########"# -*- cperl -*-
 use v5.24;
@@ -48,7 +48,7 @@ ok(compare($bib, 't/tdata/full-bibtex_biber.bib') == 0, 'Testing non-toolmode bi
 
 #[test]
 fn assertion_001_full_test_has_zero_exit_status() {
-    xfail_upstream(
+    pass_upstream(
         "Full test has zero exit status",
         r########"in_process_session.exit_status /* upstream: $? >> 8 */"########,
         r########"0"########,
@@ -59,7 +59,7 @@ fn assertion_001_full_test_has_zero_exit_status() {
 
 #[test]
 fn assertion_002_testing_non_toolmode_bibtex_output() {
-    xfail_upstream(
+    pass_upstream(
         "Testing non-toolmode bibtex output",
         r########"in_process_session.output_bytes /* upstream: compare($bib, 't/tdata/full-bibtex_biber.bib') == 0 */"########,
         r########"fixture_bytes('t/tdata/full-bibtex_biber.bib')"########,
