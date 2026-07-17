@@ -16,6 +16,7 @@ const PARAGRAPH_FRONT_END_DOMAIN: u32 = 2;
 const PARAGRAPH_FRONT_END_SCHEMA: u32 = 1;
 const PARAGRAPH_ENV_HASH_DOMAIN: u64 = 0x7061_7261_656e_7601;
 const MAX_PREFLIGHT_TOKENS: usize = 1 << 16;
+const MAX_BREAK_DEPENDENCY_CACHE_ENTRIES: usize = 4_096;
 
 #[cfg(feature = "profiling-stats")]
 type PhaseStart = std::time::Instant;
@@ -893,7 +894,7 @@ pub(crate) fn publish_finished_lines(
         return;
     };
     let dependencies_started = start_phase();
-    let Some(dependencies) = paragraph_break_dependencies(stores, nodes) else {
+    let Some(dependencies) = paragraph_break_dependencies(stores, execution, nodes) else {
         return;
     };
     finish_phase(
@@ -985,6 +986,7 @@ fn paragraph_graph_origin_ordinals(
 
 fn paragraph_break_dependencies(
     stores: &mut Universe,
+    execution: &mut ExecutionContext<'_>,
     nodes: &[tex_state::node::Node],
 ) -> Option<Vec<tex_state::ObservedDependency>> {
     use tex_state::{
@@ -1114,11 +1116,23 @@ fn paragraph_break_dependencies(
     let dependencies = tracked
         .into_iter()
         .map(|(key, changed_at)| {
-            Some(tex_state::ObservedDependency {
+            if let Some(cached) = execution.paragraph_break_dependency_cache.get(&key)
+                && cached.changed_at == changed_at
+            {
+                return Some(cached.clone());
+            }
+            let observed = tex_state::ObservedDependency {
                 key,
                 changed_at,
                 value: stores.semantic_dependency_value(key)?,
-            })
+            };
+            if execution.paragraph_break_dependency_cache.len() < MAX_BREAK_DEPENDENCY_CACHE_ENTRIES
+            {
+                execution
+                    .paragraph_break_dependency_cache
+                    .insert(key, observed.clone());
+            }
+            Some(observed)
         })
         .collect();
     finish_phase(

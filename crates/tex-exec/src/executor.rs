@@ -117,6 +117,10 @@ pub struct ExecutionContext<'a> {
     pub(crate) bypass_paragraph_memo_once: bool,
     pub(crate) paragraph_memo_barrier: bool,
     pub(crate) cold_paragraph_recording: Option<ColdParagraphRecording>,
+    /// Detached observations reusable only while their authoritative
+    /// changed-at stamps remain equal during this execution run.
+    pub(crate) paragraph_break_dependency_cache:
+        BTreeMap<tex_state::DependencyKey, tex_state::ObservedDependency>,
 }
 
 impl<'a> ExecutionContext<'a> {
@@ -130,6 +134,7 @@ impl<'a> ExecutionContext<'a> {
             bypass_paragraph_memo_once: false,
             paragraph_memo_barrier: false,
             cold_paragraph_recording: None,
+            paragraph_break_dependency_cache: BTreeMap::new(),
         }
     }
 
@@ -147,6 +152,7 @@ impl<'a> ExecutionContext<'a> {
             bypass_paragraph_memo_once: false,
             paragraph_memo_barrier: false,
             cold_paragraph_recording: None,
+            paragraph_break_dependency_cache: BTreeMap::new(),
         }
     }
 
@@ -165,6 +171,7 @@ impl<'a> ExecutionContext<'a> {
             bypass_paragraph_memo_once: false,
             paragraph_memo_barrier: false,
             cold_paragraph_recording: None,
+            paragraph_break_dependency_cache: BTreeMap::new(),
         }
     }
 
