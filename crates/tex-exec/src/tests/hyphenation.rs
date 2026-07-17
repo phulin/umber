@@ -547,6 +547,15 @@ fn literal_paragraph_front_end_reuses_hlist_and_preserves_output() {
     assert_eq!(stats.paragraph_commands_skipped, 0);
     assert_eq!(stats.paragraph_imported_bytes, 0);
     assert_eq!(stats.paragraph_eligible_regions, 3, "{stats:?}");
+    assert_eq!(stats.paragraph_opportunities.seeded.regions, 3, "{stats:?}");
+    assert_eq!(
+        stats.paragraph_opportunities.published.regions, 3,
+        "{stats:?}"
+    );
+    assert_eq!(
+        stats.paragraph_opportunities.declined.regions, 0,
+        "{stats:?}"
+    );
 }
 
 #[test]

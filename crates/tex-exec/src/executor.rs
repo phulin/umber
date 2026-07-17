@@ -105,6 +105,9 @@ pub(crate) struct ColdParagraphRecording {
     pub(crate) macro_bearing: bool,
     pub(crate) trace: Vec<TracedTokenWord>,
     pub(crate) barriers: std::collections::BTreeSet<ParagraphBarrierReason>,
+    pub(crate) admission: tex_state::ParagraphAdmission,
+    #[cfg(feature = "profiling-stats")]
+    pub(crate) started: std::time::Instant,
     #[cfg(feature = "profiling-stats")]
     pub(crate) trace_capture_nanos: u64,
     #[cfg(feature = "profiling-stats")]
@@ -119,6 +122,7 @@ pub struct ExecutionContext<'a> {
     pub(crate) bypass_paragraph_memo_once: bool,
     pub(crate) paragraph_memo_barrier: bool,
     pub(crate) cold_paragraph_recording: Option<ColdParagraphRecording>,
+    pub(crate) declined_paragraph_census: bool,
     /// Detached paragraph observations reusable only while their authoritative
     /// changed-at stamps remain equal during this execution run.
     pub(crate) paragraph_dependency_cache:
@@ -136,6 +140,7 @@ impl<'a> ExecutionContext<'a> {
             bypass_paragraph_memo_once: false,
             paragraph_memo_barrier: false,
             cold_paragraph_recording: None,
+            declined_paragraph_census: false,
             paragraph_dependency_cache: BTreeMap::new(),
         }
     }
@@ -154,6 +159,7 @@ impl<'a> ExecutionContext<'a> {
             bypass_paragraph_memo_once: false,
             paragraph_memo_barrier: false,
             cold_paragraph_recording: None,
+            declined_paragraph_census: false,
             paragraph_dependency_cache: BTreeMap::new(),
         }
     }
@@ -173,6 +179,7 @@ impl<'a> ExecutionContext<'a> {
             bypass_paragraph_memo_once: false,
             paragraph_memo_barrier: false,
             cold_paragraph_recording: None,
+            declined_paragraph_census: false,
             paragraph_dependency_cache: BTreeMap::new(),
         }
     }
@@ -220,6 +227,7 @@ impl<'a> ExecutionContext<'a> {
         starting_span: Option<tex_state::RootSpanId>,
         starting_group_depth: u32,
         starting_group_changed_at: tex_state::ChangedAt,
+        admission: tex_state::ParagraphAdmission,
     ) -> bool {
         if self.cold_paragraph_recording.is_some() {
             return false;
@@ -233,12 +241,32 @@ impl<'a> ExecutionContext<'a> {
             macro_bearing: false,
             trace: Vec::new(),
             barriers: std::collections::BTreeSet::new(),
+            admission,
+            #[cfg(feature = "profiling-stats")]
+            started: std::time::Instant::now(),
             #[cfg(feature = "profiling-stats")]
             trace_capture_nanos: 0,
             #[cfg(feature = "profiling-stats")]
             trace_capture_samples: 0,
         });
         true
+    }
+
+    pub(crate) fn observe_declined_paragraph_census(&mut self) {
+        if !self.declined_paragraph_census {
+            self.declined_paragraph_census = true;
+        }
+    }
+
+    pub(crate) fn arm_paragraph_census(&mut self) {
+        self.declined_paragraph_census = false;
+    }
+
+    pub(crate) fn finish_declined_paragraph_census(&mut self, stores: &mut Universe) {
+        if !std::mem::take(&mut self.declined_paragraph_census) {
+            return;
+        }
+        stores.record_declined_paragraph_census();
     }
 
     pub(crate) fn observe_paragraph_token(&mut self, token: TracedTokenWord) {
@@ -612,14 +640,21 @@ where
             let group_key =
                 tex_state::DependencyKey::Engine(tex_state::DependencyEngineField::GroupLevel);
             let starting_group_changed_at = stores.track_dependency(group_key);
-            if execution.begin_cold_paragraph_recording(
-                stores.world().effect_records().len(),
-                starting_span,
-                tex_state::ExpansionState::execution_group_depth(stores),
-                starting_group_changed_at,
-            ) {
-                input.begin_paragraph_source_recording();
-                stores.begin_pure_paragraph_recording();
+            if execution.cold_paragraph_recording.is_none() {
+                let admission = stores.paragraph_recording_admission(starting_span);
+                if admission == tex_state::ParagraphAdmission::Declined {
+                    execution.observe_declined_paragraph_census();
+                } else if execution.begin_cold_paragraph_recording(
+                    stores.world().effect_records().len(),
+                    starting_span,
+                    tex_state::ExpansionState::execution_group_depth(stores),
+                    starting_group_changed_at,
+                    admission,
+                ) {
+                    execution.arm_paragraph_census();
+                    input.begin_paragraph_source_recording();
+                    stores.begin_pure_paragraph_recording();
+                }
             }
             if execution.update_cold_paragraph_start(
                 starting_span,
@@ -628,7 +663,10 @@ where
             ) {
                 input.ensure_paragraph_source_recording();
             }
-            if execution.bypass_paragraph_memo_once {
+            if execution.cold_paragraph_recording.is_none() {
+                // Census-only regions execute normally without dependency,
+                // provenance, break, or result recording.
+            } else if execution.bypass_paragraph_memo_once {
                 execution.bypass_paragraph_memo_once = false;
             } else if crate::paragraph_memo::try_reuse_literal_paragraph(
                 nest, input, stores, execution, stats,
@@ -914,6 +952,7 @@ where
             && nest.depth() == 1
         {
             execution.paragraph_memo_barrier = false;
+            execution.finish_declined_paragraph_census(stores);
         }
         if observe(
             nest,

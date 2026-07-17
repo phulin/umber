@@ -1803,6 +1803,35 @@ impl Universe {
     }
 
     #[doc(hidden)]
+    pub fn paragraph_recording_admission(
+        &mut self,
+        starting_span: Option<crate::RootSpanId>,
+    ) -> crate::ParagraphAdmission {
+        self.pure_memo.paragraph_admission(starting_span)
+    }
+
+    #[doc(hidden)]
+    pub fn record_declined_paragraph_census(&mut self) {
+        self.pure_memo.record_declined_paragraph_census();
+    }
+
+    #[doc(hidden)]
+    pub fn record_armed_paragraph_cost(
+        &mut self,
+        admission: crate::ParagraphAdmission,
+        bytes: usize,
+        elapsed: std::time::Duration,
+    ) {
+        self.pure_memo
+            .record_armed_paragraph_cost(admission, bytes, elapsed);
+    }
+
+    #[doc(hidden)]
+    pub fn record_carried_paragraph(&mut self, region: &crate::RecordedParagraphRegion) {
+        self.pure_memo.record_carried_paragraph(region);
+    }
+
+    #[doc(hidden)]
     pub fn finish_pure_paragraph_recording(&mut self) -> Option<Vec<crate::PureParagraphMutation>> {
         self.pure_memo.finish_paragraph_recording()
     }

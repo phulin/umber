@@ -189,6 +189,8 @@ struct IncrementalFixture {
 }
 
 struct IncrementalSample {
+    priming_elapsed: Duration,
+    priming_memo: PureMemoStats,
     steps: Vec<IncrementalStep>,
 }
 
@@ -289,6 +291,9 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
     let mut enabled_stages = vec![Vec::with_capacity(options.iterations); edit_count];
     let mut cold = vec![Vec::with_capacity(options.iterations); edit_count];
     let mut paired_millis = vec![Vec::with_capacity(options.iterations); edit_count];
+    let mut disabled_priming = Vec::with_capacity(options.iterations);
+    let mut enabled_priming = Vec::with_capacity(options.iterations);
+    let mut paired_total_millis = Vec::with_capacity(options.iterations);
     let mut last_disabled = None;
     let mut last_enabled = None;
     let mut cold_reference = vec![None; edit_count];
@@ -307,6 +312,11 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
             };
             let sample =
                 execute_incremental_sample(template, &fixture, memo || baseline_memo, recording)?;
+            if memo {
+                enabled_priming.push(sample.priming_elapsed);
+            } else {
+                disabled_priming.push(sample.priming_elapsed);
+            }
             for (index, step) in sample.steps.iter().enumerate() {
                 if memo {
                     enabled[index].push(step.elapsed);
@@ -342,6 +352,14 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
             cold[index].push(elapsed);
             cold_reference[index] = Some(output);
         }
+        let disabled_sample = pair[0].as_ref().expect("disabled pair");
+        let enabled_sample = pair[1].as_ref().expect("enabled pair");
+        let disabled_total = disabled_priming.last().copied().unwrap_or_default()
+            + disabled_sample.iter().copied().sum::<Duration>();
+        let enabled_total = enabled_priming.last().copied().unwrap_or_default()
+            + enabled_sample.iter().copied().sum::<Duration>();
+        paired_total_millis
+            .push((enabled_total.as_secs_f64() - disabled_total.as_secs_f64()) * 1_000.0);
     }
 
     let disabled_sample = last_disabled.expect("at least one disabled sample");
@@ -418,6 +436,29 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
         fixture.edits.len(),
         options.iterations,
         options.warmups,
+    );
+    print_duration_stats(
+        &format!("{baseline_name} priming"),
+        duration_stats(&disabled_priming),
+    );
+    print_duration_stats(
+        &format!("{candidate_name} priming"),
+        duration_stats(&enabled_priming),
+    );
+    let total = scalar_stats(&paired_total_millis);
+    println!(
+        "gentle-profile baseline-inclusive paired delta: {delta_name} mean={:+.3}ms median={:+.3}ms min={:+.3}ms max={:+.3}ms",
+        total.mean, total.median, total.min, total.max,
+    );
+    print_paragraph_opportunities(
+        baseline_name,
+        "priming",
+        disabled_sample.priming_memo.paragraph_opportunities,
+    );
+    print_paragraph_opportunities(
+        candidate_name,
+        "priming",
+        enabled_sample.priming_memo.paragraph_opportunities,
     );
     for index in 0..edit_count {
         let disabled_stats = duration_stats(&disabled[index]);
@@ -627,6 +668,14 @@ fn print_incremental_work(
         reuse.acceptance_latency.as_micros(),
         sample.dvi_latency.as_micros(),
     );
+    print_paragraph_opportunities(
+        name,
+        &format!("edit-{edit}"),
+        sample
+            .memo
+            .paragraph_opportunities
+            .saturating_since(sample.previous_memo.paragraph_opportunities),
+    );
     #[cfg(feature = "profiling-stats")]
     println!(
         "gentle-profile exact identity: {name}: edit={edit} calls={} nanos={} projection_calls={} projection_visits={} projection_nanos={} root_cache_hits={} root_cache_misses={} dirty_leaves={}",
@@ -699,6 +748,25 @@ fn print_incremental_work(
             phases.line_retention_nanos,
         );
     }
+}
+
+fn print_paragraph_opportunities(
+    name: &str,
+    stage: &str,
+    stats: tex_state::ParagraphOpportunityStats,
+) {
+    let metric = |metric: tex_state::ParagraphOpportunityMetric| {
+        format!("{}/{}/{}", metric.regions, metric.bytes, metric.nanos)
+    };
+    println!(
+        "gentle-profile paragraph opportunities: {name}: stage={stage} metric=regions/bytes/nanos census_only={} fully_armed={} carried_forward={} seeded={} published={} declined={}",
+        metric(stats.census_only),
+        metric(stats.fully_armed),
+        metric(stats.carried_forward),
+        metric(stats.seeded),
+        metric(stats.published),
+        metric(stats.declined),
+    );
 }
 
 fn print_memo_layer(name: &str, edit: usize, layer: &str, stats: MemoLayerStats) {
@@ -876,10 +944,13 @@ fn execute_incremental_sample(
         recording,
     )?;
     let mut resolvers = FileSessionResolvers::new(&path, Vec::new(), Vec::new());
+    let priming_started = Instant::now();
     let (input, font) = resolvers.resolvers();
     session
         .cold_with_resolvers(input, font)
         .map_err(|error| format!("prepare incremental baseline: {error}"))?;
+    let priming_elapsed = priming_started.elapsed();
+    let priming_memo = session.pure_memo_stats();
     let mut steps = Vec::with_capacity(fixture.edits.len());
     for (index, edit) in fixture.edits.iter().enumerate() {
         let previous_memo = session.pure_memo_stats();
@@ -932,7 +1003,11 @@ fn execute_incremental_sample(
             },
         });
     }
-    Ok(IncrementalSample { steps })
+    Ok(IncrementalSample {
+        priming_elapsed,
+        priming_memo,
+        steps,
+    })
 }
 
 #[allow(clippy::disallowed_methods)] // Host-side benchmark timer; no engine fact observes it.

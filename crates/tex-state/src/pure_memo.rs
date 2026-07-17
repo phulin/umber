@@ -144,6 +144,62 @@ pub enum ParagraphRecordingPhase {
     LineRetention,
 }
 
+/// Work and retained storage attributed to one opportunity-driven paragraph
+/// admission class. Bytes are owned metadata/result capacity, not allocator
+/// traffic inferred from process-wide counters.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ParagraphOpportunityMetric {
+    pub regions: u64,
+    pub bytes: u64,
+    pub nanos: u64,
+}
+
+impl ParagraphOpportunityMetric {
+    #[must_use]
+    pub fn saturating_since(self, earlier: Self) -> Self {
+        Self {
+            regions: self.regions.saturating_sub(earlier.regions),
+            bytes: self.bytes.saturating_sub(earlier.bytes),
+            nanos: self.nanos.saturating_sub(earlier.nanos),
+        }
+    }
+}
+
+/// Opportunity-driven paragraph recording census.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ParagraphOpportunityStats {
+    pub census_only: ParagraphOpportunityMetric,
+    pub fully_armed: ParagraphOpportunityMetric,
+    pub carried_forward: ParagraphOpportunityMetric,
+    pub seeded: ParagraphOpportunityMetric,
+    pub published: ParagraphOpportunityMetric,
+    pub declined: ParagraphOpportunityMetric,
+}
+
+impl ParagraphOpportunityStats {
+    #[must_use]
+    pub fn saturating_since(self, earlier: Self) -> Self {
+        Self {
+            census_only: self.census_only.saturating_since(earlier.census_only),
+            fully_armed: self.fully_armed.saturating_since(earlier.fully_armed),
+            carried_forward: self
+                .carried_forward
+                .saturating_since(earlier.carried_forward),
+            seeded: self.seeded.saturating_since(earlier.seeded),
+            published: self.published.saturating_since(earlier.published),
+            declined: self.declined.saturating_since(earlier.declined),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[doc(hidden)]
+pub enum ParagraphAdmission {
+    Candidate,
+    Seeded,
+    Declined,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ParagraphRecordingStats {
     /// Number of `Instant::now`/`elapsed` pairs used by these named phases.
@@ -336,6 +392,7 @@ pub struct PureMemoStats {
     pub paragraph_generation_metadata_bytes: usize,
     pub paragraph_validation_failure_reasons: [u64; PARAGRAPH_VALIDATION_FAILURES],
     pub paragraph_recording: ParagraphRecordingStats,
+    pub paragraph_opportunities: ParagraphOpportunityStats,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -489,11 +546,17 @@ pub struct PureMemoRuntime {
     prior_paragraph_starts: HashMap<RootSpanId, usize>,
     recorded_paragraphs: Vec<RecordedParagraphRegion>,
     reuse_prior_paragraphs: bool,
+    paragraph_probation_epoch: u8,
+    paragraph_seeded_regions: usize,
     paragraph_barrier_reasons: BTreeMap<ParagraphBarrierReason, u64>,
 }
 
 #[allow(clippy::disallowed_methods)] // Operational profiling timers never become TeX facts.
 impl PureMemoRuntime {
+    const INITIAL_PARAGRAPH_SEED_LIMIT: usize = 512;
+    const PROBATION_PARAGRAPH_SEED_LIMIT: usize = 64;
+    const PROBATION_PERIOD: u32 = 64;
+
     #[must_use]
     pub const fn is_enabled(&self) -> bool {
         self.cache.is_some()
@@ -971,12 +1034,125 @@ impl PureMemoRuntime {
                 }
             }
         }
+        let bytes = recorded_paragraph_retained_bytes(&region) as u64;
+        let published = &mut cache.stats.paragraph_opportunities.published;
+        published.regions = published.regions.saturating_add(1);
+        published.bytes = published.bytes.saturating_add(bytes);
         self.recorded_paragraphs.push(region);
-        self.record_timing(
-            PureMemoLayer::Paragraph,
-            MemoTimingPhase::Record,
-            started.elapsed(),
-        );
+        let elapsed = started.elapsed();
+        cache.stats.paragraph_opportunities.published.nanos = cache
+            .stats
+            .paragraph_opportunities
+            .published
+            .nanos
+            .saturating_add(elapsed_nanos(elapsed));
+        self.record_timing(PureMemoLayer::Paragraph, MemoTimingPhase::Record, elapsed);
+    }
+
+    pub(crate) fn paragraph_admission(
+        &mut self,
+        starting_span: Option<RootSpanId>,
+    ) -> ParagraphAdmission {
+        let started = std::time::Instant::now();
+        let candidate = starting_span.is_some_and(|span| {
+            self.reuse_prior_paragraphs && self.prior_paragraph_starts.contains_key(&span)
+        });
+        let seeded = !candidate
+            && starting_span.is_some_and(|span| {
+                let under_limit = if self.reuse_prior_paragraphs {
+                    self.paragraph_seeded_regions < Self::PROBATION_PARAGRAPH_SEED_LIMIT
+                } else {
+                    self.paragraph_seeded_regions < Self::INITIAL_PARAGRAPH_SEED_LIMIT
+                };
+                under_limit
+                    && (!self.reuse_prior_paragraphs
+                        || paragraph_probation_bucket(span)
+                            == u32::from(self.paragraph_probation_epoch))
+            });
+        let admission = if candidate {
+            ParagraphAdmission::Candidate
+        } else if seeded {
+            self.paragraph_seeded_regions = self.paragraph_seeded_regions.saturating_add(1);
+            ParagraphAdmission::Seeded
+        } else {
+            ParagraphAdmission::Declined
+        };
+        if let Some(cache) = &mut self.cache {
+            let elapsed = elapsed_nanos(started.elapsed());
+            match admission {
+                ParagraphAdmission::Candidate => {
+                    let metric = &mut cache.stats.paragraph_opportunities.fully_armed;
+                    metric.regions = metric.regions.saturating_add(1);
+                    metric.nanos = metric.nanos.saturating_add(elapsed);
+                }
+                ParagraphAdmission::Seeded => {
+                    for metric in [
+                        &mut cache.stats.paragraph_opportunities.fully_armed,
+                        &mut cache.stats.paragraph_opportunities.seeded,
+                    ] {
+                        metric.regions = metric.regions.saturating_add(1);
+                        metric.nanos = metric.nanos.saturating_add(elapsed);
+                    }
+                }
+                ParagraphAdmission::Declined => {}
+            }
+            if admission == ParagraphAdmission::Declined {
+                for metric in [
+                    &mut cache.stats.paragraph_opportunities.census_only,
+                    &mut cache.stats.paragraph_opportunities.declined,
+                ] {
+                    metric.nanos = metric.nanos.saturating_add(elapsed);
+                }
+            }
+        }
+        admission
+    }
+
+    pub(crate) fn record_declined_paragraph_census(&mut self) {
+        let Some(cache) = &mut self.cache else {
+            return;
+        };
+        for metric in [
+            &mut cache.stats.paragraph_opportunities.census_only,
+            &mut cache.stats.paragraph_opportunities.declined,
+        ] {
+            metric.regions = metric.regions.saturating_add(1);
+        }
+    }
+
+    pub(crate) fn record_armed_paragraph_cost(
+        &mut self,
+        admission: ParagraphAdmission,
+        bytes: usize,
+        elapsed: Duration,
+    ) {
+        let Some(cache) = &mut self.cache else {
+            return;
+        };
+        let bytes = bytes as u64;
+        let nanos = elapsed_nanos(elapsed);
+        let armed = &mut cache.stats.paragraph_opportunities.fully_armed;
+        armed.bytes = armed.bytes.saturating_add(bytes);
+        armed.nanos = armed.nanos.saturating_add(nanos);
+        if admission == ParagraphAdmission::Seeded {
+            let seeded = &mut cache.stats.paragraph_opportunities.seeded;
+            seeded.bytes = seeded.bytes.saturating_add(bytes);
+            seeded.nanos = seeded.nanos.saturating_add(nanos);
+        }
+    }
+
+    pub(crate) fn record_carried_paragraph(&mut self, region: &RecordedParagraphRegion) {
+        let started = std::time::Instant::now();
+        if let Some(cache) = &mut self.cache {
+            let metric = &mut cache.stats.paragraph_opportunities.carried_forward;
+            metric.regions = metric.regions.saturating_add(1);
+            metric.bytes = metric
+                .bytes
+                .saturating_add(recorded_paragraph_retained_bytes(region) as u64);
+            metric.nanos = metric
+                .nanos
+                .saturating_add(elapsed_nanos(started.elapsed()));
+        }
     }
 
     pub(crate) fn lookup_recorded_paragraph(
@@ -1044,6 +1220,7 @@ impl PureMemoRuntime {
     pub fn begin_paragraph_generation(&mut self, reuse_prior: bool) {
         self.recorded_paragraphs.clear();
         self.reuse_prior_paragraphs = reuse_prior;
+        self.paragraph_seeded_regions = 0;
     }
 
     /// Publishes the speculative trace wholesale after its owning Universe is
@@ -1060,6 +1237,8 @@ impl PureMemoRuntime {
             }
         }
         self.reuse_prior_paragraphs = false;
+        self.paragraph_probation_epoch =
+            self.paragraph_probation_epoch.wrapping_add(1) % (Self::PROBATION_PERIOD as u8);
     }
 
     /// Drops all trace metadata produced by an abandoned execution branch.
@@ -1378,6 +1557,13 @@ impl PureMemoStats {
 
 fn elapsed_nanos(duration: Duration) -> u64 {
     u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
+}
+
+fn paragraph_probation_bucket(span: RootSpanId) -> u32 {
+    let bytes = span.content().bytes();
+    let content = u32::from_le_bytes(bytes[..4].try_into().expect("four-byte hash prefix"));
+    (span.start().wrapping_mul(0x9e37_79b9).rotate_left(11) ^ content)
+        % PureMemoRuntime::PROBATION_PERIOD
 }
 
 fn recorded_paragraph_retained_bytes(region: &RecordedParagraphRegion) -> usize {

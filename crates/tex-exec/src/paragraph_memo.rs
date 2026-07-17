@@ -349,6 +349,7 @@ pub(crate) fn try_reuse_literal_paragraph(
     };
     let line_count = entry.line_count;
     let mutation_count = entry.mutations.len();
+    stores.record_carried_paragraph(&entry);
     stores.record_paragraph_region(entry);
     execution.pending_paragraph_memo =
         (!lines_valid).then_some(crate::executor::PendingParagraphMemo {
@@ -832,6 +833,21 @@ fn publish_recorded_region(
         retention_started,
     );
     let publication_started = start_phase();
+    let armed_bytes = recording
+        .trace
+        .capacity()
+        .saturating_mul(std::mem::size_of::<tex_state::token::TracedTokenWord>())
+        .saturating_add(
+            recording
+                .barriers
+                .len()
+                .saturating_mul(std::mem::size_of::<tex_state::ParagraphBarrierReason>()),
+        );
+    let admission = recording.admission;
+    #[cfg(feature = "profiling-stats")]
+    let armed_elapsed = recording.started.elapsed();
+    #[cfg(not(feature = "profiling-stats"))]
+    let armed_elapsed = std::time::Duration::ZERO;
     stores.record_paragraph_region(tex_state::RecordedParagraphRegion {
         key,
         starting_span: recording.starting_span,
@@ -856,6 +872,7 @@ fn publish_recorded_region(
         ParagraphRecordingPhase::RegionPublication,
         publication_started,
     );
+    stores.record_armed_paragraph_cost(admission, armed_bytes, armed_elapsed);
     if eligible && execution.pending_paragraph_memo.is_none() {
         execution.pending_paragraph_memo =
             Some(crate::executor::PendingParagraphMemo { key, trace_origins });
