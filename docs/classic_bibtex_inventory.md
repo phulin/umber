@@ -144,10 +144,17 @@ the TeX Live 2025 `plain.bst` and `apalike.bst` bytes with small, exact BBL
 execution fixtures, and `bib-bst` compiles both styles hermetically.
 `umber2-ild0.22` fixes the VM's quoted-assignment and control-flow operand
 ordering by representing `while$` continuations explicitly rather than
-draining active caller frames. Whole-style execution now reaches the separate
-classic name-formatting bug tracked by `umber2-ild0.23`; the imported bytes and
-reference BBLs must not be replaced with normalized or compatibility-allowance
-tests while that blocker is resolved.
+draining active caller frames. `umber2-ild0.23` fixes no-comma name parsing,
+and `umber2-ild0.24` makes classic name-pattern separators and abbreviated
+punctuation apply per word. The imported bytes and reference BBLs must not be
+replaced with normalized or compatibility-allowance tests while remaining
+whole-style blockers are resolved.
+
+The focused VM matrix covers the `plain.bst` `{ff~}` and `apalike.bst` `{f.}`
+patterns. Exact public-session BBL parity for those pinned styles remains
+blocked by the separate VM operand-ordering failure in
+`umber2-ild0.25`; it must be restored without weakening the committed fixture
+comparison.
 
 ## Upstream test inventory
 

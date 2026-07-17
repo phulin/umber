@@ -240,6 +240,15 @@ READ ITERATE {item}"#,
     );
     assert!(!result.is_fatal(), "{:?}", result.diagnostics());
     assert_eq!(result.bbl(), Some("Donald E. Knuth"));
+
+    assert_eq!(
+        super::format_bib_name("Donald E. Knuth", "{ff~}{vv~}{ll}{, jj}"),
+        "Donald~E. Knuth"
+    );
+    assert_eq!(
+        super::format_bib_name("Donald E. Knuth", "{vv~}{ll}{, jj}{, f.}"),
+        "Knuth, D.~E."
+    );
 }
 
 #[test]

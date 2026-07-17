@@ -1205,7 +1205,12 @@ fn format_bib_name(name: &str, format: &str) -> String {
             };
             if !words.is_empty() {
                 let abbreviated = pattern.matches(key).count() == 1;
-                result.push_str(&format_name_words(words, abbreviated, pattern));
+                result.push_str(&format_name_words(
+                    words,
+                    abbreviated,
+                    pattern,
+                    has_following_name_part(&format[close + 1..], &parts),
+                ));
             }
         } else {
             result.push_str(pattern);
@@ -1215,7 +1220,12 @@ fn format_bib_name(name: &str, format: &str) -> String {
     result
 }
 
-fn format_name_words(words: &[String], abbreviated: bool, pattern: &str) -> String {
+fn format_name_words(
+    words: &[String],
+    abbreviated: bool,
+    pattern: &str,
+    has_following_part: bool,
+) -> String {
     let key_at = pattern
         .find(['f', 'v', 'l', 'j'])
         .expect("name pattern has a part key");
@@ -1227,21 +1237,66 @@ fn format_name_words(words: &[String], abbreviated: bool, pattern: &str) -> Stri
         .rfind(key)
         .expect("name pattern contains its part key")
         + key.len_utf8();
-    let rendered = words
-        .iter()
-        .map(|word| {
+    let before = &pattern[..key_at];
+    let after = &pattern[key_end..];
+    // A trailing tie on a multi-word part is its inter-word separator, not
+    // punctuation around the entire rendered part.  If another name part
+    // follows, the reference leaves the ordinary boundary space after it.
+    let consume_tie_as_word_separator = after == "~" && words.len() > 1;
+    let mut result = String::from(before);
+    for (index, word) in words.iter().enumerate() {
+        if abbreviated {
+            result.extend(word.chars().next());
+        } else {
+            result.push_str(word);
+        }
+        if index + 1 < words.len() {
             if abbreviated {
-                word.chars()
-                    .next()
-                    .map(|character| character.to_string())
-                    .unwrap_or_default()
-            } else {
-                word.clone()
+                result.push('.');
             }
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
-    format!("{}{rendered}{}", &pattern[..key_at], &pattern[key_end..])
+            if consume_tie_as_word_separator || abbreviated {
+                result.push('~');
+            } else {
+                result.push(' ');
+            }
+        }
+    }
+    if !consume_tie_as_word_separator {
+        result.push_str(after);
+    } else if has_following_part {
+        result.push(' ');
+    }
+    result
+}
+
+fn has_following_name_part(format: &str, parts: &BibName) -> bool {
+    let mut at = 0;
+    let bytes = format.as_bytes();
+    while at < bytes.len() {
+        if bytes[at] != b'{' {
+            at += 1;
+            continue;
+        }
+        let Some(close) = format[at + 1..].find('}').map(|end| at + 1 + end) else {
+            return false;
+        };
+        let key = format[at + 1..close]
+            .chars()
+            .find(|character| matches!(character, 'f' | 'v' | 'l' | 'j'));
+        if let Some(key) = key {
+            let words = match key {
+                'f' => &parts.first,
+                'v' => &parts.von,
+                'l' => &parts.last,
+                _ => &parts.jr,
+            };
+            if !words.is_empty() {
+                return true;
+            }
+        }
+        at = close + 1;
+    }
+    false
 }
 
 #[derive(Default)]
