@@ -668,10 +668,27 @@ where
                 // provenance, break, or result recording.
             } else if execution.bypass_paragraph_memo_once {
                 execution.bypass_paragraph_memo_once = false;
-            } else if crate::paragraph_memo::try_reuse_literal_paragraph(
-                nest, input, stores, execution, stats,
-            )? {
-                continue;
+            } else {
+                let before_artifacts = stores.world().artifact_commits().len();
+                if crate::paragraph_memo::try_reuse_literal_paragraph(
+                    nest, input, stores, execution, stats,
+                )? {
+                    output::drain_pending_output(nest, input, stores, execution, stats)?;
+                    execution.paragraph_memo_barrier = false;
+                    if observe(
+                        nest,
+                        input,
+                        stores,
+                        BoundaryEvent {
+                            outer_paragraph_end: true,
+                            shipout_complete: stores.world().artifact_commits().len()
+                                != before_artifacts,
+                        },
+                    ) {
+                        return Ok(MainControlExit::Stopped);
+                    }
+                    continue;
+                }
             }
         }
 

@@ -770,11 +770,7 @@ fn publish_recorded_region(
         ParagraphRecordingPhase::FrontEndProvenance,
         provenance_started,
     );
-    let ending_span = if recording.macro_bearing {
-        input.root_source_delivery_anchor(stores).ok().flatten()
-    } else {
-        input.current_root_delivery_anchor(stores).ok().flatten()
-    };
+    let ending_span = input.root_source_checkpoint_anchor(stores);
     if let Some((start, end)) = recording.starting_span.zip(ending_span)
         && start.piece() == end.piece()
     {

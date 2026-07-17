@@ -188,6 +188,24 @@ impl LayoutCursor {
             (document_start >= minimum).then_some(document_start..document_end)
         })
     }
+
+    fn root_span_at_document_offset(
+        &self,
+        document_offset: usize,
+        stores: &impl ExpansionState,
+    ) -> Option<RootSpanId> {
+        let index = self
+            .segments
+            .partition_point(|segment| segment.document_start <= document_offset)
+            .saturating_sub(1);
+        let segment = self.segments.get(index)?;
+        if document_offset > segment.document_end {
+            return None;
+        }
+        let within = u64::try_from(document_offset.checked_sub(segment.document_start)?).ok()?;
+        let fragment_offset = segment.fragment_start.checked_add(within)?;
+        stores.registered_root_span_id(segment.registration, fragment_offset..fragment_offset)
+    }
 }
 
 /// Source of physical input lines.
@@ -2936,6 +2954,27 @@ impl InputStack {
         Ok(stores.registered_root_span_id(registration, offset..offset))
     }
 
+    /// Returns the root checkpoint cursor without refilling the next physical
+    /// line. Paragraph recording uses this to retain a stable continuation
+    /// without changing the named-boundary schedule merely by observing it.
+    pub fn root_source_checkpoint_anchor(
+        &self,
+        stores: &impl ExpansionState,
+    ) -> Option<RootSpanId> {
+        let (_, frame) = self
+            .frames
+            .iter_indexed_from(0)
+            .rev()
+            .find(|(_, frame)| matches!(frame, InputFrame::Source(_)))?;
+        let InputFrame::Source(source) = frame else {
+            unreachable!();
+        };
+        source
+            .layout_cursor
+            .as_ref()?
+            .root_span_at_document_offset(source.next_source_offset, stores)
+    }
+
     /// Validates a prior paragraph's complete raw source coverage without
     /// tokenizing or mutating the input stack.
     #[must_use]
@@ -3009,14 +3048,8 @@ impl InputStack {
         }
 
         let ending_line_offset = ending
-            .synthetic_endline_start()
-            .filter(|start| ending.line_byte_offset() >= *start)
-            .map_or(ending.line_byte_offset(), |_| {
-                ending
-                    .normalized_end_anchor()
-                    .checked_sub(ending.buffer_offset())
-                    .unwrap_or(usize::MAX)
-            });
+            .next_source_offset()
+            .checked_sub(ending.buffer_offset())?;
         let expected_fragment_offset = ending
             .origin_line_start()
             .checked_add(u64::try_from(ending_line_offset).ok()?)?;

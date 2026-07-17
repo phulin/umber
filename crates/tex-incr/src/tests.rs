@@ -207,6 +207,112 @@ fn paragraph_front_end_hit_survives_prefix_shift_and_unrelated_register_write() 
         incremental.dvi_bytes().expect("incremental DVI"),
         cold_output.dvi_bytes().expect("cold DVI")
     );
+    let schedule = |output: &AcceptedOutput| {
+        output
+            .history
+            .iter()
+            .map(|record| {
+                (
+                    record.key(),
+                    record.effect_prefix(),
+                    record.artifact_prefix(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        schedule(&incremental),
+        schedule(&cold_output),
+        "paragraph replay must publish the same named-boundary schedule as cold execution"
+    );
+}
+
+#[test]
+fn paragraph_hit_preserves_outer_paragraph_and_shipout_boundaries() {
+    let paragraph = "stable paragraph words stable paragraph words stable paragraph words stable paragraph words stable paragraph words stable paragraph words";
+    let source = format!(
+        "\\font\\tenrm=cmr10\\relax \\tenrm \\hsize=35pt \\vsize=24pt\n{paragraph}\\par\n{paragraph}\\par\n{paragraph}\\par\n\\end"
+    );
+    let inserted = "\\count77=123 ";
+    let edited = format!("{inserted}{source}");
+
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut session = Session::start(
+        universe,
+        "paragraph-boundary-replay",
+        RevisionId::new(1),
+        source.clone(),
+        usize::MAX,
+    )
+    .expect("session starts");
+    session
+        .register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("font fixture");
+    session.cold().expect("cold revision");
+    let before = session.pure_memo_stats();
+    let incremental = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: 0..0,
+                replacement: inserted.to_owned(),
+            },
+        )
+        .expect("prefix edit");
+    assert!(
+        session.pure_memo_stats().paragraph_line_hits > before.paragraph_line_hits,
+        "the schedule comparison must exercise finished-line paragraph replay"
+    );
+
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-boundary-replay",
+        RevisionId::new(2),
+        edited,
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    cold.register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("cold font fixture");
+    let expected = cold.cold().expect("cold comparison");
+    let schedule = |output: &AcceptedOutput| {
+        output
+            .history
+            .iter()
+            .map(|record| {
+                (
+                    record.key(),
+                    record.effect_prefix(),
+                    record.artifact_prefix(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    assert!(
+        expected
+            .history
+            .iter()
+            .filter(|record| record.key().boundary == EngineBoundary::ShipoutComplete)
+            .count()
+            > 1,
+        "fixture must ship a page before the final end cleanup"
+    );
+    assert_eq!(incremental.effects, expected.effects);
+    assert_eq!(incremental.artifacts, expected.artifacts);
+    assert_eq!(
+        incremental.dvi_bytes().expect("incremental DVI"),
+        expected.dvi_bytes().expect("cold DVI")
+    );
+    assert_eq!(
+        schedule(&incremental),
+        schedule(&expected),
+        "paragraph replay must preserve outer-paragraph and shipout checkpoints"
+    );
 }
 
 #[test]
