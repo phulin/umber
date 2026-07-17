@@ -176,6 +176,15 @@ or extra bytes. Regenerate the complete import only with
 exact expected terminal/error byte fixtures. These exercise the in-process
 command adapter and must not invoke the live reference implementation.
 
+`tests/corpus/bibtex` contains the classic BibTeX 0.99d Web2C compatibility
+inventory, source/configuration/executable manifest, and committed BBL, BLG,
+and terminal bytes. The compact smoke style executes all ten BST commands;
+the BLG enumerates all 37 built-ins. The `bib-engine` scaffold verifies every
+owner and byte identity hermetically. Regenerate only with
+`scripts/regen-fixtures.sh --area bibtex`, which builds and verifies the pinned
+merged `bibtex.web` plus `bibtex.ch` executable before running it in an empty
+environment.
+
 `tests/corpus/e2e` receives gitignored final-DVI oracles for Story, Gentle,
 TRIP, and e-TRIP. Their Cargo integration tests run Umber directly in process
 and return cleanly when an

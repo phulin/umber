@@ -9,6 +9,7 @@ dvi_areas=(dvi page math align leaders)
 pdf_area=pdf
 e2e_area=e2e
 bib_area=bib
+bibtex_area=bibtex
 readonly bib_upstream_commit=74252e608e5f8115375c532eb25416430a9f52eb
 
 target_dir="${CARGO_TARGET_DIR:-target}"
@@ -40,6 +41,7 @@ Fixture areas:
   DVI:         dvi page math align leaders
   PDF:         pdf  (pinned pdfTeX structure plus exact Poppler grayscale pixels)
   bibliography: bib  (verbatim pinned upstream test data and SHA-256 manifest)
+  classic BibTeX: bibtex  (pinned merged WEB2C program, inventory, BBL, and BLG)
   end-to-end:  e2e  (story, gentle, trip, and e-trip local DVI oracles)
   live check:  fonts  (runs the tftopl cross-check; it does not rewrite fixtures)
 
@@ -70,6 +72,13 @@ Reference tools:
   repository. Set UMBER_REF_BIBER_SOURCE=/absolute/path/to/clone. The script
   exports commit 74252e608e5f8115375c532eb25416430a9f52eb directly from Git;
   the clone's checkout and working-tree modifications are ignored.
+
+  Classic BibTeX regeneration builds the hash-pinned TeX Live 2025 Web2C
+  source cached under third_party/texlive-source, verifies the merged
+  bibtex.web+bibtex.ch program, configuration, and executable identities, and
+  runs the committed cases in an empty environment. Set
+  UMBER_REF_TEXLIVE_SOURCE to select an equivalent cache root containing the
+  pinned archive, src, and build directories.
 EOF
 }
 
@@ -101,7 +110,7 @@ is_dvi_area() {
 is_known_area() {
   is_text_area "$1" || is_dvi_area "$1" || \
     [[ "$1" == "$pdf_area" || "$1" == "$e2e_area" || \
-       "$1" == "$bib_area" || "$1" == "fonts" ]]
+       "$1" == "$bib_area" || "$1" == "$bibtex_area" || "$1" == "fonts" ]]
 }
 
 test_command_for_area() {
@@ -154,6 +163,9 @@ test_command_for_area() {
       ;;
     bib)
       printf '%s\n' 'cargo test -p bib-engine --test it fixture_manifest_is_complete_and_pinned'
+      ;;
+    bibtex)
+      printf '%s\n' 'cargo test -p bib-engine --test it classic_fixture_manifest_and_inventory_are_complete_and_pinned'
       ;;
     *)
       die "unknown fixture area: ${area}"
@@ -518,6 +530,10 @@ sha256_file() {
   openssl dgst -sha256 -r "$1" | awk '{print $1}'
 }
 
+sha512_file() {
+  openssl dgst -sha512 -r "$1" | awk '{print $1}'
+}
+
 regen_bib_area() {
   local upstream="${UMBER_REF_BIBER_SOURCE:-}"
   local fixture_dir="${repo_root}/tests/corpus/bib/upstream-2.22"
@@ -582,6 +598,109 @@ regen_bib_area() {
     cargo test -p bib-engine --test it fixture_manifest_is_complete_and_pinned
 }
 
+regen_bibtex_area() {
+  local cache_root="${UMBER_REF_TEXLIVE_SOURCE:-${repo_root}/third_party/texlive-source}"
+  local source_dir="${cache_root}/src"
+  local build_dir="${cache_root}/build"
+  local archive="${cache_root}/texlive-20250308-source.tar.xz"
+  local executable="${build_dir}/texk/web2c/bibtex"
+  local fixture_dir="${repo_root}/tests/corpus/bibtex/cases/smoke"
+  local tmp_root
+  local case_dir
+  local exit_status
+  local manifest_tmp
+  local expected_archive_sha512="0837c935488b96cfc8dd79f1298f283b467ab68b4163cee9cb04b79e80195982fdc5ae8a80058dc7d3e99206bfda8b3bdd11340425b08f60cbef70d5a0e22702"
+
+  command -v openssl >/dev/null || die 'openssl is required to hash classic BibTeX fixtures'
+  command -v jq >/dev/null || die 'jq is required to update the classic BibTeX fixture manifest'
+  if [[ ! -f "$archive" || ! -f "${source_dir}/configure" ]]; then
+    [[ "$cache_root" == "${repo_root}/third_party/texlive-source" ]] || \
+      die "selected TeX Live cache is incomplete: ${cache_root}"
+    run_command 'Acquiring pinned TeX Live source for classic BibTeX' \
+      "${repo_root}/scripts/build-trip-initex.sh"
+  fi
+  [[ "$(sha512_file "$archive")" == "$expected_archive_sha512" ]] || \
+    die "pinned TeX Live archive identity mismatch: ${archive}"
+  [[ "$(sha256_file "${source_dir}/texk/web2c/bibtex.web")" == \
+      "38b9ba09fce5abb6f7ec135a2474b26c0d8c3a8b883df2d1c07072d33bc331ed" ]] || \
+    die 'bibtex.web identity mismatch'
+  [[ "$(sha256_file "${source_dir}/texk/web2c/bibtex.ch")" == \
+      "9bffb931a113278d3c9304248a70b47f2576f7ee86fe6c1ae2160865ed0ea716" ]] || \
+    die 'bibtex.ch identity mismatch'
+  [[ "$(sha256_file "${source_dir}/texk/kpathsea/texmf.cnf")" == \
+      "75cc5499ea9d15d1cf68722e75c846155fac55f1bbc2f0ca102ff5d423f49b29" ]] || \
+    die 'classic BibTeX texmf.cnf identity mismatch'
+
+  if [[ ! -f "${build_dir}/texk/web2c/Makefile" ]]; then
+    [[ "$cache_root" == "${repo_root}/third_party/texlive-source" ]] || \
+      die "selected TeX Live cache has no configured Web2C build: ${cache_root}"
+    run_command 'Configuring pinned Web2C build for classic BibTeX' \
+      "${repo_root}/scripts/build-trip-initex.sh" --offline
+  fi
+  run_command 'Building pinned classic BibTeX reference' \
+    make -C "${build_dir}/texk/web2c" bibtex
+  [[ -x "$executable" ]] || die "classic BibTeX reference was not built: ${executable}"
+  [[ "$(sha256_file "${build_dir}/texk/web2c/bibtex.p")" == \
+      "a0362ee3ca112207a5a666a5bb89484c4bb8c1a44d99c1ea824767b2eaafec79" ]] || \
+    die 'merged bibtex.p identity mismatch'
+  [[ "$(sha256_file "${build_dir}/texk/web2c/bibtex.c")" == \
+      "848e79f7b29e5a2ad2388ffcfc486399c176f0a2dd2d6e83d55188de532bbc3d" ]] || \
+    die 'generated bibtex.c identity mismatch'
+  [[ "$(sha256_file "${build_dir}/texk/web2c/bibtex.h")" == \
+      "2ffa94f92b6c15b16aad99cc39b587f9e34e98731c911148921a6295b273157a" ]] || \
+    die 'generated bibtex.h identity mismatch'
+  [[ "$(sha256_file "${build_dir}/texk/web2c/w2c/c-auto.h")" == \
+      "20553e51994937db88c411bd5aa39d1e34965309a184f14aae02c19ebded1c1d" ]] || \
+    die 'Web2C c-auto.h configuration identity mismatch'
+  [[ "$(sha256_file "$executable")" == \
+      "fcd33ae491e1adfc84a636015d3840ba49556649c65f3bf2db2fa7d2f948dc7e" ]] || \
+    die 'classic BibTeX executable identity mismatch; use the pinned Darwin-arm64 build recorded in the manifest'
+
+  tmp_root="$(mktemp -d)"
+  case_dir="${tmp_root}/smoke"
+  mkdir -p "$case_dir"
+  cp "${fixture_dir}/smoke.aux" "${fixture_dir}/smoke.bib" \
+    "${fixture_dir}/smoke.bst" "$case_dir/"
+  set +e
+  (
+    cd "$case_dir"
+    env -i PATH=/usr/bin:/bin LC_ALL=C LANGUAGE=C \
+      TEXMFCNF="${source_dir}/texk/kpathsea" BIBINPUTS=. BSTINPUTS=. \
+      "$executable" smoke >smoke.terminal 2>&1
+  )
+  exit_status=$?
+  set -e
+  [[ "$exit_status" -eq 0 ]] || \
+    die "classic BibTeX smoke case exited with status ${exit_status}"
+  for file in smoke.bbl smoke.blg smoke.terminal; do
+    [[ -f "${case_dir}/${file}" ]] || die "classic BibTeX did not produce ${file}"
+    if ! cmp -s "${case_dir}/${file}" "${fixture_dir}/${file}"; then
+      cp "${case_dir}/${file}" "${fixture_dir}/${file}.tmp"
+      mv "${fixture_dir}/${file}.tmp" "${fixture_dir}/${file}"
+      printf 'Classic BibTeX fixture updated: tests/corpus/bibtex/cases/smoke/%s\n' "$file" >&2
+    fi
+  done
+  manifest_tmp="${tmp_root}/manifest.json"
+  jq \
+    --arg bbl_bytes "$(wc -c < "${fixture_dir}/smoke.bbl" | tr -d ' ')" \
+    --arg bbl_sha256 "$(sha256_file "${fixture_dir}/smoke.bbl")" \
+    --arg blg_bytes "$(wc -c < "${fixture_dir}/smoke.blg" | tr -d ' ')" \
+    --arg blg_sha256 "$(sha256_file "${fixture_dir}/smoke.blg")" \
+    --arg terminal_bytes "$(wc -c < "${fixture_dir}/smoke.terminal" | tr -d ' ')" \
+    --arg terminal_sha256 "$(sha256_file "${fixture_dir}/smoke.terminal")" \
+    '(.cases[] | select(.name == "smoke") | .files[] | select(.role == "bbl-output")) |=
+       (.bytes = ($bbl_bytes | tonumber) | .sha256 = $bbl_sha256) |
+     (.cases[] | select(.name == "smoke") | .files[] | select(.role == "blg-output")) |=
+       (.bytes = ($blg_bytes | tonumber) | .sha256 = $blg_sha256) |
+     (.cases[] | select(.name == "smoke") | .files[] | select(.role == "terminal-output")) |=
+       (.bytes = ($terminal_bytes | tonumber) | .sha256 = $terminal_sha256)' \
+    "${repo_root}/tests/corpus/bibtex/manifest.json" > "$manifest_tmp"
+  mv "$manifest_tmp" "${repo_root}/tests/corpus/bibtex/manifest.json"
+  rm -rf "$tmp_root"
+  run_command 'Validating pinned classic BibTeX fixtures and inventory' \
+    cargo test -p bib-engine --test it classic_fixture_manifest_and_inventory_are_complete_and_pinned
+}
+
 regen_area() {
   local area="$1"
   is_known_area "$area" || die "unknown fixture area: ${area}"
@@ -595,6 +714,8 @@ regen_area() {
     regen_e2e_area
   elif [[ "$area" == "$bib_area" ]]; then
     regen_bib_area
+  elif [[ "$area" == "$bibtex_area" ]]; then
+    regen_bibtex_area
   else
     run_fonts_live_check
   fi
@@ -639,6 +760,9 @@ regen_case() {
     run_command 'Validating hermetic PDF parity fixtures' $command_string
   elif [[ "$area" == "$bib_area" ]]; then
     die '--case is not meaningful for the pinned bibliography fixture set'
+  elif [[ "$area" == "$bibtex_area" ]]; then
+    [[ "$case" == "smoke" ]] || die "unknown classic BibTeX fixture case: ${case}"
+    regen_bibtex_area
   elif is_text_area "$area"; then
     printf 'Regenerating text area %s for requested case %s\n' "$area" "$case" >&2
     build_fixturegen_once
@@ -789,6 +913,7 @@ case "$mode" in
     regen_area "$pdf_area"
     regen_area "$e2e_area"
     regen_area "$bib_area"
+    regen_area "$bibtex_area"
     ;;
   area)
     regen_area "$area_arg"

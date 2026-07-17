@@ -1,0 +1,154 @@
+# Classic BibTeX compatibility inventory
+
+Status: Phase 0 compatibility inventory and fixture route complete
+
+The reviewed architecture and phase exit criteria remain those in
+`docs/classic_bibtex_bst.md` at commit `c676cfb0`. This inventory does not
+replace or revise that design. Classic BibTeX and the existing
+Biber-compatible implementation remain separate semantic backends behind one
+resource, result, and project-orchestration facade. Classic `.bst` execution
+must not be routed through `bib-graph`, `bib-sort`, `bib-label`, or
+`bib-output`.
+
+The machine-audited source of this census is
+`tests/corpus/bibtex/inventory.json`. It names every AUX command, BST command,
+BibTeX database command, built-in, predefined VM-visible symbol, diagnostic
+family, reference capacity, relevant branch family, and upstream test, with
+both an implementation owner and a test owner. The ordinary `bib-engine`
+integration test fixes the exact names and counts so omissions cannot silently
+enter later implementation phases.
+
+## Pinned executable specification
+
+`tests/corpus/bibtex/manifest.json` fixes the complete reference identity:
+
+| Component             | Pinned identity                                                           |
+| --------------------- | ------------------------------------------------------------------------- |
+| Source distribution   | TeX Live 2025 `texlive-20250308-source.tar.xz`, SHA-512 in the manifest   |
+| WEB source            | `texk/web2c/bibtex.web`, SHA-256 `38b9ba09…31ed`                          |
+| Change file           | `texk/web2c/bibtex.ch`, SHA-256 `9bffb931…716`                            |
+| Merged program        | `tangle bibtex bibtex` output `bibtex.p`, SHA-256 `a0362ee3…f79`          |
+| WEB2C output          | exact `bibtex.c` and `bibtex.h` SHA-256 identities                        |
+| Build                 | repository TRIP Web2C configuration, `-O2`, generated `c-auto.h` identity |
+| File lookup           | pinned kpathsea `texmf.cnf`, isolated `BIBINPUTS=.` and `BSTINPUTS=.`     |
+| Executable provenance | Darwin arm64, Apple clang 17.0.0, exact binary SHA-256                    |
+| Runtime               | `LC_ALL=C`, `LANGUAGE=C`, otherwise empty environment                     |
+
+The exact binary hash records the executable that produced the committed
+bytes; the merged Pascal and generated C identities are the portable semantic
+build identity. A different platform is not allowed to masquerade as that
+recorded executable. A future reviewed platform identity must be added to the
+manifest rather than weakening the current pin.
+
+The change file is part of the specification. It changes dynamic capacities,
+8-bit character acceptance, file opening and kpathsea lookup, line handling,
+the banner and capacity report, output safety, command-line parsing, exit
+status, and memory allocation. Auditing `bibtex.web` alone is insufficient.
+
+## Construct census and ownership
+
+The exact name lists and owner strings live in `inventory.json`; this table is
+the review summary.
+
+| Reference-owned surface       | Count | Primary implementation issue                   | Primary test boundary                          |
+| ----------------------------- | ----: | ---------------------------------------------- | ---------------------------------------------- |
+| AUX commands                  |     4 | `umber2-ild0.3`                                | classic AUX/VFS integration tests              |
+| BST top-level commands        |    10 | `umber2-ild0.5`                                | `bib-bst` parser/compiler matrices             |
+| BIB record commands           |     3 | `umber2-ild0.4`, `umber2-ild0.7`               | raw parser and classic database tests          |
+| Built-in functions            |    37 | `umber2-ild0.8`, `umber2-ild0.9`               | VM matrix plus one focused matrix per built-in |
+| Predefined VM-visible symbols |     4 | `umber2-ild0.7`, `umber2-ild0.8`               | database and VM tests                          |
+| Diagnostic families           |    15 | phase-specific owners through `umber2-ild0.11` | typed and rendered diagnostic parity           |
+| Reference/safety limits       |    18 | phase-specific owners through `umber2-ild0.13` | boundary and adversarial tests                 |
+| Branch families               |    15 | phase-specific owners through `umber2-ild0.13` | differential branch/state coverage             |
+| Upstream test programs        |    17 | `umber2-ild0.3` through `umber2-ild0.13`       | imported and focused parity cohorts            |
+
+The 37 built-ins are the complete `n_equals` through `n_write` dispatch in the
+merged program. The separate predefined field/variables `crossref`,
+`sort.key$`, `entry.max$`, and `global.max$` are inventoried because the WEB
+source calls them built-ins conceptually even though `fn_type` classifies them
+as storage. The `default.type` fallback is owned by the VM lifecycle and
+unknown-entry-type branch rather than counted as a 38th primitive.
+
+Every built-in test owner must cover ordinary values, empty and missing
+values, every wrong stack type, stack underflow, brace/control-sequence cases,
+output and diagnostic ordering, compatibility character boundaries, and work
+and output limits. Whole-style tests remain necessary for lifecycle, entry
+context, mutation, stable sorting, and composed output.
+
+## Diagnostics, limits, and branch coverage
+
+Diagnostic ownership follows the stage that has enough context to produce the
+event. AUX, BST, and BIB scanners retain their distinct recovery rules. The VM
+owns stack underflow, wrong-type, entry-context, and invariant events. The
+classic output/invocation boundary owns line wrapping, file-open behavior,
+history rendering, and process status. Typed diagnostics are rendered into BLG
+and terminal bytes only after semantic ordering is fixed.
+
+The four reference histories are `spotless`, `warning`, `error`, and `fatal`.
+Warnings and recoverable errors can still yield a complete BBL. Infrastructure
+failure remains outside this history model, and fatal partial files are never
+published by a project transaction. `umber2-ild0.2` owns the typed history;
+`umber2-ild0.11` owns exact terminal, BLG, status, and partial-artifact parity.
+
+Historical capacities are observations, not Umber's safety policy. The
+inventory records fixed, configured, and dynamically grown Web2C values,
+including `max_strings=200000`, `hash_size=200000`,
+`hash_prime=170003`, initial `buf_size=20000`, `max_cites=750`,
+`max_fields=5000`, `wiz_fn_space=3000`, and `lit_stk_size=50`.
+Umber exposes deterministic safe bounds for aggregate input, parser nesting,
+symbols, instructions, stack/call depth, string/output bytes, diagnostics,
+work, and retained cache bytes. Exact historical out-of-memory thresholds are
+not a compatibility promise.
+
+The branch ledger covers command order and recovery; identifier, literal,
+brace, comment, and EOF scanning; symbol collisions and recursion; raw BIB
+records; citation and crossref selection; VM lifecycle and types; stable sort;
+all built-in edge categories; diagnostic/history ordering; cache and retry
+identity; and the final bounded legal-program differential generator. Later
+issues must refine these families into individual source branches and state
+transitions without deleting or reassigning an owner invisibly.
+
+## Upstream test inventory
+
+The classic Web2C suite consists of:
+
+- `bibtex.test`, the `apalike.bst`/`xampl.bib` exact-output baseline;
+- `bibtex-mem.test` with `memdata1.bst` through `memdata3.bst`;
+- AUX include, large-author, long-line, and output-open tests.
+
+The supplemental `bibtex-x` suite has four BibTeX8 tests and seven BibTeXu
+tests. Its focused character test styles cover `add.period$`, `substring$`,
+`text.length$`, `text.prefix$`, `width$`, integer/character conversion,
+`num.names$`, and `format.name$`; the sort suites cover `change.case$` and
+ordering. Only branches whose behavior agrees with classic 0.99d are classic
+fixtures. CSF collation, UTF-8, ICU locale sorting, `is.knj.str$`, non-ASCII
+job names, and other extension semantics remain explicitly extension-only and
+belong to `umber2-ild0.13`. They cannot silently expand the classic identity.
+
+## Committed fixture and regeneration
+
+The compact `cases/smoke` reference case is intentionally small but executes
+all ten BST commands. Its manifest pins the AUX, BIB, BST, command, isolated
+environment, process status, reference history, BBL, BLG, and terminal byte
+identities. No normalization is applied. The BLG also records the configured
+capacity banner and all 37 built-in counters, providing a direct executable
+census check.
+
+The only supported live-reference rewrite path is:
+
+```bash
+scripts/regen-fixtures.sh --area bibtex
+```
+
+It verifies the archive, WEB, change file, kpathsea configuration, merged
+Pascal, generated C/header, Web2C configuration header, and exact executable;
+builds the pinned executable when necessary; stages only the committed inputs
+in a temporary directory; starts it with an empty deterministic environment;
+captures status, BBL, BLG, and terminal bytes; atomically replaces changed
+outputs; and runs the hermetic manifest/inventory test.
+
+Ordinary `cargo test --tests` never reads the source checkout, invokes
+BibTeX, searches an ambient TeX installation, uses a locale service, or
+accesses the network. It verifies only committed JSON and fixture bytes. This
+is the Phase 0 exit gate: every reference surface is owned, every initial
+reference byte is content-pinned, and regeneration has one auditable route.

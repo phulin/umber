@@ -97,6 +97,18 @@ tests record the equivalent in-process session status, byte-output, and
 diagnostic expectations. The validation loop is expanded to 53 independent
 tests so one XPASS cannot hide later validation assertions.
 
+Classic BibTeX has a separate committed corpus under `tests/corpus/bibtex`.
+Its manifest pins the TeX Live 2025 archive, `bibtex.web`, `bibtex.ch`, merged
+Pascal, WEB2C-generated C/header, kpathsea and build configuration, exact
+reference executable, inputs, status/history, BBL, BLG, and terminal bytes.
+Its inventory assigns implementation and test owners to all 4 AUX commands,
+10 BST commands, 3 BIB commands, 37 built-ins, 4 predefined symbols, and the
+diagnostic, limit, branch, and upstream-test families. Ordinary tests audit
+those committed bytes and owners only. The explicit
+`scripts/regen-fixtures.sh --area bibtex` route builds and identity-checks the
+pinned reference, executes it in an empty fixed-locale environment, refreshes
+the outputs atomically, and reruns the hermetic audit.
+
 The LaTeX format builder is a separate deterministic integration tier:
 
 ```bash

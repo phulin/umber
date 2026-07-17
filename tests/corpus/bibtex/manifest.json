@@ -1,0 +1,88 @@
+{
+  "schema": 1,
+  "compatibility": "classic-bibtex-0.99d-texlive-2025-web2c",
+  "source_archive": {
+    "url": "https://ftp.math.utah.edu/pub/tex/historic/systems/texlive/2025/texlive-20250308-source.tar.xz",
+    "sha512": "0837c935488b96cfc8dd79f1298f283b467ab68b4163cee9cb04b79e80195982fdc5ae8a80058dc7d3e99206bfda8b3bdd11340425b08f60cbef70d5a0e22702"
+  },
+  "merged_program": {
+    "web_path": "texk/web2c/bibtex.web",
+    "web_sha256": "38b9ba09fce5abb6f7ec135a2474b26c0d8c3a8b883df2d1c07072d33bc331ed",
+    "change_path": "texk/web2c/bibtex.ch",
+    "change_sha256": "9bffb931a113278d3c9304248a70b47f2576f7ee86fe6c1ae2160865ed0ea716",
+    "tangle_command": "tangle bibtex bibtex",
+    "merged_path": "build/texk/web2c/bibtex.p",
+    "merged_sha256": "a0362ee3ca112207a5a666a5bb89484c4bb8c1a44d99c1ea824767b2eaafec79",
+    "web2c_c_sha256": "848e79f7b29e5a2ad2388ffcfc486399c176f0a2dd2d6e83d55188de532bbc3d",
+    "web2c_h_sha256": "2ffa94f92b6c15b16aad99cc39b587f9e34e98731c911148921a6295b273157a"
+  },
+  "configuration": {
+    "configure_arguments": "--without-x --disable-shared --disable-all-pkgs --enable-tex --disable-synctex --disable-xetex --enable-missing -C CFLAGS=-O2 CXXFLAGS=-O2",
+    "texmf_cnf_path": "texk/kpathsea/texmf.cnf",
+    "texmf_cnf_sha256": "75cc5499ea9d15d1cf68722e75c846155fac55f1bbc2f0ca102ff5d423f49b29",
+    "c_auto_sha256": "20553e51994937db88c411bd5aa39d1e34965309a184f14aae02c19ebded1c1d",
+    "environment": {
+      "LC_ALL": "C",
+      "LANGUAGE": "C",
+      "BIBINPUTS": ".",
+      "BSTINPUTS": "."
+    }
+  },
+  "reference_executable": {
+    "path": "build/texk/web2c/bibtex",
+    "sha256": "fcd33ae491e1adfc84a636015d3840ba49556649c65f3bf2db2fa7d2f948dc7e",
+    "platform": "Darwin-arm64",
+    "compiler": "Apple clang 17.0.0",
+    "banner": "BibTeX 0.99d (TeX Live 2025); kpathsea 6.4.1"
+  },
+  "normalizations": [],
+  "cases": [
+    {
+      "name": "smoke",
+      "command": [
+        "bibtex",
+        "smoke"
+      ],
+      "status": 0,
+      "history": "warning",
+      "files": [
+        {
+          "path": "cases/smoke/smoke.aux",
+          "role": "aux-input",
+          "bytes": 57,
+          "sha256": "b4377927e18f9b3df69b07367f3f61d148f8cbf0fce5348dde8a25aa3cef0d65"
+        },
+        {
+          "path": "cases/smoke/smoke.bib",
+          "role": "bib-input",
+          "bytes": 86,
+          "sha256": "d86c76a15f4a5e2a74c626c9578b8bebe87eb03968fc95d80907c1e872089363"
+        },
+        {
+          "path": "cases/smoke/smoke.bst",
+          "role": "bst-input",
+          "bytes": 230,
+          "sha256": "db90996ffee267b2bbcb197c8db5c00d61a323321db1904dc8cb126e2eb1b763"
+        },
+        {
+          "path": "cases/smoke/smoke.bbl",
+          "role": "bbl-output",
+          "bytes": 20,
+          "sha256": "754a6bf82c311ae019065ebc2bd06206a9f11976b9f78072f096c480dc9d20c0"
+        },
+        {
+          "path": "cases/smoke/smoke.blg",
+          "role": "blg-output",
+          "bytes": 946,
+          "sha256": "e58185f6fba1ad83009197161f678767b06aa326525c3d41bc71962a0b0ee118"
+        },
+        {
+          "path": "cases/smoke/smoke.terminal",
+          "role": "terminal-output",
+          "bytes": 246,
+          "sha256": "49fc85a65c39304924bb5c27970c9e1fc5ae77553d24491d4d20902691e584e6"
+        }
+      ]
+    }
+  ]
+}

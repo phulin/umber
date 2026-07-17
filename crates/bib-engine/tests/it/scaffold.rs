@@ -5,6 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 const PINNED_COMMIT: &str = "74252e608e5f8115375c532eb25416430a9f52eb";
@@ -89,6 +90,233 @@ fn fixture_manifest_is_complete_and_pinned() {
 }
 
 #[test]
+fn classic_fixture_manifest_and_inventory_are_complete_and_pinned() {
+    let root = classic_fixture_root();
+    let manifest: Value = read_json(&root.join("manifest.json"));
+    assert_eq!(manifest["schema"], 1);
+    assert_eq!(
+        manifest["compatibility"],
+        "classic-bibtex-0.99d-texlive-2025-web2c"
+    );
+    assert_eq!(
+        manifest["source_archive"]["url"],
+        "https://ftp.math.utah.edu/pub/tex/historic/systems/texlive/2025/texlive-20250308-source.tar.xz"
+    );
+    assert_eq!(
+        manifest["source_archive"]["sha512"],
+        "0837c935488b96cfc8dd79f1298f283b467ab68b4163cee9cb04b79e80195982fdc5ae8a80058dc7d3e99206bfda8b3bdd11340425b08f60cbef70d5a0e22702"
+    );
+    assert_eq!(
+        manifest["merged_program"]["web_path"],
+        "texk/web2c/bibtex.web"
+    );
+    assert_eq!(
+        manifest["merged_program"]["web_sha256"],
+        "38b9ba09fce5abb6f7ec135a2474b26c0d8c3a8b883df2d1c07072d33bc331ed"
+    );
+    assert_eq!(
+        manifest["merged_program"]["change_path"],
+        "texk/web2c/bibtex.ch"
+    );
+    assert_eq!(
+        manifest["merged_program"]["change_sha256"],
+        "9bffb931a113278d3c9304248a70b47f2576f7ee86fe6c1ae2160865ed0ea716"
+    );
+    assert_eq!(
+        manifest["merged_program"]["merged_sha256"],
+        "a0362ee3ca112207a5a666a5bb89484c4bb8c1a44d99c1ea824767b2eaafec79"
+    );
+    assert_eq!(
+        manifest["merged_program"]["tangle_command"],
+        "tangle bibtex bibtex"
+    );
+    assert_eq!(
+        manifest["merged_program"]["merged_path"],
+        "build/texk/web2c/bibtex.p"
+    );
+    assert_eq!(
+        manifest["merged_program"]["web2c_c_sha256"],
+        "848e79f7b29e5a2ad2388ffcfc486399c176f0a2dd2d6e83d55188de532bbc3d"
+    );
+    assert_eq!(
+        manifest["merged_program"]["web2c_h_sha256"],
+        "2ffa94f92b6c15b16aad99cc39b587f9e34e98731c911148921a6295b273157a"
+    );
+    assert_eq!(
+        manifest["configuration"]["configure_arguments"],
+        "--without-x --disable-shared --disable-all-pkgs --enable-tex --disable-synctex --disable-xetex --enable-missing -C CFLAGS=-O2 CXXFLAGS=-O2"
+    );
+    assert_eq!(
+        manifest["configuration"]["texmf_cnf_path"],
+        "texk/kpathsea/texmf.cnf"
+    );
+    assert_eq!(
+        manifest["configuration"]["texmf_cnf_sha256"],
+        "75cc5499ea9d15d1cf68722e75c846155fac55f1bbc2f0ca102ff5d423f49b29"
+    );
+    assert_eq!(
+        manifest["configuration"]["c_auto_sha256"],
+        "20553e51994937db88c411bd5aa39d1e34965309a184f14aae02c19ebded1c1d"
+    );
+    assert_eq!(manifest["configuration"]["environment"]["LC_ALL"], "C");
+    assert_eq!(manifest["configuration"]["environment"]["LANGUAGE"], "C");
+    assert_eq!(manifest["configuration"]["environment"]["BIBINPUTS"], ".");
+    assert_eq!(manifest["configuration"]["environment"]["BSTINPUTS"], ".");
+    assert_eq!(
+        manifest["reference_executable"]["path"],
+        "build/texk/web2c/bibtex"
+    );
+    assert_eq!(
+        manifest["reference_executable"]["sha256"],
+        "fcd33ae491e1adfc84a636015d3840ba49556649c65f3bf2db2fa7d2f948dc7e"
+    );
+    assert_eq!(manifest["reference_executable"]["platform"], "Darwin-arm64");
+    assert_eq!(
+        manifest["reference_executable"]["compiler"],
+        "Apple clang 17.0.0"
+    );
+    assert_eq!(
+        manifest["reference_executable"]["banner"],
+        "BibTeX 0.99d (TeX Live 2025); kpathsea 6.4.1"
+    );
+    assert_eq!(manifest["normalizations"].as_array().map(Vec::len), Some(0));
+
+    let cases = manifest["cases"]
+        .as_array()
+        .expect("cases must be an array");
+    assert_eq!(cases.len(), 1);
+    assert_eq!(cases[0]["name"], "smoke");
+    assert_eq!(cases[0]["command"], serde_json::json!(["bibtex", "smoke"]));
+    assert_eq!(cases[0]["status"], 0);
+    assert_eq!(cases[0]["history"], "warning");
+    let mut roles = BTreeSet::new();
+    let mut declared = BTreeSet::new();
+    for file in cases[0]["files"]
+        .as_array()
+        .expect("case files must be an array")
+    {
+        let path = file["path"].as_str().expect("fixture path must be text");
+        let case_path = path
+            .strip_prefix("cases/")
+            .expect("case fixture must live below cases/");
+        assert!(
+            declared.insert(case_path.to_owned()),
+            "duplicate path: {path}"
+        );
+        roles.insert(file["role"].as_str().expect("role must be text"));
+        assert_file_identity(
+            &root.join(path),
+            file["bytes"].as_u64().expect("bytes must be unsigned"),
+            file["sha256"].as_str().expect("sha256 must be text"),
+        );
+    }
+    assert_eq!(
+        roles,
+        BTreeSet::from([
+            "aux-input",
+            "bbl-output",
+            "bib-input",
+            "blg-output",
+            "bst-input",
+            "terminal-output",
+        ])
+    );
+    assert_eq!(declared, imported_paths(&root.join("cases")));
+
+    let inventory: Value = read_json(&root.join("inventory.json"));
+    assert_eq!(inventory["schema"], 1);
+    assert_inventory_names(
+        &inventory["aux_commands"],
+        &["\\citation", "\\bibdata", "\\bibstyle", "\\@input"],
+    );
+    assert_inventory_names(
+        &inventory["bst_commands"],
+        &[
+            "ENTRY", "EXECUTE", "FUNCTION", "INTEGERS", "ITERATE", "MACRO", "READ", "REVERSE",
+            "SORT", "STRINGS",
+        ],
+    );
+    assert_inventory_names(
+        &inventory["bib_commands"],
+        &["@comment", "@preamble", "@string"],
+    );
+    assert_inventory_names(
+        &inventory["builtins"],
+        &[
+            "=",
+            ">",
+            "<",
+            "+",
+            "-",
+            "*",
+            ":=",
+            "add.period$",
+            "call.type$",
+            "change.case$",
+            "chr.to.int$",
+            "cite$",
+            "duplicate$",
+            "empty$",
+            "format.name$",
+            "if$",
+            "int.to.chr$",
+            "int.to.str$",
+            "missing$",
+            "newline$",
+            "num.names$",
+            "pop$",
+            "preamble$",
+            "purify$",
+            "quote$",
+            "skip$",
+            "stack$",
+            "substring$",
+            "swap$",
+            "text.length$",
+            "text.prefix$",
+            "top$",
+            "type$",
+            "warning$",
+            "while$",
+            "width$",
+            "write$",
+        ],
+    );
+    assert_inventory_names(
+        &inventory["predefined_symbols"],
+        &["crossref", "sort.key$", "entry.max$", "global.max$"],
+    );
+    for family in [
+        "diagnostic_families",
+        "reference_limits",
+        "branch_families",
+        "upstream_tests",
+    ] {
+        let entries = inventory[family]
+            .as_array()
+            .unwrap_or_else(|| panic!("{family} must be an array"));
+        assert!(!entries.is_empty(), "{family} must not be empty");
+        assert_owned(entries);
+    }
+    assert_eq!(
+        inventory["diagnostic_families"].as_array().map(Vec::len),
+        Some(15)
+    );
+    assert_eq!(
+        inventory["reference_limits"].as_array().map(Vec::len),
+        Some(18)
+    );
+    assert_eq!(
+        inventory["branch_families"].as_array().map(Vec::len),
+        Some(15)
+    );
+    assert_eq!(
+        inventory["upstream_tests"].as_array().map(Vec::len),
+        Some(17)
+    );
+}
+
+#[test]
 fn translated_suite_has_no_compatibility_allowances() {
     let upstream = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/it/upstream");
     let mut modules = 0;
@@ -129,6 +357,56 @@ fn translated_suite_has_no_compatibility_allowances() {
 
 fn fixture_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/bib/upstream-2.22")
+}
+
+fn classic_fixture_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/bibtex")
+}
+
+fn read_json(path: &Path) -> Value {
+    let bytes =
+        fs::read(path).unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+    serde_json::from_slice(&bytes)
+        .unwrap_or_else(|error| panic!("invalid JSON in {}: {error}", path.display()))
+}
+
+fn assert_file_identity(path: &Path, expected_bytes: u64, expected_sha256: &str) {
+    let bytes =
+        fs::read(path).unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+    assert_eq!(
+        bytes.len() as u64,
+        expected_bytes,
+        "byte length drift for {}",
+        path.display()
+    );
+    assert_eq!(
+        format!("{:x}", Sha256::digest(&bytes)),
+        expected_sha256,
+        "SHA-256 drift for {}",
+        path.display()
+    );
+}
+
+fn assert_inventory_names(value: &Value, expected: &[&str]) {
+    let entries = value.as_array().expect("inventory family must be an array");
+    assert_owned(entries);
+    let actual: Vec<_> = entries
+        .iter()
+        .map(|entry| entry["name"].as_str().expect("inventory name must be text"))
+        .collect();
+    assert_eq!(actual, expected);
+}
+
+fn assert_owned(entries: &[Value]) {
+    for entry in entries {
+        for field in ["implementation_owner", "test_owner"] {
+            assert!(
+                entry[field].as_str().is_some_and(|owner| !owner.is_empty()),
+                "{} has no {field}",
+                entry["name"]
+            );
+        }
+    }
 }
 
 fn imported_paths(root: &Path) -> BTreeSet<String> {

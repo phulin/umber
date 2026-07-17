@@ -1,0 +1,763 @@
+{
+  "schema": 1,
+  "source": "merged texk/web2c/bibtex.web + texk/web2c/bibtex.ch from manifest.json",
+  "architecture": "classic and biblatex are separate semantic backends behind shared resource, result, and project orchestration",
+  "aux_commands": [
+    {
+      "name": "\\citation",
+      "reference": "n_aux_citation",
+      "implementation_owner": "umber2-ild0.3 crates/bib-engine/src/classic/aux.rs",
+      "test_owner": "umber2-ild0.3 crates/bib-engine/tests/it/classic/aux.rs"
+    },
+    {
+      "name": "\\bibdata",
+      "reference": "n_aux_bibdata",
+      "implementation_owner": "umber2-ild0.3 crates/bib-engine/src/classic/aux.rs",
+      "test_owner": "umber2-ild0.3 crates/bib-engine/tests/it/classic/aux.rs"
+    },
+    {
+      "name": "\\bibstyle",
+      "reference": "n_aux_bibstyle",
+      "implementation_owner": "umber2-ild0.3 crates/bib-engine/src/classic/aux.rs",
+      "test_owner": "umber2-ild0.3 crates/bib-engine/tests/it/classic/aux.rs"
+    },
+    {
+      "name": "\\@input",
+      "reference": "n_aux_input",
+      "implementation_owner": "umber2-ild0.3 crates/bib-engine/src/classic/aux.rs",
+      "test_owner": "umber2-ild0.3 crates/bib-engine/tests/it/classic/aux.rs"
+    }
+  ],
+  "bst_commands": [
+    {
+      "name": "ENTRY",
+      "reference": "n_bst_entry",
+      "implementation_owner": "umber2-ild0.5 crates/bib-bst/src/parser.rs",
+      "test_owner": "umber2-ild0.5 crates/bib-bst/src/parser/tests.rs"
+    },
+    {
+      "name": "EXECUTE",
+      "reference": "n_bst_execute",
+      "implementation_owner": "umber2-ild0.5 crates/bib-bst/src/parser.rs",
+      "test_owner": "umber2-ild0.5 crates/bib-bst/src/parser/tests.rs"
+    },
+    {
+      "name": "FUNCTION",
+      "reference": "n_bst_function",
+      "implementation_owner": "umber2-ild0.5 crates/bib-bst/src/parser.rs",
+      "test_owner": "umber2-ild0.5 crates/bib-bst/src/parser/tests.rs"
+    },
+    {
+      "name": "INTEGERS",
+      "reference": "n_bst_integers",
+      "implementation_owner": "umber2-ild0.5 crates/bib-bst/src/parser.rs",
+      "test_owner": "umber2-ild0.5 crates/bib-bst/src/parser/tests.rs"
+    },
+    {
+      "name": "ITERATE",
+      "reference": "n_bst_iterate",
+      "implementation_owner": "umber2-ild0.5 crates/bib-bst/src/parser.rs",
+      "test_owner": "umber2-ild0.5 crates/bib-bst/src/parser/tests.rs"
+    },
+    {
+      "name": "MACRO",
+      "reference": "n_bst_macro",
+      "implementation_owner": "umber2-ild0.5 crates/bib-bst/src/parser.rs",
+      "test_owner": "umber2-ild0.5 crates/bib-bst/src/parser/tests.rs"
+    },
+    {
+      "name": "READ",
+      "reference": "n_bst_read",
+      "implementation_owner": "umber2-ild0.5 crates/bib-bst/src/parser.rs",
+      "test_owner": "umber2-ild0.5 crates/bib-bst/src/parser/tests.rs"
+    },
+    {
+      "name": "REVERSE",
+      "reference": "n_bst_reverse",
+      "implementation_owner": "umber2-ild0.5 crates/bib-bst/src/parser.rs",
+      "test_owner": "umber2-ild0.5 crates/bib-bst/src/parser/tests.rs"
+    },
+    {
+      "name": "SORT",
+      "reference": "n_bst_sort",
+      "implementation_owner": "umber2-ild0.5 crates/bib-bst/src/parser.rs",
+      "test_owner": "umber2-ild0.5 crates/bib-bst/src/parser/tests.rs"
+    },
+    {
+      "name": "STRINGS",
+      "reference": "n_bst_strings",
+      "implementation_owner": "umber2-ild0.5 crates/bib-bst/src/parser.rs",
+      "test_owner": "umber2-ild0.5 crates/bib-bst/src/parser/tests.rs"
+    }
+  ],
+  "bib_commands": [
+    {
+      "name": "@comment",
+      "reference": "n_bib_comment",
+      "implementation_owner": "umber2-ild0.4 crates/bib-input/src/raw.rs",
+      "test_owner": "umber2-ild0.4 crates/bib-input/src/raw/tests.rs"
+    },
+    {
+      "name": "@preamble",
+      "reference": "n_bib_preamble",
+      "implementation_owner": "umber2-ild0.7 crates/bib-engine/src/classic/database.rs",
+      "test_owner": "umber2-ild0.7 crates/bib-engine/tests/it/classic/database.rs"
+    },
+    {
+      "name": "@string",
+      "reference": "n_bib_string",
+      "implementation_owner": "umber2-ild0.7 crates/bib-engine/src/classic/database.rs",
+      "test_owner": "umber2-ild0.7 crates/bib-engine/tests/it/classic/database.rs"
+    }
+  ],
+  "builtins": [
+    {
+      "name": "=",
+      "reference": "n_equals",
+      "implementation_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/comparison.rs",
+      "test_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/tests.rs"
+    },
+    {
+      "name": ">",
+      "reference": "n_greater_than",
+      "implementation_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/comparison.rs",
+      "test_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/tests.rs"
+    },
+    {
+      "name": "<",
+      "reference": "n_less_than",
+      "implementation_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/comparison.rs",
+      "test_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/tests.rs"
+    },
+    {
+      "name": "+",
+      "reference": "n_plus",
+      "implementation_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/arithmetic.rs",
+      "test_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/tests.rs"
+    },
+    {
+      "name": "-",
+      "reference": "n_minus",
+      "implementation_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/arithmetic.rs",
+      "test_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/tests.rs"
+    },
+    {
+      "name": "*",
+      "reference": "n_concatenate",
+      "implementation_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/strings.rs",
+      "test_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/tests.rs"
+    },
+    {
+      "name": ":=",
+      "reference": "n_gets",
+      "implementation_owner": "umber2-ild0.8 crates/bib-bst/src/vm.rs",
+      "test_owner": "umber2-ild0.8 crates/bib-bst/src/vm/tests.rs"
+    },
+    {
+      "name": "add.period$",
+      "reference": "n_add_period",
+      "implementation_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/strings.rs",
+      "test_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/tests.rs"
+    },
+    {
+      "name": "call.type$",
+      "reference": "n_call_type",
+      "implementation_owner": "umber2-ild0.8 crates/bib-bst/src/vm.rs",
+      "test_owner": "umber2-ild0.8 crates/bib-bst/src/vm/tests.rs"
+    },
+    {
+      "name": "change.case$",
+      "reference": "n_change_case",
+      "implementation_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/text.rs",
+      "test_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/tests.rs"
+    },
+    {
+      "name": "chr.to.int$",
+      "reference": "n_chr_to_int",
+      "implementation_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/conversion.rs",
+      "test_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/tests.rs"
+    },
+    {
+      "name": "cite$",
+      "reference": "n_cite",
+      "implementation_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/entry.rs",
+      "test_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/tests.rs"
+    },
+    {
+      "name": "duplicate$",
+      "reference": "n_duplicate",
+      "implementation_owner": "umber2-ild0.8 crates/bib-bst/src/vm.rs",
+      "test_owner": "umber2-ild0.8 crates/bib-bst/src/vm/tests.rs"
+    },
+    {
+      "name": "empty$",
+      "reference": "n_empty",
+      "implementation_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/strings.rs",
+      "test_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/tests.rs"
+    },
+    {
+      "name": "format.name$",
+      "reference": "n_format_name",
+      "implementation_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/names.rs",
+      "test_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/tests.rs"
+    },
+    {
+      "name": "if$",
+      "reference": "n_if",
+      "implementation_owner": "umber2-ild0.8 crates/bib-bst/src/vm.rs",
+      "test_owner": "umber2-ild0.8 crates/bib-bst/src/vm/tests.rs"
+    },
+    {
+      "name": "int.to.chr$",
+      "reference": "n_int_to_chr",
+      "implementation_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/conversion.rs",
+      "test_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/tests.rs"
+    },
+    {
+      "name": "int.to.str$",
+      "reference": "n_int_to_str",
+      "implementation_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/conversion.rs",
+      "test_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/tests.rs"
+    },
+    {
+      "name": "missing$",
+      "reference": "n_missing",
+      "implementation_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/entry.rs",
+      "test_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/tests.rs"
+    },
+    {
+      "name": "newline$",
+      "reference": "n_newline",
+      "implementation_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/output.rs",
+      "test_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/tests.rs"
+    },
+    {
+      "name": "num.names$",
+      "reference": "n_num_names",
+      "implementation_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/names.rs",
+      "test_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/tests.rs"
+    },
+    {
+      "name": "pop$",
+      "reference": "n_pop",
+      "implementation_owner": "umber2-ild0.8 crates/bib-bst/src/vm.rs",
+      "test_owner": "umber2-ild0.8 crates/bib-bst/src/vm/tests.rs"
+    },
+    {
+      "name": "preamble$",
+      "reference": "n_preamble",
+      "implementation_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/entry.rs",
+      "test_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/tests.rs"
+    },
+    {
+      "name": "purify$",
+      "reference": "n_purify",
+      "implementation_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/text.rs",
+      "test_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/tests.rs"
+    },
+    {
+      "name": "quote$",
+      "reference": "n_quote",
+      "implementation_owner": "umber2-ild0.8 crates/bib-bst/src/vm.rs",
+      "test_owner": "umber2-ild0.8 crates/bib-bst/src/vm/tests.rs"
+    },
+    {
+      "name": "skip$",
+      "reference": "n_skip",
+      "implementation_owner": "umber2-ild0.8 crates/bib-bst/src/vm.rs",
+      "test_owner": "umber2-ild0.8 crates/bib-bst/src/vm/tests.rs"
+    },
+    {
+      "name": "stack$",
+      "reference": "n_stack",
+      "implementation_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/diagnostics.rs",
+      "test_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/tests.rs"
+    },
+    {
+      "name": "substring$",
+      "reference": "n_substring",
+      "implementation_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/strings.rs",
+      "test_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/tests.rs"
+    },
+    {
+      "name": "swap$",
+      "reference": "n_swap",
+      "implementation_owner": "umber2-ild0.8 crates/bib-bst/src/vm.rs",
+      "test_owner": "umber2-ild0.8 crates/bib-bst/src/vm/tests.rs"
+    },
+    {
+      "name": "text.length$",
+      "reference": "n_text_length",
+      "implementation_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/text.rs",
+      "test_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/tests.rs"
+    },
+    {
+      "name": "text.prefix$",
+      "reference": "n_text_prefix",
+      "implementation_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/text.rs",
+      "test_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/tests.rs"
+    },
+    {
+      "name": "top$",
+      "reference": "n_top_stack",
+      "implementation_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/diagnostics.rs",
+      "test_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/tests.rs"
+    },
+    {
+      "name": "type$",
+      "reference": "n_type",
+      "implementation_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/entry.rs",
+      "test_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/tests.rs"
+    },
+    {
+      "name": "warning$",
+      "reference": "n_warning",
+      "implementation_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/diagnostics.rs",
+      "test_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/tests.rs"
+    },
+    {
+      "name": "while$",
+      "reference": "n_while",
+      "implementation_owner": "umber2-ild0.8 crates/bib-bst/src/vm.rs",
+      "test_owner": "umber2-ild0.8 crates/bib-bst/src/vm/tests.rs"
+    },
+    {
+      "name": "width$",
+      "reference": "n_width",
+      "implementation_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/text.rs",
+      "test_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/tests.rs"
+    },
+    {
+      "name": "write$",
+      "reference": "n_write",
+      "implementation_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/output.rs",
+      "test_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/tests.rs"
+    }
+  ],
+  "predefined_symbols": [
+    {
+      "name": "crossref",
+      "kind": "field",
+      "implementation_owner": "umber2-ild0.7 crates/bib-engine/src/classic/database.rs",
+      "test_owner": "umber2-ild0.7 crates/bib-engine/tests/it/classic/database.rs"
+    },
+    {
+      "name": "sort.key$",
+      "kind": "entry-string",
+      "implementation_owner": "umber2-ild0.8 crates/bib-bst/src/vm.rs",
+      "test_owner": "umber2-ild0.8 crates/bib-bst/src/vm/tests.rs"
+    },
+    {
+      "name": "entry.max$",
+      "kind": "global-integer",
+      "implementation_owner": "umber2-ild0.8 crates/bib-bst/src/vm.rs",
+      "test_owner": "umber2-ild0.8 crates/bib-bst/src/vm/tests.rs"
+    },
+    {
+      "name": "global.max$",
+      "kind": "global-integer",
+      "implementation_owner": "umber2-ild0.8 crates/bib-bst/src/vm.rs",
+      "test_owner": "umber2-ild0.8 crates/bib-bst/src/vm/tests.rs"
+    }
+  ],
+  "diagnostic_families": [
+    {
+      "name": "invocation-and-output-open",
+      "reference": "bibtex.ch command_line; aux/log/bbl open",
+      "implementation_owner": "umber2-ild0.11 crates/umber/src/bibtex.rs",
+      "test_owner": "umber2-ild0.11 tests/corpus/bibtex/invocation"
+    },
+    {
+      "name": "aux-syntax-and-recovery",
+      "reference": "aux_err, aux_err_return, aux_end_err",
+      "implementation_owner": "umber2-ild0.3 crates/bib-engine/src/classic/aux.rs",
+      "test_owner": "umber2-ild0.3 crates/bib-engine/tests/it/classic/aux.rs"
+    },
+    {
+      "name": "aux-control-duplicates-and-missing",
+      "reference": "aux_citation_command, aux_bib_data_command, aux_bib_style_command, aux_input_command",
+      "implementation_owner": "umber2-ild0.3 crates/bib-engine/src/classic/aux.rs",
+      "test_owner": "umber2-ild0.3 crates/bib-engine/tests/it/classic/aux.rs"
+    },
+    {
+      "name": "bst-token-and-command-recovery",
+      "reference": "bst_err, bst_err_print_and_look_for_blank_line",
+      "implementation_owner": "umber2-ild0.5 crates/bib-bst/src/parser.rs",
+      "test_owner": "umber2-ild0.5 crates/bib-bst/src/parser/tests.rs"
+    },
+    {
+      "name": "bst-phase-and-symbol-errors",
+      "reference": "bst_*_command and scan_fn_def",
+      "implementation_owner": "umber2-ild0.5 crates/bib-bst/src/compiler.rs",
+      "test_owner": "umber2-ild0.5 crates/bib-bst/src/compiler/tests.rs"
+    },
+    {
+      "name": "bib-syntax-and-recovery",
+      "reference": "bib_err, bib_one_of_two_expected",
+      "implementation_owner": "umber2-ild0.4 crates/bib-input/src/raw.rs",
+      "test_owner": "umber2-ild0.4 crates/bib-input/src/raw/tests.rs"
+    },
+    {
+      "name": "database-duplicates-macros-and-fields",
+      "reference": "get_bib_command_or_entry_and_process",
+      "implementation_owner": "umber2-ild0.7 crates/bib-engine/src/classic/database.rs",
+      "test_owner": "umber2-ild0.7 crates/bib-engine/tests/it/classic/database.rs"
+    },
+    {
+      "name": "citation-and-crossref-selection",
+      "reference": "add_database_cite and crossref passes",
+      "implementation_owner": "umber2-ild0.7 crates/bib-engine/src/classic/database.rs",
+      "test_owner": "umber2-ild0.7 crates/bib-engine/tests/it/classic/database.rs"
+    },
+    {
+      "name": "stack-underflow-and-wrong-type",
+      "reference": "pop_lit_stk and print_wrong_stk_lit",
+      "implementation_owner": "umber2-ild0.8 crates/bib-bst/src/vm.rs",
+      "test_owner": "umber2-ild0.8 crates/bib-bst/src/vm/tests.rs"
+    },
+    {
+      "name": "entry-context-and-unknown-type",
+      "reference": "cite$, type$, call.type$, missing$",
+      "implementation_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/entry.rs",
+      "test_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/tests.rs"
+    },
+    {
+      "name": "style-warning-stack-and-top",
+      "reference": "warning$, stack$, top$",
+      "implementation_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/diagnostics.rs",
+      "test_owner": "umber2-ild0.9 crates/bib-bst/src/builtins/tests.rs"
+    },
+    {
+      "name": "capacity-and-safe-limit",
+      "reference": "overflow and bibtex.ch dynamic reallocations",
+      "implementation_owner": "umber2-ild0.5 crates/bib-bst/src/limits.rs",
+      "test_owner": "umber2-ild0.5 crates/bib-bst/src/limits/tests.rs"
+    },
+    {
+      "name": "output-line-buffering",
+      "reference": "output_bbl_line, add_out_pool, write$, newline$",
+      "implementation_owner": "umber2-ild0.11 crates/bib-engine/src/classic/output.rs",
+      "test_owner": "umber2-ild0.11 crates/bib-engine/tests/it/classic/parity.rs"
+    },
+    {
+      "name": "spotless-warning-error-fatal-history",
+      "reference": "mark_warning, mark_error, mark_fatal, Print the job history",
+      "implementation_owner": "umber2-ild0.2 crates/bib-engine/src/bibliography.rs",
+      "test_owner": "umber2-ild0.11 crates/bib-engine/tests/it/classic/parity.rs"
+    },
+    {
+      "name": "internal-invariant-confusion",
+      "reference": "confusion and print_confusion",
+      "implementation_owner": "umber2-ild0.8 crates/bib-bst/src/vm.rs",
+      "test_owner": "umber2-ild0.8 crates/bib-bst/src/vm/tests.rs"
+    }
+  ],
+  "reference_limits": [
+    {
+      "name": "buf_size",
+      "reference_value": "20000 initial, dynamically grown",
+      "implementation_owner": "umber2-ild0.5 ClassicBibLimits.style_bytes/style_tokens",
+      "test_owner": "umber2-ild0.5 parser limit tests"
+    },
+    {
+      "name": "pool_size",
+      "reference_value": "configured, dynamically grown",
+      "implementation_owner": "umber2-ild0.8 ClassicBibLimits.string_bytes",
+      "test_owner": "umber2-ild0.8 VM string limit tests"
+    },
+    {
+      "name": "max_strings",
+      "reference_value": "200000 from texmf.cnf",
+      "implementation_owner": "umber2-ild0.5 ClassicBibLimits.symbols",
+      "test_owner": "umber2-ild0.5 symbol limit tests"
+    },
+    {
+      "name": "hash_size/hash_prime",
+      "reference_value": "200000/170003",
+      "implementation_owner": "umber2-ild0.5 deterministic symbol table",
+      "test_owner": "umber2-ild0.5 symbol census tests"
+    },
+    {
+      "name": "max_bib_files",
+      "reference_value": "20 initial, dynamically grown",
+      "implementation_owner": "umber2-ild0.3 ClassicBibLimits.database_files",
+      "test_owner": "umber2-ild0.3 resource limit tests"
+    },
+    {
+      "name": "max_cites",
+      "reference_value": "750 initial, dynamically grown",
+      "implementation_owner": "umber2-ild0.7 ClassicBibLimits.entries",
+      "test_owner": "umber2-ild0.7 selection limit tests"
+    },
+    {
+      "name": "max_fields",
+      "reference_value": "5000 initial, dynamically grown",
+      "implementation_owner": "umber2-ild0.7 ClassicBibLimits.fields_per_entry/entries",
+      "test_owner": "umber2-ild0.7 database limit tests"
+    },
+    {
+      "name": "wiz_fn_space",
+      "reference_value": "3000 initial, dynamically grown",
+      "implementation_owner": "umber2-ild0.5 ClassicBibLimits.instructions",
+      "test_owner": "umber2-ild0.5 instruction limit tests"
+    },
+    {
+      "name": "single_fn_space",
+      "reference_value": "100",
+      "implementation_owner": "umber2-ild0.5 ClassicBibLimits.instructions",
+      "test_owner": "umber2-ild0.5 function limit tests"
+    },
+    {
+      "name": "max_glob_strs",
+      "reference_value": "10 initial, dynamically grown",
+      "implementation_owner": "umber2-ild0.8 ClassicBibLimits.symbols",
+      "test_owner": "umber2-ild0.8 variable limit tests"
+    },
+    {
+      "name": "ent_str_size",
+      "reference_value": "100",
+      "implementation_owner": "umber2-ild0.8 ClassicBibLimits.string_bytes",
+      "test_owner": "umber2-ild0.8 entry string tests"
+    },
+    {
+      "name": "glob_str_size",
+      "reference_value": "1000",
+      "implementation_owner": "umber2-ild0.8 ClassicBibLimits.string_bytes",
+      "test_owner": "umber2-ild0.8 global string tests"
+    },
+    {
+      "name": "lit_stk_size",
+      "reference_value": "50 initial, dynamically grown",
+      "implementation_owner": "umber2-ild0.8 ClassicBibLimits.stack_values",
+      "test_owner": "umber2-ild0.8 stack limit tests"
+    },
+    {
+      "name": "aux_stack_size",
+      "reference_value": "20",
+      "implementation_owner": "umber2-ild0.3 ClassicBibLimits.aux_depth",
+      "test_owner": "umber2-ild0.3 AUX depth tests"
+    },
+    {
+      "name": "min_crossrefs",
+      "reference_value": "2, runtime configurable",
+      "implementation_owner": "umber2-ild0.7 ClassicBibOptions.min_crossrefs",
+      "test_owner": "umber2-ild0.7 crossref threshold tests"
+    },
+    {
+      "name": "max_print_line",
+      "reference_value": "79 from texmf.cnf",
+      "implementation_owner": "umber2-ild0.11 classic output renderer",
+      "test_owner": "umber2-ild0.11 BBL/BLG wrapping parity"
+    },
+    {
+      "name": "file_name_size",
+      "reference_value": "kpathsea dynamic path boundary",
+      "implementation_owner": "umber2-ild0.3 VirtualPath/resource limits",
+      "test_owner": "umber2-ild0.3 path limit tests"
+    },
+    {
+      "name": "total_work_and_retained_cache",
+      "reference_value": "Umber safety extension, not historical overflow parity",
+      "implementation_owner": "umber2-ild0.5 ClassicBibLimits.work/retained_cache_bytes",
+      "test_owner": "umber2-ild0.13 adversarial and persistent-session tests"
+    }
+  ],
+  "branch_families": [
+    {
+      "name": "aux-command-order-duplicates-star-and-case-collisions",
+      "implementation_owner": "umber2-ild0.3",
+      "test_owner": "classic/aux differential fixtures"
+    },
+    {
+      "name": "aux-include-search-depth-cycle-and-missing",
+      "implementation_owner": "umber2-ild0.3",
+      "test_owner": "classic/aux VFS fixtures"
+    },
+    {
+      "name": "bst-legal-phase-repeated-premature-late-and-blank-line-recovery",
+      "implementation_owner": "umber2-ild0.5",
+      "test_owner": "bib-bst parser command matrix"
+    },
+    {
+      "name": "bst-token-identifier-integer-string-brace-quote-comment-and-eof",
+      "implementation_owner": "umber2-ild0.5",
+      "test_owner": "bib-bst lexer/parser matrices"
+    },
+    {
+      "name": "symbol-duplicate-cross-kind-shadow-forward-reference-and-recursion",
+      "implementation_owner": "umber2-ild0.5",
+      "test_owner": "bib-bst compiler matrices"
+    },
+    {
+      "name": "bib-entry-string-preamble-comment-macro-concatenation-and-recovery",
+      "implementation_owner": "umber2-ild0.4",
+      "test_owner": "raw datasource observation fixtures"
+    },
+    {
+      "name": "read-citation-selection-wildcard-duplicate-key-and-declared-fields",
+      "implementation_owner": "umber2-ild0.7",
+      "test_owner": "classic database differential fixtures"
+    },
+    {
+      "name": "read-crossref-threshold-inheritance-missing-parent-and-order",
+      "implementation_owner": "umber2-ild0.7",
+      "test_owner": "classic database differential fixtures"
+    },
+    {
+      "name": "vm-literal-variable-assignment-function-entry-context-and-command-lifecycle",
+      "implementation_owner": "umber2-ild0.8",
+      "test_owner": "bib-bst VM state-transition tests"
+    },
+    {
+      "name": "vm-stack-underflow-every-wrong-type-call-depth-loop-and-output-limit",
+      "implementation_owner": "umber2-ild0.8",
+      "test_owner": "bib-bst VM adversarial matrix"
+    },
+    {
+      "name": "sort-stability-comparison-prefix-and-mutation",
+      "implementation_owner": "umber2-ild0.8",
+      "test_owner": "bib-bst sorting differential fixtures"
+    },
+    {
+      "name": "builtin-empty-missing-wrong-type-braces-control-sequences-and-character-boundaries",
+      "implementation_owner": "umber2-ild0.9",
+      "test_owner": "one focused matrix per builtin"
+    },
+    {
+      "name": "diagnostic-order-rendering-history-status-and-partial-artifacts",
+      "implementation_owner": "umber2-ild0.11",
+      "test_owner": "classic invocation/parity fixtures"
+    },
+    {
+      "name": "cold-cache-equivalence-resource-retry-no-progress-and-limit-revalidation",
+      "implementation_owner": "umber2-ild0.3",
+      "test_owner": "classic session tests"
+    },
+    {
+      "name": "bounded-legal-program-reference-branch-and-state-transition-generator",
+      "implementation_owner": "umber2-ild0.13",
+      "test_owner": "systematic differential coverage gate"
+    }
+  ],
+  "upstream_tests": [
+    {
+      "name": "web2c/bibtex.test",
+      "scope": "apalike.bst + xampl.bib exact BBL",
+      "classification": "classic-required",
+      "implementation_owner": "umber2-ild0.11",
+      "test_owner": "classic standard-style parity"
+    },
+    {
+      "name": "web2c/tests/bibtex-mem.test",
+      "scope": "memdata1..3, dynamic entry/field/string capacity",
+      "classification": "classic-required",
+      "implementation_owner": "umber2-ild0.7/umber2-ild0.8",
+      "test_owner": "classic database and limit parity"
+    },
+    {
+      "name": "web2c/tests/bibtex-auxinclude.test",
+      "scope": "working-directory AUX include lookup",
+      "classification": "classic-required",
+      "implementation_owner": "umber2-ild0.3",
+      "test_owner": "classic AUX VFS parity"
+    },
+    {
+      "name": "web2c/tests/bibtex-bigauth.test",
+      "scope": "large author field and dynamic buffer",
+      "classification": "classic-required",
+      "implementation_owner": "umber2-ild0.7/umber2-ild0.9",
+      "test_owner": "database/name parity"
+    },
+    {
+      "name": "web2c/tests/bibtex-longline-test.pl",
+      "scope": "long BBL line preservation",
+      "classification": "classic-required",
+      "implementation_owner": "umber2-ild0.11",
+      "test_owner": "classic output parity"
+    },
+    {
+      "name": "web2c/tests/bibtex-openout-test.pl",
+      "scope": "openout_any output rejection",
+      "classification": "host-invocation-only",
+      "implementation_owner": "umber2-ild0.11",
+      "test_owner": "classic invocation parity"
+    },
+    {
+      "name": "bibtex-x/tests/bibtex8.test",
+      "scope": "7/8-bit modes, debug/stat, non-ASCII job names",
+      "classification": "extension-only except shared apalike baseline",
+      "implementation_owner": "umber2-ild0.13",
+      "test_owner": "extension compatibility ledger"
+    },
+    {
+      "name": "bibtex-x/tests/bibtex8u-mem.test",
+      "scope": "BibTeX8/BibTeXu dynamic memory",
+      "classification": "shared-limit-supplement",
+      "implementation_owner": "umber2-ild0.13",
+      "test_owner": "safe-limit differential tier"
+    },
+    {
+      "name": "bibtex-x/tests/bibtex8-sort.test",
+      "scope": "sorting and change.case$ with CSF",
+      "classification": "shared-builtins plus extension collation",
+      "implementation_owner": "umber2-ild0.9",
+      "test_owner": "classic-shared focused fixtures; CSF excluded"
+    },
+    {
+      "name": "bibtex-x/tests/bibtex8-char.test",
+      "scope": "add.period$, substring$, text.*, width$, conversions, names",
+      "classification": "shared-builtins supplement",
+      "implementation_owner": "umber2-ild0.9",
+      "test_owner": "classic-shared focused fixtures"
+    },
+    {
+      "name": "bibtex-x/tests/bibtexu.test",
+      "scope": "UTF-8 debug/stat and Unicode job names",
+      "classification": "extension-only except shared apalike baseline",
+      "implementation_owner": "umber2-ild0.13",
+      "test_owner": "extension compatibility ledger"
+    },
+    {
+      "name": "bibtex-x/tests/bibtexu-basic.test",
+      "scope": "UTF-8 basic style execution",
+      "classification": "extension-only",
+      "implementation_owner": "umber2-ild0.13",
+      "test_owner": "extension compatibility ledger"
+    },
+    {
+      "name": "bibtex-x/tests/bibtexu-range.test",
+      "scope": "Unicode range handling",
+      "classification": "extension-only",
+      "implementation_owner": "umber2-ild0.13",
+      "test_owner": "extension compatibility ledger"
+    },
+    {
+      "name": "bibtex-x/tests/bibtexu-yannis.test",
+      "scope": "French ICU sorting",
+      "classification": "extension-only",
+      "implementation_owner": "umber2-ild0.13",
+      "test_owner": "extension compatibility ledger"
+    },
+    {
+      "name": "bibtex-x/tests/bibtexu-sort.test",
+      "scope": "locale sorting and Unicode change.case$",
+      "classification": "extension-only except ASCII branches",
+      "implementation_owner": "umber2-ild0.13",
+      "test_owner": "extension compatibility ledger"
+    },
+    {
+      "name": "bibtex-x/tests/bibtexu-char.test",
+      "scope": "Unicode built-in variants",
+      "classification": "shared branch names, extension semantics",
+      "implementation_owner": "umber2-ild0.9",
+      "test_owner": "classic-shared focused fixtures only"
+    },
+    {
+      "name": "bibtex-x/tests/bibtexu-iscjk.test",
+      "scope": "ICU-versioned is.knj.str$",
+      "classification": "extension-only",
+      "implementation_owner": "umber2-ild0.13",
+      "test_owner": "extension compatibility ledger"
+    }
+  ]
+}

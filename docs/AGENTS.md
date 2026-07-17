@@ -93,3 +93,9 @@ parity, migration, and validation.
 its `bib-*` crate boundaries, exact compatibility target, public API,
 processing pipeline, direct upstream-test translation, shared-VFS dependency,
 multi-pass native/WASM composition, rollout, and exit criteria.
+
+`classic_bibtex_inventory.md` pins the merged classic BibTeX 0.99d Web2C
+identity, construct and upstream-test ownership census, committed fixture
+manifest, and the hermetic `--area bibtex` regeneration boundary. The reviewed
+two-backend architecture and phase exit criteria remain fixed by
+`classic_bibtex_bst.md` at commit `c676cfb0`.
