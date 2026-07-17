@@ -91,6 +91,25 @@ READ EXECUTE {main}"#,
 }
 
 #[test]
+fn quoted_mutable_symbols_are_deferred_control_operands() {
+    let result = run(
+        br#"ENTRY {} {} {}
+INTEGERS { condition }
+STRINGS { saved }
+FUNCTION {main} {
+  "kept" 'saved :=
+  #0 'condition :=
+  'condition 'skip$ while$
+  #0 { "wrong" } 'saved if$ write$
+}
+READ EXECUTE {main}"#,
+        b"@book{one}",
+    );
+    assert!(!result.is_fatal(), "{:?}", result.diagnostics());
+    assert_eq!(result.bbl(), Some("kept"));
+}
+
+#[test]
 fn wrong_types_and_underflow_are_fatal_and_transactional() {
     let result = run(
         b"ENTRY {} {} {} FUNCTION {bad} { pop$ } READ EXECUTE {bad}",

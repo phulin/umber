@@ -341,3 +341,62 @@ fn classic_smoke_executes_through_the_public_session_with_cold_and_cached_bytes(
         second.files().map(GeneratedFile::bytes).collect::<Vec<_>>(),
     );
 }
+
+#[test]
+fn classic_plain_executes_through_the_public_session() {
+    let aux = VirtualPath::user("plain.aux").expect("fixture path");
+    let mut provisioner = FileProvisioner::new(VfsLimits::default()).expect("VFS");
+    provisioner
+        .register_user(
+            aux.clone(),
+            include_bytes!("../../../../tests/corpus/bibtex/cases/plain/plain.aux").to_vec(),
+        )
+        .expect("fixture AUX");
+    let job = ClassicBibJob::new(aux, ClassicBibOptions::default());
+    let mut session = BibliographySession::classic();
+    let needs = match session.process(
+        &BibliographyJob::Classic(job.clone()),
+        &provisioner.snapshot(),
+    ) {
+        BibliographyAttempt::NeedResources(needs) => needs,
+        attempt => panic!("expected classic resource requests, got {attempt:?}"),
+    };
+    provisioner.expect(&needs);
+    for request in &needs.required {
+        let bytes = match request.key().kind() {
+            FileKind::ClassicBibData => {
+                include_bytes!("../../../../tests/corpus/bibtex/cases/plain/references.bib")
+                    .to_vec()
+            }
+            FileKind::BibStyle => {
+                include_bytes!("../../../../tests/corpus/bibtex/styles/plain.bst").to_vec()
+            }
+            kind => panic!("unexpected classic resource kind: {kind:?}"),
+        };
+        provisioner
+            .provision(ResolvedFile {
+                request: request.key().clone(),
+                virtual_path: format!("/texlive/classic/{}", request.key().name()),
+                bytes,
+                expected_digest: None,
+            })
+            .expect("fixture resource");
+    }
+    let result = match session.process(&BibliographyJob::Classic(job), &provisioner.snapshot()) {
+        BibliographyAttempt::Finished(result) => result,
+        attempt => panic!("expected classic execution, got {attempt:?}"),
+    };
+    assert_eq!(
+        result.history(),
+        BibliographyHistory::Spotless,
+        "{result:?}"
+    );
+    assert_eq!(
+        result
+            .files()
+            .find(|file| file.path().as_str() == "/job/plain.bbl")
+            .expect("BBL")
+            .bytes(),
+        include_bytes!("../../../../tests/corpus/bibtex/cases/plain/plain.bbl"),
+    );
+}

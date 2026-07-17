@@ -17,7 +17,8 @@ pub enum VmValue {
     Integer(i64),
     String(String),
     Function(FunctionId),
-    /// An assignment target, produced only by a quoted mutable symbol.
+    /// A quoted mutable symbol. It is an assignment target for `:=` and a
+    /// deferred getter when consumed by a control-flow builtin.
     Variable(SymbolId),
     Missing,
 }
@@ -145,10 +146,17 @@ enum Frame {
         pc: usize,
     },
     While {
-        condition: FunctionId,
-        body: FunctionId,
+        condition: Callable,
+        body: Callable,
         state: WhileState,
     },
+}
+
+#[derive(Clone, Copy)]
+enum Callable {
+    Function(FunctionId),
+    /// A quoted mutable symbol, invoked by reading its current value.
+    Variable(SymbolId),
 }
 
 #[derive(Clone, Copy)]
@@ -368,11 +376,11 @@ impl<'a> Vm<'a> {
         true
     }
 
-    fn while_frame(&mut self, condition: FunctionId, body: FunctionId, state: WhileState) {
+    fn while_frame(&mut self, condition: Callable, body: Callable, state: WhileState) {
         match state {
             WhileState::RunCondition => {
                 self.set_while_state(WhileState::CheckCondition);
-                self.push_function(condition);
+                self.call_callable(condition);
             }
             WhileState::CheckCondition => {
                 let Some(condition) = self.pop_integer() else {
@@ -382,7 +390,7 @@ impl<'a> Vm<'a> {
                     self.frames.pop();
                 } else {
                     self.set_while_state(WhileState::RunBody);
-                    self.push_function(body);
+                    self.call_callable(body);
                 }
             }
             WhileState::RunBody => self.set_while_state(WhileState::RunCondition),
@@ -665,13 +673,13 @@ impl<'a> Vm<'a> {
     }
 
     fn if_builtin(&mut self) {
-        let else_function = self.pop_function();
-        let then_function = self.pop_function();
+        let else_function = self.pop_callable();
+        let then_function = self.pop_callable();
         let condition = self.pop_integer();
         if let (Some(else_function), Some(then_function), Some(condition)) =
             (else_function, then_function, condition)
         {
-            self.push_function(if condition > 0 {
+            self.call_callable(if condition > 0 {
                 then_function
             } else {
                 else_function
@@ -680,8 +688,8 @@ impl<'a> Vm<'a> {
     }
 
     fn while_builtin(&mut self) {
-        let body = self.pop_function();
-        let condition = self.pop_function();
+        let body = self.pop_callable();
+        let condition = self.pop_callable();
         let (Some(body), Some(condition)) = (body, condition) else {
             return;
         };
@@ -909,14 +917,26 @@ impl<'a> Vm<'a> {
             None => None,
         }
     }
-    fn pop_function(&mut self) -> Option<FunctionId> {
+    fn pop_callable(&mut self) -> Option<Callable> {
         match self.pop() {
-            Some(VmValue::Function(value)) => Some(value),
+            Some(VmValue::Function(value)) => Some(Callable::Function(value)),
+            Some(VmValue::Variable(value)) => Some(Callable::Variable(value)),
             Some(_) => {
                 self.wrong_type();
                 None
             }
             None => None,
+        }
+    }
+    fn call_callable(&mut self, callable: Callable) {
+        match callable {
+            Callable::Function(function) => {
+                self.push_function(function);
+            }
+            Callable::Variable(symbol) => {
+                let value = self.read(symbol);
+                self.push(value);
+            }
         }
     }
     fn value_bytes(&self, value: &VmValue) -> usize {
