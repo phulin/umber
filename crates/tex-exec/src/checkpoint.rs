@@ -93,8 +93,10 @@ impl EngineCheckpoint {
         self.root_anchor
     }
 
-    /// Returns true only when both checkpoints carry a strong canonical store
-    /// identity and all remaining future-relevant roots compare exactly.
+    /// Returns true when both checkpoints carry matching authoritative
+    /// session-local 64-bit aHash projections and the remaining explicit roots
+    /// compare exactly. The projection is probabilistic: a rare collision may
+    /// cause incorrect suffix reuse.
     #[must_use]
     pub fn exact_future_state_matches(&self, other: &Self) -> bool {
         self.boundary == other.boundary
@@ -102,16 +104,16 @@ impl EngineCheckpoint {
             && self.modes == other.modes
     }
 
-    /// Returns whether this checkpoint already carries the optional strong
-    /// identity used by exact suffix-adoption comparisons.
+    /// Returns whether this checkpoint already carries the optional
+    /// probabilistic identity used by suffix-adoption comparisons.
     #[doc(hidden)]
     #[must_use]
     pub fn has_exact_state_identity(&self) -> bool {
         self.universe.has_exact_state_identity()
     }
 
-    /// Computes the optional strong identity for an already retained
-    /// checkpoint without changing its restart roots.
+    /// Computes the optional session-local probabilistic identity for an
+    /// already retained checkpoint without changing its restart roots.
     #[doc(hidden)]
     pub fn with_exact_state_identity(
         &self,
@@ -123,7 +125,7 @@ impl EngineCheckpoint {
     }
 
     /// Rehomes revision-relative root metadata after a validated convergence
-    /// match while adopting the owner-exact state snapshot by reference.
+    /// match while adopting the owner-owned state snapshot by reference.
     pub fn rehome_converged_root(
         &self,
         substrate: &GenerationSubstrate,

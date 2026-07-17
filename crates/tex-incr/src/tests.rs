@@ -891,9 +891,9 @@ fn multi_page_baseline_distinguishes_comment_and_semantic_edits() {
             },
         )
         .expect("semantic edit");
-    // Exact-state convergence may legitimately match at the terminal
-    // boundary after all changed pages have already been reexecuted. That is
-    // not a false reuse: no old page suffix is adopted.
+    // Probabilistic state convergence may legitimately match at the terminal
+    // boundary after all changed pages have already been reexecuted. In this
+    // observed run no old page suffix is adopted.
     assert_eq!(semantic.reuse.same_history_stop, SameHistoryStop::Matched);
     assert!(semantic.reuse.pages_reused > 0);
     assert!(semantic.reuse.pages_retyped > 0);

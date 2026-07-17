@@ -191,11 +191,13 @@ pub struct ReuseMetrics {
 /// Why identical-history suffix adoption did or did not stop re-execution.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum SameHistoryStop {
-    /// A mapped schedule entry passed exact future-state verification.
+    /// A mapped schedule entry matched the authoritative probabilistic
+    /// future-state projection.
     Matched,
     /// The mapped named-boundary schedule differed from the accepted revision.
     ScheduleDiverged,
-    /// Every comparable boundary failed exact future-state verification.
+    /// Every comparable boundary missed the probabilistic future-state
+    /// projection.
     HashesDiverged,
     /// No old boundary after the restart anchor could be mapped and compared.
     NoComparableBoundary,

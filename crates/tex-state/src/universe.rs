@@ -689,13 +689,15 @@ impl Snapshot {
         self.state_hash
     }
 
-    /// Verifies equality of every future-relevant root retained by two named
-    /// checkpoints without treating the folded 64-bit history hash as proof.
+    /// Compares the probabilistic fixed-seed 64-bit aHash projection of every
+    /// future-relevant root retained by two named checkpoints.
     ///
     /// The canonical store identity is deliberately unavailable inside open
     /// groups, which are not named convergence boundaries; that case is a safe
     /// miss. Detached effect and artifact history is excluded; callers splice
-    /// those ordered prefixes separately.
+    /// those ordered prefixes separately. Equality is authoritative for this
+    /// session-local optimization, so a rare collision may cause incorrect
+    /// suffix reuse; durable identities retain their cryptographic contracts.
     #[must_use]
     pub fn exact_future_state_matches(&self, other: &Self) -> bool {
         self.exact_state_identity.is_some()
