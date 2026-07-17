@@ -86,6 +86,17 @@ classic output/invocation boundary owns line wrapping, file-open behavior,
 history rendering, and process status. Typed diagnostics are rendered into BLG
 and terminal bytes only after semantic ordering is fixed.
 
+Large `.bst` programs also expose the Web2C change file's dynamic allocation
+records. The immutable `bib-bst` program preserves each compiler-time
+transition in source order; the classic execution seam replays those records
+only into the BLG stream, using the exact `Reallocated … (elt_size=…) to …
+items from ….` form. In particular, the per-definition `singl_function`
+buffer grows from 50 slots and the shared `wiz_functions` buffer grows from
+3,000 slots, both with the reference's strict boundary condition. These
+records are charged with the compiled program so cache hits retain and replay
+identical bounded effects. Style `warning$` output remains a separate ordered
+terminal-and-BLG event, never conflated with allocation records.
+
 The four reference histories are `spotless`, `warning`, `error`, and `fatal`.
 Warnings and recoverable errors can still yield a complete BBL. In particular,
 operand-stack underflow is a recoverable VM error: execution continues through

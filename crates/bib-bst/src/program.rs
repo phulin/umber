@@ -214,6 +214,48 @@ pub struct ProgramCharge {
     pub work: usize,
     pub retained_bytes: usize,
 }
+
+/// One observable Web2C dynamic-allocation transition while compiling a
+/// classic style. The reference writes these records to the `.blg` stream.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Web2cReallocation {
+    array: &'static str,
+    element_size: usize,
+    old_capacity: usize,
+    new_capacity: usize,
+}
+impl Web2cReallocation {
+    pub(crate) const fn new(
+        array: &'static str,
+        element_size: usize,
+        old_capacity: usize,
+        new_capacity: usize,
+    ) -> Self {
+        Self {
+            array,
+            element_size,
+            old_capacity,
+            new_capacity,
+        }
+    }
+    #[must_use]
+    pub const fn array(self) -> &'static str {
+        self.array
+    }
+    #[must_use]
+    pub const fn element_size(self) -> usize {
+        self.element_size
+    }
+    #[must_use]
+    pub const fn old_capacity(self) -> usize {
+        self.old_capacity
+    }
+    #[must_use]
+    pub const fn new_capacity(self) -> usize {
+        self.new_capacity
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompiledStyle {
     declarations: Declarations,
@@ -222,6 +264,7 @@ pub struct CompiledStyle {
     command_locations: Vec<SourceLocation>,
     charge: ProgramCharge,
     pool_trace: Vec<String>,
+    web2c_reallocations: Vec<Web2cReallocation>,
 }
 impl CompiledStyle {
     #[must_use]
@@ -260,6 +303,12 @@ impl CompiledStyle {
         self.apply_pool_trace(&mut pool);
         pool.usage()
     }
+    /// Web2C allocation records in the order the reference emits while
+    /// scanning this style. Cache hits replay these immutable effects.
+    #[must_use]
+    pub fn web2c_reallocations(&self) -> &[Web2cReallocation] {
+        &self.web2c_reallocations
+    }
     pub(crate) fn with_command_locations(
         declarations: Declarations,
         functions: Vec<CompiledFunction>,
@@ -267,6 +316,7 @@ impl CompiledStyle {
         command_locations: Vec<SourceLocation>,
         charge: ProgramCharge,
         pool_trace: Vec<String>,
+        web2c_reallocations: Vec<Web2cReallocation>,
     ) -> Self {
         debug_assert_eq!(commands.len(), command_locations.len());
         Self {
@@ -276,6 +326,7 @@ impl CompiledStyle {
             command_locations,
             charge,
             pool_trace,
+            web2c_reallocations,
         }
     }
 }

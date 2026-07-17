@@ -5,7 +5,8 @@ use std::sync::Arc;
 use crate::lexer::{Token, TokenKind, lex};
 use crate::program::{
     Builtin, CompiledCommand, CompiledFunction, CompiledStyle, Declarations, FunctionId,
-    Instruction, ProgramCharge, SpecialSymbol, SymbolId, SymbolKind, builtin, fold,
+    Instruction, ProgramCharge, SpecialSymbol, SymbolId, SymbolKind, Web2cReallocation, builtin,
+    fold,
 };
 use crate::{CompileLimits, CompileStats, Diagnostic, DiagnosticKind, SourceLocation};
 
@@ -89,6 +90,9 @@ struct Compiler {
     work: usize,
     pool_trace: Vec<String>,
     anonymous_pool_index: usize,
+    web2c_reallocations: Vec<Web2cReallocation>,
+    web2c_wiz_used: usize,
+    web2c_wiz_capacity: usize,
 }
 impl Compiler {
     fn new(
@@ -127,6 +131,9 @@ impl Compiler {
             work,
             pool_trace: Vec::new(),
             anonymous_pool_index: 0,
+            web2c_reallocations: Vec::new(),
+            web2c_wiz_used: 0,
+            web2c_wiz_capacity: WIZ_FUNCTION_SPACE,
         }
     }
     fn parse(&mut self) {
@@ -271,6 +278,7 @@ impl Compiler {
         }
         self.pool_trace.push(fold(&name));
         let body = self.body_group();
+        self.record_web2c_function(&body);
         // Reserve the stable function ID before lowering nested anonymous
         // bodies. They are ordinary functions but must not displace the named
         // declaration that introduced them.
@@ -495,6 +503,58 @@ impl Compiler {
             ),
             SymbolKind::UserFunction(function) => instructions.push(Instruction::Call(function)),
             _ => instructions.push(Instruction::Read(id)),
+        }
+    }
+    fn record_web2c_function(&mut self, body: &[Token]) {
+        let mut slots = 0;
+        let mut capacity = SINGLE_FUNCTION_SPACE;
+        let mut at = 0;
+        while at < body.len() {
+            match &body[at].kind {
+                TokenKind::Quote => {
+                    self.record_web2c_slots(&mut slots, &mut capacity, 2);
+                    at += 1;
+                }
+                TokenKind::OpenBrace => {
+                    self.record_web2c_slots(&mut slots, &mut capacity, 2);
+                    let (nested, end) = nested_body(body, at);
+                    if let Some(end) = end {
+                        self.record_web2c_function(&nested);
+                        at = end;
+                    }
+                }
+                TokenKind::CloseBrace => {}
+                TokenKind::Integer(_) | TokenKind::String(_) | TokenKind::Identifier(_) => {
+                    self.record_web2c_slots(&mut slots, &mut capacity, 1);
+                }
+            }
+            at += 1;
+        }
+        // `end_of_def` occupies the last temporary instruction slot.
+        self.record_web2c_slots(&mut slots, &mut capacity, 1);
+        while self.web2c_wiz_used.saturating_add(slots) > self.web2c_wiz_capacity {
+            self.web2c_reallocations.push(Web2cReallocation::new(
+                "wiz_functions",
+                HASH_PTR_SIZE,
+                self.web2c_wiz_capacity,
+                self.web2c_wiz_capacity + WIZ_FUNCTION_SPACE,
+            ));
+            self.web2c_wiz_capacity += WIZ_FUNCTION_SPACE;
+        }
+        self.web2c_wiz_used += slots;
+    }
+    fn record_web2c_slots(&mut self, slots: &mut usize, capacity: &mut usize, count: usize) {
+        for _ in 0..count {
+            if *slots == *capacity {
+                self.web2c_reallocations.push(Web2cReallocation::new(
+                    "singl_function",
+                    HASH_PTR_SIZE,
+                    *capacity,
+                    *capacity + SINGLE_FUNCTION_SPACE,
+                ));
+                *capacity += SINGLE_FUNCTION_SPACE;
+            }
+            *slots += 1;
         }
     }
     fn identifiers_group(&mut self) -> Vec<String> {
@@ -738,6 +798,9 @@ impl Compiler {
                         .iter()
                         .map(String::len)
                         .sum::<usize>(),
+                )
+                .saturating_add(
+                    self.web2c_reallocations.len() * std::mem::size_of::<Web2cReallocation>(),
                 ),
         };
         let success = self.diagnostics.is_empty() && charge.fits(self.limits);
@@ -757,6 +820,7 @@ impl Compiler {
                     self.command_locations,
                     charge,
                     self.pool_trace,
+                    self.web2c_reallocations,
                 ))
             }),
             diagnostics: self.diagnostics,
@@ -769,6 +833,11 @@ impl Compiler {
         }
     }
 }
+
+const HASH_PTR_SIZE: usize = 4;
+const SINGLE_FUNCTION_SPACE: usize = 50;
+const WIZ_FUNCTION_SPACE: usize = 3_000;
+
 #[derive(Clone, Copy)]
 enum Invoke {
     Execute,

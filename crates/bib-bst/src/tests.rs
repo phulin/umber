@@ -209,3 +209,39 @@ fn compiler_pool_trace_keeps_web2c_integer_and_implicit_function_names() {
     assert_eq!(pool.usage().strings(), 86);
     assert_eq!(pool.usage().characters(), 484);
 }
+
+#[test]
+fn compiler_records_web2c_single_function_reallocation_at_the_exact_threshold() {
+    let mut source = b"ENTRY {} {} {} FUNCTION {emit} { ".to_vec();
+    for _ in 0..50 {
+        source.extend_from_slice(b"skip$ ");
+    }
+    source.extend_from_slice(b"} READ EXECUTE {emit}");
+    let compiled = compile(&source, CompileLimits::default());
+    let style = compiled.program().expect("valid large function");
+    assert_eq!(style.web2c_reallocations().len(), 1);
+    let event = style.web2c_reallocations()[0];
+    assert_eq!(event.array(), "singl_function");
+    assert_eq!(event.element_size(), 4);
+    assert_eq!(event.old_capacity(), 50);
+    assert_eq!(event.new_capacity(), 100);
+}
+
+#[test]
+fn compiler_records_wizard_reallocation_after_the_strict_capacity_boundary() {
+    let mut source = b"ENTRY {} {} {} FUNCTION {emit} { ".to_vec();
+    for _ in 0..3_000 {
+        source.extend_from_slice(b"skip$ ");
+    }
+    source.extend_from_slice(b"} READ EXECUTE {emit}");
+    let compiled = compile(&source, CompileLimits::default());
+    let style = compiled.program().expect("valid large function");
+    let event = style
+        .web2c_reallocations()
+        .iter()
+        .find(|event| event.array() == "wiz_functions")
+        .expect("wizard reallocation");
+    assert_eq!(event.element_size(), 4);
+    assert_eq!(event.old_capacity(), 3_000);
+    assert_eq!(event.new_capacity(), 6_000);
+}

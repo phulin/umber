@@ -319,6 +319,15 @@ fn render_log(
     let mut log = String::from("This is BibTeX, Version 0.99d (TeX Live 2025)\n");
     log.push_str("Capacity: max_strings=200000, hash_size=200000, hash_prime=170003\n");
     render_control_header(&mut log, control);
+    for event in style.web2c_reallocations() {
+        log.push_str(&format!(
+            "Reallocated {} (elt_size={}) to {} items from {}.\n",
+            event.array(),
+            event.element_size(),
+            event.new_capacity(),
+            event.old_capacity(),
+        ));
+    }
     for diagnostic in database.diagnostics() {
         render_warning(&mut log, diagnostic.message(), diagnostic.source());
     }

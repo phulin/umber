@@ -17,6 +17,7 @@ pub use pool::{
 pub use program::{
     Builtin, CompiledCommand, CompiledFunction, CompiledStyle, Declarations, FunctionId,
     Instruction, ProgramCharge, SpecialSymbol, StringId, Symbol, SymbolId, SymbolKind,
+    Web2cReallocation,
 };
 
 /// Hard limits for one style compilation.
