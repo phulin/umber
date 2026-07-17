@@ -2,6 +2,7 @@
 
 mod bbl;
 mod bibtex;
+mod xml;
 
 use bib_model::{GeneratedFile, OutputRequest, ProcessedBibliography};
 use bib_unicode::UnicodeData;
@@ -10,6 +11,10 @@ pub use bbl::{BblOutputFailure, BblOutputFailureKind, BblSerializer};
 pub use bibtex::{
     BibtexCase, BibtexMacro, BibtexOptions, BibtexOutputFailure, BibtexOutputFailureKind,
     BibtexSerializer,
+};
+pub use xml::{
+    BBL_XML_NAMESPACE, BIBLATEX_XML_NAMESPACE, BblXmlSerializer, BibLatexXmlSerializer,
+    XmlOutputFailure, XmlOutputFailureKind, XmlSchemaKind, generate_xml_schema,
 };
 
 #[derive(Clone, Copy, Debug)]

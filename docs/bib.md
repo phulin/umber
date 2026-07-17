@@ -2,9 +2,9 @@
 
 Status: foundation contracts, pinned Unicode utilities, bounded XML and
 BibTeX inputs, deterministic cross-entry graphs, structured names,
-data-list/sorting, labeling/uniqueness, exact BBL 3.3 serialization, and exact
-detached BibTeX serialization are implemented; the remaining secondary
-serializers, session, and project integration continue in dependency order.
+data-list/sorting, labeling/uniqueness, exact BBL 3.3, BibTeX, BibLaTeXML, and
+BBLXML serialization are implemented; the remaining DOT serializer, session,
+and project integration continue in dependency order.
 
 This document defines Umber's pure-Rust bibliography subsystem. Every Rust
 package uses the `bib-*` prefix, and modules, types, commands, features, and
@@ -146,8 +146,9 @@ The workspace now contains these packages and dependency boundaries:
   presort, sort initials, and stable ordering;
 - `bib-label`: static and context-dependent entry processing, name visibility,
   hashes, label fields, extradate/title values, and uniqueness;
-- `bib-output`: detached deterministic BBL 3.3 and BibTeX serialization,
-  followed by the separately tracked XML and DOT output formats; and
+- `bib-output`: detached deterministic BBL 3.3, BibTeX, BibLaTeXML, and BBLXML
+  serialization plus deterministic Relax NG companion generation, followed by
+  the separately tracked DOT output format; and
 - `bib-engine`: the only ordinary dependency of `umber`, composing the stages
   and exposing resource-session and one-shot APIs.
 
@@ -272,6 +273,16 @@ processing and carry the control/config source location when available.
 
 `bib-input` consumes exact bytes from an `umber-vfs` snapshot. It never opens a
 path independently.
+
+The XML output boundary consumes only a frozen `ProcessedBibliography`, pinned
+Unicode compatibility data, and an explicit `OutputRequest`. BibLaTeXML uses
+the pinned `bltx` namespace and BBLXML uses the pinned `bbl` namespace. Both
+writers escape and normalize values in process, derive the XML-model companion
+name deterministically, honor explicit legacy encoding and newline policy, and
+enforce work and final-byte bounds with typed diagnostics. Relax NG companions
+are generated from the frozen document's field vocabulary in stable lexical
+order; neither serialization nor schema generation reads host files or invokes
+an XML subprocess.
 
 ### Control and configuration XML
 

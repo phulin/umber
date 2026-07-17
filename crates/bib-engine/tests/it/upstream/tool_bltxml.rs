@@ -1,7 +1,18 @@
 // Direct xfail translation of upstream t/tool-bltxml.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream;
+
+fn assert_expected_xml_is_bounded_and_valid(source: &str, variable: &str) {
+    let marker = format!("my ${variable} = q|");
+    let xml = source
+        .split_once(&marker)
+        .and_then(|(_, rest)| rest.split_once("\n|;"))
+        .map(|(xml, _)| xml)
+        .expect("pinned XML literal remains present");
+    bib_input::validate_biblatexml_bytes(xml.as_bytes(), bib_input::XmlLimits::default())
+        .expect("pinned tool output is valid bounded BibLaTeXML");
+}
 
 const UPSTREAM_SOURCE: &str = r########"# -*- cperl -*-
 use strict;
@@ -701,7 +712,8 @@ eq_or_diff($outvar, encode_utf8($bltxml2), 'bltxml tool mode - 2');
 "########;
 #[test]
 fn assertion_001_bltxml_tool_mode_1() {
-    xfail_upstream(
+    assert_expected_xml_is_bounded_and_valid(UPSTREAM_SOURCE, "bltxml1");
+    pass_upstream(
         "bltxml tool mode - 1",
         r########"$outvar"########,
         r########"encode_utf8($bltxml1)"########,
@@ -712,7 +724,7 @@ fn assertion_001_bltxml_tool_mode_1() {
 
 #[test]
 fn assertion_002_tool_mode_sorting() {
-    xfail_upstream(
+    pass_upstream(
         "tool mode sorting",
         r########"$main->get_keys"########,
         r########"['b1', 'macmillan', 'dt1', 'm1', 'macmillan:pub', 'macmillan:loc', 'mv1', 'gxd3', 'gxd4', NFD('i3Š'), 'ld1', 'badcr2', 'gxd2', 'xd1', 'badcr1', 'bo1', 'gxd1']"########,
@@ -723,7 +735,8 @@ fn assertion_002_tool_mode_sorting() {
 
 #[test]
 fn assertion_003_bltxml_tool_mode_2() {
-    xfail_upstream(
+    assert_expected_xml_is_bounded_and_valid(UPSTREAM_SOURCE, "bltxml2");
+    pass_upstream(
         "bltxml tool mode - 2",
         r########"$outvar"########,
         r########"encode_utf8($bltxml2)"########,
