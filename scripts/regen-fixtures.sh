@@ -730,6 +730,37 @@ regen_bibtex_area() {
         "$file" >&2
     fi
   done
+  for case in elsarticle-book elsarticle-article; do
+    case_dir="${tmp_root}/${case}"
+    mkdir -p "$case_dir"
+    cp "${repo_root}/tests/corpus/bibtex/cases/${case}/${case}.aux" \
+      "${repo_root}/tests/corpus/bibtex/cases/${case}/references.bib" \
+      "${repo_root}/tests/corpus/bibtex/styles/elsarticle-num.bst" "$case_dir/"
+    set +e
+    (
+      cd "$case_dir"
+      env -i PATH=/usr/bin:/bin LC_ALL=C LANGUAGE=C \
+        TEXMFCNF="${source_dir}/texk/kpathsea" BIBINPUTS=. BSTINPUTS=. \
+        "$executable" "$case" >"${case}.terminal" 2>&1
+    )
+    exit_status=$?
+    set -e
+    [[ "$exit_status" -eq 0 ]] || \
+      die "classic BibTeX real-world case ${case} exited with status ${exit_status}"
+    for extension in bbl blg terminal; do
+      file="${case}.${extension}"
+      [[ -f "${case_dir}/${file}" ]] || die "classic BibTeX did not produce ${file}"
+      if ! cmp -s "${case_dir}/${file}" \
+        "${repo_root}/tests/corpus/bibtex/cases/${case}/${file}"; then
+        cp "${case_dir}/${file}" \
+          "${repo_root}/tests/corpus/bibtex/cases/${case}/${file}.tmp"
+        mv "${repo_root}/tests/corpus/bibtex/cases/${case}/${file}.tmp" \
+          "${repo_root}/tests/corpus/bibtex/cases/${case}/${file}"
+        printf 'Classic BibTeX fixture updated: tests/corpus/bibtex/cases/%s/%s\n' \
+          "$case" "$file" >&2
+      fi
+    done
+  done
   manifest_tmp="${tmp_root}/manifest.json"
   jq \
     --arg bbl_bytes "$(wc -c < "${fixture_dir}/smoke.bbl" | tr -d ' ')" \
@@ -748,6 +779,18 @@ regen_bibtex_area() {
     --arg xampl_bib_sha256 "$(sha256_file "${repo_root}/tests/corpus/bibtex/cases/xampl/xampl.bib")" \
     --arg xampl_bbl_bytes "$(wc -c < "${repo_root}/tests/corpus/bibtex/cases/xampl/exampl.bbl" | tr -d ' ')" \
     --arg xampl_bbl_sha256 "$(sha256_file "${repo_root}/tests/corpus/bibtex/cases/xampl/exampl.bbl")" \
+    --arg elsarticle_book_bbl_bytes "$(wc -c < "${repo_root}/tests/corpus/bibtex/cases/elsarticle-book/elsarticle-book.bbl" | tr -d ' ')" \
+    --arg elsarticle_book_bbl_sha256 "$(sha256_file "${repo_root}/tests/corpus/bibtex/cases/elsarticle-book/elsarticle-book.bbl")" \
+    --arg elsarticle_book_blg_bytes "$(wc -c < "${repo_root}/tests/corpus/bibtex/cases/elsarticle-book/elsarticle-book.blg" | tr -d ' ')" \
+    --arg elsarticle_book_blg_sha256 "$(sha256_file "${repo_root}/tests/corpus/bibtex/cases/elsarticle-book/elsarticle-book.blg")" \
+    --arg elsarticle_book_terminal_bytes "$(wc -c < "${repo_root}/tests/corpus/bibtex/cases/elsarticle-book/elsarticle-book.terminal" | tr -d ' ')" \
+    --arg elsarticle_book_terminal_sha256 "$(sha256_file "${repo_root}/tests/corpus/bibtex/cases/elsarticle-book/elsarticle-book.terminal")" \
+    --arg elsarticle_article_bbl_bytes "$(wc -c < "${repo_root}/tests/corpus/bibtex/cases/elsarticle-article/elsarticle-article.bbl" | tr -d ' ')" \
+    --arg elsarticle_article_bbl_sha256 "$(sha256_file "${repo_root}/tests/corpus/bibtex/cases/elsarticle-article/elsarticle-article.bbl")" \
+    --arg elsarticle_article_blg_bytes "$(wc -c < "${repo_root}/tests/corpus/bibtex/cases/elsarticle-article/elsarticle-article.blg" | tr -d ' ')" \
+    --arg elsarticle_article_blg_sha256 "$(sha256_file "${repo_root}/tests/corpus/bibtex/cases/elsarticle-article/elsarticle-article.blg")" \
+    --arg elsarticle_article_terminal_bytes "$(wc -c < "${repo_root}/tests/corpus/bibtex/cases/elsarticle-article/elsarticle-article.terminal" | tr -d ' ')" \
+    --arg elsarticle_article_terminal_sha256 "$(sha256_file "${repo_root}/tests/corpus/bibtex/cases/elsarticle-article/elsarticle-article.terminal")" \
     '(.cases[] | select(.name == "smoke") | .files[] | select(.role == "bbl-output")) |=
        (.bytes = ($bbl_bytes | tonumber) | .sha256 = $bbl_sha256) |
      (.cases[] | select(.name == "smoke") | .files[] | select(.role == "blg-output")) |=
@@ -768,7 +811,25 @@ regen_bibtex_area() {
        (.bytes = ($xampl_bib_bytes | tonumber) | .sha256 = $xampl_bib_sha256) |
      (.standard_style_execution_cases[] | select(.name == "xampl") | .files[] |
        select(.path == "cases/xampl/exampl.bbl")) |=
-       (.bytes = ($xampl_bbl_bytes | tonumber) | .sha256 = $xampl_bbl_sha256)' \
+       (.bytes = ($xampl_bbl_bytes | tonumber) | .sha256 = $xampl_bbl_sha256) |
+     (.real_world_execution_cases[] | select(.name == "elsarticle-book") | .files[] |
+       select(.path == "cases/elsarticle-book/elsarticle-book.bbl")) |=
+       (.bytes = ($elsarticle_book_bbl_bytes | tonumber) | .sha256 = $elsarticle_book_bbl_sha256) |
+     (.real_world_execution_cases[] | select(.name == "elsarticle-book") | .files[] |
+       select(.path == "cases/elsarticle-book/elsarticle-book.blg")) |=
+       (.bytes = ($elsarticle_book_blg_bytes | tonumber) | .sha256 = $elsarticle_book_blg_sha256) |
+     (.real_world_execution_cases[] | select(.name == "elsarticle-book") | .files[] |
+       select(.path == "cases/elsarticle-book/elsarticle-book.terminal")) |=
+       (.bytes = ($elsarticle_book_terminal_bytes | tonumber) | .sha256 = $elsarticle_book_terminal_sha256) |
+     (.real_world_execution_cases[] | select(.name == "elsarticle-article") | .files[] |
+       select(.path == "cases/elsarticle-article/elsarticle-article.bbl")) |=
+       (.bytes = ($elsarticle_article_bbl_bytes | tonumber) | .sha256 = $elsarticle_article_bbl_sha256) |
+     (.real_world_execution_cases[] | select(.name == "elsarticle-article") | .files[] |
+       select(.path == "cases/elsarticle-article/elsarticle-article.blg")) |=
+       (.bytes = ($elsarticle_article_blg_bytes | tonumber) | .sha256 = $elsarticle_article_blg_sha256) |
+     (.real_world_execution_cases[] | select(.name == "elsarticle-article") | .files[] |
+       select(.path == "cases/elsarticle-article/elsarticle-article.terminal")) |=
+       (.bytes = ($elsarticle_article_terminal_bytes | tonumber) | .sha256 = $elsarticle_article_terminal_sha256)' \
     "${repo_root}/tests/corpus/bibtex/manifest.json" > "$manifest_tmp"
   mv "$manifest_tmp" "${repo_root}/tests/corpus/bibtex/manifest.json"
   rm -rf "$tmp_root"

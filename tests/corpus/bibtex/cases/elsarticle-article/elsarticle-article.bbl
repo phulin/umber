@@ -1,0 +1,15 @@
+\begin{thebibliography}{1}
+\expandafter\ifx\csname url\endcsname\relax
+  \def\url#1{\texttt{#1}}\fi
+\expandafter\ifx\csname urlprefix\endcsname\relax\def\urlprefix{URL }\fi
+\expandafter\ifx\csname href\endcsname\relax
+  \def\href#1#2{#2} \def\path#1{#1}\fi
+
+\bibitem{knuth84}
+D.~Knuth, \href{https://example.test/literate}{Literate programming}, The
+  Computer Journal 27~(2) (1984) 97--111.
+\newblock \href {https://doi.org/10.1093/comjnl/27.2.97}
+  {\path{doi:10.1093/comjnl/27.2.97}}.
+\newline\urlprefix\url{https://example.test/literate}
+
+\end{thebibliography}

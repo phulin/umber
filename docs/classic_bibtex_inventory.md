@@ -246,6 +246,20 @@ identities. No normalization is applied. The BLG also records the configured
 capacity banner and all 37 built-in counters, providing a direct executable
 census check.
 
+The real-world corpus is deliberately separate from the compact smoke and
+upstream cases. A candidate must be redistributable under a recorded license,
+retain its upstream provenance/version/revision and SHA-256 identity in
+`tests/corpus/bibtex/manifest.json`, run under the pinned 0.99d executable,
+and add measured style-path or reference-built-in coverage. The initial
+selection is the LPPL-1.3-or-later `elsarticle-num.bst` 2.1 from TeX Live 2025.
+Its `elsarticle-book` case covers the style startup and book/publisher path;
+its `elsarticle-article` case additionally covers article volume/page, DOI,
+and URL formatting and observes `change.case$`, `substring$`, and `swap$`.
+Both use the public `ClassicBibCommand` and require exact status, terminal,
+BBL, and BLG bytes. Candidates that expose an unresolved public-boundary
+parity gap are documented as follow-up work rather than admitted with an
+allowance.
+
 The only supported live-reference rewrite path is:
 
 ```bash

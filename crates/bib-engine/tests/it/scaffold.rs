@@ -238,6 +238,112 @@ fn classic_fixture_manifest_and_inventory_are_complete_and_pinned() {
         }
     }
 
+    let real_world_styles = manifest["real_world_styles"]
+        .as_array()
+        .expect("real-world styles must be an array");
+    assert_eq!(real_world_styles.len(), 1);
+    let elsarticle = &real_world_styles[0];
+    assert_eq!(elsarticle["name"], "elsarticle-num");
+    assert_eq!(
+        elsarticle["source"],
+        "TeX Live 2025 texmf-dist/bibtex/bst/elsarticle/elsarticle-num.bst"
+    );
+    assert_eq!(
+        elsarticle["upstream_url"],
+        "https://ctan.org/pkg/elsarticle"
+    );
+    assert_eq!(elsarticle["version"], "2.1");
+    assert_eq!(elsarticle["revision"], "272 (2025-01-09)");
+    assert_eq!(elsarticle["license"], "LPPL-1.3-or-later");
+    assert_file_identity(
+        &root.join(
+            elsarticle["path"]
+                .as_str()
+                .expect("real-world style path must be text"),
+        ),
+        elsarticle["bytes"]
+            .as_u64()
+            .expect("real-world style bytes must be unsigned"),
+        elsarticle["sha256"]
+            .as_str()
+            .expect("real-world style SHA-256 must be text"),
+    );
+
+    let real_world_cases = manifest["real_world_execution_cases"]
+        .as_array()
+        .expect("real-world execution cases must be an array");
+    assert_eq!(real_world_cases.len(), 2);
+    for (case, name) in real_world_cases
+        .iter()
+        .zip(["elsarticle-book", "elsarticle-article"])
+    {
+        assert_eq!(case["name"], name);
+        assert_eq!(case["style"], "elsarticle-num");
+        assert_eq!(case["command"], serde_json::json!(["bibtex", name]));
+        assert_eq!(case["status"], 0);
+        assert_eq!(case["history"], "spotless");
+        let coverage = &case["coverage"];
+        assert!(
+            !coverage["paths"]
+                .as_array()
+                .expect("coverage paths must be an array")
+                .is_empty(),
+            "{name} must document the style paths it adds"
+        );
+        let files = case["files"]
+            .as_array()
+            .expect("real-world execution files must be an array");
+        let mut roles = BTreeSet::new();
+        let mut log_path = None;
+        for file in files {
+            let path = file["path"]
+                .as_str()
+                .expect("real-world fixture path must be text");
+            roles.insert(file["role"].as_str().expect("fixture role must be text"));
+            if file["role"] == "blg-output" {
+                log_path = Some(root.join(path));
+            }
+            assert_file_identity(
+                &root.join(path),
+                file["bytes"].as_u64().expect("bytes must be unsigned"),
+                file["sha256"].as_str().expect("SHA-256 must be text"),
+            );
+        }
+        assert_eq!(
+            roles,
+            BTreeSet::from([
+                "aux-input",
+                "bbl-output",
+                "bib-input",
+                "blg-output",
+                "terminal-output",
+            ])
+        );
+        let log = fs::read_to_string(log_path.expect("BLG fixture"))
+            .expect("real-world BLG fixture must be UTF-8");
+        for (builtin, expected) in coverage["reference_builtin_calls"]
+            .as_object()
+            .expect("reference builtin calls must be an object")
+        {
+            let actual = log
+                .lines()
+                .find_map(|line| {
+                    line.split_once(" -- ")
+                        .filter(|(found, _)| *found == builtin)
+                })
+                .and_then(|(_, calls)| calls.parse::<u64>().ok())
+                .unwrap_or_else(|| panic!("missing builtin count for {builtin} in {name}"));
+            assert_eq!(
+                actual,
+                expected.as_u64().expect("call count must be unsigned")
+            );
+        }
+    }
+    assert_eq!(
+        real_world_cases[1]["coverage"]["adds_builtins_beyond"],
+        "elsarticle-book"
+    );
+
     let cases = manifest["cases"]
         .as_array()
         .expect("cases must be an array");
@@ -289,6 +395,23 @@ fn classic_fixture_manifest_and_inventory_are_complete_and_pinned() {
             let case_path = path
                 .strip_prefix("cases/")
                 .expect("execution fixture must live below cases/");
+            assert!(
+                declared.insert(case_path.to_owned()),
+                "duplicate path: {path}"
+            );
+        }
+    }
+    for case in real_world_cases {
+        for file in case["files"]
+            .as_array()
+            .expect("execution files must be an array")
+        {
+            let path = file["path"]
+                .as_str()
+                .expect("execution fixture path must be text");
+            let case_path = path
+                .strip_prefix("cases/")
+                .expect("case fixture must live below cases/");
             assert!(
                 declared.insert(case_path.to_owned()),
                 "duplicate path: {path}"

@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
 use bib_engine::{
-    BibAttempt, BibConfigurationBuilder, BibJob, BibOptionsBuilder, BibResultBuilder, BibSession,
-    BibliographyAttempt, BibliographyBackend, BibliographyDetection, BibliographyDetector,
-    BibliographyDocument, BibliographyFailure, BibliographyHistory, BibliographyJob,
-    BibliographyMode, BibliographyResult, BibliographyResultError, BibliographySession,
-    BibliographyStats, ClassicBibFailure, ClassicBibJob, ClassicBibOptions, CompatibilityVersion,
-    FileKind, FileProvisioner, GeneratedFile, OutputFormat, OutputRequest,
-    ProcessedBibliographyBuilder, ResolvedFile, VfsLimits, VirtualPath,
+    BibAttempt, BibConfigurationBuilder, BibExitStatus, BibJob, BibOptionsBuilder,
+    BibResultBuilder, BibSession, BibliographyAttempt, BibliographyBackend, BibliographyDetection,
+    BibliographyDetector, BibliographyDocument, BibliographyFailure, BibliographyHistory,
+    BibliographyJob, BibliographyMode, BibliographyResult, BibliographyResultError,
+    BibliographySession, BibliographyStats, ClassicBibCommand, ClassicBibFailure, ClassicBibJob,
+    ClassicBibOptions, CompatibilityVersion, FileKind, FileProvisioner, GeneratedFile,
+    OutputFormat, OutputRequest, ProcessedBibliographyBuilder, ResolvedFile, VfsLimits,
+    VirtualPath,
 };
 
 #[test]
@@ -378,6 +379,42 @@ fn classic_tex_live_xampl_executes_through_the_public_session() {
     );
 }
 
+#[test]
+fn classic_real_world_elsarticle_book_has_exact_public_command_parity() {
+    execute_real_world_command(
+        "elsarticle-book",
+        include_bytes!("../../../../tests/corpus/bibtex/cases/elsarticle-book/elsarticle-book.aux"),
+        include_bytes!("../../../../tests/corpus/bibtex/cases/elsarticle-book/references.bib"),
+        include_bytes!("../../../../tests/corpus/bibtex/styles/elsarticle-num.bst"),
+        include_bytes!("../../../../tests/corpus/bibtex/cases/elsarticle-book/elsarticle-book.bbl"),
+        include_bytes!("../../../../tests/corpus/bibtex/cases/elsarticle-book/elsarticle-book.blg"),
+        include_bytes!(
+            "../../../../tests/corpus/bibtex/cases/elsarticle-book/elsarticle-book.terminal"
+        ),
+    );
+}
+
+#[test]
+fn classic_real_world_elsarticle_article_has_exact_public_command_parity() {
+    execute_real_world_command(
+        "elsarticle-article",
+        include_bytes!(
+            "../../../../tests/corpus/bibtex/cases/elsarticle-article/elsarticle-article.aux"
+        ),
+        include_bytes!("../../../../tests/corpus/bibtex/cases/elsarticle-article/references.bib"),
+        include_bytes!("../../../../tests/corpus/bibtex/styles/elsarticle-num.bst"),
+        include_bytes!(
+            "../../../../tests/corpus/bibtex/cases/elsarticle-article/elsarticle-article.bbl"
+        ),
+        include_bytes!(
+            "../../../../tests/corpus/bibtex/cases/elsarticle-article/elsarticle-article.blg"
+        ),
+        include_bytes!(
+            "../../../../tests/corpus/bibtex/cases/elsarticle-article/elsarticle-article.terminal"
+        ),
+    );
+}
+
 fn execute_standard_style(
     name: &str,
     aux_bytes: &[u8],
@@ -429,4 +466,52 @@ fn execute_standard_style(
             .bytes(),
         expected_bbl,
     );
+}
+
+fn execute_real_world_command(
+    name: &str,
+    aux_bytes: &[u8],
+    database_bytes: &[u8],
+    style_bytes: &[u8],
+    expected_bbl: &[u8],
+    expected_blg: &[u8],
+    expected_terminal: &[u8],
+) {
+    let command = ClassicBibCommand::parse([name]).expect("fixture command");
+    let mut files = FileProvisioner::new(VfsLimits::default()).expect("VFS");
+    files
+        .register_user(command.aux_path().clone(), aux_bytes.to_vec())
+        .expect("fixture AUX");
+    let output = command.execute_provisioned(&mut files, |request| {
+        let bytes = match request.key().kind() {
+            FileKind::ClassicBibData => database_bytes.to_vec(),
+            FileKind::BibStyle => style_bytes.to_vec(),
+            kind => panic!("unexpected fixture resource kind: {kind:?}"),
+        };
+        Some(ResolvedFile {
+            request: request.key().clone(),
+            virtual_path: format!("/texlive/classic/{}", request.key().name()),
+            bytes,
+            expected_digest: None,
+        })
+    });
+    assert_eq!(output.status(), BibExitStatus::Success, "{output:?}");
+    assert_eq!(output.terminal(), expected_terminal);
+    let result = output.result().expect("publishable classic result");
+    assert_eq!(
+        result.history(),
+        BibliographyHistory::Spotless,
+        "{result:?}"
+    );
+    for (extension, expected) in [("bbl", expected_bbl), ("blg", expected_blg)] {
+        assert_eq!(
+            result
+                .files()
+                .find(|file| file.path().as_str() == format!("/job/{name}.{extension}"))
+                .expect("expected classic artifact")
+                .bytes(),
+            expected,
+            "{extension} parity for {name}",
+        );
+    }
 }
