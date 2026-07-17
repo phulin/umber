@@ -268,9 +268,10 @@ compares DVI and auxiliary artifacts with TeX Live 2026, and verifies the
 production distribution: `scripts/build-texlive-snapshot.sh` enforces full
 runtime inventory floors and package metadata hints. `scripts/check-latex-wasm.sh`
 publishes that closure with the format, builds the real WASM package, and
-requires three-pass native/WASM article parity. Neither command belongs in the
-ordinary workspace test tier because both intentionally build live pinned
-distribution artifacts.
+exports that same format explicitly for the native run before requiring
+byte-identical three-pass native/WASM article parity. Neither command belongs
+in the ordinary workspace test tier because both intentionally build live
+pinned distribution artifacts.
 
 `scripts/test-publish-texlive-r2.sh` is the hermetic contract test for the R2
 release command and runs in `scripts/check-and-test.sh`. Mock rclone and curl

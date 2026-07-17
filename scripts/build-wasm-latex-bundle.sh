@@ -5,16 +5,20 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 texmf_dist="${UMBER_TEXMF_DIST:-/usr/local/texlive/2026/texmf-dist}"
 runtime_lock="${repo_root}/tests/latex-runtime.lock"
 output_dir="${repo_root}/target/latex-wasm"
+format_output=""
 objects_base_url="https://example.invalid/umber/latex/objects/"
 
 usage() {
   cat <<'EOF'
-usage: scripts/build-wasm-latex-bundle.sh [--texmf-dist PATH] [--output-dir PATH] [--objects-base-url URL]
+usage: scripts/build-wasm-latex-bundle.sh [--texmf-dist PATH] [--output-dir PATH]
+                                          [--format-output PATH] [--objects-base-url URL]
 
 Builds the deterministic Umber-native LaTeX format, stages the exact pinned
 base-corpus runtime closure, and publishes both through the content-addressed
 WASM manifest. The URL must identify the deployment's immutable objects/
 directory; the default is a non-deployable example URL for local verification.
+When --format-output is provided, the exact published format is also copied to
+that explicit path for a native parity run.
 EOF
 }
 
@@ -28,6 +32,11 @@ while [[ $# -gt 0 ]]; do
     --output-dir)
       [[ $# -ge 2 ]] || { printf '%s\n' 'missing path after --output-dir' >&2; exit 2; }
       output_dir="$2"
+      shift 2
+      ;;
+    --format-output)
+      [[ $# -ge 2 ]] || { printf '%s\n' 'missing path after --format-output' >&2; exit 2; }
+      format_output="$2"
       shift 2
       ;;
     --objects-base-url)
@@ -145,6 +154,11 @@ second="${tmp_root}/second"
 "$publisher" "$config" "$second"
 diff -qr "$first" "$second" >/dev/null || fail "two clean publications differ"
 "$publisher" "$config" "$output_dir"
+
+if [[ -n "$format_output" ]]; then
+  mkdir -p "$(dirname "$format_output")"
+  cp "${format_dir}/latex.fmt" "$format_output"
+fi
 
 printf 'Umber LaTeX WASM bundle: format=%s files=%s output=%s\n' \
   "$(sha256 "${format_dir}/latex.fmt")" \

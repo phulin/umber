@@ -167,7 +167,9 @@ The package example under `examples/latex.html` is the same browser workflow.
   closure.
 - `scripts/check-latex-wasm.sh` builds the package and hosted bundle, runs the
   article corpus for three passes inside the generated WASM module, and
-  requires exact native DVI/AUX/TOC parity.
+  requires exact native DVI/AUX/TOC parity. The bundle builder exports the
+  exact published format to an explicit temporary native path, so the gate has
+  no dependency on a pre-existing `target/latex-format/latex.fmt`.
 - `scripts/check-latex-parity.sh` derives a whole-repository LaTeX2e DVI cohort
   from one hash-pinned upstream archive and runs it against TeX Live 2025. The
   pinned scopes yield 295 shipout-log candidates: 286 actual classic-LaTeX

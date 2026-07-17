@@ -364,6 +364,45 @@ test("formats remain inline and download through the verified object cache", asy
 	);
 });
 
+test("prefetches dependency closures without returning unrequested responses", async () => {
+	const data = await fixture();
+	const requestedObject = data.files["tex:plain.tex"].object;
+	const dependencyObjects = new Set([
+		data.files["tfm:cmr10.tfm"].object,
+		data.files["tex:hint.tex"].object,
+	]);
+	const calls = [];
+	const { resolver } = resolverFor(data, {
+		async fetch(url) {
+			const object = url.split("/").at(-1);
+			calls.push(object);
+			const bytes = data.objectBytes.get(object);
+			return bytes === undefined
+				? response(new Uint8Array(), { status: 404 })
+				: response(bytes);
+		},
+	});
+
+	const downloads = await resolver.resolve([
+		{ kind: "tex", name: "plain.tex" },
+	]);
+
+	assert.deepEqual(
+		downloads.map(({ type, domain, kind, name }) => ({
+			type,
+			domain,
+			kind,
+			name,
+		})),
+		[{ type: "file", domain: "tex", kind: "tex", name: "plain.tex" }],
+	);
+	assert(calls.includes(requestedObject));
+	assert.deepEqual(
+		new Set(calls.filter((object) => dependencyObjects.has(object))),
+		dependencyObjects,
+	);
+});
+
 test("cancellation and oversized streamed objects remain bounded", async () => {
 	const data = await fixture();
 	const controller = new AbortController();

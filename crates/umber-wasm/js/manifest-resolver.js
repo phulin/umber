@@ -214,7 +214,7 @@ export class HttpManifestResolver {
 		);
 		throwIfAborted(signal);
 		return unavailable.concat(
-			required.jobs.flatMap((job) =>
+			jobs.flatMap((job) =>
 				job.requested && results.has(job.key) ? [results.get(job.key)] : [],
 			),
 		);
