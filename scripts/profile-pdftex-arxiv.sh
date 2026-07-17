@@ -26,6 +26,8 @@ usage() {
 usage: $0 [setup|smoke|all|check-sample]
 
 Build a pinned instrumented pdfTeX and profile the committed 100-paper sample.
+Each result preserves primitive usage, the raw recorder inputs.fls, and a
+host-independent files.txt containing normalized /texlive paths.
 
   setup         build pdfTeX and the pdflatex format under PDFTEX_PROFILE_ROOT
   smoke         download/profile the sample with the existing build
@@ -193,6 +195,7 @@ process_sample() {
     tex_env "$PDFTEX" \
       --progname=pdflatex \
       -fmt="$FORMAT" \
+      -recorder \
       -interaction=nonstopmode \
       -halt-on-error \
       "$(basename "$main")"
@@ -202,10 +205,29 @@ process_sample() {
   rg '^PDFTEX_PRIMITIVE_USED \\' "$result/pdftex.stdout" \
     | sed 's/^PDFTEX_PRIMITIVE_USED //' \
     | sort -u >"$result/primitives.txt" || true
-  local count
+  local fls
+  fls="$(dirname "$main")/$(basename "${main%.*}").fls"
+  if [[ -f "$fls" ]]; then
+    cp "$fls" "$result/inputs.fls"
+    # Recorder paths are host-specific. Preserve the raw trace for audit, and
+    # also emit snapshot-relative paths that replay identically on every host.
+    LC_ALL=C awk '
+      /^INPUT / {
+        path = substr($0, 7)
+        marker = "/texmf-dist/"
+        start = index(path, marker)
+        if (start != 0) print "/texlive/" substr(path, start + length(marker))
+      }
+    ' "$fls" | LC_ALL=C sort -u >"$result/files.txt"
+  else
+    : >"$result/inputs.fls"
+    : >"$result/files.txt"
+  fi
+  local count input_count
   count="$(wc -l <"$result/primitives.txt" | tr -d ' ')"
-  printf '%s\t%s\t%s\t%s\t%s\n' \
-    "$id" "$category" "${main#"$directory/"}" "$rc" "$count" \
+  input_count="$(wc -l <"$result/files.txt" | tr -d ' ')"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$id" "$category" "${main#"$directory/"}" "$rc" "$count" "$input_count" \
     | tee "$result/summary.tsv"
 }
 
@@ -237,7 +259,7 @@ smoke() {
 
   local key
   local -a primitive_files=()
-  printf 'id\tcategory\tentrypoint\texit\tprimitive_count\n' >"$ROOT/results/summary.tsv"
+  printf 'id\tcategory\tentrypoint\texit\tprimitive_count\tinput_count\n' >"$ROOT/results/summary.tsv"
   while IFS=$'\t' read -r id _; do
     key=${id//\//_}
     if [[ -f "$ROOT/results/$key/summary.tsv" ]]; then
