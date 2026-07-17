@@ -710,6 +710,30 @@ Each implementation task ports the assertions it makes pass. Internal helper
 tests remain beside their owning modules under `src/.../tests.rs`; public
 compatibility tests exercise only the `bib-engine` facade.
 
+The two upstream files that exercise several stages use assertion-level
+ownership rather than file-level ownership. Their Rust modules enforce the
+following ledger before entering the strict xfail helper; an assertion absent
+from the ledger fails instead of silently inheriting the input-stage owner.
+
+| Semantic owner                               | Issue            | `basic-misc` assertion ordinals                   | `bibtex-aliases` assertion ordinals |  Count |
+| -------------------------------------------- | ---------------- | ------------------------------------------------- | ----------------------------------- | -----: |
+| Graph, sourcemaps, and validation            | `umber2-rti9.6`  | 7–9, 19–28, 38–42, 45–46, 56, 58–60, 64–67, 70–72 | 1–15, 17–25                         |     55 |
+| Names and visibility                         | `umber2-rti9.7`  | 29–35, 57                                         | 16                                  |      9 |
+| Sorting and list construction                | `umber2-rti9.8`  | 2–4, 36–37                                        | —                                   |      5 |
+| Labels and uniqueness                        | `umber2-rti9.9`  | 1, 11–12                                          | —                                   |      3 |
+| Exact BBL entry output                       | `umber2-rti9.10` | 5, 10, 13–18, 44, 61–63, 68–69                    | —                                   |     14 |
+| End-to-end session exposure of parsed values | `umber2-rti9.12` | 6, 43, 47–55                                      | —                                   |     11 |
+| **Transferred mixed-stage total**            |                  | **72**                                            | **25**                              | **97** |
+
+`umber2-rti9.5` owns the raw BibTeX parser implementation and its focused
+tests, but none of these 97 full-pipeline assertions. The dependency path is
+acyclic: graph and names consume raw input; sorting/lists consume graph and
+names; labels consume those semantic stages; output consumes graph, sorting,
+and labels; and the session consumes the complete processing/output pipeline.
+The owning issue converts each exact assertion normally once its dependencies
+land. The upstream call, expected expression, fixture reference, and strict
+comparison remain unchanged during this ownership transfer.
+
 ## Differential and end-to-end gates
 
 The default correctness tier is hermetic and consumes committed fixtures:

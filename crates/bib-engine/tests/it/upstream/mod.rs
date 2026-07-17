@@ -9,10 +9,57 @@ enum TranslationValue<'a> {
     SemanticEnginePending,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SemanticOwner {
+    Graph,
+    Names,
+    SortAndLists,
+    Labels,
+    Output,
+    Session,
+}
+
+impl SemanticOwner {
+    const fn issue(self) -> &'static str {
+        match self {
+            Self::Graph => "umber2-rti9.6",
+            Self::Names => "umber2-rti9.7",
+            Self::SortAndLists => "umber2-rti9.8",
+            Self::Labels => "umber2-rti9.9",
+            Self::Output => "umber2-rti9.10",
+            Self::Session => "umber2-rti9.12",
+        }
+    }
+}
+
 /// Executes one translated assertion while the semantic facade is pending.
 ///
 /// The exact upstream call and complete source are retained in the owning
 /// module so an assertion can be audited now and replaced in isolation later.
+#[track_caller]
+fn xfail_owned_upstream(
+    owner: SemanticOwner,
+    assertion: &str,
+    actual_expression: &str,
+    expected_expression: &str,
+    upstream_call: &str,
+    upstream_source: &str,
+) {
+    let owner_issue = owner.issue();
+    assert!(
+        upstream_source.contains(upstream_call),
+        "translated assertion `{assertion}` owned by {owner_issue} is absent from its pinned upstream source"
+    );
+    xfail_deep(
+        assertion,
+        &TranslationValue::Expected {
+            actual_expression,
+            expected_expression,
+        },
+        &TranslationValue::SemanticEnginePending,
+    );
+}
+
 #[track_caller]
 fn xfail_upstream(
     assertion: &str,

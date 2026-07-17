@@ -1,7 +1,101 @@
 // Direct xfail translation of upstream t/basic-misc.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::{SemanticOwner, xfail_owned_upstream};
+
+// This upstream file crosses semantic stages. Keep each assertion attached to
+// the issue that owns the last behavior needed for its exact expected value.
+fn xfail_upstream(
+    assertion: &str,
+    actual_expression: &str,
+    expected_expression: &str,
+    upstream_call: &str,
+    upstream_source: &str,
+) {
+    use SemanticOwner::{Graph, Labels, Names, Output, Session, SortAndLists};
+
+    let owner = match assertion {
+        "uniquelist 1" | "uniquename count 1" | "uniquename count 2" => Labels,
+        "citekeys 1"
+        | "shorthands"
+        | "citekeys 2"
+        | "per_type/entry items - 1"
+        | "per_type/entry items - 2" => SortAndLists,
+        "Keywords test - 1"
+        | "Keywords test - 2"
+        | "Keywords test - 3"
+        | "map 1"
+        | "map 2"
+        | "map 3"
+        | "map 4"
+        | "map 5"
+        | "map 6"
+        | "map 7"
+        | "map 8"
+        | "map 9"
+        | "map 10"
+        | "Citekey aliases - 1"
+        | "Citekey aliases - 2"
+        | "Citekey aliases - 3"
+        | "Citekey aliases - 4"
+        | "Citekey aliases - 5"
+        | "map_final - 1"
+        | "map_final - 2"
+        | "Map levels - 1"
+        | "Overwrite test - 1"
+        | "ISBN options - 1"
+        | "ISBN options - 2"
+        | "New key loop mapping - 1"
+        | "New key loop mapping - 2"
+        | "notfield - 1"
+        | "notfield - 2"
+        | "Static match list - 1"
+        | "Static match list - 2"
+        | "Static match list - 3" => Graph,
+        "bib visibility - 1"
+        | "per_type maxcitenames - 1"
+        | "per_type maxcitenames - 2"
+        | "per_type bibnames - 3"
+        | "per_type bibnames - 4"
+        | "per_type/entry alphanames - 1"
+        | "per_type/entry alphanames - 2"
+        | "Entry with others list" => Names,
+        "default bib month macros"
+        | "URL encoding - 1"
+        | "pages - 1"
+        | "pages - 2"
+        | "pages - 3"
+        | "pages - 4"
+        | "pages - 5"
+        | "pages - 6"
+        | "pages - 7"
+        | "pages - 8"
+        | "pages - 9" => Session,
+        "bbl entry with maths in title 1"
+        | "bbl entry with maths in title 2"
+        | "bbl with > maxcitenames"
+        | "missing citekey 1"
+        | "missing citekey 2"
+        | "bbl with > maxcitenames, empty alphaothers"
+        | "namehash/fullhash 1"
+        | "namehash/fullhash 2"
+        | "URL encoding - 2"
+        | "Clone - 1"
+        | "Clone - 2"
+        | "New key mapping - 1"
+        | "Extended name test - 1"
+        | "Decoding verbatim fields - 1" => Output,
+        _ => panic!("mixed-stage assertion `{assertion}` has no semantic owner"),
+    };
+    xfail_owned_upstream(
+        owner,
+        assertion,
+        actual_expression,
+        expected_expression,
+        upstream_call,
+        upstream_source,
+    );
+}
 
 const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
 use strict;

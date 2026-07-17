@@ -1,7 +1,35 @@
 // Direct xfail translation of upstream t/bibtex-aliases.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::{SemanticOwner, xfail_owned_upstream};
+
+// Alias processing belongs to the graph stage; the structured-name assertion
+// additionally needs the name stage and is therefore owned by that later issue.
+fn xfail_upstream(
+    assertion: &str,
+    actual_expression: &str,
+    expected_expression: &str,
+    upstream_call: &str,
+    upstream_source: &str,
+) {
+    let owner = match assertion {
+        "Alias - 16" => SemanticOwner::Names,
+        "Alias - 1" | "Alias - 2" | "Alias - 3" | "Alias - 4" | "Alias - 5" | "Alias - 6"
+        | "Alias - 7" | "Alias - 8" | "Alias - 9" | "Alias - 10" | "Alias - 11" | "Alias - 12"
+        | "Alias - 13" | "Alias - 14" | "Alias - 15" | "Alias - 17" | "Alias - 18"
+        | "Alias - 19" | "Alias - 20" | "Alias - 21" | "Alias - 22" | "Alias - 23"
+        | "Alias - 24" | "Alias - 25" => SemanticOwner::Graph,
+        _ => panic!("mixed-stage assertion `{assertion}` has no semantic owner"),
+    };
+    xfail_owned_upstream(
+        owner,
+        assertion,
+        actual_expression,
+        expected_expression,
+        upstream_call,
+        upstream_source,
+    );
+}
 
 const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
 use strict;
