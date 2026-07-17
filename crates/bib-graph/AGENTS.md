@@ -7,4 +7,9 @@ do not depend on other worker crates, `bib-engine`, hosts, or mutable globals.
 
 ## File Map
 
-- `src/lib.rs`: immutable graph-stage context boundary.
+- `src/lib.rs`: public graph-stage exports.
+- `src/maps.rs`: ordered sourcemap predicates and actions.
+- `src/processor.rs`: bounded section closure, aliases, relationships, sets,
+  inheritance, and cycle handling.
+- `src/validation.rs`: post-inheritance data-model constraints.
+- `src/tests.rs`: graph-stage contract and adversarial-limit tests.

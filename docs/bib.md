@@ -1,10 +1,9 @@
 # In-process bibliography backend
 
-Status: foundation crate graph, frozen domain contracts, the pinned
-Unicode/encoding/date/language utility substrate, and the pure-Rust bounded
-control/configuration/BibLaTeXML input boundary are implemented; remaining
-datasource parsing, pipeline processing, serializers, sessions, and project
-integration continue in the dependency-ordered bibliography issues.
+Status: foundation contracts, pinned Unicode utilities, bounded XML and
+BibTeX inputs, and the deterministic cross-entry graph stage are implemented;
+remaining name, sorting, label, serialization, session, and project
+integration work continues in dependency order.
 
 This document defines Umber's pure-Rust bibliography subsystem. Every Rust
 package uses the `bib-*` prefix, and modules, types, commands, features, and
@@ -358,6 +357,19 @@ Each stage accepts an explicit context and mutable private builder, then
 returns a validated next-stage value or ordered diagnostics. No stage reads a
 global configuration object, current directory, process locale, or argument
 vector.
+
+The implemented `bib-graph` boundary applies declared sourcemaps before graph
+construction, resolves case-insensitive citation aliases, and builds each
+section independently from its original citekeys. Set members and related
+entries form deterministic dependency closure; crossref/xref parent inclusion
+uses the section-local threshold. Xdata, crossref, and xref inheritance is
+applied in that order without replacing child fields, and inherited values
+retain their source field and parent provenance. Explicit stacks diagnose
+cycles, while entry, edge, inheritance-depth, and diagnostic budgets bound all
+graph work. Data-model constraints run only after inheritance, so inherited
+values participate in mandatory, conditional, one-of, exclusivity, and typed
+field validation. Source order determines section output and diagnostic order;
+lookup maps never do.
 
 ## Public API
 

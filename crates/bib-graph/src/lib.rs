@@ -1,28 +1,15 @@
-//! Cross-entry graph and validation stage boundary.
+//! Deterministic cross-entry graph, transformation, and validation stage.
 
-use bib_model::BibConfiguration;
-use bib_unicode::UnicodeData;
+mod maps;
+mod processor;
+mod validation;
 
-#[derive(Clone, Copy, Debug)]
-pub struct GraphContext<'a> {
-    configuration: &'a BibConfiguration,
-    unicode: &'a UnicodeData,
-}
+pub use maps::{MapAction, MapMatch, SourceMap, SourceMapStep};
+pub use processor::{
+    GraphContext, GraphError, GraphInput, GraphLimits, GraphOptions, GraphOutput, GraphProcessor,
+    GraphSection, SectionSpec,
+};
+pub use validation::{DataConstraint, DataModel, ValidationRule};
 
-impl<'a> GraphContext<'a> {
-    #[must_use]
-    pub const fn new(configuration: &'a BibConfiguration, unicode: &'a UnicodeData) -> Self {
-        Self {
-            configuration,
-            unicode,
-        }
-    }
-    #[must_use]
-    pub const fn configuration(self) -> &'a BibConfiguration {
-        self.configuration
-    }
-    #[must_use]
-    pub const fn unicode(self) -> &'a UnicodeData {
-        self.unicode
-    }
-}
+#[cfg(test)]
+mod tests;
