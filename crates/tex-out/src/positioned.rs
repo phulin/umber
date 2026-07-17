@@ -36,6 +36,8 @@ pub struct PositionedPage {
     pub page_index: u32,
     pub width: Scaled,
     pub height: Scaled,
+    pub page_origin_x: Scaled,
+    pub page_origin_y: Scaled,
     pub mag: i32,
     pub counts: [i32; 10],
     pub fonts: Vec<FontResource>,

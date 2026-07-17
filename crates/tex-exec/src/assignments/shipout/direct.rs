@@ -72,6 +72,10 @@ fn stage_form_inner(
         banner: DEFAULT_BANNER.to_owned(),
         h_offset: tex_state::scaled::Scaled::from_raw(0),
         v_offset: tex_state::scaled::Scaled::from_raw(0),
+        page_origin_x: tex_state::scaled::Scaled::from_raw(0),
+        page_origin_y: tex_state::scaled::Scaled::from_raw(0),
+        page_width: tex_state::scaled::Scaled::from_raw(0),
+        page_height: tex_state::scaled::Scaled::from_raw(0),
     };
     let mut encoder = V10ArtifactBuilder::new(job, [0; 10], &root, vertical);
     let mut emission = EmissionState {
@@ -138,11 +142,28 @@ pub(super) fn stage_shipout(
     if let Some(diagnostic) = diagnostic {
         diagnostics::report_dimension_diagnostic(stores, DimensionDiagnostic::from(diagnostic));
     }
+    const DVI_ONE_INCH: i32 = 4_736_286;
+    let has_configured_page = stores.dimen_param(DimenParam::PDF_PAGE_WIDTH).raw() > 0
+        || stores.dimen_param(DimenParam::PDF_PAGE_HEIGHT).raw() > 0;
+    let (page_origin_x, page_origin_y) =
+        if stores.int_param(IntParam::PDF_OUTPUT) > 0 || has_configured_page {
+            (
+                stores.dimen_param(DimenParam::PDF_H_ORIGIN),
+                stores.dimen_param(DimenParam::PDF_V_ORIGIN),
+            )
+        } else {
+            let inch = tex_state::scaled::Scaled::from_raw(DVI_ONE_INCH);
+            (inch, inch)
+        };
     let job = JobInfo {
         mag,
         banner: DEFAULT_BANNER.to_owned(),
         h_offset: stores.dimen_param(DimenParam::H_OFFSET),
         v_offset: stores.dimen_param(DimenParam::V_OFFSET),
+        page_origin_x,
+        page_origin_y,
+        page_width: stores.dimen_param(DimenParam::PDF_PAGE_WIDTH),
+        page_height: stores.dimen_param(DimenParam::PDF_PAGE_HEIGHT),
     };
     let (root, children, vertical) = match node {
         Node::HList(box_node) => (lower_box_header(&box_node), box_node.children, false),

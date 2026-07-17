@@ -28,8 +28,20 @@ pub(super) fn lower(
         _ => unreachable!("validated artifact root is a box"),
     };
     let height = add(root.height, root.depth)?;
-    let right = add(page.job.h_offset, root.width)?;
-    let bottom = add(page.job.v_offset, height)?;
+    let content_origin_x = add(page.job.page_origin_x, page.job.h_offset)?;
+    let content_origin_y = add(page.job.page_origin_y, page.job.v_offset)?;
+    let content_right = add(content_origin_x, root.width)?;
+    let content_bottom = add(content_origin_y, height)?;
+    let right = if page.job.page_width.raw() > 0 {
+        page.job.page_width
+    } else {
+        Scaled::from_raw(add(content_right, content_origin_x)?.raw().max(0))
+    };
+    let bottom = if page.job.page_height.raw() > 0 {
+        page.job.page_height
+    } else {
+        Scaled::from_raw(add(content_bottom, content_origin_y)?.raw().max(0))
+    };
     let mut out = Lowerer {
         effects: &page.effects,
         events: Vec::new(),
@@ -56,8 +68,10 @@ pub(super) fn lower(
     }
     Ok(PositionedPage {
         page_index,
-        width: Scaled::from_raw(right.raw().max(0)),
-        height: Scaled::from_raw(bottom.raw().max(0)),
+        width: right,
+        height: bottom,
+        page_origin_x: page.job.page_origin_x,
+        page_origin_y: page.job.page_origin_y,
         mag: page.job.mag,
         counts: page.counts,
         fonts: page.fonts.clone(),

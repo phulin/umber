@@ -23,6 +23,25 @@ fn page_artifact_round_trips() {
 }
 
 #[test]
+fn version_19_artifacts_decode_with_unconfigured_page_geometry() {
+    let artifact = sample_artifact();
+    let mut bytes = artifact.to_bytes().expect("artifact serializes");
+    let banner_len = u32::from_le_bytes(bytes[9..13].try_into().expect("banner length")) as usize;
+    let page_geometry = 13 + banner_len + 8;
+    bytes.drain(page_geometry..page_geometry + 16);
+    bytes[4] = 19;
+
+    let parsed = PageArtifact::from_bytes(&bytes).expect("version 19 artifact parses");
+
+    assert_eq!(parsed.job.page_origin_x, Scaled::from_raw(0));
+    assert_eq!(parsed.job.page_origin_y, Scaled::from_raw(0));
+    assert_eq!(parsed.job.page_width, Scaled::from_raw(0));
+    assert_eq!(parsed.job.page_height, Scaled::from_raw(0));
+    assert_eq!(parsed.root, artifact.root);
+    assert_eq!(parsed.effects, artifact.effects);
+}
+
+#[test]
 fn pdf_destinations_round_trip_nullable_zoom_and_running_rectangle_dimensions() {
     let mut artifact = sample_artifact();
     artifact.testing_mut().effects.extend([
@@ -55,7 +74,7 @@ fn pdf_destinations_round_trip_nullable_zoom_and_running_rectangle_dimensions() 
     let bytes = artifact
         .to_bytes()
         .expect("destination artifact serializes");
-    assert_eq!(bytes[4], 19);
+    assert_eq!(bytes[4], 20);
     assert_eq!(
         PageArtifact::from_bytes(&bytes).expect("destination artifact parses"),
         artifact
@@ -290,7 +309,7 @@ fn rejects_unknown_version() {
 #[test]
 fn rejects_pre_content_identity_v2_artifact_version() {
     let mut bytes = sample_artifact().to_bytes().expect("artifact serializes");
-    assert_eq!(bytes[4], 19);
+    assert_eq!(bytes[4], 20);
     bytes[4] = 11;
 
     assert_eq!(
@@ -661,6 +680,10 @@ fn sample_artifact() -> PageArtifact {
             banner: "This is Umber test".to_owned(),
             h_offset: Scaled::from_raw(12_345),
             v_offset: Scaled::from_raw(-54_321),
+            page_origin_x: Scaled::from_raw(4_736_286),
+            page_origin_y: Scaled::from_raw(4_736_286),
+            page_width: Scaled::from_raw(612_000),
+            page_height: Scaled::from_raw(792_000),
         },
         fonts: vec![FontResource {
             font_id: 1,

@@ -479,6 +479,10 @@ fn page(root: PageNode) -> crate::PageArtifact {
             banner: "test".to_owned(),
             h_offset: sp(0),
             v_offset: sp(0),
+            page_origin_x: sp(0),
+            page_origin_y: sp(0),
+            page_width: sp(0),
+            page_height: sp(0),
         },
         fonts: (1_u8..=2)
             .map(|font_id| FontResource {

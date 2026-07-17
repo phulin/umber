@@ -4862,6 +4862,8 @@ mod tests {
             page_index,
             width: Scaled::from_raw(200),
             height: Scaled::from_raw(200),
+            page_origin_x: Scaled::from_raw(0),
+            page_origin_y: Scaled::from_raw(0),
             mag: 1_000,
             counts: [0; 10],
             fonts: Vec::new(),

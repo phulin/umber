@@ -9,7 +9,8 @@ use std::fmt;
 use tex_arith::Scaled;
 
 const MAGIC: &[u8; 4] = b"UMPG";
-const VERSION: u8 = 19;
+const VERSION: u8 = 20;
+const PRE_PAGE_SIZE_VERSION: u8 = 19;
 const IMAGE_VERSION: u8 = 18;
 const ANNOTATION_VERSION: u8 = 17;
 const PRE_ANNOTATION_VERSION: u8 = 16;
@@ -266,6 +267,10 @@ pub(crate) fn to_bytes(
     writer.str(&artifact.job.banner);
     writer.scaled(artifact.job.h_offset);
     writer.scaled(artifact.job.v_offset);
+    writer.scaled(artifact.job.page_origin_x);
+    writer.scaled(artifact.job.page_origin_y);
+    writer.scaled(artifact.job.page_width);
+    writer.scaled(artifact.job.page_height);
     writer.fonts(&artifact.fonts);
     for value in artifact.counts {
         writer.i32(value);
@@ -296,6 +301,7 @@ pub(crate) fn from_bytes(
     reader.expect_magic()?;
     let version = reader.u8()?;
     if version != VERSION
+        && version != PRE_PAGE_SIZE_VERSION
         && version != IMAGE_VERSION
         && version != ANNOTATION_VERSION
         && version != PRE_ANNOTATION_VERSION
@@ -310,6 +316,21 @@ pub(crate) fn from_bytes(
     let banner = reader.str()?;
     let h_offset = reader.scaled()?;
     let v_offset = reader.scaled()?;
+    let (page_origin_x, page_origin_y, page_width, page_height) = if version >= VERSION {
+        (
+            reader.scaled()?,
+            reader.scaled()?,
+            reader.scaled()?,
+            reader.scaled()?,
+        )
+    } else {
+        (
+            Scaled::from_raw(0),
+            Scaled::from_raw(0),
+            Scaled::from_raw(0),
+            Scaled::from_raw(0),
+        )
+    };
     let fonts = reader.fonts(version)?;
     let mut counts = [0; 10];
     for value in &mut counts {
@@ -324,6 +345,10 @@ pub(crate) fn from_bytes(
             banner,
             h_offset,
             v_offset,
+            page_origin_x,
+            page_origin_y,
+            page_width,
+            page_height,
         },
         fonts,
         counts,
@@ -456,6 +481,10 @@ impl V10ArtifactBuilder {
         writer.str(&this.job.banner);
         writer.scaled(this.job.h_offset);
         writer.scaled(this.job.v_offset);
+        writer.scaled(this.job.page_origin_x);
+        writer.scaled(this.job.page_origin_y);
+        writer.scaled(this.job.page_width);
+        writer.scaled(this.job.page_height);
         writer.fonts(fonts);
         for value in this.counts {
             writer.i32(value);
@@ -1931,6 +1960,7 @@ impl Reader<'_> {
         self.expect_magic()?;
         let version = self.u8()?;
         if version != VERSION
+            && version != PRE_PAGE_SIZE_VERSION
             && version != IMAGE_VERSION
             && version != ANNOTATION_VERSION
             && version != PRE_ANNOTATION_VERSION
@@ -1941,11 +1971,34 @@ impl Reader<'_> {
         {
             return Err(ParseError::UnsupportedVersion(version));
         }
+        let mag = self.i32()?;
+        let banner = self.str()?;
+        let h_offset = self.scaled()?;
+        let v_offset = self.scaled()?;
+        let (page_origin_x, page_origin_y, page_width, page_height) = if version >= VERSION {
+            (
+                self.scaled()?,
+                self.scaled()?,
+                self.scaled()?,
+                self.scaled()?,
+            )
+        } else {
+            (
+                Scaled::from_raw(0),
+                Scaled::from_raw(0),
+                Scaled::from_raw(0),
+                Scaled::from_raw(0),
+            )
+        };
         let job = crate::JobInfo {
-            mag: self.i32()?,
-            banner: self.str()?,
-            h_offset: self.scaled()?,
-            v_offset: self.scaled()?,
+            mag,
+            banner,
+            h_offset,
+            v_offset,
+            page_origin_x,
+            page_origin_y,
+            page_width,
+            page_height,
         };
         let fonts = self.fonts(version)?;
         let mut counts = [0; 10];
@@ -2355,7 +2408,7 @@ impl Reader<'_> {
                         depth: self.scaled()?,
                     }
                 }
-                wire::effect::PDF_DESTINATION if version >= VERSION => {
+                wire::effect::PDF_DESTINATION if version >= PRE_PAGE_SIZE_VERSION => {
                     let object = self.u32()?;
                     let identifier = match self.u8()? {
                         0 => PdfDestinationIdentifier::Name(self.bytes()?),
@@ -2431,7 +2484,7 @@ impl Reader<'_> {
                     })
                 }
                 tag @ (wire::effect::PDF_THREAD | wire::effect::PDF_START_THREAD)
-                    if version >= VERSION =>
+                    if version >= PRE_PAGE_SIZE_VERSION =>
                 {
                     let thread_object = self.u32()?;
                     let bead_object = self.u32()?;
@@ -2473,7 +2526,9 @@ impl Reader<'_> {
                         PageEffect::PdfStartThread(marker)
                     }
                 }
-                wire::effect::PDF_END_THREAD if version >= VERSION => PageEffect::PdfEndThread,
+                wire::effect::PDF_END_THREAD if version >= PRE_PAGE_SIZE_VERSION => {
+                    PageEffect::PdfEndThread
+                }
                 tag => {
                     return Err(ParseError::InvalidTag {
                         kind: "effect",

@@ -409,6 +409,7 @@ pub fn write_positioned_html<R: HtmlFontResolver>(
 const BASE_CSS: &str = concat!(
     ".umber-document{margin:0;padding:0;background:#777}\n",
     ".umber-page{position:relative;contain:strict;overflow:hidden;background:#fff;margin:0 auto 1rem;isolation:isolate}\n",
+    ".umber-page-content{position:absolute;width:0;height:0;overflow:visible}\n",
     ".umber-box{position:absolute;pointer-events:none}\n",
     ".umber-rule{position:absolute;background:currentColor}\n",
     ".umber-run{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;white-space:pre;unicode-bidi:isolate-override;font-kerning:normal;font-variant-ligatures:common-ligatures;font-synthesis:none;font-optical-sizing:none}\n",
@@ -633,12 +634,18 @@ fn write_page(
     out.push('"');
     attr_sp(out, "width", page.width);
     attr_sp(out, "height", page.height);
+    attr_sp(out, "origin-x", page.page_origin_x);
+    attr_sp(out, "origin-y", page.page_origin_y);
     out.push_str(" data-umber-mag=\"");
     out.push_str(&page.mag.to_string());
     out.push_str("\" style=\"width:");
     css_px(out, page.width, page.mag);
     out.push_str(";height:");
     css_px(out, page.height, page.mag);
+    out.push_str("\">\n<div class=\"umber-page-content\" style=\"left:");
+    css_px(out, page.page_origin_x, page.mag);
+    out.push_str(";top:");
+    css_px(out, page.page_origin_y, page.mag);
     out.push_str("\">\n");
     let page_fonts = page
         .fonts
@@ -787,7 +794,7 @@ fn write_page(
             message: "unclosed color or link scope at page end".to_owned(),
         });
     }
-    out.push_str("<div class=\"umber-a11y\">");
+    out.push_str("</div><div class=\"umber-a11y\">");
     escape_text(&accessible, out);
     out.push_str("</div></section>\n");
     Ok(())

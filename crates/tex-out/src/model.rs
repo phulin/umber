@@ -151,6 +151,14 @@ pub struct JobInfo {
     pub banner: String,
     pub h_offset: Scaled,
     pub v_offset: Scaled,
+    /// Physical-page x origin applied by page-oriented drivers.
+    pub page_origin_x: Scaled,
+    /// Physical-page y origin applied by page-oriented drivers.
+    pub page_origin_y: Scaled,
+    /// Configured physical page width, or zero when the driver should derive it.
+    pub page_width: Scaled,
+    /// Configured physical page height, or zero when the driver should derive it.
+    pub page_height: Scaled,
 }
 
 impl Default for JobInfo {
@@ -160,6 +168,10 @@ impl Default for JobInfo {
             banner: DEFAULT_BANNER.to_owned(),
             h_offset: Scaled::from_raw(0),
             v_offset: Scaled::from_raw(0),
+            page_origin_x: Scaled::from_raw(0),
+            page_origin_y: Scaled::from_raw(0),
+            page_width: Scaled::from_raw(0),
+            page_height: Scaled::from_raw(0),
         }
     }
 }

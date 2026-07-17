@@ -124,6 +124,43 @@ fn serialization_is_deterministic_exact_and_escaped() {
 }
 
 #[test]
+fn configured_physical_dimensions_build_the_page_box() {
+    let mut page = page();
+    page.testing_mut().job.page_width = sp(1_000);
+    page.testing_mut().job.page_height = sp(2_000);
+    let mut resolver = Resolver { missing_b: false };
+
+    let output =
+        write_html(&[page], &mut resolver, &HtmlOptions::default()).expect("physical page HTML");
+    let html = String::from_utf8(output.html).expect("UTF-8 HTML");
+
+    assert!(html.contains("data-umber-width-sp=\"1000\""));
+    assert!(html.contains("data-umber-height-sp=\"2000\""));
+    assert!(html.contains("style=\"width:0.02026904px;height:0.04053809px\""));
+}
+
+#[test]
+fn plain_tex_fallback_surrounds_content_with_the_dvi_origin() {
+    let mut page = page();
+    page.testing_mut().job.page_origin_x = sp(4_736_286);
+    page.testing_mut().job.page_origin_y = sp(4_736_286);
+    let mut resolver = Resolver { missing_b: false };
+
+    let output =
+        write_html(&[page], &mut resolver, &HtmlOptions::default()).expect("plain TeX page HTML");
+    let html = String::from_utf8(output.html).expect("UTF-8 HTML");
+
+    assert!(html.contains("data-umber-width-sp=\"9472806\""));
+    assert!(html.contains("data-umber-height-sp=\"9472643\""));
+    assert!(html.contains("data-umber-origin-x-sp=\"4736286\""));
+    assert!(
+        html.contains(
+            "class=\"umber-page-content\" style=\"left:95.99998541px;top:95.99998541px\""
+        )
+    );
+}
+
+#[test]
 fn unavailable_text_mapping_is_actionable() {
     let mut resolver = Resolver { missing_b: true };
     let error =
@@ -306,6 +343,10 @@ fn page() -> crate::PageArtifact {
             banner: "test".to_owned(),
             h_offset: sp(17),
             v_offset: sp(13),
+            page_origin_x: sp(0),
+            page_origin_y: sp(0),
+            page_width: sp(0),
+            page_height: sp(0),
         },
         fonts: vec![font],
         counts: [0; 10],

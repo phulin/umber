@@ -203,21 +203,37 @@ fn compare_media(
         PageNode::HList(root) | PageNode::VList(root) => root,
         _ => unreachable!("validated page root is a box"),
     };
-    let width = artifact
-        .job
-        .h_offset
-        .checked_add(root.width)
-        .ok_or(DviError::PositionOverflow)?
-        .raw()
-        .max(0);
-    let height = artifact
-        .job
-        .v_offset
-        .checked_add(root.height)
-        .and_then(|value| value.checked_add(root.depth))
-        .ok_or(DviError::PositionOverflow)?
-        .raw()
-        .max(0);
+    let width = if artifact.job.page_width.raw() > 0 {
+        artifact.job.page_width.raw()
+    } else {
+        let inset = artifact
+            .job
+            .page_origin_x
+            .checked_add(artifact.job.h_offset)
+            .ok_or(DviError::PositionOverflow)?;
+        inset
+            .checked_add(root.width)
+            .and_then(|value| value.checked_add(inset))
+            .ok_or(DviError::PositionOverflow)?
+            .raw()
+            .max(0)
+    };
+    let height = if artifact.job.page_height.raw() > 0 {
+        artifact.job.page_height.raw()
+    } else {
+        let inset = artifact
+            .job
+            .page_origin_y
+            .checked_add(artifact.job.v_offset)
+            .ok_or(DviError::PositionOverflow)?;
+        inset
+            .checked_add(root.height)
+            .and_then(|value| value.checked_add(root.depth))
+            .and_then(|value| value.checked_add(inset))
+            .ok_or(DviError::PositionOverflow)?
+            .raw()
+            .max(0)
+    };
     if positioned.width.raw() != width
         || positioned.height.raw() != height
         || positioned.mag != artifact.job.mag

@@ -16,13 +16,18 @@ OpenType math. It does not delegate formula layout to MathML.
 
 ## Coordinate model
 
-All canonical coordinates are signed TeX scaled-point (`sp`) integers. Page
+All canonical coordinates are signed TeX scaled-point (`sp`) integers. Event
 coordinates have an origin at the unshifted upper-left of the shipped root box,
-with positive x rightward and positive y downward. The page media rectangle is
-the smallest origin-anchored rectangle containing the root box after applying
-the artifact's `\hoffset` and `\voffset`; its width and height are emitted as
-exact `sp` metadata. Negative child coordinates are allowed and do not change
-the origin.
+with positive x rightward and positive y downward. The page records a separate
+physical-media origin. Native plain-TeX/DVI pages use TeX's conventional
+one-inch origin; pdfTeX pages use the captured `\pdfhorigin` and `\pdfvorigin`.
+
+The page media rectangle uses positive `\pdfpagewidth` and `\pdfpageheight`
+values when configured. When either dimension is unset, that axis surrounds
+the shipped root with equal media-origin-plus-offset space on both sides. This
+gives plain TeX a physical page box without requiring pdfTeX primitives. Page
+dimensions and media origins are emitted as exact `sp` metadata. Negative
+child coordinates are allowed and do not change the origin.
 
 Each ordered positioned event is one of:
 

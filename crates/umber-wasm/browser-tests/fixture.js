@@ -298,6 +298,8 @@ function measureGeneratedHtml(zoom) {
 	const pageRect = page.getBoundingClientRect();
 	const mag = Number(page.dataset.umberMag);
 	const px = (raw) => (Number(raw) * mag * 48) / (65536 * 5 * 7227);
+	const originX = Number(page.dataset.umberOriginXSp);
+	const originY = Number(page.dataset.umberOriginYSp);
 	const tolerance = 1 / 30 + 1e-6;
 	const close = (actual, expected, label) =>
 		assert(
@@ -311,12 +313,12 @@ function measureGeneratedHtml(zoom) {
 	const ruleRect = rule.getBoundingClientRect();
 	close(
 		ruleRect.left - pageRect.left,
-		px(rule.dataset.umberXSp) * zoom,
+		px(originX + Number(rule.dataset.umberXSp)) * zoom,
 		"rule x",
 	);
 	close(
 		ruleRect.top - pageRect.top,
-		px(rule.dataset.umberYSp) * zoom,
+		px(originY + Number(rule.dataset.umberYSp)) * zoom,
 		"rule y",
 	);
 	close(ruleRect.width, px(rule.dataset.umberWidthSp) * zoom, "rule width");
@@ -329,12 +331,12 @@ function measureGeneratedHtml(zoom) {
 	const baseline = run.querySelector(".umber-baseline").getBoundingClientRect();
 	close(
 		baseline.left - pageRect.left,
-		px(run.dataset.umberXSp) * zoom,
+		px(originX + Number(run.dataset.umberXSp)) * zoom,
 		"run x",
 	);
 	close(
 		baseline.top - pageRect.top,
-		px(run.dataset.umberBaselineSp) * zoom,
+		px(originY + Number(run.dataset.umberBaselineSp)) * zoom,
 		"baseline",
 	);
 	return {
