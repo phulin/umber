@@ -139,9 +139,23 @@ pub fn execute_classic_style(
 }
 
 #[derive(Clone, Copy)]
-struct Frame {
-    function: FunctionId,
-    pc: usize,
+enum Frame {
+    Function {
+        function: FunctionId,
+        pc: usize,
+    },
+    While {
+        condition: FunctionId,
+        body: FunctionId,
+        state: WhileState,
+    },
+}
+
+#[derive(Clone, Copy)]
+enum WhileState {
+    RunCondition,
+    CheckCondition,
+    RunBody,
 }
 
 struct EntryState {
@@ -295,40 +309,91 @@ impl<'a> Vm<'a> {
         if self.fatal {
             return;
         }
+        if !self.push_function(function) {
+            return;
+        }
+        while !self.frames.is_empty() {
+            if !self.charge() {
+                return;
+            }
+            let frame = *self.frames.last().expect("non-empty loop condition");
+            match frame {
+                Frame::Function { function, pc } => {
+                    let Some(instruction) = self.style.functions()[function.0 as usize]
+                        .instructions()
+                        .get(pc)
+                        .cloned()
+                    else {
+                        self.frames.pop();
+                        continue;
+                    };
+                    let Frame::Function { pc, .. } = self
+                        .frames
+                        .last_mut()
+                        .expect("function frame remains present")
+                    else {
+                        unreachable!("current frame is a function frame");
+                    };
+                    *pc += 1;
+                    self.instruction(instruction);
+                }
+                Frame::While {
+                    condition,
+                    body,
+                    state,
+                } => self.while_frame(condition, body, state),
+            }
+            if self.fatal {
+                return;
+            }
+        }
+    }
+
+    fn push_function(&mut self, function: FunctionId) -> bool {
         if function.0 as usize >= self.style.functions().len() {
             self.fail(
                 ClassicVmDiagnosticKind::InvalidFunction,
                 "invalid BST function",
             );
-            return;
+            return false;
         }
         if self.frames.len() >= self.limits.call_depth {
             self.fail(
                 ClassicVmDiagnosticKind::Limit,
                 "BST call-depth limit exceeded",
             );
-            return;
+            return false;
         }
-        self.frames.push(Frame { function, pc: 0 });
-        while !self.frames.is_empty() {
-            if !self.charge() {
-                return;
+        self.frames.push(Frame::Function { function, pc: 0 });
+        true
+    }
+
+    fn while_frame(&mut self, condition: FunctionId, body: FunctionId, state: WhileState) {
+        match state {
+            WhileState::RunCondition => {
+                self.set_while_state(WhileState::CheckCondition);
+                self.push_function(condition);
             }
-            let frame = *self.frames.last().expect("non-empty loop condition");
-            let Some(instruction) = self.style.functions()[frame.function.0 as usize]
-                .instructions()
-                .get(frame.pc)
-                .cloned()
-            else {
-                self.frames.pop();
-                continue;
-            };
-            self.frames.last_mut().expect("frame remains present").pc += 1;
-            self.instruction(instruction);
-            if self.fatal {
-                return;
+            WhileState::CheckCondition => {
+                let Some(condition) = self.pop_integer() else {
+                    return;
+                };
+                if condition <= 0 {
+                    self.frames.pop();
+                } else {
+                    self.set_while_state(WhileState::RunBody);
+                    self.push_function(body);
+                }
             }
+            WhileState::RunBody => self.set_while_state(WhileState::RunCondition),
         }
+    }
+
+    fn set_while_state(&mut self, state: WhileState) {
+        let Some(Frame::While { state: current, .. }) = self.frames.last_mut() else {
+            unreachable!("while continuation is the active frame");
+        };
+        *current = state;
     }
 
     fn instruction(&mut self, instruction: Instruction) {
@@ -344,14 +409,7 @@ impl<'a> Vm<'a> {
             )),
             Instruction::PushFunction(function) => self.push(VmValue::Function(function)),
             Instruction::Call(function) => {
-                if self.frames.len() >= self.limits.call_depth {
-                    self.fail(
-                        ClassicVmDiagnosticKind::Limit,
-                        "BST call-depth limit exceeded",
-                    );
-                } else {
-                    self.frames.push(Frame { function, pc: 0 });
-                }
+                self.push_function(function);
             }
             Instruction::Read(symbol) => {
                 let value = self.read(symbol);
@@ -478,7 +536,7 @@ impl<'a> Vm<'a> {
             .function_named(name)
             .or_else(|| self.function_named("default.type"));
         if let Some(function) = function {
-            self.call(function);
+            self.push_function(function);
         }
     }
 
@@ -613,7 +671,7 @@ impl<'a> Vm<'a> {
         if let (Some(else_function), Some(then_function), Some(condition)) =
             (else_function, then_function, condition)
         {
-            self.call(if condition > 0 {
+            self.push_function(if condition > 0 {
                 then_function
             } else {
                 else_function
@@ -627,21 +685,17 @@ impl<'a> Vm<'a> {
         let (Some(body), Some(condition)) = (body, condition) else {
             return;
         };
-        loop {
-            self.call(condition);
-            if self.fatal {
-                return;
-            }
-            let Some(value) = self.pop_integer() else {
-                return;
-            };
-            if value <= 0 {
-                return;
-            }
-            self.call(body);
-            if self.fatal {
-                return;
-            }
+        if self.frames.len() >= self.limits.call_depth {
+            self.fail(
+                ClassicVmDiagnosticKind::Limit,
+                "BST call-depth limit exceeded",
+            );
+        } else {
+            self.frames.push(Frame::While {
+                condition,
+                body,
+                state: WhileState::RunCondition,
+            });
         }
     }
 

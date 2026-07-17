@@ -141,10 +141,13 @@ only requested files into the VFS for `umber bibtex job`, then publishes the
 returned artifacts. It does not invoke a system BibTeX executable. The smoke
 fixture exercises this boundary both cold and cached. `umber2-ild0.21` imports
 the TeX Live 2025 `plain.bst` and `apalike.bst` bytes with small, exact BBL
-execution fixtures, and `bib-bst` compiles both styles hermetically. The
-first VM stack-type failure on those fixtures is deliberately tracked by
-`umber2-ild0.22`; the imported bytes and reference BBLs must not be replaced
-with normalized or compatibility-allowance tests.
+execution fixtures, and `bib-bst` compiles both styles hermetically.
+`umber2-ild0.22` fixes the VM's quoted-assignment and control-flow operand
+ordering by representing `while$` continuations explicitly rather than
+draining active caller frames. Whole-style execution now reaches the separate
+classic name-formatting bug tracked by `umber2-ild0.23`; the imported bytes and
+reference BBLs must not be replaced with normalized or compatibility-allowance
+tests while that blocker is resolved.
 
 ## Upstream test inventory
 

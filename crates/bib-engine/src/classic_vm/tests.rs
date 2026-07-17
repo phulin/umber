@@ -67,6 +67,30 @@ READ EXECUTE {branch}"#,
 }
 
 #[test]
+fn quoted_assignments_and_control_continuations_preserve_operand_order() {
+    let result = run(
+        br#"ENTRY {} {} {}
+INTEGERS { counter }
+STRINGS { saved }
+FUNCTION {increment} { counter #1 + 'counter := }
+FUNCTION {condition} { counter #3 < }
+FUNCTION {main} {
+  "kept" 'saved :=
+  #0 'counter :=
+  'condition 'increment while$
+  counter #3 =
+    { saved write$ }
+    { "wrong" write$ }
+  if$
+}
+READ EXECUTE {main}"#,
+        b"@book{one}",
+    );
+    assert!(!result.is_fatal(), "{:?}", result.diagnostics());
+    assert_eq!(result.bbl(), Some("kept"));
+}
+
+#[test]
 fn wrong_types_and_underflow_are_fatal_and_transactional() {
     let result = run(
         b"ENTRY {} {} {} FUNCTION {bad} { pop$ } READ EXECUTE {bad}",
