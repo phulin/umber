@@ -183,11 +183,21 @@ async function integration() {
 		measureGeneratedHtml(zoom);
 
 	const plain = await compileInWorker(
-		{ mainPath: "main.tex" },
+		{ mainPath: "main.tex", html: { fonts: [htmlFont] } },
 		new Map([["main.tex", encode("Plain browser format.\\par\\bye")]]),
 		{ ...resolver, format: "plain" },
 	);
 	assert(plain.dvi.byteLength > 0, "Plain format returned no DVI");
+	assert(plain.html instanceof Uint8Array, "Plain format returned no HTML");
+	const plainPageMargins = serializedPageMargins(plain.html);
+	assert(
+		plainPageMargins.left === plainPageMargins.right,
+		`Plain horizontal margins differ: ${JSON.stringify(plainPageMargins)}`,
+	);
+	assert(
+		plainPageMargins.top === plainPageMargins.bottom,
+		`Plain vertical margins differ: ${JSON.stringify(plainPageMargins)}`,
+	);
 
 	const direct = await HttpManifestResolver.create({
 		manifestUrl,
@@ -258,9 +268,35 @@ async function integration() {
 		coldObjects: cold.objectRequests,
 		maximumActive: cold.maximumActive,
 		plainDviBytes: plain.dvi.byteLength,
+		plainPageMargins,
 		htmlBytes: htmlFirst.html.byteLength,
 		clickSource,
 		geometry: generatedGeometry,
+	};
+}
+
+function serializedPageMargins(bytes) {
+	const html = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+	const doc = new DOMParser().parseFromString(html, "text/html");
+	const page = doc.querySelector(".umber-page");
+	const root = page?.querySelector('.umber-box[data-umber-event="0"]');
+	assert(page && root, "serialized HTML has no page/root box");
+	const number = (element, name) => Number(element.getAttribute(name));
+	const originX = number(page, "data-umber-origin-x-sp");
+	const originY = number(page, "data-umber-origin-y-sp");
+	const left = originX + number(root, "data-umber-x-sp");
+	const top = originY + number(root, "data-umber-y-sp");
+	return {
+		left,
+		right:
+			number(page, "data-umber-width-sp") -
+			left -
+			number(root, "data-umber-width-sp"),
+		top,
+		bottom:
+			number(page, "data-umber-height-sp") -
+			top -
+			number(root, "data-umber-height-sp"),
 	};
 }
 
@@ -351,6 +387,17 @@ function measureGeneratedHtml(zoom) {
 		);
 	close(pageRect.width, px(page.dataset.umberWidthSp) * zoom, "page width");
 	close(pageRect.height, px(page.dataset.umberHeightSp) * zoom, "page height");
+	const rootBox = page.querySelector('.umber-box[data-umber-event="0"]');
+	assert(rootBox, "generated HTML has no root page box event");
+	const rootRect = rootBox.getBoundingClientRect();
+	const pageMargins = {
+		left: rootRect.left - pageRect.left,
+		right: pageRect.right - rootRect.right,
+		top: rootRect.top - pageRect.top,
+		bottom: pageRect.bottom - rootRect.bottom,
+	};
+	close(pageMargins.left, pageMargins.right, "horizontal page margins");
+	close(pageMargins.top, pageMargins.bottom, "vertical page margins");
 	const rule = page.querySelector(".umber-rule");
 	assert(rule, "generated HTML has no rule event");
 	const ruleRect = rule.getBoundingClientRect();
@@ -387,6 +434,7 @@ function measureGeneratedHtml(zoom) {
 		zoom,
 		dpr: devicePixelRatio,
 		ruleX: ruleRect.left - pageRect.left,
+		pageMargins,
 	};
 }
 
