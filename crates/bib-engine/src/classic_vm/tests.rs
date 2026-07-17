@@ -227,6 +227,34 @@ fn work_and_call_limits_terminate_loops_without_rust_recursion() {
 }
 
 #[test]
+fn malicious_nested_control_exhausts_explicit_frames_deterministically() {
+    let mut body = String::from("\"done\" write$");
+    for _ in 0..32 {
+        body = format!("#1 {{ {body} }} {{ }} if$");
+    }
+    let source =
+        format!("ENTRY {{}} {{}} {{}} FUNCTION {{ main }} {{ {body} }} READ EXECUTE {{ main }}");
+    let compiled = compile(source.as_bytes(), CompileLimits::default());
+    let style = compiled.program().expect("style");
+    let limits = ClassicVmLimits {
+        call_depth: 8,
+        ..ClassicVmLimits::default()
+    };
+    let first = execute_classic_style(style, &database(style, b"@book{one}", &["*"]), limits);
+    let second = execute_classic_style(style, &database(style, b"@book{one}", &["*"]), limits);
+    assert!(first.is_fatal());
+    assert_eq!(first, second);
+    assert_eq!(
+        first.diagnostics()[0].kind(),
+        ClassicVmDiagnosticKind::Limit
+    );
+    assert_eq!(
+        first.diagnostics()[0].message(),
+        "BST call-depth limit exceeded"
+    );
+}
+
+#[test]
 fn compiler_rejects_direct_recursion_before_execution() {
     let compiled = compile(b"FUNCTION {loop} { loop }", CompileLimits::default());
     assert!(!compiled.is_success());

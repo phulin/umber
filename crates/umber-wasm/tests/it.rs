@@ -1,5 +1,9 @@
 #![cfg(target_arch = "wasm32")]
 
+use bib_engine::{
+    BibliographyAttempt, ClassicBibJob, ClassicBibOptions, ClassicBibSession, FileKind,
+    FileProvisioner, FileRequestKey, ResolvedFile, VfsLimits, VirtualPath,
+};
 use js_sys::{Array, Object, Reflect, Uint8Array};
 use umber_wasm::{
     CompilerSession, JsFileRequestKey, JsProjectSessionOptions, JsSessionOptions, JsSourcePatch,
@@ -52,6 +56,73 @@ fn project_binding_accepts_versioned_classic_bibliography_options() {
             .expect("classic project session");
     session.dispose();
     assert!(session.disposed());
+}
+
+#[wasm_bindgen_test]
+fn persistent_wasm_classic_caches_evict_maximum_charge_jobs() {
+    let mut provisioner = FileProvisioner::new(VfsLimits::default()).expect("VFS limits");
+    for index in 0..16 {
+        provisioner
+            .register_user(
+                VirtualPath::user(&format!("main-{index}.aux")).expect("AUX path"),
+                format!(
+                    "\\citation{{*}}\n\\bibdata{{refs-{index}}}\n\\bibstyle{{style-{index}}}\n"
+                )
+                .into_bytes(),
+            )
+            .expect("AUX");
+        let style_name = format!("style-{index}.bst");
+        provisioner
+            .preload(ResolvedFile {
+                request: FileRequestKey::new(FileKind::BibStyle, &style_name).expect("style key"),
+                virtual_path: format!("/texlive/bib/{style_name}"),
+                bytes: format!(
+                    "ENTRY {{ title }} {{ }} {{ }} FUNCTION {{ main{index} }} {{ \"{}\" write$ }} READ EXECUTE {{ main{index} }}",
+                    "x".repeat(96),
+                )
+                .into_bytes(),
+                expected_digest: None,
+            })
+            .expect("style");
+        let database_name = format!("refs-{index}.bib");
+        provisioner
+            .preload(ResolvedFile {
+                request: FileRequestKey::new(FileKind::ClassicBibData, &database_name)
+                    .expect("database key"),
+                virtual_path: format!("/texlive/bib/{database_name}"),
+                bytes: format!("@book{{entry{index}, title = \"{}\"}}", "y".repeat(64),)
+                    .into_bytes(),
+                expected_digest: None,
+            })
+            .expect("database");
+    }
+    let snapshot = provisioner.snapshot();
+    let options = ClassicBibOptions::default()
+        .with_cache_entries(32)
+        .with_cache_bytes(4_096);
+    let mut session = ClassicBibSession::new();
+    for index in 0..16 {
+        let job = ClassicBibJob::new(
+            VirtualPath::user(&format!("main-{index}.aux")).expect("AUX path"),
+            options.clone(),
+        );
+        assert!(matches!(
+            session.process(&job, &snapshot),
+            BibliographyAttempt::Finished(_)
+        ));
+        let usage = session.cache_usage();
+        assert!(
+            usage.compiled_styles <= 4_096,
+            "style job {index}: {usage:?}"
+        );
+        assert!(
+            usage.prepared_databases <= 4_096,
+            "database job {index}: {usage:?}"
+        );
+    }
+    let usage = session.cache_usage();
+    assert!(usage.compiled_styles > 0);
+    assert!(usage.prepared_databases > 0);
 }
 
 #[wasm_bindgen_test]

@@ -141,6 +141,34 @@ fn cache_hit_revalidates_active_limits() {
     let result = cache.compile(VALID, limits);
     assert!(!result.is_success());
     assert!(!result.stats().cache_hit);
+
+    let result = cache.compile(
+        VALID,
+        CompileLimits {
+            retained_cache_bytes: 1,
+            ..CompileLimits::default()
+        },
+    );
+    assert!(!result.is_success());
+    assert!(!result.stats().cache_hit);
+}
+
+#[test]
+fn byte_weighted_cache_evicts_persistent_maximum_charge_styles() {
+    let mut cache = CompilationCache::new(32, 900);
+    for index in 0..16 {
+        let source = format!(
+            "ENTRY {{ }} {{ }} {{ }} FUNCTION {{ main{index} }} {{ \"{}\" write$ }} READ EXECUTE {{ main{index} }}",
+            "x".repeat(128),
+        );
+        assert!(
+            cache
+                .compile(source.as_bytes(), CompileLimits::default())
+                .is_success()
+        );
+        assert!(cache.retained_bytes() <= 900, "job {index}");
+    }
+    assert!(cache.len() < 16, "byte budget must evict old styles");
 }
 
 #[test]

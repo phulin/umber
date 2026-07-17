@@ -6,7 +6,7 @@ use super::{
     ClassicDatabaseCache, ClassicDatabaseDiagnosticKind, ClassicDatabaseSource,
     prepare_classic_database,
 };
-use crate::{ClassicControl, ClassicDatabaseOptions};
+use crate::{ClassicControl, ClassicDatabaseLimits, ClassicDatabaseOptions};
 
 fn control(citations: &[&str]) -> ClassicControl {
     // Test-only construction stays in this owning module, keeping the public
@@ -189,6 +189,68 @@ fn cache_key_changes_for_schema_and_read_options() {
         &ClassicDatabaseOptions::default(),
     );
     assert_eq!(cache.len(), 5);
+}
+
+#[test]
+fn cache_is_byte_weighted_and_revalidates_read_limits_per_job() {
+    let source = b"@book{one, title = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}\n@book{two, title = \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}";
+    let raw = parse_raw_bibtex_bytes(source, BibTexOptions::default());
+    let path = VirtualPath::user("refs.bib").expect("path");
+    let source = [ClassicDatabaseSource::new(
+        &path,
+        FileContentId::for_bytes(source),
+        &raw,
+    )];
+    let all_control = control(&["*"]);
+    let compiled = compile(b"ENTRY { title } { } { } READ", CompileLimits::default());
+    let style = compiled.program().expect("style");
+    let mut cache = ClassicDatabaseCache::new(32, 4_096);
+
+    let permissive = cache.prepare(
+        &all_control,
+        style,
+        &source,
+        &ClassicDatabaseOptions::default(),
+    );
+    assert_eq!(permissive.entries().len(), 2);
+    assert!(cache.retained_bytes() <= 4_096);
+
+    let restricted = ClassicDatabaseOptions::default().with_limits(ClassicDatabaseLimits {
+        entries: 1,
+        ..ClassicDatabaseLimits::default()
+    });
+    let restrictive = cache.prepare(&all_control, style, &source, &restricted);
+    assert!(!std::sync::Arc::ptr_eq(&permissive, &restrictive));
+    assert_eq!(restrictive.entries().len(), 1);
+    assert!(
+        restrictive
+            .diagnostics()
+            .any(|diagnostic| diagnostic.kind() == ClassicDatabaseDiagnosticKind::Limit)
+    );
+
+    for suffix in 0..16 {
+        let bytes = format!("@book{{entry{suffix}, title = \"{}\"}}", "x".repeat(64));
+        let raw = parse_raw_bibtex_bytes(bytes.as_bytes(), BibTexOptions::default());
+        let path = VirtualPath::user(&format!("refs-{suffix}.bib")).expect("path");
+        let sources = [ClassicDatabaseSource::new(
+            &path,
+            FileContentId::for_bytes(bytes.as_bytes()),
+            &raw,
+        )];
+        let control = control(&["*"]);
+        cache.prepare(
+            &control,
+            style,
+            &sources,
+            &ClassicDatabaseOptions::default(),
+        );
+        assert!(cache.retained_bytes() <= 4_096, "job {suffix}");
+    }
+    assert!(cache.retained_bytes() > 0);
+    assert!(
+        cache.len() < 16,
+        "byte budget must evict maximum-charge jobs"
+    );
 }
 
 #[test]
