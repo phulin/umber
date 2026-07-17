@@ -54,6 +54,12 @@ pub enum FileKind {
     XmlSchema = 7,
     GenericAsset = 8,
     Image = 9,
+    /// A root or recursively included classic BibTeX auxiliary file.
+    BibAux = 10,
+    /// A classic BibTeX datasource, kept distinct from Biber's input boundary.
+    ClassicBibData = 11,
+    /// An executable classic BibTeX style program.
+    BibStyle = 12,
 }
 
 impl FileKind {
@@ -61,9 +67,13 @@ impl FileKind {
     pub const fn domain(self) -> ResourceDomain {
         match self {
             Self::TexInput | Self::Tfm | Self::FormatImage | Self::Image => ResourceDomain::Tex,
-            Self::BibControl | Self::BibData | Self::BibConfiguration | Self::XmlSchema => {
-                ResourceDomain::Bibliography
-            }
+            Self::BibControl
+            | Self::BibData
+            | Self::BibConfiguration
+            | Self::XmlSchema
+            | Self::BibAux
+            | Self::ClassicBibData
+            | Self::BibStyle => ResourceDomain::Bibliography,
             Self::GenericAsset => ResourceDomain::Generic,
         }
     }
@@ -80,6 +90,9 @@ impl FileKind {
             Self::XmlSchema => "xml-schema",
             Self::GenericAsset => "asset",
             Self::Image => "image",
+            Self::BibAux => "bib-aux",
+            Self::ClassicBibData => "classic-bib-data",
+            Self::BibStyle => "bib-style",
         }
     }
 
@@ -95,6 +108,9 @@ impl FileKind {
             "xml-schema" => Some(Self::XmlSchema),
             "asset" => Some(Self::GenericAsset),
             "image" => Some(Self::Image),
+            "bib-aux" => Some(Self::BibAux),
+            "classic-bib-data" => Some(Self::ClassicBibData),
+            "bib-style" => Some(Self::BibStyle),
             _ => None,
         }
     }
@@ -112,6 +128,9 @@ impl fmt::Display for FileKind {
             Self::XmlSchema => "XML schema",
             Self::GenericAsset => "generic asset",
             Self::Image => "image",
+            Self::BibAux => "classic bibliography auxiliary",
+            Self::ClassicBibData => "classic bibliography data",
+            Self::BibStyle => "classic bibliography style",
         })
     }
 }

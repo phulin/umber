@@ -10,6 +10,9 @@ use crate::manifest::{
 pub enum FileKind {
     Tex,
     Tfm,
+    BibAux,
+    ClassicBib,
+    BibStyle,
 }
 
 impl FileKind {
@@ -18,6 +21,9 @@ impl FileKind {
         match self {
             Self::Tex => "tex",
             Self::Tfm => "tfm",
+            Self::BibAux => "bib-aux",
+            Self::ClassicBib => "classic-bib",
+            Self::BibStyle => "bst",
         }
     }
 
@@ -25,6 +31,9 @@ impl FileKind {
         match value {
             "tex" => Ok(Self::Tex),
             "tfm" => Ok(Self::Tfm),
+            "bib-aux" => Ok(Self::BibAux),
+            "classic-bib" => Ok(Self::ClassicBib),
+            "bst" => Ok(Self::BibStyle),
             _ => Err(SelectionError::new(format!(
                 "unsupported distribution file kind {value:?}"
             ))),

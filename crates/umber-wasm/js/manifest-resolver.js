@@ -4,6 +4,7 @@ import {
 	fontRequestIdentity,
 	isFormatName,
 	ManifestResolverError,
+	resourceDomain,
 	shardIndex,
 	validateIndexShard,
 	validateRootManifest,
@@ -194,8 +195,10 @@ export class HttpManifestResolver {
 					for (const job of group) {
 						results.set(job.key, {
 							type: "file",
-							domain: "tex",
-							...decodeKey(job.key),
+							...(() => {
+								const decoded = decodeKey(job.key);
+								return { domain: resourceDomain(decoded.kind), ...decoded };
+							})(),
 							virtualPath: job.entry.virtualPath,
 							bytes,
 						});

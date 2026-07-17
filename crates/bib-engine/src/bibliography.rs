@@ -39,14 +39,62 @@ impl From<BibJob> for BibliographyJob {
     }
 }
 
-/// Classic-BibTeX options reserved for the classic backend.
-///
-/// The phase-one backend deliberately has no classic execution options. The
-/// type establishes the explicit job boundary without leaking biblatex options
-/// into future classic execution.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+/// Bounded AUX-control resources accepted by a classic bibliography session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ClassicBibLimits {
+    pub aux_bytes: usize,
+    pub aux_files: usize,
+    pub aux_depth: usize,
+}
+
+impl Default for ClassicBibLimits {
+    fn default() -> Self {
+        Self {
+            aux_bytes: 8 * 1024 * 1024,
+            aux_files: 1_024,
+            aux_depth: 64,
+        }
+    }
+}
+
+/// Options that affect classic control discovery and later execution phases.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClassicBibOptions {
-    _private: (),
+    limits: ClassicBibLimits,
+    cache_entries: usize,
+}
+
+impl Default for ClassicBibOptions {
+    fn default() -> Self {
+        Self {
+            limits: ClassicBibLimits::default(),
+            cache_entries: 32,
+        }
+    }
+}
+
+impl ClassicBibOptions {
+    #[must_use]
+    pub const fn limits(&self) -> ClassicBibLimits {
+        self.limits
+    }
+
+    #[must_use]
+    pub const fn with_limits(mut self, limits: ClassicBibLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_cache_entries(mut self, entries: usize) -> Self {
+        self.cache_entries = entries;
+        self
+    }
+
+    #[must_use]
+    pub const fn cache_entries(&self) -> usize {
+        self.cache_entries
+    }
 }
 
 /// A classic-BibTeX job rooted at a LaTeX AUX file.
@@ -144,13 +192,44 @@ impl BibliographyDocument {
 /// stacks or mutable symbol storage through the public facade.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ClassicBibliography {
-    _private: (),
+    aux_files: Arc<[VirtualPath]>,
+    databases: Arc<[String]>,
+    style: Option<String>,
 }
 
 impl ClassicBibliography {
     #[must_use]
-    pub const fn empty() -> Self {
-        Self { _private: () }
+    pub fn empty() -> Self {
+        Self {
+            aux_files: Arc::new([]),
+            databases: Arc::new([]),
+            style: None,
+        }
+    }
+
+    pub(crate) fn from_control(control: &crate::classic::ClassicControl) -> Self {
+        Self {
+            aux_files: control.aux_files().cloned().collect::<Vec<_>>().into(),
+            databases: control
+                .databases()
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+                .into(),
+            style: control.style().map(str::to_owned),
+        }
+    }
+
+    pub fn aux_files(&self) -> impl ExactSizeIterator<Item = &VirtualPath> {
+        self.aux_files.iter()
+    }
+
+    pub fn databases(&self) -> impl ExactSizeIterator<Item = &str> {
+        self.databases.iter().map(String::as_str)
+    }
+
+    #[must_use]
+    pub fn style(&self) -> Option<&str> {
+        self.style.as_deref()
     }
 }
 
@@ -479,6 +558,10 @@ pub enum ClassicBibFailure {
     ResourceConflict,
     NoProgress,
     InternalInvariant,
+    MalformedInput,
+    Limit,
+    IncompleteControl,
+    AmbiguousProtocol,
 }
 
 /// An explicitly dispatched bibliography session.
@@ -494,7 +577,7 @@ impl BibliographySession {
     }
 
     #[must_use]
-    pub const fn classic() -> Self {
+    pub fn classic() -> Self {
         Self::Classic(ClassicBibSession::new())
     }
 
@@ -532,31 +615,19 @@ impl BibliographySession {
 /// result plumbing before AUX parsing and classic resource requests land.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ClassicBibSession {
-    _private: (),
+    control: crate::classic::ClassicControlSession,
 }
 
 impl ClassicBibSession {
     #[must_use]
-    pub const fn new() -> Self {
-        Self { _private: () }
+    pub fn new() -> Self {
+        Self {
+            control: crate::classic::ClassicControlSession::new(),
+        }
     }
 
     #[must_use]
-    pub fn process(
-        &mut self,
-        _job: &ClassicBibJob,
-        _snapshot: &VfsSnapshot,
-    ) -> BibliographyAttempt {
-        BibliographyAttempt::Finished(
-            BibliographyResult::new(
-                BibliographyHistory::Spotless,
-                BibliographyDocument::Classic(Arc::new(ClassicBibliography::empty())),
-                [],
-                [],
-                [],
-                BibliographyStats::Classic(ClassicBibliographyStats::default()),
-            )
-            .expect("an empty classic no-op result is valid"),
-        )
+    pub fn process(&mut self, job: &ClassicBibJob, snapshot: &VfsSnapshot) -> BibliographyAttempt {
+        self.control.process(job, snapshot)
     }
 }

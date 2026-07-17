@@ -9,6 +9,7 @@ use std::fmt;
 use std::sync::Arc;
 
 mod bibliography;
+mod classic;
 mod command;
 mod session;
 mod tool;
@@ -34,8 +35,13 @@ pub use bibliography::{
     BibliographyAttempt, BibliographyBackend, BibliographyDiagnostic, BibliographyDiagnosticCode,
     BibliographyDocument, BibliographyFailure, BibliographyHistory, BibliographyJob,
     BibliographyResult, BibliographyResultError, BibliographySession, BibliographySourceLocation,
-    BibliographyStats, ClassicBibFailure, ClassicBibJob, ClassicBibOptions, ClassicBibSession,
-    ClassicBibliography, ClassicBibliographyStats, ClassicDiagnosticCode, ClassicSourceLocation,
+    BibliographyStats, ClassicBibFailure, ClassicBibJob, ClassicBibLimits, ClassicBibOptions,
+    ClassicBibSession, ClassicBibliography, ClassicBibliographyStats, ClassicDiagnosticCode,
+    ClassicSourceLocation,
+};
+pub use classic::{
+    BibliographyDetection, BibliographyDetector, BibliographyDetectorOptions, BibliographyMode,
+    ClassicControl,
 };
 pub use command::{BibCommand, BibCommandError, BibCommandMode, BibCommandOutput, BibExitStatus};
 pub use session::{BibInitFailure, BibSession, BibSessionOptions};

@@ -614,7 +614,7 @@ pub(crate) fn validate_file_key(key: &str) -> Result<(), ManifestParseError> {
     let Some((kind, name)) = key.split_once(':') else {
         return Err(ManifestParseError::new(format!("invalid lookup key {key}")));
     };
-    if !matches!(kind, "tex" | "tfm") {
+    if !matches!(kind, "tex" | "tfm" | "bib-aux" | "classic-bib" | "bst") {
         return Err(ManifestParseError::new(format!("invalid lookup key {key}")));
     }
     validate_path(name, "", "lookup key")

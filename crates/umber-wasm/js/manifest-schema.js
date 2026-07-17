@@ -1,4 +1,4 @@
-const KEY_PATTERN = /^(tex|tfm):(.+)$/;
+const KEY_PATTERN = /^(tex|tfm|bib-aux|classic-bib|bst):(.+)$/;
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 const FORMAT_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 const MAX_OBJECT_BYTES = 128 * 1024 * 1024;
@@ -148,21 +148,35 @@ export async function shardIndex(key, shardBits, crypto) {
 export function encodeRequest(request) {
 	if (
 		!isRecord(request) ||
-		(request.kind !== "tex" && request.kind !== "tfm")
+		!["tex", "tfm", "bib-aux", "classic-bib-data", "bib-style"].includes(
+			request.kind,
+		)
 	) {
 		throw new ManifestResolverError(
 			"invalid-request",
-			"request kind must be tex or tfm",
+			"request kind is not supported by the distribution resolver",
 		);
 	}
-	const key = `${request.kind}:${request.name}`;
+	const kind = {
+		"classic-bib-data": "classic-bib",
+		"bib-style": "bst",
+	}[request.kind] ?? request.kind;
+	const key = `${kind}:${request.name}`;
 	validateKey(key);
 	return key;
 }
 
 export function decodeKey(key) {
 	const match = KEY_PATTERN.exec(key);
-	return { kind: match[1], name: match[2] };
+	const kind = {
+		"classic-bib": "classic-bib-data",
+		bst: "bib-style",
+	}[match[1]] ?? match[1];
+	return { kind, name: match[2] };
+}
+
+export function resourceDomain(kind) {
+	return kind === "tex" || kind === "tfm" ? "tex" : "bibliography";
 }
 
 export function isFormatName(name) {

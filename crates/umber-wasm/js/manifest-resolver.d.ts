@@ -4,7 +4,7 @@ import type { ResourceRequest, ResourceResponse } from "./umber_wasm.js";
 export const TEXLIVE_2026_MANIFEST_URL: string;
 export const TEXLIVE_2026_MANIFEST_SHA256: string;
 
-export type FileKind = "tex" | "tfm";
+export type FileKind = "tex" | "tfm" | "bib-aux" | "classic-bib-data" | "bib-style";
 
 export interface FileRequestKey {
 	kind: FileKind;

@@ -22,11 +22,15 @@ irreducible payload of 256 SHA-256 hex digests.
 
 ## Partition and shard schema
 
-The canonical lookup key is the existing case-sensitive `kind:name` string,
-for example `tex:article.cls` or `tfm:cmr10.tfm`. Hash its UTF-8 bytes with
-SHA-256 and interpret the first `shardBits` bits in network bit order as the
-numeric shard index. `shardBits` may be 0 through 16, so every supported shard
-count is a configurable power of two.
+The canonical lookup key is the case-sensitive `kind:name` string, for example
+`tex:article.cls`, `tfm:cmr10.tfm`, `bib-aux:main.aux`,
+`classic-bib:refs.bib`, or `bst:plain.bst`. The classic keys map one-to-one to
+the VFS wire kinds `bib-aux`, `classic-bib-data`, and `bib-style`; the shorter
+manifest spellings are immutable distribution vocabulary, not a browser-only
+translation. Hash its UTF-8 bytes with SHA-256 and interpret the first
+`shardBits` bits in network bit order as the numeric shard index. `shardBits`
+may be 0 through 16, so every supported shard count is a configurable power of
+two.
 
 Every digest-addressed shard is compact canonical JSON with schema 1,
 distribution identity, its numeric `index` (which also makes empty shard

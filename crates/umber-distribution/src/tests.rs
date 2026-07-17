@@ -93,6 +93,20 @@ fn request_key_encoding_is_canonical() {
 }
 
 #[test]
+fn classic_resource_kinds_use_stable_distribution_keys() {
+    let cases = [
+        (FileKind::BibAux, "main.aux", "bib-aux:main.aux"),
+        (FileKind::ClassicBib, "refs.bib", "classic-bib:refs.bib"),
+        (FileKind::BibStyle, "plain.bst", "bst:plain.bst"),
+    ];
+    for (kind, name, expected) in cases {
+        let key = FileRequestKey::new(kind, name).expect("valid classic request");
+        assert_eq!(key.manifest_key().as_str(), expected);
+        assert_eq!(FileRequestKey::from_manifest_key(expected), Ok(key));
+    }
+}
+
+#[test]
 fn parses_sharded_root_and_full_inline_dependency_metadata() {
     let root = ShardedManifestRoot::parse(
         r#"{"schema":2,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]}"#,

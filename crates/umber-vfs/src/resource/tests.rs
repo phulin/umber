@@ -148,6 +148,10 @@ fn native_wire_names_round_trip_every_wasm_value() {
         FileKind::BibConfiguration,
         FileKind::XmlSchema,
         FileKind::GenericAsset,
+        FileKind::Image,
+        FileKind::BibAux,
+        FileKind::ClassicBibData,
+        FileKind::BibStyle,
     ] {
         assert_eq!(FileKind::from_wire_name(kind.wire_name()), Some(kind));
     }

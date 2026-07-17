@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { webcrypto } from "node:crypto";
 import test from "node:test";
 
-import { shardIndex, validateRootManifest } from "./manifest-schema.js";
+import { decodeKey, encodeRequest, shardIndex, validateRootManifest } from "./manifest-schema.js";
 
 test("canonical shard selection matches publisher parity vectors", async () => {
 	const vectors = [
@@ -16,6 +16,17 @@ test("canonical shard selection matches publisher parity vectors", async () => {
 	}
 	assert.equal(await shardIndex("tex:plain.tex", 0, webcrypto), 0);
 	assert.equal(await shardIndex("tex:plain.tex", 16, webcrypto), 35536);
+});
+
+test("classic request keys share the Rust distribution vocabulary", () => {
+	assert.equal(
+		encodeRequest({ kind: "classic-bib-data", name: "refs.bib" }),
+		"classic-bib:refs.bib",
+	);
+	assert.deepEqual(decodeKey("bst:plain.bst"), {
+		kind: "bib-style",
+		name: "plain.bst",
+	});
 });
 
 test("root validation requires a consistent power-of-two shard table", () => {

@@ -2,11 +2,12 @@ use std::sync::Arc;
 
 use bib_engine::{
     BibAttempt, BibConfigurationBuilder, BibJob, BibOptionsBuilder, BibResultBuilder, BibSession,
-    BibliographyAttempt, BibliographyBackend, BibliographyDocument, BibliographyHistory,
-    BibliographyJob, BibliographyResult, BibliographyResultError, BibliographySession,
-    BibliographyStats, ClassicBibJob, ClassicBibOptions, CompatibilityVersion, FileProvisioner,
-    GeneratedFile, OutputFormat, OutputRequest, ProcessedBibliographyBuilder, VfsLimits,
-    VirtualPath,
+    BibliographyAttempt, BibliographyBackend, BibliographyDetection, BibliographyDetector,
+    BibliographyDocument, BibliographyFailure, BibliographyHistory, BibliographyJob,
+    BibliographyMode, BibliographyResult, BibliographyResultError, BibliographySession,
+    BibliographyStats, ClassicBibFailure, ClassicBibJob, ClassicBibOptions, CompatibilityVersion,
+    FileKind, FileProvisioner, GeneratedFile, OutputFormat, OutputRequest,
+    ProcessedBibliographyBuilder, ResolvedFile, VfsLimits, VirtualPath,
 };
 
 #[test]
@@ -138,23 +139,125 @@ fn fatal_artifacts_remain_detached_from_publishable_files() {
 }
 
 #[test]
-fn classic_noop_uses_the_same_typed_result_boundary() {
-    let job = ClassicBibJob::new(
-        VirtualPath::user("main.aux").expect("AUX path"),
-        ClassicBibOptions::default(),
-    );
-    let snapshot = FileProvisioner::new(VfsLimits::default())
-        .expect("limits")
-        .snapshot();
+fn classic_control_resolves_aux_bst_and_datasource_resources() {
+    let mut provisioner = FileProvisioner::new(VfsLimits::default()).expect("limits");
+    let aux = VirtualPath::user("main.aux").expect("AUX path");
+    provisioner
+        .register_user(
+            aux.clone(),
+            b"\\citation{one}\n\\@input{chapter.aux}\n".to_vec(),
+        )
+        .expect("root AUX");
+    let job = ClassicBibJob::new(aux, ClassicBibOptions::default());
     let mut session = BibliographySession::classic();
-    let result = match session.process(&BibliographyJob::Classic(job), &snapshot) {
+    let included = match session.process(
+        &BibliographyJob::Classic(job.clone()),
+        &provisioner.snapshot(),
+    ) {
+        BibliographyAttempt::NeedResources(needs) => needs,
+        attempt => panic!("expected included AUX request, got {attempt:?}"),
+    };
+    assert_eq!(included.required[0].key().kind(), FileKind::BibAux);
+    provisioner.expect(&included);
+    provisioner
+        .provision(ResolvedFile {
+            request: included.required[0].key().clone(),
+            virtual_path: "/texlive/classic/chapter.aux".into(),
+            bytes: b"\\bibstyle{plain}\n\\bibdata{refs}\n".to_vec(),
+            expected_digest: None,
+        })
+        .expect("included AUX");
+    let resources = match session.process(
+        &BibliographyJob::Classic(job.clone()),
+        &provisioner.snapshot(),
+    ) {
+        BibliographyAttempt::NeedResources(needs) => needs,
+        attempt => panic!("expected BST and classic BIB requests, got {attempt:?}"),
+    };
+    assert_eq!(
+        resources
+            .required
+            .iter()
+            .map(|request| request.key().kind())
+            .collect::<Vec<_>>(),
+        [FileKind::ClassicBibData, FileKind::BibStyle]
+    );
+    provisioner.expect(&resources);
+    for request in &resources.required {
+        provisioner
+            .provision(ResolvedFile {
+                request: request.key().clone(),
+                virtual_path: format!("/texlive/classic/{}", request.key().name()),
+                bytes: b"resource".to_vec(),
+                expected_digest: None,
+            })
+            .expect("classic resource");
+    }
+    let result = match session.process(&BibliographyJob::Classic(job), &provisioner.snapshot()) {
         BibliographyAttempt::Finished(result) => result,
-        attempt => panic!("expected no-op completion, got {attempt:?}"),
+        attempt => panic!("expected classic control completion, got {attempt:?}"),
     };
     assert_eq!(result.backend(), BibliographyBackend::Classic);
     assert!(result.is_publishable());
     assert!(matches!(
         result.document(),
         BibliographyDocument::Classic(_)
+    ));
+}
+
+#[test]
+fn auto_detection_waits_for_included_aux_before_reporting_ambiguity() {
+    let mut provisioner = FileProvisioner::new(VfsLimits::default()).expect("limits");
+    provisioner
+        .register_user(VirtualPath::user("main.bcf").expect("BCF"), b"bcf".to_vec())
+        .expect("BCF");
+    provisioner
+        .register_user(
+            VirtualPath::user("main.aux").expect("AUX"),
+            b"\\@input{included.aux}\n".to_vec(),
+        )
+        .expect("AUX");
+    let mode = BibliographyMode::Auto {
+        job_path: VirtualPath::user("main.tex").expect("job"),
+    };
+    let mut detector = BibliographyDetector::default();
+    let needs = match detector.detect(&mode, &provisioner.snapshot()) {
+        BibliographyDetection::NeedResources(needs) => needs,
+        result => panic!("expected included AUX request, got {result:?}"),
+    };
+    provisioner.expect(&needs);
+    provisioner
+        .provision(ResolvedFile {
+            request: needs.required[0].key().clone(),
+            virtual_path: "/texlive/classic/included.aux".into(),
+            bytes: b"\\bibstyle{plain}\n\\bibdata{refs}\n".to_vec(),
+            expected_digest: None,
+        })
+        .expect("included AUX");
+    assert!(matches!(
+        detector.detect(&mode, &provisioner.snapshot()),
+        BibliographyDetection::Failed(BibliographyFailure::Classic(
+            ClassicBibFailure::AmbiguousProtocol
+        ))
+    ));
+}
+
+#[test]
+fn classic_resource_retry_rejects_an_unchanged_missing_batch() {
+    let job = ClassicBibJob::new(
+        VirtualPath::user("missing.aux").expect("AUX"),
+        ClassicBibOptions::default(),
+    );
+    let snapshot = FileProvisioner::new(VfsLimits::default())
+        .expect("limits")
+        .snapshot();
+    let mut session = BibliographySession::classic();
+    assert!(matches!(
+        session.process(&BibliographyJob::Classic(job.clone()), &snapshot),
+        BibliographyAttempt::NeedResources(_)
+    ));
+    assert!(matches!(
+        session.process(&BibliographyJob::Classic(job), &snapshot),
+        BibliographyAttempt::Failed(BibliographyFailure::Classic(ClassicBibFailure::NoProgress))
     ));
 }

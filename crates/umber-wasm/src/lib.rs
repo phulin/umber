@@ -12,7 +12,7 @@ use wasm_bindgen::prelude::*;
 #[wasm_bindgen(typescript_custom_section)]
 const TYPESCRIPT_TYPES: &str = r#"
 export type ResourceDomain = "tex" | "bibliography" | "generic";
-export type FileKind = "tex" | "tfm" | "format" | "bib-control" | "bib-data" | "bib-configuration" | "xml-schema" | "asset";
+export type FileKind = "tex" | "tfm" | "format" | "bib-control" | "bib-data" | "bib-configuration" | "xml-schema" | "asset" | "image" | "bib-aux" | "classic-bib-data" | "bib-style";
 
 export interface FileRequestKey {
   domain: ResourceDomain;

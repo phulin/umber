@@ -310,10 +310,14 @@ pub enum FileResourceResponse {
 }
 ```
 
-The vocabulary initially covers TeX inputs, TFM files, format images,
-bibliography control files, bibliography data, bibliography configuration,
-XML/schema data, and explicitly typed generic assets. The domain and kind are
-part of identity even when two requests share a normalized name.
+The vocabulary covers TeX inputs, TFM files, format images, bibliography
+control files, bibliography data, bibliography configuration, XML/schema data,
+and explicitly typed generic assets. Classic BibTeX additionally uses distinct
+`bib-aux`, `classic-bib-data`, and `bib-style` kinds for the ordered AUX
+closure, raw `.bib` datasource, and executable `.bst` program respectively.
+The domain and kind are part of identity even when two requests share a
+normalized name. In particular, classic input is never silently treated as a
+Biber datasource or ordinary TeX input.
 
 The implemented `ResourceDomain` values are TeX, bibliography, and generic.
 Wire names are defined by these Rust values and reused by `umber-wasm`; the

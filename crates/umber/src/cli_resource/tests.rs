@@ -112,9 +112,30 @@ fn file_request(name: &str) -> ResourceRequest {
 
 fn local_resolver(root: &Path) -> LocalResolver {
     LocalResolver {
+        base: root.to_owned(),
         input: TexInputSearchPath::new(root, Vec::new()),
         font: TexFontSearchPath::new(root.to_owned(), Vec::new()),
         input_paths: RefCell::new(BTreeMap::new()),
+    }
+}
+
+#[test]
+fn local_resolver_handles_each_classic_bibliography_kind() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    std::fs::write(directory.path().join("child.aux"), b"aux").expect("AUX");
+    std::fs::write(directory.path().join("refs.bib"), b"bib").expect("BIB");
+    std::fs::write(directory.path().join("plain.bst"), b"bst").expect("BST");
+    let resolver = local_resolver(directory.path());
+    for (kind, name, bytes) in [
+        (FileKind::BibAux, "child", b"aux".as_slice()),
+        (FileKind::ClassicBibData, "refs", b"bib".as_slice()),
+        (FileKind::BibStyle, "plain", b"bst".as_slice()),
+    ] {
+        let request = FileRequest::new(
+            crate::FileRequestKey::new(kind, name).expect("classic request"),
+            name,
+        );
+        assert_eq!(resolver.resolve(&request).expect("resolved").bytes, bytes);
     }
 }
 

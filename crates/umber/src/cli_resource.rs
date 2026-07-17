@@ -332,6 +332,7 @@ fn contiguous_edit(old: &str, new: &str) -> (std::ops::Range<usize>, String) {
 }
 
 struct LocalResolver {
+    base: PathBuf,
     input: TexInputSearchPath,
     font: TexFontSearchPath,
     input_paths: RefCell<BTreeMap<PathBuf, PathBuf>>,
@@ -350,6 +351,7 @@ impl LocalResolver {
         };
         let base = main.parent().unwrap_or_else(|| Path::new(".")).to_owned();
         Self {
+            base: base.clone(),
             input: TexInputSearchPath::new(&base, areas("TEXINPUTS")),
             font: TexFontSearchPath::new(base, areas("TEXFONTS")),
             input_paths: RefCell::new(BTreeMap::new()),
@@ -357,6 +359,12 @@ impl LocalResolver {
     }
 
     fn resolve(&self, request: &FileRequest) -> Option<ResolvedFile> {
+        if matches!(
+            request.key().kind(),
+            FileKind::BibAux | FileKind::ClassicBibData | FileKind::BibStyle
+        ) {
+            return self.resolve_classic_bibliography(request);
+        }
         let mut world = World::real();
         let content = match request.key().kind() {
             FileKind::TexInput | FileKind::Image => self
@@ -382,9 +390,72 @@ impl LocalResolver {
         })
     }
 
+    fn resolve_classic_bibliography(&self, request: &FileRequest) -> Option<ResolvedFile> {
+        let (variable, extension) = match request.key().kind() {
+            FileKind::BibAux => ("TEXINPUTS", ".aux"),
+            FileKind::ClassicBibData => ("BIBINPUTS", ".bib"),
+            FileKind::BibStyle => ("BSTINPUTS", ".bst"),
+            _ => return None,
+        };
+        let mut world = World::real();
+        let content = read_classic_bib_resource(
+            &mut world,
+            &self.base,
+            variable,
+            request.original_name(),
+            extension,
+        )
+        .ok()?;
+        let path = content.path().to_owned();
+        let bytes = content.bytes().to_vec();
+        let digest = FileContentId::for_bytes(&bytes);
+        let virtual_path = PathBuf::from(format!("/texlive/local/{digest}"));
+        self.input_paths
+            .borrow_mut()
+            .insert(virtual_path.clone(), path);
+        Some(ResolvedFile {
+            request: request.key().clone(),
+            virtual_path: virtual_path.to_string_lossy().into_owned(),
+            expected_digest: Some(digest),
+            bytes,
+        })
+    }
+
     fn input_path_map(&self) -> BTreeMap<PathBuf, PathBuf> {
         self.input_paths.borrow().clone()
     }
+}
+
+fn read_classic_bib_resource(
+    world: &mut World,
+    base: &Path,
+    variable: &str,
+    original: &str,
+    extension: &str,
+) -> Result<tex_state::FileContent, String> {
+    let name = Path::new(original);
+    let mut candidates = Vec::new();
+    if name.is_absolute() {
+        candidates.push(name.to_owned());
+    } else {
+        candidates.push(base.join(name));
+        if let Some(areas) = env::var_os(variable) {
+            candidates.extend(
+                env::split_paths(&areas)
+                    .filter(|area| !area.as_os_str().is_empty())
+                    .map(|area| area.join(name)),
+            );
+        }
+    }
+    for mut candidate in candidates {
+        if candidate.extension().is_none() {
+            candidate.set_extension(extension.trim_start_matches('.'));
+        }
+        if let Ok(content) = world.read_file(&candidate) {
+            return Ok(content);
+        }
+    }
+    Err(format!("{original} was not found in {variable}"))
 }
 
 #[derive(Clone)]
@@ -457,6 +528,9 @@ impl DistributionResolver {
             let kind = match request.key().kind() {
                 FileKind::TexInput => DistributionFileKind::Tex,
                 FileKind::Tfm => DistributionFileKind::Tfm,
+                FileKind::BibAux => DistributionFileKind::BibAux,
+                FileKind::ClassicBibData => DistributionFileKind::ClassicBib,
+                FileKind::BibStyle => DistributionFileKind::BibStyle,
                 FileKind::GenericAsset => continue,
                 _ => {
                     responses.push(ResourceResponse::FileUnavailable(request.key().clone()));
