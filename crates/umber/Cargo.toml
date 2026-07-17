@@ -21,6 +21,7 @@ profiling-stats = [
 ]
 
 [dependencies]
+bib-engine = { path = "../bib-engine" }
 flate2.workspace = true
 lopdf = { version = "=0.43.0", default-features = false }
 md-5.workspace = true

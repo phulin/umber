@@ -4,7 +4,7 @@ Read the repository-level `AGENTS.md` before editing here. This crate is the com
 
 ## Crate Role
 
-`umber` wires the engine crates into user-facing commands. The binary currently provides `lex-dump`, `expand-dump`, and `run`; `run` composes TeX82, e-TeX, pdfTeX, LaTeX-DVI, and pdfLaTeX engine layers and can publish DVI or PDF from committed artifacts. The library exposes the shared engine-session orchestration boundary, localized file resolvers, typed finalization phases, in-memory helpers, and downstream artifact construction. It owns CLI argument handling, job-name/base-directory policy, engine capability composition, downstream output-driver composition, and the final effect commit for real runs.
+`umber` wires the engine crates into user-facing commands. The binary provides `lex-dump`, `expand-dump`, `bib`, and `run`; `bib` stages native files for the in-process bibliography adapter, while `run` composes TeX82, e-TeX, pdfTeX, LaTeX-DVI, and pdfLaTeX engine layers and can publish DVI or PDF from committed artifacts. The library exposes the shared engine-session orchestration boundary, localized file resolvers, typed finalization phases, in-memory helpers, and downstream artifact construction. It owns CLI argument handling, job-name/base-directory policy, engine capability composition, downstream output-driver composition, and the final effect commit for real runs.
 
 Use this crate when behavior is about driving the engine, presenting CLI output, or providing integration-test harnesses over multiple lower-level crates.
 
@@ -20,6 +20,7 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `AGENTS.md`: crate-local guidance for CLI-driver ownership, boundaries, validation, and this file map.
 - `Cargo.toml`: package metadata, feature flags, workspace lint inheritance, and engine/test dependencies.
 - `src/expand_dump.rs`: implementation of the `expand-dump` CLI command through the shared engine session and dump primitive setup.
+- `src/bib.rs`: native host-file staging, resource retry, and detached artifact publication for the in-process `bib` command.
 - `src/input_search.rs`: deterministic driver-owned TeX input and TFM font path resolution through World-backed reads.
 - `src/input_search/tests.rs`: focused TeX input/font area ordering, extension, and input-record coverage.
 - `src/html_output.rs`: exact native web-font bundle resolver with TFM identity, WOFF2 digest, complete encoding-map, and embedding-license validation.

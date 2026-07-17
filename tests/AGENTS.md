@@ -172,6 +172,10 @@ or extra bytes. Regenerate the complete import only with
 `scripts/regen-fixtures.sh --area bib` and a local upstream clone selected by
 `UMBER_REF_BIBER_SOURCE`; ordinary Cargo tests never run the reference program.
 
+`tests/corpus/bib/invocation` contains small native `umber bib` inputs and
+exact expected terminal/error byte fixtures. These exercise the in-process
+command adapter and must not invoke the live reference implementation.
+
 `tests/corpus/e2e` receives gitignored final-DVI oracles for Story, Gentle,
 TRIP, and e-TRIP. Their Cargo integration tests run Umber directly in process
 and return cleanly when an

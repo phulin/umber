@@ -8,6 +8,7 @@
 use std::fmt;
 use std::sync::Arc;
 
+mod command;
 mod session;
 mod tool;
 
@@ -27,14 +28,19 @@ pub use bib_output::{
     OutputFailureKind, OutputOptions, OutputRouter, Serializer,
 };
 pub use bib_unicode::{LegacyEncoding, RecodeSet, UnicodeData};
+pub use command::{BibCommand, BibCommandError, BibCommandMode, BibCommandOutput, BibExitStatus};
 pub use session::{BibInitFailure, BibSession, BibSessionOptions};
 pub use tool::{SyntheticTool, ToolFailure, ToolFailureKind, ToolResult};
-pub use umber_vfs::{FileKind, FileRequest, FileRequestBatch, FileRequestKey, VfsSnapshot};
+pub use umber_vfs::{
+    FileKind, FileProvisioner, FileRequest, FileRequestBatch, FileRequestKey, ResolvedFile,
+    VfsLimits, VfsSnapshot,
+};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct BibOptions {
     tool_mode: bool,
     outputs: Arc<[OutputRequest]>,
+    output_options: OutputOptions,
     configuration: Option<VirtualPath>,
     schemas: Arc<[VirtualPath]>,
 }
@@ -46,6 +52,10 @@ impl BibOptions {
     }
     pub fn outputs(&self) -> impl ExactSizeIterator<Item = &OutputRequest> {
         self.outputs.iter()
+    }
+    #[must_use]
+    pub const fn output_options(&self) -> &OutputOptions {
+        &self.output_options
     }
     #[must_use]
     pub const fn configuration(&self) -> Option<&VirtualPath> {
@@ -60,6 +70,7 @@ impl BibOptions {
 pub struct BibOptionsBuilder {
     tool_mode: bool,
     outputs: Vec<OutputRequest>,
+    output_options: OutputOptions,
     configuration: Option<VirtualPath>,
     schemas: Vec<VirtualPath>,
 }
@@ -84,6 +95,10 @@ impl BibOptionsBuilder {
         self.outputs.push(request);
         Ok(self)
     }
+    pub fn output_options(&mut self, options: OutputOptions) -> &mut Self {
+        self.output_options = options;
+        self
+    }
     pub fn configuration(&mut self, path: VirtualPath) -> &mut Self {
         self.configuration = Some(path);
         self
@@ -106,6 +121,7 @@ impl BibOptionsBuilder {
         BibOptions {
             tool_mode: self.tool_mode,
             outputs: self.outputs.into(),
+            output_options: self.output_options,
             configuration: self.configuration,
             schemas: self.schemas.into(),
         }

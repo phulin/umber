@@ -4,9 +4,9 @@ Status: foundation contracts, pinned Unicode utilities, bounded XML and
 BibTeX inputs, deterministic cross-entry graphs, structured names,
 data-list/sorting, labeling/uniqueness, exact BBL 3.3, BibTeX, BibLaTeXML, and
 BBLXML serialization, bounded DOT output, synthetic-section tool mode,
-alternate-output routing, and the resumable VFS bibliography session are
-implemented; native command and project integration continue in dependency
-order.
+alternate-output routing, the resumable VFS bibliography session, and the
+native command/API invocation adapter are implemented; project integration
+continues in dependency order.
 
 This document defines Umber's pure-Rust bibliography subsystem. Every Rust
 package uses the `bib-*` prefix, and modules, types, commands, features, and
@@ -488,6 +488,24 @@ as resource conflicts. Control, configuration, schema, local datasource, and
 URL datasource requests use the bibliography VFS kinds. URL request keys are
 deterministically encoded while `FileRequest::original_name` preserves the
 client-facing identifier.
+
+`BibCommand` is the host-neutral pinned invocation adapter. It parses the
+supported process, tool, and control-validation modes; applies command options
+above compiled defaults and tool configuration while leaving control-file
+scopes to the semantic pipeline; derives deterministic default output names;
+and returns `BibCommandOutput` with an exact status, terminal bytes, log bytes,
+and optional detached `BibResult`. Invalid invocations use status 2,
+processing/resource/output failures use status 1, and completed processing
+uses status 0. `execute_provisioned` drives typed resource retries through a
+caller-supplied resolver without host access in `bib-engine`.
+
+The native `umber bib` command is the host adapter for this API. It stages the
+input and requested local resources in `umber-vfs`, calls `bib-engine`
+directly, and publishes detached generated files and an optional `.blg`. It
+does not launch the reference implementation or another process. Command
+invocation fixtures under `tests/corpus/bib/invocation` pin validation,
+default/explicit naming, status, and terminal/log behavior independently from
+the upstream semantic fixtures.
 
 Serialization may also be invoked separately:
 

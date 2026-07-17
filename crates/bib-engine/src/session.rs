@@ -11,7 +11,7 @@ use bib_model::{
     BibConfigurationBuilder, BibDiagnostic, BibDiagnosticCode, BibSeverity, DataListId,
     DiagnosticBuilder, EntryId, ProcessedBibliographyBuilder, ProcessedSectionBuilder, SectionId,
 };
-use bib_output::{OutputContext, OutputOptions, OutputRouter};
+use bib_output::{OutputContext, OutputRouter};
 use bib_sort::{DataListBuilder, SortComponent, SortField, SortTemplate};
 use bib_unicode::{CompatibilityVersion, UnicodeData};
 use umber_vfs::{
@@ -389,7 +389,7 @@ impl BibSession {
             document.section(builder.freeze()).map_err(build_failure)?;
         }
         let document = Arc::new(document.freeze());
-        let router = OutputRouter::new(OutputOptions::default());
+        let router = OutputRouter::new(job.options().output_options().clone());
         let mut result = BibResultBuilder::new(Arc::clone(&document));
         let mut generated_bytes = 0usize;
         for request in job.options().outputs() {

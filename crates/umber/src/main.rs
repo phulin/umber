@@ -10,6 +10,7 @@ use tex_state::{FormatError, Universe, World, WorldError};
 use umber::EngineMode as RunEngine;
 use umber::{DriverFile, FileSessionResolvers, PlannedFinalization};
 
+mod bib;
 mod expand_dump;
 mod watch;
 
@@ -18,7 +19,7 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("umber: {err}");
-            ExitCode::FAILURE
+            ExitCode::from(err.exit_status())
         }
     }
 }
@@ -50,13 +51,14 @@ fn run() -> Result<(), CliError> {
             let opts = RunCliOptions::parse(args)?;
             run_tex(&opts)
         }
+        Some("bib") => bib::run(args).map_err(CliError::Bib),
         Some("watch") => watch::run(args).map_err(CliError::Watch),
         None => {
             println!("umber {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
         Some(_) => Err(CliError::Usage(
-            "expected: umber <lex-dump|expand-dump|run|watch> <file.tex>",
+            "expected: umber <lex-dump|expand-dump|bib|run|watch> <input>",
         )),
     }
 }
@@ -644,6 +646,7 @@ enum CliError {
     Format(FormatError),
     Finalization(umber::FinalizationError),
     InputReceipt(String),
+    Bib(bib::BibCliError),
     Watch(watch::WatchError),
     NativeRun(umber::cli_resource::NativeRunError),
 }
@@ -663,8 +666,18 @@ impl std::fmt::Display for CliError {
             Self::Format(err) => write!(f, "{err}"),
             Self::Finalization(err) => write!(f, "{err}"),
             Self::InputReceipt(message) => f.write_str(message),
+            Self::Bib(err) => write!(f, "{err}"),
             Self::Watch(err) => write!(f, "{err}"),
             Self::NativeRun(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl CliError {
+    const fn exit_status(&self) -> u8 {
+        match self {
+            Self::Bib(error) => error.exit_status(),
+            _ => 1,
         }
     }
 }

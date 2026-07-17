@@ -1,4 +1,4 @@
-use std::{fs, process::Command};
+use std::{fs, path::PathBuf, process::Command};
 
 use sha2::{Digest, Sha256};
 use test_support::{
@@ -19,6 +19,68 @@ fn exits_successfully() {
         .expect("failed to run umber binary");
 
     assert!(status.success());
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // CLI boundary intentionally launches the built Umber binary.
+fn bib_command_has_exact_native_invocation_outputs_and_statuses() {
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/bib/invocation");
+    let temp_dir = tempfile::tempdir().expect("create bib output directory");
+    let output_path = temp_dir.path().join("result.bbl");
+    let log_path = fixture.join("basic.blg");
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .arg("bib")
+        .arg("--nolog")
+        .arg("--output-file")
+        .arg(&output_path)
+        .arg(fixture.join("basic.bcf"))
+        .output()
+        .expect("run native bib command");
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        output.stdout,
+        fs::read(fixture.join("basic.expected.stdout")).expect("stdout fixture")
+    );
+    assert!(output.stderr.is_empty());
+    assert_eq!(
+        fs::read(&output_path).expect("generated BBL"),
+        fs::read(fixture.join("basic.expected.bbl")).expect("BBL fixture")
+    );
+    assert!(!log_path.exists(), "--nolog must not publish a log");
+
+    let tool_path = temp_dir.path().join("tool.bib");
+    let tool = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .arg("bib")
+        .arg("--tool")
+        .arg("--nolog")
+        .arg("--output-file")
+        .arg(&tool_path)
+        .arg(fixture.join("basic.bib"))
+        .output()
+        .expect("run native bib tool mode");
+    assert_eq!(tool.status.code(), Some(0));
+    assert_eq!(
+        tool.stdout,
+        fs::read(fixture.join("basic.expected.stdout")).expect("stdout fixture")
+    );
+    assert_eq!(
+        fs::read(tool_path).expect("tool output"),
+        fs::read(fixture.join("tool.expected.bib")).expect("tool fixture")
+    );
+
+    let invalid = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .arg("bib")
+        .arg("--output-format=pdf")
+        .arg(fixture.join("basic.bcf"))
+        .output()
+        .expect("run invalid bib invocation");
+    assert_eq!(invalid.status.code(), Some(2));
+    assert!(invalid.stdout.is_empty());
+    assert_eq!(
+        invalid.stderr,
+        fs::read(fixture.join("invalid.expected.stderr")).expect("stderr fixture")
+    );
 }
 
 #[test]

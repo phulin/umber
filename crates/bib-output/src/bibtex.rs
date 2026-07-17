@@ -97,6 +97,11 @@ impl Default for BibtexOptions {
 
 impl BibtexOptions {
     #[must_use]
+    pub const fn alignment(&self) -> bool {
+        self.align_fields
+    }
+
+    #[must_use]
     pub const fn with_alignment(mut self, enabled: bool) -> Self {
         self.align_fields = enabled;
         self

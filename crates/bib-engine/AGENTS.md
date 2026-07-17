@@ -8,6 +8,8 @@ in native and WASM builds without subprocesses or native-filesystem access.
 
 - `Cargo.toml`: crate graph and test-only manifest verification dependencies.
 - `src/lib.rs`: detached public job, option, result, failure, attempt, one-shot, and serialization contracts.
+- `src/command.rs`: pinned in-process command invocation, output naming, status, terminal, and log-byte adapter.
+- `src/command/tests.rs`: exact invocation validation and command-result fixtures.
 - `src/session.rs`: resumable VFS resource loop, bounded caches, stage composition, and detached output routing.
 - `src/session/convert.rs`: raw BibTeX-to-model conversion, typed values, and label-source preparation.
 - `src/session/tests.rs`: retry, no-progress, typed-query, and cold/cache parity tests.
