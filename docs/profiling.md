@@ -370,6 +370,25 @@ cold DVI; the final edit retained 14 pages, re-shipped three, and adopted all
 not a release win; the remaining executor residual is tracked by
 `umber2-vfqs.15.4.6`.
 
+The next residual pass compared two bounded non-instrumented samples with both
+incremental policies set to paragraph recording against two with both policies
+disabled. The newly dominant paragraph owner was dependency validation under
+`try_reuse_literal_paragraph`: its 144 inclusive samples repeatedly projected
+the complete unchanged hyphenation-pattern fingerprint. The existing bounded
+execution-local paragraph observation cache already guarded break capture by
+exact changed-at equality. Validation now consults that same cache and inserts
+an authoritative projection on a miss; any stamp change still recomputes
+through `Universe`, and the cache remains outside generations and replay.
+
+The single final four-pair AB/BA comparison reduced paragraph validation on the
+large/inverse edits from the local pre-change 10.745/10.670 ms to 4.834/4.829
+ms and reduced executor deltas from +84.794/+77.081 ms to +74.663/+68.110 ms.
+End-to-end deltas were +91.464, +43.781, +82.353, and +8.508 ms. All revisions
+remained byte-identical to cold DVI, dependency and barrier counts were
+unchanged, and the fourth edit retained 14 pages, re-shipped three, and adopted
+all 83 suffix pages. The still-material executor residual is a separate
+follow-up rather than grounds to add another optimization to this pass.
+
 The runner requires the same external inputs as Gentle conformance. Populate
 them with `scripts/setup-conformance-tests.sh` if necessary.
 

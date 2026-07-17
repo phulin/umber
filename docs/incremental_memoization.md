@@ -1009,6 +1009,24 @@ batching, break-observation caching, and the final 14 retained / 3 re-shipped /
 executor residual is `umber2-vfqs.15.4.6` rather than a reason to widen this
 optimization.
 
+A bounded same-policy enabled/disabled sample after the provenance merge made
+paragraph dependency validation the next dominant named path. In particular,
+unchanged hyphenation-pattern projections were recomputed for successive memo
+validations even though break recording already retained the same detached
+observation under its authoritative changed-at stamp. The execution-local
+cache now serves both validation and break capture. A lookup is usable only
+when the current stamp equals the cached stamp; otherwise validation recomputes
+the semantic value through `Universe` and refreshes the bounded cache. No cache
+entry crosses an execution run or participates in snapshots, hashes, replay,
+or detached paragraph identity.
+
+The one final four-pair AB/BA run reduced large/inverse paragraph validation
+from the local 10.745/10.670 ms to 4.834/4.829 ms and executor deltas from
++84.794/+77.081 ms to +74.663/+68.110 ms. Cold-DVI identity, inverse restart,
+dependency/barrier counts, provenance and source batching, and the final 14
+retained / 3 re-shipped / 83 adopted suffix split remained exact. The residual
+is still material and remains separate follow-up work.
+
 ### Dependency-recorder baseline
 
 The state-layer recorder has an explicit disabled branch and no lock or atomic.

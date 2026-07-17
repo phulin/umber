@@ -18,7 +18,7 @@ const PARAGRAPH_FRONT_END_DOMAIN: u32 = 2;
 const PARAGRAPH_FRONT_END_SCHEMA: u32 = 1;
 const PARAGRAPH_ENV_HASH_DOMAIN: u64 = 0x7061_7261_656e_7601;
 const MAX_PREFLIGHT_TOKENS: usize = 1 << 16;
-const MAX_BREAK_DEPENDENCY_CACHE_ENTRIES: usize = 4_096;
+const MAX_PARAGRAPH_DEPENDENCY_CACHE_ENTRIES: usize = 4_096;
 
 #[cfg(feature = "profiling-stats")]
 type PhaseStart = std::time::Instant;
@@ -201,11 +201,9 @@ pub(crate) fn try_reuse_literal_paragraph(
     };
     #[allow(clippy::disallowed_methods)]
     let validation_started = std::time::Instant::now();
-    let dependency_failure =
-        stores.validate_dependencies_with_failure(&mut entry.dependencies, |key| {
-            stores
-                .semantic_dependency_value(key)
-                .unwrap_or(tex_state::DependencyValue::Absent)
+    let dependency_failure = stores
+        .validate_dependencies_with_failure(&mut entry.dependencies, |key| {
+            paragraph_validation_value(stores, execution, key)
         });
     let prepared_input = stable_candidate.then(|| {
         entry
@@ -310,11 +308,9 @@ pub(crate) fn try_reuse_literal_paragraph(
     rebind_literal_origins(&mut nodes, &current_trace_origins, &entry.origin_ordinals);
     #[allow(clippy::disallowed_methods)]
     let line_validation_started = std::time::Instant::now();
-    let line_dependency_failure =
-        stores.validate_dependencies_with_failure(&mut entry.break_dependencies, |key| {
-            stores
-                .semantic_dependency_value(key)
-                .unwrap_or(tex_state::DependencyValue::Absent)
+    let line_dependency_failure = stores
+        .validate_dependencies_with_failure(&mut entry.break_dependencies, |key| {
+            paragraph_validation_value(stores, execution, key)
         });
     let lines_valid = imported_lines.is_some() && line_dependency_failure.is_none();
     stores.record_pure_memo_timing(
@@ -1122,7 +1118,7 @@ fn paragraph_break_dependencies(
     let dependencies = tracked
         .into_iter()
         .map(|(key, changed_at)| {
-            if let Some(cached) = execution.paragraph_break_dependency_cache.get(&key)
+            if let Some(cached) = execution.paragraph_dependency_cache.get(&key)
                 && cached.changed_at == changed_at
             {
                 return Some(cached.clone());
@@ -1132,10 +1128,9 @@ fn paragraph_break_dependencies(
                 changed_at,
                 value: stores.semantic_dependency_value(key)?,
             };
-            if execution.paragraph_break_dependency_cache.len() < MAX_BREAK_DEPENDENCY_CACHE_ENTRIES
-            {
+            if execution.paragraph_dependency_cache.len() < MAX_PARAGRAPH_DEPENDENCY_CACHE_ENTRIES {
                 execution
-                    .paragraph_break_dependency_cache
+                    .paragraph_dependency_cache
                     .insert(key, observed.clone());
             }
             Some(observed)
@@ -1147,6 +1142,33 @@ fn paragraph_break_dependencies(
         projection_started,
     );
     dependencies
+}
+
+fn paragraph_validation_value(
+    stores: &Universe,
+    execution: &mut ExecutionContext<'_>,
+    key: tex_state::DependencyKey,
+) -> tex_state::DependencyValue {
+    let changed_at = stores.dependency_changed_at(key);
+    if let Some(cached) = execution.paragraph_dependency_cache.get(&key)
+        && cached.changed_at == changed_at
+    {
+        return cached.value.clone();
+    }
+    let value = stores
+        .semantic_dependency_value(key)
+        .unwrap_or(tex_state::DependencyValue::Absent);
+    if execution.paragraph_dependency_cache.len() < MAX_PARAGRAPH_DEPENDENCY_CACHE_ENTRIES {
+        execution.paragraph_dependency_cache.insert(
+            key,
+            tex_state::ObservedDependency {
+                key,
+                changed_at,
+                value: value.clone(),
+            },
+        );
+    }
+    value
 }
 
 fn detach_effects(records: &[EffectRecord]) -> Option<Vec<DetachedVirtualEffect>> {
