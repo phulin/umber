@@ -378,6 +378,13 @@ continues to consume only its eager `BibTexSource` adapter. Sorting remains a
 later style-VM operation; the syntax parser does not silently bake either
 backend's processing policy into field values.
 
+Classic compiled-style and prepared-database caches are independently bounded
+by both FIFO entry count and charged retained bytes. The active classic job
+reapplies both limits before execution; tightening a persistent native or WASM
+session evicts oldest immutable entries immediately. Compiler hits revalidate
+the current compile limits, while prepared-database keys include every `READ`
+bound, so a permissive earlier job cannot bypass a restrictive later policy.
+
 ### BibLaTeXML datasource
 
 The XML datasource follows the same typed raw-entry contract. Handler tables

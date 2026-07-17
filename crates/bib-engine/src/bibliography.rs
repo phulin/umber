@@ -148,6 +148,7 @@ pub struct ClassicBibOptions {
     limits: ClassicBibLimits,
     database: ClassicDatabaseOptions,
     cache_entries: usize,
+    cache_bytes: usize,
 }
 
 impl Default for ClassicBibOptions {
@@ -156,6 +157,7 @@ impl Default for ClassicBibOptions {
             limits: ClassicBibLimits::default(),
             database: ClassicDatabaseOptions::default(),
             cache_entries: 32,
+            cache_bytes: 64 * 1024 * 1024,
         }
     }
 }
@@ -192,6 +194,18 @@ impl ClassicBibOptions {
     #[must_use]
     pub const fn cache_entries(&self) -> usize {
         self.cache_entries
+    }
+
+    /// Bounds each immutable classic execution cache in a persistent session.
+    #[must_use]
+    pub const fn with_cache_bytes(mut self, bytes: usize) -> Self {
+        self.cache_bytes = bytes;
+        self
+    }
+
+    #[must_use]
+    pub const fn cache_bytes(&self) -> usize {
+        self.cache_bytes
     }
 }
 
@@ -729,6 +743,13 @@ pub struct ClassicBibSession {
     execution: crate::classic_execution::ClassicExecutionSession,
 }
 
+/// Byte-accounted immutable classic execution caches retained by one session.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ClassicBibCacheUsage {
+    pub compiled_styles: usize,
+    pub prepared_databases: usize,
+}
+
 impl ClassicBibSession {
     #[must_use]
     pub fn new() -> Self {
@@ -750,5 +771,10 @@ impl ClassicBibSession {
             Err(crate::classic::ControlFailure::Need(batch)) => self.control.need(job, batch),
             Err(error) => BibliographyAttempt::Failed(error.into_failure()),
         }
+    }
+
+    #[must_use]
+    pub fn cache_usage(&self) -> ClassicBibCacheUsage {
+        self.execution.cache_usage()
     }
 }

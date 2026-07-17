@@ -6,6 +6,7 @@
 //! observable to the later BST VM.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::mem;
 use std::sync::Arc;
 
 use bib_bst::{ClassicStringPool, CompiledStyle, SymbolId, SymbolKind};
@@ -155,6 +156,66 @@ impl ClassicDatabase {
             let _ = pool.intern(value);
         }
     }
+
+    /// Conservatively charges every allocation retained by this immutable
+    /// prepared view. The raw parser input is deliberately excluded: a
+    /// prepared database owns only its projected entry state and diagnostics.
+    #[must_use]
+    pub fn retained_bytes(&self) -> usize {
+        mem::size_of::<Self>()
+            .saturating_add(
+                self.entries
+                    .iter()
+                    .map(ClassicDatabaseEntry::retained_bytes)
+                    .sum::<usize>(),
+            )
+            .saturating_add(
+                self.preambles
+                    .iter()
+                    .map(|value| mem::size_of::<String>().saturating_add(value.capacity()))
+                    .sum::<usize>(),
+            )
+            .saturating_add(
+                self.diagnostics
+                    .iter()
+                    .map(ClassicDatabaseDiagnostic::retained_bytes)
+                    .sum::<usize>(),
+            )
+            .saturating_add(
+                self.pool_trace
+                    .iter()
+                    .map(|value| mem::size_of::<String>().saturating_add(value.capacity()))
+                    .sum::<usize>(),
+            )
+    }
+}
+
+impl ClassicDatabaseEntry {
+    fn retained_bytes(&self) -> usize {
+        mem::size_of::<Self>()
+            .saturating_add(self.key.capacity())
+            .saturating_add(self.entry_type.capacity())
+            .saturating_add(self.crossref.as_ref().map_or(0, String::capacity))
+            .saturating_add(
+                self.fields
+                    .values()
+                    .map(|value| mem::size_of::<(SymbolId, String)>() + value.capacity())
+                    .sum::<usize>(),
+            )
+            .saturating_add(self.source.path().as_str().len())
+    }
+}
+
+impl ClassicDatabaseDiagnostic {
+    fn retained_bytes(&self) -> usize {
+        mem::size_of::<Self>()
+            .saturating_add(self.message.capacity())
+            .saturating_add(
+                self.source
+                    .as_ref()
+                    .map_or(0, |source| source.path().as_str().len()),
+            )
+    }
 }
 
 /// Prepared-database cache keyed by every `READ` semantic input.
@@ -162,22 +223,26 @@ impl ClassicDatabase {
 pub struct ClassicDatabaseCache {
     values: BTreeMap<PreparedKey, Arc<ClassicDatabase>>,
     order: VecDeque<PreparedKey>,
-    capacity: usize,
+    retained_bytes: usize,
+    max_entries: usize,
+    max_bytes: usize,
 }
 
 impl Default for ClassicDatabaseCache {
     fn default() -> Self {
-        Self::new(32)
+        Self::new(32, 64 * 1024 * 1024)
     }
 }
 
 impl ClassicDatabaseCache {
     #[must_use]
-    pub const fn new(capacity: usize) -> Self {
+    pub const fn new(max_entries: usize, max_bytes: usize) -> Self {
         Self {
             values: BTreeMap::new(),
             order: VecDeque::new(),
-            capacity,
+            retained_bytes: 0,
+            max_entries,
+            max_bytes,
         }
     }
 
@@ -189,6 +254,30 @@ impl ClassicDatabaseCache {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.values.is_empty()
+    }
+
+    /// Bytes charged to immutable prepared views and their cache keys.
+    #[must_use]
+    pub const fn retained_bytes(&self) -> usize {
+        self.retained_bytes
+    }
+
+    /// Applies persistent-session cache policy before a job begins. Any
+    /// tighter policy immediately evicts the oldest immutable views.
+    pub fn set_limits(&mut self, max_entries: usize, max_bytes: usize) {
+        self.max_entries = max_entries;
+        self.max_bytes = max_bytes;
+        if max_entries == 0 || max_bytes == 0 {
+            self.values.clear();
+            self.order.clear();
+            self.retained_bytes = 0;
+            return;
+        }
+        while self.values.len() > max_entries || self.retained_bytes > max_bytes {
+            if !self.evict_oldest() {
+                break;
+            }
+        }
     }
 
     pub fn prepare(
@@ -203,17 +292,58 @@ impl ClassicDatabaseCache {
             return Arc::clone(value);
         }
         let value = Arc::new(prepare_classic_database(control, style, sources, options));
-        if self.capacity != 0 {
-            while self.values.len() >= self.capacity {
-                let Some(oldest) = self.order.pop_front() else {
-                    break;
-                };
-                self.values.remove(&oldest);
-            }
-            self.order.push_back(key.clone());
-            self.values.insert(key, Arc::clone(&value));
-        }
+        self.insert(key, Arc::clone(&value));
         value
+    }
+
+    fn insert(&mut self, key: PreparedKey, value: Arc<ClassicDatabase>) {
+        if self.max_entries == 0 || self.max_bytes == 0 {
+            return;
+        }
+        // The FIFO order owns a second key so eviction does not depend on map
+        // ordering. Charge both copies as well as the immutable prepared view.
+        let charge = key
+            .retained_bytes()
+            .saturating_mul(2)
+            .saturating_add(value.retained_bytes());
+        if charge > self.max_bytes {
+            return;
+        }
+        while self.values.len() >= self.max_entries
+            || self.retained_bytes.saturating_add(charge) > self.max_bytes
+        {
+            if !self.evict_oldest() {
+                break;
+            }
+        }
+        self.retained_bytes = self.retained_bytes.saturating_add(charge);
+        self.order.push_back(key.clone());
+        self.values.insert(key, value);
+    }
+
+    fn evict_oldest(&mut self) -> bool {
+        let Some(oldest) = self.order.pop_front() else {
+            self.values.clear();
+            self.retained_bytes = 0;
+            return false;
+        };
+        if let Some(evicted) = self.values.remove(&oldest) {
+            self.retained_bytes = self.retained_bytes.saturating_sub(
+                oldest
+                    .retained_bytes()
+                    .saturating_mul(2)
+                    .saturating_add(evicted.retained_bytes()),
+            );
+            true
+        } else {
+            // The FIFO and lookup map are always updated together. Recover
+            // defensively if an internal invariant is ever violated rather
+            // than allowing cache eviction to spin in a persistent session.
+            self.values.clear();
+            self.order.clear();
+            self.retained_bytes = 0;
+            false
+        }
     }
 }
 
@@ -281,6 +411,38 @@ impl PreparedKey {
             // options and every bound are private and included recursively.
             options: format!("{options:?}"),
         }
+    }
+
+    fn retained_bytes(&self) -> usize {
+        mem::size_of::<Self>()
+            .saturating_add(
+                self.sources
+                    .iter()
+                    .map(|(path, _, options)| {
+                        mem::size_of::<(String, FileContentId, String)>()
+                            .saturating_add(path.capacity())
+                            .saturating_add(options.capacity())
+                    })
+                    .sum::<usize>(),
+            )
+            .saturating_add(
+                self.citations
+                    .iter()
+                    .map(|citation| mem::size_of::<String>() + citation.capacity())
+                    .sum::<usize>(),
+            )
+            .saturating_add(
+                self.schema
+                    .iter()
+                    .map(|(kind, name, value)| {
+                        mem::size_of::<(String, String, String)>()
+                            .saturating_add(kind.capacity())
+                            .saturating_add(name.capacity())
+                            .saturating_add(value.capacity())
+                    })
+                    .sum::<usize>(),
+            )
+            .saturating_add(self.options.capacity())
     }
 }
 

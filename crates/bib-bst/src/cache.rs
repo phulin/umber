@@ -46,6 +46,15 @@ impl CompilationCache {
         self.entries.clear();
         self.retained_bytes = 0;
     }
+
+    /// Applies session policy before the next job. Tightening a long-lived
+    /// session evicts FIFO entries immediately, so stale permissive jobs
+    /// cannot retain memory above the current policy.
+    pub fn set_limits(&mut self, max_entries: usize, max_bytes: usize) {
+        self.max_entries = max_entries;
+        self.max_bytes = max_bytes;
+        self.evict_to_limits();
+    }
     #[must_use]
     pub fn compile(&mut self, source: &[u8], limits: CompileLimits) -> CompileResult {
         if let Some(program) = self
@@ -71,20 +80,38 @@ impl CompilationCache {
         if charge > self.max_bytes || charge > limits.retained_cache_bytes {
             return;
         }
-        while self.entries.len() >= self.max_entries
-            || self.retained_bytes.saturating_add(charge) > self.max_bytes
-        {
-            let Some(entry) = self.entries.pop_front() else {
-                break;
-            };
-            self.retained_bytes = self
-                .retained_bytes
-                .saturating_sub(entry.program.charge().retained_bytes);
-        }
+        self.evict_for(charge);
         self.retained_bytes += charge;
         self.entries.push_back(Entry {
             source: source.to_vec(),
             program,
         });
+    }
+
+    fn evict_to_limits(&mut self) {
+        if self.max_entries == 0 || self.max_bytes == 0 {
+            self.clear();
+            return;
+        }
+        while self.entries.len() > self.max_entries || self.retained_bytes > self.max_bytes {
+            self.evict_oldest();
+        }
+    }
+
+    fn evict_for(&mut self, charge: usize) {
+        while self.entries.len() >= self.max_entries
+            || self.retained_bytes.saturating_add(charge) > self.max_bytes
+        {
+            self.evict_oldest();
+        }
+    }
+
+    fn evict_oldest(&mut self) {
+        let Some(entry) = self.entries.pop_front() else {
+            return;
+        };
+        self.retained_bytes = self
+            .retained_bytes
+            .saturating_sub(entry.program.charge().retained_bytes);
     }
 }

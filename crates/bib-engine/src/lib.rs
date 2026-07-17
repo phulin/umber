@@ -39,9 +39,9 @@ pub use bibliography::{
     BibliographyAttempt, BibliographyBackend, BibliographyDiagnostic, BibliographyDiagnosticCode,
     BibliographyDocument, BibliographyFailure, BibliographyHistory, BibliographyJob,
     BibliographyResult, BibliographyResultError, BibliographySession, BibliographySourceLocation,
-    BibliographyStats, ClassicBibFailure, ClassicBibJob, ClassicBibLimits, ClassicBibOptions,
-    ClassicBibSession, ClassicBibliography, ClassicBibliographyStats, ClassicDatabaseLimits,
-    ClassicDatabaseOptions, ClassicDiagnosticCode, ClassicSourceLocation,
+    BibliographyStats, ClassicBibCacheUsage, ClassicBibFailure, ClassicBibJob, ClassicBibLimits,
+    ClassicBibOptions, ClassicBibSession, ClassicBibliography, ClassicBibliographyStats,
+    ClassicDatabaseLimits, ClassicDatabaseOptions, ClassicDiagnosticCode, ClassicSourceLocation,
 };
 pub use classic::{
     BibliographyDetection, BibliographyDetector, BibliographyDetectorOptions, BibliographyMode,

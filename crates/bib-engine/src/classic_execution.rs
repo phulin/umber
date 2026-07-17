@@ -13,9 +13,10 @@ use umber_vfs::{FileKind, FileRequest, FileRequestBatch, VfsSnapshot, VirtualPat
 
 use crate::{
     BibliographyAttempt, BibliographyDiagnostic, BibliographyDiagnosticCode, BibliographyDocument,
-    BibliographyHistory, BibliographyResult, BibliographyStats, ClassicBibJob, ClassicControl,
-    ClassicDatabaseCache, ClassicDatabaseDiagnostic, ClassicDiagnosticCode, ClassicVmDiagnostic,
-    ClassicVmDiagnosticKind, ClassicVmLimits, GeneratedFile, execute_classic_style,
+    BibliographyHistory, BibliographyResult, BibliographyStats, ClassicBibCacheUsage,
+    ClassicBibJob, ClassicControl, ClassicDatabaseCache, ClassicDatabaseDiagnostic,
+    ClassicDiagnosticCode, ClassicVmDiagnostic, ClassicVmDiagnosticKind, ClassicVmLimits,
+    GeneratedFile, execute_classic_style,
 };
 
 #[derive(Clone, Debug)]
@@ -35,7 +36,7 @@ impl ClassicExecutionSession {
         let limits = CompileLimits::default();
         Self {
             styles: CompilationCache::new(32, limits.retained_cache_bytes),
-            databases: ClassicDatabaseCache::new(32),
+            databases: ClassicDatabaseCache::new(32, limits.retained_cache_bytes),
         }
     }
 
@@ -46,6 +47,10 @@ impl ClassicExecutionSession {
         snapshot: &VfsSnapshot,
         control_session: &mut crate::classic::ClassicControlSession,
     ) -> BibliographyAttempt {
+        self.styles
+            .set_limits(job.options().cache_entries(), job.options().cache_bytes());
+        self.databases
+            .set_limits(job.options().cache_entries(), job.options().cache_bytes());
         let Some(style_name) = control.style() else {
             return self.finished_empty(control);
         };
@@ -165,6 +170,13 @@ impl ClassicExecutionSession {
             )
             .expect("classic execution artifacts have distinct names"),
         )
+    }
+
+    pub(crate) fn cache_usage(&self) -> ClassicBibCacheUsage {
+        ClassicBibCacheUsage {
+            compiled_styles: self.styles.retained_bytes(),
+            prepared_databases: self.databases.retained_bytes(),
+        }
     }
 
     fn finished_empty(&self, control: ClassicControl) -> BibliographyAttempt {
