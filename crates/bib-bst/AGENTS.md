@@ -11,6 +11,7 @@ session and later BST VM issues.
 
 - `src/lib.rs`: public bounded compilation and cache boundary.
 - `src/lexer.rs`: byte-aware tokens and bounded lexical recovery.
+- `src/pool.rs`: Web2C-compatible pooled-string identity and charged lifetime accounting.
 - `src/parser.rs`: all ten top-level commands and parser recovery.
 - `src/program.rs`: immutable typed symbols, instructions, and compiled style.
 - `src/compiler.rs`: phase validation, resolution, lowering, and limits.

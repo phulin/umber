@@ -1,5 +1,6 @@
 use crate::{
-    CompilationCache, CompileLimits, CompiledCommand, DiagnosticKind, Instruction, compile,
+    ClassicStringPool, CompilationCache, CompileLimits, CompiledCommand, DiagnosticKind,
+    Instruction, StringPoolLimit, StringPoolLimits, compile,
 };
 
 const VALID: &[u8] = br#"
@@ -155,4 +156,43 @@ fn arbitrary_bytes_terminate_under_limits() {
         let bytes = vec![seed; 1024];
         let _ = compile(&bytes, limits);
     }
+}
+
+#[test]
+fn classic_pool_deduplicates_empty_strings_and_preserves_identities() {
+    let mut pool = ClassicStringPool::new(StringPoolLimits::unlimited());
+    let empty = pool.intern("").expect("empty string");
+    assert_eq!(pool.intern("").expect("same empty string"), empty);
+    let title = pool.intern("title").expect("title");
+    assert_eq!(pool.value(title), Some("title"));
+    assert_eq!(pool.usage().strings(), 2);
+    assert_eq!(pool.usage().characters(), 5);
+}
+
+#[test]
+fn web2c_bootstrap_owns_the_reference_predefined_pool() {
+    let pool = ClassicStringPool::web2c();
+    assert_eq!(pool.usage().strings(), 80);
+    assert_eq!(pool.usage().characters(), 470);
+}
+
+#[test]
+fn classic_pool_enforces_charged_limits_after_deduplication() {
+    let mut pool = ClassicStringPool::new(StringPoolLimits::new(1, 3));
+    pool.intern("abc").expect("fits");
+    assert_eq!(pool.intern("abc"), pool.intern("abc"));
+    assert_eq!(pool.intern("d"), Err(StringPoolLimit::Strings));
+    let mut characters = ClassicStringPool::new(StringPoolLimits::new(2, 3));
+    assert_eq!(characters.intern("four"), Err(StringPoolLimit::Characters));
+}
+
+#[test]
+fn compiler_pool_trace_covers_symbols_and_literals_without_double_charging() {
+    let result = compile(
+        b"ENTRY { title } {} {} MACRO { titlecase } { \"x\" } FUNCTION { emit } { \"x\" } READ",
+        CompileLimits::default(),
+    );
+    let style = result.program().expect("valid style");
+    assert_eq!(style.compiler_pool_usage().strings(), 4);
+    assert_eq!(style.compiler_pool_usage().characters(), 19);
 }

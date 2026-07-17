@@ -6,10 +6,14 @@
 mod cache;
 mod compiler;
 mod lexer;
+mod pool;
 mod program;
 
 pub use cache::CompilationCache;
 pub use compiler::{CompileResult, compile};
+pub use pool::{
+    ClassicStringPool, PoolStringId, StringPoolLimit, StringPoolLimits, StringPoolUsage,
+};
 pub use program::{
     Builtin, CompiledCommand, CompiledFunction, CompiledStyle, Declarations, FunctionId,
     Instruction, ProgramCharge, SpecialSymbol, StringId, Symbol, SymbolId, SymbolKind,

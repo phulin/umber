@@ -2,6 +2,8 @@
 
 use std::collections::BTreeMap;
 
+use crate::{ClassicStringPool, StringPoolLimits, StringPoolUsage};
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct FunctionId(pub u32);
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -218,6 +220,7 @@ pub struct CompiledStyle {
     functions: Vec<CompiledFunction>,
     commands: Vec<CompiledCommand>,
     charge: ProgramCharge,
+    pool_trace: Vec<String>,
 }
 impl CompiledStyle {
     #[must_use]
@@ -236,17 +239,35 @@ impl CompiledStyle {
     pub const fn charge(&self) -> ProgramCharge {
         self.charge
     }
+    /// Replays compiler-owned declarations and literal values into the
+    /// job-lifetime pool. The caller owns ordering with AUX and database
+    /// ingestion; repeated values retain the first pool identity.
+    pub fn apply_pool_trace(&self, pool: &mut ClassicStringPool) {
+        for value in &self.pool_trace {
+            let _ = pool.intern(value);
+        }
+    }
+    /// Compiler-owned pool charge in isolation, useful for cache accounting
+    /// and focused tests. Job summaries should replay into their shared pool.
+    #[must_use]
+    pub fn compiler_pool_usage(&self) -> StringPoolUsage {
+        let mut pool = ClassicStringPool::new(StringPoolLimits::unlimited());
+        self.apply_pool_trace(&mut pool);
+        pool.usage()
+    }
     pub(crate) fn new(
         declarations: Declarations,
         functions: Vec<CompiledFunction>,
         commands: Vec<CompiledCommand>,
         charge: ProgramCharge,
+        pool_trace: Vec<String>,
     ) -> Self {
         Self {
             declarations,
             functions,
             commands,
             charge,
+            pool_trace,
         }
     }
 }

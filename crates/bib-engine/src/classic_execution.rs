@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use bib_bst::{CompilationCache, CompileLimits, CompiledStyle, Instruction};
+use bib_bst::{ClassicStringPool, CompilationCache, CompileLimits, CompiledStyle, Instruction};
 use bib_input::parse_raw_bibtex_bytes;
 use umber_vfs::{FileKind, FileRequest, FileRequestBatch, VfsSnapshot, VirtualPath};
 
@@ -418,39 +418,36 @@ fn classic_string_usage(
     style: &CompiledStyle,
     database: &crate::ClassicDatabase,
 ) -> (usize, usize) {
-    let style_strings = style.declarations().strings();
-    let mut strings = style.declarations().symbols().len() + style_strings.len();
-    let mut characters = style
-        .declarations()
-        .symbols()
-        .iter()
-        .map(|symbol| symbol.name().len())
-        .sum::<usize>()
-        + style_strings.iter().map(String::len).sum::<usize>();
+    let mut pool = ClassicStringPool::web2c();
     for aux in control.aux_files() {
-        strings += 1;
-        characters += file_name(aux).len();
+        // Web2C first interns the top-level AUX name before adding `.aux` for
+        // file opening; the extension belongs to the already bootstrapped
+        // pool rather than to this dynamic identity.
+        let name = file_name(aux)
+            .strip_suffix(".aux")
+            .unwrap_or(file_name(aux));
+        let _ = pool.intern(name);
     }
     if let Some(style_name) = control.style() {
-        strings += 1;
-        characters += style_name.len() + usize::from(!style_name.ends_with(".bst")) * 4;
+        let _ = pool.intern(style_name);
     }
     for database_name in control.databases() {
-        strings += 1;
-        characters += database_name.len() + usize::from(!database_name.ends_with(".bib")) * 4;
+        let _ = pool.intern(database_name);
     }
     for citation in control.citations() {
-        strings += 1;
-        characters += citation.len();
+        let _ = pool.intern(citation);
     }
+    style.apply_pool_trace(&mut pool);
     let (source_strings, source_characters) = database.source_string_usage();
-    strings += source_strings;
-    characters += source_characters;
+    // Database event ownership is completed by the READ-pool follow-up. Keep
+    // its existing aggregate charge here so this compiler-pool migration does
+    // not alter emitted bibliography artifacts.
+    let usage = pool.usage();
+    let mut strings = usage.strings() + source_strings;
+    let mut characters = usage.characters() + source_characters;
     for preamble in database.preambles() {
         strings += 1;
         characters += preamble.len();
     }
-    // Fixed strings installed by the classic scanner and command reader but
-    // not represented in the compiled immutable program.
-    (strings + 37, characters + 163)
+    (strings, characters)
 }

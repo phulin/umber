@@ -145,6 +145,25 @@ summary is `103` strings / `598` characters and Umber reports `106` / `625`.
 The runner intentionally treats this as a parity failure rather than
 normalizing it away.
 
+### Web2C string-pool accounting
+
+`bib-bst/src/pool.rs` owns the monotonic classic string-pool model. A pool
+assigns a stable `PoolStringId` on first insertion, charges one string and its
+byte length exactly once, and shares that identity across all owners; an empty
+string is an ordinary chargeable value. Its explicit bootstrap sequence is the
+Web2C `pre_def_certain_strings` population, rather than a summary offset.
+Independent string-count and character-count limits are checked only for a
+new value, so duplicate lookup never consumes capacity.
+
+The BST compiler records its declaration and literal insertions as an ordered
+trace in the immutable compiled style. At BLG rendering the session starts the
+Web2C bootstrap pool, records AUX identities, replays the compiler trace, and
+then applies the currently owned READ aggregate. This keeps compiled-style
+caches host-neutral while preserving one job-lifetime pool identity. The
+remaining database event-level ownership and ordering is tracked separately by
+`umber2-ild0.13.5.2`; it must replace that READ aggregate without changing the
+pool or emitted bibliography behavior.
+
 ## VM core and built-in completion
 
 `umber2-ild0.8` supplies the bounded execution core in

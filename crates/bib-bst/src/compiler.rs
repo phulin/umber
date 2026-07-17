@@ -86,6 +86,7 @@ struct Compiler {
     source_bytes: usize,
     nesting: usize,
     work: usize,
+    pool_trace: Vec<String>,
 }
 impl Compiler {
     fn new(
@@ -121,6 +122,7 @@ impl Compiler {
             source_bytes,
             nesting,
             work,
+            pool_trace: Vec::new(),
         }
     }
     fn parse(&mut self) {
@@ -222,6 +224,7 @@ impl Compiler {
             self.recover();
             return;
         };
+        self.pool_trace.push(value.clone());
         let id = self.declarations.add_string(value);
         self.declare(&name, SymbolKind::StringMacro(id), location, |_, _| {});
     }
@@ -262,6 +265,7 @@ impl Compiler {
             self.skip_group();
             return;
         }
+        self.pool_trace.push(fold(&name));
         let body = self.body_group();
         // Reserve the stable function ID before lowering nested anonymous
         // bodies. They are ordinary functions but must not displace the named
@@ -328,6 +332,7 @@ impl Compiler {
             match &body[at].kind {
                 TokenKind::Integer(value) => instructions.push(Instruction::PushInteger(*value)),
                 TokenKind::String(value) => {
+                    self.pool_trace.push(value.clone());
                     let id = self.declarations.add_string(value.clone());
                     instructions.push(Instruction::PushString(id));
                 }
@@ -640,7 +645,10 @@ impl Compiler {
             return;
         }
         match self.declarations.insert(name, kind) {
-            Ok(id) => add(&mut self.declarations, id),
+            Ok(id) => {
+                self.pool_trace.push(fold(name));
+                add(&mut self.declarations, id)
+            }
             Err(()) => self.error(
                 DiagnosticKind::DuplicateSymbol,
                 location,
@@ -724,6 +732,7 @@ impl Compiler {
                     self.functions,
                     self.commands,
                     charge,
+                    self.pool_trace,
                 ))
             }),
             diagnostics: self.diagnostics,
