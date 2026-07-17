@@ -89,11 +89,11 @@ bytes, deep values, and structured plus rendered diagnostics; a comparison
 that unexpectedly matches is an XPASS and fails the test. Refreshing the
 verbatim upstream input set is an explicit live-reference operation through
 `scripts/regen-fixtures.sh --area bib`, never an ordinary Cargo-test action.
-The same binary currently contains 539 assertion-isolated strict xfails for
-the 23 foundation, input, and graph upstream files. Their Rust modules retain
-the complete pinned test sources and exact assertion expressions for audit;
-the validation loop is expanded to 53 independent tests so one XPASS cannot
-hide later validation assertions.
+The same binary currently contains 1,225 assertion-isolated strict xfails for
+43 foundation, input, graph, names, sorting, labels, and uniqueness upstream
+files. Their Rust modules retain the complete pinned test sources and exact
+assertion expressions for audit; the validation loop is expanded to 53
+independent tests so one XPASS cannot hide later validation assertions.
 
 The LaTeX format builder is a separate deterministic integration tier:
 

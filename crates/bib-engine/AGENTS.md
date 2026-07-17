@@ -13,8 +13,8 @@ in native and WASM builds without subprocesses or native-filesystem access.
 - `tests/it/scaffold.rs`: fixture-manifest and xfail harness self-tests.
 - `tests/it/upstream/`: direct, assertion-isolated translations of the pinned
   upstream compatibility suite. Each module retains the complete upstream
-  source beside its Rust xfails so names, order, expressions, and Unicode stay
-  auditable.
+  source beside its Rust xfails so names, order, expressions, fixture
+  references, and Unicode stay auditable.
 
 Translated upstream cohorts belong below `tests/it/upstream/` and are modules
 of `tests/it.rs`, not additional top-level integration binaries. Public
