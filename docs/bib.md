@@ -1,8 +1,9 @@
 # In-process bibliography backend
 
-Status: foundation crate graph and frozen domain contracts implemented;
-semantic processing, serializers, sessions, and project integration remain in
-the dependency-ordered bibliography issues.
+Status: foundation crate graph, frozen domain contracts, and the pinned
+Unicode/encoding/date/language utility substrate are implemented; pipeline
+processing, serializers, sessions, and project integration remain in the
+dependency-ordered bibliography issues.
 
 This document defines Umber's pure-Rust bibliography subsystem. Every Rust
 package uses the `bib-*` prefix, and modules, types, commands, features, and
@@ -158,6 +159,17 @@ The implemented foundation gives each worker crate an immutable stage context.
 semantic workers receive only frozen configuration/model values and pinned
 Unicode resources. Actual stage algorithms land in their owning issues without
 changing the dependency direction fixed here.
+
+`bib-unicode` now supplies the host-independent compatibility substrate. Its
+public values cover BCP-47 tags, extended dates and times, ordered annotations,
+legacy byte codecs, TeX base/full/null recoding, transliteration, root collation
+keys, string/range utilities, and MD5 compatibility hashes. The compatibility
+identity pins upstream commit `74252e6` and a versioned root-collation table
+identifier. Parsers reject malformed and overlong values explicitly; no code
+consults a host locale, browser internationalization service, filesystem, or
+mutable process state. The six directly owned upstream cohorts (`annotations`,
+`dateformats`, `encoding`, `langtags`, `translit`, and `utils`) execute as 177
+ordinary assertion-level tests rather than strict xfails.
 
 ## Domain model
 

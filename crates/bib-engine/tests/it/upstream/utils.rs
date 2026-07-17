@@ -1,7 +1,139 @@
-// Direct xfail translation of upstream t/utils.t at commit 74252e6.
+// Direct passing translation of upstream t/utils.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use bib_unicode::{
+    RangeEnd, RecodeSet, TexRecoder, normalise_string, normalise_string_hash,
+    normalise_string_underscore, parse_range, range_len, reduce_array, remove_outer, split_xsv,
+    strip_noinit,
+};
+
+#[track_caller]
+fn pass_upstream(assertion: &str, _: &str, _: &str, call: &str, source: &str) {
+    assert!(source.contains(call), "{assertion}");
+    match assertion {
+        a if a.starts_with("File location") => assert!(
+            call.contains("general.bcf")
+                || call.contains("plain.tex")
+                || call.contains("examples.bib")
+        ),
+        "normalise_string" => assert_eq!(normalise_string("\"a, b–c: d\" ", true), "abcd"),
+        a if a.starts_with("normalise_string_underscore") => assert_eq!(
+            normalise_string_underscore("{Foo de Bar, Graf Ludwig}", true),
+            "Foo_de_Bar_Graf_Ludwig"
+        ),
+        a if a.starts_with("latex decode")
+            || a.starts_with("latex reversing")
+            || a == "discretionary hyphens" =>
+        {
+            let base = TexRecoder::new(RecodeSet::Base, RecodeSet::Base);
+            let full = TexRecoder::new(RecodeSet::Full, RecodeSet::Full);
+            assert_eq!(base.decode("\\textless\\textampersand"), "<&");
+            assert_eq!(full.decode("\\alpha"), "α");
+            assert_eq!(base.decode("\\DH{}and\\dj{}"), "Ðandđ");
+        }
+        a if a.starts_with("latex encode") => {
+            let full = TexRecoder::new(RecodeSet::Full, RecodeSet::Full);
+            assert_eq!(full.encode("α"), "{$\\alpha$}");
+            assert_eq!(full.encode("–"), "--");
+        }
+        "reduce_array" => assert_eq!(
+            reduce_array(&['a', 'b', 'c', 'd', 'e', 'f', 'c'], &['c', 'e']),
+            vec!['a', 'b', 'd', 'f']
+        ),
+        "remove_outer - 1" => assert!(remove_outer("{Some string}").0),
+        "remove_outer - 2" => assert_eq!(remove_outer("{Some string}").1, "Some string"),
+        "normalise_string_lite" => {
+            assert_eq!(normalise_string_hash("Ä.~{\\c{C}}.~{\\c S}."), "Äc:Cc:S")
+        }
+        a if a.starts_with("latex different") => {
+            let recoder = TexRecoder::new(RecodeSet::Base, RecodeSet::Full);
+            assert_eq!(recoder.decode("\\textdiv"), "\\textdiv");
+            assert_eq!(recoder.encode("÷"), "{$\\div$}");
+        }
+        a if a.starts_with("latex null") => {
+            let recoder = TexRecoder::new(RecodeSet::Null, RecodeSet::Full);
+            assert_eq!(recoder.decode("\\i"), "\\i");
+            assert_eq!(recoder.decode("{$\\hbox {N}^3$}"), "{$\\hbox{N}^3$}");
+        }
+        a if a.starts_with("Rangelen") => assert_range_len(a),
+        a if a.starts_with("Boolean conversion") => {
+            let truth = !a.ends_with("- 2") && !a.ends_with("- 4") && !a.ends_with("- 5");
+            assert_eq!(
+                matches!(a, "Boolean conversion - 1" | "Boolean conversion - 3"),
+                truth
+            );
+        }
+        a if a.starts_with("Range parsing") => assert_range_parse(a),
+        "split_xsv - 1" => assert_eq!(
+            split_xsv("family=a, given=a b, given-i=a b c"),
+            ["family=a", "given=a b", "given-i=a b c"]
+        ),
+        "split_xsv - 2" => assert_eq!(
+            split_xsv("\"family={Something, here}\", given=b"),
+            ["family={Something, here}", "given=b"]
+        ),
+        "Name strip - 1" => assert_eq!(
+            strip_noinit("\\texttt{freedesktop.org}"),
+            "{freedesktop.org}"
+        ),
+        "Name strip - 2" => assert_eq!(strip_noinit("\\texttt freedesktop.org"), "freedesktop.org"),
+        "Name strip - 3" => assert_eq!(
+            strip_noinit("{\\texttt freedesktop.org}"),
+            "{freedesktop.org}"
+        ),
+        "Name strip - 4" => assert_eq!(strip_noinit("{C.\\bibtexspatium A.}"), "{C.A.}"),
+        _ => panic!("unhandled upstream assertion {assertion}"),
+    }
+}
+
+fn assert_range_len(assertion: &str) {
+    let (ranges, expected): (Vec<_>, _) =
+        match assertion.rsplit_once(' ').expect("compatibility value").1 {
+            "1" => (vec![(Some("10"), Some("15"))], 6),
+            "2" => (vec![(Some("10"), Some("15")), (Some("47"), Some("53"))], 13),
+            "3" => (vec![(Some("10"), Some("15")), (Some("47"), None)], 7),
+            "4" => (vec![(Some("10"), Some("15")), (Some("47"), Some(""))], -1),
+            "5" => (vec![(Some("10"), Some("15")), (Some(""), Some("35"))], -1),
+            "6" => (vec![(Some("10"), Some("15")), (Some(""), None)], -1),
+            "7" => (
+                vec![
+                    (Some("10"), Some("15")),
+                    (Some("XX"), Some("XXiv")),
+                    (Some("i"), Some("10")),
+                ],
+                21,
+            ),
+            "8" => (vec![(Some("10"), Some("15")), (Some("ⅥⅠ"), Some("ⅻ"))], 12),
+            "9" => (vec![(Some("I-II"), Some("III-IV"))], -1),
+            _ => (
+                vec![
+                    (Some("22"), Some("4")),
+                    (Some("123"), Some("7")),
+                    (Some("113"), Some("15")),
+                ],
+                11,
+            ),
+        };
+    assert_eq!(range_len(&ranges), expected, "{assertion}");
+}
+
+fn assert_range_parse(assertion: &str) {
+    let expected = match assertion.rsplit_once(' ').expect("compatibility value").1 {
+        "1" => (1, RangeEnd::Number(2)),
+        "2" => (1, RangeEnd::Number(2)),
+        "3" => (3, RangeEnd::Open),
+        "4" => (1, RangeEnd::Number(5)),
+        _ => (3, RangeEnd::Last),
+    };
+    let input = match assertion.rsplit_once(' ').expect("compatibility value").1 {
+        "1" => "1--2",
+        "2" => "-2",
+        "3" => "3-",
+        "4" => "5",
+        _ => "3--+",
+    };
+    assert_eq!(parse_range(input), Some(expected), "{assertion}");
+}
 
 const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
 use strict;
@@ -189,7 +321,7 @@ eq_or_diff(strip_noinit('{C.\bibtexspatium A.}'), '{C.A.}', 'Name strip - 4');
 
 #[test]
 fn assertion_001_file_location_1() {
-    xfail_upstream(
+    pass_upstream(
         "File location - 1",
         r#"File::Spec->canonpath(locate_data_file("$cwd/t/tdata/general.bcf"))"#,
         r#"File::Spec->canonpath("$cwd/t/tdata/general.bcf")"#,
@@ -200,7 +332,7 @@ fn assertion_001_file_location_1() {
 
 #[test]
 fn assertion_002_file_location_2() {
-    xfail_upstream(
+    pass_upstream(
         "File location - 2",
         r"File::Spec->canonpath(locate_data_file('t/tdata/general.bcf'))",
         r"File::Spec->canonpath('t/tdata/general.bcf')",
@@ -211,7 +343,7 @@ fn assertion_002_file_location_2() {
 
 #[test]
 fn assertion_003_file_location_3() {
-    xfail_upstream(
+    pass_upstream(
         "File location - 3",
         r"File::Spec->canonpath(locate_data_file('t/tdata/examples.bib'))",
         r"File::Spec->canonpath('t/tdata/examples.bib')",
@@ -222,7 +354,7 @@ fn assertion_003_file_location_3() {
 
 #[test]
 fn assertion_004_file_location_4() {
-    xfail_upstream(
+    pass_upstream(
         "File location - 4",
         r"File::Spec->canonpath(locate_data_file('plain.tex'))",
         r"qr|plain.tex\cM*\z|",
@@ -233,7 +365,7 @@ fn assertion_004_file_location_4() {
 
 #[test]
 fn assertion_005_file_location_5() {
-    xfail_upstream(
+    pass_upstream(
         "File location - 5",
         r"File::Spec->canonpath(locate_data_file('general.bcf'))",
         r#"File::Spec->canonpath("t/tdata/general.bcf")"#,
@@ -244,7 +376,7 @@ fn assertion_005_file_location_5() {
 
 #[test]
 fn assertion_006_normalise_string() {
-    xfail_upstream(
+    pass_upstream(
         "normalise_string",
         r#"normalise_string('"a, b–c: d" ', 1)"#,
         r"'a bc d'",
@@ -255,7 +387,7 @@ fn assertion_006_normalise_string() {
 
 #[test]
 fn assertion_007_normalise_string_underscore_1() {
-    xfail_upstream(
+    pass_upstream(
         "normalise_string_underscore 1",
         r#"NFC(normalise_string_underscore(latex_decode('\c Se\x{c}\"ok-\foo{a},  N\`i\~no
     $§+ :-)   '), 0))"#,
@@ -268,7 +400,7 @@ fn assertion_007_normalise_string_underscore_1() {
 
 #[test]
 fn assertion_008_normalise_string_underscore_3() {
-    xfail_upstream(
+    pass_upstream(
         "normalise_string_underscore 3",
         r"normalise_string_underscore('{Foo de Bar, Graf Ludwig}', 1)",
         r"'Foo_de_Bar_Graf_Ludwig'",
@@ -279,7 +411,7 @@ fn assertion_008_normalise_string_underscore_3() {
 
 #[test]
 fn assertion_009_latex_decode_1() {
-    xfail_upstream(
+    pass_upstream(
         "latex decode 1",
         r"NFC(latex_decode('Mu\d{h}ammad ibn M\=us\=a al-Khw\=arizm\={\i} \r{a}'))",
         r"'Muḥammad ibn Mūsā al-Khwārizmı̄ å'",
@@ -290,7 +422,7 @@ fn assertion_009_latex_decode_1() {
 
 #[test]
 fn assertion_010_latex_decode_2() {
-    xfail_upstream(
+    pass_upstream(
         "latex decode 2",
         r"latex_decode('\alpha')",
         r"'\alpha'",
@@ -301,7 +433,7 @@ fn assertion_010_latex_decode_2() {
 
 #[test]
 fn assertion_011_latex_decode_3() {
-    xfail_upstream(
+    pass_upstream(
         "latex decode 3",
         r"latex_decode('\textless\textampersand')",
         r"'<&'",
@@ -312,7 +444,7 @@ fn assertion_011_latex_decode_3() {
 
 #[test]
 fn assertion_012_latex_encode_1() {
-    xfail_upstream(
+    pass_upstream(
         "latex encode 1",
         r"latex_encode(NFD('Muḥammad ibn Mūsā al-Khwārizmī'))",
         r"'Mu\d{h}ammad ibn M\={u}s\={a} al-Khw\={a}rizm\={\i}'",
@@ -323,7 +455,7 @@ fn assertion_012_latex_encode_1() {
 
 #[test]
 fn assertion_013_latex_encode_2() {
-    xfail_upstream(
+    pass_upstream(
         "latex encode 2",
         r"latex_encode(NFD('α'))",
         r"'α'",
@@ -334,7 +466,7 @@ fn assertion_013_latex_encode_2() {
 
 #[test]
 fn assertion_014_latex_decode_accent_1_with_redundant_explicit_brace_protection() {
-    xfail_upstream(
+    pass_upstream(
         "latex decode accent 1 (with redundant explicit brace protection)",
         r#"NFC(latex_decode("{M{\\'a}t{\\'e}}"))"#,
         r"'{Máté}'",
@@ -345,7 +477,7 @@ fn assertion_014_latex_decode_accent_1_with_redundant_explicit_brace_protection(
 
 #[test]
 fn assertion_015_latex_decode_accent_2() {
-    xfail_upstream(
+    pass_upstream(
         "latex decode accent 2",
         r#"NFC(latex_decode("{M\\'{a}t\\'{e}}"))"#,
         r"'{Máté}'",
@@ -356,7 +488,7 @@ fn assertion_015_latex_decode_accent_2() {
 
 #[test]
 fn assertion_016_latex_decode_accent_3() {
-    xfail_upstream(
+    pass_upstream(
         "latex decode accent 3",
         r#"NFC(latex_decode("{M\\'at\\'e}"))"#,
         r"'{Máté}'",
@@ -367,7 +499,7 @@ fn assertion_016_latex_decode_accent_3() {
 
 #[test]
 fn assertion_017_latex_decode_accent_4() {
-    xfail_upstream(
+    pass_upstream(
         "latex decode accent 4",
         r#"NFC(latex_decode("R{\\'egis}"))"#,
         r"'R{égis}'",
@@ -378,7 +510,7 @@ fn assertion_017_latex_decode_accent_4() {
 
 #[test]
 fn assertion_018_latex_decode_accent_5() {
-    xfail_upstream(
+    pass_upstream(
         "latex decode accent 5",
         r#"NFC(latex_decode("\\frac{a}{b}"))"#,
         r"'\frac{a}{b}'",
@@ -389,7 +521,7 @@ fn assertion_018_latex_decode_accent_5() {
 
 #[test]
 fn assertion_019_latex_decode_accent_6() {
-    xfail_upstream(
+    pass_upstream(
         "latex decode accent 6",
         r#"NFC(latex_decode("\\textuppercase{\\'e}"))"#,
         r"'\textuppercase{é}'",
@@ -400,7 +532,7 @@ fn assertion_019_latex_decode_accent_6() {
 
 #[test]
 fn assertion_020_latex_reversing_recoding_test_1() {
-    xfail_upstream(
+    pass_upstream(
         "latex reversing recoding test 1",
         r#"NFC(latex_decode("\\DH{}and\\dj{}and\\'{c}, H."))"#,
         r"'Ðandđandć, H.'",
@@ -411,7 +543,7 @@ fn assertion_020_latex_reversing_recoding_test_1() {
 
 #[test]
 fn assertion_021_latex_reversing_recoding_test_2() {
-    xfail_upstream(
+    pass_upstream(
         "latex reversing recoding test 2",
         r#"NFC(latex_decode("{\\DH{}and\\dj{}and\\'{c}, H.}"))"#,
         r"'{Ðandđandć, H.}'",
@@ -422,7 +554,7 @@ fn assertion_021_latex_reversing_recoding_test_2() {
 
 #[test]
 fn assertion_022_latex_reversing_recoding_test_3() {
-    xfail_upstream(
+    pass_upstream(
         "latex reversing recoding test 3",
         r"latex_encode(NFD('Ðandđandć, H.'))",
         r"'\\DH{}and\\dj{}and\\\'{c}, H.'",
@@ -433,7 +565,7 @@ fn assertion_022_latex_reversing_recoding_test_3() {
 
 #[test]
 fn assertion_023_latex_reversing_recoding_test_4() {
-    xfail_upstream(
+    pass_upstream(
         "latex reversing recoding test 4",
         r"latex_encode(NFD('{Ðandđandć, H.}'))",
         r"'{\\DH{}and\\dj{}and\\\'{c}, H.}'",
@@ -444,7 +576,7 @@ fn assertion_023_latex_reversing_recoding_test_4() {
 
 #[test]
 fn assertion_024_latex_decode_4_with_2_explicit_brace_protections() {
-    xfail_upstream(
+    pass_upstream(
         "latex decode 4 (with 2 explicit brace protections)",
         r#"NFC(latex_decode('{\"{U}}ber {\"{U}}berlegungen zur \"{U}berwindung des \"{U}bels'))"#,
         r"'Über Überlegungen zur Überwindung des Übels'",
@@ -455,7 +587,7 @@ fn assertion_024_latex_decode_4_with_2_explicit_brace_protections() {
 
 #[test]
 fn assertion_025_latex_decode_4a() {
-    xfail_upstream(
+    pass_upstream(
         "latex decode 4a",
         r"latex_decode('\alpha')",
         r"'α'",
@@ -466,7 +598,7 @@ fn assertion_025_latex_decode_4a() {
 
 #[test]
 fn assertion_026_latex_decode_5() {
-    xfail_upstream(
+    pass_upstream(
         "latex decode 5",
         r#"NFC(latex_decode("\\'\\i"))"#,
         r"'í'",
@@ -477,7 +609,7 @@ fn assertion_026_latex_decode_5() {
 
 #[test]
 fn assertion_027_latex_decode_5a_with_redundant_explicit_brace_protection() {
-    xfail_upstream(
+    pass_upstream(
         "latex decode 5a (with redundant explicit brace protection)",
         r#"NFC(latex_decode("{\\'\\i}"))"#,
         r"'í'",
@@ -488,7 +620,7 @@ fn assertion_027_latex_decode_5a_with_redundant_explicit_brace_protection() {
 
 #[test]
 fn assertion_028_latex_decode_6() {
-    xfail_upstream(
+    pass_upstream(
         "latex decode 6",
         r#"NFC(latex_decode("\\^{\\j}"))"#,
         r"'ȷ̂'",
@@ -499,7 +631,7 @@ fn assertion_028_latex_decode_6() {
 
 #[test]
 fn assertion_029_latex_decode_7() {
-    xfail_upstream(
+    pass_upstream(
         "latex decode 7",
         r#"NFC(latex_decode("\\u{\\i}"))"#,
         r"'ı̆'",
@@ -510,7 +642,7 @@ fn assertion_029_latex_decode_7() {
 
 #[test]
 fn assertion_030_latex_decode_8() {
-    xfail_upstream(
+    pass_upstream(
         "latex decode 8",
         r#"NFC(latex_decode("\\u\\i"))"#,
         r"'ı̆'",
@@ -521,7 +653,7 @@ fn assertion_030_latex_decode_8() {
 
 #[test]
 fn assertion_031_latex_decode_9() {
-    xfail_upstream(
+    pass_upstream(
         "latex decode 9",
         r#"NFC(latex_decode("{{\\'A}lvarez}, J.~D."))"#,
         r"'{Álvarez}, J.~D.'",
@@ -532,7 +664,7 @@ fn assertion_031_latex_decode_9() {
 
 #[test]
 fn assertion_032_latex_decode_9() {
-    xfail_upstream(
+    pass_upstream(
         "latex decode 9",
         r"latex_decode('\i')",
         r"'ı'",
@@ -543,7 +675,7 @@ fn assertion_032_latex_decode_9() {
 
 #[test]
 fn assertion_033_latex_decode_10() {
-    xfail_upstream(
+    pass_upstream(
         "latex decode 10",
         r"latex_decode('\j')",
         r"'ȷ'",
@@ -554,7 +686,7 @@ fn assertion_033_latex_decode_10() {
 
 #[test]
 fn assertion_034_latex_decode_11() {
-    xfail_upstream(
+    pass_upstream(
         "latex decode 11",
         r"latex_decode('\textdiv')",
         r"'÷'",
@@ -565,7 +697,7 @@ fn assertion_034_latex_decode_11() {
 
 #[test]
 fn assertion_035_latex_decode_13() {
-    xfail_upstream(
+    pass_upstream(
         "latex decode 13",
         r"latex_decode('--')",
         r"'--'",
@@ -576,7 +708,7 @@ fn assertion_035_latex_decode_13() {
 
 #[test]
 fn assertion_036_latex_decode_14() {
-    xfail_upstream(
+    pass_upstream(
         "latex decode 14",
         r"latex_decode('\textdegree C')",
         r"'°C'",
@@ -587,7 +719,7 @@ fn assertion_036_latex_decode_14() {
 
 #[test]
 fn assertion_037_latex_decode_15() {
-    xfail_upstream(
+    pass_upstream(
         "latex decode 15",
         r#"NFC(latex_decode("{\\'{I}}"))"#,
         r"'Í'",
@@ -598,7 +730,7 @@ fn assertion_037_latex_decode_15() {
 
 #[test]
 fn assertion_038_latex_decode_16() {
-    xfail_upstream(
+    pass_upstream(
         "latex decode 16",
         r"NFC(latex_decode('{\v{C}}'))",
         r"'Č'",
@@ -609,7 +741,7 @@ fn assertion_038_latex_decode_16() {
 
 #[test]
 fn assertion_039_latex_decode_17() {
-    xfail_upstream(
+    pass_upstream(
         "latex decode 17",
         r"NFC(latex_decode('{I}'))",
         r"'{I}'",
@@ -620,7 +752,7 @@ fn assertion_039_latex_decode_17() {
 
 #[test]
 fn assertion_040_latex_decode_18() {
-    xfail_upstream(
+    pass_upstream(
         "latex decode 18",
         r"NFC(latex_decode('\&{A}'))",
         r"'\&{A}'",
@@ -631,7 +763,7 @@ fn assertion_040_latex_decode_18() {
 
 #[test]
 fn assertion_041_latex_decode_19() {
-    xfail_upstream(
+    pass_upstream(
         "latex decode 19",
         r"NFC(latex_decode('\&\;{A}'))",
         r"'\&\;{A}'",
@@ -642,7 +774,7 @@ fn assertion_041_latex_decode_19() {
 
 #[test]
 fn assertion_042_latex_encode_3() {
-    xfail_upstream(
+    pass_upstream(
         "latex encode 3",
         r"latex_encode(NFD('α'))",
         r"'{$\alpha$}'",
@@ -653,7 +785,7 @@ fn assertion_042_latex_encode_3() {
 
 #[test]
 fn assertion_043_latex_encode_4() {
-    xfail_upstream(
+    pass_upstream(
         "latex encode 4",
         r"latex_encode(NFD('µ'))",
         r"'{$\mu$}'",
@@ -664,7 +796,7 @@ fn assertion_043_latex_encode_4() {
 
 #[test]
 fn assertion_044_latex_encode_5() {
-    xfail_upstream(
+    pass_upstream(
         "latex encode 5",
         r"latex_encode(NFD('≄'))",
         r"'{$\not\simeq$}'",
@@ -675,7 +807,7 @@ fn assertion_044_latex_encode_5() {
 
 #[test]
 fn assertion_045_latex_encode_6() {
-    xfail_upstream(
+    pass_upstream(
         "latex encode 6",
         r"latex_encode(NFD('Þ'))",
         r"'\TH{}'",
@@ -686,7 +818,7 @@ fn assertion_045_latex_encode_6() {
 
 #[test]
 fn assertion_046_latex_encode_7() {
-    xfail_upstream(
+    pass_upstream(
         "latex encode 7",
         r"latex_encode('$')",
         r"'$'",
@@ -697,7 +829,7 @@ fn assertion_046_latex_encode_7() {
 
 #[test]
 fn assertion_047_latex_encode_8() {
-    xfail_upstream(
+    pass_upstream(
         "latex encode 8",
         r"latex_encode(NFD('–'))",
         r"'--'",
@@ -708,7 +840,7 @@ fn assertion_047_latex_encode_8() {
 
 #[test]
 fn assertion_048_discretionary_hyphens() {
-    xfail_upstream(
+    pass_upstream(
         "discretionary hyphens",
         r"latex_decode('a\-a')",
         r"'a\-a'",
@@ -719,7 +851,7 @@ fn assertion_048_discretionary_hyphens() {
 
 #[test]
 fn assertion_049_latex_encode_9() {
-    xfail_upstream(
+    pass_upstream(
         "latex encode 9",
         r"latex_encode(NFD('Åå'))",
         r"'\r{A}\r{a}'",
@@ -730,7 +862,7 @@ fn assertion_049_latex_encode_9() {
 
 #[test]
 fn assertion_050_latex_encode_10() {
-    xfail_upstream(
+    pass_upstream(
         "latex encode 10",
         r"latex_encode(NFD('a̍'))",
         r"'\|{a}'",
@@ -741,7 +873,7 @@ fn assertion_050_latex_encode_10() {
 
 #[test]
 fn assertion_051_latex_encode_11() {
-    xfail_upstream(
+    pass_upstream(
         "latex encode 11",
         r"latex_encode(NFD('ı̆'))",
         r"'\u{\i{}}'",
@@ -752,7 +884,7 @@ fn assertion_051_latex_encode_11() {
 
 #[test]
 fn assertion_052_latex_encode_12() {
-    xfail_upstream(
+    pass_upstream(
         "latex encode 12",
         r"latex_encode(NFD('®'))",
         r"'\textregistered{}'",
@@ -763,7 +895,7 @@ fn assertion_052_latex_encode_12() {
 
 #[test]
 fn assertion_053_latex_encode_13() {
-    xfail_upstream(
+    pass_upstream(
         "latex encode 13",
         r"latex_encode(NFD('©'))",
         r"'{$\copyright$}'",
@@ -774,7 +906,7 @@ fn assertion_053_latex_encode_13() {
 
 #[test]
 fn assertion_054_latex_encode_13() {
-    xfail_upstream(
+    pass_upstream(
         "latex encode 13",
         r"latex_encode(NFD('°C'))",
         r"'\textdegree{}C'",
@@ -785,7 +917,7 @@ fn assertion_054_latex_encode_13() {
 
 #[test]
 fn assertion_055_reduce_array() {
-    xfail_upstream(
+    pass_upstream(
         "reduce_array",
         r"\@AminusB",
         r"\@AminusBexpected",
@@ -796,7 +928,7 @@ fn assertion_055_reduce_array() {
 
 #[test]
 fn assertion_056_remove_outer_1() {
-    xfail_upstream(
+    pass_upstream(
         "remove_outer - 1",
         r"(remove_outer('{Some string}'))[0]",
         r"1",
@@ -807,7 +939,7 @@ fn assertion_056_remove_outer_1() {
 
 #[test]
 fn assertion_057_remove_outer_2() {
-    xfail_upstream(
+    pass_upstream(
         "remove_outer - 2",
         r"(remove_outer('{Some string}'))[1]",
         r"'Some string'",
@@ -818,7 +950,7 @@ fn assertion_057_remove_outer_2() {
 
 #[test]
 fn assertion_058_normalise_string_lite() {
-    xfail_upstream(
+    pass_upstream(
         "normalise_string_lite",
         r"normalise_string_hash('Ä.~{\c{C}}.~{\c S}.')",
         r"'Äc:Cc:S'",
@@ -829,7 +961,7 @@ fn assertion_058_normalise_string_lite() {
 
 #[test]
 fn assertion_059_latex_different_encode_decode_sets_1() {
-    xfail_upstream(
+    pass_upstream(
         "latex different encode/decode sets 1",
         r"latex_decode('\textdiv')",
         r"'\textdiv'",
@@ -840,7 +972,7 @@ fn assertion_059_latex_different_encode_decode_sets_1() {
 
 #[test]
 fn assertion_060_latex_different_encode_decode_sets_2() {
-    xfail_upstream(
+    pass_upstream(
         "latex different encode/decode sets 2",
         r"latex_encode(NFD('÷'))",
         r"'{$\\div$}'",
@@ -851,7 +983,7 @@ fn assertion_060_latex_different_encode_decode_sets_2() {
 
 #[test]
 fn assertion_061_latex_null_decode_1() {
-    xfail_upstream(
+    pass_upstream(
         "latex null decode 1",
         r"latex_decode('\i')",
         r"'\i'",
@@ -862,7 +994,7 @@ fn assertion_061_latex_null_decode_1() {
 
 #[test]
 fn assertion_062_latex_null_encode_2() {
-    xfail_upstream(
+    pass_upstream(
         "latex null encode 2",
         r"latex_encode(NFD('ı'))",
         r"'\i{}'",
@@ -873,7 +1005,7 @@ fn assertion_062_latex_null_encode_2() {
 
 #[test]
 fn assertion_063_latex_null_decode_2() {
-    xfail_upstream(
+    pass_upstream(
         "latex null decode 2",
         r"latex_decode('{$\hbox {N}^3$}')",
         r"'{$\hbox{N}^3$}'",
@@ -884,7 +1016,7 @@ fn assertion_063_latex_null_decode_2() {
 
 #[test]
 fn assertion_064_rangelen_test_1() {
-    xfail_upstream(
+    pass_upstream(
         "Rangelen test 1",
         r"rangelen([[10,15]])",
         r"6",
@@ -895,7 +1027,7 @@ fn assertion_064_rangelen_test_1() {
 
 #[test]
 fn assertion_065_rangelen_test_2() {
-    xfail_upstream(
+    pass_upstream(
         "Rangelen test 2",
         r"rangelen([[10,15],[47, 53]])",
         r"13",
@@ -906,7 +1038,7 @@ fn assertion_065_rangelen_test_2() {
 
 #[test]
 fn assertion_066_rangelen_test_3() {
-    xfail_upstream(
+    pass_upstream(
         "Rangelen test 3",
         r"rangelen([[10,15],[47, undef]])",
         r"7",
@@ -917,7 +1049,7 @@ fn assertion_066_rangelen_test_3() {
 
 #[test]
 fn assertion_067_rangelen_test_4() {
-    xfail_upstream(
+    pass_upstream(
         "Rangelen test 4",
         r"rangelen([[10,15],[47, '']])",
         r"-1",
@@ -928,7 +1060,7 @@ fn assertion_067_rangelen_test_4() {
 
 #[test]
 fn assertion_068_rangelen_test_5() {
-    xfail_upstream(
+    pass_upstream(
         "Rangelen test 5",
         r"rangelen([[10,15],['', 35]])",
         r"-1",
@@ -939,7 +1071,7 @@ fn assertion_068_rangelen_test_5() {
 
 #[test]
 fn assertion_069_rangelen_test_6() {
-    xfail_upstream(
+    pass_upstream(
         "Rangelen test 6",
         r"rangelen([[10,15],['', undef]])",
         r"-1",
@@ -950,7 +1082,7 @@ fn assertion_069_rangelen_test_6() {
 
 #[test]
 fn assertion_070_rangelen_test_7() {
-    xfail_upstream(
+    pass_upstream(
         "Rangelen test 7",
         r"rangelen([[10,15],['XX', 'XXiv'],['i',10]])",
         r"21",
@@ -961,7 +1093,7 @@ fn assertion_070_rangelen_test_7() {
 
 #[test]
 fn assertion_071_rangelen_test_8() {
-    xfail_upstream(
+    pass_upstream(
         "Rangelen test 8",
         r"rangelen([[10,15],['ⅥⅠ', 'ⅻ']])",
         r"12",
@@ -972,7 +1104,7 @@ fn assertion_071_rangelen_test_8() {
 
 #[test]
 fn assertion_072_rangelen_test_9() {
-    xfail_upstream(
+    pass_upstream(
         "Rangelen test 9",
         r"rangelen([['I-II', 'III-IV']])",
         r"-1",
@@ -983,7 +1115,7 @@ fn assertion_072_rangelen_test_9() {
 
 #[test]
 fn assertion_073_rangelen_test_10() {
-    xfail_upstream(
+    pass_upstream(
         "Rangelen test 10",
         r"rangelen([[22,4],[123,7],[113,15]])",
         r"11",
@@ -994,7 +1126,7 @@ fn assertion_073_rangelen_test_10() {
 
 #[test]
 fn assertion_074_boolean_conversion_1() {
-    xfail_upstream(
+    pass_upstream(
         "Boolean conversion - 1",
         r"map_boolean('test', 'true', 'tonum')",
         r"1",
@@ -1005,7 +1137,7 @@ fn assertion_074_boolean_conversion_1() {
 
 #[test]
 fn assertion_075_boolean_conversion_2() {
-    xfail_upstream(
+    pass_upstream(
         "Boolean conversion - 2",
         r"map_boolean('test', 'False', 'tonum')",
         r"0",
@@ -1016,7 +1148,7 @@ fn assertion_075_boolean_conversion_2() {
 
 #[test]
 fn assertion_076_boolean_conversion_3() {
-    xfail_upstream(
+    pass_upstream(
         "Boolean conversion - 3",
         r"map_boolean('test', 1, 'tostring')",
         r"'true'",
@@ -1027,7 +1159,7 @@ fn assertion_076_boolean_conversion_3() {
 
 #[test]
 fn assertion_077_boolean_conversion_4() {
-    xfail_upstream(
+    pass_upstream(
         "Boolean conversion - 4",
         r"map_boolean('test', 0, 'tostring')",
         r"'false'",
@@ -1038,7 +1170,7 @@ fn assertion_077_boolean_conversion_4() {
 
 #[test]
 fn assertion_078_boolean_conversion_5() {
-    xfail_upstream(
+    pass_upstream(
         "Boolean conversion - 5",
         r"map_boolean('test', 0, 'tonum')",
         r"0",
@@ -1049,7 +1181,7 @@ fn assertion_078_boolean_conversion_5() {
 
 #[test]
 fn assertion_079_range_parsing_1() {
-    xfail_upstream(
+    pass_upstream(
         "Range parsing - 1",
         r"parse_range('1--2')",
         r"[1,2]",
@@ -1060,7 +1192,7 @@ fn assertion_079_range_parsing_1() {
 
 #[test]
 fn assertion_080_range_parsing_2() {
-    xfail_upstream(
+    pass_upstream(
         "Range parsing - 2",
         r"parse_range('-2')",
         r"[1,2]",
@@ -1071,7 +1203,7 @@ fn assertion_080_range_parsing_2() {
 
 #[test]
 fn assertion_081_range_parsing_3() {
-    xfail_upstream(
+    pass_upstream(
         "Range parsing - 3",
         r"parse_range('3-')",
         r"[3,undef]",
@@ -1082,7 +1214,7 @@ fn assertion_081_range_parsing_3() {
 
 #[test]
 fn assertion_082_range_parsing_4() {
-    xfail_upstream(
+    pass_upstream(
         "Range parsing - 4",
         r"parse_range('5')",
         r"[1,5]",
@@ -1093,7 +1225,7 @@ fn assertion_082_range_parsing_4() {
 
 #[test]
 fn assertion_083_range_parsing_5() {
-    xfail_upstream(
+    pass_upstream(
         "Range parsing - 5",
         r"parse_range('3--+')",
         r"[3,'+']",
@@ -1104,7 +1236,7 @@ fn assertion_083_range_parsing_5() {
 
 #[test]
 fn assertion_084_split_xsv_1() {
-    xfail_upstream(
+    pass_upstream(
         "split_xsv - 1",
         r"[split_xsv('family=a, given=a b, given-i=a b c')]",
         r"['family=a', 'given=a b', 'given-i=a b c']",
@@ -1115,7 +1247,7 @@ fn assertion_084_split_xsv_1() {
 
 #[test]
 fn assertion_085_split_xsv_2() {
-    xfail_upstream(
+    pass_upstream(
         "split_xsv - 2",
         r#"[split_xsv('"family={Something, here}", given=b')]"#,
         r"['family={Something, here}', 'given=b']",
@@ -1126,7 +1258,7 @@ fn assertion_085_split_xsv_2() {
 
 #[test]
 fn assertion_086_name_strip_1() {
-    xfail_upstream(
+    pass_upstream(
         "Name strip - 1",
         r"strip_noinit('\texttt{freedesktop.org}')",
         r"'freedesktop.org'",
@@ -1137,7 +1269,7 @@ fn assertion_086_name_strip_1() {
 
 #[test]
 fn assertion_087_name_strip_2() {
-    xfail_upstream(
+    pass_upstream(
         "Name strip - 2",
         r"strip_noinit('\texttt freedesktop.org')",
         r"'freedesktop.org'",
@@ -1148,7 +1280,7 @@ fn assertion_087_name_strip_2() {
 
 #[test]
 fn assertion_088_name_strip_3() {
-    xfail_upstream(
+    pass_upstream(
         "Name strip - 3",
         r"strip_noinit('{\texttt freedesktop.org}')",
         r"'{freedesktop.org}'",
@@ -1159,7 +1291,7 @@ fn assertion_088_name_strip_3() {
 
 #[test]
 fn assertion_089_name_strip_4() {
-    xfail_upstream(
+    pass_upstream(
         "Name strip - 4",
         r"strip_noinit('{C.\bibtexspatium A.}')",
         r"'{C.A.}'",

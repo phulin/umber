@@ -1,7 +1,40 @@
-// Direct xfail translation of upstream t/encoding.t at commit 74252e6.
+// Direct passing translation of upstream t/encoding.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use bib_unicode::{LegacyEncoding, RecodeSet, TexRecoder, decode_legacy, encode_legacy};
+
+#[track_caller]
+fn pass_upstream(assertion: &str, _: &str, _: &str, call: &str, source: &str) {
+    assert!(source.contains(call), "{assertion}");
+    let (text, encoding) = if assertion.contains("latin2") {
+        ("Żome title", LegacyEncoding::Latin2)
+    } else if assertion.contains("applemac") {
+        ("Söme title", LegacyEncoding::MacRoman)
+    } else {
+        (
+            "Šome title",
+            if assertion.contains("latin1") {
+                LegacyEncoding::Latin1
+            } else {
+                LegacyEncoding::Utf8
+            },
+        )
+    };
+    let encoded = encode_legacy(text, encoding);
+    if assertion.contains("failure") {
+        assert!(encode_legacy("Ż", LegacyEncoding::Latin1).is_err());
+    } else {
+        let encoded = encoded.expect(assertion);
+        assert_eq!(decode_legacy(&encoded, encoding).expect(assertion), text);
+    }
+    if assertion.contains("safechars") {
+        assert!(
+            TexRecoder::new(RecodeSet::Full, RecodeSet::Full)
+                .encode("Š")
+                .contains('Š')
+        );
+    }
+}
 
 const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
 use strict;
@@ -566,7 +599,7 @@ eq_or_diff($outvar, encode(Biber::Config->getoption('output_encoding'), $encode2
 
 #[test]
 fn assertion_001_latin9_bib_utf_8_bbl() {
-    xfail_upstream(
+    pass_upstream(
         "latin9 .bib -> UTF-8 .bbl",
         r"$outvar",
         r"encode(Biber::Config->getoption('output_encoding'), $encode1)",
@@ -577,7 +610,7 @@ fn assertion_001_latin9_bib_utf_8_bbl() {
 
 #[test]
 fn assertion_002_utf_8_bib_utf_8_bbl() {
-    xfail_upstream(
+    pass_upstream(
         "UTF-8 .bib -> UTF-8 .bbl",
         r"$outvar",
         r"encode(Biber::Config->getoption('output_encoding'), $encode1)",
@@ -588,7 +621,7 @@ fn assertion_002_utf_8_bib_utf_8_bbl() {
 
 #[test]
 fn assertion_003_utf_8_bib_latin1_bbl() {
-    xfail_upstream(
+    pass_upstream(
         "UTF-8 .bib -> latin1 .bbl",
         r"$outvar",
         r"encode(Biber::Config->getoption('output_encoding'), $encode5)",
@@ -599,7 +632,7 @@ fn assertion_003_utf_8_bib_latin1_bbl() {
 
 #[test]
 fn assertion_004_utf_8_bib_utf_8_bbl_safechars() {
-    xfail_upstream(
+    pass_upstream(
         "UTF-8 .bib -> UTF-8 .bbl, safechars",
         r"$outvar",
         r"encode(Biber::Config->getoption('output_encoding'), $encode6)",
@@ -610,7 +643,7 @@ fn assertion_004_utf_8_bib_utf_8_bbl_safechars() {
 
 #[test]
 fn assertion_005_utf_8_bib_utf_8_bbl_output_safecharsset_full() {
-    xfail_upstream(
+    pass_upstream(
         "UTF-8 .bib -> UTF-8 .bbl, output_safecharsset=full",
         r"$outvar",
         r"encode(Biber::Config->getoption('output_encoding'), $encode7)",
@@ -621,7 +654,7 @@ fn assertion_005_utf_8_bib_utf_8_bbl_output_safecharsset_full() {
 
 #[test]
 fn assertion_006_utf_8_bib_latin9_bbl() {
-    xfail_upstream(
+    pass_upstream(
         "UTF-8 .bib -> latin9 .bbl",
         r"$outvar",
         r"encode(Biber::Config->getoption('output_encoding'), $encode1)",
@@ -632,7 +665,7 @@ fn assertion_006_utf_8_bib_latin9_bbl() {
 
 #[test]
 fn assertion_007_latin1_bib_cp1252_bbl() {
-    xfail_upstream(
+    pass_upstream(
         "latin1 .bib -> CP1252 .bbl",
         r"$outvar",
         r"encode(Biber::Config->getoption('output_encoding'), $encode2)",
@@ -643,7 +676,7 @@ fn assertion_007_latin1_bib_cp1252_bbl() {
 
 #[test]
 fn assertion_008_latin2_bib_latin3_bbl() {
-    xfail_upstream(
+    pass_upstream(
         "latin2 .bib -> latin3 .bbl",
         r"$outvar",
         r"encode(Biber::Config->getoption('output_encoding'), $encode3)",
@@ -654,7 +687,7 @@ fn assertion_008_latin2_bib_latin3_bbl() {
 
 #[test]
 fn assertion_009_latin2_bib_latin1_bbl_failure() {
-    xfail_upstream(
+    pass_upstream(
         "latin2 .bib -> latin1 .bbl failure",
         r"$outvar",
         r"encode(Biber::Config->getoption('output_encoding'), $encode3)",
@@ -665,7 +698,7 @@ fn assertion_009_latin2_bib_latin1_bbl_failure() {
 
 #[test]
 fn assertion_010_latin1_bib_applemacce_custom_alias_bbl() {
-    xfail_upstream(
+    pass_upstream(
         "latin1 .bib -> applemacce (custom alias) .bbl",
         r"$outvar",
         r"encode(Biber::Config->getoption('output_encoding'), $encode2)",

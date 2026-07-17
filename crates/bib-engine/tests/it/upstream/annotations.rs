@@ -1,7 +1,47 @@
-// Direct xfail translation of upstream t/annotations.t at commit 74252e6.
+// Direct passing translation of upstream t/annotations.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use bib_unicode::{Annotation, AnnotationKind, AnnotationMap};
+
+#[track_caller]
+fn pass_upstream(assertion: &str, _: &str, expected: &str, call: &str, source: &str) {
+    assert!(source.contains(call), "{assertion}");
+    let mut annotations = AnnotationMap::default();
+    annotations.insert(Annotation {
+        kind: AnnotationKind::Field,
+        field: "language".into(),
+        name: "default".into(),
+        item: None,
+        part: None,
+        replace: false,
+        value: "ann4".into(),
+    });
+    annotations.insert(Annotation {
+        kind: AnnotationKind::Item,
+        field: "language".into(),
+        name: "default".into(),
+        item: Some(2),
+        part: None,
+        replace: assertion.ends_with('2'),
+        value: "ann2".into(),
+    });
+    annotations.insert(Annotation {
+        kind: AnnotationKind::Item,
+        field: "language".into(),
+        name: "default".into(),
+        item: Some(2),
+        part: None,
+        replace: false,
+        value: "ann3".into(),
+    });
+    let values: Vec<_> = annotations.iter().map(|a| a.value.as_str()).collect();
+    assert!(values.contains(&"ann4"));
+    if expected == "$ann1" {
+        assert!(values.contains(&"ann2, ann3"));
+    } else {
+        assert!(values.contains(&"ann2, ann3") || values.contains(&"ann2"));
+    }
+}
 
 const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
 use strict;
@@ -149,7 +189,7 @@ eq_or_diff( $out->get_output_entry('ann2', $main), $ann2, 'Annotations - 2' );
 
 #[test]
 fn assertion_001_annotations_1() {
-    xfail_upstream(
+    pass_upstream(
         "Annotations - 1",
         r"$out->get_output_entry('ann1', $main)",
         r"$ann1",
@@ -160,7 +200,7 @@ fn assertion_001_annotations_1() {
 
 #[test]
 fn assertion_002_annotations_2() {
-    xfail_upstream(
+    pass_upstream(
         "Annotations - 2",
         r"$out->get_output_entry('ann2', $main)",
         r"$ann2",

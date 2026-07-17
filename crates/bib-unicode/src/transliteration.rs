@@ -25,9 +25,11 @@ fn devanagari_latin(value: &str) -> String {
             'ि' => "i",
             'ी' => "ī",
             'ृ' => "ṛ",
+            'े' => "e",
             '्' => "",
             'ष' => "ṣ",
             'ञ' => "ñ",
+            'र' => "r",
             _ => {
                 output.push(c);
                 continue;

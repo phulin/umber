@@ -115,7 +115,7 @@ fn parse_optional(value: &str) -> Result<Option<DatePart>, DateError> {
     }
     let mut division = None;
     if let Some(m) = month_raw {
-        if m.len() != 2 {
+        if m.chars().count() != 2 {
             return Err(DateError::InvalidFormat);
         }
         if let Ok(number) = m.parse::<u8>() {
@@ -134,7 +134,7 @@ fn parse_optional(value: &str) -> Result<Option<DatePart>, DateError> {
         }
     }
     if let Some(d) = day_raw {
-        if d.len() != 2 {
+        if d.chars().count() != 2 {
             return Err(DateError::InvalidFormat);
         }
         if let Ok(number) = d.parse::<u8>() {

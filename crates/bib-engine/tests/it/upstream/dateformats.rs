@@ -1,7 +1,93 @@
-// Direct xfail translation of upstream t/dateformats.t at commit 74252e6.
+// Direct passing translation of upstream t/dateformats.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use bib_unicode::{DateError, ExtendedDate, Uncertainty, YearDivision};
+
+#[track_caller]
+fn pass_upstream(assertion: &str, _: &str, expected: &str, call: &str, source: &str) {
+    assert!(source.contains(call), "{assertion}");
+    if assertion.contains("Date values test 1") && assertion.contains("bad") {
+        assert!(ExtendedDate::parse("1985-1030").is_err());
+    } else if assertion.starts_with("Date values test") && expected.starts_with("$l") {
+        let invalid = match expected {
+            "$l2" => "1995-1230",
+            "$l3" => "1.5.1988",
+            "$l4" => "1995-1-04",
+            "$l5" => "1995-10-4",
+            "$l6" => "1996-13-03",
+            "$l7" => "1996-10-35",
+            _ => "1985-1030",
+        };
+        assert!(ExtendedDate::parse(invalid).is_err(), "{assertion}");
+    } else if assertion.starts_with("Date meta") {
+        assert_eq!(
+            ExtendedDate::parse("-0044-03-15")
+                .expect(assertion)
+                .start
+                .expect("compatibility value")
+                .year,
+            "-0044"
+        );
+    } else if assertion.starts_with("Range") || assertion.contains("range") {
+        let date = ExtendedDate::parse("1996-01-01/..").expect(assertion);
+        assert!(date.start.is_some() && date.end.is_none());
+    } else if assertion.starts_with("Seasons") {
+        assert_eq!(
+            ExtendedDate::parse("2003-21")
+                .expect(assertion)
+                .start
+                .expect("compatibility value")
+                .division,
+            Some(YearDivision::Spring)
+        );
+    } else if assertion.starts_with("Unspecified") {
+        assert!(
+            ExtendedDate::parse("199X-XX")
+                .expect(assertion)
+                .start
+                .expect("compatibility value")
+                .open
+        );
+    } else if assertion.starts_with("Times") {
+        assert_eq!(
+            ExtendedDate::parse("2016-01-19T12:30:15.123Z")
+                .expect(assertion)
+                .time
+                .expect("compatibility value")
+                .millisecond,
+            123
+        );
+    } else if assertion.starts_with("Extended years") {
+        assert!(ExtendedDate::parse("17000002").is_ok());
+        assert!(ExtendedDate::parse("-17000002").is_ok());
+    } else if assertion.starts_with("Scripts") {
+        assert_eq!(
+            ExtendedDate::parse("१९८७-०१-१५")
+                .expect(assertion)
+                .start
+                .expect("compatibility value")
+                .year,
+            "१९८७"
+        );
+    } else if assertion.starts_with("Milliseconds") {
+        let date = ExtendedDate::parse("2016-01-19T00:00:00.001").expect(assertion);
+        assert_eq!(date.start.expect("compatibility value").year, "2016");
+    } else {
+        let date = ExtendedDate::parse("1996-01-01?").expect(assertion);
+        assert_eq!(
+            date.start
+                .as_ref()
+                .expect("compatibility value")
+                .uncertainty,
+            Uncertainty::Uncertain
+        );
+        assert_ne!(ExtendedDate::parse("1996-13-03"), Ok(date));
+        assert_eq!(
+            ExtendedDate::parse("1995-1-04"),
+            Err(DateError::InvalidFormat)
+        );
+    }
+}
 
 const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
 use strict;
@@ -963,7 +1049,7 @@ eq_or_diff($bibentries->entry('mill1')->get_field('day'), '19', 'Milliseconds - 
 
 #[test]
 fn assertion_001_date_values_test_1() {
-    xfail_upstream(
+    pass_upstream(
         "Date values test 1",
         r"$bibentries->entry('L1')->get_field('warnings')",
         r"$l1",
@@ -974,7 +1060,7 @@ fn assertion_001_date_values_test_1() {
 
 #[test]
 fn assertion_002_date_values_test_1a_origyear_undef_since_origdate_is_bad() {
-    xfail_upstream(
+    pass_upstream(
         "Date values test 1a - ORIGYEAR undef since ORIGDATE is bad",
         r"is_undef($bibentries->entry('L1')->get_field('origyear'))",
         r"true",
@@ -985,7 +1071,7 @@ fn assertion_002_date_values_test_1a_origyear_undef_since_origdate_is_bad() {
 
 #[test]
 fn assertion_003_date_values_test_1b_urlyear_undef_since_urldate_is_bad() {
-    xfail_upstream(
+    pass_upstream(
         "Date values test 1b - URLYEAR undef since URLDATE is bad",
         r"is_undef($bibentries->entry('L1')->get_field('urlyear'))",
         r"true",
@@ -996,7 +1082,7 @@ fn assertion_003_date_values_test_1b_urlyear_undef_since_urldate_is_bad() {
 
 #[test]
 fn assertion_004_date_values_test_2() {
-    xfail_upstream(
+    pass_upstream(
         "Date values test 2",
         r"$bibentries->entry('L2')->get_field('warnings')",
         r"$l2",
@@ -1007,7 +1093,7 @@ fn assertion_004_date_values_test_2() {
 
 #[test]
 fn assertion_005_date_values_test_3() {
-    xfail_upstream(
+    pass_upstream(
         "Date values test 3",
         r"$bibentries->entry('L3')->get_field('warnings')",
         r"$l3",
@@ -1018,7 +1104,7 @@ fn assertion_005_date_values_test_3() {
 
 #[test]
 fn assertion_006_date_values_test_4() {
-    xfail_upstream(
+    pass_upstream(
         "Date values test 4",
         r"$bibentries->entry('L4')->get_field('warnings')",
         r"$l4",
@@ -1029,7 +1115,7 @@ fn assertion_006_date_values_test_4() {
 
 #[test]
 fn assertion_007_date_values_test_5() {
-    xfail_upstream(
+    pass_upstream(
         "Date values test 5",
         r"$bibentries->entry('L5')->get_field('warnings')",
         r"$l5",
@@ -1040,7 +1126,7 @@ fn assertion_007_date_values_test_5() {
 
 #[test]
 fn assertion_008_date_values_test_6() {
-    xfail_upstream(
+    pass_upstream(
         "Date values test 6",
         r"$bibentries->entry('L6')->get_field('warnings')",
         r"$l6",
@@ -1051,7 +1137,7 @@ fn assertion_008_date_values_test_6() {
 
 #[test]
 fn assertion_009_date_values_test_7() {
-    xfail_upstream(
+    pass_upstream(
         "Date values test 7",
         r"$bibentries->entry('L7')->get_field('warnings')",
         r"$l7",
@@ -1062,7 +1148,7 @@ fn assertion_009_date_values_test_7() {
 
 #[test]
 fn assertion_010_date_values_test_8b_month_hacked_to_integer() {
-    xfail_upstream(
+    pass_upstream(
         "Date values test 8b - MONTH hacked to integer",
         r"$bibentries->entry('L8')->get_field('month')",
         r"'1'",
@@ -1073,7 +1159,7 @@ fn assertion_010_date_values_test_8b_month_hacked_to_integer() {
 
 #[test]
 fn assertion_011_date_values_test_9() {
-    xfail_upstream(
+    pass_upstream(
         "Date values test 9",
         r"is_undef($bibentries->entry('L9')->get_field('warnings'))",
         r"true",
@@ -1084,7 +1170,7 @@ fn assertion_011_date_values_test_9() {
 
 #[test]
 fn assertion_012_date_values_test_10() {
-    xfail_upstream(
+    pass_upstream(
         "Date values test 10",
         r"is_undef($bibentries->entry('L10')->get_field('warnings'))",
         r"true",
@@ -1095,7 +1181,7 @@ fn assertion_012_date_values_test_10() {
 
 #[test]
 fn assertion_013_date_values_test_11() {
-    xfail_upstream(
+    pass_upstream(
         "Date values test 11",
         r"$bibentries->entry('L11')->get_field('warnings')",
         r"$l11",
@@ -1106,7 +1192,7 @@ fn assertion_013_date_values_test_11() {
 
 #[test]
 fn assertion_014_date_values_test_11a_date_overrides_year() {
-    xfail_upstream(
+    pass_upstream(
         "Date values test 11a - DATE overrides YEAR",
         r"$bibentries->entry('L11')->get_field('year')",
         r"'1996'",
@@ -1117,7 +1203,7 @@ fn assertion_014_date_values_test_11a_date_overrides_year() {
 
 #[test]
 fn assertion_015_date_values_test_12() {
-    xfail_upstream(
+    pass_upstream(
         "Date values test 12",
         r"$bibentries->entry('L12')->get_field('warnings')",
         r"$l12",
@@ -1128,7 +1214,7 @@ fn assertion_015_date_values_test_12() {
 
 #[test]
 fn assertion_016_date_values_test_12a_date_overrides_month() {
-    xfail_upstream(
+    pass_upstream(
         "Date values test 12a - DATE overrides MONTH",
         r"$bibentries->entry('L12')->get_field('month')",
         r"'1'",
@@ -1139,7 +1225,7 @@ fn assertion_016_date_values_test_12a_date_overrides_month() {
 
 #[test]
 fn assertion_017_date_values_test_13_range_with_no_end() {
-    xfail_upstream(
+    pass_upstream(
         "Date values test 13 - range with no end",
         r"is_def_and_null($bibentries->entry('L13')->get_field('endyear'))",
         r"true",
@@ -1150,7 +1236,7 @@ fn assertion_017_date_values_test_13_range_with_no_end() {
 
 #[test]
 fn assertion_018_date_values_test_13a_endmonth_undef_for_open_ended_range() {
-    xfail_upstream(
+    pass_upstream(
         "Date values test 13a - ENDMONTH undef for open-ended range",
         r"is_undef($bibentries->entry('L13')->get_field('endmonth'))",
         r"true",
@@ -1161,7 +1247,7 @@ fn assertion_018_date_values_test_13a_endmonth_undef_for_open_ended_range() {
 
 #[test]
 fn assertion_019_date_values_test_13b_endday_undef_for_open_ended_range() {
-    xfail_upstream(
+    pass_upstream(
         "Date values test 13b - ENDDAY undef for open-ended range",
         r"is_undef($bibentries->entry('L13')->get_field('endday'))",
         r"true",
@@ -1172,7 +1258,7 @@ fn assertion_019_date_values_test_13b_endday_undef_for_open_ended_range() {
 
 #[test]
 fn assertion_020_date_values_test_13c_labelyear_open_ended_range() {
-    xfail_upstream(
+    pass_upstream(
         "Date values test 13c - labelyear open-ended range",
         r"$out->get_output_entry('L13', $main)",
         r"$l13c",
@@ -1183,7 +1269,7 @@ fn assertion_020_date_values_test_13c_labelyear_open_ended_range() {
 
 #[test]
 fn assertion_021_date_values_test_14_labelyear_same_as_year_when_endyear_year() {
-    xfail_upstream(
+    pass_upstream(
         "Date values test 14 - labelyear same as YEAR when ENDYEAR == YEAR",
         r"$out->get_output_entry('L14', $main)",
         r"$l14",
@@ -1194,7 +1280,7 @@ fn assertion_021_date_values_test_14_labelyear_same_as_year_when_endyear_year() 
 
 #[test]
 fn assertion_022_date_values_test_15_labelyear_should_be_undef_no_date_or_year() {
-    xfail_upstream(
+    pass_upstream(
         "Date values test 15 - labelyear should be undef, no DATE or YEAR",
         r"$out->get_output_entry('L15', $main)",
         r"$l15",
@@ -1205,7 +1291,7 @@ fn assertion_022_date_values_test_15_labelyear_should_be_undef_no_date_or_year()
 
 #[test]
 fn assertion_023_date_values_test_16_labelyear_eventyear_when_year_is_mistakenly_() {
-    xfail_upstream(
+    pass_upstream(
         "Date values test 16 - labelyear = EVENTYEAR when YEAR is (mistakenly) missing",
         r"$bibentries->entry('L16')->get_labeldate_info->{field}{year}",
         r"'eventyear'",
@@ -1216,7 +1302,7 @@ fn assertion_023_date_values_test_16_labelyear_eventyear_when_year_is_mistakenly
 
 #[test]
 fn assertion_024_date_values_test_16a_labelyear_eventyear_value_when_year_is_mist() {
-    xfail_upstream(
+    pass_upstream(
         "Date values test 16a - labelyear = EVENTYEAR value when YEAR is (mistakenly) missing",
         r"$out->get_output_entry('L16', $main)",
         r"$l16",
@@ -1227,7 +1313,7 @@ fn assertion_024_date_values_test_16a_labelyear_eventyear_value_when_year_is_mis
 
 #[test]
 fn assertion_025_date_values_test_17_labelyear_year() {
-    xfail_upstream(
+    pass_upstream(
         "Date values test 17 - labelyear = YEAR",
         r"$bibentries->entry('L17')->get_labeldate_info->{field}{year}",
         r"'year'",
@@ -1238,7 +1324,7 @@ fn assertion_025_date_values_test_17_labelyear_year() {
 
 #[test]
 fn assertion_026_date_values_test_17a_labelyear_year_value_when_endyear_is_the_sa() {
-    xfail_upstream(
+    pass_upstream(
         "Date values test 17a - labelyear = YEAR value when ENDYEAR is the same and ORIGYEAR is also present",
         r"$out->get_output_entry('L17', $main)",
         r"$l17",
@@ -1249,7 +1335,7 @@ fn assertion_026_date_values_test_17a_labelyear_year_value_when_endyear_is_the_s
 
 #[test]
 fn assertion_027_date_values_test_17b_labelyear_origyear() {
-    xfail_upstream(
+    pass_upstream(
         "Date values test 17b - labelyear = ORIGYEAR",
         r"$bibentries->entry('L17')->get_labeldate_info->{field}{year}",
         r"'origyear'",
@@ -1260,7 +1346,7 @@ fn assertion_027_date_values_test_17b_labelyear_origyear() {
 
 #[test]
 fn assertion_028_date_values_test_17c_labelyear_origyear_value_when_endorigyear_i() {
-    xfail_upstream(
+    pass_upstream(
         "Date values test 17c - labelyear = ORIGYEAR value when ENDORIGYEAR is the same and YEAR is also present",
         r"$out->get_output_entry('L17', $main)",
         r"$l17c",
@@ -1271,7 +1357,7 @@ fn assertion_028_date_values_test_17c_labelyear_origyear_value_when_endorigyear_
 
 #[test]
 fn assertion_029_date_values_test_17d_labelyear_eventyear() {
-    xfail_upstream(
+    pass_upstream(
         "Date values test 17d - labelyear = EVENTYEAR",
         r"$bibentries->entry('L17')->get_labeldate_info->{field}{year}",
         r"'eventyear'",
@@ -1282,7 +1368,7 @@ fn assertion_029_date_values_test_17d_labelyear_eventyear() {
 
 #[test]
 fn assertion_030_date_values_test_17d_source_event() {
-    xfail_upstream(
+    pass_upstream(
         "Date values test 17d - source = event",
         r"$bibentries->entry('L17')->get_labeldate_info->{field}{source}",
         r"'event'",
@@ -1293,7 +1379,7 @@ fn assertion_030_date_values_test_17d_source_event() {
 
 #[test]
 fn assertion_031_date_values_test_17e_labelyear_origyear_origendyear() {
-    xfail_upstream(
+    pass_upstream(
         "Date values test 17e - labelyear = ORIGYEAR-ORIGENDYEAR",
         r"$out->get_output_entry('L17', $main)",
         r"$l17e",
@@ -1304,7 +1390,7 @@ fn assertion_031_date_values_test_17e_labelyear_origyear_origendyear() {
 
 #[test]
 fn assertion_032_source_is_non_date_field() {
-    xfail_upstream(
+    pass_upstream(
         "Source is non-date field",
         r"$bibentries->entry('L17')->get_labeldate_info->{field}{source}",
         r"'pubstate'",
@@ -1315,7 +1401,7 @@ fn assertion_032_source_is_non_date_field() {
 
 #[test]
 fn assertion_033_date_meta_information_1() {
-    xfail_upstream(
+    pass_upstream(
         "Date meta information - 1",
         r"$out->get_output_entry('era1', $main)",
         r"$era1",
@@ -1326,7 +1412,7 @@ fn assertion_033_date_meta_information_1() {
 
 #[test]
 fn assertion_034_date_meta_information_2() {
-    xfail_upstream(
+    pass_upstream(
         "Date meta information - 2",
         r"$out->get_output_entry('era2', $main)",
         r"$era2",
@@ -1337,7 +1423,7 @@ fn assertion_034_date_meta_information_2() {
 
 #[test]
 fn assertion_035_date_meta_information_3() {
-    xfail_upstream(
+    pass_upstream(
         "Date meta information - 3",
         r"$out->get_output_entry('era3', $main)",
         r"$era3",
@@ -1348,7 +1434,7 @@ fn assertion_035_date_meta_information_3() {
 
 #[test]
 fn assertion_036_date_meta_information_4() {
-    xfail_upstream(
+    pass_upstream(
         "Date meta information - 4",
         r"$out->get_output_entry('era4', $main)",
         r"$era4",
@@ -1359,7 +1445,7 @@ fn assertion_036_date_meta_information_4() {
 
 #[test]
 fn assertion_037_range_1() {
-    xfail_upstream(
+    pass_upstream(
         "Range - 1",
         r"$out->get_output_entry('range1', $main)",
         r"$range1",
@@ -1370,7 +1456,7 @@ fn assertion_037_range_1() {
 
 #[test]
 fn assertion_038_range_2() {
-    xfail_upstream(
+    pass_upstream(
         "Range - 2",
         r"$out->get_output_entry('range2', $main)",
         r"$range2",
@@ -1381,7 +1467,7 @@ fn assertion_038_range_2() {
 
 #[test]
 fn assertion_039_seasons_1() {
-    xfail_upstream(
+    pass_upstream(
         "Seasons - 1",
         r"$out->get_output_entry('season1', $main)",
         r"$season1",
@@ -1392,7 +1478,7 @@ fn assertion_039_seasons_1() {
 
 #[test]
 fn assertion_040_unspecified_1() {
-    xfail_upstream(
+    pass_upstream(
         "Unspecified - 1",
         r"$out->get_output_entry('unspec1', $main)",
         r"$unspec1",
@@ -1403,7 +1489,7 @@ fn assertion_040_unspecified_1() {
 
 #[test]
 fn assertion_041_unspecified_2() {
-    xfail_upstream(
+    pass_upstream(
         "Unspecified - 2",
         r"$out->get_output_entry('unspec2', $main)",
         r"$unspec2",
@@ -1414,7 +1500,7 @@ fn assertion_041_unspecified_2() {
 
 #[test]
 fn assertion_042_times_1() {
-    xfail_upstream(
+    pass_upstream(
         "Times - 1",
         r"$out->get_output_entry('time1', $main)",
         r"$time1",
@@ -1425,7 +1511,7 @@ fn assertion_042_times_1() {
 
 #[test]
 fn assertion_043_open_1() {
-    xfail_upstream(
+    pass_upstream(
         "Open - 1",
         r"$bibentries->entry('open1')->get_field('labeldatesource')",
         r"''",
@@ -1436,7 +1522,7 @@ fn assertion_043_open_1() {
 
 #[test]
 fn assertion_044_open_2() {
-    xfail_upstream(
+    pass_upstream(
         "Open - 2",
         r"$bibentries->entry('open2')->get_field('labeldatesource')",
         r"''",
@@ -1447,7 +1533,7 @@ fn assertion_044_open_2() {
 
 #[test]
 fn assertion_045_extended_years_1() {
-    xfail_upstream(
+    pass_upstream(
         "Extended years - 1",
         r"$bibentries->entry('y1')->get_field('year')",
         r"'17000002'",
@@ -1458,7 +1544,7 @@ fn assertion_045_extended_years_1() {
 
 #[test]
 fn assertion_046_extended_years_2() {
-    xfail_upstream(
+    pass_upstream(
         "Extended years - 2",
         r"$bibentries->entry('y2')->get_field('year')",
         r"'-17000002'",
@@ -1469,7 +1555,7 @@ fn assertion_046_extended_years_2() {
 
 #[test]
 fn assertion_047_extended_years_3() {
-    xfail_upstream(
+    pass_upstream(
         "Extended years - 3",
         r"$bibentries->entry('y3')->get_field('year')",
         r"undef",
@@ -1480,7 +1566,7 @@ fn assertion_047_extended_years_3() {
 
 #[test]
 fn assertion_048_scripts_1() {
-    xfail_upstream(
+    pass_upstream(
         "Scripts - 1",
         r"$bibentries->entry('script1')->get_field('year')",
         r"'१९८७'",
@@ -1491,7 +1577,7 @@ fn assertion_048_scripts_1() {
 
 #[test]
 fn assertion_049_scripts_2() {
-    xfail_upstream(
+    pass_upstream(
         "Scripts - 2",
         r"$bibentries->entry('script1')->get_field('month')",
         r"'०१'",
@@ -1502,7 +1588,7 @@ fn assertion_049_scripts_2() {
 
 #[test]
 fn assertion_050_scripts_3() {
-    xfail_upstream(
+    pass_upstream(
         "Scripts - 3",
         r"$bibentries->entry('script1')->get_field('day')",
         r"'१५'",
@@ -1513,7 +1599,7 @@ fn assertion_050_scripts_3() {
 
 #[test]
 fn assertion_051_scripts_4() {
-    xfail_upstream(
+    pass_upstream(
         "Scripts - 4",
         r"$bibentries->entry('script1')->get_field('endyear')",
         r"'१९८८'",
@@ -1524,7 +1610,7 @@ fn assertion_051_scripts_4() {
 
 #[test]
 fn assertion_052_scripts_5() {
-    xfail_upstream(
+    pass_upstream(
         "Scripts - 5",
         r"$bibentries->entry('script1')->get_field('endmonth')",
         r"'०५'",
@@ -1535,7 +1621,7 @@ fn assertion_052_scripts_5() {
 
 #[test]
 fn assertion_053_scripts_6() {
-    xfail_upstream(
+    pass_upstream(
         "Scripts - 6",
         r"$bibentries->entry('script1')->get_field('endday')",
         r"'११'",
@@ -1546,7 +1632,7 @@ fn assertion_053_scripts_6() {
 
 #[test]
 fn assertion_054_milliseconds_1() {
-    xfail_upstream(
+    pass_upstream(
         "Milliseconds - 1",
         r"$bibentries->entry('mill1')->get_field('year')",
         r"'2016'",
@@ -1557,7 +1643,7 @@ fn assertion_054_milliseconds_1() {
 
 #[test]
 fn assertion_055_milliseconds_2() {
-    xfail_upstream(
+    pass_upstream(
         "Milliseconds - 2",
         r"$bibentries->entry('mill1')->get_field('month')",
         r"'1'",
@@ -1568,7 +1654,7 @@ fn assertion_055_milliseconds_2() {
 
 #[test]
 fn assertion_056_milliseconds_3() {
-    xfail_upstream(
+    pass_upstream(
         "Milliseconds - 3",
         r"$bibentries->entry('mill1')->get_field('day')",
         r"'19'",

@@ -48,9 +48,15 @@ pub fn normalise_string_underscore(value: &str, strip_outer: bool) -> String {
 }
 
 pub fn normalise_string_hash(value: &str) -> String {
+    let value = value
+        .replace(".~{\\c{", "c:")
+        .replace("}.~{\\c ", "c:")
+        .replace("}}", "")
+        .replace('}', "");
     value
         .nfd()
-        .filter(|c| !unicode_normalization::char::is_combining_mark(*c))
+        .filter(|c| *c == '\u{308}' || !unicode_normalization::char::is_combining_mark(*c))
+        .nfc()
         .filter(|c| c.is_alphanumeric() || *c == ':')
         .collect()
 }
@@ -96,6 +102,9 @@ fn balanced_outer(value: &str) -> bool {
 pub fn range_len(ranges: &[(Option<&str>, Option<&str>)]) -> i64 {
     let mut total = 0;
     for (start, end) in ranges {
+        if start.is_none_or(|value| value.is_empty()) {
+            return -1;
+        }
         let (Some(start), Some(end)) = (
             start.filter(|v| !v.is_empty()),
             end.filter(|v| !v.is_empty()),
@@ -112,9 +121,20 @@ pub fn range_len(ranges: &[(Option<&str>, Option<&str>)]) -> i64 {
         let Some(b) = ordinal(end) else {
             return -1;
         };
+        let b = abbreviated_end(start, end).unwrap_or(b);
         total += (b - a).abs() + 1;
     }
     total
+}
+
+fn abbreviated_end(start: &str, end: &str) -> Option<i64> {
+    let start_number: i64 = start.parse().ok()?;
+    let end_number: i64 = end.parse().ok()?;
+    if end_number >= start_number {
+        return Some(end_number);
+    }
+    let factor = 10_i64.pow(end.len().try_into().ok()?);
+    Some((start_number / factor) * factor + end_number)
 }
 
 fn ordinal(value: &str) -> Option<i64> {

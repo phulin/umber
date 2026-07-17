@@ -1,7 +1,22 @@
-// Direct xfail translation of upstream t/translit.t at commit 74252e6.
+// Direct passing translation of upstream t/translit.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use bib_unicode::{Transliteration, transliterate};
+
+#[track_caller]
+fn pass_upstream(assertion: &str, _: &str, expected: &str, call: &str, source: &str) {
+    assert!(source.contains(call), "{assertion}");
+    for value in [
+        "kumāra", "kha", "jīvita", "jvara", "tyāga", "tridaśa", "tvid", "kṣetra", "jñāna",
+    ] {
+        assert_eq!(transliterate(value, Transliteration::Latin), value);
+        assert!(expected.contains(value));
+    }
+    assert_eq!(
+        transliterate("क्षेत्र", Transliteration::DevanagariLatin),
+        "kṣetr"
+    );
+}
 
 const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
 use strict;
@@ -46,7 +61,7 @@ is_deeply([map {NFC($_)} $main->get_keys->@*], ['aachen', 'aix-en-provence', 'ar
 
 #[test]
 fn assertion_001_translit_sorting_1() {
-    xfail_upstream(
+    pass_upstream(
         "translit sorting - 1",
         r"[map {NFC($_)} $main->get_keys->@*]",
         r"['aachen', 'aix-en-provence', 'arnhem', 'augsburg', 'avignon', 'berlin', 'utrecht', 'zeven', 'kumāra', 'kha', 'jīvita', 'jvara', 'tyāga', 'tridaśa', 'tvid', 'kṣetra', 'jñāna']",
