@@ -1,9 +1,8 @@
-//! Cheap paragraph mutation identity and journal-derived root survivor redo.
+//! Cheap paragraph mutation identity and direct root-transition recording.
 
 use super::Env;
 use crate::cell::{BankTag, CellId};
 use crate::env::banks::IntParam;
-use crate::journal::{Entry, JournalPos};
 use crate::{PureParagraphMutation, PureParagraphMutationSummary};
 use ahash::{AHashMap, RandomState};
 use std::hash::{BuildHasher, Hasher};
@@ -24,12 +23,26 @@ fn count_int_hash_state() -> RandomState {
     )
 }
 
-/// Opaque start position for one paragraph's surviving environment writes.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct ParagraphMutationCheckpoint {
-    journal_pos: JournalPos,
-    entry_fingerprint: u64,
+struct RecordedCell {
+    cell: CellId,
+    expected: u64,
+    escapes: bool,
+    global: bool,
 }
+
+#[derive(Clone, Debug)]
+pub(super) struct ParagraphMutationRecorder {
+    entry_fingerprint: u64,
+    entry_group_depth: u32,
+    write_observed: bool,
+    cells: Vec<RecordedCell>,
+    positions: AHashMap<CellId, usize, RandomState>,
+}
+
+/// Opaque proof that one environment paragraph recorder is active.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ParagraphMutationCheckpoint(());
 
 impl Env {
     /// Returns a cached identity for all count registers and integer parameters.
@@ -55,83 +68,99 @@ impl Env {
         fingerprint
     }
 
-    /// Captures paragraph entry identity and opens a fresh journal epoch.
+    /// Captures paragraph entry identity without changing the rollback epoch.
     pub(crate) fn begin_paragraph_mutations(&mut self) -> ParagraphMutationCheckpoint {
-        let checkpoint = ParagraphMutationCheckpoint {
-            journal_pos: self.current_journal_pos(),
-            entry_fingerprint: self.count_int_fingerprint(),
-        };
-        // The barrier records only the first local write in an epoch. A fresh
-        // epoch makes every root-surviving paragraph write visible after the
-        // captured journal position without adding work to individual setters.
-        self.epoch.bump();
-        checkpoint
+        assert!(
+            self.paragraph_mutations.is_none(),
+            "paragraph mutation recorder already active"
+        );
+        let entry_fingerprint = self.count_int_fingerprint();
+        self.paragraph_mutations = Some(ParagraphMutationRecorder {
+            entry_fingerprint,
+            entry_group_depth: self.group_depth,
+            write_observed: false,
+            cells: Vec::new(),
+            positions: AHashMap::with_hasher(count_int_hash_state()),
+        });
+        ParagraphMutationCheckpoint(())
     }
 
-    /// Derives the compact final-value redo for count/int writes still visible
-    /// in the paragraph's journal suffix after group compaction.
+    /// Records one count/int setter before its write barrier runs.
+    pub(super) fn record_paragraph_mutation(&mut self, cell: CellId, expected: u64, global: bool) {
+        let Some(recorder) = &mut self.paragraph_mutations else {
+            return;
+        };
+        recorder.write_observed = true;
+        if recorder.entry_group_depth != 0 {
+            return;
+        }
+
+        let cell = CellId::new(cell.bank(), cell.index());
+        let escapes = global || self.group_depth == 0;
+        if let Some(&position) = recorder.positions.get(&cell) {
+            let recorded = &mut recorder.cells[position];
+            recorded.escapes |= escapes;
+            recorded.global |= global;
+            return;
+        }
+        recorder.positions.insert(cell, recorder.cells.len());
+        recorder.cells.push(RecordedCell {
+            cell,
+            expected,
+            escapes,
+            global,
+        });
+    }
+
+    /// Builds the compact final-value redo from directly observed setters.
     pub(crate) fn finish_paragraph_mutations(
         &mut self,
-        checkpoint: ParagraphMutationCheckpoint,
+        _checkpoint: ParagraphMutationCheckpoint,
     ) -> PureParagraphMutationSummary {
+        let recorder = self
+            .paragraph_mutations
+            .take()
+            .expect("paragraph mutation recorder missing at finish");
+        let entry_fingerprint = recorder.entry_fingerprint;
         let exit_fingerprint = self.count_int_fingerprint();
-        if self.current_journal_pos() < checkpoint.journal_pos {
-            return PureParagraphMutationSummary {
-                entry_fingerprint: checkpoint.entry_fingerprint,
-                exit_fingerprint,
-                journal_rewound: true,
-                mutations: Vec::new(),
-            };
-        }
-
-        let mut cells: Vec<(CellId, u64, bool)> = Vec::new();
-        let mut positions: AHashMap<CellId, usize, RandomState> =
-            AHashMap::with_hasher(count_int_hash_state());
-        for entry in self.journal_entries_since(checkpoint.journal_pos) {
-            let Entry::Undo(rec) = entry else {
-                continue;
-            };
-            let cell = rec.cell();
-            if !matches!(cell.bank(), BankTag::Count | BankTag::IntParam) {
-                continue;
-            }
-            let cell = CellId::new(cell.bank(), cell.index());
-            if let Some(&position) = positions.get(&cell) {
-                if rec.cell().is_global() {
-                    cells[position].2 = true;
-                }
-            } else {
-                positions.insert(cell, cells.len());
-                cells.push((cell, rec.old(), rec.cell().is_global()));
-            }
-        }
-
-        let mutations = cells
+        let mutations = recorder
+            .cells
             .into_iter()
-            .map(|(cell, expected, global)| match cell.bank() {
+            .filter(|recorded| {
+                recorded.escapes && self.semantic_word(recorded.cell) != recorded.expected
+            })
+            .map(|recorded| match recorded.cell.bank() {
                 BankTag::Count => PureParagraphMutation::Count {
-                    index: u16::try_from(cell.index()).expect("count register index fits u16"),
-                    expected: expected as u32 as i32,
-                    value: self.semantic_word(cell) as u32 as i32,
-                    global,
+                    index: u16::try_from(recorded.cell.index())
+                        .expect("count register index fits u16"),
+                    expected: recorded.expected as u32 as i32,
+                    value: self.semantic_word(recorded.cell) as u32 as i32,
+                    global: recorded.global,
                 },
                 BankTag::IntParam => PureParagraphMutation::IntParam {
                     param: IntParam::new(
-                        u16::try_from(cell.index()).expect("integer parameter index fits u16"),
+                        u16::try_from(recorded.cell.index())
+                            .expect("integer parameter index fits u16"),
                     ),
-                    expected: expected as u32 as i32,
-                    value: self.semantic_word(cell) as u32 as i32,
-                    global,
+                    expected: recorded.expected as u32 as i32,
+                    value: self.semantic_word(recorded.cell) as u32 as i32,
+                    global: recorded.global,
                 },
                 _ => unreachable!("filtered count/int paragraph survivor"),
             })
             .collect();
 
         PureParagraphMutationSummary {
-            entry_fingerprint: checkpoint.entry_fingerprint,
+            entry_fingerprint,
             exit_fingerprint,
-            journal_rewound: false,
+            unsupported_group_ownership: recorder.entry_group_depth != 0 && recorder.write_observed,
             mutations,
         }
+    }
+
+    pub(crate) fn abandon_paragraph_mutations(&mut self, _checkpoint: ParagraphMutationCheckpoint) {
+        self.paragraph_mutations
+            .take()
+            .expect("paragraph mutation recorder missing at abandon");
     }
 }

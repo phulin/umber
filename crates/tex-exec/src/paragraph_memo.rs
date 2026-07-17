@@ -390,15 +390,13 @@ fn publish_recorded_region(
     let ending_group_depth = tex_state::ExpansionState::execution_group_depth(stores);
     let group_transition_changed =
         recording.starting_group_changed_at != stores.track_dependency(group_key);
-    // At depth zero, group compaction has removed local writes and retained
-    // only root/global survivors in the journal suffix. Inside a live group,
-    // count/int survivor values cannot reproduce assignment ownership, so any
-    // such write remains a conservative barrier.
+    // At depth zero the dedicated setter recorder retains only root/global
+    // transitions. Inside a live entry group, count/int writes cannot reproduce
+    // assignment ownership, so any such write remains a conservative barrier.
     if recording.starting_span.is_some()
-        && (mutation_summary.journal_rewound
-            || recording.starting_group_depth != ending_group_depth
+        && (recording.starting_group_depth != ending_group_depth
             || (recording.starting_group_depth != 0
-                && (group_transition_changed || !mutation_summary.mutations.is_empty())))
+                && (group_transition_changed || mutation_summary.unsupported_group_ownership)))
     {
         recording
             .barriers

@@ -2202,6 +2202,13 @@ impl Stores {
         self.env.finish_paragraph_mutations(checkpoint)
     }
 
+    pub(crate) fn abandon_paragraph_mutations(
+        &mut self,
+        checkpoint: crate::env::paragraph::ParagraphMutationCheckpoint,
+    ) {
+        self.env.abandon_paragraph_mutations(checkpoint);
+    }
+
     pub fn set_dimen(&mut self, index: u16, value: Scaled) {
         self.env.set_dimen(index, value);
     }

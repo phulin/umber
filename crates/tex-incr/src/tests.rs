@@ -948,8 +948,14 @@ fn paragraph_post_break_reuse_tiers_match_cold_for_layout_and_hyphenation_change
 fn stateful_paragraph_redo_survives_a_later_prefix_edit() {
     let mut universe = template();
     universe.enable_pure_memo(tex_state::PureMemoConfig::default());
-    let paragraph = "\\count5=41 \\language=7 stateful paragraph text\\par\n";
-    let source = format!("{paragraph}{paragraph}{paragraph}{paragraph}\\vfill\\eject\\end");
+    let source = concat!(
+        "stateful \\count5=41 \\language=7 paragraph text\\par\n",
+        "stateful \\count5=42 \\language=7 paragraph text\\par\n",
+        "stateful \\count5=43 \\language=7 paragraph text\\par\n",
+        "stateful \\count5=44 \\language=7 paragraph text\\par\n",
+        "\\vfill\\eject\\end",
+    )
+    .to_owned();
     let mut session = Session::start(
         universe,
         "stateful-paragraph-redo",

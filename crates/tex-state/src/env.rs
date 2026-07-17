@@ -187,6 +187,7 @@ pub struct Env {
     math_family_fonts: FixedBank<FontIdCodec, MATH_FAMILY_FONT_COUNT>,
     /// Lazily derived identity for the complete count-register/int-parameter state.
     count_int_fingerprint: Option<u64>,
+    paragraph_mutations: Option<paragraph::ParagraphMutationRecorder>,
     journal: Journal,
     group_boundaries: Vec<group::GroupBoundary>,
     aftergroup: Vec<Token>,
@@ -237,6 +238,7 @@ impl Env {
             current_font: WordStamp::default(),
             math_family_fonts: FixedBank::new(),
             count_int_fingerprint: None,
+            paragraph_mutations: None,
             journal: Journal::new(),
             group_boundaries: Vec::new(),
             aftergroup: Vec::new(),
@@ -330,15 +332,45 @@ impl Env {
         self.set_global(symbol, meaning);
     }
 
-    register_accessors!(
-        count,
-        set_count,
-        set_count_global,
-        i32,
-        Count,
-        counts,
-        overflow_counts
-    );
+    #[must_use]
+    pub fn count(&self, index: u16) -> i32 {
+        if is_dense_register(index) {
+            self.counts.get(index)
+        } else {
+            self.overflow_counts.get(index)
+        }
+    }
+
+    pub(crate) fn set_count(&mut self, index: u16, value: i32) {
+        self.set_count_with_scope(index, value, false);
+    }
+
+    pub(crate) fn set_count_global(&mut self, index: u16, value: i32) {
+        self.set_count_with_scope(index, value, true);
+    }
+
+    fn set_count_with_scope(&mut self, index: u16, value: i32, global: bool) {
+        let old = self.count(index);
+        self.record_paragraph_mutation(
+            CellId::new(BankTag::Count, u32::from(index)),
+            u64::from(old as u32),
+            global,
+        );
+        self.count_int_fingerprint = None;
+        let context = BankSetContext {
+            journal: &mut self.journal,
+            #[cfg(feature = "shadow")]
+            shadow: &mut self.shadow,
+            epoch: self.epoch,
+            bank: BankTag::Count,
+            global,
+        };
+        if is_dense_register(index) {
+            self.counts.set(index, value, context);
+        } else {
+            self.overflow_counts.set(index, value, context);
+        }
+    }
     register_accessors!(
         dimen,
         set_dimen,
@@ -503,6 +535,11 @@ impl Env {
 
     /// Sets a local integer parameter value.
     pub(crate) fn set_int_param(&mut self, param: IntParam, value: i32) {
+        self.record_paragraph_mutation(
+            CellId::new(BankTag::IntParam, u32::from(param.raw())),
+            u64::from(self.int_param(param) as u32),
+            false,
+        );
         self.count_int_fingerprint = None;
         self.int_params.set(
             param.raw(),
@@ -520,6 +557,11 @@ impl Env {
 
     /// Sets a global integer parameter value.
     pub(crate) fn set_int_param_global(&mut self, param: IntParam, value: i32) {
+        self.record_paragraph_mutation(
+            CellId::new(BankTag::IntParam, u32::from(param.raw())),
+            u64::from(self.int_param(param) as u32),
+            true,
+        );
         self.count_int_fingerprint = None;
         self.int_params.set(
             param.raw(),

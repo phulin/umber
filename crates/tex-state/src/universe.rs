@@ -1814,7 +1814,11 @@ impl Universe {
 
     #[doc(hidden)]
     pub fn abandon_pure_paragraph_recording(&mut self) -> bool {
-        self.pure_memo.abandon_paragraph_recording()
+        let Some(checkpoint) = self.pure_memo.abandon_paragraph_recording() else {
+            return false;
+        };
+        self.stores.abandon_paragraph_mutations(checkpoint);
+        true
     }
 
     #[doc(hidden)]

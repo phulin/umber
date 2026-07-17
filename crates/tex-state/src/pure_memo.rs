@@ -485,12 +485,12 @@ pub enum PureParagraphMutation {
     },
 }
 
-/// Cold paragraph mutation accounting derived once from the environment journal.
+/// Cold paragraph root-transition accounting observed directly by setters.
 #[derive(Clone, Debug)]
 pub struct PureParagraphMutationSummary {
     pub entry_fingerprint: u64,
     pub exit_fingerprint: u64,
-    pub journal_rewound: bool,
+    pub unsupported_group_ownership: bool,
     pub mutations: Vec<PureParagraphMutation>,
 }
 
@@ -887,8 +887,10 @@ impl PureMemoRuntime {
         self.paragraph_recording.take()
     }
 
-    pub(crate) fn abandon_paragraph_recording(&mut self) -> bool {
-        self.paragraph_recording.take().is_some()
+    pub(crate) fn abandon_paragraph_recording(
+        &mut self,
+    ) -> Option<crate::env::paragraph::ParagraphMutationCheckpoint> {
+        self.paragraph_recording.take()
     }
 
     pub(crate) fn record_paragraph_hit(

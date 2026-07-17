@@ -837,7 +837,13 @@ fn count_int_fingerprint_is_lazy_and_restores_after_local_group() {
 #[test]
 fn paragraph_mutations_keep_only_compacted_root_survivors() {
     let mut env = Env::new();
+    let entry_epoch = env.epoch();
     let checkpoint = env.begin_paragraph_mutations();
+    assert_eq!(
+        env.epoch(),
+        entry_epoch,
+        "paragraph recording must not advance the rollback epoch"
+    );
 
     env.enter_group();
     env.set_count(7, 99);
@@ -846,7 +852,7 @@ fn paragraph_mutations_keep_only_compacted_root_survivors() {
     env.set_count(300, -17);
 
     let summary = env.finish_paragraph_mutations(checkpoint);
-    assert!(!summary.journal_rewound);
+    assert!(!summary.unsupported_group_ownership);
     assert_ne!(summary.entry_fingerprint, summary.exit_fingerprint);
     assert_eq!(
         summary.mutations,
@@ -866,6 +872,69 @@ fn paragraph_mutations_keep_only_compacted_root_survivors() {
         ]
     );
     assert_eq!(env.count(7), 0, "balanced local write must not escape");
+}
+
+#[test]
+fn paragraph_mutations_omit_restored_root_values_and_nested_locals() {
+    let mut env = Env::new();
+    let checkpoint = env.begin_paragraph_mutations();
+
+    env.set_count(4, 10);
+    env.enter_group();
+    env.set_count(4, 20);
+    env.set_count(5, 30);
+    assert_eq!(env.leave_group(), Vec::<Token>::new());
+    env.set_count(4, 0);
+
+    let summary = env.finish_paragraph_mutations(checkpoint);
+    assert_eq!(summary.entry_fingerprint, summary.exit_fingerprint);
+    assert!(summary.mutations.is_empty());
+}
+
+#[test]
+fn paragraph_mutations_record_global_writes_at_nested_depth() {
+    let mut env = Env::new();
+    let checkpoint = env.begin_paragraph_mutations();
+
+    env.enter_group();
+    env.set_count(300, 11);
+    env.set_count_global(300, 12);
+    assert_eq!(env.leave_group(), Vec::<Token>::new());
+
+    let summary = env.finish_paragraph_mutations(checkpoint);
+    assert_eq!(
+        summary.mutations,
+        vec![crate::PureParagraphMutation::Count {
+            index: 300,
+            expected: 0,
+            value: 12,
+            global: true,
+        }]
+    );
+}
+
+#[test]
+fn paragraph_mutations_keep_nonzero_entry_group_ownership_conservative() {
+    let mut env = Env::new();
+    env.enter_group();
+    let checkpoint = env.begin_paragraph_mutations();
+    env.set_count(7, 0);
+
+    let summary = env.finish_paragraph_mutations(checkpoint);
+    assert!(summary.unsupported_group_ownership);
+    assert!(summary.mutations.is_empty());
+}
+
+#[test]
+fn abandoned_paragraph_mutations_release_the_recorder() {
+    let mut env = Env::new();
+    let checkpoint = env.begin_paragraph_mutations();
+    env.set_count(7, 1);
+    env.abandon_paragraph_mutations(checkpoint);
+
+    let next = env.begin_paragraph_mutations();
+    let summary = env.finish_paragraph_mutations(next);
+    assert!(summary.mutations.is_empty());
 }
 
 #[test]
