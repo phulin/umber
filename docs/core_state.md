@@ -156,6 +156,15 @@ and roll back; survivor promotion preserves immutable content that escapes a
 transaction or checkpoint. Each frozen list has a canonical semantic identity
 composed from decoded node values and child identities, excluding provenance.
 
+Survivor roots separate immutable payload ownership from one Universe's local
+root/refcount table. Related Universe forks share the payload through `Arc`;
+dropping a fork recycles storage only when it is the last payload owner.
+Accepted paragraph history may therefore mount a retained survivor root in a
+restarted Universe without copying or re-freezing its semantic graph. A local
+origin overlay supplies current-revision diagnostic provenance, and a captured
+glue closure restores ordinary glue-interner state before the root is exposed.
+Unsupported handle-bearing node forms miss before live execution mutates.
+
 ## 8. External effects: the virtualized world
 
 `World` is the sole capability for inputs, output streams, terminal text,

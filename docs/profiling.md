@@ -816,3 +816,46 @@ linear-time aHash ordinal index. With paragraph replay default-disabled, no P1
 correctness, asymptotic, architectural, or measurement issue remains in the
 released fast suffix path. The unresolved slow-path limitation is explicit
 capability coverage, not a hidden cache layer.
+
+### Shared finished-line mount experiment
+
+Issue `umber2-q02h.58` tested the remaining ownership hypothesis without
+changing paragraph installation or the page builder. Survivor semantic
+payloads are now immutable `Arc` values shared by related Universes. The
+restarted store validates and mounts the accepted `NodeListId`, supplies a
+local provenance overlay, and restores the retained hlist glue closure. The
+ordinary reused-paragraph epilogue still appends each mounted top-level line,
+migrating node, and penalty through the existing vertical/page path.
+
+The required before Samply capture was
+`/tmp/umber2-q02h58-before.json.gz` (10 balanced incremental pairs, 36,346
+weighted samples). `try_reuse_aligned_paragraph` owned 391 samples (1.08%).
+Recursive origin rebinding owned 152 samples (0.42%), including 90 SHA-256
+compression samples, and retained-list cloning owned 78 samples (0.21%). The
+optimized before timing run reported +23.477 ms combined slow-edit
+enabled-minus-disabled and +7.212/+4.765 ms executor deltas.
+
+The matched after capture `/tmp/umber2-q02h58-after.json.gz` had 38,017
+weighted samples. Replay fell to 120 samples (0.32%); neither origin rebinding
+nor retained-list cloning appeared in sampled stacks, and the complete mount
+subtree was 24 samples (0.06%). SHA-256 under replay fell from 104 samples
+(0.29% whole-run) to 4 (0.01%), with none attributed to origin refreezing.
+
+The separate optimized, profiling-stat ten-pair run reported 132 line hits and
+zero imported semantic bytes on each slow edit. Enabled and disabled survivor
+source-word promotion was effectively identical (192,196 versus 192,198 on
+each slow edit), so line hits no longer add promotion volume. The slow-path
+delta was -8.219 ms mean/-6.196 ms median; executor deltas were -11.195 and
+-9.716 ms. Interaction was +0.876 ms mean, fast was -0.191 ms mean/+0.842 ms
+median, and slow-plus-priming remained +25.987 ms mean/+26.489 ms median.
+Every revision preserved the disabled named-boundary schedule and cold DVI
+bytes. These results validate the mount seam but do not enable paragraph
+recording by default because accepted-history publication still outweighs the
+two-edit slow-path win over a complete session.
+
+A final two-pair telemetry pass separated recycling releases from O(1) shared
+payload drops. Each slow edit recycled 1,161 roots with memoization enabled
+versus 1,162 disabled, while 1,836--1,894 local roots were released by dropping
+their shared payload reference. Together with the unchanged source-word count,
+this confirms that finished-line hits do not hide promotion or recycling
+amplification behind the mount.

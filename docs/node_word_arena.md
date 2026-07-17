@@ -293,7 +293,11 @@ and outside `Universe` exactly as in Phase 1.
 
 ### 5.2 Survivor roots and recycling
 
-Every survivor root owns a complete `NodeStorage`: words and all sidecars.
+Every survivor root payload owns a complete `NodeStorage`: words and all
+sidecars. The arena-local root slot owns that immutable payload through `Arc`
+plus its own refcount and optional diagnostic-origin overlay. Cloning a related
+Universe therefore shares semantic storage while retaining independent root
+ownership and provenance state.
 Promotion iteratively decodes the mixed epoch/survivor DAG, memoizes exact
 source spans, appends logical nodes into the destination storage, and rewrites
 all child handles in destination sidecar rows to the new monotonic root id.
@@ -318,13 +322,23 @@ live pin-log prefix alongside the same journal-owned register references used
 by ordinary snapshots. Format images never serialize this runtime ownership
 log and assert that it is empty at their quiescent capture boundary.
 Replacement, group exit, rollback, and shipout otherwise release references
-through the same barriered paths as today. At refcount zero, all destination vectors are
-cleared and move together into a recycled `NodeStorage` pool. Recycling may
-reuse capacity but never the root slot or a packed handle. The pool and its
-reuse counters are derived allocator state: cloning may copy them and rollback
-need not restore their exact capacity/order, because they cannot affect
-meaning, liveness, ids, hashes, or output. Tests must prove that claim by
-replay/hash equality with different recycling histories.
+through the same barriered paths as today. At local refcount zero, the slot is
+removed immediately. Its destination vectors move into the recycled
+`NodeStorage` pool only when `Arc::try_unwrap` proves this was the last related
+Universe payload owner; otherwise teardown is an O(1) shared-payload drop.
+Recycling may reuse capacity but never the root slot or a packed handle. The
+pool and its reuse counters are derived allocator state: cloning may copy them
+and rollback need not restore their exact capacity/order, because they cannot
+affect meaning, liveness, ids, hashes, or output. Tests prove that claim by
+replay/hash equality with different sharing and recycling histories.
+
+Accepted paragraph history uses this ownership split as a mount seam. A
+restarted Universe resolves the same survivor `NodeListId` through ordinary
+arena APIs, installs only the retained glue-resource closure, and overlays
+current-revision char/ligature origins without changing semantic words,
+sidecars, or semantic ids. The mount validator admits the minimal ordinary
+finished-line node vocabulary and rejects unresolved or unsupported
+handle-bearing forms before mutation.
 
 The lookup table adds one `(SurvivorRootId, usize)` payload per live root (16
 bytes on the supported 64-bit targets), plus standard hash-table control

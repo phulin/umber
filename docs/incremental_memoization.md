@@ -61,6 +61,8 @@ The repository already provides the required correctness substrate:
 - immutable accepted-generation substrates and one validated restart fork;
 - retained logical effects and page artifacts;
 - generation-owned paragraph hlists and finished lines;
+- shared mountable survivor payloads with local provenance overlays and
+  retained glue closures;
 - current-revision provenance rebinding recipes;
 - typed dependency keys, semantic observations, changed-at stamps, and
   backdating; and
@@ -182,9 +184,9 @@ For each candidate record, in order:
 3. validate its front-end dependencies, count/integer mutation state, and
    virtual effects;
 4. import its retained hlist before applying any mutation;
-5. validate the separate break dependencies and import finished lines when
+5. validate the separate break dependencies and mount finished lines when
    green, otherwise line-break the imported hlist;
-6. rebind provenance to current-revision source spans;
+6. bind current-revision provenance through the mount-local origin overlay;
 7. replay supported ordered mutations/effects and atomically apply the input
    transition;
 8. install the result through the ordinary vertical/page-builder boundary;
@@ -320,6 +322,40 @@ opportunities, 27 hits, only 1.432 ms of validation/import, and a +67.594 ms
 memo-enabled slow-path loss. It remains default-disabled. The new plan must win
 by removing discovery, recording, and lifecycle work, not by weakening the
 read-set or provenance contract.
+
+### Mountable finished-line ownership experiment
+
+The accepted-history implementation now shares immutable survivor payloads
+between related Universes. A finished-line hit validates the retained graph and
+its ordinary Gentle handle closure before mutation, mounts a local provenance
+overlay, restores the retained hlist's glue closure into the restarted store,
+and returns the unchanged `NodeListId`. It does not import, promote, re-freeze,
+rehash, or recursively rewrite semantic nodes. The existing reused-paragraph
+installation still materializes only the mounted top-level contributions and
+feeds them through ordinary vertical append, baseline glue, prevdepth, page
+building, and output-routine behavior. Marks, whatsits, leaders, unset nodes,
+and unresolved font/glue/foreign child handles conservatively miss the mount.
+
+The 2026-07-17 optimized ten-pair AB/BA Gentle run retained 132 finished-line
+hits on each slow edit, skipped 42,183 commands, and reported zero imported
+semantic bytes. All four revisions preserved the disabled schedule and were
+DVI-byte-identical to cold. The combined slow-edit enabled-minus-disabled
+delta was -8.219 ms mean/-6.196 ms median; executor deltas were -11.195 and
+-9.716 ms for the two slow edits. Interaction was +0.876 ms mean and the
+independent fast path was -0.191 ms mean/+0.842 ms median. Recording still
+costs: slow-plus-priming remained +25.987 ms mean/+26.489 ms median, so this is
+not a default-enablement claim.
+
+A matched ten-run sampled profile reduced `try_reuse_aligned_paragraph` from
+391 samples (1.08%) to 120 (0.32%). The former recursive origin-refreeze
+subtree was 152 samples (0.42%), including 90 SHA-256 compression samples, and
+the retained-list clone subtree was 78 samples (0.21%); neither appeared in
+the after profile. The replacement mount subtree was 24 samples (0.06%).
+
+A final two-pair counter pass observed 1,161 recycling releases on each
+memo-enabled slow edit versus 1,162 disabled, while 1,836--1,894 local roots
+used the O(1) shared-payload drop path. Thus the mounted hits add neither
+semantic promotion volume nor survivor recycling work.
 
 ## Implementation sequence
 
