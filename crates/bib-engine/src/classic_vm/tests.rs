@@ -218,6 +218,31 @@ READ ITERATE {item}"#,
 }
 
 #[test]
+fn format_name_handles_no_comma_names_without_lowercase_particles() {
+    let parsed = super::BibName::parse("Donald E. Knuth");
+    assert_eq!(
+        parsed.first.iter().map(String::as_str).collect::<Vec<_>>(),
+        ["Donald", "E."]
+    );
+    assert!(parsed.von.is_empty());
+    assert_eq!(
+        parsed.last.iter().map(String::as_str).collect::<Vec<_>>(),
+        ["Knuth"]
+    );
+
+    let result = run(
+        br#"ENTRY {} {} {}
+FUNCTION {item} {
+  "Donald E. Knuth" #1 "{ff }{vv }{ll}{, jj}" format.name$ write$
+}
+READ ITERATE {item}"#,
+        b"@book{one, title = \"one\"}",
+    );
+    assert!(!result.is_fatal(), "{:?}", result.diagnostics());
+    assert_eq!(result.bbl(), Some("Donald E. Knuth"));
+}
+
+#[test]
 fn builtin_errors_and_output_limits_remain_bounded() {
     let wrong_type = run(
         b"ENTRY {} {} {} FUNCTION {bad} { #1 purify$ } READ EXECUTE {bad}",

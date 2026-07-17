@@ -1273,18 +1273,18 @@ impl BibName {
                     .iter()
                     .position(|word| starts_lower(word))
                     .unwrap_or(words.len());
-                let last_start = words[split..]
-                    .iter()
-                    .position(|word| !starts_lower(word))
-                    .map_or(split, |offset| split + offset);
-                let last_start = if last_start == words.len() {
-                    words.len().saturating_sub(1)
+                let last_start = if split == words.len() {
+                    split.saturating_sub(1)
                 } else {
-                    last_start
+                    words[split..]
+                        .iter()
+                        .position(|word| !starts_lower(word))
+                        .map_or_else(|| words.len().saturating_sub(1), |offset| split + offset)
                 };
+                let von_start = split.min(last_start);
                 Self {
-                    first: words[..split].to_vec(),
-                    von: words[split..last_start].to_vec(),
+                    first: words[..von_start].to_vec(),
+                    von: words[von_start..last_start].to_vec(),
                     last: words[last_start..].to_vec(),
                     jr: Vec::new(),
                 }
