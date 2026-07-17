@@ -1,7 +1,7 @@
-// Direct xfail translation of upstream t/extratitle.t at commit 74252e6.
+// Direct passing translation of upstream t/extratitle.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream;
 
 const UPSTREAM_SOURCE: &str = r####"# -*- cperl -*-
 use strict;
@@ -72,7 +72,7 @@ ok(is_undef($main->get_entryfield('L5', 'singletitle')), 'Singletitle test - 7')
 
 #[test]
 fn assertion_001_same_name_same_title_1() {
-    xfail_upstream(
+    pass_upstream(
         "Same name, same title - 1",
         r####"$main->get_extratitledata_for_key('L1')"####,
         r####"'1'"####,
@@ -83,7 +83,7 @@ fn assertion_001_same_name_same_title_1() {
 
 #[test]
 fn assertion_002_same_name_same_title_2() {
-    xfail_upstream(
+    pass_upstream(
         "Same name, same title - 2",
         r####"$main->get_extratitledata_for_key('L2')"####,
         r####"'2'"####,
@@ -94,7 +94,7 @@ fn assertion_002_same_name_same_title_2() {
 
 #[test]
 fn assertion_003_no_name_same_title_1() {
-    xfail_upstream(
+    pass_upstream(
         "No name, same title - 1",
         r####"$main->get_extratitledata_for_key('L3')"####,
         r####"'1'"####,
@@ -105,7 +105,7 @@ fn assertion_003_no_name_same_title_1() {
 
 #[test]
 fn assertion_004_no_name_same_title_2() {
-    xfail_upstream(
+    pass_upstream(
         "No name, same title - 2",
         r####"$main->get_extratitledata_for_key('L4')"####,
         r####"'2'"####,
@@ -116,7 +116,7 @@ fn assertion_004_no_name_same_title_2() {
 
 #[test]
 fn assertion_005_no_name_same_title_as_with_name_1() {
-    xfail_upstream(
+    pass_upstream(
         "No name, same title as with name - 1",
         r####"is_undef($main->get_extratitledata_for_key('L5'))"####,
         r####"true"####,
@@ -127,7 +127,7 @@ fn assertion_005_no_name_same_title_as_with_name_1() {
 
 #[test]
 fn assertion_006_no_name_same_shorttitle_title_1() {
-    xfail_upstream(
+    pass_upstream(
         "No name, same shorttitle/title - 1",
         r####"$main->get_extratitledata_for_key('L6')"####,
         r####"'1'"####,
@@ -138,7 +138,7 @@ fn assertion_006_no_name_same_shorttitle_title_1() {
 
 #[test]
 fn assertion_007_no_name_same_shorttitle_title_2() {
-    xfail_upstream(
+    pass_upstream(
         "No name, same shorttitle/title - 2",
         r####"$main->get_extratitledata_for_key('L7')"####,
         r####"'2'"####,
@@ -149,7 +149,7 @@ fn assertion_007_no_name_same_shorttitle_title_2() {
 
 #[test]
 fn assertion_008_singletitle_test_1() {
-    xfail_upstream(
+    pass_upstream(
         "Singletitle test - 1",
         r####"is_undef($main->get_entryfield('L8', 'singletitle'))"####,
         r####"true"####,
@@ -160,7 +160,7 @@ fn assertion_008_singletitle_test_1() {
 
 #[test]
 fn assertion_009_singletitle_test_2() {
-    xfail_upstream(
+    pass_upstream(
         "Singletitle test - 2",
         r####"is_undef($main->get_entryfield('L9', 'singletitle'))"####,
         r####"true"####,
@@ -171,7 +171,7 @@ fn assertion_009_singletitle_test_2() {
 
 #[test]
 fn assertion_010_singletitle_test_3() {
-    xfail_upstream(
+    pass_upstream(
         "Singletitle test - 3",
         r####"$main->get_entryfield('L10', 'singletitle')"####,
         r####"'1'"####,
@@ -182,7 +182,7 @@ fn assertion_010_singletitle_test_3() {
 
 #[test]
 fn assertion_011_singletitle_test_4() {
-    xfail_upstream(
+    pass_upstream(
         "Singletitle test - 4",
         r####"is_undef($main->get_entryfield('L11', 'singletitle'))"####,
         r####"true"####,
@@ -193,7 +193,7 @@ fn assertion_011_singletitle_test_4() {
 
 #[test]
 fn assertion_012_singletitle_test_5() {
-    xfail_upstream(
+    pass_upstream(
         "Singletitle test - 5",
         r####"is_undef($main->get_entryfield('L12', 'singletitle'))"####,
         r####"true"####,
@@ -204,7 +204,7 @@ fn assertion_012_singletitle_test_5() {
 
 #[test]
 fn assertion_013_singletitle_test_6() {
-    xfail_upstream(
+    pass_upstream(
         "Singletitle test - 6",
         r####"is_undef($main->get_entryfield('L1', 'singletitle'))"####,
         r####"true"####,
@@ -215,7 +215,7 @@ fn assertion_013_singletitle_test_6() {
 
 #[test]
 fn assertion_014_singletitle_test_7() {
-    xfail_upstream(
+    pass_upstream(
         "Singletitle test - 7",
         r####"is_undef($main->get_entryfield('L5', 'singletitle'))"####,
         r####"true"####,

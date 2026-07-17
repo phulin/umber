@@ -73,7 +73,10 @@ fn compare_owned_upstream(
 ) {
     if matches!(
         owner,
-        SemanticOwner::Graph | SemanticOwner::Names | SemanticOwner::SortAndLists
+        SemanticOwner::Graph
+            | SemanticOwner::Names
+            | SemanticOwner::SortAndLists
+            | SemanticOwner::Labels
     ) {
         pass_upstream(
             assertion,

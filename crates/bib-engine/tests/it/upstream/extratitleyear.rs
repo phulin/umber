@@ -1,7 +1,7 @@
-// Direct xfail translation of upstream t/extratitleyear.t at commit 74252e6.
+// Direct passing translation of upstream t/extratitleyear.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream;
 
 const UPSTREAM_SOURCE: &str = r####"# -*- cperl -*-
 use strict;
@@ -64,7 +64,7 @@ ok(is_undef($main->get_extratitleyeardata_for_key('LY3')), 'Different years due 
 
 #[test]
 fn assertion_001_same_title_same_year() {
-    xfail_upstream(
+    pass_upstream(
         "Same title, same year",
         r####"$main->get_extratitleyeardata_for_key('L1')"####,
         r####"'1'"####,
@@ -75,7 +75,7 @@ fn assertion_001_same_title_same_year() {
 
 #[test]
 fn assertion_002_same_title_same_year() {
-    xfail_upstream(
+    pass_upstream(
         "Same title, same year",
         r####"$main->get_extratitleyeardata_for_key('L2')"####,
         r####"'2'"####,
@@ -86,7 +86,7 @@ fn assertion_002_same_title_same_year() {
 
 #[test]
 fn assertion_003_no_title_same_year() {
-    xfail_upstream(
+    pass_upstream(
         "No title,  same year",
         r####"is_undef($main->get_extratitledata_for_key('L3'))"####,
         r####"true"####,
@@ -97,7 +97,7 @@ fn assertion_003_no_title_same_year() {
 
 #[test]
 fn assertion_004_same_title_different_year() {
-    xfail_upstream(
+    pass_upstream(
         "Same title,  different year",
         r####"is_undef($main->get_extratitleyeardata_for_key('L4'))"####,
         r####"true"####,
@@ -108,7 +108,7 @@ fn assertion_004_same_title_different_year() {
 
 #[test]
 fn assertion_005_different_labeltitle_same_year() {
-    xfail_upstream(
+    pass_upstream(
         "Different labeltitle,  same year",
         r####"is_undef($main->get_extratitleyeardata_for_key('L5'))"####,
         r####"true"####,
@@ -119,7 +119,7 @@ fn assertion_005_different_labeltitle_same_year() {
 
 #[test]
 fn assertion_006_different_years_due_to_range_ends_1() {
-    xfail_upstream(
+    pass_upstream(
         "Different years due to range ends - 1",
         r####"is_undef($main->get_extratitleyeardata_for_key('LY1'))"####,
         r####"true"####,
@@ -130,7 +130,7 @@ fn assertion_006_different_years_due_to_range_ends_1() {
 
 #[test]
 fn assertion_007_different_years_due_to_range_ends_1() {
-    xfail_upstream(
+    pass_upstream(
         "Different years due to range ends - 1",
         r####"is_undef($main->get_extratitleyeardata_for_key('LY2'))"####,
         r####"true"####,
@@ -141,7 +141,7 @@ fn assertion_007_different_years_due_to_range_ends_1() {
 
 #[test]
 fn assertion_008_different_years_due_to_range_ends_1() {
-    xfail_upstream(
+    pass_upstream(
         "Different years due to range ends - 1",
         r####"is_undef($main->get_extratitleyeardata_for_key('LY3'))"####,
         r####"true"####,

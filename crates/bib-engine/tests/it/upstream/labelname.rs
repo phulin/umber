@@ -1,7 +1,7 @@
-// Direct xfail translation of upstream t/labelname.t at commit 74252e6.
+// Direct passing translation of upstream t/labelname.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream;
 
 const UPSTREAM_SOURCE: &str = r####"# -*- cperl -*-
 use strict;
@@ -62,7 +62,7 @@ eq_or_diff($bibentries->entry('lne1')->get_labelname_info, 'namea', 'type-specif
 
 #[test]
 fn assertion_001_global_shortauthor() {
-    xfail_upstream(
+    pass_upstream(
         "global shortauthor",
         r####"$bibentries->entry('angenendtsa')->get_labelname_info"####,
         r####"'shortauthor'"####,
@@ -73,7 +73,7 @@ fn assertion_001_global_shortauthor() {
 
 #[test]
 fn assertion_002_global_author() {
-    xfail_upstream(
+    pass_upstream(
         "global author",
         r####"$bibentries->entry('stdmodel')->get_labelname_info"####,
         r####"'author'"####,
@@ -84,7 +84,7 @@ fn assertion_002_global_author() {
 
 #[test]
 fn assertion_003_type_specific_editor() {
-    xfail_upstream(
+    pass_upstream(
         "type-specific editor",
         r####"$bibentries->entry('aristotle:anima')->get_labelname_info"####,
         r####"'editor'"####,
@@ -95,7 +95,7 @@ fn assertion_003_type_specific_editor() {
 
 #[test]
 fn assertion_004_type_specific_exotic_name() {
-    xfail_upstream(
+    pass_upstream(
         "type-specific exotic name",
         r####"$bibentries->entry('lne1')->get_labelname_info"####,
         r####"'namea'"####,

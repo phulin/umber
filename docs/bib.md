@@ -1,9 +1,9 @@
 # In-process bibliography backend
 
 Status: foundation contracts, pinned Unicode utilities, bounded XML and
-BibTeX inputs, deterministic cross-entry graphs, structured names, and the
-data-list/sorting stage are implemented; labeling, serialization, session,
-and project integration continue in dependency order.
+BibTeX inputs, deterministic cross-entry graphs, structured names,
+data-list/sorting, and labeling/uniqueness are implemented; serialization,
+session, and project integration continue in dependency order.
 
 This document defines Umber's pure-Rust bibliography subsystem. Every Rust
 package uses the `bib-*` prefix, and modules, types, commands, features, and
@@ -171,6 +171,16 @@ mutable process state. The ten directly completed upstream cohorts
 (`annotations`, `dateformats`, `encoding`, `langtags`, `translit`, `utils`,
 `bcfvalidation`, `biblatexml`, `configfile`, and `options`) execute as 254
 ordinary assertion-level tests rather than strict xfails.
+
+`bib-label` now supplies immutable label-source selection, template-driven
+labelalpha construction, normalized full and per-name compatibility hashes,
+and context-specific visible-name inputs. Its collision passes assign
+extraalpha, extradate, extratitle, and extratitleyear in explicit data-list
+order, while uniqueness processing derives uniquename/uniquelist levels and
+title, work, and primary-author flags without process-global section state.
+Every processing call builds a fresh result, so repeated preparation resets
+obsolete collision state and deterministic ordered maps prevent hash-table
+iteration from affecting output.
 
 ## Domain model
 

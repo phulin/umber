@@ -1,7 +1,7 @@
-// Direct xfail translation of upstream t/labelalphaname.t at commit 74252e6.
+// Direct passing translation of upstream t/labelalphaname.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream;
 
 const UPSTREAM_SOURCE: &str = r####"# -*- cperl -*-
 use strict;
@@ -61,7 +61,7 @@ eq_or_diff($main2->get_labelalphadata_for_key('lant6'), 'GRW', 'labelalphaname n
 
 #[test]
 fn assertion_001_labelalphaname_global_template() {
-    xfail_upstream(
+    pass_upstream(
         "labelalphaname global template",
         r####"$main->get_labelalphadata_for_key('lant1')"####,
         r####"'Smi'"####,
@@ -72,7 +72,7 @@ fn assertion_001_labelalphaname_global_template() {
 
 #[test]
 fn assertion_002_labelalphaname_dlist_template() {
-    xfail_upstream(
+    pass_upstream(
         "labelalphaname dlist template",
         r####"$main1->get_labelalphadata_for_key('lant1')"####,
         r####"'AS'"####,
@@ -83,7 +83,7 @@ fn assertion_002_labelalphaname_dlist_template() {
 
 #[test]
 fn assertion_003_labelalphaname_entry_template() {
-    xfail_upstream(
+    pass_upstream(
         "labelalphaname entry template",
         r####"$main->get_labelalphadata_for_key('lant2')"####,
         r####"'ArSm'"####,
@@ -94,7 +94,7 @@ fn assertion_003_labelalphaname_entry_template() {
 
 #[test]
 fn assertion_004_labelalphaname_namelist_template() {
-    xfail_upstream(
+    pass_upstream(
         "labelalphaname namelist template",
         r####"$main->get_labelalphadata_for_key('lant3')"####,
         r####"'ArtSmi'"####,
@@ -105,7 +105,7 @@ fn assertion_004_labelalphaname_namelist_template() {
 
 #[test]
 fn assertion_005_labelalphaname_name_template() {
-    xfail_upstream(
+    pass_upstream(
         "labelalphaname name template",
         r####"$main->get_labelalphadata_for_key('lant4')"####,
         r####"'ArthSmit'"####,
@@ -116,7 +116,7 @@ fn assertion_005_labelalphaname_name_template() {
 
 #[test]
 fn assertion_006_labelalphaname_name_template_compound() {
-    xfail_upstream(
+    pass_upstream(
         "labelalphaname name template compound",
         r####"$main2->get_labelalphadata_for_key('lant5')"####,
         r####"'GRW'"####,
@@ -127,7 +127,7 @@ fn assertion_006_labelalphaname_name_template_compound() {
 
 #[test]
 fn assertion_007_labelalphaname_name_template_hyphen() {
-    xfail_upstream(
+    pass_upstream(
         "labelalphaname name template hyphen",
         r####"$main2->get_labelalphadata_for_key('lant6')"####,
         r####"'GRW'"####,

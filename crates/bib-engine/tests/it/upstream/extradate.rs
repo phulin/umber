@@ -1,7 +1,7 @@
-// Direct xfail translation of upstream t/extradate.t at commit 74252e6.
+// Direct passing translation of upstream t/extradate.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream;
 
 const UPSTREAM_SOURCE: &str = r####"# -*- cperl -*-
 use strict;
@@ -131,7 +131,7 @@ eq_or_diff($main->get_extradatedata_for_key('ed8'), '2', 'year scope - 2');
 
 #[test]
 fn assertion_001_entry_l1_one_name_first_in_1995() {
-    xfail_upstream(
+    pass_upstream(
         "Entry L1 - one name, first in 1995",
         r####"$main->get_extradatedata_for_key('L1')"####,
         r####"'1'"####,
@@ -142,7 +142,7 @@ fn assertion_001_entry_l1_one_name_first_in_1995() {
 
 #[test]
 fn assertion_002_entry_l2_one_name_second_in_1995() {
-    xfail_upstream(
+    pass_upstream(
         "Entry L2 - one name, second in 1995",
         r####"$main->get_extradatedata_for_key('L2')"####,
         r####"'2'"####,
@@ -153,7 +153,7 @@ fn assertion_002_entry_l2_one_name_second_in_1995() {
 
 #[test]
 fn assertion_003_entry_l3_one_name_third_in_1995() {
-    xfail_upstream(
+    pass_upstream(
         "Entry L3 - one name, third in 1995",
         r####"$main->get_extradatedata_for_key('L3')"####,
         r####"'3'"####,
@@ -164,7 +164,7 @@ fn assertion_003_entry_l3_one_name_third_in_1995() {
 
 #[test]
 fn assertion_004_entry_l4_two_names_first_in_1995() {
-    xfail_upstream(
+    pass_upstream(
         "Entry L4 - two names, first in 1995",
         r####"$main->get_extradatedata_for_key('L4')"####,
         r####"'1'"####,
@@ -175,7 +175,7 @@ fn assertion_004_entry_l4_two_names_first_in_1995() {
 
 #[test]
 fn assertion_005_entry_l5_two_names_second_in_1995() {
-    xfail_upstream(
+    pass_upstream(
         "Entry L5 - two names, second in 1995",
         r####"$main->get_extradatedata_for_key('L5')"####,
         r####"'2'"####,
@@ -186,7 +186,7 @@ fn assertion_005_entry_l5_two_names_second_in_1995() {
 
 #[test]
 fn assertion_006_entry_l6_two_names_first_in_1996() {
-    xfail_upstream(
+    pass_upstream(
         "Entry L6 - two names, first in 1996",
         r####"$main->get_extradatedata_for_key('L6')"####,
         r####"'1'"####,
@@ -197,7 +197,7 @@ fn assertion_006_entry_l6_two_names_first_in_1996() {
 
 #[test]
 fn assertion_007_entry_l7_two_names_second_in_1996() {
-    xfail_upstream(
+    pass_upstream(
         "Entry L7 - two names, second in 1996",
         r####"$main->get_extradatedata_for_key('L7')"####,
         r####"'2'"####,
@@ -208,7 +208,7 @@ fn assertion_007_entry_l7_two_names_second_in_1996() {
 
 #[test]
 fn assertion_008_same_name_no_year_1() {
-    xfail_upstream(
+    pass_upstream(
         "Same name, no year 1",
         r####"$main->get_extradatedata_for_key('nodate1')"####,
         r####"'1'"####,
@@ -219,7 +219,7 @@ fn assertion_008_same_name_no_year_1() {
 
 #[test]
 fn assertion_009_same_name_no_year_2() {
-    xfail_upstream(
+    pass_upstream(
         "Same name, no year 2",
         r####"$main->get_extradatedata_for_key('nodate2')"####,
         r####"'2'"####,
@@ -230,7 +230,7 @@ fn assertion_009_same_name_no_year_2() {
 
 #[test]
 fn assertion_010_entry_l8_one_name_only_in_year() {
-    xfail_upstream(
+    pass_upstream(
         "Entry L8 - one name, only in year",
         r####"is_undef($main->get_extradatedata_for_key('L8'))"####,
         r####"true"####,
@@ -241,7 +241,7 @@ fn assertion_010_entry_l8_one_name_only_in_year() {
 
 #[test]
 fn assertion_011_entry_l9_no_name_same_year_as_another_with_no_name() {
-    xfail_upstream(
+    pass_upstream(
         "Entry L9 - No name, same year as another with no name",
         r####"is_undef($main->get_extradatedata_for_key('L9'))"####,
         r####"true"####,
@@ -252,7 +252,7 @@ fn assertion_011_entry_l9_no_name_same_year_as_another_with_no_name() {
 
 #[test]
 fn assertion_012_entry_l10_no_name_same_year_as_another_with_no_name() {
-    xfail_upstream(
+    pass_upstream(
         "Entry L10 - No name, same year as another with no name",
         r####"is_undef($main->get_extradatedata_for_key('L10'))"####,
         r####"true"####,
@@ -263,7 +263,7 @@ fn assertion_012_entry_l10_no_name_same_year_as_another_with_no_name() {
 
 #[test]
 fn assertion_013_entry_companion1_names_truncated_to_same_as_another_entry_in_same_year() {
-    xfail_upstream(
+    pass_upstream(
         "Entry companion1 - names truncated to same as another entry in same year",
         r####"$main->get_extradatedata_for_key('companion1')"####,
         r####"'1'"####,
@@ -274,7 +274,7 @@ fn assertion_013_entry_companion1_names_truncated_to_same_as_another_entry_in_sa
 
 #[test]
 fn assertion_014_entry_companion2_names_truncated_to_same_as_another_entry_in_same_year() {
-    xfail_upstream(
+    pass_upstream(
         "Entry companion2 - names truncated to same as another entry in same year",
         r####"$main->get_extradatedata_for_key('companion2')"####,
         r####"'2'"####,
@@ -285,7 +285,7 @@ fn assertion_014_entry_companion2_names_truncated_to_same_as_another_entry_in_sa
 
 #[test]
 fn assertion_015_entry_companion3_one_name_same_year_as_truncated_names() {
-    xfail_upstream(
+    pass_upstream(
         "Entry companion3 - one name, same year as truncated names",
         r####"is_undef($main->get_extradatedata_for_key('companion3'))"####,
         r####"true"####,
@@ -296,7 +296,7 @@ fn assertion_015_entry_companion3_one_name_same_year_as_truncated_names() {
 
 #[test]
 fn assertion_016_entry_vangennep_useprefix_does_makes_it_different() {
-    xfail_upstream(
+    pass_upstream(
         "Entry vangennep - useprefix does makes it different",
         r####"$main->get_extradatedata_for_key('vangennep')"####,
         r####"'2'"####,
@@ -307,7 +307,7 @@ fn assertion_016_entry_vangennep_useprefix_does_makes_it_different() {
 
 #[test]
 fn assertion_017_entry_gennep_different_from_prefix_name() {
-    xfail_upstream(
+    pass_upstream(
         "Entry gennep - different from prefix name",
         r####"$main->get_extradatedata_for_key('gennep')"####,
         r####"'1'"####,
@@ -318,7 +318,7 @@ fn assertion_017_entry_gennep_different_from_prefix_name() {
 
 #[test]
 fn assertion_018_date_range_means_no_extradate_1() {
-    xfail_upstream(
+    pass_upstream(
         "Date range means no extradate - 1",
         r####"is_undef($main->get_extradatedata_for_key('LY1'))"####,
         r####"true"####,
@@ -329,7 +329,7 @@ fn assertion_018_date_range_means_no_extradate_1() {
 
 #[test]
 fn assertion_019_date_range_means_no_extradate_2() {
-    xfail_upstream(
+    pass_upstream(
         "Date range means no extradate - 2",
         r####"is_undef($main->get_extradatedata_for_key('LY2'))"####,
         r####"true"####,
@@ -340,7 +340,7 @@ fn assertion_019_date_range_means_no_extradate_2() {
 
 #[test]
 fn assertion_020_date_range_means_no_extradate_3() {
-    xfail_upstream(
+    pass_upstream(
         "Date range means no extradate - 3",
         r####"is_undef($main->get_extradatedata_for_key('LY3'))"####,
         r####"true"####,
@@ -351,7 +351,7 @@ fn assertion_020_date_range_means_no_extradate_3() {
 
 #[test]
 fn assertion_021_labeldatesource_string_1() {
-    xfail_upstream(
+    pass_upstream(
         "Labeldatesource string - 1",
         r####"$bibentries->entry('nodate1')->get_field('labeldatesource')"####,
         r####"'nodate'"####,
@@ -362,7 +362,7 @@ fn assertion_021_labeldatesource_string_1() {
 
 #[test]
 fn assertion_022_labeldatesource_string_2() {
-    xfail_upstream(
+    pass_upstream(
         "Labeldatesource string - 2",
         r####"$bibentries->entry('nodate2')->get_field('labeldatesource')"####,
         r####"'nodate'"####,
@@ -373,7 +373,7 @@ fn assertion_022_labeldatesource_string_2() {
 
 #[test]
 fn assertion_023_labelyear_scope_1() {
-    xfail_upstream(
+    pass_upstream(
         "labelyear scope - 1",
         r####"$main->get_extradatedata_for_key('ed1')"####,
         r####"'1'"####,
@@ -384,7 +384,7 @@ fn assertion_023_labelyear_scope_1() {
 
 #[test]
 fn assertion_024_labelyear_scope_2() {
-    xfail_upstream(
+    pass_upstream(
         "labelyear scope - 2",
         r####"$main->get_extradatedata_for_key('ed2')"####,
         r####"'2'"####,
@@ -395,7 +395,7 @@ fn assertion_024_labelyear_scope_2() {
 
 #[test]
 fn assertion_025_labelyear_scope_1a() {
-    xfail_upstream(
+    pass_upstream(
         "labelyear scope - 1a",
         r####"$bibentries->entry('ed1')->get_field('extradatescope')"####,
         r####"'labelyear'"####,
@@ -406,7 +406,7 @@ fn assertion_025_labelyear_scope_1a() {
 
 #[test]
 fn assertion_026_labelyear_scope_3() {
-    xfail_upstream(
+    pass_upstream(
         "labelyear scope - 3",
         r####"is_undef($main->get_extradatedata_for_key('ed7'))"####,
         r####"true"####,
@@ -417,7 +417,7 @@ fn assertion_026_labelyear_scope_3() {
 
 #[test]
 fn assertion_027_labelyear_scope_4() {
-    xfail_upstream(
+    pass_upstream(
         "labelyear scope - 4",
         r####"is_undef($main->get_extradatedata_for_key('ed8'))"####,
         r####"true"####,
@@ -428,7 +428,7 @@ fn assertion_027_labelyear_scope_4() {
 
 #[test]
 fn assertion_028_labelmonth_scope_1() {
-    xfail_upstream(
+    pass_upstream(
         "labelmonth scope - 1",
         r####"is_undef($main->get_extradatedata_for_key('ed1'))"####,
         r####"true"####,
@@ -439,7 +439,7 @@ fn assertion_028_labelmonth_scope_1() {
 
 #[test]
 fn assertion_029_labelmonth_scope_2() {
-    xfail_upstream(
+    pass_upstream(
         "labelmonth scope - 2",
         r####"is_undef($main->get_extradatedata_for_key('ed2'))"####,
         r####"true"####,
@@ -450,7 +450,7 @@ fn assertion_029_labelmonth_scope_2() {
 
 #[test]
 fn assertion_030_labelmonth_scope_1a() {
-    xfail_upstream(
+    pass_upstream(
         "labelmonth scope - 1a",
         r####"$bibentries->entry('ed1')->get_field('extradatescope')"####,
         r####"'labelmonth'"####,
@@ -461,7 +461,7 @@ fn assertion_030_labelmonth_scope_1a() {
 
 #[test]
 fn assertion_031_labelmonth_scope_3() {
-    xfail_upstream(
+    pass_upstream(
         "labelmonth scope - 3",
         r####"$main->get_extradatedata_for_key('ed3')"####,
         r####"'1'"####,
@@ -472,7 +472,7 @@ fn assertion_031_labelmonth_scope_3() {
 
 #[test]
 fn assertion_032_labelmonth_scope_4() {
-    xfail_upstream(
+    pass_upstream(
         "labelmonth scope - 4",
         r####"$main->get_extradatedata_for_key('ed4')"####,
         r####"'2'"####,
@@ -483,7 +483,7 @@ fn assertion_032_labelmonth_scope_4() {
 
 #[test]
 fn assertion_033_labelminute_scope_1() {
-    xfail_upstream(
+    pass_upstream(
         "labelminute scope - 1",
         r####"$main->get_extradatedata_for_key('ed5')"####,
         r####"'1'"####,
@@ -494,7 +494,7 @@ fn assertion_033_labelminute_scope_1() {
 
 #[test]
 fn assertion_034_labelminute_scope_2() {
-    xfail_upstream(
+    pass_upstream(
         "labelminute scope - 2",
         r####"$main->get_extradatedata_for_key('ed6')"####,
         r####"'2'"####,
@@ -505,7 +505,7 @@ fn assertion_034_labelminute_scope_2() {
 
 #[test]
 fn assertion_035_labelminute_scope_1a() {
-    xfail_upstream(
+    pass_upstream(
         "labelminute scope - 1a",
         r####"$bibentries->entry('ed5')->get_field('extradatescope')"####,
         r####"'labelminute'"####,
@@ -516,7 +516,7 @@ fn assertion_035_labelminute_scope_1a() {
 
 #[test]
 fn assertion_036_labelminute_scope_3() {
-    xfail_upstream(
+    pass_upstream(
         "labelminute scope - 3",
         r####"is_undef($main->get_extradatedata_for_key('ed1'))"####,
         r####"true"####,
@@ -527,7 +527,7 @@ fn assertion_036_labelminute_scope_3() {
 
 #[test]
 fn assertion_037_labelminute_scope_4() {
-    xfail_upstream(
+    pass_upstream(
         "labelminute scope - 4",
         r####"is_undef($main->get_extradatedata_for_key('ed2'))"####,
         r####"true"####,
@@ -538,7 +538,7 @@ fn assertion_037_labelminute_scope_4() {
 
 #[test]
 fn assertion_038_year_scope_1() {
-    xfail_upstream(
+    pass_upstream(
         "year scope - 1",
         r####"$main->get_extradatedata_for_key('ed7')"####,
         r####"'1'"####,
@@ -549,7 +549,7 @@ fn assertion_038_year_scope_1() {
 
 #[test]
 fn assertion_039_year_scope_2() {
-    xfail_upstream(
+    pass_upstream(
         "year scope - 2",
         r####"$main->get_extradatedata_for_key('ed8')"####,
         r####"'2'"####,

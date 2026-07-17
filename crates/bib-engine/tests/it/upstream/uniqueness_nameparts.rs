@@ -1,7 +1,7 @@
-// Direct xfail translation of upstream t/uniqueness-nameparts.t at commit 74252e6.
+// Direct passing translation of upstream t/uniqueness-nameparts.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream;
 
 const UPSTREAM_SOURCE: &str = r####"# -*- cperl -*-
 use strict;
@@ -555,7 +555,7 @@ eq_or_diff($out->get_output_entry('un7', $main2), $un7, 'Uniquename namepart - 1
 
 #[test]
 fn assertion_001_uniquename_namepart_1() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename namepart - 1",
         r####"$out->get_output_entry('un1', $main)"####,
         r####"$un1"####,
@@ -566,7 +566,7 @@ fn assertion_001_uniquename_namepart_1() {
 
 #[test]
 fn assertion_002_uniquename_namepart_2() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename namepart - 2",
         r####"$out->get_output_entry('un2', $main)"####,
         r####"$un2"####,
@@ -577,7 +577,7 @@ fn assertion_002_uniquename_namepart_2() {
 
 #[test]
 fn assertion_003_uniquename_namepart_3() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename namepart - 3",
         r####"$out->get_output_entry('un3', $main)"####,
         r####"$un3"####,
@@ -588,7 +588,7 @@ fn assertion_003_uniquename_namepart_3() {
 
 #[test]
 fn assertion_004_uniquename_namepart_4() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename namepart - 4",
         r####"$out->get_output_entry('un4', $main)"####,
         r####"$un4"####,
@@ -599,7 +599,7 @@ fn assertion_004_uniquename_namepart_4() {
 
 #[test]
 fn assertion_005_uniquename_namepart_5() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename namepart - 5",
         r####"$out->get_output_entry('un1', $main1)"####,
         r####"$un1a"####,
@@ -610,7 +610,7 @@ fn assertion_005_uniquename_namepart_5() {
 
 #[test]
 fn assertion_006_uniquename_namepart_6() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename namepart - 6",
         r####"$out->get_output_entry('un2', $main1)"####,
         r####"$un2a"####,
@@ -621,7 +621,7 @@ fn assertion_006_uniquename_namepart_6() {
 
 #[test]
 fn assertion_007_uniquename_namepart_7() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename namepart - 7",
         r####"$out->get_output_entry('un3', $main1)"####,
         r####"$un3a"####,
@@ -632,7 +632,7 @@ fn assertion_007_uniquename_namepart_7() {
 
 #[test]
 fn assertion_008_uniquename_namepart_8() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename namepart - 8",
         r####"$out->get_output_entry('un4', $main1)"####,
         r####"$un4a"####,
@@ -643,7 +643,7 @@ fn assertion_008_uniquename_namepart_8() {
 
 #[test]
 fn assertion_009_uniquename_metadata_1() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename metadata - 1",
         r####"$main2->get_namestring($un1nlid, $un1nid)"####,
         r####"'SmithSimon'"####,
@@ -654,7 +654,7 @@ fn assertion_009_uniquename_metadata_1() {
 
 #[test]
 fn assertion_010_uniquename_metadata_2() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename metadata - 2",
         r####"$main2->get_namestrings($un1nlid, $un1nid)"####,
         r####"['Smith', 'SmithS', 'SmithSimon']"####,
@@ -666,7 +666,7 @@ fn assertion_010_uniquename_metadata_2() {
 
 #[test]
 fn assertion_011_uniquename_metadata_3() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename metadata - 3",
         r####"$main2->get_namedisschema($un1nlid, $un1nid)"####,
         r####"[['base', ['family']], ['middle', 'init'], ['middle', 'full']]"####,
@@ -678,7 +678,7 @@ fn assertion_011_uniquename_metadata_3() {
 
 #[test]
 fn assertion_012_uniquename_metadata_4() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename metadata - 4",
         r####"$main2->get_namestring($un2nlid, $un2nid)"####,
         r####"'SmithAlan'"####,
@@ -689,7 +689,7 @@ fn assertion_012_uniquename_metadata_4() {
 
 #[test]
 fn assertion_013_uniquename_metadata_5() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename metadata - 5",
         r####"$main2->get_namestrings($un2nlid, $un2nid)"####,
         r####"['Smith', 'SmithA', 'SmithAlan']"####,
@@ -701,7 +701,7 @@ fn assertion_013_uniquename_metadata_5() {
 
 #[test]
 fn assertion_014_uniquename_metadata_6() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename metadata - 6",
         r####"$main2->get_namedisschema($un2nlid, $un2nid)"####,
         r####"[['base', ['family']], ['middle', 'init'], ['middle', 'full']]"####,
@@ -713,7 +713,7 @@ fn assertion_014_uniquename_metadata_6() {
 
 #[test]
 fn assertion_015_uniquename_metadata_7() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename metadata - 7",
         r####"$main2->get_namestring($un3nlid, $un3nid)"####,
         r####"'SmithArthur'"####,
@@ -724,7 +724,7 @@ fn assertion_015_uniquename_metadata_7() {
 
 #[test]
 fn assertion_016_uniquename_metadata_8() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename metadata - 8",
         r####"$main2->get_namestrings($un3nlid, $un3nid)"####,
         r####"['Smith', 'SmithA', 'SmithArthur']"####,
@@ -736,7 +736,7 @@ fn assertion_016_uniquename_metadata_8() {
 
 #[test]
 fn assertion_017_uniquename_metadata_9() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename metadata - 9",
         r####"$main2->get_namedisschema($un3nlid, $un3nid)"####,
         r####"[['base', ['family']], ['middle', 'init'], ['middle', 'full']]"####,
@@ -748,7 +748,7 @@ fn assertion_017_uniquename_metadata_9() {
 
 #[test]
 fn assertion_018_uniquename_metadata_10() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename metadata - 10",
         r####"$main2->get_namestring($un4nlid, $un4nid)"####,
         r####"'SmithSimon'"####,
@@ -759,7 +759,7 @@ fn assertion_018_uniquename_metadata_10() {
 
 #[test]
 fn assertion_019_uniquename_metadata_11() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename metadata - 11",
         r####"$main2->get_namestrings($un4nlid, $un4nid)"####,
         r####"['Smith', 'SmithS', 'SmithSimon']"####,
@@ -771,7 +771,7 @@ fn assertion_019_uniquename_metadata_11() {
 
 #[test]
 fn assertion_020_uniquename_metadata_12() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename metadata - 12",
         r####"$main2->get_namedisschema($un4nlid, $un4nid)"####,
         r####"[['base', ['family']], ['middle', 'init'], ['middle', 'full']]"####,
@@ -783,7 +783,7 @@ fn assertion_020_uniquename_metadata_12() {
 
 #[test]
 fn assertion_021_uniquename_metadata_13() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename metadata - 13",
         r####"$main2->get_namestring($un5nlid, $un5nid)"####,
         r####"'SmithSimon'"####,
@@ -794,7 +794,7 @@ fn assertion_021_uniquename_metadata_13() {
 
 #[test]
 fn assertion_022_uniquename_metadata_14() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename metadata - 14",
         r####"$main2->get_namestrings($un5nlid, $un5nid)"####,
         r####"['Smith', 'SmithSimon']"####,
@@ -806,7 +806,7 @@ fn assertion_022_uniquename_metadata_14() {
 
 #[test]
 fn assertion_023_uniquename_metadata_15() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename metadata - 15",
         r####"$main2->get_namedisschema($un5nlid, $un5nid)"####,
         r####"[['base', ['family']], ['middle', 'fullonly']]"####,
@@ -818,7 +818,7 @@ fn assertion_023_uniquename_metadata_15() {
 
 #[test]
 fn assertion_024_uniquename_metadata_16() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename metadata - 16",
         r####"$main2->get_namestring($un6nlid, $un6nid)"####,
         r####"'SmithSmythe'"####,
@@ -829,7 +829,7 @@ fn assertion_024_uniquename_metadata_16() {
 
 #[test]
 fn assertion_025_uniquename_metadata_17() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename metadata - 17",
         r####"$main2->get_namestrings($un6nlid, $un6nid)"####,
         r####"['Smith', 'SmithS']"####,
@@ -841,7 +841,7 @@ fn assertion_025_uniquename_metadata_17() {
 
 #[test]
 fn assertion_026_uniquename_metadata_18() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename metadata - 18",
         r####"$main2->get_namedisschema($un6nlid, $un6nid)"####,
         r####"[['base', ['family']], ['middle', 'init']]"####,
@@ -853,7 +853,7 @@ fn assertion_026_uniquename_metadata_18() {
 
 #[test]
 fn assertion_027_uniquename_metadata_19() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename metadata - 19",
         r####"$main2->get_namestring($un7nlid, $un7nid)"####,
         r####"'Smith'"####,
@@ -864,7 +864,7 @@ fn assertion_027_uniquename_metadata_19() {
 
 #[test]
 fn assertion_028_uniquename_metadata_20() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename metadata - 20",
         r####"$main2->get_namestrings($un7nlid, $un7nid)"####,
         r####"['Smith']"####,
@@ -876,7 +876,7 @@ fn assertion_028_uniquename_metadata_20() {
 
 #[test]
 fn assertion_029_uniquename_metadata_21() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename metadata - 21",
         r####"$main2->get_namedisschema($un7nlid, $un7nid)"####,
         r####"[['base', ['family']]]"####,
@@ -888,7 +888,7 @@ fn assertion_029_uniquename_metadata_21() {
 
 #[test]
 fn assertion_030_uniquename_namepart_9() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename namepart - 9",
         r####"$out->get_output_entry('un1', $main2)"####,
         r####"$un1b"####,
@@ -899,7 +899,7 @@ fn assertion_030_uniquename_namepart_9() {
 
 #[test]
 fn assertion_031_uniquename_namepart_10() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename namepart - 10",
         r####"$out->get_output_entry('un2', $main2)"####,
         r####"$un2b"####,
@@ -910,7 +910,7 @@ fn assertion_031_uniquename_namepart_10() {
 
 #[test]
 fn assertion_032_uniquename_namepart_11() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename namepart - 11",
         r####"$out->get_output_entry('un3', $main2)"####,
         r####"$un3b"####,
@@ -921,7 +921,7 @@ fn assertion_032_uniquename_namepart_11() {
 
 #[test]
 fn assertion_033_uniquename_namepart_12() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename namepart - 12",
         r####"$out->get_output_entry('un4', $main2)"####,
         r####"$un4b"####,
@@ -932,7 +932,7 @@ fn assertion_033_uniquename_namepart_12() {
 
 #[test]
 fn assertion_034_uniquename_namepart_13() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename namepart - 13",
         r####"$out->get_output_entry('un5', $main2)"####,
         r####"$un5"####,
@@ -943,7 +943,7 @@ fn assertion_034_uniquename_namepart_13() {
 
 #[test]
 fn assertion_035_uniquename_namepart_14() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename namepart - 14",
         r####"$out->get_output_entry('un6', $main2)"####,
         r####"$un6"####,
@@ -954,7 +954,7 @@ fn assertion_035_uniquename_namepart_14() {
 
 #[test]
 fn assertion_036_uniquename_namepart_15() {
-    xfail_upstream(
+    pass_upstream(
         "Uniquename namepart - 15",
         r####"$out->get_output_entry('un7', $main2)"####,
         r####"$un7"####,
