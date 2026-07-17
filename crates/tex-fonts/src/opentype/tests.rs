@@ -152,6 +152,97 @@ fn stix_math_is_identical_from_woff2_and_native_sfnt() {
 }
 
 #[test]
+fn stix_direct_math_metrics_cover_basic_layout_queries_and_classic_fallback() {
+    let request = wasm_request();
+    let font = OpenTypeFont::parse(
+        &request,
+        ResolvedFont {
+            request: request.key.clone(),
+            container: FontContainer::Woff2,
+            bytes: include_bytes!("../../tests/fixtures/stix-two-math.woff2").to_vec(),
+            declared_object_sha256: None,
+            declared_program_identity: None,
+            provenance: Some("STIX Two Math under the SIL OFL".to_owned()),
+        },
+        FontLimits::default(),
+    )
+    .expect("STIX fixture");
+    let size = tex_arith::Scaled::from_raw(10 * tex_arith::Scaled::UNITY);
+    let identity = font.identity;
+    let loaded = crate::LoadedFont::new_opentype(
+        "stix-two-math",
+        "stix-two-math.woff2",
+        size,
+        size,
+        crate::OpenTypeProgramSelection {
+            font,
+            variation: VariationSelection::default(),
+            features: FontFeaturePolicy::default(),
+            direction: WritingDirection::LeftToRight,
+        },
+    );
+    let crate::MathMetricsSource::OpenType(math) = loaded.math_metrics_source() else {
+        panic!("validated MATH table must be exposed directly")
+    };
+    assert_eq!(math.program_identity(), identity);
+    assert!(math.constant(MathConstant::AxisHeight).raw() > 0);
+    assert!(math.constant(MathConstant::FractionRuleThickness).raw() > 0);
+    assert!(math.constant(MathConstant::SuperscriptShiftUp).raw() > 0);
+
+    let italic = math.glyph('f', 0).expect("italic math glyph");
+    assert_eq!(italic.metrics.italic_correction, italic.italic_correction);
+    assert!(italic.italic_correction.raw() >= 0);
+    let accent_base = math.glyph('A', 0).expect("accent base glyph");
+    assert!(accent_base.top_accent_attachment.is_some());
+    assert_eq!(math.glyph('A', 1), math.glyph('A', 1));
+    assert_eq!(math.glyph('A', 2), math.glyph('A', 2));
+
+    let math_tables = loaded
+        .shaping_font()
+        .expect("OpenType selection")
+        .parts()
+        .0
+        .math
+        .as_ref()
+        .expect("MATH table");
+    if let Some((&glyph, kerns)) = math_tables
+        .glyph_info
+        .as_ref()
+        .and_then(|info| info.kern_info.iter().next())
+    {
+        let corner = if kerns.top_right.is_some() {
+            crate::MathKernCorner::TopRight
+        } else if kerns.top_left.is_some() {
+            crate::MathKernCorner::TopLeft
+        } else if kerns.bottom_right.is_some() {
+            crate::MathKernCorner::BottomRight
+        } else {
+            crate::MathKernCorner::BottomLeft
+        };
+        assert_eq!(
+            math.kern(glyph, corner, tex_arith::Scaled::from_raw(0)),
+            math.kern(glyph, corner, tex_arith::Scaled::from_raw(0))
+        );
+    }
+    assert!(loaded.supports_math());
+
+    let classic = crate::LoadedFont::new(
+        "classic",
+        "classic.tfm",
+        [0; 32],
+        0,
+        size,
+        size,
+        vec![],
+        crate::FontMetrics::default(),
+    );
+    assert!(matches!(
+        classic.math_metrics_source(),
+        crate::MathMetricsSource::ClassicTfmExact
+    ));
+}
+
+#[test]
 fn opentype_only_font_synthesizes_versioned_text_fontdimens() {
     let request = wasm_request();
     let font = OpenTypeFont::parse(

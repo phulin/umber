@@ -1,7 +1,10 @@
 use super::*;
 use tex_fonts::metrics::CharTag;
 use tex_fonts::{
-    CharMetrics, FontMetrics, LigKernCommand, LigKernInstruction, LigatureCommand, LoadedFont,
+    AcceptedFontContainers, CharMetrics, FontContainer, FontFeaturePolicy, FontLimits, FontMetrics,
+    FontPurposes, FontRequest, FontRequestKey, LigKernCommand, LigKernInstruction, LigatureCommand,
+    LoadedFont, OpenTypeFont, OpenTypeProgramSelection, ResolvedFont, VariationSelection,
+    WritingDirection,
 };
 use tex_state::env::banks::{GlueParam, IntParam};
 use tex_state::glue::{GlueSpec, Order};
@@ -37,6 +40,109 @@ fn style_transitions_follow_tex_style_codes() {
         Style::SCRIPT_SCRIPT.denom_style(),
         Style::new(StyleFamily::ScriptScript, true)
     );
+}
+
+#[test]
+fn pinned_opentype_math_fixture_drives_basic_formula_layout_deterministically() {
+    let key = FontRequestKey::new(
+        "stix-two-math",
+        0,
+        VariationSelection::default(),
+        FontFeaturePolicy::default(),
+    )
+    .expect("fixture key");
+    let request = FontRequest {
+        key: key.clone(),
+        accepted_containers: AcceptedFontContainers::WASM,
+        purposes: FontPurposes::LAYOUT_AND_HTML,
+    };
+    let font = OpenTypeFont::parse(
+        &request,
+        ResolvedFont {
+            request: key,
+            container: FontContainer::Woff2,
+            bytes: include_bytes!("../../../tex-fonts/tests/fixtures/stix-two-math.woff2").to_vec(),
+            declared_object_sha256: None,
+            declared_program_identity: None,
+            provenance: Some("STIX Two Math under the SIL OFL".to_owned()),
+        },
+        FontLimits::default(),
+    )
+    .expect("STIX fixture");
+    let size = sc(10 * Scaled::UNITY);
+    let loaded = LoadedFont::new_opentype(
+        "stix-two-math",
+        "stix-two-math.woff2",
+        size,
+        size,
+        OpenTypeProgramSelection {
+            font,
+            variation: VariationSelection::default(),
+            features: FontFeaturePolicy::default(),
+            direction: WritingDirection::LeftToRight,
+        },
+    );
+    let mut universe = Universe::new();
+    let font = universe.intern_font(loaded);
+    for size in [
+        MathFontSize::Text,
+        MathFontSize::Script,
+        MathFontSize::ScriptScript,
+    ] {
+        for family in 0..=3 {
+            universe.set_math_family_font(size, family, font, false);
+        }
+    }
+    let numerator = universe.freeze_node_list(&[Node::MathNoad(noad(NoadClass::Ord, 'A'))]);
+    let denominator = universe.freeze_node_list(&[Node::MathNoad(noad(NoadClass::Ord, 'B'))]);
+    let mut scripted = noad(NoadClass::Ord, 'f');
+    scripted.superscript = MathField::MathChar(math_char('A'));
+    scripted.subscript = MathField::MathChar(math_char('B'));
+    let mut operator = MathNoad::new(
+        NoadKind::Operator(LimitType::Limits),
+        MathField::MathChar(math_char('∑')),
+    );
+    operator.superscript = MathField::MathChar(math_char('A'));
+    operator.subscript = MathField::MathChar(math_char('B'));
+    let input = universe.freeze_node_list(&[
+        Node::MathNoad(scripted),
+        Node::FractionNoad(MathFraction {
+            numerator,
+            denominator,
+            thickness: FractionThickness::Default,
+            left_delimiter: None,
+            right_delimiter: None,
+        }),
+        Node::MathNoad(MathNoad::new(
+            NoadKind::Accent {
+                accent: math_char('^'),
+            },
+            MathField::MathChar(math_char('A')),
+        )),
+        Node::MathNoad(operator),
+    ]);
+    let params = MathParams::read(&universe);
+    let first = mlist_to_hlist(&universe, input, Style::DISPLAY, false, &params);
+    let second = mlist_to_hlist(&universe, input, Style::DISPLAY, false, &params);
+    assert_eq!(first, second);
+    assert!(params.text.extension.default_rule_thickness.raw() > 0);
+    assert!(all_math_glyphs(&first).iter().all(Option::is_some));
+    assert!(all_math_glyphs(&first).len() >= 7);
+}
+
+fn all_math_glyphs(layout: &MathLayout) -> Vec<Option<u16>> {
+    let mut glyphs = Vec::new();
+    let mut stack = vec![layout.root()];
+    while let Some(list) = stack.pop() {
+        for node in layout.logical_nodes(list) {
+            match node {
+                MathNode::Char { glyph_id, .. } => glyphs.push(*glyph_id),
+                MathNode::HList(boxed) | MathNode::VList(boxed) => stack.push(boxed.list),
+                _ => {}
+            }
+        }
+    }
+    glyphs
 }
 
 #[test]

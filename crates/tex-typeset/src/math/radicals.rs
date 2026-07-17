@@ -155,15 +155,25 @@ pub(super) fn make_math_accent(
         };
     };
     let accent_font = fetched.font;
+    let accent_glyph_id = fetched.glyph_id;
+    let accent_attachment = fetched.top_accent_attachment;
     let mut accent_code = fetched.ch as u8;
     let mut accent_metrics = fetched.metrics;
     let skew = accent_skew(ctx, &noad.nucleus);
+    let base_attachment = match &noad.nucleus {
+        MathField::MathChar(ch) | MathField::MathTextChar(ch) => {
+            fetch(ctx.state, *ch, ctx.style).and_then(|glyph| glyph.top_accent_attachment)
+        }
+        _ => None,
+    };
     let style = ctx.style.cramped_style();
     let mut accentee = clean_box(ctx, &noad.nucleus, style);
     let accentee_width = accentee.width;
     let mut accentee_height = accentee.height;
 
-    while let Some(next) = ctx.state.font_next_larger(accent_font, accent_code) {
+    while accent_glyph_id.is_none()
+        && let Some(next) = ctx.state.font_next_larger(accent_font, accent_code)
+    {
         let Some(next_metrics) = ctx.state.font_char_metrics(accent_font, next) else {
             break;
         };
@@ -207,13 +217,18 @@ pub(super) fn make_math_accent(
             font: accent_font,
             ch: char::from(accent_code),
             metrics: accent_metrics,
+            glyph_id: accent_glyph_id,
+            top_accent_attachment: accent_attachment,
         },
         accent.origin,
     );
-    accent_box.shift = add(
-        skew,
-        Scaled::from_raw(tex_arith::half(sub(accentee_width, accent_box.width).raw())),
-    );
+    accent_box.shift = match (base_attachment, accent_attachment) {
+        (Some(base), Some(accent)) => sub(base, accent),
+        _ => add(
+            skew,
+            Scaled::from_raw(tex_arith::half(sub(accentee_width, accent_box.width).raw())),
+        ),
+    };
     accent_box.width = Scaled::from_raw(0);
 
     let accentee_width = accentee.width;

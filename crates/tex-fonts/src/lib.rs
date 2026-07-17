@@ -14,8 +14,9 @@ pub use metrics::{
     FontConstruction, FontConstructionError, FontContentHash, FontMetrics, FontMetricsSource,
     FontMetricsValidationError, FontSourceIdentity, LigKernChar, LigKernCommand,
     LigKernInstruction, LigKernIter, LigKernStep as MetricLigKernStep, LigatureCommand, LoadedFont,
-    MAX_LIG_KERN_PROGRAM_LEN, OPENTYPE_FONTDIMEN_SYNTHESIS_VERSION, OpenTypeFontSelection,
-    OpenTypeFontShaped, OpenTypeProgramSelection, ShapingFont,
+    MAX_LIG_KERN_PROGRAM_LEN, MathKernCorner, MathMetricsSource,
+    OPENTYPE_FONTDIMEN_SYNTHESIS_VERSION, OpenTypeFontSelection, OpenTypeFontShaped,
+    OpenTypeMathGlyph, OpenTypeMathMetrics, OpenTypeProgramSelection, ShapingFont,
 };
 pub use opentype::{
     AcceptedFontContainers, CharacterMap, FeatureSetting, FontContainer, FontFeaturePolicy,

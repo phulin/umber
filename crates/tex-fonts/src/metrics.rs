@@ -2,7 +2,8 @@
 
 use crate::opentype::{
     FontContainer, FontFeaturePolicy, FontInstanceIdentity, FontObjectIdentity,
-    FontProgramIdentity, OpenTypeFont, VariationSelection, WritingDirection,
+    FontProgramIdentity, MathConstant, MathKern, MathValue, OpenTypeFont, VariationSelection,
+    WritingDirection,
 };
 use sha2::{Digest, Sha256};
 use std::hash::Hash;
@@ -241,6 +242,189 @@ pub struct ShapingFont<'a> {
     size: Scaled,
 }
 
+/// Direct math-metric capability selected for one immutable loaded font.
+///
+/// OpenType MATH data stays in its native model; the classic variant is an
+/// explicit compatibility decision rather than a synthesized fontdimen view.
+#[derive(Clone, Copy, Debug)]
+pub enum MathMetricsSource<'a> {
+    OpenType(OpenTypeMathMetrics<'a>),
+    ClassicTfmExact,
+}
+
+/// A validated OpenType MATH program paired with its selected TeX size.
+#[derive(Clone, Copy, Debug)]
+pub struct OpenTypeMathMetrics<'a> {
+    font: &'a OpenTypeFont,
+    size: Scaled,
+}
+
+/// One OpenType MATH glyph with all basic-layout glyph information projected
+/// to the selected size.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct OpenTypeMathGlyph {
+    pub glyph_id: u16,
+    pub metrics: CharMetrics,
+    pub italic_correction: Scaled,
+    pub top_accent_attachment: Option<Scaled>,
+}
+
+/// Corner used when querying an OpenType MATH kern table.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum MathKernCorner {
+    TopRight,
+    TopLeft,
+    BottomRight,
+    BottomLeft,
+}
+
+impl OpenTypeMathMetrics<'_> {
+    #[must_use]
+    pub const fn program_identity(self) -> FontProgramIdentity {
+        self.font.identity
+    }
+
+    #[must_use]
+    pub fn constant(self, constant: MathConstant) -> Scaled {
+        self.project_value(
+            self.font
+                .math
+                .as_ref()
+                .expect("MATH source")
+                .constants
+                .value(constant),
+        )
+    }
+
+    #[must_use]
+    pub fn script_percent_scale_down(self) -> i16 {
+        self.font
+            .math
+            .as_ref()
+            .expect("MATH source")
+            .constants
+            .script_percent_scale_down
+    }
+
+    #[must_use]
+    pub fn script_script_percent_scale_down(self) -> i16 {
+        self.font
+            .math
+            .as_ref()
+            .expect("MATH source")
+            .constants
+            .script_script_percent_scale_down
+    }
+
+    /// Selects the cmap glyph, applying the standard `ssty` feature for script
+    /// levels one and two, and returns native MATH glyph information.
+    #[must_use]
+    pub fn glyph(self, ch: char, script_level: u8) -> Option<OpenTypeMathGlyph> {
+        let base = self.font.cmap.glyph(ch)?;
+        let glyph_id = if script_level == 0 {
+            base
+        } else {
+            let mut buffer = rustybuzz::UnicodeBuffer::new();
+            let mut encoded = [0_u8; 4];
+            buffer.push_str(ch.encode_utf8(&mut encoded));
+            let feature = rustybuzz::Feature::new(
+                rustybuzz::ttf_parser::Tag::from_bytes(b"ssty"),
+                u32::from(script_level.min(2)),
+                ..,
+            );
+            self.font.with_shaping_face(|face| {
+                rustybuzz::shape(face, &[feature], buffer)
+                    .glyph_infos()
+                    .first()
+                    .and_then(|info| u16::try_from(info.glyph_id).ok())
+            })?
+        };
+        let index = usize::from(glyph_id);
+        let advance = *self.font.metrics.horizontal_advances.get(index)?;
+        let width = self.project_units(i32::from(advance));
+        let bounds = self.font.metrics.glyph_bounds.get(index).copied().flatten();
+        let (height, depth, ink_italic) = bounds.map_or(
+            (
+                Scaled::from_raw(0),
+                Scaled::from_raw(0),
+                Scaled::from_raw(0),
+            ),
+            |(_, y_min, x_max, y_max)| {
+                (
+                    self.project_units(i32::from(y_max).max(0)),
+                    self.project_units((-i32::from(y_min)).max(0)),
+                    self.project_units((i32::from(x_max) - i32::from(advance)).max(0)),
+                )
+            },
+        );
+        let info = self.font.math.as_ref()?.glyph_info.as_ref();
+        let italic_correction = info
+            .and_then(|info| info.italic_corrections.get(&glyph_id))
+            .map_or(ink_italic, |value| self.project_value(value));
+        let top_accent_attachment = info
+            .and_then(|info| info.top_accent_attachments.get(&glyph_id))
+            .map(|value| self.project_value(value));
+        Some(OpenTypeMathGlyph {
+            glyph_id,
+            metrics: CharMetrics {
+                width,
+                height,
+                depth,
+                italic_correction,
+                tag: CharTag::None,
+            },
+            italic_correction,
+            top_accent_attachment,
+        })
+    }
+
+    #[must_use]
+    pub fn kern(self, glyph_id: u16, corner: MathKernCorner, height: Scaled) -> Scaled {
+        let Some(kerns) = self
+            .font
+            .math
+            .as_ref()
+            .and_then(|math| math.glyph_info.as_ref())
+            .and_then(|info| info.kern_info.get(&glyph_id))
+        else {
+            return Scaled::from_raw(0);
+        };
+        let table = match corner {
+            MathKernCorner::TopRight => kerns.top_right.as_ref(),
+            MathKernCorner::TopLeft => kerns.top_left.as_ref(),
+            MathKernCorner::BottomRight => kerns.bottom_right.as_ref(),
+            MathKernCorner::BottomLeft => kerns.bottom_left.as_ref(),
+        };
+        table.map_or(Scaled::from_raw(0), |table| {
+            self.kern_at_height(table, height)
+        })
+    }
+
+    fn kern_at_height(self, kern: &MathKern, height: Scaled) -> Scaled {
+        let index = kern
+            .correction_heights
+            .iter()
+            .position(|value| height < self.project_value(value))
+            .unwrap_or(kern.correction_heights.len());
+        kern.kern_values
+            .get(index)
+            .map_or(Scaled::from_raw(0), |value| self.project_value(value))
+    }
+
+    fn project_value(self, value: &MathValue) -> Scaled {
+        // Device/variation adjustments are retained in the immutable model;
+        // applying them requires a resolved ppem/variation instance.
+        self.project_units(i32::from(value.value))
+    }
+
+    fn project_units(self, units: i32) -> Scaled {
+        self.font
+            .metrics
+            .units_to_sp(units, self.size.raw())
+            .map_or(Scaled::from_raw(0), Scaled::from_raw)
+    }
+}
+
 impl<'a> ShapingFont<'a> {
     /// Exposes the immutable program and requested size to shaping kernels.
     #[must_use]
@@ -402,6 +586,29 @@ impl LoadedFont {
             }),
             FontMetricsSource::Tfm(_) => None,
         }
+    }
+
+    /// Returns direct OpenType MATH metrics when present, otherwise the
+    /// explicit byte-compatible classic TeX fallback.
+    #[must_use]
+    pub const fn math_metrics_source(&self) -> MathMetricsSource<'_> {
+        match &self.metrics {
+            FontMetricsSource::OpenType(font) if font.font.math.is_some() => {
+                MathMetricsSource::OpenType(OpenTypeMathMetrics {
+                    font: &font.font,
+                    size: self.size,
+                })
+            }
+            FontMetricsSource::OpenType(_) | FontMetricsSource::Tfm(_) => {
+                MathMetricsSource::ClassicTfmExact
+            }
+        }
+    }
+
+    #[must_use]
+    pub const fn supports_math(&self) -> bool {
+        self.classic_math_capable
+            || matches!(self.math_metrics_source(), MathMetricsSource::OpenType(_))
     }
 
     /// OpenType feature policy selected for this immutable font instance.

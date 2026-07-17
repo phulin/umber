@@ -456,16 +456,25 @@ children are direct stages in this chain.
 9. `umber2-y2ei.11.3`: add OpenType-only font selection and text fontdimens.
 10. `umber2-y2ei.11.4`: integrate two-pass shape, break, and reshape.
 11. `umber2-y2ei.9.1`: parse and validate immutable OpenType MATH tables.
+12. `umber2-y2ei.9.2`: expose direct MATH metrics and basic formula layout.
 
 ### Next 1: positioned OpenType math
 
 Tracked by `umber2-y2ei.9`; this is the first new implementation stage.
 
-The MATH parser and immutable data model are complete. Next, add a
-`MathMetricsSource` queried by the existing math-list conversion kernels, then
-emit fixed positioned HTML math using ordinary WOFF2-backed SVG text where
-cmap can reproduce the chosen glyph and SVG outline fallback for glyph-id-only
-variants and assembly parts. MathML does not own layout.
+The MATH parser, immutable data model, and direct `MathMetricsSource` are
+complete. `tex-typeset` now reads OpenType constants without a lossy
+22-fontdimen projection, selects `ssty` glyphs, and uses native italic
+corrections, math kerns, top-accent attachments, fraction gaps, script shifts,
+and limit spacing. Fonts without MATH data select the explicit
+`ClassicTfmExact` path, preserving Appendix G geometry. The selected glyph id
+is retained in the math-layout arena with the content-addressed font identity,
+so basic formula geometry and glyph choice are deterministic.
+
+Next, add variants and assemblies, then emit fixed positioned HTML math using
+ordinary WOFF2-backed SVG text where cmap can reproduce the chosen glyph and
+SVG outline fallback for glyph-id-only variants and assembly parts. MathML
+does not own layout.
 
 ### Next 2: OpenType-preferred mappings for TFM-style text
 

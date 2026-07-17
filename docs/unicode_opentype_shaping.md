@@ -19,6 +19,15 @@ metadata }` produced by `crates/tex-fonts/src/opentype/`. That work is done.
 `tex-shape` now applies the validated face through rustybuzz and the
 shape/break/reshape pipeline consumes its cluster advances.
 
+OpenType math uses a separate direct path. `LoadedFont::math_metrics_source`
+returns validated, size-bound MATH data when present and the explicit
+`ClassicTfmExact` fallback otherwise. The math converter consumes native MATH
+constants and glyph records (including `ssty`, italic correction, four-corner
+math kern, and top-accent attachment) without synthesizing TeX's 22 math
+fontdimens. Exact selected glyph ids remain in the backend-neutral math layout
+arena; variant/assembly selection and positioned HTML lowering are subsequent
+stages of `umber2-y2ei.9`.
+
 That document states its model explicitly: _"browser owns glyph selection,
 advances, kerning, ligatures... inside a run"_ — it deliberately avoids an
 engine-side shaper and accepts that HTML output cannot guarantee

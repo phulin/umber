@@ -57,6 +57,15 @@ impl Style {
     }
 
     #[must_use]
+    pub const fn script_level(self) -> u8 {
+        match self.family {
+            StyleFamily::Display | StyleFamily::Text => 0,
+            StyleFamily::Script => 1,
+            StyleFamily::ScriptScript => 2,
+        }
+    }
+
+    #[must_use]
     pub const fn cramped_style(self) -> Self {
         // AppG rule 17
         Self::new(self.family, true)

@@ -52,15 +52,32 @@ pub(super) fn make_fraction(
             &mut shift_down,
         );
     } else {
+        let mut shifts = FractionShifts {
+            up: shift_up,
+            down: shift_down,
+        };
         adjust_with_rule(
             &numerator,
             &denominator,
             thickness,
             size_params.symbols.axis_height,
             ctx.style.is_display(),
-            &mut shift_up,
-            &mut shift_down,
+            &mut shifts,
+            (
+                if ctx.style.is_display() {
+                    size_params.extension.fraction_numerator_display_gap_min
+                } else {
+                    size_params.extension.fraction_numerator_gap_min
+                },
+                if ctx.style.is_display() {
+                    size_params.extension.fraction_denominator_display_gap_min
+                } else {
+                    size_params.extension.fraction_denominator_gap_min
+                },
+            ),
         );
+        shift_up = shifts.up;
+        shift_down = shifts.down;
     }
 
     let fraction_box = fraction_vlist(
@@ -117,26 +134,31 @@ fn adjust_with_rule(
     thickness: Scaled,
     axis_height: Scaled,
     display: bool,
-    shift_up: &mut Scaled,
-    shift_down: &mut Scaled,
+    shifts: &mut FractionShifts,
+    gaps: (Option<Scaled>, Option<Scaled>),
 ) {
     // AppG rule 15d
     let multiplier: i32 = if display { 3 } else { 1 };
     let clearance = mul(multiplier, thickness);
     let delta = Scaled::from_raw(tex_arith::half(thickness.raw()));
-    let above_actual = sub(sub(*shift_up, numerator.depth), add(axis_height, delta));
+    let above_actual = sub(sub(shifts.up, numerator.depth), add(axis_height, delta));
     let below_actual = sub(
         sub(axis_height, delta),
-        sub(denominator.height, *shift_down),
+        sub(denominator.height, shifts.down),
     );
-    let delta1 = sub(clearance, above_actual);
-    let delta2 = sub(clearance, below_actual);
+    let delta1 = sub(gaps.0.unwrap_or(clearance), above_actual);
+    let delta2 = sub(gaps.1.unwrap_or(clearance), below_actual);
     if delta1.raw() > 0 {
-        *shift_up = add(*shift_up, delta1);
+        shifts.up = add(shifts.up, delta1);
     }
     if delta2.raw() > 0 {
-        *shift_down = add(*shift_down, delta2);
+        shifts.down = add(shifts.down, delta2);
     }
+}
+
+struct FractionShifts {
+    up: Scaled,
+    down: Scaled,
 }
 
 fn fraction_vlist(

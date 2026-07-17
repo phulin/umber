@@ -325,6 +325,8 @@ fn char_box_for(
             font,
             ch: char::from(code),
             metrics,
+            glyph_id: None,
+            top_accent_attachment: None,
         },
         tex_state::token::OriginId::UNKNOWN,
     ))

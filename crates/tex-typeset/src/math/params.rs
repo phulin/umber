@@ -1,3 +1,4 @@
+use tex_fonts::{MathConstant, MathMetricsSource};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::glue::GlueSpec;
 use tex_state::ids::GlueId;
@@ -33,6 +34,11 @@ pub struct SymbolParams {
     pub delim1: Scaled,
     pub delim2: Scaled,
     pub axis_height: Scaled,
+    pub subscript_top_max: Option<Scaled>,
+    pub superscript_bottom_min: Option<Scaled>,
+    pub sub_superscript_gap_min: Option<Scaled>,
+    pub superscript_bottom_max_with_subscript: Option<Scaled>,
+    pub space_after_script: Option<Scaled>,
 }
 
 /// Math-extension font parameters for one TeX math size.
@@ -44,6 +50,10 @@ pub struct ExtensionParams {
     pub big_op_spacing3: Scaled,
     pub big_op_spacing4: Scaled,
     pub big_op_spacing5: Scaled,
+    pub fraction_numerator_gap_min: Option<Scaled>,
+    pub fraction_numerator_display_gap_min: Option<Scaled>,
+    pub fraction_denominator_gap_min: Option<Scaled>,
+    pub fraction_denominator_display_gap_min: Option<Scaled>,
 }
 
 /// Plain value snapshot needed by Appendix G conversion.
@@ -110,6 +120,53 @@ impl SizeParams {
     pub fn read(state: &impl MathTypesetState, size: MathFontSize) -> Self {
         let symbols = state.math_family_font(size, 2);
         let extension = state.math_family_font(size, 3);
+        if let MathMetricsSource::OpenType(math) = state.math_metrics_source(symbols) {
+            let c = |constant| math.constant(constant);
+            return Self {
+                symbols: SymbolParams {
+                    math_x_height: c(MathConstant::AccentBaseHeight),
+                    math_quad: state.font_parameter(symbols, 6),
+                    num1: c(MathConstant::FractionNumeratorDisplayStyleShiftUp),
+                    num2: c(MathConstant::FractionNumeratorShiftUp),
+                    num3: c(MathConstant::FractionNumeratorShiftUp),
+                    denom1: c(MathConstant::FractionDenominatorDisplayStyleShiftDown),
+                    denom2: c(MathConstant::FractionDenominatorShiftDown),
+                    sup1: c(MathConstant::SuperscriptShiftUp),
+                    sup2: c(MathConstant::SuperscriptShiftUp),
+                    sup3: c(MathConstant::SuperscriptShiftUpCramped),
+                    sub1: c(MathConstant::SubscriptShiftDown),
+                    sub2: c(MathConstant::SubscriptShiftDown),
+                    sup_drop: c(MathConstant::SuperscriptBaselineDropMax),
+                    sub_drop: c(MathConstant::SubscriptBaselineDropMin),
+                    delim1: Scaled::from_raw(0),
+                    delim2: Scaled::from_raw(0),
+                    axis_height: c(MathConstant::AxisHeight),
+                    subscript_top_max: Some(c(MathConstant::SubscriptTopMax)),
+                    superscript_bottom_min: Some(c(MathConstant::SuperscriptBottomMin)),
+                    sub_superscript_gap_min: Some(c(MathConstant::SubSuperscriptGapMin)),
+                    superscript_bottom_max_with_subscript: Some(c(
+                        MathConstant::SuperscriptBottomMaxWithSubscript,
+                    )),
+                    space_after_script: Some(c(MathConstant::SpaceAfterScript)),
+                },
+                extension: ExtensionParams {
+                    default_rule_thickness: c(MathConstant::FractionRuleThickness),
+                    big_op_spacing1: c(MathConstant::UpperLimitGapMin),
+                    big_op_spacing2: c(MathConstant::LowerLimitGapMin),
+                    big_op_spacing3: c(MathConstant::UpperLimitBaselineRiseMin),
+                    big_op_spacing4: c(MathConstant::LowerLimitBaselineDropMin),
+                    big_op_spacing5: Scaled::from_raw(0),
+                    fraction_numerator_gap_min: Some(c(MathConstant::FractionNumeratorGapMin)),
+                    fraction_numerator_display_gap_min: Some(c(
+                        MathConstant::FractionNumeratorDisplayStyleGapMin,
+                    )),
+                    fraction_denominator_gap_min: Some(c(MathConstant::FractionDenominatorGapMin)),
+                    fraction_denominator_display_gap_min: Some(c(
+                        MathConstant::FractionDenominatorDisplayStyleGapMin,
+                    )),
+                },
+            };
+        }
         Self {
             symbols: SymbolParams {
                 math_x_height: state.font_parameter(symbols, 5),
@@ -129,6 +186,11 @@ impl SizeParams {
                 delim1: state.font_parameter(symbols, 20),
                 delim2: state.font_parameter(symbols, 21),
                 axis_height: state.font_parameter(symbols, 22),
+                subscript_top_max: None,
+                superscript_bottom_min: None,
+                sub_superscript_gap_min: None,
+                superscript_bottom_max_with_subscript: None,
+                space_after_script: None,
             },
             extension: ExtensionParams {
                 default_rule_thickness: state.font_parameter(extension, 8),
@@ -137,6 +199,10 @@ impl SizeParams {
                 big_op_spacing3: state.font_parameter(extension, 11),
                 big_op_spacing4: state.font_parameter(extension, 12),
                 big_op_spacing5: state.font_parameter(extension, 13),
+                fraction_numerator_gap_min: None,
+                fraction_numerator_display_gap_min: None,
+                fraction_denominator_gap_min: None,
+                fraction_denominator_display_gap_min: None,
             },
         }
     }

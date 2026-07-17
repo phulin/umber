@@ -17,6 +17,8 @@ pub(crate) struct FetchedChar {
     pub(crate) font: FontId,
     pub(crate) ch: char,
     pub(crate) metrics: CharMetrics,
+    pub(crate) glyph_id: Option<u16>,
+    pub(crate) top_accent_attachment: Option<Scaled>,
 }
 
 const INF_PENALTY: i32 = 10_000;
@@ -687,6 +689,7 @@ pub(crate) fn make_character_nucleus<S: MathTypesetState>(
     let character = MathNode::Char {
         font: fetched.font,
         ch: fetched.ch,
+        glyph_id: fetched.glyph_id,
         metrics: fetched.metrics,
         origin: ch.origin,
     };
@@ -711,6 +714,7 @@ pub(crate) fn char_box(
     let list = ctx.layout.hlist([MathNode::Char {
         font: fetched.font,
         ch: fetched.ch,
+        glyph_id: fetched.glyph_id,
         metrics: fetched.metrics,
         origin,
     }]);
@@ -734,14 +738,29 @@ pub(crate) fn fetch(
     style: Style,
 ) -> Option<FetchedChar> {
     // AppG rule 17
-    let code = u8::try_from(u32::from(ch.character)).ok()?;
     let font = state.math_family_font(style.size(), ch.family);
-    let metrics = state.font_char_metrics(font, code)?;
-    Some(FetchedChar {
-        font,
-        ch: ch.character,
-        metrics,
-    })
+    match state.math_metrics_source(font) {
+        tex_fonts::MathMetricsSource::OpenType(math) => {
+            let glyph = math.glyph(ch.character, style.script_level())?;
+            Some(FetchedChar {
+                font,
+                ch: ch.character,
+                metrics: glyph.metrics,
+                glyph_id: Some(glyph.glyph_id),
+                top_accent_attachment: glyph.top_accent_attachment,
+            })
+        }
+        tex_fonts::MathMetricsSource::ClassicTfmExact => {
+            let code = u8::try_from(u32::from(ch.character)).ok()?;
+            Some(FetchedChar {
+                font,
+                ch: ch.character,
+                metrics: state.font_char_metrics(font, code)?,
+                glyph_id: None,
+                top_accent_attachment: None,
+            })
+        }
+    }
 }
 
 pub(crate) fn source_list(
@@ -800,6 +819,7 @@ pub(crate) fn source_node(ctx: &mut Context<'_, impl MathTypesetState>, node: &N
                 MathNode::Char {
                     font: *font,
                     ch: *ch,
+                    glyph_id: None,
                     metrics,
                     origin: *origin,
                 }

@@ -118,6 +118,8 @@ pub enum MathNode {
     Char {
         font: FontId,
         ch: char,
+        /// Exact glyph selected by OpenType MATH, including `ssty`.
+        glyph_id: Option<u16>,
         metrics: CharMetrics,
         origin: tex_state::token::OriginId,
     },

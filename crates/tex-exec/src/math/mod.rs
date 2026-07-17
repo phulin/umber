@@ -446,16 +446,24 @@ fn math_font_failure(stores: &Universe) -> Option<MathFontFailure> {
         MathFontSize::Script,
         MathFontSize::ScriptScript,
     ];
-    if SIZES
-        .into_iter()
-        .any(|size| stores.font_parameter_count(stores.math_family_font(size, 2)) < 22)
-    {
+    if SIZES.into_iter().any(|size| {
+        let font = stores.math_family_font(size, 2);
+        stores.font_parameter_count(font) < 22
+            && !matches!(
+                stores.font(font).math_metrics_source(),
+                tex_fonts::MathMetricsSource::OpenType(_)
+            )
+    }) {
         return Some(MathFontFailure::Symbol);
     }
-    if SIZES
-        .into_iter()
-        .any(|size| stores.font_parameter_count(stores.math_family_font(size, 3)) < 13)
-    {
+    if SIZES.into_iter().any(|size| {
+        let font = stores.math_family_font(size, 3);
+        stores.font_parameter_count(font) < 13
+            && !matches!(
+                stores.font(font).math_metrics_source(),
+                tex_fonts::MathMetricsSource::OpenType(_)
+            )
+    }) {
         return Some(MathFontFailure::Extension);
     }
     None

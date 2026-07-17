@@ -226,6 +226,10 @@ impl MathTypesetState for LoweredMathSink<'_> {
     fn font_skew_char(&self, font: FontId) -> i32 {
         self.stores.font_skew_char(font)
     }
+
+    fn math_metrics_source(&self, font: FontId) -> tex_fonts::MathMetricsSource<'_> {
+        self.stores.font(font).math_metrics_source()
+    }
 }
 
 impl MathLayoutSink for LoweredMathSink<'_> {

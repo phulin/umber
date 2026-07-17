@@ -241,7 +241,7 @@ pub(super) fn execute_math_family_font_assignment(
     let family = scan_math_family(input, stores, execution, context)?;
     skip_optional_equals_x(input, stores, execution)?;
     let font = scan_font_selector(input, stores, execution)?;
-    if !stores.font(font).supports_classic_math() {
+    if !stores.font(font).supports_math() {
         return Err(ExecError::OpenTypeMathUnsupported);
     }
     stores.set_math_family_font(
