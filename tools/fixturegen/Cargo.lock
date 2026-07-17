@@ -69,6 +69,85 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
+name = "bib-bst"
+version = "0.1.0"
+
+[[package]]
+name = "bib-engine"
+version = "0.1.0"
+dependencies = [
+ "bib-bst",
+ "bib-graph",
+ "bib-input",
+ "bib-label",
+ "bib-model",
+ "bib-output",
+ "bib-sort",
+ "bib-unicode",
+ "umber-vfs",
+]
+
+[[package]]
+name = "bib-graph"
+version = "0.1.0"
+dependencies = [
+ "bib-model",
+ "bib-unicode",
+]
+
+[[package]]
+name = "bib-input"
+version = "0.1.0"
+dependencies = [
+ "bib-model",
+ "bib-unicode",
+ "quick-xml",
+ "umber-vfs",
+ "unicode-normalization",
+]
+
+[[package]]
+name = "bib-label"
+version = "0.1.0"
+dependencies = [
+ "bib-model",
+ "bib-unicode",
+]
+
+[[package]]
+name = "bib-model"
+version = "0.1.0"
+dependencies = [
+ "bib-unicode",
+ "umber-vfs",
+]
+
+[[package]]
+name = "bib-output"
+version = "0.1.0"
+dependencies = [
+ "bib-model",
+ "bib-unicode",
+]
+
+[[package]]
+name = "bib-sort"
+version = "0.1.0"
+dependencies = [
+ "bib-model",
+ "bib-unicode",
+]
+
+[[package]]
+name = "bib-unicode"
+version = "0.1.0"
+dependencies = [
+ "encoding_rs",
+ "md-5 0.10.6",
+ "unicode-normalization",
+]
+
+[[package]]
 name = "bincode"
 version = "1.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -363,6 +442,7 @@ name = "fixturegen"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bib-engine",
  "pdf-writer",
  "refexec",
  "sha2 0.10.9",
@@ -671,6 +751,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "quick-xml"
+version = "0.38.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b66c2058c55a409d601666cffe35f04333cf1013010882cec174a7467cd4e21c"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]
@@ -1058,6 +1147,13 @@ name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
+
+[[package]]
+name = "umber-vfs"
+version = "0.1.0"
+dependencies = [
+ "tex-content",
+]
 
 [[package]]
 name = "unicode-bidi"

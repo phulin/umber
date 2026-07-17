@@ -656,6 +656,11 @@ regen_bibtex_area() {
       "fcd33ae491e1adfc84a636015d3840ba49556649c65f3bf2db2fa7d2f948dc7e" ]] || \
     die 'classic BibTeX executable identity mismatch; use the pinned Darwin-arm64 build recorded in the manifest'
 
+  build_fixturegen_once
+  run_command 'Running bounded classic BST reference differential generator' \
+    "$fixturegen_bin" --classic-bibtex-differential \
+      --reference "$executable" --texmfcnf "${source_dir}/texk/kpathsea"
+
   tmp_root="$(mktemp -d)"
   case_dir="${tmp_root}/smoke"
   mkdir -p "$case_dir"

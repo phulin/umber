@@ -4,6 +4,12 @@
 
 `tools/fixturegen` is the script-owned fixture regeneration tool used by `scripts/regen-fixtures.sh` for text/native fixtures, pinned pdfTeX/Poppler PDF parity fixtures, and the explicit live font check. It is intentionally not a root workspace member; build it via `cargo build --manifest-path tools/fixturegen/Cargo.toml`. It may invoke `refexec`, `umber`, `pdftex`, `pdftoppm`, and `tftopl`, but cargo tests must not build or run it.
 
+Its `--classic-bibtex-differential` mode is called only by the `bibtex` branch
+of `scripts/regen-fixtures.sh`. It generates a fixed, bounded seed corpus of
+legal `.bst` programs, stages each case without host lookup, and compares
+reference/Umber status, BBL, and BLG bytes. Failures are preserved under
+`target/bst-differential/failures/` with their exact seed and inputs.
+
 `refexec` also wraps `tftopl` for the font metric check owned by `tools/fixturegen`. When running that tier, it locates `tftopl` on `PATH`; set `UMBER_REF_TFTOPL=/absolute/path/to/tftopl` to point regeneration at a specific TeX installation.
 
 `tools/corpus-sync` is the external document acquisition tool used by `scripts/setup-conformance-tests.sh`. It is intentionally not a root workspace member; build it via `cargo build --manifest-path tools/corpus-sync/Cargo.toml`. It reads the line-oriented `tests/corpus-manifest.txt`, fetches exact support inputs and runnable documents into gitignored `third_party/corpus/`, verifies SHA-256, and treats cached hash matches as a no-op. Once setup is complete, conformance tests consume only local inputs and require no network access. Do not normalize line endings or commit fetched corpus files; licensing determinations live in the manifest notes.

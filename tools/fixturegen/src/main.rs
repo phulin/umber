@@ -1,5 +1,6 @@
 #![allow(clippy::disallowed_methods)] // host-side fixture regeneration tool.
 
+mod classic_bibtex;
 mod fonts;
 mod pdf;
 
@@ -42,6 +43,9 @@ fn main() -> ExitCode {
 fn run() -> Result<()> {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
+        Some("--classic-bibtex-differential") => {
+            classic_bibtex::run(&repo_root(), args.collect())
+        }
         Some("--area") => {
             let area = args.next().context("missing area after --area")?;
             ensure_no_extra_args(args)?;

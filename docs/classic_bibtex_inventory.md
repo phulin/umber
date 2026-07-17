@@ -1,6 +1,8 @@
 # Classic BibTeX compatibility inventory
 
-Status: Phase 0 compatibility inventory and fixture route complete
+Status: Phase 10 systematic differential generator implemented. Its reference
+gate is currently blocked by tracked BLG accounting parity work; real-world
+corpus and remaining hardening work are tracked in Beads.
 
 The reviewed architecture and phase exit criteria remain those in
 `docs/classic_bibtex_bst.md` at commit `c676cfb0`. This inventory does not
@@ -107,6 +109,41 @@ all built-in edge categories; diagnostic/history ordering; cache and retry
 identity; and the final bounded legal-program differential generator. Later
 issues must refine these families into individual source branches and state
 transitions without deleting or reassigning an owner invisibly.
+
+### Bounded systematic differential gate
+
+`tools/fixturegen/src/classic_bibtex.rs` owns the opt-in generator invoked by
+`scripts/regen-fixtures.sh --area bibtex`, after that script has validated the
+pinned source, merged program, Web2C configuration, and executable identity.
+It is not a Cargo test and never uses an ambient BibTeX installation.
+
+The fixed master seed is `0xB1B7EA5ED1FF0001`. It emits exactly 37 cases (one
+per merged-reference built-in) and caps each generated AUX, BIB, and BST at
+256, 2,048, and 4,096 bytes respectively. Every generated BST contains all
+ten legal top-level commands in the declaration-to-execution order and the
+same bounded two-entry database. The generator counts the following
+dispatch-level merged-reference targets before execution:
+
+| Target class                | Required |    Threshold |
+| --------------------------- | -------: | -----------: |
+| Top-level command branches  |       10 | 10/10 (100%) |
+| Built-in dispatch branches  |       37 | 37/37 (100%) |
+| Lifecycle state transitions |       10 | 10/10 (100%) |
+
+These are source-census dispatch and lifecycle targets, not an assertion that
+all internal Web2C control-flow edges have been observed. The generator must
+compare unnormalized status, BBL, and BLG bytes for every case in an empty
+environment with pinned lookup paths. A mismatch preserves both staged inputs,
+both artifacts, status files, and a seed-bearing reproduction script under
+`target/bst-differential/failures/<case>/`; the generator stops at the first
+failure so that the case remains stable while it is minimized or investigated.
+
+As of the initial gate run, the declared coverage thresholds are measured, but
+exact BLG parity is blocked by `umber2-ild0.13.5`: legal generated case
+`bst-diff-00` has matching BBL and successful status while its reference string
+summary is `103` strings / `598` characters and Umber reports `106` / `625`.
+The runner intentionally treats this as a parity failure rather than
+normalizing it away.
 
 ## VM core and built-in completion
 
