@@ -250,7 +250,7 @@ owner-exact and there is no general snapshot re-owner API; per-`Universe`
 cloning happens once per restart, never per checkpoint.
 
 Profiling builds split revision setup, restart forking, executor work,
-detached diagnostic/effect snapshots, paragraph-generation transition,
+detached diagnostic/effect snapshots, accepted paragraph-history transition,
 splice/history construction, accepted-substrate publication/drop, and
 acceptance/pruning into additive session timings. DVI materialization remains
 a driver-owned timer outside `Session::advance`. These measurements are

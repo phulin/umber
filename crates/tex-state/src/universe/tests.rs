@@ -1452,7 +1452,7 @@ fn generation_charge_covers_source_backing_and_releases_it_with_the_substrate() 
 }
 
 #[test]
-fn paragraph_generation_roots_survive_rollback_and_supersede_wholesale() {
+fn accepted_paragraph_mount_owns_shared_root_across_rollback() {
     let mut universe = Universe::new();
     let before = universe.snapshot();
     let glue = universe.intern_glue(GlueSpec {
@@ -1468,31 +1468,40 @@ fn paragraph_generation_roots_survive_rollback_and_supersede_wholesale() {
         },
     ]);
     let old = universe.retain_paragraph_result(old_epoch);
-    let old_semantic = universe.stores.node_list_semantic_fragment(old);
-
-    universe.rollback(&before);
-    let imported_old = universe
-        .import_retained_paragraph_result(old)
-        .expect("generation-owned paragraph roots must outlive checkpoint rollback");
+    let old_semantic = universe.stores.node_list_semantic_fragment(old.id());
     assert_eq!(
-        universe.stores.node_list_semantic_fragment(imported_old),
-        old_semantic,
-        "rebasing expired handles must preserve the sealed semantic identity"
+        universe.stores.testing_survivor_payload_strong_count(&old),
+        2,
+        "the local survivor slot and accepted-history mount share one payload"
     );
 
-    let next_start = universe.paragraph_result_generation_mark();
-    let new_epoch = universe.freeze_node_list(&[crate::node::Node::Penalty(22)]);
-    let new = universe.retain_paragraph_result(new_epoch);
-    universe.accept_paragraph_result_generation(next_start);
-
-    assert!(universe.import_retained_paragraph_result(old).is_none());
-    let imported = universe
-        .import_retained_paragraph_result(new)
-        .expect("new accepted generation root");
-    assert!(matches!(
-        universe.nodes(imported).first(),
-        Some(crate::node_arena::NodeRef::Penalty(22))
-    ));
+    universe.rollback(&before);
+    assert_eq!(
+        universe.stores.testing_survivor_payload_strong_count(&old),
+        1,
+        "rollback releases only the ordinary local survivor pin"
+    );
+    let carried = old.clone();
+    assert_eq!(
+        universe.stores.testing_survivor_payload_strong_count(&old),
+        2,
+        "carried accepted history adds one shared payload owner"
+    );
+    drop(carried);
+    assert_eq!(
+        universe.stores.testing_survivor_payload_strong_count(&old),
+        1,
+        "discarding accepted history is independent of graph size"
+    );
+    assert!(universe.can_mount_retained_paragraph_result(&old));
+    let mounted_old = universe
+        .mount_retained_paragraph_result(&old, &[], &[])
+        .expect("accepted-history mount must outlive checkpoint rollback");
+    assert_eq!(
+        universe.stores.node_list_semantic_fragment(mounted_old),
+        old_semantic,
+        "mounting must preserve the sealed semantic identity"
+    );
 }
 
 #[test]
@@ -1534,28 +1543,33 @@ fn restarted_universe_mounts_shared_paragraph_graph_with_local_provenance() {
         children,
     }))]);
     let retained = universe.retain_paragraph_result(lines);
-    assert!(universe.stores.testing_has_paragraph_glue(stored_glue));
+    let semantic = universe.stores.node_list_semantic_fragment(retained.id());
     universe.rollback(&before);
-    assert!(universe.stores.testing_has_paragraph_glue(stored_glue));
     let mut restarted = universe.clone();
-    assert!(restarted.stores.testing_has_paragraph_glue(stored_glue));
 
     assert_eq!(
         universe
             .stores
-            .testing_survivor_payload_strong_count(retained),
-        2,
-        "Universe restart must share immutable survivor storage"
+            .testing_survivor_payload_strong_count(&retained),
+        1,
+        "accepted history alone owns the shared payload after rollback"
     );
-    assert!(restarted.can_mount_retained_paragraph_result(retained));
-    assert!(restarted.mount_retained_paragraph_resources(retained));
+    assert!(restarted.can_mount_retained_paragraph_result(&retained));
     let current_origin = restarted.synthetic_origin(SyntheticOriginKind::Engine);
     assert_eq!(
-        restarted.mount_retained_paragraph_result(retained, &[current_origin], &[0]),
-        Some(retained),
+        restarted.mount_retained_paragraph_result(&retained, &[current_origin], &[0]),
+        Some(retained.id()),
         "mounting preserves the ordinary node-list handle"
     );
-    let Some(crate::node_arena::NodeRef::HList(line)) = restarted.nodes(retained).first() else {
+    assert_eq!(
+        restarted
+            .stores
+            .testing_survivor_payload_strong_count(&retained),
+        2,
+        "the mounted local slot shares accepted-history storage"
+    );
+    let Some(crate::node_arena::NodeRef::HList(line)) = restarted.nodes(retained.id()).first()
+    else {
         panic!("mounted root must remain a line box");
     };
     let mounted = restarted.nodes(line.children).to_vec();
@@ -1565,8 +1579,8 @@ fn restarted_universe_mounts_shared_paragraph_graph_with_local_provenance() {
     ));
     assert_eq!(restarted.glue(stored_glue).width, Scaled::from_raw(17));
     assert_eq!(
-        restarted.stores.node_list_semantic_fragment(retained),
-        universe.stores.node_list_semantic_fragment(retained),
+        restarted.stores.node_list_semantic_fragment(retained.id()),
+        semantic,
         "mount-local provenance must not change semantic identity"
     );
 }
@@ -1579,7 +1593,7 @@ fn paragraph_mount_rejects_unsupported_handle_bearing_nodes() {
         tokens: crate::ids::TokenListId::EMPTY,
     }]);
     let retained = universe.retain_paragraph_result(graph);
-    assert!(!universe.can_mount_retained_paragraph_result(retained));
+    assert!(!universe.can_mount_retained_paragraph_result(&retained));
 }
 
 #[test]

@@ -31,10 +31,10 @@ root-buffer patches and retained incremental execution.
 
 `incremental_memoization.md` defines the changed-document slow path: stable
 source alignment plus an ordered accepted-history paragraph replay cursor,
-per-paragraph dependency validation, retained hlist/line import, cold-equivalent
-boundary publication, simplification of the old generic memo layers, and
-path-separated rollout. It deliberately does not use a reverse suffix hash or
-hierarchical execution trace.
+per-paragraph dependency validation, accepted-history-owned shared hlist/line
+mounts, cold-equivalent boundary publication, simplification of the old generic
+memo layers, and path-separated rollout. It deliberately does not use a reverse
+suffix hash or hierarchical execution trace.
 
 `retained_group_roots.md` specifies the proposed persistent/COW environment
 history needed for durable paragraph checkpoints inside ordinary open groups,

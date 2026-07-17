@@ -7,7 +7,7 @@
 use crate::dependency::DependencyKey;
 use crate::env::banks::IntParam;
 use crate::glue::GlueSpec;
-use crate::ids::NodeListId;
+use crate::survivor::RetainedNodeList;
 use crate::{ContentHash, DetachedMemoValue, InputSummary, ObservedDependency, RootSpanId};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::time::Duration;
@@ -336,11 +336,9 @@ pub struct PureMemoStats {
     /// Hits whose incoming count/int fingerprint differed, admitted because
     /// unchanged source and read dependencies establish the same write script.
     pub paragraph_relaxed_state_replays: u64,
-    pub paragraph_imported_bytes: u64,
     pub paragraph_line_hits: u64,
     pub paragraph_hlist_fallbacks: u64,
     pub paragraph_validation_misses: u64,
-    pub paragraph_import_failures: u64,
     pub paragraph_barriers: u64,
     pub paragraph_eligible_regions: u64,
     pub paragraph_display_math_barriers: u64,
@@ -424,8 +422,8 @@ pub struct ParagraphProvenanceSpan {
     pub end: u32,
 }
 
-/// Recorder output for one normally executed paragraph. The result nodes are
-/// generation-owned survivor roots with stable output-provenance recipes.
+/// Recorder output for one normally executed paragraph. Accepted history owns
+/// shared survivor mounts with stable output-provenance recipes.
 #[derive(Clone, Debug)]
 pub struct RecordedParagraphRegion {
     /// Cheap candidate identity captured before the first raw delivery.
@@ -448,7 +446,7 @@ pub struct RecordedParagraphRegion {
     pub effects: Vec<crate::DetachedVirtualEffect>,
     pub ending_input: InputSummary,
     pub barriers: Vec<ParagraphBarrierReason>,
-    pub hlist: Option<NodeListId>,
+    pub hlist: Option<RetainedNodeList>,
     pub hlist_provenance: ParagraphProvenanceRecipe,
     /// Dependencies observed only by line breaking, materialization, and
     /// horizontal packing. A mismatch here still permits prepared-hlist reuse.
@@ -456,7 +454,7 @@ pub struct RecordedParagraphRegion {
     /// Exact identity of the post-redo facts used by line breaking.
     pub break_identity: ParagraphReadIdentity,
     /// Finished line boxes interleaved with migrating material and penalties.
-    pub lines: Option<NodeListId>,
+    pub lines: Option<RetainedNodeList>,
     pub line_count: i32,
     pub line_provenance: ParagraphProvenanceRecipe,
 }
@@ -982,7 +980,6 @@ impl PureMemoRuntime {
         &mut self,
         commands: usize,
         mutations: usize,
-        imported_bytes: usize,
         relaxed_state: bool,
     ) {
         let Some(cache) = &mut self.cache else {
@@ -1003,10 +1000,6 @@ impl PureMemoRuntime {
             .stats
             .paragraph_relaxed_state_replays
             .saturating_add(u64::from(relaxed_state));
-        cache.stats.paragraph_imported_bytes = cache
-            .stats
-            .paragraph_imported_bytes
-            .saturating_add(imported_bytes as u64);
     }
 
     pub(crate) fn record_paragraph_line_hit(&mut self, fallback: bool) {
@@ -1024,7 +1017,7 @@ impl PureMemoRuntime {
     pub(crate) fn finish_recorded_paragraph_lines(
         &mut self,
         dependencies: Vec<ObservedDependency>,
-        lines: NodeListId,
+        lines: RetainedNodeList,
         line_count: i32,
         provenance: ParagraphProvenanceRecipe,
     ) {
@@ -1046,15 +1039,6 @@ impl PureMemoRuntime {
                 cache.stats.paragraph_validation_misses.saturating_add(1);
             cache.stats.paragraph.validation_failures =
                 cache.stats.paragraph.validation_failures.saturating_add(1);
-        }
-    }
-
-    pub(crate) fn record_paragraph_import_failure(&mut self) {
-        if let Some(cache) = &mut self.cache {
-            cache.stats.paragraph_import_failures =
-                cache.stats.paragraph_import_failures.saturating_add(1);
-            cache.stats.paragraph.import_failures =
-                cache.stats.paragraph.import_failures.saturating_add(1);
         }
     }
 
@@ -1546,6 +1530,18 @@ fn elapsed_nanos(duration: Duration) -> u64 {
 
 fn recorded_paragraph_retained_bytes(region: &RecordedParagraphRegion) -> usize {
     std::mem::size_of::<RecordedParagraphRegion>()
+        .saturating_add(
+            region
+                .hlist
+                .as_ref()
+                .map_or(0, RetainedNodeList::resource_retained_bytes),
+        )
+        .saturating_add(
+            region
+                .lines
+                .as_ref()
+                .map_or(0, RetainedNodeList::resource_retained_bytes),
+        )
         .saturating_add(
             region
                 .consumed_spans

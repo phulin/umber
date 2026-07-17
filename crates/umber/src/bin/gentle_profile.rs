@@ -249,7 +249,7 @@ struct IncrementalStages {
     executor: Duration,
     executor_shell: Duration,
     output_snapshot: Duration,
-    generation_transition: Duration,
+    paragraph_history_transition: Duration,
     splice: Duration,
     substrate_transition: Duration,
     acceptance: Duration,
@@ -268,7 +268,7 @@ impl IncrementalStages {
             .saturating_add(reuse.restart_fork_latency)
             .saturating_add(reuse.reexecution_latency)
             .saturating_add(reuse.output_snapshot_latency)
-            .saturating_add(reuse.generation_transition_latency)
+            .saturating_add(reuse.paragraph_history_transition_latency)
             .saturating_add(reuse.splice_latency)
             .saturating_add(reuse.substrate_transition_latency)
             .saturating_add(reuse.acceptance_latency);
@@ -278,7 +278,7 @@ impl IncrementalStages {
             executor: reuse.executor_latency,
             executor_shell,
             output_snapshot: reuse.output_snapshot_latency,
-            generation_transition: reuse.generation_transition_latency,
+            paragraph_history_transition: reuse.paragraph_history_transition_latency,
             splice: reuse.splice_latency,
             substrate_transition: reuse.substrate_transition_latency,
             acceptance: reuse.acceptance_latency,
@@ -684,21 +684,14 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
         .memo
         .paragraph_hlist_fallbacks
         .saturating_sub(rebreak_step.previous_memo.paragraph_hlist_fallbacks);
-    let imported_bytes = rebreak_step
-        .memo
-        .paragraph_imported_bytes
-        .saturating_sub(rebreak_step.previous_memo.paragraph_imported_bytes);
-    if hlist_hits == 0 || imported_bytes != 0 {
-        return Err(format!(
-            "mounted hlist rebreak edit reported hits={hlist_hits} imported_bytes={imported_bytes}"
-        ));
+    if hlist_hits == 0 {
+        return Err("mounted hlist rebreak edit reported no hits".to_owned());
     }
     println!(
-        "gentle-profile hlist rebreak verified: edit={} ({}) hlist_hits={} imported_bytes={}",
+        "gentle-profile hlist rebreak verified: edit={} ({}) shared_mount_hits={}",
         rebreak + 1,
         fixture.edit_names[rebreak],
         hlist_hits,
-        imported_bytes,
     );
     Ok(())
 }
@@ -802,7 +795,7 @@ fn print_stage_attribution(
         stage!(executor),
         stage!(executor_shell),
         stage!(output_snapshot),
-        stage!(generation_transition),
+        stage!(paragraph_history_transition),
         stage!(splice),
         stage!(substrate_transition),
         stage!(acceptance),
@@ -861,7 +854,7 @@ fn print_incremental_work(
         reuse.executor_latency.as_micros(),
         reuse.reexecution_latency.as_micros(),
         reuse.output_snapshot_latency.as_micros(),
-        reuse.generation_transition_latency.as_micros(),
+        reuse.paragraph_history_transition_latency.as_micros(),
         reuse.trace_validation_latency.as_micros(),
         reuse.trace_replay_latency.as_micros(),
         reuse.splice_latency.as_micros(),
@@ -924,15 +917,13 @@ fn print_incremental_work(
         print_memo_layer(name, edit, layer_name, current.saturating_since(previous));
     }
     println!(
-        "gentle-profile paragraph detail: {name}: edit={edit} eligible={} barriers={} validation_misses={} import_failures={} line_hits={} hlist_fallbacks={} commands_skipped={} imported_bytes={} barrier_display_math={} barrier_scantokens={} barrier_input_open={} barrier_endinput={} barrier_world={} barrier_output={} barrier_unsupported_write={} barrier_unsupported_input_transition={} barrier_unsupported_group_transition={} validation_reasons={}",
+        "gentle-profile paragraph detail: {name}: edit={edit} eligible={} barriers={} validation_misses={} line_hits={} hlist_fallbacks={} commands_skipped={} barrier_display_math={} barrier_scantokens={} barrier_input_open={} barrier_endinput={} barrier_world={} barrier_output={} barrier_unsupported_write={} barrier_unsupported_input_transition={} barrier_unsupported_group_transition={} validation_reasons={}",
         memo_delta!(paragraph_eligible_regions),
         memo_delta!(paragraph_barriers),
         memo_delta!(paragraph_validation_misses),
-        memo_delta!(paragraph_import_failures),
         memo_delta!(paragraph_line_hits),
         memo_delta!(paragraph_hlist_fallbacks),
         memo_delta!(paragraph_commands_skipped),
-        memo_delta!(paragraph_imported_bytes),
         memo_delta!(paragraph_display_math_barriers),
         memo_delta!(paragraph_scantokens_barriers),
         memo_delta!(paragraph_input_open_barriers),

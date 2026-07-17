@@ -192,6 +192,37 @@ impl GlueStore {
         self.specs.get(id.raw() as usize).copied()
     }
 
+    /// Checks whether a retained mounted root's resource closure can be
+    /// restored without changing any already-live glue slot.
+    pub(crate) fn can_restore_retained(&self, retained: &[(GlueId, GlueSpec)]) -> bool {
+        let mut next_raw = self.specs.len();
+        for &(id, spec) in retained {
+            match self.resolve_get(id) {
+                Some(current) if current == spec => {}
+                Some(_) => return false,
+                None if id.is_stored() && id.raw() as usize == next_raw => next_raw += 1,
+                None => return false,
+            }
+        }
+        true
+    }
+
+    /// Restores a prevalidated retained resource closure at its original raw
+    /// slots. Generation tags remain local; stored node words resolve through
+    /// the ordinary raw-slot compatibility boundary.
+    pub(crate) fn restore_retained(&mut self, retained: &[(GlueId, GlueSpec)]) -> bool {
+        if !self.can_restore_retained(retained) {
+            return false;
+        }
+        for &(id, spec) in retained {
+            if self.resolve_get(id).is_none() {
+                let restored = self.intern(spec);
+                assert_eq!(restored.raw(), id.raw(), "retained glue slot changed");
+            }
+        }
+        true
+    }
+
     /// Takes a rollback watermark for aggregate snapshots.
     #[must_use]
     pub(crate) fn watermark(&self) -> GlueStoreMark {

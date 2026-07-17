@@ -1831,11 +1831,10 @@ impl Universe {
         &mut self,
         commands: usize,
         mutations: usize,
-        imported_bytes: usize,
         relaxed_state: bool,
     ) {
         self.pure_memo
-            .record_paragraph_hit(commands, mutations, imported_bytes, relaxed_state);
+            .record_paragraph_hit(commands, mutations, relaxed_state);
     }
 
     #[doc(hidden)]
@@ -1847,7 +1846,7 @@ impl Universe {
     pub fn finish_recorded_paragraph_lines(
         &mut self,
         dependencies: Vec<crate::ObservedDependency>,
-        lines: NodeListId,
+        lines: crate::survivor::RetainedNodeList,
         line_count: i32,
         provenance: crate::ParagraphProvenanceRecipe,
     ) {
@@ -1858,11 +1857,6 @@ impl Universe {
     #[doc(hidden)]
     pub fn record_pure_paragraph_validation_miss(&mut self) {
         self.pure_memo.record_paragraph_validation_miss();
-    }
-
-    #[doc(hidden)]
-    pub fn record_pure_paragraph_import_failure(&mut self) {
-        self.pure_memo.record_paragraph_import_failure();
     }
 
     #[doc(hidden)]
@@ -4549,64 +4543,30 @@ impl Universe {
         self.stores.freeze_node_list_owned(nodes)
     }
 
-    /// Retains a prepared paragraph graph for the lifetime of the accepted
-    /// generation, independently of rollback-coupled survivor pins.
-    pub fn retain_paragraph_result(&mut self, id: NodeListId) -> NodeListId {
+    /// Captures accepted-history ownership of a shared, mountable paragraph
+    /// graph while keeping the local root under ordinary rollback ownership.
+    pub fn retain_paragraph_result(&mut self, id: NodeListId) -> crate::survivor::RetainedNodeList {
         self.stores.retain_paragraph_result(id)
     }
 
-    /// Imports one validated prior-generation paragraph graph into the active
-    /// epoch without consuming its generation-owned root.
-    pub fn import_retained_paragraph_result(&mut self, id: NodeListId) -> Option<NodeListId> {
-        self.stores.import_retained_paragraph_result(id)
-    }
-
     #[must_use]
-    pub fn retained_paragraph_result_is_live(&self, id: NodeListId) -> bool {
-        self.stores.retained_paragraph_result_is_live(id)
-    }
-
-    pub fn mount_retained_paragraph_resources(&mut self, id: NodeListId) -> bool {
-        self.stores.mount_retained_paragraph_resources(id)
-    }
-
-    #[must_use]
-    pub fn can_mount_retained_paragraph_result(&self, id: NodeListId) -> bool {
-        self.stores.can_mount_retained_paragraph_result(id)
+    pub fn can_mount_retained_paragraph_result(
+        &self,
+        retained: &crate::survivor::RetainedNodeList,
+    ) -> bool {
+        self.stores.can_mount_retained_paragraph_result(retained)
     }
 
     /// Mounts one immutable accepted-history graph with current-revision
     /// diagnostic provenance and returns its unchanged ordinary list handle.
     pub fn mount_retained_paragraph_result(
         &mut self,
-        id: NodeListId,
+        retained: &crate::survivor::RetainedNodeList,
         root_origins: &[crate::token::OriginId],
         origin_slots: &[u32],
     ) -> Option<NodeListId> {
         self.stores
-            .mount_retained_paragraph_result(id, root_origins, origin_slots)
-    }
-
-    /// Mounts output provenance over a retained hlist before ordinary import.
-    pub fn mount_retained_paragraph_provenance(
-        &mut self,
-        id: NodeListId,
-        root_origins: &[crate::token::OriginId],
-        origin_slots: &[u32],
-    ) -> bool {
-        self.stores
-            .mount_retained_paragraph_provenance(id, root_origins, origin_slots)
-    }
-
-    #[doc(hidden)]
-    #[must_use]
-    pub fn paragraph_result_generation_mark(&self) -> usize {
-        self.stores.paragraph_result_generation_mark()
-    }
-
-    #[doc(hidden)]
-    pub fn accept_paragraph_result_generation(&mut self, new_start: usize) {
-        self.stores.accept_paragraph_result_generation(new_start);
+            .mount_retained_paragraph_result(retained, root_origins, origin_slots)
     }
 
     pub fn finish_node_list(&mut self, builder: &mut NodeListBuilder) -> NodeListId {

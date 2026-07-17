@@ -3,7 +3,8 @@
 //! Promotion copies an epoch-rooted node graph into one contiguous allocation
 //! and rewrites child spans to be relative to the survivor root.
 
-use crate::ids::{ArenaRef, NodeListId, SurvivorRootId};
+use crate::glue::GlueSpec;
+use crate::ids::{ArenaRef, GlueId, NodeListId, SurvivorRootId};
 #[cfg(debug_assertions)]
 use crate::node::Node;
 use crate::node_arena::{
@@ -130,6 +131,50 @@ struct SurvivorPayload {
     storage: NodeStorage,
     semantic_spans: Vec<SurvivorSemanticSpan>,
 }
+
+/// Accepted-history ownership of one immutable survivor list and the
+/// store-local resources needed to mount it in a related Universe.
+///
+/// The semantic payload is shared directly. Cloning or dropping this handle
+/// never walks the node graph; a live Universe installs a local root slot and
+/// ordinary rollback pin only when it actually consumes the mount.
+#[derive(Clone, Debug)]
+pub struct RetainedNodeList {
+    id: NodeListId,
+    payload: Arc<SurvivorPayload>,
+    glues: Arc<[(GlueId, GlueSpec)]>,
+}
+
+impl RetainedNodeList {
+    #[must_use]
+    pub const fn id(&self) -> NodeListId {
+        self.id
+    }
+
+    pub(crate) fn glues(&self) -> &[(GlueId, GlueSpec)] {
+        &self.glues
+    }
+
+    pub(crate) fn contains_glue(&self, id: GlueId) -> bool {
+        self.glues
+            .binary_search_by_key(&id.raw(), |(candidate, _)| candidate.raw())
+            .is_ok()
+    }
+
+    pub(crate) fn resource_retained_bytes(&self) -> usize {
+        self.glues
+            .len()
+            .saturating_mul(core::mem::size_of::<(GlueId, GlueSpec)>())
+    }
+}
+
+impl PartialEq for RetainedNodeList {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for RetainedNodeList {}
 
 #[derive(Clone, Copy, Debug)]
 struct SurvivorSemanticSpan {
@@ -302,13 +347,73 @@ impl SurvivorArena {
             panic!("frozen semantic ids belong to survivor roots");
         };
         let root = self.root_mut(root);
-        let index = root
+        let payload = Arc::get_mut(&mut root.payload)
+            .expect("a frozen root cannot be shared before identity validation");
+        let index = payload
             .semantic_spans
             .binary_search_by_key(&id.start(), |span| span.start)
             .expect("frozen node-list semantic id is not live");
-        let span = &mut root.semantic_spans[index];
+        let span = &mut payload.semantic_spans[index];
         assert_eq!(span.len, id.len(), "frozen semantic span length mismatch");
         span.semantic_id = semantic_id;
+    }
+
+    /// Captures accepted-history ownership of an already promoted list.
+    pub(crate) fn retain(
+        &self,
+        id: NodeListId,
+        glues: Vec<(GlueId, GlueSpec)>,
+    ) -> RetainedNodeList {
+        let ArenaRef::Survivor(_) = id.arena() else {
+            panic!("only survivor node-list ids can be retained");
+        };
+        let root = self.root_for_retained(id);
+        RetainedNodeList {
+            id,
+            payload: Arc::clone(&root.payload),
+            glues: glues.into(),
+        }
+    }
+
+    /// Reads a list directly from an accepted-history mount without requiring
+    /// that its root currently have a local arena slot.
+    #[must_use]
+    pub(crate) fn retained_nodes<'a>(
+        &'a self,
+        retained: &'a RetainedNodeList,
+        id: NodeListId,
+    ) -> Option<NodeList<'a>> {
+        if id.arena() != retained.id.arena() {
+            return None;
+        }
+        let start = id.start() as usize;
+        let end = start.checked_add(id.len() as usize)?;
+        (end <= retained.payload.storage.len())
+            .then(|| retained.payload.storage.view(id.start(), id.len()))
+    }
+
+    /// Installs one accepted-history payload as a local root. The returned
+    /// flag says whether the new slot's initial refcount must be adopted by
+    /// the caller's ordinary rollback pin log.
+    pub(crate) fn mount(&mut self, retained: &RetainedNodeList) -> Option<bool> {
+        let ArenaRef::Survivor(root_id) = retained.id.arena() else {
+            return None;
+        };
+        if let Some(index) = self.root_slots.get(&root_id).copied() {
+            let root = self.slots.get(index)?.as_ref()?;
+            return Arc::ptr_eq(&root.payload, &retained.payload).then_some(false);
+        }
+        let index = self.slots.len();
+        self.slots.push(Some(SurvivorRoot {
+            payload: Arc::clone(&retained.payload),
+            origin_overlay: None,
+            refcount: 1,
+        }));
+        assert!(
+            self.root_slots.insert(root_id, index).is_none(),
+            "retained survivor root was published concurrently"
+        );
+        Some(true)
     }
 
     /// Increments the root refcount for a survivor list.
@@ -413,11 +518,8 @@ impl SurvivorArena {
 
     #[cfg(test)]
     #[must_use]
-    pub(crate) fn testing_payload_strong_count(&self, id: NodeListId) -> usize {
-        let ArenaRef::Survivor(root) = id.arena() else {
-            panic!("expected survivor id");
-        };
-        Arc::strong_count(&self.root(root).payload)
+    pub(crate) fn testing_payload_strong_count(retained: &RetainedNodeList) -> usize {
+        Arc::strong_count(&retained.payload)
     }
 
     #[cfg(any(test, feature = "testing"))]
@@ -562,6 +664,21 @@ impl SurvivorArena {
             .get(index)
             .and_then(Option::as_ref)
             .expect("survivor root is not live")
+    }
+
+    fn root_for_retained(&self, id: NodeListId) -> &SurvivorRoot {
+        let ArenaRef::Survivor(root) = id.arena() else {
+            panic!("expected survivor id");
+        };
+        let root = self.root(root);
+        let end = (id.start() as usize)
+            .checked_add(id.len() as usize)
+            .expect("survivor node-list span overflow");
+        assert!(
+            end <= root.payload.storage.len(),
+            "survivor node-list id is not live"
+        );
+        root
     }
 
     fn root_mut(&mut self, root: SurvivorRootId) -> &mut SurvivorRoot {

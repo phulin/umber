@@ -39,8 +39,8 @@ The design must:
 - validate every replayed paragraph before mutation or input advancement;
 - preserve the cold named-boundary schedule, effect order, page artifacts,
   DVI bytes, and final state;
-- keep paragraph artifacts tied to the accepted generation that owns their
-  node roots and provenance recipes;
+- keep paragraph artifacts tied to accepted-history handles that own their
+  shared node roots, resource closures, and provenance recipes;
 - make failure local: a red paragraph executes normally and later mapped
   paragraphs may re-align; and
 - measure height/page-preserving and pagination-changing edits separately.
@@ -60,9 +60,9 @@ The repository already provides the required correctness substrate:
   checkpoints;
 - immutable accepted-generation substrates and one validated restart fork;
 - retained logical effects and page artifacts;
-- generation-owned paragraph hlists and finished lines;
-- shared mountable survivor payloads with local provenance overlays and
-  retained glue closures;
+- accepted-history-owned paragraph hlist and finished-line mounts;
+- shared immutable survivor payloads with mount-owned glue closures, ordinary
+  rollback-local root pins, and local provenance overlays;
 - compact output-reachable, current-revision provenance rebinding recipes;
 - typed dependency keys, semantic observations, changed-at stamps, and
   backdating; and
@@ -318,7 +318,7 @@ zero-overhead finished-line replay with page rebuilding has an approximate
 approximate 159.7 ms floor, or a 1.32x ceiling.
 
 These are absolute rooflines, not release targets: the changed paragraph,
-restart prefix, validation, import, provenance rebinding, and misses remain.
+restart prefix, validation, mount/provenance installation, and misses remain.
 Fast-path suffix adoption has a different cost model and must never be averaged
 with slow-path paragraph economics.
 
@@ -330,12 +330,13 @@ read-set or provenance contract.
 
 ### Mountable finished-line ownership experiment
 
-The accepted-history implementation now shares immutable survivor payloads
-between related Universes. A finished-line hit validates the retained graph and
-its ordinary Gentle handle closure before mutation, mounts a local provenance
-overlay, restores the retained hlist's glue closure into the restarted store,
-and returns the unchanged `NodeListId`. It does not import, promote, re-freeze,
-rehash, or recursively rewrite semantic nodes. The existing reused-paragraph
+The accepted-history implementation now owns cloneable retained-root handles
+whose immutable survivor payload and glue closure are shared between related
+Universes. A finished-line hit validates the handle before mutation, installs
+its payload under the restarted Universe's ordinary rollback pin log, mounts a
+local provenance overlay, restores its glue closure, and returns the unchanged
+`NodeListId`. It does not import, promote, re-freeze, rehash, or recursively
+rewrite semantic nodes. The existing reused-paragraph
 installation still materializes only the mounted top-level contributions and
 feeds them through ordinary vertical append, baseline glue, prevdepth, page
 building, and output-routine behavior. Marks, whatsits, leaders, unset nodes,
@@ -496,6 +497,37 @@ the executor-only mean delta was +0.117 ms while acceptance and generation
 publication retained their known recording cost. This establishes the
 zero-copy hlist mount and its executor work reduction, not default enablement.
 
+### Retained-root lifecycle cleanup
+
+Issue `umber2-q02h.63` made the shared mount the ownership boundary rather than
+an adapter over the earlier paragraph-generation machinery. Each accepted
+`RecordedParagraphRegion` now owns cloneable hlist and finished-line mount
+handles. A handle contains the immutable survivor payload and its deduplicated
+glue closure; cloning or dropping it is O(1) in graph size. Mounting installs a
+local survivor root plus one ordinary rollback pin and restores only the small
+resource closure. Scratch rollback therefore treats paragraph consumers like
+other survivor-backed engine state, while accepted-history drop releases its
+shared payload without a graph walk.
+
+The separate paragraph generation mark, pin vector, glue reference table,
+accept/drain transition, recursive epoch importer, semantic refreeze path, and
+paragraph imported-byte/import-failure telemetry are removed. Carried hits
+keep the existing retained handles and do not retain or promote them again.
+The generic detached import API in `tex-state::memo` remains for the independent
+page and shipout experiments; it owns handle-free DTO reconstruction and is not
+part of paragraph replay. Compact piece/root ordinals also remain because they
+encode the live output-provenance recipe, not the removed import lifecycle.
+
+The post-cleanup four-pair optimized Gentle gate retained 132 finished-line
+hits on both slow edits and 132 shared-hlist mounts on the break-dependency
+edit, with identical 499-boundary schedules and cold-identical 100-page DVI.
+Paragraph-history publication/drop averaged 0.289--0.429 ms across those
+graph-heavy edits. Retained history measured 2,091,680 bytes after priming,
+2,126,680 bytes after slow replay, and 1,788,468 bytes after hlist rebreaking;
+these totals now include the mount-owned glue closures. Timing samples spanned
+both signs, so the result validates the lifecycle simplification without
+changing the default-disabled release decision.
+
 ## Implementation sequence
 
 1. **Live boundary identities.** Capture accepted canonical identities while
@@ -517,10 +549,11 @@ zero-copy hlist mount and its executor work reduction, not default enablement.
    allowed a vertical prelude to share the following paragraph's region. The
    corrected boundary replays 132 finished-line paragraphs per slow edit and
    preserves exact cold DVI across the full four-edit Gentle matrix.
-5. **Cleanup and release decision.** Collapse the generic memo runtime to the
-   facilities still used, remove obsolete opt-in layers only after dependency
-   checks, and decide paragraph default enablement from balanced release
-   measurements. The accepted-history layer remains default-disabled. In the
+5. **Cleanup and release decision.** The paragraph graph generation/import
+   lifecycle has been removed in favor of accepted-history-owned shared mounts;
+   generic detached page/shipout import remains isolated. Decide paragraph
+   default enablement from balanced release measurements. The accepted-history
+   layer remains default-disabled. In the
    corrected Gentle run, 132 regions replay and 525 recorded regions hit
    barriers; macro-generated paragraph starts that have no clean root-source
    alignment after vertical setup are not recorded. Recovering those requires

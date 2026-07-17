@@ -52,9 +52,10 @@ same named-boundary schedule and retain/re-ship/adopt the same page counts
 after earlier paragraph hits. The equal-width substitution is the fast path:
 both policies must preserve the same schedule, reconverge at shipout, re-ship
 the pinned three changed pages, and adopt every page in the unchanged suffix.
-The final rebreak path must mount accepted hlists, import zero semantic graph
-bytes, run the ordinary current-state line breaker, and keep cold-identical
-output and the same named-boundary schedule as the disabled control.
+The final rebreak path must install accepted-history shared hlist mounts, run
+the ordinary current-state line breaker, and keep cold-identical output and the
+same named-boundary schedule as the disabled control. Paragraph replay has no
+semantic graph import path or imported-byte counter.
 Both modes must also produce the exact DVI bytes of a fresh cold compile for
 every revision. The summary reports steady-state slow, interaction, and fast
 and rebreak paired totals, a priming-inclusive slow total, boundary-schedule
@@ -99,11 +100,12 @@ during thermal pressure or unrelated host contention admissible.
 
 For every accepted edit, each layer reports lookups, hits, inserts, evictions,
 retained bytes, and misses split into not attempted, ineligible barrier, key
-miss, first validation failure, evicted before reuse, and import failure.
+miss, first validation failure, evicted before reuse, and, for detached layers,
+import failure.
 Paragraph barrier reasons and the first failing dependency family are printed
-separately. Record, lookup, validation/key construction, and import time are
-reported independently. Generation-anchored paragraph metadata bytes are
-reported separately from detached-cache bytes.
+separately. Record, lookup, validation/key construction, and the generic
+import/mount timing bucket are reported independently. Accepted-history
+paragraph metadata bytes are reported separately from detached-cache bytes.
 
 The fixed edit inserts 1,792 words into one paragraph beginning 19.66% through
 the source. It deliberately changes both line and page breaking: with corrected
@@ -973,3 +975,39 @@ cold 100-page, 279,176-byte DVI. The rebreak enabled-minus-disabled delta was
 +0.117 ms delta. The remaining loss was outside ordinary rebreaking, chiefly
 generation publication, splice, and acceptance. This is capability and
 zero-copy evidence rather than a default-enablement result.
+
+### Accepted-history mount ownership cleanup
+
+Issue `umber2-q02h.63` removed the lifecycle that remained underneath the two
+shared replay paths. `RecordedParagraphRegion` now owns cloneable retained-root
+handles containing the immutable survivor payload and glue closure. A hit
+mounts that handle under the scratch Universe's ordinary rollback pin log and
+carries the same handle forward; it does not import, recursively clone,
+refreeze, rehash, promote, or re-retain the semantic graph. Replacing accepted
+history drops `Arc` payload owners without generation-sized pin/glue drains.
+
+The paragraph generation mark/accept API, generation pin and glue-reference
+tables, recursive importer, and paragraph-specific imported-byte/import-failure
+telemetry are gone. The profiler verifies shared hlist mount hits and cold DVI
+instead of asserting a permanently zero byte counter. Generic detached import
+telemetry remains for page and shipout experiments. Focused `tex-state`,
+`tex-exec`, `tex-incr`, and `umber` tests cover rollback ownership, resource
+restoration, provenance, unsupported mount misses, and cold parity.
+
+A four-pair optimized AB/BA validation run after the cleanup retained 132 line
+hits on each slow edit and 132 shared-hlist mounts on the rebreak edit, skipping
+42,183 commands in all three cases. Every policy pair published the same 499
+boundaries and emitted the cold-identical 100-page DVI. Mean paragraph-history
+publish/drop time was 0.429 ms on the large edit, 0.289 ms on the inverse edit,
+and 0.362 ms on the hlist-rebreak edit; this transition now moves metadata and
+`Arc` handles only. Accepted-history accounting was 2,091,680 bytes after
+priming, 2,126,680 bytes after each slow edit, and 1,788,468 bytes after hlist
+rebreaking. Unlike the earlier figures, these totals explicitly charge each
+mount's glue closure.
+
+The short timing sample was noisy. Rebreak measured -6.293 ms mean/-13.377 ms
+median enabled-minus-disabled, with executor mean -12.232 ms. The combined
+slow edits measured +61.839 ms mean/+89.608 ms median, with individual paired
+ranges spanning both signs. These numbers establish parity, hit coverage,
+bounded history-transition work, and honest retained-memory accounting; they
+do not change the default-disabled release decision.

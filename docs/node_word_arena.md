@@ -332,15 +332,19 @@ and rollback need not restore their exact capacity/order, because they cannot
 affect meaning, liveness, ids, hashes, or output. Tests prove that claim by
 replay/hash equality with different sharing and recycling histories.
 
-Accepted paragraph history uses this ownership split as a mount seam. A
-restarted Universe resolves the same survivor `NodeListId` through ordinary
-arena APIs, installs only the retained glue-resource closure, and overlays
-current-revision char/ligature origins without changing semantic words,
-sidecars, or semantic ids. The overlay is derived from compact stable
+Accepted paragraph history uses this ownership split directly. Its cloneable
+retained-list handle owns an `Arc` to the immutable survivor payload plus the
+deduplicated glue-resource closure. A restarted Universe validates the handle,
+installs the same root key and payload under one ordinary rollback pin, restores
+the closure at compatible local glue slots, and overlays current-revision
+char/ligature origins without changing semantic words, sidecars, or semantic
+ids. Dropping or replacing accepted history therefore releases shared payloads
+without a graph walk; there is no paragraph-specific generation pin log or
+accept/drain transition. The overlay is derived from compact stable
 piece-relative ranges for only the origins reachable by ordinary graph
 traversal; no expanded-token trace or shipout-only provenance map is involved.
-The mount validator admits the minimal ordinary finished-line node vocabulary
-and rejects unresolved or unsupported handle-bearing forms before mutation.
+The mount validator admits the minimal ordinary paragraph node vocabulary and
+rejects unresolved or unsupported handle-bearing forms before mutation.
 
 The lookup table adds one `(SurvivorRootId, usize)` payload per live root (16
 bytes on the supported 64-bit targets), plus standard hash-table control

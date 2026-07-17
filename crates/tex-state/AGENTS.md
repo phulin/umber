@@ -80,7 +80,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/page/tests.rs`: Page snapshot-root sharing and copy-on-write isolation tests.
 - `src/provenance.rs`: Diagnostic origin-record and origin-list arenas with rollback watermarks.
 - `src/provenance/tests.rs`: Unit tests for provenance allocation, readback, and rollback marks.
-- `src/pure_memo.rs`: Optional bounded session-local pure-query experiments plus the ordered accepted paragraph history, stable-start cursor, exact paragraph read identities, validation telemetry, compact output-provenance recipes, and retained result metadata anchored in accepted-generation node roots.
+- `src/pure_memo.rs`: Optional bounded session-local pure-query experiments plus the ordered accepted paragraph history, stable-start cursor, exact paragraph read identities, validation telemetry, compact output-provenance recipes, and accepted-history-owned retained node mounts.
 - `src/pure_memo/tests.rs`: Collision, eviction, retention-release, and disabled-cache tests.
 - `src/scaled.rs`: Compatibility re-export for shared TeX scaled-point arithmetic.
 - `src/source_map.rs`: Rollback-coupled logical source regions, validated positions/spans, and immutable World/generated backing identities.
@@ -89,7 +89,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/source_fragments/layout_index.rs`: Fragment-and-offset index for logarithmic current/deleted piece resolution across repeated views.
 - `src/source_fragments/tests.rs`: Fragment range, deletion, fork-liveness, anchor, allocator, snapshot, and line-index cache tests.
 - `src/state_hash.rs`: Deterministic semantic state hasher used by snapshots and replay convergence checks.
-- `src/stores.rs`: Internal aggregate store tuple that coordinates interner, env, token, provenance, glue, node, font, accepted-generation paragraph roots/auxiliaries, survivor pins, input, and rollback/shipout scope state.
+- `src/stores.rs`: Internal aggregate store tuple that coordinates interner, env, token, provenance, glue, node, font, survivor mounts and rollback pins, input, and rollback/shipout scope state.
 - `src/stores/handles.rs`: Store-boundary liveness checks for symbols, token lists, origins, glue, fonts, macros, and node handles.
 - `src/stores/exact_identity.rs`: Persistent deterministic Merkle treap for canonical environment-cell identities retained by checkpoints.
 - `src/stores/exact_collection.rs`: Persistent deterministic Merkle collection for allocation-order-independent immutable-store roots.
@@ -104,7 +104,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/stores/format/font_validation.rs`: Pre-publication validation of detached font metrics, identifiers, and serialized Env font banks, plus test-only corruption fixtures.
 - `src/stores/state_hash.rs`: Store snapshot cursor and semantic hashing implementation for changed cells and store-owned slices.
 - `src/stores/tests.rs`: Unit tests for aggregate store rollback, builders, handle validation, parameters, boxes, and state hashes.
-- `src/survivor.rs`: Survivor arena for node lists that escape epoch rollback boundaries, including root-safe buffer recycling and profiling-only promotion measurements.
+- `src/survivor.rs`: Survivor arena for node lists that escape epoch rollback boundaries, including accepted-history retained mounts, shared immutable payload ownership, root-safe buffer recycling, and profiling-only promotion measurements.
 - `src/tests.rs`: Crate-level integration-style unit tests for `Universe`, snapshots, world effects, and module test wiring.
 - `src/tests/handle_matrix.rs`: Table-driven aggregate rollback, fork, and cross-Universe liveness coverage for every production opaque handle class.
 - `src/tests/live_boundary.rs`: Unit tests proving live-state capability boundaries and restricted context APIs.

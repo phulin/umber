@@ -929,10 +929,6 @@ fn paragraph_post_break_reuse_tiers_match_cold_for_layout_and_hyphenation_change
     let (layout, _) = run_edit(&source, hsize..hsize + 2, "45");
     assert!(layout.paragraph_hits > 0, "{layout:?}");
     assert!(layout.paragraph_hlist_fallbacks > 0, "{layout:?}");
-    assert_eq!(
-        layout.paragraph_imported_bytes, 0,
-        "mounted hlist rebreaking must not import semantic graph bytes: {layout:?}"
-    );
 
     let hyphens = source.find("hy-phen-a-tion").expect("exception");
     let (hyphenation, _) = run_edit(
@@ -942,10 +938,6 @@ fn paragraph_post_break_reuse_tiers_match_cold_for_layout_and_hyphenation_change
     );
     assert!(hyphenation.paragraph_hits > 0, "{hyphenation:?}");
     assert!(hyphenation.paragraph_hlist_fallbacks > 0, "{hyphenation:?}");
-    assert_eq!(
-        hyphenation.paragraph_imported_bytes, 0,
-        "mounted hlist rebreaking must not import semantic graph bytes: {hyphenation:?}"
-    );
 
     let insertion = source.find(prose).expect("first paragraph");
     let (full, _) = run_edit(&source, insertion..insertion, "\\count77=1 ");
@@ -1000,11 +992,6 @@ fn paragraph_hlist_mount_rejects_unsupported_graph_before_replay() {
             > before.paragraph_validation_failure_reasons[retained_result],
         "mark-bearing graph must fail retained-result mount validation: {after:?}"
     );
-    assert_eq!(
-        after.paragraph_imported_bytes, before.paragraph_imported_bytes,
-        "unsupported graph misses must not fall back to semantic import: {after:?}"
-    );
-
     let mut cold_universe = template();
     cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
     let mut cold = Session::start(
@@ -1052,7 +1039,12 @@ fn rebroken_mounted_hlist_keeps_current_output_provenance() {
         .pure_memo
         .accepted_paragraphs()
         .iter()
-        .filter_map(|region| region.hlist)
+        .filter_map(|region| {
+            region
+                .hlist
+                .as_ref()
+                .map(tex_state::survivor::RetainedNodeList::id)
+        })
         .collect::<Vec<_>>();
     let before = session.pure_memo_stats();
     let hsize = source.find("70pt").expect("hsize value");
@@ -1072,16 +1064,17 @@ fn rebroken_mounted_hlist_keeps_current_output_provenance() {
         after.paragraph_hlist_fallbacks > before.paragraph_hlist_fallbacks,
         "fixture must rebreak a mounted hlist: {after:?}"
     );
-    assert_eq!(
-        after.paragraph_imported_bytes,
-        before.paragraph_imported_bytes
-    );
     assert!(
         session
             .pure_memo
             .accepted_paragraphs()
             .iter()
-            .filter_map(|region| region.hlist)
+            .filter_map(|region| {
+                region
+                    .hlist
+                    .as_ref()
+                    .map(tex_state::survivor::RetainedNodeList::id)
+            })
             .any(|hlist| retained_hlists.contains(&hlist)),
         "hlist replay must retain the accepted survivor handle"
     );

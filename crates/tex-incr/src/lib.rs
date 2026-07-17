@@ -156,8 +156,8 @@ pub struct ReuseMetrics {
     /// Copying detached diagnostics, effects, artifacts, and DVI page plans
     /// out of the completed scratch execution.
     pub output_snapshot_latency: Duration,
-    /// Publishing or discarding speculative paragraph roots and metadata.
-    pub generation_transition_latency: Duration,
+    /// Publishing or discarding speculative accepted paragraph history.
+    pub paragraph_history_transition_latency: Duration,
     pub trace_validation_latency: Duration,
     pub trace_replay_latency: Duration,
     pub splice_latency: Duration,
@@ -872,7 +872,7 @@ impl Session {
             .substrate
             .as_ref()
             .ok_or(SessionError::MissingAcceptedSubstrate)?;
-        let mut advance = execute_advance(
+        let advance = execute_advance(
             &self.template,
             &mut self.pure_memo,
             substrate,
@@ -905,16 +905,13 @@ impl Session {
         let same_history_hash_mismatches = advance.same_history_hash_mismatches;
         let trace_validation_latency = advance.trace_validation_latency;
         let same_history_stop = advance.same_history_stop;
-        let generation_transition_started = Timer::start();
+        let paragraph_history_transition_started = Timer::start();
         if advance.convergence_old_index.is_some() {
             self.pure_memo.discard_paragraph_history();
         } else {
-            advance
-                .scratch
-                .accept_paragraph_result_generation(advance.paragraph_generation_mark);
             self.pure_memo.accept_paragraph_history();
         }
-        let generation_transition_latency = generation_transition_started.elapsed();
+        let paragraph_history_transition_latency = paragraph_history_transition_started.elapsed();
         let splice_started = Timer::start();
         let (effects, artifacts, pages, mut history, pending_substrate, mut reuse) =
             if let Some(old_index) = advance.convergence_old_index {
@@ -1006,7 +1003,7 @@ impl Session {
                         executor_latency,
                         reexecution_latency,
                         output_snapshot_latency,
-                        generation_transition_latency,
+                        paragraph_history_transition_latency,
                         trace_validation_latency,
                         ..ReuseMetrics::default()
                     },
@@ -1065,7 +1062,7 @@ impl Session {
                         executor_latency,
                         reexecution_latency,
                         output_snapshot_latency,
-                        generation_transition_latency,
+                        paragraph_history_transition_latency,
                         trace_validation_latency,
                         ..ReuseMetrics::default()
                     },
@@ -1433,7 +1430,6 @@ fn execute_revision(
         ),
         None => ExecutionContext::with_resolvers(job_name, input_resolver, font_resolver),
     };
-    let paragraph_generation_mark = universe.paragraph_result_generation_mark();
     pure_memo.begin_paragraph_history(false);
     universe.install_pure_memo_runtime(std::mem::take(pure_memo));
     let execution_result = executor.run_with_context_and_checkpoints(
@@ -1456,7 +1452,6 @@ fn execute_revision(
         ..
     } = execution_result?;
     let expansion_stats = input.expansion_stats();
-    universe.accept_paragraph_result_generation(paragraph_generation_mark);
     pure_memo.accept_paragraph_history();
     let effects = universe.world().effect_records().to_vec();
     let artifacts = universe.world().committed_artifacts().to_vec();
@@ -1487,7 +1482,6 @@ fn execute_revision(
 
 struct AdvanceRun {
     scratch: Universe,
-    paragraph_generation_mark: usize,
     new_records: Vec<BoundaryRecord>,
     effects: Vec<EffectRecord>,
     artifacts: Vec<CommittedArtifact>,
@@ -1684,7 +1678,6 @@ fn execute_advance(
         None => ExecutionContext::with_resolvers(job_name, input_resolver, font_resolver),
     };
     let reexecution_started = Timer::start();
-    let paragraph_generation_mark = scratch.paragraph_result_generation_mark();
     pure_memo.begin_paragraph_history(true);
     scratch.install_pure_memo_runtime(std::mem::take(pure_memo));
     let executor_started = Timer::start();
@@ -1737,7 +1730,6 @@ fn execute_advance(
     let output_snapshot_latency = output_snapshot_started.elapsed();
     Ok(AdvanceRun {
         scratch,
-        paragraph_generation_mark,
         new_records: sink.records,
         effects,
         artifacts,

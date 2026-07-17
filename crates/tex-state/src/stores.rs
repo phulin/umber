@@ -60,12 +60,11 @@ use crate::source_map::{
     GeneratedSource, SourceBacking, SourceDescriptor, SourceMap, SourceMapError, SourceMapMark,
     SourcePos, SourceRegion, SourceSpan,
 };
-use crate::survivor::SurvivorArena;
+use crate::survivor::{RetainedNodeList, SurvivorArena};
 use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::token_store::{
     TokenListBuilder, TokenSemanticId, TokenSemanticIdBuilder, TokenStore, TokenStoreMark,
 };
-use std::collections::HashMap;
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
 use std::hash::{Hash, Hasher};
 use std::mem;
@@ -185,9 +184,6 @@ pub struct Stores {
     nodes: NodeArena,
     survivors: SurvivorArena,
     survivor_pins: Vec<NodeListId>,
-    paragraph_generation_pins: Vec<NodeListId>,
-    paragraph_generation_pin_glues: Vec<Vec<GlueId>>,
-    paragraph_generation_glues: HashMap<GlueId, (GlueSpec, usize)>,
     code_tables: CodeTables,
     hyphenation: Arc<HyphenationTable>,
     prepared_mag: Option<i32>,
@@ -251,9 +247,6 @@ impl Clone for Stores {
             nodes: self.nodes.clone(),
             survivors: self.survivors.clone(),
             survivor_pins: self.survivor_pins.clone(),
-            paragraph_generation_pins: self.paragraph_generation_pins.clone(),
-            paragraph_generation_pin_glues: self.paragraph_generation_pin_glues.clone(),
-            paragraph_generation_glues: self.paragraph_generation_glues.clone(),
             code_tables: self.code_tables.clone(),
             hyphenation: self.hyphenation.clone(),
             prepared_mag: self.prepared_mag,
@@ -341,9 +334,6 @@ impl Stores {
             nodes: NodeArena::new(),
             survivors: SurvivorArena::new(),
             survivor_pins: Vec::new(),
-            paragraph_generation_pins: Vec::new(),
-            paragraph_generation_pin_glues: Vec::new(),
-            paragraph_generation_glues: HashMap::new(),
             code_tables: CodeTables::new(),
             hyphenation: Arc::new(HyphenationTable::new()),
             prepared_mag: None,
@@ -1220,11 +1210,6 @@ impl Stores {
     pub fn glue(&self, id: GlueId) -> GlueSpec {
         self.glue
             .resolve_get(id)
-            .or_else(|| {
-                self.paragraph_generation_glues
-                    .get(&id)
-                    .map(|(spec, _)| *spec)
-            })
             .expect("stored glue slot is not live")
     }
 
@@ -1763,111 +1748,49 @@ impl Stores {
         self.survivor_pins.push(id);
     }
 
-    /// Promotes one paragraph result graph into storage owned by the accepted
-    /// generation rather than by an individual rollback checkpoint.
-    pub fn retain_paragraph_result(&mut self, id: NodeListId) -> NodeListId {
+    /// Captures accepted-history ownership of one paragraph graph. The local
+    /// survivor slot is held by the ordinary rollback pin log; the returned
+    /// mount shares its immutable payload and complete glue closure directly.
+    pub fn retain_paragraph_result(&mut self, id: NodeListId) -> RetainedNodeList {
         let mut glues = Vec::new();
         self.collect_paragraph_glues(id, &mut glues);
-        glues.sort_unstable();
-        glues.dedup();
-        for &id in &glues {
-            let spec = self.glue(id);
-            let (_, refs) = self
-                .paragraph_generation_glues
-                .entry(id)
-                .or_insert((spec, 0));
-            *refs = refs.saturating_add(1);
-        }
+        glues.sort_unstable_by_key(|id| id.raw());
+        glues.dedup_by_key(|id| id.raw());
+        let glues = glues.into_iter().map(|id| (id, self.glue(id))).collect();
         let retained = self.prepare_box_value(id);
-        self.paragraph_generation_pins.push(retained);
-        self.paragraph_generation_pin_glues.push(glues);
-        retained
-    }
-
-    /// Imports a retained paragraph root into the active epoch only after its
-    /// complete graph has been proven live. The retained root remains owned by
-    /// the prior accepted generation.
-    pub fn import_retained_paragraph_result(&mut self, id: NodeListId) -> Option<NodeListId> {
-        if !self.survivors.contains(id) {
-            return None;
-        }
-        self.clone_retained_paragraph_list(id)
-    }
-
-    #[must_use]
-    pub fn retained_paragraph_result_is_live(&self, id: NodeListId) -> bool {
-        self.survivors.contains(id)
+        self.survivor_pins.push(retained);
+        self.survivors.retain(retained, glues)
     }
 
     #[cfg(test)]
-    pub(crate) fn testing_survivor_payload_strong_count(&self, id: NodeListId) -> usize {
-        self.survivors.testing_payload_strong_count(id)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn testing_has_paragraph_glue(&self, id: GlueId) -> bool {
-        self.paragraph_generation_glues.contains_key(&id)
-    }
-
-    /// Installs the immutable glue closure associated with one retained graph
-    /// into the active interner without decoding or copying semantic nodes.
-    /// The mounted graph keeps its accepted-history handles; the local entries
-    /// preserve the ordinary allocation timeline for subsequent execution.
-    pub fn mount_retained_paragraph_resources(&mut self, id: NodeListId) -> bool {
-        let Some(index) = self
-            .paragraph_generation_pins
-            .iter()
-            .rposition(|candidate| *candidate == id)
-        else {
-            return false;
-        };
-        let glues = self.paragraph_generation_pin_glues[index].clone();
-        for retained in glues {
-            if self.glue.resolve_stored(retained).is_none() {
-                let Some((spec, _)) = self.paragraph_generation_glues.get(&retained).copied()
-                else {
-                    return false;
-                };
-                self.glue.intern(spec);
-            }
-        }
-        true
-    }
-
-    fn can_mount_retained_paragraph_resources(&self, id: NodeListId) -> bool {
-        let Some(index) = self
-            .paragraph_generation_pins
-            .iter()
-            .rposition(|candidate| *candidate == id)
-        else {
-            return false;
-        };
-        self.paragraph_generation_pin_glues[index]
-            .iter()
-            .all(|retained| {
-                self.glue.resolve_stored(*retained).is_some()
-                    || self.paragraph_generation_glues.contains_key(retained)
-            })
+    pub(crate) fn testing_survivor_payload_strong_count(
+        &self,
+        retained: &RetainedNodeList,
+    ) -> usize {
+        SurvivorArena::testing_payload_strong_count(retained)
     }
 
     /// Proves that an accepted-history survivor graph and its resource closure
     /// can be read directly by this Universe. Unsupported handle-bearing forms
     /// conservatively miss before replay mutates live state.
-    pub fn can_mount_retained_paragraph_result(&self, id: NodeListId) -> bool {
-        if !self.survivors.contains(id) || !self.can_mount_retained_paragraph_resources(id) {
+    pub fn can_mount_retained_paragraph_result(&self, retained: &RetainedNodeList) -> bool {
+        if !self.glue.can_restore_retained(retained.glues()) {
             return false;
         }
-        let root = id.arena();
-        let mut pending = vec![id];
+        let root = retained.id().arena();
+        let mut pending = vec![retained.id()];
         let mut seen = std::collections::HashSet::new();
         while let Some(list) = pending.pop() {
-            if list.arena() != root || !self.survivors.contains(list) {
+            if list.arena() != root {
                 return false;
             }
             if !seen.insert(list) {
                 continue;
             }
-            for node in self.nodes(list) {
+            let Some(nodes) = self.survivors.retained_nodes(retained, list) else {
+                return false;
+            };
+            for node in nodes {
                 match node {
                     crate::node_arena::NodeRef::Char { font, .. }
                     | crate::node_arena::NodeRef::Lig { font, .. } => {
@@ -1878,9 +1801,7 @@ impl Stores {
                     crate::node_arena::NodeRef::Glue {
                         spec, leader: None, ..
                     } => {
-                        if self.glue.resolve_stored(spec).is_none()
-                            && !self.paragraph_generation_glues.contains_key(&spec)
-                        {
+                        if !retained.contains_glue(spec) {
                             return false;
                         }
                     }
@@ -1894,11 +1815,7 @@ impl Stores {
                         content,
                         ..
                     } => {
-                        if self.glue.resolve_stored(split_top_skip).is_none()
-                            && !self
-                                .paragraph_generation_glues
-                                .contains_key(&split_top_skip)
-                        {
+                        if !retained.contains_glue(split_top_skip) {
                             return false;
                         }
                         pending.push(content);
@@ -1935,39 +1852,25 @@ impl Stores {
     /// paragraph graph and returns the same ordinary node-list handle.
     pub fn mount_retained_paragraph_result(
         &mut self,
-        id: NodeListId,
+        retained: &RetainedNodeList,
         root_origins: &[OriginId],
         origin_slots: &[u32],
     ) -> Option<NodeListId> {
-        self.can_mount_retained_paragraph_result(id)
-            .then(|| self.mount_retained_paragraph_provenance(id, root_origins, origin_slots))
-            .filter(|mounted| *mounted)
-            .map(|_| id)
-    }
-
-    /// Mounts current-revision provenance before an accepted hlist is copied
-    /// into the active epoch. Handle closure validation remains the importer's
-    /// responsibility; this operation changes only diagnostic sidecars.
-    pub fn mount_retained_paragraph_provenance(
-        &mut self,
-        id: NodeListId,
-        root_origins: &[OriginId],
-        origin_slots: &[u32],
-    ) -> bool {
+        if !self.can_mount_retained_paragraph_result(retained)
+            || !self.glue.restore_retained(retained.glues())
+        {
+            return None;
+        }
+        let id = retained.id();
+        let newly_mounted = self.survivors.mount(retained)?;
+        if newly_mounted {
+            self.survivor_pins.push(id);
+        } else {
+            self.pin_survivor(id);
+        }
         self.survivors
             .mount_paragraph_origins(id, root_origins, origin_slots)
-    }
-
-    /// Copies a retained node graph into the live epoch while preserving its
-    /// already-sealed semantic identity. Glue handles and provenance are not
-    /// semantic inputs, so rebasing those handles does not require rehashing
-    /// the immutable node content.
-    fn clone_retained_paragraph_list(&mut self, id: NodeListId) -> Option<NodeListId> {
-        let semantic_id = self.node_semantic_id(id);
-        let mut nodes = self.nodes(id).to_vec();
-        self.restore_paragraph_glues(&mut nodes)?;
-        self.assert_live_handles_in_nodes(&nodes);
-        Some(self.nodes.append_with_semantic_id(&nodes, semantic_id))
+            .then_some(id)
     }
 
     fn collect_paragraph_glues(&self, id: NodeListId, glues: &mut Vec<GlueId>) {
@@ -2009,92 +1912,6 @@ impl Stores {
                 _ => {}
             }
         }
-    }
-
-    fn restore_paragraph_glues(&mut self, nodes: &mut [Node]) -> Option<()> {
-        let restore = |stores: &mut Self, id: GlueId| {
-            stores.glue.resolve_stored(id).or_else(|| {
-                stores
-                    .paragraph_generation_glues
-                    .get(&id)
-                    .map(|(spec, _)| *spec)
-                    .map(|spec| stores.glue.intern(spec))
-            })
-        };
-        let rebuild = |stores: &mut Self, id: NodeListId| stores.clone_retained_paragraph_list(id);
-        for node in nodes {
-            match node {
-                Node::Glue { spec, leader, .. } => {
-                    *spec = restore(self, *spec)?;
-                    if let Some(LeaderPayload::HList(box_node) | LeaderPayload::VList(box_node)) =
-                        leader
-                    {
-                        box_node.children = rebuild(self, box_node.children)?;
-                    }
-                }
-                Node::HList(box_node) | Node::VList(box_node) => {
-                    box_node.children = rebuild(self, box_node.children)?;
-                }
-                Node::Unset(unset) => unset.children = rebuild(self, unset.children)?,
-                Node::Disc {
-                    pre, post, replace, ..
-                } => {
-                    *pre = rebuild(self, *pre)?;
-                    *post = rebuild(self, *post)?;
-                    *replace = rebuild(self, *replace)?;
-                }
-                Node::Ins {
-                    split_top_skip,
-                    content,
-                    ..
-                } => {
-                    *split_top_skip = restore(self, *split_top_skip)?;
-                    *content = rebuild(self, *content)?;
-                }
-                Node::Adjust(content) => *content = rebuild(self, *content)?,
-                _ => {}
-            }
-        }
-        Some(())
-    }
-
-    /// Replaces the generation-owned paragraph roots wholesale after a run is
-    /// accepted. Newly recorded roots are the suffix after `new_start`.
-    pub fn accept_paragraph_result_generation(&mut self, new_start: usize) {
-        assert!(new_start <= self.paragraph_generation_pins.len());
-        assert_eq!(
-            self.paragraph_generation_pins.len(),
-            self.paragraph_generation_pin_glues.len()
-        );
-        let old = self
-            .paragraph_generation_pins
-            .drain(..new_start)
-            .collect::<Vec<_>>();
-        for id in old {
-            self.survivors.dec_ref(id);
-        }
-        let old_glues = self
-            .paragraph_generation_pin_glues
-            .drain(..new_start)
-            .collect::<Vec<_>>();
-        for glues in old_glues {
-            for id in glues {
-                let remove = if let Some((_, refs)) = self.paragraph_generation_glues.get_mut(&id) {
-                    *refs = refs.saturating_sub(1);
-                    *refs == 0
-                } else {
-                    false
-                };
-                if remove {
-                    self.paragraph_generation_glues.remove(&id);
-                }
-            }
-        }
-    }
-
-    #[must_use]
-    pub fn paragraph_result_generation_mark(&self) -> usize {
-        self.paragraph_generation_pins.len()
     }
 
     /// Enters a TeX group.
@@ -2566,13 +2383,12 @@ impl Stores {
         // format capture forbids them because formats have a stricter job-start
         // contract. Use the serialized-size proxy only when that contract is
         // satisfied instead of turning retention accounting into a panic.
-        let serialized =
-            if self.survivor_pins.is_empty() && self.paragraph_generation_pins.is_empty() {
-                self.encode_frozen_format()
-                    .map_or(0, |format| format.payload_len())
-            } else {
-                0
-            };
+        let serialized = if self.survivor_pins.is_empty() {
+            self.encode_frozen_format()
+                .map_or(0, |format| format.payload_len())
+        } else {
+            0
+        };
         let provenance = self.provenance_stats().retained_bytes();
         let source_map = self.source_map.stats().retained_bytes;
         let source_fragment_metadata = self.source_fragments.metadata_retained_bytes();
@@ -2584,22 +2400,6 @@ impl Stores {
                 self.survivor_pins
                     .capacity()
                     .saturating_mul(mem::size_of::<NodeListId>()),
-            )
-            .saturating_add(
-                self.paragraph_generation_pins
-                    .capacity()
-                    .saturating_mul(mem::size_of::<NodeListId>()),
-            )
-            .saturating_add(
-                self.paragraph_generation_pin_glues
-                    .iter()
-                    .map(|glues| glues.capacity().saturating_mul(mem::size_of::<GlueId>()))
-                    .sum::<usize>(),
-            )
-            .saturating_add(
-                self.paragraph_generation_glues
-                    .capacity()
-                    .saturating_mul(mem::size_of::<(GlueId, (GlueSpec, usize))>()),
             );
         std::mem::size_of::<Self>()
             .saturating_add(serialized)

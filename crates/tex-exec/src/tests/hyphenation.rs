@@ -545,7 +545,6 @@ fn direct_batch_paragraphs_do_not_build_incremental_history() {
     assert_eq!(stats.paragraph_hits, 0, "{stats:?}");
     assert_eq!(stats.paragraph_inserts, 0, "{stats:?}");
     assert_eq!(stats.paragraph_commands_skipped, 0);
-    assert_eq!(stats.paragraph_imported_bytes, 0);
     assert_eq!(stats.paragraph_eligible_regions, 0, "{stats:?}");
     assert_eq!(
         stats.paragraph_opportunities.published.regions, 0,

@@ -2,7 +2,6 @@
 
 use tex_lex::InputStack;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
-use tex_state::ids::NodeListId;
 use tex_state::{
     DetachedVirtualEffect, EffectRecord, MemoTimingPhase, ParagraphRecordingPhase,
     ParagraphValidationFailure, PrintSink, PureMemoLayer, Universe,
@@ -14,7 +13,7 @@ const MAX_PARAGRAPH_DEPENDENCY_CACHE_ENTRIES: usize = 4_096;
 
 struct ValidatedParagraphEntry {
     input: tex_lex::PreparedParagraphTransition,
-    retained: NodeListId,
+    retained: tex_state::survivor::RetainedNodeList,
     relaxed_state: bool,
 }
 
@@ -75,7 +74,9 @@ pub(crate) fn try_reuse_aligned_paragraph(
     };
     let mountable_lines = entry
         .lines
-        .filter(|&lines| stores.can_mount_retained_paragraph_result(lines));
+        .as_ref()
+        .filter(|lines| stores.can_mount_retained_paragraph_result(lines))
+        .cloned();
     let transition_applied = input.apply_paragraph_transition(stores, prepared_input)?;
     assert!(
         transition_applied,
@@ -100,30 +101,25 @@ pub(crate) fn try_reuse_aligned_paragraph(
         let origins = resolve_paragraph_provenance(stores, &entry.line_provenance);
         stores
             .mount_retained_paragraph_result(
-                mountable_lines.expect("validated mounted lines"),
+                mountable_lines.as_ref().expect("validated mounted lines"),
                 &origins,
                 &entry.line_provenance.origin_slots,
             )
             .expect("prevalidated paragraph mount must remain valid")
     });
-    assert!(
-        stores.mount_retained_paragraph_resources(retained),
-        "prevalidated paragraph hlist must mount its resources"
-    );
     let (nodes, retained_hlist) = if lines_valid {
-        (Vec::new(), stores.retain_paragraph_result(retained))
+        (Vec::new(), retained.clone())
     } else {
         let origins = resolve_paragraph_provenance(stores, &entry.hlist_provenance);
         let mounted = stores
             .mount_retained_paragraph_result(
-                retained,
+                &retained,
                 &origins,
                 &entry.hlist_provenance.origin_slots,
             )
             .expect("prevalidated paragraph hlist mount must remain valid");
         let nodes = stores.nodes(mounted).to_vec();
-        let retained_hlist = stores.retain_paragraph_result(mounted);
-        (nodes, retained_hlist)
+        (nodes, retained.clone())
     };
     let lines = mounted_lines.map(|list| stores.nodes(list).to_vec());
     stores.record_pure_memo_timing(
@@ -134,7 +130,7 @@ pub(crate) fn try_reuse_aligned_paragraph(
     execution.abandon_cold_paragraph_recording();
     entry.ending_input = current_input;
     entry.hlist = Some(retained_hlist);
-    entry.lines = mounted_lines.map(|list| stores.retain_paragraph_result(list));
+    entry.lines = lines_valid.then_some(mountable_lines).flatten();
     let line_count = entry.line_count;
     let mutation_count = entry.mutations.len();
     let delivered_tokens = entry.delivered_tokens;
@@ -150,7 +146,7 @@ pub(crate) fn try_reuse_aligned_paragraph(
         nodes,
         lines.map(|lines| (lines, line_count)),
     )?;
-    stores.record_pure_paragraph_hit(delivered_tokens, mutation_count, 0, relaxed_state);
+    stores.record_pure_paragraph_hit(delivered_tokens, mutation_count, relaxed_state);
     stores.record_pure_paragraph_line_hit(!lines_valid);
     Ok(true)
 }
@@ -215,11 +211,11 @@ fn validate_paragraph_entry(
             .entry_identity
             .refresh(&entry.dependencies, current_count_int_fingerprint);
     }
-    let Some(retained) = entry.hlist else {
+    let Some(retained) = entry.hlist.clone() else {
         stores.record_pure_paragraph_validation_failure(ParagraphValidationFailure::RetainedResult);
         return None;
     };
-    if !stores.can_mount_retained_paragraph_result(retained) {
+    if !stores.can_mount_retained_paragraph_result(&retained) {
         stores.record_pure_paragraph_validation_failure(ParagraphValidationFailure::RetainedResult);
         return None;
     }
