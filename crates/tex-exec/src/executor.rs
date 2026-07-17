@@ -576,6 +576,7 @@ where
 {
     let mut macro_text = Vec::new();
     loop {
+        abandon_stale_vertical_paragraph_probe(nest, stores, execution);
         report_recoverable_expansion_diagnostics(execution, stores);
         if should_stop(input, stores) {
             return Ok(MainControlExit::Stopped);
@@ -795,6 +796,7 @@ where
             }
         };
         let Some(token) = token else {
+            abandon_stale_vertical_paragraph_probe(nest, stores, execution);
             assignments::flush_pending_hchars(nest, stores)?;
             return Ok(MainControlExit::EndOfInput);
         };
@@ -892,11 +894,25 @@ where
                     _ => false,
                 };
                 assignments::flush_pending_hchars(nest, stores)?;
+                abandon_stale_vertical_paragraph_probe(nest, stores, execution);
                 return Ok(MainControlExit::End { token });
             }
             DispatchAction::NotConsumed => {
                 return Ok(MainControlExit::NotConsumed { token });
             }
+        }
+        // Paragraph alignment is probed while the engine is still in outer
+        // vertical mode so expansion reads made by the paragraph-starting
+        // token are part of the recording. That probe is provisional: a
+        // command which leaves us in vertical mode belongs to the vertical
+        // prelude, not to the following paragraph. Discard it here so glue,
+        // penalties, assignments, and macro-expanded vertical commands can
+        // never be swallowed by a retained paragraph hlist.
+        if before_mode == crate::Mode::Vertical
+            && nest.current_mode() == crate::Mode::Vertical
+            && execution.cold_paragraph_recording.is_some()
+        {
+            abandon_stale_vertical_paragraph_probe(nest, stores, execution);
         }
         if before_mode == crate::Mode::Horizontal
             && before_depth == 2
@@ -920,6 +936,23 @@ where
             return Ok(MainControlExit::Stopped);
         }
     }
+}
+
+fn abandon_stale_vertical_paragraph_probe(
+    nest: &ModeNest,
+    stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
+) {
+    if nest.current_mode() != crate::Mode::Vertical || execution.cold_paragraph_recording.is_none()
+    {
+        return;
+    }
+    let abandoned_state_recording = stores.abandon_pure_paragraph_recording();
+    debug_assert!(
+        abandoned_state_recording,
+        "provisional paragraph recording must have a state checkpoint"
+    );
+    execution.abandon_cold_paragraph_recording();
 }
 
 pub(crate) fn sync_engine_state(

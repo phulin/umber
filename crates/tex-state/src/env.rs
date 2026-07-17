@@ -12,6 +12,7 @@ pub mod banks;
 pub(crate) mod box_bank;
 pub(crate) mod group;
 pub(crate) mod overflow;
+pub(crate) mod paragraph;
 pub(crate) mod raw;
 
 use self::banks::{
@@ -80,6 +81,9 @@ macro_rules! register_accessors {
         }
 
         pub(crate) fn $set(&mut self, index: u16, value: $value) {
+            if matches!(BankTag::$bank, BankTag::Count) {
+                self.count_int_fingerprint = None;
+            }
             if is_dense_register(index) {
                 self.$dense.set(
                     index,
@@ -110,6 +114,9 @@ macro_rules! register_accessors {
         }
 
         pub(crate) fn $set_global(&mut self, index: u16, value: $value) {
+            if matches!(BankTag::$bank, BankTag::Count) {
+                self.count_int_fingerprint = None;
+            }
             if is_dense_register(index) {
                 self.$dense.set(
                     index,
@@ -178,6 +185,8 @@ pub struct Env {
     pdf_no_ligatures: BTreeMap<u32, WordStamp>,
     current_font: WordStamp,
     math_family_fonts: FixedBank<FontIdCodec, MATH_FAMILY_FONT_COUNT>,
+    /// Lazily derived identity for the complete count-register/int-parameter state.
+    count_int_fingerprint: Option<u64>,
     journal: Journal,
     group_boundaries: Vec<group::GroupBoundary>,
     aftergroup: Vec<Token>,
@@ -227,6 +236,7 @@ impl Env {
             pdf_no_ligatures: BTreeMap::new(),
             current_font: WordStamp::default(),
             math_family_fonts: FixedBank::new(),
+            count_int_fingerprint: None,
             journal: Journal::new(),
             group_boundaries: Vec::new(),
             aftergroup: Vec::new(),
@@ -493,6 +503,7 @@ impl Env {
 
     /// Sets a local integer parameter value.
     pub(crate) fn set_int_param(&mut self, param: IntParam, value: i32) {
+        self.count_int_fingerprint = None;
         self.int_params.set(
             param.raw(),
             value,
@@ -509,6 +520,7 @@ impl Env {
 
     /// Sets a global integer parameter value.
     pub(crate) fn set_int_param_global(&mut self, param: IntParam, value: i32) {
+        self.count_int_fingerprint = None;
         self.int_params.set(
             param.raw(),
             value,

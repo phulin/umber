@@ -818,6 +818,57 @@ fn group_exit_bumps_epoch_so_outer_undo_slice_records_rewrite() {
 }
 
 #[test]
+fn count_int_fingerprint_is_lazy_and_restores_after_local_group() {
+    let mut env = Env::new();
+    let initial = env.count_int_fingerprint();
+    assert_eq!(env.count_int_fingerprint(), initial);
+
+    env.enter_group();
+    env.set_count(300, -17);
+    env.set_int_param(IntParam::GLOBAL_DEFS, 1);
+    assert_ne!(env.count_int_fingerprint(), initial);
+    assert_eq!(env.leave_group(), Vec::<Token>::new());
+
+    assert_eq!(env.count_int_fingerprint(), initial);
+    env.set_count_global(3, 42);
+    assert_ne!(env.count_int_fingerprint(), initial);
+}
+
+#[test]
+fn paragraph_mutations_keep_only_compacted_root_survivors() {
+    let mut env = Env::new();
+    let checkpoint = env.begin_paragraph_mutations();
+
+    env.enter_group();
+    env.set_count(7, 99);
+    env.set_int_param_global(IntParam::GLOBAL_DEFS, 2);
+    assert_eq!(env.leave_group(), Vec::<Token>::new());
+    env.set_count(300, -17);
+
+    let summary = env.finish_paragraph_mutations(checkpoint);
+    assert!(!summary.journal_rewound);
+    assert_ne!(summary.entry_fingerprint, summary.exit_fingerprint);
+    assert_eq!(
+        summary.mutations,
+        vec![
+            crate::PureParagraphMutation::IntParam {
+                param: IntParam::GLOBAL_DEFS,
+                expected: 0,
+                value: 2,
+                global: true,
+            },
+            crate::PureParagraphMutation::Count {
+                index: 300,
+                expected: 0,
+                value: -17,
+                global: false,
+            },
+        ]
+    );
+    assert_eq!(env.count(7), 0, "balanced local write must not escape");
+}
+
+#[test]
 fn rollback_to_restores_globals_across_group_markers() {
     let mut env = Env::new();
     let pos = env.checkpoint();

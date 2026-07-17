@@ -359,7 +359,7 @@ fn paragraph_front_end_hit_replays_nonempty_everypar_across_revision() {
 }
 
 #[test]
-fn paragraph_region_that_replaces_its_entry_group_is_not_replayed() {
+fn paragraph_after_entry_group_replacement_is_replayed() {
     let mut universe = template();
     universe.enable_pure_memo(tex_state::PureMemoConfig::default());
     let source = concat!(
@@ -379,12 +379,13 @@ fn paragraph_region_that_replaces_its_entry_group_is_not_replayed() {
     .expect("session starts");
     session.cold().expect("cold revision");
     let after_cold = session.pure_memo_stats();
-    assert!(
-        after_cold.paragraph_unsupported_group_transition_barriers > 0,
-        "a region that replaces its entry group cannot be replayed without a group redo log"
+    assert_eq!(
+        after_cold.paragraph_unsupported_group_transition_barriers, 0,
+        "vertical group replacement finishes before the paragraph region starts"
     );
 
     let header = source.find("header a").expect("header marker") + "header ".len();
+    let before = session.pure_memo_stats();
     let first = session
         .advance(
             RevisionId::new(2),
@@ -397,6 +398,10 @@ fn paragraph_region_that_replaces_its_entry_group_is_not_replayed() {
         )
         .expect("header edit");
     assert!(first.reuse.restart_boundary.is_some());
+    assert!(
+        session.pure_memo_stats().paragraph_line_hits > before.paragraph_line_hits,
+        "the paragraph inside the replacement group should replay"
+    );
     let edited = format!("{}b{}", &source[..header], &source[header + 1..]);
 
     let second = session
@@ -436,6 +441,7 @@ fn paragraph_with_balanced_root_level_group_is_replayed() {
     universe.enable_pure_memo(tex_state::PureMemoConfig::default());
     let source = concat!(
         "changed prefix paragraph text\\par\n",
+        "\\vskip 12pt\n",
         "root paragraph with {locally grouped words} after the group\\par\n",
         "stable suffix paragraph text\\par\n",
         "\\vfill\\eject\\end",
@@ -498,11 +504,76 @@ fn paragraph_with_balanced_root_level_group_is_replayed() {
 }
 
 #[test]
-fn paragraph_with_group_local_mutation_is_not_replayed_at_root() {
+fn paragraph_replay_excludes_preceding_recoverable_vertical_error() {
     let mut universe = template();
     universe.enable_pure_memo(tex_state::PureMemoConfig::default());
     let source = concat!(
-        "root paragraph with {\\count255=123 locally assigned count} text\\par\n",
+        "changed prefix paragraph text\\par\n",
+        "\\notdefined\n",
+        "stable paragraph after the error\\par\n",
+        "\\vfill\\eject\\end",
+    );
+    let mut session = Session::start(
+        universe,
+        "paragraph-after-recoverable-error",
+        RevisionId::new(1),
+        source,
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+
+    let changed = source.find("changed").expect("changed word");
+    let before = session.pure_memo_stats();
+    let incremental = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: changed..changed + "changed".len(),
+                replacement: "altered".to_owned(),
+            },
+        )
+        .expect("prefix edit");
+    assert!(
+        session.pure_memo_stats().paragraph_line_hits > before.paragraph_line_hits,
+        "the paragraph after the diagnostic should still replay"
+    );
+
+    let edited = format!(
+        "{}altered{}",
+        &source[..changed],
+        &source[changed + "changed".len()..]
+    );
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-after-recoverable-error",
+        RevisionId::new(2),
+        edited,
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    let expected = cold.cold().expect("cold comparison");
+    assert_eq!(
+        incremental.dvi_bytes().expect("incremental DVI"),
+        expected.dvi_bytes().expect("cold DVI")
+    );
+    assert_eq!(
+        incremental.effects, expected.effects,
+        "the vertical diagnostic must execute once rather than replay with the paragraph"
+    );
+}
+
+#[test]
+fn paragraph_with_group_local_mutation_replays_without_root_write() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = concat!(
+        "changed prefix paragraph text\\par\n",
+        "root paragraph with {\\count255=123 locally assigned count} and root value \\the\\count255\\par\n",
         "stable suffix paragraph text\\par\n",
         "\\vfill\\eject\\end",
     );
@@ -516,10 +587,51 @@ fn paragraph_with_group_local_mutation_is_not_replayed_at_root() {
     .expect("session starts");
     session.cold().expect("cold revision");
     let after_cold = session.pure_memo_stats();
-    assert!(
-        after_cold.paragraph_unsupported_group_transition_barriers > 0,
-        "the mutation redo log cannot preserve a balanced group's local scope"
+    assert_eq!(
+        after_cold.paragraph_unsupported_group_transition_barriers, 0,
+        "balanced local writes disappear from the compacted root journal"
     );
+
+    let changed = source.find("changed").expect("changed word");
+    let before = session.pure_memo_stats();
+    let incremental = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: changed..changed + "changed".len(),
+                replacement: "altered".to_owned(),
+            },
+        )
+        .expect("prefix edit");
+    let after = session.pure_memo_stats();
+    assert!(
+        after.paragraph_line_hits > before.paragraph_line_hits,
+        "balanced local mutation paragraph should replay: {after:?}"
+    );
+
+    let edited = format!(
+        "{}altered{}",
+        &source[..changed],
+        &source[changed + "changed".len()..]
+    );
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-balanced-root-group-mutation",
+        RevisionId::new(2),
+        edited,
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    let expected = cold.cold().expect("cold comparison");
+    assert_eq!(
+        incremental.dvi_bytes().expect("incremental DVI"),
+        expected.dvi_bytes().expect("cold DVI")
+    );
+    assert_eq!(incremental.effects, expected.effects);
 }
 
 #[test]

@@ -754,33 +754,57 @@ effectively invisible. Retained-result import dominated that small subtree;
 preserve their already-sealed semantic identities while rebasing nonsemantic
 handles, reducing reported import time from roughly 4.4--5.0 ms to 1.26--1.30
 ms per slow edit. There was no hidden repeated rollback, linear suffix scan,
-or replay-side quadratic responsible for the loss. The limiting factor is coverage: only 261
-of 889 observed paragraphs were replayable, while 628 hit barriers. Barrier
+or replay-side quadratic responsible for the loss. The limiting factor
+appeared to be coverage: only 261 of 889 observed paragraphs were replayable,
+while 628 hit barriers. Barrier
 telemetry reported 594 group transitions, 174 input transitions, 210
 unsupported writes, 50 display-math crossings, and 42 output-routine
-crossings, with overlap. Relaxing the group barrier to equal group depth plus
-equal environment identity caused a cold-DVI mismatch on the inverse edit and
-was rejected. Safe expansion of nonzero or mutation-bearing transitions
-therefore requires a complete retained group transition/redo design, not a
-weaker identity predicate or another result-cache layer.
+crossings, with overlap. The initial equal-depth experiment caused a cold-DVI
+mismatch on the inverse edit. Later threshold isolation showed that the group
+rule was not the cause: recording had started at a preceding `\bigskip`, while
+retained paragraph installation recreated only `\parskip` and the hlist.
+Replay therefore silently omitted the outer vertical glue.
 
-A subsequent narrower experiment established one useful exception. A
-paragraph that starts and finishes at depth zero cannot replace an entry group,
-and a fully discharged transition is replayable when the paragraph's mutation
-log is empty. Mutation-bearing transitions remain barriered because the
-existing count/integer redo log does not preserve nested local scope. The
-broader zero-to-zero experiment was rejected: it retained 333 paragraphs but
-produced 60 additional mutation-validation misses, grew history metadata to
-4,831,676 bytes, and increased the measured slow loss. With the scoped-mutation
-guard, Gentle retains 272 of 889 paragraphs, reports 574 group barriers, and
-replays 257 finished-line paragraphs per slow edit with 15 validation misses.
-Metadata is 2,606,512 bytes. A release twelve-pair run kept exact cold DVI and
-boundary-schedule parity and measured candidate-minus-baseline means of
-+16.066 ms for the two slow edits, -3.619 ms for the interaction edit, and
--0.935 ms for the independent fast edit. Priming-inclusive mean was +11.936
-ms, but contained a large negative baseline outlier; the slow path therefore
-remains default-disabled despite the coverage and latency improvement over the
-earlier final runs.
+The correction treats vertical recording as provisional and discards it after
+every delivered command that remains in outer vertical mode. The paragraph
+region therefore begins only at the command that actually enters horizontal
+mode. Input transitions also recognize a scanner's backed-up first source
+token, using its rooted start anchor while still validating the complete raw
+byte range. A focused `\vskip` regression and the four-edit Gentle matrix now
+prove that vertical material is executed cold and DVI remains byte-identical.
+
+Count/integer mutation accounting was independently simplified. Setters only
+invalidate a lazy complete-state aHash fingerprint. Paragraph exit derives a
+compact root-survivor redo from the already-compacted environment journal, so
+balanced local writes require no record and depth-zero group transitions may
+replay safely. Exact incoming fingerprints are the common path; mismatches
+validate the survivor cells' entry values before replay. Nonzero groups with
+surviving writes remain barriers because final values do not encode assignment
+ownership.
+
+The corrected boundary deliberately reduces coverage. On the slow Gentle
+edits, 132 regions replay as finished lines, 525 recorded regions hit barriers,
+42,183 commands are skipped, 3,735,160 bytes of retained nodes are imported,
+and accepted paragraph metadata is 3,916,504 bytes. The barrier counts are 420
+group transitions, 69 unsupported writes, 34 input transitions, 20 display
+math crossings, and 13 output crossings. Macro-generated paragraph starts
+whose vertical setup exhausts the clean root-source alignment are left cold;
+recovering them would require late alignment plus an explicit identity for the
+already-built horizontal prefix.
+
+A six-run optimized AB/BA confirmation kept every revision byte-identical to
+cold and reported candidate-minus-baseline means of +4.213 ms for the two slow
+edits, +1.347 ms for the interaction edit, and -0.084 ms for the independent
+fast edit. The corresponding medians were +13.835, +3.364, and +1.217 ms. One
+large memo-disabled priming outlier made the mean priming-inclusive delta
++6.247 ms versus a +37.920 ms median, so this short run is correctness and
+directional performance evidence rather than a new enablement baseline. The
+post-audit six-run confirmation, after direct-source pending-token tightening
+and cheap provisional-checkpoint abandonment, reported +18.743 ms slow,
++6.337 ms interaction, and +4.568 ms fast means; its priming-inclusive slow
+mean was +52.266 ms. Coverage and exact output were unchanged. The spread
+between short balanced runs reinforces the release decision: the paragraph
+layer remains default-disabled, and no speed win is claimed.
 
 The adversarial implementation review found no repeated accepted-substrate
 rollback, global candidate search, suffix scan, or quadratic on the measured

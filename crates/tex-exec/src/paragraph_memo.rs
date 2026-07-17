@@ -62,16 +62,19 @@ pub(crate) fn try_reuse_aligned_paragraph(
         .zip(entry.ending_span)
         .and_then(|(start, end)| {
             input.prepare_paragraph_transition(
+                stores,
                 start,
                 &entry.consumed_spans,
                 end,
                 &entry.ending_input,
             )
         });
+    let current_count_int_fingerprint = stores.count_int_fingerprint();
+    let relaxed_state = current_count_int_fingerprint != entry.mutation_entry_fingerprint;
     let validation_failure = dependency_failure
         .map(ParagraphValidationFailure::from_dependency)
         .or_else(|| {
-            (!validate_mutations(stores, &entry.mutations))
+            (relaxed_state && !validate_mutations(stores, &entry.mutations))
                 .then_some(ParagraphValidationFailure::Mutation)
         })
         .or_else(|| {
@@ -140,6 +143,13 @@ pub(crate) fn try_reuse_aligned_paragraph(
         .collect::<Vec<_>>();
     let _ = stores.finish_pure_paragraph_recording();
     replay_mutations(stores, &entry.mutations);
+    if !relaxed_state {
+        debug_assert_eq!(
+            stores.count_int_fingerprint(),
+            entry.mutation_exit_fingerprint,
+            "paragraph survivor redo must reproduce the recorded count/int state"
+        );
+    }
     replay_effects(stores, &entry.effects);
     let mut nodes: Vec<_> = stores
         .nodes(list)
@@ -204,7 +214,7 @@ pub(crate) fn try_reuse_aligned_paragraph(
         nodes,
         lines_valid.then_some((lines.expect("validated imported lines"), line_count)),
     )?;
-    stores.record_pure_paragraph_hit(trace_len, mutation_count, imported_bytes);
+    stores.record_pure_paragraph_hit(trace_len, mutation_count, imported_bytes, relaxed_state);
     stores.record_pure_paragraph_line_hit(!lines_valid);
     Ok(true)
 }
@@ -220,28 +230,14 @@ fn validate_effects(effects: &[DetachedVirtualEffect]) -> bool {
 }
 
 fn validate_mutations(stores: &Universe, mutations: &[tex_state::PureParagraphMutation]) -> bool {
-    let mut current = std::collections::BTreeMap::<(u8, u16), i32>::new();
-    for mutation in mutations {
-        let (key, expected, value, initial) = match *mutation {
-            tex_state::PureParagraphMutation::Count {
-                index,
-                expected,
-                value,
-                ..
-            } => ((0, index), expected, value, stores.count(index)),
-            tex_state::PureParagraphMutation::IntParam {
-                param,
-                expected,
-                value,
-                ..
-            } => ((1, param.raw()), expected, value, stores.int_param(param)),
-        };
-        if current.get(&key).copied().unwrap_or(initial) != expected {
-            return false;
-        }
-        current.insert(key, value);
-    }
-    true
+    mutations.iter().all(|mutation| match *mutation {
+        tex_state::PureParagraphMutation::Count {
+            index, expected, ..
+        } => stores.count(index) == expected,
+        tex_state::PureParagraphMutation::IntParam {
+            param, expected, ..
+        } => stores.int_param(param) == expected,
+    })
 }
 
 fn replay_mutations(stores: &mut Universe, mutations: &[tex_state::PureParagraphMutation]) {
@@ -249,9 +245,9 @@ fn replay_mutations(stores: &mut Universe, mutations: &[tex_state::PureParagraph
         match *mutation {
             tex_state::PureParagraphMutation::Count {
                 index,
-                expected: _,
                 value,
                 global,
+                ..
             } => {
                 if global {
                     stores.set_count_global(index, value);
@@ -261,9 +257,9 @@ fn replay_mutations(stores: &mut Universe, mutations: &[tex_state::PureParagraph
             }
             tex_state::PureParagraphMutation::IntParam {
                 param,
-                expected: _,
                 value,
                 global,
+                ..
             } => {
                 if global {
                     stores.set_int_param_global(param, value);
@@ -469,7 +465,9 @@ fn publish_recorded_region(
             Vec::new()
         }
     };
-    let mutations = stores.finish_pure_paragraph_recording().unwrap_or_default();
+    let mutation_summary = stores
+        .finish_pure_paragraph_recording()
+        .expect("cold paragraph recording has matching state checkpoint");
     let ending_span = input.root_source_checkpoint_anchor(stores);
     let consumed_spans = recording
         .starting_span
@@ -489,14 +487,15 @@ fn publish_recorded_region(
     let ending_group_depth = tex_state::ExpansionState::execution_group_depth(stores);
     let group_transition_changed =
         recording.starting_group_changed_at != stores.track_dependency(group_key);
-    // At depth zero there is no entry frame to replace, so a fully discharged
-    // group transition needs no group redo. Recorded mutations are excluded:
-    // their current redo log does not preserve the local scope of a nested
-    // group and would otherwise replay a local write at the root.
+    // At depth zero, group compaction has removed local writes and retained
+    // only root/global survivors in the journal suffix. Inside a live group,
+    // count/int survivor values cannot reproduce assignment ownership, so any
+    // such write remains a conservative barrier.
     if recording.starting_span.is_some()
-        && (recording.starting_group_depth != ending_group_depth
-            || (group_transition_changed
-                && (recording.starting_group_depth != 0 || !mutations.is_empty())))
+        && (mutation_summary.journal_rewound
+            || recording.starting_group_depth != ending_group_depth
+            || (recording.starting_group_depth != 0
+                && (group_transition_changed || !mutation_summary.mutations.is_empty())))
     {
         recording
             .barriers
@@ -595,7 +594,9 @@ fn publish_recorded_region(
         consumed_spans,
         trace_spans,
         dependencies,
-        mutations: mutations.clone(),
+        mutation_entry_fingerprint: mutation_summary.entry_fingerprint,
+        mutation_exit_fingerprint: mutation_summary.exit_fingerprint,
+        mutations: mutation_summary.mutations,
         effects,
         ending_input,
         barriers: recording.barriers.into_iter().collect(),

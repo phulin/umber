@@ -294,6 +294,10 @@ pub trait ExpansionState {
     ) -> Option<crate::RootSpanId> {
         None
     }
+    /// Resolves only provenance allocated directly from rooted editor source.
+    fn direct_root_span_for_origin(&self, _origin: OriginId) -> Option<crate::RootSpanId> {
+        None
+    }
     /// Follows a delivered token's provenance to stable root-editor backing.
     fn root_span_for_origin(&self, _origin: OriginId) -> Option<crate::RootSpanId> {
         None
@@ -1789,7 +1793,10 @@ impl Universe {
 
     #[doc(hidden)]
     pub fn begin_pure_paragraph_recording(&mut self) {
-        self.pure_memo.begin_paragraph_recording();
+        if self.pure_memo.paragraph_front_ends_enabled() {
+            let checkpoint = self.stores.begin_paragraph_mutations();
+            self.pure_memo.begin_paragraph_recording(checkpoint);
+        }
     }
 
     #[doc(hidden)]
@@ -1798,12 +1805,21 @@ impl Universe {
     }
 
     #[doc(hidden)]
-    pub fn finish_pure_paragraph_recording(&mut self) -> Option<Vec<crate::PureParagraphMutation>> {
-        self.pure_memo.finish_paragraph_recording()
+    pub fn finish_pure_paragraph_recording(
+        &mut self,
+    ) -> Option<crate::PureParagraphMutationSummary> {
+        let checkpoint = self.pure_memo.finish_paragraph_recording()?;
+        Some(self.stores.finish_paragraph_mutations(checkpoint))
     }
 
-    fn record_pure_paragraph_mutation(&mut self, mutation: crate::PureParagraphMutation) {
-        self.pure_memo.record_paragraph_mutation(mutation);
+    #[doc(hidden)]
+    pub fn abandon_pure_paragraph_recording(&mut self) -> bool {
+        self.pure_memo.abandon_paragraph_recording()
+    }
+
+    #[doc(hidden)]
+    pub fn count_int_fingerprint(&mut self) -> u64 {
+        self.stores.count_int_fingerprint()
     }
 
     #[doc(hidden)]
@@ -1812,9 +1828,10 @@ impl Universe {
         commands: usize,
         mutations: usize,
         imported_bytes: usize,
+        relaxed_state: bool,
     ) {
         self.pure_memo
-            .record_paragraph_hit(commands, mutations, imported_bytes);
+            .record_paragraph_hit(commands, mutations, imported_bytes, relaxed_state);
     }
 
     #[doc(hidden)]
@@ -4823,15 +4840,8 @@ impl Universe {
     }
 
     pub fn set_count(&mut self, index: u16, value: i32) {
-        let expected = self.stores.count(index);
         self.stores.set_count(index, value);
         self.mark_cell_changed(DependencyBank::Count, u32::from(index));
-        self.record_pure_paragraph_mutation(crate::PureParagraphMutation::Count {
-            index,
-            expected,
-            value,
-            global: false,
-        });
     }
 
     #[must_use]
@@ -4840,15 +4850,8 @@ impl Universe {
     }
 
     pub fn set_count_global(&mut self, index: u16, value: i32) {
-        let expected = self.stores.count(index);
         self.stores.set_count_global(index, value);
         self.mark_cell_changed(DependencyBank::Count, u32::from(index));
-        self.record_pure_paragraph_mutation(crate::PureParagraphMutation::Count {
-            index,
-            expected,
-            value,
-            global: true,
-        });
     }
 
     pub fn set_dimen(&mut self, index: u16, value: Scaled) {
@@ -5518,27 +5521,13 @@ impl Universe {
     }
 
     pub fn set_int_param(&mut self, param: IntParam, value: i32) {
-        let expected = self.stores.int_param(param);
         self.stores.set_int_param(param, value);
         self.mark_cell_changed(DependencyBank::IntParam, u32::from(param.raw()));
-        self.record_pure_paragraph_mutation(crate::PureParagraphMutation::IntParam {
-            param,
-            expected,
-            value,
-            global: false,
-        });
     }
 
     pub fn set_int_param_global(&mut self, param: IntParam, value: i32) {
-        let expected = self.stores.int_param(param);
         self.stores.set_int_param_global(param, value);
         self.mark_cell_changed(DependencyBank::IntParam, u32::from(param.raw()));
-        self.record_pure_paragraph_mutation(crate::PureParagraphMutation::IntParam {
-            param,
-            expected,
-            value,
-            global: true,
-        });
     }
 
     #[must_use]
@@ -5946,6 +5935,10 @@ impl ExpansionState for Universe {
         range: std::ops::Range<u64>,
     ) -> Option<crate::RootSpanId> {
         self.stores.registered_root_span_id(registration, range)
+    }
+
+    fn direct_root_span_for_origin(&self, origin: OriginId) -> Option<crate::RootSpanId> {
+        self.stores.direct_root_span_id(origin)
     }
 
     fn root_span_for_origin(&self, origin: OriginId) -> Option<crate::RootSpanId> {

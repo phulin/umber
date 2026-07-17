@@ -179,7 +179,7 @@ For each candidate record, in order:
 
 1. prove that its starting anchor and consumed source spans map unchanged;
 2. prepare, but do not yet apply, its ending input transition;
-3. validate its front-end dependencies, supported mutation preconditions, and
+3. validate its front-end dependencies, count/integer mutation state, and
    virtual effects;
 4. import its retained hlist before applying any mutation;
 5. validate the separate break dependencies and import finished lines when
@@ -209,22 +209,39 @@ new cache or correctness identity.
 
 ## Mutations, effects, and barriers
 
-The implemented paragraph subset may replay ordered count-register and
-integer-parameter writes and supported detached stream text. Replay first
-validates the complete precondition sequence and imports retained nodes; only
-then does it call ordinary aggregate mutation APIs in the recorded order.
+The implemented paragraph subset may replay count-register and
+integer-parameter survivors plus supported detached stream text. Cold setters
+do not append paragraph-specific records. Instead, paragraph entry opens a
+fresh environment-journal epoch and captures a lazy 64-bit aHash fingerprint
+of the complete count/integer state. At paragraph exit, the compacted journal
+suffix yields one final-value redo per surviving root/global cell; writes that
+were local to a balanced group have already disappeared.
 
-Unsupported writes, nonzero or mutation-bearing group transitions, input
-continuations, output routines, display math, `\scantokens`, mid-paragraph
-input opening, `\endinput`, and untracked World access remain explicit
-barriers. A paragraph that starts and finishes at group depth zero may contain
-fully discharged groups when its mutation log is empty: it has no entry group
-to replace and needs no group redo. The empty-mutation condition matters
-because the current redo log does not retain the nested scope of a local
-count/integer assignment. During simplification, a barrier must prefer
-ordinary execution over broadening redo semantics. New mutation/effect
-families are added only when a measured corpus shows that the barrier
-materially limits useful aligned replay.
+The common replay path compares the incoming fingerprint once and applies the
+compact redo. If the fingerprint differs, only the surviving cells' recorded
+entry values are checked before reuse. This admits the same root write script
+after unrelated count/integer changes while keeping cold setter overhead to
+cache invalidation. A rare 64-bit collision is an accepted performance tradeoff
+for this experimental replay layer.
+
+Unsupported writes, changed nonzero entry groups, input continuations, output
+routines, display math, `\scantokens`, mid-paragraph input opening,
+`\endinput`, and untracked World access remain explicit barriers. A paragraph
+that starts and finishes at group depth zero may contain fully discharged
+groups, including local count/integer writes: there is no entry frame to
+replace, and group compaction removes local writes before redo extraction.
+Inside an open group, any surviving count/integer write remains conservative
+because final values alone cannot reproduce assignment ownership.
+
+Paragraph recording begins provisionally in outer vertical mode so expansion
+reads made by the paragraph-starting token are captured. If the delivered
+command leaves the engine in vertical mode, its recording and mutation
+checkpoint are discarded immediately. Only the command that actually enters
+horizontal mode owns the paragraph region. This keeps vertical glue,
+penalties, assignments, and macro setup out of retained hlists. When a scanner
+has read one source token ahead, input alignment uses that pending token's
+rooted start anchor and validates the full raw source transition before
+discarding the token on a hit.
 
 ## One execution loop
 
@@ -321,18 +338,19 @@ read-set or provenance contract.
 4. **Path-separated verification.** Re-run slow pagination-changing,
    cross-generation interaction, and fast height/page-preserving Gentle
    cases. Require cold parity, exact page accounting, and the explicit
-   1,000-edit tier. The first final balanced runs replayed 246 paragraphs per
-   slow edit with exact cold parity, but lost 35.800--45.193 ms across the two
-   slow edits and 58.240--70.547 ms including priming. Admitting mutation-free
-   zero-to-zero group transitions later raised replay to 257 paragraphs and a
-   twelve-pair run reduced the mean slow loss to 16.066 ms while keeping the
-   fast-path mean flat at -0.935 ms.
+   1,000-edit tier. Earlier runs replayed 246--257 paragraphs but incorrectly
+   allowed a vertical prelude to share the following paragraph's region. The
+   corrected boundary replays 132 finished-line paragraphs per slow edit and
+   preserves exact cold DVI across the full four-edit Gentle matrix.
 5. **Cleanup and release decision.** Collapse the generic memo runtime to the
    facilities still used, remove obsolete opt-in layers only after dependency
    checks, and decide paragraph default enablement from balanced release
-   measurements. The accepted-history layer remains default-disabled: 617 of
-   889 observed Gentle paragraphs are still barriered, chiefly because a
-   complete scoped group transition/redo substrate is not yet available.
+   measurements. The accepted-history layer remains default-disabled. In the
+   corrected Gentle run, 132 regions replay and 525 recorded regions hit
+   barriers; macro-generated paragraph starts that have no clean root-source
+   alignment after vertical setup are not recorded. Recovering those requires
+   a separate late-alignment design with an explicit cold-prefix identity, not
+   a weaker vertical/paragraph boundary.
 6. **Deferred page work.** Design direct page/shipout artifact patching only
    after paragraph replay reaches its measured slow-path ceiling. It is not a
    blocker for this plan.

@@ -2031,6 +2031,23 @@ impl Stores {
         self.env.set_count_global(index, value);
     }
 
+    pub(crate) fn count_int_fingerprint(&mut self) -> u64 {
+        self.env.count_int_fingerprint()
+    }
+
+    pub(crate) fn begin_paragraph_mutations(
+        &mut self,
+    ) -> crate::env::paragraph::ParagraphMutationCheckpoint {
+        self.env.begin_paragraph_mutations()
+    }
+
+    pub(crate) fn finish_paragraph_mutations(
+        &mut self,
+        checkpoint: crate::env::paragraph::ParagraphMutationCheckpoint,
+    ) -> crate::PureParagraphMutationSummary {
+        self.env.finish_paragraph_mutations(checkpoint)
+    }
+
     pub fn set_dimen(&mut self, index: u16, value: Scaled) {
         self.env.set_dimen(index, value);
     }

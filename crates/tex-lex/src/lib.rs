@@ -2836,6 +2836,11 @@ impl InputStack {
             return Ok(None);
         };
         ensure_source_registered(source, stores);
+        if let Some(pending) = source.frame.pending.front() {
+            return Ok(stores
+                .direct_root_span_for_origin(pending.origin())
+                .map(RootSpanId::start_anchor));
+        }
         if source.frame.pending.is_empty()
             && source.frame.state == LexerState::SkippingBlanks
             && source
@@ -2954,6 +2959,7 @@ impl InputStack {
     #[must_use]
     pub fn prepare_paragraph_transition(
         &self,
+        stores: &impl ExpansionState,
         starting_span: RootSpanId,
         consumed_spans: &[RootSpanId],
         ending_span: RootSpanId,
@@ -2966,11 +2972,7 @@ impl InputStack {
         let InputFrame::Source(source) = &self.frames[frame_index] else {
             return None;
         };
-        if source.input_record.is_some()
-            || source.scantokens
-            || !source.frame.pending.is_empty()
-            || source.layout_cursor.is_none()
-        {
+        if source.input_record.is_some() || source.scantokens || source.layout_cursor.is_none() {
             return None;
         }
         let source_summary_index = ending_input
@@ -2999,7 +3001,7 @@ impl InputStack {
             return None;
         }
         let cursor = source.layout_cursor.as_ref()?;
-        let current_document_offset = source.frame.physical_line_start.checked_add(
+        let lexer_document_offset = source.frame.physical_line_start.checked_add(
             usize::try_from(
                 source_coordinate(source)
                     .byte_offset
@@ -3007,6 +3009,24 @@ impl InputStack {
             )
             .ok()?,
         )?;
+        let current_document_offset = if let Some(pending) = source.frame.pending.front() {
+            let pending_start = stores
+                .direct_root_span_for_origin(pending.origin())?
+                .start_anchor();
+            if pending_start != starting_span {
+                return None;
+            }
+            let pending_range = cursor
+                .document_range_at_or_after(pending_start, source.frame.physical_line_start)?;
+            if pending_range.start != pending_range.end
+                || pending_range.start > lexer_document_offset
+            {
+                return None;
+            }
+            pending_range.start
+        } else {
+            lexer_document_offset
+        };
         let start = cursor.document_range_at_or_after(starting_span, current_document_offset)?;
         if start.start != current_document_offset || start.start != start.end {
             return None;

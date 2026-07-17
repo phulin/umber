@@ -1277,6 +1277,64 @@ fn source_text_span_deopts_for_pending_delivery_and_source_transition() {
 }
 
 #[test]
+fn pending_paragraph_anchor_requires_direct_root_provenance() {
+    let mut fragments = FragmentStore::new();
+    let (fragment, _) = fragments
+        .append(Arc::from(&b"ab"[..]), 1)
+        .expect("fragment appends");
+    let layout = EditorLayout::new(
+        "root.tex",
+        LayoutGeneration::new(1),
+        vec![Piece::new(fragment, 0, 2)],
+        &fragments,
+    )
+    .expect("layout is valid");
+    let mut input = InputStack::new(MemoryInput::new("ab"));
+    input.install_root_layout_cursor(
+        LayoutCursor::new(&layout, &fragments).expect("layout cursor freezes"),
+    );
+    let mut stores = Universe::new();
+    stores
+        .install_editor_fragments(&fragments, &layout)
+        .expect("fragment metadata installs");
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+
+    let direct = input
+        .next_traced_token(&mut stores)
+        .expect("valid source")
+        .expect("direct token");
+    let expected = stores
+        .direct_root_span_for_origin(direct.origin())
+        .expect("direct token has rooted source")
+        .start_anchor();
+    assert!(input.push_current_source_pending(direct));
+    assert_eq!(
+        input
+            .current_root_delivery_anchor(&mut stores)
+            .expect("direct anchor"),
+        Some(expected)
+    );
+    assert_eq!(
+        input.next_traced_token(&mut stores).expect("pending token"),
+        Some(direct)
+    );
+
+    let inserted_origin = stores.inserted_origin(
+        InsertedOriginKind::NoExpand,
+        direct.token().expect("semantic token"),
+        direct.origin(),
+    );
+    let inserted = TracedTokenWord::pack(direct.token().expect("semantic token"), inserted_origin);
+    assert!(input.push_current_source_pending(inserted));
+    assert_eq!(
+        input
+            .current_root_delivery_anchor(&mut stores)
+            .expect("inserted pending token is not alignable"),
+        None
+    );
+}
+
+#[test]
 fn physical_byte_coordinates_preserve_crlf_trailing_spaces_and_utf8() {
     let mut stores = Universe::new();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);

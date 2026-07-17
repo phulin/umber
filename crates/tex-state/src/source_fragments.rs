@@ -62,6 +62,17 @@ pub struct RootSpanId {
 }
 
 impl RootSpanId {
+    /// Returns the zero-width anchor at the beginning of this rooted span.
+    #[must_use]
+    pub const fn start_anchor(self) -> Self {
+        Self {
+            piece: self.piece,
+            start: self.start,
+            end: self.start,
+            content: self.content,
+        }
+    }
+
     #[must_use]
     pub const fn piece(self) -> PieceId {
         self.piece

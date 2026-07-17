@@ -339,6 +339,9 @@ pub struct PureMemoStats {
     pub paragraph_inserts: u64,
     pub paragraph_commands_skipped: u64,
     pub paragraph_mutations_replayed: u64,
+    /// Hits whose incoming count/int fingerprint differed, admitted because
+    /// unchanged source and read dependencies establish the same write script.
+    pub paragraph_relaxed_state_replays: u64,
     pub paragraph_imported_bytes: u64,
     pub paragraph_line_hits: u64,
     pub paragraph_hlist_fallbacks: u64,
@@ -419,6 +422,10 @@ pub struct RecordedParagraphRegion {
     /// Stable source ancestry parallel to the expanded delivery trace.
     pub trace_spans: Vec<Option<RootSpanId>>,
     pub dependencies: Vec<ObservedDependency>,
+    /// Complete count/int state required before applying `mutations`.
+    pub mutation_entry_fingerprint: u64,
+    /// Complete count/int state after applying `mutations`.
+    pub mutation_exit_fingerprint: u64,
     pub mutations: Vec<PureParagraphMutation>,
     pub effects: Vec<crate::DetachedVirtualEffect>,
     pub ending_input: InputSummary,
@@ -461,6 +468,15 @@ pub enum PureParagraphMutation {
         value: i32,
         global: bool,
     },
+}
+
+/// Cold paragraph mutation accounting derived once from the environment journal.
+#[derive(Clone, Debug)]
+pub struct PureParagraphMutationSummary {
+    pub entry_fingerprint: u64,
+    pub exit_fingerprint: u64,
+    pub journal_rewound: bool,
+    pub mutations: Vec<PureParagraphMutation>,
 }
 
 /// Strong key used to verify a compact candidate bucket.
@@ -519,7 +535,7 @@ pub struct PureMemoRuntime {
     pretolerance: bool,
     page_episodes: bool,
     shipout_episodes: bool,
-    paragraph_recording: Option<Vec<PureParagraphMutation>>,
+    paragraph_recording: Option<crate::env::paragraph::ParagraphMutationCheckpoint>,
     prior_paragraphs: Vec<RecordedParagraphRegion>,
     /// Stable-source alignment index for the ordered accepted paragraph trace.
     prior_paragraph_starts: HashMap<RootSpanId, usize>,
@@ -841,20 +857,23 @@ impl PureMemoRuntime {
         }
     }
 
-    pub(crate) fn begin_paragraph_recording(&mut self) {
+    pub(crate) fn begin_paragraph_recording(
+        &mut self,
+        checkpoint: crate::env::paragraph::ParagraphMutationCheckpoint,
+    ) {
         if self.paragraph_front_ends_enabled() {
-            self.paragraph_recording = Some(Vec::new());
+            self.paragraph_recording = Some(checkpoint);
         }
     }
 
-    pub(crate) fn record_paragraph_mutation(&mut self, mutation: PureParagraphMutation) {
-        if let Some(recording) = &mut self.paragraph_recording {
-            recording.push(mutation);
-        }
-    }
-
-    pub(crate) fn finish_paragraph_recording(&mut self) -> Option<Vec<PureParagraphMutation>> {
+    pub(crate) fn finish_paragraph_recording(
+        &mut self,
+    ) -> Option<crate::env::paragraph::ParagraphMutationCheckpoint> {
         self.paragraph_recording.take()
+    }
+
+    pub(crate) fn abandon_paragraph_recording(&mut self) -> bool {
+        self.paragraph_recording.take().is_some()
     }
 
     pub(crate) fn record_paragraph_hit(
@@ -862,6 +881,7 @@ impl PureMemoRuntime {
         commands: usize,
         mutations: usize,
         imported_bytes: usize,
+        relaxed_state: bool,
     ) {
         let Some(cache) = &mut self.cache else {
             return;
@@ -877,6 +897,10 @@ impl PureMemoRuntime {
             .stats
             .paragraph_mutations_replayed
             .saturating_add(mutations as u64);
+        cache.stats.paragraph_relaxed_state_replays = cache
+            .stats
+            .paragraph_relaxed_state_replays
+            .saturating_add(u64::from(relaxed_state));
         cache.stats.paragraph_imported_bytes = cache
             .stats
             .paragraph_imported_bytes

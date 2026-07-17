@@ -24,6 +24,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/env/box_bank.rs`: Dense-and-paged box slots combining semantic values with journal-owned assignment and coalescing state.
 - `src/env/group.rs`: Group stack, aftergroup/afterassignment handling, group mismatch types, and environment snapshot logic.
 - `src/env/overflow.rs`: Sparse e-TeX overflow register banks for high register numbers.
+- `src/env/paragraph.rs`: Lazy count/int paragraph fingerprints and journal-derived root survivor redo extraction.
 - `src/env/raw.rs`: Restore-only raw environment writes, semantic word iteration, shadow verification, and raw word helpers.
 - `src/env/tests.rs`: Unit tests for environment write barriers, grouping, globals, aftergroup, font banks, and raw restore behavior.
 - `src/epoch.rs`: Monotonic epoch stamps used to coalesce journal entries within a state epoch.
