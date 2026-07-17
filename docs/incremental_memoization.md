@@ -1049,6 +1049,36 @@ value projection. Executor deltas fell from +74.663/+68.110 ms to
 and inverse restart, dependency/barrier/provenance counts, batching, tracing,
 and the final 14 retained / 3 re-shipped / 83 adopted suffix split held.
 
+The independent parent acceptance rerun then performed exactly one bounded
+four-pair, same-process AB/BA comparison after one warm-up under the default
+paragraph-only policy. Enabled-minus-disabled paired means were +74.281,
++31.387, +65.301, and +10.855 ms across the large insertion, follow-up,
+inverse removal, and height-preserving substitution. The executor owned
++58.597, +28.515, +51.102, and +9.298 ms of those deltas; named paragraph
+recording phases totaled about 20.896, 3.265, 22.324, and 1.597 ms. No named
+validation, identity, or import path replaced executor-side distributed
+necessary recording/allocation as the residual owner, so this evidence does
+not justify another micro-optimization issue.
+
+Paragraph hit/key-miss/validation-miss counts were 19/1,384/1, 3/79/0,
+19/1,385/0, and 0/5/0. There were no import failures, and matching candidates
+that reached validation hit at 95%, 100%, and 100%; the fourth edit had no
+validation-eligible candidate. Validation plus import was only 1.059, 0.159,
+1.080, and 0 ms versus 276.664, 271.477, 270.642, and 52.675 ms of enabled
+executor work. Barrier-region counts were 648/51/648/2. Exact-identity
+calls/time were 2/5.081 ms, 127/3.764 ms, 0/0, and 4/5.284 ms. Generation
+metadata retained 19,112,980 bytes; detached bytes and evictions were zero.
+
+All four enabled and disabled outputs remained byte-identical to their cold
+100-page DVI at 279,176/279,248/279,176/279,176 bytes. Restart accounting was
+14/86/0, 14/13/73, 14/86/0, and 14/3/83 retained/re-shipped/adopted pages;
+the second and fourth edits adopted one suffix subtree with 73 and 83 leaf
+hits. The macro edit matrix, Story/Gentle/TRIP/e-TRIP corpus, explicit
+1,000-edit tier, snapshot budgets, full workspace tests, rustfmt, dprint, and
+clippy passed. Because memo-enabled recompilation lost on every paired mean,
+paragraph memoization remains experimental and the parent acceptance issue
+remains open.
+
 ### Dependency-recorder baseline
 
 The state-layer recorder has an explicit disabled branch and no lock or atomic.

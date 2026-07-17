@@ -278,6 +278,36 @@ retained 14 pages, re-shipped three, and adopted the 83-page suffix. Host load
 made end-to-end paired deltas directionally unstable; the remaining paragraph
 memo reexecution overhead is tracked independently by `umber2-vfqs.15.4.2`.
 
+The final independent parent acceptance rerun after all seven attribution
+children used one bounded four-pair, same-process AB/BA comparison with one
+warm-up and the default paragraph-only policy. Enabled-minus-disabled paired
+means for the large insertion, follow-up insertion, inverse removal, and
+height-preserving substitution were +74.281, +31.387, +65.301, and +10.855 ms.
+Memo-enabled recompilation therefore still lost on every edit. The additive
+stage split assigned +58.597, +28.515, +51.102, and +9.298 ms to the executor;
+the named paragraph recording phases accounted for about 20.896, 3.265,
+22.324, and 1.597 ms. The remaining cost is executor-side distributed
+necessary recording and allocation rather than validation/import, exact
+identity, or a newly independent dominant micro-path.
+
+Paragraph hit/key-miss/validation-miss counts were 19/1,384/1, 3/79/0,
+19/1,385/0, and 0/5/0, with no import failures. Candidates that reached
+validation therefore hit at 95%, 100%, and 100%; the fourth edit had no
+validation-eligible candidate. Validation plus import cost 1.059, 0.159,
+1.080, and 0 ms, far below enabled executor time. Recorded barrier-region
+counts were 648, 51, 648, and 2. Exact-identity calls/time were 2/5.081 ms,
+127/3.764 ms, 0/0, and 4/5.284 ms. Generation metadata retained 19,112,980
+bytes; detached retention and evictions stayed zero.
+
+All revisions matched cold output exactly at 100 pages and
+279,176/279,248/279,176/279,176 DVI bytes. Restart accounting was
+14/86/0, 14/13/73, 14/86/0, and 14/3/83 retained/re-shipped/adopted pages;
+the second and fourth edits adopted one suffix subtree with 73 and 83 leaf
+hits. The committed edit matrix, all four external corpus cases, explicit
+1,000-edit tier, snapshot budgets, workspace tests, rustfmt, dprint, and clippy
+passed. The release gate remains failed solely because recording paragraphs
+does not beat the disabled control.
+
 The paragraph-reexecution follow-up first reproduced the delivery-path shift
 in a direct two-run AB/BA same-process comparison. The large edit moved from
 41,334 scalar commands and 84,395 physical-source span tokens disabled to
