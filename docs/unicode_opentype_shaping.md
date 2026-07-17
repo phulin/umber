@@ -1,17 +1,14 @@
 # Native Unicode and OpenType/TrueType Shaping
 
-Status: staged implementation; Stages 1 and 2 are implemented. This document amends the
-shaping-ownership decision in `docs/web_font_bundles.md` for OpenType-selected
-fonts and defines the engine-side shaping architecture that supersedes its
-Stage 7.
+Status: text-shaping foundation implemented; remaining work is tracked in the
+single linear `umber2-y2ei` plan. This document defines the engine-side shaping
+architecture used by OpenType-only fonts and by TFM-style text selections that
+the modern layout policy maps to OpenType resources.
 
-**Scope of this pass.** Implementation work (Stages 1-4 below) targets the
-HTML backend only. The shaping kernel's data model deliberately carries no
-HTML- or DOM-specific concepts — glyph IDs and absolute positions in scaled
-points, nothing else — so that a later PDF consumer (Stage 6) can read
-`tex-shape`'s output directly instead of requiring a redesign. PDF output is
-not implemented as part of this pass; see "Output side" below for why the
-data model already accommodates it.
+**Scope.** The implemented shaping work targets modern HTML layout. The
+shaping kernel remains backend-neutral—glyph IDs and positions in scaled
+points, nothing HTML- or DOM-specific—but PDF glyph embedding is a separate
+future concern and is not part of the linear HTML epic.
 
 ## Relationship to the existing OpenType resource architecture
 
@@ -19,24 +16,23 @@ data model already accommodates it.
 _acquisition_: `FontRequest`/`ResolvedFont`, content-addressed identity, and a
 validated `OpenTypeFont { cmap, metrics, shaping: ShapingTables, math,
 metadata }` produced by `crates/tex-fonts/src/opentype/`. That work is done.
-`ShapingTables` retains raw `gdef`/`gsub`/`gpos` table bytes but nothing
-applies them; no shaping engine exists.
+`tex-shape` now applies the validated face through rustybuzz and the
+shape/break/reshape pipeline consumes its cluster advances.
 
 That document states its model explicitly: _"browser owns glyph selection,
 advances, kerning, ligatures... inside a run"_ — it deliberately avoids an
 engine-side shaper and accepts that HTML output cannot guarantee
 glyph-coordinate equality inside a text run. This document amends that
-decision for OpenType-selected fonts: the engine shapes text itself, using
-`rustybuzz`, so that line-breaking gets real widths, kerning, and ligatures
-instead of an approximation, and so that any future glyph-exact output
-backend has an authoritative shaped-glyph stream to consume. TFM-selected
-fonts are entirely unaffected by this document; they keep the existing
-byte-indexed lig/kern automaton.
+decision for OpenType-backed fonts: the engine shapes text itself, using
+`rustybuzz`, so line-breaking gets real widths, kerning, and ligatures instead
+of an approximation. `ClassicTfmExact` keeps the existing byte-indexed
+lig/kern automaton. Under `OpenTypePreferred`, an exact client-supplied mapping
+may transparently route TFM-style text syntax through the same Unicode and
+OpenType shaping path; that policy is specified in
+`docs/web_font_bundles.md` and tracked by `umber2-y2ei.12`.
 
-This is tracked as a continuation of `umber2-y2ei` (its Stage 7 description —
-"add advanced OpenType text support... mark positioning, and the supported
-shaping boundary" — is superseded by the design below) rather than a new
-epic.
+All work is tracked directly under `umber2-y2ei`. The former nested epic
+`umber2-y2ei.11` is retained only as historical issue provenance.
 
 ## Shaping engine choice: rustybuzz, not harfbuzz-rs
 
@@ -126,8 +122,10 @@ to the OpenType cmap and advances. Stage 3 removes the need for that
 compatibility TFM when it adds OpenType-only font selection and synthesized
 fontdimens.
 
-- TFM-selected fonts keep their exact current behavior: 256-character cap,
-  existing lig/kern automaton, no DVI/TRIP/e-TRIP fixture risk.
+- TFM-selected fonts under `ClassicTfmExact` keep their exact current behavior:
+  256-character cap, existing lig/kern automaton, and byte-identical parity
+  fixtures. `OpenTypePreferred` may instead resolve a versioned mapping and
+  route text through the OpenType variant.
 - OpenType-selected fonts check the real `cmap` for character existence
   instead of `u8::try_from`, which alone fixes the false "missing character"
   behavior independent of shaping.
@@ -144,12 +142,14 @@ classically come from a TFM's param section: interword space/stretch/shrink
 symbol/extension arrays. A font selected from OpenType data alone has none of
 this.
 
-OpenType-only selection uses the explicit syntax
+Explicit OpenType-only selection uses the syntax
 `\font\name=opentype:<logical-name>`, followed by the ordinary optional
 `at <dimension>` or `scaled <integer>` size clause. The prefix is part of the
-engine syntax, not the logical resource name. An unprefixed `\font` remains a
-TFM request with byte-for-byte compatible behavior; the engine does not probe
-one source type and fall back to the other.
+engine syntax, not the logical resource name. An unprefixed `\font` remains
+TFM-style document syntax. `ClassicTfmExact` resolves it only as TFM;
+`OpenTypePreferred` may use an exact client mapping keyed by TFM identity and
+recorded mapping policy. It never probes filenames or substitutes a platform
+font by name.
 
 The current mapping is **OpenType fontdimen synthesis version 1**, exposed as
 `tex_fonts::OPENTYPE_FONTDIMEN_SYNTHESIS_VERSION`. At the selected size it is:
@@ -169,11 +169,12 @@ OpenType fonts have no intrinsic TeX design size, so an omitted size and
 and computed only from validated cmap/metric metadata. A future mapping change
 must increment the version constant and document the compatibility impact.
 
-Math-font parameter synthesis from the OpenType MATH table is out of scope.
+Math-font parameter synthesis is not part of text fontdimen mapping v1.
 Assigning an OpenType-only font through `\textfont`, `\scriptfont`, or
-`\scriptscriptfont` fails with an explicit capability error; TFM-backed fonts
-that also select OpenType shaping retain their classic math parameters. This
-is the seam for the existing Stage 8 (OpenType math support) work.
+`\scriptscriptfont` currently fails with an explicit capability error. The
+first next stage, `umber2-y2ei.9`, adds a direct `MathMetricsSource` over the
+OpenType MATH table rather than forcing its richer constants, kerns, variants,
+and assemblies into TeX's 22 symbol/extension parameters.
 
 `execute_font_definition` (`tex-exec/src/assignments/fonts.rs`) receives an
 explicit `FontSource::OpenType` variant carrying the selected validated
@@ -239,29 +240,24 @@ proven.
 
 ## Output side
 
-HTML rendering (`tex-out/src/html.rs`) keeps its current contract: Unicode
-text plus `@font-face`, browser shapes the run. There is no way to address a
-glyph by glyph ID from plain HTML/CSS, so engine-side shaping cannot, by
-itself, make HTML glyph-exact. Its value in this phase is entirely upstream
-of HTML: correct Unicode character-existence and width lookups, and
-shaping-informed line-breaking for OpenType-only fonts that have no TFM to
-approximate widths from.
+HTML prose remains Unicode text plus the retained `@font-face`. Umber owns
+shaping-informed line breaking and fixed run anchors; the browser rasterizes
+the same font instance and may differ only in bounded subpixel ink placement
+inside a run. It cannot reflow the line or move later events.
 
-The workspace has since gained a real PDF backend
-(`docs/pdf_backend.md`, `crates/tex-out/src/pdf.rs`), but it is scoped to
-pdfTeX parity: TFM/PK-derived Type3 bitmap glyph streams, not OpenType font
-embedding with glyph-ID-addressed text showing. Embedding validated OpenType
-programs as Type0/CID-keyed fonts and emitting glyph-show operators driven
-directly by `tex-shape`'s `ShapedRun` output is the natural next home for
-glyph-exact rendering, since PDF (unlike HTML) can address glyphs by ID. That
-work is deliberately out of scope for this pass, but the reason it stays
-cheap later is structural, not aspirational: `ShapedGlyph`/`ShapedRun`
-already contain exactly what a PDF glyph-show operator needs (glyph ID, x/y
-advance, x/y offset, all in `Scaled`) and nothing HTML-specific (no DOM
-node, no CSS unit, no string). A future PDF consumer reads `tex-shape`'s
-output the same way the HTML path will; only Stage 6's own new code
-(font embedding, subsetting, `ToUnicode` CMap construction) is net-new, and
-none of Stages 1-4 need revisiting to support it.
+OpenType math uses a stronger positioned contract. Umber consumes MATH
+constants, glyph information, italic corrections, math kern, accent
+attachments, variants, and assemblies, then emits every math glyph and rule at
+an engine-computed coordinate. Cmap-addressable selections use SVG text with
+the original WOFF2. Glyph-id-only variants and assembly pieces use extracted
+SVG outlines because HTML text APIs cannot request an arbitrary glyph id.
+MathML does not own layout. This yields authoritative formula geometry and
+glyph choice while accepting browser antialiasing differences for ordinary
+font-rendered glyphs.
+
+`ShapedGlyph` and the planned positioned-math glyph record remain
+backend-neutral. OpenType PDF embedding may consume them later, but PDF work is
+outside the linear HTML epic and does not block its release.
 
 ## Testing strategy
 
@@ -278,10 +274,14 @@ none of Stages 1-4 need revisiting to support it.
   rustybuzz/HarfBuzz behavioral drift during development. This is never a
   CI dependency and does not compromise the no-C-toolchain default build.
 - The existing WASM/browser HTML gate (`scripts/check-wasm.sh`) gains a case
-  using a non-Latin-1 Unicode OpenType-only document, verifying no TFM is
-  involved and the browser renders it, using DOM-text assertions rather than
-  pixel comparison, consistent with the existing "no coordinate equality
-  inside a run" HTML contract.
+  using non-Latin Unicode in explicit OpenType-only and mapped TFM-style text,
+  verifying the same WOFF2 drives engine shaping and browser installation.
+  DOM, font-load, artifact-identity, and coordinate assertions are normative;
+  screenshots remain diagnostic.
+- OpenType MATH fixtures cover scripts, fractions, radicals, accents,
+  operators, delimiters, variants, assemblies, cmap-addressable positioned
+  text, glyph-id-only outline fallback, and corrupt/cyclic assembly rejection
+  across native, WASM, and browser output.
 
 ## Staged rollout
 
@@ -293,10 +293,13 @@ none of Stages 1-4 need revisiting to support it.
 3. **Implemented.** OpenType-only `\font` path and fontdimen synthesis.
 4. **Implemented.** Two-pass shape/linebreak/reshape integration into
    `tex-exec` and `tex-typeset` — the largest chunk of this plan.
-5. Complex-script and bidi follow-on (separate stage).
-6. Glyph-exact PDF output via Type0/CID font embedding driven by
-   `tex-shape` (separate stage, depends on the PDF backend's font-embedding
-   support, not yet started).
+5. **Next.** Positioned OpenType MATH layout and HTML rendering
+   (`umber2-y2ei.9`).
+6. OpenType-preferred mappings for TFM-style text (`umber2-y2ei.12`).
+7. Advanced instances, variations, and feature policy (`umber2-y2ei.8`).
+8. Complex-script and bidi reordering (`umber2-y2ei.11.7`).
+9. Full native/WASM/browser coverage (`umber2-y2ei.7`).
+10. Superseded-path removal and release review (`umber2-y2ei.10`).
 
 Each stage should land as its own coherent change with fixtures, per the
 project's usual practice, rather than being split into smaller partial

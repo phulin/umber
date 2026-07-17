@@ -1,6 +1,7 @@
 # Coordinate-Identical HTML Output
 
-Status: implementation contract for artifact schema 13 and HTML schema 1.
+Status: implementation contract for artifact schema 13 and HTML schema 1,
+plus the linear OpenType completion contract below.
 
 HTML is a downstream view of committed `PageArtifact` values. It is not a page
 builder and never observes `Universe`, node handles, or mutable font state. DVI
@@ -8,6 +9,10 @@ remains the glyph-position conformance driver. HTML preserves the TeX page,
 box, rule, leader, special-anchor, and text-container coordinates described
 below while delegating glyph advances, shaping, ligatures, and kerning inside a
 text run to the browser.
+
+The next schema revision keeps this fixed-page model, makes
+`OpenTypePreferred` the modern font authority, and adds engine-positioned
+OpenType math. It does not delegate formula layout to MathML.
 
 ## Coordinate model
 
@@ -97,6 +102,43 @@ font-family list. A load failure is fatal in parity mode; platform fallback is
 never named. Artifact text is already in shipped visual order, so schema 1
 forces LTR visual ordering with `unicode-bidi: isolate-override`; semantic
 bidirectional reconstruction is outside this schema.
+
+## Planned OpenType-preferred text and positioned math
+
+The modern session policy may map TFM-style text syntax to an exact WOFF2
+bundle keyed by TFM content identity. The bundle's code-to-Unicode map feeds
+the existing rustybuzz shape/break/reshape path, so OpenType cluster advances
+rather than TFM widths locate line breaks and later events. The chosen policy,
+mapping version, TFM identity, OpenType program/instance identity, and
+fontdimen-synthesis version are committed in the artifact. `ClassicTfmExact`
+retains schema 1 behavior for parity documents, virtual fonts, and explicit
+legacy output.
+
+OpenType math extends the positioned event stream rather than inserting a
+reflowing subtree. The artifact records a fixed math container and ordered
+glyph/rule events conceptually shaped as:
+
+```text
+MathStart { id, x_sp, baseline_sp, width_sp, height_sp, depth_sp }
+MathGlyph { font_instance, glyph_id, unicode?, x_sp, baseline_sp, feature }
+MathRule  { x_sp, y_sp, width_sp, height_sp }
+MathEnd
+```
+
+`tex-typeset` derives these coordinates from validated MATH constants, italic
+corrections, math kern, top-accent attachments, variants, and assemblies.
+HTML serializes a fixed zero-layout SVG at the recorded anchor. When the
+selected glyph is reproducible through cmap, it emits positioned `<text>`
+using the retained WOFF2. Script-style substitutions use the recorded `ssty`
+feature. When a selected MATH variant or assembly part is addressable only by
+glyph id, the serializer emits its validated outline as a positioned SVG
+`<path>`. Fraction and radical rules are explicit rectangles or paths.
+
+Engine coordinates and glyph choice are authoritative. Browser font
+rasterization may differ in antialiasing and subpixel ink, but no glyph can
+move another glyph, resize the formula box, or reflow the page. A separate
+artifact-order accessibility representation remains geometry-free; it does
+not participate in layout.
 
 ## Font and asset contract
 

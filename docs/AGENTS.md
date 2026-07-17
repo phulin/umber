@@ -48,7 +48,14 @@ caching, and native parity.
 `web_font_bundles.md` specifies the OpenType-first native/WASM font-resource
 model: OTF/TTF native containers, WOFF2 browser containers, canonical program
 identity, batched acquisition, client-owned distribution, retained HTML asset
-reuse, and the migration rollout.
+reuse, modern `OpenTypePreferred` versus `ClassicTfmExact` layout policy,
+positioned OpenType MATH output, and the single linear migration rollout.
+
+`unicode_opentype_shaping.md` specifies rustybuzz text shaping, mapped
+TFM-style text in modern mode, shape/break/reshape integration, and the
+positioned-math output boundary. `html_output.md` remains the exact current
+HTML schema contract and defines its planned fixed-position OpenType text and
+math extension.
 
 `etex_primitives.md` is the extension-only e-TeX V2 primitive checklist and
 maps each family to its short-reference-manual contract and conformance gate.

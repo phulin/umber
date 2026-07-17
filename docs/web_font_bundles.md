@@ -1,10 +1,11 @@
 # OpenType Font Resources for Native and Web Rendering
 
-Status: long-term implementation plan. This document defines the font-resource
-architecture shared by native and WebAssembly execution. OpenType font data is
-the source of truth for layout and rendering. Native sessions accept OpenType
-or TrueType SFNT containers; browser sessions accept WOFF2 and decode the same
-OpenType tables for engine use.
+Status: implemented foundation and linear completion plan. This document
+defines the font-resource architecture shared by native and WebAssembly
+execution. OpenType font data is the modern source of truth for layout and
+rendering. Native sessions accept OpenType or TrueType SFNT containers;
+browser sessions accept WOFF2 and decode the same OpenType tables for engine
+use. Exact TFM behavior remains available as an explicit legacy policy.
 
 ## Decision summary
 
@@ -43,6 +44,13 @@ they are fetched, authenticated, prefetched, cached, and installed. Umber owns
 the request contract, structural validation, resource limits, OpenType
 interpretation, deterministic identity, artifact binding, and output reuse.
 
+New-document sessions use `OpenTypePreferred`: an exact client mapping may
+upgrade a TFM-style text-font selection to a WOFF2/OpenType program without
+changing document syntax. `ClassicTfmExact` preserves historical metrics,
+lig/kern programs, virtual fonts, math parameters, and byte-oriented output.
+Transparency is a user-facing selection rule, never an identity shortcut: the
+chosen policy and every TFM/OpenType/mapping version enter committed identity.
+
 ## Goals and non-goals
 
 The completed architecture must:
@@ -55,7 +63,9 @@ The completed architecture must:
 - compute immutable identities after decoding and validation;
 - use the same selected font for layout, artifacts, and HTML;
 - preserve exact page, box, rule, and text-run anchor coordinates while
-  allowing the browser to shape within a run;
+  allowing bounded browser rasterization differences inside a text run;
+- derive modern text and math layout from the same OpenType program that HTML
+  installs, including engine-positioned math from the MATH table;
 - support embedded and content-addressed manifest HTML assets;
 - make duplicate provisioning idempotent only for identical resources;
 - fail explicitly on malformed, unsupported, conflicting, or unavailable
@@ -65,8 +75,7 @@ The completed architecture must:
 
 This architecture does not:
 
-- require coordinate equality for individual glyphs inside a browser-shaped
-  text run;
+- require pixel equality for browser-rasterized prose glyphs;
 - define a universal font CDN, package catalog, or name-to-URL convention;
 - convert OTF or TTF to WOFF2 during a browser session;
 - search operating-system fonts implicitly;
@@ -223,6 +232,43 @@ font instances and output pages. Selected sizes do not duplicate the font
 object. Session and long-lived render ownership use explicit retain/release
 accounting so cached font bytes cannot leak across revisions indefinitely.
 
+## Layout policy and mapped TFM selections
+
+The session records one versioned layout policy:
+
+```rust
+pub enum FontLayoutPolicy {
+    OpenTypePreferred,
+    ClassicTfmExact,
+}
+```
+
+`OpenTypePreferred` is the default for actively authored documents and HTML
+preview. A TFM-style text selection may resolve a client-supplied mapping
+bundle containing the exact TFM content identity, a complete used-code to
+Unicode map, the selected OpenType program/instance identity, WOFF2 bytes,
+and versioned feature and fontdimen policies. Umber converts legacy character
+codes through that map, then uses OpenType cmap membership and rustybuzz
+cluster advances for packing and line breaking. The retained WOFF2 is the
+same object later installed by HTML. Per-character `hmtx` substitution is not
+sufficient because kerning, ligatures, marks, and legal break boundaries are
+run properties.
+
+`ClassicTfmExact` preserves the existing byte-indexed metrics, lig/kern
+automaton, fontdimens, virtual-font composition, DVI constraints, and parity
+fixtures. A modern session may use a documented fallback to this policy only
+when a mapping or required OpenType capability is absent; the fallback is
+recorded in the font and artifact identity and is never a silent platform-font
+substitution. Virtual fonts remain classic until their programs can be lowered
+without losing composition semantics. Classic math families remain available
+independently of modern text selection while OpenType MATH rolls out.
+
+One compilation uses one recorded authority per font across every requested
+output. HTML cannot line-break with OpenType metrics while a DVI or PDF from
+the same accepted run claims TFM geometry. Cache and artifact identity include
+the layout policy, TFM identity when present, OpenType program and instance,
+encoding-map version, fontdimen-synthesis version, and fallback result.
+
 ## Native integration
 
 Native applications resolve `FontRequest` values from explicit files,
@@ -309,11 +355,22 @@ protocol or mandatory Umber catalog.
 
 ## HTML behavior
 
-HTML preserves exact TeX page geometry and text-run anchors. The browser owns
-glyph selection, advances, kerning, ligatures, and ink placement inside a run
-under the fixed feature, variation, direction, and synthesis policy recorded
-by the font instance. A browser-shaped run may differ slightly in width from
-the engine's line construction without moving any later positioned event.
+HTML preserves exact engine page geometry and text-run anchors. For prose,
+Umber shapes before line breaking and materialization; HTML emits Unicode runs
+with the identical OpenType instance and fixed feature, variation, direction,
+and synthesis policy. The browser rasterizes and may make bounded subpixel ink
+choices inside the fixed run, but it cannot reflow the line or move any later
+positioned event.
+
+Math is not delegated to MathML layout. Umber parses and validates the selected
+font's MATH table, selects glyphs and assemblies, and computes every script,
+fraction, radical, accent, operator, delimiter, rule, and box coordinate. HTML
+emits a fixed positioned math container. Ordinary cmap-addressable glyphs use
+positioned SVG text with the retained WOFF2; `ssty` selections use the recorded
+feature policy. MATH variants or assembly pieces that are addressable only by
+glyph id use extracted SVG outlines. Rules are explicit rectangles or paths.
+The engine geometry and glyph choice are authoritative; only browser text
+rasterization and antialiasing may differ.
 
 Visible text uses Unicode text and the acquired OpenType `cmap`. Accessibility
 text remains a separate artifact-order layer. Unknown characters, missing
@@ -372,91 +429,79 @@ protocol; no family-specific engine binding is introduced.
 
 ## Staged implementation plan
 
-The implementation is tracked by Beads epic `umber2-y2ei`.
+The implementation is one linear chain under Beads epic `umber2-y2ei`.
+The former nested shaping epic `umber2-y2ei.11` is historical only; its
+children are direct stages in this chain.
 
-### Stage 1: freeze resource and identity contracts
+### Completed foundation
 
-Tracked by `umber2-y2ei.2`.
+1. `umber2-y2ei.1`: rewrite the roadmap around OpenType resources.
+2. `umber2-y2ei.2`: freeze resource and identity contracts.
+3. `umber2-y2ei.3`: implement the shared validated OpenType core.
+4. `umber2-y2ei.4`: acquire fonts through batched `NeedResources`.
+5. `umber2-y2ei.5`: expose client-driven WASM orchestration.
+6. `umber2-y2ei.6`: retain selected resources for HTML.
+7. `umber2-y2ei.11.1`: split TFM and OpenType character metrics.
+8. `umber2-y2ei.11.2`: add the pure rustybuzz shaping kernel.
+9. `umber2-y2ei.11.3`: add OpenType-only font selection and text fontdimens.
+10. `umber2-y2ei.11.4`: integrate two-pass shape, break, and reshape.
 
-Define `FontRequest`, `ResolvedFont`, container capabilities, object identity,
-canonical program identity, instance identity, duplicate semantics, limits,
-and shared native/WASM test vectors. The contract contains no URLs, catalog
-records, or asynchronous callbacks.
+### Next 1: positioned OpenType math
 
-### Stage 2: implement the shared OpenType core
+Tracked by `umber2-y2ei.9`; this is the first new implementation stage.
 
-Tracked by `umber2-y2ei.3`; depends on stage 1.
+Parse and validate MATH constants, glyph information, italic corrections,
+math kern, accent attachments, variants, and assemblies. Replace lossy
+projection into TeX's symbol/extension fontdimens with a `MathMetricsSource`
+queried by the existing math-list conversion kernels. Emit fixed positioned
+HTML math using ordinary WOFF2-backed SVG text where cmap can reproduce the
+chosen glyph, and SVG outline fallback for glyph-id-only variants and assembly
+parts. MathML does not own layout.
 
-Implement bounded OTF, TTF, collection, and WOFF2 decoding; canonical program
-identity; metrics and `cmap` projection; supported GSUB/GPOS extraction; and
-immutable font-program storage. Prove equivalent OTF/TTF and WOFF2 fixtures
-produce the same program identity and projected metrics.
+### Next 2: OpenType-preferred mappings for TFM-style text
 
-### Stage 3: integrate batched font acquisition
+Tracked by `umber2-y2ei.12`; depends on positioned math.
 
-Tracked by `umber2-y2ei.4`; depends on stage 2.
+Make `OpenTypePreferred` the modern authoring/HTML default. Resolve exact
+client mappings for TFM-style text selections, use the WOFF2's Unicode map,
+fontdimens, and rustybuzz metrics for layout, and retain `ClassicTfmExact` for
+old documents, virtual fonts, and explicit parity work.
 
-Generalize the host-neutral session to return fonts in `NeedResources`, accept
-typed responses, detect conflicts and no progress, and retain selected font
-resources before layout. Collect all currently knowable font misses in one
-deterministic batch.
+### Next 3: advanced OpenType instances and features
 
-### Stage 4: expose client-driven WASM orchestration
+Tracked by `umber2-y2ei.8`; depends on the mapped-text policy.
 
-Tracked by `umber2-y2ei.5`; depends on stage 3.
+Add collections, variation axes, named/default instances, complete feature and
+script/language identity, mark positioning coverage, resource sharing across
+instances, and an optional local `hb-shape` fixture cross-check. The engine
+continues to own layout shaping.
 
-Expose the low-level resource state machine and a high-level authored
-JavaScript facade that accepts an application resolver. Test concurrency,
-cancellation, workers, transfer, client caching, hints, partial responses, and
-progress without embedding any distribution policy in the package.
+### Next 4: bidi and complex scripts
 
-### Stage 5: reuse selected fonts in HTML
+Tracked by `umber2-y2ei.11.7`; depends on advanced instances and features.
 
-Tracked by `umber2-y2ei.6`; depends on stage 4.
+Add Unicode Bidi Algorithm level resolution, mixed-direction segmentation,
+mirroring, run reordering, and pass-2 visual-order materialization for RTL and
+reordering scripts without changing LTR output.
 
-Record font program and instance identities in artifacts and generate embedded
-or manifest HTML from the already retained font objects. Remove any post-layout
-font acquisition path. Verify one WOFF2 fetch serves WASM layout and browser
-installation.
+### Next 5: native, WASM, and browser vertical coverage
 
-### Stage 6: complete native/WASM and CM vertical coverage
+Tracked by `umber2-y2ei.7`; depends on bidi and complex scripts.
 
-Tracked by `umber2-y2ei.7`; depends on stage 5.
+Exercise equivalent native and WOFF2 resources, mapped TFM-style text,
+non-Latin Unicode, positioned math, variations, embedded and manifest assets,
+workers, caching, Chromium, and Firefox. Tests wait for the exact
+content-derived face, reject fallback, and compare engine coordinates while
+allowing only the documented rasterization differences.
 
-Exercise OTF/TTF native loading and WOFF2 WASM loading with equivalent CMU
-fixtures. Verify metrics, font identity, artifact selection, HTML text, asset
-digests, browser installation, and coordinate anchors across native, WASM,
-Chromium, and Firefox.
+### Next 6: remove superseded delivery paths and release
 
-### Stage 7: add advanced OpenType text support
+Tracked by `umber2-y2ei.10`; depends on full vertical coverage.
 
-Tracked by `umber2-y2ei.8`; depends on stage 6.
-
-Add collections, variation axes, feature policies, script/language selection,
-mark positioning, and the supported shaping boundary.
-
-This stage's shaping-ownership boundary is superseded by
-`docs/unicode_opentype_shaping.md`: rather than keeping shaping entirely
-inside the browser, the engine shapes OpenType-selected text itself via
-`rustybuzz` so that line-breaking uses real widths, kerning, and ligatures.
-See that document for the full design; TFM-selected fonts are unaffected.
-
-### Stage 8: add OpenType math support
-
-Tracked by `umber2-y2ei.9`; depends on stage 7.
-
-Parse and validate MATH constants, italic corrections, variants, assemblies,
-and math glyph information. Integrate them with math layout without inventing
-family-specific mappings or auxiliary metrics files.
-
-### Stage 9: remove superseded font-delivery paths and release
-
-Tracked by `umber2-y2ei.10`; depends on stage 8.
-
-Delete superseded web-font binding, preload, and post-finalization APIs; migrate
-native, WASM, worker, examples, and documentation to `NeedResources`; complete
-resource-limit, corruption, cache-lifetime, browser, and licensing review; and
-ship the OpenType resource path as the supported architecture.
+Delete superseded web-font binding, preload, separate encoding-map, and
+post-finalization acquisition APIs. Migrate supported callers, finish resource
+lifetime/security/performance/licensing review, and ship the modern policy
+with `ClassicTfmExact` as the explicit compatibility mode.
 
 ## Exit criteria
 
@@ -469,6 +514,10 @@ The architecture is complete when:
 - artifacts bind exact font program and instance identities;
 - HTML reuses retained font bytes without a second resolution phase;
 - embedded and manifest modes install without platform fallback;
+- modern mapped text uses one retained OpenType program for layout and HTML,
+  while `ClassicTfmExact` remains byte-compatible;
+- OpenType MATH controls formula geometry and fixed positioned HTML math
+  without delegating layout to MathML;
 - the core package contains no distribution catalog or name-to-URL policy;
 - client resolvers can use static assets, manifests, CDNs, private stores, and
   persistent caches without changing the engine protocol;
