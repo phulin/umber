@@ -36,6 +36,64 @@
     "banner": "BibTeX 0.99d (TeX Live 2025); kpathsea 6.4.1"
   },
   "normalizations": [],
+  "standard_styles": [
+    {
+      "name": "plain",
+      "source": "TeX Live 2025 texmf-dist/bibtex/bst/base/plain.bst",
+      "path": "styles/plain.bst",
+      "bytes": 20614,
+      "sha256": "6e41cb2104896774fb7e7660ac5a9ea08db822ec9ed0bb64480ba818312a47d5"
+    },
+    {
+      "name": "apalike",
+      "source": "TeX Live 2025 texmf-dist/bibtex/bst/base/apalike.bst",
+      "path": "styles/apalike.bst",
+      "bytes": 24636,
+      "sha256": "96b7f47340d473f21fe586dba22fa202da8bc655d803a5f34f244b4ec0f009de"
+    }
+  ],
+  "standard_style_execution_cases": [
+    {
+      "name": "plain",
+      "files": [
+        {
+          "path": "cases/plain/plain.aux",
+          "bytes": 62,
+          "sha256": "831100cd040f9d91b97ac43cdd3c36f3700f91d27642cae67c026c8c73b0c695"
+        },
+        {
+          "path": "cases/plain/references.bib",
+          "bytes": 118,
+          "sha256": "acffac16031611694c174a2d282fa126bc8364aa7ea371b576b62c4be0906cc0"
+        },
+        {
+          "path": "cases/plain/plain.bbl",
+          "bytes": 145,
+          "sha256": "19c658825897830ccdf7ed7893a30bf06937062bba367d0fe0c3b35808e9ec4b"
+        }
+      ]
+    },
+    {
+      "name": "apalike",
+      "files": [
+        {
+          "path": "cases/apalike/apalike.aux",
+          "bytes": 64,
+          "sha256": "070c54a310514bf60203bf102cbff42456fe8556b88cf9bdaafced6bee41217b"
+        },
+        {
+          "path": "cases/apalike/references.bib",
+          "bytes": 118,
+          "sha256": "acffac16031611694c174a2d282fa126bc8364aa7ea371b576b62c4be0906cc0"
+        },
+        {
+          "path": "cases/apalike/apalike.bbl",
+          "bytes": 155,
+          "sha256": "409306c36d66b834ef674357d7457501c39ebda9dd9bc960f2aaf06cde72be56"
+        }
+      ]
+    }
+  ],
   "cases": [
     {
       "name": "smoke",

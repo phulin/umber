@@ -182,13 +182,17 @@ impl Lexer<'_> {
     fn integer(&mut self, location: SourceLocation) {
         self.bump();
         let start = self.at;
+        if self.at < self.bytes.len() && self.peek() == b'-' {
+            self.bump();
+        }
+        let digits = self.at;
         while self.at < self.bytes.len()
             && self.peek().is_ascii_digit()
             && self.work <= self.limits.work
         {
             self.bump();
         }
-        if start == self.at {
+        if digits == self.at {
             self.error(DiagnosticKind::Syntax, location, "expected digits after #");
             return;
         }

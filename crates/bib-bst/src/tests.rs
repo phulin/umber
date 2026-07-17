@@ -46,6 +46,17 @@ fn compiles_committed_smoke_style() {
 }
 
 #[test]
+fn compiles_imported_standard_styles() {
+    for source in [
+        include_bytes!("../../../tests/corpus/bibtex/styles/plain.bst").as_slice(),
+        include_bytes!("../../../tests/corpus/bibtex/styles/apalike.bst").as_slice(),
+    ] {
+        let result = compile(source, CompileLimits::default());
+        assert!(result.is_success(), "{:?}", result.diagnostics());
+    }
+}
+
+#[test]
 fn recovery_reaches_later_command() {
     let source = b"ENTRY { title } { } { }\nBOGUS { broken }\nREAD\nSORT\n";
     let result = compile(source, CompileLimits::default());
@@ -94,6 +105,22 @@ fn declaration_before_use_and_self_recursion_are_diagnostics() {
             .iter()
             .any(|diagnostic| diagnostic.kind() == DiagnosticKind::IllegalRecursion)
     );
+}
+
+#[test]
+fn compiles_signed_literals_and_quoted_builtins() {
+    let source =
+        b"ENTRY { } { } { }\nFUNCTION { control } { #-1 'skip$ if$ }\nREAD\nEXECUTE { control }\n";
+    let result = compile(source, CompileLimits::default());
+    let style = result.program().expect("standard BST syntax");
+    assert!(matches!(
+        style.functions()[0].instructions(),
+        [
+            Instruction::PushInteger(-1),
+            Instruction::PushFunction(_),
+            Instruction::Builtin(crate::Builtin::If)
+        ]
+    ));
 }
 
 #[test]

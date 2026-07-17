@@ -191,14 +191,6 @@ impl Compiler {
         }
     }
     fn variables(&mut self, location: SourceLocation, integer: bool) {
-        if self.read_seen {
-            self.error(
-                DiagnosticKind::Phase,
-                location,
-                "global declarations must precede READ",
-            );
-            return;
-        }
         for name in self.identifiers_group() {
             if integer {
                 self.declare(
@@ -234,14 +226,6 @@ impl Compiler {
         self.declare(&name, SymbolKind::StringMacro(id), location, |_, _| {});
     }
     fn function(&mut self, location: SourceLocation) {
-        if self.read_seen {
-            self.error(
-                DiagnosticKind::Phase,
-                location,
-                "FUNCTION must precede READ",
-            );
-            return;
-        }
         let Some(name) = self.one_identifier_group() else {
             self.recover();
             return;
@@ -374,6 +358,23 @@ impl Compiler {
                         Some((_, SymbolKind::UserFunction(id))) => {
                             instructions.push(Instruction::PushFunction(id))
                         }
+                        Some((_, SymbolKind::Builtin(builtin))) => {
+                            if let Some(id) = self.builtin_function(builtin, name, token.location) {
+                                instructions.push(Instruction::PushFunction(id));
+                            }
+                        }
+                        Some((
+                            id,
+                            SymbolKind::EntryField(_)
+                            | SymbolKind::StringMacro(_)
+                            | SymbolKind::Special(SpecialSymbol::Crossref)
+                            | SymbolKind::Special(SpecialSymbol::EntryMax)
+                            | SymbolKind::Special(SpecialSymbol::GlobalMax),
+                        )) => {
+                            if let Some(function) = self.read_function(id, name, token.location) {
+                                instructions.push(Instruction::PushFunction(function));
+                            }
+                        }
                         Some((
                             id,
                             SymbolKind::GlobalInteger(_)
@@ -382,11 +383,6 @@ impl Compiler {
                             | SymbolKind::EntryString(_)
                             | SymbolKind::Special(SpecialSymbol::SortKey),
                         )) => instructions.push(Instruction::Assign(id)),
-                        Some(_) => self.error(
-                            DiagnosticKind::Syntax,
-                            token.location,
-                            "quoted BST symbol is not assignable or callable",
-                        ),
                         None => self.error(
                             DiagnosticKind::UnknownSymbol,
                             token.location,
@@ -560,28 +556,16 @@ impl Compiler {
         Some((name.clone(), token.location))
     }
     fn function_id(&mut self, name: &str, location: SourceLocation) -> Option<FunctionId> {
-        match self
+        let symbol = self
             .declarations
             .lookup(name)
             .and_then(|id| self.declarations.symbol(id))
-        {
-            Some(symbol) => match symbol.kind() {
-                SymbolKind::UserFunction(id) => Some(*id),
+            .map(|symbol| (symbol.name().to_owned(), symbol.kind().clone()));
+        match symbol {
+            Some((symbol_name, kind)) => match kind {
+                SymbolKind::UserFunction(id) => Some(id),
                 SymbolKind::Builtin(builtin) => {
-                    if self.functions.len() >= self.limits.functions {
-                        self.error(
-                            DiagnosticKind::Limit,
-                            location,
-                            "BST function limit exceeded",
-                        );
-                        return None;
-                    }
-                    let id = FunctionId(self.functions.len() as u32);
-                    self.functions.push(CompiledFunction::new(
-                        format!("<builtin:{}>", symbol.name()),
-                        vec![Instruction::Builtin(*builtin)],
-                    ));
-                    Some(id)
+                    self.builtin_function(builtin, &symbol_name, location)
                 }
                 _ => {
                     self.error(
@@ -601,6 +585,48 @@ impl Compiler {
                 None
             }
         }
+    }
+    fn builtin_function(
+        &mut self,
+        builtin: Builtin,
+        name: &str,
+        location: SourceLocation,
+    ) -> Option<FunctionId> {
+        if self.functions.len() >= self.limits.functions {
+            self.error(
+                DiagnosticKind::Limit,
+                location,
+                "BST function limit exceeded",
+            );
+            return None;
+        }
+        let id = FunctionId(self.functions.len() as u32);
+        self.functions.push(CompiledFunction::new(
+            format!("<builtin:{name}>"),
+            vec![Instruction::Builtin(builtin)],
+        ));
+        Some(id)
+    }
+    fn read_function(
+        &mut self,
+        symbol: SymbolId,
+        name: &str,
+        location: SourceLocation,
+    ) -> Option<FunctionId> {
+        if self.functions.len() >= self.limits.functions {
+            self.error(
+                DiagnosticKind::Limit,
+                location,
+                "BST function limit exceeded",
+            );
+            return None;
+        }
+        let id = FunctionId(self.functions.len() as u32);
+        self.functions.push(CompiledFunction::new(
+            format!("<read:{name}>"),
+            vec![Instruction::Read(symbol)],
+        ));
+        Some(id)
     }
     fn declare(
         &mut self,

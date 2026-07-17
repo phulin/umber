@@ -139,9 +139,12 @@ Fatal VM artifacts remain in `partial_files` and are never publishable.
 `bib-engine` exposes the in-process `ClassicBibCommand`; native Umber stages
 only requested files into the VFS for `umber bibtex job`, then publishes the
 returned artifacts. It does not invoke a system BibTeX executable. The smoke
-fixture exercises this boundary both cold and cached. Standard-style fixture
-import and full byte parity remain separately tracked by `umber2-ild0.21`;
-they must not be replaced with normalized or compatibility-allowance tests.
+fixture exercises this boundary both cold and cached. `umber2-ild0.21` imports
+the TeX Live 2025 `plain.bst` and `apalike.bst` bytes with small, exact BBL
+execution fixtures, and `bib-bst` compiles both styles hermetically. The
+first VM stack-type failure on those fixtures is deliberately tracked by
+`umber2-ild0.22`; the imported bytes and reference BBLs must not be replaced
+with normalized or compatibility-allowance tests.
 
 ## Upstream test inventory
 

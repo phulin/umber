@@ -680,6 +680,29 @@ regen_bibtex_area() {
       printf 'Classic BibTeX fixture updated: tests/corpus/bibtex/cases/smoke/%s\n' "$file" >&2
     fi
   done
+  for style in plain apalike; do
+    case_dir="${tmp_root}/${style}"
+    mkdir -p "$case_dir"
+    cp "${repo_root}/tests/corpus/bibtex/cases/${style}/${style}.aux" \
+      "${repo_root}/tests/corpus/bibtex/cases/${style}/references.bib" \
+      "${repo_root}/tests/corpus/bibtex/styles/${style}.bst" "$case_dir/"
+    (
+      cd "$case_dir"
+      env -i PATH=/usr/bin:/bin LC_ALL=C LANGUAGE=C \
+        TEXMFCNF="${source_dir}/texk/kpathsea" BIBINPUTS=. BSTINPUTS=. \
+        "$executable" "$style" >/dev/null
+    )
+    file="${style}.bbl"
+    if ! cmp -s "${case_dir}/${file}" \
+      "${repo_root}/tests/corpus/bibtex/cases/${style}/${file}"; then
+      cp "${case_dir}/${file}" \
+        "${repo_root}/tests/corpus/bibtex/cases/${style}/${file}.tmp"
+      mv "${repo_root}/tests/corpus/bibtex/cases/${style}/${file}.tmp" \
+        "${repo_root}/tests/corpus/bibtex/cases/${style}/${file}"
+      printf 'Classic BibTeX fixture updated: tests/corpus/bibtex/cases/%s/%s\n' \
+        "$style" "$file" >&2
+    fi
+  done
   manifest_tmp="${tmp_root}/manifest.json"
   jq \
     --arg bbl_bytes "$(wc -c < "${fixture_dir}/smoke.bbl" | tr -d ' ')" \
@@ -688,12 +711,22 @@ regen_bibtex_area() {
     --arg blg_sha256 "$(sha256_file "${fixture_dir}/smoke.blg")" \
     --arg terminal_bytes "$(wc -c < "${fixture_dir}/smoke.terminal" | tr -d ' ')" \
     --arg terminal_sha256 "$(sha256_file "${fixture_dir}/smoke.terminal")" \
+    --arg plain_bbl_bytes "$(wc -c < "${repo_root}/tests/corpus/bibtex/cases/plain/plain.bbl" | tr -d ' ')" \
+    --arg plain_bbl_sha256 "$(sha256_file "${repo_root}/tests/corpus/bibtex/cases/plain/plain.bbl")" \
+    --arg apalike_bbl_bytes "$(wc -c < "${repo_root}/tests/corpus/bibtex/cases/apalike/apalike.bbl" | tr -d ' ')" \
+    --arg apalike_bbl_sha256 "$(sha256_file "${repo_root}/tests/corpus/bibtex/cases/apalike/apalike.bbl")" \
     '(.cases[] | select(.name == "smoke") | .files[] | select(.role == "bbl-output")) |=
        (.bytes = ($bbl_bytes | tonumber) | .sha256 = $bbl_sha256) |
      (.cases[] | select(.name == "smoke") | .files[] | select(.role == "blg-output")) |=
        (.bytes = ($blg_bytes | tonumber) | .sha256 = $blg_sha256) |
      (.cases[] | select(.name == "smoke") | .files[] | select(.role == "terminal-output")) |=
-       (.bytes = ($terminal_bytes | tonumber) | .sha256 = $terminal_sha256)' \
+       (.bytes = ($terminal_bytes | tonumber) | .sha256 = $terminal_sha256) |
+     (.standard_style_execution_cases[] | select(.name == "plain") | .files[] |
+       select(.path == "cases/plain/plain.bbl")) |=
+       (.bytes = ($plain_bbl_bytes | tonumber) | .sha256 = $plain_bbl_sha256) |
+     (.standard_style_execution_cases[] | select(.name == "apalike") | .files[] |
+       select(.path == "cases/apalike/apalike.bbl")) |=
+       (.bytes = ($apalike_bbl_bytes | tonumber) | .sha256 = $apalike_bbl_sha256)' \
     "${repo_root}/tests/corpus/bibtex/manifest.json" > "$manifest_tmp"
   mv "$manifest_tmp" "${repo_root}/tests/corpus/bibtex/manifest.json"
   rm -rf "$tmp_root"

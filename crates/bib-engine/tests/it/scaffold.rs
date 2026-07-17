@@ -181,6 +181,63 @@ fn classic_fixture_manifest_and_inventory_are_complete_and_pinned() {
     );
     assert_eq!(manifest["normalizations"].as_array().map(Vec::len), Some(0));
 
+    let standard_styles = manifest["standard_styles"]
+        .as_array()
+        .expect("standard styles must be an array");
+    assert_eq!(standard_styles.len(), 2);
+    for (style, name, source, path) in [
+        (
+            &standard_styles[0],
+            "plain",
+            "TeX Live 2025 texmf-dist/bibtex/bst/base/plain.bst",
+            "styles/plain.bst",
+        ),
+        (
+            &standard_styles[1],
+            "apalike",
+            "TeX Live 2025 texmf-dist/bibtex/bst/base/apalike.bst",
+            "styles/apalike.bst",
+        ),
+    ] {
+        assert_eq!(style["name"], name);
+        assert_eq!(style["source"], source);
+        assert_eq!(style["path"], path);
+        assert_file_identity(
+            &root.join(path),
+            style["bytes"]
+                .as_u64()
+                .expect("style bytes must be unsigned"),
+            style["sha256"]
+                .as_str()
+                .expect("style SHA-256 must be text"),
+        );
+    }
+    let standard_cases = manifest["standard_style_execution_cases"]
+        .as_array()
+        .expect("standard-style execution cases must be an array");
+    assert_eq!(standard_cases.len(), 2);
+    for (case, name) in standard_cases.iter().zip(["plain", "apalike"]) {
+        assert_eq!(case["name"], name);
+        let files = case["files"]
+            .as_array()
+            .expect("execution files must be an array");
+        assert_eq!(files.len(), 3);
+        for file in files {
+            let path = file["path"]
+                .as_str()
+                .expect("execution fixture path must be text");
+            assert_file_identity(
+                &root.join(path),
+                file["bytes"]
+                    .as_u64()
+                    .expect("execution bytes must be unsigned"),
+                file["sha256"]
+                    .as_str()
+                    .expect("execution SHA-256 must be text"),
+            );
+        }
+    }
+
     let cases = manifest["cases"]
         .as_array()
         .expect("cases must be an array");
@@ -221,6 +278,23 @@ fn classic_fixture_manifest_and_inventory_are_complete_and_pinned() {
             "terminal-output",
         ])
     );
+    for case in standard_cases {
+        for file in case["files"]
+            .as_array()
+            .expect("execution files must be an array")
+        {
+            let path = file["path"]
+                .as_str()
+                .expect("execution fixture path must be text");
+            let case_path = path
+                .strip_prefix("cases/")
+                .expect("execution fixture must live below cases/");
+            assert!(
+                declared.insert(case_path.to_owned()),
+                "duplicate path: {path}"
+            );
+        }
+    }
     assert_eq!(declared, imported_paths(&root.join("cases")));
 
     let inventory: Value = read_json(&root.join("inventory.json"));
