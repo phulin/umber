@@ -65,6 +65,7 @@ pub enum ClassicDatabaseDiagnosticKind {
     MissingCitation,
     MissingCrossref,
     CrossrefCycle,
+    UndefinedEntryType,
     Limit,
 }
 
@@ -499,6 +500,19 @@ impl<'a> Reader<'a> {
             .into_iter()
             .filter_map(|key| self.visible_entry(&key, &field_symbols, &mut BTreeSet::new(), 0))
             .collect::<Vec<_>>();
+        for entry in &entries {
+            if self
+                .style
+                .declarations()
+                .lookup(entry.entry_type())
+                .is_none()
+            {
+                self.diagnostic(
+                    ClassicDatabaseDiagnosticKind::UndefinedEntryType,
+                    format!("entry type for `{}` is not style-file defined", entry.key()),
+                );
+            }
+        }
         ClassicDatabase {
             entries: entries.into(),
             preambles: self.preambles.into(),

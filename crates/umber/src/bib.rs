@@ -134,18 +134,18 @@ pub struct BibCliError {
 }
 
 impl BibCliError {
-    fn command(status: BibExitStatus, terminal: &[u8]) -> Self {
+    pub(crate) fn command(status: BibExitStatus, terminal: &[u8]) -> Self {
         Self::message(
             status.code(),
             String::from_utf8_lossy(terminal).trim_end().to_owned(),
         )
     }
 
-    fn external(error: impl fmt::Display) -> Self {
+    pub(crate) fn external(error: impl fmt::Display) -> Self {
         Self::message(1, error.to_string())
     }
 
-    fn message(status: u8, message: impl Into<String>) -> Self {
+    pub(crate) fn message(status: u8, message: impl Into<String>) -> Self {
         Self {
             status,
             message: message.into(),

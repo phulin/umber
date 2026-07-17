@@ -21,6 +21,7 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `Cargo.toml`: package metadata, feature flags, workspace lint inheritance, and engine/test dependencies.
 - `src/expand_dump.rs`: implementation of the `expand-dump` CLI command through the shared engine session and dump primitive setup.
 - `src/bib.rs`: native host-file staging, resource retry, and detached artifact publication for the in-process `bib` command.
+- `src/classic_bib.rs`: native host-file staging and artifact publication for the in-process classic `bibtex` command.
 - `src/input_search.rs`: deterministic driver-owned TeX input and TFM font path resolution through World-backed reads.
 - `src/input_search/tests.rs`: focused TeX input/font area ordering, extension, and input-record coverage.
 - `src/latex_project.rs`: host-neutral transactional LaTeX/bibliography multipass orchestration, convergence, and atomic project acceptance.

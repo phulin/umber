@@ -707,13 +707,10 @@ impl BibliographySession {
     }
 }
 
-/// Phase-one no-op classic session.
-///
-/// It exists so callers can exercise explicit backend dispatch and neutral
-/// result plumbing before AUX parsing and classic resource requests land.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub struct ClassicBibSession {
     control: crate::classic::ClassicControlSession,
+    execution: crate::classic_execution::ClassicExecutionSession,
 }
 
 impl ClassicBibSession {
@@ -721,11 +718,21 @@ impl ClassicBibSession {
     pub fn new() -> Self {
         Self {
             control: crate::classic::ClassicControlSession::new(),
+            execution: crate::classic_execution::ClassicExecutionSession::new(),
         }
     }
 
     #[must_use]
     pub fn process(&mut self, job: &ClassicBibJob, snapshot: &VfsSnapshot) -> BibliographyAttempt {
-        self.control.process(job, snapshot)
+        match self
+            .control
+            .resolve(job.aux_path(), job.options(), snapshot, true)
+        {
+            Ok(control) => self
+                .execution
+                .process(job, control, snapshot, &mut self.control),
+            Err(crate::classic::ControlFailure::Need(batch)) => self.control.need(job, batch),
+            Err(error) => BibliographyAttempt::Failed(error.into_failure()),
+        }
     }
 }

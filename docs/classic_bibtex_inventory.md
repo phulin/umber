@@ -127,6 +127,22 @@ Umber's safety limits. Focused VM coverage lives in
 `bib-engine/src/classic_vm/tests.rs`; fixture-level output/diagnostic parity
 continues to be owned by the later command-parity phase.
 
+## Public execution and command boundary
+
+`umber2-ild0.11` connects the already separate classic phases without routing
+them through the Biber pipeline. `ClassicBibSession` now resolves the AUX
+closure, compiles the requested BST through a bounded cache, prepares the raw
+classic database through its independent cache, executes the bounded VM, and
+returns detached `.bbl` and `.blg` artifacts with warning or fatal history.
+Fatal VM artifacts remain in `partial_files` and are never publishable.
+
+`bib-engine` exposes the in-process `ClassicBibCommand`; native Umber stages
+only requested files into the VFS for `umber bibtex job`, then publishes the
+returned artifacts. It does not invoke a system BibTeX executable. The smoke
+fixture exercises this boundary both cold and cached. Standard-style fixture
+import and full byte parity remain separately tracked by `umber2-ild0.21`;
+they must not be replaced with normalized or compatibility-allowance tests.
+
 ## Upstream test inventory
 
 The classic Web2C suite consists of:

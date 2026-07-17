@@ -11,6 +11,7 @@ use umber::EngineMode as RunEngine;
 use umber::{DriverFile, FileSessionResolvers, PlannedFinalization};
 
 mod bib;
+mod classic_bib;
 mod expand_dump;
 mod watch;
 
@@ -52,13 +53,14 @@ fn run() -> Result<(), CliError> {
             run_tex(&opts)
         }
         Some("bib") => bib::run(args).map_err(CliError::Bib),
+        Some("bibtex") => classic_bib::run(args).map_err(CliError::Bib),
         Some("watch") => watch::run(args).map_err(CliError::Watch),
         None => {
             println!("umber {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
         Some(_) => Err(CliError::Usage(
-            "expected: umber <lex-dump|expand-dump|bib|run|watch> <input>",
+            "expected: umber <lex-dump|expand-dump|bib|bibtex|run|watch> <input>",
         )),
     }
 }

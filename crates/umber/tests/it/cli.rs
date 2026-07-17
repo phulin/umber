@@ -85,6 +85,42 @@ fn bib_command_has_exact_native_invocation_outputs_and_statuses() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // Regression exercises the native command with pinned files.
+fn bibtex_command_runs_the_pinned_classic_smoke_case_in_process() {
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/bibtex/cases/smoke");
+    let temp_dir = tempfile::tempdir().expect("create classic output directory");
+    for extension in ["aux", "bib", "bst"] {
+        fs::copy(
+            fixture.join(format!("smoke.{extension}")),
+            temp_dir.path().join(format!("smoke.{extension}")),
+        )
+        .expect("stage classic fixture");
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .arg("bibtex")
+        .arg(temp_dir.path().join("smoke"))
+        .output()
+        .expect("run native classic BibTeX command");
+    assert_eq!(output.status.code(), Some(0));
+    assert!(output.stderr.is_empty());
+    assert_eq!(
+        fs::read(temp_dir.path().join("smoke.bbl")).expect("generated BBL"),
+        fs::read(fixture.join("smoke.bbl")).expect("pinned BBL")
+    );
+    assert!(
+        output
+            .stdout
+            .starts_with(b"Warning--entry type for `knuth` is not style-file defined\n")
+    );
+    assert!(
+        fs::read(temp_dir.path().join("smoke.blg"))
+            .expect("generated BLG")
+            .starts_with(b"This is Umber classic BibTeX compatibility mode\n")
+    );
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // Regression exercises the native command with pinned files.
 fn bib_command_processes_pinned_full_bibtex_unicode_names() {
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/corpus/bib/upstream-2.22/tdata");

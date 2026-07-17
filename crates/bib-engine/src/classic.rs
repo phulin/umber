@@ -13,9 +13,8 @@ use umber_vfs::{
 };
 
 use crate::{
-    BibJob, BibOptions, BibliographyAttempt, BibliographyDocument, BibliographyFailure,
-    BibliographyHistory, BibliographyResult, BibliographyStats, ClassicBibFailure, ClassicBibJob,
-    ClassicBibLimits, ClassicBibOptions, ClassicBibliography, ClassicBibliographyStats,
+    BibJob, BibOptions, BibliographyAttempt, BibliographyFailure, ClassicBibFailure, ClassicBibJob,
+    ClassicBibLimits, ClassicBibOptions,
 };
 
 /// Explicit protocol selection after a TeX pass.
@@ -263,63 +262,11 @@ impl ClassicControlSession {
         }
     }
 
-    pub fn process(&mut self, job: &ClassicBibJob, snapshot: &VfsSnapshot) -> BibliographyAttempt {
-        match self.resolve(job.aux_path(), job.options(), snapshot, true) {
-            Ok(control) => {
-                self.previous_need = None;
-                match control.completeness() {
-                    ControlCompleteness::Complete => {
-                        let required = resource_requests(&control);
-                        let missing = match missing_resources(snapshot, required) {
-                            Ok(missing) => missing,
-                            Err(error) => {
-                                self.previous_need = None;
-                                return BibliographyAttempt::Failed(error.into_failure());
-                            }
-                        };
-                        if let Some(missing) = missing {
-                            return self.need(job, missing);
-                        }
-                        BibliographyAttempt::Finished(
-                            BibliographyResult::new(
-                                BibliographyHistory::Spotless,
-                                BibliographyDocument::Classic(Arc::new(
-                                    ClassicBibliography::from_control(&control),
-                                )),
-                                [],
-                                [],
-                                [],
-                                BibliographyStats::Classic(ClassicBibliographyStats::default()),
-                            )
-                            .expect("classic control results have no generated artifacts"),
-                        )
-                    }
-                    ControlCompleteness::None => BibliographyAttempt::Finished(
-                        BibliographyResult::new(
-                            BibliographyHistory::Spotless,
-                            BibliographyDocument::Classic(Arc::new(ClassicBibliography::empty())),
-                            [],
-                            [],
-                            [],
-                            BibliographyStats::Classic(ClassicBibliographyStats::default()),
-                        )
-                        .expect("empty classic control result is valid"),
-                    ),
-                    ControlCompleteness::Incomplete => BibliographyAttempt::Failed(failure(
-                        ClassicBibFailure::IncompleteControl,
-                        "classic bibliography control requires both \\bibstyle and \\bibdata",
-                    )),
-                }
-            }
-            Err(ControlFailure::Need(batch)) => self.need(job, batch),
-            Err(ControlFailure::Terminal(kind, message)) => {
-                self.previous_need = None;
-                BibliographyAttempt::Failed(failure(kind, message))
-            }
-        }
-    }
-
-    fn need(&mut self, job: &ClassicBibJob, batch: FileRequestBatch) -> BibliographyAttempt {
+    pub(crate) fn need(
+        &mut self,
+        job: &ClassicBibJob,
+        batch: FileRequestBatch,
+    ) -> BibliographyAttempt {
         if self
             .previous_need
             .as_ref()
@@ -336,7 +283,7 @@ impl ClassicControlSession {
         }
     }
 
-    fn resolve(
+    pub(crate) fn resolve(
         &mut self,
         root: &VirtualPath,
         options: &ClassicBibOptions,
@@ -497,39 +444,7 @@ fn command_value(line: &str, command: &str) -> Result<Option<String>, ControlFai
     Ok(Some(rest[1..end].to_owned()))
 }
 
-fn resource_requests(control: &ClassicControl) -> Vec<FileRequest> {
-    let mut requests = control
-        .databases()
-        .map(|name| {
-            FileRequest::new(
-                request_key(FileKind::ClassicBibData, &default_extension(name, "bib")),
-                name,
-            )
-        })
-        .collect::<Vec<_>>();
-    if let Some(style) = control.style() {
-        requests.push(FileRequest::new(
-            request_key(FileKind::BibStyle, &default_extension(style, "bst")),
-            style,
-        ));
-    }
-    requests
-}
-
-fn missing_resources(
-    snapshot: &VfsSnapshot,
-    requests: Vec<FileRequest>,
-) -> Result<Option<FileRequestBatch>, ControlFailure> {
-    let mut missing = Vec::new();
-    for request in requests {
-        if locate(snapshot, None, request.key())?.is_none() {
-            missing.push(request);
-        }
-    }
-    Ok((!missing.is_empty()).then(|| FileRequestBatch::new(missing, [])))
-}
-
-fn locate<'a>(
+pub(crate) fn locate<'a>(
     snapshot: &'a VfsSnapshot,
     exact: Option<&VirtualPath>,
     request: &FileRequestKey,
@@ -563,7 +478,7 @@ fn companion_paths(path: &VirtualPath) -> (VirtualPath, VirtualPath) {
     )
 }
 
-fn default_extension(name: &str, extension: &str) -> String {
+pub(crate) fn default_extension(name: &str, extension: &str) -> String {
     if name
         .rsplit('/')
         .next()
@@ -575,7 +490,7 @@ fn default_extension(name: &str, extension: &str) -> String {
     }
 }
 
-fn request_key(kind: FileKind, value: &str) -> FileRequestKey {
+pub(crate) fn request_key(kind: FileKind, value: &str) -> FileRequestKey {
     let name = value.strip_prefix("/job/").unwrap_or(value);
     FileRequestKey::new(kind, name).unwrap_or_else(|_| {
         FileRequestKey::new(kind, &format!("opaque/{:x}", fxhash(value)))
@@ -610,13 +525,13 @@ fn validate_limits(limits: ClassicBibLimits) -> Result<(), ControlFailure> {
     Ok(())
 }
 
-enum ControlFailure {
+pub(crate) enum ControlFailure {
     Need(FileRequestBatch),
     Terminal(ClassicBibFailure, String),
 }
 
 impl ControlFailure {
-    fn into_failure(self) -> BibliographyFailure {
+    pub(crate) fn into_failure(self) -> BibliographyFailure {
         match self {
             Self::Need(_) => BibliographyFailure::Classic(ClassicBibFailure::InternalInvariant),
             Self::Terminal(kind, _) => BibliographyFailure::Classic(kind),

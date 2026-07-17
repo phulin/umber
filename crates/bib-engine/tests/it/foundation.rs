@@ -184,11 +184,16 @@ fn classic_control_resolves_aux_bst_and_datasource_resources() {
     );
     provisioner.expect(&resources);
     for request in &resources.required {
+        let bytes = match request.key().kind() {
+            FileKind::BibStyle => b"ENTRY { } { } { } READ".to_vec(),
+            FileKind::ClassicBibData => b"@book{one}".to_vec(),
+            kind => panic!("unexpected classic resource kind: {kind:?}"),
+        };
         provisioner
             .provision(ResolvedFile {
                 request: request.key().clone(),
                 virtual_path: format!("/texlive/classic/{}", request.key().name()),
-                bytes: b"resource".to_vec(),
+                bytes,
                 expected_digest: None,
             })
             .expect("classic resource");
@@ -260,4 +265,79 @@ fn classic_resource_retry_rejects_an_unchanged_missing_batch() {
         session.process(&BibliographyJob::Classic(job), &snapshot),
         BibliographyAttempt::Failed(BibliographyFailure::Classic(ClassicBibFailure::NoProgress))
     ));
+}
+
+#[test]
+fn classic_smoke_executes_through_the_public_session_with_cold_and_cached_bytes() {
+    let mut provisioner = FileProvisioner::new(VfsLimits::default()).expect("limits");
+    provisioner
+        .register_user(
+            VirtualPath::user("smoke.aux").expect("fixture path"),
+            include_bytes!("../../../../tests/corpus/bibtex/cases/smoke/smoke.aux").to_vec(),
+        )
+        .expect("fixture input");
+    let job = ClassicBibJob::new(
+        VirtualPath::user("smoke.aux").expect("AUX path"),
+        ClassicBibOptions::default(),
+    );
+    let mut session = BibliographySession::classic();
+    let needs = match session.process(
+        &BibliographyJob::Classic(job.clone()),
+        &provisioner.snapshot(),
+    ) {
+        BibliographyAttempt::NeedResources(needs) => needs,
+        attempt => panic!("expected classic resource requests, got {attempt:?}"),
+    };
+    provisioner.expect(&needs);
+    for request in &needs.required {
+        let bytes = match request.key().kind() {
+            FileKind::ClassicBibData => {
+                include_bytes!("../../../../tests/corpus/bibtex/cases/smoke/smoke.bib").to_vec()
+            }
+            FileKind::BibStyle => {
+                include_bytes!("../../../../tests/corpus/bibtex/cases/smoke/smoke.bst").to_vec()
+            }
+            kind => panic!("unexpected resource kind: {kind:?}"),
+        };
+        provisioner
+            .provision(ResolvedFile {
+                request: request.key().clone(),
+                virtual_path: format!("/texlive/classic/{}", request.key().name()),
+                bytes,
+                expected_digest: None,
+            })
+            .expect("fixture resource");
+    }
+    let first = match session.process(
+        &BibliographyJob::Classic(job.clone()),
+        &provisioner.snapshot(),
+    ) {
+        BibliographyAttempt::Finished(result) => result,
+        attempt => panic!("expected classic execution, got {attempt:?}"),
+    };
+    assert_eq!(first.history(), BibliographyHistory::Warning);
+    assert_eq!(
+        first
+            .files()
+            .find(|file| file.path().as_str() == "/job/smoke.bbl")
+            .expect("BBL")
+            .bytes(),
+        include_bytes!("../../../../tests/corpus/bibtex/cases/smoke/smoke.bbl"),
+    );
+    assert!(
+        first
+            .files()
+            .find(|file| file.path().as_str() == "/job/smoke.blg")
+            .expect("BLG")
+            .bytes()
+            .starts_with(b"This is Umber classic BibTeX compatibility mode\n")
+    );
+    let second = match session.process(&BibliographyJob::Classic(job), &provisioner.snapshot()) {
+        BibliographyAttempt::Finished(result) => result,
+        attempt => panic!("expected cached classic execution, got {attempt:?}"),
+    };
+    assert_eq!(
+        first.files().map(GeneratedFile::bytes).collect::<Vec<_>>(),
+        second.files().map(GeneratedFile::bytes).collect::<Vec<_>>(),
+    );
 }
