@@ -1708,6 +1708,17 @@ impl Universe {
     }
 
     #[doc(hidden)]
+    pub fn record_pure_paragraph_phase_samples(
+        &mut self,
+        phase: crate::ParagraphRecordingPhase,
+        elapsed: std::time::Duration,
+        samples: u64,
+    ) {
+        self.pure_memo
+            .record_paragraph_phase_samples(phase, elapsed, samples);
+    }
+
+    #[doc(hidden)]
     pub fn record_pure_memo_not_attempted(&mut self, layer: crate::PureMemoLayer) {
         self.pure_memo.record_not_attempted(layer);
     }

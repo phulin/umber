@@ -244,6 +244,14 @@ the fork is swapped into the private executor only on success. Snapshots stay
 owner-exact and there is no general snapshot re-owner API; per-`Universe`
 cloning happens once per restart, never per checkpoint.
 
+Profiling builds split revision setup, restart forking, executor work,
+detached diagnostic/effect snapshots, paragraph-generation transition,
+splice/history construction, accepted-substrate publication/drop, and
+acceptance/pruning into additive session timings. DVI materialization remains
+a driver-owned timer outside `Session::advance`. These measurements are
+operational telemetry only; they do not enter snapshots, exact identity,
+revision acceptance, or output semantics.
+
 The session therefore holds at most two substrates — the accepted frozen
 `Universe` and one in-progress scratch fork — and only while an edit is
 executing. Both terminal outcomes return to one substrate:

@@ -151,6 +151,9 @@ pub struct ReuseMetrics {
     pub reexecuted_macro_text_span_tokens: usize,
     /// Ordinary physical-source character tokens handled by the batched text path.
     pub reexecuted_source_text_span_tokens: usize,
+    pub paragraph_source_recording_calls: u64,
+    pub paragraph_source_recording_nanos: u64,
+    pub paragraph_source_recording_timer_samples: u64,
     pub reexecuted_paragraphs: usize,
     pub same_history_attempts: usize,
     pub same_history_hash_mismatches: usize,
@@ -164,10 +167,25 @@ pub struct ReuseMetrics {
     pub suffixes_adopted: usize,
     pub same_history_stop: SameHistoryStop,
     pub restart_fork_latency: Duration,
+    /// Edit validation, accepted-output snapshots, and revision-layout setup.
+    pub revision_setup_latency: Duration,
+    /// Time inside the executor resume call, excluding session-owned setup.
+    pub executor_latency: Duration,
     pub reexecution_latency: Duration,
+    /// Copying detached diagnostics, effects, artifacts, and DVI page plans
+    /// out of the completed scratch execution.
+    pub output_snapshot_latency: Duration,
+    /// Publishing or discarding speculative paragraph roots and metadata.
+    pub generation_transition_latency: Duration,
     pub trace_validation_latency: Duration,
     pub trace_replay_latency: Duration,
     pub splice_latency: Duration,
+    /// Accepted-substrate replacement or retained-origin publication,
+    /// including release of the superseded generation.
+    pub substrate_transition_latency: Duration,
+    /// Pending-revision pruning and accepted-output view construction,
+    /// excluding `substrate_transition_latency`.
+    pub acceptance_latency: Duration,
 }
 
 /// Why identical-history suffix adoption did or did not stop re-execution.
@@ -790,6 +808,7 @@ impl Session {
         font_resolver: &mut dyn tex_exec::FontResolver,
         image_resolver: Option<&mut dyn tex_exec::PdfImageResolver>,
     ) -> Result<PendingRevision, SessionError> {
+        let revision_setup_started = Timer::start();
         self.validate_edit(next_revision, &edit)?;
         self.clear_render_maps();
         let old_source = self.source.clone();
@@ -820,6 +839,7 @@ impl Session {
             .ok_or(SessionError::MissingAcceptedSubstrate)?
             .world()
             .validate_recorded_inputs()?;
+        let revision_setup_latency = revision_setup_started.elapsed();
         let Some(restart_index) = restart_index else {
             let mut run = execute_revision(
                 &self.template,
@@ -887,17 +907,24 @@ impl Session {
         )?;
 
         let restart_fork_latency = advance.restart_fork_latency;
+        let executor_latency = advance.executor_latency;
         let reexecution_latency = advance.reexecution_latency;
+        let output_snapshot_latency = advance.output_snapshot_latency;
         let reexecuted_bytes = advance.reexecuted_bytes;
         let reexecuted_tokens = advance.reexecuted_tokens;
         let reexecuted_commands = advance.reexecuted_commands;
         let reexecuted_macro_text_span_tokens = advance.reexecuted_macro_text_span_tokens;
         let reexecuted_source_text_span_tokens = advance.reexecuted_source_text_span_tokens;
+        let paragraph_source_recording_calls = advance.paragraph_source_recording_calls;
+        let paragraph_source_recording_nanos = advance.paragraph_source_recording_nanos;
+        let paragraph_source_recording_timer_samples =
+            advance.paragraph_source_recording_timer_samples;
         let reexecuted_paragraphs = advance.reexecuted_paragraphs;
         let same_history_attempts = advance.same_history_attempts;
         let same_history_hash_mismatches = advance.same_history_hash_mismatches;
         let trace_validation_latency = advance.trace_validation_latency;
         let same_history_stop = advance.same_history_stop;
+        let generation_transition_started = Timer::start();
         if advance.convergence_old_index.is_some() {
             self.pure_memo.discard_paragraph_generation();
         } else {
@@ -906,6 +933,7 @@ impl Session {
                 .accept_paragraph_result_generation(advance.paragraph_generation_mark);
             self.pure_memo.accept_paragraph_generation();
         }
+        let generation_transition_latency = generation_transition_started.elapsed();
         let splice_started = Timer::start();
         let (effects, artifacts, pages, mut history, pending_substrate, mut reuse) =
             if let Some(old_index) = advance.convergence_old_index {
@@ -984,6 +1012,9 @@ impl Session {
                         reexecuted_commands,
                         reexecuted_macro_text_span_tokens,
                         reexecuted_source_text_span_tokens,
+                        paragraph_source_recording_calls,
+                        paragraph_source_recording_nanos,
+                        paragraph_source_recording_timer_samples,
                         reexecuted_paragraphs,
                         same_history_attempts,
                         same_history_hash_mismatches,
@@ -993,7 +1024,11 @@ impl Session {
                         suffixes_adopted: 1,
                         same_history_stop,
                         restart_fork_latency,
+                        revision_setup_latency,
+                        executor_latency,
                         reexecution_latency,
+                        output_snapshot_latency,
+                        generation_transition_latency,
                         trace_validation_latency,
                         ..ReuseMetrics::default()
                     },
@@ -1039,6 +1074,9 @@ impl Session {
                         reexecuted_commands,
                         reexecuted_macro_text_span_tokens,
                         reexecuted_source_text_span_tokens,
+                        paragraph_source_recording_calls,
+                        paragraph_source_recording_nanos,
+                        paragraph_source_recording_timer_samples,
                         reexecuted_paragraphs,
                         same_history_attempts,
                         same_history_hash_mismatches,
@@ -1048,14 +1086,16 @@ impl Session {
                         suffixes_adopted: 0,
                         same_history_stop,
                         restart_fork_latency,
+                        revision_setup_latency,
+                        executor_latency,
                         reexecution_latency,
+                        output_snapshot_latency,
+                        generation_transition_latency,
                         trace_validation_latency,
                         ..ReuseMetrics::default()
                     },
                 )
             };
-        reuse.splice_latency = splice_started.elapsed();
-        reuse.trace_replay_latency = reuse.splice_latency;
         for record in &mut history {
             record.revision = next_revision;
         }
@@ -1069,6 +1109,8 @@ impl Session {
         let history = retain_restorable_history(history, retained_substrate)?;
         reuse.trace_retained_bytes = std::mem::size_of_val(history.as_slice());
         let content_hash = ContentHash::from_bytes(next.as_bytes());
+        reuse.splice_latency = splice_started.elapsed();
+        reuse.trace_replay_latency = reuse.splice_latency;
         Ok(PendingRevision {
             session_output_id: self.output_id,
             base_revision: self.revision,
@@ -1112,6 +1154,7 @@ impl Session {
         &mut self,
         pending: PendingRevision,
     ) -> Result<AcceptedOutput, SessionError> {
+        let acceptance_started = Timer::start();
         self.validate_pending(&pending)?;
         let PendingRevision {
             revision,
@@ -1130,6 +1173,7 @@ impl Session {
             ..
         } = pending;
 
+        let substrate_transition_started = Timer::start();
         match substrate {
             PendingSubstrate::Retained {
                 scratch,
@@ -1141,6 +1185,7 @@ impl Session {
                 .retain_artifact_origins_from_fork(&scratch, &adopted_origins, &self.source_path)?,
             PendingSubstrate::Replaced(substrate) => self.substrate = Some(substrate),
         }
+        let substrate_transition_latency = substrate_transition_started.elapsed();
 
         let substrate_bytes = self
             .substrate
@@ -1187,7 +1232,12 @@ impl Session {
         self.dumped_format = dumped_format;
         self.expansion_stats = expansion_stats;
         self.accepted_retention = Some(retention);
-        Ok(self.output(reuse, retention))
+        let mut output = self.output(reuse, retention);
+        output.reuse.substrate_transition_latency = substrate_transition_latency;
+        output.reuse.acceptance_latency = acceptance_started
+            .elapsed()
+            .saturating_sub(substrate_transition_latency);
+        Ok(output)
     }
 
     fn validate_pending(&self, pending: &PendingRevision) -> Result<(), SessionError> {
@@ -1469,15 +1519,20 @@ struct AdvanceRun {
     reexecuted_commands: usize,
     reexecuted_macro_text_span_tokens: usize,
     reexecuted_source_text_span_tokens: usize,
+    paragraph_source_recording_calls: u64,
+    paragraph_source_recording_nanos: u64,
+    paragraph_source_recording_timer_samples: u64,
     reexecuted_paragraphs: usize,
     same_history_attempts: usize,
     same_history_hash_mismatches: usize,
     trace_validation_latency: Duration,
     same_history_stop: SameHistoryStop,
     restart_fork_latency: Duration,
+    executor_latency: Duration,
     reexecution_latency: Duration,
     dumped_format: bool,
     expansion_stats: tex_lex::ExpansionStats,
+    output_snapshot_latency: Duration,
 }
 
 struct ResumeSink<'a> {
@@ -1685,12 +1740,14 @@ fn execute_advance(
     let paragraph_generation_mark = scratch.paragraph_result_generation_mark();
     pure_memo.begin_paragraph_generation(true);
     scratch.install_pure_memo_runtime(std::mem::take(pure_memo));
+    let executor_started = Timer::start();
     let execution_result = executor.resume_with_context_and_checkpoints(
         &mut input,
         &mut scratch,
         &mut context,
         &mut sink,
     );
+    let executor_latency = executor_started.elapsed();
     *pure_memo = scratch.take_pure_memo_runtime();
     if execution_result.is_err() {
         pure_memo.discard_paragraph_generation();
@@ -1702,6 +1759,9 @@ fn execute_advance(
         main_control_dispatches,
         macro_text_span_tokens,
         source_text_span_tokens,
+        paragraph_source_recording_calls,
+        paragraph_source_recording_nanos,
+        paragraph_source_recording_timer_samples,
         ..
     } = execution_result?;
     let reexecution_latency = reexecution_started.elapsed();
@@ -1726,10 +1786,12 @@ fn execute_advance(
         SameHistoryStop::NoComparableBoundary
     };
     let expansion_stats = input.expansion_stats();
+    let output_snapshot_started = Timer::start();
     let effects = scratch.world().effect_records().to_vec();
     let artifacts = scratch.world().committed_artifacts().to_vec();
     let mut pages_through_stop = old_pages[..anchor.artifact_prefix].to_vec();
     pages_through_stop.extend(dvi_pages);
+    let output_snapshot_latency = output_snapshot_started.elapsed();
     Ok(AdvanceRun {
         scratch,
         paragraph_generation_mark,
@@ -1743,15 +1805,20 @@ fn execute_advance(
         reexecuted_commands: main_control_dispatches,
         reexecuted_macro_text_span_tokens: macro_text_span_tokens,
         reexecuted_source_text_span_tokens: source_text_span_tokens,
+        paragraph_source_recording_calls,
+        paragraph_source_recording_nanos,
+        paragraph_source_recording_timer_samples,
         reexecuted_paragraphs,
         same_history_attempts: sink.same_history_attempts,
         same_history_hash_mismatches: sink.same_history_hash_mismatches,
         trace_validation_latency: sink.trace_validation_latency,
         same_history_stop,
         restart_fork_latency,
+        executor_latency,
         reexecution_latency,
         dumped_format,
         expansion_stats,
+        output_snapshot_latency,
     })
 }
 

@@ -146,6 +146,8 @@ pub enum ParagraphRecordingPhase {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ParagraphRecordingStats {
+    /// Number of `Instant::now`/`elapsed` pairs used by these named phases.
+    pub timer_samples: u64,
     pub trace_capture_nanos: u64,
     pub front_end_dependency_nanos: u64,
     pub input_transition_nanos: u64,
@@ -164,6 +166,7 @@ impl ParagraphRecordingStats {
     #[must_use]
     pub fn saturating_since(self, earlier: Self) -> Self {
         Self {
+            timer_samples: self.timer_samples.saturating_sub(earlier.timer_samples),
             trace_capture_nanos: self
                 .trace_capture_nanos
                 .saturating_sub(earlier.trace_capture_nanos),
@@ -203,7 +206,7 @@ impl ParagraphRecordingStats {
         }
     }
 
-    fn add(&mut self, phase: ParagraphRecordingPhase, elapsed: Duration) {
+    fn add(&mut self, phase: ParagraphRecordingPhase, elapsed: Duration, samples: u64) {
         let target = match phase {
             ParagraphRecordingPhase::TraceCapture => &mut self.trace_capture_nanos,
             ParagraphRecordingPhase::FrontEndDependencies => &mut self.front_end_dependency_nanos,
@@ -221,6 +224,7 @@ impl ParagraphRecordingStats {
             ParagraphRecordingPhase::LineRetention => &mut self.line_retention_nanos,
         };
         *target = target.saturating_add(elapsed_nanos(elapsed));
+        self.timer_samples = self.timer_samples.saturating_add(samples);
     }
 }
 
@@ -1205,7 +1209,18 @@ impl PureMemoRuntime {
         elapsed: Duration,
     ) {
         if let Some(cache) = &mut self.cache {
-            cache.stats.paragraph_recording.add(phase, elapsed);
+            cache.stats.paragraph_recording.add(phase, elapsed, 1);
+        }
+    }
+
+    pub(crate) fn record_paragraph_phase_samples(
+        &mut self,
+        phase: ParagraphRecordingPhase,
+        elapsed: Duration,
+        samples: u64,
+    ) {
+        if let Some(cache) = &mut self.cache {
+            cache.stats.paragraph_recording.add(phase, elapsed, samples);
         }
     }
 

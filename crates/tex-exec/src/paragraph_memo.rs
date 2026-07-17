@@ -642,9 +642,10 @@ fn publish_recorded_region(
         return;
     };
     #[cfg(feature = "profiling-stats")]
-    stores.record_pure_paragraph_phase(
+    stores.record_pure_paragraph_phase_samples(
         ParagraphRecordingPhase::TraceCapture,
         std::time::Duration::from_nanos(recording.trace_capture_nanos),
+        recording.trace_capture_samples,
     );
     let dependency_started = start_phase();
     let (mut keys, expansion_barriers) = execution.finish_paragraph_expansion_recording();

@@ -1170,14 +1170,18 @@ pub struct ExpansionStats {
     pub provenance_nanos: u64,
     pub classification_meaning_nanos: u64,
     pub builder_append_nanos: u64,
+    pub paragraph_source_recording_nanos: u64,
     pub frame_step_timer_samples: u64,
     pub provenance_timer_samples: u64,
     pub classification_meaning_timer_samples: u64,
     pub builder_append_timer_samples: u64,
+    pub paragraph_source_recording_calls: u64,
+    pub paragraph_source_recording_timer_samples: u64,
     frame_step_timer_events: u64,
     provenance_timer_events: u64,
     classification_meaning_timer_events: u64,
     builder_append_timer_events: u64,
+    paragraph_source_recording_timer_events: u64,
 }
 
 #[cfg(feature = "profiling-stats")]
@@ -1208,6 +1212,7 @@ impl ExpansionStats {
             .saturating_add(self.provenance_nanos)
             .saturating_add(self.classification_meaning_nanos)
             .saturating_add(self.builder_append_nanos)
+            .saturating_add(self.paragraph_source_recording_nanos)
     }
 
     #[must_use]
@@ -3582,6 +3587,8 @@ impl InputStack {
                     if let Some(token) = source.frame.pending.pop_front() {
                         record_paragraph_source_delivery(
                             &mut self.paragraph_source_spans,
+                            #[cfg(feature = "profiling-stats")]
+                            &mut self.expansion_stats,
                             stores,
                             token,
                         );
@@ -3648,6 +3655,8 @@ impl InputStack {
                     let token = token.packed();
                     record_paragraph_source_delivery(
                         &mut self.paragraph_source_spans,
+                        #[cfg(feature = "profiling-stats")]
+                        &mut self.expansion_stats,
                         stores,
                         token,
                     );
@@ -3778,6 +3787,8 @@ impl InputStack {
                     if let Some(token) = source.frame.pending.pop_front() {
                         record_paragraph_source_delivery(
                             &mut self.paragraph_source_spans,
+                            #[cfg(feature = "profiling-stats")]
+                            &mut self.expansion_stats,
                             stores,
                             token,
                         );
@@ -3844,6 +3855,8 @@ impl InputStack {
                     let packed = token.packed();
                     record_paragraph_source_delivery(
                         &mut self.paragraph_source_spans,
+                        #[cfg(feature = "profiling-stats")]
+                        &mut self.expansion_stats,
                         stores,
                         packed,
                     );
@@ -4525,13 +4538,29 @@ fn decode_traced_token(token: TracedTokenWord) -> Token {
 #[inline(always)]
 fn record_paragraph_source_delivery(
     recording: &mut Option<Vec<RootSpanId>>,
+    #[cfg(feature = "profiling-stats")] stats: &mut ExpansionStats,
     stores: &impl ExpansionState,
     token: TracedTokenWord,
 ) {
+    #[cfg(feature = "profiling-stats")]
+    let started = if recording.is_some() {
+        stats.paragraph_source_recording_calls =
+            stats.paragraph_source_recording_calls.saturating_add(1);
+        should_sample_timer(&mut stats.paragraph_source_recording_timer_events).then(Instant::now)
+    } else {
+        None
+    };
     if let Some(recording) = recording
         && let Some(span) = stores.root_span_for_origin(token.origin())
     {
         recording.push(span);
+    }
+    #[cfg(feature = "profiling-stats")]
+    if let Some(started) = started {
+        stats.paragraph_source_recording_timer_samples = stats
+            .paragraph_source_recording_timer_samples
+            .saturating_add(1);
+        add_elapsed(&mut stats.paragraph_source_recording_nanos, started);
     }
 }
 

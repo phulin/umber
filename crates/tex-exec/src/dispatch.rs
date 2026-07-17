@@ -23,6 +23,11 @@ pub struct ExecutionStats {
     pub macro_text_span_tokens: usize,
     /// Ordinary physical-source characters delivered through the batched path.
     pub source_text_span_tokens: usize,
+    /// Physical deliveries inspected for stable paragraph-source recording.
+    pub paragraph_source_recording_calls: u64,
+    /// Sparse-sampled estimate of paragraph-source recording work.
+    pub paragraph_source_recording_nanos: u64,
+    pub paragraph_source_recording_timer_samples: u64,
     pub shipped_artifacts: Vec<ContentHash>,
     /// Precompiled DVI pages aligned with `shipped_artifacts`.
     pub dvi_pages: Vec<DviPagePlan>,

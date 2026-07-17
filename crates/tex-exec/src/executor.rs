@@ -107,6 +107,8 @@ pub(crate) struct ColdParagraphRecording {
     pub(crate) barriers: std::collections::BTreeSet<ParagraphBarrierReason>,
     #[cfg(feature = "profiling-stats")]
     pub(crate) trace_capture_nanos: u64,
+    #[cfg(feature = "profiling-stats")]
+    pub(crate) trace_capture_samples: u64,
 }
 
 pub struct ExecutionContext<'a> {
@@ -233,6 +235,8 @@ impl<'a> ExecutionContext<'a> {
             barriers: std::collections::BTreeSet::new(),
             #[cfg(feature = "profiling-stats")]
             trace_capture_nanos: 0,
+            #[cfg(feature = "profiling-stats")]
+            trace_capture_samples: 0,
         });
         true
     }
@@ -247,6 +251,7 @@ impl<'a> ExecutionContext<'a> {
                 recording.trace_capture_nanos = recording.trace_capture_nanos.saturating_add(
                     u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
                 );
+                recording.trace_capture_samples = recording.trace_capture_samples.saturating_add(1);
             }
         }
     }
@@ -472,6 +477,13 @@ where {
         }
         stores.set_input_summary(summary);
         result.and_then(|mut stats| {
+            let expansion_stats = input.expansion_stats();
+            stats.paragraph_source_recording_calls =
+                expansion_stats.paragraph_source_recording_calls;
+            stats.paragraph_source_recording_nanos =
+                expansion_stats.paragraph_source_recording_nanos;
+            stats.paragraph_source_recording_timer_samples =
+                expansion_stats.paragraph_source_recording_timer_samples;
             stats.shipped_artifacts = stores.world().artifact_commits()[artifact_start..].to_vec();
             let mut prepared = BTreeMap::<_, VecDeque<_>>::new();
             for page in std::mem::take(&mut stats.prepared_dvi_pages) {

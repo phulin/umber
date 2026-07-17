@@ -321,6 +321,32 @@ re-shipped three, and adopted 83. The end-to-end sample remained visibly noisy
 and retained a residual larger than all named recording phases; follow-up
 attribution is `umber2-vfqs.15.4.4`, not part of this measured fix.
 
+The residual-attribution follow-up timed the complete incremental acceptance
+path additively. Its final four-pair AB/BA run reported enabled-minus-disabled
+means of +153.730, +86.131, +134.716, and +44.486 ms across the four edits.
+On the large and inverse edits, respectively, executor work accounted for
++136.465 and +118.291 ms, splice/history construction for +4.664 and
++5.864 ms, paragraph-generation publication/drop for +1.219 and +1.247 ms,
+and the then-combined substrate acceptance/drop bucket for +10.290 and
++8.781 ms. Revision setup, diagnostics/effect snapshots, DVI materialization,
+and the additive unaccounted remainder were each below 1 ms of paired delta.
+The runner now splits accepted-substrate publication/drop from pruning and
+accepted-output construction so later captures retain that distinction.
+
+Within the executor, profiling-only named recording phases totaled about
+33--35 ms on those edits. Sparse input-stack attribution counted 88,432 stable
+source-recording probes but estimated only 1.6 ms of work; paragraph validation
+and import remained separately reported by the memo layer. The 130,933 named
+timer samples had a calibrated measurement floor of about 4.45 ms. Thus the
+post-projection residual is real executor-side recording/allocation work, not
+diagnostics, generation publication, DVI construction, or an unmeasured wall
+clock gap, but no single additional owner was independently dominant enough
+for a principled semantic-preserving optimization. A sampled mixed-mode run
+charged 22.8% of self samples to the system allocator, distributed across many
+callers rather than one removable allocation. No optimization was retained.
+All outputs remained byte-identical to cold, inverse restart stayed exact, and
+the final edit again retained 14 pages, re-shipped three, and adopted 83.
+
 The runner requires the same external inputs as Gentle conformance. Populate
 them with `scripts/setup-conformance-tests.sh` if necessary.
 

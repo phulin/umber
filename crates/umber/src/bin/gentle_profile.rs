@@ -194,6 +194,7 @@ struct IncrementalSample {
 
 struct IncrementalStep {
     elapsed: Duration,
+    dvi_latency: Duration,
     dvi: Vec<u8>,
     pages: usize,
     reuse: ReuseMetrics,
@@ -201,6 +202,56 @@ struct IncrementalStep {
     previous_memo: PureMemoStats,
     #[cfg(feature = "profiling-stats")]
     exact_identity: ExactIdentityMeasurement,
+}
+
+#[derive(Clone, Copy, Default)]
+struct IncrementalStages {
+    revision_setup: Duration,
+    restart_fork: Duration,
+    executor: Duration,
+    paragraph_source_recording: Duration,
+    executor_shell: Duration,
+    output_snapshot: Duration,
+    generation_transition: Duration,
+    splice: Duration,
+    substrate_transition: Duration,
+    acceptance: Duration,
+    unaccounted: Duration,
+    dvi_materialization: Duration,
+}
+
+impl IncrementalStages {
+    fn from_step(step: &IncrementalStep) -> Self {
+        let reuse = step.reuse;
+        let executor_shell = reuse
+            .reexecution_latency
+            .saturating_sub(reuse.executor_latency);
+        let accounted = reuse
+            .revision_setup_latency
+            .saturating_add(reuse.restart_fork_latency)
+            .saturating_add(reuse.reexecution_latency)
+            .saturating_add(reuse.output_snapshot_latency)
+            .saturating_add(reuse.generation_transition_latency)
+            .saturating_add(reuse.splice_latency)
+            .saturating_add(reuse.substrate_transition_latency)
+            .saturating_add(reuse.acceptance_latency);
+        Self {
+            revision_setup: reuse.revision_setup_latency,
+            restart_fork: reuse.restart_fork_latency,
+            executor: reuse.executor_latency,
+            paragraph_source_recording: Duration::from_nanos(
+                reuse.paragraph_source_recording_nanos,
+            ),
+            executor_shell,
+            output_snapshot: reuse.output_snapshot_latency,
+            generation_transition: reuse.generation_transition_latency,
+            splice: reuse.splice_latency,
+            substrate_transition: reuse.substrate_transition_latency,
+            acceptance: reuse.acceptance_latency,
+            unaccounted: step.elapsed.saturating_sub(accounted),
+            dvi_materialization: step.dvi_latency,
+        }
+    }
 }
 
 fn run_incremental_edit(options: &Options, template: &World) -> Result<(), String> {
@@ -229,10 +280,13 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
             let _ = execute_cold_sample(template, source, RevisionId::new(index as u64 + 2))?;
         }
     }
+    let timer_pair_floor_ns = instant_pair_floor_nanos();
 
     let edit_count = fixture.edits.len();
     let mut disabled = vec![Vec::with_capacity(options.iterations); edit_count];
     let mut enabled = vec![Vec::with_capacity(options.iterations); edit_count];
+    let mut disabled_stages = vec![Vec::with_capacity(options.iterations); edit_count];
+    let mut enabled_stages = vec![Vec::with_capacity(options.iterations); edit_count];
     let mut cold = vec![Vec::with_capacity(options.iterations); edit_count];
     let mut paired_millis = vec![Vec::with_capacity(options.iterations); edit_count];
     let mut last_disabled = None;
@@ -256,8 +310,10 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
             for (index, step) in sample.steps.iter().enumerate() {
                 if memo {
                     enabled[index].push(step.elapsed);
+                    enabled_stages[index].push(IncrementalStages::from_step(step));
                 } else {
                     disabled[index].push(step.elapsed);
+                    disabled_stages[index].push(IncrementalStages::from_step(step));
                 }
             }
             pair[usize::from(memo)] = Some(
@@ -384,8 +440,26 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
             paired.min,
             paired.max,
         );
-        print_incremental_work(baseline_name, index + 1, &disabled_sample.steps[index]);
-        print_incremental_work(candidate_name, index + 1, &enabled_sample.steps[index]);
+        print_stage_attribution(
+            index + 1,
+            baseline_name,
+            candidate_name,
+            delta_name,
+            &disabled_stages[index],
+            &enabled_stages[index],
+        );
+        print_incremental_work(
+            baseline_name,
+            index + 1,
+            &disabled_sample.steps[index],
+            timer_pair_floor_ns,
+        );
+        print_incremental_work(
+            candidate_name,
+            index + 1,
+            &enabled_sample.steps[index],
+            timer_pair_floor_ns,
+        );
         println!(
             "gentle-profile incremental output: edit={}: {} pages, {} DVI bytes; both incremental modes are byte-identical to cold",
             index + 1,
@@ -448,7 +522,69 @@ fn print_duration_stats(name: &str, stats: DurationStats) {
     );
 }
 
-fn print_incremental_work(name: &str, edit: usize, sample: &IncrementalStep) {
+fn stage_mean(
+    samples: &[IncrementalStages],
+    select: impl Fn(IncrementalStages) -> Duration,
+) -> f64 {
+    samples
+        .iter()
+        .copied()
+        .map(select)
+        .map(|duration| duration.as_secs_f64() * 1_000.0)
+        .sum::<f64>()
+        / samples.len() as f64
+}
+
+fn print_stage_attribution(
+    edit: usize,
+    baseline_name: &str,
+    candidate_name: &str,
+    delta_name: &str,
+    baseline: &[IncrementalStages],
+    candidate: &[IncrementalStages],
+) {
+    macro_rules! stage {
+        ($field:ident) => {{
+            let baseline = stage_mean(baseline, |sample| sample.$field);
+            let candidate = stage_mean(candidate, |sample| sample.$field);
+            format!("{baseline:.3}/{candidate:.3}/{:+.3}", candidate - baseline)
+        }};
+    }
+    println!(
+        "gentle-profile stage attribution (baseline/candidate/delta ms): edit={edit} baseline={baseline_name:?} candidate={candidate_name:?} delta={delta_name:?} revision_setup={} restart_fork={} executor={} paragraph_source_recording={} executor_shell={} diagnostics_effects_snapshot={} paragraph_generation_publish_drop={} splice={} substrate_publish_drop={} acceptance={} unaccounted_system_noise={} dvi_materialization={}",
+        stage!(revision_setup),
+        stage!(restart_fork),
+        stage!(executor),
+        stage!(paragraph_source_recording),
+        stage!(executor_shell),
+        stage!(output_snapshot),
+        stage!(generation_transition),
+        stage!(splice),
+        stage!(substrate_transition),
+        stage!(acceptance),
+        stage!(unaccounted),
+        stage!(dvi_materialization),
+    );
+}
+
+#[allow(clippy::disallowed_methods)] // Profiling-only timer-floor calibration.
+fn instant_pair_floor_nanos() -> u64 {
+    const SAMPLES: u32 = 20_000;
+    let calibration_started = Instant::now();
+    for _ in 0..SAMPLES {
+        let started = black_box(Instant::now());
+        let _ = black_box(started.elapsed());
+    }
+    u64::try_from(calibration_started.elapsed().as_nanos() / u128::from(SAMPLES))
+        .unwrap_or(u64::MAX)
+}
+
+fn print_incremental_work(
+    name: &str,
+    edit: usize,
+    sample: &IncrementalStep,
+    _timer_pair_floor_ns: u64,
+) {
     let reuse = sample.reuse;
     macro_rules! memo_delta {
         ($field:ident) => {
@@ -459,7 +595,7 @@ fn print_incremental_work(name: &str, edit: usize, sample: &IncrementalStep) {
         };
     }
     println!(
-        "gentle-profile incremental work: {name}: edit={edit} pages_retained_prefix={} pages_retyped={} pages_reused={} paragraphs_reexecuted={} bytes_reexecuted={} tokens_reexecuted={} commands_reexecuted={} macro_text_span_tokens={} source_text_span_tokens={} trace_nodes_walked={} trace_leaf_hits={} trace_subtree_hits={} trace_bytes={} exact_checks={} suffixes_adopted={} fork_us={} reexecute_us={} trace_validation_us={} trace_replay_us={} splice_us={}",
+        "gentle-profile incremental work: {name}: edit={edit} pages_retained_prefix={} pages_retyped={} pages_reused={} paragraphs_reexecuted={} bytes_reexecuted={} tokens_reexecuted={} commands_reexecuted={} macro_text_span_tokens={} source_text_span_tokens={} paragraph_source_recording_calls={} paragraph_source_recording_timer_samples={} trace_nodes_walked={} trace_leaf_hits={} trace_subtree_hits={} trace_bytes={} exact_checks={} suffixes_adopted={} revision_setup_us={} fork_us={} executor_us={} paragraph_source_recording_us={} reexecute_us={} diagnostics_effects_snapshot_us={} paragraph_generation_publish_drop_us={} trace_validation_us={} trace_replay_us={} splice_us={} substrate_publish_drop_us={} acceptance_us={} dvi_materialization_us={}",
         reuse.pages_retained_prefix,
         reuse.pages_retyped,
         reuse.pages_reused,
@@ -469,17 +605,27 @@ fn print_incremental_work(name: &str, edit: usize, sample: &IncrementalStep) {
         reuse.reexecuted_commands,
         reuse.reexecuted_macro_text_span_tokens,
         reuse.reexecuted_source_text_span_tokens,
+        reuse.paragraph_source_recording_calls,
+        reuse.paragraph_source_recording_timer_samples,
         reuse.trace_nodes_walked,
         reuse.trace_leaf_hits,
         reuse.trace_subtree_hits,
         reuse.trace_retained_bytes,
         reuse.same_history_attempts,
         reuse.suffixes_adopted,
+        reuse.revision_setup_latency.as_micros(),
         reuse.restart_fork_latency.as_micros(),
+        reuse.executor_latency.as_micros(),
+        Duration::from_nanos(reuse.paragraph_source_recording_nanos).as_micros(),
         reuse.reexecution_latency.as_micros(),
+        reuse.output_snapshot_latency.as_micros(),
+        reuse.generation_transition_latency.as_micros(),
         reuse.trace_validation_latency.as_micros(),
         reuse.trace_replay_latency.as_micros(),
         reuse.splice_latency.as_micros(),
+        reuse.substrate_transition_latency.as_micros(),
+        reuse.acceptance_latency.as_micros(),
+        sample.dvi_latency.as_micros(),
     );
     #[cfg(feature = "profiling-stats")]
     println!(
@@ -535,7 +681,10 @@ fn print_incremental_work(name: &str, edit: usize, sample: &IncrementalStep) {
             .paragraph_recording
             .saturating_since(sample.previous_memo.paragraph_recording);
         println!(
-            "gentle-profile paragraph recording phases: {name}: edit={edit} trace_capture_ns={} front_end_dependency_ns={} input_transition_ns={} front_end_provenance_ns={} hlist_retention_ns={} region_publication_ns={} break_dependency_ns={} break_key_discovery_ns={} break_stamp_registration_ns={} break_value_projection_ns={} line_provenance_ns={} line_retention_ns={}",
+            "gentle-profile paragraph recording phases: {name}: edit={edit} timer_samples={} calibrated_timer_pair_floor_ns={} estimated_measurement_floor_ns={} trace_capture_ns={} front_end_dependency_ns={} input_transition_ns={} front_end_provenance_ns={} hlist_retention_ns={} region_publication_ns={} break_dependency_ns={} break_key_discovery_ns={} break_stamp_registration_ns={} break_value_projection_ns={} line_provenance_ns={} line_retention_ns={}",
+            phases.timer_samples,
+            _timer_pair_floor_ns,
+            phases.timer_samples.saturating_mul(_timer_pair_floor_ns),
             phases.trace_capture_nanos,
             phases.front_end_dependency_nanos,
             phases.input_transition_nanos,
@@ -746,10 +895,13 @@ fn execute_incremental_sample(
         let memo = session.pure_memo_stats();
         #[cfg(feature = "profiling-stats")]
         let exact_after = exact_identity_measurement();
+        let dvi_started = Instant::now();
         let dvi = accepted.dvi_bytes().map_err(|error| error.to_string())?;
+        let dvi_latency = dvi_started.elapsed();
         let _ = black_box(accepted.artifacts.len());
         steps.push(IncrementalStep {
             elapsed,
+            dvi_latency,
             dvi,
             pages: accepted.artifacts.len(),
             reuse: accepted.reuse,
@@ -949,7 +1101,7 @@ fn print_summary(options: &Options, output: &RunOutput, elapsed: Duration) {
     );
     #[cfg(feature = "profiling-stats")]
     println!(
-        "gentle-profile expansion timers (ns): frame_step={} frame_step_samples={} provenance={} provenance_samples={} classification_meaning={} classification_meaning_samples={} builder_append={} builder_append_samples={} attributed_total={}",
+        "gentle-profile expansion timers (ns): frame_step={} frame_step_samples={} provenance={} provenance_samples={} classification_meaning={} classification_meaning_samples={} builder_append={} builder_append_samples={} paragraph_source_recording={} paragraph_source_recording_calls={} paragraph_source_recording_samples={} attributed_total={}",
         output.expansion_stats.frame_step_nanos,
         output.expansion_stats.frame_step_timer_samples,
         output.expansion_stats.provenance_nanos,
@@ -958,6 +1110,11 @@ fn print_summary(options: &Options, output: &RunOutput, elapsed: Duration) {
         output.expansion_stats.classification_meaning_timer_samples,
         output.expansion_stats.builder_append_nanos,
         output.expansion_stats.builder_append_timer_samples,
+        output.expansion_stats.paragraph_source_recording_nanos,
+        output.expansion_stats.paragraph_source_recording_calls,
+        output
+            .expansion_stats
+            .paragraph_source_recording_timer_samples,
         output.expansion_stats.attributed_nanos(),
     );
     #[cfg(feature = "profiling-stats")]

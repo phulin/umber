@@ -965,6 +965,28 @@ than the now-named recording totals; that independent residual is tracked by
 `umber2-vfqs.15.4.4` rather than broadening this change or altering optional
 pretolerance.
 
+The follow-up reconciled the outer enabled residual with additive session
+timers. In its final four-pair AB/BA run, executor work owned +136.465 ms of
+the large edit's +153.730 ms paired delta and +118.291 ms of the inverse
+edit's +134.716 ms delta. Splice/history construction contributed about
+4.7--5.9 ms, paragraph-generation publication/drop about 1.2 ms, and accepted
+substrate replacement/drop plus pruning/output construction about 9--10 ms.
+Diagnostics/effect snapshots, DVI materialization, and the unaccounted system
+remainder were neutral below 1 ms. The profiler now reports revision setup,
+fork, executor and executor-shell work, diagnostics/effects, paragraph and
+substrate generation transitions, splice, acceptance, DVI materialization,
+and the additive remainder independently.
+
+Named paragraph phases accounted for about 33--35 ms. Sparse attribution of
+the 88,432 physical-source recording probes measured only about 1.6 ms, and
+the 130,933 profiling timer pairs had an estimated 4.45 ms measurement floor.
+The remaining executor overhead was distributed recording/allocation work,
+not a new dominant projection or import owner; a sampled mixed-mode capture
+placed 22.8% of self samples in allocator runtime across many callers. No
+second optimization was retained without an independently dominant semantic-
+preserving target. Cold equality, inverse restart, optional pretolerance, and
+the final 14 retained / 3 re-shipped / 83 adopted split remained unchanged.
+
 ### Dependency-recorder baseline
 
 The state-layer recorder has an explicit disabled branch and no lock or atomic.
