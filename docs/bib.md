@@ -569,6 +569,16 @@ The existing single-pass `EngineSession` and `VirtualCompileSession` APIs
 remain available. Callers opt into project orchestration rather than silently
 changing the meaning or latency of a one-pass compile operation.
 
+This orchestration is implemented by `umber::LatexProjectSession`. Its public
+attempt result mirrors the existing host-neutral resource loop, while
+`LatexProjectOutput` retains the converged TeX output, bibliography result,
+complete generated-file generation, accepted revision, and exact root content
+identity. TeX and bibliography file needs share `ResourceRequest`; font needs
+remain part of the same deterministic batch. A terminal candidate failure
+rejects a pending root patch and leaves the prior accepted output queryable.
+The final TeX session is retained with the project output so rendered-source
+queries use the accepted project revision and output identity.
+
 ## WebAssembly integration
 
 `umber-wasm` compiles the complete `bib` dependency graph into the same module
@@ -971,9 +981,9 @@ Each lane owns its direct test cohort and commits in logical passing slices.
 
 ### Integration wave
 
-1. `BibSession`, resource retries, caches, and public queries.
-2. Native command/API compatibility and output collection.
-3. `LatexProjectSession` and transactional multipass convergence.
+1. **Complete.** `BibSession`, resource retries, caches, and public queries.
+2. **Complete.** Native command/API compatibility and output collection.
+3. **Complete.** `LatexProjectSession` and transactional multipass convergence.
 4. `umber-wasm` bindings and browser resource-loop parity.
 
 The coordinator owns shared workspace dependency changes, fixture manifest

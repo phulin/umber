@@ -145,6 +145,23 @@ retains it; charges do not accumulate with revision count.
 `dispose()` releases resources, accepted history, and output. No session
 method succeeds after disposal.
 
+## Multipass project sessions
+
+`umber::LatexProjectSession` is the opt-in layer above the single-pass session.
+It reruns TeX over the candidate generated generation, processes a produced
+BCF through an in-process retained `BibSession`, publishes detached BBL/BLG
+files into the next candidate generation, and repeats until every generated
+file has identical path and byte identity. A repeated non-adjacent generation
+is an oscillation; configured attempt and pass limits are typed failures.
+
+Project resource responses use the existing combined file/font protocol.
+Immutable responses and bibliography parse caches survive a suspended
+candidate, but candidate stage writes do not. Acceptance installs the root
+revision, complete generated VFS generation, bibliography diagnostics, final
+TeX output, and retained rendered-source session together. A resource miss or
+terminal failure therefore cannot replace any part of the prior accepted
+project. Existing `VirtualCompileSession` behavior and latency are unchanged.
+
 ## Rendered-source queries
 
 HTML output identifies each page and positioned event with `data-umber-page`

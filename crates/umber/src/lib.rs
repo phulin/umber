@@ -19,6 +19,7 @@ use tex_state::{
 pub mod cli_resource;
 mod html_output;
 mod input_search;
+mod latex_project;
 mod memory_output;
 mod pdf_output;
 mod pdftex;
@@ -28,6 +29,10 @@ pub const PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub use html_output::DirectoryHtmlFontResolver;
 pub use input_search::{TexFontSearchPath, TexInputSearchPath};
+pub use latex_project::{
+    LatexProjectAttempt, LatexProjectError, LatexProjectLimits, LatexProjectOptions,
+    LatexProjectOutput, LatexProjectSession,
+};
 pub use memory_output::{
     MemoryOutputCollectionError, MemoryOutputFile, MemoryRunOutput, collect_final_memory_output,
     collect_final_memory_output_from_commits, collect_final_memory_output_from_plans,

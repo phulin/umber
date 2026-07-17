@@ -120,6 +120,13 @@ through `EngineSession` plus `FileSessionResolvers`; this is the same composed
 path used by the CLI. A library embedding remains responsible for labeling the
 run LaTeX-DVI and for supplying deterministic TeX/TFM search areas.
 
+Library callers that need automatic bibliography processing opt into
+`umber::LatexProjectSession`. It runs the existing TeX engine and in-process
+`BibSession` through byte-stable auxiliary convergence, returns typed combined
+resource needs, and atomically accepts the root, generated files, bibliography
+diagnostics, and final DVI/HTML. The single-pass APIs retain their existing
+meaning.
+
 ### npm and browser worker
 
 Publish the format and exact base-corpus input closure, then select the named
@@ -194,7 +201,9 @@ The package example under `examples/latex.html` is the same browser workflow.
   initial engine-mode milestone;
 - unrestricted compatibility with the full CTAN package ecosystem;
 - shell escape; and
-- automatic execution of bibliography or index tools.
+- automatic execution of index tools.
 
-Auxiliary files used by external bibliography or index tools must still be
-semantically exact where the supported corpus exercises them.
+Auxiliary files used by external index tools must still be semantically exact
+where the supported corpus exercises them. Bibliography automation is exposed
+only through the explicit project-session API, not implicit single-pass CLI
+execution.

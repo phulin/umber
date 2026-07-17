@@ -448,6 +448,7 @@ pub struct VirtualCompileSession {
     accepted_output: Option<MemoryRunOutput>,
     pending_patch: Option<(tex_incr::RevisionId, tex_incr::Edit)>,
     last_reuse: Option<tex_incr::ReuseMetrics>,
+    initial_revision: tex_incr::RevisionId,
 }
 
 enum CandidateExecution {
@@ -510,6 +511,13 @@ impl PreparedExecution {
 
 impl VirtualCompileSession {
     pub fn new(options: SessionOptions) -> Result<Self, CompileError> {
+        Self::new_at_revision(options, tex_incr::RevisionId::new(1))
+    }
+
+    pub(crate) fn new_at_revision(
+        options: SessionOptions,
+        initial_revision: tex_incr::RevisionId,
+    ) -> Result<Self, CompileError> {
         let limits = options.limits.validate()?;
         let main_path = VirtualPath::user(&options.main_path).map_err(|error| {
             CompileError::InvalidVirtualPath {
@@ -553,6 +561,7 @@ impl VirtualCompileSession {
             accepted_output: None,
             pending_patch: None,
             last_reuse: None,
+            initial_revision,
         })
     }
 
@@ -1022,7 +1031,7 @@ impl VirtualCompileSession {
                     template,
                     &self.job_name,
                     self.main_path.as_str(),
-                    tex_incr::RevisionId::new(1),
+                    self.initial_revision,
                     source,
                     self.limits.cached_file_bytes,
                 )

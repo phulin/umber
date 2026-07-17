@@ -23,6 +23,9 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/bib.rs`: native host-file staging, resource retry, and detached artifact publication for the in-process `bib` command.
 - `src/input_search.rs`: deterministic driver-owned TeX input and TFM font path resolution through World-backed reads.
 - `src/input_search/tests.rs`: focused TeX input/font area ordering, extension, and input-record coverage.
+- `src/latex_project.rs`: host-neutral transactional LaTeX/bibliography multipass orchestration, convergence, and atomic project acceptance.
+- `src/latex_project/support.rs`: project candidate VFS assembly, generated-file identity, and shared resource conversion helpers.
+- `src/latex_project/tests.rs`: project convergence, bibliography publication, and rollback coverage.
 - `src/html_output.rs`: exact native web-font bundle resolver with TFM identity, WOFF2 digest, complete encoding-map, and embedding-license validation.
 - `src/lib.rs`: shared engine session, file resolvers, typed effect-before-driver finalization, run helpers, and one-artifact-at-a-time DVI construction.
 - `src/memory_output.rs`: exact committed terminal/log/DVI/aux collection for successful memory-backed runs, aggregate output limits, and auxiliary publication into VFS stage transactions.

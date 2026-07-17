@@ -571,9 +571,9 @@ The shared VFS substrate and its implemented TeX consumers are complete:
 - no legacy private virtual-file store or duplicate public path/request type
   remains in `umber` or `umber-wasm`.
 
-The bibliography consumer now reads this VFS directly and returns detached
-generated files without runtime filesystem access or subprocesses. The
-remaining project-level criteria are sharing TeX and bibliography misses in
-one multipass project loop and publishing those detached files through its
-build transaction. They are acceptance criteria of `umber2-rti9.14` and
-`umber2-rti9.15` and cannot be claimed until those tracked consumers exist.
+The bibliography consumer reads this VFS directly and returns detached files
+without runtime filesystem access or subprocesses. Native
+`LatexProjectSession` now shares TeX and bibliography misses in one multipass
+loop and publishes the converged generated generation through a build
+transaction together with the accepted root and rendered output. Browser
+representation and resource-loop parity remain owned by `umber2-rti9.15`.
