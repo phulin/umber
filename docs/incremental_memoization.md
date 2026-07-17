@@ -436,6 +436,40 @@ slow edits, +25.577 ms including priming, -1.005 ms for interaction, and
 240.270/278.726 ms. This keeps the layer default-disabled: the steady slow path
 won in this run, but priming remains a net cost.
 
+### Central paragraph validation boundary
+
+An aligned candidate now crosses one executor-owned, fail-before-mutation
+entry boundary. Source anchors and the complete raw input transition are
+prepared first. The common same-timeline path then compares an exact
+paragraph-relevant identity: the canonical front-end read order's changed-at
+stamps plus the complete count/integer entry fingerprint. This identity is not
+a full-`Universe` hash and excludes page state that the slow path rebuilds.
+
+If either component differs, validation falls back only to the typed semantic
+observations for the recorded read set and, when count/integer state differs,
+the compact surviving-cell preconditions. Semantically equal observations are
+backdated and refresh the exact identity carried into the new accepted
+generation. Detached effects and retained hlist liveness are checked at the
+same boundary. Only after all checks succeed may replay advance input, apply
+the root delta, reproduce effects, or mount provenance.
+
+The audited treatment of future-relevant state is:
+
+| State                                                                                                                                              | Treatment on a hit                                                                                                                 |
+| -------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Raw source coverage and ending input stack                                                                                                         | Validated, then advanced atomically                                                                                                |
+| Expansion reads, current font, `\everypar`, used `\sfcode`, `\parindent`, `\spaceskip`, and `\xspaceskip`                                          | Exact-stamp match or typed semantic fallback                                                                                       |
+| Metrics and hyphen character of fonts reachable from the prepared hlist                                                                            | Front-end validation, because they affect character existence, ligature/kern construction, and materialized spaces before breaking |
+| Surviving count-register and integer-parameter writes                                                                                              | Entry preconditions validated on divergence; final root values replayed in order                                                   |
+| Detached stream text                                                                                                                               | Shape validated, then replayed in original order                                                                                   |
+| Line parameters, shapes, penalty arrays, font/hyphenation facts, and used lowercase codes                                                          | Post-redo exact-stamp match or typed semantic fallback; mismatch recomputes lines from the validated hlist                         |
+| Baseline/interline glue, `prev_graf`, normal-paragraph reset, page building, output routines, and shipout                                          | Recomputed by the ordinary paragraph epilogue and page pipeline                                                                    |
+| Nonzero-entry group ownership, unsupported writes/input transitions, display math, `\scantokens`, input opening/ending, and untracked World access | Explicit barrier; the 420 measured Gentle open-group cases remain ineligible                                                       |
+
+Finished-line failure therefore remains an hlist fallback rather than a whole
+transaction failure. No conservative whole-state identity is added: facts are
+named at their actual read tier, and missing seams use typed observations.
+
 ## Implementation sequence
 
 1. **Live boundary identities.** Capture accepted canonical identities while

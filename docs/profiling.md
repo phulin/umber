@@ -920,3 +920,25 @@ medians of -9.292 ms for the combined slow edits, +25.577 ms including priming,
 commands on each slow edit, preserved the disabled boundary schedules, and
 emitted cold-identical DVI for every revision. The priming-inclusive result
 continues to keep paragraph recording default-disabled.
+
+### Central paragraph validation contract
+
+Issue `umber2-q02h.61` made paragraph validation an explicit executor-owned
+transaction boundary. The common path compares the exact changed-at vector for
+the paragraph's typed read set together with the complete count/integer entry
+fingerprint. Only divergence projects semantic values and checks recorded
+root-delta preconditions; successful semantic equality backdates the accepted
+identity. The read-set audit also moved prepared-hlist font metrics and
+hyphen-character facts into front-end validation and added the previously
+missing `\parindent`, `\spaceskip`, and `\xspaceskip` observations.
+
+A two-pair optimized AB/BA gate retained 132 finished-line hits and 42,183
+skipped commands on each slow edit, with no validation misses or import
+failures. Paragraph validation/import measured 1.256/0.406 ms on the large edit
+and 1.171/0.412 ms on the inverse edit. The 420 conservative nonzero-entry
+group barriers were unchanged. Both modes preserved all four boundary
+schedules and matched cold output at 100 pages and
+279,176/279,248/279,176/279,176 DVI bytes; the fast edit retained 14 pages,
+re-shipped three, and adopted the 83-page suffix. The short run reported a
+-14.520 ms combined slow-path mean but +13.798 ms including priming, so it is a
+validation gate rather than a new default-enablement claim.

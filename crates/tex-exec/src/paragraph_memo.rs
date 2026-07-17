@@ -2,6 +2,7 @@
 
 use tex_lex::InputStack;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
+use tex_state::ids::NodeListId;
 use tex_state::{
     DetachedVirtualEffect, EffectRecord, MemoTimingPhase, ParagraphRecordingPhase,
     ParagraphValidationFailure, PrintSink, PureMemoLayer, Universe,
@@ -10,6 +11,12 @@ use tex_state::{
 use crate::{ExecError, ExecutionContext, ExecutionStats, ModeNest};
 
 const MAX_PARAGRAPH_DEPENDENCY_CACHE_ENTRIES: usize = 4_096;
+
+struct ValidatedParagraphEntry {
+    input: tex_lex::PreparedParagraphTransition,
+    retained: NodeListId,
+    relaxed_state: bool,
+}
 
 #[cfg(feature = "profiling-stats")]
 type PhaseStart = std::time::Instant;
@@ -52,55 +59,20 @@ pub(crate) fn try_reuse_aligned_paragraph(
     debug_assert!(entry.barriers.is_empty());
     #[allow(clippy::disallowed_methods)]
     let validation_started = std::time::Instant::now();
-    let dependency_failure = stores
-        .validate_dependencies_with_failure(&mut entry.dependencies, |key| {
-            paragraph_validation_value(stores, execution, key)
-        });
-    let prepared_input = entry
-        .starting_span
-        .zip(entry.ending_span)
-        .and_then(|(start, end)| {
-            input.prepare_paragraph_transition(
-                stores,
-                start,
-                &entry.consumed_spans,
-                end,
-                &entry.ending_input,
-            )
-        });
-    let current_count_int_fingerprint = stores.count_int_fingerprint();
-    let relaxed_state = current_count_int_fingerprint != entry.mutation_entry_fingerprint;
-    let validation_failure = dependency_failure
-        .map(ParagraphValidationFailure::from_dependency)
-        .or_else(|| {
-            (relaxed_state && !validate_mutations(stores, &entry.mutations))
-                .then_some(ParagraphValidationFailure::Mutation)
-        })
-        .or_else(|| {
-            (!validate_effects(&entry.effects)).then_some(ParagraphValidationFailure::Effect)
-        })
-        .or_else(|| {
-            prepared_input
-                .is_none()
-                .then_some(ParagraphValidationFailure::InputTransition)
-        });
+    let validated = validate_paragraph_entry(&mut entry, input, stores, execution);
     stores.record_pure_memo_timing(
         PureMemoLayer::Paragraph,
         MemoTimingPhase::Validation,
         validation_started.elapsed(),
     );
-    if let Some(failure) = validation_failure {
-        stores.record_pure_paragraph_validation_failure(failure);
-        return Ok(false);
-    }
-    let Some(retained) = entry.hlist else {
-        stores.record_pure_paragraph_validation_failure(ParagraphValidationFailure::RetainedResult);
+    let Some(ValidatedParagraphEntry {
+        input: prepared_input,
+        retained,
+        relaxed_state,
+    }) = validated
+    else {
         return Ok(false);
     };
-    if !stores.retained_paragraph_result_is_live(retained) {
-        stores.record_pure_paragraph_validation_failure(ParagraphValidationFailure::RetainedResult);
-        return Ok(false);
-    }
     #[allow(clippy::disallowed_methods)]
     let import_started = std::time::Instant::now();
     let mountable_lines = entry
@@ -111,10 +83,7 @@ pub(crate) fn try_reuse_aligned_paragraph(
         MemoTimingPhase::Import,
         import_started.elapsed(),
     );
-    let transition_applied = input.apply_paragraph_transition(
-        stores,
-        prepared_input.expect("validated paragraph transition"),
-    )?;
+    let transition_applied = input.apply_paragraph_transition(stores, prepared_input)?;
     assert!(
         transition_applied,
         "validated paragraph source transition must apply"
@@ -130,22 +99,8 @@ pub(crate) fn try_reuse_aligned_paragraph(
         );
     }
     replay_effects(stores, &entry.effects);
-    #[allow(clippy::disallowed_methods)]
-    let line_validation_started = std::time::Instant::now();
-    let line_dependency_failure = stores
-        .validate_dependencies_with_failure(&mut entry.break_dependencies, |key| {
-            paragraph_validation_value(stores, execution, key)
-        });
-    let lines_valid = mountable_lines.is_some() && line_dependency_failure.is_none();
-    stores.record_pure_memo_timing(
-        PureMemoLayer::Paragraph,
-        MemoTimingPhase::Validation,
-        line_validation_started.elapsed(),
-    );
-    if line_dependency_failure.is_some() {
-        stores
-            .record_pure_paragraph_validation_failure(ParagraphValidationFailure::BreakDependency);
-    }
+    let lines_valid =
+        validate_finished_lines(&mut entry, mountable_lines.is_some(), stores, execution);
     let mounted_lines = lines_valid.then(|| {
         let origins = resolve_paragraph_provenance(stores, &entry.line_provenance);
         stores
@@ -211,6 +166,117 @@ pub(crate) fn try_reuse_aligned_paragraph(
     );
     stores.record_pure_paragraph_line_hit(!lines_valid);
     Ok(true)
+}
+
+/// Central fail-before-mutation validation boundary for an accepted paragraph.
+/// Source/input alignment, exact entry identity, typed semantic fallback,
+/// state-delta preconditions, effects, and retained hlist liveness are all
+/// established before the caller advances input or replays state.
+fn validate_paragraph_entry(
+    entry: &mut tex_state::RecordedParagraphRegion,
+    input: &InputStack,
+    stores: &mut Universe,
+    execution: &mut ExecutionContext<'_>,
+) -> Option<ValidatedParagraphEntry> {
+    let prepared_input = entry
+        .starting_span
+        .zip(entry.ending_span)
+        .and_then(|(start, end)| {
+            input.prepare_paragraph_transition(
+                stores,
+                start,
+                &entry.consumed_spans,
+                end,
+                &entry.ending_input,
+            )
+        });
+    let current_count_int_fingerprint = stores.count_int_fingerprint();
+    let relaxed_state = current_count_int_fingerprint != entry.mutation_entry_fingerprint;
+    let exact_entry =
+        entry
+            .entry_identity
+            .matches(&entry.dependencies, current_count_int_fingerprint, |key| {
+                stores.dependency_changed_at(key)
+            });
+    let dependency_failure = (!exact_entry)
+        .then(|| {
+            stores.validate_dependencies_with_failure(&mut entry.dependencies, |key| {
+                paragraph_validation_value(stores, execution, key)
+            })
+        })
+        .flatten();
+    let validation_failure = dependency_failure
+        .map(ParagraphValidationFailure::from_dependency)
+        .or_else(|| {
+            (!exact_entry && relaxed_state && !validate_mutations(stores, &entry.mutations))
+                .then_some(ParagraphValidationFailure::Mutation)
+        })
+        .or_else(|| {
+            (!validate_effects(&entry.effects)).then_some(ParagraphValidationFailure::Effect)
+        })
+        .or_else(|| {
+            prepared_input
+                .is_none()
+                .then_some(ParagraphValidationFailure::InputTransition)
+        });
+    if let Some(failure) = validation_failure {
+        stores.record_pure_paragraph_validation_failure(failure);
+        return None;
+    }
+    if !exact_entry {
+        entry
+            .entry_identity
+            .refresh(&entry.dependencies, current_count_int_fingerprint);
+    }
+    let Some(retained) = entry.hlist else {
+        stores.record_pure_paragraph_validation_failure(ParagraphValidationFailure::RetainedResult);
+        return None;
+    };
+    if !stores.retained_paragraph_result_is_live(retained) {
+        stores.record_pure_paragraph_validation_failure(ParagraphValidationFailure::RetainedResult);
+        return None;
+    }
+    Some(ValidatedParagraphEntry {
+        input: prepared_input?,
+        retained,
+        relaxed_state,
+    })
+}
+
+fn validate_finished_lines(
+    entry: &mut tex_state::RecordedParagraphRegion,
+    mountable: bool,
+    stores: &mut Universe,
+    execution: &mut ExecutionContext<'_>,
+) -> bool {
+    #[allow(clippy::disallowed_methods)]
+    let line_validation_started = std::time::Instant::now();
+    let exact = entry
+        .break_identity
+        .matches(&entry.break_dependencies, |key| {
+            stores.dependency_changed_at(key)
+        });
+    let line_dependency_failure = (!exact)
+        .then(|| {
+            stores.validate_dependencies_with_failure(&mut entry.break_dependencies, |key| {
+                paragraph_validation_value(stores, execution, key)
+            })
+        })
+        .flatten();
+    if !exact && line_dependency_failure.is_none() {
+        entry.break_identity.refresh(&entry.break_dependencies);
+    }
+    let lines_valid = mountable && line_dependency_failure.is_none();
+    stores.record_pure_memo_timing(
+        PureMemoLayer::Paragraph,
+        MemoTimingPhase::Validation,
+        line_validation_started.elapsed(),
+    );
+    if line_dependency_failure.is_some() {
+        stores
+            .record_pure_paragraph_validation_failure(ParagraphValidationFailure::BreakDependency);
+    }
+    lines_valid
 }
 
 fn validate_effects(effects: &[DetachedVirtualEffect]) -> bool {
@@ -427,8 +493,20 @@ fn publish_recorded_region(
             bank: tex_state::DependencyBank::TokParam,
             index: u32::from(TokParam::EVERY_PAR.raw()),
         },
+        tex_state::DependencyKey::Cell {
+            bank: tex_state::DependencyBank::DimenParam,
+            index: u32::from(DimenParam::PAR_INDENT.raw()),
+        },
+        tex_state::DependencyKey::Cell {
+            bank: tex_state::DependencyBank::GlueParam,
+            index: u32::from(GlueParam::SPACE_SKIP.raw()),
+        },
+        tex_state::DependencyKey::Cell {
+            bank: tex_state::DependencyBank::GlueParam,
+            index: u32::from(GlueParam::XSPACE_SKIP.raw()),
+        },
     ]);
-    append_paragraph_character_dependencies(stores, nodes, &mut keys);
+    append_paragraph_hlist_dependencies(stores, nodes, &mut keys);
     keys.sort_unstable();
     keys.dedup();
     let dependencies = keys
@@ -451,6 +529,8 @@ fn publish_recorded_region(
         );
         return;
     };
+    let entry_identity =
+        tex_state::ParagraphEntryIdentity::new(&dependencies, mutation_summary.entry_fingerprint);
     finish_phase(
         stores,
         ParagraphRecordingPhase::FrontEndDependencies,
@@ -477,6 +557,7 @@ fn publish_recorded_region(
         ending_span,
         consumed_spans,
         delivered_tokens: recording.delivered_tokens,
+        entry_identity,
         dependencies,
         mutation_entry_fingerprint: mutation_summary.entry_fingerprint,
         mutation_exit_fingerprint: mutation_summary.exit_fingerprint,
@@ -487,6 +568,7 @@ fn publish_recorded_region(
         hlist,
         hlist_provenance,
         break_dependencies: Vec::new(),
+        break_identity: tex_state::ParagraphReadIdentity::default(),
         lines: None,
         line_count: 0,
         line_provenance: tex_state::ParagraphProvenanceRecipe::default(),
@@ -653,27 +735,25 @@ fn paragraph_graph_provenance(
     recipe
 }
 
-fn append_paragraph_character_dependencies(
+fn append_paragraph_hlist_dependencies(
     stores: &Universe,
     nodes: &[tex_state::node::Node],
     keys: &mut Vec<tex_state::DependencyKey>,
 ) {
     let child = |id, keys: &mut Vec<tex_state::DependencyKey>| {
         let nodes = stores.nodes(id).to_vec();
-        append_paragraph_character_dependencies(stores, &nodes, keys);
+        append_paragraph_hlist_dependencies(stores, &nodes, keys);
     };
     for node in nodes {
-        let mut push_sfcode = |ch: char| {
-            keys.push(tex_state::DependencyKey::Code {
-                table: tex_state::DependencyCodeTable::Sfcode,
-                scalar: ch as u32,
-            });
-        };
         match node {
-            tex_state::node::Node::Char { ch, .. } => push_sfcode(*ch),
-            tex_state::node::Node::Lig { orig, .. } => {
+            tex_state::node::Node::Char { font, ch, .. } => {
+                push_sfcode_dependency(*ch, keys);
+                push_hlist_font_dependencies(*font, keys);
+            }
+            tex_state::node::Node::Lig { font, orig, .. } => {
+                push_hlist_font_dependencies(*font, keys);
                 for &ch in orig {
-                    push_sfcode(ch);
+                    push_sfcode_dependency(ch, keys);
                 }
             }
             tex_state::node::Node::HList(box_node) | tex_state::node::Node::VList(box_node) => {
@@ -700,6 +780,29 @@ fn append_paragraph_character_dependencies(
             }
             _ => {}
         }
+    }
+}
+
+fn push_sfcode_dependency(ch: char, keys: &mut Vec<tex_state::DependencyKey>) {
+    keys.push(tex_state::DependencyKey::Code {
+        table: tex_state::DependencyCodeTable::Sfcode,
+        scalar: ch as u32,
+    });
+}
+
+fn push_hlist_font_dependencies(
+    font: tex_state::ids::FontId,
+    keys: &mut Vec<tex_state::DependencyKey>,
+) {
+    for field in [
+        tex_state::DependencyFontField::Metrics,
+        tex_state::DependencyFontField::HyphenChar,
+    ] {
+        keys.push(tex_state::DependencyKey::Font {
+            field,
+            font: font.raw(),
+            index: 0,
+        });
     }
 }
 

@@ -945,6 +945,98 @@ fn paragraph_post_break_reuse_tiers_match_cold_for_layout_and_hyphenation_change
 }
 
 #[test]
+fn paragraph_entry_validation_rejects_changed_indent_then_backdates_equal_state() {
+    let prose = "stable paragraph words stable paragraph words stable paragraph words";
+    let source = format!(
+        "\\font\\tenrm=cmr10\\relax \\tenrm \\parindent=10pt\n{prose}\\par\n{prose}\\par\n{prose}\\par\n\\vfill\\eject\\end"
+    );
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut session = Session::start(
+        universe,
+        "paragraph-entry-validation",
+        RevisionId::new(1),
+        source.clone(),
+        usize::MAX,
+    )
+    .expect("session starts");
+    session
+        .register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("font fixture");
+    let initial = session
+        .cold()
+        .expect("cold paragraph generation")
+        .dvi_bytes()
+        .expect("initial DVI");
+
+    let indent = source.find("10pt").expect("indent value");
+    let before_changed = session.pure_memo_stats();
+    let changed_source = source.replacen("10pt", "20pt", 1);
+    let changed = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: indent..indent + 2,
+                replacement: "20".to_owned(),
+            },
+        )
+        .expect("changed relevant entry state");
+    let after_changed = session.pure_memo_stats();
+    assert_eq!(
+        after_changed.paragraph_hits, before_changed.paragraph_hits,
+        "changed parindent must reject retained hlists: {after_changed:?}"
+    );
+    assert!(
+        after_changed.paragraph_validation_misses > before_changed.paragraph_validation_misses,
+        "changed parindent must be reported as a typed validation miss"
+    );
+
+    let before_equal = after_changed;
+    let equal_source = changed_source.replacen("20pt", "020pt", 1);
+    let equal = session
+        .advance(
+            RevisionId::new(3),
+            Edit {
+                base_revision: RevisionId::new(2),
+                expected_hash: ContentHash::from_bytes(changed_source.as_bytes()),
+                range: indent..indent + 2,
+                replacement: "020".to_owned(),
+            },
+        )
+        .expect("semantically equal entry state");
+    let after_equal = session.pure_memo_stats();
+    assert!(
+        after_equal.paragraph_hits > before_equal.paragraph_hits,
+        "equal parindent after a stamp change must backdate and hit: {after_equal:?}"
+    );
+
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-entry-validation",
+        RevisionId::new(3),
+        equal_source,
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    cold.register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("cold font fixture");
+    let expected = cold.cold().expect("cold comparison");
+    assert_eq!(
+        equal.dvi_bytes().expect("incremental DVI"),
+        expected.dvi_bytes().expect("cold DVI")
+    );
+    assert_ne!(
+        changed.dvi_bytes().expect("changed DVI"),
+        initial,
+        "fixture must make the relevant indentation change observable"
+    );
+}
+
+#[test]
 fn stateful_paragraph_redo_survives_a_later_prefix_edit() {
     let mut universe = template();
     universe.enable_pure_memo(tex_state::PureMemoConfig::default());
