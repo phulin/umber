@@ -37,6 +37,24 @@ fn project_binding_validates_options_and_disposes() {
 }
 
 #[wasm_bindgen_test]
+fn project_binding_accepts_versioned_classic_bibliography_options() {
+    let project_options = options("/job/main.tex");
+    let bibliography = Object::new();
+    set(&bibliography, "mode", &JsValue::from_str("classic"));
+    set(
+        &bibliography,
+        "auxPath",
+        &JsValue::from_str("/job/main.aux"),
+    );
+    set(&project_options, "bibliography", bibliography.as_ref());
+    let mut session =
+        ProjectSession::new(project_options.unchecked_ref::<JsProjectSessionOptions>())
+            .expect("classic project session");
+    session.dispose();
+    assert!(session.disposed());
+}
+
+#[wasm_bindgen_test]
 fn typed_attempts_preserve_binary_inputs_and_clear_cached_allocations() {
     let mut session = session("/job/main.tex");
     session

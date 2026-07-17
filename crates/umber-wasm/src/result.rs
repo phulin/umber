@@ -1,7 +1,8 @@
 use js_sys::{Array, Object, Reflect, Uint8Array};
 use umber::{
-    CompileAttemptResult, CompileDiagnostic, CompileError, LatexProjectAttempt, LatexProjectError,
-    LatexProjectOutput, MemoryRunOutput, ResourceRequest,
+    CompileAttemptResult, CompileDiagnostic, CompileError, LatexProjectAttempt,
+    LatexProjectAttemptV2, LatexProjectError, LatexProjectOutput, LatexProjectOutputV2,
+    MemoryRunOutput, ResourceRequest,
 };
 use wasm_bindgen::{JsCast, JsValue};
 
@@ -47,6 +48,30 @@ pub(crate) fn project_attempt_result(
             set(&object, "output", &project_output(output)?)?;
         }
         LatexProjectAttempt::Error(error) => {
+            set(&object, "kind", &JsValue::from_str("error"))?;
+            set(&object, "diagnostic", &project_diagnostic(error)?)?;
+        }
+    }
+    Ok(object.unchecked_into())
+}
+
+pub(crate) fn project_attempt_result_v2(
+    result: LatexProjectAttemptV2,
+) -> Result<JsAttemptResult, JsValue> {
+    let object = Object::new();
+    match result {
+        LatexProjectAttemptV2::NeedResources(resources) => {
+            set(&object, "kind", &JsValue::from_str("need-resources"))?;
+            let required = resource_requests(resources.required)?;
+            set(&object, "required", required.as_ref())?;
+            let hints = resource_requests(resources.prefetch_hints)?;
+            set(&object, "prefetchHints", hints.as_ref())?;
+        }
+        LatexProjectAttemptV2::Complete(output) => {
+            set(&object, "kind", &JsValue::from_str("complete"))?;
+            set(&object, "output", &project_output_v2(*output)?)?;
+        }
+        LatexProjectAttemptV2::Error(error) => {
             set(&object, "kind", &JsValue::from_str("error"))?;
             set(&object, "diagnostic", &project_diagnostic(error)?)?;
         }
@@ -258,6 +283,67 @@ fn project_output(output: LatexProjectOutput) -> Result<JsValue, JsValue> {
     Ok(object.into())
 }
 
+fn project_output_v2(output: LatexProjectOutputV2) -> Result<JsValue, JsValue> {
+    let object = Object::new();
+    set(
+        &object,
+        "revision",
+        &JsValue::from_f64(output.revision.raw() as f64),
+    )?;
+    set(
+        &object,
+        "contentHash",
+        &JsValue::from_str(&output.content_hash.hex()),
+    )?;
+    set(
+        &object,
+        "passes",
+        &JsValue::from_f64(f64::from(output.passes)),
+    )?;
+    set(&object, "tex", &compile_output(output.tex)?)?;
+    if let Some(bibliography) = output.bibliography {
+        let bib = Object::new();
+        set(
+            &bib,
+            "backend",
+            &JsValue::from_str(match bibliography.backend() {
+                bib_engine::BibliographyBackend::Biblatex => "biblatex",
+                bib_engine::BibliographyBackend::Classic => "classic",
+            }),
+        )?;
+        let files = Array::new();
+        for file in bibliography.files() {
+            files.push(&output_file_value(file.path().as_str(), file.bytes())?);
+        }
+        set(&bib, "files", &files)?;
+        let diagnostics = Array::new();
+        for diagnostic in bibliography.diagnostics() {
+            let value = Object::new();
+            set(
+                &value,
+                "code",
+                &JsValue::from_str(match diagnostic.code() {
+                    bib_engine::BibliographyDiagnosticCode::Biblatex(code) => code.as_str(),
+                    bib_engine::BibliographyDiagnosticCode::Classic(code) => code.as_str(),
+                }),
+            )?;
+            set(&value, "message", &JsValue::from_str(diagnostic.message()))?;
+            diagnostics.push(&value);
+        }
+        set(&bib, "diagnostics", &diagnostics)?;
+        set(&object, "bibliography", &bib)?;
+    }
+    let generated = Array::new();
+    for file in output.generated_files {
+        generated.push(&output_file_value(
+            &file.path.to_string_lossy(),
+            &file.bytes,
+        )?);
+    }
+    set(&object, "generatedFiles", &generated)?;
+    Ok(object.into())
+}
+
 fn output_file_value(path: &str, bytes: &[u8]) -> Result<JsValue, JsValue> {
     let file = Object::new();
     set(&file, "path", &JsValue::from_str(path))?;
@@ -297,6 +383,9 @@ pub(crate) const fn project_error_code(error: &LatexProjectError) -> &'static st
             bib_engine::BibFailureKind::ResourceConflict => "conflicting-resource",
             _ => "bibliography",
         },
+        LatexProjectError::BibliographyFacade(_) | LatexProjectError::BibliographyFatal { .. } => {
+            "bibliography"
+        }
         LatexProjectError::InvalidLimit { .. } => "invalid-options",
         LatexProjectError::PassLimit { .. } => "pass-limit",
         LatexProjectError::Oscillation { .. } => "oscillation",

@@ -1,11 +1,11 @@
-use bib_engine::{BibJob, BibOptionsBuilder, BibSessionOptions, OutputFormat, OutputRequest};
+use bib_engine::{BibJob, BibOptionsBuilder, BibliographyMode, OutputFormat, OutputRequest};
 use js_sys::{Array, Reflect, Uint8Array};
 use umber::{
-    EngineMode, FeatureSetting, FileContentId, FileKind, FileRequestKey, FontContainer,
-    FontFeaturePolicy, FontObjectIdentity, FontProgramIdentity, FontRequestKey, LatexProjectLimits,
-    LatexProjectOptions, OpenTypeTag, ResolvedFile, ResolvedFont, ResourceDomain, ResourceResponse,
-    SessionLimits, SessionOptions, SessionWebFont, SourcePatch, VariationCoordinate,
-    VariationSelection,
+    BibliographyProjectOptions, EngineMode, FeatureSetting, FileContentId, FileKind,
+    FileRequestKey, FontContainer, FontFeaturePolicy, FontObjectIdentity, FontProgramIdentity,
+    FontRequestKey, LatexProjectLimits, LatexProjectOptions, LatexProjectOptionsV2, OpenTypeTag,
+    ResolvedFile, ResolvedFont, ResourceDomain, ResourceResponse, SessionLimits, SessionOptions,
+    SessionWebFont, SourcePatch, VariationCoordinate, VariationSelection,
 };
 use wasm_bindgen::{JsCast, JsValue};
 
@@ -46,13 +46,26 @@ pub(crate) fn parse_options(value: &JsValue) -> Result<SessionOptions, JsValue> 
     Ok(options)
 }
 
-pub(crate) fn parse_project_options(value: &JsValue) -> Result<LatexProjectOptions, JsValue> {
+pub(crate) enum ProjectOptions {
+    Legacy(LatexProjectOptions),
+    V2(LatexProjectOptionsV2),
+}
+
+pub(crate) fn parse_project_options(value: &JsValue) -> Result<ProjectOptions, JsValue> {
     let tex = parse_options(value)?;
     let bibliography = optional_object(value, "bibliography")?
         .ok_or_else(|| js_error("project options require bibliography"))?;
-    let control_path = parse_virtual_path(&required_string(&bibliography, "controlPath")?)?;
+    let mode = optional_string(&bibliography, "mode")?;
+    let control_path = optional_string(&bibliography, "controlPath")?
+        .map(|path| parse_virtual_path(&path))
+        .transpose()?;
     let mut builder = BibOptionsBuilder::new();
-    for output in parse_array(&bibliography, "outputs")? {
+    let outputs = if matches!(mode.as_deref(), Some("classic") | Some("auto")) {
+        Vec::new()
+    } else {
+        parse_array(&bibliography, "outputs")?
+    };
+    for output in outputs {
         let path = parse_virtual_path(&required_string(&output, "path")?)?;
         let format = match required_string(&output, "format")?.as_str() {
             "bbl" => OutputFormat::Bbl,
@@ -92,12 +105,51 @@ pub(crate) fn parse_project_options(value: &JsValue) -> Result<LatexProjectOptio
             limits.passes = integer::<u32>(&value, "passes")?;
         }
     }
-    Ok(LatexProjectOptions {
-        tex,
-        bibliography: BibJob::new(control_path, builder.freeze()),
-        bib_session: BibSessionOptions::default(),
-        limits,
-    })
+    let biblatex = builder.freeze();
+    match mode.as_deref() {
+        None => Ok(ProjectOptions::Legacy(LatexProjectOptions {
+            tex,
+            bibliography: BibJob::new(
+                control_path
+                    .ok_or_else(|| js_error("project bibliography requires controlPath"))?,
+                biblatex,
+            ),
+            bib_session: bib_engine::BibSessionOptions::default(),
+            limits,
+        })),
+        Some("biblatex") => Ok(ProjectOptions::V2(LatexProjectOptionsV2 {
+            tex,
+            bibliography: BibliographyProjectOptions {
+                mode: BibliographyMode::Biblatex {
+                    control_path: control_path
+                        .ok_or_else(|| js_error("biblatex bibliography requires controlPath"))?,
+                },
+                biblatex,
+                bib_session: bib_engine::BibSessionOptions::default(),
+                classic: bib_engine::ClassicBibOptions::default(),
+                detector: bib_engine::BibliographyDetectorOptions::default(),
+            },
+            limits,
+        })),
+        Some("classic") => Ok(ProjectOptions::V2(LatexProjectOptionsV2 {
+            tex,
+            bibliography: BibliographyProjectOptions::classic(parse_virtual_path(
+                &required_string(&bibliography, "auxPath")?,
+            )?),
+            limits,
+        })),
+        Some("auto") => Ok(ProjectOptions::V2(LatexProjectOptionsV2 {
+            tex,
+            bibliography: BibliographyProjectOptions::auto(parse_virtual_path(&required_string(
+                &bibliography,
+                "jobPath",
+            )?)?),
+            limits,
+        })),
+        Some(_) => Err(js_error(
+            "bibliography mode must be 'biblatex', 'classic', or 'auto'",
+        )),
+    }
 }
 
 fn parse_virtual_path(value: &str) -> Result<bib_engine::VirtualPath, JsValue> {

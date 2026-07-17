@@ -201,3 +201,22 @@ BibTeX, searches an ambient TeX installation, uses a locale service, or
 accesses the network. It verifies only committed JSON and fixture bytes. This
 is the Phase 0 exit gate: every reference surface is owned, every initial
 reference byte is content-pinned, and regeneration has one auditable route.
+
+## Project integration
+
+`umber2-ild0.12` adds `LatexProjectOptionsV2` and
+`BibliographyProjectOptions` beside the source-compatible biblatex-only
+`LatexProjectOptions`. The V2 project session accepts explicit biblatex,
+explicit classic, or auto protocol selection, and sequences TeX, detection,
+and bibliography resource discovery rather than speculating across stages.
+
+Its convergence identity contains the selected backend and generated-file
+content identities. Classic warning/error results publish their detached BBL
+and BLG only in an accepted project generation; fatal execution and resource
+or compile failure reject the candidate and retain the last accepted output.
+Changing the V2 bibliography policy resets the backend session and removes
+previous bibliography artifacts before the next generation, preventing a BBL
+from one backend from being consumed after a switch. The WebAssembly project
+binding accepts the existing biblatex object unchanged and additionally
+accepts a `mode: "biblatex" | "classic" | "auto"` bibliography object; byte
+and AUX/BST/BIB parsing remain inside the Rust session.

@@ -118,3 +118,226 @@ fn repeated_resource_need_is_a_typed_no_progress_failure() {
     );
     assert!(session.accepted_output().is_none());
 }
+
+fn classic_options(mode: bib_engine::BibliographyMode) -> LatexProjectOptionsV2 {
+    LatexProjectOptionsV2 {
+        tex: SessionOptions {
+            engine: EngineMode::Tex82,
+            ..SessionOptions::default()
+        },
+        bibliography: BibliographyProjectOptions {
+            mode,
+            biblatex: bib_engine::BibOptions::default(),
+            bib_session: BibSessionOptions::default(),
+            classic: bib_engine::ClassicBibOptions::default(),
+            detector: bib_engine::BibliographyDetectorOptions::default(),
+        },
+        limits: LatexProjectLimits::default(),
+    }
+}
+
+fn classic_project_source() -> &'static [u8] {
+    br#"\immediate\openout1=main.aux
+\immediate\write1{\relax}
+\immediate\write1{\string\citation{knuth}}
+\immediate\write1{\string\bibdata{smoke}}
+\immediate\write1{\string\bibstyle{smoke}}
+\immediate\closeout1
+\shipout\hbox{X}\end
+"#
+}
+
+fn finish_classic_project(session: &mut LatexProjectSessionV2) -> LatexProjectOutputV2 {
+    loop {
+        match session.compile_attempt() {
+            LatexProjectAttemptV2::Complete(output) => return *output,
+            LatexProjectAttemptV2::NeedResources(needs) => {
+                let responses = needs
+                    .required
+                    .into_iter()
+                    .map(|request| match request {
+                        ResourceRequest::File(file) => {
+                            let (path, bytes) = match file.key().name() {
+                                "smoke.bib" => (
+                                    "/texlive/bib/smoke.bib",
+                                    include_bytes!(
+                                        "../../../../tests/corpus/bibtex/cases/smoke/smoke.bib"
+                                    )
+                                    .to_vec(),
+                                ),
+                                "smoke.bst" => (
+                                    "/texlive/bib/smoke.bst",
+                                    include_bytes!(
+                                        "../../../../tests/corpus/bibtex/cases/smoke/smoke.bst"
+                                    )
+                                    .to_vec(),
+                                ),
+                                "fatal.bst" => ("/texlive/bib/fatal.bst", b"ENTRY {".to_vec()),
+                                name => panic!("unexpected resource {name}"),
+                            };
+                            ResourceResponse::File(ResolvedFile {
+                                request: file.key().clone(),
+                                virtual_path: path.into(),
+                                bytes,
+                                expected_digest: None,
+                            })
+                        }
+                        ResourceRequest::Font(_) => panic!("unexpected font request"),
+                    })
+                    .collect();
+                session
+                    .provide_resources(responses)
+                    .expect("provide classic resource");
+            }
+            LatexProjectAttemptV2::Error(error) => panic!("classic project failed: {error}"),
+        }
+    }
+}
+
+#[test]
+fn classic_projects_converge_transactionally_with_explicit_and_auto_modes() {
+    for mode in [
+        bib_engine::BibliographyMode::Classic {
+            aux_path: VirtualPath::user("/job/main.aux").expect("aux"),
+        },
+        bib_engine::BibliographyMode::Auto {
+            job_path: VirtualPath::user("/job/main").expect("job"),
+        },
+    ] {
+        let mut session =
+            LatexProjectSessionV2::new(classic_options(mode.clone())).expect("project");
+        session
+            .add_user_file("/job/main.tex", classic_project_source().to_vec())
+            .expect("source");
+        let output = finish_classic_project(&mut session);
+        assert!(output.passes >= 2);
+        assert_eq!(
+            output.fingerprint.backend,
+            Some(bib_engine::BibliographyBackend::Classic),
+            "mode: {mode:?}, files: {:?}",
+            output
+                .generated_files
+                .iter()
+                .map(|file| &file.path)
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            output
+                .generated_files
+                .iter()
+                .any(|file| file.path == std::path::Path::new("/job/main.bbl"))
+        );
+        assert!(
+            output
+                .generated_files
+                .iter()
+                .any(|file| file.path == std::path::Path::new("/job/main.blg"))
+        );
+    }
+}
+
+#[test]
+fn v2_backend_switch_discards_incompatible_bibliography_artifacts() {
+    let mut session =
+        LatexProjectSessionV2::new(classic_options(bib_engine::BibliographyMode::Classic {
+            aux_path: VirtualPath::user("/job/main.aux").expect("aux"),
+        }))
+        .expect("project");
+    session
+        .add_user_file("/job/main.tex", classic_project_source().to_vec())
+        .expect("source");
+    let accepted = finish_classic_project(&mut session);
+    session
+        .set_bibliography(BibliographyProjectOptions::auto(
+            VirtualPath::user("/job/no-bibliography").expect("job"),
+        ))
+        .expect("switch");
+    let marker = classic_project_source()
+        .windows(1)
+        .position(|_| true)
+        .expect("source");
+    session
+        .apply_patch(SourcePatch {
+            base_revision: accepted.revision,
+            next_revision: tex_incr::RevisionId::new(2),
+            expected_hash: accepted.content_hash,
+            range: marker..marker,
+            replacement: "% switched\n".into(),
+        })
+        .expect("patch");
+    let output = finish_classic_project(&mut session);
+    assert_eq!(output.fingerprint.backend, None);
+    assert!(
+        !output
+            .generated_files
+            .iter()
+            .any(|file| file.path == std::path::Path::new("/job/main.bbl"))
+    );
+    assert_eq!(session.revision(), Some(tex_incr::RevisionId::new(2)));
+}
+
+#[test]
+fn fatal_classic_execution_rolls_back_to_the_last_accepted_project() {
+    let mut session =
+        LatexProjectSessionV2::new(classic_options(bib_engine::BibliographyMode::Classic {
+            aux_path: VirtualPath::user("/job/main.aux").expect("aux"),
+        }))
+        .expect("project");
+    let source = classic_project_source().to_vec();
+    session
+        .add_user_file("/job/main.tex", source.clone())
+        .expect("source");
+    let accepted = finish_classic_project(&mut session);
+    let style = source
+        .windows(b"smoke}".len())
+        .rposition(|window| window == b"smoke}")
+        .expect("style name");
+    session
+        .apply_patch(SourcePatch {
+            base_revision: accepted.revision,
+            next_revision: tex_incr::RevisionId::new(2),
+            expected_hash: accepted.content_hash,
+            range: style..style + b"smoke".len(),
+            replacement: "fatal".into(),
+        })
+        .expect("patch");
+    loop {
+        match session.compile_attempt() {
+            LatexProjectAttemptV2::NeedResources(needs) => {
+                let responses = needs
+                    .required
+                    .into_iter()
+                    .map(|request| match request {
+                        ResourceRequest::File(file) => {
+                            let (path, bytes) = match file.key().name() {
+                                "smoke.bib" => (
+                                    "/texlive/bib/smoke.bib",
+                                    include_bytes!(
+                                        "../../../../tests/corpus/bibtex/cases/smoke/smoke.bib"
+                                    )
+                                    .to_vec(),
+                                ),
+                                "fatal.bst" => ("/texlive/bib/fatal.bst", b"ENTRY {".to_vec()),
+                                name => panic!("unexpected resource {name}"),
+                            };
+                            ResourceResponse::File(ResolvedFile {
+                                request: file.key().clone(),
+                                virtual_path: path.into(),
+                                bytes,
+                                expected_digest: None,
+                            })
+                        }
+                        ResourceRequest::Font(_) => panic!("unexpected font request"),
+                    })
+                    .collect();
+                session.provide_resources(responses).expect("resources");
+            }
+            LatexProjectAttemptV2::Error(LatexProjectError::BibliographyFatal {
+                backend: bib_engine::BibliographyBackend::Classic,
+            }) => break,
+            other => panic!("expected fatal classic rollback, got {other:?}"),
+        }
+    }
+    assert_eq!(session.accepted_output(), Some(&accepted));
+    assert_eq!(session.revision(), Some(tex_incr::RevisionId::new(1)));
+}
