@@ -78,8 +78,10 @@ It preloads external corpus and font inputs into a structurally shared memory
 World, performs a warm-up, then repeats fresh engine sessions without
 per-iteration temporary-directory or host-file staging. The script builds an
 optimized symbolized binary and saves the Samply profile under
-`target/profiles/`. See [Profiling Umber with Gentle](profiling.md) for its
-controls and measured boundary.
+`target/profiles/`. Its incremental matrix separately verifies slow,
+interaction, fast suffix-adoption, and break-dependency hlist-rebreak paths.
+See [Profiling Umber with Gentle](profiling.md) for its controls and measured
+boundary.
 
 ## Fixture Regeneration
 

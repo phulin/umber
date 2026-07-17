@@ -39,22 +39,27 @@ GENTLE_PROFILE_ITERATIONS=200 scripts/profile-gentle.sh --checkpoints
 ```
 
 Pass `--incremental-edit` to measure a fixed semantic prose edit 20% through
-`gentle.tex`. Every sample keeps one session alive for four accepted revisions:
+`gentle.tex`. Every sample keeps one session alive for five accepted revisions:
 the pinned large edit, a follow-up insertion in that paragraph, removal of the
-follow-up, and an equal-width word substitution. Adjacent disabled/enabled
+follow-up, an equal-width word substitution, and a one-unit `\tolerance`
+change that invalidates only line-breaking dependencies. Adjacent disabled/enabled
 samples alternate AB/BA order, so the iteration count must be even. The runner
 reports paired latency differences for each revision and separate aggregate
-totals for three paths. The large insertion and inverse removal are the slow
+totals for four paths. The large insertion and inverse removal are the slow
 paragraph path: pagination changes and neither policy may adopt a suffix. The
 follow-up insertion is the interaction path: both policies must publish the
 same named-boundary schedule and retain/re-ship/adopt the same page counts
 after earlier paragraph hits. The equal-width substitution is the fast path:
 both policies must preserve the same schedule, reconverge at shipout, re-ship
 the pinned three changed pages, and adopt every page in the unchanged suffix.
+The final rebreak path must mount accepted hlists, import zero semantic graph
+bytes, run the ordinary current-state line breaker, and keep cold-identical
+output and the same named-boundary schedule as the disabled control.
 Both modes must also produce the exact DVI bytes of a fresh cold compile for
 every revision. The summary reports steady-state slow, interaction, and fast
-paired totals, a priming-inclusive slow total, boundary-schedule equivalence,
-page reuse, trace hits, and incremental-to-cold latency ratios:
+and rebreak paired totals, a priming-inclusive slow total, boundary-schedule
+equivalence, page reuse, trace hits, hlist hits, and incremental-to-cold latency
+ratios:
 
 ```bash
 cargo run --profile profiling -p umber --bin gentle-profile -- \
@@ -942,3 +947,29 @@ schedules and matched cold output at 100 pages and
 re-shipped three, and adopted the 83-page suffix. The short run reported a
 -14.520 ms combined slow-path mean but +13.798 ms including priming, so it is a
 validation gate rather than a new default-enablement claim.
+
+### Shared prepared-hlist mount experiment
+
+Issue `umber2-q02h.62` extended the q02h.58 survivor mount to accepted prepared
+hlists. The retained hlist's complete shared graph/resource closure is now
+validated before mutation; a break-dependency miss mounts the unchanged
+`NodeListId` with current-revision provenance and executes the ordinary
+current-state line breaker, paragraph epilogue, vertical contribution path,
+page builder, and shipout. Supported hits do not recursively import, copy,
+refreeze, rehash, or re-promote semantic graphs. Unsupported marks, leaders,
+unset nodes, handle/effect-bearing whatsits, and incomplete foreign closures
+miss before replay, while handle-free language whatsits remain ordinary
+mountable line-break input.
+
+The profiler's fifth revision inserts `\tolerance=201` before the edited
+paragraph, changing the plain-TeX default by one without creating a
+pathological line-break search. The final four-pair optimized AB/BA run
+reported 132 hlist hits, 132 break-dependency validation fallbacks, 42,183
+skipped commands, zero imported semantic bytes, and no import failures. The
+420 conservative nonzero-entry group barriers were unchanged. Memo-disabled
+and memo-enabled execution both published 499 named boundaries and matched the
+cold 100-page, 279,176-byte DVI. The rebreak enabled-minus-disabled delta was
++7.293 ms mean/+7.546 ms median; executor means were 227.590/227.708 ms, a
++0.117 ms delta. The remaining loss was outside ordinary rebreaking, chiefly
+generation publication, splice, and acceptance. This is capability and
+zero-copy evidence rather than a default-enablement result.

@@ -18,9 +18,9 @@ The design deliberately has two paths and two reuse tests:
    checkpoint, and paragraph suffix.
 2. **Slow path — aligned paragraph replay.** Full state differs, usually
    because pagination changed, but later paragraph inputs and the semantic
-   values they read remain valid. The executor imports their retained hlists
-   or finished lines in accepted order and feeds them through ordinary page
-   building and shipout.
+   values they read remain valid. The executor mounts their retained hlists or
+   finished lines in accepted order and feeds them through ordinary line
+   breaking, page building, and shipout.
 
 There is no reverse paragraph-suffix hash. Stable source mapping determines
 alignment, and dependency validation determines semantic validity. A suffix
@@ -163,8 +163,8 @@ codes. This separation supports three outcomes:
 ```text
 front-end red       -> execute the paragraph
 front end green,
-break set red       -> import hlist and re-break
-both green          -> import finished lines
+break set red       -> mount hlist and re-break
+both green          -> mount finished lines
 ```
 
 Source identity and input transition are validated separately from the read
@@ -183,13 +183,14 @@ For each candidate record, in order:
 2. prepare, but do not yet apply, its ending input transition;
 3. validate its front-end dependencies, count/integer mutation state, and
    virtual effects;
-4. import its retained hlist before applying any mutation;
-5. validate the separate break dependencies and mount finished lines when
-   green, otherwise line-break the imported hlist;
-6. resolve only the stable editor roots named by reachable hlist or line
+4. prove that its retained hlist graph and complete resource closure are
+   mountable before applying any mutation;
+5. atomically apply the prepared input transition and replay the supported
+   ordered mutations/effects;
+6. validate the separate post-redo break dependencies and mount finished lines
+   when green, otherwise mount and line-break the accepted hlist;
+7. resolve only the stable editor roots named by reachable hlist or line
    origins and bind them through the mount-local origin overlay;
-7. replay supported ordered mutations/effects and atomically apply the input
-   transition;
 8. install the result through the ordinary vertical/page-builder boundary;
    and
 9. publish the same `ShipoutComplete` and `OuterParagraphEnd` events as cold
@@ -199,7 +200,7 @@ The next old record is then the only candidate. There is no token preflight,
 content-key bucket search, paragraph census, probabilistic admission, or
 per-paragraph discovery map on this aligned path.
 
-If mapping, transition preparation, dependency validation, import, or a
+If mapping, transition preparation, dependency validation, mount validation, or a
 barrier fails, the candidate leaves live state untouched and executes cold.
 The cursor may resynchronize at a later accepted paragraph whose start maps
 unambiguously; one miss does not invalidate the entire source suffix.
@@ -372,14 +373,14 @@ records, and depth-first origin slots use `u32` indexes. Unknown or non-rooted
 output origins use the reserved unknown slot. Token values and origins that
 produced no accepted node are not retained.
 
-On a finished-line hit, replay prepares and validates the ordinary input
-transition first, recreates origins only for the recipe's distinct output
+On a finished-line or hlist-only hit, replay prepares and validates the ordinary
+input transition first, recreates origins only for the recipe's distinct output
 ranges, and installs them in the existing survivor mount overlay. Every
 ordinary `Universe::nodes` traversal therefore observes current-revision
-provenance immediately, including page building, output-routine inspection,
-node diagnostics, and shipout. An hlist fallback mounts the same sidecar before
-the existing recursive epoch import, so copied child graphs also receive the
-current origins. There is no shipout-only map and no second node model.
+provenance immediately, including line breaking, page building, output-routine
+inspection, node diagnostics, and shipout. Both tiers keep the accepted
+`NodeListId`; neither copies child graphs into the active epoch. There is no
+shipout-only map and no second node model.
 
 The focused scaling regression expands 4,096 `\relax` tokens after paragraph
 entry but produces only two characters; both retained recipes contain at most
@@ -469,6 +470,31 @@ The audited treatment of future-relevant state is:
 Finished-line failure therefore remains an hlist fallback rather than a whole
 transaction failure. No conservative whole-state identity is added: facts are
 named at their actual read tier, and missing seams use typed observations.
+
+### Mountable prepared-hlist experiment
+
+Accepted prepared hlists now use the same shared survivor payload, captured
+glue closure, font liveness checks, and mount-local provenance overlay as
+finished lines. Entry validation proves the complete hlist closure before the
+input transition, mutation redo, or effects are applied. A break-dependency
+failure then mounts the unchanged accepted `NodeListId`, materializes only the
+ordinary top-level line-break input, and runs the existing current-state
+paragraph breaker and epilogue. It performs no recursive epoch import,
+semantic graph copy, refreeze, rehash, or promotion. Handle-free language
+whatsits are supported because they are ordinary line-break input; marks,
+leaders, unset nodes, effectful/handle-bearing whatsits, and unresolved child,
+font, or glue closures remain conservative retained-result misses.
+
+The Gentle profiler now appends a fifth `\tolerance=201` revision after the
+unchanged four-path matrix. In the final four-pair optimized AB/BA run, that
+edit produced 132 hlist-only hits, 132 typed break-dependency fallbacks, 42,183
+skipped commands, zero imported semantic bytes, and the unchanged 420
+nonzero-entry group barriers. Both policies published the same 499 named
+boundaries and emitted the cold-identical 100-page, 279,176-byte DVI. The
+memo-enabled-minus-disabled rebreak delta was +7.293 ms mean/+7.546 ms median;
+the executor-only mean delta was +0.117 ms while acceptance and generation
+publication retained their known recording cost. This establishes the
+zero-copy hlist mount and its executor work reduction, not default enablement.
 
 ## Implementation sequence
 

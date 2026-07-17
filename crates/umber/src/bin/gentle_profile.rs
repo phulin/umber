@@ -35,6 +35,7 @@ const GENTLE_EDIT_REPETITIONS: usize = 64;
 const GENTLE_FOLLOW_UP: &str = " A measured follow-up changes this paragraph again.";
 const GENTLE_EQUAL_WIDTH_OLD: &str = "words";
 const GENTLE_EQUAL_WIDTH_NEW: &str = "sword";
+const GENTLE_REBREAK_ASSIGNMENT: &str = "\\tolerance=201 ";
 const GENTLE_FAST_PATH_RETYPED_PAGES: usize = 3;
 
 #[derive(Debug)]
@@ -188,6 +189,7 @@ struct IncrementalFixture {
     edit_names: Vec<&'static str>,
     edit_paths: Vec<IncrementalPath>,
     suffix_adoption_edit: usize,
+    hlist_rebreak_edit: usize,
     body_offset: usize,
     body_len: usize,
     inserted_bytes: usize,
@@ -199,16 +201,18 @@ enum IncrementalPath {
     Slow,
     Interaction,
     Fast,
+    Rebreak,
 }
 
 impl IncrementalPath {
-    const ALL: [Self; 3] = [Self::Slow, Self::Interaction, Self::Fast];
+    const ALL: [Self; 4] = [Self::Slow, Self::Interaction, Self::Fast, Self::Rebreak];
 
     const fn name(self) -> &'static str {
         match self {
             Self::Slow => "slow",
             Self::Interaction => "interaction",
             Self::Fast => "fast",
+            Self::Rebreak => "rebreak",
         }
     }
 }
@@ -478,7 +482,7 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
             ));
         }
         match fixture.edit_paths[index] {
-            IncrementalPath::Slow => {
+            IncrementalPath::Slow | IncrementalPath::Rebreak => {
                 if baseline.reuse.suffixes_adopted != 0
                     || candidate.reuse.suffixes_adopted != 0
                     || baseline.reuse.pages_reused != 0
@@ -673,6 +677,28 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
         work.trace_subtree_hits,
         disabled_fast.mean / cold_fast.mean,
         enabled_fast.mean / cold_fast.mean,
+    );
+    let rebreak = fixture.hlist_rebreak_edit;
+    let rebreak_step = &enabled_sample.steps[rebreak];
+    let hlist_hits = rebreak_step
+        .memo
+        .paragraph_hlist_fallbacks
+        .saturating_sub(rebreak_step.previous_memo.paragraph_hlist_fallbacks);
+    let imported_bytes = rebreak_step
+        .memo
+        .paragraph_imported_bytes
+        .saturating_sub(rebreak_step.previous_memo.paragraph_imported_bytes);
+    if hlist_hits == 0 || imported_bytes != 0 {
+        return Err(format!(
+            "mounted hlist rebreak edit reported hits={hlist_hits} imported_bytes={imported_bytes}"
+        ));
+    }
+    println!(
+        "gentle-profile hlist rebreak verified: edit={} ({}) hlist_hits={} imported_bytes={}",
+        rebreak + 1,
+        fixture.edit_names[rebreak],
+        hlist_hits,
+        imported_bytes,
     );
     Ok(())
 }
@@ -1078,23 +1104,40 @@ fn incremental_fixture(repo_root: &Path) -> Result<IncrementalFixture, String> {
         range: equal_width_start..equal_width_end,
         replacement: GENTLE_EQUAL_WIDTH_NEW.to_owned(),
     };
+    let mut rebreak_edited = equal_width_edited.clone();
+    rebreak_edited.insert_str(start, GENTLE_REBREAK_ASSIGNMENT);
+    let edit_five = Edit {
+        base_revision: RevisionId::new(5),
+        expected_hash: ContentHash::from_bytes(equal_width_edited.as_bytes()),
+        range: start..start,
+        replacement: GENTLE_REBREAK_ASSIGNMENT.to_owned(),
+    };
     Ok(IncrementalFixture {
         original,
-        revisions: vec![edited.clone(), followed_up, edited, equal_width_edited],
-        edits: vec![edit_one, edit_two, edit_three, edit_four],
+        revisions: vec![
+            edited.clone(),
+            followed_up,
+            edited,
+            equal_width_edited,
+            rebreak_edited,
+        ],
+        edits: vec![edit_one, edit_two, edit_three, edit_four, edit_five],
         edit_names: vec![
             "large pagination-changing insertion",
             "follow-up insertion",
             "inverse removal",
             "height-preserving equal-width substitution",
+            "line-breaking dependency change",
         ],
         edit_paths: vec![
             IncrementalPath::Slow,
             IncrementalPath::Interaction,
             IncrementalPath::Slow,
             IncrementalPath::Fast,
+            IncrementalPath::Rebreak,
         ],
         suffix_adoption_edit: 3,
+        hlist_rebreak_edit: 4,
         body_offset,
         body_len: body.len(),
         inserted_bytes: insertion.len() + 1,
@@ -1549,7 +1592,8 @@ fn print_help() {
          iterations and {DEFAULT_WARMUPS} warm-up. --checkpoints captures and hashes every\n\
          named executor checkpoint through a bounded profiling sink.\n\
          --incremental-edit compares a memo baseline, memo candidate, and cold compilation\n\
-         four accepted edits/session using balanced AB/BA pairs and DVI parity verification.\n\
+         five accepted edits/session using balanced AB/BA pairs and DVI parity verification;\n\
+         the fifth changes a line-breaking dependency to exercise mounted hlist rebreaking.\n\
          --memo-layers configures enabled recording layers; the default is paragraph.\n\
          --baseline-memo-layers replaces the disabled control with an explicit recording\n\
          policy for direct marginal layer comparisons."
