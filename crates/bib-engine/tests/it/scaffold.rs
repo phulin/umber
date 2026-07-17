@@ -272,11 +272,13 @@ fn classic_fixture_manifest_and_inventory_are_complete_and_pinned() {
     let real_world_cases = manifest["real_world_execution_cases"]
         .as_array()
         .expect("real-world execution cases must be an array");
-    assert_eq!(real_world_cases.len(), 2);
-    for (case, name) in real_world_cases
-        .iter()
-        .zip(["elsarticle-book", "elsarticle-article"])
-    {
+    assert_eq!(real_world_cases.len(), 4);
+    for (case, name) in real_world_cases.iter().zip([
+        "elsarticle-book",
+        "elsarticle-article",
+        "elsarticle-names",
+        "elsarticle-month",
+    ]) {
         assert_eq!(case["name"], name);
         assert_eq!(case["style"], "elsarticle-num");
         assert_eq!(case["command"], serde_json::json!(["bibtex", name]));
@@ -342,6 +344,14 @@ fn classic_fixture_manifest_and_inventory_are_complete_and_pinned() {
     assert_eq!(
         real_world_cases[1]["coverage"]["adds_builtins_beyond"],
         "elsarticle-book"
+    );
+    assert_eq!(
+        real_world_cases[2]["coverage"]["format_name_pattern"],
+        "{f.~}{vv~}{ll}{, jj}"
+    );
+    assert_eq!(
+        real_world_cases[3]["coverage"]["style_macro"],
+        serde_json::json!({ "jan": "Jan." })
     );
 
     let cases = manifest["cases"]

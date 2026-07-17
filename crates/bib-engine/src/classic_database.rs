@@ -309,7 +309,19 @@ struct Reader<'a> {
 
 impl<'a> Reader<'a> {
     fn new(style: &'a CompiledStyle, options: &'a ClassicDatabaseOptions) -> Self {
-        let macros = months();
+        let macros = style
+            .declarations()
+            .symbols()
+            .iter()
+            .filter_map(|symbol| match symbol.kind() {
+                SymbolKind::StringMacro(id) => style
+                    .declarations()
+                    .strings()
+                    .get(id.0 as usize)
+                    .map(|value| (symbol.name().to_owned(), value.clone())),
+                _ => None,
+            })
+            .collect();
         Self {
             style,
             options,
@@ -731,26 +743,6 @@ fn project(
         crossref,
         source: entry.source.clone(),
     }
-}
-
-fn months() -> BTreeMap<String, String> {
-    [
-        ("jan", "1"),
-        ("feb", "2"),
-        ("mar", "3"),
-        ("apr", "4"),
-        ("may", "5"),
-        ("jun", "6"),
-        ("jul", "7"),
-        ("aug", "8"),
-        ("sep", "9"),
-        ("oct", "10"),
-        ("nov", "11"),
-        ("dec", "12"),
-    ]
-    .into_iter()
-    .map(|(name, value)| (name.to_owned(), value.to_owned()))
-    .collect()
 }
 
 #[cfg(test)]

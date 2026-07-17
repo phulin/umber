@@ -255,10 +255,12 @@ selection is the LPPL-1.3-or-later `elsarticle-num.bst` 2.1 from TeX Live 2025.
 Its `elsarticle-book` case covers the style startup and book/publisher path;
 its `elsarticle-article` case additionally covers article volume/page, DOI,
 and URL formatting and observes `change.case$`, `substring$`, and `swap$`.
-Both use the public `ClassicBibCommand` and require exact status, terminal,
-BBL, and BLG bytes. Candidates that expose an unresolved public-boundary
-parity gap are documented as follow-up work rather than admitted with an
-allowance.
+The focused `elsarticle-names` case pins multi-word `{f.~}` abbreviation
+separators, while `elsarticle-month` verifies that `month = jan` resolves
+through the style's visible `MACRO {jan} {"Jan."}` declaration. All four use
+the public `ClassicBibCommand` and require exact status, terminal, BBL, and
+BLG bytes. Candidates that expose an unresolved public-boundary parity gap are
+documented as follow-up work rather than admitted with an allowance.
 
 The only supported live-reference rewrite path is:
 

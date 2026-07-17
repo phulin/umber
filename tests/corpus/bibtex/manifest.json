@@ -241,6 +241,114 @@
           "sha256": "301057f70c118719809016567d7d8584cd284f870fda772bb63634356c28d371"
         }
       ]
+    },
+    {
+      "name": "elsarticle-names",
+      "style": "elsarticle-num",
+      "command": [
+        "bibtex",
+        "elsarticle-names"
+      ],
+      "status": 0,
+      "history": "spotless",
+      "coverage": {
+        "paths": [
+          "book",
+          "format.names"
+        ],
+        "format_name_pattern": "{f.~}{vv~}{ll}{, jj}",
+        "reference_builtin_calls": {
+          "format.name$": 1,
+          "num.names$": 1
+        }
+      },
+      "files": [
+        {
+          "path": "cases/elsarticle-names/elsarticle-names.aux",
+          "role": "aux-input",
+          "bytes": 66,
+          "sha256": "9ce2f7043622eae158bd9256c708bd8d20e3b98e1ea048bcc109770cf940f113"
+        },
+        {
+          "path": "cases/elsarticle-names/references.bib",
+          "role": "bib-input",
+          "bytes": 154,
+          "sha256": "54562080d6c2f1d9ae62f40952fd52bd648c99e9f70a2f66b32a4299c4957027"
+        },
+        {
+          "path": "cases/elsarticle-names/elsarticle-names.bbl",
+          "role": "bbl-output",
+          "bytes": 375,
+          "sha256": "9093a814bb18f5631678e55b7ef5c6d281248415dc154a4d943937eb1858aeef"
+        },
+        {
+          "path": "cases/elsarticle-names/elsarticle-names.blg",
+          "role": "blg-output",
+          "bytes": 880,
+          "sha256": "d719963c6cfa28f937751d6632f6fd97c02865c5988cd7047e08a25f35cb17b6"
+        },
+        {
+          "path": "cases/elsarticle-names/elsarticle-names.terminal",
+          "role": "terminal-output",
+          "bytes": 165,
+          "sha256": "e5ed87e6d93669982776f3f37ce9e6f221c6b6ebd54e54010c2fd6dfd460a500"
+        }
+      ]
+    },
+    {
+      "name": "elsarticle-month",
+      "style": "elsarticle-num",
+      "command": [
+        "bibtex",
+        "elsarticle-month"
+      ],
+      "status": 0,
+      "history": "spotless",
+      "coverage": {
+        "paths": [
+          "misc",
+          "format.date"
+        ],
+        "style_macro": {
+          "jan": "Jan."
+        },
+        "reference_builtin_calls": {
+          "format.name$": 1,
+          "num.names$": 1
+        }
+      },
+      "files": [
+        {
+          "path": "cases/elsarticle-month/elsarticle-month.aux",
+          "role": "aux-input",
+          "bytes": 64,
+          "sha256": "30cbe12ca7668c021afaf178015821fabf0800e8605ce3da5f96ef8dd99d271f"
+        },
+        {
+          "path": "cases/elsarticle-month/references.bib",
+          "role": "bib-input",
+          "bytes": 105,
+          "sha256": "b9840f566e9ed9182a9efde078c7f1ec02768a1c3e36656873637c912ef97f59"
+        },
+        {
+          "path": "cases/elsarticle-month/elsarticle-month.bbl",
+          "role": "bbl-output",
+          "bytes": 340,
+          "sha256": "0781e27b8722aad957db1015c650371f9995fb5652547ada5948cd7dcf1cb9d0"
+        },
+        {
+          "path": "cases/elsarticle-month/elsarticle-month.blg",
+          "role": "blg-output",
+          "bytes": 879,
+          "sha256": "bf9533a88000eae694d2b67708468dde5877e4ca75c42f4968591b5281b51f60"
+        },
+        {
+          "path": "cases/elsarticle-month/elsarticle-month.terminal",
+          "role": "terminal-output",
+          "bytes": 165,
+          "sha256": "9da833924ac14e6156ac2b65e50697b78ce04a6403aacad0c7463b511867668f"
+        }
+      ]
     }
   ],
   "cases": [

@@ -1369,9 +1369,16 @@ fn format_name_words(
         (None, raw_after)
     };
     // A trailing tie on a multi-word part is its inter-word separator, not
-    // punctuation around the entire rendered part.  If another name part
-    // follows, the reference leaves the ordinary boundary space after it.
-    let consume_tie_as_word_separator = after == "~" && words.len() > 1;
+    // the separator before the following name part.  Punctuation preceding
+    // that tie is still emitted after the final word: `{f.~}{ll}` becomes
+    // `J.~R.~R. Tolkien`, not `J.~R.~R.~Tolkien`.
+    let consume_tie_as_word_separator =
+        word_separator.is_none() && after.ends_with('~') && words.len() > 1 && has_following_part;
+    let after_without_tie = if consume_tie_as_word_separator {
+        &after[..after.len() - 1]
+    } else {
+        after
+    };
     let mut result = String::from(before);
     for (index, word) in words.iter().enumerate() {
         if abbreviated {
@@ -1382,21 +1389,23 @@ fn format_name_words(
         if index + 1 < words.len() {
             if let Some(separator) = word_separator {
                 result.push_str(separator);
-            } else {
-                if abbreviated {
+            } else if consume_tie_as_word_separator {
+                if abbreviated && !after_without_tie.ends_with('.') {
                     result.push('.');
                 }
-                if consume_tie_as_word_separator || abbreviated {
-                    result.push('~');
-                } else {
-                    result.push(' ');
-                }
+                result.push_str(after);
+            } else if abbreviated {
+                result.push('.');
+                result.push('~');
+            } else {
+                result.push(' ');
             }
         }
     }
     if !consume_tie_as_word_separator {
         result.push_str(after);
     } else if has_following_part {
+        result.push_str(after_without_tie);
         result.push(' ');
     }
     result

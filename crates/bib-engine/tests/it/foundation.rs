@@ -415,6 +415,48 @@ fn classic_real_world_elsarticle_article_has_exact_public_command_parity() {
     );
 }
 
+#[test]
+fn classic_real_world_elsarticle_names_has_exact_public_command_parity() {
+    execute_real_world_command(
+        "elsarticle-names",
+        include_bytes!(
+            "../../../../tests/corpus/bibtex/cases/elsarticle-names/elsarticle-names.aux"
+        ),
+        include_bytes!("../../../../tests/corpus/bibtex/cases/elsarticle-names/references.bib"),
+        include_bytes!("../../../../tests/corpus/bibtex/styles/elsarticle-num.bst"),
+        include_bytes!(
+            "../../../../tests/corpus/bibtex/cases/elsarticle-names/elsarticle-names.bbl"
+        ),
+        include_bytes!(
+            "../../../../tests/corpus/bibtex/cases/elsarticle-names/elsarticle-names.blg"
+        ),
+        include_bytes!(
+            "../../../../tests/corpus/bibtex/cases/elsarticle-names/elsarticle-names.terminal"
+        ),
+    );
+}
+
+#[test]
+fn classic_real_world_elsarticle_month_has_exact_public_command_parity() {
+    execute_real_world_command(
+        "elsarticle-month",
+        include_bytes!(
+            "../../../../tests/corpus/bibtex/cases/elsarticle-month/elsarticle-month.aux"
+        ),
+        include_bytes!("../../../../tests/corpus/bibtex/cases/elsarticle-month/references.bib"),
+        include_bytes!("../../../../tests/corpus/bibtex/styles/elsarticle-num.bst"),
+        include_bytes!(
+            "../../../../tests/corpus/bibtex/cases/elsarticle-month/elsarticle-month.bbl"
+        ),
+        include_bytes!(
+            "../../../../tests/corpus/bibtex/cases/elsarticle-month/elsarticle-month.blg"
+        ),
+        include_bytes!(
+            "../../../../tests/corpus/bibtex/cases/elsarticle-month/elsarticle-month.terminal"
+        ),
+    );
+}
+
 fn execute_standard_style(
     name: &str,
     aux_bytes: &[u8],

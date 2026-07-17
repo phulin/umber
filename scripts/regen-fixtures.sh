@@ -730,7 +730,7 @@ regen_bibtex_area() {
         "$file" >&2
     fi
   done
-  for case in elsarticle-book elsarticle-article; do
+  for case in elsarticle-book elsarticle-article elsarticle-names elsarticle-month; do
     case_dir="${tmp_root}/${case}"
     mkdir -p "$case_dir"
     cp "${repo_root}/tests/corpus/bibtex/cases/${case}/${case}.aux" \
@@ -832,6 +832,27 @@ regen_bibtex_area() {
        (.bytes = ($elsarticle_article_terminal_bytes | tonumber) | .sha256 = $elsarticle_article_terminal_sha256)' \
     "${repo_root}/tests/corpus/bibtex/manifest.json" > "$manifest_tmp"
   mv "$manifest_tmp" "${repo_root}/tests/corpus/bibtex/manifest.json"
+  for case in elsarticle-names elsarticle-month; do
+    jq \
+      --arg case "$case" \
+      --arg bbl_bytes "$(wc -c < "${repo_root}/tests/corpus/bibtex/cases/${case}/${case}.bbl" | tr -d ' ')" \
+      --arg bbl_sha256 "$(sha256_file "${repo_root}/tests/corpus/bibtex/cases/${case}/${case}.bbl")" \
+      --arg blg_bytes "$(wc -c < "${repo_root}/tests/corpus/bibtex/cases/${case}/${case}.blg" | tr -d ' ')" \
+      --arg blg_sha256 "$(sha256_file "${repo_root}/tests/corpus/bibtex/cases/${case}/${case}.blg")" \
+      --arg terminal_bytes "$(wc -c < "${repo_root}/tests/corpus/bibtex/cases/${case}/${case}.terminal" | tr -d ' ')" \
+      --arg terminal_sha256 "$(sha256_file "${repo_root}/tests/corpus/bibtex/cases/${case}/${case}.terminal")" \
+      '(.real_world_execution_cases[] | select(.name == $case) | .files[] |
+         select(.role == "bbl-output")) |=
+         (.bytes = ($bbl_bytes | tonumber) | .sha256 = $bbl_sha256) |
+       (.real_world_execution_cases[] | select(.name == $case) | .files[] |
+         select(.role == "blg-output")) |=
+         (.bytes = ($blg_bytes | tonumber) | .sha256 = $blg_sha256) |
+       (.real_world_execution_cases[] | select(.name == $case) | .files[] |
+         select(.role == "terminal-output")) |=
+         (.bytes = ($terminal_bytes | tonumber) | .sha256 = $terminal_sha256)' \
+      "${repo_root}/tests/corpus/bibtex/manifest.json" > "$manifest_tmp"
+    mv "$manifest_tmp" "${repo_root}/tests/corpus/bibtex/manifest.json"
+  done
   rm -rf "$tmp_root"
   run_command 'Validating pinned classic BibTeX fixtures and inventory' \
     cargo test -p bib-engine --test it classic_fixture_manifest_and_inventory_are_complete_and_pinned

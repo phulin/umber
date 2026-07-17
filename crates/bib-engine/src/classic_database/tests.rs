@@ -37,7 +37,7 @@ fn prepared(source: &[u8], citations: &[&str]) -> super::ClassicDatabase {
 #[test]
 fn read_projects_declared_fields_and_preserves_citation_order() {
     let database = prepared(
-        br#"@article{b, title = "B", year = jan, ignored = "no"}
+        br#"@article{b, title = "B", year = "1", ignored = "no"}
             @book{a, title = "A"}"#,
         &["a", "b", "a"],
     );
@@ -56,6 +56,33 @@ fn read_projects_declared_fields_and_preserves_citation_order() {
     assert_eq!(entries[0].field(title), Some("A"));
     assert_eq!(entries[0].field(year), None);
     assert_eq!(entries[1].field(year), Some("1"));
+}
+
+#[test]
+fn style_macros_are_visible_when_expanding_raw_entry_values() {
+    let source = b"@misc{one, month = jan}";
+    let raw = parse_raw_bibtex_bytes(source, BibTexOptions::default());
+    let style = compile(
+        b"ENTRY { month } { } { } MACRO { jan } { \"Jan.\" } READ",
+        CompileLimits::default(),
+    );
+    let style = style.program().expect("style");
+    let month = style.declarations().lookup("month").expect("month");
+    let path = VirtualPath::user("refs.bib").expect("path");
+    let database = prepare_classic_database(
+        &control(&["one"]),
+        style,
+        &[ClassicDatabaseSource::new(
+            &path,
+            FileContentId::for_bytes(source),
+            &raw,
+        )],
+        &ClassicDatabaseOptions::default(),
+    );
+    assert_eq!(
+        database.entries().next().expect("entry").field(month),
+        Some("Jan.")
+    );
 }
 
 #[test]

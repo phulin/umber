@@ -340,6 +340,10 @@ fn format_name_honors_nested_patterns_and_classic_initials() {
         super::format_bib_name("Jean-Baptiste Missilany", "{f.} {ll}"),
         "J.-B. Missilany"
     );
+    assert_eq!(
+        super::format_bib_name("Tolkien, John Ronald Reuel", "{f.~}{ll}"),
+        "J.~R.~R. Tolkien"
+    );
 }
 
 #[test]
