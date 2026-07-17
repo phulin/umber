@@ -11,6 +11,46 @@ use bib_bst::{
 
 use crate::ClassicDatabase;
 
+pub(crate) const CLASSIC_BUILTINS: [(Builtin, &str); 37] = [
+    (Builtin::Equals, "="),
+    (Builtin::GreaterThan, ">"),
+    (Builtin::LessThan, "<"),
+    (Builtin::Add, "+"),
+    (Builtin::Subtract, "-"),
+    (Builtin::Concatenate, "*"),
+    (Builtin::Assign, ":="),
+    (Builtin::AddPeriod, "add.period$"),
+    (Builtin::CallType, "call.type$"),
+    (Builtin::ChangeCase, "change.case$"),
+    (Builtin::ChrToInt, "chr.to.int$"),
+    (Builtin::Cite, "cite$"),
+    (Builtin::Duplicate, "duplicate$"),
+    (Builtin::Empty, "empty$"),
+    (Builtin::FormatName, "format.name$"),
+    (Builtin::If, "if$"),
+    (Builtin::IntToChr, "int.to.chr$"),
+    (Builtin::IntToStr, "int.to.str$"),
+    (Builtin::Missing, "missing$"),
+    (Builtin::Newline, "newline$"),
+    (Builtin::NumNames, "num.names$"),
+    (Builtin::Pop, "pop$"),
+    (Builtin::Preamble, "preamble$"),
+    (Builtin::Purify, "purify$"),
+    (Builtin::Quote, "quote$"),
+    (Builtin::Skip, "skip$"),
+    (Builtin::Stack, "stack$"),
+    (Builtin::Substring, "substring$"),
+    (Builtin::Swap, "swap$"),
+    (Builtin::TextLength, "text.length$"),
+    (Builtin::TextPrefix, "text.prefix$"),
+    (Builtin::Top, "top$"),
+    (Builtin::Type, "type$"),
+    (Builtin::Warning, "warning$"),
+    (Builtin::While, "while$"),
+    (Builtin::Width, "width$"),
+    (Builtin::Write, "write$"),
+];
+
 /// Values which can occur on the classic BibTeX operand stack.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum VmValue {
@@ -52,6 +92,7 @@ impl Default for ClassicVmLimits {
 /// Stable classes of VM diagnostics.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ClassicVmDiagnosticKind {
+    Warning,
     Underflow,
     WrongType,
     NoCurrentEntry,
@@ -89,6 +130,7 @@ pub struct ClassicVmResult {
     blg: String,
     diagnostics: Vec<ClassicVmDiagnostic>,
     entry_order: Vec<String>,
+    builtin_calls: [usize; CLASSIC_BUILTINS.len()],
     work: usize,
 }
 
@@ -120,6 +162,9 @@ impl ClassicVmResult {
     #[must_use]
     pub fn entry_order(&self) -> &[String] {
         &self.entry_order
+    }
+    pub(crate) const fn builtin_calls(&self) -> &[usize; CLASSIC_BUILTINS.len()] {
+        &self.builtin_calls
     }
     #[must_use]
     pub const fn work(&self) -> usize {
@@ -186,6 +231,7 @@ struct Vm<'a> {
     bbl: String,
     blg: String,
     diagnostics: Vec<ClassicVmDiagnostic>,
+    builtin_calls: [usize; CLASSIC_BUILTINS.len()],
     work: usize,
     fatal: bool,
 }
@@ -218,6 +264,7 @@ impl<'a> Vm<'a> {
             bbl: String::new(),
             blg: String::new(),
             diagnostics: Vec::new(),
+            builtin_calls: [0; CLASSIC_BUILTINS.len()],
             work: 0,
             fatal: false,
         }
@@ -242,6 +289,7 @@ impl<'a> Vm<'a> {
             blg: self.blg,
             diagnostics: self.diagnostics,
             entry_order,
+            builtin_calls: self.builtin_calls,
             work: self.work,
         }
     }
@@ -429,6 +477,7 @@ impl<'a> Vm<'a> {
     }
 
     fn builtin(&mut self, builtin: Builtin) {
+        self.builtin_calls[builtin as usize] += 1;
         match builtin {
             Builtin::Duplicate => {
                 if let Some(value) = self.stack.last().cloned() {
@@ -467,6 +516,12 @@ impl<'a> Vm<'a> {
             Builtin::Newline => self.effect(false, "\n"),
             Builtin::Warning => {
                 if let Some(value) = self.pop_string() {
+                    if self.diagnostics.len() < self.limits.diagnostics {
+                        self.diagnostics.push(ClassicVmDiagnostic {
+                            kind: ClassicVmDiagnosticKind::Warning,
+                            message: value.clone(),
+                        });
+                    }
                     self.effect(true, &value);
                     self.effect(true, "\n");
                 }
@@ -829,6 +884,11 @@ impl<'a> Vm<'a> {
             SymbolKind::Special(bib_bst::SpecialSymbol::SortKey) => self
                 .current
                 .map(|entry| VmValue::String(self.entries[entry].sort_key.clone()))
+                .unwrap_or(VmValue::Missing),
+            SymbolKind::Special(bib_bst::SpecialSymbol::Crossref) => self
+                .current_entry()
+                .and_then(|entry| entry.crossref().map(str::to_owned))
+                .map(VmValue::String)
                 .unwrap_or(VmValue::Missing),
             // These are fixed by the pinned classic Web2C configuration, not
             // by Umber's separate safety limits.
@@ -1209,7 +1269,7 @@ fn format_bib_name(name: &str, format: &str) -> String {
             at += 1;
             continue;
         }
-        let Some(close) = format[at + 1..].find('}').map(|end| at + 1 + end) else {
+        let Some(close) = matching_close_brace(format, at) else {
             result.push('{');
             at += 1;
             continue;
@@ -1260,7 +1320,14 @@ fn format_name_words(
         .expect("name pattern contains its part key")
         + key.len_utf8();
     let before = &pattern[..key_at];
-    let after = &pattern[key_end..];
+    let raw_after = &pattern[key_end..];
+    let (word_separator, after) = if raw_after.starts_with('{') {
+        matching_close_brace(raw_after, 0).map_or((None, raw_after), |close| {
+            (Some(&raw_after[1..close]), &raw_after[close + 1..])
+        })
+    } else {
+        (None, raw_after)
+    };
     // A trailing tie on a multi-word part is its inter-word separator, not
     // punctuation around the entire rendered part.  If another name part
     // follows, the reference leaves the ordinary boundary space after it.
@@ -1268,18 +1335,22 @@ fn format_name_words(
     let mut result = String::from(before);
     for (index, word) in words.iter().enumerate() {
         if abbreviated {
-            result.extend(word.chars().next());
+            result.push_str(&abbreviated_name_word(word));
         } else {
             result.push_str(word);
         }
         if index + 1 < words.len() {
-            if abbreviated {
-                result.push('.');
-            }
-            if consume_tie_as_word_separator || abbreviated {
-                result.push('~');
+            if let Some(separator) = word_separator {
+                result.push_str(separator);
             } else {
-                result.push(' ');
+                if abbreviated {
+                    result.push('.');
+                }
+                if consume_tie_as_word_separator || abbreviated {
+                    result.push('~');
+                } else {
+                    result.push(' ');
+                }
             }
         }
     }
@@ -1291,6 +1362,60 @@ fn format_name_words(
     result
 }
 
+fn abbreviated_name_word(word: &str) -> String {
+    let mut result = String::new();
+    for (index, segment) in split_name_word_segments(word).into_iter().enumerate() {
+        if index != 0 {
+            result.push_str(".-");
+        }
+        if let Some(braced_initial) = initial_braced_group(segment) {
+            result.push_str(braced_initial);
+        } else if let Some(initial) = segment.chars().next() {
+            result.push(initial);
+        }
+    }
+    result
+}
+
+fn initial_braced_group(segment: &str) -> Option<&str> {
+    if !segment.starts_with('{') {
+        return None;
+    }
+    let mut depth = 0_usize;
+    for (at, character) in segment.char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(&segment[..at + character.len_utf8()]);
+                }
+            }
+            _ => {}
+        }
+    }
+    Some(segment)
+}
+
+fn split_name_word_segments(word: &str) -> Vec<&str> {
+    let mut segments = Vec::new();
+    let mut depth = 0_usize;
+    let mut start = 0;
+    for (at, character) in word.char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            '-' if depth == 0 => {
+                segments.push(&word[start..at]);
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    segments.push(&word[start..]);
+    segments
+}
+
 fn has_following_name_part(format: &str, parts: &BibName) -> bool {
     let mut at = 0;
     let bytes = format.as_bytes();
@@ -1299,7 +1424,7 @@ fn has_following_name_part(format: &str, parts: &BibName) -> bool {
             at += 1;
             continue;
         }
-        let Some(close) = format[at + 1..].find('}').map(|end| at + 1 + end) else {
+        let Some(close) = matching_close_brace(format, at) else {
             return false;
         };
         let key = format[at + 1..close]
@@ -1319,6 +1444,23 @@ fn has_following_name_part(format: &str, parts: &BibName) -> bool {
         at = close + 1;
     }
     false
+}
+
+fn matching_close_brace(value: &str, open: usize) -> Option<usize> {
+    let mut depth = 0_usize;
+    for (offset, character) in value[open..].char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(open + offset);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 #[derive(Default)]

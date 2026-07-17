@@ -4,9 +4,9 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::{
-    BibExitStatus, BibliographyAttempt, BibliographyHistory, BibliographyResult,
-    BibliographySession, ClassicBibJob, ClassicBibOptions, FileProvisioner, ResolvedFile,
-    VfsSnapshot, VirtualPath,
+    BibExitStatus, BibliographyAttempt, BibliographyDocument, BibliographyHistory,
+    BibliographyResult, BibliographySession, BibliographySourceLocation, ClassicBibJob,
+    ClassicBibOptions, FileProvisioner, ResolvedFile, VfsSnapshot, VirtualPath,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -212,14 +212,47 @@ fn with_extension(path: &VirtualPath, extension: &str) -> VirtualPath {
 }
 
 fn render_terminal(result: &BibliographyResult) -> Vec<u8> {
-    let mut terminal = Vec::new();
+    let mut terminal = String::from("This is BibTeX, Version 0.99d (TeX Live 2025)\n");
+    let BibliographyDocument::Classic(document) = result.document() else {
+        return terminal.into_bytes();
+    };
+    if let Some(aux) = document.aux_files().next() {
+        terminal.push_str("The top-level auxiliary file: ");
+        terminal.push_str(file_name(aux));
+        terminal.push('\n');
+    }
+    if let Some(style) = document.style() {
+        terminal.push_str("The style file: ");
+        terminal.push_str(style);
+        if !style.ends_with(".bst") {
+            terminal.push_str(".bst");
+        }
+        terminal.push('\n');
+    }
+    for (index, database) in document.databases().enumerate() {
+        terminal.push_str(&format!("Database file #{}: {database}", index + 1));
+        if !database.ends_with(".bib") {
+            terminal.push_str(".bib");
+        }
+        terminal.push('\n');
+    }
     for diagnostic in result.diagnostics() {
-        terminal.extend_from_slice(format!("Warning--{}\n", diagnostic.message()).as_bytes());
+        let source = match diagnostic.source() {
+            Some(BibliographySourceLocation::Classic(source)) => Some(source),
+            _ => None,
+        };
+        crate::classic_execution::render_warning(&mut terminal, diagnostic.message(), source);
     }
     if result.history() == BibliographyHistory::Fatal {
-        terminal.extend_from_slice(b"(Fatal error)\n");
+        terminal.push_str("(Fatal error)\n");
+    } else {
+        crate::classic_execution::render_history(&mut terminal, result.diagnostics().len());
     }
-    terminal
+    terminal.into_bytes()
+}
+
+fn file_name(path: &VirtualPath) -> &str {
+    path.as_str().rsplit('/').next().unwrap_or(path.as_str())
 }
 
 #[cfg(test)]

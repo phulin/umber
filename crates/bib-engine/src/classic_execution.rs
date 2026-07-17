@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use bib_bst::{CompilationCache, CompileLimits};
+use bib_bst::{CompilationCache, CompileLimits, CompiledStyle, Instruction};
 use bib_input::parse_raw_bibtex_bytes;
 use umber_vfs::{FileKind, FileRequest, FileRequestBatch, VfsSnapshot, VirtualPath};
 
@@ -85,7 +85,9 @@ impl ClassicExecutionSession {
         let mut diagnostics = compile
             .diagnostics()
             .iter()
-            .map(|diagnostic| diagnostic_message("BST_COMPILE", diagnostic.message().to_owned()))
+            .map(|diagnostic| {
+                diagnostic_message("BST_COMPILE", diagnostic.message().to_owned(), None)
+            })
             .collect::<Vec<_>>();
         let Some(style) = compile.program() else {
             return self.fatal(control, diagnostics, Vec::new(), Vec::new());
@@ -117,8 +119,8 @@ impl ClassicExecutionSession {
         diagnostics.extend(vm.diagnostics().iter().map(vm_diagnostic));
         let bbl_path = output_path(job.aux_path(), "bbl");
         let blg_path = output_path(job.aux_path(), "blg");
-        let bbl = vm.partial_bbl().as_bytes().to_vec();
-        let blg = render_log(&control, &database, &vm);
+        let bbl = wrap_bbl(vm.partial_bbl());
+        let blg = render_log(&control, style, &database, &vm);
         if vm.is_fatal() {
             return self.fatal(
                 control,
@@ -189,6 +191,60 @@ impl ClassicExecutionSession {
     }
 }
 
+fn wrap_bbl(raw: &str) -> Vec<u8> {
+    const MIN_PRINT_LINE: usize = 3;
+    const MAX_PRINT_LINE: usize = 79;
+
+    let mut output = String::with_capacity(raw.len());
+    for raw_line in raw.split_inclusive('\n') {
+        let mut line = raw_line.strip_suffix('\n').unwrap_or(raw_line).to_owned();
+        loop {
+            line = line.trim_end_matches(classic_output_whitespace).to_owned();
+            if line.is_empty() {
+                if raw_line.ends_with('\n') {
+                    output.push('\n');
+                }
+                break;
+            }
+            if line.len() <= MAX_PRINT_LINE {
+                output.push_str(&line);
+                if raw_line.ends_with('\n') {
+                    output.push('\n');
+                }
+                break;
+            }
+            let bytes = line.as_bytes();
+            let backward_break = (MIN_PRINT_LINE..=MAX_PRINT_LINE)
+                .rev()
+                .find(|&at| classic_output_whitespace(bytes[at] as char));
+            let break_at = backward_break.or_else(|| {
+                (MAX_PRINT_LINE + 1..bytes.len())
+                    .find(|&at| classic_output_whitespace(bytes[at] as char))
+            });
+            let Some(mut break_at) = break_at else {
+                output.push_str(&line);
+                if raw_line.ends_with('\n') {
+                    output.push('\n');
+                }
+                break;
+            };
+            while break_at + 1 < bytes.len()
+                && classic_output_whitespace(bytes[break_at + 1] as char)
+            {
+                break_at += 1;
+            }
+            output.push_str(line[..break_at].trim_end_matches(classic_output_whitespace));
+            output.push('\n');
+            line = format!("  {}", &line[break_at + 1..]);
+        }
+    }
+    output.into_bytes()
+}
+
+fn classic_output_whitespace(character: char) -> bool {
+    matches!(character, ' ' | '\t' | '\r' | '\u{000c}')
+}
+
 fn output_path(aux: &VirtualPath, extension: &str) -> VirtualPath {
     let raw = aux
         .as_str()
@@ -198,23 +254,35 @@ fn output_path(aux: &VirtualPath, extension: &str) -> VirtualPath {
     VirtualPath::user(&format!("{stem}.{extension}")).expect("AUX-derived output is valid")
 }
 
-fn diagnostic_message(code: &str, message: String) -> BibliographyDiagnostic {
+fn diagnostic_message(
+    code: &str,
+    message: String,
+    source: Option<crate::BibliographySourceLocation>,
+) -> BibliographyDiagnostic {
     BibliographyDiagnostic::new(
         crate::BibSeverity::Warning,
         BibliographyDiagnosticCode::Classic(
             ClassicDiagnosticCode::new(code).expect("fixed classic diagnostic code is valid"),
         ),
         message,
-        None,
+        source,
     )
 }
 
 fn database_diagnostic(diagnostic: &ClassicDatabaseDiagnostic) -> BibliographyDiagnostic {
-    diagnostic_message("CLASSIC_READ", diagnostic.message().to_owned())
+    diagnostic_message(
+        "CLASSIC_READ",
+        diagnostic.message().to_owned(),
+        diagnostic
+            .source()
+            .cloned()
+            .map(crate::BibliographySourceLocation::Classic),
+    )
 }
 
 fn vm_diagnostic(diagnostic: &ClassicVmDiagnostic) -> BibliographyDiagnostic {
     let code = match diagnostic.kind() {
+        ClassicVmDiagnosticKind::Warning => "CLASSIC_VM_WARNING",
         ClassicVmDiagnosticKind::Underflow => "CLASSIC_VM_UNDERFLOW",
         ClassicVmDiagnosticKind::WrongType => "CLASSIC_VM_TYPE",
         ClassicVmDiagnosticKind::NoCurrentEntry => "CLASSIC_VM_ENTRY",
@@ -222,32 +290,167 @@ fn vm_diagnostic(diagnostic: &ClassicVmDiagnostic) -> BibliographyDiagnostic {
         ClassicVmDiagnosticKind::Limit => "CLASSIC_VM_LIMIT",
         ClassicVmDiagnosticKind::Arithmetic => "CLASSIC_VM_ARITHMETIC",
     };
-    diagnostic_message(code, diagnostic.message().to_owned())
+    diagnostic_message(code, diagnostic.message().to_owned(), None)
 }
 
 fn render_log(
     control: &ClassicControl,
+    style: &CompiledStyle,
     database: &crate::ClassicDatabase,
     vm: &crate::ClassicVmResult,
 ) -> Vec<u8> {
-    let mut log = String::from("This is Umber classic BibTeX compatibility mode\n");
+    let mut log = String::from("This is BibTeX, Version 0.99d (TeX Live 2025)\n");
+    log.push_str("Capacity: max_strings=200000, hash_size=200000, hash_prime=170003\n");
+    render_control_header(&mut log, control);
+    for diagnostic in database.diagnostics() {
+        render_warning(&mut log, diagnostic.message(), diagnostic.source());
+    }
+    for diagnostic in vm.diagnostics() {
+        render_warning(&mut log, diagnostic.message(), None);
+    }
+    let entries = database.entries().len();
+    let wiz_locations = wiz_defined_locations(style);
+    let (strings, characters) = classic_string_usage(control, style, database);
+    log.push_str(&format!(
+        "You've used {entries} entr{},\n",
+        if entries == 1 { "y" } else { "ies" }
+    ));
+    log.push_str(&format!(
+        "            {wiz_locations} wiz_defined-function locations,\n"
+    ));
+    log.push_str(&format!(
+        "            {strings} strings with {characters} characters,\n"
+    ));
+    let calls = vm.builtin_calls().iter().sum::<usize>();
+    log.push_str(&format!(
+        "and the built_in function-call counts, {calls} in all, are:\n"
+    ));
+    for ((_, name), calls) in crate::classic_vm::CLASSIC_BUILTINS
+        .iter()
+        .zip(vm.builtin_calls())
+    {
+        log.push_str(&format!("{name} -- {calls}\n"));
+    }
+    render_history(
+        &mut log,
+        database.diagnostics().len() + vm.diagnostics().len(),
+    );
+    log.into_bytes()
+}
+
+pub(crate) fn render_control_header(log: &mut String, control: &ClassicControl) {
+    if let Some(aux) = control.aux_files().next() {
+        log.push_str("The top-level auxiliary file: ");
+        log.push_str(file_name(aux));
+        log.push('\n');
+    }
     if let Some(style) = control.style() {
         log.push_str("The style file: ");
         log.push_str(style);
-        log.push_str(".bst\n");
-    }
-    for (index, database_name) in control.databases().enumerate() {
-        log.push_str(&format!(
-            "Database file #{}: {}.bib\n",
-            index + 1,
-            database_name
-        ));
-    }
-    for diagnostic in database.diagnostics() {
-        log.push_str("Warning--");
-        log.push_str(diagnostic.message());
+        if !style.ends_with(".bst") {
+            log.push_str(".bst");
+        }
         log.push('\n');
     }
-    log.push_str(vm.partial_blg());
-    log.into_bytes()
+    for (index, database_name) in control.databases().enumerate() {
+        log.push_str(&format!("Database file #{}: {database_name}", index + 1));
+        if !database_name.ends_with(".bib") {
+            log.push_str(".bib");
+        }
+        log.push('\n');
+    }
+}
+
+pub(crate) fn render_warning(
+    output: &mut String,
+    message: &str,
+    source: Option<&crate::ClassicSourceLocation>,
+) {
+    output.push_str("Warning--");
+    output.push_str(message);
+    output.push('\n');
+    if let Some(source) = source
+        && let Some(line) = source.line()
+    {
+        output.push_str(&format!(
+            "--line {line} of file {}\n",
+            file_name(source.path())
+        ));
+    }
+}
+
+pub(crate) fn render_history(output: &mut String, warnings: usize) {
+    match warnings {
+        0 => {}
+        1 => output.push_str("(There was 1 warning)\n"),
+        count => output.push_str(&format!("(There were {count} warnings)\n")),
+    }
+}
+
+fn file_name(path: &VirtualPath) -> &str {
+    path.as_str().rsplit('/').next().unwrap_or(path.as_str())
+}
+
+fn wiz_defined_locations(style: &CompiledStyle) -> usize {
+    style
+        .functions()
+        .iter()
+        .filter(|function| {
+            !function.name().starts_with("<builtin:") && !function.name().starts_with("<read:")
+        })
+        .map(|function| {
+            1 + function
+                .instructions()
+                .iter()
+                .map(|instruction| {
+                    usize::from(matches!(
+                        instruction,
+                        Instruction::PushFunction(_) | Instruction::Assign(_)
+                    )) + 1
+                })
+                .sum::<usize>()
+        })
+        .sum()
+}
+
+fn classic_string_usage(
+    control: &ClassicControl,
+    style: &CompiledStyle,
+    database: &crate::ClassicDatabase,
+) -> (usize, usize) {
+    let style_strings = style.declarations().strings();
+    let mut strings = style.declarations().symbols().len() + style_strings.len();
+    let mut characters = style
+        .declarations()
+        .symbols()
+        .iter()
+        .map(|symbol| symbol.name().len())
+        .sum::<usize>()
+        + style_strings.iter().map(String::len).sum::<usize>();
+    for aux in control.aux_files() {
+        strings += 1;
+        characters += file_name(aux).len();
+    }
+    if let Some(style_name) = control.style() {
+        strings += 1;
+        characters += style_name.len() + usize::from(!style_name.ends_with(".bst")) * 4;
+    }
+    for database_name in control.databases() {
+        strings += 1;
+        characters += database_name.len() + usize::from(!database_name.ends_with(".bib")) * 4;
+    }
+    for citation in control.citations() {
+        strings += 1;
+        characters += citation.len();
+    }
+    let (source_strings, source_characters) = database.source_string_usage();
+    strings += source_strings;
+    characters += source_characters;
+    for preamble in database.preambles() {
+        strings += 1;
+        characters += preamble.len();
+    }
+    // Fixed strings installed by the classic scanner and command reader but
+    // not represented in the compiled immutable program.
+    (strings + 37, characters + 163)
 }

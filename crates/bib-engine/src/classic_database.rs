@@ -12,7 +12,7 @@ use bib_bst::{CompiledStyle, SymbolId, SymbolKind};
 use bib_input::{RawBibDatabase, RawBibEntry, RawBibRecord, RawBibValue, RawBibValuePart};
 use umber_vfs::{FileContentId, VirtualPath};
 
-use crate::{ClassicControl, ClassicDatabaseOptions};
+use crate::{ClassicControl, ClassicDatabaseOptions, ClassicSourceLocation};
 
 /// One raw datasource with its immutable VFS identity.
 #[derive(Clone, Copy, Debug)]
@@ -42,6 +42,7 @@ impl<'a> ClassicDatabaseSource<'a> {
 pub struct ClassicDatabaseDiagnostic {
     kind: ClassicDatabaseDiagnosticKind,
     message: String,
+    source: Option<ClassicSourceLocation>,
 }
 
 impl ClassicDatabaseDiagnostic {
@@ -53,6 +54,11 @@ impl ClassicDatabaseDiagnostic {
     #[must_use]
     pub fn message(&self) -> &str {
         &self.message
+    }
+
+    #[must_use]
+    pub const fn source(&self) -> Option<&ClassicSourceLocation> {
+        self.source.as_ref()
     }
 }
 
@@ -76,6 +82,7 @@ pub struct ClassicDatabaseEntry {
     entry_type: String,
     fields: BTreeMap<SymbolId, String>,
     crossref: Option<String>,
+    source: ClassicSourceLocation,
 }
 
 impl ClassicDatabaseEntry {
@@ -95,9 +102,20 @@ impl ClassicDatabaseEntry {
         self.fields.get(&symbol).map(String::as_str)
     }
 
+    pub fn fields(&self) -> impl ExactSizeIterator<Item = (SymbolId, &str)> {
+        self.fields
+            .iter()
+            .map(|(&symbol, value)| (symbol, value.as_str()))
+    }
+
     #[must_use]
     pub fn crossref(&self) -> Option<&str> {
         self.crossref.as_deref()
+    }
+
+    #[must_use]
+    pub const fn source(&self) -> &ClassicSourceLocation {
+        &self.source
     }
 }
 
@@ -107,6 +125,8 @@ pub struct ClassicDatabase {
     entries: Arc<[ClassicDatabaseEntry]>,
     preambles: Arc<[String]>,
     diagnostics: Arc<[ClassicDatabaseDiagnostic]>,
+    source_strings: usize,
+    source_characters: usize,
 }
 
 impl ClassicDatabase {
@@ -126,6 +146,11 @@ impl ClassicDatabase {
 
     pub fn diagnostics(&self) -> impl ExactSizeIterator<Item = &ClassicDatabaseDiagnostic> {
         self.diagnostics.iter()
+    }
+
+    #[must_use]
+    pub(crate) const fn source_string_usage(&self) -> (usize, usize) {
+        (self.source_strings, self.source_characters)
     }
 }
 
@@ -262,6 +287,7 @@ struct RawEntry {
     entry_type: String,
     fields: BTreeMap<String, String>,
     crossref: Option<String>,
+    source: ClassicSourceLocation,
 }
 
 struct Reader<'a> {
@@ -325,13 +351,13 @@ impl<'a> Reader<'a> {
                         self.preambles.push(value);
                     }
                 }
-                RawBibRecord::Entry(entry) => self.entry(entry),
+                RawBibRecord::Entry(entry) => self.entry(source.path, entry),
                 RawBibRecord::Comment(_) | RawBibRecord::Recovery(_) => {}
             }
         }
     }
 
-    fn entry(&mut self, entry: &RawBibEntry) {
+    fn entry(&mut self, path: &VirtualPath, entry: &RawBibEntry) {
         if !self.charge() {
             return;
         }
@@ -378,9 +404,14 @@ impl<'a> Reader<'a> {
             folded,
             RawEntry {
                 key: entry.key().source().to_owned(),
-                entry_type: entry.entry_type().source().to_owned(),
+                entry_type: entry.entry_type().folded().to_owned(),
                 fields,
                 crossref,
+                source: ClassicSourceLocation::new(
+                    path.clone(),
+                    entry.location().byte_start() as u64,
+                    u32::try_from(entry.location().line()).ok(),
+                ),
             },
         );
     }
@@ -414,7 +445,7 @@ impl<'a> Reader<'a> {
                 break;
             }
         }
-        output
+        normalize_classic_value(&output)
     }
 
     fn select<'b>(&mut self, citations: impl Iterator<Item = &'b str>) {
@@ -494,6 +525,47 @@ impl<'a> Reader<'a> {
                     .map(|declaration| (declaration.name().to_owned(), *symbol))
             })
             .collect::<BTreeMap<_, _>>();
+        let selected_raw_entries = self
+            .source_order
+            .iter()
+            .filter_map(|key| self.entries.get(key))
+            .collect::<Vec<_>>();
+        let mut retained_values = BTreeSet::new();
+        let mut new_types = BTreeSet::new();
+        let mut source_strings = selected_raw_entries.len();
+        let mut source_characters = selected_raw_entries
+            .iter()
+            .map(|entry| entry.key.len())
+            .sum::<usize>();
+        for entry in &selected_raw_entries {
+            if self
+                .style
+                .declarations()
+                .lookup(&entry.entry_type)
+                .is_none()
+                && new_types.insert(entry.entry_type.as_str())
+            {
+                source_strings += 1;
+                source_characters += entry.entry_type.len();
+            }
+            for (name, value) in &entry.fields {
+                let retained = name == "crossref"
+                    || self
+                        .style
+                        .declarations()
+                        .lookup(name)
+                        .and_then(|symbol| self.style.declarations().symbol(symbol))
+                        .is_some_and(|symbol| matches!(symbol.kind(), SymbolKind::EntryField(_)));
+                if retained {
+                    retained_values.insert(value.as_str());
+                }
+            }
+        }
+        source_strings += retained_values.len();
+        source_characters += retained_values
+            .iter()
+            .map(|value| value.len())
+            .sum::<usize>();
         let entries = self
             .source_order
             .clone()
@@ -507,9 +579,13 @@ impl<'a> Reader<'a> {
                 .lookup(entry.entry_type())
                 .is_none()
             {
-                self.diagnostic(
+                self.diagnostic_at(
                     ClassicDatabaseDiagnosticKind::UndefinedEntryType,
-                    format!("entry type for `{}` is not style-file defined", entry.key()),
+                    format!(
+                        "entry type for \"{}\" isn't style-file defined",
+                        entry.key()
+                    ),
+                    entry.source().clone(),
                 );
             }
         }
@@ -517,6 +593,8 @@ impl<'a> Reader<'a> {
             entries: entries.into(),
             preambles: self.preambles.into(),
             diagnostics: self.diagnostics.into(),
+            source_strings,
+            source_characters,
         }
     }
 
@@ -543,7 +621,7 @@ impl<'a> Reader<'a> {
                 ClassicDatabaseDiagnosticKind::CrossrefCycle,
                 format!("crossref cycle at `{}`", entry.key),
             );
-            return Some(project(&entry, fields, None));
+            return Some(project(&entry, fields, None, entry.crossref.clone()));
         }
         let parent = entry
             .crossref
@@ -564,8 +642,13 @@ impl<'a> Reader<'a> {
                 None
             }
         });
+        let crossref = parent
+            .as_ref()
+            .and_then(|parent| self.entries.get(parent))
+            .map(|parent| parent.key.clone())
+            .or_else(|| entry.crossref.clone());
         visiting.remove(key);
-        Some(project(&entry, fields, inherited.as_ref()))
+        Some(project(&entry, fields, inherited.as_ref(), crossref))
     }
 
     fn charge(&mut self) -> bool {
@@ -589,15 +672,52 @@ impl<'a> Reader<'a> {
             self.diagnostics.push(ClassicDatabaseDiagnostic {
                 kind,
                 message: message.into(),
+                source: None,
             });
         }
     }
+
+    fn diagnostic_at(
+        &mut self,
+        kind: ClassicDatabaseDiagnosticKind,
+        message: impl Into<String>,
+        source: ClassicSourceLocation,
+    ) {
+        if self.diagnostics.len() < self.options.limits().diagnostics {
+            self.diagnostics.push(ClassicDatabaseDiagnostic {
+                kind,
+                message: message.into(),
+                source: Some(source),
+            });
+        }
+    }
+}
+
+fn normalize_classic_value(value: &str) -> String {
+    let mut normalized = String::with_capacity(value.len());
+    let mut pending_space = false;
+    for character in value.chars() {
+        if character.is_ascii_whitespace() {
+            pending_space = true;
+        } else {
+            if pending_space {
+                normalized.push(' ');
+                pending_space = false;
+            }
+            normalized.push(character);
+        }
+    }
+    if pending_space {
+        normalized.push(' ');
+    }
+    normalized
 }
 
 fn project(
     entry: &RawEntry,
     symbols: &BTreeMap<String, SymbolId>,
     inherited: Option<&ClassicDatabaseEntry>,
+    crossref: Option<String>,
 ) -> ClassicDatabaseEntry {
     let fields = symbols
         .iter()
@@ -614,7 +734,8 @@ fn project(
         key: entry.key.clone(),
         entry_type: entry.entry_type.clone(),
         fields,
-        crossref: entry.crossref.clone(),
+        crossref,
+        source: entry.source.clone(),
     }
 }
 

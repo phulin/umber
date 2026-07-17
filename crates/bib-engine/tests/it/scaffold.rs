@@ -215,8 +215,8 @@ fn classic_fixture_manifest_and_inventory_are_complete_and_pinned() {
     let standard_cases = manifest["standard_style_execution_cases"]
         .as_array()
         .expect("standard-style execution cases must be an array");
-    assert_eq!(standard_cases.len(), 2);
-    for (case, name) in standard_cases.iter().zip(["plain", "apalike"]) {
+    assert_eq!(standard_cases.len(), 3);
+    for (case, name) in standard_cases.iter().zip(["plain", "apalike", "xampl"]) {
         assert_eq!(case["name"], name);
         let files = case["files"]
             .as_array()

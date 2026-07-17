@@ -59,6 +59,30 @@ fn read_projects_declared_fields_and_preserves_citation_order() {
 }
 
 #[test]
+fn read_collapses_literal_whitespace_without_losing_macro_boundaries() {
+    let database = prepared(
+        br#"@string{prefix = "ACM "}
+            @book{one, title = prefix # {Symposium
+                on Computing}}"#,
+        &["one"],
+    );
+    let compiled = compile(
+        b"ENTRY { title year } { } { } READ",
+        CompileLimits::default(),
+    );
+    let title = compiled
+        .program()
+        .expect("style")
+        .declarations()
+        .lookup("title")
+        .expect("title");
+    assert_eq!(
+        database.entries().next().expect("entry").field(title),
+        Some("ACM Symposium on Computing")
+    );
+}
+
+#[test]
 fn wildcard_preamble_duplicates_and_crossref_inheritance_are_vm_visible() {
     let database = prepared(
         br#"@string{org = "Umber"}

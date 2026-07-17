@@ -703,6 +703,28 @@ regen_bibtex_area() {
         "$style" "$file" >&2
     fi
   done
+  case_dir="${tmp_root}/xampl"
+  mkdir -p "$case_dir"
+  cp "${source_dir}/texk/web2c/tests/exampl.aux" "$case_dir/exampl.aux"
+  cp "${source_dir}/texk/web2c/tests/xampl.bib" "$case_dir/xampl.bib"
+  cp "${repo_root}/tests/corpus/bibtex/styles/apalike.bst" "$case_dir/apalike.bst"
+  (
+    cd "$case_dir"
+    env -i PATH=/usr/bin:/bin LC_ALL=C LANGUAGE=C \
+      TEXMFCNF="${source_dir}/texk/kpathsea" BIBINPUTS=. BSTINPUTS=. \
+      "$executable" exampl >/dev/null
+  )
+  for file in exampl.aux xampl.bib exampl.bbl; do
+    if ! cmp -s "${case_dir}/${file}" \
+      "${repo_root}/tests/corpus/bibtex/cases/xampl/${file}"; then
+      cp "${case_dir}/${file}" \
+        "${repo_root}/tests/corpus/bibtex/cases/xampl/${file}.tmp"
+      mv "${repo_root}/tests/corpus/bibtex/cases/xampl/${file}.tmp" \
+        "${repo_root}/tests/corpus/bibtex/cases/xampl/${file}"
+      printf 'Classic BibTeX fixture updated: tests/corpus/bibtex/cases/xampl/%s\n' \
+        "$file" >&2
+    fi
+  done
   manifest_tmp="${tmp_root}/manifest.json"
   jq \
     --arg bbl_bytes "$(wc -c < "${fixture_dir}/smoke.bbl" | tr -d ' ')" \
@@ -715,6 +737,12 @@ regen_bibtex_area() {
     --arg plain_bbl_sha256 "$(sha256_file "${repo_root}/tests/corpus/bibtex/cases/plain/plain.bbl")" \
     --arg apalike_bbl_bytes "$(wc -c < "${repo_root}/tests/corpus/bibtex/cases/apalike/apalike.bbl" | tr -d ' ')" \
     --arg apalike_bbl_sha256 "$(sha256_file "${repo_root}/tests/corpus/bibtex/cases/apalike/apalike.bbl")" \
+    --arg xampl_aux_bytes "$(wc -c < "${repo_root}/tests/corpus/bibtex/cases/xampl/exampl.aux" | tr -d ' ')" \
+    --arg xampl_aux_sha256 "$(sha256_file "${repo_root}/tests/corpus/bibtex/cases/xampl/exampl.aux")" \
+    --arg xampl_bib_bytes "$(wc -c < "${repo_root}/tests/corpus/bibtex/cases/xampl/xampl.bib" | tr -d ' ')" \
+    --arg xampl_bib_sha256 "$(sha256_file "${repo_root}/tests/corpus/bibtex/cases/xampl/xampl.bib")" \
+    --arg xampl_bbl_bytes "$(wc -c < "${repo_root}/tests/corpus/bibtex/cases/xampl/exampl.bbl" | tr -d ' ')" \
+    --arg xampl_bbl_sha256 "$(sha256_file "${repo_root}/tests/corpus/bibtex/cases/xampl/exampl.bbl")" \
     '(.cases[] | select(.name == "smoke") | .files[] | select(.role == "bbl-output")) |=
        (.bytes = ($bbl_bytes | tonumber) | .sha256 = $bbl_sha256) |
      (.cases[] | select(.name == "smoke") | .files[] | select(.role == "blg-output")) |=
@@ -726,7 +754,16 @@ regen_bibtex_area() {
        (.bytes = ($plain_bbl_bytes | tonumber) | .sha256 = $plain_bbl_sha256) |
      (.standard_style_execution_cases[] | select(.name == "apalike") | .files[] |
        select(.path == "cases/apalike/apalike.bbl")) |=
-       (.bytes = ($apalike_bbl_bytes | tonumber) | .sha256 = $apalike_bbl_sha256)' \
+       (.bytes = ($apalike_bbl_bytes | tonumber) | .sha256 = $apalike_bbl_sha256) |
+     (.standard_style_execution_cases[] | select(.name == "xampl") | .files[] |
+       select(.path == "cases/xampl/exampl.aux")) |=
+       (.bytes = ($xampl_aux_bytes | tonumber) | .sha256 = $xampl_aux_sha256) |
+     (.standard_style_execution_cases[] | select(.name == "xampl") | .files[] |
+       select(.path == "cases/xampl/xampl.bib")) |=
+       (.bytes = ($xampl_bib_bytes | tonumber) | .sha256 = $xampl_bib_sha256) |
+     (.standard_style_execution_cases[] | select(.name == "xampl") | .files[] |
+       select(.path == "cases/xampl/exampl.bbl")) |=
+       (.bytes = ($xampl_bbl_bytes | tonumber) | .sha256 = $xampl_bbl_sha256)' \
     "${repo_root}/tests/corpus/bibtex/manifest.json" > "$manifest_tmp"
   mv "$manifest_tmp" "${repo_root}/tests/corpus/bibtex/manifest.json"
   rm -rf "$tmp_root"

@@ -92,6 +92,27 @@
           "sha256": "409306c36d66b834ef674357d7457501c39ebda9dd9bc960f2aaf06cde72be56"
         }
       ]
+    },
+    {
+      "name": "xampl",
+      "source": "TeX Live 2025 texk/web2c/tests",
+      "files": [
+        {
+          "path": "cases/xampl/exampl.aux",
+          "bytes": 1904,
+          "sha256": "4ebba6975890936e5d8aa3dda2a7183cb05c4d2d4fe674dbbb6761b4a6a3bb81"
+        },
+        {
+          "path": "cases/xampl/xampl.bib",
+          "bytes": 9894,
+          "sha256": "b4f16c2019b029b2f44452a62cbe7888ab8ae4679c4c446a5c233fa140950b7c"
+        },
+        {
+          "path": "cases/xampl/exampl.bbl",
+          "bytes": 8305,
+          "sha256": "3034164758da7ef484eaf53b5f972ddcd94cccc4f16fba0fad9fe121e4ba9d52"
+        }
+      ]
     }
   ],
   "cases": [

@@ -278,6 +278,22 @@ READ ITERATE {item}"#,
 }
 
 #[test]
+fn format_name_honors_nested_patterns_and_classic_initials() {
+    assert_eq!(
+        super::format_bib_name("L[eslie] A. Aamport", "{vv{ } }{ll{ }}{  f{ }}{  jj{ }}"),
+        "Aamport  L A"
+    );
+    assert_eq!(
+        super::format_bib_name("Masterly, {\\'{E}}douard", "{f.} {ll}"),
+        "{\\'{E}}. Masterly"
+    );
+    assert_eq!(
+        super::format_bib_name("Jean-Baptiste Missilany", "{f.} {ll}"),
+        "J.-B. Missilany"
+    );
+}
+
+#[test]
 fn builtin_errors_and_output_limits_remain_bounded() {
     let wrong_type = run(
         b"ENTRY {} {} {} FUNCTION {bad} { #1 purify$ } READ EXECUTE {bad}",

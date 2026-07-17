@@ -324,13 +324,13 @@ fn classic_smoke_executes_through_the_public_session_with_cold_and_cached_bytes(
             .bytes(),
         include_bytes!("../../../../tests/corpus/bibtex/cases/smoke/smoke.bbl"),
     );
-    assert!(
+    assert_eq!(
         first
             .files()
             .find(|file| file.path().as_str() == "/job/smoke.blg")
             .expect("BLG")
-            .bytes()
-            .starts_with(b"This is Umber classic BibTeX compatibility mode\n")
+            .bytes(),
+        include_bytes!("../../../../tests/corpus/bibtex/cases/smoke/smoke.blg"),
     );
     let second = match session.process(&BibliographyJob::Classic(job), &provisioner.snapshot()) {
         BibliographyAttempt::Finished(result) => result,
@@ -350,6 +350,7 @@ fn classic_plain_executes_through_the_public_session() {
         include_bytes!("../../../../tests/corpus/bibtex/cases/plain/references.bib"),
         include_bytes!("../../../../tests/corpus/bibtex/styles/plain.bst"),
         include_bytes!("../../../../tests/corpus/bibtex/cases/plain/plain.bbl"),
+        BibliographyHistory::Spotless,
     );
 }
 
@@ -361,6 +362,19 @@ fn classic_apalike_executes_through_the_public_session() {
         include_bytes!("../../../../tests/corpus/bibtex/cases/apalike/references.bib"),
         include_bytes!("../../../../tests/corpus/bibtex/styles/apalike.bst"),
         include_bytes!("../../../../tests/corpus/bibtex/cases/apalike/apalike.bbl"),
+        BibliographyHistory::Spotless,
+    );
+}
+
+#[test]
+fn classic_tex_live_xampl_executes_through_the_public_session() {
+    execute_standard_style(
+        "exampl",
+        include_bytes!("../../../../tests/corpus/bibtex/cases/xampl/exampl.aux"),
+        include_bytes!("../../../../tests/corpus/bibtex/cases/xampl/xampl.bib"),
+        include_bytes!("../../../../tests/corpus/bibtex/styles/apalike.bst"),
+        include_bytes!("../../../../tests/corpus/bibtex/cases/xampl/exampl.bbl"),
+        BibliographyHistory::Warning,
     );
 }
 
@@ -370,6 +384,7 @@ fn execute_standard_style(
     database_bytes: &[u8],
     style_bytes: &[u8],
     expected_bbl: &[u8],
+    expected_history: BibliographyHistory,
 ) {
     let aux = VirtualPath::user(&format!("{name}.aux")).expect("fixture path");
     let mut provisioner = FileProvisioner::new(VfsLimits::default()).expect("VFS");
@@ -405,11 +420,7 @@ fn execute_standard_style(
         BibliographyAttempt::Finished(result) => result,
         attempt => panic!("expected classic execution, got {attempt:?}"),
     };
-    assert_eq!(
-        result.history(),
-        BibliographyHistory::Spotless,
-        "{result:?}"
-    );
+    assert_eq!(result.history(), expected_history, "{result:?}");
     assert_eq!(
         result
             .files()

@@ -107,15 +107,13 @@ fn bibtex_command_runs_the_pinned_classic_smoke_case_in_process() {
         fs::read(temp_dir.path().join("smoke.bbl")).expect("generated BBL"),
         fs::read(fixture.join("smoke.bbl")).expect("pinned BBL")
     );
-    assert!(
-        output
-            .stdout
-            .starts_with(b"Warning--entry type for `knuth` is not style-file defined\n")
+    assert_eq!(
+        output.stdout,
+        fs::read(fixture.join("smoke.terminal")).expect("pinned terminal output")
     );
-    assert!(
-        fs::read(temp_dir.path().join("smoke.blg"))
-            .expect("generated BLG")
-            .starts_with(b"This is Umber classic BibTeX compatibility mode\n")
+    assert_eq!(
+        fs::read(temp_dir.path().join("smoke.blg")).expect("generated BLG"),
+        fs::read(fixture.join("smoke.blg")).expect("pinned BLG")
     );
 }
 
