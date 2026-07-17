@@ -1,0 +1,10 @@
+[package]
+name = "bib-bst"
+version.workspace = true
+edition.workspace = true
+description = "Bounded classic BibTeX BST style compiler for Umber"
+
+[dependencies]
+
+[lints]
+workspace = true

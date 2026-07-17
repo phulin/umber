@@ -50,6 +50,7 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `crates/bib-label`: label, hash, and uniqueness-stage boundary.
 - `crates/bib-output`: detached deterministic serializer boundary.
 - `crates/bib-engine`: public bibliography facade and pinned upstream compatibility suite.
+- `crates/bib-bst`: bounded classic BibTeX style lexer, parser, compiler, and immutable programs.
 - `tools/`: Rust tooling crates.
 - `benchmarks/`: opt-in standalone benchmark crates kept outside the root workspace.
 - `tests/`: committed fixtures and parity test definitions.
