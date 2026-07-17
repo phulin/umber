@@ -992,6 +992,7 @@ fn paragraph_break_dependencies(
         DependencyFontField as Font, DependencyKey as Key,
     };
 
+    let discovery_started = start_phase();
     let mut keys = Vec::new();
     for param in [
         IntParam::PRETOLERANCE,
@@ -1094,15 +1095,38 @@ fn paragraph_break_dependencies(
     }
     keys.sort_unstable();
     keys.dedup();
-    keys.into_iter()
-        .map(|key| {
+    finish_phase(
+        stores,
+        ParagraphRecordingPhase::BreakKeyDiscovery,
+        discovery_started,
+    );
+    let registration_started = start_phase();
+    let tracked = keys
+        .into_iter()
+        .map(|key| (key, stores.track_dependency(key)))
+        .collect::<Vec<_>>();
+    finish_phase(
+        stores,
+        ParagraphRecordingPhase::BreakStampRegistration,
+        registration_started,
+    );
+    let projection_started = start_phase();
+    let dependencies = tracked
+        .into_iter()
+        .map(|(key, changed_at)| {
             Some(tex_state::ObservedDependency {
                 key,
-                changed_at: stores.track_dependency(key),
+                changed_at,
                 value: stores.semantic_dependency_value(key)?,
             })
         })
-        .collect()
+        .collect();
+    finish_phase(
+        stores,
+        ParagraphRecordingPhase::BreakValueProjection,
+        projection_started,
+    );
+    dependencies
 }
 
 fn detach_effects(records: &[EffectRecord]) -> Option<Vec<DetachedVirtualEffect>> {

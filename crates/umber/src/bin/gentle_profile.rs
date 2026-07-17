@@ -535,7 +535,7 @@ fn print_incremental_work(name: &str, edit: usize, sample: &IncrementalStep) {
             .paragraph_recording
             .saturating_since(sample.previous_memo.paragraph_recording);
         println!(
-            "gentle-profile paragraph recording phases: {name}: edit={edit} trace_capture_ns={} front_end_dependency_ns={} input_transition_ns={} front_end_provenance_ns={} hlist_retention_ns={} region_publication_ns={} break_dependency_ns={} line_provenance_ns={} line_retention_ns={}",
+            "gentle-profile paragraph recording phases: {name}: edit={edit} trace_capture_ns={} front_end_dependency_ns={} input_transition_ns={} front_end_provenance_ns={} hlist_retention_ns={} region_publication_ns={} break_dependency_ns={} break_key_discovery_ns={} break_stamp_registration_ns={} break_value_projection_ns={} line_provenance_ns={} line_retention_ns={}",
             phases.trace_capture_nanos,
             phases.front_end_dependency_nanos,
             phases.input_transition_nanos,
@@ -543,6 +543,9 @@ fn print_incremental_work(name: &str, edit: usize, sample: &IncrementalStep) {
             phases.hlist_retention_nanos,
             phases.region_publication_nanos,
             phases.break_dependency_nanos,
+            phases.break_key_discovery_nanos,
+            phases.break_stamp_registration_nanos,
+            phases.break_value_projection_nanos,
             phases.line_provenance_nanos,
             phases.line_retention_nanos,
         );

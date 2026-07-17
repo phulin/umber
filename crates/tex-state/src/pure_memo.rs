@@ -137,6 +137,9 @@ pub enum ParagraphRecordingPhase {
     HlistRetention,
     RegionPublication,
     BreakDependencies,
+    BreakKeyDiscovery,
+    BreakStampRegistration,
+    BreakValueProjection,
     LineProvenance,
     LineRetention,
 }
@@ -150,6 +153,9 @@ pub struct ParagraphRecordingStats {
     pub hlist_retention_nanos: u64,
     pub region_publication_nanos: u64,
     pub break_dependency_nanos: u64,
+    pub break_key_discovery_nanos: u64,
+    pub break_stamp_registration_nanos: u64,
+    pub break_value_projection_nanos: u64,
     pub line_provenance_nanos: u64,
     pub line_retention_nanos: u64,
 }
@@ -179,6 +185,15 @@ impl ParagraphRecordingStats {
             break_dependency_nanos: self
                 .break_dependency_nanos
                 .saturating_sub(earlier.break_dependency_nanos),
+            break_key_discovery_nanos: self
+                .break_key_discovery_nanos
+                .saturating_sub(earlier.break_key_discovery_nanos),
+            break_stamp_registration_nanos: self
+                .break_stamp_registration_nanos
+                .saturating_sub(earlier.break_stamp_registration_nanos),
+            break_value_projection_nanos: self
+                .break_value_projection_nanos
+                .saturating_sub(earlier.break_value_projection_nanos),
             line_provenance_nanos: self
                 .line_provenance_nanos
                 .saturating_sub(earlier.line_provenance_nanos),
@@ -197,6 +212,11 @@ impl ParagraphRecordingStats {
             ParagraphRecordingPhase::HlistRetention => &mut self.hlist_retention_nanos,
             ParagraphRecordingPhase::RegionPublication => &mut self.region_publication_nanos,
             ParagraphRecordingPhase::BreakDependencies => &mut self.break_dependency_nanos,
+            ParagraphRecordingPhase::BreakKeyDiscovery => &mut self.break_key_discovery_nanos,
+            ParagraphRecordingPhase::BreakStampRegistration => {
+                &mut self.break_stamp_registration_nanos
+            }
+            ParagraphRecordingPhase::BreakValueProjection => &mut self.break_value_projection_nanos,
             ParagraphRecordingPhase::LineProvenance => &mut self.line_provenance_nanos,
             ParagraphRecordingPhase::LineRetention => &mut self.line_retention_nanos,
         };
