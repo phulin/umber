@@ -94,6 +94,8 @@ classic command returns the reference error exit status. Infrastructure failure
 remains outside this history model, and fatal partial files are never published
 by a project transaction. `umber2-ild0.2` owns the typed history;
 `umber2-ild0.11` owns exact terminal, BLG, status, and partial-artifact parity.
+`top$` consumes and emits its literal as a stack log event before a subsequent
+recoverable `pop$` underflow is rendered.
 
 Historical capacities are observations, not Umber's safety policy. The
 inventory records fixed, configured, and dynamically grown Web2C values,

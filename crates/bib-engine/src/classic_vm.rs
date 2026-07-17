@@ -745,7 +745,9 @@ impl<'a> Vm<'a> {
 
     fn print_top(&mut self) {
         if let Some(value) = self.pop() {
-            self.effect(true, &format!("{value:?}\n"));
+            let text = value.stack_text();
+            self.effect(true, &format!("{text}\n"));
+            self.log_events.push(ClassicVmLogEvent::Stack(text));
         }
     }
 

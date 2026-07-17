@@ -154,6 +154,25 @@ READ ITERATE {item} REVERSE {item} SORT ITERATE {item}"#,
 }
 
 #[test]
+fn top_log_event_precedes_following_recoverable_underflow() {
+    let result = run(
+        b"ENTRY {} {} {} FUNCTION {item} { #1 top$ pop$ } READ ITERATE {item}",
+        b"@book{alpha,}",
+    );
+    assert!(!result.is_fatal(), "{:?}", result.diagnostics());
+    assert_eq!(result.diagnostics().len(), 1);
+    assert_eq!(
+        result.log_events(),
+        [
+            super::ClassicVmLogEvent::Stack("1".to_owned()),
+            super::ClassicVmLogEvent::Diagnostic(result.diagnostics()[0].clone()),
+        ]
+    );
+    assert_eq!(result.builtin_calls()[Builtin::Top as usize], 1);
+    assert_eq!(result.builtin_calls()[Builtin::Pop as usize], 1);
+}
+
+#[test]
 fn wrong_types_and_missing_entry_context_are_diagnostic() {
     let wrong_type = run(
         b"ENTRY {} {} {} FUNCTION {bad} { \"x\" #1 + } READ EXECUTE {bad}",
