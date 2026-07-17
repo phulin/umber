@@ -13,7 +13,7 @@ see [Testing Infrastructure](testing_infrastructure.md).
 
 Test placement should optimize for three things:
 
-1. **Fast local gates.** `cargo test --workspace --tests` should remain fast
+1. **Fast local gates.** `cargo test --tests` should remain fast
    enough to run often and is the correctness gate against committed fixtures.
    Live reference work belongs in fixture regeneration, not in cargo tests.
 2. **Clear production files.** Source files should stay short and focused so
@@ -30,7 +30,6 @@ The correctness tier is fixture-only and hermetic:
 
 ```bash
 cargo test --tests
-cargo test --workspace --tests
 scripts/check-and-test.sh
 ```
 
@@ -38,6 +37,12 @@ These commands must not require `pdftex`, `tex`, `tftopl`, or other TeX tools
 on `PATH`. Keep the default correctness tier fast enough to run routinely.
 Move expensive scaling and live-reference checks into explicit performance or
 regeneration tiers instead of weakening coverage in the default tier.
+
+The root workspace's default members cover the engine, native adapters, and
+fixture-only correctness support. Browser bindings run through
+`scripts/check-wasm.sh`; host-side regeneration, profiling, and triage targets
+run through `scripts/check-tools.sh`. Use `--workspace` only for an explicitly
+requested exhaustive Cargo operation, not for the routine native gate.
 
 Regenerate committed fixtures only through `scripts/regen-fixtures.sh`, the
 blessed live-reference rewrite path.

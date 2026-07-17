@@ -1,15 +1,20 @@
 //! Reference TeX execution helper for parity tests.
 
+pub use test_support::dvi::{
+    DviComparison, DviDiff, compare_dvi_bytes, normalized_dvi_for_comparison,
+};
+
 #[allow(clippy::disallowed_methods)] // host tool, not engine code
 mod imp {
     use std::env;
-    use std::fmt::Write as _;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::process::Command;
 
     use anyhow::{Context, Result, anyhow};
     use tempfile::TempDir;
+
+    use super::{DviComparison, compare_dvi_bytes};
 
     const DEFAULT_SOURCE_DATE_EPOCH: &str = "1783604160";
 
@@ -39,19 +44,6 @@ mod imp {
         pub stdout: String,
         pub log: String,
         pub dvi: Option<Vec<u8>>,
-    }
-
-    #[derive(Clone, Debug, Eq, PartialEq)]
-    pub enum DviComparison {
-        Equal,
-        Different(DviDiff),
-    }
-
-    #[derive(Clone, Debug, Eq, PartialEq)]
-    pub struct DviDiff {
-        pub offset: usize,
-        pub expected_context: String,
-        pub actual_context: String,
     }
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -253,84 +245,6 @@ mod imp {
             .unwrap_or_else(|| "1".into())
     }
 
-    pub fn compare_dvi_bytes(expected: &[u8], actual: &[u8]) -> Result<DviComparison> {
-        let expected = normalized_dvi_for_comparison(expected)?;
-        let actual = normalized_dvi_for_comparison(actual)?;
-        if expected == actual {
-            return Ok(DviComparison::Equal);
-        }
-        Ok(DviComparison::Different(first_dvi_diff(&expected, &actual)))
-    }
-
-    pub fn normalized_dvi_for_comparison(bytes: &[u8]) -> Result<Vec<u8>> {
-        let mut normalized = bytes.to_vec();
-        normalize_dvi_preamble_comment(&mut normalized)?;
-        Ok(normalized)
-    }
-
-    fn normalize_dvi_preamble_comment(bytes: &mut [u8]) -> Result<()> {
-        const PRE: u8 = 247;
-        const COMMENT_LEN_OFFSET: usize = 14;
-        const COMMENT_OFFSET: usize = 15;
-        const NORMALIZED_COMMENT: &[u8] = b"umber normalized dvi banner";
-
-        if bytes.first() != Some(&PRE) || bytes.len() <= COMMENT_LEN_OFFSET {
-            return Err(anyhow!("DVI is missing a valid preamble"));
-        }
-        let len = bytes[COMMENT_LEN_OFFSET] as usize;
-        let end = COMMENT_OFFSET
-            .checked_add(len)
-            .ok_or_else(|| anyhow!("DVI preamble comment length overflowed"))?;
-        if end > bytes.len() {
-            return Err(anyhow!("DVI preamble comment is truncated"));
-        }
-
-        // The DVI preamble comment is the only sanctioned normalization in the
-        // DVI parity harness. The reference banner contains engine/date text,
-        // while Umber records its own job banner. We deliberately overwrite
-        // exactly the existing k-length comment payload in both files; every
-        // other byte, including the k length itself and all DVI pointers, must
-        // already match.
-        for (index, byte) in bytes[COMMENT_OFFSET..end].iter_mut().enumerate() {
-            *byte = NORMALIZED_COMMENT.get(index).copied().unwrap_or(b' ');
-        }
-        Ok(())
-    }
-
-    fn first_dvi_diff(expected: &[u8], actual: &[u8]) -> DviDiff {
-        let common = expected.len().min(actual.len());
-        let offset = expected
-            .iter()
-            .zip(actual)
-            .position(|(left, right)| left != right)
-            .unwrap_or(common);
-        DviDiff {
-            offset,
-            expected_context: hex_context(expected, offset),
-            actual_context: hex_context(actual, offset),
-        }
-    }
-
-    fn hex_context(bytes: &[u8], offset: usize) -> String {
-        const WINDOW: usize = 12;
-        let start = offset.saturating_sub(WINDOW);
-        let end = bytes.len().min(offset.saturating_add(WINDOW + 1));
-        let mut out = format!("{start:08x}:");
-        for (index, byte) in bytes.iter().enumerate().take(end).skip(start) {
-            if index == offset {
-                out.push_str(" [");
-                let _ = write!(out, "{byte:02x}");
-                out.push(']');
-            } else {
-                let _ = write!(out, " {byte:02x}");
-            }
-        }
-        if offset >= bytes.len() {
-            out.push_str(" [EOF]");
-        }
-        out
-    }
-
     fn infer_engine(path: &Path) -> TexEngine {
         path.file_stem()
             .and_then(std::ffi::OsStr::to_str)
@@ -367,7 +281,4 @@ mod imp {
     }
 }
 
-pub use imp::{
-    DviComparison, DviDiff, RefTex, RefTftopl, RunOpts, RunOutput, compare_dvi_bytes,
-    normalized_dvi_for_comparison,
-};
+pub use imp::{RefTex, RefTftopl, RunOpts, RunOutput};

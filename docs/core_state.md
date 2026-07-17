@@ -239,7 +239,7 @@ deoptimization rules. Until that crate exists, no raw layout API is exposed.
 
 ## Verification and performance requirements
 
-- `cargo test --workspace --tests` is the hermetic correctness gate.
+- `cargo test --tests` is the hermetic default-native correctness gate.
 - `scripts/check.sh` enforces formatting and clippy boundaries.
 - Snapshot retention and scaling use `scripts/check-snapshot-budgets.sh`.
 - Exact fixture and corpus parity defines semantic compatibility.

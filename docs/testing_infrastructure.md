@@ -15,17 +15,20 @@ The fixture-only, hermetic correctness tier is:
 
 ```bash
 cargo test --tests
-cargo test --workspace --tests
 scripts/check-and-test.sh
 ```
+
+These commands use the root workspace's default native correctness members.
+Run `scripts/check-wasm.sh` for the browser adapter and `scripts/check-tools.sh`
+for opt-in regeneration, profiling, and triage tools.
 
 The warmed `cargo test --tests` target is under 10 seconds on the current
 macOS development workspace; investigate a sustained run above 15 seconds or
 any default test that invokes live TeX. `scripts/check.sh` checks dprint and
 rustfmt formatting, then runs clippy without rerunning tests; it has a warmed
 two-minute local budget.
-`scripts/check-and-test.sh` runs the full workspace test suite followed by that
-quality gate.
+`scripts/check-and-test.sh` runs the default native correctness suite followed
+by that quality gate.
 
 Snapshot scaling has a separate explicit performance tier:
 

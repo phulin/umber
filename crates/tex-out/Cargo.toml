@@ -3,6 +3,16 @@ name = "tex-out"
 version.workspace = true
 edition.workspace = true
 
+[features]
+dvi-tools = []
+
+[[bin]]
+name = "texout-dvitype"
+path = "src/bin/texout-dvitype.rs"
+required-features = ["dvi-tools"]
+test = false
+bench = false
+
 [dependencies]
 flate2.workspace = true
 pdf-writer.workspace = true

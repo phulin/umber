@@ -518,5 +518,5 @@ Implementation is not complete until tests prove all of the following:
   run across the committed fast corpus and the 1,000-edit scripted fuzz tier.
 
 Run focused `tex-state`, `tex-lex`, `tex-exec`, and `tex-incr` tests, then
-`cargo test --workspace --tests`, `scripts/check.sh`, the snapshot budget gate,
+`cargo test --tests`, `scripts/check.sh`, the snapshot budget gate,
 and the relevant parity corpora before enabling editor-session mode by default.

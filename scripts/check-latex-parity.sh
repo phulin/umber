@@ -398,7 +398,7 @@ cd "$repo_root"
 prepare_format
 start_receipt
 cargo build --quiet --release -p umber
-cargo build --quiet -p parity-harness
+cargo build --quiet -p parity-harness --features reference-tools
 
 umber_bin="${target_dir}/release/umber"
 parity_bin="${target_dir}/debug/parity-harness"

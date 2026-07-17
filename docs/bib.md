@@ -598,7 +598,7 @@ compatibility tests exercise only the `bib-engine` facade.
 The default correctness tier is hermetic and consumes committed fixtures:
 
 ```text
-cargo test --workspace --tests
+cargo test --tests
 ```
 
 Reference regeneration runs the pinned Perl implementation in an isolated,

@@ -179,7 +179,7 @@ build_umber_once() {
 
 build_parity_harness_once() {
   if [[ "$parity_harness_built" -eq 0 ]]; then
-    run_command 'Building parity-harness' cargo build -p parity-harness
+    run_command 'Building parity-harness' cargo build -p parity-harness --features reference-tools
     parity_harness_built=1
   fi
 }

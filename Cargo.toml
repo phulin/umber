@@ -5,6 +5,26 @@ members = [
   "tools/profile-analyzer",
   "tools/refexec",
 ]
+default-members = [
+  "crates/corpus-manifest",
+  "crates/test-support",
+  "crates/tex-arith",
+  "crates/tex-content",
+  "crates/tex-exec",
+  "crates/tex-expand",
+  "crates/tex-fonts",
+  "crates/tex-incr",
+  "crates/tex-lex",
+  "crates/tex-out",
+  "crates/tex-shape",
+  "crates/tex-state",
+  "crates/tex-typeset",
+  "crates/umber",
+  "crates/umber-distribution",
+  "crates/umber-fetch",
+  "crates/umber-vfs",
+  "tools/parity-harness",
+]
 exclude = [
   "tools/corpus-sync",
   "tools/fixturegen",

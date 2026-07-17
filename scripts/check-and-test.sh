@@ -55,7 +55,7 @@ warn_missing_e2e_case \
 
 scripts/test-publish-texlive-r2.sh
 
-cargo test --workspace --tests --quiet &
+cargo test --tests --quiet &
 test_pid=$!
 scripts/check.sh &
 check_pid=$!

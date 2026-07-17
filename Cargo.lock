@@ -1072,6 +1072,7 @@ dependencies = [
  "sha2 0.10.9",
  "similar",
  "tempfile",
+ "test-support",
  "tex-out",
 ]
 
@@ -1330,6 +1331,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "tempfile",
+ "test-support",
 ]
 
 [[package]]
@@ -1719,7 +1721,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "lopdf",
- "refexec",
  "sha2 0.10.9",
  "similar",
  "tempfile",

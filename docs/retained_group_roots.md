@@ -359,7 +359,7 @@ Performance gates must demonstrate:
   baseline.
 
 Run focused `tex-state` normal/shadow/replay suites, `tex-expand` and `tex-exec`
-checkpoint/group tests, `cargo test --workspace --tests`, `scripts/check.sh`,
+checkpoint/group tests, `cargo test --tests`, `scripts/check.sh`,
 the snapshot budget gate, and relevant Gentle/corpus parity before enabling the
 new boundary policy.
 

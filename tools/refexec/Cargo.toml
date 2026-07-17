@@ -3,9 +3,16 @@ name = "refexec"
 version.workspace = true
 edition.workspace = true
 
+[[bin]]
+name = "refexec"
+path = "src/main.rs"
+test = false
+bench = false
+
 [dependencies]
 anyhow.workspace = true
 tempfile.workspace = true
+test-support = { path = "../../crates/test-support" }
 
 [lints]
 workspace = true

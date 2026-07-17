@@ -62,13 +62,17 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - When running tests, make sure to use `cargo test -q` so you don't fill up
   your context window.
 - Direct `cargo build` output to a log file; it has verbose output.
-- Use `scripts/check-and-test.sh` when a single command should run the full
-  workspace test suite concurrently with the format and clippy gate. Clippy
-  uses its own `target/clippy` directory so it does not lock the test build.
+- Use `scripts/check-and-test.sh` when a single command should run the default
+  native correctness suite concurrently with the format and clippy gate.
+  Clippy uses its own `target/clippy` directory so it does not lock the test
+  build.
 - Use `cargo run-dev -p umber -- <args>` for local CLI runs that should share
   optimized artifacts with the test build.
 - Run `scripts/check-snapshot-budgets.sh` in the explicit performance tier;
   snapshot allocation and latency gates do not run under ordinary cargo tests.
+- Run `scripts/check-tools.sh` for the explicit host-side regeneration,
+  profiling, and triage-tool test/clippy gate; these targets are excluded from
+  routine native correctness builds.
 
 ## Beads Issue Tracker
 

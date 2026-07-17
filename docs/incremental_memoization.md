@@ -507,7 +507,7 @@ and second/third edits through previously reused trace nodes.
 
 The fast committed tier and an explicit 1,000-edit scripted/fuzz tier compare
 incremental and cold results. Relevant corpus parity, snapshot budgets,
-profiling, `cargo test --workspace --tests`, and `scripts/check.sh` gate each
+profiling, `cargo test --tests`, and `scripts/check.sh` gate each
 rollout phase.
 
 ## Implementation sequence

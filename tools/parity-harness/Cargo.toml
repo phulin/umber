@@ -3,13 +3,24 @@ name = "parity-harness"
 version.workspace = true
 edition.workspace = true
 
+[features]
+reference-tools = ["dep:refexec"]
+
+[[bin]]
+name = "parity-harness"
+path = "src/main.rs"
+required-features = ["reference-tools"]
+test = false
+bench = false
+
 [dependencies]
 anyhow.workspace = true
 corpus-manifest = { path = "../../crates/corpus-manifest" }
-refexec = { path = "../refexec" }
+refexec = { path = "../refexec", optional = true }
 sha2.workspace = true
 similar.workspace = true
 tempfile.workspace = true
+test-support = { path = "../../crates/test-support" }
 tex-out = { path = "../../crates/tex-out" }
 
 [dev-dependencies]

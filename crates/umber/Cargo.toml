@@ -6,6 +6,9 @@ edition.workspace = true
 [[bin]]
 name = "gentle-profile"
 path = "src/bin/gentle_profile.rs"
+required-features = ["profiling-stats"]
+test = false
+bench = false
 
 [features]
 default = []

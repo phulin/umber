@@ -3,6 +3,12 @@ name = "profile-analyzer"
 version.workspace = true
 edition.workspace = true
 
+[[bin]]
+name = "profile-analyzer"
+path = "src/main.rs"
+test = false
+bench = false
+
 [dependencies]
 flate2.workspace = true
 serde.workspace = true

@@ -1,17 +1,22 @@
 #![allow(clippy::disallowed_methods)] // Host-side parity runner and triage writer.
 
-use std::env;
-use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[cfg(feature = "reference-tools")]
+use std::{env, ffi::OsString};
+
 use anyhow::{Context, Result, anyhow, bail};
-use corpus_manifest::{Document, Manifest, parse_manifest_file};
-use refexec::{RefTex, RunOpts, normalized_dvi_for_comparison};
+#[cfg(any(test, feature = "reference-tools"))]
+use corpus_manifest::Document;
+use corpus_manifest::{Manifest, parse_manifest_file};
+#[cfg(feature = "reference-tools")]
+use refexec::{RefTex, RunOpts};
 use sha2::{Digest, Sha256};
 use similar::TextDiff;
+use test_support::dvi::normalized_dvi_for_comparison;
 use tex_out::dvi::disasm::DviFile;
 
 const TRACE_PREFIX: &str =
@@ -25,6 +30,7 @@ const CORPUS_TFMS: &[&str] = &[
     "cmti10", "cmti7", "cmti8", "cmti9", "cmtt10", "cmtt8", "cmtt9", "cmu10", "manfnt",
 ];
 
+#[cfg(feature = "reference-tools")]
 pub fn run_cli() -> Result<bool> {
     let options = Options::parse(env::args_os().skip(1))?;
     if let Some((expected, actual)) = &options.compare_existing_dvi {
@@ -108,6 +114,7 @@ pub fn run_named_fixture_document(
 /// Runs one manifest-backed document through reference TeX and Umber, then
 /// requires byte-identical DVI output after normalizing only the preamble
 /// comment payload.
+#[cfg(feature = "reference-tools")]
 pub fn run_named_external_document(
     repo_root: &Path,
     umber_bin: &Path,
@@ -205,6 +212,7 @@ pub fn compare_dvi_files(
     )
 }
 
+#[cfg(feature = "reference-tools")]
 #[derive(Clone, Debug)]
 struct Options {
     repo_root: PathBuf,
@@ -220,6 +228,7 @@ struct Options {
     comparison_label: String,
 }
 
+#[cfg(feature = "reference-tools")]
 impl Options {
     fn parse(args: impl Iterator<Item = OsString>) -> Result<Self> {
         let mut options = Self {
@@ -286,6 +295,7 @@ impl Options {
     }
 }
 
+#[cfg(feature = "reference-tools")]
 fn write_reference_fixture(options: &Options, path: &Path) -> Result<()> {
     let document = options
         .doc_filter
@@ -329,6 +339,7 @@ fn write_reference_fixture(options: &Options, path: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "reference-tools")]
 fn next_path(args: &mut impl Iterator<Item = OsString>, flag: &str) -> Result<PathBuf> {
     args.next()
         .map(PathBuf::from)
@@ -341,6 +352,7 @@ struct EngineDvi {
     normalized: Vec<u8>,
 }
 
+#[cfg(any(test, feature = "reference-tools"))]
 #[derive(Debug)]
 struct UmberRun {
     success: bool,
@@ -349,13 +361,16 @@ struct UmberRun {
     dvi: Option<Vec<u8>>,
 }
 
+#[cfg(any(test, feature = "reference-tools"))]
 #[derive(Debug)]
 struct TraceRun {
     log: String,
+    #[cfg_attr(not(feature = "reference-tools"), allow(dead_code))]
     dvi: Option<Vec<u8>>,
     success: bool,
 }
 
+#[cfg(any(test, feature = "reference-tools"))]
 #[derive(Debug)]
 struct TriageInput<'a> {
     doc: &'a Document,
@@ -375,12 +390,14 @@ struct DviByteDiff {
     umber_context: String,
 }
 
+#[cfg(any(test, feature = "reference-tools"))]
 #[derive(Clone, Debug)]
 struct ReferenceDrift {
     expected: String,
     actual: String,
 }
 
+#[cfg(any(test, feature = "reference-tools"))]
 #[derive(Debug)]
 struct TraceBundle {
     reference: TraceRun,
@@ -389,6 +406,7 @@ struct TraceBundle {
     umber_stable: Option<bool>,
 }
 
+#[cfg(feature = "reference-tools")]
 fn run_e2e(options: &Options) -> Result<bool> {
     let manifest = read_manifest(&options.manifest_path)?;
     if !options.keep_triage && options.triage_dir.exists() {
@@ -541,6 +559,7 @@ fn read_manifest(path: &Path) -> Result<Manifest> {
     Ok(manifest)
 }
 
+#[cfg(feature = "reference-tools")]
 fn run_reference_dvi(
     repo_root: &Path,
     ref_tex: &RefTex,
@@ -565,6 +584,7 @@ fn run_reference_dvi(
     Ok(EngineDvi { bytes, normalized })
 }
 
+#[cfg(feature = "reference-tools")]
 fn run_umber_dvi(
     repo_root: &Path,
     umber_bin: &Path,
@@ -600,6 +620,7 @@ fn run_umber_dvi(
     })
 }
 
+#[cfg(feature = "reference-tools")]
 fn run_trace_bundle(
     repo_root: &Path,
     ref_tex: &RefTex,
@@ -621,6 +642,7 @@ fn run_trace_bundle(
     })
 }
 
+#[cfg(feature = "reference-tools")]
 fn trace_stability(traced: Option<&[u8]>, normal: &[u8]) -> Result<Option<bool>> {
     let Some(traced) = traced else {
         return Ok(None);
@@ -628,6 +650,7 @@ fn trace_stability(traced: Option<&[u8]>, normal: &[u8]) -> Result<Option<bool>>
     Ok(Some(normalized_dvi_for_comparison(traced)? == normal))
 }
 
+#[cfg(feature = "reference-tools")]
 fn run_reference_trace(
     repo_root: &Path,
     ref_tex: &RefTex,
@@ -652,6 +675,7 @@ fn run_reference_trace(
     })
 }
 
+#[cfg(feature = "reference-tools")]
 fn run_umber_trace(
     repo_root: &Path,
     umber_bin: &Path,
@@ -692,6 +716,7 @@ fn run_umber_trace(
     })
 }
 
+#[cfg(feature = "reference-tools")]
 fn runnable_umber_bin(umber_bin: &Path) -> Result<PathBuf> {
     fs::canonicalize(umber_bin)
         .with_context(|| format!("failed to resolve umber binary {}", umber_bin.display()))
@@ -786,6 +811,7 @@ fn staged_source_dir(
     Ok(temp)
 }
 
+#[cfg(any(test, feature = "reference-tools"))]
 fn write_triage_bundle(root: &Path, input: &TriageInput<'_>) -> Result<PathBuf> {
     let bundle = root.join(safe_bundle_name(&input.doc.name));
     if bundle.exists() {
@@ -851,6 +877,7 @@ fn write_page_disassembly(
     Ok(())
 }
 
+#[cfg(any(test, feature = "reference-tools"))]
 fn summary_text(input: &TriageInput<'_>) -> Result<String> {
     let mut out = String::new();
     writeln!(out, "document: {}", input.doc.name)?;
@@ -918,6 +945,7 @@ fn divergent_page_and_opcodes(
     Ok((page_index + 1, reference_opcode, umber_opcode))
 }
 
+#[cfg(any(test, feature = "reference-tools"))]
 fn trace_verification(trace: &TraceBundle) -> String {
     format!(
         "reference_success: {}\number_success: {}\nreference_tracing_preserves_dvi: {}\number_tracing_preserves_dvi: {}\n",
@@ -928,6 +956,7 @@ fn trace_verification(trace: &TraceBundle) -> String {
     )
 }
 
+#[cfg(any(test, feature = "reference-tools"))]
 fn display_optional_bool(value: Option<bool>) -> &'static str {
     match value {
         Some(true) => "yes",
@@ -996,6 +1025,7 @@ fn safe_bundle_name(name: &str) -> String {
         .collect()
 }
 
+#[cfg(any(test, feature = "reference-tools"))]
 fn run_self_test(triage_dir: &Path) -> Result<PathBuf> {
     let root = triage_dir.join("self-test");
     if root.exists() {
@@ -1050,11 +1080,13 @@ fn run_self_test(triage_dir: &Path) -> Result<PathBuf> {
     Ok(bundle)
 }
 
+#[cfg(any(test, feature = "reference-tools"))]
 fn synthetic_second_page_body_offset(bytes: &[u8]) -> usize {
     let file = DviFile::parse(bytes).expect("synthetic DVI parses");
     file.pages[1].bop_offset + 45
 }
 
+#[cfg(any(test, feature = "reference-tools"))]
 fn synthetic_two_page_dvi() -> Vec<u8> {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(&[247, 2]);
@@ -1100,6 +1132,7 @@ fn synthetic_two_page_dvi() -> Vec<u8> {
     bytes
 }
 
+#[cfg(any(test, feature = "reference-tools"))]
 fn synthetic_page(bytes: &mut Vec<u8>, count0: i32, previous: i32, body: &[u8]) {
     bytes.push(139);
     bytes.extend_from_slice(&count0.to_be_bytes());
@@ -1111,6 +1144,7 @@ fn synthetic_page(bytes: &mut Vec<u8>, count0: i32, previous: i32, body: &[u8]) 
     bytes.push(140);
 }
 
+#[cfg(feature = "reference-tools")]
 fn print_usage() {
     eprintln!(
         "usage: parity-harness [--manifest path] [--corpus-dir dir] [--triage-dir dir] [--umber-bin path] [--doc name] [--keep-triage] [--self-test] [--write-reference-fixture path]\n       parity-harness --compare-existing-dvi expected.dvi actual.dvi [--label name] [--triage-dir dir]"

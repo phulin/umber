@@ -10,7 +10,7 @@ cd "$repo_root"
 dprint check
 cargo fmt --all --check
 CARGO_TARGET_DIR="${CLIPPY_TARGET_DIR:-target/clippy}" \
-  cargo clippy --workspace --all-targets --quiet -- -D warnings
+  cargo clippy --all-targets --quiet -- -D warnings
 
 if [[ "${CHECK_BENCH:-0}" == 1 ]]; then
   scripts/check-node-width-budget.sh

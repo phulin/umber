@@ -14,7 +14,7 @@ Use this crate for stable, driver-facing artifact structures and serialization c
 - `Cargo.toml`: Crate manifest declaring shared arithmetic and content-identity dependencies.
 - `src/binary.rs`: Versioned compact binary writer/reader, nested list and token streaming encoders/decoders, and parse error types.
 - `src/dvi.rs`: Slice-compatible and incremental output-sink DVI APIs, one-page writer state, errors, and submodule wiring.
-- `src/bin/texout-dvitype.rs`: Small host-side DVI disassembly binary for parity triage.
+- `src/bin/texout-dvitype.rs`: Small host-side DVI disassembly binary for parity triage, enabled by the opt-in `dvi-tools` feature.
 - `src/dvi/disasm.rs`: Bounded backpointer-graph validator and single-pass retained DVI command index/disassembler.
 - `src/dvi/coordinates.rs`: DVI-traversal coordinate oracle and exact positioned-stream comparator.
 - `src/dvi/disasm/tests.rs`: Page-graph corruption, retained-index, disassembly, and command lookup tests.

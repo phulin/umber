@@ -308,6 +308,6 @@ render, digest chain, and retained-session replay.
 | `navigation_structures`           | more than six deliberately unsorted escaped names, balanced name-tree levels and limits, mixed outline/thread/destination graph, multiple pages, exact deterministic ids, normalized dictionaries/arrays, unchanged page pixels |
 
 The focused completion sequence is the new scanner/state tests, the committed
-navigation corpus, `cargo test --workspace --tests`, and `scripts/check.sh`.
+navigation corpus, `cargo test --tests`, and `scripts/check.sh`.
 The full epic gate additionally runs `scripts/check-and-test.sh`, the PDF
 regeneration validation path, DVI byte parity, and the native/WASM gates.
