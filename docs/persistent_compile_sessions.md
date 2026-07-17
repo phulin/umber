@@ -117,6 +117,16 @@ Observable effects are materialized through a lightweight clone of the
 accepted retained `World`; inspecting output therefore does not clone engine
 stores, consume checkpoints, or prevent later patches.
 
+One-shot native clients may instead consume a completed session through
+`into_accepted_finalization()`. That boundary transfers the accepted
+`Universe`, format-dump flag, and expansion counters with effects still
+uncommitted. The CLI performs PDF/HTML lowering, format serialization, input
+receipt construction, and driver-file collision checks against that detached
+state; only then does it retarget the retained `World` to the native output
+backend, commit effects, and atomically publish the complete driver file set.
+An unaccepted or pending revision cannot cross the boundary. Persistent WASM
+and watch sessions continue to use non-consuming accepted-output views.
+
 The retention values copied into an accepted output are a point-in-time
 snapshot taken during acceptance. The session's `retention_metrics()` getter,
 and therefore the WASM `retentionMetrics` property, is live: it preserves the

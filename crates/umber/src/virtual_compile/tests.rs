@@ -24,6 +24,41 @@ fn session(main: &str) -> VirtualCompileSession {
 }
 
 #[test]
+fn accepted_finalization_transfers_uncommitted_engine_state() {
+    let mut session = session("\\message{accepted-finalization}\\end");
+    let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+        panic!("revision should complete");
+    };
+
+    let mut finalization = session
+        .into_accepted_finalization()
+        .expect("accepted finalization");
+    assert_eq!(
+        finalization.stores.world().commit_mode(),
+        tex_state::WorldCommitMode::Retained
+    );
+    assert!(!finalization.stores.world().effect_records().is_empty());
+    finalization
+        .stores
+        .export_retained_effects()
+        .expect("commit accepted effects");
+    assert_eq!(
+        finalization.stores.world().memory_terminal_output(),
+        Some(output.terminal.as_slice())
+    );
+    assert!(!finalization.dumped_format);
+}
+
+#[test]
+fn finalization_rejects_a_session_without_accepted_output() {
+    let error = session("\\end")
+        .into_accepted_finalization()
+        .err()
+        .expect("unfinished session must not finalize");
+    assert!(error.to_string().contains("no completed accepted output"));
+}
+
+#[test]
 fn expanded_definition_classifies_noexpand_across_editor_fragment_origins() {
     let source = "\\def\\a{A}\n\\toks0={T}\n\\edef\\e{\\noexpand\\a:\\the\\toks0:\\number7}\n\\show\\e\n\\end\n";
     let CompileAttemptResult::Complete(output) = session(source).compile_attempt() else {

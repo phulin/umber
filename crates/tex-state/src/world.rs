@@ -2045,6 +2045,27 @@ impl World {
         self.commit_mode
     }
 
+    /// Selects the destination backend for a retained session's eventual
+    /// effects without exposing that backend during engine execution.
+    pub fn retarget_output_backend(&mut self, destination: &World) -> Result<(), WorldError> {
+        if self.commit_mode != WorldCommitMode::Retained {
+            return Err(WorldError::new(
+                "retarget output backend",
+                None,
+                "world is not an unexported retained session",
+            ));
+        }
+        if destination.effect_pos() != EffectPos::default() {
+            return Err(WorldError::new(
+                "retarget output backend",
+                None,
+                "destination world already contains effects",
+            ));
+        }
+        self.backend = destination.backend.clone();
+        Ok(())
+    }
+
     /// Materializes a retained branch once, in order, and seals it against rollback.
     pub(crate) fn export_retained_effects(&mut self) -> Result<(), WorldError> {
         if self.commit_mode != WorldCommitMode::Retained {

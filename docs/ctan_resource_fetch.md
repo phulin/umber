@@ -17,9 +17,8 @@ CTAN-derived distribution:
 - the **web app** already drives the `NeedResources` loop through
   `HttpManifestResolver`, but depends on a deployment-provided manifest and
   hard-fails on any file outside it; and
-- the **CLI** (`umber run`, `umber watch`) does not use the resource session
-  at all: it searches the local filesystem through `TexInputSearchPath` /
-  `TexFontSearchPath` and reports a plain error when a file is absent.
+- the **CLI** (`umber run`, `umber watch`) drives the same resource session,
+  with local project search ahead of its pinned distribution resolver; and
 
 The merged VFS work already provides everything below the host boundary:
 typed deterministic request batches, digest and limit validation, idempotent
@@ -347,11 +346,12 @@ Each phase is a `bd` issue under the `umber2-mbwq` epic (phase N is
    accepts pinned HTTPS or local manifests, resolves formats through the same
    manifest, reports one progress line per acquired batch, and gives typed
    pin-mismatch and offline-unavailable errors. The release-default URL and
-   digest slots are present; until phase 6 replaces the zero placeholder pin,
-   flagless local-only invocations retain the existing direct runner. PDF,
-   format-dump, profiling, HTML-asset, and input-receipt postprocessing also
-   retain that runner because those outputs require live state not exposed by
-   `VirtualCompileSession`.
+   digest slots are present. Every `umber run` output mode uses this path.
+   Completed one-shot sessions expose a consuming accepted-finalization
+   boundary, so client-owned PDF lowering, format dumping, profiling, HTML
+   asset publication, input receipts, effect commit, and atomic driver-file
+   publication retain live-state behavior without granting engine execution
+   host I/O access.
 5. **Complete — watch and cancellation.** `umber watch` now drives one retained
    native resource session across accepted edits. File polling cancels an
    in-flight manifest/object acquisition when a newer edit appears, discards

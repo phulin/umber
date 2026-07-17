@@ -1,5 +1,6 @@
 //! Native host policy for driving one CLI compile through the resource loop.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::env;
 use std::error::Error;
@@ -21,8 +22,8 @@ use umber_fetch::{
 };
 
 use crate::{
-    CompileAttemptResult, EngineMode, FileContentId, FileKind, FileRequest, MemoryRunOutput,
-    ResolvedFile, ResourceRequest, ResourceResponse, SessionOptions, SourcePatch,
+    AcceptedFinalization, CompileAttemptResult, EngineMode, FileContentId, FileKind, FileRequest,
+    MemoryRunOutput, ResolvedFile, ResourceRequest, ResourceResponse, SessionOptions, SourcePatch,
     TexFontSearchPath, TexInputSearchPath, VirtualCompileSession,
 };
 
@@ -107,6 +108,35 @@ impl Error for NativeRunError {}
 pub fn run(options: &NativeRunOptions) -> Result<MemoryRunOutput, NativeRunError> {
     NativeCompileSession::new(options, &FetchCancellation::new())?
         .compile(&FetchCancellation::new())
+}
+
+pub struct NativeAcceptedRun {
+    pub output: MemoryRunOutput,
+    pub finalization: AcceptedFinalization,
+    pub input_path_map: BTreeMap<PathBuf, PathBuf>,
+    pub main_input: (PathBuf, usize),
+}
+
+pub fn run_for_finalization(
+    options: &NativeRunOptions,
+) -> Result<NativeAcceptedRun, NativeRunError> {
+    let cancellation = FetchCancellation::new();
+    let mut session = NativeCompileSession::new(options, &cancellation)?;
+    let output = session.compile(&cancellation)?;
+    let input_path_map = session.local.input_path_map();
+    let main_input = (options.input.clone(), session.source.len());
+    let mut finalization = session.into_accepted_finalization()?;
+    finalization
+        .stores
+        .world_mut()
+        .retarget_output_backend(&World::real())
+        .map_err(|error| NativeRunError::Compile(error.to_string()))?;
+    Ok(NativeAcceptedRun {
+        output,
+        finalization,
+        input_path_map,
+        main_input,
+    })
 }
 
 /// Retained native resource and incremental compile state used by `run` and
@@ -226,6 +256,12 @@ impl NativeCompileSession {
         }
     }
 
+    pub fn into_accepted_finalization(self) -> Result<AcceptedFinalization, NativeRunError> {
+        self.session
+            .into_accepted_finalization()
+            .map_err(|error| NativeRunError::Compile(error.to_string()))
+    }
+
     pub fn apply_source(
         &mut self,
         next_revision: tex_incr::RevisionId,
@@ -298,6 +334,7 @@ fn contiguous_edit(old: &str, new: &str) -> (std::ops::Range<usize>, String) {
 struct LocalResolver {
     input: TexInputSearchPath,
     font: TexFontSearchPath,
+    input_paths: RefCell<BTreeMap<PathBuf, PathBuf>>,
 }
 
 impl LocalResolver {
@@ -315,6 +352,7 @@ impl LocalResolver {
         Self {
             input: TexInputSearchPath::new(&base, areas("TEXINPUTS")),
             font: TexFontSearchPath::new(base, areas("TEXFONTS")),
+            input_paths: RefCell::new(BTreeMap::new()),
         }
     }
 
@@ -332,12 +370,20 @@ impl LocalResolver {
         .ok()?;
         let bytes = content.bytes().to_vec();
         let digest = FileContentId::for_bytes(&bytes);
+        let virtual_path = PathBuf::from(format!("/texlive/local/{digest}"));
+        self.input_paths
+            .borrow_mut()
+            .insert(virtual_path.clone(), content.path().to_owned());
         Some(ResolvedFile {
             request: request.key().clone(),
-            virtual_path: format!("/texlive/local/{digest}"),
+            virtual_path: virtual_path.to_string_lossy().into_owned(),
             expected_digest: Some(digest),
             bytes,
         })
+    }
+
+    fn input_path_map(&self) -> BTreeMap<PathBuf, PathBuf> {
+        self.input_paths.borrow().clone()
     }
 }
 

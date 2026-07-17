@@ -23,6 +23,30 @@ fn exits_successfully() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn run_publishes_a_dumped_format_from_the_resource_session() {
+    let temp_dir = tempfile::tempdir().expect("create format output temp dir");
+    let source = temp_dir.path().join("format.tex");
+    let format = temp_dir.path().join("format.fmt");
+    fs::write(&source, "\\catcode`@=11 \\dump\n").expect("write format source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .args(["run", "--format-out"])
+        .arg(&format)
+        .arg(&source)
+        .output()
+        .expect("run format dump");
+
+    assert!(
+        output.status.success(),
+        "format dump failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!fs::read(format).expect("read dumped format").is_empty());
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn pdftex_rule_page_is_published_only_to_an_explicit_distinct_pdf_path() {
     let temp_dir = tempfile::tempdir().expect("create PDF output temp dir");
     let source = temp_dir.path().join("rule.tex");
