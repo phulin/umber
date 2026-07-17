@@ -202,9 +202,12 @@ copy-on-write roots, world state, mode/page summaries, and other future-relevant
 scalars. Taking a snapshot is bounded and independent of total live document
 size; rollback cost is proportional to changed or newly allocated state.
 
-The probabilistic canonical identity used for optional suffix adoption is
-derived later, not captured in every snapshot. Executor sinks request it only for a
-schedule-aligned boundary they will compare. Its store projection separates
+The probabilistic canonical identity used for optional suffix adoption remains
+optional for ordinary snapshots. Incremental accepted-history sinks request it
+while every retained named boundary's `Universe` is live, and the resulting
+identity is stored with that checkpoint. Later convergence compares the two
+retained identities directly. It never forks or rolls an accepted generation
+back merely to reconstruct an earlier identity. Its store projection separates
 append-only interned content from mutable state. Names, token lists, macros,
 glue, and fonts contribute canonical leaf identities to per-store deterministic
 Merkle collections. Collection shape and root depend only on the set of content
@@ -239,7 +242,8 @@ remains transient. Root-key comparison is the invalidation barrier: unchanged
 roots compose in O(1), and only changed roots rebuild their projection. PDF
 state uses rolling semantic
 fingerprints and future allocation cursors. One versioned, domain-separated,
-fixed-seed 64-bit aHash checkpoint identity is stored only on compared records.
+fixed-seed 64-bit aHash checkpoint identity is stored on each accepted
+incremental boundary and on each new boundary emitted for comparison.
 Full mutable-store and page DTO serialization is not part of the session-local
 aHash comparison, so unchanged roots are O(1) and work at a compared boundary
 is proportional to roots dirtied since

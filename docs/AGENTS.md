@@ -29,10 +29,12 @@ for the first incremental engine.
 session lifecycle that composes typed resource retries with revision-checked
 root-buffer patches and retained incremental execution.
 
-`incremental_memoization.md` supersedes folded-hash convergence as the general
-incremental strategy and specifies stable input identity, constrained read
-validation, semantic mutation/effect replay, layered memoization boundaries,
-hierarchical trace reuse, retention, measurement, and rollout.
+`incremental_memoization.md` defines the changed-document slow path: stable
+source alignment plus an ordered accepted-history paragraph replay cursor,
+per-paragraph dependency validation, retained hlist/line import, cold-equivalent
+boundary publication, simplification of the old generic memo layers, and
+path-separated rollout. It deliberately does not use a reverse suffix hash or
+hierarchical execution trace.
 
 `retained_group_roots.md` specifies the proposed persistent/COW environment
 history needed for durable paragraph checkpoints inside ordinary open groups,

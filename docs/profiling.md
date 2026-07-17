@@ -689,3 +689,42 @@ medians of 105.909 and 105.865 ms/run. Host contention produced large paired
 outliers, so retain both raw means and medians when comparing this run. All
 processes emitted 97 pages and 263,424 DVI bytes; checkpoint runs published
 1,108 checkpoints.
+
+## Incremental boundary and paragraph roofline evidence
+
+The 2026-07-17 incremental audit found that accepted canonical boundary
+identities were materialized lazily. Every schedule-aligned comparison whose
+old record lacked an identity cloned the accepted `Universe`, rolled the clone
+back to that boundary, projected the identity, and cached it. A 66-candidate
+interaction edit therefore spent 174.5 ms without paragraph recording and
+186.9 ms with paragraph recording in candidate validation.
+
+Commit `b2fbbb84` captures canonical identities while accepted boundaries are
+live and compares the retained values directly. The same 66-candidate stage
+fell to 6 us and 5 us respectively. End-to-end interaction latency fell from
+263.7 to 93.5 ms without paragraph recording and from 285.7 to 100.4 ms with
+it. The one-candidate height/page-preserving edit remained about 72 ms. The
+cost moved to live publication: initial priming and a fully nonconvergent slow
+edit each increased by about 22--24 ms. Focused state/executor/incremental
+tests, the explicit 1,000-edit convergence test, and `scripts/check.sh` passed.
+
+A separate optimized cold Gentle sampling run measured 100 compilations at
+210.252 ms mean with 21,466 main-thread samples. Direct stack attribution was
+50.6 ms (24.1%) for paragraph hlist/front-end work and 30.2 ms (14.4%) for
+paragraph finalization and line breaking. Page/output work was 64.9 ms
+(30.9%), but only 0.8 ms belonged to page-break selection; 3.7 ms was other
+output work and 60.4 ms was shipout, page lowering, and artifact construction.
+The remaining 64.6 ms was other execution and driver work.
+
+Perfect zero-cost finished-line replay while rebuilding pages therefore has a
+129.5 ms whole-document floor, or about a 1.62x ceiling. Hlist-only replay has
+a 159.7 ms floor, or about a 1.32x ceiling. These are absolute rooflines rather
+than expected edit results because the changed paragraph, restart prefix,
+validation, import, and misses remain.
+
+The corresponding design decision is recorded in
+[`incremental_memoization.md`](incremental_memoization.md): full canonical
+boundary identity remains the fast suffix splice, while the slow path uses an
+ordered accepted-history paragraph cursor with per-record validation. It does
+not add a reverse paragraph-suffix hash. Direct page/shipout artifact patching
+is deferred to later measured work.

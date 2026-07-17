@@ -2,10 +2,10 @@
 
 > **Status:** this document remains authoritative for restartable named
 > checkpoints, retained editor-session effects/artifacts, edit mapping,
-> generation substrates, and pruning. Its folded `state_hash` convergence is
-> an identical-history optimization (no-op, comment-only, and other
-> semantically identical edits), not a general way to rejoin after changed
-> typeset content. General changed-document reuse is specified in
+> generation substrates, and pruning. Its canonical live boundary identity
+> drives the fast full-state suffix splice; the folded `state_hash` remains
+> schedule-relative telemetry. Changed-document paragraph reuse when full
+> state does not converge is specified in
 > [`incremental_memoization.md`](incremental_memoization.md).
 
 This document fixes the v1 contract for an editor session that re-executes an
@@ -155,6 +155,7 @@ BoundaryRecord {
     restartable EngineCheckpoint,
     ordered committed-artifact prefix position,
     schedule-relative state_hash,
+    canonical future-state identity,
 }
 ```
 
@@ -209,14 +210,15 @@ nodes.
 ## Generation substrates and restart forking
 
 Every checkpoint of a retained generation shares one frozen `Universe`
-substrate. Records are O(1) owner-exact watermark snapshots into that
-substrate, and a retained substrate is never mutated or rolled back in place.
-Session-local canonical comparison identities are not part of checkpoint
-capture. During an advance, the resume sink requests them only after the mapped occurrence key
-proves that a boundary will actually be compared. The corresponding accepted
-record computes its identity on that first later comparison and caches it in
-derived record metadata shared by record clones; cold history and boundaries
-that are never compared retain only their O(1) roots. Canonical store identity
+substrate. Records are owner-exact watermark snapshots into that substrate,
+and a retained substrate is never mutated or rolled back in place.
+Incremental history sinks capture the session-local canonical comparison
+identity while each accepted boundary's `Universe` is live. The identity is
+stored with the checkpoint and preserved by record clones and revision
+rehoming. A later comparison reads both retained identities directly; it never
+forks or rolls the accepted substrate back to materialize an old boundary.
+Ordinary non-incremental snapshot consumers still use the bounded snapshot
+path without requesting this optional projection. Canonical store identity
 separates append-only interned content from mutable checkpoint state. Stable
 font data keeps its durable identity from load, and new token-list, macro,
 name, glue, and font entries add only canonical leaves and prefix roots to
@@ -431,11 +433,9 @@ generation transition once. This is the boundary used to compose editor
 acceptance with VFS build transactions.
 
 Within an accepted generation, records are ordered by schedule and their
-restart roots and revision metadata are never mutated in place. The one
-derived mutation is publication of a previously absent canonical comparison
-identity into the record's shared one-time cache. Rehoming creates a new
-accepted record wrapper rather than mutating an old generation's checkpoint.
-`JobStart` is always retained.
+restart roots, canonical comparison identities, and revision metadata are
+never mutated in place. Rehoming creates a new accepted record wrapper rather
+than mutating an old generation's checkpoint. `JobStart` is always retained.
 
 The host supplies a soft checkpoint-root memory budget. The aggregate state
 layer reports opaque retention units and their charged bytes; `tex-incr` never
@@ -493,8 +493,8 @@ A newly emitted checkpoint is a convergence candidate only when:
 1. its occurrence key equals the prior revision's key after revision mapping;
 2. every named boundary from the restart anchor through the candidate has the
    same mapped key in the same order; and
-3. its complete canonical future-state identity equals the prior record's
-   identity, computed lazily at this comparison.
+3. its live-captured canonical future-state identity equals the identity
+   retained on the prior record.
 
 The second rule is required because the inexpensive `state_hash` remains a
 fold over checkpoint slices, not a canonical fingerprint of state at an
@@ -560,6 +560,8 @@ Implementation is not complete until tests prove all of the following:
   accumulate revision-map chains;
 - no-op edits converge at the first eligible candidate;
 - schedule changes cause only missed reuse;
+- accepted boundary comparison never forks or rolls back the accepted
+  substrate after the one restart fork;
 - checkpoint-root and output-retention accounting charge shared roots once,
   report protected-root overage, and return to baseline after eviction; and
 - incremental artifacts, deferred effects, and final DVI bytes equal a cold
