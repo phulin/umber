@@ -593,6 +593,44 @@ Translation rules are:
 - regenerate reference-derived fixtures only through
   `scripts/regen-fixtures.sh`.
 
+### Audited xfail baseline
+
+The completed baseline audit compared the four translation commits
+`45669f8e`, `fe8e3f23`, `574d31cc`, and `fa682215` directly with upstream
+commit `74252e608e5f8115375c532eb25416430a9f52eb`. The complete embedded Perl
+source in every Rust module is byte-identical to its upstream `t/*.t` file.
+The exact upstream assertion calls occur in the same order in the Rust
+translations; those calls retain the upstream names, actual expressions,
+expected expressions, fixture references, byte strings, and Unicode without
+change. Subprocess cases additionally carry the documented in-process
+expectation beside the exact upstream call.
+The one generated upstream loop, `bcfvalidation.t`, expands to the same 53
+lexically ordered `.bcf` paths as the pinned `t/tdata` tree.
+
+| Translation cohort                     |  Files | Declared assertions |
+| -------------------------------------- | -----: | ------------------: |
+| Foundation, input, and graph           |     23 |                 539 |
+| Names, sorting, labels, and uniqueness |     20 |                 686 |
+| Output and tool mode                   |      8 |                  50 |
+| **Exact baseline**                     | **51** |           **1,275** |
+
+The 112 files in upstream `t/tdata` are all committed byte for byte, together
+with upstream `LICENSE` as `LICENSE.Artistic-2.0`; the 113 entries and their
+lengths and SHA-256 identities are exact in `manifest.json`. Thus there is no
+missing upstream repository fixture and no nonredistributable repository
+fixture requiring a separate setup path. `remote-files.t` additionally names
+a live HTTPS datasource in its committed BCF; that development-only external
+resource is not part of the upstream repository fixture tree and is modeled
+as a client-provided VFS resource rather than fetched by Cargo tests.
+
+Upstream gates `full-bbl.t` (5 assertions), `full-bibtex.t` (2), `full-dot.t`
+(2), and `remote-files.t` (1) behind `BIBER_DEV_TESTS`. All ten assertions run
+unconditionally in the Rust baseline as independent strict xfails. Across the
+suite, each of the 1,275 assertions is a distinct Cargo test. The harness
+self-test proves every comparison helper accepts a mismatch and panics on
+equality with an `XPASS`, so no earlier failure, file-wide wrapper, skip, or
+development gate can hide a later assertion.
+
 Implementation status, owners, dependencies, and blockers live in Beads. The
 fixture manifest records provenance and test configuration, not task status.
 
