@@ -8,8 +8,10 @@
 use std::fmt;
 use std::sync::Arc;
 
+mod session;
 mod tool;
 
+pub use bib_input::{BibTexLimits, BibTexOptions, XmlLimits};
 pub use bib_model::{
     BibConfigurationBuilder, BibDiagnostic, BibDiagnosticCode, BibSeverity, BibSourceLocation,
     COMPATIBILITY_VERSION, CompatibilityVersion, DataList, DataListId, DataListKind, Entry,
@@ -25,13 +27,16 @@ pub use bib_output::{
     OutputFailureKind, OutputOptions, OutputRouter, Serializer,
 };
 pub use bib_unicode::{LegacyEncoding, RecodeSet, UnicodeData};
+pub use session::{BibInitFailure, BibSession, BibSessionOptions};
 pub use tool::{SyntheticTool, ToolFailure, ToolFailureKind, ToolResult};
-use umber_vfs::FileRequestBatch;
+pub use umber_vfs::{FileKind, FileRequest, FileRequestBatch, FileRequestKey, VfsSnapshot};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct BibOptions {
     tool_mode: bool,
     outputs: Arc<[OutputRequest]>,
+    configuration: Option<VirtualPath>,
+    schemas: Arc<[VirtualPath]>,
 }
 
 impl BibOptions {
@@ -42,12 +47,21 @@ impl BibOptions {
     pub fn outputs(&self) -> impl ExactSizeIterator<Item = &OutputRequest> {
         self.outputs.iter()
     }
+    #[must_use]
+    pub const fn configuration(&self) -> Option<&VirtualPath> {
+        self.configuration.as_ref()
+    }
+    pub fn schemas(&self) -> impl ExactSizeIterator<Item = &VirtualPath> {
+        self.schemas.iter()
+    }
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct BibOptionsBuilder {
     tool_mode: bool,
     outputs: Vec<OutputRequest>,
+    configuration: Option<VirtualPath>,
+    schemas: Vec<VirtualPath>,
 }
 
 impl BibOptionsBuilder {
@@ -70,11 +84,30 @@ impl BibOptionsBuilder {
         self.outputs.push(request);
         Ok(self)
     }
+    pub fn configuration(&mut self, path: VirtualPath) -> &mut Self {
+        self.configuration = Some(path);
+        self
+    }
+    pub fn configuration_path(&mut self, path: VirtualPath) -> &mut Self {
+        self.configuration(path)
+    }
+    pub fn schema(&mut self, path: VirtualPath) -> Result<&mut Self, BibBuildError> {
+        if self.schemas.contains(&path) {
+            return Err(BibBuildError::DuplicateResourcePath(path));
+        }
+        self.schemas.push(path);
+        Ok(self)
+    }
+    pub fn schema_path(&mut self, path: VirtualPath) -> Result<&mut Self, BibBuildError> {
+        self.schema(path)
+    }
     #[must_use]
     pub fn freeze(self) -> BibOptions {
         BibOptions {
             tool_mode: self.tool_mode,
             outputs: self.outputs.into(),
+            configuration: self.configuration,
+            schemas: self.schemas.into(),
         }
     }
 }
@@ -187,6 +220,10 @@ impl BibResultBuilder {
         self
     }
     #[must_use]
+    pub fn files_len(&self) -> usize {
+        self.files.len()
+    }
+    #[must_use]
     pub fn freeze(self) -> BibResult {
         let stats = BibStats {
             sections: self.document.sections().len(),
@@ -222,6 +259,7 @@ pub enum BibFailureKind {
     Validation,
     MissingResource,
     ResourceConflict,
+    NoProgress,
     Semantic,
     Output,
     Limit,
@@ -254,6 +292,7 @@ impl BibFailure {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BibBuildError {
     DuplicateOutputPath(VirtualPath),
+    DuplicateResourcePath(VirtualPath),
 }
 
 impl fmt::Display for BibBuildError {
@@ -263,3 +302,20 @@ impl fmt::Display for BibBuildError {
 }
 
 impl std::error::Error for BibBuildError {}
+
+/// Processes one attempt with default cold-session policy.
+#[must_use]
+pub fn process_once(job: &BibJob, snapshot: &umber_vfs::VfsSnapshot) -> BibAttempt {
+    BibSession::default().process(job, snapshot)
+}
+
+/// Serializes one detached artifact from an immutable processed document.
+pub fn serialize(
+    document: &ProcessedBibliography,
+    request: &OutputRequest,
+) -> Result<GeneratedFile, OutputFailure> {
+    OutputRouter::default().serialize(
+        OutputContext::new(document, &UnicodeData::pinned()),
+        request,
+    )
+}

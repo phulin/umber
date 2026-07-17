@@ -3,9 +3,10 @@
 Status: foundation contracts, pinned Unicode utilities, bounded XML and
 BibTeX inputs, deterministic cross-entry graphs, structured names,
 data-list/sorting, labeling/uniqueness, exact BBL 3.3, BibTeX, BibLaTeXML, and
-BBLXML serialization, bounded DOT output, synthetic-section tool mode, and
-alternate-output routing are implemented; the remaining resource session and
-project integration continue in dependency order.
+BBLXML serialization, bounded DOT output, synthetic-section tool mode,
+alternate-output routing, and the resumable VFS bibliography session are
+implemented; native command and project integration continue in dependency
+order.
 
 This document defines Umber's pure-Rust bibliography subsystem. Every Rust
 package uses the `bib-*` prefix, and modules, types, commands, features, and
@@ -438,12 +439,10 @@ lookup maps never do.
 
 ## Public API
 
-The implemented `bib-engine` foundation exposes detached `BibJob`,
+The implemented `bib-engine` facade exposes detached `BibJob`,
 `BibOptions`, `BibAttempt`, `BibResult`, typed failure classes, statistics, and
-validated result/option builders. The resumable session that executes these
-contracts over virtual-resource acquisition, plus the convenient one-shot
-operation for callers that already have every file, is owned by
-`umber2-rti9.12`:
+validated result/option builders. `BibSession` executes these contracts over
+immutable VFS snapshots, and `process_once` provides the cold one-shot form:
 
 ```rust
 pub struct BibSession {
@@ -479,11 +478,16 @@ impl BibSession {
 }
 ```
 
-The facade will not own host acquisition. `NeedResources` contains typed
+The facade does not own host acquisition. `NeedResources` contains typed
 logical requests that the project session merges with TeX requests. After the
 host registers responses in `umber-vfs`, the caller invokes `process` again.
 An attempt either returns a complete detached result, returns needs without
-publishing generated files, or fails.
+publishing generated files, or fails. Repeating an identical required batch
+for the same job is a typed no-progress failure, and stale snapshots are typed
+as resource conflicts. Control, configuration, schema, local datasource, and
+URL datasource requests use the bibliography VFS kinds. URL request keys are
+deterministically encoded while `FileRequest::original_name` preserves the
+client-facing identifier.
 
 Serialization may also be invoked separately:
 
@@ -679,6 +683,12 @@ directories or host URLs.
 Cold execution remains the correctness definition. Caches are detached,
 versioned, bounded, and freely discardable.
 
+`BibSession` retains bounded FIFO control and BibTeX parse caches. Keys combine
+exact VFS content identity with the pinned upstream compatibility version;
+parser options are session-immutable. A zero capacity disables both caches,
+and `clear_caches` drops them without affecting resource or result state.
+Focused tests require cache-on and cache-off `BibResult` equality.
+
 Useful cache layers include:
 
 - decoded immutable source bytes keyed by content identity and encoding;
@@ -799,11 +809,11 @@ as a client-provided VFS resource rather than fetched by Cargo tests.
 
 Upstream gates `full-bbl.t` (5 assertions), `full-bibtex.t` (2), `full-dot.t`
 (2), and `remote-files.t` (1) behind `BIBER_DEV_TESTS`. All ten assertions run
-unconditionally in the Rust baseline as independent strict xfails. Across the
-suite, each of the 1,275 assertions is a distinct Cargo test. The harness
-self-test proves every comparison helper accepts a mismatch and panics on
-equality with an `XPASS`, so no earlier failure, file-wide wrapper, skip, or
-development gate can hide a later assertion.
+unconditionally in Rust; the whole-output cohorts and `remote-files` now pass
+normally. Across the suite, each of the 1,275 assertions is a distinct Cargo
+test. Remaining assertion-level xfails still panic on equality with an
+`XPASS`, so no earlier failure, file-wide wrapper, skip, or development gate
+can hide a later assertion.
 
 Implementation status, owners, dependencies, and blockers live in Beads. The
 fixture manifest records provenance and test configuration, not task status.
@@ -863,6 +873,12 @@ from the ledger fails instead of silently inheriting the input-stage owner.
 | Exact BBL entry output                       | `umber2-rti9.10` | 5, 10, 13–18, 44, 61–63, 68–69                    | —                                   |     14 |
 | End-to-end session exposure of parsed values | `umber2-rti9.12` | 6, 43, 47–55                                      | —                                   |     11 |
 | **Transferred mixed-stage total**            |                  | **72**                                            | **25**                              | **97** |
+
+All 11 session-owned `basic-misc` assertions now run normally through the
+public facade ledger, covering expanded standard month macros, normalized URL
+values, and typed page ranges. The development-gated `remote-files` assertion
+also runs normally with its URL retained as a client-provided typed resource;
+the Cargo test suite performs no network access.
 
 `umber2-rti9.5` owns the raw BibTeX parser implementation and its focused
 tests, but none of these 97 full-pipeline assertions. The dependency path is

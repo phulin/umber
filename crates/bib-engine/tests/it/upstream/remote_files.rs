@@ -1,7 +1,7 @@
 // Direct xfail translation of upstream t/remote-files.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream;
 
 const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
 use strict;
@@ -115,7 +115,7 @@ eq_or_diff( $out->get_output_entry('SchillerCND2010', $main), $dl1, 'Fetch from 
 
 #[test]
 fn assertion_001_fetch_from_plain_bib_download() {
-    xfail_upstream(
+    pass_upstream(
         "Fetch from plain bib download",
         r"$out->get_output_entry('SchillerCND2010', $main)",
         r"$dl1",

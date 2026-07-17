@@ -537,9 +537,11 @@ no private path, request, registration, progress, or byte-accounting store.
    generations. Candidate root bytes, generated files, diagnostics, artifacts,
    DVI/HTML, and returned output now accept or roll back together, with composed
    retention charges.
-9. **Resource vocabulary complete; bibliography adapter deferred.** The shared
-   bibliography domains and file kinds are implemented here. `BibSession` and
-   its engine-specific validation are owned by `umber2-rti9.12`.
+9. **Complete.** The shared bibliography domains and file kinds are consumed
+   by `BibSession`. Missing control, data, configuration, and schema files are
+   deterministic typed batches; resolved files are recovered from snapshot
+   origins independently of response ordering, chunking, or chosen
+   distribution path.
 10. **TeX session complete; project orchestration deferred.** Native and WASM
     TeX compilation use the identical persistent Rust state machine. In-process
     LaTeX/bibliography multipass orchestration is owned by `umber2-rti9.14` and
@@ -569,10 +571,9 @@ The shared VFS substrate and its implemented TeX consumers are complete:
 - no legacy private virtual-file store or duplicate public path/request type
   remains in `umber` or `umber-wasm`.
 
-The following are project-level bibliography integration criteria, not missing
-VFS substrate work: TeX and bibliography processing must exchange generated
-files through this one VFS without runtime filesystem access or subprocesses;
-both engines' missing files must share the resource loop; and native/WASM must
-run the same multipass project stages. They are acceptance criteria of
-`umber2-rti9.12`, `umber2-rti9.14`, and `umber2-rti9.15` and cannot be claimed
-until those tracked consumers exist.
+The bibliography consumer now reads this VFS directly and returns detached
+generated files without runtime filesystem access or subprocesses. The
+remaining project-level criteria are sharing TeX and bibliography misses in
+one multipass project loop and publishing those detached files through its
+build transaction. They are acceptance criteria of `umber2-rti9.14` and
+`umber2-rti9.15` and cannot be claimed until those tracked consumers exist.

@@ -78,6 +78,7 @@ fn compare_owned_upstream(
             | SemanticOwner::SortAndLists
             | SemanticOwner::Labels
             | SemanticOwner::Output
+            | SemanticOwner::Session
     ) {
         pass_upstream(
             assertion,
@@ -117,28 +118,6 @@ fn pass_upstream(
     assert!(
         !expected_expression.is_empty(),
         "translated assertion `{assertion}` lost its expected expression"
-    );
-}
-
-#[track_caller]
-fn xfail_upstream(
-    assertion: &str,
-    actual_expression: &str,
-    expected_expression: &str,
-    upstream_call: &str,
-    upstream_source: &str,
-) {
-    assert!(
-        upstream_source.contains(upstream_call),
-        "translated assertion `{assertion}` is absent from its pinned upstream source"
-    );
-    xfail_deep(
-        assertion,
-        &TranslationValue::Expected {
-            actual_expression,
-            expected_expression,
-        },
-        &TranslationValue::SemanticEnginePending,
     );
 }
 

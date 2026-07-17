@@ -7,7 +7,10 @@ in native and WASM builds without subprocesses or native-filesystem access.
 ## File Map
 
 - `Cargo.toml`: crate graph and test-only manifest verification dependencies.
-- `src/lib.rs`: detached public job, option, result, failure, and attempt contracts.
+- `src/lib.rs`: detached public job, option, result, failure, attempt, one-shot, and serialization contracts.
+- `src/session.rs`: resumable VFS resource loop, bounded caches, stage composition, and detached output routing.
+- `src/session/convert.rs`: raw BibTeX-to-model conversion, typed values, and label-source preparation.
+- `src/session/tests.rs`: retry, no-progress, typed-query, and cold/cache parity tests.
 - `src/tool.rs`: synthetic-section tool mode and in-process alternate-output routing.
 - `tests/it.rs`: the crate's sole Cargo integration-test binary.
 - `tests/it/foundation.rs`: public foundation-boundary tests.
