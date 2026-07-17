@@ -21,8 +21,10 @@ pub use opentype::{
     AcceptedFontContainers, CharacterMap, FeatureSetting, FontContainer, FontFeaturePolicy,
     FontInstanceIdentity, FontLimits, FontMetadata, FontObjectIdentity, FontParseError,
     FontProgramIdentity, FontPurposes, FontRequest, FontRequestKey, FontSelectionError,
-    FontWireError, OpenTypeFont, OpenTypeMetrics, OpenTypeTag, ResolvedFont, ShapingTables,
-    VariationCoordinate, VariationSelection, WritingDirection,
+    FontWireError, MathAdjustment, MathConstant, MathConstants, MathGlyphAssembly,
+    MathGlyphConstruction, MathGlyphInfo, MathGlyphPart, MathGlyphVariant, MathKern, MathKernInfo,
+    MathTables, MathValue, MathVariants, OpenTypeFont, OpenTypeMetrics, OpenTypeTag, ResolvedFont,
+    ShapingTables, VariationCoordinate, VariationSelection, WritingDirection,
 };
 pub use pdf_encoding::{PdfEncoding, PdfEncodingError};
 pub use pdf_map::{

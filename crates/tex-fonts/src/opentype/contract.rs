@@ -407,6 +407,8 @@ pub struct FontLimits {
     pub max_features: usize,
     pub max_logical_name_bytes: usize,
     pub max_provenance_bytes: usize,
+    pub max_math_records: usize,
+    pub max_math_assembly_parts: usize,
 }
 
 impl FontLimits {
@@ -421,6 +423,8 @@ impl FontLimits {
         max_features: 256,
         max_logical_name_bytes: 1024,
         max_provenance_bytes: 4096,
+        max_math_records: 4_000_000,
+        max_math_assembly_parts: 1_000_000,
     };
 }
 
@@ -437,6 +441,8 @@ impl Default for FontLimits {
             max_features: 128,
             max_logical_name_bytes: 255,
             max_provenance_bytes: 1024,
+            max_math_records: 262_144,
+            max_math_assembly_parts: 65_536,
         }
     }
 }

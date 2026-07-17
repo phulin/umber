@@ -26,6 +26,8 @@ Use this crate for font-domain parsing and metric representation that does not r
 - `src/pdf_pk.rs`: bounded host-neutral PK bitmap font decoding, normalized glyph masks, and content identity.
 - `src/pdf_truetype.rs`: validated SFNT bytes and PDF descriptor metrics normalized through `ttf-parser`.
 - `src/opentype/`: validated OpenType resource contracts, canonical identities, bounded SFNT/WOFF2 decoding, immutable metric/cmap/table projections, and cached rustybuzz faces.
+- `src/opentype/math.rs`: strict bounded OpenType MATH parsing and immutable constants, glyph-info, kern, variant, construction, and assembly records.
+- `src/opentype/math/tests.rs`: synthetic complete-table and malformed MATH validation tests.
 - `src/tests.rs`: crate-internal test module declarations for TFM parsing and cross-checks.
 - `src/tests/metrics_validation.rs`: Detached metric capacity/reference validation and runtime lig/kern cursor boundary tests.
 - `src/tests/tfm_parse.rs`: unit tests and helpers for parsing fixtures, metrics conversion, and malformed TFM validation.
@@ -41,6 +43,9 @@ Use this crate for font-domain parsing and metric representation that does not r
 - `tests/fixtures/cm/cmtt10.tfm`: Computer Modern typewriter font fixture.
 - `tests/fixtures/edge/boundary-char.tfm`: edge-case TFM fixture covering boundary-character lig/kern behavior.
 - `tests/fixtures/edge/ptmr8g-longjump.tfm`: edge-case TFM fixture covering long lig/kern jump encodings.
+- `tests/fixtures/README.md`: provenance and regeneration details for OpenType fixtures.
+- `tests/fixtures/stix-two-math.woff2`: pinned SIL-OFL STIX Two Math container-equivalence fixture.
+- `tests/fixtures/stix-two-math.LICENSE.txt`: upstream license for the STIX fixture.
 
 ## Validation
 

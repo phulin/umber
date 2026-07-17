@@ -11,6 +11,7 @@ use super::contract::{
     FONT_PROGRAM_IDENTITY_VERSION, FontContainer, FontLimits, FontObjectIdentity,
     FontProgramIdentity, FontRequest, OpenTypeTag, ResolvedFont, VariationSelection,
 };
+use super::math::{MathTables, parse_math};
 
 type RustybuzzFace<'a> = rustybuzz::Face<'a>;
 
@@ -182,7 +183,7 @@ pub struct OpenTypeFont {
     pub cmap: CharacterMap,
     pub metrics: OpenTypeMetrics,
     pub shaping: ShapingTables,
-    pub math: Option<Arc<[u8]>>,
+    pub math: Option<MathTables>,
     pub metadata: FontMetadata,
     shaping_face: Arc<ShapingFace>,
     pub container: FontContainer,
@@ -288,7 +289,17 @@ impl OpenTypeFont {
             gsub: table_arc(&raw, *b"GSUB"),
             gpos: table_arc(&raw, *b"GPOS"),
         };
-        let math = table_arc(&raw, *b"MATH");
+        let math = raw
+            .table(Tag::from_bytes(b"MATH"))
+            .map(|data| {
+                parse_math(
+                    data,
+                    glyph_count,
+                    limits.max_math_records,
+                    limits.max_math_assembly_parts,
+                )
+            })
+            .transpose()?;
         let metadata = FontMetadata {
             glyph_count,
             is_variable: face.is_variable(),
@@ -349,6 +360,16 @@ fn validate_limits(limits: FontLimits) -> Result<(), FontParseError> {
             "provenance bytes",
             limits.max_provenance_bytes,
             hard.max_provenance_bytes,
+        ),
+        (
+            "MATH records",
+            limits.max_math_records,
+            hard.max_math_records,
+        ),
+        (
+            "MATH assembly parts",
+            limits.max_math_assembly_parts,
+            hard.max_math_assembly_parts,
         ),
     ] {
         if attempted > maximum {
@@ -547,6 +568,7 @@ pub enum FontParseError {
     InvalidTableRange(OpenTypeTag),
     UnknownVariationAxis(OpenTypeTag),
     VariationOutOfRange(OpenTypeTag),
+    InvalidMath(&'static str),
     ArithmeticOverflow,
     LimitExceeded {
         resource: &'static str,

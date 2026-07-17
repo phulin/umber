@@ -102,9 +102,10 @@ pub struct OpenTypeFont {
 ```
 
 The parser bounds table counts, offsets, glyph counts, outlines, collection
-faces, variation axes, mappings, substitution and positioning programs, and
-decoded allocation before publishing the value. Unknown optional tables may
-be retained or ignored by versioned policy; malformed required tables fail.
+faces, variation axes, mappings, substitution and positioning programs, MATH
+records and assembly parts, and decoded allocation before publishing the
+value. Unknown optional tables may be retained or ignored by versioned policy;
+malformed required tables fail.
 
 The initial metric projection includes:
 
@@ -115,7 +116,16 @@ The initial metric projection includes:
 - underline, strikeout, cap-height, and x-height metadata when present;
 - character-to-glyph mappings;
 - GDEF, GSUB, and GPOS data used by the supported shaping policy; and
-- MATH constants, italic corrections, variants, and assemblies when present.
+- lossless MATH constants and device adjustments, italic corrections, top
+  accent attachments, extended-shape coverage, four-corner math kerns,
+  variants, constructions, and assemblies when present.
+
+The MATH projection is an immutable font-unit model and does not synthesize
+classic TeX symbol or extension fontdimens. Coverage/record correspondence,
+glyph references, offset graph separation, sorted kern/variant records, and
+resource limits are validated before the font is published. Since the raw
+decoded `MATH` table is already part of canonical program identity, native
+SFNT and equivalent WOFF2 inputs publish identical MATH values and identity.
 
 The engine applies one documented rounding policy when projecting font units
 into scaled points. The same parser, projection rules, feature selection, and
@@ -445,18 +455,17 @@ children are direct stages in this chain.
 8. `umber2-y2ei.11.2`: add the pure rustybuzz shaping kernel.
 9. `umber2-y2ei.11.3`: add OpenType-only font selection and text fontdimens.
 10. `umber2-y2ei.11.4`: integrate two-pass shape, break, and reshape.
+11. `umber2-y2ei.9.1`: parse and validate immutable OpenType MATH tables.
 
 ### Next 1: positioned OpenType math
 
 Tracked by `umber2-y2ei.9`; this is the first new implementation stage.
 
-Parse and validate MATH constants, glyph information, italic corrections,
-math kern, accent attachments, variants, and assemblies. Replace lossy
-projection into TeX's symbol/extension fontdimens with a `MathMetricsSource`
-queried by the existing math-list conversion kernels. Emit fixed positioned
-HTML math using ordinary WOFF2-backed SVG text where cmap can reproduce the
-chosen glyph, and SVG outline fallback for glyph-id-only variants and assembly
-parts. MathML does not own layout.
+The MATH parser and immutable data model are complete. Next, add a
+`MathMetricsSource` queried by the existing math-list conversion kernels, then
+emit fixed positioned HTML math using ordinary WOFF2-backed SVG text where
+cmap can reproduce the chosen glyph and SVG outline fallback for glyph-id-only
+variants and assembly parts. MathML does not own layout.
 
 ### Next 2: OpenType-preferred mappings for TFM-style text
 

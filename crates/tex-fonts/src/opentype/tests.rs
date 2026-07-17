@@ -62,6 +62,7 @@ fn woff2_and_decoded_ttf_have_one_program_identity_and_projection() {
     assert_eq!(web.cmap, native.cmap);
     assert_eq!(web.metrics, native.metrics);
     assert_eq!(web.shaping, native.shaping);
+    assert_eq!(web.math, native.math);
 
     let (scalar, glyph) = web
         .cmap
@@ -104,6 +105,50 @@ fn woff2_and_decoded_ttf_have_one_program_identity_and_projection() {
         loaded.metrics_source(),
         crate::FontMetricsSource::OpenType(_)
     ));
+}
+
+#[test]
+fn stix_math_is_identical_from_woff2_and_native_sfnt() {
+    let woff2 = include_bytes!("../../tests/fixtures/stix-two-math.woff2").to_vec();
+    let ttf = woff2_patched::convert_woff2_to_ttf(&mut woff2.as_slice()).expect("decode fixture");
+    let web = OpenTypeFont::parse(
+        &wasm_request(),
+        ResolvedFont {
+            request: key(),
+            container: FontContainer::Woff2,
+            bytes: woff2,
+            declared_object_sha256: None,
+            declared_program_identity: None,
+            provenance: Some("STIX Two Math under the SIL OFL".to_owned()),
+        },
+        FontLimits::default(),
+    )
+    .expect("STIX WOFF2");
+    let native_request = FontRequest {
+        key: key(),
+        accepted_containers: AcceptedFontContainers::NATIVE,
+        purposes: FontPurposes::LAYOUT,
+    };
+    let native = OpenTypeFont::parse(
+        &native_request,
+        ResolvedFont {
+            request: key(),
+            container: FontContainer::TrueType,
+            bytes: ttf,
+            declared_object_sha256: None,
+            declared_program_identity: Some(web.identity),
+            provenance: None,
+        },
+        FontLimits::default(),
+    )
+    .expect("STIX native sfnt");
+
+    assert_eq!(web.identity, native.identity);
+    assert_eq!(web.math, native.math);
+    let math = web.math.expect("fixture MATH table");
+    assert!(!math.constants.values().is_empty());
+    assert!(math.glyph_info.is_some());
+    assert!(math.variants.is_some());
 }
 
 #[test]
