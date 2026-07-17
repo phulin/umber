@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { webcrypto } from "node:crypto";
 import test from "node:test";
 
-import { decodeKey, encodeRequest, shardIndex, validateRootManifest } from "./manifest-schema.js";
+import {
+	decodeKey,
+	encodeRequest,
+	shardIndex,
+	validateRootManifest,
+} from "./manifest-schema.js";
 
 test("canonical shard selection matches publisher parity vectors", async () => {
 	const vectors = [

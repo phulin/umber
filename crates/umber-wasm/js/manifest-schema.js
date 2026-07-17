@@ -157,10 +157,11 @@ export function encodeRequest(request) {
 			"request kind is not supported by the distribution resolver",
 		);
 	}
-	const kind = {
-		"classic-bib-data": "classic-bib",
-		"bib-style": "bst",
-	}[request.kind] ?? request.kind;
+	const kind =
+		{
+			"classic-bib-data": "classic-bib",
+			"bib-style": "bst",
+		}[request.kind] ?? request.kind;
 	const key = `${kind}:${request.name}`;
 	validateKey(key);
 	return key;
@@ -168,10 +169,11 @@ export function encodeRequest(request) {
 
 export function decodeKey(key) {
 	const match = KEY_PATTERN.exec(key);
-	const kind = {
-		"classic-bib": "classic-bib-data",
-		bst: "bib-style",
-	}[match[1]] ?? match[1];
+	const kind =
+		{
+			"classic-bib": "classic-bib-data",
+			bst: "bib-style",
+		}[match[1]] ?? match[1];
 	return { kind, name: match[2] };
 }
 
