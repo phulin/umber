@@ -1845,14 +1845,10 @@ impl Universe {
         dependencies: Vec<crate::ObservedDependency>,
         lines: NodeListId,
         line_count: i32,
-        origin_ordinals: Vec<u32>,
+        provenance: crate::ParagraphProvenanceRecipe,
     ) {
-        self.pure_memo.finish_recorded_paragraph_lines(
-            dependencies,
-            lines,
-            line_count,
-            origin_ordinals,
-        );
+        self.pure_memo
+            .finish_recorded_paragraph_lines(dependencies, lines, line_count, provenance);
     }
 
     #[doc(hidden)]
@@ -4580,11 +4576,22 @@ impl Universe {
     pub fn mount_retained_paragraph_result(
         &mut self,
         id: NodeListId,
-        trace_origins: &[crate::token::OriginId],
-        ordinals: &[u32],
+        root_origins: &[crate::token::OriginId],
+        origin_slots: &[u32],
     ) -> Option<NodeListId> {
         self.stores
-            .mount_retained_paragraph_result(id, trace_origins, ordinals)
+            .mount_retained_paragraph_result(id, root_origins, origin_slots)
+    }
+
+    /// Mounts output provenance over a retained hlist before ordinary import.
+    pub fn mount_retained_paragraph_provenance(
+        &mut self,
+        id: NodeListId,
+        root_origins: &[crate::token::OriginId],
+        origin_slots: &[u32],
+    ) -> bool {
+        self.stores
+            .mount_retained_paragraph_provenance(id, root_origins, origin_slots)
     }
 
     #[doc(hidden)]

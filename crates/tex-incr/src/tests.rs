@@ -146,6 +146,126 @@ fn cold_paragraph_recording_preserves_source_batching() {
 }
 
 #[test]
+fn paragraph_recording_retains_only_output_provenance() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let repetitions = 4_096;
+    let source = format!(
+        "\\font\\tenrm=cmr10\\relax\\tenrm\\def\\r{{\\relax}}\nx{}y\\par\\vfill\\eject\\end",
+        "\\r".repeat(repetitions),
+    );
+    let mut session = Session::start(
+        universe,
+        "paragraph-output-provenance",
+        RevisionId::new(1),
+        source,
+        usize::MAX,
+    )
+    .expect("session starts");
+    session
+        .register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("font fixture");
+    session.cold().expect("cold revision");
+
+    let region = session
+        .pure_memo
+        .accepted_paragraphs()
+        .iter()
+        .find(|region| region.lines.is_some())
+        .expect("literal paragraph is retained");
+    assert!(region.delivered_tokens > repetitions);
+    assert!(region.hlist_provenance.root_spans.len() <= 3);
+    assert!(region.hlist_provenance.origin_slots.len() <= 3);
+    assert!(region.line_provenance.root_spans.len() <= 3);
+    assert!(region.line_provenance.origin_slots.len() <= 3);
+}
+
+#[test]
+fn replayed_paragraph_provenance_tracks_current_then_deleted_layout() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = concat!(
+        "\\font\\tenrm=cmr10\\relax\\tenrm\\hsize=45pt\\vsize=40pt\n",
+        "changed prefix paragraph text\\par\n",
+        "stable replay paragraph text\\par\n",
+        "another stable paragraph text\\par\n",
+        "\\vfill\\eject\\end",
+    );
+    let stable_start = source.find("stable replay").expect("stable paragraph");
+    let stable_end = stable_start + "stable replay paragraph text".len();
+    let changed = source.find("changed").expect("changed paragraph");
+    let mut session = Session::start(
+        universe,
+        "paragraph-mounted-provenance",
+        RevisionId::new(1),
+        source,
+        usize::MAX,
+    )
+    .expect("session starts");
+    session
+        .register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("font fixture");
+    session.cold().expect("cold revision");
+    let before = session.pure_memo_stats();
+
+    session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: changed..changed + "changed".len(),
+                replacement: "altered".to_owned(),
+            },
+        )
+        .expect("prefix edit");
+    assert!(
+        session.pure_memo_stats().paragraph_line_hits > before.paragraph_line_hits,
+        "fixture must mount at least one finished-line graph"
+    );
+    let stable_start_revision_two = stable_start;
+    let (page, event) = (1..=session.artifacts.len() as u32)
+        .flat_map(|page| (0..256).map(move |event| (page, event)))
+        .find(|&(page, event)| {
+            matches!(
+                session.rendered_source_origin(page, event, None),
+                Ok(Some(LayoutResolvedOrigin::Current {
+                    doc_offset_lo,
+                    doc_offset_hi,
+                    ..
+                })) if doc_offset_lo < stable_end as u64 && doc_offset_hi > stable_start_revision_two as u64
+            )
+        })
+        .expect("stable paragraph output has mounted provenance");
+    let replayed_origin = session
+        .rendered_origin(page, event, None)
+        .expect("render lookup")
+        .expect("stable paragraph origin");
+
+    let revision_two = session.source.clone();
+    let stable_text = revision_two[stable_start..stable_end].to_owned();
+    session
+        .advance(
+            RevisionId::new(3),
+            Edit {
+                base_revision: RevisionId::new(2),
+                expected_hash: ContentHash::from_bytes(revision_two.as_bytes()),
+                range: stable_start..stable_end,
+                replacement: stable_text,
+            },
+        )
+        .expect("identity replacement converges");
+    assert_eq!(
+        session
+            .substrate
+            .as_ref()
+            .expect("accepted substrate")
+            .resolve_layout_origin(replayed_origin, &session.fragments, &session.layout),
+        LayoutResolvedOrigin::Deleted { minted_revision: 1 }
+    );
+}
+
+#[test]
 fn paragraph_front_end_hit_survives_prefix_shift_and_unrelated_register_write() {
     let mut universe = template();
     universe.enable_pure_memo(tex_state::PureMemoConfig::default());

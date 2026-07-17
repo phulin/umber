@@ -92,6 +92,19 @@ impl RootSpanId {
     pub const fn content(self) -> ContentHash {
         self.content
     }
+
+    /// Rebuilds a span on the same immutable editor piece. Aggregate source
+    /// lookup remains responsible for validating the resulting bounds.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn with_offsets(self, start: u32, end: u32) -> Self {
+        Self {
+            piece: self.piece,
+            start,
+            end,
+            content: self.content,
+        }
+    }
 }
 
 impl FragmentId {

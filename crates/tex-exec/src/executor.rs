@@ -92,21 +92,15 @@ pub enum FontSource {
 /// Expansion scanners see this only through its concrete dereference to
 /// [`tex_expand::ExpansionContext`]; font resolution remains an execution-only
 /// operation and is invoked solely by `\font` assignment.
-pub(crate) struct PendingParagraphMemo {
-    pub(crate) trace_origins: Vec<tex_state::token::OriginId>,
-}
+pub(crate) struct PendingParagraphMemo;
 
 pub(crate) struct ColdParagraphRecording {
     pub(crate) effect_start: usize,
     pub(crate) starting_span: Option<tex_state::RootSpanId>,
     pub(crate) starting_group_depth: u32,
     pub(crate) starting_group_changed_at: tex_state::ChangedAt,
-    pub(crate) trace: Vec<TracedTokenWord>,
+    pub(crate) delivered_tokens: usize,
     pub(crate) barriers: std::collections::BTreeSet<ParagraphBarrierReason>,
-    #[cfg(feature = "profiling-stats")]
-    pub(crate) trace_capture_nanos: u64,
-    #[cfg(feature = "profiling-stats")]
-    pub(crate) trace_capture_samples: u64,
 }
 
 pub struct ExecutionContext<'a> {
@@ -224,30 +218,17 @@ impl<'a> ExecutionContext<'a> {
             starting_span,
             starting_group_depth,
             starting_group_changed_at,
-            trace: Vec::new(),
+            delivered_tokens: 0,
             barriers: std::collections::BTreeSet::new(),
-            #[cfg(feature = "profiling-stats")]
-            trace_capture_nanos: 0,
-            #[cfg(feature = "profiling-stats")]
-            trace_capture_samples: 0,
         });
         true
     }
 
-    pub(crate) fn observe_paragraph_token(&mut self, token: TracedTokenWord) {
+    pub(crate) fn count_paragraph_token(&mut self) {
         if let Some(recording) = &mut self.cold_paragraph_recording
             && recording.barriers.is_empty()
         {
-            #[cfg(feature = "profiling-stats")]
-            let started = std::time::Instant::now();
-            recording.trace.push(token);
-            #[cfg(feature = "profiling-stats")]
-            {
-                recording.trace_capture_nanos = recording.trace_capture_nanos.saturating_add(
-                    u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
-                );
-                recording.trace_capture_samples = recording.trace_capture_samples.saturating_add(1);
-            }
+            recording.delivered_tokens = recording.delivered_tokens.saturating_add(1);
         }
     }
 
@@ -651,7 +632,7 @@ where
                 stats.delivered_tokens += macro_text.len();
                 stats.macro_text_span_tokens += macro_text.len();
                 for token in macro_text.drain(..) {
-                    execution.observe_paragraph_token(token);
+                    execution.count_paragraph_token();
                     let appended = assignments::try_append_character(nest, token, stores)?;
                     debug_assert!(appended);
                 }
@@ -661,7 +642,7 @@ where
                 stats.delivered_tokens += macro_text.len();
                 stats.source_text_span_tokens += macro_text.len();
                 for token in macro_text.drain(..) {
-                    execution.observe_paragraph_token(token);
+                    execution.count_paragraph_token();
                     let appended = assignments::try_append_character(nest, token, stores)?;
                     debug_assert!(appended);
                 }
@@ -810,7 +791,7 @@ where
         }
         stats.delivered_tokens += 1;
         stats.main_control_dispatches += 1;
-        execution.observe_paragraph_token(token);
+        execution.count_paragraph_token();
         let action =
             match dispatch_delivered_token_with_context(nest, token, input, stores, execution) {
                 Ok(action) => action,

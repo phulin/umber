@@ -2,7 +2,6 @@
 
 use tex_lex::InputStack;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
-use tex_state::token::Token;
 use tex_state::{
     DetachedVirtualEffect, EffectRecord, MemoTimingPhase, ParagraphRecordingPhase,
     ParagraphValidationFailure, PrintSink, PureMemoLayer, Universe,
@@ -121,14 +120,6 @@ pub(crate) fn try_reuse_aligned_paragraph(
         "validated paragraph source transition must apply"
     );
     let current_input = input.publication_summary(stores);
-    let current_trace_origins = entry
-        .trace_spans
-        .iter()
-        .map(|span| {
-            span.and_then(|span| stores.origin_for_root_span(span))
-                .unwrap_or(tex_state::token::OriginId::UNKNOWN)
-        })
-        .collect::<Vec<_>>();
     let _ = stores.finish_pure_paragraph_recording();
     replay_mutations(stores, &entry.mutations);
     if !relaxed_state {
@@ -156,11 +147,12 @@ pub(crate) fn try_reuse_aligned_paragraph(
             .record_pure_paragraph_validation_failure(ParagraphValidationFailure::BreakDependency);
     }
     let mounted_lines = lines_valid.then(|| {
+        let origins = resolve_paragraph_provenance(stores, &entry.line_provenance);
         stores
             .mount_retained_paragraph_result(
                 mountable_lines.expect("validated mounted lines"),
-                &current_trace_origins,
-                &entry.line_origin_ordinals,
+                &origins,
+                &entry.line_provenance.origin_slots,
             )
             .expect("prevalidated paragraph mount must remain valid")
     });
@@ -171,6 +163,15 @@ pub(crate) fn try_reuse_aligned_paragraph(
         );
         (Vec::new(), 0, stores.retain_paragraph_result(retained))
     } else {
+        let origins = resolve_paragraph_provenance(stores, &entry.hlist_provenance);
+        assert!(
+            stores.mount_retained_paragraph_provenance(
+                retained,
+                &origins,
+                &entry.hlist_provenance.origin_slots,
+            ),
+            "live generation-owned paragraph hlist must mount provenance"
+        );
         let list = stores
             .import_retained_paragraph_result(retained)
             .expect("live generation-owned paragraph hlist must import");
@@ -178,8 +179,7 @@ pub(crate) fn try_reuse_aligned_paragraph(
             .nodes(list)
             .len()
             .saturating_mul(std::mem::size_of::<tex_state::node::Node>());
-        let mut nodes = stores.nodes(list).to_vec();
-        rebind_literal_origins(&mut nodes, &current_trace_origins, &entry.origin_ordinals);
+        let nodes = stores.nodes(list).to_vec();
         let retained_hlist = stores.retain_paragraph_result(list);
         (nodes, imported_bytes, retained_hlist)
     };
@@ -190,13 +190,11 @@ pub(crate) fn try_reuse_aligned_paragraph(
     entry.lines = mounted_lines.map(|list| stores.retain_paragraph_result(list));
     let line_count = entry.line_count;
     let mutation_count = entry.mutations.len();
-    let trace_len = entry.trace_spans.len();
+    let delivered_tokens = entry.delivered_tokens;
     stores.record_carried_paragraph(&entry);
     stores.record_paragraph_region(entry);
     execution.pending_paragraph_memo =
-        (!lines_valid).then_some(crate::executor::PendingParagraphMemo {
-            trace_origins: current_trace_origins,
-        });
+        (!lines_valid).then_some(crate::executor::PendingParagraphMemo);
     crate::assignments::install_reused_paragraph_hlist(
         nest,
         input,
@@ -205,7 +203,12 @@ pub(crate) fn try_reuse_aligned_paragraph(
         nodes,
         lines.map(|lines| (lines, line_count)),
     )?;
-    stores.record_pure_paragraph_hit(trace_len, mutation_count, imported_bytes, relaxed_state);
+    stores.record_pure_paragraph_hit(
+        delivered_tokens,
+        mutation_count,
+        imported_bytes,
+        relaxed_state,
+    );
     stores.record_pure_paragraph_line_hit(!lines_valid);
     Ok(true)
 }
@@ -278,37 +281,25 @@ fn replay_effects(stores: &mut Universe, effects: &[DetachedVirtualEffect]) {
     }
 }
 
-fn rebind_literal_origins(
-    nodes: &mut [tex_state::node::Node],
-    trace_origins: &[tex_state::token::OriginId],
-    ordinals: &[u32],
-) {
-    let mut ordinals = ordinals.iter().copied();
-    let origin_at = |ordinal: u32| {
-        usize::try_from(ordinal)
-            .ok()
-            .and_then(|ordinal| trace_origins.get(ordinal))
-            .copied()
-            .unwrap_or(tex_state::token::OriginId::UNKNOWN)
-    };
-    for node in nodes {
-        match node {
-            tex_state::node::Node::Char { origin, .. } => {
-                *origin = origin_at(ordinals.next().unwrap_or(u32::MAX));
-            }
-            tex_state::node::Node::Lig {
-                orig,
-                origins: node_origins,
-                ..
-            } => {
-                node_origins.clear();
-                node_origins.extend(
-                    (0..orig.len()).map(|_| origin_at(ordinals.next().unwrap_or(u32::MAX))),
-                );
-            }
-            _ => {}
-        }
-    }
+fn resolve_paragraph_provenance(
+    stores: &mut Universe,
+    recipe: &tex_state::ParagraphProvenanceRecipe,
+) -> Vec<tex_state::token::OriginId> {
+    recipe
+        .root_spans
+        .iter()
+        .map(|span| {
+            let Some(anchor) = usize::try_from(span.piece)
+                .ok()
+                .and_then(|piece| recipe.piece_anchors.get(piece))
+            else {
+                return tex_state::token::OriginId::UNKNOWN;
+            };
+            stores
+                .origin_for_root_span(anchor.with_offsets(span.start, span.end))
+                .unwrap_or(tex_state::token::OriginId::UNKNOWN)
+        })
+        .collect()
 }
 
 pub(crate) fn publish_prepared_hlist(
@@ -330,12 +321,6 @@ fn publish_recorded_region(
         let _ = stores.finish_pure_paragraph_recording();
         return;
     };
-    #[cfg(feature = "profiling-stats")]
-    stores.record_pure_paragraph_phase_samples(
-        ParagraphRecordingPhase::TraceCapture,
-        std::time::Duration::from_nanos(recording.trace_capture_nanos),
-        recording.trace_capture_samples,
-    );
     let (mut keys, expansion_barriers) = execution.finish_paragraph_expansion_recording();
     keys.retain(|key| {
         let tex_state::DependencyKey::Query { domain, .. } = key else {
@@ -445,14 +430,7 @@ fn publish_recorded_region(
             index: u32::from(TokParam::EVERY_PAR.raw()),
         },
     ]);
-    for token in &recording.trace {
-        if let Token::Char { ch, .. } = tex_expand::semantic_token(*token) {
-            keys.push(tex_state::DependencyKey::Code {
-                table: tex_state::DependencyCodeTable::Sfcode,
-                scalar: ch as u32,
-            });
-        }
-    }
+    append_paragraph_character_dependencies(stores, nodes, &mut keys);
     keys.sort_unstable();
     keys.dedup();
     let dependencies = keys
@@ -481,25 +459,15 @@ fn publish_recorded_region(
         dependency_started,
     );
     let provenance_started = start_phase();
-    let trace_spans = recording
-        .trace
-        .iter()
-        .map(|token| stores.root_span_for_origin(token.origin()))
-        .collect::<Vec<_>>();
+    let hlist_provenance = paragraph_graph_provenance(stores, nodes);
     finish_phase(
         stores,
         ParagraphRecordingPhase::FrontEndProvenance,
         provenance_started,
     );
-    let pending = execution.pending_paragraph_memo.as_ref();
-    let trace_origins = pending.map_or_else(
-        || recording.trace.iter().map(|token| token.origin()).collect(),
-        |pending| pending.trace_origins.clone(),
-    );
     let retention_started = start_phase();
     let list = stores.freeze_node_list(nodes);
     let hlist = Some(stores.retain_paragraph_result(list));
-    let origin_ordinals = paragraph_origin_ordinals(nodes, &trace_origins);
     finish_phase(
         stores,
         ParagraphRecordingPhase::HlistRetention,
@@ -510,7 +478,7 @@ fn publish_recorded_region(
         starting_span: recording.starting_span,
         ending_span,
         consumed_spans,
-        trace_spans,
+        delivered_tokens: recording.delivered_tokens,
         dependencies,
         mutation_entry_fingerprint: mutation_summary.entry_fingerprint,
         mutation_exit_fingerprint: mutation_summary.exit_fingerprint,
@@ -519,11 +487,11 @@ fn publish_recorded_region(
         ending_input,
         barriers: recording.barriers.into_iter().collect(),
         hlist,
-        origin_ordinals,
+        hlist_provenance,
         break_dependencies: Vec::new(),
         lines: None,
         line_count: 0,
-        line_origin_ordinals: Vec::new(),
+        line_provenance: tex_state::ParagraphProvenanceRecipe::default(),
     });
     finish_phase(
         stores,
@@ -531,28 +499,8 @@ fn publish_recorded_region(
         publication_started,
     );
     if execution.pending_paragraph_memo.is_none() {
-        execution.pending_paragraph_memo =
-            Some(crate::executor::PendingParagraphMemo { trace_origins });
+        execution.pending_paragraph_memo = Some(crate::executor::PendingParagraphMemo);
     }
-}
-
-fn paragraph_origin_ordinals(
-    nodes: &[tex_state::node::Node],
-    trace_origins: &[tex_state::token::OriginId],
-) -> Vec<u32> {
-    let origin_ordinals = origin_ordinal_map(trace_origins);
-    let ordinal = |origin| origin_ordinals.get(&origin).copied().unwrap_or(u32::MAX);
-    let mut ordinals = Vec::new();
-    for node in nodes {
-        match node {
-            tex_state::node::Node::Char { origin, .. } => ordinals.push(ordinal(*origin)),
-            tex_state::node::Node::Lig { origins, .. } => {
-                ordinals.extend(origins.iter().map(|origin| ordinal(*origin)));
-            }
-            _ => {}
-        }
-    }
-    ordinals
 }
 
 pub(crate) fn publish_finished_lines(
@@ -561,7 +509,7 @@ pub(crate) fn publish_finished_lines(
     nodes: &[tex_state::node::Node],
     line_count: i32,
 ) {
-    let Some(pending) = execution.pending_paragraph_memo.take() else {
+    let Some(_) = execution.pending_paragraph_memo.take() else {
         return;
     };
     let dependencies_started = start_phase();
@@ -582,14 +530,14 @@ pub(crate) fn publish_finished_lines(
         retention_started,
     );
     let provenance_started = start_phase();
-    let ordinals = paragraph_graph_origin_ordinals(stores, nodes, &pending.trace_origins);
+    let provenance = paragraph_graph_provenance(stores, nodes);
     finish_phase(
         stores,
         ParagraphRecordingPhase::LineProvenance,
         provenance_started,
     );
     let publication_started = start_phase();
-    stores.finish_recorded_paragraph_lines(dependencies, retained, line_count, ordinals);
+    stores.finish_recorded_paragraph_lines(dependencies, retained, line_count, provenance);
     finish_phase(
         stores,
         ParagraphRecordingPhase::RegionPublication,
@@ -597,30 +545,76 @@ pub(crate) fn publish_finished_lines(
     );
 }
 
-fn paragraph_graph_origin_ordinals(
+fn paragraph_graph_provenance(
     stores: &Universe,
     nodes: &[tex_state::node::Node],
-    trace_origins: &[tex_state::token::OriginId],
-) -> Vec<u32> {
+) -> tex_state::ParagraphProvenanceRecipe {
     fn visit(
         stores: &Universe,
         nodes: &[tex_state::node::Node],
-        origin_ordinals: &ahash::AHashMap<tex_state::token::OriginId, u32>,
-        out: &mut Vec<u32>,
+        root_ordinals: &mut ahash::AHashMap<tex_state::RootSpanId, u32>,
+        piece_ordinals: &mut ahash::AHashMap<tex_state::PieceId, u32>,
+        recipe: &mut tex_state::ParagraphProvenanceRecipe,
     ) {
-        let ordinal = |origin| origin_ordinals.get(&origin).copied().unwrap_or(u32::MAX);
-        let child = |id, out: &mut Vec<u32>| {
+        fn push_origin(
+            stores: &Universe,
+            origin: tex_state::token::OriginId,
+            root_ordinals: &mut ahash::AHashMap<tex_state::RootSpanId, u32>,
+            piece_ordinals: &mut ahash::AHashMap<tex_state::PieceId, u32>,
+            recipe: &mut tex_state::ParagraphProvenanceRecipe,
+        ) {
+            let Some(span) = stores.root_span_for_origin(origin) else {
+                recipe.origin_slots.push(u32::MAX);
+                return;
+            };
+            let ordinal = if let Some(&ordinal) = root_ordinals.get(&span) {
+                ordinal
+            } else {
+                let Ok(ordinal) = u32::try_from(recipe.root_spans.len()) else {
+                    recipe.origin_slots.push(u32::MAX);
+                    return;
+                };
+                let piece = span.piece();
+                let piece_ordinal = if let Some(&piece_ordinal) = piece_ordinals.get(&piece) {
+                    piece_ordinal
+                } else {
+                    let Ok(piece_ordinal) = u32::try_from(recipe.piece_anchors.len()) else {
+                        recipe.origin_slots.push(u32::MAX);
+                        return;
+                    };
+                    recipe.piece_anchors.push(span.start_anchor());
+                    piece_ordinals.insert(piece, piece_ordinal);
+                    piece_ordinal
+                };
+                recipe.root_spans.push(tex_state::ParagraphProvenanceSpan {
+                    piece: piece_ordinal,
+                    start: span.start(),
+                    end: span.end(),
+                });
+                root_ordinals.insert(span, ordinal);
+                ordinal
+            };
+            recipe.origin_slots.push(ordinal);
+        }
+        let child = |id,
+                     root_ordinals: &mut ahash::AHashMap<tex_state::RootSpanId, u32>,
+                     piece_ordinals: &mut ahash::AHashMap<tex_state::PieceId, u32>,
+                     recipe: &mut tex_state::ParagraphProvenanceRecipe| {
             let nodes = stores.nodes(id).to_vec();
-            visit(stores, &nodes, origin_ordinals, out);
+            visit(stores, &nodes, root_ordinals, piece_ordinals, recipe);
         };
         for node in nodes {
             match node {
-                tex_state::node::Node::Char { origin, .. } => out.push(ordinal(*origin)),
+                tex_state::node::Node::Char { origin, .. } => {
+                    push_origin(stores, *origin, root_ordinals, piece_ordinals, recipe);
+                }
                 tex_state::node::Node::Lig { origins, .. } => {
-                    out.extend(origins.iter().map(|origin| ordinal(*origin)));
+                    for &origin in origins {
+                        push_origin(stores, origin, root_ordinals, piece_ordinals, recipe);
+                    }
                 }
                 tex_state::node::Node::HList(box_node) | tex_state::node::Node::VList(box_node) => {
-                    child(box_node.children, out)
+                    child(box_node.children, root_ordinals, piece_ordinals, recipe)
                 }
                 tex_state::node::Node::Glue {
                     leader:
@@ -629,38 +623,86 @@ fn paragraph_graph_origin_ordinals(
                             | tex_state::node::LeaderPayload::VList(box_node),
                         ),
                     ..
-                } => child(box_node.children, out),
-                tex_state::node::Node::Unset(unset) => child(unset.children, out),
+                } => child(box_node.children, root_ordinals, piece_ordinals, recipe),
+                tex_state::node::Node::Unset(unset) => {
+                    child(unset.children, root_ordinals, piece_ordinals, recipe)
+                }
                 tex_state::node::Node::Disc {
                     pre, post, replace, ..
                 } => {
-                    child(*pre, out);
-                    child(*post, out);
-                    child(*replace, out);
+                    child(*pre, root_ordinals, piece_ordinals, recipe);
+                    child(*post, root_ordinals, piece_ordinals, recipe);
+                    child(*replace, root_ordinals, piece_ordinals, recipe);
                 }
                 tex_state::node::Node::Ins { content, .. }
-                | tex_state::node::Node::Adjust(content) => child(*content, out),
+                | tex_state::node::Node::Adjust(content) => {
+                    child(*content, root_ordinals, piece_ordinals, recipe)
+                }
                 _ => {}
             }
         }
     }
-    let mut out = Vec::new();
-    let origin_ordinals = origin_ordinal_map(trace_origins);
-    visit(stores, nodes, &origin_ordinals, &mut out);
-    out
+    let mut recipe = tex_state::ParagraphProvenanceRecipe::default();
+    let mut root_ordinals = ahash::AHashMap::new();
+    let mut piece_ordinals = ahash::AHashMap::new();
+    visit(
+        stores,
+        nodes,
+        &mut root_ordinals,
+        &mut piece_ordinals,
+        &mut recipe,
+    );
+    recipe
 }
 
-fn origin_ordinal_map(
-    trace_origins: &[tex_state::token::OriginId],
-) -> ahash::AHashMap<tex_state::token::OriginId, u32> {
-    let mut ordinals = ahash::AHashMap::with_capacity(trace_origins.len());
-    for (index, &origin) in trace_origins.iter().enumerate() {
-        let Ok(index) = u32::try_from(index) else {
-            break;
+fn append_paragraph_character_dependencies(
+    stores: &Universe,
+    nodes: &[tex_state::node::Node],
+    keys: &mut Vec<tex_state::DependencyKey>,
+) {
+    let child = |id, keys: &mut Vec<tex_state::DependencyKey>| {
+        let nodes = stores.nodes(id).to_vec();
+        append_paragraph_character_dependencies(stores, &nodes, keys);
+    };
+    for node in nodes {
+        let mut push_sfcode = |ch: char| {
+            keys.push(tex_state::DependencyKey::Code {
+                table: tex_state::DependencyCodeTable::Sfcode,
+                scalar: ch as u32,
+            });
         };
-        ordinals.entry(origin).or_insert(index);
+        match node {
+            tex_state::node::Node::Char { ch, .. } => push_sfcode(*ch),
+            tex_state::node::Node::Lig { orig, .. } => {
+                for &ch in orig {
+                    push_sfcode(ch);
+                }
+            }
+            tex_state::node::Node::HList(box_node) | tex_state::node::Node::VList(box_node) => {
+                child(box_node.children, keys);
+            }
+            tex_state::node::Node::Glue {
+                leader:
+                    Some(
+                        tex_state::node::LeaderPayload::HList(box_node)
+                        | tex_state::node::LeaderPayload::VList(box_node),
+                    ),
+                ..
+            } => child(box_node.children, keys),
+            tex_state::node::Node::Unset(unset) => child(unset.children, keys),
+            tex_state::node::Node::Disc {
+                pre, post, replace, ..
+            } => {
+                child(*pre, keys);
+                child(*post, keys);
+                child(*replace, keys);
+            }
+            tex_state::node::Node::Ins { content, .. } | tex_state::node::Node::Adjust(content) => {
+                child(*content, keys)
+            }
+            _ => {}
+        }
     }
-    ordinals
 }
 
 fn paragraph_break_dependencies(

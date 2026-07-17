@@ -901,11 +901,10 @@ fn print_incremental_work(
             .paragraph_recording
             .saturating_since(sample.previous_memo.paragraph_recording);
         println!(
-            "gentle-profile paragraph recording phases: {name}: edit={edit} timer_samples={} calibrated_timer_pair_floor_ns={} estimated_measurement_floor_ns={} trace_capture_ns={} front_end_dependency_ns={} input_transition_ns={} front_end_provenance_ns={} hlist_retention_ns={} region_publication_ns={} break_dependency_ns={} break_key_discovery_ns={} break_stamp_registration_ns={} break_value_projection_ns={} line_provenance_ns={} line_retention_ns={}",
+            "gentle-profile paragraph recording phases: {name}: edit={edit} timer_samples={} calibrated_timer_pair_floor_ns={} estimated_measurement_floor_ns={} front_end_dependency_ns={} input_transition_ns={} hlist_provenance_ns={} hlist_retention_ns={} region_publication_ns={} break_dependency_ns={} break_key_discovery_ns={} break_stamp_registration_ns={} break_value_projection_ns={} line_provenance_ns={} line_retention_ns={}",
             phases.timer_samples,
             _timer_pair_floor_ns,
             phases.timer_samples.saturating_mul(_timer_pair_floor_ns),
-            phases.trace_capture_nanos,
             phases.front_end_dependency_nanos,
             phases.input_transition_nanos,
             phases.front_end_provenance_nanos,

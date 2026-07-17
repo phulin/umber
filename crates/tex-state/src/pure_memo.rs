@@ -130,7 +130,6 @@ pub enum MemoTimingPhase {
 /// the cache layer's generic lookup/record/validation/import buckets.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ParagraphRecordingPhase {
-    TraceCapture,
     FrontEndDependencies,
     InputTransition,
     FrontEndProvenance,
@@ -186,7 +185,6 @@ impl ParagraphOpportunityStats {
 pub struct ParagraphRecordingStats {
     /// Number of `Instant::now`/`elapsed` pairs used by these named phases.
     pub timer_samples: u64,
-    pub trace_capture_nanos: u64,
     pub front_end_dependency_nanos: u64,
     pub input_transition_nanos: u64,
     pub front_end_provenance_nanos: u64,
@@ -205,9 +203,6 @@ impl ParagraphRecordingStats {
     pub fn saturating_since(self, earlier: Self) -> Self {
         Self {
             timer_samples: self.timer_samples.saturating_sub(earlier.timer_samples),
-            trace_capture_nanos: self
-                .trace_capture_nanos
-                .saturating_sub(earlier.trace_capture_nanos),
             front_end_dependency_nanos: self
                 .front_end_dependency_nanos
                 .saturating_sub(earlier.front_end_dependency_nanos),
@@ -246,7 +241,6 @@ impl ParagraphRecordingStats {
 
     fn add(&mut self, phase: ParagraphRecordingPhase, elapsed: Duration, samples: u64) {
         let target = match phase {
-            ParagraphRecordingPhase::TraceCapture => &mut self.trace_capture_nanos,
             ParagraphRecordingPhase::FrontEndDependencies => &mut self.front_end_dependency_nanos,
             ParagraphRecordingPhase::InputTransition => &mut self.input_transition_nanos,
             ParagraphRecordingPhase::FrontEndProvenance => &mut self.front_end_provenance_nanos,
@@ -409,9 +403,29 @@ pub enum ParagraphBarrierReason {
     UnsupportedGroupTransition,
 }
 
+/// Stable current-revision rebinding recipe for the provenance slots reachable
+/// from one retained paragraph graph.
+///
+/// `piece_anchors` stores one full stable identity per referenced editor piece;
+/// `root_spans` stores compact offsets into those pieces. `origin_slots`
+/// follows ordinary depth-first node traversal and indexes `root_spans`;
+/// `u32::MAX` denotes provenance which cannot be represented by a stable root.
+#[derive(Clone, Debug, Default)]
+pub struct ParagraphProvenanceRecipe {
+    pub piece_anchors: Vec<RootSpanId>,
+    pub root_spans: Vec<ParagraphProvenanceSpan>,
+    pub origin_slots: Vec<u32>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ParagraphProvenanceSpan {
+    pub piece: u32,
+    pub start: u32,
+    pub end: u32,
+}
+
 /// Recorder output for one normally executed paragraph. The result nodes are
-/// deliberately not detached here; the prior-generation anchoring layer owns
-/// that reference in the next rollout phase.
+/// generation-owned survivor roots with stable output-provenance recipes.
 #[derive(Clone, Debug)]
 pub struct RecordedParagraphRegion {
     /// Cheap candidate identity captured before the first raw delivery.
@@ -419,8 +433,9 @@ pub struct RecordedParagraphRegion {
     /// Stable raw cursor reached after the paragraph terminator.
     pub ending_span: Option<RootSpanId>,
     pub consumed_spans: Vec<RootSpanId>,
-    /// Stable source ancestry parallel to the expanded delivery trace.
-    pub trace_spans: Vec<Option<RootSpanId>>,
+    /// Delivered-token count retained only for avoided-work telemetry. No
+    /// token values or origins are recorded.
+    pub delivered_tokens: usize,
     pub dependencies: Vec<ObservedDependency>,
     /// Complete count/int state required before applying `mutations`.
     pub mutation_entry_fingerprint: u64,
@@ -431,14 +446,14 @@ pub struct RecordedParagraphRegion {
     pub ending_input: InputSummary,
     pub barriers: Vec<ParagraphBarrierReason>,
     pub hlist: Option<NodeListId>,
-    pub origin_ordinals: Vec<u32>,
+    pub hlist_provenance: ParagraphProvenanceRecipe,
     /// Dependencies observed only by line breaking, materialization, and
     /// horizontal packing. A mismatch here still permits prepared-hlist reuse.
     pub break_dependencies: Vec<ObservedDependency>,
     /// Finished line boxes interleaved with migrating material and penalties.
     pub lines: Option<NodeListId>,
     pub line_count: i32,
-    pub line_origin_ordinals: Vec<u32>,
+    pub line_provenance: ParagraphProvenanceRecipe,
 }
 
 #[derive(Clone, Debug)]
@@ -924,7 +939,7 @@ impl PureMemoRuntime {
         dependencies: Vec<ObservedDependency>,
         lines: NodeListId,
         line_count: i32,
-        origin_ordinals: Vec<u32>,
+        provenance: ParagraphProvenanceRecipe,
     ) {
         let Some(region) = self.recorded_paragraphs.last_mut() else {
             return;
@@ -933,7 +948,7 @@ impl PureMemoRuntime {
             region.break_dependencies = dependencies;
             region.lines = Some(lines);
             region.line_count = line_count;
-            region.line_origin_ordinals = origin_ordinals;
+            region.line_provenance = provenance;
         }
     }
 
@@ -1125,6 +1140,12 @@ impl PureMemoRuntime {
 
     pub fn recorded_paragraphs(&self) -> &[RecordedParagraphRegion] {
         &self.recorded_paragraphs
+    }
+
+    /// Returns the currently accepted ordered paragraph history.
+    #[doc(hidden)]
+    pub fn accepted_paragraphs(&self) -> &[RecordedParagraphRegion] {
+        &self.prior_paragraphs
     }
 
     pub(crate) fn insert_pretolerance(&mut self, key: PureMemoKey, plan: Option<PureBreakPlan>) {
@@ -1445,12 +1466,6 @@ fn recorded_paragraph_retained_bytes(region: &RecordedParagraphRegion) -> usize 
         )
         .saturating_add(
             region
-                .trace_spans
-                .capacity()
-                .saturating_mul(std::mem::size_of::<Option<RootSpanId>>()),
-        )
-        .saturating_add(
-            region
                 .dependencies
                 .capacity()
                 .saturating_mul(std::mem::size_of::<ObservedDependency>()),
@@ -1479,21 +1494,32 @@ fn recorded_paragraph_retained_bytes(region: &RecordedParagraphRegion) -> usize 
                 .capacity()
                 .saturating_mul(std::mem::size_of::<ParagraphBarrierReason>()),
         )
-        .saturating_add(
-            region
-                .origin_ordinals
-                .capacity()
-                .saturating_mul(std::mem::size_of::<u32>()),
-        )
+        .saturating_add(paragraph_provenance_retained_bytes(
+            &region.hlist_provenance,
+        ))
         .saturating_add(
             region
                 .break_dependencies
                 .capacity()
                 .saturating_mul(std::mem::size_of::<ObservedDependency>()),
         )
+        .saturating_add(paragraph_provenance_retained_bytes(&region.line_provenance))
+}
+
+fn paragraph_provenance_retained_bytes(recipe: &ParagraphProvenanceRecipe) -> usize {
+    recipe
+        .piece_anchors
+        .capacity()
+        .saturating_mul(std::mem::size_of::<RootSpanId>())
         .saturating_add(
-            region
-                .line_origin_ordinals
+            recipe
+                .root_spans
+                .capacity()
+                .saturating_mul(std::mem::size_of::<ParagraphProvenanceSpan>()),
+        )
+        .saturating_add(
+            recipe
+                .origin_slots
                 .capacity()
                 .saturating_mul(std::mem::size_of::<u32>()),
         )

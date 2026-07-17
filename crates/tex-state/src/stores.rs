@@ -1917,16 +1917,26 @@ impl Stores {
     pub fn mount_retained_paragraph_result(
         &mut self,
         id: NodeListId,
-        trace_origins: &[OriginId],
-        ordinals: &[u32],
+        root_origins: &[OriginId],
+        origin_slots: &[u32],
     ) -> Option<NodeListId> {
         self.can_mount_retained_paragraph_result(id)
-            .then(|| {
-                self.survivors
-                    .mount_paragraph_origins(id, trace_origins, ordinals)
-            })
+            .then(|| self.mount_retained_paragraph_provenance(id, root_origins, origin_slots))
             .filter(|mounted| *mounted)
             .map(|_| id)
+    }
+
+    /// Mounts current-revision provenance before an accepted hlist is copied
+    /// into the active epoch. Handle closure validation remains the importer's
+    /// responsibility; this operation changes only diagnostic sidecars.
+    pub fn mount_retained_paragraph_provenance(
+        &mut self,
+        id: NodeListId,
+        root_origins: &[OriginId],
+        origin_slots: &[u32],
+    ) -> bool {
+        self.survivors
+            .mount_paragraph_origins(id, root_origins, origin_slots)
     }
 
     /// Copies a retained node graph into the live epoch while preserving its

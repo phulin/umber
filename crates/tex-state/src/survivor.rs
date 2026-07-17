@@ -385,8 +385,8 @@ impl SurvivorArena {
     pub(crate) fn mount_paragraph_origins(
         &mut self,
         id: NodeListId,
-        trace_origins: &[crate::token::OriginId],
-        ordinals: &[u32],
+        root_origins: &[crate::token::OriginId],
+        origin_slots: &[u32],
     ) -> bool {
         let ArenaRef::Survivor(root_id) = id.arena() else {
             return false;
@@ -400,7 +400,7 @@ impl SurvivorArena {
         let Some(overlay) =
             root.payload
                 .storage
-                .paragraph_origin_overlay(id, trace_origins, ordinals)
+                .paragraph_origin_overlay(id, root_origins, origin_slots)
         else {
             return false;
         };

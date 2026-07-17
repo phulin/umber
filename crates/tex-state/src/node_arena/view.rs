@@ -560,8 +560,8 @@ impl NodeStorage {
     pub(crate) fn paragraph_origin_overlay(
         &self,
         root: NodeListId,
-        trace_origins: &[OriginId],
-        ordinals: &[u32],
+        root_origins: &[OriginId],
+        origin_slots: &[u32],
     ) -> Option<NodeOriginOverlay> {
         let ArenaRef::Survivor(root_id) = root.arena() else {
             return None;
@@ -574,11 +574,11 @@ impl NodeStorage {
             word_origins: self.origins.clone(),
             ligature_origins: vec![None; self.ligatures.len()],
         };
-        let mut ordinals = ordinals.iter().copied();
+        let mut origin_slots = origin_slots.iter().copied();
         let origin_at = |ordinal: u32| {
             usize::try_from(ordinal)
                 .ok()
-                .and_then(|ordinal| trace_origins.get(ordinal))
+                .and_then(|ordinal| root_origins.get(ordinal))
                 .copied()
                 .unwrap_or(OriginId::UNKNOWN)
         };
@@ -594,13 +594,14 @@ impl NodeStorage {
             let mut children = Vec::new();
             match node {
                 NodeRef::Char { .. } => {
-                    overlay.word_origins[index] = origin_at(ordinals.next().unwrap_or(u32::MAX));
+                    overlay.word_origins[index] =
+                        origin_at(origin_slots.next().unwrap_or(u32::MAX));
                 }
                 NodeRef::Lig { orig, .. } => {
                     let side = self.words[index].payload() as usize;
                     overlay.ligature_origins[side] = Some(
                         (0..orig.len())
-                            .map(|_| origin_at(ordinals.next().unwrap_or(u32::MAX)))
+                            .map(|_| origin_at(origin_slots.next().unwrap_or(u32::MAX)))
                             .collect(),
                     );
                 }
@@ -633,6 +634,6 @@ impl NodeStorage {
                 frames.push((child.start() as usize, child_end));
             }
         }
-        ordinals.next().is_none().then_some(overlay)
+        origin_slots.next().is_none().then_some(overlay)
     }
 }

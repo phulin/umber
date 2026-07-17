@@ -66,7 +66,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/node_arena/semantic.rs`: Versioned, allocation-independent semantic identity for immutable node-list aggregates.
 - `src/node_arena/storage.rs`: Canonical node words, sidecar coordination, encoding, aggregate watermarks, and rollback.
 - `src/node_arena/tables.rs`: Typed structure-of-arrays sidecar tables for boxes, unsets, insertions, and noads.
-- `src/node_arena/view.rs`: Zero-allocation node references, list spans, raw tag predicates, character runs, and iterators.
+- `src/node_arena/view.rs`: Zero-allocation node references, list spans, mount-local output-provenance overlays, raw tag predicates, character runs, and iterators.
 - `src/node_arena/tests.rs`: Unit tests for node-list allocation, lookup, rollback, and arena liveness.
 - `src/page.rs`: Snapshot-owned page-builder state, page dimensions/integers, contribution/current-page queues, and fire-up records.
 - `src/pdf.rs`: Checkpointed pdfTeX document mode, deterministic object allocation, and committed-page ledger.
@@ -80,7 +80,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/page/tests.rs`: Page snapshot-root sharing and copy-on-write isolation tests.
 - `src/provenance.rs`: Diagnostic origin-record and origin-list arenas with rollback watermarks.
 - `src/provenance/tests.rs`: Unit tests for provenance allocation, readback, and rollback marks.
-- `src/pure_memo.rs`: Optional bounded session-local pure-query experiments plus the ordered accepted paragraph history, stable-start cursor, validation telemetry, and retained result metadata anchored in accepted-generation node roots.
+- `src/pure_memo.rs`: Optional bounded session-local pure-query experiments plus the ordered accepted paragraph history, stable-start cursor, validation telemetry, compact output-provenance recipes, and retained result metadata anchored in accepted-generation node roots.
 - `src/pure_memo/tests.rs`: Collision, eviction, retention-release, and disabled-cache tests.
 - `src/scaled.rs`: Compatibility re-export for shared TeX scaled-point arithmetic.
 - `src/source_map.rs`: Rollback-coupled logical source regions, validated positions/spans, and immutable World/generated backing identities.
