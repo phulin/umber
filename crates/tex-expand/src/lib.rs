@@ -9,7 +9,7 @@
 use std::fmt;
 use std::path::Path;
 #[cfg(feature = "profiling-stats")]
-use std::time::Instant;
+use tex_state::World;
 
 use tex_lex::{
     InputSource, InputStack, LexError, MacroArguments, MacroReplaySite, TokenListReplayKind,
@@ -1168,7 +1168,7 @@ impl<'a> ExpansionContext<'a> {
         #[cfg(feature = "profiling-stats")]
         let started = input
             .should_sample_expansion_meaning_timer()
-            .then(Instant::now);
+            .then(World::start_profiling_timer);
         let meaning = self.resolve_meaning_inner(input, stores, symbol);
         #[cfg(feature = "profiling-stats")]
         if let Some(started) = started {
