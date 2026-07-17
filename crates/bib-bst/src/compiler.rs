@@ -87,6 +87,7 @@ struct Compiler {
     nesting: usize,
     work: usize,
     pool_trace: Vec<String>,
+    anonymous_pool_index: usize,
 }
 impl Compiler {
     fn new(
@@ -123,6 +124,7 @@ impl Compiler {
             nesting,
             work,
             pool_trace: Vec::new(),
+            anonymous_pool_index: 0,
         }
     }
     fn parse(&mut self) {
@@ -330,7 +332,13 @@ impl Compiler {
                 break;
             }
             match &body[at].kind {
-                TokenKind::Integer(value) => instructions.push(Instruction::PushInteger(*value)),
+                TokenKind::Integer(value) => {
+                    // BibTeX hashes each integer literal while scanning a
+                    // function body, so its spelling belongs to the same
+                    // job-lifetime pool as declarations and strings.
+                    self.pool_trace.push(value.to_string());
+                    instructions.push(Instruction::PushInteger(*value));
+                }
                 TokenKind::String(value) => {
                     self.pool_trace.push(value.clone());
                     let id = self.declarations.add_string(value.clone());
@@ -432,6 +440,12 @@ impl Compiler {
             );
             return current;
         }
+        // Web2C gives nested function bodies an internal BST function name
+        // such as `'0`, which is inserted into the string pool even though it
+        // never appears in the public compiled program.
+        self.pool_trace
+            .push(format!("'{}", self.anonymous_pool_index));
+        self.anonymous_pool_index += 1;
         self.functions.push(CompiledFunction::new(
             format!("<anonymous:{}>", id.0),
             Vec::new(),

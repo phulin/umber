@@ -419,13 +419,14 @@ fn classic_string_usage(
     database: &crate::ClassicDatabase,
 ) -> (usize, usize) {
     let mut pool = ClassicStringPool::web2c();
-    for aux in control.aux_files() {
-        // Web2C first interns the top-level AUX name before adding `.aux` for
-        // file opening; the extension belongs to the already bootstrapped
-        // pool rather than to this dynamic identity.
-        let name = file_name(aux)
-            .strip_suffix(".aux")
-            .unwrap_or(file_name(aux));
+    for (index, aux) in control.aux_files().enumerate() {
+        let name = file_name(aux);
+        if index == 0 {
+            // The command-line job name and its opened top-level AUX file
+            // have separate hash ilks, but retain distinct pool strings.
+            let base = name.strip_suffix(".aux").unwrap_or(name);
+            let _ = pool.intern(base);
+        }
         let _ = pool.intern(name);
     }
     if let Some(style_name) = control.style() {
@@ -435,19 +436,14 @@ fn classic_string_usage(
         let _ = pool.intern(database_name);
     }
     for citation in control.citations() {
-        let _ = pool.intern(citation);
+        // `*` switches BibTeX to whole-database inclusion; it is not itself
+        // looked up. READ inserts the encountered database keys instead.
+        if citation != "*" {
+            let _ = pool.intern(citation);
+        }
     }
     style.apply_pool_trace(&mut pool);
-    let (source_strings, source_characters) = database.source_string_usage();
-    // Database event ownership is completed by the READ-pool follow-up. Keep
-    // its existing aggregate charge here so this compiler-pool migration does
-    // not alter emitted bibliography artifacts.
+    database.apply_pool_trace(&mut pool);
     let usage = pool.usage();
-    let mut strings = usage.strings() + source_strings;
-    let mut characters = usage.characters() + source_characters;
-    for preamble in database.preambles() {
-        strings += 1;
-        characters += preamble.len();
-    }
-    (strings, characters)
+    (usage.strings(), usage.characters())
 }

@@ -90,6 +90,10 @@ impl ClassicStringPool {
     #[must_use]
     pub fn web2c() -> Self {
         let mut pool = Self::new(StringPoolLimits::unlimited());
+        // `str_ptr` starts at one because `str_start[0]` is deliberately
+        // unused. The Web2C summary reports that reserved slot even though it
+        // has no corresponding string-pool bytes.
+        pool.usage.strings = 1;
         for value in WEB2C_BOOTSTRAP_STRINGS {
             pool.intern(value).expect("fixed Web2C bootstrap fits");
         }

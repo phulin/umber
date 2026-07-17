@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 
-use bib_bst::{CompiledStyle, SymbolId, SymbolKind};
+use bib_bst::{ClassicStringPool, CompiledStyle, SymbolId, SymbolKind};
 use bib_input::{RawBibDatabase, RawBibEntry, RawBibRecord, RawBibValue, RawBibValuePart};
 use umber_vfs::{FileContentId, VirtualPath};
 
@@ -125,8 +125,7 @@ pub struct ClassicDatabase {
     entries: Arc<[ClassicDatabaseEntry]>,
     preambles: Arc<[String]>,
     diagnostics: Arc<[ClassicDatabaseDiagnostic]>,
-    source_strings: usize,
-    source_characters: usize,
+    pool_trace: Arc<[String]>,
 }
 
 impl ClassicDatabase {
@@ -148,9 +147,13 @@ impl ClassicDatabase {
         self.diagnostics.iter()
     }
 
-    #[must_use]
-    pub(crate) const fn source_string_usage(&self) -> (usize, usize) {
-        (self.source_strings, self.source_characters)
+    /// Replays the raw database values that Web2C retains in its string pool
+    /// while processing `READ`. The trace is independent of the prepared
+    /// database cache and must be applied only to a single job pool.
+    pub(crate) fn apply_pool_trace(&self, pool: &mut ClassicStringPool) {
+        for value in self.pool_trace.iter() {
+            let _ = pool.intern(value);
+        }
     }
 }
 
@@ -297,6 +300,8 @@ struct Reader<'a> {
     entries: BTreeMap<String, RawEntry>,
     source_order: Vec<String>,
     preambles: Vec<String>,
+    pool_trace: Vec<String>,
+    all_entries: bool,
     diagnostics: Vec<ClassicDatabaseDiagnostic>,
     work: usize,
     work_exhausted: bool,
@@ -312,6 +317,8 @@ impl<'a> Reader<'a> {
             entries: BTreeMap::new(),
             source_order: Vec::new(),
             preambles: Vec::new(),
+            pool_trace: Vec::new(),
+            all_entries: false,
             diagnostics: Vec::new(),
             work: 0,
             work_exhausted: false,
@@ -335,6 +342,8 @@ impl<'a> Reader<'a> {
                         );
                     } else {
                         let value = self.expand(mac.value());
+                        self.pool_trace.push(name.to_owned());
+                        self.pool_trace.push(value.clone());
                         self.macros.insert(name.to_owned(), value);
                     }
                 }
@@ -348,6 +357,7 @@ impl<'a> Reader<'a> {
                             "preamble byte limit exceeded",
                         );
                     } else {
+                        self.pool_trace.push(value.clone());
                         self.preambles.push(value);
                     }
                 }
@@ -451,6 +461,7 @@ impl<'a> Reader<'a> {
     fn select<'b>(&mut self, citations: impl Iterator<Item = &'b str>) {
         let citations = citations.collect::<Vec<_>>();
         let wildcard = citations.contains(&"*");
+        self.all_entries = wildcard;
         let mut selected = Vec::new();
         let mut seen = BTreeSet::new();
         for citation in citations {
@@ -530,23 +541,12 @@ impl<'a> Reader<'a> {
             .iter()
             .filter_map(|key| self.entries.get(key))
             .collect::<Vec<_>>();
-        let mut retained_values = BTreeSet::new();
-        let mut new_types = BTreeSet::new();
-        let mut source_strings = selected_raw_entries.len();
-        let mut source_characters = selected_raw_entries
-            .iter()
-            .map(|entry| entry.key.len())
-            .sum::<usize>();
         for entry in &selected_raw_entries {
-            if self
-                .style
-                .declarations()
-                .lookup(&entry.entry_type)
-                .is_none()
-                && new_types.insert(entry.entry_type.as_str())
-            {
-                source_strings += 1;
-                source_characters += entry.entry_type.len();
+            if self.all_entries {
+                // Whole-database inclusion discovers each database key while
+                // reading records; ordinary citations already own their keys
+                // before READ starts.
+                self.pool_trace.push(entry.key.clone());
             }
             for (name, value) in &entry.fields {
                 let retained = name == "crossref"
@@ -557,15 +557,10 @@ impl<'a> Reader<'a> {
                         .and_then(|symbol| self.style.declarations().symbol(symbol))
                         .is_some_and(|symbol| matches!(symbol.kind(), SymbolKind::EntryField(_)));
                 if retained {
-                    retained_values.insert(value.as_str());
+                    self.pool_trace.push(value.clone());
                 }
             }
         }
-        source_strings += retained_values.len();
-        source_characters += retained_values
-            .iter()
-            .map(|value| value.len())
-            .sum::<usize>();
         let entries = self
             .source_order
             .clone()
@@ -593,8 +588,7 @@ impl<'a> Reader<'a> {
             entries: entries.into(),
             preambles: self.preambles.into(),
             diagnostics: self.diagnostics.into(),
-            source_strings,
-            source_characters,
+            pool_trace: self.pool_trace.into(),
         }
     }
 

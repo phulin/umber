@@ -155,14 +155,15 @@ Web2C `pre_def_certain_strings` population, rather than a summary offset.
 Independent string-count and character-count limits are checked only for a
 new value, so duplicate lookup never consumes capacity.
 
-The BST compiler records its declaration and literal insertions as an ordered
-trace in the immutable compiled style. At BLG rendering the session starts the
-Web2C bootstrap pool, records AUX identities, replays the compiler trace, and
-then applies the currently owned READ aggregate. This keeps compiled-style
-caches host-neutral while preserving one job-lifetime pool identity. The
-remaining database event-level ownership and ordering is tracked separately by
-`umber2-ild0.13.5.2`; it must replace that READ aggregate without changing the
-pool or emitted bibliography behavior.
+The BST compiler records its declaration, literal, integer, and internal
+anonymous-function insertions as an ordered trace in the immutable compiled
+style. At BLG rendering the session starts the Web2C bootstrap pool (including
+the reserved `str_ptr` slot), records the top-level bare AUX name and each
+opened AUX name, replays the compiler trace, then replays the immutable READ
+trace. The latter records raw `@string` names and values, preambles, and the
+selected declared-field values in their Web2C ownership order. This keeps
+compiled-style and prepared-database caches host-neutral while preserving one
+job-lifetime pool identity and exact unnormalized BLG summaries.
 
 ## VM core and built-in completion
 

@@ -1,4 +1,4 @@
-use bib_bst::{CompileLimits, compile};
+use bib_bst::{ClassicStringPool, CompileLimits, StringPoolLimits, compile};
 use bib_input::{BibTexOptions, parse_raw_bibtex_bytes};
 use umber_vfs::{FileContentId, VirtualPath};
 
@@ -162,4 +162,24 @@ fn cache_key_changes_for_schema_and_read_options() {
         &ClassicDatabaseOptions::default(),
     );
     assert_eq!(cache.len(), 5);
+}
+
+#[test]
+fn raw_read_pool_trace_keeps_macros_preambles_and_selected_field_values() {
+    let source =
+        b"@string{abbr = \"Macro\"}\n@preamble{\"Prelude\"}\n@book{one, title = \"Title\"}";
+    let database = prepared(source, &["one"]);
+    let mut pool = ClassicStringPool::new(StringPoolLimits::unlimited());
+    database.apply_pool_trace(&mut pool);
+    assert_eq!(pool.usage().strings(), 4);
+    assert_eq!(pool.usage().characters(), 21);
+}
+
+#[test]
+fn whole_database_read_trace_owns_discovered_keys_not_the_aux_wildcard() {
+    let database = prepared(b"@book{one, title = \"Title\"}", &["*"]);
+    let mut pool = ClassicStringPool::new(StringPoolLimits::unlimited());
+    database.apply_pool_trace(&mut pool);
+    assert_eq!(pool.usage().strings(), 2);
+    assert_eq!(pool.usage().characters(), 8);
 }

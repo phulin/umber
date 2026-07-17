@@ -172,7 +172,7 @@ fn classic_pool_deduplicates_empty_strings_and_preserves_identities() {
 #[test]
 fn web2c_bootstrap_owns_the_reference_predefined_pool() {
     let pool = ClassicStringPool::web2c();
-    assert_eq!(pool.usage().strings(), 80);
+    assert_eq!(pool.usage().strings(), 81);
     assert_eq!(pool.usage().characters(), 470);
 }
 
@@ -189,10 +189,23 @@ fn classic_pool_enforces_charged_limits_after_deduplication() {
 #[test]
 fn compiler_pool_trace_covers_symbols_and_literals_without_double_charging() {
     let result = compile(
-        b"ENTRY { title } {} {} MACRO { titlecase } { \"x\" } FUNCTION { emit } { \"x\" } READ",
+        b"ENTRY { title } {} {} MACRO { titlecase } { \"x\" } FUNCTION { emit } { \"x\" #7 } READ",
         CompileLimits::default(),
     );
     let style = result.program().expect("valid style");
-    assert_eq!(style.compiler_pool_usage().strings(), 4);
-    assert_eq!(style.compiler_pool_usage().characters(), 19);
+    assert_eq!(style.compiler_pool_usage().strings(), 5);
+    assert_eq!(style.compiler_pool_usage().characters(), 20);
+}
+
+#[test]
+fn compiler_pool_trace_keeps_web2c_integer_and_implicit_function_names() {
+    let result = compile(
+        b"ENTRY { title } {} {} FUNCTION { emit } { #7 { skip$ } { skip$ } if$ } READ",
+        CompileLimits::default(),
+    );
+    let style = result.program().expect("valid style");
+    let mut pool = ClassicStringPool::web2c();
+    style.apply_pool_trace(&mut pool);
+    assert_eq!(pool.usage().strings(), 86);
+    assert_eq!(pool.usage().characters(), 484);
 }
