@@ -7,6 +7,7 @@ description = "Input-stage contracts for Umber bibliography processing"
 [dependencies]
 bib-model = { path = "../bib-model" }
 bib-unicode = { path = "../bib-unicode" }
+quick-xml.workspace = true
 umber-vfs = { path = "../umber-vfs" }
 
 [lints]

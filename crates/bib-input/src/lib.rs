@@ -1,5 +1,27 @@
 //! Control, configuration, and datasource input-stage boundary.
 
+mod biblatexml;
+mod config;
+mod control;
+mod xml;
+
+pub use biblatexml::{
+    BIBLATEX_XML_NAMESPACE, BibLatexXmlData, BibLatexXmlEntry, BibLatexXmlError, NamePart,
+    XmlAnnotation, XmlFieldValue, XmlListItem, XmlName, parse_biblatexml, parse_biblatexml_bytes,
+    validate_biblatexml_bytes,
+};
+pub use config::{
+    ConfigError, ConfigValue, ConfigurationFile, ConfigurationLayer, ResolvedConfiguration,
+    parse_config, parse_config_bytes, validate_config_bytes,
+};
+pub use control::{
+    CONTROL_NAMESPACE, CONTROL_VERSION, ControlError, ControlFile, ControlOptionSet,
+    ControlOptionValue, ControlSection, DataModel, DataModelField, OptionComponent,
+    StructuredValue, Template, TemplateElement, parse_control, parse_control_bytes,
+    validate_control_bytes,
+};
+pub use xml::{XmlError, XmlLimits};
+
 use bib_model::BibConfiguration;
 use bib_unicode::UnicodeData;
 use umber_vfs::VfsSnapshot;
@@ -39,3 +61,6 @@ impl<'a> InputContext<'a> {
         self.unicode
     }
 }
+
+#[cfg(test)]
+mod tests;

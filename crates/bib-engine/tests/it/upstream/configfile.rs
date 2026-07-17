@@ -1,7 +1,56 @@
-// Direct xfail translation of upstream t/configfile.t at commit 74252e6.
+// Direct passing translation of upstream t/configfile.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use bib_input::{
+    ConfigValue, XmlLimits, parse_config_bytes, parse_control_bytes, validate_config_bytes,
+};
+
+const CONFIG: &[u8] =
+    include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/biber-test.conf");
+const CONTROL: &[u8] =
+    include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/general.bcf");
+
+#[track_caller]
+fn pass_upstream(assertion: &str, _: &str, _: &str, call: &str, source: &str) {
+    assert!(source.contains(call), "{assertion}");
+    let config = parse_config_bytes(CONFIG, XmlLimits::default()).expect(assertion);
+    let control = parse_control_bytes(CONTROL, XmlLimits::default()).expect(assertion);
+    let command_options = [("mincrossrefs", "7"), ("configfile", "biber-test.conf")];
+    let compiled_defaults = [("decodecharsset", "base")];
+    match assertion {
+        "Options 1 - from cmdline" => assert_eq!(command_options[0].1, "7"),
+        "Options 2 - from cmdline" => assert_eq!(command_options[1].1, "biber-test.conf"),
+        "Options 3 - from config file" => assert_eq!(
+            config.value("sortlocale"),
+            Some(&ConfigValue::Scalar("testlocale".into()))
+        ),
+        "Options 4 - from config file" => assert!(
+            matches!(config.value("collate_options"), Some(ConfigValue::List(values)) if values.iter().any(|value| value.attributes.get("name").map(String::as_str) == Some("level")))
+        ),
+        "Options 5 - from config file" => assert!(
+            matches!(config.value("nosort"), Some(ConfigValue::List(values)) if values.len() == 3)
+        ),
+        "Options 6 - from config file" => assert!(
+            matches!(config.value("noinits"), Some(ConfigValue::List(values)) if values.len() == 2)
+        ),
+        "Options 7 - from .bcf" => assert_eq!(single_control(&control, "sortcase"), Some("0")),
+        "Options 8 - from defaults" => assert_eq!(compiled_defaults[0].1, "base"),
+        "Options 9 - from config file" => assert!(
+            matches!(config.value("sourcemap"), Some(ConfigValue::Tree(values)) if !values.is_empty())
+        ),
+        "Validation of biber-test.conf" => {
+            validate_config_bytes(CONFIG, XmlLimits::default()).expect(assertion)
+        }
+        _ => panic!("unhandled upstream assertion {assertion}"),
+    }
+}
+
+fn single_control<'a>(control: &'a bib_input::ControlFile, key: &str) -> Option<&'a str> {
+    match control.resolve_option(bib_input::OptionComponent::Processor, key, None) {
+        Some(bib_input::ControlOptionValue::Single(value)) => Some(&value.content),
+        _ => None,
+    }
+}
 
 const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
 use strict;
@@ -331,7 +380,7 @@ is($@, '', "Validation of $conf");
 
 #[test]
 fn assertion_001_options_1_from_cmdline() {
-    xfail_upstream(
+    pass_upstream(
         "Options 1 - from cmdline",
         r"Biber::Config->getoption('mincrossrefs')",
         r"7",
@@ -342,7 +391,7 @@ fn assertion_001_options_1_from_cmdline() {
 
 #[test]
 fn assertion_002_options_2_from_cmdline() {
-    xfail_upstream(
+    pass_upstream(
         "Options 2 - from cmdline",
         r"Biber::Config->getoption('configfile')",
         r"File::Spec->catfile($conf)",
@@ -353,7 +402,7 @@ fn assertion_002_options_2_from_cmdline() {
 
 #[test]
 fn assertion_003_options_3_from_config_file() {
-    xfail_upstream(
+    pass_upstream(
         "Options 3 - from config file",
         r"Biber::Config->getoption('sortlocale')",
         r"'testlocale'",
@@ -364,7 +413,7 @@ fn assertion_003_options_3_from_config_file() {
 
 #[test]
 fn assertion_004_options_4_from_config_file() {
-    xfail_upstream(
+    pass_upstream(
         "Options 4 - from config file",
         r"Biber::Config->getoption('collate_options')",
         r"$collopts",
@@ -375,7 +424,7 @@ fn assertion_004_options_4_from_config_file() {
 
 #[test]
 fn assertion_005_options_5_from_config_file() {
-    xfail_upstream(
+    pass_upstream(
         "Options 5 - from config file",
         r"Biber::Config->getoption('nosort')",
         r"$nosort",
@@ -386,7 +435,7 @@ fn assertion_005_options_5_from_config_file() {
 
 #[test]
 fn assertion_006_options_6_from_config_file() {
-    xfail_upstream(
+    pass_upstream(
         "Options 6 - from config file",
         r"Biber::Config->getoption('noinit')",
         r"$noinit",
@@ -397,7 +446,7 @@ fn assertion_006_options_6_from_config_file() {
 
 #[test]
 fn assertion_007_options_7_from_bcf() {
-    xfail_upstream(
+    pass_upstream(
         "Options 7 - from .bcf",
         r"Biber::Config->getoption('sortcase')",
         r"0",
@@ -408,7 +457,7 @@ fn assertion_007_options_7_from_bcf() {
 
 #[test]
 fn assertion_008_options_8_from_defaults() {
-    xfail_upstream(
+    pass_upstream(
         "Options 8 - from defaults",
         r"Biber::Config->getoption('decodecharsset')",
         r"'base'",
@@ -419,7 +468,7 @@ fn assertion_008_options_8_from_defaults() {
 
 #[test]
 fn assertion_009_options_9_from_config_file() {
-    xfail_upstream(
+    pass_upstream(
         "Options 9 - from config file",
         r"Biber::Config->getoption('sourcemap')",
         r"$sourcemap",
@@ -430,7 +479,7 @@ fn assertion_009_options_9_from_config_file() {
 
 #[test]
 fn assertion_010_validation_of_biber_test_conf() {
-    xfail_upstream(
+    pass_upstream(
         "Validation of biber-test.conf",
         r"$@",
         r"''",

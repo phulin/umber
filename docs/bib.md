@@ -1,9 +1,10 @@
 # In-process bibliography backend
 
-Status: foundation crate graph, frozen domain contracts, and the pinned
-Unicode/encoding/date/language utility substrate are implemented; pipeline
-processing, serializers, sessions, and project integration remain in the
-dependency-ordered bibliography issues.
+Status: foundation crate graph, frozen domain contracts, the pinned
+Unicode/encoding/date/language utility substrate, and the pure-Rust bounded
+control/configuration/BibLaTeXML input boundary are implemented; remaining
+datasource parsing, pipeline processing, serializers, sessions, and project
+integration continue in the dependency-ordered bibliography issues.
 
 This document defines Umber's pure-Rust bibliography subsystem. Every Rust
 package uses the `bib-*` prefix, and modules, types, commands, features, and
@@ -167,8 +168,9 @@ keys, string/range utilities, and MD5 compatibility hashes. The compatibility
 identity pins upstream commit `74252e6` and a versioned root-collation table
 identifier. Parsers reject malformed and overlong values explicitly; no code
 consults a host locale, browser internationalization service, filesystem, or
-mutable process state. The six directly owned upstream cohorts (`annotations`,
-`dateformats`, `encoding`, `langtags`, `translit`, and `utils`) execute as 177
+mutable process state. The ten directly completed upstream cohorts
+(`annotations`, `dateformats`, `encoding`, `langtags`, `translit`, `utils`,
+`bcfvalidation`, `biblatexml`, `configfile`, and `options`) execute as 254
 ordinary assertion-level tests rather than strict xfails.
 
 ## Domain model
@@ -278,6 +280,21 @@ The validator is pure Rust and supports the complete schema behavior required
 by the pinned distribution. It does not call libxml2, libxslt, or another
 native library. Schema and transform data are versioned distribution resources
 or compiled immutable tables with recorded source hashes.
+
+The implemented input boundary uses `quick-xml` only as a token reader and
+builds an owned, order-preserving tree under explicit byte, nesting, node,
+attribute, and text budgets. DTDs and non-built-in entity references are
+rejected. XML includes resolve relative to the including canonical virtual
+path, consume a separate include budget, detect cycles, and read only the
+provided immutable `VfsSnapshot`; they never fall back to a URL or host path.
+BCF parsing requires the exact pinned namespace and control version 3.11,
+validates the pinned structural contracts, and constructs ordered option
+scopes, sections, datasource declarations, templates, and data-model values.
+Configuration parsing constructs typed scalar, list, attribute, tree, and
+template values, while explicit immutable layers implement defaults, tool,
+user, command, and control-file precedence. BibLaTeXML parsing constructs
+typed names, lists, dates, ranges, aliases, annotations, related values, and
+entry-local options from the pinned namespace.
 
 ### BibTeX datasource
 

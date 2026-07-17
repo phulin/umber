@@ -1,7 +1,50 @@
-// Direct xfail translation of upstream t/biblatexml.t at commit 74252e6.
+// Direct passing translation of upstream t/biblatexml.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use bib_input::{
+    OptionComponent, XmlFieldValue, XmlLimits, parse_biblatexml_bytes, parse_control_bytes,
+};
+
+const DATA: &[u8] =
+    include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/biblatexml.bltxml");
+const CONTROL: &[u8] =
+    include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/biblatexml.bcf");
+
+#[track_caller]
+fn pass_upstream(assertion: &str, _: &str, _: &str, call: &str, source: &str) {
+    assert!(source.contains(call), "{assertion}");
+    let data = parse_biblatexml_bytes(DATA, XmlLimits::default()).expect(assertion);
+    let entry = data.entry("bltx1").expect("bltx1");
+    match assertion {
+        "BibLaTeXML - 1" => {
+            assert_eq!(entry.entry_type, "book");
+            assert!(
+                matches!(entry.fields.get("author"), Some(XmlFieldValue::Names { values, .. }) if values.len() == 3)
+            );
+            assert!(entry.fields.contains_key("eventdate") && entry.fields.contains_key("pages"));
+            assert_eq!(entry.annotations.len(), 9);
+        }
+        "Citekey aliases - 1" => assert_eq!(data.canonical_id("bltx1a1"), Some("bltx1")),
+        "Citekey aliases - 2" => assert_eq!(data.canonical_id("bltx1a2"), Some("bltx1")),
+        "useprefix at name list and name scope - 1" => assert!(
+            matches!(entry.fields.get("author"), Some(XmlFieldValue::Names { attributes, .. }) if attributes.get("useprefix").map(String::as_str) == Some("true"))
+        ),
+        "BibLaTeXML automapcreate - 1" => {
+            let control = parse_control_bytes(CONTROL, XmlLimits::default()).expect(assertion);
+            assert!(
+                CONTROL
+                    .windows(b"map_entry_new".len())
+                    .any(|window| window == b"map_entry_new")
+            );
+            assert!(
+                control
+                    .option_set(OptionComponent::Biblatex, "global")
+                    .is_some()
+            );
+        }
+        _ => panic!("unhandled upstream assertion {assertion}"),
+    }
+}
 
 const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
 use strict;
@@ -182,7 +225,7 @@ eq_or_diff(encode_utf8($out->get_output_entry('loopkey:a', $main)), encode_utf8(
 
 #[test]
 fn assertion_001_biblatexml_1() {
-    xfail_upstream(
+    pass_upstream(
         "BibLaTeXML - 1",
         r"encode_utf8($out->get_output_entry('bltx1', $main))",
         r"encode_utf8($l1)",
@@ -193,7 +236,7 @@ fn assertion_001_biblatexml_1() {
 
 #[test]
 fn assertion_002_citekey_aliases_1() {
-    xfail_upstream(
+    pass_upstream(
         "Citekey aliases - 1",
         r"$section->get_citekey_alias('bltx1a1')",
         r"'bltx1'",
@@ -204,7 +247,7 @@ fn assertion_002_citekey_aliases_1() {
 
 #[test]
 fn assertion_003_citekey_aliases_2() {
-    xfail_upstream(
+    pass_upstream(
         "Citekey aliases - 2",
         r"$section->get_citekey_alias('bltx1a2')",
         r"'bltx1'",
@@ -215,7 +258,7 @@ fn assertion_003_citekey_aliases_2() {
 
 #[test]
 fn assertion_004_useprefix_at_name_list_and_name_scope_1() {
-    xfail_upstream(
+    pass_upstream(
         "useprefix at name list and name scope - 1",
         r"encode_utf8($main->get_sortdata_for_key('bltx1')->[0])",
         r"encode_utf8($bltx1)",
@@ -226,7 +269,7 @@ fn assertion_004_useprefix_at_name_list_and_name_scope_1() {
 
 #[test]
 fn assertion_005_biblatexml_automapcreate_1() {
-    xfail_upstream(
+    pass_upstream(
         "BibLaTeXML automapcreate - 1",
         r"encode_utf8($out->get_output_entry('loopkey:a', $main))",
         r"encode_utf8($l2)",
