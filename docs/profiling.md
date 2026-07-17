@@ -55,11 +55,14 @@ cargo run --profile profiling -p umber --bin gentle-profile -- \
   --repo-root /path/to/umber2 --incremental-edit --iterations 6 --warmups 1
 ```
 
-Select recording layers with `--memo-layers`. The default is `paragraph`, whose
-results and trace metadata belong to the accepted generation. Explicit
-experiments may select comma-separated
-`pretolerance,paragraph,page,shipout`, `all`, or `none`. Detached layers are
-off by default until they demonstrate steady-state value and budget fit.
+Select recording layers with `--memo-layers`. For this profiler's explicitly
+memo-enabled candidate, the default is `paragraph`, whose results and trace
+metadata belong to the accepted generation. The engine memo runtime remains
+disabled by default; this profiler policy is an experimental comparison, not
+the batch or editor-session product default. Explicit experiments may select
+comma-separated `pretolerance,paragraph,page,shipout`, `all`, or `none`.
+Detached layers are off by default until they demonstrate steady-state value
+and budget fit.
 
 For a direct marginal comparison between two recording policies, pass
 `--baseline-memo-layers` as well. Both policies then run inside the same
@@ -308,6 +311,13 @@ hits. The committed edit matrix, all four external corpus cases, explicit
 1,000-edit tier, snapshot budgets, workspace tests, rustfmt, dprint, and clippy
 passed. The release gate remains failed solely because recording paragraphs
 does not beat the disabled control.
+
+The parent capability evaluation therefore closes with a split result:
+macro-bearing reuse, validation/import savings, parity, and the eligible-hit
+target are delivered, but the end-to-end speed criterion failed. Paragraph
+memoization remains default-disabled, and the encompassing release review must
+consume this as a negative default-enablement decision rather than a passed
+performance acceptance.
 
 The incremental comparison now times the initial accepted-generation compile
 as well as each of its four accepted edits. AB/BA ordering applies to the

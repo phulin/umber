@@ -645,10 +645,12 @@ retain the O(1) snapshot path.
 
 The detached cache is session-local, single-threaded, and byte-budgeted. It
 owns detached semantic values independently of one `Universe` generation.
-Recording policy is configured per layer. The default records only paragraph
-regions, which are not detached-cache entries: their trace metadata and node
-roots belong to the prior accepted generation and are replaced wholesale on
-acceptance. Pretolerance, page, and shipout recording are opt-in experiments.
+Recording policy is configured per layer. The engine does not enable the memo
+runtime by default. Once a caller explicitly enables it with the default
+experimental configuration, only paragraph regions are recorded; these are
+not detached-cache entries, because their trace metadata and node roots belong
+to the prior accepted generation and are replaced wholesale on acceptance.
+Pretolerance, page, and shipout recording are separate opt-in experiments.
 
 Detached admission is scan resistant through a first-reuse protection rule.
 Once admitted, an entry cannot be evicted until it has received its first
@@ -1083,8 +1085,8 @@ the second and fourth edits adopted one suffix subtree with 73 and 83 leaf
 hits. The macro edit matrix, Story/Gentle/TRIP/e-TRIP corpus, explicit
 1,000-edit tier, snapshot budgets, full workspace tests, rustfmt, dprint, and
 clippy passed. Because memo-enabled recompilation lost on every paired mean,
-paragraph memoization remains experimental and the parent acceptance issue
-remains open.
+paragraph memoization remains experimental and its speed acceptance criterion
+failed.
 
 The opportunity-driven admission experiment then retained the stable-anchor
 census but armed dependency, provenance, break, and result recording only for
@@ -1111,6 +1113,12 @@ last edit retained 14 pages, re-shipped three, and adopted 83, but trace
 attrition and the losing total independently trigger the issue's stop rules.
 Paragraph memoization therefore remains default-disabled, and this negative
 release verdict does not create another recording micro-optimization chain.
+This completes the macro-bearing paragraph capability evaluation: the
+dependency, provenance, stable-anchor, prior-generation import, parity, and
+eligible-validation goals were delivered, while default enablement was
+rejected on end-to-end speed. The encompassing release decision must consume
+that split verdict rather than treating completion as evidence that the speed
+criterion passed.
 
 ### Dependency-recorder baseline
 
