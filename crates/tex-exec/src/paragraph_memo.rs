@@ -50,10 +50,7 @@ pub(crate) fn try_reuse_aligned_paragraph(
     else {
         return Ok(false);
     };
-    if !entry.barriers.is_empty() {
-        stores.record_pure_paragraph_barrier();
-        return Ok(false);
-    }
+    debug_assert!(entry.barriers.is_empty());
     #[allow(clippy::disallowed_methods)]
     let validation_started = std::time::Instant::now();
     let dependency_failure = stores
@@ -425,7 +422,6 @@ fn publish_recorded_region(
         std::time::Duration::from_nanos(recording.trace_capture_nanos),
         recording.trace_capture_samples,
     );
-    let dependency_started = start_phase();
     let (mut keys, expansion_barriers) = execution.finish_paragraph_expansion_recording();
     keys.retain(|key| {
         let tex_state::DependencyKey::Query { domain, .. } = key else {
@@ -450,45 +446,6 @@ fn publish_recorded_region(
             true
         }
     });
-    keys.extend([
-        tex_state::DependencyKey::Cell {
-            bank: tex_state::DependencyBank::CurrentFont,
-            index: 0,
-        },
-        tex_state::DependencyKey::Cell {
-            bank: tex_state::DependencyBank::TokParam,
-            index: u32::from(TokParam::EVERY_PAR.raw()),
-        },
-    ]);
-    for token in &recording.trace {
-        if let Token::Char { ch, .. } = tex_expand::semantic_token(*token) {
-            keys.push(tex_state::DependencyKey::Code {
-                table: tex_state::DependencyCodeTable::Sfcode,
-                scalar: ch as u32,
-            });
-        }
-    }
-    keys.sort_unstable();
-    keys.dedup();
-    let dependencies = keys
-        .into_iter()
-        .map(|key| {
-            Some(tex_state::ObservedDependency {
-                key,
-                changed_at: stores.track_dependency(key),
-                value: stores.semantic_dependency_value(key)?,
-            })
-        })
-        .collect::<Option<Vec<_>>>();
-    let dependencies = match dependencies {
-        Some(dependencies) => dependencies,
-        None => {
-            recording
-                .barriers
-                .insert(tex_state::ParagraphBarrierReason::UnsupportedInputTransition);
-            Vec::new()
-        }
-    };
     for barrier in expansion_barriers {
         recording.barriers.insert(match barrier {
             tex_expand::ParagraphExpansionBarrier::InputOpen => {
@@ -502,11 +459,6 @@ fn publish_recorded_region(
             }
         });
     }
-    finish_phase(
-        stores,
-        ParagraphRecordingPhase::FrontEndDependencies,
-        dependency_started,
-    );
     let input_started = start_phase();
     let effects = match detach_effects(&stores.world().effect_records()[recording.effect_start..]) {
         Some(effects) => effects,
@@ -518,22 +470,6 @@ fn publish_recorded_region(
         }
     };
     let mutations = stores.finish_pure_paragraph_recording().unwrap_or_default();
-    finish_phase(
-        stores,
-        ParagraphRecordingPhase::InputTransition,
-        input_started,
-    );
-    let provenance_started = start_phase();
-    let trace_spans = recording
-        .trace
-        .iter()
-        .map(|token| stores.root_span_for_origin(token.origin()))
-        .collect::<Vec<_>>();
-    finish_phase(
-        stores,
-        ParagraphRecordingPhase::FrontEndProvenance,
-        provenance_started,
-    );
     let ending_span = input.root_source_checkpoint_anchor(stores);
     let consumed_spans = recording
         .starting_span
@@ -564,22 +500,82 @@ fn publish_recorded_region(
             .barriers
             .insert(tex_state::ParagraphBarrierReason::UnsupportedInputTransition);
     }
-    let eligible = recording.barriers.is_empty();
+    finish_phase(
+        stores,
+        ParagraphRecordingPhase::InputTransition,
+        input_started,
+    );
+    if !recording.barriers.is_empty() {
+        let barriers = recording.barriers.into_iter().collect::<Vec<_>>();
+        stores.record_pure_paragraph_barriers(&barriers);
+        return;
+    }
+    let dependency_started = start_phase();
+    keys.extend([
+        tex_state::DependencyKey::Cell {
+            bank: tex_state::DependencyBank::CurrentFont,
+            index: 0,
+        },
+        tex_state::DependencyKey::Cell {
+            bank: tex_state::DependencyBank::TokParam,
+            index: u32::from(TokParam::EVERY_PAR.raw()),
+        },
+    ]);
+    for token in &recording.trace {
+        if let Token::Char { ch, .. } = tex_expand::semantic_token(*token) {
+            keys.push(tex_state::DependencyKey::Code {
+                table: tex_state::DependencyCodeTable::Sfcode,
+                scalar: ch as u32,
+            });
+        }
+    }
+    keys.sort_unstable();
+    keys.dedup();
+    let dependencies = keys
+        .into_iter()
+        .map(|key| {
+            Some(tex_state::ObservedDependency {
+                key,
+                changed_at: stores.track_dependency(key),
+                value: stores.semantic_dependency_value(key)?,
+            })
+        })
+        .collect::<Option<Vec<_>>>();
+    let Some(dependencies) = dependencies else {
+        let barriers = [tex_state::ParagraphBarrierReason::UnsupportedInputTransition];
+        stores.record_pure_paragraph_barriers(&barriers);
+        finish_phase(
+            stores,
+            ParagraphRecordingPhase::FrontEndDependencies,
+            dependency_started,
+        );
+        return;
+    };
+    finish_phase(
+        stores,
+        ParagraphRecordingPhase::FrontEndDependencies,
+        dependency_started,
+    );
+    let provenance_started = start_phase();
+    let trace_spans = recording
+        .trace
+        .iter()
+        .map(|token| stores.root_span_for_origin(token.origin()))
+        .collect::<Vec<_>>();
+    finish_phase(
+        stores,
+        ParagraphRecordingPhase::FrontEndProvenance,
+        provenance_started,
+    );
     let pending = execution.pending_paragraph_memo.as_ref();
     let trace_origins = pending.map_or_else(
         || recording.trace.iter().map(|token| token.origin()).collect(),
         |pending| pending.trace_origins.clone(),
     );
     let retention_started = start_phase();
-    let (hlist, origin_ordinals) = if eligible {
-        let list = stores.freeze_node_list(nodes);
-        (
-            Some(stores.retain_paragraph_result(list)),
-            paragraph_origin_ordinals(nodes, &trace_origins),
-        )
-    } else {
-        (None, Vec::new())
-    };
+    let list = stores.freeze_node_list(nodes);
+    let hlist = Some(stores.retain_paragraph_result(list));
+    let origin_ordinals = paragraph_origin_ordinals(nodes, &trace_origins);
     finish_phase(
         stores,
         ParagraphRecordingPhase::HlistRetention,
@@ -608,7 +604,7 @@ fn publish_recorded_region(
         ParagraphRecordingPhase::RegionPublication,
         publication_started,
     );
-    if eligible && execution.pending_paragraph_memo.is_none() {
+    if execution.pending_paragraph_memo.is_none() {
         execution.pending_paragraph_memo =
             Some(crate::executor::PendingParagraphMemo { trace_origins });
     }

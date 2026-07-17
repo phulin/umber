@@ -931,84 +931,82 @@ impl PureMemoRuntime {
         }
     }
 
-    pub(crate) fn record_paragraph_barrier(&mut self) {
-        if let Some(cache) = &mut self.cache {
-            cache.stats.paragraph_barriers = cache.stats.paragraph_barriers.saturating_add(1);
+    pub(crate) fn record_paragraph_barriers(&mut self, reasons: &[ParagraphBarrierReason]) {
+        let Some(cache) = &mut self.cache else {
+            return;
+        };
+        cache.stats.paragraph_barriers = cache.stats.paragraph_barriers.saturating_add(1);
+        cache.stats.paragraph.ineligible_barriers = cache
+            .stats
+            .paragraph
+            .ineligible_barriers
+            .saturating_add(reasons.len() as u64);
+        for &reason in reasons {
+            let count = self.paragraph_barrier_reasons.entry(reason).or_default();
+            *count = count.saturating_add(1);
+            match reason {
+                ParagraphBarrierReason::DisplayMath => {
+                    cache.stats.paragraph_display_math_barriers = cache
+                        .stats
+                        .paragraph_display_math_barriers
+                        .saturating_add(1);
+                }
+                ParagraphBarrierReason::Scantokens => {
+                    cache.stats.paragraph_scantokens_barriers =
+                        cache.stats.paragraph_scantokens_barriers.saturating_add(1);
+                }
+                ParagraphBarrierReason::MidParagraphInputOpen => {
+                    cache.stats.paragraph_input_open_barriers =
+                        cache.stats.paragraph_input_open_barriers.saturating_add(1);
+                }
+                ParagraphBarrierReason::UntrackedWorldAccess => {
+                    cache.stats.paragraph_untracked_world_barriers = cache
+                        .stats
+                        .paragraph_untracked_world_barriers
+                        .saturating_add(1);
+                }
+                ParagraphBarrierReason::NestedOutputRoutine => {
+                    cache.stats.paragraph_output_routine_barriers = cache
+                        .stats
+                        .paragraph_output_routine_barriers
+                        .saturating_add(1);
+                }
+                ParagraphBarrierReason::EndInput => {
+                    cache.stats.paragraph_endinput_barriers =
+                        cache.stats.paragraph_endinput_barriers.saturating_add(1);
+                }
+                ParagraphBarrierReason::UnsupportedEscapingWrite => {
+                    cache.stats.paragraph_unsupported_write_barriers = cache
+                        .stats
+                        .paragraph_unsupported_write_barriers
+                        .saturating_add(1);
+                }
+                ParagraphBarrierReason::UnsupportedInputTransition => {
+                    cache.stats.paragraph_unsupported_input_transition_barriers = cache
+                        .stats
+                        .paragraph_unsupported_input_transition_barriers
+                        .saturating_add(1);
+                }
+                ParagraphBarrierReason::UnsupportedGroupTransition => {
+                    cache.stats.paragraph_unsupported_group_transition_barriers = cache
+                        .stats
+                        .paragraph_unsupported_group_transition_barriers
+                        .saturating_add(1);
+                }
+            }
         }
     }
 
     pub(crate) fn record_paragraph_region(&mut self, region: RecordedParagraphRegion) {
+        debug_assert!(region.barriers.is_empty());
         let started = std::time::Instant::now();
         let Some(cache) = &mut self.cache else {
             return;
         };
-        if region.barriers.is_empty() {
-            cache.stats.paragraph_eligible_regions =
-                cache.stats.paragraph_eligible_regions.saturating_add(1);
-            cache.stats.paragraph_inserts = cache.stats.paragraph_inserts.saturating_add(1);
-            cache.stats.paragraph.inserts = cache.stats.paragraph.inserts.saturating_add(1);
-        } else {
-            cache.stats.paragraph_barriers = cache.stats.paragraph_barriers.saturating_add(1);
-            cache.stats.paragraph.ineligible_barriers = cache
-                .stats
-                .paragraph
-                .ineligible_barriers
-                .saturating_add(region.barriers.len() as u64);
-            for &reason in &region.barriers {
-                let count = self.paragraph_barrier_reasons.entry(reason).or_default();
-                *count = count.saturating_add(1);
-                match reason {
-                    ParagraphBarrierReason::DisplayMath => {
-                        cache.stats.paragraph_display_math_barriers = cache
-                            .stats
-                            .paragraph_display_math_barriers
-                            .saturating_add(1);
-                    }
-                    ParagraphBarrierReason::Scantokens => {
-                        cache.stats.paragraph_scantokens_barriers =
-                            cache.stats.paragraph_scantokens_barriers.saturating_add(1);
-                    }
-                    ParagraphBarrierReason::MidParagraphInputOpen => {
-                        cache.stats.paragraph_input_open_barriers =
-                            cache.stats.paragraph_input_open_barriers.saturating_add(1);
-                    }
-                    ParagraphBarrierReason::UntrackedWorldAccess => {
-                        cache.stats.paragraph_untracked_world_barriers = cache
-                            .stats
-                            .paragraph_untracked_world_barriers
-                            .saturating_add(1);
-                    }
-                    ParagraphBarrierReason::NestedOutputRoutine => {
-                        cache.stats.paragraph_output_routine_barriers = cache
-                            .stats
-                            .paragraph_output_routine_barriers
-                            .saturating_add(1);
-                    }
-                    ParagraphBarrierReason::EndInput => {
-                        cache.stats.paragraph_endinput_barriers =
-                            cache.stats.paragraph_endinput_barriers.saturating_add(1);
-                    }
-                    ParagraphBarrierReason::UnsupportedEscapingWrite => {
-                        cache.stats.paragraph_unsupported_write_barriers = cache
-                            .stats
-                            .paragraph_unsupported_write_barriers
-                            .saturating_add(1);
-                    }
-                    ParagraphBarrierReason::UnsupportedInputTransition => {
-                        cache.stats.paragraph_unsupported_input_transition_barriers = cache
-                            .stats
-                            .paragraph_unsupported_input_transition_barriers
-                            .saturating_add(1);
-                    }
-                    ParagraphBarrierReason::UnsupportedGroupTransition => {
-                        cache.stats.paragraph_unsupported_group_transition_barriers = cache
-                            .stats
-                            .paragraph_unsupported_group_transition_barriers
-                            .saturating_add(1);
-                    }
-                }
-            }
-        }
+        cache.stats.paragraph_eligible_regions =
+            cache.stats.paragraph_eligible_regions.saturating_add(1);
+        cache.stats.paragraph_inserts = cache.stats.paragraph_inserts.saturating_add(1);
+        cache.stats.paragraph.inserts = cache.stats.paragraph.inserts.saturating_add(1);
         let bytes = recorded_paragraph_retained_bytes(&region) as u64;
         let published = &mut cache.stats.paragraph_opportunities.published;
         published.regions = published.regions.saturating_add(1);

@@ -1849,8 +1849,8 @@ impl Universe {
     }
 
     #[doc(hidden)]
-    pub fn record_pure_paragraph_barrier(&mut self) {
-        self.pure_memo.record_paragraph_barrier();
+    pub fn record_pure_paragraph_barriers(&mut self, reasons: &[crate::ParagraphBarrierReason]) {
+        self.pure_memo.record_paragraph_barriers(reasons);
     }
 
     #[doc(hidden)]

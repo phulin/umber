@@ -235,7 +235,9 @@ impl<'a> ExecutionContext<'a> {
     }
 
     pub(crate) fn observe_paragraph_token(&mut self, token: TracedTokenWord) {
-        if let Some(recording) = &mut self.cold_paragraph_recording {
+        if let Some(recording) = &mut self.cold_paragraph_recording
+            && recording.barriers.is_empty()
+        {
             #[cfg(feature = "profiling-stats")]
             let started = std::time::Instant::now();
             recording.trace.push(token);
