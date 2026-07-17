@@ -730,12 +730,16 @@ regen_bibtex_area() {
         "$file" >&2
     fi
   done
-  for case in elsarticle-book elsarticle-article elsarticle-names elsarticle-month; do
+  for case in elsarticle-book elsarticle-article elsarticle-names elsarticle-month ieeetran; do
     case_dir="${tmp_root}/${case}"
     mkdir -p "$case_dir"
+    style=elsarticle-num
+    if [[ "$case" == "ieeetran" ]]; then
+      style=IEEEtran
+    fi
     cp "${repo_root}/tests/corpus/bibtex/cases/${case}/${case}.aux" \
       "${repo_root}/tests/corpus/bibtex/cases/${case}/references.bib" \
-      "${repo_root}/tests/corpus/bibtex/styles/elsarticle-num.bst" "$case_dir/"
+      "${repo_root}/tests/corpus/bibtex/styles/${style}.bst" "$case_dir/"
     set +e
     (
       cd "$case_dir"
@@ -832,7 +836,7 @@ regen_bibtex_area() {
        (.bytes = ($elsarticle_article_terminal_bytes | tonumber) | .sha256 = $elsarticle_article_terminal_sha256)' \
     "${repo_root}/tests/corpus/bibtex/manifest.json" > "$manifest_tmp"
   mv "$manifest_tmp" "${repo_root}/tests/corpus/bibtex/manifest.json"
-  for case in elsarticle-names elsarticle-month; do
+  for case in elsarticle-names elsarticle-month ieeetran; do
     jq \
       --arg case "$case" \
       --arg bbl_bytes "$(wc -c < "${repo_root}/tests/corpus/bibtex/cases/${case}/${case}.bbl" | tr -d ' ')" \

@@ -241,7 +241,7 @@ fn classic_fixture_manifest_and_inventory_are_complete_and_pinned() {
     let real_world_styles = manifest["real_world_styles"]
         .as_array()
         .expect("real-world styles must be an array");
-    assert_eq!(real_world_styles.len(), 1);
+    assert_eq!(real_world_styles.len(), 2);
     let elsarticle = &real_world_styles[0];
     assert_eq!(elsarticle["name"], "elsarticle-num");
     assert_eq!(
@@ -268,19 +268,53 @@ fn classic_fixture_manifest_and_inventory_are_complete_and_pinned() {
             .as_str()
             .expect("real-world style SHA-256 must be text"),
     );
+    let ieeetran = &real_world_styles[1];
+    assert_eq!(ieeetran["name"], "IEEEtran");
+    assert_eq!(
+        ieeetran["source"],
+        "TeX Live 2025 texmf-dist/bibtex/bst/ieeetran/IEEEtran.bst"
+    );
+    assert_eq!(ieeetran["upstream_url"], "https://ctan.org/pkg/ieeetran");
+    assert_eq!(ieeetran["version"], "1.14");
+    assert_eq!(ieeetran["revision"], "2015-08-26");
+    assert_eq!(ieeetran["license"], "LPPL-1.3");
+    assert_file_identity(
+        &root.join(
+            ieeetran["path"]
+                .as_str()
+                .expect("real-world style path must be text"),
+        ),
+        ieeetran["bytes"]
+            .as_u64()
+            .expect("real-world style bytes must be unsigned"),
+        ieeetran["sha256"]
+            .as_str()
+            .expect("real-world style SHA-256 must be text"),
+    );
 
     let real_world_cases = manifest["real_world_execution_cases"]
         .as_array()
         .expect("real-world execution cases must be an array");
-    assert_eq!(real_world_cases.len(), 4);
-    for (case, name) in real_world_cases.iter().zip([
-        "elsarticle-book",
-        "elsarticle-article",
-        "elsarticle-names",
-        "elsarticle-month",
-    ]) {
+    assert_eq!(real_world_cases.len(), 5);
+    for ((case, name), style) in real_world_cases
+        .iter()
+        .zip([
+            "elsarticle-book",
+            "elsarticle-article",
+            "elsarticle-names",
+            "elsarticle-month",
+            "ieeetran",
+        ])
+        .zip([
+            "elsarticle-num",
+            "elsarticle-num",
+            "elsarticle-num",
+            "elsarticle-num",
+            "IEEEtran",
+        ])
+    {
         assert_eq!(case["name"], name);
-        assert_eq!(case["style"], "elsarticle-num");
+        assert_eq!(case["style"], style);
         assert_eq!(case["command"], serde_json::json!(["bibtex", name]));
         assert_eq!(case["status"], 0);
         assert_eq!(case["history"], "spotless");
@@ -352,6 +386,10 @@ fn classic_fixture_manifest_and_inventory_are_complete_and_pinned() {
     assert_eq!(
         real_world_cases[3]["coverage"]["style_macro"],
         serde_json::json!({ "jan": "Jan." })
+    );
+    assert_eq!(
+        real_world_cases[4]["coverage"]["control"],
+        serde_json::json!({ "forced_et_al": true, "repeated_name_dash": true })
     );
 
     let cases = manifest["cases"]

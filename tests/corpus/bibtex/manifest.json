@@ -126,6 +126,17 @@
       "path": "styles/elsarticle-num.bst",
       "bytes": 29462,
       "sha256": "08d06d24a533fbe0c6e29d5bd5e7134781ab41a3c6640d73ad63112d4851b301"
+    },
+    {
+      "name": "IEEEtran",
+      "source": "TeX Live 2025 texmf-dist/bibtex/bst/ieeetran/IEEEtran.bst",
+      "upstream_url": "https://ctan.org/pkg/ieeetran",
+      "version": "1.14",
+      "revision": "2015-08-26",
+      "license": "LPPL-1.3",
+      "path": "styles/IEEEtran.bst",
+      "bytes": 57748,
+      "sha256": "314f0ece704568faf827011bac498650691b2b5ee06320720830e782416d5a5f"
     }
   ],
   "real_world_execution_cases": [
@@ -347,6 +358,68 @@
           "role": "terminal-output",
           "bytes": 165,
           "sha256": "9da833924ac14e6156ac2b65e50697b78ce04a6403aacad0c7463b511867668f"
+        }
+      ]
+    },
+    {
+      "name": "ieeetran",
+      "style": "IEEEtran",
+      "command": [
+        "bibtex",
+        "ieeetran"
+      ],
+      "status": 0,
+      "history": "spotless",
+      "coverage": {
+        "paths": [
+          "IEEEtranBSTCTL",
+          "article",
+          "inproceedings",
+          "format.bvolume",
+          "format.url"
+        ],
+        "control": {
+          "forced_et_al": true,
+          "repeated_name_dash": true
+        },
+        "reference_builtin_calls": {
+          "chr.to.int$": 46,
+          "format.name$": 6,
+          "if$": 421,
+          "substring$": 88,
+          "write$": 45
+        }
+      },
+      "files": [
+        {
+          "path": "cases/ieeetran/ieeetran.aux",
+          "role": "aux-input",
+          "bytes": 95,
+          "sha256": "18e2b9da2d127b6a315f063332d9bf9969fdc2e3f3a8d363c58a7fde2854b9f3"
+        },
+        {
+          "path": "cases/ieeetran/references.bib",
+          "role": "bib-input",
+          "bytes": 804,
+          "sha256": "bb0a9f583197fd9c11b893e8aca84ee6be3739e712624e02ac3170e1f667b951"
+        },
+        {
+          "path": "cases/ieeetran/ieeetran.bbl",
+          "role": "bbl-output",
+          "bytes": 1407,
+          "sha256": "8ff101db66508918910e9c059239db203abd115e554566d5d0c6652484e702c3"
+        },
+        {
+          "path": "cases/ieeetran/ieeetran.blg",
+          "role": "blg-output",
+          "bytes": 1449,
+          "sha256": "f12bdcf776b84750373d6ec874b2a24645e3a0be3db8651f05a9d4567fb27f33"
+        },
+        {
+          "path": "cases/ieeetran/ieeetran.terminal",
+          "role": "terminal-output",
+          "bytes": 401,
+          "sha256": "4add9113a2e8928ea6bed964d6b6a7e4fa88bced92e7b239a77080980b1006f3"
         }
       ]
     }

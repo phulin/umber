@@ -1,8 +1,9 @@
 # Classic BibTeX compatibility inventory
 
-Status: Phase 10 systematic differential generator implemented. Its reference
-gate is currently blocked by tracked BLG accounting parity work; real-world
-corpus and remaining hardening work are tracked in Beads.
+Status: Phase 10 systematic differential generator and the initial elsarticle
+real-world corpus are implemented. The staged IEEEtran candidate is blocked on
+public terminal parity in `umber2-ild0.13.6.4`; remaining hardening work is
+tracked in Beads.
 
 The reviewed architecture and phase exit criteria remain those in
 `docs/classic_bibtex_bst.md` at commit `c676cfb0`. This inventory does not
@@ -262,16 +263,26 @@ upstream cases. A candidate must be redistributable under a recorded license,
 retain its upstream provenance/version/revision and SHA-256 identity in
 `tests/corpus/bibtex/manifest.json`, run under the pinned 0.99d executable,
 and add measured style-path or reference-built-in coverage. The initial
-selection is the LPPL-1.3-or-later `elsarticle-num.bst` 2.1 from TeX Live 2025.
-Its `elsarticle-book` case covers the style startup and book/publisher path;
-its `elsarticle-article` case additionally covers article volume/page, DOI,
-and URL formatting and observes `change.case$`, `substring$`, and `swap$`.
-The focused `elsarticle-names` case pins multi-word `{f.~}` abbreviation
-separators, while `elsarticle-month` verifies that `month = jan` resolves
-through the style's visible `MACRO {jan} {"Jan."}` declaration. All four use
-the public `ClassicBibCommand` and require exact status, terminal, BBL, and
-BLG bytes. Candidates that expose an unresolved public-boundary parity gap are
-documented as follow-up work rather than admitted with an allowance.
+selection is the LPPL-1.3-or-later `elsarticle-num.bst` 2.1 from TeX Live
+2025. `elsarticle-book` covers style startup and the
+book/publisher path; `elsarticle-article` additionally covers article
+volume/page, DOI, and URL formatting and observes `change.case$`,
+`substring$`, and `swap$`. The focused `elsarticle-names` case pins multi-word
+`{f.~}` abbreviation separators, while `elsarticle-month` verifies that
+`month = jan` resolves through the style's visible `MACRO {jan} {"Jan."}`
+declaration. All admitted cases use the public `ClassicBibCommand` and require
+exact status, terminal, BBL, and BLG bytes. Candidates that expose an
+unresolved public-boundary parity gap are documented as follow-up work rather
+than admitted with an allowance.
+
+`IEEEtran.bst` 1.14 is staged with its LPPL-1.3 provenance and reference
+artifacts in the same manifest. Its representative case selects the
+`IEEEtranBSTCTL` forced-`et al.` and repeated-name controls, then exercises
+article and proceedings formatting, title case handling, URL layout, and
+high-volume `chr.to.int$`, `format.name$`, `substring$`, and `write$` calls.
+It is intentionally not yet an admitted public-command parity case:
+`umber2-ild0.13.6.4` must restore its exact terminal parity before that gate is
+enabled.
 
 The only supported live-reference rewrite path is:
 
