@@ -96,6 +96,16 @@ impl HtmlFontResolver for Resolver {
     }
 }
 
+struct SingleScalarResolver;
+
+impl HtmlFontResolver for SingleScalarResolver {
+    fn resolve(&mut self, font: &FontResource) -> Result<WebFont, String> {
+        let mut web = Resolver { missing_b: false }.resolve(font)?;
+        web.encoding[usize::from(b'B')] = Some("B".to_owned());
+        Ok(web)
+    }
+}
+
 #[test]
 fn serialization_is_deterministic_exact_and_escaped() {
     let page = page();
@@ -121,6 +131,19 @@ fn serialization_is_deterministic_exact_and_escaped() {
             "data-umber-special-hex=\"3c7363726970743e616c6572742831293c2f7363726970743e\""
         )
     );
+}
+
+#[test]
+fn single_scalar_runs_use_exact_tex_character_positions() {
+    let output = write_html(
+        &[page()],
+        &mut SingleScalarResolver,
+        &HtmlOptions::default(),
+    )
+    .expect("positioned HTML");
+    let html = String::from_utf8(output.html).expect("UTF-8 HTML");
+
+    assert!(html.contains("x=\"0.00034457px 0.00095265px\""), "{html}");
 }
 
 #[test]

@@ -733,7 +733,27 @@ fn write_page(
                     out.push_str("\" rel=\"noreferrer noopener\">");
                 }
                 out.push_str("<text class=\"umber-run-text\" direction=\"ltr\" x=\"");
-                css_px(out, event.x, page.mag);
+                let exact_character_positions = event.positions.len() == event.units.len()
+                    && event.units.iter().all(|unit| match unit {
+                        TextUnit::Space => true,
+                        TextUnit::Code(code) => font.web.encoding[usize::from(*code)]
+                            .as_ref()
+                            .is_some_and(|mapping| mapping.chars().count() == 1),
+                    });
+                if exact_character_positions {
+                    for (index, position) in event.positions.iter().enumerate() {
+                        if index > 0 {
+                            out.push(' ');
+                        }
+                        css_px(out, *position, page.mag);
+                    }
+                } else {
+                    // A multi-scalar mapping represents one TeX unit. SVG cannot
+                    // skip entries in an x-position list, so retain browser
+                    // shaping for that exceptional run rather than assigning
+                    // later scalars to positions belonging to subsequent units.
+                    css_px(out, event.x, page.mag);
+                }
                 out.push_str("\" y=\"");
                 css_px(out, event.baseline, page.mag);
                 out.push_str("\">");
