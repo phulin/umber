@@ -108,6 +108,17 @@ identity; and the final bounded legal-program differential generator. Later
 issues must refine these families into individual source branches and state
 transitions without deleting or reassigning an owner invisibly.
 
+## Phase 6 VM core
+
+`umber2-ild0.8` supplies the bounded execution core in
+`bib-engine/src/classic_vm.rs`. It consumes immutable `bib-bst` programs and
+prepared classic database state, with explicit operand and call stacks rather
+than user-controlled Rust recursion. It owns command lifecycle, current-entry
+state, variables and assignment, core control flow, stable `SORT`, and
+detached bounded BBL/BLG effects. Fatal results retain inspection-only partial
+effects while withholding publishable artifacts. Text, name, layout, and the
+remaining compatibility built-ins remain Phase 7 work.
+
 ## Upstream test inventory
 
 The classic Web2C suite consists of:

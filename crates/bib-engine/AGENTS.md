@@ -10,6 +10,7 @@ in native and WASM builds without subprocesses or native-filesystem access.
 - `src/lib.rs`: detached public job, option, result, failure, attempt, one-shot, and serialization contracts.
 - `src/classic.rs`: backend-neutral protocol detection plus bounded classic AUX closure and typed classic resource discovery.
 - `src/classic_database.rs`: classic `READ` preparation, immutable VM-visible entry storage, and schema/options-aware prepared-database cache.
+- `src/classic_vm.rs`: bounded classic BST command execution, mutable VM state, and detached BBL/BLG effects.
 - `src/command.rs`: pinned in-process command invocation, output naming, status, terminal, and log-byte adapter.
 - `src/command/tests.rs`: exact invocation validation and command-result fixtures.
 - `src/session.rs`: resumable VFS resource loop, bounded caches, stage composition, and detached output routing.

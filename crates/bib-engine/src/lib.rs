@@ -11,6 +11,7 @@ use std::sync::Arc;
 mod bibliography;
 mod classic;
 mod classic_database;
+mod classic_vm;
 mod command;
 mod session;
 mod tool;
@@ -48,6 +49,10 @@ pub use classic_database::{
     ClassicDatabase, ClassicDatabaseCache, ClassicDatabaseDiagnostic,
     ClassicDatabaseDiagnosticKind, ClassicDatabaseEntry, ClassicDatabaseSource,
     prepare_classic_database,
+};
+pub use classic_vm::{
+    ClassicVmDiagnostic, ClassicVmDiagnosticKind, ClassicVmLimits, ClassicVmResult, VmValue,
+    execute_classic_style,
 };
 pub use command::{BibCommand, BibCommandError, BibCommandMode, BibCommandOutput, BibExitStatus};
 pub use session::{BibInitFailure, BibSession, BibSessionOptions};

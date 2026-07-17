@@ -379,7 +379,8 @@ impl Compiler {
                             SymbolKind::GlobalInteger(_)
                             | SymbolKind::GlobalString(_)
                             | SymbolKind::EntryInteger(_)
-                            | SymbolKind::EntryString(_),
+                            | SymbolKind::EntryString(_)
+                            | SymbolKind::Special(SpecialSymbol::SortKey),
                         )) => instructions.push(Instruction::Assign(id)),
                         Some(_) => self.error(
                             DiagnosticKind::Syntax,
