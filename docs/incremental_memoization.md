@@ -214,12 +214,17 @@ integer-parameter writes and supported detached stream text. Replay first
 validates the complete precondition sequence and imports retained nodes; only
 then does it call ordinary aggregate mutation APIs in the recorded order.
 
-Unsupported writes, group transitions, input continuations, output routines,
-display math, `\scantokens`, mid-paragraph input opening, `\endinput`, and
-untracked World access remain explicit barriers. During simplification, a
-barrier must prefer ordinary execution over broadening redo semantics. New
-mutation/effect families are added only when a measured corpus shows that the
-barrier materially limits useful aligned replay.
+Unsupported writes, nonzero or mutation-bearing group transitions, input
+continuations, output routines, display math, `\scantokens`, mid-paragraph
+input opening, `\endinput`, and untracked World access remain explicit
+barriers. A paragraph that starts and finishes at group depth zero may contain
+fully discharged groups when its mutation log is empty: it has no entry group
+to replace and needs no group redo. The empty-mutation condition matters
+because the current redo log does not retain the nested scope of a local
+count/integer assignment. During simplification, a barrier must prefer
+ordinary execution over broadening redo semantics. New mutation/effect
+families are added only when a measured corpus shows that the barrier
+materially limits useful aligned replay.
 
 ## One execution loop
 
@@ -316,15 +321,18 @@ read-set or provenance contract.
 4. **Path-separated verification.** Re-run slow pagination-changing,
    cross-generation interaction, and fast height/page-preserving Gentle
    cases. Require cold parity, exact page accounting, and the explicit
-   1,000-edit tier. Final balanced runs replayed 246 paragraphs per slow edit
-   with exact cold parity, but lost 35.800--45.193 ms across the two slow edits
-   and 58.240--70.547 ms including priming.
+   1,000-edit tier. The first final balanced runs replayed 246 paragraphs per
+   slow edit with exact cold parity, but lost 35.800--45.193 ms across the two
+   slow edits and 58.240--70.547 ms including priming. Admitting mutation-free
+   zero-to-zero group transitions later raised replay to 257 paragraphs and a
+   twelve-pair run reduced the mean slow loss to 16.066 ms while keeping the
+   fast-path mean flat at -0.935 ms.
 5. **Cleanup and release decision.** Collapse the generic memo runtime to the
    facilities still used, remove obsolete opt-in layers only after dependency
    checks, and decide paragraph default enablement from balanced release
-   measurements. The accepted-history layer remains default-disabled: 628 of
-   889 observed Gentle paragraphs were correctly barriered, chiefly because a
-   complete group transition/redo substrate is not yet available.
+   measurements. The accepted-history layer remains default-disabled: 617 of
+   889 observed Gentle paragraphs are still barriered, chiefly because a
+   complete scoped group transition/redo substrate is not yet available.
 6. **Deferred page work.** Design direct page/shipout artifact patching only
    after paragraph replay reaches its measured slow-path ceiling. It is not a
    blocker for this plan.

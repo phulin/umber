@@ -486,10 +486,17 @@ fn publish_recorded_region(
     };
     let ending_input = input.publication_summary(stores);
     let group_key = tex_state::DependencyKey::Engine(tex_state::DependencyEngineField::GroupLevel);
+    let ending_group_depth = tex_state::ExpansionState::execution_group_depth(stores);
+    let group_transition_changed =
+        recording.starting_group_changed_at != stores.track_dependency(group_key);
+    // At depth zero there is no entry frame to replace, so a fully discharged
+    // group transition needs no group redo. Recorded mutations are excluded:
+    // their current redo log does not preserve the local scope of a nested
+    // group and would otherwise replay a local write at the root.
     if recording.starting_span.is_some()
-        && (recording.starting_group_depth
-            != tex_state::ExpansionState::execution_group_depth(stores)
-            || recording.starting_group_changed_at != stores.track_dependency(group_key))
+        && (recording.starting_group_depth != ending_group_depth
+            || (group_transition_changed
+                && (recording.starting_group_depth != 0 || !mutations.is_empty())))
     {
         recording
             .barriers

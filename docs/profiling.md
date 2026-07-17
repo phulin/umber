@@ -760,8 +760,27 @@ telemetry reported 594 group transitions, 174 input transitions, 210
 unsupported writes, 50 display-math crossings, and 42 output-routine
 crossings, with overlap. Relaxing the group barrier to equal group depth plus
 equal environment identity caused a cold-DVI mismatch on the inverse edit and
-was rejected. Safe expansion therefore requires a complete retained group
-transition/redo design, not a weaker predicate or another result-cache layer.
+was rejected. Safe expansion of nonzero or mutation-bearing transitions
+therefore requires a complete retained group transition/redo design, not a
+weaker identity predicate or another result-cache layer.
+
+A subsequent narrower experiment established one useful exception. A
+paragraph that starts and finishes at depth zero cannot replace an entry group,
+and a fully discharged transition is replayable when the paragraph's mutation
+log is empty. Mutation-bearing transitions remain barriered because the
+existing count/integer redo log does not preserve nested local scope. The
+broader zero-to-zero experiment was rejected: it retained 333 paragraphs but
+produced 60 additional mutation-validation misses, grew history metadata to
+4,831,676 bytes, and increased the measured slow loss. With the scoped-mutation
+guard, Gentle retains 272 of 889 paragraphs, reports 574 group barriers, and
+replays 257 finished-line paragraphs per slow edit with 15 validation misses.
+Metadata is 2,606,512 bytes. A release twelve-pair run kept exact cold DVI and
+boundary-schedule parity and measured candidate-minus-baseline means of
++16.066 ms for the two slow edits, -3.619 ms for the interaction edit, and
+-0.935 ms for the independent fast edit. Priming-inclusive mean was +11.936
+ms, but contained a large negative baseline outlier; the slow path therefore
+remains default-disabled despite the coverage and latency improvement over the
+earlier final runs.
 
 The adversarial implementation review found no repeated accepted-substrate
 rollback, global candidate search, suffix scan, or quadratic on the measured
