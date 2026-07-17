@@ -1,6 +1,5 @@
 use super::exact_collection::CanonicalCollectionRoot;
 use super::*;
-use crate::ContentHash;
 use serde::{Deserialize, Serialize};
 
 mod node;
@@ -221,7 +220,7 @@ impl AppendOnlyIdentityCache {
         &mut self,
         len: usize,
         can_extend: bool,
-        mut leaf: impl FnMut(usize) -> Result<ContentHash, StoreFormatError>,
+        mut leaf: impl FnMut(usize) -> Result<u64, StoreFormatError>,
     ) -> Result<(), StoreFormatError> {
         if !can_extend || self.logical_len > len {
             self.root = CanonicalCollectionRoot::default();
@@ -235,24 +234,21 @@ impl AppendOnlyIdentityCache {
         Ok(())
     }
 
-    fn identity(&self) -> ContentHash {
+    fn identity(&self) -> u64 {
         self.root.identity()
     }
 }
 
-fn exact_serialized_leaf<T: Serialize>(
-    domain: &[u8],
-    value: &T,
-) -> Result<ContentHash, StoreFormatError> {
+fn exact_serialized_leaf<T: Serialize>(domain: &[u8], value: &T) -> Result<u64, StoreFormatError> {
     let encoded =
         bincode::serialize(value).map_err(|error| StoreFormatError::Codec(error.to_string()))?;
     let mut framed = Vec::with_capacity(domain.len() + encoded.len());
     framed.extend_from_slice(domain);
     framed.extend_from_slice(&encoded);
-    Ok(crate::state_hash::strong_identity_bytes(domain, &framed))
+    Ok(crate::state_hash::exact_identity_bytes(domain, &framed))
 }
 
-fn exact_name_leaf(stores: &Stores, raw: usize) -> Result<ContentHash, StoreFormatError> {
+fn exact_name_leaf(stores: &Stores, raw: usize) -> Result<u64, StoreFormatError> {
     let symbol = stores
         .interner
         .symbol_at_slot(raw as u32)
@@ -266,7 +262,7 @@ fn exact_name_leaf(stores: &Stores, raw: usize) -> Result<ContentHash, StoreForm
     )
 }
 
-fn exact_token_leaf(stores: &Stores, raw: usize) -> Result<ContentHash, StoreFormatError> {
+fn exact_token_leaf(stores: &Stores, raw: usize) -> Result<u64, StoreFormatError> {
     let id = stores.resolve_stored_token_list(TokenListId::new(raw as u32));
     let mut framed = Vec::new();
     framed.extend_from_slice(b"umber-exact-token-list-v1");
@@ -281,7 +277,9 @@ fn exact_token_leaf(stores: &Stores, raw: usize) -> Result<ContentHash, StoreFor
             Token::Cs(symbol) => {
                 framed.push(1);
                 let symbol = stores.resolve_stored_symbol(symbol);
-                framed.extend_from_slice(&exact_name_leaf(stores, symbol.raw() as usize)?.bytes());
+                framed.extend_from_slice(
+                    &exact_name_leaf(stores, symbol.raw() as usize)?.to_le_bytes(),
+                );
             }
             Token::Param(slot) => framed.extend_from_slice(&[2, slot]),
             Token::Frozen(crate::token::FrozenToken::END_TEMPLATE) => {
@@ -293,13 +291,13 @@ fn exact_token_leaf(stores: &Stores, raw: usize) -> Result<ContentHash, StoreFor
             Token::Frozen(_) => unreachable!("invalid frozen token payload"),
         }
     }
-    Ok(crate::state_hash::strong_identity_bytes(
+    Ok(crate::state_hash::exact_identity_bytes(
         b"umber-exact-token-list-v2",
         &framed,
     ))
 }
 
-fn exact_macro_leaf(stores: &Stores, raw: usize) -> Result<ContentHash, StoreFormatError> {
+fn exact_macro_leaf(stores: &Stores, raw: usize) -> Result<u64, StoreFormatError> {
     let meaning = stores.macros.get(
         stores
             .macros
@@ -311,15 +309,15 @@ fn exact_macro_leaf(stores: &Stores, raw: usize) -> Result<ContentHash, StoreFor
     let mut framed = Vec::with_capacity(96);
     framed.extend_from_slice(b"umber-exact-macro-v2");
     framed.push(meaning.flags().bits());
-    framed.extend_from_slice(&exact_token_leaf(stores, parameter.raw() as usize)?.bytes());
-    framed.extend_from_slice(&exact_token_leaf(stores, replacement.raw() as usize)?.bytes());
-    Ok(crate::state_hash::strong_identity_bytes(
+    framed.extend_from_slice(&exact_token_leaf(stores, parameter.raw() as usize)?.to_le_bytes());
+    framed.extend_from_slice(&exact_token_leaf(stores, replacement.raw() as usize)?.to_le_bytes());
+    Ok(crate::state_hash::exact_identity_bytes(
         b"umber-exact-macro-v3",
         &framed,
     ))
 }
 
-fn exact_glue_leaf(stores: &Stores, raw: usize) -> Result<ContentHash, StoreFormatError> {
+fn exact_glue_leaf(stores: &Stores, raw: usize) -> Result<u64, StoreFormatError> {
     exact_serialized_leaf(
         b"umber-exact-glue-v1",
         &FormatGlue::capture(
@@ -330,7 +328,7 @@ fn exact_glue_leaf(stores: &Stores, raw: usize) -> Result<ContentHash, StoreForm
     )
 }
 
-fn exact_font_leaf(stores: &Stores, raw: usize) -> Result<ContentHash, StoreFormatError> {
+fn exact_font_leaf(stores: &Stores, raw: usize) -> Result<u64, StoreFormatError> {
     let id = stores.resolve_stored_font(FontId::new(raw as u32));
     let base = stores.fonts.immutable_exact_identity(id);
     let identifier = stores.fonts.identifier(id).map(|symbol| {
@@ -346,30 +344,30 @@ fn exact_font_leaf(stores: &Stores, raw: usize) -> Result<ContentHash, StoreForm
     match identifier {
         Some(identifier) => {
             framed.push(1);
-            framed.extend_from_slice(&identifier.bytes());
+            framed.extend_from_slice(&identifier.to_le_bytes());
         }
         None => framed.push(0),
     }
     framed.extend_from_slice(&expansion);
-    Ok(crate::state_hash::strong_identity_bytes(
+    Ok(crate::state_hash::exact_identity_bytes(
         b"umber-exact-font-v3",
         &framed,
     ))
 }
 
 fn compose_immutable_store_root(
-    names: ContentHash,
-    tokens: ContentHash,
-    macros: ContentHash,
-    glue: ContentHash,
-    fonts: ContentHash,
-) -> ContentHash {
+    names: u64,
+    tokens: u64,
+    macros: u64,
+    glue: u64,
+    fonts: u64,
+) -> u64 {
     let mut framed = Vec::with_capacity(192);
     framed.extend_from_slice(b"umber-exact-immutable-store-v1");
     for identity in [names, tokens, macros, glue, fonts] {
-        framed.extend_from_slice(&identity.bytes());
+        framed.extend_from_slice(&identity.to_le_bytes());
     }
-    crate::state_hash::strong_identity_bytes(b"umber-exact-immutable-store-v2", &framed)
+    crate::state_hash::exact_identity_bytes(b"umber-exact-immutable-store-v2", &framed)
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -552,7 +550,7 @@ impl Stores {
     /// Canonical semantic store root for checkpoint verification. Survivor
     /// pins are retention metadata, so unlike a restorable format dump they
     /// neither prevent nor participate in this identity.
-    pub(crate) fn semantic_identity(&mut self) -> Result<ContentHash, StoreFormatError> {
+    pub(crate) fn semantic_identity(&mut self) -> Result<u64, StoreFormatError> {
         if self.env.group_depth() != 0 {
             return Err(StoreFormatError::OpenGroups(self.env.group_depth()));
         }
@@ -642,9 +640,9 @@ impl Stores {
         let mutable = self.exact_mutable_identity();
         let mut composed = Vec::with_capacity(96);
         composed.extend_from_slice(b"umber-exact-store-v1");
-        composed.extend_from_slice(&immutable.bytes());
-        composed.extend_from_slice(&mutable.bytes());
-        Ok(crate::state_hash::strong_identity_bytes(
+        composed.extend_from_slice(&immutable.to_le_bytes());
+        composed.extend_from_slice(&mutable.to_le_bytes());
+        Ok(crate::state_hash::exact_identity_bytes(
             b"umber-exact-store-v2",
             &composed,
         ))
@@ -1342,7 +1340,7 @@ fn install_frozen_sections(
     format: StoreFormat,
     frozen: frozen_core::DecodedFrozenCore,
     non_node: frozen_non_node::DecodedFrozenNonNode,
-    semantic_ids: Vec<crate::node_arena::NodeSemanticId>,
+    semantic_ids: Vec<u64>,
 ) -> Result<Stores, StoreFormatError> {
     let font_count = format.fonts.len();
     let glue_count = format.glue.len();
@@ -1407,15 +1405,21 @@ fn install_frozen_sections(
         if start != id.start() || len != id.len() {
             return Err(StoreFormatError::Invalid("frozen node span metadata"));
         }
-        spans.push((start, len, expected_id));
+        spans.push((
+            start,
+            len,
+            crate::node_arena::NodeSemanticId::unverified_frozen(expected_id),
+        ));
         verified_ids.push((id, expected_id));
     }
     stores.survivors.publish_frozen_root(root, storage, spans);
-    for (id, expected_id) in verified_ids {
+    for (id, expected_fingerprint) in verified_ids {
         let nodes = stores.nodes(id).to_vec();
-        if stores.compute_node_semantic_id(&nodes) != expected_id {
+        let semantic_id = stores.compute_node_semantic_id(&nodes);
+        if semantic_id.value() != expected_fingerprint {
             return Err(StoreFormatError::Invalid("frozen node semantic identity"));
         }
+        stores.survivors.set_frozen_semantic_id(id, semantic_id);
     }
     let mut base = Vec::with_capacity(format.env.len());
     for entry in format.env {
@@ -1716,7 +1720,7 @@ fn capture_node_list(
                     .collect();
                 out.push(FormatNodeList {
                     key: FormatListKey::capture(stores, id, survivor_roots),
-                    semantic_id: stores.node_list_semantic_id_value(id),
+                    semantic_id: stores.node_semantic_id(id).value(),
                     nodes,
                 });
             }

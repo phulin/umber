@@ -202,8 +202,8 @@ copy-on-write roots, world state, mode/page summaries, and other future-relevant
 scalars. Taking a snapshot is bounded and independent of total live document
 size; rollback cost is proportional to changed or newly allocated state.
 
-The strong canonical identity used for optional suffix adoption is derived
-later, not captured in every snapshot. Executor sinks request it only for a
+The probabilistic canonical identity used for optional suffix adoption is
+derived later, not captured in every snapshot. Executor sinks request it only for a
 schedule-aligned boundary they will compare. Its store projection separates
 append-only interned content from mutable state. Names, token lists, macros,
 glue, and fonts contribute canonical leaf identities to per-store deterministic
@@ -214,7 +214,7 @@ logarithmic collection paths. Token leaves bind canonical control-sequence-name 
 macro leaves bind parameter and replacement token-list identities, and font
 annotations bind canonical identifier-name identities rather than runtime
 handles.
-Loaded fonts retain their immutable strong identity at load, while the small
+Loaded fonts retain their immutable durable identity at load, while the small
 rollback-coupled identifier and expansion projection is composed separately.
 The derived collection caches are shared across related generation forks, validate
 allocator ancestry before extending, and fall back to canonical reconstruction
@@ -231,12 +231,22 @@ for code tables, hyphenation, magnification/font selection, page-builder
 collections and persistent node forests, live input, virtual streams and World
 scalars, interaction mode, and the append-only PDF ledger. The page and input
 projections reuse immutable-root cache keys; PDF state uses rolling semantic
-fingerprints and future allocation cursors. One versioned, domain-separated
-checkpoint identity is stored only on compared records. Full mutable-store and
+fingerprints and future allocation cursors. One versioned, domain-separated,
+fixed-seed 64-bit aHash checkpoint identity is stored only on compared records. Full mutable-store and
 page DTO serialization is not part of exact comparison, so unchanged roots are
 O(1) and work at a compared boundary is proportional to roots dirtied since
 their cached projections. Detached effects and artifacts remain splice-owned
 history and are deliberately excluded.
+
+This identity is session-local acceleration state, not a durable content or
+persistence identity. Equality is authoritative for suffix adoption: there is
+no SHA-256 or structural fallback on this path. A 64-bit collision can therefore
+cause incorrect reuse; that very rare risk is an explicit performance tradeoff.
+The fixed seeds make forks and rollback deterministic within one compatible
+build/session, while the schema/domain version defines compatibility and must be
+bumped when the framing or hash contract changes. Durable `ContentHash` values
+for files, fonts, formats, and persisted artifacts retain their cryptographic
+identity contracts and are merely framed as inputs where needed.
 
 Snapshots are not public restart points. `tex-exec` alone may publish complete
 `EngineCheckpoint`s at `JobStart`, eligible `OuterParagraphEnd`, and outermost

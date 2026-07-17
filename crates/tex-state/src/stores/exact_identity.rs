@@ -1,5 +1,4 @@
-use crate::ContentHash;
-use crate::state_hash::strong_identity_bytes;
+use crate::state_hash::exact_identity_bytes;
 use std::sync::Arc;
 
 const EMPTY_ENV_DOMAIN: &[u8] = b"umber-exact-env-empty-v1";
@@ -18,14 +17,14 @@ pub(super) struct ExactEnvIdentity {
 }
 
 impl ExactEnvIdentity {
-    pub(super) fn identity(&self) -> ContentHash {
+    pub(super) fn identity(&self) -> u64 {
         self.root.as_ref().map_or_else(
-            || strong_identity_bytes(EMPTY_ENV_DOMAIN, &[]),
+            || exact_identity_bytes(EMPTY_ENV_DOMAIN, &[]),
             |root| root.identity,
         )
     }
 
-    pub(super) fn update(&mut self, key: ContentHash, value: Option<ContentHash>) {
+    pub(super) fn update(&mut self, key: u64, value: Option<u64>) {
         #[cfg(test)]
         {
             self.updates += 1;
@@ -44,32 +43,27 @@ impl ExactEnvIdentity {
 
 #[derive(Debug)]
 struct Node {
-    key: ContentHash,
-    value: ContentHash,
-    priority: [u8; 32],
+    key: u64,
+    value: u64,
+    priority: u64,
     left: Option<Arc<Node>>,
     right: Option<Arc<Node>>,
     len: usize,
-    identity: ContentHash,
+    identity: u64,
 }
 
 impl Node {
-    fn new(
-        key: ContentHash,
-        value: ContentHash,
-        left: Option<Arc<Self>>,
-        right: Option<Arc<Self>>,
-    ) -> Arc<Self> {
-        let priority = key.bytes();
+    fn new(key: u64, value: u64, left: Option<Arc<Self>>, right: Option<Arc<Self>>) -> Arc<Self> {
+        let priority = priority(key);
         let len = 1 + node_len(&left) + node_len(&right);
         let mut bytes = [0_u8; 192];
         let mut offset = 0;
         for part in [
             ENV_NODE_DOMAIN,
-            key.bytes().as_slice(),
-            value.bytes().as_slice(),
-            node_identity(&left).bytes().as_slice(),
-            node_identity(&right).bytes().as_slice(),
+            key.to_le_bytes().as_slice(),
+            value.to_le_bytes().as_slice(),
+            node_identity(&left).to_le_bytes().as_slice(),
+            node_identity(&right).to_le_bytes().as_slice(),
             (len as u64).to_le_bytes().as_slice(),
         ] {
             bytes[offset..offset + part.len()].copy_from_slice(part);
@@ -82,7 +76,7 @@ impl Node {
             left,
             right,
             len,
-            identity: strong_identity_bytes(ENV_NODE_DOMAIN, &bytes[..offset]),
+            identity: exact_identity_bytes(ENV_NODE_DOMAIN, &bytes[..offset]),
         })
     }
 }
@@ -91,20 +85,28 @@ fn node_len(node: &Option<Arc<Node>>) -> usize {
     node.as_ref().map_or(0, |node| node.len)
 }
 
-fn node_identity(node: &Option<Arc<Node>>) -> ContentHash {
-    node.as_ref()
-        .map_or_else(ContentHash::default, |node| node.identity)
+fn node_identity(node: &Option<Arc<Node>>) -> u64 {
+    node.as_ref().map_or(0, |node| node.identity)
 }
 
-fn higher_priority_key(key: ContentHash, right: &Node) -> bool {
-    key.bytes() < right.priority || (key.bytes() == right.priority && key < right.key)
+fn higher_priority_key(key: u64, right: &Node) -> bool {
+    let key_priority = priority(key);
+    key_priority < right.priority || (key_priority == right.priority && key < right.key)
+}
+
+fn priority(mut key: u64) -> u64 {
+    key ^= key >> 30;
+    key = key.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    key ^= key >> 27;
+    key = key.wrapping_mul(0x94d0_49bb_1331_11eb);
+    key ^ (key >> 31)
 }
 
 fn higher_priority(left: &Node, right: &Node) -> bool {
     higher_priority_key(left.key, right)
 }
 
-fn insert(root: Option<Arc<Node>>, key: ContentHash, value: ContentHash) -> Option<Arc<Node>> {
+fn insert(root: Option<Arc<Node>>, key: u64, value: u64) -> Option<Arc<Node>> {
     let Some(root) = root else {
         return Some(Node::new(key, value, None, None));
     };
@@ -135,7 +137,7 @@ fn insert(root: Option<Arc<Node>>, key: ContentHash, value: ContentHash) -> Opti
     }
 }
 
-fn remove(root: Option<Arc<Node>>, key: ContentHash) -> Option<Arc<Node>> {
+fn remove(root: Option<Arc<Node>>, key: u64) -> Option<Arc<Node>> {
     let root = root?;
     if key == root.key {
         return merge(root.left.clone(), root.right.clone());
@@ -157,7 +159,7 @@ fn remove(root: Option<Arc<Node>>, key: ContentHash) -> Option<Arc<Node>> {
     }
 }
 
-fn split(root: Option<Arc<Node>>, key: ContentHash) -> (Option<Arc<Node>>, Option<Arc<Node>>) {
+fn split(root: Option<Arc<Node>>, key: u64) -> (Option<Arc<Node>>, Option<Arc<Node>>) {
     let Some(root) = root else {
         return (None, None);
     };
@@ -199,8 +201,8 @@ fn merge(left: Option<Arc<Node>>, right: Option<Arc<Node>>) -> Option<Arc<Node>>
 mod tests {
     use super::*;
 
-    fn hash(value: u8) -> ContentHash {
-        ContentHash::from_bytes(&[value])
+    fn hash(value: u8) -> u64 {
+        exact_identity_bytes(b"test", &[value])
     }
 
     #[test]

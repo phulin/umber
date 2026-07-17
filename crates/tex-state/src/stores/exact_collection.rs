@@ -1,10 +1,8 @@
-use crate::ContentHash;
-use crate::state_hash::strong_identity_bytes;
+use crate::state_hash::exact_identity_bytes;
 use std::sync::Arc;
 
 const EMPTY_DOMAIN: &[u8] = b"umber-exact-canonical-collection-empty-v1";
 const NODE_DOMAIN: &[u8] = b"umber-exact-canonical-collection-node-v1";
-const PRIORITY_DOMAIN: &[u8] = b"umber-exact-canonical-collection-priority-v1";
 
 /// Persistent deterministic treap over canonical content identities.
 ///
@@ -15,13 +13,13 @@ const PRIORITY_DOMAIN: &[u8] = b"umber-exact-canonical-collection-priority-v1";
 pub(super) struct CanonicalCollectionRoot(Option<Arc<Node>>);
 
 impl CanonicalCollectionRoot {
-    pub(super) fn insert(&mut self, key: ContentHash) {
+    pub(super) fn insert(&mut self, key: u64) {
         self.0 = insert(self.0.take(), key);
     }
 
-    pub(super) fn identity(&self) -> ContentHash {
+    pub(super) fn identity(&self) -> u64 {
         self.0.as_ref().map_or_else(
-            || strong_identity_bytes(EMPTY_DOMAIN, &[]),
+            || exact_identity_bytes(EMPTY_DOMAIN, &[]),
             |root| root.identity,
         )
     }
@@ -29,23 +27,23 @@ impl CanonicalCollectionRoot {
 
 #[derive(Debug)]
 struct Node {
-    key: ContentHash,
-    priority: [u8; 32],
+    key: u64,
+    priority: u64,
     left: Option<Arc<Self>>,
     right: Option<Arc<Self>>,
     len: usize,
-    identity: ContentHash,
+    identity: u64,
 }
 
 impl Node {
-    fn new(key: ContentHash, left: Option<Arc<Self>>, right: Option<Arc<Self>>) -> Arc<Self> {
+    fn new(key: u64, left: Option<Arc<Self>>, right: Option<Arc<Self>>) -> Arc<Self> {
         let len = 1 + node_len(&left) + node_len(&right);
         let priority = priority(key);
         let mut framed = Vec::with_capacity(144);
         framed.extend_from_slice(NODE_DOMAIN);
-        framed.extend_from_slice(&key.bytes());
-        framed.extend_from_slice(&node_identity(&left).bytes());
-        framed.extend_from_slice(&node_identity(&right).bytes());
+        framed.extend_from_slice(&key.to_le_bytes());
+        framed.extend_from_slice(&node_identity(&left).to_le_bytes());
+        framed.extend_from_slice(&node_identity(&right).to_le_bytes());
         framed.extend_from_slice(&(len as u64).to_le_bytes());
         Arc::new(Self {
             key,
@@ -53,28 +51,29 @@ impl Node {
             left,
             right,
             len,
-            identity: strong_identity_bytes(NODE_DOMAIN, &framed),
+            identity: exact_identity_bytes(NODE_DOMAIN, &framed),
         })
     }
 }
 
-fn priority(key: ContentHash) -> [u8; 32] {
-    let mut framed = Vec::with_capacity(80);
-    framed.extend_from_slice(PRIORITY_DOMAIN);
-    framed.extend_from_slice(&key.bytes());
-    strong_identity_bytes(PRIORITY_DOMAIN, &framed).bytes()
+fn priority(key: u64) -> u64 {
+    let mut priority = key;
+    priority ^= priority >> 30;
+    priority = priority.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    priority ^= priority >> 27;
+    priority = priority.wrapping_mul(0x94d0_49bb_1331_11eb);
+    priority ^ (priority >> 31)
 }
 
 fn node_len(node: &Option<Arc<Node>>) -> usize {
     node.as_ref().map_or(0, |node| node.len)
 }
 
-fn node_identity(node: &Option<Arc<Node>>) -> ContentHash {
-    node.as_ref()
-        .map_or_else(ContentHash::default, |node| node.identity)
+fn node_identity(node: &Option<Arc<Node>>) -> u64 {
+    node.as_ref().map_or(0, |node| node.identity)
 }
 
-fn insert(root: Option<Arc<Node>>, key: ContentHash) -> Option<Arc<Node>> {
+fn insert(root: Option<Arc<Node>>, key: u64) -> Option<Arc<Node>> {
     let Some(root) = root else {
         return Some(Node::new(key, None, None));
     };
@@ -101,7 +100,7 @@ fn insert(root: Option<Arc<Node>>, key: ContentHash) -> Option<Arc<Node>> {
     }
 }
 
-fn split(root: Option<Arc<Node>>, key: ContentHash) -> (Option<Arc<Node>>, Option<Arc<Node>>) {
+fn split(root: Option<Arc<Node>>, key: u64) -> (Option<Arc<Node>>, Option<Arc<Node>>) {
     let Some(root) = root else {
         return (None, None);
     };
@@ -118,8 +117,8 @@ fn split(root: Option<Arc<Node>>, key: ContentHash) -> (Option<Arc<Node>>, Optio
 mod tests {
     use super::*;
 
-    fn hash(value: u8) -> ContentHash {
-        ContentHash::from_bytes(&[value])
+    fn hash(value: u8) -> u64 {
+        exact_identity_bytes(b"test", &[value])
     }
 
     #[test]

@@ -202,7 +202,7 @@ impl Stores {
     /// components reuse the same root-keyed canonical projections as the
     /// rolling checkpoint hash, so an exact comparison visits only roots that
     /// have changed since their last projection.
-    pub(crate) fn exact_mutable_identity(&mut self) -> ContentHash {
+    pub(crate) fn exact_mutable_identity(&mut self) -> u64 {
         let cursor = self.state_hash_cursor();
         let mut cache = std::mem::take(&mut self.semantic_hash_cache);
         let code_tables: [StateHashFragment; 6] = core::array::from_fn(|table| {
@@ -220,9 +220,10 @@ impl Stores {
             StateHashComponent::Hyphenation,
             |projection| self.hyphenation.hash_semantic(projection),
         );
-        let prepared_mag = StateHashFragment::from_builder(PREPARED_MAG_DOMAIN, |projection| {
-            hash_prepared_mag(self.prepared_mag, projection);
-        });
+        let prepared_mag =
+            StateHashFragment::from_exact_builder(PREPARED_MAG_DOMAIN, |projection| {
+                hash_prepared_mag(self.prepared_mag, projection);
+            });
         let last_loaded_font = cached_projection(
             &mut cache.last_loaded_font,
             &cursor.last_loaded_font,
@@ -237,14 +238,14 @@ impl Stores {
 
         let mut framed = Vec::with_capacity(32 + 8 * 9);
         framed.extend_from_slice(b"umber-exact-mutable-store-v1");
-        framed.extend_from_slice(&self.exact_env_identity().bytes());
+        framed.extend_from_slice(&self.exact_env_identity().to_le_bytes());
         for fragment in code_tables {
-            framed.extend_from_slice(&fragment.identity().bytes());
+            framed.extend_from_slice(&fragment.exact_identity().to_le_bytes());
         }
-        framed.extend_from_slice(&hyphenation.identity().bytes());
-        framed.extend_from_slice(&prepared_mag.identity().bytes());
-        framed.extend_from_slice(&last_loaded_font.identity().bytes());
-        crate::state_hash::strong_identity_bytes(b"umber-exact-mutable-store-v2", &framed)
+        framed.extend_from_slice(&hyphenation.exact_identity().to_le_bytes());
+        framed.extend_from_slice(&prepared_mag.exact_identity().to_le_bytes());
+        framed.extend_from_slice(&last_loaded_font.exact_identity().to_le_bytes());
+        crate::state_hash::exact_identity_bytes(b"umber-exact-mutable-store-v2", &framed)
     }
 
     #[must_use]
@@ -409,7 +410,7 @@ impl Stores {
             },
         );
         self.semantic_hash_cache = cache;
-        let mut hasher = StateHasher::new(STORE_SLICE_DOMAIN);
+        let mut hasher = StateHasher::new_exact(STORE_SLICE_DOMAIN);
         journal.apply(&mut hasher);
         for fragment in code_tables {
             fragment.apply(&mut hasher);
@@ -679,13 +680,13 @@ impl Stores {
         hasher.finish()
     }
 
-    fn exact_cell_key(&self, key: &SemanticCellKey) -> ContentHash {
+    fn exact_cell_key(&self, key: &SemanticCellKey) -> u64 {
         exact_identity_from_hashers(EXACT_CELL_KEY_DOMAIN, |hasher| {
             self.hash_cell_key(key, hasher);
         })
     }
 
-    fn exact_cell_value(&self, cell: CellId, word: u64) -> ContentHash {
+    fn exact_cell_value(&self, cell: CellId, word: u64) -> u64 {
         exact_identity_from_hashers(EXACT_CELL_VALUE_DOMAIN, |hasher| {
             self.hash_cell_value(cell, word, hasher);
         })
@@ -708,7 +709,7 @@ impl Stores {
         }
     }
 
-    pub(crate) fn exact_env_identity(&self) -> ContentHash {
+    pub(crate) fn exact_env_identity(&self) -> u64 {
         self.exact_env_identity.identity()
     }
 
@@ -1641,13 +1642,10 @@ pub(super) fn hash_print_sink(sink: crate::world::PrintSink, hasher: &mut StateH
     }
 }
 
-fn exact_identity_from_hashers(
-    domain: u64,
-    mut write: impl FnMut(&mut StateHasher),
-) -> ContentHash {
-    let mut hasher = StateHasher::new(domain);
+fn exact_identity_from_hashers(domain: u64, mut write: impl FnMut(&mut StateHasher)) -> u64 {
+    let mut hasher = StateHasher::new_exact(domain);
     write(&mut hasher);
-    hasher.finish_identity()
+    hasher.finish_exact_identity()
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]

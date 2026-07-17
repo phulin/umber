@@ -2648,7 +2648,7 @@ fn exact_immutable_font_collection_ignores_allocation_order() {
 
 #[test]
 fn exact_checkpoint_identity_composes_every_future_state_root() {
-    fn identity(universe: &mut Universe) -> ContentHash {
+    fn identity(universe: &mut Universe) -> u64 {
         universe
             .snapshot_with_exact_identity()
             .exact_state_identity
@@ -2698,7 +2698,7 @@ fn exact_checkpoint_identity_restores_after_inverse_mutation() {
     assert_eq!(identity_of(&mut universe), baseline);
 }
 
-fn identity_of(universe: &mut Universe) -> ContentHash {
+fn identity_of(universe: &mut Universe) -> u64 {
     universe
         .snapshot_with_exact_identity()
         .exact_state_identity

@@ -224,6 +224,7 @@ impl FontStore {
         let mut hash_fragments_by_key = BTreeMap::new();
         let mut font_hash_fragments = Vec::with_capacity(rows.len());
         let mut complete_hash_fragments = Vec::with_capacity(rows.len());
+        let mut exact_immutable_identities = Vec::with_capacity(rows.len());
         for (raw, (font, identifier, expansion)) in rows.into_iter().enumerate() {
             if expansion.is_some()
                 && matches!(font.construction(), FontConstruction::Expanded { .. })
@@ -251,6 +252,7 @@ impl FontStore {
                 hash_fragments[fragment],
                 identifier_text,
             ));
+            exact_immutable_identities.push(exact_immutable_font_identity(&font));
             if raw != 0 && matches!(font.construction(), FontConstruction::Loaded) {
                 let key = FontKey {
                     name: font.name().to_owned(),
@@ -284,6 +286,7 @@ impl FontStore {
             hash_fragments_by_key,
             font_hash_fragments,
             complete_hash_fragments,
+            exact_immutable_identities,
             identities,
         })
     }

@@ -13,6 +13,11 @@ pub(crate) struct NodeSemanticId {
 
 impl NodeSemanticId {
     #[must_use]
+    pub(crate) const fn value(self) -> u64 {
+        self.fingerprint
+    }
+
+    #[must_use]
     pub(crate) const fn fragment(self) -> crate::state_hash::StateHashFragment {
         crate::state_hash::StateHashFragment::from_parts(self.fingerprint, self.identity)
     }
@@ -22,11 +27,15 @@ impl NodeSemanticId {
         hasher.strong_identity(self.identity);
     }
 
-    /// Constructs an identity whose bytes were independently validated by a
-    /// frozen-format decoder.
+    /// Temporary identity used only while a frozen graph is being installed.
+    /// The loader replaces it with the recomputed strong identity before the
+    /// restored stores can escape.
     #[must_use]
-    pub(crate) const fn from_validated(value: u64) -> Self {
-        Self(value)
+    pub(crate) const fn unverified_frozen(fingerprint: u64) -> Self {
+        Self {
+            fingerprint,
+            identity: ContentHash::new([0; 32]),
+        }
     }
 
     #[must_use]

@@ -270,6 +270,23 @@ impl SurvivorArena {
         span.semantic_id
     }
 
+    /// Replaces one placeholder identity while atomically installing a frozen
+    /// graph. Callers must finish validating every span before exposing the
+    /// restored stores.
+    pub(crate) fn set_frozen_semantic_id(&mut self, id: NodeListId, semantic_id: NodeSemanticId) {
+        let ArenaRef::Survivor(root) = id.arena() else {
+            panic!("frozen semantic ids belong to survivor roots");
+        };
+        let root = self.root_mut(root);
+        let index = root
+            .semantic_spans
+            .binary_search_by_key(&id.start(), |span| span.start)
+            .expect("frozen node-list semantic id is not live");
+        let span = &mut root.semantic_spans[index];
+        assert_eq!(span.len, id.len(), "frozen semantic span length mismatch");
+        span.semantic_id = semantic_id;
+    }
+
     /// Increments the root refcount for a survivor list.
     pub(crate) fn inc_ref(&mut self, id: NodeListId) {
         let ArenaRef::Survivor(root) = id.arena() else {

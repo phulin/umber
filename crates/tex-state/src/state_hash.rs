@@ -11,7 +11,9 @@
 //! see `docs/core_state.md` §9.
 
 use crate::ContentHash;
+use ahash::{AHasher, RandomState};
 use sha2::{Digest, Sha256};
+use std::hash::{BuildHasher, Hasher};
 
 const MIX_INCREMENT: u64 = 0x9e37_79b9_7f4a_7c15;
 // Schema-v8 streaming constants. The odd multiplier keeps the recurrence
@@ -19,6 +21,31 @@ const MIX_INCREMENT: u64 = 0x9e37_79b9_7f4a_7c15;
 const STREAM_MULTIPLIER: u64 = 0x9e37_79b1_85eb_ca87;
 const STREAM_INCREMENT: u64 = 0x632b_e59b_d9b4_e019;
 const INITIAL_STATE: u64 = 0x6a09_e667_f3bc_c909;
+const EXACT_HASH_SCHEMA: &[u8] = b"umber-session-exact-hash-v1";
+
+fn exact_hasher(domain: u64) -> AHasher {
+    let state = RandomState::with_seeds(
+        0x756d_6265_725f_6578,
+        0x6163_745f_6168_6173,
+        0x685f_7631_5f66_6978,
+        0x6564_5f73_6565_6473,
+    );
+    let mut hasher = state.build_hasher();
+    hasher.write(EXACT_HASH_SCHEMA);
+    hasher.write_u64(domain);
+    hasher
+}
+
+/// Fixed-seed, domain-framed session-local exact identity for canonical bytes.
+#[must_use]
+pub(crate) fn exact_identity_bytes(domain: &[u8], bytes: &[u8]) -> u64 {
+    let mut hasher = exact_hasher(0x6279_7465_735f_7631);
+    hasher.write_usize(domain.len());
+    hasher.write(domain);
+    hasher.write_usize(bytes.len());
+    hasher.write(bytes);
+    hasher.finish()
+}
 
 /// Initial checkpoint hash before any semantic slice is combined.
 pub(crate) const INITIAL_STATE_HASH: u64 = INITIAL_STATE;
@@ -84,7 +111,8 @@ pub(crate) fn strong_identity_bytes(domain: &[u8], bytes: &[u8]) -> ContentHash 
 pub(crate) struct StateHasher {
     states: [u64; 4],
     lanes: u8,
-    strong: Sha256,
+    strong: Option<Sha256>,
+    exact: AHasher,
 }
 
 /// Domain-separated fingerprint for semantic data that is immutable after
@@ -95,7 +123,8 @@ pub(crate) struct StateHasher {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct StateHashFragment {
     fingerprint: u64,
-    identity: ContentHash,
+    exact_identity: u64,
+    strong_identity: Option<ContentHash>,
 }
 
 /// One discardable canonical projection paired with its private reuse key.
@@ -125,13 +154,22 @@ impl StateHashFragment {
     pub(crate) const fn from_parts(fingerprint: u64, identity: ContentHash) -> Self {
         Self {
             fingerprint,
-            identity,
+            exact_identity: fingerprint,
+            strong_identity: Some(identity),
         }
     }
 
     #[must_use]
     pub(crate) fn from_builder(domain: u64, build: impl FnOnce(&mut StateHasher)) -> Self {
         let mut hasher = StateHasher::new(domain);
+        build(&mut hasher);
+        hasher.finish_fragment()
+    }
+
+    /// Builds a session-local exact fragment without maintaining SHA-256 state.
+    #[must_use]
+    pub(crate) fn from_exact_builder(domain: u64, build: impl FnOnce(&mut StateHasher)) -> Self {
+        let mut hasher = StateHasher::new_exact(domain);
         build(&mut hasher);
         hasher.finish_fragment()
     }
@@ -157,7 +195,7 @@ impl StateHashFragment {
     ) -> Self {
         #[cfg(feature = "profiling-stats")]
         let started = crate::world::World::start_profiling_timer();
-        let mut hasher = StateHasher::new(domain);
+        let mut hasher = StateHasher::new_exact(domain);
         let visits = build(&mut hasher);
         let fragment = hasher.finish_fragment();
         #[cfg(feature = "profiling-stats")]
@@ -169,7 +207,13 @@ impl StateHashFragment {
 
     pub(crate) fn apply(&self, hasher: &mut StateHasher) {
         hasher.u64(self.fingerprint);
-        hasher.strong_identity(self.identity);
+        hasher.exact.write_u64(self.exact_identity);
+        if hasher.strong.is_some() {
+            hasher.strong_identity(
+                self.strong_identity
+                    .expect("strong fragment composition requires a strong child identity"),
+            );
+        }
     }
 
     #[must_use]
@@ -180,12 +224,19 @@ impl StateHashFragment {
     /// Collision-resistant identity over the fragment's canonical field stream.
     #[must_use]
     pub(crate) const fn identity(self) -> ContentHash {
-        self.identity
+        self.strong_identity
+            .expect("fragment was built for session-local exact comparison only")
     }
 
     #[must_use]
     pub(crate) const fn bytes(self) -> [u8; 32] {
-        self.identity.bytes()
+        self.identity().bytes()
+    }
+
+    /// Probabilistic fixed-seed identity used only for session-local exact reuse.
+    #[must_use]
+    pub(crate) const fn exact_identity(self) -> u64 {
+        self.exact_identity
     }
 }
 
@@ -198,7 +249,18 @@ impl StateHasher {
         Self {
             states: [INITIAL_STATE ^ domain, 0, 0, 0],
             lanes: 1,
-            strong,
+            strong: Some(strong),
+            exact: exact_hasher(domain),
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn new_exact(domain: u64) -> Self {
+        Self {
+            states: [INITIAL_STATE ^ domain, 0, 0, 0],
+            lanes: 1,
+            strong: None,
+            exact: exact_hasher(domain),
         }
     }
 
@@ -217,7 +279,8 @@ impl StateHasher {
                 INITIAL_STATE ^ domains[3],
             ],
             lanes: 4,
-            strong,
+            strong: Some(strong),
+            exact: exact_hasher(domains[0] ^ domains[1] ^ domains[2] ^ domains[3]),
         }
     }
 
@@ -230,22 +293,34 @@ impl StateHasher {
     }
 
     pub(crate) fn u8(&mut self, value: u8) {
-        self.strong.update([value]);
+        if let Some(strong) = &mut self.strong {
+            strong.update([value]);
+        }
+        self.exact.write_u8(value);
         self.mix(u64::from(value));
     }
 
     pub(crate) fn u16(&mut self, value: u16) {
-        self.strong.update(value.to_le_bytes());
+        if let Some(strong) = &mut self.strong {
+            strong.update(value.to_le_bytes());
+        }
+        self.exact.write_u16(value);
         self.mix(u64::from(value));
     }
 
     pub(crate) fn u32(&mut self, value: u32) {
-        self.strong.update(value.to_le_bytes());
+        if let Some(strong) = &mut self.strong {
+            strong.update(value.to_le_bytes());
+        }
+        self.exact.write_u32(value);
         self.mix(u64::from(value));
     }
 
     pub(crate) fn u64(&mut self, value: u64) {
-        self.strong.update(value.to_le_bytes());
+        if let Some(strong) = &mut self.strong {
+            strong.update(value.to_le_bytes());
+        }
+        self.exact.write_u64(value);
         self.mix(value);
     }
 
@@ -259,7 +334,10 @@ impl StateHasher {
 
     pub(crate) fn bytes(&mut self, bytes: &[u8]) {
         self.usize(bytes.len());
-        self.strong.update(bytes);
+        if let Some(strong) = &mut self.strong {
+            strong.update(bytes);
+        }
+        self.exact.write(bytes);
         for chunk in bytes.chunks(8) {
             let mut word = 0_u64;
             for (offset, byte) in chunk.iter().copied().enumerate() {
@@ -278,22 +356,27 @@ impl StateHasher {
         splitmix64(self.states[0])
     }
 
-    /// Finishes only the collision-resistant canonical identity.
     #[must_use]
-    pub(crate) fn finish_identity(self) -> ContentHash {
-        ContentHash::new(self.strong.finalize().into())
+    pub(crate) fn finish_exact_identity(self) -> u64 {
+        self.exact.finish()
     }
 
     pub(crate) fn finish_fragment(self) -> StateHashFragment {
         StateHashFragment {
             fingerprint: splitmix64(self.states[0]),
-            identity: ContentHash::new(self.strong.finalize().into()),
+            exact_identity: self.exact.finish(),
+            strong_identity: self
+                .strong
+                .map(|strong| ContentHash::new(strong.finalize().into())),
         }
     }
 
     /// Frames a child strong identity without narrowing it through the rolling lane.
     pub(crate) fn strong_identity(&mut self, identity: ContentHash) {
-        self.strong.update(identity.bytes());
+        if let Some(strong) = &mut self.strong {
+            strong.update(identity.bytes());
+        }
+        self.exact.write(&identity.bytes());
     }
 
     #[must_use]
@@ -354,14 +437,14 @@ mod tests {
 
     #[test]
     fn equal_rolling_fingerprints_do_not_alias_strong_child_identities() {
-        let left = StateHashFragment {
-            fingerprint: 0xdead_beef_dead_beef,
-            identity: strong_identity_bytes(b"collision-shape", b"left"),
-        };
-        let right = StateHashFragment {
-            fingerprint: left.fingerprint,
-            identity: strong_identity_bytes(b"collision-shape", b"right"),
-        };
+        let left = StateHashFragment::from_parts(
+            0xdead_beef_dead_beef,
+            strong_identity_bytes(b"collision-shape", b"left"),
+        );
+        let right = StateHashFragment::from_parts(
+            left.fingerprint,
+            strong_identity_bytes(b"collision-shape", b"right"),
+        );
         let compose = |child: StateHashFragment| {
             StateHashFragment::from_builder(0x636f_6c6c_6973_696f, |hasher| child.apply(hasher))
         };
@@ -369,6 +452,7 @@ mod tests {
         let left = compose(left);
         let right = compose(right);
         assert_eq!(left.fingerprint(), right.fingerprint());
+        assert_ne!(left.exact_identity(), right.exact_identity());
         assert_ne!(left.identity(), right.identity());
     }
 }

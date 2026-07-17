@@ -955,9 +955,10 @@ impl Default for PdfState {
             document_fragments: PdfDocumentFragments::default(),
             document_objects: PdfDocumentObjectIds::default(),
             catalog_open_action: None,
-            action_fingerprint: StateHasher::new(0x7064_665f_6163_746e).finish_fragment(),
+            action_fingerprint: StateHasher::new_exact(0x7064_665f_6163_746e).finish_fragment(),
             page_reservations: Arc::new(Vec::new()),
-            page_reservation_fingerprint: StateHasher::new(0x7064_665f_7067_7273).finish_fragment(),
+            page_reservation_fingerprint: StateHasher::new_exact(0x7064_665f_7067_7273)
+                .finish_fragment(),
             space_font_names: vec![default_space_font.clone()],
             space_font_name_lookup: BTreeMap::from([(default_space_font.clone(), 0)]),
             current_space_font_name: 0,
@@ -965,7 +966,7 @@ impl Default for PdfState {
             annotations: Arc::new(Vec::new()),
             annotation_fingerprint: annotation_fingerprint(&[]),
             links: Arc::new(Vec::new()),
-            link_fingerprint: StateHasher::new(0x7064_665f_6c69_6e6b).finish_fragment(),
+            link_fingerprint: StateHasher::new_exact(0x7064_665f_6c69_6e6b).finish_fragment(),
             open_links: Arc::new(Vec::new()),
             open_link_fingerprint: open_link_fingerprint(&[]),
             color_stacks: Arc::new(Vec::new()),
@@ -973,10 +974,11 @@ impl Default for PdfState {
             last_position: (Scaled::from_raw(0), Scaled::from_raw(0)),
             snap_reference: (Scaled::from_raw(0), Scaled::from_raw(0)),
             forms: Arc::new(Vec::new()),
-            form_fingerprint: StateHasher::new(PDF_FORM_DOMAIN).finish_fragment(),
+            form_fingerprint: StateHasher::new_exact(PDF_FORM_DOMAIN).finish_fragment(),
             next_form_resource: 1,
             form_artifacts: Arc::new(BTreeMap::new()),
-            form_artifact_fingerprint: StateHasher::new(0x7064_665f_666d_6172).finish_fragment(),
+            form_artifact_fingerprint: StateHasher::new_exact(0x7064_665f_666d_6172)
+                .finish_fragment(),
             return_value: 0,
             destinations: Arc::new(Vec::new()),
             destination_fingerprint: destination_fingerprint(&[], false),
@@ -1901,7 +1903,7 @@ impl PdfState {
     }
 
     pub(crate) fn set_form_artifact(&mut self, object: u32, artifact: PdfFormArtifact) {
-        let mut hasher = StateHasher::new(0x7064_665f_666d_6172);
+        let mut hasher = StateHasher::new_exact(0x7064_665f_666d_6172);
         self.form_artifact_fingerprint.apply(&mut hasher);
         hasher.u32(object);
         hasher.bytes(&artifact.bytes);
@@ -2216,7 +2218,7 @@ impl PdfState {
     #[must_use]
     pub(crate) fn hash_fragment(&self) -> StateHashFragment {
         let cursor = self.cursor();
-        StateHashFragment::from_builder(PDF_STATE_DOMAIN, |hasher| {
+        StateHashFragment::from_exact_builder(PDF_STATE_DOMAIN, |hasher| {
             hasher.bool(cursor.enabled);
             hasher.u32(cursor.next_object);
             hasher.usize(cursor.page_count);
@@ -2434,7 +2436,7 @@ impl PdfState {
 }
 
 fn color_stack_fingerprint(stacks: &[PdfColorStack]) -> StateHashFragment {
-    let mut hasher = StateHasher::new(PDF_COLOR_STACK_DOMAIN);
+    let mut hasher = StateHasher::new_exact(PDF_COLOR_STACK_DOMAIN);
     hasher.usize(stacks.len());
     for stack in stacks {
         hasher.u8(match stack.mode {
@@ -2455,11 +2457,11 @@ fn color_stack_fingerprint(stacks: &[PdfColorStack]) -> StateHashFragment {
 }
 
 fn external_image_base_fingerprint() -> StateHashFragment {
-    StateHasher::new(PDF_EXTERNAL_IMAGE_DOMAIN).finish_fragment()
+    StateHasher::new_exact(PDF_EXTERNAL_IMAGE_DOMAIN).finish_fragment()
 }
 
 fn page_reservation_fingerprint(reservations: &[PdfPageReservation]) -> StateHashFragment {
-    let mut hasher = StateHasher::new(0x7064_665f_7067_7273);
+    let mut hasher = StateHasher::new_exact(0x7064_665f_7067_7273);
     hasher.usize(reservations.len());
     for reservation in reservations {
         hasher.u32(reservation.number);
@@ -2469,14 +2471,14 @@ fn page_reservation_fingerprint(reservations: &[PdfPageReservation]) -> StateHas
 }
 
 fn annotation_fingerprint(_records: &[PdfAnnotationRecord]) -> StateHashFragment {
-    StateHasher::new(0x7064_665f_616e_6e6f).finish_fragment()
+    StateHasher::new_exact(0x7064_665f_616e_6e6f).finish_fragment()
 }
 
 fn append_annotation_reservation_fingerprint(
     previous: StateHashFragment,
     object: u32,
 ) -> StateHashFragment {
-    let mut hasher = StateHasher::new(0x7064_665f_616e_6e6f);
+    let mut hasher = StateHasher::new_exact(0x7064_665f_616e_6e6f);
     previous.apply(&mut hasher);
     hasher.u8(0);
     hasher.u32(object);
@@ -2489,7 +2491,7 @@ fn append_annotation_data_fingerprint(
     dimensions: PdfAnnotationDimensions,
     entries_semantic_id: StateHashFragment,
 ) -> StateHashFragment {
-    let mut hasher = StateHasher::new(0x7064_665f_616e_6e6f);
+    let mut hasher = StateHasher::new_exact(0x7064_665f_616e_6e6f);
     previous.apply(&mut hasher);
     hasher.u8(1);
     hasher.u32(object);
@@ -2504,7 +2506,7 @@ fn append_link_fingerprint(
     attributes_semantic_id: StateHashFragment,
     action_semantic_id: StateHashFragment,
 ) -> StateHashFragment {
-    let mut hasher = StateHasher::new(0x7064_665f_6c69_6e6b);
+    let mut hasher = StateHasher::new_exact(0x7064_665f_6c69_6e6b);
     previous.apply(&mut hasher);
     hasher.u32(record.object());
     hash_annotation_dimensions(&mut hasher, record.dimensions());
@@ -2514,7 +2516,7 @@ fn append_link_fingerprint(
 }
 
 fn open_link_fingerprint(links: &[PdfOpenLink]) -> StateHashFragment {
-    let mut hasher = StateHasher::new(0x7064_665f_6f70_6c6e);
+    let mut hasher = StateHasher::new_exact(0x7064_665f_6f70_6c6e);
     hasher.usize(links.len());
     for link in links {
         hasher.u32(link.record.object());
@@ -2524,7 +2526,7 @@ fn open_link_fingerprint(links: &[PdfOpenLink]) -> StateHashFragment {
 }
 
 fn destination_fingerprint(records: &[PdfDestinationRecord], structure: bool) -> StateHashFragment {
-    let mut hasher = StateHasher::new(if structure {
+    let mut hasher = StateHasher::new_exact(if structure {
         0x7064_665f_7364_7374
     } else {
         0x7064_665f_6465_7374
@@ -2552,11 +2554,11 @@ fn destination_fingerprint(records: &[PdfDestinationRecord], structure: bool) ->
 }
 
 fn outline_fingerprint(_records: &[PdfOutlineRecord]) -> StateHashFragment {
-    StateHasher::new(0x7064_665f_6f75_746c).finish_fragment()
+    StateHasher::new_exact(0x7064_665f_6f75_746c).finish_fragment()
 }
 
 fn thread_fingerprint(records: &[PdfThreadRecord]) -> StateHashFragment {
-    let mut hasher = StateHasher::new(0x7064_665f_7468_7264);
+    let mut hasher = StateHasher::new_exact(0x7064_665f_7468_7264);
     for record in records {
         match record.identity() {
             PdfDestinationIdentity::Name(name) => {
@@ -2584,7 +2586,7 @@ fn append_outline_fingerprint(
     action_semantic_id: StateHashFragment,
     title_semantic_id: StateHashFragment,
 ) -> StateHashFragment {
-    let mut hasher = StateHasher::new(0x7064_665f_6f75_746c);
+    let mut hasher = StateHasher::new_exact(0x7064_665f_6f75_746c);
     previous.apply(&mut hasher);
     hasher.u32(record.action_object());
     hasher.u32(record.item_object());
@@ -2606,7 +2608,7 @@ fn hash_annotation_dimensions(hasher: &mut StateHasher, dimensions: PdfAnnotatio
 }
 
 fn external_image_fingerprint(images: &[PdfExternalImageRecord]) -> StateHashFragment {
-    let mut hasher = StateHasher::new(PDF_EXTERNAL_IMAGE_DOMAIN);
+    let mut hasher = StateHasher::new_exact(PDF_EXTERNAL_IMAGE_DOMAIN);
     hasher.usize(images.len());
     for record in images {
         hasher.u32(record.id.raw());
@@ -2660,7 +2662,7 @@ fn append_font_resource_fingerprint(
     previous: StateHashFragment,
     record: PdfFontResourceRecord,
 ) -> StateHashFragment {
-    let mut hasher = StateHasher::new(PDF_FONT_DOMAIN);
+    let mut hasher = StateHasher::new_exact(PDF_FONT_DOMAIN);
     previous.apply(&mut hasher);
     hasher.tag(5);
     hasher.u32(record.font.raw());
@@ -2679,7 +2681,7 @@ fn append_font_fingerprint(
     previous: StateHashFragment,
     operation: &PdfFontOperation,
 ) -> StateHashFragment {
-    let mut hasher = StateHasher::new(PDF_FONT_DOMAIN);
+    let mut hasher = StateHasher::new_exact(PDF_FONT_DOMAIN);
     previous.apply(&mut hasher);
     match operation {
         PdfFontOperation::Map(PdfFontMapOperation::File(file)) => {
@@ -2776,7 +2778,7 @@ fn match_fingerprint(
     slot_count: u32,
     matched: bool,
 ) -> StateHashFragment {
-    let mut hasher = StateHasher::new(0x7064_665f_6d61_7463);
+    let mut hasher = StateHasher::new_exact(0x7064_665f_6d61_7463);
     hasher.bytes(haystack);
     hasher.u32(slot_count);
     hasher.bool(matched);
@@ -2795,14 +2797,14 @@ fn match_fingerprint(
 }
 
 fn base_fingerprint(enabled: bool) -> StateHashFragment {
-    let mut hasher = StateHasher::new(PDF_STATE_DOMAIN);
+    let mut hasher = StateHasher::new_exact(PDF_STATE_DOMAIN);
     hasher.bool(enabled);
     hasher.u32(FIRST_DYNAMIC_OBJECT);
     hasher.finish_fragment()
 }
 
 fn space_font_name_fingerprint(name: &[u8]) -> StateHashFragment {
-    let mut hasher = StateHasher::new(0x7064_665f_7370_666e);
+    let mut hasher = StateHasher::new_exact(0x7064_665f_7370_666e);
     hasher.bytes(name);
     hasher.finish_fragment()
 }
@@ -2811,14 +2813,14 @@ fn freeze_fingerprint(
     previous: StateHashFragment,
     parameters: PdfOutputParameters,
 ) -> StateHashFragment {
-    let mut hasher = StateHasher::new(PDF_PAGE_DOMAIN);
+    let mut hasher = StateHasher::new_exact(PDF_PAGE_DOMAIN);
     previous.apply(&mut hasher);
     hash_output_parameters(&mut hasher, Some(parameters));
     hasher.finish_fragment()
 }
 
 fn append_fingerprint(previous: StateHashFragment, record: PdfPageRecord) -> StateHashFragment {
-    let mut hasher = StateHasher::new(PDF_PAGE_DOMAIN);
+    let mut hasher = StateHasher::new_exact(PDF_PAGE_DOMAIN);
     previous.apply(&mut hasher);
     hasher.bytes(&record.artifact.bytes());
     hasher.u32(record.resources_object);
@@ -2839,7 +2841,7 @@ fn append_form_fingerprint(
     previous: StateHashFragment,
     record: PdfFormRecord,
 ) -> StateHashFragment {
-    let mut hasher = StateHasher::new(PDF_FORM_DOMAIN);
+    let mut hasher = StateHasher::new_exact(PDF_FORM_DOMAIN);
     previous.apply(&mut hasher);
     hasher.u32(record.object);
     hasher.u32(record.resource);
@@ -2861,7 +2863,7 @@ fn freeze_pk_mode_fingerprint(
     previous: StateHashFragment,
     mode: PdfTokenParameter,
 ) -> StateHashFragment {
-    let mut hasher = StateHasher::new(PDF_PAGE_DOMAIN);
+    let mut hasher = StateHasher::new_exact(PDF_PAGE_DOMAIN);
     previous.apply(&mut hasher);
     hasher.bytes(&mode.semantic_id.bytes());
     hasher.finish_fragment()

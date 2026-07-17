@@ -215,7 +215,7 @@ record computes its identity on that first later comparison and caches it in
 derived record metadata shared by record clones; cold history and boundaries
 that are never compared retain only their O(1) roots. Canonical store identity
 separates append-only interned content from mutable checkpoint state. Stable
-font data is strongly identified once at load, and new token-list, macro,
+font data keeps its durable identity from load, and new token-list, macro,
 name, glue, and font entries add only canonical leaves and prefix roots to a
 cache shared by related forks. Allocator ancestry prevents a divergent
 post-rollback suffix from reusing the wrong derived root. This cache is not
@@ -223,7 +223,13 @@ semantic state and does not change rollback or exact-match results. Mutable
 environment state contributes its journal-maintained persistent Merkle root;
 code-table, hyphenation, page, input, World, interaction, and PDF components
 contribute cached canonical roots or rolling semantic fingerprints. A single
-versioned checkpoint identity composes those components. Exact comparison does
+versioned, domain-separated, fixed-seed 64-bit aHash checkpoint identity
+composes those components. Equality is authoritative for suffix adoption, with
+no SHA-256 or structural fallback; the accepted rare collision risk is confined
+to this session-local optimization. Fixed seeds make fork and rollback results
+deterministic within a compatible build/session, and a schema change invalidates
+retained compatibility. Durable content and persistence identities remain
+unchanged. Exact comparison does
 not serialize the full mutable store or page graph, and therefore visits only
 component roots dirtied since their prior projection.
 Restart uses one validated aggregate fork operation: clone the retained

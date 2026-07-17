@@ -92,7 +92,7 @@ fn current_page_binary_carry_rebuilds_only_the_affected_path() {
 }
 
 fn hash_page(page: &PageBuilderState, cache: &mut PageHashCache) -> u64 {
-    let mut hasher = StateHasher::new(0x7061_6765_5f74_6573);
+    let mut hasher = StateHasher::new_exact(0x7061_6765_5f74_6573);
     page.hash_semantic(
         &mut hasher,
         cache,

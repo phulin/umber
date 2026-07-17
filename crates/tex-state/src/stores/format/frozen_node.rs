@@ -18,7 +18,7 @@ pub(crate) struct FrozenNodeSection<'a> {
 
 pub(crate) struct DecodedFrozenNodes {
     pub(crate) lists: Vec<FormatNodeList>,
-    pub(crate) semantic_ids: Vec<crate::node_arena::NodeSemanticId>,
+    pub(crate) semantic_ids: Vec<u64>,
 }
 
 fn options() -> impl Options {
@@ -153,7 +153,7 @@ pub(super) fn decode(
             semantic_id: semantic,
             nodes,
         });
-        semantic_ids.push(crate::node_arena::NodeSemanticId::from_validated(semantic));
+        semantic_ids.push(semantic);
     }
     if previous_end != payload_len {
         return Err(StoreFormatError::Invalid("frozen node trailing payload"));

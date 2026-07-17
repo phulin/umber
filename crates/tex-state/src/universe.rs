@@ -463,7 +463,7 @@ pub struct Snapshot {
     interaction_mode: InteractionMode,
     page: PageBuilderState,
     pdf: PdfStateSnapshot,
-    exact_state_identity: Option<ContentHash>,
+    exact_state_identity: Option<u64>,
     dependency_tracker: DependencyTrackerSnapshot,
     state_hash: u64,
     state_hash_base: StateHashBase,
@@ -1909,7 +1909,7 @@ impl Universe {
     ) -> u64 {
         let mut projection = EngineBoundaryHasher {
             stores: &self.stores,
-            hasher: StateHasher::new(domain),
+            hasher: StateHasher::new_exact(domain),
             visits: 0,
         };
         #[cfg(feature = "profiling-stats")]
@@ -2332,7 +2332,7 @@ impl Universe {
         let pdf = self.pdf.hash_fragment();
         self.state_hash_projection_cache = cache;
 
-        let mut hasher = StateHasher::new(UNIVERSE_SLICE_DOMAIN);
+        let mut hasher = StateHasher::new_exact(UNIVERSE_SLICE_DOMAIN);
         hasher.u32(crate::CHECKPOINT_STATE_HASH_SCHEMA_VERSION);
         hasher.u64(store);
         world.apply(&mut hasher);
@@ -2403,7 +2403,7 @@ impl Universe {
                 hash_shell_escape_policy(self.world.shell_escape_policy(), projection);
             },
         );
-        StateHashFragment::from_builder(WORLD_SLICE_DOMAIN, |projection| {
+        StateHashFragment::from_exact_builder(WORLD_SLICE_DOMAIN, |projection| {
             effects.apply(projection);
             projection.tag(0x81);
             // Input records are content-addressed provenance allocations. Live
@@ -2433,7 +2433,7 @@ impl Universe {
                 cache.world_streams = Some(CachedProjection::new(stream_root, fragment));
                 fragment
             });
-        let scalars = StateHashFragment::from_builder(WORLD_SCALARS_DOMAIN, |projection| {
+        let scalars = StateHashFragment::from_exact_builder(WORLD_SCALARS_DOMAIN, |projection| {
             hash_rng_state(self.world.rng_state(), projection);
             hash_pdf_random_state(&self.world, projection);
             hash_pdf_timer_state(&self.world, projection);
@@ -2445,7 +2445,7 @@ impl Universe {
                 WorldCommitMode::Exported => 2,
             });
         });
-        StateHashFragment::from_builder(WORLD_SLICE_DOMAIN ^ 0x6578_6163_7400, |projection| {
+        StateHashFragment::from_exact_builder(WORLD_SLICE_DOMAIN ^ 0x6578_6163_7400, |projection| {
             streams.apply(projection);
             scalars.apply(projection);
         })
@@ -2507,7 +2507,7 @@ impl Universe {
     }
 
     fn hash_page_state(&self, cache: &mut PageHashCache) -> StateHashFragment {
-        StateHashFragment::from_builder(0x7061_6765_5f62_6e64, |projection| {
+        StateHashFragment::from_exact_builder(0x7061_6765_5f62_6e64, |projection| {
             self.page.hash_semantic(
                 projection,
                 cache,
@@ -2519,7 +2519,7 @@ impl Universe {
         })
     }
 
-    fn exact_checkpoint_identity(&mut self) -> Result<ContentHash, StoreFormatError> {
+    fn exact_checkpoint_identity(&mut self) -> Result<u64, StoreFormatError> {
         #[cfg(feature = "profiling-stats")]
         let started = std::time::Instant::now();
         let store = self.stores.semantic_identity()?;
@@ -2527,7 +2527,7 @@ impl Universe {
         let input = self.hash_input_summary(&mut cache);
         let world = self.hash_exact_world_state(&mut cache);
         let interaction =
-            StateHashFragment::from_builder(INTERACTION_PROJECTION_DOMAIN, |projection| {
+            StateHashFragment::from_exact_builder(INTERACTION_PROJECTION_DOMAIN, |projection| {
                 hash_interaction_mode(self.interaction_mode, projection)
             });
         let page = self.hash_page_state(&mut cache.page);
@@ -2536,12 +2536,12 @@ impl Universe {
 
         let mut framed = Vec::with_capacity(192);
         framed.extend_from_slice(b"umber-exact-checkpoint-v2");
-        framed.extend_from_slice(&store.bytes());
+        framed.extend_from_slice(&store.to_le_bytes());
         for component in [input, world, interaction, page, pdf] {
-            framed.extend_from_slice(&component.identity().bytes());
+            framed.extend_from_slice(&component.exact_identity().to_le_bytes());
         }
         let identity =
-            crate::state_hash::strong_identity_bytes(b"umber-exact-checkpoint-v2", &framed);
+            crate::state_hash::exact_identity_bytes(b"umber-exact-checkpoint-v3", &framed);
         #[cfg(feature = "profiling-stats")]
         crate::measurement::record_exact_identity(started.elapsed());
         Ok(identity)

@@ -1,10 +1,11 @@
 use super::{FormatGlue, FormatMacro, FormatName, FormatToken, StoreFormat, StoreFormatError};
+use crate::ContentHash;
 use crate::glue::{GlueSpec, GlueStore, Order};
 use crate::interner::{ControlSequenceKind, Interner, semantic_atom};
 use crate::macro_store::{MacroMeaning, MacroParameterPattern, MacroStore};
 use crate::scaled::Scaled;
 use crate::token::{Catcode, FrozenToken, Token};
-use crate::token_store::{TokenSemanticId, TokenSemanticIdBuilder, TokenStore};
+use crate::token_store::{TokenSemanticIdBuilder, TokenStore};
 
 pub(crate) const NAMES_SECTION: u32 = 256;
 pub(crate) const NAMES_LOOKUP_SECTION: u32 = 257;
@@ -349,7 +350,7 @@ fn decode_tokens(
 fn encode_token(
     token: &FormatToken,
     names: &[FormatName],
-) -> Result<(u64, Token, Option<u64>), StoreFormatError> {
+) -> Result<(u64, Token, Option<(u64, ContentHash)>), StoreFormatError> {
     const TAG_SHIFT: u32 = 56;
     Ok(match *token {
         FormatToken::Char { ch, cat } => {
@@ -372,7 +373,7 @@ fn encode_token(
             (
                 (1_u64 << TAG_SHIFT) | u64::from(raw),
                 Token::Cs(crate::interner::Symbol::new(raw)),
-                Some(semantic_atom(kind, &name.text)),
+                Some(strong_semantic_atom(kind, &name.text)),
             )
         }
         FormatToken::Param(slot) => (
@@ -398,7 +399,7 @@ fn encode_token(
 fn decode_token(
     word: u64,
     interner: &Interner,
-) -> Result<(FormatToken, Token, Option<u64>), StoreFormatError> {
+) -> Result<(FormatToken, Token, Option<(u64, ContentHash)>), StoreFormatError> {
     let tag = word >> 56;
     let payload = word & 0x00ff_ffff_ffff_ffff;
     match tag {
@@ -422,7 +423,15 @@ fn decode_token(
             Ok((
                 FormatToken::Cs(raw),
                 Token::Cs(symbol),
-                interner.semantic_atom(symbol),
+                interner.semantic_atom(symbol).map(|fingerprint| {
+                    let symbol = interner
+                        .resolve_stored(symbol)
+                        .expect("decoded frozen symbol should resolve to its stored identity");
+                    let kind = interner.kind_id(symbol);
+                    let name = interner.resolve_id(symbol);
+                    let (_, identity) = strong_semantic_atom(kind, name);
+                    (fingerprint, identity)
+                }),
             ))
         }
         2 if payload <= u64::from(u8::MAX) => Ok((
@@ -441,6 +450,19 @@ fn decode_token(
         )),
         _ => Err(StoreFormatError::Invalid("invalid frozen token word")),
     }
+}
+
+fn strong_semantic_atom(kind: ControlSequenceKind, name: &str) -> (u64, ContentHash) {
+    let mut bytes = Vec::with_capacity(name.len() + 1);
+    bytes.push(match kind {
+        ControlSequenceKind::Named => 0,
+        ControlSequenceKind::ActiveCharacter => 1,
+    });
+    bytes.extend_from_slice(name.as_bytes());
+    (
+        semantic_atom(kind, name),
+        crate::state_hash::strong_identity_bytes(b"umber-control-sequence-v1", &bytes),
+    )
 }
 
 fn encode_macros(macros: &[FormatMacro]) -> Result<Vec<u8>, StoreFormatError> {

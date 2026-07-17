@@ -317,7 +317,7 @@ impl PageBuilderState {
             |projection| hash_nodes(&self.split_discards, projection),
         );
 
-        StateHashFragment::from_builder(PAGE_PROJECTION_DOMAIN, |projection| {
+        StateHashFragment::from_exact_builder(PAGE_PROJECTION_DOMAIN, |projection| {
             scalars.apply(projection);
             insertions.apply(projection);
             mark_classes.apply(projection);

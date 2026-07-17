@@ -602,24 +602,29 @@ remaining old trace when all future-relevant roots match. This identity is
 separate from the folded history hash and includes every live continuation
 root while excluding already detached output history.
 
-The fast comparison may use immutable root identity and versioned strong
-semantic digests, but a cache hit cannot rely on an unverified 64-bit collision.
-Where roots are not shared, structural comparison or a stronger canonical
-identity verifies equality before suffix adoption.
+The fast comparison uses immutable root identity and a versioned, fixed-seed
+64-bit aHash over canonical semantic projections. Hash equality is authoritative
+for suffix adoption: the session-local path deliberately performs no SHA-256 or
+structural verification. A rare 64-bit collision may therefore produce
+incorrect reuse; this is an accepted performance tradeoff rather than a durable
+integrity guarantee. Domain/schema changes invalidate compatibility, while the
+fixed seeds preserve deterministic identities across forks and rollback within
+one compatible build/session. Durable content and persistence identities remain
+cryptographic and separate.
 
 Failure to match merely continues trace validation and replay.
 
 The implemented splice walks the flat ordered named-boundary trace after the
 restart point. Every mapped boundary is attempted even after an earlier miss,
 so a semantic edit can retype its changed pages and still adopt later pages.
-Adoption now requires a SHA-256 identity of canonical store state, the
+Adoption now requires the 64-bit session-local identity of canonical store state, the
 allocation-independent detached page transition, an exact future-input
 comparison that ignores only revision-relative coordinates, exact mode state,
 and exact future-relevant World scalars. Existing detached effect and artifact
 prefixes remain outside that comparison and are composed in order. Boundaries
 inside open groups, or any boundary whose canonical projection cannot be
 formed, are safe misses. The folded `state_hash` remains diagnostic telemetry
-and is not consulted by the splice decision. Strong identities are requested
+and is not consulted by the splice decision. Exact session-local identities are requested
 only by incremental history sinks; ordinary rollback and profiling checkpoints
 retain the O(1) snapshot path.
 
