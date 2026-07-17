@@ -264,6 +264,7 @@ READ EXECUTE {main}"#,
 fn substring_negative_starts_count_back_from_the_right_edge() {
     assert_eq!(super::classic_substring("abcdef", -1, 4), "cdef");
     assert_eq!(super::classic_substring("abcdef", -2, 4), "bcde");
+    assert_eq!(super::classic_substring("100--110", -2, 10_000), "100--11");
     assert_eq!(super::classic_substring("1984", -1, 4), "1984");
 }
 

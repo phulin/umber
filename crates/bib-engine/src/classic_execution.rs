@@ -95,7 +95,7 @@ impl ClassicExecutionSession {
             })
             .collect::<Vec<_>>();
         let Some(style) = compile.program() else {
-            return self.fatal(control, diagnostics, Vec::new(), Vec::new());
+            return self.fatal(control, diagnostics, Vec::new(), Vec::new(), Vec::new());
         };
         let sources = found[1..]
             .iter()
@@ -126,12 +126,14 @@ impl ClassicExecutionSession {
         let blg_path = output_path(job.aux_path(), "blg");
         let bbl = wrap_bbl(vm.partial_bbl());
         let blg = render_log(&control, style, &database, &vm);
+        let terminal_lines = vm.terminal_lines().map(str::to_owned).collect::<Vec<_>>();
         if vm.is_fatal() {
             return self.fatal(
                 control,
                 diagnostics,
                 vec![GeneratedFile::new(bbl_path, Arc::<[u8]>::from(bbl))],
                 vec![GeneratedFile::new(blg_path, Arc::<[u8]>::from(blg))],
+                terminal_lines,
             );
         }
         let history = if diagnostics
@@ -147,9 +149,12 @@ impl ClassicExecutionSession {
         BibliographyAttempt::Finished(
             BibliographyResult::new(
                 history,
-                BibliographyDocument::Classic(Arc::new(crate::ClassicBibliography::from_control(
-                    &control,
-                ))),
+                BibliographyDocument::Classic(Arc::new(
+                    crate::ClassicBibliography::from_control_with_terminal(
+                        &control,
+                        terminal_lines,
+                    ),
+                )),
                 [
                     GeneratedFile::new(bbl_path, Arc::<[u8]>::from(bbl)),
                     GeneratedFile::new(blg_path, Arc::<[u8]>::from(blg)),
@@ -184,13 +189,17 @@ impl ClassicExecutionSession {
         diagnostics: Vec<BibliographyDiagnostic>,
         bbl: Vec<GeneratedFile>,
         blg: Vec<GeneratedFile>,
+        terminal_lines: Vec<String>,
     ) -> BibliographyAttempt {
         BibliographyAttempt::Finished(
             BibliographyResult::new(
                 BibliographyHistory::Fatal,
-                BibliographyDocument::Classic(Arc::new(crate::ClassicBibliography::from_control(
-                    &control,
-                ))),
+                BibliographyDocument::Classic(Arc::new(
+                    crate::ClassicBibliography::from_control_with_terminal(
+                        &control,
+                        terminal_lines,
+                    ),
+                )),
                 [],
                 bbl.into_iter().chain(blg).collect::<Vec<_>>(),
                 diagnostics,
@@ -318,7 +327,7 @@ fn render_log(
 ) -> Vec<u8> {
     let mut log = String::from("This is BibTeX, Version 0.99d (TeX Live 2025)\n");
     log.push_str("Capacity: max_strings=200000, hash_size=200000, hash_prime=170003\n");
-    render_control_header(&mut log, control);
+    render_control_opening(&mut log, control);
     for event in style.web2c_reallocations() {
         log.push_str(&format!(
             "Reallocated {} (elt_size={}) to {} items from {}.\n",
@@ -328,6 +337,7 @@ fn render_log(
             event.old_capacity(),
         ));
     }
+    render_database_header(&mut log, control);
     for diagnostic in database.diagnostics() {
         render_warning(&mut log, diagnostic.message(), diagnostic.source());
     }
@@ -408,7 +418,7 @@ fn render_vm_diagnostic(
     }
 }
 
-pub(crate) fn render_control_header(log: &mut String, control: &ClassicControl) {
+fn render_control_opening(log: &mut String, control: &ClassicControl) {
     if let Some(aux) = control.aux_files().next() {
         log.push_str("The top-level auxiliary file: ");
         log.push_str(file_name(aux));
@@ -422,6 +432,9 @@ pub(crate) fn render_control_header(log: &mut String, control: &ClassicControl) 
         }
         log.push('\n');
     }
+}
+
+fn render_database_header(log: &mut String, control: &ClassicControl) {
     for (index, database_name) in control.databases().enumerate() {
         log.push_str(&format!("Database file #{}: {database_name}", index + 1));
         if !database_name.ends_with(".bib") {
@@ -518,6 +531,10 @@ fn classic_string_usage(
         // looked up. READ inserts the encountered database keys instead.
         if citation != "*" {
             let _ = pool.intern(citation);
+            // Citation lookup retains both the original case-sensitive key
+            // and its separately interned lowercase lookup key. They share
+            // a pool entry only when the spelling is already lowercase.
+            let _ = pool.intern(&citation.to_ascii_lowercase());
         }
     }
     style.apply_pool_trace(&mut pool);

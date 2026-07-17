@@ -178,6 +178,13 @@ impl ClassicVmResult {
     pub(crate) fn log_events(&self) -> &[ClassicVmLogEvent] {
         &self.log_events
     }
+
+    pub(crate) fn terminal_lines(&self) -> impl Iterator<Item = &str> {
+        self.log_events.iter().filter_map(|event| match event {
+            ClassicVmLogEvent::Stack(value) => Some(value.as_str()),
+            ClassicVmLogEvent::Diagnostic(_) => None,
+        })
+    }
     #[must_use]
     pub fn entry_order(&self) -> &[String] {
         &self.entry_order
@@ -1187,20 +1194,30 @@ fn classic_substring(value: &str, start: i64, count: i64) -> String {
         return String::new();
     }
     let chars: Vec<char> = value.chars().collect();
-    let start = if start > 0 {
-        i128::from(start - 1)
-    } else {
-        // A negative start identifies the right edge of the requested slice.
-        // Thus `#-1 #4 substring$` retains the final four characters.
-        chars.len() as i128 + i128::from(start) - i128::from(count) + 1
-    };
-    if start < 0 || start >= chars.len() as i128 {
+    let length = chars.len() as i128;
+    let count = i128::from(count);
+    let start = i128::from(start);
+    if count >= length && matches!(start, 1 | -1) {
+        return value.to_owned();
+    }
+    if start > length || start < -length {
         return String::new();
     }
+    let (start, count) = if start > 0 {
+        let start = start - 1;
+        (start, count.min(length - start))
+    } else {
+        // A negative start identifies the inclusive right edge of the slice.
+        // The requested width is clipped at the left edge, so `#-2
+        // global.max$ substring$` retains every character except the last.
+        let end = length + start + 1;
+        let count = count.min(end);
+        (end - count, count)
+    };
     chars
         .into_iter()
         .skip(start as usize)
-        .take(usize::try_from(count).unwrap_or(usize::MAX))
+        .take(count as usize)
         .collect()
 }
 

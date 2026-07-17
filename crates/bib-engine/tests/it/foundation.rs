@@ -457,6 +457,19 @@ fn classic_real_world_elsarticle_month_has_exact_public_command_parity() {
     );
 }
 
+#[test]
+fn classic_real_world_ieeetran_has_exact_public_command_parity() {
+    execute_real_world_command(
+        "ieeetran",
+        include_bytes!("../../../../tests/corpus/bibtex/cases/ieeetran/ieeetran.aux"),
+        include_bytes!("../../../../tests/corpus/bibtex/cases/ieeetran/references.bib"),
+        include_bytes!("../../../../tests/corpus/bibtex/styles/IEEEtran.bst"),
+        include_bytes!("../../../../tests/corpus/bibtex/cases/ieeetran/ieeetran.bbl"),
+        include_bytes!("../../../../tests/corpus/bibtex/cases/ieeetran/ieeetran.blg"),
+        include_bytes!("../../../../tests/corpus/bibtex/cases/ieeetran/ieeetran.terminal"),
+    );
+}
+
 fn execute_standard_style(
     name: &str,
     aux_bytes: &[u8],

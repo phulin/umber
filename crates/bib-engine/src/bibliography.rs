@@ -293,6 +293,7 @@ pub struct ClassicBibliography {
     aux_files: Arc<[VirtualPath]>,
     databases: Arc<[String]>,
     style: Option<String>,
+    terminal_lines: Arc<[String]>,
 }
 
 impl ClassicBibliography {
@@ -302,6 +303,7 @@ impl ClassicBibliography {
             aux_files: Arc::new([]),
             databases: Arc::new([]),
             style: None,
+            terminal_lines: Arc::new([]),
         }
     }
 
@@ -314,7 +316,17 @@ impl ClassicBibliography {
                 .collect::<Vec<_>>()
                 .into(),
             style: control.style().map(str::to_owned),
+            terminal_lines: Arc::new([]),
         }
+    }
+
+    pub(crate) fn from_control_with_terminal(
+        control: &crate::classic::ClassicControl,
+        terminal_lines: impl IntoIterator<Item = String>,
+    ) -> Self {
+        let mut bibliography = Self::from_control(control);
+        bibliography.terminal_lines = terminal_lines.into_iter().collect::<Vec<_>>().into();
+        bibliography
     }
 
     pub fn aux_files(&self) -> impl ExactSizeIterator<Item = &VirtualPath> {
@@ -328,6 +340,10 @@ impl ClassicBibliography {
     #[must_use]
     pub fn style(&self) -> Option<&str> {
         self.style.as_deref()
+    }
+
+    pub(crate) fn terminal_lines(&self) -> impl ExactSizeIterator<Item = &str> {
+        self.terminal_lines.iter().map(String::as_str)
     }
 }
 

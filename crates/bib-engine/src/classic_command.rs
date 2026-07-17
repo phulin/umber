@@ -235,6 +235,10 @@ fn render_terminal(result: &BibliographyResult) -> Vec<u8> {
         }
         terminal.push('\n');
     }
+    for line in document.terminal_lines() {
+        terminal.push_str(line);
+        terminal.push('\n');
+    }
     for diagnostic in result.diagnostics() {
         let source = match diagnostic.source() {
             Some(BibliographySourceLocation::Classic(source)) => Some(source),
