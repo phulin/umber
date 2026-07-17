@@ -338,6 +338,8 @@ async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
                 const page = doc.querySelector('.umber-page');
                 const mag = Number(page.dataset.umberMag);
                 const px = raw => Number(raw) * mag * 48 / (65536 * 5 * 7227);
+                const originX = Number(page.dataset.umberOriginXSp);
+                const originY = Number(page.dataset.umberOriginYSp);
                 const close = (a, b) => Math.abs(a - b) <= 1 / 30 + 1e-6;
                 let ok = doc.documentElement.outerHTML.includes('umber-html/1');
                 for (const zoom of [1, 1.25, 2]) {
@@ -349,12 +351,16 @@ async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
                   const baseline = run.querySelector('.umber-baseline').getBoundingClientRect();
                   ok = ok && Number(rule.dataset.umberXSp) < 0
                     && close(pageRect.width, px(page.dataset.umberWidthSp) * zoom)
-                    && close(ruleRect.left - pageRect.left, px(rule.dataset.umberXSp) * zoom)
-                    && close(ruleRect.top - pageRect.top, px(rule.dataset.umberYSp) * zoom)
+                    && close(ruleRect.left - pageRect.left,
+                      px(originX + Number(rule.dataset.umberXSp)) * zoom)
+                    && close(ruleRect.top - pageRect.top,
+                      px(originY + Number(rule.dataset.umberYSp)) * zoom)
                     && close(ruleRect.width, px(rule.dataset.umberWidthSp) * zoom)
                     && close(ruleRect.height, px(rule.dataset.umberHeightSp) * zoom)
-                    && close(baseline.left - pageRect.left, px(run.dataset.umberXSp) * zoom)
-                    && close(baseline.top - pageRect.top, px(run.dataset.umberBaselineSp) * zoom);
+                    && close(baseline.left - pageRect.left,
+                      px(originX + Number(run.dataset.umberXSp)) * zoom)
+                    && close(baseline.top - pageRect.top,
+                      px(originY + Number(run.dataset.umberBaselineSp)) * zoom);
                 }
                 iframe.remove();
                 resolve(ok);
