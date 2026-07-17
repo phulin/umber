@@ -77,6 +77,7 @@ fn compare_owned_upstream(
             | SemanticOwner::Names
             | SemanticOwner::SortAndLists
             | SemanticOwner::Labels
+            | SemanticOwner::Output
     ) {
         pass_upstream(
             assertion,

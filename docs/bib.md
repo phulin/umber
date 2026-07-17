@@ -2,8 +2,9 @@
 
 Status: foundation contracts, pinned Unicode utilities, bounded XML and
 BibTeX inputs, deterministic cross-entry graphs, structured names,
-data-list/sorting, and labeling/uniqueness are implemented; serialization,
-session, and project integration continue in dependency order.
+data-list/sorting, labeling/uniqueness, and exact BBL 3.3 serialization are
+implemented; secondary serializers, session, and project integration continue
+in dependency order.
 
 This document defines Umber's pure-Rust bibliography subsystem. Every Rust
 package uses the `bib-*` prefix, and modules, types, commands, features, and
@@ -145,8 +146,8 @@ The workspace now contains these packages and dependency boundaries:
   presort, sort initials, and stable ordering;
 - `bib-label`: static and context-dependent entry processing, name visibility,
   hashes, label fields, extradate/title values, and uniqueness;
-- `bib-output`: detached deterministic serializers for every supported output
-  format; and
+- `bib-output`: detached deterministic BBL 3.3 serialization, followed by the
+  separately tracked secondary output formats; and
 - `bib-engine`: the only ordinary dependency of `umber`, composing the stages
   and exposing resource-session and one-shot APIs.
 
@@ -598,6 +599,19 @@ Every output writer specifies:
 - malformed or unrepresentable-value diagnostics; and
 - output-size accounting.
 
+The implemented BBL 3.3 writer consumes only the frozen document, explicit
+`OutputRequest`, and pinned `UnicodeData`. Frozen sections retain declared
+data-list kind and order, ordered key aliases and undefined citekeys, while
+data-list items retain ordered context-computed field overrides so one entry
+can have distinct `sortinit` values in different lists. The writer emits the
+exact version header and section/list/entry framing, names and initials,
+annotations, typed scalar/list/range/date/verbatim values, aliases, and missing
+keys. UTF-8 and pinned legacy encodings plus LF/CRLF are explicit request
+properties. Checked byte accounting, structural-value validation, incompatible
+table/schema detection, and unrepresentable characters return typed failures
+with stable ordered diagnostics; serializers read no VFS, host locale, mutable
+option state, or process global.
+
 Diagnostics have stable codes and structured data:
 
 ```rust
@@ -775,6 +789,12 @@ All 121 direct assertions owned by `datalists`, `skips`, `skipsg`,
 `sort-case`, `sort-complex`, `sort-names`, `sort-order`, `sort-uc`, and
 `sorting`, plus the five sorting/list assertions transferred from
 `basic-misc`, execute normally with no sorting-stage xfails.
+
+All five development-gated `full-bbl.t` assertions and the 14 exact-entry
+assertions transferred from `basic-misc.t` execute normally with no BBL-output
+xfails. The complete committed `full-bbl.bbl` is regenerated from a frozen
+document and compared byte for byte, including its three list contexts, alias,
+undefined key, header, and trailing newlines.
 
 The two upstream files that exercise several stages use assertion-level
 ownership rather than file-level ownership. Their Rust modules enforce the

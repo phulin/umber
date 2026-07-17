@@ -1,7 +1,11 @@
 //! Detached deterministic bibliography serializer boundary.
 
+mod bbl;
+
 use bib_model::{GeneratedFile, OutputRequest, ProcessedBibliography};
 use bib_unicode::UnicodeData;
+
+pub use bbl::{BblOutputFailure, BblOutputFailureKind, BblSerializer};
 
 #[derive(Clone, Copy, Debug)]
 pub struct OutputContext<'a> {
@@ -34,3 +38,6 @@ pub trait Serializer {
         request: &OutputRequest,
     ) -> Result<GeneratedFile, Self::Error>;
 }
+
+#[cfg(test)]
+mod tests;

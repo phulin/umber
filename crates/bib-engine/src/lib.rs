@@ -9,11 +9,17 @@ use std::fmt;
 use std::sync::Arc;
 
 pub use bib_model::{
-    BibConfigurationBuilder, BibDiagnostic, BibDiagnosticCode, BibSeverity, COMPATIBILITY_VERSION,
-    CompatibilityVersion, DataList, DataListId, Entry, EntryId, FieldId, FieldValue, GeneratedFile,
-    OutputFormat, OutputRequest, ProcessedBibliography, ProcessedBibliographyBuilder,
-    ProcessedSection, SectionId, VirtualPath,
+    BibConfigurationBuilder, BibDiagnostic, BibDiagnosticCode, BibSeverity, BibSourceLocation,
+    COMPATIBILITY_VERSION, CompatibilityVersion, DataList, DataListId, DataListKind, Entry,
+    EntryBuilder, EntryId, EntryType, Field, FieldId, FieldProvenance, FieldValue, FieldValueStage,
+    GeneratedFile, Literal, NameBuilder, NameList, NamePartValue, OutputFormat, OutputNewline,
+    OutputRequest, ProcessedBibliography, ProcessedBibliographyBuilder, ProcessedSection,
+    ProcessedSectionBuilder, SectionId, SourceSpan, VirtualPath,
 };
+pub use bib_output::{
+    BblOutputFailure, BblOutputFailureKind, BblSerializer, OutputContext, Serializer,
+};
+pub use bib_unicode::{LegacyEncoding, UnicodeData};
 use umber_vfs::FileRequestBatch;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

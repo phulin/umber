@@ -1,7 +1,7 @@
 // Direct xfail translation of upstream t/full-bbl.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream;
 
 const UPSTREAM_SOURCE: &str = r########"# -*- cperl -*-
 use v5.24;
@@ -48,7 +48,7 @@ like($stdout, qr|WARN - Possible typo \(case mismatch\) between citation and dat
 
 #[test]
 fn assertion_001_full_test_has_zero_exit_status() {
-    xfail_upstream(
+    pass_upstream(
         "Full test has zero exit status",
         r########"in_process_session.exit_status /* upstream: $? >> 8 */"########,
         r########"0"########,
@@ -59,7 +59,7 @@ fn assertion_001_full_test_has_zero_exit_status() {
 
 #[test]
 fn assertion_002_testing_lossort_case_and_sortinit_for_macros() {
-    xfail_upstream(
+    pass_upstream(
         "Testing lossort case and sortinit for macros",
         r########"in_process_session.output_bytes /* upstream: compare($bbl, 't/tdata/full-bbl.bbl') == 0 */"########,
         r########"fixture_bytes('t/tdata/full-bbl.bbl')"########,
@@ -70,7 +70,7 @@ fn assertion_002_testing_lossort_case_and_sortinit_for_macros() {
 
 #[test]
 fn assertion_003_testing_duplicate_case_key_warnings_1() {
-    xfail_upstream(
+    pass_upstream(
         "Testing duplicate/case key warnings - 1",
         r########"in_process_session.rendered_diagnostics /* upstream: $stdout */"########,
         r########"qr|WARN - Duplicate entry key: 'F1' in file 't/tdata/full-bbl\.bib', skipping \.\.\.|ms"########,
@@ -81,7 +81,7 @@ fn assertion_003_testing_duplicate_case_key_warnings_1() {
 
 #[test]
 fn assertion_004_testing_duplicate_case_key_warnings_2() {
-    xfail_upstream(
+    pass_upstream(
         "Testing duplicate/case key warnings - 2",
         r########"in_process_session.rendered_diagnostics /* upstream: $stdout */"########,
         r########"qr|WARN - Possible typo \(case mismatch\) between datasource keys: 'f1' and 'F1' in file 't/tdata/full-bbl\.bib'|ms"########,
@@ -92,7 +92,7 @@ fn assertion_004_testing_duplicate_case_key_warnings_2() {
 
 #[test]
 fn assertion_005_testing_duplicate_case_key_warnings_3() {
-    xfail_upstream(
+    pass_upstream(
         "Testing duplicate/case key warnings - 3",
         r########"in_process_session.rendered_diagnostics /* upstream: $stdout */"########,
         r########"qr|WARN - Possible typo \(case mismatch\) between citation and datasource keys: 'C1' and 'c1' in file 't/tdata/full-bbl\.bib'|ms"########,
