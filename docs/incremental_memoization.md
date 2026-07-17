@@ -551,9 +551,13 @@ changing the default-disabled release decision.
    preserves exact cold DVI across the full four-edit Gentle matrix.
 5. **Cleanup and release decision.** The paragraph graph generation/import
    lifecycle has been removed in favor of accepted-history-owned shared mounts;
-   generic detached page/shipout import remains isolated. Decide paragraph
-   default enablement from balanced release measurements. The accepted-history
-   layer remains default-disabled. In the
+   generic detached page/shipout import remains isolated. The final ten-pair
+   balanced release measurement keeps the accepted-history layer
+   default-disabled. Finished-line replay won the combined slow path by 10.177
+   ms mean/10.252 ms median and the fast path stayed flat, but cold priming
+   regressed by 36.437 ms mean (14.87%), slow plus priming lost 26.260 ms mean,
+   and hlist rebreak lost 1.729 ms mean. Issue `umber2-q02h.66` owns the focused
+   remaining priming/acceptance blocker. In the
    corrected Gentle run, 132 regions replay and 525 recorded regions hit
    barriers; macro-generated paragraph starts that have no clean root-source
    alignment after vertical setup are not recorded. Recovering those requires

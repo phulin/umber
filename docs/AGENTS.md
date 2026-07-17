@@ -11,6 +11,11 @@ When documenting tests or parity workflow, point fixture changes to `scripts/reg
 `profiling.md` documents the persistent in-process Gentle profiler, its
 Samply wrapper, prerequisites, and measured boundary.
 
+`profiling_q02h64_release_receipt.md` is the durable final paragraph-replay
+release receipt: exact commands, optimized path-separated timing, sampled
+attribution, retention, long-session evidence, and the default-enablement
+decision after q02h.58--.63.
+
 `testing_policy.md` is forward-looking guidance for test design and placement.
 `testing_infrastructure.md` inventories the current test commands, budgets,
 fixtures, corpora, and harnesses; update it when those implementation facts

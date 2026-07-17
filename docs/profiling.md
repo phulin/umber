@@ -1011,3 +1011,44 @@ slow edits measured +61.839 ms mean/+89.608 ms median, with individual paired
 ranges spanning both signs. These numbers establish parity, hit coverage,
 bounded history-transition work, and honest retained-memory accounting; they
 do not change the default-disabled release decision.
+
+### Final paragraph replay release evaluation
+
+Issue `umber2-q02h.64` ran the final uninstrumented ten-pair AB/BA evaluation
+after shared finished-line roots, compact output provenance, direct state
+deltas, centralized validation, shared prepared-hlist mounts, and lifecycle
+cleanup. The complete durable receipt is
+[`profiling_q02h64_release_receipt.md`](profiling_q02h64_release_receipt.md).
+
+Finished-line replay reached the intended slow-path win: the two
+pagination-changing edits were -10.177 ms mean/-10.252 ms median combined,
+with 132 line hits and 42,183 skipped commands on each edit. Fast suffix
+adoption remained flat at -0.288 ms mean/+0.243 ms median and retained 14
+pages, re-shipped three, and adopted 83. Interaction was flat by the paired
+median (+0.137 ms). Hlist rebreak mounted 132 shared hlists but remained
++1.729 ms mean/+3.810 ms median.
+
+Cold history construction is still material. Priming increased from 245.025
+to 281.462 ms by the means (+36.437 ms, 14.87%), changing the slow-plus-priming
+result to +26.260 ms mean/+23.219 ms median. Complete five-edit history plus
+priming was +21.657 ms mean/+25.134 ms median. Accepted history retained
+2,091,680 bytes after priming, 2,126,680 bytes after slow replay, and 1,788,468
+bytes after hlist rebreaking; detached retention and evictions stayed zero.
+
+The sampled capture had 58,901 weighted main-thread samples. Aligned replay
+owned 379 (0.64%), finished-line publication 143 (0.24%), paragraph provenance
+121 (0.21%), result retention 41 (0.07%), and accepted-history transition 12
+(0.02%). Stage counters likewise assigned the finished-line savings to the
+executor while substrate/acceptance and cold recording kept the session
+positive. No replay-side dominant hotspot remains.
+
+All five revisions preserved the disabled boundary schedules and cold
+100-page DVI bytes. The explicit 1,000-edit tier passed every incremental/cold
+comparison in 1.06 seconds with 53,346,304 bytes peak test-process RSS.
+Paragraph recording therefore remains default-disabled: the representative
+slow path wins and the fast path is neutral, but the non-regressing cold and
+session gate fails, and hlist rebreak has not won. `umber2-q02h.66` owns the
+focused priming/acceptance blocker. Current counters cannot weight barrier
+classes by per-paragraph cold work or graph size, so `umber2-q02h.65` owns
+profiling-only work-weighted distributions; the release decision does not
+assume uniform paragraph savings.
