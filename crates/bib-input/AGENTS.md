@@ -12,7 +12,9 @@ host I/O or processing-stage graph, sorting, labeling, or output work.
 - `src/control.rs`: BCF 3.11 validation, options, sections, templates, and data model parsing.
 - `src/config.rs`: configuration validation, typed values, templates, and precedence layers.
 - `src/biblatexml.rs`: typed BibLaTeXML entries, names, dates, ranges, lists, aliases, and annotations.
-- `src/bibtex.rs`: bounded BibTeX decoding, macros, raw entries/names, recovery diagnostics, and datasource caching.
+- `src/bibtex.rs`: Biber-facing eager adapter, datasource cache, and public raw-syntax exports.
+- `src/bibtex/raw.rs`: bounded lossless BibTeX syntax parsing, source-ordered records,
+  unexpanded values, brace/control-sequence text, locations, and recovery events.
 - `src/names.rs`: bounded classic structured-name parsing, source preservation, initials, aliases, and compatibility hashes.
 - `src/extended_names.rs`: bounded extended-name records, explicit parts and initials, ordered attributes, and aliases.
 - `src/tests.rs`: parser, validation, include, precedence, and adversarial-limit tests.

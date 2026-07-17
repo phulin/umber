@@ -309,16 +309,20 @@ user, command, and control-file precedence. BibLaTeXML parsing constructs
 typed names, lists, dates, ranges, aliases, annotations, related values, and
 entry-local options from the pinned namespace.
 
-The BibTeX boundary now decodes immutable datasource bytes with an explicit
-legacy encoding and TeX recode set, then produces ordered raw entries, fields,
-unparsed name components, macros, and preambles. It includes the twelve
-standard month macros, concatenation, brace- and quote-aware value scanning,
-case-insensitive lookup with distinct duplicate/case-collision diagnostics,
-and recovery at record boundaries. Entry, field, macro, value, nesting,
-diagnostic, datasource-byte, and total-work budgets are explicit. Parsed
-datasources may be cached by exact VFS content identity plus all semantic
-parser options; canonical path and allocation identity do not affect cache
-reuse or observable results.
+The BibTeX boundary first decodes immutable datasource bytes with an explicit
+legacy encoding into `RawBibDatabase`. This source-ordered syntax value retains
+`@comment`, `@string`, `@preamble`, and entry records; original and folded
+identifiers; duplicate fields and keys; unexpanded concatenated value parts;
+braced and quoted text (including nested braces and TeX control sequences);
+byte/line locations; diagnostics; and record-recovery events. `BibTexSource`
+is the eager Biber adapter derived from that raw value: it applies the configured
+TeX recode set, month/string expansion, duplicate filtering, name splitting,
+and derived date parts. Later classic `READ` processing consumes the distinct
+raw classic view directly, so it does not reconstruct syntax from Biber values.
+The parser has explicit entry, field, macro, value, nesting, diagnostic,
+datasource-byte, and total-work budgets. Parsed datasources may be cached by
+exact VFS content identity plus all semantic parser options; canonical path and
+allocation identity do not affect cache reuse or observable results.
 
 Classic name fields additionally expose an immutable ordered `NameList`.
 Brace-aware splitting accepts configured name-separator and explicit-`others`
@@ -361,9 +365,13 @@ case-colliding keys, month macros, nested braces, quoted values, malformed
 entries, and encoding/recode stages. Parser recovery preserves diagnostic
 order and resumes at the same logical boundary as the reference tests.
 
-Parsing produces a datasource-local raw entry store. Entry selection,
-dependency traversal, inheritance, and sorting occur later; the parser does
-not silently bake processing policy into field values.
+Parsing produces a datasource-local `RawBibDatabase`, then makes an explicit
+backend conversion. Biber receives its retained eager `BibTexSource` adapter;
+classic `READ` receives the raw record view and owns its macro expansion,
+preamble, duplicate, missing-field, and entry-selection semantics. Entry
+selection, dependency traversal, inheritance, and sorting therefore occur
+later; the syntax parser does not silently bake backend processing policy into
+field values.
 
 ### BibLaTeXML datasource
 

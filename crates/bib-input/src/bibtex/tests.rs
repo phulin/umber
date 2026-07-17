@@ -35,6 +35,85 @@ fn parses_macros_concatenation_nested_values_names_and_preamble() {
 }
 
 #[test]
+fn raw_database_preserves_record_order_parts_duplicates_and_locations() {
+    let raw = parse_raw_bibtex_bytes(
+        br#"@comment{keep \LaTeX syntax}
+            @string{who = "Ada" # family}
+            @preamble{"prefix " # who}
+            @book{Key, title = {A {Nested} \OE uvre}, title = "duplicate", author = who}
+            @book{key, note = {case collision}}"#,
+        BibTexOptions::default(),
+    );
+    assert_eq!(raw.records().len(), 5);
+    let [
+        RawBibRecord::Comment(comment),
+        RawBibRecord::String(mac),
+        RawBibRecord::Preamble(preamble),
+        RawBibRecord::Entry(entry),
+        RawBibRecord::Entry(collision),
+    ] = raw.records()
+    else {
+        panic!("raw records retain every recognized record")
+    };
+    assert_eq!(comment.value().source(), "keep \\LaTeX syntax");
+    assert_eq!(comment.value().control_sequences()[0].source(), "\\LaTeX");
+    assert_eq!(mac.name().source(), "who");
+    assert!(matches!(
+        mac.value().parts(),
+        [RawBibValuePart::Quoted(_), RawBibValuePart::Macro(_)]
+    ));
+    assert!(matches!(
+        preamble.value().parts(),
+        [RawBibValuePart::Quoted(_), RawBibValuePart::Macro(_)]
+    ));
+    assert_eq!(entry.key().source(), "Key");
+    assert_eq!(entry.key().folded(), "key");
+    assert_eq!(entry.fields().len(), 3);
+    let RawBibValuePart::Braced(title) = &entry.fields()[0].value().parts()[0] else {
+        panic!("title remains braced")
+    };
+    assert_eq!(title.source(), "A {Nested} \\OE uvre");
+    assert_eq!(title.control_sequences()[0].source(), "\\OE");
+    assert_eq!(collision.key().source(), "key");
+    assert!(entry.location().byte_start() < collision.location().byte_start());
+    assert_eq!(entry.location().line(), 4);
+    assert!(
+        raw.diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.kind == BibTexDiagnosticKind::DuplicateField)
+    );
+    assert!(
+        raw.diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.kind == BibTexDiagnosticKind::CaseCollision)
+    );
+
+    let biber = BibTexSource::from_raw(&raw);
+    assert_eq!(biber.entries().len(), 1);
+    assert_eq!(
+        biber.entries()[0].field("title").expect("title").value(),
+        "A {Nested} \\OE uvre"
+    );
+    assert_eq!(raw.classic().records().len(), raw.records().len());
+}
+
+#[test]
+fn raw_recovery_is_retained_without_discarding_the_next_record() {
+    let raw = parse_raw_bibtex_bytes(
+        b"@broken{x title={lost}\n@misc{after, note={ok}}",
+        BibTexOptions::default(),
+    );
+    assert!(
+        raw.records()
+            .iter()
+            .any(|record| matches!(record, RawBibRecord::Recovery(_)))
+    );
+    assert!(raw.records().iter().any(
+        |record| matches!(record, RawBibRecord::Entry(entry) if entry.key().source() == "after")
+    ));
+}
+
+#[test]
 fn diagnoses_collisions_and_recovers_at_the_next_entry() {
     let source = parse_bibtex_bytes(
         br#"@book{Same, title={one}} @book{same, title={two}}

@@ -1,8 +1,16 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
-use bib_unicode::{LegacyEncoding, RecodeSet, TexRecoder, decode_legacy};
+use bib_unicode::{LegacyEncoding, RecodeSet, TexRecoder};
 use umber_vfs::{FileContentId, VfsSnapshot, VirtualPath};
+
+mod raw;
+
+pub use raw::{
+    RawBibClassicSource, RawBibComment, RawBibControlSequence, RawBibDatabase, RawBibEntry,
+    RawBibField, RawBibIdentifier, RawBibLocation, RawBibPreamble, RawBibRecord, RawBibRecovery,
+    RawBibStringMacro, RawBibText, RawBibValue, RawBibValuePart, parse_raw_bibtex_bytes,
+};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct BibTexLimits {
@@ -98,7 +106,6 @@ impl BibTexField {
     pub fn raw_names(&self) -> Option<&[RawName]> {
         self.names.as_deref()
     }
-
     #[must_use]
     pub fn classic_names(
         &self,
@@ -148,6 +155,7 @@ impl BibTexPreamble {
     }
 }
 
+/// Eager Biber-facing adapter derived from [`RawBibDatabase`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BibTexSource {
     entries: Vec<BibTexEntry>,
@@ -157,6 +165,10 @@ pub struct BibTexSource {
 }
 
 impl BibTexSource {
+    #[must_use]
+    pub fn from_raw(raw: &RawBibDatabase) -> Self {
+        BiberAdapter::new(raw).convert()
+    }
     #[must_use]
     pub fn entries(&self) -> &[BibTexEntry] {
         &self.entries
@@ -179,6 +191,105 @@ impl BibTexSource {
             .iter()
             .find(|entry| entry.key.eq_ignore_ascii_case(key))
     }
+}
+
+struct BiberAdapter<'a> {
+    raw: &'a RawBibDatabase,
+    source: BibTexSource,
+    keys: BTreeMap<String, String>,
+}
+
+impl<'a> BiberAdapter<'a> {
+    fn new(raw: &'a RawBibDatabase) -> Self {
+        Self {
+            raw,
+            source: BibTexSource {
+                entries: Vec::new(),
+                preambles: Vec::new(),
+                macros: month_macros(),
+                diagnostics: raw.diagnostics().to_vec(),
+            },
+            keys: BTreeMap::new(),
+        }
+    }
+
+    fn convert(mut self) -> BibTexSource {
+        for record in self.raw.records() {
+            match record {
+                RawBibRecord::String(mac) => {
+                    let name = self.recode(mac.name().folded());
+                    let value = self.expand(mac.value());
+                    self.source.macros.insert(name, value);
+                }
+                RawBibRecord::Preamble(preamble) => {
+                    let value = self.expand(preamble.value());
+                    self.source.preambles.push(BibTexPreamble(value));
+                }
+                RawBibRecord::Entry(raw) => self.entry(raw),
+                RawBibRecord::Comment(_) | RawBibRecord::Recovery(_) => {}
+            }
+        }
+        self.source
+    }
+
+    fn entry(&mut self, raw: &RawBibEntry) {
+        let key = self.recode(raw.key().source());
+        let folded = key.to_ascii_lowercase();
+        if self.keys.contains_key(&folded) {
+            return;
+        }
+        self.keys.insert(folded, key.clone());
+        let mut fields = Vec::new();
+        let mut seen_fields = BTreeSet::new();
+        for raw_field in raw.fields() {
+            let name = self.recode(raw_field.name().folded());
+            let value = self.expand(raw_field.value());
+            if !seen_fields.insert(name.clone()) {
+                continue;
+            }
+            let names = is_name_field(&name).then(|| split_names(&value));
+            fields.push(BibTexField { name, value, names });
+        }
+        add_date_parts(&mut fields);
+        self.source.entries.push(BibTexEntry {
+            key,
+            entry_type: self.recode(raw.entry_type().folded()),
+            fields,
+        });
+    }
+
+    fn expand(&mut self, value: &RawBibValue) -> String {
+        let mut result = String::new();
+        for part in value.parts() {
+            match part {
+                RawBibValuePart::Braced(text)
+                | RawBibValuePart::Quoted(text)
+                | RawBibValuePart::Number(text) => result.push_str(&self.recode(text.source())),
+                RawBibValuePart::Macro(name) => {
+                    let name = self.recode(name.folded());
+                    if let Some(value) = self.source.macros.get(&name) {
+                        result.push_str(value);
+                    } else {
+                        self.source.diagnostics.push(diagnostic(
+                            BibTexDiagnosticKind::UndefinedMacro,
+                            name_location(part),
+                            format!("undefined string macro `{name}`"),
+                        ));
+                        result.push_str(&name);
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    fn recode(&self, value: &str) -> String {
+        TexRecoder::new(self.raw.options().decode, RecodeSet::Null).decode(value)
+    }
+}
+
+fn name_location(part: &RawBibValuePart) -> usize {
+    part.location().byte_start()
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -283,547 +394,7 @@ pub fn parse_bibtex(
 
 #[must_use]
 pub fn parse_bibtex_bytes(bytes: &[u8], options: BibTexOptions) -> BibTexSource {
-    if bytes.len() > options.limits.max_bytes {
-        return BibTexSource {
-            entries: Vec::new(),
-            preambles: Vec::new(),
-            macros: month_macros(),
-            diagnostics: vec![diagnostic(
-                BibTexDiagnosticKind::Limit,
-                0,
-                "datasource byte limit exceeded",
-            )],
-        };
-    }
-    let decoded = match decode_legacy(bytes, options.encoding) {
-        Ok(text) => text,
-        Err(_) => {
-            return BibTexSource {
-                entries: Vec::new(),
-                preambles: Vec::new(),
-                macros: month_macros(),
-                diagnostics: vec![diagnostic(
-                    BibTexDiagnosticKind::Encoding,
-                    0,
-                    "datasource cannot be decoded with the selected encoding",
-                )],
-            };
-        }
-    };
-    let decoded = TexRecoder::new(options.decode, RecodeSet::Null).decode(&decoded);
-    Parser::new(&decoded, options.limits).parse()
-}
-
-struct Parser<'a> {
-    input: &'a str,
-    at: usize,
-    limits: BibTexLimits,
-    work: usize,
-    source: BibTexSource,
-    keys: BTreeMap<String, String>,
-}
-
-impl<'a> Parser<'a> {
-    fn new(input: &'a str, limits: BibTexLimits) -> Self {
-        Self {
-            input,
-            at: 0,
-            limits,
-            work: 0,
-            source: BibTexSource {
-                entries: Vec::new(),
-                preambles: Vec::new(),
-                macros: month_macros(),
-                diagnostics: Vec::new(),
-            },
-            keys: BTreeMap::new(),
-        }
-    }
-
-    fn parse(mut self) -> BibTexSource {
-        while self.at < self.input.len() && self.work < self.limits.max_work {
-            if !self.seek_record() {
-                break;
-            }
-            let start = self.at - 1;
-            self.space();
-            let kind = self.identifier().to_ascii_lowercase();
-            self.space();
-            let Some(open) = self.peek() else { break };
-            if open != b'{' && open != b'(' {
-                self.error(
-                    BibTexDiagnosticKind::Syntax,
-                    start,
-                    "expected `{` or `(` after entry type",
-                );
-                continue;
-            }
-            self.at += 1;
-            let close = if open == b'{' { b'}' } else { b')' };
-            match kind.as_str() {
-                "comment" => self.skip_balanced(open, close),
-                "preamble" => self.parse_preamble(close, start),
-                "string" => self.parse_string(close, start),
-                "" => self.recover(close),
-                _ => self.parse_entry(kind, close, start),
-            }
-        }
-        if self.work >= self.limits.max_work {
-            self.error(
-                BibTexDiagnosticKind::Limit,
-                self.at,
-                "parser work limit exceeded",
-            );
-        }
-        self.source
-    }
-
-    fn parse_preamble(&mut self, close: u8, start: usize) {
-        match self.value(close, 0) {
-            Some(value) => {
-                self.source.preambles.push(BibTexPreamble(value));
-                self.finish_record(close, start);
-            }
-            None => self.recover(close),
-        }
-    }
-
-    fn parse_string(&mut self, close: u8, start: usize) {
-        self.space();
-        let name = self.identifier().to_ascii_lowercase();
-        self.space();
-        if name.is_empty() || !self.eat(b'=') {
-            self.error(
-                BibTexDiagnosticKind::Syntax,
-                start,
-                "malformed string macro",
-            );
-            self.recover(close);
-            return;
-        }
-        if self.source.macros.len() >= self.limits.max_macros {
-            self.error(BibTexDiagnosticKind::Limit, start, "macro limit exceeded");
-            self.recover(close);
-            return;
-        }
-        if let Some(value) = self.value(close, 0) {
-            self.source.macros.insert(name, value);
-            self.finish_record(close, start);
-        } else {
-            self.recover(close);
-        }
-    }
-
-    fn parse_entry(&mut self, entry_type: String, close: u8, start: usize) {
-        if self.source.entries.len() >= self.limits.max_entries {
-            self.error(BibTexDiagnosticKind::Limit, start, "entry limit exceeded");
-            self.recover(close);
-            return;
-        }
-        self.space();
-        let key_start = self.at;
-        while let Some(byte) = self.peek() {
-            if byte == b',' || byte == close {
-                break;
-            }
-            self.at += 1;
-        }
-        let key = self.input[key_start..self.at].trim().to_owned();
-        if key.is_empty() || !self.eat(b',') {
-            self.error(
-                BibTexDiagnosticKind::Syntax,
-                start,
-                "entry has no key or field separator",
-            );
-            self.recover(close);
-            return;
-        }
-        let folded = key.to_ascii_lowercase();
-        if let Some(previous) = self.keys.get(&folded) {
-            let kind = if previous == &key {
-                BibTexDiagnosticKind::DuplicateEntry
-            } else {
-                BibTexDiagnosticKind::CaseCollision
-            };
-            self.error(
-                kind,
-                key_start,
-                format!("entry key `{key}` collides with earlier `{previous}`"),
-            );
-            self.recover(close);
-            return;
-        }
-        let mut fields = Vec::new();
-        loop {
-            self.space();
-            if self.eat(close) {
-                break;
-            }
-            if self.eat(b',') {
-                continue;
-            }
-            let field_start = self.at;
-            let name = self.identifier().to_ascii_lowercase();
-            self.space();
-            if name.is_empty() || !self.eat(b'=') {
-                self.error(
-                    BibTexDiagnosticKind::Syntax,
-                    field_start,
-                    "malformed field assignment",
-                );
-                self.recover(close);
-                return;
-            }
-            if fields.len() >= self.limits.max_fields_per_entry {
-                self.error(
-                    BibTexDiagnosticKind::Limit,
-                    field_start,
-                    "field limit exceeded",
-                );
-                self.recover(close);
-                return;
-            }
-            let Some(value) = self.value(close, 0) else {
-                self.recover(close);
-                return;
-            };
-            if fields.iter().any(|field: &BibTexField| field.name == name) {
-                self.error(
-                    BibTexDiagnosticKind::DuplicateField,
-                    field_start,
-                    format!("duplicate field `{name}` in entry `{key}`"),
-                );
-            } else {
-                let names = is_name_field(&name).then(|| split_names(&value));
-                fields.push(BibTexField { name, value, names });
-            }
-            self.space();
-            if self.eat(close) {
-                break;
-            }
-            if !self.eat(b',') {
-                self.error(
-                    BibTexDiagnosticKind::Syntax,
-                    self.at,
-                    "expected comma after field",
-                );
-                self.recover(close);
-                return;
-            }
-        }
-        add_date_parts(&mut fields);
-        self.keys.insert(folded, key.clone());
-        self.source.entries.push(BibTexEntry {
-            key,
-            entry_type,
-            fields,
-        });
-    }
-
-    fn value(&mut self, close: u8, depth: usize) -> Option<String> {
-        if depth > self.limits.max_nesting {
-            self.error(
-                BibTexDiagnosticKind::Limit,
-                self.at,
-                "value nesting limit exceeded",
-            );
-            return None;
-        }
-        let mut value = String::new();
-        loop {
-            self.space();
-            let piece = match self.peek()? {
-                b'{' => self.braced(depth + 1)?,
-                b'"' => self.quoted(depth + 1)?,
-                byte if byte.is_ascii_digit() => self.number(),
-                _ => {
-                    let offset = self.at;
-                    let name = self.identifier().to_ascii_lowercase();
-                    if name.is_empty() {
-                        self.error(BibTexDiagnosticKind::Syntax, offset, "expected value");
-                        return None;
-                    }
-                    match self.source.macros.get(&name) {
-                        Some(value) => value.clone(),
-                        None => {
-                            self.error(
-                                BibTexDiagnosticKind::UndefinedMacro,
-                                offset,
-                                format!("undefined string macro `{name}`"),
-                            );
-                            name
-                        }
-                    }
-                }
-            };
-            if value.len().saturating_add(piece.len()) > self.limits.max_value_bytes {
-                self.error(
-                    BibTexDiagnosticKind::Limit,
-                    self.at,
-                    "value byte limit exceeded",
-                );
-                return None;
-            }
-            value.push_str(&piece);
-            self.space();
-            if !self.eat(b'#') {
-                break;
-            }
-        }
-        if self.peek() == Some(close) || self.peek() == Some(b',') {
-            Some(value)
-        } else {
-            self.error(
-                BibTexDiagnosticKind::Syntax,
-                self.at,
-                "unexpected token after value",
-            );
-            None
-        }
-    }
-
-    fn braced(&mut self, depth: usize) -> Option<String> {
-        self.at += 1;
-        let start = self.at;
-        let mut nesting = 1usize;
-        let mut escaped = false;
-        let mut recovery = None;
-        while let Some(byte) = self.peek() {
-            if byte == b'@' && self.is_line_record_boundary(self.at) {
-                recovery = Some(self.at);
-            }
-            self.work += 1;
-            if self.work >= self.limits.max_work {
-                return None;
-            }
-            self.at += 1;
-            if escaped {
-                escaped = false;
-                continue;
-            }
-            if byte == b'\\' {
-                escaped = true;
-                continue;
-            }
-            if byte == b'{' {
-                nesting += 1;
-                if depth + nesting > self.limits.max_nesting {
-                    self.error(
-                        BibTexDiagnosticKind::Limit,
-                        self.at,
-                        "brace nesting limit exceeded",
-                    );
-                    return None;
-                }
-            }
-            if byte == b'}' {
-                nesting -= 1;
-                if nesting == 0 {
-                    return Some(self.input[start..self.at - 1].to_owned());
-                }
-            }
-        }
-        if let Some(offset) = recovery {
-            self.at = offset;
-        }
-        self.error(
-            BibTexDiagnosticKind::Syntax,
-            start,
-            "unterminated braced value",
-        );
-        None
-    }
-
-    fn quoted(&mut self, depth: usize) -> Option<String> {
-        self.at += 1;
-        let start = self.at;
-        let mut braces = 0usize;
-        let mut escaped = false;
-        let mut recovery = None;
-        while let Some(byte) = self.peek() {
-            if byte == b'@' && self.is_line_record_boundary(self.at) {
-                recovery = Some(self.at);
-            }
-            self.at += 1;
-            self.work += 1;
-            if escaped {
-                escaped = false;
-                continue;
-            }
-            if byte == b'\\' {
-                escaped = true;
-                continue;
-            }
-            if byte == b'{' {
-                braces += 1;
-                if depth + braces > self.limits.max_nesting {
-                    self.error(
-                        BibTexDiagnosticKind::Limit,
-                        self.at,
-                        "quote brace nesting limit exceeded",
-                    );
-                    return None;
-                }
-            }
-            if byte == b'}' && braces > 0 {
-                braces -= 1;
-            }
-            if byte == b'"' && braces == 0 {
-                return Some(self.input[start..self.at - 1].to_owned());
-            }
-        }
-        if let Some(offset) = recovery {
-            self.at = offset;
-        }
-        self.error(
-            BibTexDiagnosticKind::Syntax,
-            start,
-            "unterminated quoted value",
-        );
-        None
-    }
-
-    fn number(&mut self) -> String {
-        let start = self.at;
-        while self.peek().is_some_and(|byte| byte.is_ascii_digit()) {
-            self.at += 1;
-        }
-        self.input[start..self.at].to_owned()
-    }
-
-    fn identifier(&mut self) -> String {
-        let start = self.at;
-        while self.peek().is_some_and(is_identifier_byte) {
-            self.at += 1;
-        }
-        self.input[start..self.at].to_owned()
-    }
-
-    fn finish_record(&mut self, close: u8, start: usize) {
-        self.space();
-        if self.eat(b',') {
-            self.space();
-        }
-        if !self.eat(close) {
-            self.error(
-                BibTexDiagnosticKind::Syntax,
-                start,
-                "record has trailing content",
-            );
-            self.recover(close);
-        }
-    }
-
-    fn recover(&mut self, close: u8) {
-        let mut braces = 0usize;
-        let mut quoted = false;
-        let mut escaped = false;
-        while let Some(byte) = self.peek() {
-            let offset = self.at;
-            self.at += 1;
-            self.work += 1;
-            if escaped {
-                escaped = false;
-                continue;
-            }
-            if byte == b'\\' {
-                escaped = true;
-                continue;
-            }
-            if byte == b'"' {
-                quoted = !quoted;
-                continue;
-            }
-            if quoted {
-                continue;
-            }
-            if byte == b'{' {
-                braces += 1;
-            }
-            if byte == b'}' && braces > 0 {
-                braces -= 1;
-            }
-            let record_boundary = byte == b'@' && self.is_line_record_boundary(offset);
-            if (braces == 0 && byte == close) || record_boundary {
-                if byte == b'@' {
-                    self.at -= 1;
-                }
-                break;
-            }
-            if self.work >= self.limits.max_work {
-                break;
-            }
-        }
-    }
-
-    fn seek_record(&mut self) -> bool {
-        while let Some(byte) = self.peek() {
-            self.at += 1;
-            self.work = self.work.saturating_add(1);
-            if byte == b'%' {
-                while let Some(comment_byte) = self.peek() {
-                    self.at += 1;
-                    self.work = self.work.saturating_add(1);
-                    if comment_byte == b'\n' || self.work >= self.limits.max_work {
-                        break;
-                    }
-                }
-            } else if byte == b'@' {
-                return true;
-            }
-            if self.work >= self.limits.max_work {
-                return false;
-            }
-        }
-        false
-    }
-
-    fn is_line_record_boundary(&self, offset: usize) -> bool {
-        self.input[..offset]
-            .rsplit_once('\n')
-            .map_or(offset == 0, |(_, prefix)| prefix.trim().is_empty())
-    }
-
-    fn skip_balanced(&mut self, open: u8, close: u8) {
-        let mut nesting = 1usize;
-        while let Some(byte) = self.peek() {
-            self.at += 1;
-            if byte == open {
-                nesting += 1;
-            }
-            if byte == close {
-                nesting -= 1;
-                if nesting == 0 {
-                    break;
-                }
-            }
-        }
-    }
-
-    fn error(&mut self, kind: BibTexDiagnosticKind, offset: usize, message: impl Into<String>) {
-        if self.source.diagnostics.len() < self.limits.max_diagnostics {
-            self.source
-                .diagnostics
-                .push(diagnostic(kind, offset, message));
-        }
-    }
-
-    fn space(&mut self) {
-        while self.peek().is_some_and(|byte| byte.is_ascii_whitespace()) {
-            self.at += 1;
-        }
-    }
-    fn eat(&mut self, byte: u8) -> bool {
-        if self.peek() == Some(byte) {
-            self.at += 1;
-            true
-        } else {
-            false
-        }
-    }
-    fn peek(&self) -> Option<u8> {
-        self.input.as_bytes().get(self.at).copied()
-    }
+    BibTexSource::from_raw(&parse_raw_bibtex_bytes(bytes, options))
 }
 
 fn month_macros() -> BTreeMap<String, String> {
@@ -844,14 +415,6 @@ fn month_macros() -> BTreeMap<String, String> {
     .into_iter()
     .map(|(name, value)| (name.to_owned(), value.to_owned()))
     .collect()
-}
-
-fn is_identifier_byte(byte: u8) -> bool {
-    !byte.is_ascii_whitespace()
-        && !matches!(
-            byte,
-            b'=' | b',' | b'{' | b'}' | b'(' | b')' | b'"' | b'#' | b'@'
-        )
 }
 
 fn is_name_field(name: &str) -> bool {
@@ -950,7 +513,7 @@ fn add_date_parts(fields: &mut Vec<BibTexField>) {
     }
 }
 
-fn diagnostic(
+pub(super) fn diagnostic(
     kind: BibTexDiagnosticKind,
     offset: usize,
     message: impl Into<String>,

@@ -15,7 +15,11 @@ pub use biblatexml::{
 };
 pub use bibtex::{
     BibTexCache, BibTexDiagnostic, BibTexDiagnosticKind, BibTexEntry, BibTexField, BibTexLimits,
-    BibTexOptions, BibTexPreamble, BibTexSource, RawName, parse_bibtex, parse_bibtex_bytes,
+    BibTexOptions, BibTexPreamble, BibTexSource, RawBibClassicSource, RawBibComment,
+    RawBibControlSequence, RawBibDatabase, RawBibEntry, RawBibField, RawBibIdentifier,
+    RawBibLocation, RawBibPreamble, RawBibRecord, RawBibRecovery, RawBibStringMacro, RawBibText,
+    RawBibValue, RawBibValuePart, RawName, parse_bibtex, parse_bibtex_bytes,
+    parse_raw_bibtex_bytes,
 };
 pub use config::{
     ConfigError, ConfigValue, ConfigurationFile, ConfigurationLayer, ResolvedConfiguration,
