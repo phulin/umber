@@ -113,7 +113,7 @@ fn pure_memo_runtime_survives_accepted_revisions() {
 }
 
 #[test]
-fn reuse_metrics_attribute_paragraph_preflight_replay_dispatches() {
+fn reuse_metrics_preserve_paragraph_preflight_source_batching() {
     fn cold(memo: bool) -> ReuseMetrics {
         let mut universe = template();
         if memo {
@@ -140,9 +140,17 @@ fn reuse_metrics_attribute_paragraph_preflight_replay_dispatches() {
     );
     assert!(memo_miss.reexecuted_commands > ordinary.reexecuted_commands);
     assert_eq!(
+        ordinary.reexecuted_source_text_span_tokens - memo_miss.reexecuted_source_text_span_tokens,
+        1,
+    );
+    assert_eq!(
+        memo_miss.reexecuted_commands - ordinary.reexecuted_commands,
+        1,
+    );
+    assert_eq!(
         ordinary.reexecuted_commands + ordinary.reexecuted_source_text_span_tokens,
         memo_miss.reexecuted_commands + memo_miss.reexecuted_source_text_span_tokens,
-        "public metrics expose the preflight replay delivery-path shift"
+        "public metrics expose the one-token vertical-mode replay seam"
     );
 }
 

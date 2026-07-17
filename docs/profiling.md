@@ -278,6 +278,30 @@ retained 14 pages, re-shipped three, and adopted the 83-page suffix. Host load
 made end-to-end paired deltas directionally unstable; the remaining paragraph
 memo reexecution overhead is tracked independently by `umber2-vfqs.15.4.2`.
 
+The paragraph-reexecution follow-up first reproduced the delivery-path shift
+in a direct two-run AB/BA same-process comparison. The large edit moved from
+41,334 scalar commands and 84,395 physical-source span tokens disabled to
+71,776 commands and 52,023 span tokens enabled; the inverse edit reproduced
+the same counts. Paragraph lookup, record, validation, and import telemetry
+totaled about 17 ms and 23 ms on those enabled edits, far below the observed
+reexecution loss, while exact identity remained bounded by the retained-root
+cache. This attributes the dominant independent cost to preflight miss replay
+destroying source-span batching rather than to authoritative exact equality.
+
+Preflight pushback now uses a dedicated transient replay kind. Horizontal main
+control batches its original traced `Letter`/`Other` words without retokenizing
+or changing expansion, provenance, recording, rollback, or input semantics. A
+four-run AB/BA comparison reduced enabled scalar commands to 40,800 on
+the large and inverse edits while restoring 82,999 source-span tokens. The
+memo-disabled buckets remained 41,334/84,395; the enabled token total still
+includes 2,749 commands skipped by paragraph hits. All revisions remained
+byte-identical to cold DVI, and the fourth edit retained 14 pages, re-shipped
+three, and adopted the 83-page suffix. Enabled still lost by paired means of
+282.651 and 264.070 ms on the large and inverse edits despite only about
+13--15 ms of reported paragraph phases. The remaining uninstrumented
+recording/execution cost is therefore a separate bottleneck, not grounds to
+widen this optimization or alter exact-state equality.
+
 The runner requires the same external inputs as Gentle conformance. Populate
 them with `scripts/setup-conformance-tests.sh` if necessary.
 

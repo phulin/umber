@@ -635,6 +635,16 @@ where
                 }
                 continue;
             }
+            if input.append_paragraph_preflight_text_span(&mut macro_text) > 0 {
+                stats.delivered_tokens += macro_text.len();
+                stats.source_text_span_tokens += macro_text.len();
+                for token in macro_text.drain(..) {
+                    execution.observe_paragraph_token(token);
+                    let appended = assignments::try_append_character(nest, token, stores)?;
+                    debug_assert!(appended);
+                }
+                continue;
+            }
         }
 
         let before_mode = nest.current_mode();

@@ -2457,6 +2457,68 @@ impl InputStack {
         appended
     }
 
+    /// Appends a maximal ordinary-character run restored after paragraph
+    /// preflight consumed it from a physical source.
+    ///
+    /// The transient frame retains the original traced words, so this changes
+    /// only delivery granularity: expansion, provenance, and input ordering are
+    /// identical to scalar replay.
+    pub fn append_paragraph_preflight_text_span(
+        &mut self,
+        tokens_out: &mut Vec<TracedTokenWord>,
+    ) -> usize {
+        if self.has_active_alignment() {
+            return 0;
+        }
+        loop {
+            let Some(frame_index) = self.current_token_frame_index() else {
+                return 0;
+            };
+            let exhausted = matches!(
+                &self.frames[frame_index],
+                InputFrame::TokenList(TokenListInputFrame {
+                    payload: ReplayPayload::Transient { tokens },
+                    replay_kind: TokenListReplayKind::ParagraphPreflight,
+                    index,
+                    ..
+                }) if *index >= tokens.len()
+            );
+            if exhausted {
+                let frame = self.discard_token_list_frame(frame_index);
+                self.retire_token_list_frame(frame);
+                continue;
+            }
+            let InputFrame::TokenList(frame) = &mut self.frames[frame_index] else {
+                return 0;
+            };
+            if frame.replay_kind != TokenListReplayKind::ParagraphPreflight {
+                return 0;
+            }
+            let ReplayPayload::Transient { tokens } = &frame.payload else {
+                return 0;
+            };
+            let start = frame.index;
+            let mut end = start;
+            while let Some(token) = tokens.get(end)
+                && matches!(
+                    token.token(),
+                    Some(Token::Char {
+                        cat: Catcode::Letter | Catcode::Other,
+                        ..
+                    })
+                )
+            {
+                end += 1;
+            }
+            if end == start {
+                return 0;
+            }
+            tokens_out.extend_from_slice(&tokens[start..end]);
+            frame.index = end;
+            return end - start;
+        }
+    }
+
     fn take_macro_literal_span(
         &mut self,
         stores: &impl ExpansionState,

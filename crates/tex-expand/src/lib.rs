@@ -2064,6 +2064,34 @@ pub fn back_input<I>(
 ) where
     I: IntoIterator<Item = TracedTokenWord>,
 {
+    back_input_with_kind(input, stores, tokens, TokenListReplayKind::Inserted);
+}
+
+/// Restores tokens consumed by paragraph preflight while retaining their
+/// physical-source replay class for horizontal text-span delivery.
+pub fn back_paragraph_preflight<I>(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    tokens: I,
+) where
+    I: IntoIterator<Item = TracedTokenWord>,
+{
+    back_input_with_kind(
+        input,
+        stores,
+        tokens,
+        TokenListReplayKind::ParagraphPreflight,
+    );
+}
+
+fn back_input_with_kind<I>(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    tokens: I,
+    replay_kind: TokenListReplayKind,
+) where
+    I: IntoIterator<Item = TracedTokenWord>,
+{
     #[cfg(test)]
     BACK_INPUT_CALLS.with(|calls| calls.set(calls.get() + 1));
     let mut traced = tokens.into_iter();
@@ -2088,7 +2116,7 @@ pub fn back_input<I>(
         }
         let mut buffer = input.take_transient_token_buffer();
         buffer.push(first);
-        input.push_transient_tokens(buffer, TokenListReplayKind::Inserted);
+        input.push_transient_tokens(buffer, replay_kind);
         return;
     };
 
@@ -2101,7 +2129,7 @@ pub fn back_input<I>(
         input.undo_alignment_delivery(classify_alignment_token(stores, token).0);
         buffer.push(token);
     }
-    input.push_transient_tokens(buffer, TokenListReplayKind::Inserted);
+    input.push_transient_tokens(buffer, replay_kind);
 }
 
 #[cfg(test)]

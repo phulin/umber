@@ -182,6 +182,8 @@ pub enum TokenListReplayKind {
     Mark,
     OutputRoutine,
     Inserted,
+    /// Raw physical-source tokens replayed after a paragraph memo preflight miss.
+    ParagraphPreflight,
     /// `\everyeof` replay whose retirement closes a traced `\scantokens` file.
     ScantokensEveryEof,
     AlignmentUTemplate,

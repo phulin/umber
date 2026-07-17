@@ -913,19 +913,19 @@ dependency recording. Its bounded ABBA pretolerance comparison reversed
 direction under host contention, so pretolerance remains as an opt-in
 experiment rather than being removed on inconclusive evidence.
 
-The apparently inflated memo-enabled command count is actual main-control
+The apparently inflated memo-enabled command count was actual main-control
 work. `ExecutionStats::main_control_dispatches` increments only immediately
 before scalar token dispatch; paragraph validation and import do not increment
 it, and a successful paragraph replay contributes only to the separate
 paragraph `commands_skipped` telemetry. On a paragraph key or validation miss,
-however, preflight restores the scanned traced tokens to the input stack for
-ordinary execution. Physical-source character runs restored this way cannot
-use the direct source-span path, so they are subsequently dispatched one token
-at a time. The incremental metrics expose macro and source text-span token
-counts alongside scalar commands to make this phase shift visible. This audit
-does not change replay semantics or DVI output; eliminating the extra work
-would require a source-span-preserving preflight design rather than a counter
-correction.
+preflight restores the scanned traced tokens to the input stack for ordinary
+execution. Those physical-source words now retain a dedicated transient replay
+kind, and horizontal main control consumes maximal `Letter`/`Other` runs with
+their existing traced origins. Expansion, alignment, input ordering,
+provenance, and paragraph recording remain unchanged; only the original first
+vertical-mode character stays scalar before horizontal mode begins. Incremental
+metrics continue to expose macro and source text-span tokens beside scalar
+commands so this delivery accounting remains auditable.
 
 The final default-policy verification on 2026-07-16 kept only paragraph
 recording enabled and excluded the unresolved pretolerance experiment. Four

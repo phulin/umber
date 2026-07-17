@@ -45,7 +45,8 @@ pub use mode::{
 };
 
 pub(crate) use dispatch::{
-    insert_traced_tokens, leave_group, leave_group_with_origin, push_tokens, push_traced_tokens,
+    insert_traced_tokens, leave_group, leave_group_with_origin, push_paragraph_preflight_tokens,
+    push_tokens, push_traced_tokens,
 };
 
 #[cfg(test)]

@@ -976,7 +976,7 @@ fn horizontal_main_control_batches_direct_physical_source_text() {
 }
 
 #[test]
-fn paragraph_preflight_miss_replays_source_text_through_real_dispatch() {
+fn paragraph_preflight_miss_preserves_source_text_batching() {
     fn run(memo: bool) -> ExecutionStats {
         let mut stores = Universe::new();
         install_unexpandable_primitives(&mut stores);
@@ -994,6 +994,16 @@ fn paragraph_preflight_miss_replays_source_text_through_real_dispatch() {
     assert_eq!(ordinary.delivered_tokens, memo_miss.delivered_tokens);
     assert!(ordinary.source_text_span_tokens > memo_miss.source_text_span_tokens);
     assert!(memo_miss.main_control_dispatches > ordinary.main_control_dispatches);
+    assert_eq!(
+        ordinary.source_text_span_tokens - memo_miss.source_text_span_tokens,
+        1,
+        "only the first vertical-mode character remains a scalar replay seam"
+    );
+    assert_eq!(
+        memo_miss.main_control_dispatches - ordinary.main_control_dispatches,
+        1,
+        "the rest of the preflight replay should retain source-span delivery"
+    );
     assert_eq!(
         ordinary.main_control_dispatches + ordinary.source_text_span_tokens,
         memo_miss.main_control_dispatches + memo_miss.source_text_span_tokens,

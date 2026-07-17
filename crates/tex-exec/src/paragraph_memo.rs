@@ -151,7 +151,7 @@ pub(crate) fn try_reuse_literal_paragraph(
                 .iter()
                 .any(|token| matches!(token, Token::Char { cat, .. } if *cat != Catcode::Space)));
     if !eligible {
-        crate::push_traced_tokens(input, stores, traced);
+        crate::push_paragraph_preflight_tokens(input, stores, traced);
         return Ok(false);
     }
 
@@ -164,7 +164,7 @@ pub(crate) fn try_reuse_literal_paragraph(
         .or_else(|| stores.lookup_recorded_paragraph(key))
     else {
         let trace_origins = traced.iter().map(|token| token.origin()).collect();
-        crate::push_traced_tokens(input, stores, traced);
+        crate::push_paragraph_preflight_tokens(input, stores, traced);
         execution.pending_paragraph_memo =
             Some(crate::executor::PendingParagraphMemo { key, trace_origins });
         stores.begin_pure_paragraph_recording();
@@ -213,13 +213,13 @@ pub(crate) fn try_reuse_literal_paragraph(
     );
     if let Some(failure) = validation_failure {
         stores.record_pure_paragraph_validation_failure(failure);
-        crate::push_traced_tokens(input, stores, traced);
+        crate::push_paragraph_preflight_tokens(input, stores, traced);
         stores.begin_pure_paragraph_recording();
         return Ok(false);
     }
     let Some(retained) = entry.hlist else {
         stores.record_pure_paragraph_validation_failure(ParagraphValidationFailure::RetainedResult);
-        crate::push_traced_tokens(input, stores, traced);
+        crate::push_paragraph_preflight_tokens(input, stores, traced);
         return Ok(false);
     };
     #[allow(clippy::disallowed_methods)]
@@ -233,7 +233,7 @@ pub(crate) fn try_reuse_literal_paragraph(
                 import_started.elapsed(),
             );
             stores.record_pure_paragraph_import_failure();
-            crate::push_traced_tokens(input, stores, traced);
+            crate::push_paragraph_preflight_tokens(input, stores, traced);
             stores.begin_pure_paragraph_recording();
             return Ok(false);
         }

@@ -16,9 +16,8 @@ pub struct ExecutionStats {
     /// Tokens processed through full main-control dispatch rather than a text span.
     ///
     /// This counts actual scalar dispatch calls. Paragraph memo preflight is not
-    /// counted, but tokens pushed back after a preflight miss are counted when
-    /// main control subsequently dispatches them. That replay can turn physical
-    /// source text that was previously batchable into scalar dispatch work.
+    /// counted. Physical-source characters restored after a preflight miss keep
+    /// a dedicated replay class so horizontal main control can still batch them.
     pub main_control_dispatches: usize,
     /// Ordinary macro-body characters delivered through the batched main path.
     pub macro_text_span_tokens: usize,
@@ -494,6 +493,20 @@ where
     I: IntoIterator<Item = TracedTokenWord>,
 {
     tex_expand::back_input(input, &mut tex_state::ExpansionContext::new(stores), tokens);
+}
+
+pub(crate) fn push_paragraph_preflight_tokens<I>(
+    input: &mut InputStack,
+    stores: &mut Universe,
+    tokens: I,
+) where
+    I: IntoIterator<Item = TracedTokenWord>,
+{
+    tex_expand::back_paragraph_preflight(
+        input,
+        &mut tex_state::ExpansionContext::new(stores),
+        tokens,
+    );
 }
 
 pub(crate) fn insert_traced_tokens<I>(input: &mut InputStack, stores: &mut Universe, tokens: I)
