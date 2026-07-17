@@ -29,12 +29,6 @@ pub(crate) struct PageHashCache {
     split_discards: Option<CachedProjection<Arc<Vec<Node>>>>,
 }
 
-impl PageHashCache {
-    pub(crate) fn clear(&mut self) {
-        *self = Self::default();
-    }
-}
-
 fn project_page_tree(
     tree: &Arc<PageNodeTree>,
     hash_nodes: &mut impl FnMut(&[Node], &mut StateHasher) -> usize,

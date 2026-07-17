@@ -483,8 +483,15 @@ fn print_incremental_work(name: &str, edit: usize, sample: &IncrementalStep) {
     );
     #[cfg(feature = "profiling-stats")]
     println!(
-        "gentle-profile exact identity: {name}: edit={edit} calls={} nanos={}",
-        sample.exact_identity.calls, sample.exact_identity.nanos,
+        "gentle-profile exact identity: {name}: edit={edit} calls={} nanos={} projection_calls={} projection_visits={} projection_nanos={} root_cache_hits={} root_cache_misses={} dirty_leaves={}",
+        sample.exact_identity.calls,
+        sample.exact_identity.nanos,
+        sample.exact_identity.projection_calls,
+        sample.exact_identity.projection_visits,
+        sample.exact_identity.projection_nanos,
+        sample.exact_identity.root_cache_hits,
+        sample.exact_identity.root_cache_misses,
+        sample.exact_identity.dirty_leaves,
     );
     for (layer_name, layer) in [
         ("pretolerance", PureMemoLayer::Pretolerance),
@@ -730,6 +737,24 @@ fn execute_incremental_sample(
             exact_identity: ExactIdentityMeasurement {
                 calls: exact_after.calls.saturating_sub(exact_before.calls),
                 nanos: exact_after.nanos.saturating_sub(exact_before.nanos),
+                projection_calls: exact_after
+                    .projection_calls
+                    .saturating_sub(exact_before.projection_calls),
+                projection_visits: exact_after
+                    .projection_visits
+                    .saturating_sub(exact_before.projection_visits),
+                projection_nanos: exact_after
+                    .projection_nanos
+                    .saturating_sub(exact_before.projection_nanos),
+                root_cache_hits: exact_after
+                    .root_cache_hits
+                    .saturating_sub(exact_before.root_cache_hits),
+                root_cache_misses: exact_after
+                    .root_cache_misses
+                    .saturating_sub(exact_before.root_cache_misses),
+                dirty_leaves: exact_after
+                    .dirty_leaves
+                    .saturating_sub(exact_before.dirty_leaves),
             },
         });
     }

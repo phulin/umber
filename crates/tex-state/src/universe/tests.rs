@@ -2577,6 +2577,43 @@ fn exact_snapshots_reuse_immutable_store_projection_across_forks() {
 }
 
 #[test]
+fn retained_snapshot_restores_exact_component_projections_into_forks() {
+    let mut universe = Universe::new();
+    universe.set_input_summary(condition_input_summary(0));
+    universe.add_hyphenation_pattern(PatternSpec {
+        letters: "retained".chars().collect(),
+        values: vec![0, 0, 1, 0, 0, 0, 0, 0, 0],
+    });
+    let checkpoint = universe.snapshot();
+    let substrate = universe.freeze_generation();
+    let mut fork = substrate.fork_at(&checkpoint).expect("retained fork");
+    let input_calls = fork.testing_input_projection_hash_calls();
+    let hyphenation_calls = fork.stores.testing_hyphenation_projection_hash_calls();
+
+    let _ = fork.snapshot_with_exact_identity();
+
+    assert_eq!(fork.testing_input_projection_hash_calls(), input_calls);
+    assert_eq!(
+        fork.stores.testing_hyphenation_projection_hash_calls(),
+        hyphenation_calls,
+        "exact comparison must compose the retained roots without rebuilding them"
+    );
+
+    fork.set_input_summary(condition_input_summary(1));
+    fork.add_hyphenation_exception(ExceptionSpec {
+        word: "retained".to_owned(),
+        positions: vec![2],
+    });
+    let _ = fork.snapshot_with_exact_identity();
+    assert_eq!(fork.testing_input_projection_hash_calls(), input_calls + 1);
+    assert_eq!(
+        fork.stores.testing_hyphenation_projection_hash_calls(),
+        hyphenation_calls + 1,
+        "only dirty component roots are projected"
+    );
+}
+
+#[test]
 fn exact_immutable_store_growth_hashes_only_new_append_entries() {
     let mut universe = Universe::new();
     let _ = universe.snapshot_with_exact_identity();
@@ -2589,6 +2626,38 @@ fn exact_immutable_store_growth_hashes_only_new_append_entries() {
         universe.stores.testing_exact_immutable_leaves(),
         before + 1,
         "one append must hash one leaf instead of recapturing every immutable store"
+    );
+}
+
+#[test]
+fn exact_immutable_store_cache_retains_accepted_and_scratch_lineages() {
+    let mut universe = Universe::new();
+    let anchor = universe.snapshot();
+    let mut accepted = Vec::new();
+    for index in 0..8 {
+        universe.intern(&format!("accepted-{index}"));
+        accepted.push(universe.snapshot());
+    }
+    let substrate = universe.freeze_generation();
+    let mut scratch = substrate.fork_at(&anchor).expect("scratch fork");
+    let _ = scratch.snapshot_with_exact_identity();
+    let before = scratch.stores.testing_exact_immutable_leaves();
+
+    for (index, checkpoint) in accepted.iter().enumerate() {
+        let _ = substrate
+            .snapshot_with_exact_identity(checkpoint)
+            .expect("accepted exact identity");
+        scratch.intern(&format!("scratch-{index}"));
+        let _ = scratch.snapshot_with_exact_identity();
+    }
+
+    let encoded = scratch
+        .stores
+        .testing_exact_immutable_leaves()
+        .saturating_sub(before);
+    assert!(
+        encoded <= 16,
+        "the two append-only lineages must each encode every new name at most once; encoded {encoded} leaves"
     );
 }
 

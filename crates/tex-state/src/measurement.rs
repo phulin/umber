@@ -41,6 +41,12 @@ pub struct StateHashComponentMeasurement {
 pub struct ExactIdentityMeasurement {
     pub calls: u64,
     pub nanos: u64,
+    pub projection_calls: u64,
+    pub projection_visits: u64,
+    pub projection_nanos: u64,
+    pub root_cache_hits: u64,
+    pub root_cache_misses: u64,
+    pub dirty_leaves: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -99,6 +105,12 @@ static HASH_COMPONENT_NANOS: [AtomicU64; StateHashComponent::COUNT] =
     [const { AtomicU64::new(0) }; StateHashComponent::COUNT];
 static EXACT_IDENTITY_CALLS: AtomicU64 = AtomicU64::new(0);
 static EXACT_IDENTITY_NANOS: AtomicU64 = AtomicU64::new(0);
+static EXACT_IDENTITY_PROJECTION_CALLS: AtomicU64 = AtomicU64::new(0);
+static EXACT_IDENTITY_PROJECTION_VISITS: AtomicU64 = AtomicU64::new(0);
+static EXACT_IDENTITY_PROJECTION_NANOS: AtomicU64 = AtomicU64::new(0);
+static EXACT_IDENTITY_ROOT_CACHE_HITS: AtomicU64 = AtomicU64::new(0);
+static EXACT_IDENTITY_ROOT_CACHE_MISSES: AtomicU64 = AtomicU64::new(0);
+static EXACT_IDENTITY_DIRTY_LEAVES: AtomicU64 = AtomicU64::new(0);
 
 static TRACED_FINISHES: AtomicU64 = AtomicU64::new(0);
 static TRACED_TOKENS: AtomicU64 = AtomicU64::new(0);
@@ -159,12 +171,26 @@ pub(crate) fn record_state_hash_component(
     );
 }
 
-pub(crate) fn record_exact_identity(elapsed: std::time::Duration) {
+pub(crate) fn record_exact_identity(
+    elapsed: std::time::Duration,
+    projection_calls: u64,
+    projection_visits: u64,
+    projection_nanos: u64,
+) {
     EXACT_IDENTITY_CALLS.fetch_add(1, Ordering::Relaxed);
     EXACT_IDENTITY_NANOS.fetch_add(
         elapsed.as_nanos().min(u128::from(u64::MAX)) as u64,
         Ordering::Relaxed,
     );
+    EXACT_IDENTITY_PROJECTION_CALLS.fetch_add(projection_calls, Ordering::Relaxed);
+    EXACT_IDENTITY_PROJECTION_VISITS.fetch_add(projection_visits, Ordering::Relaxed);
+    EXACT_IDENTITY_PROJECTION_NANOS.fetch_add(projection_nanos, Ordering::Relaxed);
+}
+
+pub(crate) fn record_exact_root_cache(hits: u64, misses: u64, dirty_leaves: usize) {
+    EXACT_IDENTITY_ROOT_CACHE_HITS.fetch_add(hits, Ordering::Relaxed);
+    EXACT_IDENTITY_ROOT_CACHE_MISSES.fetch_add(misses, Ordering::Relaxed);
+    EXACT_IDENTITY_DIRTY_LEAVES.fetch_add(dirty_leaves as u64, Ordering::Relaxed);
 }
 
 pub(crate) fn record_traced_list_finish(
@@ -261,6 +287,12 @@ pub fn exact_identity_measurement() -> ExactIdentityMeasurement {
     ExactIdentityMeasurement {
         calls: EXACT_IDENTITY_CALLS.load(Ordering::Relaxed),
         nanos: EXACT_IDENTITY_NANOS.load(Ordering::Relaxed),
+        projection_calls: EXACT_IDENTITY_PROJECTION_CALLS.load(Ordering::Relaxed),
+        projection_visits: EXACT_IDENTITY_PROJECTION_VISITS.load(Ordering::Relaxed),
+        projection_nanos: EXACT_IDENTITY_PROJECTION_NANOS.load(Ordering::Relaxed),
+        root_cache_hits: EXACT_IDENTITY_ROOT_CACHE_HITS.load(Ordering::Relaxed),
+        root_cache_misses: EXACT_IDENTITY_ROOT_CACHE_MISSES.load(Ordering::Relaxed),
+        dirty_leaves: EXACT_IDENTITY_DIRTY_LEAVES.load(Ordering::Relaxed),
     }
 }
 

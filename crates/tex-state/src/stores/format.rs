@@ -197,16 +197,30 @@ struct ImmutableStoreMarks {
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct ExactIdentityCache {
-    marks: Option<ImmutableStoreMarks>,
-    names: AppendOnlyIdentityCache,
-    tokens: AppendOnlyIdentityCache,
-    macros: AppendOnlyIdentityCache,
-    glue: AppendOnlyIdentityCache,
-    fonts: AppendOnlyIdentityCache,
+    names: LineageIdentityCache<InternerMark>,
+    tokens: LineageIdentityCache<TokenStoreMark>,
+    macros: LineageIdentityCache<MacroStoreMark>,
+    glue: LineageIdentityCache<GlueStoreMark>,
+    fonts: LineageIdentityCache<FontStoreMark>,
     #[cfg(test)]
     immutable_encodes: usize,
     #[cfg(test)]
     immutable_leaves: usize,
+}
+
+const EXACT_IDENTITY_CACHE_BRANCHES: usize = 4;
+
+#[derive(Clone, Debug)]
+struct LineageIdentityCache<M> {
+    branches: Vec<(M, AppendOnlyIdentityCache)>,
+}
+
+impl<M> Default for LineageIdentityCache<M> {
+    fn default() -> Self {
+        Self {
+            branches: Vec::new(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -236,6 +250,51 @@ impl AppendOnlyIdentityCache {
 
     fn identity(&self) -> u64 {
         self.root.identity()
+    }
+}
+
+impl<M: Copy + Eq> LineageIdentityCache<M> {
+    #[cfg(any(test, feature = "profiling-stats"))]
+    fn contains(&self, mark: M) -> bool {
+        self.branches
+            .iter()
+            .any(|(cached_mark, _)| *cached_mark == mark)
+    }
+
+    fn update(
+        &mut self,
+        mark: M,
+        len: usize,
+        retains: impl Fn(M) -> bool,
+        leaf: impl FnMut(usize) -> Result<u64, StoreFormatError>,
+    ) -> Result<u64, StoreFormatError> {
+        if let Some((_, cache)) = self
+            .branches
+            .iter()
+            .find(|(cached_mark, _)| *cached_mark == mark)
+        {
+            return Ok(cache.identity());
+        }
+        let reusable = self
+            .branches
+            .iter()
+            .enumerate()
+            .filter(|(_, (cached_mark, _))| retains(*cached_mark))
+            .max_by_key(|(_, (_, cache))| cache.logical_len)
+            .map(|(index, _)| index);
+        let mut cache = reusable
+            .map(|index| self.branches[index].1.clone())
+            .unwrap_or_default();
+        cache.update(len, reusable.is_some(), leaf)?;
+        let identity = cache.identity();
+        if let Some(index) = reusable {
+            self.branches[index] = (mark, cache);
+        } else if self.branches.len() < EXACT_IDENTITY_CACHE_BRANCHES {
+            self.branches.push((mark, cache));
+        } else {
+            self.branches[0] = (mark, cache);
+        }
+        Ok(identity)
     }
 }
 
@@ -560,82 +619,79 @@ impl Stores {
                 .exact_identity_cache
                 .lock()
                 .expect("exact store identity cache is not poisoned");
-            if cache.marks == Some(current_marks) {
-                compose_immutable_store_root(
-                    cache.names.identity(),
-                    cache.tokens.identity(),
-                    cache.macros.identity(),
-                    cache.glue.identity(),
-                    cache.fonts.identity(),
-                )
-            } else {
-                let old_marks = cache.marks;
-                let mut leaves = 0;
-                let name_len = self.interner.len();
-                cache.names.update(
-                    name_len,
-                    old_marks.is_some_and(|old| self.interner.retains_mark(old.interner)),
-                    |raw| {
-                        leaves += 1;
-                        exact_name_leaf(self, raw)
-                    },
-                )?;
-                let token_len = current_marks.tokens.spans as usize;
-                cache.tokens.update(
-                    token_len,
-                    old_marks.is_some_and(|old| self.tokens.retains_mark(old.tokens)),
-                    |raw| {
-                        leaves += 1;
-                        exact_token_leaf(self, raw)
-                    },
-                )?;
-                let macro_len = current_marks.macros.definitions as usize;
-                cache.macros.update(
-                    macro_len,
-                    old_marks.is_some_and(|old| self.macros.retains_mark(old.macros)),
-                    |raw| {
-                        leaves += 1;
-                        exact_macro_leaf(self, raw)
-                    },
-                )?;
-                let glue_len = current_marks.glue.specs as usize;
-                cache.glue.update(
-                    glue_len,
-                    old_marks.is_some_and(|old| self.glue.retains_mark(old.glue)),
-                    |raw| {
-                        leaves += 1;
-                        exact_glue_leaf(self, raw)
-                    },
-                )?;
-                let font_len = current_marks.fonts.len as usize;
-                let font_metadata_unchanged = old_marks.is_some_and(|old| {
-                    old.fonts.identifier_writes_len == current_marks.fonts.identifier_writes_len
-                        && old.fonts.expansion_writes_len
-                            == current_marks.fonts.expansion_writes_len
-                });
-                cache.fonts.update(
-                    font_len,
-                    font_metadata_unchanged
-                        && old_marks.is_some_and(|old| self.fonts.retains_mark(old.fonts)),
-                    |raw| {
-                        leaves += 1;
-                        exact_font_leaf(self, raw)
-                    },
-                )?;
-                cache.marks = Some(current_marks);
-                #[cfg(test)]
-                {
-                    cache.immutable_encodes += 1;
-                    cache.immutable_leaves += leaves;
-                }
-                compose_immutable_store_root(
-                    cache.names.identity(),
-                    cache.tokens.identity(),
-                    cache.macros.identity(),
-                    cache.glue.identity(),
-                    cache.fonts.identity(),
-                )
+            #[cfg(any(test, feature = "profiling-stats"))]
+            let root_hits = [
+                cache.names.contains(current_marks.interner),
+                cache.tokens.contains(current_marks.tokens),
+                cache.macros.contains(current_marks.macros),
+                cache.glue.contains(current_marks.glue),
+                cache.fonts.contains(current_marks.fonts),
+            ]
+            .into_iter()
+            .filter(|hit| *hit)
+            .count();
+            let mut leaves = 0;
+            let names = cache.names.update(
+                current_marks.interner,
+                self.interner.len(),
+                |mark| self.interner.retains_mark(mark),
+                |raw| {
+                    leaves += 1;
+                    exact_name_leaf(self, raw)
+                },
+            )?;
+            let tokens = cache.tokens.update(
+                current_marks.tokens,
+                current_marks.tokens.spans as usize,
+                |mark| self.tokens.retains_mark(mark),
+                |raw| {
+                    leaves += 1;
+                    exact_token_leaf(self, raw)
+                },
+            )?;
+            let macros = cache.macros.update(
+                current_marks.macros,
+                current_marks.macros.definitions as usize,
+                |mark| self.macros.retains_mark(mark),
+                |raw| {
+                    leaves += 1;
+                    exact_macro_leaf(self, raw)
+                },
+            )?;
+            let glue = cache.glue.update(
+                current_marks.glue,
+                current_marks.glue.specs as usize,
+                |mark| self.glue.retains_mark(mark),
+                |raw| {
+                    leaves += 1;
+                    exact_glue_leaf(self, raw)
+                },
+            )?;
+            let fonts = cache.fonts.update(
+                current_marks.fonts,
+                current_marks.fonts.len as usize,
+                |mark| {
+                    mark.identifier_writes_len == current_marks.fonts.identifier_writes_len
+                        && mark.expansion_writes_len == current_marks.fonts.expansion_writes_len
+                        && self.fonts.retains_mark(mark)
+                },
+                |raw| {
+                    leaves += 1;
+                    exact_font_leaf(self, raw)
+                },
+            )?;
+            #[cfg(test)]
+            {
+                cache.immutable_encodes += usize::from(root_hits != 5);
+                cache.immutable_leaves += leaves;
             }
+            #[cfg(feature = "profiling-stats")]
+            crate::measurement::record_exact_root_cache(
+                root_hits as u64,
+                (5 - root_hits) as u64,
+                leaves,
+            );
+            compose_immutable_store_root(names, tokens, macros, glue, fonts)
         };
         let mutable = self.exact_mutable_identity();
         let mut composed = Vec::with_capacity(96);

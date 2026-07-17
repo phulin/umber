@@ -41,11 +41,22 @@ const FONT_DIMEN_MASK: u32 = (1 << FONT_DIMEN_BITS) - 1;
 #[derive(Debug)]
 pub(super) struct SemanticHashCache {
     cells: AHashMap<CellId, CachedCellHash>,
+    pub(super) projections: StoreProjectionCache,
+    first_old: Vec<(CellId, usize, u64)>,
+    changed_cells: Vec<(u64, CellId)>,
+}
+
+/// Fixed-size derived roots retained by snapshots.
+///
+/// Unlike the journal scratch in [`SemanticHashCache`], these projections are
+/// keyed by immutable semantic roots and are safe to restore with a snapshot.
+/// A mutation changes the key and therefore turns only that component into a
+/// cache miss.
+#[derive(Clone, Debug, Default)]
+pub(super) struct StoreProjectionCache {
     code_tables: [Option<CachedProjection<crate::code_tables::CodeTablesSemanticCursor>>; 6],
     hyphenation: Option<CachedProjection<HyphenationSemanticCursor>>,
     last_loaded_font: Option<CachedProjection<FontSelectionCursor>>,
-    first_old: Vec<(CellId, usize, u64)>,
-    changed_cells: Vec<(u64, CellId)>,
     #[cfg(test)]
     hyphenation_hash_calls: usize,
 }
@@ -64,13 +75,9 @@ impl Default for SemanticHashCache {
         );
         Self {
             cells: AHashMap::with_hasher(cell_hasher),
-            code_tables: core::array::from_fn(|_| None),
-            hyphenation: None,
-            last_loaded_font: None,
+            projections: StoreProjectionCache::default(),
             first_old: Vec::new(),
             changed_cells: Vec::new(),
-            #[cfg(test)]
-            hyphenation_hash_calls: 0,
         }
     }
 }
@@ -79,13 +86,9 @@ impl Clone for SemanticHashCache {
     fn clone(&self) -> Self {
         Self {
             cells: self.cells.clone(),
-            code_tables: self.code_tables.clone(),
-            hyphenation: self.hyphenation.clone(),
-            last_loaded_font: self.last_loaded_font.clone(),
+            projections: self.projections.clone(),
             first_old: Vec::new(),
             changed_cells: Vec::new(),
-            #[cfg(test)]
-            hyphenation_hash_calls: 0,
         }
     }
 }
@@ -93,9 +96,7 @@ impl Clone for SemanticHashCache {
 impl SemanticHashCache {
     pub(super) fn clear(&mut self) {
         self.cells.clear();
-        self.code_tables = core::array::from_fn(|_| None);
-        self.hyphenation = None;
-        self.last_loaded_font = None;
+        self.projections = StoreProjectionCache::default();
         self.first_old.clear();
         self.changed_cells.clear();
     }
@@ -107,7 +108,7 @@ impl SemanticHashCache {
 
     #[cfg(test)]
     pub(super) const fn testing_hyphenation_hash_calls(&self) -> usize {
-        self.hyphenation_hash_calls
+        self.projections.hyphenation_hash_calls
     }
 }
 
@@ -207,14 +208,14 @@ impl Stores {
         let mut cache = std::mem::take(&mut self.semantic_hash_cache);
         let code_tables: [StateHashFragment; 6] = core::array::from_fn(|table| {
             cached_code_table_projection(
-                &mut cache.code_tables[table],
+                &mut cache.projections.code_tables[table],
                 &cursor.code_tables,
                 table,
                 |projection| self.hash_code_table(table, projection),
             )
         });
         let hyphenation = cached_projection(
-            &mut cache.hyphenation,
+            &mut cache.projections.hyphenation,
             &cursor.hyphenation_root,
             HYPHENATION_DOMAIN,
             StateHashComponent::Hyphenation,
@@ -225,7 +226,7 @@ impl Stores {
                 hash_prepared_mag(self.prepared_mag, projection);
             });
         let last_loaded_font = cached_projection(
-            &mut cache.last_loaded_font,
+            &mut cache.projections.last_loaded_font,
             &cursor.last_loaded_font,
             FONT_SELECTION_DOMAIN,
             StateHashComponent::FontSelection,
@@ -371,7 +372,7 @@ impl Stores {
         let end_cursor = self.state_hash_cursor_from_snapshot(end);
         let code_tables: [StateHashFragment; 6] = core::array::from_fn(|table| {
             cached_code_table_projection(
-                &mut cache.code_tables[table],
+                &mut cache.projections.code_tables[table],
                 &end_cursor.code_tables,
                 table,
                 |projection| self.hash_code_table(table, projection),
@@ -379,11 +380,12 @@ impl Stores {
         });
         #[cfg(test)]
         let rehash_hyphenation = cache
+            .projections
             .hyphenation
             .as_ref()
             .is_none_or(|cached| cached.key != end_cursor.hyphenation_root);
         let hyphenation = cached_projection(
-            &mut cache.hyphenation,
+            &mut cache.projections.hyphenation,
             &end_cursor.hyphenation_root,
             HYPHENATION_DOMAIN,
             StateHashComponent::Hyphenation,
@@ -391,7 +393,7 @@ impl Stores {
         );
         #[cfg(test)]
         if rehash_hyphenation {
-            cache.hyphenation_hash_calls += 1;
+            cache.projections.hyphenation_hash_calls += 1;
         }
         let prepared_mag = StateHashFragment::from_measured_builder(
             PREPARED_MAG_DOMAIN,
@@ -400,7 +402,7 @@ impl Stores {
             |projection| hash_prepared_mag(self.prepared_mag, projection),
         );
         let last_loaded_font = cached_projection(
-            &mut cache.last_loaded_font,
+            &mut cache.projections.last_loaded_font,
             &end_cursor.last_loaded_font,
             FONT_SELECTION_DOMAIN,
             StateHashComponent::FontSelection,
@@ -409,6 +411,7 @@ impl Stores {
                 1
             },
         );
+        end.exact_projection_cache = cache.projections.clone();
         self.semantic_hash_cache = cache;
         let mut hasher = StateHasher::new_exact(STORE_SLICE_DOMAIN);
         journal.apply(&mut hasher);

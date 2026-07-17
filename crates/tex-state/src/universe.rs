@@ -464,6 +464,8 @@ pub struct Snapshot {
     page: PageBuilderState,
     pdf: PdfStateSnapshot,
     exact_state_identity: Option<u64>,
+    /// Fixed-size derived component roots matching this snapshot.
+    state_hash_projection_cache: StateHashProjectionCache,
     dependency_tracker: DependencyTrackerSnapshot,
     state_hash: u64,
     state_hash_base: StateHashBase,
@@ -529,6 +531,7 @@ struct ScopedRollback {
     page: PageBuilderState,
     pdf: PdfStateSnapshot,
     state_hash_base: StateHashBase,
+    state_hash_projection_cache: StateHashProjectionCache,
     dependency_tracker: DependencyTrackerSnapshot,
 }
 
@@ -1051,18 +1054,6 @@ struct StateHashProjectionCache {
     page: PageHashCache,
     #[cfg(test)]
     input_hash_calls: usize,
-}
-
-impl StateHashProjectionCache {
-    fn clear(&mut self) {
-        self.world_streams = None;
-        self.input = None;
-        self.page.clear();
-        #[cfg(test)]
-        {
-            self.input_hash_calls = 0;
-        }
-    }
 }
 
 /// One owned TeX state timeline.
@@ -2167,6 +2158,7 @@ impl Universe {
             page: self.page.clone(),
             pdf: self.pdf.snapshot(),
             state_hash_base: self.state_hash_base.clone(),
+            state_hash_projection_cache: self.state_hash_projection_cache.clone(),
             dependency_tracker: self.dependencies.snapshot_tracker(),
         }
     }
@@ -2185,7 +2177,7 @@ impl Universe {
         self.page = rollback.page;
         self.pdf.rollback(rollback.pdf);
         self.state_hash_base = rollback.state_hash_base;
-        self.state_hash_projection_cache.clear();
+        self.state_hash_projection_cache = rollback.state_hash_projection_cache;
         self.dependencies
             .restore_tracker(&rollback.dependency_tracker);
     }
@@ -2248,6 +2240,7 @@ impl Universe {
             page: self.page.clone(),
             pdf: self.pdf.snapshot(),
             exact_state_identity,
+            state_hash_projection_cache: self.state_hash_projection_cache.clone(),
             dependency_tracker: self.dependencies.snapshot_tracker(),
             state_hash,
             state_hash_base: next_hash_base,
@@ -2291,7 +2284,7 @@ impl Universe {
         self.page = snapshot.page.clone();
         self.pdf.rollback(snapshot.pdf.clone());
         self.state_hash_base = snapshot.state_hash_base.clone();
-        self.state_hash_projection_cache.clear();
+        self.state_hash_projection_cache = snapshot.state_hash_projection_cache.clone();
         self.dependencies
             .restore_tracker(&snapshot.dependency_tracker);
     }
@@ -2306,7 +2299,7 @@ impl Universe {
         self.page = snapshot.page.clone();
         self.pdf.rollback(snapshot.pdf.clone());
         self.state_hash_base = snapshot.state_hash_base.clone();
-        self.state_hash_projection_cache.clear();
+        self.state_hash_projection_cache = snapshot.state_hash_projection_cache.clone();
         self.dependencies
             .restore_tracker(&snapshot.dependency_tracker);
     }
@@ -2522,6 +2515,8 @@ impl Universe {
     fn exact_checkpoint_identity(&mut self) -> Result<u64, StoreFormatError> {
         #[cfg(feature = "profiling-stats")]
         let started = std::time::Instant::now();
+        #[cfg(feature = "profiling-stats")]
+        let projections_before = crate::measurement::state_hash_measurement();
         let store = self.stores.semantic_identity()?;
         let mut cache = std::mem::take(&mut self.state_hash_projection_cache);
         let input = self.hash_input_summary(&mut cache);
@@ -2543,7 +2538,22 @@ impl Universe {
         let identity =
             crate::state_hash::exact_identity_bytes(b"umber-exact-checkpoint-v3", &framed);
         #[cfg(feature = "profiling-stats")]
-        crate::measurement::record_exact_identity(started.elapsed());
+        {
+            let projections_after = crate::measurement::state_hash_measurement();
+            let mut calls = 0;
+            let mut visits = 0;
+            let mut nanos = 0;
+            for (before, after) in projections_before
+                .components
+                .iter()
+                .zip(projections_after.components)
+            {
+                calls += after.calls.saturating_sub(before.calls);
+                visits += after.visits.saturating_sub(before.visits);
+                nanos += after.nanos.saturating_sub(before.nanos);
+            }
+            crate::measurement::record_exact_identity(started.elapsed(), calls, visits, nanos);
+        }
         Ok(identity)
     }
 
@@ -5794,7 +5804,7 @@ impl Universe {
     #[cfg(any(test, feature = "testing"))]
     pub fn testing_clear_state_hash_caches(&mut self) {
         self.stores.testing_clear_semantic_hash_cache();
-        self.state_hash_projection_cache.clear();
+        self.state_hash_projection_cache = StateHashProjectionCache::default();
     }
 
     #[cfg(test)]

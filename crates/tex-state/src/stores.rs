@@ -117,6 +117,7 @@ pub(crate) struct StoreSnapshot {
     prepared_mag: Option<i32>,
     last_loaded_font: FontId,
     exact_env_identity: exact_identity::ExactEnvIdentity,
+    exact_projection_cache: state_hash::StoreProjectionCache,
 }
 
 impl StoreSnapshot {
@@ -2282,6 +2283,7 @@ impl Stores {
             prepared_mag: self.prepared_mag,
             last_loaded_font: self.last_loaded_font,
             exact_env_identity: self.exact_env_identity.clone(),
+            exact_projection_cache: self.semantic_hash_cache.projections.clone(),
         }
     }
 
@@ -2339,11 +2341,17 @@ impl Stores {
         // of semantic state. Rebuild baselines lazily from the restored
         // journal slice instead of adding it to the O(1) snapshot tuple.
         self.semantic_hash_cache.clear();
+        self.semantic_hash_cache.projections = snapshot.exact_projection_cache.clone();
     }
 
     #[cfg(any(test, feature = "testing"))]
     pub(crate) fn testing_clear_semantic_hash_cache(&mut self) {
         self.semantic_hash_cache.clear();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn testing_hyphenation_projection_hash_calls(&self) -> usize {
+        self.semantic_hash_cache.testing_hyphenation_hash_calls()
     }
 
     /// Returns the number of journal bytes appended since `snapshot`.

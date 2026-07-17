@@ -554,8 +554,8 @@ fn semantic_hash_only_walks_hyphenation_after_root_changes() {
     let _ = stores.state_hash_slice(&pattern_cursor, &mut after_rollback);
     assert_eq!(
         stores.semantic_hash_cache.testing_hyphenation_hash_calls(),
-        4,
-        "rollback clears derived projections and rebuilds the restored root canonically"
+        2,
+        "rollback restores the retained projection for the snapshot's hyphenation root"
     );
 }
 
