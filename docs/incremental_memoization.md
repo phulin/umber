@@ -63,7 +63,7 @@ The repository already provides the required correctness substrate:
 - generation-owned paragraph hlists and finished lines;
 - shared mountable survivor payloads with local provenance overlays and
   retained glue closures;
-- current-revision provenance rebinding recipes;
+- compact output-reachable, current-revision provenance rebinding recipes;
 - typed dependency keys, semantic observations, changed-at stamps, and
   backdating; and
 - explicit paragraph mutation, effect, input-transition, and barrier records.
@@ -121,7 +121,7 @@ ParagraphRecord {
     replay barriers,
     retained hlist and finished lines,
     line count,
-    provenance rebinding recipes,
+    compact hlist and finished-line output-provenance recipes,
 }
 ```
 
@@ -186,7 +186,8 @@ For each candidate record, in order:
 4. import its retained hlist before applying any mutation;
 5. validate the separate break dependencies and mount finished lines when
    green, otherwise line-break the imported hlist;
-6. bind current-revision provenance through the mount-local origin overlay;
+6. resolve only the stable editor roots named by reachable hlist or line
+   origins and bind them through the mount-local origin overlay;
 7. replay supported ordered mutations/effects and atomically apply the input
    transition;
 8. install the result through the ordinary vertical/page-builder boundary;
@@ -356,6 +357,46 @@ A final two-pair counter pass observed 1,161 recycling releases on each
 memo-enabled slow edit versus 1,162 disabled, while 1,836--1,894 local roots
 used the O(1) shared-payload drop path. Thus the mounted hits add neither
 semantic promotion volume nor survivor recycling work.
+
+### Output-provenance closure
+
+Paragraph recording no longer keeps the expanded-token trace. At hlist and
+finished-line publication it traverses the ordinary node graph, follows only
+reachable char and ligature origins to stable editor roots, and builds a
+compact recipe. Each referenced editor piece contributes one full
+`RootSpanId` anchor; distinct output ranges use `(piece ordinal, start, end)`
+records, and depth-first origin slots use `u32` indexes. Unknown or non-rooted
+output origins use the reserved unknown slot. Token values and origins that
+produced no accepted node are not retained.
+
+On a finished-line hit, replay prepares and validates the ordinary input
+transition first, recreates origins only for the recipe's distinct output
+ranges, and installs them in the existing survivor mount overlay. Every
+ordinary `Universe::nodes` traversal therefore observes current-revision
+provenance immediately, including page building, output-routine inspection,
+node diagnostics, and shipout. An hlist fallback mounts the same sidecar before
+the existing recursive epoch import, so copied child graphs also receive the
+current origins. There is no shipout-only map and no second node model.
+
+The focused scaling regression expands 4,096 `\relax` tokens after paragraph
+entry but produces only two characters; both retained recipes contain at most
+three roots and three slots. Current-layout resolution after a finished-line
+hit and typed deletion after replacing the referenced fragment are covered
+separately. Thus retained metadata and replay origin allocation scale with
+reachable output provenance, while the scalar delivered-token count remains
+only avoided-work telemetry.
+
+On the q02h.58 baseline, the Gentle edit history retained 3,916,504 metadata
+bytes. The compact closure retains 1,999,076 bytes for the same 132 line hits,
+42,183 skipped commands, zero imported semantic bytes, barriers, schedules,
+and DVI output: a 48.96% reduction. A ten-pair optimized run under substantial
+host outliers reported median paragraph-enabled minus disabled deltas of
++1.366 ms for the combined slow edits, +23.753 ms including priming,
++2.032 ms interaction, and +1.832 ms fast. Disabled/enabled priming medians
+were 267.313/282.726 ms. A separate instrumented telemetry pass charged
+0.65--0.75 ms total import/mount work to each 132-hit slow edit. These costs
+preserve the default-disabled decision; the evidence establishes bounded
+output-scaled provenance rather than a new enablement claim.
 
 ## Implementation sequence
 

@@ -336,9 +336,11 @@ Accepted paragraph history uses this ownership split as a mount seam. A
 restarted Universe resolves the same survivor `NodeListId` through ordinary
 arena APIs, installs only the retained glue-resource closure, and overlays
 current-revision char/ligature origins without changing semantic words,
-sidecars, or semantic ids. The mount validator admits the minimal ordinary
-finished-line node vocabulary and rejects unresolved or unsupported
-handle-bearing forms before mutation.
+sidecars, or semantic ids. The overlay is derived from compact stable
+piece-relative ranges for only the origins reachable by ordinary graph
+traversal; no expanded-token trace or shipout-only provenance map is involved.
+The mount validator admits the minimal ordinary finished-line node vocabulary
+and rejects unresolved or unsupported handle-bearing forms before mutation.
 
 The lookup table adds one `(SurvivorRootId, usize)` payload per live root (16
 bytes on the supported 64-bit targets), plus standard hash-table control

@@ -859,3 +859,39 @@ versus 1,162 disabled, while 1,836--1,894 local roots were released by dropping
 their shared payload reference. Together with the unchanged source-word count,
 this confirms that finished-line hits do not hide promotion or recycling
 amplification behind the mount.
+
+### Output-provenance closure experiment
+
+Issue `umber2-q02h.59` removed the expanded-token vector and its parallel
+stable-root trace from paragraph recording. Cold publication now walks only
+the retained hlist and finished-line graphs. Its recipe stores one full stable
+anchor per editor piece, compact `(piece ordinal, start, end)` output ranges,
+and depth-first `u32` origin slots. Replay allocates current origins only for
+those distinct output ranges and mounts them through the q02h.58 survivor
+overlay, so ordinary node traversal, page building, output routines,
+diagnostics, and shipout all see the same current-revision provenance.
+
+The focused 4,096-expanded-`\relax` regression retains at most three roots and
+three slots for its two output characters. A finished-line replay regression
+resolves the mounted origin in the current layout and then as typed `Deleted`
+after its fragment is replaced. This directly guards the required asymptotic:
+expanded tokens which produce no accepted output contribute no provenance
+metadata and cause no replay-time origin allocation.
+
+The same optimized Gentle matrix retained 1,999,076 bytes of accepted
+paragraph metadata versus 3,916,504 bytes on the q02h.58 baseline (-48.96%).
+Each slow edit still mounted 132 finished-line hits, skipped 42,183 commands,
+imported zero semantic bytes, preserved the disabled boundary schedule, and
+emitted cold-identical 100-page/279,176-byte DVI. The instrumented telemetry
+pass reported 0.65--0.75 ms total paragraph import/mount time for each 132-hit
+slow edit.
+
+The final ten-pair optimized AB/BA run encountered severe host contention
+(individual paired samples ranged from -595 to +975 ms), so medians are the
+responsible latency summary. Paragraph-enabled minus disabled medians were
++1.366 ms for the combined slow path, +23.753 ms with priming, +2.032 ms for
+interaction, and +1.832 ms for the independent fast path. Disabled/enabled
+priming medians were 267.313/282.726 ms. The result does not change the
+default-disabled release decision; it records the closure's large metadata
+win, sub-millisecond-per-edit replay provenance cost, and exact-output guard
+under a noisy timing environment rather than claiming an end-to-end win.
