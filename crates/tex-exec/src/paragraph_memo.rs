@@ -6,7 +6,8 @@ use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::token::{Catcode, Token};
 use tex_state::{
     ContentHash, DetachedVirtualEffect, EffectRecord, ExpansionState, MemoTimingPhase,
-    ParagraphValidationFailure, PrintSink, PureMemoKey, PureMemoLayer, Universe,
+    ParagraphRecordingPhase, ParagraphValidationFailure, PrintSink, PureMemoKey, PureMemoLayer,
+    Universe,
 };
 
 use crate::{ExecError, ExecutionContext, ExecutionStats, ModeNest};
@@ -15,6 +16,31 @@ const PARAGRAPH_FRONT_END_DOMAIN: u32 = 2;
 const PARAGRAPH_FRONT_END_SCHEMA: u32 = 1;
 const PARAGRAPH_ENV_HASH_DOMAIN: u64 = 0x7061_7261_656e_7601;
 const MAX_PREFLIGHT_TOKENS: usize = 1 << 16;
+
+#[cfg(feature = "profiling-stats")]
+type PhaseStart = std::time::Instant;
+#[cfg(not(feature = "profiling-stats"))]
+struct PhaseStart;
+
+#[inline]
+fn start_phase() -> PhaseStart {
+    #[cfg(feature = "profiling-stats")]
+    {
+        std::time::Instant::now()
+    }
+    #[cfg(not(feature = "profiling-stats"))]
+    {
+        PhaseStart
+    }
+}
+
+#[inline]
+fn finish_phase(stores: &mut Universe, phase: ParagraphRecordingPhase, started: PhaseStart) {
+    #[cfg(feature = "profiling-stats")]
+    stores.record_pure_paragraph_phase(phase, started.elapsed());
+    #[cfg(not(feature = "profiling-stats"))]
+    let _ = (stores, phase, started);
+}
 
 pub(crate) fn try_reuse_literal_paragraph(
     nest: &mut ModeNest,
@@ -614,6 +640,12 @@ fn publish_recorded_region(
         let _ = stores.finish_pure_paragraph_recording();
         return;
     };
+    #[cfg(feature = "profiling-stats")]
+    stores.record_pure_paragraph_phase(
+        ParagraphRecordingPhase::TraceCapture,
+        std::time::Duration::from_nanos(recording.trace_capture_nanos),
+    );
+    let dependency_started = start_phase();
     let (mut keys, expansion_barriers) = execution.finish_paragraph_expansion_recording();
     keys.retain(|key| {
         let tex_state::DependencyKey::Query { domain, .. } = key else {
@@ -690,6 +722,12 @@ fn publish_recorded_region(
             }
         });
     }
+    finish_phase(
+        stores,
+        ParagraphRecordingPhase::FrontEndDependencies,
+        dependency_started,
+    );
+    let input_started = start_phase();
     let effects = match detach_effects(&stores.world().effect_records()[recording.effect_start..]) {
         Some(effects) => effects,
         None => {
@@ -703,11 +741,22 @@ fn publish_recorded_region(
     let mut consumed_spans = input
         .finish_paragraph_source_recording()
         .unwrap_or_default();
+    finish_phase(
+        stores,
+        ParagraphRecordingPhase::InputTransition,
+        input_started,
+    );
+    let provenance_started = start_phase();
     let trace_spans = recording
         .trace
         .iter()
         .map(|token| stores.root_span_for_origin(token.origin()))
         .collect::<Vec<_>>();
+    finish_phase(
+        stores,
+        ParagraphRecordingPhase::FrontEndProvenance,
+        provenance_started,
+    );
     if !recording.macro_bearing {
         consumed_spans.clear();
     } else {
@@ -764,6 +813,7 @@ fn publish_recorded_region(
         || recording.trace.iter().map(|token| token.origin()).collect(),
         |pending| pending.trace_origins.clone(),
     );
+    let retention_started = start_phase();
     let (hlist, origin_ordinals) = if eligible {
         let list = stores.freeze_node_list(nodes);
         (
@@ -773,6 +823,12 @@ fn publish_recorded_region(
     } else {
         (None, Vec::new())
     };
+    finish_phase(
+        stores,
+        ParagraphRecordingPhase::HlistRetention,
+        retention_started,
+    );
+    let publication_started = start_phase();
     stores.record_paragraph_region(tex_state::RecordedParagraphRegion {
         key,
         starting_span: recording.starting_span,
@@ -792,6 +848,11 @@ fn publish_recorded_region(
         line_count: 0,
         line_origin_ordinals: Vec::new(),
     });
+    finish_phase(
+        stores,
+        ParagraphRecordingPhase::RegionPublication,
+        publication_started,
+    );
     if eligible && execution.pending_paragraph_memo.is_none() {
         execution.pending_paragraph_memo =
             Some(crate::executor::PendingParagraphMemo { key, trace_origins });
@@ -831,13 +892,37 @@ pub(crate) fn publish_finished_lines(
     let Some(pending) = execution.pending_paragraph_memo.take() else {
         return;
     };
+    let dependencies_started = start_phase();
     let Some(dependencies) = paragraph_break_dependencies(stores, nodes) else {
         return;
     };
+    finish_phase(
+        stores,
+        ParagraphRecordingPhase::BreakDependencies,
+        dependencies_started,
+    );
+    let retention_started = start_phase();
     let list = stores.freeze_node_list(nodes);
     let retained = stores.retain_paragraph_result(list);
+    finish_phase(
+        stores,
+        ParagraphRecordingPhase::LineRetention,
+        retention_started,
+    );
+    let provenance_started = start_phase();
     let ordinals = paragraph_graph_origin_ordinals(stores, nodes, &pending.trace_origins);
+    finish_phase(
+        stores,
+        ParagraphRecordingPhase::LineProvenance,
+        provenance_started,
+    );
+    let publication_started = start_phase();
     stores.finish_recorded_paragraph_lines(dependencies, retained, line_count, ordinals);
+    finish_phase(
+        stores,
+        ParagraphRecordingPhase::RegionPublication,
+        publication_started,
+    );
 }
 
 fn paragraph_graph_origin_ordinals(

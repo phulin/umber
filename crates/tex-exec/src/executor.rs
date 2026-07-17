@@ -105,6 +105,8 @@ pub(crate) struct ColdParagraphRecording {
     pub(crate) macro_bearing: bool,
     pub(crate) trace: Vec<TracedTokenWord>,
     pub(crate) barriers: std::collections::BTreeSet<ParagraphBarrierReason>,
+    #[cfg(feature = "profiling-stats")]
+    pub(crate) trace_capture_nanos: u64,
 }
 
 pub struct ExecutionContext<'a> {
@@ -222,13 +224,23 @@ impl<'a> ExecutionContext<'a> {
             macro_bearing: false,
             trace: Vec::new(),
             barriers: std::collections::BTreeSet::new(),
+            #[cfg(feature = "profiling-stats")]
+            trace_capture_nanos: 0,
         });
         true
     }
 
     pub(crate) fn observe_paragraph_token(&mut self, token: TracedTokenWord) {
         if let Some(recording) = &mut self.cold_paragraph_recording {
+            #[cfg(feature = "profiling-stats")]
+            let started = std::time::Instant::now();
             recording.trace.push(token);
+            #[cfg(feature = "profiling-stats")]
+            {
+                recording.trace_capture_nanos = recording.trace_capture_nanos.saturating_add(
+                    u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+                );
+            }
         }
     }
 

@@ -126,6 +126,84 @@ pub enum MemoTimingPhase {
     Import,
 }
 
+/// Profiling-only attribution for paragraph recording work that sits outside
+/// the cache layer's generic lookup/record/validation/import buckets.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ParagraphRecordingPhase {
+    TraceCapture,
+    FrontEndDependencies,
+    InputTransition,
+    FrontEndProvenance,
+    HlistRetention,
+    RegionPublication,
+    BreakDependencies,
+    LineProvenance,
+    LineRetention,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ParagraphRecordingStats {
+    pub trace_capture_nanos: u64,
+    pub front_end_dependency_nanos: u64,
+    pub input_transition_nanos: u64,
+    pub front_end_provenance_nanos: u64,
+    pub hlist_retention_nanos: u64,
+    pub region_publication_nanos: u64,
+    pub break_dependency_nanos: u64,
+    pub line_provenance_nanos: u64,
+    pub line_retention_nanos: u64,
+}
+
+impl ParagraphRecordingStats {
+    #[must_use]
+    pub fn saturating_since(self, earlier: Self) -> Self {
+        Self {
+            trace_capture_nanos: self
+                .trace_capture_nanos
+                .saturating_sub(earlier.trace_capture_nanos),
+            front_end_dependency_nanos: self
+                .front_end_dependency_nanos
+                .saturating_sub(earlier.front_end_dependency_nanos),
+            input_transition_nanos: self
+                .input_transition_nanos
+                .saturating_sub(earlier.input_transition_nanos),
+            front_end_provenance_nanos: self
+                .front_end_provenance_nanos
+                .saturating_sub(earlier.front_end_provenance_nanos),
+            hlist_retention_nanos: self
+                .hlist_retention_nanos
+                .saturating_sub(earlier.hlist_retention_nanos),
+            region_publication_nanos: self
+                .region_publication_nanos
+                .saturating_sub(earlier.region_publication_nanos),
+            break_dependency_nanos: self
+                .break_dependency_nanos
+                .saturating_sub(earlier.break_dependency_nanos),
+            line_provenance_nanos: self
+                .line_provenance_nanos
+                .saturating_sub(earlier.line_provenance_nanos),
+            line_retention_nanos: self
+                .line_retention_nanos
+                .saturating_sub(earlier.line_retention_nanos),
+        }
+    }
+
+    fn add(&mut self, phase: ParagraphRecordingPhase, elapsed: Duration) {
+        let target = match phase {
+            ParagraphRecordingPhase::TraceCapture => &mut self.trace_capture_nanos,
+            ParagraphRecordingPhase::FrontEndDependencies => &mut self.front_end_dependency_nanos,
+            ParagraphRecordingPhase::InputTransition => &mut self.input_transition_nanos,
+            ParagraphRecordingPhase::FrontEndProvenance => &mut self.front_end_provenance_nanos,
+            ParagraphRecordingPhase::HlistRetention => &mut self.hlist_retention_nanos,
+            ParagraphRecordingPhase::RegionPublication => &mut self.region_publication_nanos,
+            ParagraphRecordingPhase::BreakDependencies => &mut self.break_dependency_nanos,
+            ParagraphRecordingPhase::LineProvenance => &mut self.line_provenance_nanos,
+            ParagraphRecordingPhase::LineRetention => &mut self.line_retention_nanos,
+        };
+        *target = target.saturating_add(elapsed_nanos(elapsed));
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[repr(u8)]
 pub enum ParagraphValidationFailure {
@@ -233,6 +311,7 @@ pub struct PureMemoStats {
     pub shipout: MemoLayerStats,
     pub paragraph_generation_metadata_bytes: usize,
     pub paragraph_validation_failure_reasons: [u64; PARAGRAPH_VALIDATION_FAILURES],
+    pub paragraph_recording: ParagraphRecordingStats,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1098,6 +1177,16 @@ impl PureMemoRuntime {
             MemoTimingPhase::Import => &mut stats.import_nanos,
         };
         *target = target.saturating_add(elapsed);
+    }
+
+    pub(crate) fn record_paragraph_phase(
+        &mut self,
+        phase: ParagraphRecordingPhase,
+        elapsed: Duration,
+    ) {
+        if let Some(cache) = &mut self.cache {
+            cache.stats.paragraph_recording.add(phase, elapsed);
+        }
     }
 
     pub fn record_paragraph_validation_failure(&mut self, reason: ParagraphValidationFailure) {

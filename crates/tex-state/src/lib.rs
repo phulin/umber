@@ -115,10 +115,10 @@ pub use page::{
 };
 pub use provenance_resolver::{ProvenanceResolver, ResolvedSourceLocation};
 pub use pure_memo::{
-    MemoLayerStats, MemoTimingPhase, ParagraphBarrierReason, ParagraphValidationFailure,
-    PureBreakDecision, PureBreakPlan, PureMemoConfig, PureMemoKey, PureMemoLayer,
-    PureMemoRecordingPolicy, PureMemoRuntime, PureMemoStats, PurePageEntry, PureParagraphMutation,
-    PureShipoutEntry, RecordedParagraphRegion,
+    MemoLayerStats, MemoTimingPhase, ParagraphBarrierReason, ParagraphRecordingPhase,
+    ParagraphRecordingStats, ParagraphValidationFailure, PureBreakDecision, PureBreakPlan,
+    PureMemoConfig, PureMemoKey, PureMemoLayer, PureMemoRecordingPolicy, PureMemoRuntime,
+    PureMemoStats, PurePageEntry, PureParagraphMutation, PureShipoutEntry, RecordedParagraphRegion,
 };
 pub use source_fragments::{
     EditorLayout, EditorLayoutError, FragmentId, FragmentStore, LayoutGeneration,
