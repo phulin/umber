@@ -161,6 +161,50 @@ test("create verifies the pinned root before accepting its selection metadata", 
 	);
 });
 
+test("pinned root and objects support zero-network warm and offline resolvers", async () => {
+	const data = await fixture();
+	const cacheStore = new MemoryObjectCache();
+	let networkRequests = 0;
+	const fetch = async (url) => {
+		networkRequests += 1;
+		if (url.endsWith("manifest-v2.json")) return response(data.rootBytes);
+		const bytes = data.objectBytes.get(url.split("/").at(-1));
+		return bytes === undefined
+			? response(new Uint8Array(), { status: 404 })
+			: response(bytes);
+	};
+	const options = {
+		manifestUrl: "https://cdn.example.test/manifest-v2.json",
+		manifestSha256: data.rootDigest,
+		persistentCache: "indexeddb",
+		cacheStore,
+		fetch,
+		crypto: webcrypto,
+	};
+	const cold = await HttpManifestResolver.create(options);
+	const coldDownloads = await cold.resolve([
+		{ kind: "tex", name: "plain.tex" },
+	]);
+	assert(coldDownloads.length > 0);
+	const coldRequests = networkRequests;
+
+	const warm = await HttpManifestResolver.create(options);
+	await warm.resolve([{ kind: "tex", name: "plain.tex" }]);
+	assert.equal(networkRequests, coldRequests);
+
+	const offline = await HttpManifestResolver.create({
+		...options,
+		offline: true,
+	});
+	await offline.resolve([{ kind: "tex", name: "plain.tex" }]);
+	assert.equal(networkRequests, coldRequests);
+	await assert.rejects(
+		offline.resolveFormat("plain"),
+		(error) => error.code === "object-offline",
+	);
+	assert.equal(networkRequests, coldRequests);
+});
+
 test("fetches canonical shards, deduplicates payloads, and uses inline hints without dependency index reads", async () => {
 	const data = await fixture();
 	const calls = [];

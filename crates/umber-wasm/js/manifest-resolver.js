@@ -43,28 +43,60 @@ export class HttpManifestResolver {
 				"manifestSha256 must be a lowercase SHA-256 digest",
 			);
 		}
-		const response = await fetchImplementation(options.manifestUrl, {
-			cache: cacheMode(options.persistentCache ?? "http"),
-			signal: options.signal,
-		});
-		if (!response.ok) {
-			throw new ManifestResolverError(
-				"manifest-http",
-				`manifest request failed with HTTP ${response.status}`,
+		const persistentMode = options.persistentCache ?? "http";
+		const persistentStore =
+			options.cacheStore ??
+			(persistentMode === "indexeddb"
+				? new IndexedDbObjectCache({ indexedDB: options.indexedDB })
+				: undefined);
+		const manifestIdentity = `manifest:${options.manifestUrl}`;
+		let bytes;
+		try {
+			bytes = await persistentStore?.get(
+				manifestIdentity,
+				options.manifestSha256,
 			);
+		} catch {}
+		if (bytes === undefined) {
+			if (options.offline) {
+				throw new ManifestResolverError(
+					"manifest-offline",
+					"pinned root manifest is unavailable in the persistent cache",
+				);
+			}
+			const response = await fetchImplementation(options.manifestUrl, {
+				cache: cacheMode(persistentMode),
+				signal: options.signal,
+			});
+			if (!response.ok) {
+				throw new ManifestResolverError(
+					"manifest-http",
+					`manifest request failed with HTTP ${response.status}`,
+				);
+			}
+			bytes = await boundedResponseBytes(response, {
+				code: "manifest-length",
+				label: "root manifest",
+				limit: MAX_ROOT_BYTES,
+			});
 		}
-		const bytes = await boundedResponseBytes(response, {
-			code: "manifest-length",
-			label: "root manifest",
-			limit: MAX_ROOT_BYTES,
-		});
 		const actual = await digestBytes(crypto, bytes);
 		if (actual !== options.manifestSha256) {
+			try {
+				await persistentStore?.delete(manifestIdentity, options.manifestSha256);
+			} catch {}
 			throw new ManifestResolverError(
 				"manifest-digest",
 				`root manifest digest ${actual} does not match pinned ${options.manifestSha256}`,
 			);
 		}
+		try {
+			await persistentStore?.put(
+				manifestIdentity,
+				options.manifestSha256,
+				bytes,
+			);
+		} catch {}
 		let manifest;
 		try {
 			manifest = JSON.parse(new TextDecoder().decode(bytes));
@@ -80,8 +112,9 @@ export class HttpManifestResolver {
 			crypto,
 			concurrency: options.concurrency,
 			persistentCache: options.persistentCache,
-			cacheStore: options.cacheStore,
+			cacheStore: persistentStore,
 			indexedDB: options.indexedDB,
+			offline: options.offline,
 			maxFiles: options.maxFiles,
 			maxBytes: options.maxBytes,
 		});
@@ -106,6 +139,7 @@ export class HttpManifestResolver {
 		);
 		const persistentMode = options.persistentCache ?? "http";
 		this.fetchCache = cacheMode(persistentMode);
+		this.offline = options.offline ?? false;
 		this.persistentStore =
 			options.cacheStore ??
 			(persistentMode === "indexeddb"
@@ -360,6 +394,12 @@ export class HttpManifestResolver {
 		throwIfAborted(signal);
 		const cached = await this.#cached(entry, limits);
 		if (cached !== undefined) return cached;
+		if (this.offline) {
+			throw new ManifestResolverError(
+				"object-offline",
+				`${entry.object} is unavailable in the persistent cache`,
+			);
+		}
 		const response = await this.fetch(
 			new URL(entry.object, this.manifest.objectsBaseUrl).href,
 			{ cache: this.fetchCache, signal },

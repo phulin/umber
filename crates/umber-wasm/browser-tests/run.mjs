@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
+import {
+	mkdtemp,
+	readdir,
+	readFile,
+	rm,
+	stat,
+	writeFile,
+} from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -11,6 +18,9 @@ const directory = path.dirname(fileURLToPath(import.meta.url));
 const repository = path.resolve(directory, "../../..");
 const packageDirectory = path.resolve(
 	process.argv[2] ?? path.join(repository, "target/umber-wasm-package"),
+);
+const nativeBinary = path.resolve(
+	process.argv[3] ?? path.join(repository, "target/debug/umber"),
 );
 const chrome =
 	process.env.CHROME ??
@@ -31,6 +41,7 @@ const objectEntry = (virtualPath, bytes, dependencies = []) => {
 	};
 };
 await stat(path.join(packageDirectory, "umber_wasm_bg.wasm"));
+await stat(nativeBinary);
 await stat(chrome);
 const packageFiles = await readdir(packageDirectory);
 assert(
@@ -108,12 +119,19 @@ const manifest = () => ({
 	formats: { [formatName]: formatMetadata },
 });
 const manifestBytes = () => encoder.encode(`${JSON.stringify(manifest())}\n`);
-const statistics = { objectRequests: 0, active: 0, maximumActive: 0 };
+const statistics = {
+	networkRequests: 0,
+	objectRequests: 0,
+	active: 0,
+	maximumActive: 0,
+};
+let nativeDviSha256;
 
 const server = http.createServer(async (request, response) => {
 	try {
 		const url = new URL(request.url, "http://fixture.invalid");
 		if (url.pathname === "/manifest.json") {
+			statistics.networkRequests += 1;
 			return send(response, 200, manifestBytes(), "application/json");
 		}
 		if (url.pathname === "/manifest.sha256") {
@@ -127,6 +145,9 @@ const server = http.createServer(async (request, response) => {
 				"application/json",
 			);
 		}
+		if (url.pathname === "/native-dvi.sha256") {
+			return send(response, 200, nativeDviSha256, "text/plain");
+		}
 		if (url.pathname === "/fixture-cmr10.tfm") {
 			return send(response, 200, cmr10, "application/octet-stream");
 		}
@@ -134,6 +155,7 @@ const server = http.createServer(async (request, response) => {
 			const bytes = objectBytes.get(url.pathname.slice("/objects/".length));
 			if (bytes === undefined)
 				return send(response, 404, "missing", "text/plain");
+			statistics.networkRequests += 1;
 			statistics.objectRequests += 1;
 			statistics.active += 1;
 			statistics.maximumActive = Math.max(
@@ -171,6 +193,51 @@ const server = http.createServer(async (request, response) => {
 
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const origin = `http://127.0.0.1:${server.address().port}`;
+const nativeRoot = await mkdtemp(path.join(os.tmpdir(), "umber-native-fetch-"));
+const nativeSource = path.join(nativeRoot, "main.tex");
+const nativeDvi = path.join(nativeRoot, "main.dvi");
+await writeFile(nativeSource, remoteSource());
+const nativeEnvironment = {
+	...process.env,
+	SOURCE_DATE_EPOCH: "0",
+	XDG_CACHE_HOME: path.join(nativeRoot, "cache"),
+};
+const nativeArguments = [
+	"run",
+	"--distribution",
+	`${origin}/manifest.json`,
+	"--distribution-sha256",
+	digest(manifestBytes()),
+	"--dvi",
+	nativeDvi,
+	nativeSource,
+];
+await runNative(nativeArguments, nativeEnvironment, nativeRoot);
+const nativeCold = { ...statistics };
+assert.equal(nativeCold.networkRequests, 5, "native cold fetch request count");
+await runNative(nativeArguments, nativeEnvironment, nativeRoot);
+assert.equal(
+	statistics.networkRequests,
+	nativeCold.networkRequests,
+	"native warm run performed a network request",
+);
+await runNative(
+	[...nativeArguments.slice(0, 1), "--offline", ...nativeArguments.slice(1)],
+	nativeEnvironment,
+	nativeRoot,
+);
+assert.equal(
+	statistics.networkRequests,
+	nativeCold.networkRequests,
+	"native offline run performed a network request",
+);
+nativeDviSha256 = digest(await readFile(nativeDvi));
+Object.assign(statistics, {
+	networkRequests: 0,
+	objectRequests: 0,
+	active: 0,
+	maximumActive: 0,
+});
 const profile = await mkdtemp(path.join(os.tmpdir(), "umber-chrome-"));
 const browser = spawn(
 	chrome,
@@ -236,6 +303,33 @@ try {
 	browser.kill("SIGTERM");
 	server.close();
 	await rm(profile, { recursive: true, force: true });
+	await rm(nativeRoot, { recursive: true, force: true });
+}
+
+function remoteSource() {
+	return encoder.encode(
+		"\\input remote \\font\\a=cmr10\\relax \\font\\b=cmtt10\\relax " +
+			"\\immediate\\openout0=result.aux " +
+			"\\immediate\\write0{browser fixture aux}\\immediate\\closeout0 " +
+			"\\shipout\\hbox{\\a A\\b B}\\end",
+	);
+}
+
+async function runNative(args, env, cwd) {
+	const child = spawn(nativeBinary, args, {
+		cwd,
+		env,
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	let stdout = "";
+	let stderr = "";
+	child.stdout.on("data", (chunk) => (stdout += chunk));
+	child.stderr.on("data", (chunk) => (stderr += chunk));
+	const code = await new Promise((resolve, reject) => {
+		child.once("error", reject);
+		child.once("exit", resolve);
+	});
+	assert.equal(code, 0, `native fetch run failed:\n${stdout}\n${stderr}`);
 }
 
 function send(response, status, body, type) {
