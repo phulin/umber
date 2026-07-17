@@ -114,6 +114,7 @@ fn local_resolver(root: &Path) -> LocalResolver {
     LocalResolver {
         input: TexInputSearchPath::new(root, Vec::new()),
         font: TexFontSearchPath::new(root.to_owned(), Vec::new()),
+        input_paths: RefCell::new(BTreeMap::new()),
     }
 }
 

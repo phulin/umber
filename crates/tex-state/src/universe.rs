@@ -780,12 +780,24 @@ impl GenerationSubstrate {
         effects: Vec<EffectRecord>,
         artifacts: Vec<CommittedArtifact>,
     ) -> Result<World, WorldError> {
+        let mut universe = self.into_detached_universe(effects, artifacts)?;
+        universe.export_retained_effects()?;
+        Ok(universe.world)
+    }
+
+    /// Consumes the accepted generation and installs its detached outputs
+    /// without committing effects. Client-owned finalizers can inspect the
+    /// reached engine state and then choose whether to publish those effects.
+    pub fn into_detached_universe(
+        self,
+        effects: Vec<EffectRecord>,
+        artifacts: Vec<CommittedArtifact>,
+    ) -> Result<Universe, WorldError> {
         let mut universe = self.universe;
         universe
             .world
             .replace_retained_outputs(effects, artifacts)?;
-        universe.export_retained_effects()?;
-        Ok(universe.world)
+        Ok(universe)
     }
 
     /// Materializes detached session output without consuming the retained

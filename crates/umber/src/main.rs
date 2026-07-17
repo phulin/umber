@@ -3,12 +3,12 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use tex_lex::{InputStack, Lexer, WorldInput};
+use tex_lex::{Lexer, WorldInput};
 use tex_state::env::banks::IntParam;
 use tex_state::token::Token;
 use tex_state::{FormatError, Universe, World, WorldError};
 use umber::EngineMode as RunEngine;
-use umber::{DriverFile, EngineSession, FileSessionResolvers, PlannedFinalization};
+use umber::{DriverFile, FileSessionResolvers, PlannedFinalization};
 
 mod expand_dump;
 mod watch;
@@ -75,79 +75,38 @@ fn lex_dump(path: &str) -> Result<(), CliError> {
 }
 
 fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
-    #[cfg(feature = "profiling-stats")]
-    let profiling_stats = opts.profiling_stats;
-    #[cfg(not(feature = "profiling-stats"))]
-    let profiling_stats = false;
-    let requires_legacy_postprocessing = opts.pdf.is_some()
-        || opts.html.is_some()
-        || opts.format_out.is_some()
-        || opts.input_records_out.is_some()
-        || (opts.show_fixtures && opts.distribution.is_none() && !opts.offline)
-        || (opts.engine == RunEngine::ETex && opts.distribution.is_none() && !opts.offline)
-        || (opts.distribution.is_none()
-            && !opts.offline
-            && umber::cli_resource::DEFAULT_DISTRIBUTION_SHA256
-                == "0000000000000000000000000000000000000000000000000000000000000000")
-        || profiling_stats;
-    if requires_legacy_postprocessing {
-        return run_tex_legacy(opts);
-    }
-    let output = umber::cli_resource::run(&umber::cli_resource::NativeRunOptions {
-        input: opts.input.clone(),
-        format: opts.format.clone(),
-        engine: opts.engine,
-        html: false,
-        distribution: opts.distribution.clone(),
-        distribution_sha256: opts.distribution_sha256.clone(),
-        offline: opts.offline,
-    })?;
-    print!("{}", String::from_utf8_lossy(&output.terminal));
-    if opts.show_fixtures {
-        return Ok(());
-    }
-    let mut files = output.files;
-    if let Some(path) = &opts.dvi {
-        files.push(umber::MemoryOutputFile {
-            path: path.clone(),
-            bytes: output.dvi,
-        });
-    }
-    materialize_memory_files(files)
+    let accepted =
+        umber::cli_resource::run_for_finalization(&umber::cli_resource::NativeRunOptions {
+            input: opts.input.clone(),
+            format: opts.format.clone(),
+            engine: opts.engine,
+            html: false,
+            distribution: opts.distribution.clone(),
+            distribution_sha256: opts.distribution_sha256.clone(),
+            offline: opts.offline,
+        })?;
+    finalize_run(opts, accepted)
 }
 
-fn run_tex_legacy(opts: &RunCliOptions) -> Result<(), CliError> {
-    let path = opts.input.as_path();
-    let mut world = World::real();
-    let mut stores = if let Some(format) = &opts.format {
-        let content = world.read_file(format)?;
-        Universe::from_format(world, content.bytes())?
-    } else {
-        let mut stores = Universe::with_world(world);
-        opts.engine.prepare_fresh(&mut stores);
-        stores
-    };
-    if opts.format.is_some() {
-        opts.engine.install_after_format(&mut stores);
-    }
-    let content = stores.world_mut().read_file(path)?;
-
-    let mut input = InputStack::new(WorldInput::from_content(content));
-    if opts.engine.uses_latex_input() {
-        input.set_utf8_input_as_bytes(true);
-    }
-    let mut resolvers = FileSessionResolvers::from_environment(path);
-    let run = match EngineSession::new(&mut input, &mut stores, resolvers.context()).execute() {
-        Ok(run) => run,
-        Err(err) => {
-            return Err(CliError::RenderedExec(
-                err.format_with_provenance(&stores).trim_end().to_owned(),
-            ));
-        }
-    };
+fn finalize_run(
+    opts: &RunCliOptions,
+    accepted: umber::cli_resource::NativeAcceptedRun,
+) -> Result<(), CliError> {
+    let umber::cli_resource::NativeAcceptedRun {
+        output,
+        finalization,
+        input_path_map,
+        main_input,
+    } = accepted;
+    let mut stores = finalization.stores;
+    let dumped_format = finalization.dumped_format;
+    #[cfg_attr(not(feature = "profiling-stats"), allow(unused_variables))]
+    let expansion_stats = finalization.expansion_stats;
+    let committed_artifacts = stores.world().committed_artifacts().to_vec();
+    let resolvers = FileSessionResolvers::from_environment(&opts.input);
     #[cfg(feature = "profiling-stats")]
     if opts.profiling_stats {
-        let stats = input.expansion_stats();
+        let stats = expansion_stats;
         eprintln!(
             "EXPANSION_STATS token_frame_steps={} provenance_resolutions={} character_tokens={} character_fraction={:.6} meaning_lookups={} meaning_cache_hits={} meaning_cache_misses={} literal_spans={} literal_tokens={} mean_literal_run={:.6} segmentation_cache_hits={} segmentation_cache_misses={} builder_appends={} source_text_span_attempts={} source_text_spans={} source_text_tokens={} mean_source_text_run={:.6}",
             stats.token_frame_steps,
@@ -288,9 +247,8 @@ fn run_tex_legacy(opts: &RunCliOptions) -> Result<(), CliError> {
         );
     }
     let mut driver_files = Vec::new();
-    if let Some(output) = &opts.dvi {
-        let dvi = umber::dvi_from_page_plans(&run.dvi_pages)?;
-        driver_files.push(DriverFile::new(output.clone(), dvi));
+    if let Some(path) = &opts.dvi {
+        driver_files.push(DriverFile::new(path.clone(), output.dvi.clone()));
     }
     if let Some(output) = &opts.pdf {
         if stores
@@ -302,7 +260,7 @@ fn run_tex_legacy(opts: &RunCliOptions) -> Result<(), CliError> {
             resolvers
                 .provide_pdf_font_programs(&mut stores)
                 .map_err(CliError::PdfFontResource)?;
-            let pdf = umber::pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)?;
+            let pdf = umber::pdf_from_committed_artifacts(&mut stores, &committed_artifacts)?;
             driver_files.push(DriverFile::new(output.clone(), pdf));
         }
     }
@@ -321,7 +279,7 @@ fn run_tex_legacy(opts: &RunCliOptions) -> Result<(), CliError> {
             html_options.asset_mode = tex_out::html::AssetMode::Manifest { relative_directory };
         }
         let html = umber::html_from_committed_artifacts(
-            &run.committed_artifacts,
+            &committed_artifacts,
             &mut resolver,
             &html_options,
         )?;
@@ -336,7 +294,7 @@ fn run_tex_legacy(opts: &RunCliOptions) -> Result<(), CliError> {
         }
         driver_files.push(DriverFile::new(output.clone(), html.html));
     }
-    if run.dumped_format {
+    if dumped_format {
         let output = opts
             .format_out
             .as_ref()
@@ -347,13 +305,13 @@ fn run_tex_legacy(opts: &RunCliOptions) -> Result<(), CliError> {
     if let Some(output) = &opts.input_records_out {
         driver_files.push(DriverFile::new(
             output.clone(),
-            input_record_receipt(stores.world())?,
+            input_record_receipt(stores.world(), &input_path_map, Some(main_input))?,
         ));
     }
     let effect_pos = stores.world().effect_pos();
     let finalization = PlannedFinalization::new(effect_pos, driver_files)?;
     if opts.show_fixtures {
-        print!("{}", run.terminal_text);
+        print!("{}", String::from_utf8_lossy(&output.terminal));
         finalization.discard_uncommitted();
         return Ok(());
     }
@@ -611,10 +569,18 @@ impl RunCliOptions {
     }
 }
 
-fn input_record_receipt(world: &World) -> Result<Vec<u8>, CliError> {
-    let mut records = BTreeMap::<&Path, usize>::new();
+fn input_record_receipt(
+    world: &World,
+    path_map: &BTreeMap<PathBuf, PathBuf>,
+    main_input: Option<(PathBuf, usize)>,
+) -> Result<Vec<u8>, CliError> {
+    let mut records = BTreeMap::<PathBuf, usize>::new();
     for record in world.input_records() {
-        match records.entry(record.path()) {
+        let path = path_map
+            .get(record.path())
+            .cloned()
+            .unwrap_or_else(|| record.path().to_owned());
+        match records.entry(path) {
             std::collections::btree_map::Entry::Vacant(entry) => {
                 entry.insert(record.len());
             }
@@ -627,6 +593,9 @@ fn input_record_receipt(world: &World) -> Result<Vec<u8>, CliError> {
                 }
             }
         }
+    }
+    if let Some((path, len)) = main_input {
+        records.insert(path, len);
     }
 
     let mut receipt = Vec::new();
@@ -668,7 +637,6 @@ enum CliError {
     Lex(tex_lex::LexError),
     ExpandDump(expand_dump::ExpandDumpError),
     Exec(tex_exec::ExecError),
-    RenderedExec(String),
     Dvi(umber::DviBuildError),
     Html(umber::HtmlBuildError),
     Pdf(umber::PdfBuildError),
@@ -678,7 +646,6 @@ enum CliError {
     InputReceipt(String),
     Watch(watch::WatchError),
     NativeRun(umber::cli_resource::NativeRunError),
-    OutputIo(String),
 }
 
 impl std::fmt::Display for CliError {
@@ -689,7 +656,6 @@ impl std::fmt::Display for CliError {
             Self::Lex(err) => write!(f, "{err}"),
             Self::ExpandDump(err) => write!(f, "{err}"),
             Self::Exec(err) => write!(f, "{err}"),
-            Self::RenderedExec(text) => f.write_str(text),
             Self::Dvi(err) => write!(f, "{err}"),
             Self::Html(err) => write!(f, "{err}"),
             Self::Pdf(err) => write!(f, "{err}"),
@@ -699,7 +665,6 @@ impl std::fmt::Display for CliError {
             Self::InputReceipt(message) => f.write_str(message),
             Self::Watch(err) => write!(f, "{err}"),
             Self::NativeRun(err) => write!(f, "{err}"),
-            Self::OutputIo(message) => f.write_str(message),
         }
     }
 }
@@ -758,24 +723,4 @@ impl From<umber::cli_resource::NativeRunError> for CliError {
     fn from(value: umber::cli_resource::NativeRunError) -> Self {
         Self::NativeRun(value)
     }
-}
-
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the CLI is the native output I/O boundary"
-)]
-fn materialize_memory_files(files: Vec<umber::MemoryOutputFile>) -> Result<(), CliError> {
-    for file in files {
-        if let Some(parent) = file.path.parent()
-            && !parent.as_os_str().is_empty()
-        {
-            std::fs::create_dir_all(parent).map_err(|error| {
-                CliError::OutputIo(format!("failed to create {}: {error}", parent.display()))
-            })?;
-        }
-        std::fs::write(&file.path, file.bytes).map_err(|error| {
-            CliError::OutputIo(format!("failed to write {}: {error}", file.path.display()))
-        })?;
-    }
-    Ok(())
 }

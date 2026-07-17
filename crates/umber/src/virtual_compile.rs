@@ -297,6 +297,14 @@ pub enum CompileAttemptResult {
     Error(CompileError),
 }
 
+/// Accepted one-shot engine state handed from the resource session to a
+/// client-owned downstream finalizer. Effects remain uncommitted.
+pub struct AcceptedFinalization {
+    pub stores: Universe,
+    pub dumped_format: bool,
+    pub expansion_stats: tex_lex::ExpansionStats,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CompileError {
     InvalidVirtualPath {
@@ -545,6 +553,30 @@ impl VirtualCompileSession {
             accepted_output: None,
             pending_patch: None,
             last_reuse: None,
+        })
+    }
+
+    /// Consumes a completed session and transfers its accepted engine state
+    /// to a one-shot client finalizer. Pending and failed revisions never
+    /// cross this boundary.
+    pub fn into_accepted_finalization(self) -> Result<AcceptedFinalization, CompileError> {
+        if self.pending_patch.is_some() || self.accepted_output.is_none() {
+            return Err(CompileError::Incremental(
+                "the session has no completed accepted output to finalize".to_owned(),
+            ));
+        }
+        let session = self.incremental.ok_or_else(|| {
+            CompileError::Incremental("the accepted incremental session is missing".to_owned())
+        })?;
+        let dumped_format = session.accepted_dumped_format();
+        let expansion_stats = session.accepted_expansion_stats();
+        let stores = session
+            .into_accepted_universe()
+            .map_err(|error| CompileError::Incremental(error.to_string()))?;
+        Ok(AcceptedFinalization {
+            stores,
+            dumped_format,
+            expansion_stats,
         })
     }
 

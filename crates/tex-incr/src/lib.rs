@@ -160,6 +160,8 @@ pub struct PendingRevision {
     history: Vec<BoundaryRecord>,
     substrate: PendingSubstrate,
     reuse: ReuseMetrics,
+    dumped_format: bool,
+    expansion_stats: tex_lex::ExpansionStats,
 }
 
 enum PendingSubstrate {
@@ -299,6 +301,8 @@ pub struct Session {
     checkpoint_budget: usize,
     registered_inputs: BTreeMap<PathBuf, Vec<u8>>,
     accepted_retention: Option<RetentionMetrics>,
+    dumped_format: bool,
+    expansion_stats: tex_lex::ExpansionStats,
     render_maps: RefCell<RenderMapCache>,
 }
 
@@ -360,6 +364,8 @@ impl Session {
             checkpoint_budget,
             registered_inputs: BTreeMap::new(),
             accepted_retention: None,
+            dumped_format: false,
+            expansion_stats: tex_lex::ExpansionStats::default(),
             render_maps: RefCell::default(),
         })
     }
@@ -468,6 +474,27 @@ impl Session {
             .as_ref()
             .ok_or(SessionError::MissingAcceptedSubstrate)?;
         Ok(substrate.materialize_detached_outputs(self.effects.clone(), self.artifacts.clone())?)
+    }
+
+    /// Consumes the accepted session into the reached engine state with its
+    /// detached effects still uncommitted. This is the client finalization
+    /// boundary for one-shot drivers.
+    pub fn into_accepted_universe(mut self) -> Result<Universe, SessionError> {
+        let substrate = self
+            .substrate
+            .take()
+            .ok_or(SessionError::MissingAcceptedSubstrate)?;
+        Ok(substrate.into_detached_universe(self.effects, self.artifacts)?)
+    }
+
+    #[must_use]
+    pub const fn accepted_dumped_format(&self) -> bool {
+        self.dumped_format
+    }
+
+    #[must_use]
+    pub const fn accepted_expansion_stats(&self) -> tex_lex::ExpansionStats {
+        self.expansion_stats
     }
 
     /// Resolves one rendered HTML event/unit against the accepted revision.
@@ -879,6 +906,8 @@ impl Session {
             history,
             substrate: pending_substrate,
             reuse,
+            dumped_format: advance.dumped_format,
+            expansion_stats: advance.expansion_stats,
         })
     }
 
@@ -918,6 +947,8 @@ impl Session {
             history,
             substrate,
             reuse,
+            dumped_format,
+            expansion_stats,
             ..
         } = pending;
 
@@ -974,6 +1005,8 @@ impl Session {
         self.artifacts = artifacts;
         self.dvi_pages = dvi_pages;
         self.history = history;
+        self.dumped_format = dumped_format;
+        self.expansion_stats = expansion_stats;
         self.accepted_retention = Some(retention);
         Ok(self.output(reuse, retention))
     }
@@ -1036,6 +1069,8 @@ impl Session {
         self.effects = run.effects;
         self.artifacts = run.artifacts;
         self.dvi_pages = run.dvi_pages;
+        self.dumped_format = run.dumped_format;
+        self.expansion_stats = run.expansion_stats;
         self.substrate = Some(run.substrate);
         self.accepted_retention = Some(retention);
         Ok(self.output(
@@ -1111,6 +1146,8 @@ struct RevisionRun {
     dvi_pages: Vec<DviPagePlan>,
     output_bytes: usize,
     substrate: GenerationSubstrate,
+    dumped_format: bool,
+    expansion_stats: tex_lex::ExpansionStats,
 }
 
 #[derive(Default)]
@@ -1155,12 +1192,17 @@ fn execute_revision(
         ),
         None => ExecutionContext::with_resolvers(job_name, input_resolver, font_resolver),
     };
-    let ExecutionStats { dvi_pages, .. } = executor.run_with_context_and_checkpoints(
+    let ExecutionStats {
+        dvi_pages,
+        dumped_format,
+        ..
+    } = executor.run_with_context_and_checkpoints(
         &mut input,
         &mut universe,
         &mut context,
         &mut sink,
     )?;
+    let expansion_stats = input.expansion_stats();
     let effects = universe.world().effect_records().to_vec();
     let artifacts = universe.world().committed_artifacts().to_vec();
     let output_bytes = universe.retained_output_bytes();
@@ -1172,6 +1214,8 @@ fn execute_revision(
         dvi_pages,
         output_bytes,
         substrate,
+        dumped_format,
+        expansion_stats,
     })
 }
 
@@ -1184,6 +1228,8 @@ struct AdvanceRun {
     convergence_old_index: Option<usize>,
     restart_fork_latency: Duration,
     reexecution_latency: Duration,
+    dumped_format: bool,
+    expansion_stats: tex_lex::ExpansionStats,
 }
 
 struct ResumeSink {
@@ -1335,13 +1381,18 @@ fn execute_advance(
         None => ExecutionContext::with_resolvers(job_name, input_resolver, font_resolver),
     };
     let reexecution_started = Timer::start();
-    let ExecutionStats { dvi_pages, .. } = executor.resume_with_context_and_checkpoints(
+    let ExecutionStats {
+        dvi_pages,
+        dumped_format,
+        ..
+    } = executor.resume_with_context_and_checkpoints(
         &mut input,
         &mut scratch,
         &mut context,
         &mut sink,
     )?;
     let reexecution_latency = reexecution_started.elapsed();
+    let expansion_stats = input.expansion_stats();
     let effects = scratch.world().effect_records().to_vec();
     let artifacts = scratch.world().committed_artifacts().to_vec();
     let mut pages_through_stop = old_pages[..anchor.artifact_prefix].to_vec();
@@ -1355,6 +1406,8 @@ fn execute_advance(
         convergence_old_index: sink.convergence_old_index,
         restart_fork_latency,
         reexecution_latency,
+        dumped_format,
+        expansion_stats,
     })
 }
 

@@ -12,7 +12,7 @@ use tex_state::env::banks::IntParam;
 use tex_state::token::TracedTokenWord;
 use tex_state::{
     CommittedArtifact, ContentHash, EffectPos, EffectRecord, ExpansionContext, PrintSink, Universe,
-    WorldError,
+    WorldCommitMode, WorldError,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -45,11 +45,11 @@ pub use tex_incr::ReuseMetrics;
 pub use tex_incr::{RenderedOutputId, RevisionId};
 pub use umber_vfs::FileContentId;
 pub use virtual_compile::{
-    CompileAttemptResult, CompileDiagnostic, CompileError, EngineMode, FileKind, FileRequest,
-    FileRequestKey, NeedResources, RenderedSourceLocation, RenderedSourceResult, RequestKeyError,
-    ResolvedFile, ResourceDomain, ResourceRequest, ResourceResponse, RetentionMetrics,
-    SessionLimits, SessionOptions, SessionWebFont, SourcePatch, VfsLimitError, VfsLimitKind,
-    VfsLimits, VirtualCompileSession, VirtualPath, VirtualPathError,
+    AcceptedFinalization, CompileAttemptResult, CompileDiagnostic, CompileError, EngineMode,
+    FileKind, FileRequest, FileRequestKey, NeedResources, RenderedSourceLocation,
+    RenderedSourceResult, RequestKeyError, ResolvedFile, ResourceDomain, ResourceRequest,
+    ResourceResponse, RetentionMetrics, SessionLimits, SessionOptions, SessionWebFont, SourcePatch,
+    VfsLimitError, VfsLimitKind, VfsLimits, VirtualCompileSession, VirtualPath, VirtualPathError,
 };
 
 /// The only checkpoint policy supported by composed engine sessions.
@@ -421,7 +421,12 @@ impl PlannedFinalization {
         self,
         stores: &mut Universe,
     ) -> Result<CommittedFinalization, FinalizationError> {
-        stores.commit_effects(self.effect_pos)?;
+        if stores.world().commit_mode() == WorldCommitMode::Retained {
+            debug_assert_eq!(self.effect_pos, stores.world().effect_pos());
+            stores.export_retained_effects()?;
+        } else {
+            stores.commit_effects(self.effect_pos)?;
+        }
         Ok(CommittedFinalization { files: self.files })
     }
 
