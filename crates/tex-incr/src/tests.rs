@@ -113,7 +113,7 @@ fn pure_memo_runtime_survives_accepted_revisions() {
 }
 
 #[test]
-fn reuse_metrics_preserve_paragraph_preflight_source_batching() {
+fn cold_paragraph_recording_preserves_source_batching() {
     fn cold(memo: bool) -> ReuseMetrics {
         let mut universe = template();
         if memo {
@@ -135,22 +135,13 @@ fn reuse_metrics_preserve_paragraph_preflight_source_batching() {
     let ordinary = cold(false);
     let memo_miss = cold(true);
     assert_eq!(ordinary.reexecuted_tokens, memo_miss.reexecuted_tokens);
-    assert!(
-        ordinary.reexecuted_source_text_span_tokens > memo_miss.reexecuted_source_text_span_tokens
-    );
-    assert!(memo_miss.reexecuted_commands > ordinary.reexecuted_commands);
     assert_eq!(
-        ordinary.reexecuted_source_text_span_tokens - memo_miss.reexecuted_source_text_span_tokens,
-        1,
+        ordinary.reexecuted_source_text_span_tokens,
+        memo_miss.reexecuted_source_text_span_tokens,
     );
     assert_eq!(
-        memo_miss.reexecuted_commands - ordinary.reexecuted_commands,
-        1,
-    );
-    assert_eq!(
-        ordinary.reexecuted_commands + ordinary.reexecuted_source_text_span_tokens,
-        memo_miss.reexecuted_commands + memo_miss.reexecuted_source_text_span_tokens,
-        "public metrics expose the one-token vertical-mode replay seam"
+        ordinary.reexecuted_commands, memo_miss.reexecuted_commands,
+        "recording must not introduce a token-preflight execution seam"
     );
 }
 

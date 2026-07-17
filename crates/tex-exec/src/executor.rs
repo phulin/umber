@@ -302,12 +302,6 @@ impl<'a> ExecutionContext<'a> {
         false
     }
 
-    pub(crate) fn mark_cold_paragraph_macro(&mut self) {
-        if let Some(recording) = &mut self.cold_paragraph_recording {
-            recording.macro_bearing = true;
-        }
-    }
-
     pub(crate) fn abandon_cold_paragraph_recording(&mut self) {
         self.cold_paragraph_recording = None;
         let _ = self.expansion.finish_paragraph_recording();
@@ -670,8 +664,13 @@ where
                 execution.bypass_paragraph_memo_once = false;
             } else {
                 let before_artifacts = stores.world().artifact_commits().len();
-                if crate::paragraph_memo::try_reuse_literal_paragraph(
-                    nest, input, stores, execution, stats,
+                if crate::paragraph_memo::try_reuse_aligned_paragraph(
+                    starting_span,
+                    nest,
+                    input,
+                    stores,
+                    execution,
+                    stats,
                 )? {
                     output::drain_pending_output(nest, input, stores, execution, stats)?;
                     execution.paragraph_memo_barrier = false;
@@ -712,16 +711,6 @@ where
                 continue;
             }
             if input.append_source_text_span(stores, &mut macro_text) > 0 {
-                stats.delivered_tokens += macro_text.len();
-                stats.source_text_span_tokens += macro_text.len();
-                for token in macro_text.drain(..) {
-                    execution.observe_paragraph_token(token);
-                    let appended = assignments::try_append_character(nest, token, stores)?;
-                    debug_assert!(appended);
-                }
-                continue;
-            }
-            if input.append_paragraph_preflight_text_span(&mut macro_text) > 0 {
                 stats.delivered_tokens += macro_text.len();
                 stats.source_text_span_tokens += macro_text.len();
                 for token in macro_text.drain(..) {

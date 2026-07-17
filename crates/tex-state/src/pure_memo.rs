@@ -542,8 +542,10 @@ pub struct PureMemoRuntime {
     shipout_episodes: bool,
     paragraph_recording: Option<Vec<PureParagraphMutation>>,
     prior_paragraphs: Vec<RecordedParagraphRegion>,
-    /// O(1) pre-delivery candidate selection for accepted macro paragraphs.
+    /// Stable-source alignment index for the ordered accepted paragraph trace.
     prior_paragraph_starts: HashMap<RootSpanId, usize>,
+    /// First accepted paragraph that may still align with the new execution.
+    prior_paragraph_cursor: usize,
     recorded_paragraphs: Vec<RecordedParagraphRegion>,
     reuse_prior_paragraphs: bool,
     paragraph_probation_epoch: u8,
@@ -1062,7 +1064,8 @@ impl PureMemoRuntime {
         } else {
             self.paragraph_seeded_regions < Self::INITIAL_PARAGRAPH_SEED_LIMIT
         };
-        let seeded = !candidate
+        let seeded = starting_span.is_some()
+            && !candidate
             && under_seed_limit
             && if self.reuse_prior_paragraphs {
                 self.prior_paragraphs.len() <= Self::PROBATION_PARAGRAPH_SEED_LIMIT
@@ -1191,7 +1194,7 @@ impl PureMemoRuntime {
         result
     }
 
-    pub(crate) fn lookup_recorded_paragraph_start(
+    pub(crate) fn align_recorded_paragraph_start(
         &mut self,
         starting_span: RootSpanId,
     ) -> Option<RecordedParagraphRegion> {
@@ -1203,11 +1206,15 @@ impl PureMemoRuntime {
         let cache = self.cache.as_mut()?;
         cache.stats.lookups = cache.stats.lookups.saturating_add(1);
         cache.stats.paragraph_lookups = cache.stats.paragraph_lookups.saturating_add(1);
-        let result = self
+        let aligned_index = self
             .prior_paragraph_starts
             .get(&starting_span)
-            .and_then(|&index| self.prior_paragraphs.get(index))
-            .cloned();
+            .copied()
+            .filter(|&index| index >= self.prior_paragraph_cursor);
+        let result = aligned_index.and_then(|index| self.prior_paragraphs.get(index).cloned());
+        if let Some(index) = aligned_index {
+            self.prior_paragraph_cursor = index.saturating_add(1);
+        }
         if result.is_none() {
             cache.stats.misses = cache.stats.misses.saturating_add(1);
             cache.stats.paragraph.key_misses = cache.stats.paragraph.key_misses.saturating_add(1);
@@ -1226,6 +1233,7 @@ impl PureMemoRuntime {
     pub fn begin_paragraph_generation(&mut self, reuse_prior: bool) {
         self.recorded_paragraphs.clear();
         self.reuse_prior_paragraphs = reuse_prior;
+        self.prior_paragraph_cursor = 0;
         self.paragraph_seeded_regions = 0;
     }
 
@@ -1235,12 +1243,11 @@ impl PureMemoRuntime {
         self.prior_paragraphs = std::mem::take(&mut self.recorded_paragraphs);
         self.prior_paragraph_starts.clear();
         for (index, region) in self.prior_paragraphs.iter().enumerate() {
-            if region.barriers.is_empty()
-                && let Some(start) = region.starting_span
-            {
+            if let Some(start) = region.starting_span {
                 self.prior_paragraph_starts.entry(start).or_insert(index);
             }
         }
+        self.prior_paragraph_cursor = 0;
         self.reuse_prior_paragraphs = false;
         self.paragraph_probation_epoch =
             self.paragraph_probation_epoch.wrapping_add(1) % (Self::PROBATION_PERIOD as u8);
@@ -1250,6 +1257,7 @@ impl PureMemoRuntime {
     pub fn discard_paragraph_generation(&mut self) {
         self.recorded_paragraphs.clear();
         self.reuse_prior_paragraphs = false;
+        self.prior_paragraph_cursor = 0;
     }
 
     pub fn recorded_paragraphs(&self) -> &[RecordedParagraphRegion] {

@@ -1897,12 +1897,11 @@ impl Universe {
     }
 
     #[doc(hidden)]
-    pub fn lookup_recorded_paragraph_start(
+    pub fn align_recorded_paragraph_start(
         &mut self,
         starting_span: crate::RootSpanId,
     ) -> Option<crate::RecordedParagraphRegion> {
-        self.pure_memo
-            .lookup_recorded_paragraph_start(starting_span)
+        self.pure_memo.align_recorded_paragraph_start(starting_span)
     }
 
     #[doc(hidden)]

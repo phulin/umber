@@ -206,6 +206,46 @@ impl LayoutCursor {
         let fragment_offset = segment.fragment_start.checked_add(within)?;
         stores.registered_root_span_id(segment.registration, fragment_offset..fragment_offset)
     }
+
+    fn root_coverage(
+        &self,
+        start: usize,
+        end: usize,
+        stores: &impl ExpansionState,
+    ) -> Option<Vec<RootSpanId>> {
+        if start > end {
+            return None;
+        }
+        let mut covered_through = start;
+        let mut spans = Vec::new();
+        for segment in self
+            .segments
+            .iter()
+            .skip_while(|segment| segment.document_end <= start)
+        {
+            if covered_through == end {
+                break;
+            }
+            if segment.document_start > covered_through {
+                return None;
+            }
+            let segment_start = covered_through.max(segment.document_start);
+            let segment_end = end.min(segment.document_end);
+            if segment_start >= segment_end {
+                continue;
+            }
+            let within_start = u64::try_from(segment_start - segment.document_start).ok()?;
+            let within_end = u64::try_from(segment_end - segment.document_start).ok()?;
+            let fragment_start = segment.fragment_start.checked_add(within_start)?;
+            let fragment_end = segment.fragment_start.checked_add(within_end)?;
+            spans.push(
+                stores
+                    .registered_root_span_id(segment.registration, fragment_start..fragment_end)?,
+            );
+            covered_through = segment_end;
+        }
+        (covered_through == end).then_some(spans)
+    }
 }
 
 /// Source of physical input lines.
@@ -2975,6 +3015,33 @@ impl InputStack {
             .root_span_at_document_offset(source.next_source_offset, stores)
     }
 
+    /// Returns complete stable root-piece coverage between two root anchors.
+    /// Unlike delivered-token provenance, this includes comments, whitespace,
+    /// and every other physical byte whose insertion could change tokenization.
+    #[must_use]
+    pub fn root_source_coverage(
+        &self,
+        starting_span: RootSpanId,
+        ending_span: RootSpanId,
+        stores: &impl ExpansionState,
+    ) -> Option<Vec<RootSpanId>> {
+        let (_, frame) = self
+            .frames
+            .iter_indexed_from(0)
+            .rev()
+            .find(|(_, frame)| matches!(frame, InputFrame::Source(_)))?;
+        let InputFrame::Source(source) = frame else {
+            unreachable!();
+        };
+        let cursor = source.layout_cursor.as_ref()?;
+        let start = cursor.document_range_at_or_after(starting_span, 0)?;
+        let end = cursor.document_range_at_or_after(ending_span, start.start)?;
+        if start.start != start.end || end.start != end.end {
+            return None;
+        }
+        cursor.root_coverage(start.start, end.start, stores)
+    }
+
     /// Validates a prior paragraph's complete raw source coverage without
     /// tokenizing or mutating the input stack.
     #[must_use]
@@ -3037,13 +3104,19 @@ impl InputStack {
         if start.start != current_document_offset || start.start != start.end {
             return None;
         }
-        let mut minimum = current_document_offset;
+        let mut covered_through = current_document_offset;
         for &span in consumed_spans {
-            let range = cursor.document_range_at_or_after(span, minimum)?;
-            minimum = range.start;
+            let range = cursor.document_range_at_or_after(span, covered_through)?;
+            if range.start != covered_through {
+                return None;
+            }
+            covered_through = range.end;
         }
-        let ending_range = cursor.document_range_at_or_after(ending_span, minimum)?;
+        let ending_range = cursor.document_range_at_or_after(ending_span, covered_through)?;
         if ending_range.start != ending_range.end {
+            return None;
+        }
+        if ending_range.start != covered_through {
             return None;
         }
 

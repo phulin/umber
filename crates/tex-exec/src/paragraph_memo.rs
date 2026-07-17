@@ -1,10 +1,7 @@
 //! Recorder-driven paragraph front-end eligibility and transitional detached reuse.
 
-use std::collections::HashSet;
-
 use tex_lex::InputStack;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
-use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::token::{Catcode, Token};
 use tex_state::{
     ContentHash, DetachedVirtualEffect, EffectRecord, ExpansionState, MemoTimingPhase,
@@ -17,7 +14,6 @@ use crate::{ExecError, ExecutionContext, ExecutionStats, ModeNest};
 const PARAGRAPH_FRONT_END_DOMAIN: u32 = 2;
 const PARAGRAPH_FRONT_END_SCHEMA: u32 = 1;
 const PARAGRAPH_ENV_HASH_DOMAIN: u64 = 0x7061_7261_656e_7601;
-const MAX_PREFLIGHT_TOKENS: usize = 1 << 16;
 const MAX_PARAGRAPH_DEPENDENCY_CACHE_ENTRIES: usize = 4_096;
 
 #[cfg(feature = "profiling-stats")]
@@ -45,184 +41,40 @@ fn finish_phase(stores: &mut Universe, phase: ParagraphRecordingPhase, started: 
     let _ = (stores, phase, started);
 }
 
-pub(crate) fn try_reuse_literal_paragraph(
+pub(crate) fn try_reuse_aligned_paragraph(
+    starting_span: Option<tex_state::RootSpanId>,
     nest: &mut ModeNest,
     input: &mut InputStack,
     stores: &mut Universe,
     execution: &mut ExecutionContext<'_>,
-    stats: &mut ExecutionStats,
+    _stats: &mut ExecutionStats,
 ) -> Result<bool, ExecError> {
-    let mut traced = Vec::new();
-    let mut semantic = Vec::new();
-    let mut saw_macro = false;
-    let mut preselected = None;
-    for _ in 0..MAX_PREFLIGHT_TOKENS {
-        let starting_span = input.current_root_delivery_anchor(stores)?;
-        let group_key =
-            tex_state::DependencyKey::Engine(tex_state::DependencyEngineField::GroupLevel);
-        let starting_group_changed_at = stores.track_dependency(group_key);
-        if execution.update_cold_paragraph_start(
-            starting_span,
-            tex_state::ExpansionState::execution_group_depth(stores),
-            starting_group_changed_at,
-        ) {
-            input.ensure_paragraph_source_recording();
-        }
-        preselected = starting_span
-            .and_then(|start| stores.lookup_recorded_paragraph_start(start))
-            .filter(|entry| entry.macro_bearing);
-        if preselected.is_some() {
-            break;
-        }
-        let next = tex_expand::next_semantic_raw_token(
-            input,
-            &mut tex_state::ExpansionContext::new(stores),
-        )?;
-        let Some(next) = next else {
-            break;
-        };
-        if matches!(
-            tex_expand::semantic_token(next),
-            Token::Char {
-                cat: Catcode::Space,
-                ..
-            }
-        ) {
-            continue;
-        }
-        crate::push_traced_tokens(input, stores, [next]);
-        break;
-    }
-    let mut terminated = preselected.is_some();
-    let mut effect_argument_depth = 0usize;
-    let mut expects_effect_argument = false;
-    for _ in 0..if preselected.is_some() {
-        0
-    } else {
-        MAX_PREFLIGHT_TOKENS
-    } {
-        let next = tex_expand::next_semantic_raw_token(
-            input,
-            &mut tex_state::ExpansionContext::new(stores),
-        )?;
-        let Some(next) = next else {
-            break;
-        };
-        let token = tex_expand::semantic_token(next);
-        traced.push(next);
-        match token {
-            Token::Char {
-                cat: Catcode::Letter | Catcode::Other | Catcode::Space,
-                ..
-            } => semantic.push(token),
-            Token::Cs(symbol) => {
-                let meaning = stores.meaning(symbol);
-                if matches!(meaning, Meaning::Macro { .. }) {
-                    saw_macro = true;
-                }
-                semantic.push(token);
-                if effect_argument_depth == 0
-                    && matches!(
-                        meaning,
-                        Meaning::UnexpandablePrimitive(
-                            UnexpandablePrimitive::Par | UnexpandablePrimitive::EndGraf
-                        )
-                    )
-                {
-                    terminated = true;
-                    break;
-                }
-                if matches!(
-                    meaning,
-                    Meaning::UnexpandablePrimitive(
-                        UnexpandablePrimitive::Message | UnexpandablePrimitive::ErrMessage
-                    )
-                ) {
-                    expects_effect_argument = true;
-                    continue;
-                }
-                if !matches!(
-                    meaning,
-                    Meaning::CountRegister(_)
-                        | Meaning::IntParam(_)
-                        | Meaning::UnexpandablePrimitive(
-                            UnexpandablePrimitive::Count | UnexpandablePrimitive::Global
-                        )
-                ) {
-                    break;
-                }
-            }
-            Token::Char {
-                cat: Catcode::BeginGroup,
-                ..
-            } if expects_effect_argument || effect_argument_depth > 0 => {
-                semantic.push(token);
-                effect_argument_depth = effect_argument_depth.saturating_add(1);
-                expects_effect_argument = false;
-            }
-            Token::Char {
-                cat: Catcode::EndGroup,
-                ..
-            } if effect_argument_depth > 0 => {
-                semantic.push(token);
-                effect_argument_depth -= 1;
-            }
-            _ => break,
-        }
-    }
-
-    if saw_macro {
-        execution.mark_cold_paragraph_macro();
-    }
-    let eligible = terminated
-        && (preselected.is_some()
-            || semantic
-                .iter()
-                .any(|token| matches!(token, Token::Char { cat, .. } if *cat != Catcode::Space)));
-    if !eligible {
-        crate::push_paragraph_preflight_tokens(input, stores, traced);
-        return Ok(false);
-    }
-
-    let stable_candidate = preselected.is_some();
-    let key = preselected
-        .as_ref()
-        .map_or_else(|| paragraph_key(stores, &semantic), |entry| entry.key);
-    let Some(mut entry) = preselected
-        .take()
-        .or_else(|| stores.lookup_recorded_paragraph(key))
+    let Some(mut entry) =
+        starting_span.and_then(|start| stores.align_recorded_paragraph_start(start))
     else {
-        let trace_origins = traced.iter().map(|token| token.origin()).collect();
-        crate::push_paragraph_preflight_tokens(input, stores, traced);
-        execution.pending_paragraph_memo =
-            Some(crate::executor::PendingParagraphMemo { key, trace_origins });
-        stores.begin_pure_paragraph_recording();
         return Ok(false);
     };
+    if !entry.barriers.is_empty() {
+        stores.record_pure_paragraph_barrier();
+        return Ok(false);
+    }
     #[allow(clippy::disallowed_methods)]
     let validation_started = std::time::Instant::now();
     let dependency_failure = stores
         .validate_dependencies_with_failure(&mut entry.dependencies, |key| {
             paragraph_validation_value(stores, execution, key)
         });
-    let prepared_input = stable_candidate.then(|| {
-        entry
-            .starting_span
-            .zip(entry.ending_span)
-            .and_then(|(start, end)| {
-                input.prepare_paragraph_transition(
-                    start,
-                    &entry.consumed_spans,
-                    end,
-                    &entry.ending_input,
-                )
-            })
-    });
-    let scanned_input = (!stable_candidate).then(|| input.publication_summary(stores));
-    let input_valid = prepared_input.as_ref().is_some_and(Option::is_some)
-        || scanned_input
-            .as_ref()
-            .is_some_and(|current| current.paragraph_transition_matches(&entry.ending_input));
+    let prepared_input = entry
+        .starting_span
+        .zip(entry.ending_span)
+        .and_then(|(start, end)| {
+            input.prepare_paragraph_transition(
+                start,
+                &entry.consumed_spans,
+                end,
+                &entry.ending_input,
+            )
+        });
     let validation_failure = dependency_failure
         .map(ParagraphValidationFailure::from_dependency)
         .or_else(|| {
@@ -232,7 +84,11 @@ pub(crate) fn try_reuse_literal_paragraph(
         .or_else(|| {
             (!validate_effects(&entry.effects)).then_some(ParagraphValidationFailure::Effect)
         })
-        .or_else(|| (!input_valid).then_some(ParagraphValidationFailure::InputTransition));
+        .or_else(|| {
+            prepared_input
+                .is_none()
+                .then_some(ParagraphValidationFailure::InputTransition)
+        });
     stores.record_pure_memo_timing(
         PureMemoLayer::Paragraph,
         MemoTimingPhase::Validation,
@@ -240,13 +96,10 @@ pub(crate) fn try_reuse_literal_paragraph(
     );
     if let Some(failure) = validation_failure {
         stores.record_pure_paragraph_validation_failure(failure);
-        crate::push_paragraph_preflight_tokens(input, stores, traced);
-        stores.begin_pure_paragraph_recording();
         return Ok(false);
     }
     let Some(retained) = entry.hlist else {
         stores.record_pure_paragraph_validation_failure(ParagraphValidationFailure::RetainedResult);
-        crate::push_paragraph_preflight_tokens(input, stores, traced);
         return Ok(false);
     };
     #[allow(clippy::disallowed_methods)]
@@ -260,8 +113,6 @@ pub(crate) fn try_reuse_literal_paragraph(
                 import_started.elapsed(),
             );
             stores.record_pure_paragraph_import_failure();
-            crate::push_paragraph_preflight_tokens(input, stores, traced);
-            stores.begin_pure_paragraph_recording();
             return Ok(false);
         }
     };
@@ -277,26 +128,23 @@ pub(crate) fn try_reuse_literal_paragraph(
         MemoTimingPhase::Import,
         import_started.elapsed(),
     );
-    if let Some(prepared) = prepared_input.flatten() {
-        let transition_applied = input.apply_paragraph_transition(stores, prepared)?;
-        assert!(
-            transition_applied,
-            "validated paragraph source transition must apply"
-        );
-    }
-    let current_input = scanned_input.unwrap_or_else(|| input.publication_summary(stores));
-    let current_trace_origins = if stable_candidate {
-        entry
-            .trace_spans
-            .iter()
-            .map(|span| {
-                span.and_then(|span| stores.origin_for_root_span(span))
-                    .unwrap_or(tex_state::token::OriginId::UNKNOWN)
-            })
-            .collect::<Vec<_>>()
-    } else {
-        traced.iter().map(|token| token.origin()).collect()
-    };
+    let transition_applied = input.apply_paragraph_transition(
+        stores,
+        prepared_input.expect("validated paragraph transition"),
+    )?;
+    assert!(
+        transition_applied,
+        "validated paragraph source transition must apply"
+    );
+    let current_input = input.publication_summary(stores);
+    let current_trace_origins = entry
+        .trace_spans
+        .iter()
+        .map(|span| {
+            span.and_then(|span| stores.origin_for_root_span(span))
+                .unwrap_or(tex_state::token::OriginId::UNKNOWN)
+        })
+        .collect::<Vec<_>>();
     let _ = stores.finish_pure_paragraph_recording();
     replay_mutations(stores, &entry.mutations);
     replay_effects(stores, &entry.effects);
@@ -349,6 +197,8 @@ pub(crate) fn try_reuse_literal_paragraph(
     };
     let line_count = entry.line_count;
     let mutation_count = entry.mutations.len();
+    let key = entry.key;
+    let trace_len = entry.trace_spans.len();
     stores.record_carried_paragraph(&entry);
     stores.record_paragraph_region(entry);
     execution.pending_paragraph_memo =
@@ -364,8 +214,7 @@ pub(crate) fn try_reuse_literal_paragraph(
         nodes,
         lines_valid.then_some((lines.expect("validated imported lines"), line_count)),
     )?;
-    stats.delivered_tokens = stats.delivered_tokens.saturating_add(traced.len());
-    stores.record_pure_paragraph_hit(traced.len(), mutation_count, imported_bytes);
+    stores.record_pure_paragraph_hit(trace_len, mutation_count, imported_bytes);
     stores.record_pure_paragraph_line_hit(!lines_valid);
     Ok(true)
 }
@@ -739,9 +588,7 @@ fn publish_recorded_region(
         }
     };
     let mutations = stores.finish_pure_paragraph_recording().unwrap_or_default();
-    let mut consumed_spans = input
-        .finish_paragraph_source_recording()
-        .unwrap_or_default();
+    let _delivered_spans = input.finish_paragraph_source_recording();
     finish_phase(
         stores,
         ParagraphRecordingPhase::InputTransition,
@@ -753,33 +600,25 @@ fn publish_recorded_region(
         .iter()
         .map(|token| stores.root_span_for_origin(token.origin()))
         .collect::<Vec<_>>();
-    if !recording.macro_bearing {
-        consumed_spans.clear();
-    } else {
-        let mut seen =
-            HashSet::with_capacity(consumed_spans.len().saturating_add(trace_spans.len()));
-        seen.extend(consumed_spans.iter().copied());
-        for span in trace_spans.iter().flatten().copied() {
-            if seen.insert(span) {
-                consumed_spans.push(span);
-            }
-        }
-    }
     finish_phase(
         stores,
         ParagraphRecordingPhase::FrontEndProvenance,
         provenance_started,
     );
     let ending_span = input.root_source_checkpoint_anchor(stores);
-    if let Some((start, end)) = recording.starting_span.zip(ending_span)
-        && start.piece() == end.piece()
-    {
-        consumed_spans.retain(|span| {
-            span.piece() == start.piece()
-                && span.start() >= start.start()
-                && span.end() <= end.start()
-        });
-    }
+    let consumed_spans = recording
+        .starting_span
+        .zip(ending_span)
+        .and_then(|(start, end)| input.root_source_coverage(start, end, stores));
+    let consumed_spans = match consumed_spans {
+        Some(spans) => spans,
+        None => {
+            recording
+                .barriers
+                .insert(tex_state::ParagraphBarrierReason::UnsupportedInputTransition);
+            Vec::new()
+        }
+    };
     let ending_input = input.publication_summary(stores);
     let group_key = tex_state::DependencyKey::Engine(tex_state::DependencyEngineField::GroupLevel);
     if recording.starting_span.is_some()

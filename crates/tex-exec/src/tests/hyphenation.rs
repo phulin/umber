@@ -515,7 +515,7 @@ fn enabled_pretolerance_memo_preserves_end_to_end_state_effects_and_dvi() {
 }
 
 #[test]
-fn literal_paragraph_front_end_reuses_hlist_and_preserves_output() {
+fn direct_batch_paragraphs_do_not_build_incremental_history() {
     fn run(enabled: bool) -> (Vec<u8>, u64, tex_state::PureMemoStats) {
         let mut stores = Universe::with_world(tex_state::World::memory());
         tex_expand::install_expandable_primitives(&mut stores);
@@ -543,20 +543,17 @@ fn literal_paragraph_front_end_reuses_hlist_and_preserves_output() {
     assert_eq!(memo_dvi, cold_dvi);
     assert_eq!(memo_hash, cold_hash);
     assert_eq!(stats.paragraph_hits, 0, "{stats:?}");
-    assert_eq!(stats.paragraph_inserts, 3, "{stats:?}");
+    assert_eq!(stats.paragraph_inserts, 0, "{stats:?}");
     assert_eq!(stats.paragraph_commands_skipped, 0);
     assert_eq!(stats.paragraph_imported_bytes, 0);
-    assert_eq!(stats.paragraph_eligible_regions, 3, "{stats:?}");
+    assert_eq!(stats.paragraph_eligible_regions, 0, "{stats:?}");
+    assert_eq!(stats.paragraph_opportunities.seeded.regions, 0, "{stats:?}");
+    assert_eq!(
+        stats.paragraph_opportunities.published.regions, 0,
+        "{stats:?}"
+    );
     assert!(
-        stats.paragraph_opportunities.seeded.regions >= 3,
-        "{stats:?}"
-    );
-    assert_eq!(
-        stats.paragraph_opportunities.published.regions, 3,
-        "{stats:?}"
-    );
-    assert_eq!(
-        stats.paragraph_opportunities.declined.regions, 0,
+        stats.paragraph_opportunities.declined.regions >= 3,
         "{stats:?}"
     );
 }
@@ -596,7 +593,7 @@ fn paragraph_front_end_replays_validated_count_mutations() {
     assert_eq!(memo_dvi, cold_dvi);
     assert_eq!(stats.paragraph_hits, 0, "{stats:?}");
     assert_eq!(stats.paragraph_mutations_replayed, 0, "{stats:?}");
-    assert_eq!(stats.paragraph_eligible_regions, 4, "{stats:?}");
+    assert_eq!(stats.paragraph_eligible_regions, 0, "{stats:?}");
 }
 
 #[test]
@@ -622,7 +619,7 @@ fn grouped_paragraph_redo_preserves_local_and_global_assignment_scope() {
     let stats = stores.pure_memo_stats();
     assert_eq!(stats.paragraph_hits, 0, "{stats:?}");
     assert_eq!(stats.paragraph_mutations_replayed, 0, "{stats:?}");
-    assert_eq!(stats.paragraph_eligible_regions, 6, "{stats:?}");
+    assert_eq!(stats.paragraph_eligible_regions, 0, "{stats:?}");
 }
 
 #[test]
@@ -641,7 +638,7 @@ fn effectful_paragraph_commands_remain_replay_barriers() {
     assert_eq!(stores.count(7), 3);
     let stats = stores.pure_memo_stats();
     assert_eq!(stats.paragraph_hits, 0);
-    assert!(stats.paragraph_barriers >= 3, "{stats:?}");
+    assert_eq!(stats.paragraph_eligible_regions, 0, "{stats:?}");
 }
 
 #[test]
@@ -660,11 +657,11 @@ fn deterministic_message_effects_replay_in_original_order() {
     assert_eq!(terminal_effect_text(&stores).matches("visible").count(), 3);
     let stats = stores.pure_memo_stats();
     assert_eq!(stats.paragraph_hits, 0, "{stats:?}");
-    assert_eq!(stats.paragraph_eligible_regions, 3, "{stats:?}");
+    assert_eq!(stats.paragraph_eligible_regions, 0, "{stats:?}");
 }
 
 #[test]
-fn cold_paragraph_recorder_accepts_macros_everypar_csname_and_migrations() {
+fn direct_batch_executor_does_not_publish_paragraph_regions() {
     let mut stores = stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
@@ -680,32 +677,12 @@ fn cold_paragraph_recorder_accepts_macros_everypar_csname_and_migrations() {
         .run(&mut input, &mut stores)
         .expect("recordable macro paragraph");
 
-    let body = stores.intern("body").symbol().raw();
     let regions = stores.recorded_paragraphs();
-    assert_eq!(regions.len(), 1, "{regions:#?}");
-    assert!(regions[0].barriers.is_empty(), "{regions:#?}");
-    assert!(
-        regions[0]
-            .dependencies
-            .iter()
-            .any(|dependency| dependency.key == tex_state::DependencyKey::Meaning(body)),
-        "constructed csname meaning was not recorded: {regions:#?}"
-    );
-    assert!(
-        regions[0].dependencies.iter().any(|dependency| {
-            dependency.key
-                == tex_state::DependencyKey::Cell {
-                    bank: tex_state::DependencyBank::TokParam,
-                    index: u32::from(tex_state::env::banks::TokParam::EVERY_PAR.raw()),
-                }
-        }),
-        "everypar dependency was not recorded: {regions:#?}"
-    );
-    assert!(!regions[0].effects.is_empty());
+    assert!(regions.is_empty(), "{regions:#?}");
 }
 
 #[test]
-fn cold_paragraph_recorder_reports_display_and_scantokens_barriers() {
+fn direct_batch_executor_does_not_arm_incremental_barrier_tracking() {
     let run = |body: &str| {
         let mut stores = stores_with_fonts();
         tex_expand::install_expandable_primitives(&mut stores);
@@ -722,10 +699,10 @@ fn cold_paragraph_recorder_reports_display_and_scantokens_barriers() {
         stores.pure_memo_stats()
     };
     let display = run("display text$$x$$after\\par");
-    assert!(display.paragraph_display_math_barriers >= 1, "{display:?}");
+    assert_eq!(display.paragraph_display_math_barriers, 0, "{display:?}");
     let scantokens = run("scanned \\scantokens{more} text\\par");
-    assert!(
-        scantokens.paragraph_scantokens_barriers >= 1,
+    assert_eq!(
+        scantokens.paragraph_scantokens_barriers, 0,
         "{scantokens:?}"
     );
 }

@@ -500,20 +500,6 @@ where
     tex_expand::back_input(input, &mut tex_state::ExpansionContext::new(stores), tokens);
 }
 
-pub(crate) fn push_paragraph_preflight_tokens<I>(
-    input: &mut InputStack,
-    stores: &mut Universe,
-    tokens: I,
-) where
-    I: IntoIterator<Item = TracedTokenWord>,
-{
-    tex_expand::back_paragraph_preflight(
-        input,
-        &mut tex_state::ExpansionContext::new(stores),
-        tokens,
-    );
-}
-
 pub(crate) fn insert_traced_tokens<I>(input: &mut InputStack, stores: &mut Universe, tokens: I)
 where
     I: IntoIterator<Item = TracedTokenWord>,
