@@ -14,10 +14,13 @@ The central decision is:
 > or virtual effects that must be replayed. Whole-state equality is an optional
 > fast path, not the main invalidation mechanism.
 
-The correctness criterion is byte-identical output and effect ordering versus
-a cold execution of the same revision with the same pinned external inputs.
-Every cache miss, unsupported construct, failed validation, or malformed
-persistent entry falls back to ordinary execution.
+Dependency-validated replay has a collision-safe correctness criterion:
+byte-identical output and effect ordering versus a cold execution of the same
+revision with the same pinned external inputs. Every cache miss, unsupported
+construct, failed validation, or malformed persistent entry falls back to
+ordinary execution. The separate session-local suffix splice is probabilistic:
+its authoritative 64-bit aHash comparison accepts a rare collision-induced
+incorrect reuse rather than falling back to SHA-256 or structural verification.
 
 ## Why checkpoint-hash convergence is insufficient
 
@@ -39,8 +42,9 @@ rejoining after changed typeset content.
 A canonical current-state fingerprint could be sound if it included every
 future-observable value: environment cells, input and mode state, page-builder
 roots, insertions, marks, page counters, virtual streams, RNG, clocks, and
-other state. Such a fingerprint remains valuable as an exact-state splice
-shortcut, but it has two limitations:
+other state. Such a fingerprint remains valuable as a probabilistic exact-state
+splice shortcut under the accepted 64-bit aHash trust contract, but it has two
+limitations:
 
 1. unrelated state differences prevent reuse even when a computation never
    reads that state; and
@@ -595,12 +599,13 @@ parents and the corresponding leaves independently and require identical
 state, write order, input, effects, and outputs. Summaries own no correctness
 state and may be discarded to recover leaf-by-leaf walking.
 
-## Optional exact-state splice
+## Optional probabilistic exact-state splice
 
-An exact current-state comparison may stop trace walking and adopt the
-remaining old trace when all future-relevant roots match. This identity is
-separate from the folded history hash and includes every live continuation
-root while excluding already detached output history.
+A session-local current-state comparison may stop trace walking and adopt the
+remaining old trace when the canonical projections of all future-relevant roots
+have the same 64-bit aHash identity. This probabilistic identity is separate
+from the folded history hash and includes every live continuation root while
+excluding already detached output history.
 
 The fast comparison uses immutable root identity and a versioned, fixed-seed
 64-bit aHash over canonical semantic projections. Hash equality is authoritative
@@ -690,8 +695,8 @@ Every accepted revision reports per layer:
 Trace telemetry distinguishes named nodes walked, adopted page leaves, adopted
 suffix subtrees, shallow retained trace bytes, exact dependency-validation
 time, and ordered suffix-replay time. Prefix-retained, re-shipped, and adopted
-page counts are separate, so their sum can attest that a verified splice
-accounts for every output page.
+page counts are separate, so their sum can attest that a probabilistically
+adopted splice accounts for every output page in the observed run.
 
 The Gentle runner measures four accepted revisions in one session—the pinned
 edit, a follow-up edit, removal of that follow-up, and the equal-width
@@ -725,8 +730,10 @@ pages is a restart-latency measurement, not evidence of suffix reuse.
 
 ## Correctness and verification
 
-For every memo layer, cache-on and cache-off execution must agree with a fresh
-cold run on:
+For every dependency-validated memo layer, cache-on and cache-off execution
+must agree with a fresh cold run on the following. Runs that also exercise the
+session-local suffix splice provide empirical parity coverage subject to its
+explicitly accepted 64-bit collision risk:
 
 - DVI bytes and ordered artifact identities;
 - virtual and materialized effect records;

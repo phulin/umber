@@ -17,10 +17,13 @@ Where this document discusses retaining group roots, the representation and
 ownership rules in [`retained_group_roots.md`](retained_group_roots.md) remain
 normative.
 
-The correctness criterion is byte-identical output to a cold execution of the
-same editor-buffer revision with the same pinned external inputs. Reuse is an
-optimization. Missing a checkpoint or a convergence match is allowed; resuming
-state that is not restartable or accepting a false match is not.
+The observed correctness criterion is byte-identical output to a cold execution
+of the same editor-buffer revision with the same pinned external inputs. Reuse
+is an optimization. Dependency-validated replay must fail closed before
+mutation, but session-local suffix adoption deliberately trusts a 64-bit aHash
+identity and therefore carries the accepted rare risk of a collision-induced
+false match. Missing a checkpoint or a convergence match is allowed; no other
+false-match mechanism is accepted.
 
 ## Scope and non-goals
 
@@ -208,8 +211,8 @@ nodes.
 Every checkpoint of a retained generation shares one frozen `Universe`
 substrate. Records are O(1) owner-exact watermark snapshots into that
 substrate, and a retained substrate is never mutated or rolled back in place.
-Strong canonical identities are not part of checkpoint capture. During an
-advance, the resume sink requests them only after the mapped occurrence key
+Session-local canonical comparison identities are not part of checkpoint
+capture. During an advance, the resume sink requests them only after the mapped occurrence key
 proves that a boundary will actually be compared. The corresponding accepted
 record computes its identity on that first later comparison and caches it in
 derived record metadata shared by record clones; cold history and boundaries
@@ -232,8 +235,8 @@ no SHA-256 or structural fallback; the accepted rare collision risk is confined
 to this session-local optimization. Fixed seeds make fork and rollback results
 deterministic within a compatible build/session, and a schema change invalidates
 retained compatibility. Durable content and persistence identities remain
-unchanged. Exact comparison does not serialize the full mutable store or page
-graph. Root-key mismatch is the invalidation signal, so it visits only
+unchanged. The session-local aHash comparison does not serialize the full
+mutable store or page graph. Root-key mismatch is the invalidation signal, so it visits only
 component roots dirtied since their retained snapshot projection.
 Restart uses one validated aggregate fork operation: clone the retained
 substrate, retarget ownership internally, and roll the clone back to the
@@ -249,8 +252,8 @@ detached diagnostic/effect snapshots, paragraph-generation transition,
 splice/history construction, accepted-substrate publication/drop, and
 acceptance/pruning into additive session timings. DVI materialization remains
 a driver-owned timer outside `Session::advance`. These measurements are
-operational telemetry only; they do not enter snapshots, exact identity,
-revision acceptance, or output semantics.
+operational telemetry only; they do not enter snapshots, session-local aHash
+identity, revision acceptance, or output semantics.
 
 The session therefore holds at most two substrates — the accepted frozen
 `Universe` and one in-progress scratch fork — and only while an edit is
@@ -496,10 +499,12 @@ A newly emitted checkpoint is a convergence candidate only when:
 The second rule is required because the inexpensive `state_hash` remains a
 fold over checkpoint slices, not a canonical fingerprint of state at an
 arbitrary instruction. It remains telemetry and a schedule-relative
-accelerator; suffix adoption uses the stronger canonical identity so changed
-content may rejoin once every future-relevant root is equal. A changed boundary
-partition still causes missed reuse, never permission to reinterpret a hash.
-Parity tests remain the correctness oracle.
+accelerator; suffix adoption uses the authoritative session-local 64-bit aHash
+identity over canonical projections, with the accepted collision risk described
+above, so changed content may probabilistically rejoin when the projections of
+every future-relevant root hash equally. A changed boundary partition still
+causes missed reuse, never permission to reinterpret a hash. Parity tests remain
+the observed correctness oracle.
 
 The first matching candidate wins. For a no-op edit this is the first eligible
 named boundary emitted after the selected restart anchor. On a match the
@@ -522,8 +527,10 @@ private executor and then resumes execution. This state-machine boundary makes
 the accepted session coherent without capturing an unnamed terminal
 continuation.
 
-The resulting artifact sequence and deferred effect sequence must equal a cold
-run. No unnamed terminal continuation is captured or resumed.
+Except for the accepted possibility of an authoritative 64-bit aHash collision
+on suffix adoption, the resulting artifact sequence and deferred effect
+sequence must equal a cold run. No unnamed terminal continuation is captured or
+resumed.
 
 If schedule keys or hashes never match, execution continues to normal job end
 and replaces the old revision. There is no fixed “pages retyped” correctness
@@ -556,7 +563,9 @@ Implementation is not complete until tests prove all of the following:
 - checkpoint-root and output-retention accounting charge shared roots once,
   report protected-root overage, and return to baseline after eviction; and
 - incremental artifacts, deferred effects, and final DVI bytes equal a cold
-  run across the committed fast corpus and the 1,000-edit scripted fuzz tier.
+  run across the committed fast corpus and the 1,000-edit scripted fuzz tier,
+  providing empirical coverage rather than an absolute suffix-adoption
+  guarantee.
 
 Run focused `tex-state`, `tex-lex`, `tex-exec`, and `tex-incr` tests, then
 `cargo test --tests`, `scripts/check.sh`, the snapshot budget gate,

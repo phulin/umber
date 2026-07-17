@@ -200,8 +200,9 @@ benchmark.
 The hierarchical-trace acceptance rerun on 2026-07-16 added explicit
 prefix/re-ship/suffix accounting and leaf/subtree telemetry. In both modes the
 fourth edit retained the first 14 pages, re-shipped exactly three pages through
-the matching `ShipoutComplete`, and adopted all 83 remaining pages as one
-verified subtree. The output remained byte-identical to the cold 100-page,
+the matching `ShipoutComplete`, and probabilistically adopted all 83 remaining
+pages as one subtree through the authoritative session-local 64-bit aHash
+comparison. The observed output remained byte-identical to the cold 100-page,
 279,176-byte DVI. Over two AB/BA pairs, memo-disabled incremental execution
 averaged 146.774 ms, paragraph-recording execution averaged 225.502 ms, and
 cold execution averaged 1,978.659 ms: 0.074x and 0.114x cold latency. Treat the

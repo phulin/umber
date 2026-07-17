@@ -229,8 +229,8 @@ the root is retained in the store snapshot so rollback and generation forks
 restore it in O(1). A full environment walk seeds the root only when a fresh
 store or format image is loaded.
 
-Exact comparison composes that environment root with cached canonical roots
-for code tables, hyphenation, magnification/font selection, page-builder
+The session-local aHash comparison composes that environment root with cached
+canonical roots for code tables, hyphenation, magnification/font selection, page-builder
 collections and persistent node forests, live input, virtual streams and World
 scalars, interaction mode, and the append-only PDF ledger. The fixed-size page,
 input, stream, code-table, hyphenation, and font-selection projection cache is
@@ -239,9 +239,10 @@ remains transient. Root-key comparison is the invalidation barrier: unchanged
 roots compose in O(1), and only changed roots rebuild their projection. PDF
 state uses rolling semantic
 fingerprints and future allocation cursors. One versioned, domain-separated,
-fixed-seed 64-bit aHash checkpoint identity is stored only on compared records. Full mutable-store and
-page DTO serialization is not part of exact comparison, so unchanged roots are
-O(1) and work at a compared boundary is proportional to roots dirtied since
+fixed-seed 64-bit aHash checkpoint identity is stored only on compared records.
+Full mutable-store and page DTO serialization is not part of the session-local
+aHash comparison, so unchanged roots are O(1) and work at a compared boundary
+is proportional to roots dirtied since
 their cached projections. Detached effects and artifacts remain splice-owned
 history and are deliberately excluded.
 

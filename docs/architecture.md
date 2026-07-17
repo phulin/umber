@@ -218,6 +218,14 @@ resource miss or failed revision does not replace prior accepted state.
 Identical-history convergence can reuse
 suffixes; general changed-content reuse belongs to the constrained trace and
 memoization design in [incremental_memoization.md](incremental_memoization.md).
+Dependency-validated trace and paragraph replay validates recorded semantic
+observations before mutation and fails closed. The separate schedule-aligned
+suffix-adoption shortcut instead treats a deterministic fixed-seed 64-bit
+aHash over canonical current-state projections as authoritative: it has no
+SHA-256 or structural fallback, and the rare possibility of collision-induced
+incorrect reuse is an accepted session-local performance tradeoff. Durable
+content, artifact, format, file, and font identities retain their cryptographic
+contracts and do not inherit this weaker trust model.
 
 Rendered-source queries validate output identity and revision, then resolve
 artifact provenance through the current fragment layout. Removed content is a
