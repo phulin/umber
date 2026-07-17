@@ -1834,11 +1834,27 @@ impl Stores {
         true
     }
 
+    fn can_mount_retained_paragraph_resources(&self, id: NodeListId) -> bool {
+        let Some(index) = self
+            .paragraph_generation_pins
+            .iter()
+            .rposition(|candidate| *candidate == id)
+        else {
+            return false;
+        };
+        self.paragraph_generation_pin_glues[index]
+            .iter()
+            .all(|retained| {
+                self.glue.resolve_stored(*retained).is_some()
+                    || self.paragraph_generation_glues.contains_key(retained)
+            })
+    }
+
     /// Proves that an accepted-history survivor graph and its resource closure
     /// can be read directly by this Universe. Unsupported handle-bearing forms
     /// conservatively miss before replay mutates live state.
     pub fn can_mount_retained_paragraph_result(&self, id: NodeListId) -> bool {
-        if !self.survivors.contains(id) {
+        if !self.survivors.contains(id) || !self.can_mount_retained_paragraph_resources(id) {
             return false;
         }
         let root = id.arena();
@@ -1895,6 +1911,9 @@ impl Stores {
                     | crate::node_arena::NodeRef::MathOff(_)
                     | crate::node_arena::NodeRef::Direction(_)
                     | crate::node_arena::NodeRef::Nonscript => {}
+                    crate::node_arena::NodeRef::Whatsit(crate::node::Whatsit::Language {
+                        ..
+                    }) => {}
                     crate::node_arena::NodeRef::Glue {
                         leader: Some(_), ..
                     }

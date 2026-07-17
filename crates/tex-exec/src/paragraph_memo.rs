@@ -73,16 +73,9 @@ pub(crate) fn try_reuse_aligned_paragraph(
     else {
         return Ok(false);
     };
-    #[allow(clippy::disallowed_methods)]
-    let import_started = std::time::Instant::now();
     let mountable_lines = entry
         .lines
         .filter(|&lines| stores.can_mount_retained_paragraph_result(lines));
-    stores.record_pure_memo_timing(
-        PureMemoLayer::Paragraph,
-        MemoTimingPhase::Import,
-        import_started.elapsed(),
-    );
     let transition_applied = input.apply_paragraph_transition(stores, prepared_input)?;
     assert!(
         transition_applied,
@@ -101,6 +94,8 @@ pub(crate) fn try_reuse_aligned_paragraph(
     replay_effects(stores, &entry.effects);
     let lines_valid =
         validate_finished_lines(&mut entry, mountable_lines.is_some(), stores, execution);
+    #[allow(clippy::disallowed_methods)]
+    let mount_started = std::time::Instant::now();
     let mounted_lines = lines_valid.then(|| {
         let origins = resolve_paragraph_provenance(stores, &entry.line_provenance);
         stores
@@ -111,34 +106,31 @@ pub(crate) fn try_reuse_aligned_paragraph(
             )
             .expect("prevalidated paragraph mount must remain valid")
     });
-    let (nodes, imported_bytes, retained_hlist) = if lines_valid {
-        assert!(
-            stores.mount_retained_paragraph_resources(retained),
-            "live generation-owned paragraph hlist must mount its resources"
-        );
-        (Vec::new(), 0, stores.retain_paragraph_result(retained))
+    assert!(
+        stores.mount_retained_paragraph_resources(retained),
+        "prevalidated paragraph hlist must mount its resources"
+    );
+    let (nodes, retained_hlist) = if lines_valid {
+        (Vec::new(), stores.retain_paragraph_result(retained))
     } else {
         let origins = resolve_paragraph_provenance(stores, &entry.hlist_provenance);
-        assert!(
-            stores.mount_retained_paragraph_provenance(
+        let mounted = stores
+            .mount_retained_paragraph_result(
                 retained,
                 &origins,
                 &entry.hlist_provenance.origin_slots,
-            ),
-            "live generation-owned paragraph hlist must mount provenance"
-        );
-        let list = stores
-            .import_retained_paragraph_result(retained)
-            .expect("live generation-owned paragraph hlist must import");
-        let imported_bytes = stores
-            .nodes(list)
-            .len()
-            .saturating_mul(std::mem::size_of::<tex_state::node::Node>());
-        let nodes = stores.nodes(list).to_vec();
-        let retained_hlist = stores.retain_paragraph_result(list);
-        (nodes, imported_bytes, retained_hlist)
+            )
+            .expect("prevalidated paragraph hlist mount must remain valid");
+        let nodes = stores.nodes(mounted).to_vec();
+        let retained_hlist = stores.retain_paragraph_result(mounted);
+        (nodes, retained_hlist)
     };
     let lines = mounted_lines.map(|list| stores.nodes(list).to_vec());
+    stores.record_pure_memo_timing(
+        PureMemoLayer::Paragraph,
+        MemoTimingPhase::Import,
+        mount_started.elapsed(),
+    );
     execution.abandon_cold_paragraph_recording();
     entry.ending_input = current_input;
     entry.hlist = Some(retained_hlist);
@@ -158,12 +150,7 @@ pub(crate) fn try_reuse_aligned_paragraph(
         nodes,
         lines.map(|lines| (lines, line_count)),
     )?;
-    stores.record_pure_paragraph_hit(
-        delivered_tokens,
-        mutation_count,
-        imported_bytes,
-        relaxed_state,
-    );
+    stores.record_pure_paragraph_hit(delivered_tokens, mutation_count, 0, relaxed_state);
     stores.record_pure_paragraph_line_hit(!lines_valid);
     Ok(true)
 }
@@ -232,7 +219,7 @@ fn validate_paragraph_entry(
         stores.record_pure_paragraph_validation_failure(ParagraphValidationFailure::RetainedResult);
         return None;
     };
-    if !stores.retained_paragraph_result_is_live(retained) {
+    if !stores.can_mount_retained_paragraph_result(retained) {
         stores.record_pure_paragraph_validation_failure(ParagraphValidationFailure::RetainedResult);
         return None;
     }

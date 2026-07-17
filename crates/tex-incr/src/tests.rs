@@ -929,6 +929,10 @@ fn paragraph_post_break_reuse_tiers_match_cold_for_layout_and_hyphenation_change
     let (layout, _) = run_edit(&source, hsize..hsize + 2, "45");
     assert!(layout.paragraph_hits > 0, "{layout:?}");
     assert!(layout.paragraph_hlist_fallbacks > 0, "{layout:?}");
+    assert_eq!(
+        layout.paragraph_imported_bytes, 0,
+        "mounted hlist rebreaking must not import semantic graph bytes: {layout:?}"
+    );
 
     let hyphens = source.find("hy-phen-a-tion").expect("exception");
     let (hyphenation, _) = run_edit(
@@ -938,10 +942,165 @@ fn paragraph_post_break_reuse_tiers_match_cold_for_layout_and_hyphenation_change
     );
     assert!(hyphenation.paragraph_hits > 0, "{hyphenation:?}");
     assert!(hyphenation.paragraph_hlist_fallbacks > 0, "{hyphenation:?}");
+    assert_eq!(
+        hyphenation.paragraph_imported_bytes, 0,
+        "mounted hlist rebreaking must not import semantic graph bytes: {hyphenation:?}"
+    );
 
     let insertion = source.find(prose).expect("first paragraph");
     let (full, _) = run_edit(&source, insertion..insertion, "\\count77=1 ");
     assert!(full.paragraph_line_hits > 0, "{full:?}");
+}
+
+#[test]
+fn paragraph_hlist_mount_rejects_unsupported_graph_before_replay() {
+    let source = concat!(
+        "\\font\\tenrm=cmr10\\relax \\tenrm \\hsize=70pt\n",
+        "marked paragraph \\mark{one} words marked paragraph words\\par\n",
+        "marked paragraph \\mark{two} words marked paragraph words\\par\n",
+        "\\vfill\\eject\\end",
+    )
+    .to_owned();
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut session = Session::start(
+        universe,
+        "paragraph-unsupported-hlist-mount",
+        RevisionId::new(1),
+        source.clone(),
+        usize::MAX,
+    )
+    .expect("session starts");
+    session
+        .register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("font fixture");
+    session.cold().expect("cold paragraph generation");
+    let before = session.pure_memo_stats();
+    let hsize = source.find("70pt").expect("hsize value");
+    let edited = source.replacen("70pt", "45pt", 1);
+    let output = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: hsize..hsize + 2,
+                replacement: "45".to_owned(),
+            },
+        )
+        .expect("unsupported graph executes cold");
+    let after = session.pure_memo_stats();
+    assert!(
+        after.paragraph_validation_misses > before.paragraph_validation_misses,
+        "unsupported mounted closure must be a typed validation miss: {after:?}"
+    );
+    let retained_result = tex_state::ParagraphValidationFailure::RetainedResult as usize;
+    assert!(
+        after.paragraph_validation_failure_reasons[retained_result]
+            > before.paragraph_validation_failure_reasons[retained_result],
+        "mark-bearing graph must fail retained-result mount validation: {after:?}"
+    );
+    assert_eq!(
+        after.paragraph_imported_bytes, before.paragraph_imported_bytes,
+        "unsupported graph misses must not fall back to semantic import: {after:?}"
+    );
+
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-unsupported-hlist-mount",
+        RevisionId::new(2),
+        edited,
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    cold.register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("cold font fixture");
+    let expected = cold.cold().expect("cold comparison");
+    assert_eq!(output.effects, expected.effects);
+    assert_eq!(output.artifacts, expected.artifacts);
+    assert_eq!(
+        output.dvi_bytes().expect("incremental DVI"),
+        expected.dvi_bytes().expect("cold DVI")
+    );
+}
+
+#[test]
+fn rebroken_mounted_hlist_keeps_current_output_provenance() {
+    let prose = "stable mounted hlist words stable mounted hlist words";
+    let source = format!(
+        "\\font\\tenrm=cmr10\\relax \\tenrm \\hsize=70pt \\vsize=40pt\n{prose}\\par\n{prose}\\par\n\\vfill\\eject\\end"
+    );
+    let second_start = source.rfind(prose).expect("second stable paragraph");
+    let second_end = second_start + prose.len();
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut session = Session::start(
+        universe,
+        "paragraph-mounted-hlist-provenance",
+        RevisionId::new(1),
+        source.clone(),
+        usize::MAX,
+    )
+    .expect("session starts");
+    session
+        .register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("font fixture");
+    session.cold().expect("cold paragraph generation");
+    let retained_hlists = session
+        .pure_memo
+        .accepted_paragraphs()
+        .iter()
+        .filter_map(|region| region.hlist)
+        .collect::<Vec<_>>();
+    let before = session.pure_memo_stats();
+    let hsize = source.find("70pt").expect("hsize value");
+    session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: hsize..hsize + 2,
+                replacement: "45".to_owned(),
+            },
+        )
+        .expect("layout-changing edit");
+    let after = session.pure_memo_stats();
+    assert!(
+        after.paragraph_hlist_fallbacks > before.paragraph_hlist_fallbacks,
+        "fixture must rebreak a mounted hlist: {after:?}"
+    );
+    assert_eq!(
+        after.paragraph_imported_bytes,
+        before.paragraph_imported_bytes
+    );
+    assert!(
+        session
+            .pure_memo
+            .accepted_paragraphs()
+            .iter()
+            .filter_map(|region| region.hlist)
+            .any(|hlist| retained_hlists.contains(&hlist)),
+        "hlist replay must retain the accepted survivor handle"
+    );
+    assert!(
+        (1..=session.artifacts.len() as u32)
+            .flat_map(|page| (0..256).map(move |event| (page, event)))
+            .any(|(page, event)| {
+                matches!(
+                    session.rendered_source_origin(page, event, None),
+                    Ok(Some(LayoutResolvedOrigin::Current {
+                        doc_offset_lo,
+                        doc_offset_hi,
+                        ..
+                    })) if doc_offset_lo < second_end as u64
+                        && doc_offset_hi > second_start as u64
+                )
+            }),
+        "ordinary line breaking and shipout must observe current mounted provenance"
+    );
 }
 
 #[test]
