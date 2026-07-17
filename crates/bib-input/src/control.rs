@@ -250,10 +250,28 @@ fn control_from_tree(root: &XmlNode) -> Result<ControlFile, ControlError> {
             fields: Vec::new(),
             constraints: Vec::new(),
         });
-    let sections = root
+    let mut sections = root
         .children_named("section")
         .map(parse_section)
-        .collect::<Result<_, _>>()?;
+        .collect::<Result<Vec<_>, _>>()?;
+    for bibdata in root.children_named("bibdata") {
+        let number = bibdata
+            .attribute("section")
+            .unwrap_or_default()
+            .parse::<u32>()
+            .map_err(|_| ControlError::Schema("invalid bibdata section number".into()))?;
+        let section = sections
+            .iter_mut()
+            .find(|section| section.number == number)
+            .ok_or_else(|| {
+                ControlError::Schema(format!("bibdata references unknown section {number}"))
+            })?;
+        section.datasources.extend(
+            bibdata
+                .children_named("datasource")
+                .map(|node| node.trimmed_text().to_owned()),
+        );
+    }
     Ok(ControlFile {
         version: root.attribute("version").unwrap_or_default().to_owned(),
         biblatex_version: root.attribute("bltxversion").unwrap_or_default().to_owned(),

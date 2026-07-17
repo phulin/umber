@@ -10,6 +10,8 @@ const CONFIG: &[u8] =
     include_bytes!("../../../tests/corpus/bib/upstream-2.22/tdata/biber-test.conf");
 const BIBLATEX_XML: &[u8] =
     include_bytes!("../../../tests/corpus/bib/upstream-2.22/tdata/biblatexml.bltxml");
+const BASIC_MISC_BCF: &[u8] =
+    include_bytes!("../../../tests/corpus/bib/upstream-2.22/tdata/basic-misc.bcf");
 
 #[test]
 fn parses_control_options_templates_model_and_sections() {
@@ -36,6 +38,15 @@ fn parses_control_options_templates_model_and_sections() {
         control.sections.first().map(|section| section.number),
         Some(0)
     );
+}
+
+#[test]
+fn associates_top_level_bibdata_with_its_section() {
+    let control =
+        parse_control_bytes(BASIC_MISC_BCF, XmlLimits::default()).expect("valid BCF 3.11");
+    let section = control.sections.first().expect("section zero");
+    assert_eq!(section.number, 0);
+    assert_eq!(section.datasources, ["examples.bib", "examples.bib"]);
 }
 
 #[test]
