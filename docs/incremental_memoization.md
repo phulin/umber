@@ -1090,7 +1090,8 @@ The opportunity-driven admission experiment then retained the stable-anchor
 census but armed dependency, provenance, break, and result recording only for
 an accepted-generation start candidate or bounded deterministic seeding. A
 cold generation seeds at most 512 regions. Later generations admit at most 64
-previously untraced regions from one rotating 1-of-64 stable-span bucket; the
+previously untraced regions: a trace already bounded to 64 regions is fully
+probed, while a larger trace uses one rotating 1-of-64 stable-span bucket. The
 bucket epoch is one scalar and no generation chain is retained. A successful
 reuse imports the result before mutation and republishes its complete trace
 against current-revision provenance and accepted-generation ownership.

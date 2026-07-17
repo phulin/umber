@@ -1065,9 +1065,11 @@ impl PureMemoRuntime {
         let seeded = !candidate
             && under_seed_limit
             && if self.reuse_prior_paragraphs {
-                starting_span.is_some_and(|span| {
-                    paragraph_probation_bucket(span) == u32::from(self.paragraph_probation_epoch)
-                })
+                self.prior_paragraphs.len() <= Self::PROBATION_PARAGRAPH_SEED_LIMIT
+                    || starting_span.is_some_and(|span| {
+                        paragraph_probation_bucket(span)
+                            == u32::from(self.paragraph_probation_epoch)
+                    })
             } else {
                 // Direct batch executors have no editor piece table. Their
                 // first generation is still a bounded deterministic seed.
