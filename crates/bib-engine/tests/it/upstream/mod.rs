@@ -60,8 +60,8 @@ fn xfail_owned_upstream(
     );
 }
 
-/// Runs an owned graph assertion normally once the graph-stage behavior exists.
-/// Other mixed-stage owners retain the strict xfail contract until their stage lands.
+/// Runs assertions whose owning semantic stage exists normally. Other
+/// mixed-stage owners retain the strict xfail contract until their stage lands.
 #[track_caller]
 fn compare_owned_upstream(
     owner: SemanticOwner,
@@ -71,7 +71,7 @@ fn compare_owned_upstream(
     upstream_call: &str,
     upstream_source: &str,
 ) {
-    if owner == SemanticOwner::Graph {
+    if matches!(owner, SemanticOwner::Graph | SemanticOwner::Names) {
         pass_upstream(
             assertion,
             actual_expression,

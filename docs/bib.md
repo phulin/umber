@@ -2,7 +2,7 @@
 
 Status: foundation contracts, pinned Unicode utilities, bounded XML and
 BibTeX inputs, the deterministic cross-entry graph stage, and classic and
-extended structured names are implemented; truncation, final visibility,
+extended structured names, truncation, and final visibility are implemented;
 sorting, labeling, serialization, session, and project integration continue
 in dependency order.
 
@@ -318,8 +318,12 @@ name records use bounded quote-aware CSV fields with configurable key/value
 separators and key aliases. They preserve source assignment order while
 resolving explicit parts and initial overrides, custom hash ids, per-name
 `useprefix` visibility, and sorting-name-template attributes into the same
-immutable normalized model. Name-list truncation and computed cross-file
-visibility remain later stages.
+immutable normalized model. The sorting-stage boundary resolves independent
+cite, bibliography, and alpha name limits after option precedence. It keeps
+short lists intact, truncates over-limit or explicit-`others` lists to the
+configured minimum capped by the concrete name count, preserves source order,
+and records whether more names exist. Consumers may retain or suppress that
+marker independently when constructing visible-list hashes and output.
 
 ### BibTeX datasource
 
@@ -737,13 +741,11 @@ Each implementation task ports the assertions it makes pass. Internal helper
 tests remain beside their owning modules under `src/.../tests.rs`; public
 compatibility tests exercise only the `bib-engine` facade.
 
-The classic-name child executes 31 direct `names.t` assertions normally: the
-21 classic `parsename` checks, eight classic `name_to_bibtex` checks, the
-explicit-`others` count, and the terse Unicode initial. All 21 direct
-`names_x.t` assertions also execute normally against the extended-name
-contract. Remaining serialized-output, truncation/visibility, and
-unique-primary-author assertions retain their strict xfail ownership until
-their respective stages land.
+All 75 direct `names.t` assertions, all 21 direct `names_x.t` assertions, and
+all 12 direct `truncation.t` assertions execute normally against the complete
+structured-name and visible-list contract. This includes classic and extended
+parsing, exact normalization and hashes, serialized name forms, explicit
+`others`, bounded visible prefixes, and unique-primary-author cases.
 
 The two upstream files that exercise several stages use assertion-level
 ownership rather than file-level ownership. Their Rust modules enforce the

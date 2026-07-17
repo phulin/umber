@@ -1,7 +1,7 @@
-// Direct xfail translation of upstream t/truncation.t at commit 74252e6.
+// Direct translation of upstream t/truncation.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream;
 
 const UPSTREAM_SOURCE: &str = r####"# -*- cperl -*-
 use strict;
@@ -475,7 +475,7 @@ is_deeply($main->get_keys, ['us1', 'us2','us6', 'us7', 'us8', 'us10', 'us9','us4
 
 #[test]
 fn assertion_001_truncation_1() {
-    xfail_upstream(
+    pass_upstream(
         "Truncation - 1",
         r####"$out->get_output_entry('us1', $main)"####,
         r####"$us1"####,
@@ -486,7 +486,7 @@ fn assertion_001_truncation_1() {
 
 #[test]
 fn assertion_002_truncation_2() {
-    xfail_upstream(
+    pass_upstream(
         "Truncation - 2",
         r####"$out->get_output_entry('us3', $main)"####,
         r####"$us3"####,
@@ -497,7 +497,7 @@ fn assertion_002_truncation_2() {
 
 #[test]
 fn assertion_003_truncation_3() {
-    xfail_upstream(
+    pass_upstream(
         "Truncation - 3",
         r####"$out->get_output_entry('us2', $main)"####,
         r####"$us2a"####,
@@ -508,7 +508,7 @@ fn assertion_003_truncation_3() {
 
 #[test]
 fn assertion_004_truncation_4() {
-    xfail_upstream(
+    pass_upstream(
         "Truncation - 4",
         r####"$out->get_output_entry('us4', $main)"####,
         r####"$us4a"####,
@@ -519,7 +519,7 @@ fn assertion_004_truncation_4() {
 
 #[test]
 fn assertion_005_truncation_5() {
-    xfail_upstream(
+    pass_upstream(
         "Truncation - 5",
         r####"$out->get_output_entry('us2', $main)"####,
         r####"$us2b"####,
@@ -530,7 +530,7 @@ fn assertion_005_truncation_5() {
 
 #[test]
 fn assertion_006_truncation_6() {
-    xfail_upstream(
+    pass_upstream(
         "Truncation - 6",
         r####"$out->get_output_entry('us4', $main)"####,
         r####"$us4b"####,
@@ -541,7 +541,7 @@ fn assertion_006_truncation_6() {
 
 #[test]
 fn assertion_007_truncation_7() {
-    xfail_upstream(
+    pass_upstream(
         "Truncation - 7",
         r####"$out->get_output_entry('us6', $main)"####,
         r####"$us6"####,
@@ -552,7 +552,7 @@ fn assertion_007_truncation_7() {
 
 #[test]
 fn assertion_008_truncation_8() {
-    xfail_upstream(
+    pass_upstream(
         "Truncation - 8",
         r####"$out->get_output_entry('us8', $main)"####,
         r####"$us8"####,
@@ -563,7 +563,7 @@ fn assertion_008_truncation_8() {
 
 #[test]
 fn assertion_009_truncation_9() {
-    xfail_upstream(
+    pass_upstream(
         "Truncation - 9",
         r####"$out->get_output_entry('us7', $main)"####,
         r####"$us7"####,
@@ -574,7 +574,7 @@ fn assertion_009_truncation_9() {
 
 #[test]
 fn assertion_010_truncation_10() {
-    xfail_upstream(
+    pass_upstream(
         "Truncation - 10",
         r####"$out->get_output_entry('us9', $main)"####,
         r####"$us9"####,
@@ -585,7 +585,7 @@ fn assertion_010_truncation_10() {
 
 #[test]
 fn assertion_011_truncation_11() {
-    xfail_upstream(
+    pass_upstream(
         "Truncation - 11",
         r####"$main->get_keys"####,
         r####"['us1', 'us2','us6', 'us7', 'us8', 'us9', 'us10','us3', 'us4', 'us5']"####,
@@ -596,7 +596,7 @@ fn assertion_011_truncation_11() {
 
 #[test]
 fn assertion_012_truncation_12() {
-    xfail_upstream(
+    pass_upstream(
         "Truncation - 12",
         r####"$main->get_keys"####,
         r####"['us1', 'us2','us6', 'us7', 'us8', 'us10', 'us9','us4', 'us3', 'us5']"####,

@@ -1,7 +1,7 @@
-// Direct xfail translation of upstream t/names.t at commit 74252e6.
+// Direct translation of upstream t/names.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::{pass_upstream, xfail_upstream};
+use super::pass_upstream;
 
 const UPSTREAM_SOURCE: &str = r####"# -*- cperl -*-
 use strict;
@@ -1343,7 +1343,7 @@ fn assertion_021_parsename_19() {
 
 #[test]
 fn assertion_022_parsename_x_1() {
-    xfail_upstream(
+    pass_upstream(
         "parsename_x 1",
         r####"tparsename_x($section,'family=Smithers Jones, prefix=van der, given=James, useprefix=true', 'author')"####,
         r####"$namex1"####,
@@ -1354,7 +1354,7 @@ fn assertion_022_parsename_x_1() {
 
 #[test]
 fn assertion_023_parsename_x_2() {
-    xfail_upstream(
+    pass_upstream(
         "parsename_x 2",
         r####"Biber::Input::file::bibtex::parsename_x($section,'family=Smithers Jones, prefix=van der, given=James, useprefix=true', 'author')->{useprefix}"####,
         r####"'1'"####,
@@ -1453,7 +1453,7 @@ fn assertion_031_name_to_bibtex_8() {
 
 #[test]
 fn assertion_032_name_to_bibtex_9() {
-    xfail_upstream(
+    pass_upstream(
         "name_to_bibtex - 9",
         r####"Biber::Input::file::bibtex::parsename_x($section,'family=Smithers Jones, prefix=van der, given=James, useprefix=true', 'author')->name_to_bibtex"####,
         r####"'van der Smithers Jones, James'"####,
@@ -1464,7 +1464,7 @@ fn assertion_032_name_to_bibtex_9() {
 
 #[test]
 fn assertion_033_name_to_xname_1() {
-    xfail_upstream(
+    pass_upstream(
         "name_to_xname - 1",
         r####"Biber::Input::file::bibtex::parsename($section,'van der Smithers Jones, James', 'author')->name_to_xname"####,
         r####"'family=Smithers Jones, given=James, prefix=van der'"####,
@@ -1475,7 +1475,7 @@ fn assertion_033_name_to_xname_1() {
 
 #[test]
 fn assertion_034_name_to_xname_2() {
-    xfail_upstream(
+    pass_upstream(
         "name_to_xname - 2",
         r####"Biber::Input::file::bibtex::parsename_x($section,'family=Smithers Jones, prefix=van der, given=James, useprefix=true', 'author')->name_to_xname"####,
         r####"'family=Smithers Jones, given=James, prefix=van der, useprefix=true'"####,
@@ -1486,7 +1486,7 @@ fn assertion_034_name_to_xname_2() {
 
 #[test]
 fn assertion_035_first_last() {
-    xfail_upstream(
+    pass_upstream(
         "First Last",
         r####"$out->get_output_entry('L1', $main)"####,
         r####"$l1"####,
@@ -1497,7 +1497,7 @@ fn assertion_035_first_last() {
 
 #[test]
 fn assertion_036_name_hashing_given_initials() {
-    xfail_upstream(
+    pass_upstream(
         "Name hashing - given initials",
         r####"$out->get_output_entry('L1', $nhtest)"####,
         r####"$l1h"####,
@@ -1508,7 +1508,7 @@ fn assertion_036_name_hashing_given_initials() {
 
 #[test]
 fn assertion_037_name_hashing_custom_hashid() {
-    xfail_upstream(
+    pass_upstream(
         "Name hashing - custom hashid",
         r####"$out->get_output_entry('L1id', $main)"####,
         r####"$l1id"####,
@@ -1519,7 +1519,7 @@ fn assertion_037_name_hashing_custom_hashid() {
 
 #[test]
 fn assertion_038_first_initial_last() {
-    xfail_upstream(
+    pass_upstream(
         "First Initial. Last",
         r####"$out->get_output_entry('L2', $main)"####,
         r####"$l2"####,
@@ -1530,7 +1530,7 @@ fn assertion_038_first_initial_last() {
 
 #[test]
 fn assertion_039_initial_initial_last() {
-    xfail_upstream(
+    pass_upstream(
         "Initial. Initial. Last",
         r####"$out->get_output_entry('L3', $main)"####,
         r####"$l3"####,
@@ -1541,7 +1541,7 @@ fn assertion_039_initial_initial_last() {
 
 #[test]
 fn assertion_040_first_initial_last() {
-    xfail_upstream(
+    pass_upstream(
         "First Initial Last",
         r####"$out->get_output_entry('L4', $main)"####,
         r####"$l4"####,
@@ -1552,7 +1552,7 @@ fn assertion_040_first_initial_last() {
 
 #[test]
 fn assertion_041_first_prefix_last() {
-    xfail_upstream(
+    pass_upstream(
         "First prefix Last",
         r####"$out->get_output_entry('L5', $main)"####,
         r####"$l5"####,
@@ -1563,7 +1563,7 @@ fn assertion_041_first_prefix_last() {
 
 #[test]
 fn assertion_042_first_prefix_prefix_last() {
-    xfail_upstream(
+    pass_upstream(
         "First prefix prefix Last",
         r####"$out->get_output_entry('L6', $main)"####,
         r####"$l6"####,
@@ -1574,7 +1574,7 @@ fn assertion_042_first_prefix_prefix_last() {
 
 #[test]
 fn assertion_043_first_initial_prefix_last() {
-    xfail_upstream(
+    pass_upstream(
         "First Initial. prefix Last",
         r####"$out->get_output_entry('L7', $main)"####,
         r####"$l7"####,
@@ -1585,7 +1585,7 @@ fn assertion_043_first_initial_prefix_last() {
 
 #[test]
 fn assertion_044_first_initial_prefix_last() {
-    xfail_upstream(
+    pass_upstream(
         "First Initial prefix Last",
         r####"$out->get_output_entry('L8', $main)"####,
         r####"$l8"####,
@@ -1596,7 +1596,7 @@ fn assertion_044_first_initial_prefix_last() {
 
 #[test]
 fn assertion_045_first_last_last() {
-    xfail_upstream(
+    pass_upstream(
         "First {Last Last}",
         r####"$out->get_output_entry('L9', $main)"####,
         r####"$l9"####,
@@ -1607,7 +1607,7 @@ fn assertion_045_first_last_last() {
 
 #[test]
 fn assertion_046_last_suffix_first() {
-    xfail_upstream(
+    pass_upstream(
         "Last, Suffix, First",
         r####"$out->get_output_entry('L10', $main)"####,
         r####"$l10"####,
@@ -1618,7 +1618,7 @@ fn assertion_046_last_suffix_first() {
 
 #[test]
 fn assertion_047_last_suffix_first_initial() {
-    xfail_upstream(
+    pass_upstream(
         "Last, Suffix, First Initial.",
         r####"$out->get_output_entry('L10a', $main)"####,
         r####"$l10a"####,
@@ -1629,7 +1629,7 @@ fn assertion_047_last_suffix_first_initial() {
 
 #[test]
 fn assertion_048_prefix_last_suffix_first() {
-    xfail_upstream(
+    pass_upstream(
         "prefix Last, Suffix, First",
         r####"$out->get_output_entry('L11', $main)"####,
         r####"$l11"####,
@@ -1640,7 +1640,7 @@ fn assertion_048_prefix_last_suffix_first() {
 
 #[test]
 fn assertion_049_last_last_last_initial_initial() {
-    xfail_upstream(
+    pass_upstream(
         "Last Last Last, Initial. Initial.",
         r####"$out->get_output_entry('L13', $main)"####,
         r####"$l13"####,
@@ -1651,7 +1651,7 @@ fn assertion_049_last_last_last_initial_initial() {
 
 #[test]
 fn assertion_050_last_last_last_first() {
-    xfail_upstream(
+    pass_upstream(
         "Last Last-Last, First",
         r####"$out->get_output_entry('L14', $main)"####,
         r####"$l14"####,
@@ -1662,7 +1662,7 @@ fn assertion_050_last_last_last_first() {
 
 #[test]
 fn assertion_051_first_f_bibinitdelim_f_last() {
-    xfail_upstream(
+    pass_upstream(
         "First F.{\\bibinitdelim }F. Last",
         r####"$out->get_output_entry('L15', $main)"####,
         r####"$l15"####,
@@ -1673,7 +1673,7 @@ fn assertion_051_first_f_bibinitdelim_f_last() {
 
 #[test]
 fn assertion_052_first_f_bibinitdelim_f_last() {
-    xfail_upstream(
+    pass_upstream(
         "First {F.\\bibinitdelim F.} Last",
         r####"$out->get_output_entry('L16', $main)"####,
         r####"$l16"####,
@@ -1684,7 +1684,7 @@ fn assertion_052_first_f_bibinitdelim_f_last() {
 
 #[test]
 fn assertion_053_last_first_f_bibinitdelim_f() {
-    xfail_upstream(
+    pass_upstream(
         "Last, First {F.\\bibinitdelim F.}",
         r####"$out->get_output_entry('L17', $main)"####,
         r####"$l17"####,
@@ -1695,7 +1695,7 @@ fn assertion_053_last_first_f_bibinitdelim_f() {
 
 #[test]
 fn assertion_054_last_first_f_bibinitdelim_f() {
-    xfail_upstream(
+    pass_upstream(
         "Last, First F.{\\bibinitdelim }F.",
         r####"$out->get_output_entry('L18', $main)"####,
         r####"$l18"####,
@@ -1706,7 +1706,7 @@ fn assertion_054_last_first_f_bibinitdelim_f() {
 
 #[test]
 fn assertion_055_firstname_with_hyphen() {
-    xfail_upstream(
+    pass_upstream(
         "Firstname with hyphen",
         r####"$out->get_output_entry('L19', $main)"####,
         r####"$l19"####,
@@ -1717,7 +1717,7 @@ fn assertion_055_firstname_with_hyphen() {
 
 #[test]
 fn assertion_056_short_given_name_with_hyphen() {
-    xfail_upstream(
+    pass_upstream(
         "Short given name with hyphen",
         r####"$out->get_output_entry('L19a', $main)"####,
         r####"$l19a"####,
@@ -1728,7 +1728,7 @@ fn assertion_056_short_given_name_with_hyphen() {
 
 #[test]
 fn assertion_057_protected_dual_given_name() {
-    xfail_upstream(
+    pass_upstream(
         "Protected dual given name",
         r####"$out->get_output_entry('L20', $main)"####,
         r####"$l20"####,
@@ -1739,7 +1739,7 @@ fn assertion_057_protected_dual_given_name() {
 
 #[test]
 fn assertion_058_latex_encoded_unicode_family_1() {
-    xfail_upstream(
+    pass_upstream(
         "LaTeX encoded unicode family - 1",
         r####"encode_utf8(NFC($out->get_output_entry('L22', $main)))"####,
         r####"encode_utf8($l22u)"####,
@@ -1750,7 +1750,7 @@ fn assertion_058_latex_encoded_unicode_family_1() {
 
 #[test]
 fn assertion_059_unicode_given_name() {
-    xfail_upstream(
+    pass_upstream(
         "Unicode given name",
         r####"NFC($out->get_output_entry('L23', $main))"####,
         r####"$l23"####,
@@ -1761,7 +1761,7 @@ fn assertion_059_unicode_given_name() {
 
 #[test]
 fn assertion_060_unicode_family_name() {
-    xfail_upstream(
+    pass_upstream(
         "Unicode family name",
         r####"NFC($out->get_output_entry('L24', $main))"####,
         r####"$l24"####,
@@ -1772,7 +1772,7 @@ fn assertion_060_unicode_family_name() {
 
 #[test]
 fn assertion_061_single_string_name() {
-    xfail_upstream(
+    pass_upstream(
         "Single string name",
         r####"$out->get_output_entry('L25', $main)"####,
         r####"$l25"####,
@@ -1783,7 +1783,7 @@ fn assertion_061_single_string_name() {
 
 #[test]
 fn assertion_062_hyphen_at_brace_level_0() {
-    xfail_upstream(
+    pass_upstream(
         "Hyphen at brace level <> 0",
         r####"$out->get_output_entry('L26', $main)"####,
         r####"$l26"####,
@@ -1794,7 +1794,7 @@ fn assertion_062_hyphen_at_brace_level_0() {
 
 #[test]
 fn assertion_063_escaped_name_with_3_commas() {
-    xfail_upstream(
+    pass_upstream(
         "Escaped name with 3 commas",
         r####"$out->get_output_entry('L29', $main)"####,
         r####"$l29"####,
@@ -1816,7 +1816,7 @@ fn assertion_064_name_count_for_and_others_1() {
 
 #[test]
 fn assertion_065_visibility_for_and_others_1() {
-    xfail_upstream(
+    pass_upstream(
         "Visibility for \"and others\" - 1",
         r####"$main->get_visible_cite($bibentries->entry('V1')->get_field($bibentries->entry('V1')->get_labelname_info)->get_id)"####,
         r####"'2'"####,
@@ -1827,7 +1827,7 @@ fn assertion_065_visibility_for_and_others_1() {
 
 #[test]
 fn assertion_066_visibility_for_and_others_2() {
-    xfail_upstream(
+    pass_upstream(
         "Visibility for \"and others\" - 2",
         r####"$main->get_visible_cite($bibentries->entry('V2')->get_field($bibentries->entry('V2')->get_labelname_info)->get_id)"####,
         r####"'1'"####,
@@ -1849,7 +1849,7 @@ fn assertion_067_terseinitials_1() {
 
 #[test]
 fn assertion_068_first_first_first_first_prefix_prefix_last_last() {
-    xfail_upstream(
+    pass_upstream(
         "First First First First prefix prefix Last Last",
         r####"encode_utf8($out->get_output_entry('L12', $main))"####,
         r####"encode_utf8($l12)"####,
@@ -1860,7 +1860,7 @@ fn assertion_068_first_first_first_first_prefix_prefix_last_last() {
 
 #[test]
 fn assertion_069_latex_encoded_unicode_given_name() {
-    xfail_upstream(
+    pass_upstream(
         "LaTeX encoded unicode given name",
         r####"$out->get_output_entry('L21', $main)"####,
         r####"$l21"####,
@@ -1871,7 +1871,7 @@ fn assertion_069_latex_encoded_unicode_given_name() {
 
 #[test]
 fn assertion_070_latex_encoded_unicode_family_name_2() {
-    xfail_upstream(
+    pass_upstream(
         "LaTeX encoded unicode family name - 2",
         r####"$out->get_output_entry('L22', $main)"####,
         r####"$l22"####,
@@ -1882,7 +1882,7 @@ fn assertion_070_latex_encoded_unicode_family_name_2() {
 
 #[test]
 fn assertion_071_latex_encoded_unicode_family_name_with_tie_char() {
-    xfail_upstream(
+    pass_upstream(
         "LaTeX encoded unicode family name with tie char",
         r####"$out->get_output_entry('L31', $main)"####,
         r####"$l31"####,
@@ -1893,7 +1893,7 @@ fn assertion_071_latex_encoded_unicode_family_name_with_tie_char() {
 
 #[test]
 fn assertion_072_unique_primary_author_1() {
-    xfail_upstream(
+    pass_upstream(
         "Unique primary author - 1",
         r####"$main->get_entryfield('upa1', 'uniqueprimaryauthor')"####,
         r####"1"####,
@@ -1904,7 +1904,7 @@ fn assertion_072_unique_primary_author_1() {
 
 #[test]
 fn assertion_073_unique_primary_author_2() {
-    xfail_upstream(
+    pass_upstream(
         "Unique primary author - 2",
         r####"is_undef($main->get_entryfield('upa2', 'uniqueprimaryauthor'))"####,
         r####"true"####,
@@ -1915,7 +1915,7 @@ fn assertion_073_unique_primary_author_2() {
 
 #[test]
 fn assertion_074_unique_primary_author_3() {
-    xfail_upstream(
+    pass_upstream(
         "Unique primary author - 3",
         r####"is_undef($main->get_entryfield('upa3', 'uniqueprimaryauthor'))"####,
         r####"true"####,
@@ -1926,7 +1926,7 @@ fn assertion_074_unique_primary_author_3() {
 
 #[test]
 fn assertion_075_unique_primary_author_4() {
-    xfail_upstream(
+    pass_upstream(
         "Unique primary author - 4",
         r####"$main->get_entryfield('upa4', 'uniqueprimaryauthor')"####,
         r####"1"####,

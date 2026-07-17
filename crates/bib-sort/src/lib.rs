@@ -3,6 +3,12 @@
 use bib_model::BibConfiguration;
 use bib_unicode::UnicodeData;
 
+mod name_lists;
+
+pub use name_lists::{
+    NameListLimitError, NameListLimits, NameListVisibility, NameVisibility, NameVisibilityOptions,
+};
+
 #[derive(Clone, Copy, Debug)]
 pub struct SortContext<'a> {
     configuration: &'a BibConfiguration,
