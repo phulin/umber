@@ -1,9 +1,9 @@
 # Classic BibTeX compatibility inventory
 
-Status: Phase 10 systematic differential generator and the initial elsarticle
-and IEEEtran real-world corpora are implemented. Their public command cases
-enforce exact status, terminal, BBL, and BLG parity; remaining hardening work
-is tracked in Beads.
+Status: complete. The Phase 10 systematic differential generator and the
+licensed elsarticle and IEEEtran real-world corpora enforce exact status,
+terminal, BBL, and BLG parity. Every phase and parent-epic exit criterion has
+passed its documented native, WASM, fixture, and performance gate.
 
 The reviewed architecture and phase exit criteria remain those in
 `docs/classic_bibtex_bst.md` at commit `c676cfb0`. This inventory does not
@@ -380,11 +380,9 @@ mode or inherit the pinned-0.99d parity claim.
 
 ### Phase 9 and epic exit audit
 
-All semantic Phase 9 and parent-epic criteria are satisfied by the following
-checked boundaries. The broader `scripts/check-wasm.sh` wrapper has one
-non-semantic formatting blocker, Beads issue `umber2-ild0.28`, which is
-limited to three authored WASM manifest files; its Rust/browser functional and
-classic cache-pressure portions pass.
+All Phase 9 and parent-epic criteria are satisfied by the following checked
+boundaries. The complete `scripts/check-wasm.sh` and `scripts/check-tools.sh`
+wrappers pass; their earlier formatting and profiling blockers are closed.
 
 | Criterion                                                                   | Satisfied by                                                                                                                                                |
 | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
