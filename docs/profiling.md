@@ -347,6 +347,29 @@ callers rather than one removable allocation. No optimization was retained.
 All outputs remained byte-identical to cold, inverse restart stayed exact, and
 the final edit again retained 14 pages, re-shipped three, and adopted 83.
 
+Executor-internal sampling then isolated the missing owner in macro-bearing
+paragraph publication. After deriving root spans for the expanded trace, the
+recorder merged them into the ordered consumed-source sequence by linearly
+scanning every span already present. The two hottest offsets inside
+`publish_prepared_hlist` were that inlined equality loop, with 386 self samples
+in the bounded diagnostic capture. The existing front-end-provenance timer had
+ended immediately before the merge, so its reported 4.6--5.8 ms excluded the
+quadratic work. Publication now keeps the same first-occurrence order required
+by monotonic input-transition validation but maintains a temporary membership
+set while appending unseen spans. The provenance phase timer covers both root
+projection and this ordered merge.
+
+One final four-pair AB/BA run reduced the large/inverse executor deltas from
+the local pre-change two-pair diagnostic's +119.826/+111.775 ms to
++84.794/+77.081 ms. End-to-end enabled-minus-disabled deltas were +102.076,
++38.592, +92.946, and +9.455 ms across the four edits. Front-end provenance,
+now including the complete merge, measured 7.388 and 8.601 ms on the
+130,933-token large/inverse paths. Every result remained byte-identical to its
+cold DVI; the final edit retained 14 pages, re-shipped three, and adopted all
+83 suffix pages. This is a material reduction from one measured optimization,
+not a release win; the remaining executor residual is tracked by
+`umber2-vfqs.15.4.6`.
+
 The runner requires the same external inputs as Gentle conformance. Populate
 them with `scripts/setup-conformance-tests.sh` if necessary.
 

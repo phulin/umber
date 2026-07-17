@@ -987,6 +987,28 @@ second optimization was retained without an independently dominant semantic-
 preserving target. Cold equality, inverse restart, optional pretolerance, and
 the final 14 retained / 3 re-shipped / 83 adopted split remained unchanged.
 
+A deeper executor-only sample separated one dominant provenance path from that
+aggregate. For macro-bearing paragraphs, recorder publication projected the
+expanded trace to stable root spans and then tested each span with a linear
+search of the growing consumed-span vector. The inlined search owned 386 self
+samples in the bounded capture and sat just outside the prior provenance
+timer. Consumed spans are semantically ordered: transition validation walks
+them monotonically through the current editor layout. Publication therefore
+still preserves the exact first-occurrence sequence, but uses a temporary
+membership set to decide whether to append each trace span. The set is only an
+execution-local index; it is not retained, hashed, or consulted during replay,
+and it does not alter provenance identities or input-transition coverage. The
+front-end-provenance phase now includes the complete ordered merge.
+
+The final four-pair AB/BA check reduced the large/inverse executor deltas from
+the local pre-change diagnostic's +119.826/+111.775 ms to +84.794/+77.081 ms;
+the complete provenance phase measured 7.388/8.601 ms on those edits.
+Cold-DVI equality, inverse restart, dependency and barrier recording, source
+batching, break-observation caching, and the final 14 retained / 3 re-shipped /
+83 adopted suffix split all held. The remaining independently separable
+executor residual is `umber2-vfqs.15.4.6` rather than a reason to widen this
+optimization.
+
 ### Dependency-recorder baseline
 
 The state-layer recorder has an explicit disabled branch and no lock or atomic.

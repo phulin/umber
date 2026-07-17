@@ -1,5 +1,7 @@
 //! Recorder-driven paragraph front-end eligibility and transitional detached reuse.
 
+use std::collections::HashSet;
+
 use tex_lex::InputStack;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
@@ -754,20 +756,23 @@ fn publish_recorded_region(
         .iter()
         .map(|token| stores.root_span_for_origin(token.origin()))
         .collect::<Vec<_>>();
+    if !recording.macro_bearing {
+        consumed_spans.clear();
+    } else {
+        let mut seen =
+            HashSet::with_capacity(consumed_spans.len().saturating_add(trace_spans.len()));
+        seen.extend(consumed_spans.iter().copied());
+        for span in trace_spans.iter().flatten().copied() {
+            if seen.insert(span) {
+                consumed_spans.push(span);
+            }
+        }
+    }
     finish_phase(
         stores,
         ParagraphRecordingPhase::FrontEndProvenance,
         provenance_started,
     );
-    if !recording.macro_bearing {
-        consumed_spans.clear();
-    } else {
-        for span in trace_spans.iter().flatten().copied() {
-            if !consumed_spans.contains(&span) {
-                consumed_spans.push(span);
-            }
-        }
-    }
     let ending_span = if recording.macro_bearing {
         input.root_source_delivery_anchor(stores).ok().flatten()
     } else {
