@@ -98,6 +98,16 @@ impl BibTexField {
     pub fn raw_names(&self) -> Option<&[RawName]> {
         self.names.as_deref()
     }
+
+    #[must_use]
+    pub fn classic_names(
+        &self,
+        options: crate::ClassicNameOptions<'_>,
+    ) -> Option<crate::ClassicNameParse> {
+        self.names
+            .as_ref()
+            .map(|_| crate::parse_classic_name_list(&self.value, options))
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

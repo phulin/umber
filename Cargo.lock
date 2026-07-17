@@ -124,6 +124,7 @@ dependencies = [
  "bib-unicode",
  "quick-xml",
  "umber-vfs",
+ "unicode-normalization",
 ]
 
 [[package]]

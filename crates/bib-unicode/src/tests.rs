@@ -31,3 +31,9 @@ fn malformed_inputs_are_bounded() {
 fn compatibility_hash_is_md5() {
     assert_eq!(compatibility_hash("L"), "d20caec3b48a1eef164cb4ca81ba2587");
 }
+
+#[test]
+fn name_hash_normalization_preserves_unicode_letters_and_tex_vestiges() {
+    assert_eq!(normalise_string_hash("Š. Smith"), "ŠSmith");
+    assert_eq!(normalise_string_hash(r#"Ä.~{\c{C}}.~{\c S}."#), "Äc:Cc:S");
+}

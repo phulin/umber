@@ -1,6 +1,10 @@
 use md5::{Digest, Md5};
 use unicode_normalization::UnicodeNormalization;
 
+pub fn normalise_nfc(value: &str) -> String {
+    value.nfc().collect()
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RangeEnd {
     Number(i64),
@@ -48,17 +52,26 @@ pub fn normalise_string_underscore(value: &str, strip_outer: bool) -> String {
 }
 
 pub fn normalise_string_hash(value: &str) -> String {
-    let value = value
-        .replace(".~{\\c{", "c:")
-        .replace("}.~{\\c ", "c:")
-        .replace("}}", "")
-        .replace('}', "");
-    value
-        .nfd()
-        .filter(|c| *c == '\u{308}' || !unicode_normalization::char::is_combining_mark(*c))
-        .nfc()
-        .filter(|c| c.is_alphanumeric() || *c == ':')
-        .collect()
+    let mut output = String::new();
+    let mut chars = value.chars().peekable();
+    while let Some(character) = chars.next() {
+        if character == '\\' {
+            if chars.peek().is_some_and(|next| next.is_alphabetic()) {
+                while chars.peek().is_some_and(|next| next.is_alphabetic()) {
+                    output.push(chars.next().expect("peeked character exists"));
+                }
+            } else if let Some(escaped) = chars.next() {
+                output.push_str(&(escaped as u32).to_string());
+            }
+            output.push(':');
+            while chars.peek().is_some_and(|next| next.is_whitespace()) {
+                chars.next();
+            }
+        } else if !matches!(character, '{' | '}' | '~' | '.') && !character.is_whitespace() {
+            output.push(character);
+        }
+    }
+    output
 }
 
 pub fn reduce_array<T: Eq + Clone>(values: &[T], removed: &[T]) -> Vec<T> {

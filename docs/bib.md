@@ -1,9 +1,10 @@
 # In-process bibliography backend
 
 Status: foundation contracts, pinned Unicode utilities, bounded XML and
-BibTeX inputs, and the deterministic cross-entry graph stage are implemented;
-remaining name, sorting, label, serialization, session, and project
-integration work continues in dependency order.
+BibTeX inputs, the deterministic cross-entry graph stage, and classic
+structured names are implemented; extended names, visibility, sorting,
+labeling, serialization, session, and project integration continue in
+dependency order.
 
 This document defines Umber's pure-Rust bibliography subsystem. Every Rust
 package uses the `bib-*` prefix, and modules, types, commands, features, and
@@ -305,6 +306,15 @@ diagnostic, datasource-byte, and total-work budgets are explicit. Parsed
 datasources may be cached by exact VFS content identity plus all semantic
 parser options; canonical path and allocation identity do not affect cache
 reuse or observable results.
+
+Classic name fields additionally expose an immutable ordered `NameList`.
+Brace-aware splitting accepts configured name-separator and explicit-`others`
+aliases, and each name retains its original source plus normalized
+family/given/prefix/suffix parts, stripped-outer-brace flags, and ordered
+initials. Compatibility hashes concatenate parts in pinned data-model order,
+normalize to NFC, and use the pinned MD5 utility. Explicit byte, name-count,
+nesting, diagnostic, and total-work limits bound malformed input. Extended
+name records and name-list visibility/truncation remain later stages.
 
 ### BibTeX datasource
 
@@ -721,6 +731,12 @@ Test ownership follows semantic boundaries:
 Each implementation task ports the assertions it makes pass. Internal helper
 tests remain beside their owning modules under `src/.../tests.rs`; public
 compatibility tests exercise only the `bib-engine` facade.
+
+The classic-name child executes 31 direct `names.t` assertions normally: the
+21 classic `parsename` checks, eight classic `name_to_bibtex` checks, the
+explicit-`others` count, and the terse Unicode initial. Extended-name,
+serialized-output, visibility, and unique-primary-author assertions retain
+their strict xfail ownership until their respective stages land.
 
 The two upstream files that exercise several stages use assertion-level
 ownership rather than file-level ownership. Their Rust modules enforce the

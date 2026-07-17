@@ -13,4 +13,5 @@ host I/O or processing-stage graph, sorting, labeling, or output work.
 - `src/config.rs`: configuration validation, typed values, templates, and precedence layers.
 - `src/biblatexml.rs`: typed BibLaTeXML entries, names, dates, ranges, lists, aliases, and annotations.
 - `src/bibtex.rs`: bounded BibTeX decoding, macros, raw entries/names, recovery diagnostics, and datasource caching.
+- `src/names.rs`: bounded classic structured-name parsing, source preservation, initials, aliases, and compatibility hashes.
 - `src/tests.rs`: parser, validation, include, precedence, and adversarial-limit tests.

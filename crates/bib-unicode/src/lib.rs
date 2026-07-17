@@ -20,7 +20,7 @@ pub use langtag::{LanguageTag, LanguageTagError};
 pub use recode::{RecodeSet, TexRecoder};
 pub use transliteration::{Transliteration, transliterate};
 pub use utils::{
-    RangeEnd, compatibility_hash, normalise_string, normalise_string_hash,
+    RangeEnd, compatibility_hash, normalise_nfc, normalise_string, normalise_string_hash,
     normalise_string_underscore, parse_range, range_len, reduce_array, remove_outer, split_xsv,
     strip_noinit,
 };

@@ -33,38 +33,111 @@ impl Verbatim {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NamePartValue {
+    value: Literal,
+    initials: Arc<[String]>,
+    outer_braces_stripped: bool,
+}
+
+impl NamePartValue {
+    #[must_use]
+    pub fn new(
+        value: Literal,
+        initials: impl IntoIterator<Item = String>,
+        outer_braces_stripped: bool,
+    ) -> Self {
+        Self {
+            value,
+            initials: initials.into_iter().collect(),
+            outer_braces_stripped,
+        }
+    }
+
+    #[must_use]
+    pub const fn value(&self) -> &Literal {
+        &self.value
+    }
+
+    pub fn initials(&self) -> impl ExactSizeIterator<Item = &str> {
+        self.initials.iter().map(String::as_str)
+    }
+
+    #[must_use]
+    pub const fn outer_braces_stripped(&self) -> bool {
+        self.outer_braces_stripped
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Name {
-    family: Option<Literal>,
-    given: Option<Literal>,
-    prefix: Option<Literal>,
-    suffix: Option<Literal>,
+    family: Option<NamePartValue>,
+    given: Option<NamePartValue>,
+    prefix: Option<NamePartValue>,
+    suffix: Option<NamePartValue>,
+    source: Option<Arc<str>>,
 }
 
 impl Name {
     #[must_use]
-    pub const fn family(&self) -> Option<&Literal> {
+    pub const fn family(&self) -> Option<&NamePartValue> {
         self.family.as_ref()
     }
     #[must_use]
-    pub const fn given(&self) -> Option<&Literal> {
+    pub const fn given(&self) -> Option<&NamePartValue> {
         self.given.as_ref()
     }
     #[must_use]
-    pub const fn prefix(&self) -> Option<&Literal> {
+    pub const fn prefix(&self) -> Option<&NamePartValue> {
         self.prefix.as_ref()
     }
     #[must_use]
-    pub const fn suffix(&self) -> Option<&Literal> {
+    pub const fn suffix(&self) -> Option<&NamePartValue> {
         self.suffix.as_ref()
+    }
+    #[must_use]
+    pub fn source(&self) -> Option<&str> {
+        self.source.as_deref()
+    }
+
+    #[must_use]
+    pub fn to_bibtex(&self) -> String {
+        let mut value = String::new();
+        if let Some(prefix) = &self.prefix {
+            push_part(&mut value, prefix);
+            value.push(' ');
+        }
+        if let Some(family) = &self.family {
+            push_part(&mut value, family);
+        }
+        if let Some(suffix) = &self.suffix {
+            value.push_str(", ");
+            push_part(&mut value, suffix);
+        }
+        if let Some(given) = &self.given {
+            value.push_str(", ");
+            push_part(&mut value, given);
+        }
+        value
+    }
+}
+
+fn push_part(output: &mut String, part: &NamePartValue) {
+    if part.outer_braces_stripped {
+        output.push('{');
+    }
+    output.push_str(&part.value.as_str().replace('~', " "));
+    if part.outer_braces_stripped {
+        output.push('}');
     }
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct NameBuilder {
-    family: Option<Literal>,
-    given: Option<Literal>,
-    prefix: Option<Literal>,
-    suffix: Option<Literal>,
+    family: Option<NamePartValue>,
+    given: Option<NamePartValue>,
+    prefix: Option<NamePartValue>,
+    suffix: Option<NamePartValue>,
+    source: Option<Arc<str>>,
 }
 
 impl NameBuilder {
@@ -73,19 +146,39 @@ impl NameBuilder {
         Self::default()
     }
     pub fn family(&mut self, value: Literal) -> &mut Self {
-        self.family = Some(value);
+        self.family = Some(NamePartValue::new(value, [], false));
         self
     }
     pub fn given(&mut self, value: Literal) -> &mut Self {
-        self.given = Some(value);
+        self.given = Some(NamePartValue::new(value, [], false));
         self
     }
     pub fn prefix(&mut self, value: Literal) -> &mut Self {
-        self.prefix = Some(value);
+        self.prefix = Some(NamePartValue::new(value, [], false));
         self
     }
     pub fn suffix(&mut self, value: Literal) -> &mut Self {
+        self.suffix = Some(NamePartValue::new(value, [], false));
+        self
+    }
+    pub fn family_part(&mut self, value: NamePartValue) -> &mut Self {
+        self.family = Some(value);
+        self
+    }
+    pub fn given_part(&mut self, value: NamePartValue) -> &mut Self {
+        self.given = Some(value);
+        self
+    }
+    pub fn prefix_part(&mut self, value: NamePartValue) -> &mut Self {
+        self.prefix = Some(value);
+        self
+    }
+    pub fn suffix_part(&mut self, value: NamePartValue) -> &mut Self {
         self.suffix = Some(value);
+        self
+    }
+    pub fn source(&mut self, value: impl Into<Arc<str>>) -> &mut Self {
+        self.source = Some(value.into());
         self
     }
     pub fn freeze(self) -> Result<Name, &'static str> {
@@ -101,6 +194,7 @@ impl NameBuilder {
             given: self.given,
             prefix: self.prefix,
             suffix: self.suffix,
+            source: self.source,
         })
     }
 }
@@ -212,7 +306,40 @@ impl DateValue {
     }
 }
 
-pub type NameList = Vec<Name>;
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct NameList {
+    names: Arc<[Name]>,
+    has_others: bool,
+}
+
+impl NameList {
+    #[must_use]
+    pub fn new(names: impl IntoIterator<Item = Name>, has_others: bool) -> Self {
+        Self {
+            names: names.into_iter().collect(),
+            has_others,
+        }
+    }
+
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = &Name> {
+        self.names.iter()
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.names.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.names.is_empty()
+    }
+
+    #[must_use]
+    pub const fn has_others(&self) -> bool {
+        self.has_others
+    }
+}
 pub type LiteralList = Vec<Literal>;
 pub type UriList = Vec<Uri>;
 pub type RangeList = Vec<Range>;

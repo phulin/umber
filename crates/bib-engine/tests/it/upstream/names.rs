@@ -1,7 +1,7 @@
 // Direct xfail translation of upstream t/names.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::{pass_upstream, xfail_upstream};
 
 const UPSTREAM_SOURCE: &str = r####"# -*- cperl -*-
 use strict;
@@ -1112,7 +1112,7 @@ eq_or_diff($main->get_entryfield('upa4', 'uniqueprimaryauthor'), 1, 'Unique prim
 
 #[test]
 fn assertion_001_parsename_1() {
-    xfail_upstream(
+    pass_upstream(
         "parsename 1",
         r####"tparsename($section,'John Doe', 'author')"####,
         r####"$name1"####,
@@ -1123,7 +1123,7 @@ fn assertion_001_parsename_1() {
 
 #[test]
 fn assertion_002_parsename_2() {
-    xfail_upstream(
+    pass_upstream(
         "parsename 2",
         r####"tparsename($section,'Doe, Jr, John', 'author')"####,
         r####"$name2"####,
@@ -1134,7 +1134,7 @@ fn assertion_002_parsename_2() {
 
 #[test]
 fn assertion_003_parsename_3() {
-    xfail_upstream(
+    pass_upstream(
         "parsename 3",
         r####"tparsename($section,'von Berlichingen zu Hornberg, Johann Gottfried', 'author')"####,
         r####"$name3"####,
@@ -1145,7 +1145,7 @@ fn assertion_003_parsename_3() {
 
 #[test]
 fn assertion_004_parsename_4() {
-    xfail_upstream(
+    pass_upstream(
         "parsename 4",
         r####"tparsename($section,'von Berlichingen zu Hornberg, Johann Gottfried', 'author')"####,
         r####"$name4"####,
@@ -1156,7 +1156,7 @@ fn assertion_004_parsename_4() {
 
 #[test]
 fn assertion_005_parsename_5() {
-    xfail_upstream(
+    pass_upstream(
         "parsename 5",
         r####"tparsename($section,'{Robert and Sons, Inc.}', 'author')"####,
         r####"$name5"####,
@@ -1167,7 +1167,7 @@ fn assertion_005_parsename_5() {
 
 #[test]
 fn assertion_006_parsename_6() {
-    xfail_upstream(
+    pass_upstream(
         "parsename 6",
         r####"tparsename($section,'al-Ṣāliḥ, ʿAbdallāh', 'author')"####,
         r####"$name6"####,
@@ -1178,7 +1178,7 @@ fn assertion_006_parsename_6() {
 
 #[test]
 fn assertion_007_parsename_6a() {
-    xfail_upstream(
+    pass_upstream(
         "parsename 6a",
         r####"tparsename($section,'al- Hakim, Tawfik', 'author')"####,
         r####"$namepre1"####,
@@ -1189,7 +1189,7 @@ fn assertion_007_parsename_6a() {
 
 #[test]
 fn assertion_008_parsename_7() {
-    xfail_upstream(
+    pass_upstream(
         "parsename 7",
         r####"tparsename($section,'Jean Charles Gabriel de la Vallée Poussin', 'author')"####,
         r####"$name7"####,
@@ -1200,7 +1200,7 @@ fn assertion_008_parsename_7() {
 
 #[test]
 fn assertion_009_parsename_8() {
-    xfail_upstream(
+    pass_upstream(
         "parsename 8",
         r####"tparsename($section,'{Jean Charles Gabriel} de la Vallée Poussin', 'author')"####,
         r####"$name8"####,
@@ -1211,7 +1211,7 @@ fn assertion_009_parsename_8() {
 
 #[test]
 fn assertion_010_parsename_9() {
-    xfail_upstream(
+    pass_upstream(
         "parsename 9",
         r####"tparsename($section,'Jean Charles Gabriel {de la} Vallée Poussin', 'author')"####,
         r####"$name9"####,
@@ -1222,7 +1222,7 @@ fn assertion_010_parsename_9() {
 
 #[test]
 fn assertion_011_parsename_10() {
-    xfail_upstream(
+    pass_upstream(
         "parsename 10",
         r####"tparsename($section,'Jean Charles Gabriel de la {Vallée Poussin}', 'author')"####,
         r####"$name10"####,
@@ -1233,7 +1233,7 @@ fn assertion_011_parsename_10() {
 
 #[test]
 fn assertion_012_parsename_11() {
-    xfail_upstream(
+    pass_upstream(
         "parsename 11",
         r####"tparsename($section,'{Jean Charles Gabriel} de la {Vallée Poussin}', 'author')"####,
         r####"$name11"####,
@@ -1244,7 +1244,7 @@ fn assertion_012_parsename_11() {
 
 #[test]
 fn assertion_013_parsename_12() {
-    xfail_upstream(
+    pass_upstream(
         "parsename 12",
         r####"tparsename($section,'Jean Charles Gabriel Poussin', 'author')"####,
         r####"$name12"####,
@@ -1255,7 +1255,7 @@ fn assertion_013_parsename_12() {
 
 #[test]
 fn assertion_014_parsename_13() {
-    xfail_upstream(
+    pass_upstream(
         "parsename 13",
         r####"tparsename($section,'Jean Charles {Poussin Lecoq}', 'author')"####,
         r####"$name13"####,
@@ -1266,7 +1266,7 @@ fn assertion_014_parsename_13() {
 
 #[test]
 fn assertion_015_parsename_14() {
-    xfail_upstream(
+    pass_upstream(
         "parsename 14",
         r####"tparsename($section,'J. C. G. de la Vallée Poussin', 'author')"####,
         r####"$name14"####,
@@ -1277,7 +1277,7 @@ fn assertion_015_parsename_14() {
 
 #[test]
 fn assertion_016_parsename_15() {
-    xfail_upstream(
+    pass_upstream(
         "parsename 15",
         r####"tparsename($section,'E. S. El-{M}allah', 'author')"####,
         r####"$name15"####,
@@ -1288,7 +1288,7 @@ fn assertion_016_parsename_15() {
 
 #[test]
 fn assertion_017_parsename_16() {
-    xfail_upstream(
+    pass_upstream(
         "parsename 16",
         r####"tparsename($section,'E. S. {K}ent-{B}oswell', 'author')"####,
         r####"$name16"####,
@@ -1299,7 +1299,7 @@ fn assertion_017_parsename_16() {
 
 #[test]
 fn assertion_018_parsename_17() {
-    xfail_upstream(
+    pass_upstream(
         "parsename 17",
         r####"tparsename($section,'Other, A.~N.', 'author')"####,
         r####"$name17"####,
@@ -1310,7 +1310,7 @@ fn assertion_018_parsename_17() {
 
 #[test]
 fn assertion_019_parsename_18() {
-    xfail_upstream(
+    pass_upstream(
         "parsename 18",
         r####"tparsename($section,'{{{British National Corpus}}}', 'author')"####,
         r####"$name18"####,
@@ -1321,7 +1321,7 @@ fn assertion_019_parsename_18() {
 
 #[test]
 fn assertion_020_parsename_18a() {
-    xfail_upstream(
+    pass_upstream(
         "parsename 18a",
         r####"Biber::Input::file::bibtex::parsename($section,'{{{British National Corpus}}}', 'author')->{strip}"####,
         r####"$name18strip"####,
@@ -1332,7 +1332,7 @@ fn assertion_020_parsename_18a() {
 
 #[test]
 fn assertion_021_parsename_19() {
-    xfail_upstream(
+    pass_upstream(
         "parsename 19",
         r####"tparsename($section,'Vázques{ de }Parga, Luis', 'author')"####,
         r####"$name19"####,
@@ -1365,7 +1365,7 @@ fn assertion_023_parsename_x_2() {
 
 #[test]
 fn assertion_024_name_to_bibtex_1() {
-    xfail_upstream(
+    pass_upstream(
         "name_to_bibtex 1",
         r####"Biber::Input::file::bibtex::parsename($section,'John Doe', 'author')->name_to_bibtex"####,
         r####"'Doe, John'"####,
@@ -1376,7 +1376,7 @@ fn assertion_024_name_to_bibtex_1() {
 
 #[test]
 fn assertion_025_name_to_bibtex_2() {
-    xfail_upstream(
+    pass_upstream(
         "name_to_bibtex 2",
         r####"Biber::Input::file::bibtex::parsename($section,'John van der Doe', 'author')->name_to_bibtex"####,
         r####"'van der Doe, John'"####,
@@ -1387,7 +1387,7 @@ fn assertion_025_name_to_bibtex_2() {
 
 #[test]
 fn assertion_026_name_to_bibtex_3() {
-    xfail_upstream(
+    pass_upstream(
         "name_to_bibtex 3",
         r####"Biber::Input::file::bibtex::parsename($section,'Doe, Jr, John', 'author')->name_to_bibtex"####,
         r####"'Doe, Jr, John'"####,
@@ -1398,7 +1398,7 @@ fn assertion_026_name_to_bibtex_3() {
 
 #[test]
 fn assertion_027_name_to_bibtex_4() {
-    xfail_upstream(
+    pass_upstream(
         "name_to_bibtex 4",
         r####"Biber::Input::file::bibtex::parsename($section,'von Doe, Jr, John', 'author')->name_to_bibtex"####,
         r####"'von Doe, Jr, John'"####,
@@ -1409,7 +1409,7 @@ fn assertion_027_name_to_bibtex_4() {
 
 #[test]
 fn assertion_028_name_to_bibtex_5() {
-    xfail_upstream(
+    pass_upstream(
         "name_to_bibtex 5",
         r####"Biber::Input::file::bibtex::parsename($section,'John Alan Doe', 'author')->name_to_bibtex"####,
         r####"'Doe, John Alan'"####,
@@ -1420,7 +1420,7 @@ fn assertion_028_name_to_bibtex_5() {
 
 #[test]
 fn assertion_029_name_to_bibtex_6() {
-    xfail_upstream(
+    pass_upstream(
         "name_to_bibtex 6",
         r####"Biber::Input::file::bibtex::parsename($section,'{Robert and Sons, Inc.}', 'author')->name_to_bibtex"####,
         r####"'{Robert and Sons, Inc.}'"####,
@@ -1431,7 +1431,7 @@ fn assertion_029_name_to_bibtex_6() {
 
 #[test]
 fn assertion_030_name_to_bibtex_7() {
-    xfail_upstream(
+    pass_upstream(
         "name_to_bibtex 7",
         r####"NFC(Biber::Input::file::bibtex::parsename($section,'Jean Charles Gabriel de la {Vallée Poussin}', 'author')->name_to_bibtex)"####,
         r####"'de la {Vallée Poussin}, Jean Charles Gabriel'"####,
@@ -1442,7 +1442,7 @@ fn assertion_030_name_to_bibtex_7() {
 
 #[test]
 fn assertion_031_name_to_bibtex_8() {
-    xfail_upstream(
+    pass_upstream(
         "name_to_bibtex 8",
         r####"Biber::Input::file::bibtex::parsename($section,'E. S. {K}ent-{B}oswell', 'author')->name_to_bibtex"####,
         r####"'{K}ent-{B}oswell, E. S.'"####,
@@ -1805,7 +1805,7 @@ fn assertion_063_escaped_name_with_3_commas() {
 
 #[test]
 fn assertion_064_name_count_for_and_others_1() {
-    xfail_upstream(
+    pass_upstream(
         "Name count for \"and others\" - 1",
         r####"$bibentries->entry('V1')->get_field($bibentries->entry('V1')->get_labelname_info)->count"####,
         r####"'2'"####,
@@ -1838,7 +1838,7 @@ fn assertion_066_visibility_for_and_others_2() {
 
 #[test]
 fn assertion_067_terseinitials_1() {
-    xfail_upstream(
+    pass_upstream(
         "Terseinitials 1",
         r####"NFC($bibentries->entry('L21')->get_field($bibentries->entry('L21')->get_labelname_info)->nth_name(1)->get_namepart_initial('given')->[0])"####,
         r####"'Š'"####,

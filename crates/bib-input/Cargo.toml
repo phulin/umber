@@ -9,6 +9,7 @@ bib-model = { path = "../bib-model" }
 bib-unicode = { path = "../bib-unicode" }
 quick-xml.workspace = true
 umber-vfs = { path = "../umber-vfs" }
+unicode-normalization = "0.1"
 
 [lints]
 workspace = true

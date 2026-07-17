@@ -112,6 +112,36 @@ fn parses_typed_biblatexml_and_aliases() {
 }
 
 #[test]
+fn exposes_structured_classic_names_from_bibtex_fields() {
+    let source = parse_bibtex_bytes(
+        br#"@book{x, author={Alfred Adler und Steven Secondauthor und andere}}"#,
+        BibTexOptions::default(),
+    );
+    let author = source
+        .entry("x")
+        .and_then(|entry| entry.field("author"))
+        .expect("author field");
+    let parsed = author
+        .classic_names(ClassicNameOptions {
+            separators: &["und"],
+            others: &["andere"],
+            limits: ClassicNameLimits::default(),
+        })
+        .expect("name field");
+    assert!(parsed.diagnostics.is_empty());
+    assert_eq!(parsed.names.len(), 2);
+    assert!(parsed.names.has_others());
+    assert_eq!(
+        parsed
+            .names
+            .iter()
+            .map(|name| name.source().expect("source"))
+            .collect::<Vec<_>>(),
+        ["Alfred Adler", "Steven Secondauthor"]
+    );
+}
+
+#[test]
 fn rejects_namespace_version_doctype_and_limits() {
     let wrong_namespace =
         br#"<bcf:controlfile version="3.11" bltxversion="3.21" xmlns:bcf="wrong"/>"#;

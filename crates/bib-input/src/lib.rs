@@ -4,6 +4,7 @@ mod biblatexml;
 mod bibtex;
 mod config;
 mod control;
+mod names;
 mod xml;
 
 pub use biblatexml::{
@@ -24,6 +25,11 @@ pub use control::{
     ControlOptionValue, ControlSection, DataModel, DataModelField, OptionComponent,
     StructuredValue, Template, TemplateElement, parse_control, parse_control_bytes,
     validate_control_bytes,
+};
+pub use names::{
+    ClassicNameDiagnostic, ClassicNameDiagnosticKind, ClassicNameLimits, ClassicNameOptions,
+    ClassicNameParse, NameHashScope, classic_name_hash, parse_classic_name,
+    parse_classic_name_list,
 };
 pub use xml::{XmlError, XmlLimits};
 
