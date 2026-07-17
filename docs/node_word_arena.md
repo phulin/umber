@@ -540,9 +540,10 @@ The follow-up audit measures canonical storage rather than inferring it from
 process RSS. `profiling-stats` computes an on-demand report over the actual epoch
 storage, its dense generation-tag and span tables, every live survivor root,
 and every cleared recycled buffer. Each vector reports logical length and
-allocator capacity in elements and bytes. Owned whatsit strings and byte
-payloads are separate rows; shared glue, token, font, and child-list storage is
-not charged again. The report excludes vector headers, allocator metadata,
+allocator capacity in elements and bytes. Owned whatsit strings, byte payloads,
+and boxed destination/thread records are separate rows; shared glue, token,
+font, and child-list storage is not charged again. The report excludes vector
+headers, allocator metadata,
 process code/stacks, and shared stores, so it is intentionally distinct from
 RSS. Cleared recycled vectors have zero logical bytes but retain capacity.
 
@@ -563,8 +564,9 @@ and then allocator-retained payload bytes. Its totals and full column vector
 are published as one mutex-protected observation; the logical atomic is only a
 fast rejection hint and is never reported independently. Consequently every
 peak column belongs to the storage that supplied both totals, and the column
-sums equal those totals. Owned whatsit strings and byte payloads participate in
-the ordering, totals, and their dedicated columns. Divergent-maximum and
+sums equal those totals. Owned whatsit strings, byte payloads, and boxed
+destination/thread records participate in the ordering, totals, and their
+dedicated columns. Divergent-maximum and
 concurrent feature tests enforce this coherence without adding measurement
 state to snapshots or semantic hashes.
 
@@ -652,6 +654,7 @@ real buffers retained after epoch truncation.
 | `adjusts`                     |     16 |                 0/0 |                 0/0 |       0/0 |         0/0 |
 | `whatsits.owned_strings`      |      1 |                 0/0 |                 0/0 |       0/0 |         0/0 |
 | `whatsits.owned_payloads`     |      1 |                 0/0 |                 0/0 |       0/0 |         0/0 |
+| `whatsits.owned_boxes`        |      1 |                 0/0 |                 0/0 |       0/0 |         0/0 |
 | `identity_tags`               |     16 |       22,561/32,768 |       56,697/65,536 |   213/256 |     408/512 |
 | `spans`                       |      8 |       22,561/32,768 |       56,697/65,536 |   213/256 |     408/512 |
 

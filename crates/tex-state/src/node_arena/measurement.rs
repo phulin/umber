@@ -147,6 +147,115 @@ pub fn peak_node_storage_measurement() -> Option<NodeStorageObservation> {
         .and_then(PeakNodeStorageRecorder::snapshot)
 }
 
+#[derive(Clone, Copy, Default)]
+struct RetainedBytes {
+    logical: usize,
+    retained: usize,
+}
+
+impl RetainedBytes {
+    fn string(value: &String) -> Self {
+        Self {
+            logical: value.len(),
+            retained: value.capacity(),
+        }
+    }
+
+    fn bytes(value: &Vec<u8>) -> Self {
+        Self {
+            logical: value.len(),
+            retained: value.capacity(),
+        }
+    }
+
+    fn boxed<T>(_: &T) -> Self {
+        let bytes = core::mem::size_of::<T>();
+        Self {
+            logical: bytes,
+            retained: bytes,
+        }
+    }
+
+    #[cfg(feature = "profiling-stats")]
+    fn add_assign(&mut self, other: Self) {
+        self.logical += other.logical;
+        self.retained += other.retained;
+    }
+}
+
+#[derive(Default)]
+struct WhatsitOwnedPayloads {
+    strings: RetainedBytes,
+    bytes: RetainedBytes,
+    boxes: RetainedBytes,
+}
+
+/// Reports heap allocations owned directly by one whatsit sidecar value.
+///
+/// Referenced token lists, glue, fonts, and child lists remain shared storage
+/// and are deliberately accounted for by their owning stores instead.
+fn whatsit_owned_payloads(whatsit: &crate::node::Whatsit) -> WhatsitOwnedPayloads {
+    use crate::node::Whatsit;
+
+    match whatsit {
+        Whatsit::OpenOut { path, .. } => WhatsitOwnedPayloads {
+            strings: RetainedBytes::string(path),
+            ..WhatsitOwnedPayloads::default()
+        },
+        Whatsit::Special { class, payload } => WhatsitOwnedPayloads {
+            strings: RetainedBytes::string(class),
+            bytes: RetainedBytes::bytes(payload),
+            ..WhatsitOwnedPayloads::default()
+        },
+        Whatsit::PdfLiteral { payload, .. } | Whatsit::PdfSetMatrix { payload } => {
+            WhatsitOwnedPayloads {
+                bytes: RetainedBytes::bytes(payload),
+                ..WhatsitOwnedPayloads::default()
+            }
+        }
+        Whatsit::PdfColorStack { action, .. } => {
+            let bytes = match action {
+                crate::PdfColorStackAction::Set(payload)
+                | crate::PdfColorStackAction::Push(payload) => RetainedBytes::bytes(payload),
+                crate::PdfColorStackAction::Pop | crate::PdfColorStackAction::Current => {
+                    RetainedBytes::default()
+                }
+            };
+            WhatsitOwnedPayloads {
+                bytes,
+                ..WhatsitOwnedPayloads::default()
+            }
+        }
+        Whatsit::PdfDestination(destination) => WhatsitOwnedPayloads {
+            boxes: RetainedBytes::boxed(destination.as_ref()),
+            ..WhatsitOwnedPayloads::default()
+        },
+        Whatsit::PdfThread(thread) => WhatsitOwnedPayloads {
+            boxes: RetainedBytes::boxed(thread.as_ref()),
+            ..WhatsitOwnedPayloads::default()
+        },
+        Whatsit::CloseOut { .. }
+        | Whatsit::DeferredWrite { .. }
+        | Whatsit::PdfReferenceObject { .. }
+        | Whatsit::PdfAccessibility(_)
+        | Whatsit::PdfAnnotation { .. }
+        | Whatsit::PdfLinkStart { .. }
+        | Whatsit::PdfLinkEnd { .. }
+        | Whatsit::PdfRunningLink(_)
+        | Whatsit::DeferredPdfLiteral { .. }
+        | Whatsit::PdfSave
+        | Whatsit::PdfRestore
+        | Whatsit::PdfSavePos
+        | Whatsit::PdfSnapRefPoint
+        | Whatsit::PdfSnapY { .. }
+        | Whatsit::PdfSnapYComp { .. }
+        | Whatsit::PdfRefXForm { .. }
+        | Whatsit::PdfRefXImage { .. }
+        | Whatsit::PdfEndThread
+        | Whatsit::Language { .. } => WhatsitOwnedPayloads::default(),
+    }
+}
+
 impl NodeStorage {
     #[cfg(feature = "profiling-stats")]
     pub(super) fn capacity_signature(&self) -> [usize; 33] {
@@ -248,49 +357,10 @@ impl NodeStorage {
                 (origins.capacity() * core::mem::size_of::<crate::token::OriginId>()) as u64;
         }
         for whatsit in &self.whatsits {
-            match whatsit {
-                crate::node::Whatsit::OpenOut { path, .. } => {
-                    logical += path.len() as u64;
-                    retained += path.capacity() as u64;
-                }
-                crate::node::Whatsit::Special { class, payload } => {
-                    logical += (class.len() + payload.len()) as u64;
-                    retained += (class.capacity() + payload.capacity()) as u64;
-                }
-                crate::node::Whatsit::PdfLiteral { payload, .. }
-                | crate::node::Whatsit::PdfSetMatrix { payload } => {
-                    logical += payload.len() as u64;
-                    retained += payload.capacity() as u64;
-                }
-                crate::node::Whatsit::PdfColorStack { action, .. } => {
-                    if let crate::PdfColorStackAction::Set(payload)
-                    | crate::PdfColorStackAction::Push(payload) = action
-                    {
-                        logical += payload.len() as u64;
-                        retained += payload.capacity() as u64;
-                    }
-                }
-                crate::node::Whatsit::CloseOut { .. }
-                | crate::node::Whatsit::DeferredWrite { .. }
-                | crate::node::Whatsit::PdfReferenceObject { .. }
-                | crate::node::Whatsit::PdfAccessibility(_)
-                | crate::node::Whatsit::PdfAnnotation { .. }
-                | crate::node::Whatsit::PdfLinkStart { .. }
-                | crate::node::Whatsit::PdfLinkEnd { .. }
-                | crate::node::Whatsit::PdfRunningLink(_)
-                | crate::node::Whatsit::DeferredPdfLiteral { .. }
-                | crate::node::Whatsit::PdfSave
-                | crate::node::Whatsit::PdfRestore
-                | crate::node::Whatsit::PdfSavePos
-                | crate::node::Whatsit::PdfSnapRefPoint
-                | crate::node::Whatsit::PdfSnapY { .. }
-                | crate::node::Whatsit::PdfSnapYComp { .. }
-                | crate::node::Whatsit::PdfRefXForm { .. }
-                | crate::node::Whatsit::PdfRefXImage { .. }
-                | crate::node::Whatsit::PdfDestination(_)
-                | crate::node::Whatsit::PdfThread(_)
-                | crate::node::Whatsit::PdfEndThread
-                | crate::node::Whatsit::Language { .. } => {}
+            let owned = whatsit_owned_payloads(whatsit);
+            for allocation in [owned.strings, owned.bytes, owned.boxes] {
+                logical += allocation.logical as u64;
+                retained += allocation.retained as u64;
             }
         }
         (logical, retained)
@@ -358,50 +428,29 @@ impl NodeStorage {
                 .sum(),
         ));
 
-        let mut string_len = 0;
-        let mut string_capacity = 0;
-        let mut payload_len = 0;
-        let mut payload_capacity = 0;
+        let mut strings = RetainedBytes::default();
+        let mut payloads = RetainedBytes::default();
+        let mut boxes = RetainedBytes::default();
         for whatsit in &self.whatsits {
-            match whatsit {
-                crate::node::Whatsit::OpenOut { path, .. } => {
-                    string_len += path.len();
-                    string_capacity += path.capacity();
-                }
-                crate::node::Whatsit::Special { class, payload } => {
-                    string_len += class.len();
-                    string_capacity += class.capacity();
-                    payload_len += payload.len();
-                    payload_capacity += payload.capacity();
-                }
-                crate::node::Whatsit::PdfLiteral { payload, .. }
-                | crate::node::Whatsit::PdfSetMatrix { payload } => {
-                    payload_len += payload.len();
-                    payload_capacity += payload.capacity();
-                }
-                crate::node::Whatsit::CloseOut { .. }
-                | crate::node::Whatsit::DeferredWrite { .. }
-                | crate::node::Whatsit::PdfReferenceObject { .. }
-                | crate::node::Whatsit::PdfAccessibility(_)
-                | crate::node::Whatsit::PdfAnnotation { .. }
-                | crate::node::Whatsit::PdfLinkStart { .. }
-                | crate::node::Whatsit::PdfLinkEnd { .. }
-                | crate::node::Whatsit::PdfRunningLink(_)
-                | crate::node::Whatsit::DeferredPdfLiteral { .. }
-                | crate::node::Whatsit::PdfSave
-                | crate::node::Whatsit::PdfRestore
-                | crate::node::Whatsit::Language { .. } => {}
-            }
+            let owned = whatsit_owned_payloads(whatsit);
+            strings.add_assign(owned.strings);
+            payloads.add_assign(owned.bytes);
+            boxes.add_assign(owned.boxes);
         }
         out.push(NodeMemoryColumn::byte_payload(
             format!("{prefix}.whatsits.owned_strings"),
-            string_len,
-            string_capacity,
+            strings.logical,
+            strings.retained,
         ));
         out.push(NodeMemoryColumn::byte_payload(
             format!("{prefix}.whatsits.owned_payloads"),
-            payload_len,
-            payload_capacity,
+            payloads.logical,
+            payloads.retained,
+        ));
+        out.push(NodeMemoryColumn::byte_payload(
+            format!("{prefix}.whatsits.owned_boxes"),
+            boxes.logical,
+            boxes.retained,
         ));
         out
     }

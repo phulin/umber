@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use super::{NodeStorageObservation, PeakNodeStorageRecorder};
+use crate::ids::{GlueId, TokenListId};
 use crate::node::{Node, Whatsit};
 use crate::node_arena::{NodeArena, NodeStorage};
 
@@ -60,6 +61,51 @@ fn owned_whatsit_payloads_participate_in_totals_and_columns() {
     assert_eq!(
         (payloads.logical_bytes, payloads.retained_payload_bytes),
         (5, 128)
+    );
+}
+
+#[test]
+fn newer_whatsit_payloads_are_exhaustively_measured() {
+    let mut color = Vec::with_capacity(128);
+    color.extend_from_slice(b"color");
+    let mut storage = NodeStorage::default();
+    storage.whatsits.extend([
+        Whatsit::PdfColorStack {
+            id: 1,
+            action: crate::PdfColorStackAction::Push(color),
+        },
+        Whatsit::PdfSavePos,
+        Whatsit::PdfSnapRefPoint,
+        Whatsit::PdfSnapY { glue: GlueId::ZERO },
+        Whatsit::PdfSnapYComp { ratio: 1 },
+        Whatsit::PdfDestination(Box::new(crate::node::PdfDestinationNode {
+            identifier: crate::PdfActionIdentifier::Number(1),
+            structure: None,
+            kind: crate::node::PdfDestinationKind::Fit,
+        })),
+        Whatsit::PdfThread(Box::new(crate::node::PdfThreadNode {
+            identifier: crate::PdfActionIdentifier::Number(2),
+            dimensions: crate::PdfAnnotationDimensions::RUNNING,
+            attributes: TokenListId::EMPTY,
+            running: false,
+        })),
+    ]);
+
+    let measured = observation(&storage);
+
+    assert_column_sums(&measured);
+    assert_eq!(
+        storage.retained_payload_bytes() as u64,
+        measured.retained_payload_bytes
+    );
+    assert_column_bytes(&measured, "peak.whatsits.owned_payloads", 5, 128);
+    let boxed_bytes = core::mem::size_of::<crate::node::PdfDestinationNode>()
+        + core::mem::size_of::<crate::node::PdfThreadNode>();
+    assert_column_bytes(
+        &measured,
+        "peak.whatsits.owned_boxes",
+        boxed_bytes,
+        boxed_bytes,
     );
 }
 
@@ -141,6 +187,23 @@ fn assert_metadata_columns(observation: &NodeStorageObservation, prefix: &str) {
     assert_eq!(identities.len, spans.len);
     assert_eq!(identities.element_bytes, 16);
     assert_eq!(spans.element_bytes, 8);
+}
+
+fn assert_column_bytes(
+    observation: &NodeStorageObservation,
+    name: &str,
+    logical_bytes: usize,
+    retained_payload_bytes: usize,
+) {
+    let column = observation
+        .columns
+        .iter()
+        .find(|column| column.name == name)
+        .expect("measurement column");
+    assert_eq!(
+        (column.logical_bytes, column.retained_payload_bytes),
+        (logical_bytes, retained_payload_bytes)
+    );
 }
 
 fn assert_column_sums(observation: &NodeStorageObservation) {
