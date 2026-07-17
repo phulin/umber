@@ -228,6 +228,43 @@ KiB, and paid measurable validation cost. Because the paired direction
 reversed, the result is not evidence that removal is neutral or positive;
 pretolerance remains opt-in pending a conditioned rerun.
 
+The final paragraph-only release pass on 2026-07-16 used four AB/BA-paired
+samples after one in-process warm-up. The paired enabled-minus-disabled means
+for the large insertion, follow-up insertion, inverse removal, and
+height-preserving substitution were respectively +768.447, +207.602,
++923.535, and +266.583 ms. The host was noisy (some individual pairs reversed
+direction), but the bounded order-balanced result does not support enablement:
+paragraph recording lost on every paired mean. The corresponding disabled /
+enabled / cold means were 1329.144/2097.590/689.275,
+2738.331/2945.933/734.451, 1086.527/2010.062/814.330, and
+245.181/511.763/725.040 ms.
+
+All eight incremental outputs were byte-identical to their fresh cold DVI:
+the four revisions emitted 100 pages and 279,176, 279,248, 279,176, and
+279,176 bytes. Restart/suffix accounting was respectively 14/86/0,
+14/13/73, 14/86/0, and 14/3/83 retained-prefix/re-shipped/adopted pages. The
+fourth edit reconverged at `ShipoutComplete`, walked one subtree, and adopted
+all 83 suffix leaves. Paragraph validation plus import remained cheaper than
+front-end execution in the measured enabled sample: 14.795/584.845,
+3.744/2166.775, 43.836/1899.058, and 0/362.014 ms. Paragraph lookup
+hit/key-miss/validation-miss counts were 19/1384/1, 3/79/0, 19/1385/0, and
+0/5/0; import failures were zero. The matching validation-eligible candidates
+therefore cleared 90% on every edit that reached validation, while 648, 51,
+648, and 2 executed regions recorded barriers. The large and inverse edits
+each attributed 50 display, 47 output-routine, 219 unsupported-write, 255
+unsupported-input-transition, and 540 group-transition barrier events.
+
+The enabled exact-identity timer reported 2/6.213 ms, 127/1163.022 ms, 0/0,
+and 4/43.142 ms (calls/total) across the four edits. The high many-comparison
+sample is first-projection and host-contention sensitive, so it is work/cost
+telemetry rather than a standalone hash verdict. Paragraph generation
+metadata retained 19,112,980 bytes; detached-cache retention and evictions
+remained zero. The committed edit matrix, external Story/Gentle/TRIP/e-TRIP
+parity, explicit 1,000-edit tier, snapshot budgets, and complete workspace
+test/format/clippy gate all passed. The release blocker is solely that
+memo-enabled recompilation did not beat memo-disabled recompilation; no broad
+tuning or optional pretolerance policy is included in this verdict.
+
 The runner requires the same external inputs as Gentle conformance. Populate
 them with `scripts/setup-conformance-tests.sh` if necessary.
 

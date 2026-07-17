@@ -919,6 +919,22 @@ does not change replay semantics or DVI output; eliminating the extra work
 would require a source-span-preserving preflight design rather than a counter
 correction.
 
+The final default-policy verification on 2026-07-16 kept only paragraph
+recording enabled and excluded the unresolved pretolerance experiment. Four
+same-process AB/BA pairs preserved cold-DVI parity on every accepted revision,
+the height-preserving edit re-shipped three pages and adopted the complete
+83-page suffix, and paragraph validation plus import stayed below front-end
+execution cost. The matching validation-eligible paragraph candidates cleared
+the 90% hit target, detached retention and eviction stayed zero, and generation
+metadata retained 19,112,980 bytes. Nevertheless, enabled-minus-disabled
+paired mean deltas were +768.447, +207.602, +923.535, and +266.583 ms across
+the large insertion, follow-up, inverse removal, and equal-width edit. The
+committed matrix, external corpus parity, explicit 1,000-edit tier, snapshot
+budgets, and full workspace gates passed, but the end-to-end speed criterion
+did not. Paragraph memoization therefore remains a measured experiment rather
+than a release-enabled policy; the concrete blocker is the enabled execution
+loss, not parity, import cost, suffix correctness, retention, or pretolerance.
+
 ### Dependency-recorder baseline
 
 The state-layer recorder has an explicit disabled branch and no lock or atomic.
