@@ -1,14 +1,3 @@
-use super::support::xfail_deep;
-
-#[derive(Debug, PartialEq)]
-enum TranslationValue<'a> {
-    Expected {
-        actual_expression: &'a str,
-        expected_expression: &'a str,
-    },
-    SemanticEnginePending,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SemanticOwner {
     Graph,
@@ -32,12 +21,10 @@ impl SemanticOwner {
     }
 }
 
-/// Executes one translated assertion while the semantic facade is pending.
-///
-/// The exact upstream call and complete source are retained in the owning
-/// module so an assertion can be audited now and replaced in isolation later.
+/// Runs a mixed-stage assertion normally while retaining its semantic owner
+/// in failure messages for auditability.
 #[track_caller]
-fn xfail_owned_upstream(
+fn compare_owned_upstream(
     owner: SemanticOwner,
     assertion: &str,
     actual_expression: &str,
@@ -50,53 +37,13 @@ fn xfail_owned_upstream(
         upstream_source.contains(upstream_call),
         "translated assertion `{assertion}` owned by {owner_issue} is absent from its pinned upstream source"
     );
-    xfail_deep(
+    pass_upstream(
         assertion,
-        &TranslationValue::Expected {
-            actual_expression,
-            expected_expression,
-        },
-        &TranslationValue::SemanticEnginePending,
+        actual_expression,
+        expected_expression,
+        upstream_call,
+        upstream_source,
     );
-}
-
-/// Runs assertions whose owning semantic stage exists normally. Other
-/// mixed-stage owners retain the strict xfail contract until their stage lands.
-#[track_caller]
-fn compare_owned_upstream(
-    owner: SemanticOwner,
-    assertion: &str,
-    actual_expression: &str,
-    expected_expression: &str,
-    upstream_call: &str,
-    upstream_source: &str,
-) {
-    if matches!(
-        owner,
-        SemanticOwner::Graph
-            | SemanticOwner::Names
-            | SemanticOwner::SortAndLists
-            | SemanticOwner::Labels
-            | SemanticOwner::Output
-            | SemanticOwner::Session
-    ) {
-        pass_upstream(
-            assertion,
-            actual_expression,
-            expected_expression,
-            upstream_call,
-            upstream_source,
-        );
-    } else {
-        xfail_owned_upstream(
-            owner,
-            assertion,
-            actual_expression,
-            expected_expression,
-            upstream_call,
-            upstream_source,
-        );
-    }
 }
 
 #[track_caller]

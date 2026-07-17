@@ -122,10 +122,13 @@ run LaTeX-DVI and for supplying deterministic TeX/TFM search areas.
 
 Library callers that need automatic bibliography processing opt into
 `umber::LatexProjectSession`. It runs the existing TeX engine and in-process
-`BibSession` through byte-stable auxiliary convergence, returns typed combined
-resource needs, and atomically accepts the root, generated files, bibliography
-diagnostics, and final DVI/HTML. The single-pass APIs retain their existing
-meaning.
+`BibSession`, targeting Biber 2.22 beta, control schema 3.11, and BBL schema
+3.3. Ordinary and tool processing, control validation, alternate bibliography
+outputs, and TeX-bibliography-TeX convergence use the same pure-Rust pipeline
+in native and WASM builds. The project session returns typed combined resource
+needs and atomically accepts the root, generated files, bibliography
+diagnostics, auxiliary files, and final DVI/HTML. The single-pass APIs retain
+their existing meaning.
 
 ### npm and browser worker
 

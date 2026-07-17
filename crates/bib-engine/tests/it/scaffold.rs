@@ -7,10 +7,10 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-use super::support::{xfail_bytes, xfail_deep, xfail_diagnostics, xfail_string};
-
 const PINNED_COMMIT: &str = "74252e608e5f8115375c532eb25416430a9f52eb";
 const IMPORTED_FILE_COUNT: usize = 113;
+const UPSTREAM_MODULE_COUNT: usize = 51;
+const UPSTREAM_ASSERTION_COUNT: usize = 1_275;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -89,35 +89,42 @@ fn fixture_manifest_is_complete_and_pinned() {
 }
 
 #[test]
-fn strict_xfail_helpers_accept_failures_and_reject_xpasses() {
-    xfail_string("string failure", "expected", "actual");
-    xfail_bytes("byte failure", b"expected", b"actual");
-    xfail_deep("deep failure", &vec![1, 2], &vec![1, 3]);
-    xfail_diagnostics(
-        "diagnostic failure",
-        &["structured expected"],
-        &["structured actual"],
-        "rendered expected",
-        "rendered actual",
-    );
-
-    assert_xpass(|| xfail_string("string pass", "same", "same"));
-    assert_xpass(|| xfail_bytes("byte pass", b"same", b"same"));
-    assert_xpass(|| xfail_deep("deep pass", &[1, 2], &[1, 2]));
-    assert_xpass(|| {
-        xfail_diagnostics(
-            "diagnostic pass",
-            &["same"],
-            &["same"],
-            "same rendered",
-            "same rendered",
-        );
-    });
-}
-
-fn assert_xpass(assertion: impl FnOnce()) {
-    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(assertion));
-    assert!(panic.is_err(), "an XPASS must fail the test");
+fn translated_suite_has_no_compatibility_allowances() {
+    let upstream = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/it/upstream");
+    let mut modules = 0;
+    let mut assertions = 0;
+    for entry in fs::read_dir(&upstream)
+        .unwrap_or_else(|error| panic!("failed to enumerate {}: {error}", upstream.display()))
+    {
+        let path = entry.expect("valid upstream directory entry").path();
+        if path.extension().is_none_or(|extension| extension != "rs")
+            || path.file_name().is_some_and(|name| name == "mod.rs")
+        {
+            continue;
+        }
+        modules += 1;
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+        assertions += source.matches("#[test]").count();
+        let expected_failure_marker = ["x", "fail"].concat();
+        let unexpected_pass_marker = ["X", "PASS"].concat();
+        let ignored_test_marker = ["#[", "ignore", "]"].concat();
+        let expected_panic_marker = ["#[", "should_panic", "]"].concat();
+        for forbidden in [
+            ignored_test_marker.as_str(),
+            expected_panic_marker.as_str(),
+            expected_failure_marker.as_str(),
+            unexpected_pass_marker.as_str(),
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "compatibility allowance `{forbidden}` remains in {}",
+                path.display()
+            );
+        }
+    }
+    assert_eq!(modules, UPSTREAM_MODULE_COUNT);
+    assert_eq!(assertions, UPSTREAM_ASSERTION_COUNT);
 }
 
 fn fixture_root() -> PathBuf {
