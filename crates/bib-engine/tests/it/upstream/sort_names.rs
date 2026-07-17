@@ -1,7 +1,7 @@
-// Direct xfail translation of upstream t/sort-names.t at commit 74252e6.
+// Direct passing translation of upstream t/sort-names.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream;
 
 const UPSTREAM_SOURCE: &str = r####"# -*- cperl -*-
 use strict;
@@ -46,7 +46,7 @@ is_deeply($main->get_keys, ['N4', 'N1', 'N2', 'N3'], 'names order');
 
 #[test]
 fn assertion_001_names_order() {
-    xfail_upstream(
+    pass_upstream(
         "names order",
         r####"$main->get_keys"####,
         r####"['N4', 'N1', 'N2', 'N3']"####,

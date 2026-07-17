@@ -1,10 +1,9 @@
 # In-process bibliography backend
 
 Status: foundation contracts, pinned Unicode utilities, bounded XML and
-BibTeX inputs, the deterministic cross-entry graph stage, and classic and
-extended structured names, truncation, and final visibility are implemented;
-sorting, labeling, serialization, session, and project integration continue
-in dependency order.
+BibTeX inputs, deterministic cross-entry graphs, structured names, and the
+data-list/sorting stage are implemented; labeling, serialization, session,
+and project integration continue in dependency order.
 
 This document defines Umber's pure-Rust bibliography subsystem. Every Rust
 package uses the `bib-*` prefix, and modules, types, commands, features, and
@@ -324,6 +323,21 @@ short lists intact, truncates over-limit or explicit-`others` lists to the
 configured minimum capped by the concrete name count, preserves source order,
 and records whether more names exist. Consumers may retain or suppress that
 marker independently when constructing visible-list hashes and output.
+
+The sorting stage constructs immutable `DataList` values from source-ordered
+sections using declarative entry-type, field, key, Boolean, and negated
+filters. Sort templates are ordered components over fields, entry identity and
+type, cite order, or constants. Each component fixes direction, missing and
+final-value behavior, numeric comparison, substring offsets, padding, case
+order, and a pinned root, Swedish, or Spanish locale; no host locale or browser
+internationalization API is consulted. Equal keys retain section order.
+Explicit limits bound entries, components, and generated key characters.
+Name-key templates select prefix/family/given/suffix parts and initials, while
+sort initials and hashes use the pinned Unicode/hash boundary. List-item
+limits preserve short lists and reduce over-limit lists to the configured
+minimum with an explicit more-items result. Skip-bibliography, skip-label, and
+data-only dispositions remain separate decisions so later stages cannot infer
+one from another.
 
 ### BibTeX datasource
 
@@ -747,6 +761,11 @@ structured-name and visible-list contract. This includes classic and extended
 parsing, exact normalization and hashes, serialized name forms, explicit
 `others`, bounded visible prefixes, and unique-primary-author cases.
 
+All 121 direct assertions owned by `datalists`, `skips`, `skipsg`,
+`sort-case`, `sort-complex`, `sort-names`, `sort-order`, `sort-uc`, and
+`sorting`, plus the five sorting/list assertions transferred from
+`basic-misc`, execute normally with no sorting-stage xfails.
+
 The two upstream files that exercise several stages use assertion-level
 ownership rather than file-level ownership. Their Rust modules enforce the
 following ledger before entering the strict xfail helper; an assertion absent
@@ -827,7 +846,7 @@ highest-risk pure-Rust/WASM dependencies.
 ### Semantic wave
 
 1. Relationships, inheritance, sourcemaps, sections, and sets.
-2. Data lists, filters, sort templates, and collation keys.
+2. **Complete.** Data lists, filters, sort templates, and collation keys.
 3. Labels, hashes, extra fields, and uniqueness.
 4. BBL and secondary serializers plus tool mode.
 

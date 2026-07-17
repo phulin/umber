@@ -1,7 +1,7 @@
-// Direct xfail translation of upstream t/sort-case.t at commit 74252e6.
+// Direct passing translation of upstream t/sort-case.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream;
 
 const UPSTREAM_SOURCE: &str = r####"# -*- cperl -*-
 use strict;
@@ -69,7 +69,7 @@ is_deeply($main->get_keys, ['CS3','CS2','CS1'], 'U::C case - 2');
 
 #[test]
 fn assertion_001_u_c_case_1() {
-    xfail_upstream(
+    pass_upstream(
         "U::C case - 1",
         r####"$main->get_keys"####,
         r####"['CS1','CS3','CS2']"####,
@@ -80,7 +80,7 @@ fn assertion_001_u_c_case_1() {
 
 #[test]
 fn assertion_002_u_c_case_2() {
-    xfail_upstream(
+    pass_upstream(
         "U::C case - 2",
         r####"$main->get_keys"####,
         r####"['CS3','CS2','CS1']"####,

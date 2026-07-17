@@ -1,7 +1,7 @@
-// Direct xfail translation of upstream t/sort-order.t at commit 74252e6.
+// Direct passing translation of upstream t/sort-order.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream;
 
 const UPSTREAM_SOURCE: &str = r####"# -*- cperl -*-
 use strict;
@@ -192,7 +192,7 @@ is_deeply($main->get_keys, ['L1','L1A','L1B','L2','L3','L4','L5','L6','L7','L8',
 
 #[test]
 fn assertion_001_sorting_none_and_nocite_second() {
-    xfail_upstream(
+    pass_upstream(
         "sorting=none and \\nocite{*} second",
         r####"$main1->get_keys"####,
         r####"['L2', 'L1','L1A','L1B','L3','L4','L5','L6','L7','L8','L9']"####,
@@ -203,7 +203,7 @@ fn assertion_001_sorting_none_and_nocite_second() {
 
 #[test]
 fn assertion_002_sorting_none_and_nocite_first() {
-    xfail_upstream(
+    pass_upstream(
         "sorting=none and \\nocite{*} first",
         r####"$main2->get_keys"####,
         r####"['L1','L1A','L1B','L2','L3','L4','L5','L6','L7','L8','L9']"####,
@@ -214,7 +214,7 @@ fn assertion_002_sorting_none_and_nocite_first() {
 
 #[test]
 fn assertion_003_citeorder() {
-    xfail_upstream(
+    pass_upstream(
         "citeorder",
         r####"$main->get_keys"####,
         r####"['L2','L3','L1B','L1','L4','L5','L1A','L7','L8','L6','L9']"####,
@@ -225,7 +225,7 @@ fn assertion_003_citeorder() {
 
 #[test]
 fn assertion_004_nty() {
-    xfail_upstream(
+    pass_upstream(
         "nty",
         r####"$main->get_keys"####,
         r####"['L5','L1A','L1','L1B','L2','L3','L4','L8','L7','L6','L9']"####,
@@ -236,7 +236,7 @@ fn assertion_004_nty() {
 
 #[test]
 fn assertion_005_nyt() {
-    xfail_upstream(
+    pass_upstream(
         "nyt",
         r####"$main->get_keys"####,
         r####"['L5','L1A','L1','L1B','L2','L3','L4','L8','L7','L6','L9']"####,
@@ -247,7 +247,7 @@ fn assertion_005_nyt() {
 
 #[test]
 fn assertion_006_nyvt() {
-    xfail_upstream(
+    pass_upstream(
         "nyvt",
         r####"$main->get_keys"####,
         r####"['L5','L1','L1A','L1B','L2','L3','L4','L8','L7','L6','L9']"####,
@@ -258,7 +258,7 @@ fn assertion_006_nyvt() {
 
 #[test]
 fn assertion_007_nyvt_with_volume_padding() {
-    xfail_upstream(
+    pass_upstream(
         "nyvt with volume padding",
         r####"$main->get_keys"####,
         r####"['L5','L1A','L1','L1B','L2','L3','L4','L8','L7','L6','L9']"####,
@@ -269,7 +269,7 @@ fn assertion_007_nyvt_with_volume_padding() {
 
 #[test]
 fn assertion_008_ynt() {
-    xfail_upstream(
+    pass_upstream(
         "ynt",
         r####"$main->get_keys"####,
         r####"['L3','L1B','L1A','L1','L4','L2','L8','L7','L6','L9','L5']"####,
@@ -280,7 +280,7 @@ fn assertion_008_ynt() {
 
 #[test]
 fn assertion_009_ynt_with_year_substring() {
-    xfail_upstream(
+    pass_upstream(
         "ynt with year substring",
         r####"$main->get_keys"####,
         r####"['L3','L1B','L1A','L1','L2','L4','L8','L7','L6','L9','L5']"####,
@@ -291,7 +291,7 @@ fn assertion_009_ynt_with_year_substring() {
 
 #[test]
 fn assertion_010_ydnt() {
-    xfail_upstream(
+    pass_upstream(
         "ydnt",
         r####"$main->get_keys"####,
         r####"['L5','L9','L6','L7','L8','L2','L4','L1A','L1','L1B','L3']"####,
@@ -302,7 +302,7 @@ fn assertion_010_ydnt() {
 
 #[test]
 fn assertion_011_entrytype() {
-    xfail_upstream(
+    pass_upstream(
         "entrytype",
         r####"$main->get_keys"####,
         r####"['L2','L3','L1B', 'L1','L1A','L4','L5','L7','L8','L6', 'L9']"####,
@@ -313,7 +313,7 @@ fn assertion_011_entrytype() {
 
 #[test]
 fn assertion_012_anyt() {
-    xfail_upstream(
+    pass_upstream(
         "anyt",
         r####"$main->get_keys"####,
         r####"['L1B','L1A','L1','L2','L3','L4','L5','L8','L7','L6','L9']"####,
@@ -324,7 +324,7 @@ fn assertion_012_anyt() {
 
 #[test]
 fn assertion_013_anyvt() {
-    xfail_upstream(
+    pass_upstream(
         "anyvt",
         r####"$main->get_keys"####,
         r####"['L1B','L1','L1A','L2','L3','L4','L5','L8','L7','L6','L9']"####,
@@ -335,7 +335,7 @@ fn assertion_013_anyvt() {
 
 #[test]
 fn assertion_014_nty_with_descending_n() {
-    xfail_upstream(
+    pass_upstream(
         "nty with descending n",
         r####"$main->get_keys"####,
         r####"['L9','L6','L7','L8','L5','L4','L3','L2','L1B','L1A','L1']"####,
@@ -346,7 +346,7 @@ fn assertion_014_nty_with_descending_n() {
 
 #[test]
 fn assertion_015_nosort_1() {
-    xfail_upstream(
+    pass_upstream(
         "nosort 1",
         r####"$main->get_keys"####,
         r####"['L1A','L1','L1B','L2','L3','L4','L5','L7','L6','L9','L8']"####,
@@ -357,7 +357,7 @@ fn assertion_015_nosort_1() {
 
 #[test]
 fn assertion_016_sorting_none_year() {
-    xfail_upstream(
+    pass_upstream(
         "sorting=none + year",
         r####"$main->get_keys"####,
         r####"['L3','L2','L1B','L1','L4','L5','L1A','L7','L8','L6','L9']"####,
@@ -368,7 +368,7 @@ fn assertion_016_sorting_none_year() {
 
 #[test]
 fn assertion_017_citecount_1() {
-    xfail_upstream(
+    pass_upstream(
         "citecount 1",
         r####"$main->get_keys"####,
         r####"['L9','L4','L6','L7','L8','L5','L2','L1','L1A','L1B','L3']"####,
@@ -379,7 +379,7 @@ fn assertion_017_citecount_1() {
 
 #[test]
 fn assertion_018_sorting_none_and_allkeys() {
-    xfail_upstream(
+    pass_upstream(
         "sorting=none and allkeys",
         r####"$main->get_keys"####,
         r####"['L1','L1A','L1B','L2','L3','L4','L5','L6','L7','L8','L9']"####,

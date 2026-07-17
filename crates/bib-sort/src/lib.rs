@@ -4,9 +4,16 @@ use bib_model::BibConfiguration;
 use bib_unicode::UnicodeData;
 
 mod name_lists;
+mod sorting;
 
 pub use name_lists::{
     NameListLimitError, NameListLimits, NameListVisibility, NameVisibility, NameVisibilityOptions,
+};
+pub use sorting::{
+    CaseOrder, DataListBuilder, DataListFilter, DataListLimits, EntryDisposition, Locale,
+    MissingOrder, NameKeyPart, NameKeyTemplate, PadDirection, SortComponent, SortDirection,
+    SortError, SortField, SortOptions, SortTemplate, SortedEntry, limit_literal_list, list_initial,
+    list_initial_hash, name_sort_key,
 };
 
 #[derive(Clone, Copy, Debug)]

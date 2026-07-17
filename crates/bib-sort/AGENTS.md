@@ -12,3 +12,6 @@ and dependencies on sibling worker crates must never affect observable order.
   visibility decisions.
 - `src/name_lists/tests.rs`: truncation, explicit-others, bounds, and option-scope
   regression tests.
+- `src/sorting.rs`: bounded filters, list construction, sort templates and keys,
+  pinned locale/case options, stable ordering, initials, and item limits.
+- `src/sorting/tests.rs`: deterministic sorting, tailoring, skip, and limit tests.

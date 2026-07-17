@@ -1,7 +1,7 @@
-// Direct xfail translation of upstream t/skips.t at commit 74252e6.
+// Direct passing translation of upstream t/skips.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream;
 
 const UPSTREAM_SOURCE: &str = r####"# -*- cperl -*-
 use strict;
@@ -295,7 +295,7 @@ eq_or_diff($out->get_output_entry('nosetc', $main), $noset3, 'Not a set member -
 
 #[test]
 fn assertion_001_passing_skipbib_through() {
-    xfail_upstream(
+    pass_upstream(
         "Passing skipbib through",
         r####"$bibentries->entry('skip1')->get_field('options')"####,
         r####"['skipbib']"####,
@@ -306,7 +306,7 @@ fn assertion_001_passing_skipbib_through() {
 
 #[test]
 fn assertion_002_normal_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "Normal labelalpha",
         r####"$main->get_entryfield('skip2', 'labelalpha')"####,
         r####"'SA'"####,
@@ -317,7 +317,7 @@ fn assertion_002_normal_labelalpha() {
 
 #[test]
 fn assertion_003_normal_labelyear() {
-    xfail_upstream(
+    pass_upstream(
         "Normal labelyear",
         r####"$bibentries->entry('skip2')->get_field($bibentries->entry('skip2')->get_labeldate_info->{field}{year})"####,
         r####"'1995'"####,
@@ -328,7 +328,7 @@ fn assertion_003_normal_labelyear() {
 
 #[test]
 fn assertion_004_skiplab_no_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "skiplab - no labelalpha",
         r####"is_undef($bibentries->entry('skip3')->get_field('labelalpha'))"####,
         r####"true"####,
@@ -339,7 +339,7 @@ fn assertion_004_skiplab_no_labelalpha() {
 
 #[test]
 fn assertion_005_skiplab_no_labelyear() {
-    xfail_upstream(
+    pass_upstream(
         "skiplab - no labelyear",
         r####"$bibentries->entry('skip3')->get_labeldate_info->{field}{source}"####,
         r####"''"####,
@@ -350,7 +350,7 @@ fn assertion_005_skiplab_no_labelyear() {
 
 #[test]
 fn assertion_006_dataonly_no_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "dataonly - no labelalpha",
         r####"is_undef($bibentries->entry('skip4')->get_field('labelalpha'))"####,
         r####"true"####,
@@ -361,7 +361,7 @@ fn assertion_006_dataonly_no_labelalpha() {
 
 #[test]
 fn assertion_007_dataonly_checking_output() {
-    xfail_upstream(
+    pass_upstream(
         "dataonly - checking output",
         r####"$out->get_output_entry('skip4', $main)"####,
         r####"$sk4"####,
@@ -372,7 +372,7 @@ fn assertion_007_dataonly_checking_output() {
 
 #[test]
 fn assertion_008_dataonly_no_labelyear() {
-    xfail_upstream(
+    pass_upstream(
         "dataonly - no labelyear",
         r####"$bibentries->entry('skip4')->get_labeldate_info->{field}{source}"####,
         r####"''"####,
@@ -383,7 +383,7 @@ fn assertion_008_dataonly_no_labelyear() {
 
 #[test]
 fn assertion_009_set_parent_with_labels() {
-    xfail_upstream(
+    pass_upstream(
         "Set parent - with labels",
         r####"$out->get_output_entry('seta', $main)"####,
         r####"$set1"####,
@@ -394,7 +394,7 @@ fn assertion_009_set_parent_with_labels() {
 
 #[test]
 fn assertion_010_set_member_no_labels_1() {
-    xfail_upstream(
+    pass_upstream(
         "Set member - no labels 1",
         r####"$out->get_output_entry('set:membera', $main)"####,
         r####"$set2"####,
@@ -405,7 +405,7 @@ fn assertion_010_set_member_no_labels_1() {
 
 #[test]
 fn assertion_011_set_member_no_labels_2() {
-    xfail_upstream(
+    pass_upstream(
         "Set member - no labels 2",
         r####"$out->get_output_entry('set:memberb', $main)"####,
         r####"$set3"####,
@@ -416,7 +416,7 @@ fn assertion_011_set_member_no_labels_2() {
 
 #[test]
 fn assertion_012_set_member_no_labels_3() {
-    xfail_upstream(
+    pass_upstream(
         "Set member - no labels 3",
         r####"$out->get_output_entry('set:memberc', $main)"####,
         r####"$set4"####,
@@ -427,7 +427,7 @@ fn assertion_012_set_member_no_labels_3() {
 
 #[test]
 fn assertion_013_not_a_set_member_extradate_continues_from_set_1() {
-    xfail_upstream(
+    pass_upstream(
         "Not a set member - extradate continues from set 1",
         r####"$out->get_output_entry('noseta', $main)"####,
         r####"$noset1"####,
@@ -438,7 +438,7 @@ fn assertion_013_not_a_set_member_extradate_continues_from_set_1() {
 
 #[test]
 fn assertion_014_not_a_set_member_extradate_continues_from_set_2() {
-    xfail_upstream(
+    pass_upstream(
         "Not a set member - extradate continues from set 2",
         r####"$out->get_output_entry('nosetb', $main)"####,
         r####"$noset2"####,
@@ -449,7 +449,7 @@ fn assertion_014_not_a_set_member_extradate_continues_from_set_2() {
 
 #[test]
 fn assertion_015_not_a_set_member_extradate_continues_from_set_3() {
-    xfail_upstream(
+    pass_upstream(
         "Not a set member - extradate continues from set 3",
         r####"$out->get_output_entry('nosetc', $main)"####,
         r####"$noset3"####,

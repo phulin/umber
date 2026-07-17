@@ -1,7 +1,7 @@
-// Direct xfail translation of upstream t/sort-uc.t at commit 74252e6.
+// Direct passing translation of upstream t/sort-uc.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream;
 
 const UPSTREAM_SOURCE: &str = r####"# -*- cperl -*-
 use strict;
@@ -88,7 +88,7 @@ is_deeply($main->get_keys, ['LS5', 'LS6','LS3', 'LS4','LS2','LS1'], 'sortcase lo
 
 #[test]
 fn assertion_001_u_c_tailoring_1() {
-    xfail_upstream(
+    pass_upstream(
         "U::C tailoring - 1",
         r####"$main->get_keys"####,
         r####"['LS6','LS5','LS2','LS1','LS3','LS4']"####,
@@ -99,7 +99,7 @@ fn assertion_001_u_c_tailoring_1() {
 
 #[test]
 fn assertion_002_u_c_tailoring_2() {
-    xfail_upstream(
+    pass_upstream(
         "U::C tailoring - 2",
         r####"$shs->get_keys"####,
         r####"['LS3', 'LS4','LS2','LS1']"####,
@@ -110,7 +110,7 @@ fn assertion_002_u_c_tailoring_2() {
 
 #[test]
 fn assertion_003_u_c_tailoring_3() {
-    xfail_upstream(
+    pass_upstream(
         "U::C tailoring - 3",
         r####"$shs->get_keys"####,
         r####"['LS2', 'LS1','LS3','LS4']"####,
@@ -121,7 +121,7 @@ fn assertion_003_u_c_tailoring_3() {
 
 #[test]
 fn assertion_004_u_c_tailoring_descending_1() {
-    xfail_upstream(
+    pass_upstream(
         "U::C tailoring descending - 1",
         r####"$main->get_keys"####,
         r####"['LS3','LS4','LS1','LS2','LS5','LS6']"####,
@@ -132,7 +132,7 @@ fn assertion_004_u_c_tailoring_descending_1() {
 
 #[test]
 fn assertion_005_upper_before_lower_locally_false() {
-    xfail_upstream(
+    pass_upstream(
         "upper_before_lower locally false",
         r####"$main->get_keys"####,
         r####"['LS5', 'LS6', 'LS4', 'LS3','LS2','LS1']"####,
@@ -143,7 +143,7 @@ fn assertion_005_upper_before_lower_locally_false() {
 
 #[test]
 fn assertion_006_sortcase_locally_false_upper_before_lower_locally_false() {
-    xfail_upstream(
+    pass_upstream(
         "sortcase locally false, upper_before_lower locally false",
         r####"$main->get_keys"####,
         r####"['LS5', 'LS6','LS3', 'LS4','LS2','LS1']"####,

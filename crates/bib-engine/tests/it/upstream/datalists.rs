@@ -1,7 +1,7 @@
-// Direct xfail translation of upstream t/datalists.t at commit 74252e6.
+// Direct passing translation of upstream t/datalists.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream;
 
 const UPSTREAM_SOURCE: &str = r####"# -*- cperl -*-
 use strict;
@@ -255,7 +255,7 @@ is_deeply($biber->datalists->get_lists_by_attrs(section           => 1,
 
 #[test]
 fn assertion_001_list_name_order() {
-    xfail_upstream(
+    pass_upstream(
         "List - name order",
         r####"$biber->datalists->get_lists_by_attrs(section           => 0,
                                        name                       => 'lname',
@@ -280,7 +280,7 @@ fn assertion_001_list_name_order() {
 
 #[test]
 fn assertion_002_list_year_order() {
-    xfail_upstream(
+    pass_upstream(
         "List - year order",
         r####"$biber->datalists->get_lists_by_attrs(section           => 0,
                                        name                       => 'lyear',
@@ -305,7 +305,7 @@ fn assertion_002_list_year_order() {
 
 #[test]
 fn assertion_003_list_title_order() {
-    xfail_upstream(
+    pass_upstream(
         "List - title order",
         r####"$biber->datalists->get_lists_by_attrs(section           => 0,
                                        name                       => 'ltitle',
@@ -330,7 +330,7 @@ fn assertion_003_list_title_order() {
 
 #[test]
 fn assertion_004_list_name_order_filtered_1() {
-    xfail_upstream(
+    pass_upstream(
         "List - name order (filtered) - 1",
         r####"$biber->datalists->get_lists_by_attrs(section           => 0,
                                        name                       => 'lnamef1',
@@ -355,7 +355,7 @@ fn assertion_004_list_name_order_filtered_1() {
 
 #[test]
 fn assertion_005_list_name_order_filtered_2() {
-    xfail_upstream(
+    pass_upstream(
         "List - name order (filtered) - 2",
         r####"$biber->datalists->get_lists_by_attrs(section           => 0,
                                        name                       => 'lnamef2',
@@ -380,7 +380,7 @@ fn assertion_005_list_name_order_filtered_2() {
 
 #[test]
 fn assertion_006_list_name_order_filtered_3() {
-    xfail_upstream(
+    pass_upstream(
         "List - name order (filtered) - 3",
         r####"$biber->datalists->get_lists_by_attrs(section           => 0,
                                        name                       => 'lnamef3',
@@ -405,7 +405,7 @@ fn assertion_006_list_name_order_filtered_3() {
 
 #[test]
 fn assertion_007_list_name_order_filtered_4() {
-    xfail_upstream(
+    pass_upstream(
         "List - name order (filtered) - 4",
         r####"$biber->datalists->get_lists_by_attrs(section           => 0,
                                        name                       => 'lnamef4',
@@ -430,7 +430,7 @@ fn assertion_007_list_name_order_filtered_4() {
 
 #[test]
 fn assertion_008_list_name_order_filtered_5() {
-    xfail_upstream(
+    pass_upstream(
         "List - name order (filtered) - 5",
         r####"$biber->datalists->get_lists_by_attrs(section           => 0,
                                        name                       => 'lnamef5',
@@ -455,7 +455,7 @@ fn assertion_008_list_name_order_filtered_5() {
 
 #[test]
 fn assertion_009_list_name_order_swedish() {
-    xfail_upstream(
+    pass_upstream(
         "List - name order (swedish)",
         r####"$biber->datalists->get_lists_by_attrs(section           => 0,
                                        name                       => 'lnameswe',
@@ -480,7 +480,7 @@ fn assertion_009_list_name_order_swedish() {
 
 #[test]
 fn assertion_010_list_title_order_spanish() {
-    xfail_upstream(
+    pass_upstream(
         "List - title order (spanish)",
         r####"$biber->datalists->get_lists_by_attrs(section           => 0,
                                        name                       => 'ltitlespan',
@@ -505,7 +505,7 @@ fn assertion_010_list_title_order_spanish() {
 
 #[test]
 fn assertion_011_list_granular_locale_spanish() {
-    xfail_upstream(
+    pass_upstream(
         "List - granular locale (spanish)",
         r####"$biber->datalists->get_lists_by_attrs(section           => 0,
                                        name                       => 'ltitleset',
@@ -530,7 +530,7 @@ fn assertion_011_list_granular_locale_spanish() {
 
 #[test]
 fn assertion_012_list_sorting_name_key_templates_1() {
-    xfail_upstream(
+    pass_upstream(
         "List - sorting name key templates - 1",
         r####"$biber->datalists->get_lists_by_attrs(section           => 0,
                                        name                       => 'lname',
@@ -555,7 +555,7 @@ fn assertion_012_list_sorting_name_key_templates_1() {
 
 #[test]
 fn assertion_013_datalist_output_1() {
-    xfail_upstream(
+    pass_upstream(
         "datalist output - 1",
         r####"$out->get_output_entry('K11', $main)"####,
         r####"$K11"####,
@@ -566,7 +566,7 @@ fn assertion_013_datalist_output_1() {
 
 #[test]
 fn assertion_014_datalist_output_2() {
-    xfail_upstream(
+    pass_upstream(
         "datalist output - 2",
         r####"$out->get_output_entry('K12', $main)"####,
         r####"$K12"####,
@@ -577,7 +577,7 @@ fn assertion_014_datalist_output_2() {
 
 #[test]
 fn assertion_015_list_dates() {
-    xfail_upstream(
+    pass_upstream(
         "List - dates",
         r####"$biber->datalists->get_lists_by_attrs(section           => 1,
                                        name                       => 'ldates',

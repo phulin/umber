@@ -1,7 +1,7 @@
-// Direct xfail translation of upstream t/sort-complex.t at commit 74252e6.
+// Direct passing translation of upstream t/sort-complex.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream;
 
 const UPSTREAM_SOURCE: &str = r####"# -*- cperl -*-
 use strict;
@@ -311,7 +311,7 @@ is_deeply($shs->get_keys, ['L1', 'L2', 'L3', 'L4', 'L5'], 'sortorder - 3');
 
 #[test]
 fn assertion_001_sort_template() {
-    xfail_upstream(
+    pass_upstream(
         "sort template",
         r####"$main->get_sortingtemplate"####,
         r####"$ss"####,
@@ -322,7 +322,7 @@ fn assertion_001_sort_template() {
 
 #[test]
 fn assertion_002_alphaothers_set_by_and_others() {
-    xfail_upstream(
+    pass_upstream(
         "\\alphaothers set by \"and others\"",
         r####"$out->get_output_entry('L4', $main)"####,
         r####"$l4"####,
@@ -333,7 +333,7 @@ fn assertion_002_alphaothers_set_by_and_others() {
 
 #[test]
 fn assertion_003_bbl_test_1() {
-    xfail_upstream(
+    pass_upstream(
         "bbl test 1",
         r####"$out->get_output_entry('L1', $main)"####,
         r####"$l1"####,
@@ -344,7 +344,7 @@ fn assertion_003_bbl_test_1() {
 
 #[test]
 fn assertion_004_bbl_test_2() {
-    xfail_upstream(
+    pass_upstream(
         "bbl test 2",
         r####"$out->get_output_entry('L2', $main)"####,
         r####"$l2"####,
@@ -355,7 +355,7 @@ fn assertion_004_bbl_test_2() {
 
 #[test]
 fn assertion_005_bbl_test_3() {
-    xfail_upstream(
+    pass_upstream(
         "bbl test 3",
         r####"$out->get_output_entry('L3', $main)"####,
         r####"$l3"####,
@@ -366,7 +366,7 @@ fn assertion_005_bbl_test_3() {
 
 #[test]
 fn assertion_006_bbl_test_4() {
-    xfail_upstream(
+    pass_upstream(
         "bbl test 4",
         r####"$out->get_output_entry('L5', $main)"####,
         r####"$l5"####,
@@ -377,7 +377,7 @@ fn assertion_006_bbl_test_4() {
 
 #[test]
 fn assertion_007_sortorder_1() {
-    xfail_upstream(
+    pass_upstream(
         "sortorder - 1",
         r####"$main->get_keys"####,
         r####"['L5', 'L4', 'L1', 'L3', 'L2']"####,
@@ -388,7 +388,7 @@ fn assertion_007_sortorder_1() {
 
 #[test]
 fn assertion_008_sortorder_2() {
-    xfail_upstream(
+    pass_upstream(
         "sortorder - 2",
         r####"$shs->get_keys"####,
         r####"[]"####,
@@ -399,7 +399,7 @@ fn assertion_008_sortorder_2() {
 
 #[test]
 fn assertion_009_sortorder_3() {
-    xfail_upstream(
+    pass_upstream(
         "sortorder - 3",
         r####"$shs->get_keys"####,
         r####"['L1', 'L2', 'L3', 'L4', 'L5']"####,

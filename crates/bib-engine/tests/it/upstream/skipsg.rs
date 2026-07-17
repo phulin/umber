@@ -1,7 +1,7 @@
-// Direct xfail translation of upstream t/skipsg.t at commit 74252e6.
+// Direct passing translation of upstream t/skipsg.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream;
 
 const UPSTREAM_SOURCE: &str = r####"# -*- cperl -*-
 use strict;
@@ -172,7 +172,7 @@ eq_or_diff( $out->get_output_entry('S3', $main), $S3, 'Global skips with entry o
 
 #[test]
 fn assertion_001_global_skips_with_entry_override_1() {
-    xfail_upstream(
+    pass_upstream(
         "Global skips with entry override - 1",
         r####"$out->get_output_entry('S1', $main)"####,
         r####"$S1"####,
@@ -183,7 +183,7 @@ fn assertion_001_global_skips_with_entry_override_1() {
 
 #[test]
 fn assertion_002_global_skips_with_entry_override_2() {
-    xfail_upstream(
+    pass_upstream(
         "Global skips with entry override - 2",
         r####"$out->get_output_entry('S2', $main)"####,
         r####"$S2"####,
@@ -194,7 +194,7 @@ fn assertion_002_global_skips_with_entry_override_2() {
 
 #[test]
 fn assertion_003_global_skips_with_entry_override_3() {
-    xfail_upstream(
+    pass_upstream(
         "Global skips with entry override - 3",
         r####"$out->get_output_entry('S3', $main)"####,
         r####"$S3"####,

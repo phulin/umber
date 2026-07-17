@@ -8,6 +8,15 @@ pub struct CollationData;
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct CollationKey(Vec<u32>);
 
+impl CollationKey {
+    /// Pinned primary weights, exposed for deterministic locale tailoring by
+    /// semantic stages. They are data, not host collation handles.
+    #[must_use]
+    pub fn weights(&self) -> &[u32] {
+        &self.0
+    }
+}
+
 impl CollationData {
     pub const fn table_id(self) -> &'static str {
         COLLATION_TABLE_ID

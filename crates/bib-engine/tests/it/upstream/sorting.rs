@@ -1,7 +1,7 @@
-// Direct xfail translation of upstream t/sorting.t at commit 74252e6.
+// Direct passing translation of upstream t/sorting.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream;
 
 const UPSTREAM_SOURCE: &str = r####"# -*- cperl -*-
 use strict;
@@ -571,7 +571,7 @@ eq_or_diff($main->get_sortdata_for_key('sn1')->[0], $sn1, 'Sortname - 1' );
 
 #[test]
 fn assertion_001_von_with_type_specific_presort_exclusions_and_useprefix_true() {
-    xfail_upstream(
+    pass_upstream(
         "von with type-specific presort, exclusions and useprefix=true",
         r####"$main->get_sortdata_for_key('tvonb')->[0]"####,
         r####"$useprefix1"####,
@@ -582,7 +582,7 @@ fn assertion_001_von_with_type_specific_presort_exclusions_and_useprefix_true() 
 
 #[test]
 fn assertion_002_von_with_name_list_scope_useprefix() {
-    xfail_upstream(
+    pass_upstream(
         "von with name list scope useprefix",
         r####"$main->get_sortdata_for_key('avona')->[0]"####,
         r####"$useprefix2"####,
@@ -593,7 +593,7 @@ fn assertion_002_von_with_name_list_scope_useprefix() {
 
 #[test]
 fn assertion_003_von_with_name_scope_useprefix() {
-    xfail_upstream(
+    pass_upstream(
         "von with name scope useprefix",
         r####"$main->get_sortdata_for_key('rvonr')->[0]"####,
         r####"$useprefix3"####,
@@ -604,7 +604,7 @@ fn assertion_003_von_with_name_scope_useprefix() {
 
 #[test]
 fn assertion_004_sorting_data_schemata_1() {
-    xfail_upstream(
+    pass_upstream(
         "Sorting data schemata - 1",
         r####"$main->get_sortdataschema"####,
         r####"$ssd1"####,
@@ -615,7 +615,7 @@ fn assertion_004_sorting_data_schemata_1() {
 
 #[test]
 fn assertion_005_explicit_and_others_1() {
-    xfail_upstream(
+    pass_upstream(
         "Explicit \"and others\" - 1",
         r####"$main->get_sortdata_for_key('others1')->[0]"####,
         r####"$others1"####,
@@ -626,7 +626,7 @@ fn assertion_005_explicit_and_others_1() {
 
 #[test]
 fn assertion_006_explicit_and_others_2() {
-    xfail_upstream(
+    pass_upstream(
         "Explicit \"and others\" - 2",
         r####"$main->get_sortdata_for_key('others2')->[0]"####,
         r####"$others2"####,
@@ -637,7 +637,7 @@ fn assertion_006_explicit_and_others_2() {
 
 #[test]
 fn assertion_007_final_entries_with_no_other_data() {
-    xfail_upstream(
+    pass_upstream(
         "Final entries with no other data",
         r####"$main->get_sortdata_for_key('final')->[0]"####,
         r####"$final"####,
@@ -648,7 +648,7 @@ fn assertion_007_final_entries_with_no_other_data() {
 
 #[test]
 fn assertion_008_sorting_name_key_1() {
-    xfail_upstream(
+    pass_upstream(
         "Sorting name key - 1",
         r####"$main->get_sortdata_for_key('snk1')->[0]"####,
         r####"$snk1"####,
@@ -659,7 +659,7 @@ fn assertion_008_sorting_name_key_1() {
 
 #[test]
 fn assertion_009_sorting_name_key_2() {
-    xfail_upstream(
+    pass_upstream(
         "Sorting name key - 2",
         r####"$main->get_sortdata_for_key('ent1')->[0]"####,
         r####"$ent1"####,
@@ -670,7 +670,7 @@ fn assertion_009_sorting_name_key_2() {
 
 #[test]
 fn assertion_010_von_with_type_specific_presort_exclusions_and_useprefix_false() {
-    xfail_upstream(
+    pass_upstream(
         "von with type-specific presort, exclusions and useprefix=false",
         r####"$main->get_sortdata_for_key('tvonb')->[0]"####,
         r####"$useprefix4"####,
@@ -681,7 +681,7 @@ fn assertion_010_von_with_type_specific_presort_exclusions_and_useprefix_false()
 
 #[test]
 fn assertion_011_title_with_nosort() {
-    xfail_upstream(
+    pass_upstream(
         "Title with nosort",
         r####"NFC($main->get_sortdata_for_key('luzzatto')->[0])"####,
         r####"$prefix1"####,
@@ -692,7 +692,7 @@ fn assertion_011_title_with_nosort() {
 
 #[test]
 fn assertion_012_name_with_nosort() {
-    xfail_upstream(
+    pass_upstream(
         "Name with nosort",
         r####"NFC($main->get_sortdata_for_key('hasan')->[0])"####,
         r####"$diacritic1"####,
@@ -703,7 +703,7 @@ fn assertion_012_name_with_nosort() {
 
 #[test]
 fn assertion_013_editor_type_class() {
-    xfail_upstream(
+    pass_upstream(
         "Editor type/class",
         r####"NFC($main->get_sortdata_for_key('jaffe')->[0])"####,
         r####"$edtypeclass1"####,
@@ -714,7 +714,7 @@ fn assertion_013_editor_type_class() {
 
 #[test]
 fn assertion_014_sorting_data_schemata_2() {
-    xfail_upstream(
+    pass_upstream(
         "Sorting data schemata - 2",
         r####"$main->get_sortdataschema"####,
         r####"$ssd2"####,
@@ -725,7 +725,7 @@ fn assertion_014_sorting_data_schemata_2() {
 
 #[test]
 fn assertion_015_very_contrived_but_thorough_test_of_date_sorting() {
-    xfail_upstream(
+    pass_upstream(
         "Very contrived but thorough test of date sorting",
         r####"$main->get_sortdata_for_key('moraux')->[0]"####,
         r####"$dates1"####,
@@ -736,7 +736,7 @@ fn assertion_015_very_contrived_but_thorough_test_of_date_sorting() {
 
 #[test]
 fn assertion_016_max_minitems_test_1_publisher() {
-    xfail_upstream(
+    pass_upstream(
         "max/minitems test 1 (publisher)",
         r####"$main->get_sortdata_for_key('augustine')->[0]"####,
         r####"$lists1"####,
@@ -747,7 +747,7 @@ fn assertion_016_max_minitems_test_1_publisher() {
 
 #[test]
 fn assertion_017_max_minitems_test_2_location() {
-    xfail_upstream(
+    pass_upstream(
         "max/minitems test 2 (location)",
         r####"$main->get_sortdata_for_key('cotton')->[0]"####,
         r####"$lists2"####,
@@ -758,7 +758,7 @@ fn assertion_017_max_minitems_test_2_location() {
 
 #[test]
 fn assertion_018_max_minitems_test_3_institution() {
-    xfail_upstream(
+    pass_upstream(
         "max/minitems test 3 (institution)",
         r####"$main->get_sortdata_for_key('chiu')->[0]"####,
         r####"$lists3"####,
@@ -769,7 +769,7 @@ fn assertion_018_max_minitems_test_3_institution() {
 
 #[test]
 fn assertion_019_max_minitems_test_4_institution_minitems_2() {
-    xfail_upstream(
+    pass_upstream(
         "max/minitems test 4 (institution - minitems=2)",
         r####"$main->get_sortdata_for_key('chiu')->[0]"####,
         r####"$lists4"####,
@@ -780,7 +780,7 @@ fn assertion_019_max_minitems_test_4_institution_minitems_2() {
 
 #[test]
 fn assertion_020_max_minitems_test_5_institution_maxitems_4_minitems_3() {
-    xfail_upstream(
+    pass_upstream(
         "max/minitems test 5 (institution - maxitems=4/minitems=3)",
         r####"$main->get_sortdata_for_key('chiu')->[0]"####,
         r####"$lists5"####,
@@ -791,7 +791,7 @@ fn assertion_020_max_minitems_test_5_institution_maxitems_4_minitems_3() {
 
 #[test]
 fn assertion_021_nty_with_default_left_offset_4_digit_year() {
-    xfail_upstream(
+    pass_upstream(
         "nty with default left offset, 4 digit year",
         r####"$main->get_sortdata_for_key('knuth:ct')->[0]"####,
         r####"$yearoff1"####,
@@ -802,7 +802,7 @@ fn assertion_021_nty_with_default_left_offset_4_digit_year() {
 
 #[test]
 fn assertion_022_nty_with_left_offset_3_digit_year_case_sensitive() {
-    xfail_upstream(
+    pass_upstream(
         "nty with left offset, 3 digit year, case sensitive",
         r####"$main->get_sortdata_for_key('knuth:ct')->[0]"####,
         r####"$yearoff2"####,
@@ -813,7 +813,7 @@ fn assertion_022_nty_with_left_offset_3_digit_year_case_sensitive() {
 
 #[test]
 fn assertion_023_nty_with_left_offset_4_digit_year_case_sensitive() {
-    xfail_upstream(
+    pass_upstream(
         "nty with left offset, 4 digit year, case sensitive",
         r####"$main->get_sortdata_for_key('knuth:ct')->[0]"####,
         r####"$yearoff3"####,
@@ -824,7 +824,7 @@ fn assertion_023_nty_with_left_offset_4_digit_year_case_sensitive() {
 
 #[test]
 fn assertion_024_nty_with_right_offset_3_digit_year() {
-    xfail_upstream(
+    pass_upstream(
         "nty with right offset, 3 digit year",
         r####"$main->get_sortdata_for_key('knuth:ct')->[0]"####,
         r####"$yearoff4"####,
@@ -835,7 +835,7 @@ fn assertion_024_nty_with_right_offset_3_digit_year() {
 
 #[test]
 fn assertion_025_nty_with_right_offset_4_digit_year() {
-    xfail_upstream(
+    pass_upstream(
         "nty with right offset, 4 digit year",
         r####"$main->get_sortdata_for_key('knuth:ct')->[0]"####,
         r####"$yearoff5"####,
@@ -846,7 +846,7 @@ fn assertion_025_nty_with_right_offset_4_digit_year() {
 
 #[test]
 fn assertion_026_ntyd_with_left_offset_4_digit_year() {
-    xfail_upstream(
+    pass_upstream(
         "ntyd with left offset, 4 digit year",
         r####"$main->get_sortdata_for_key('knuth:ct')->[0]"####,
         r####"$yearoff6"####,
@@ -857,7 +857,7 @@ fn assertion_026_ntyd_with_left_offset_4_digit_year() {
 
 #[test]
 fn assertion_027_ntyd_with_left_offset_3_digit_year() {
-    xfail_upstream(
+    pass_upstream(
         "ntyd with left offset, 3 digit year",
         r####"$main->get_sortdata_for_key('knuth:ct')->[0]"####,
         r####"$yearoff7"####,
@@ -868,7 +868,7 @@ fn assertion_027_ntyd_with_left_offset_3_digit_year() {
 
 #[test]
 fn assertion_028_ntyd_with_right_offset_4_digit_year() {
-    xfail_upstream(
+    pass_upstream(
         "ntyd with right offset, 4 digit year",
         r####"$main->get_sortdata_for_key('knuth:ct')->[0]"####,
         r####"$yearoff8"####,
@@ -879,7 +879,7 @@ fn assertion_028_ntyd_with_right_offset_4_digit_year() {
 
 #[test]
 fn assertion_029_ntyd_with_right_offset_3_digit_year() {
-    xfail_upstream(
+    pass_upstream(
         "ntyd with right offset, 3 digit year",
         r####"$main->get_sortdata_for_key('knuth:ct')->[0]"####,
         r####"$yearoff9"####,
@@ -890,7 +890,7 @@ fn assertion_029_ntyd_with_right_offset_3_digit_year() {
 
 #[test]
 fn assertion_030_nty_with_right_padded_vol() {
-    xfail_upstream(
+    pass_upstream(
         "nty with right-padded vol",
         r####"$main->get_sortdata_for_key('stdmodel')->[0]"####,
         r####"$vol1"####,
@@ -901,7 +901,7 @@ fn assertion_030_nty_with_right_padded_vol() {
 
 #[test]
 fn assertion_031_nty_with_right_padded_7_char_vol() {
-    xfail_upstream(
+    pass_upstream(
         "nty with right-padded 7-char vol",
         r####"$main->get_sortdata_for_key('stdmodel')->[0]"####,
         r####"$vol2"####,
@@ -912,7 +912,7 @@ fn assertion_031_nty_with_right_padded_7_char_vol() {
 
 #[test]
 fn assertion_032_nty_with_left_padded_5_char_a_pad_char_vol() {
-    xfail_upstream(
+    pass_upstream(
         "nty with left-padded 5-char \"a\" pad char vol",
         r####"$main->get_sortdata_for_key('stdmodel')->[0]"####,
         r####"$vol3"####,
@@ -923,7 +923,7 @@ fn assertion_032_nty_with_left_padded_5_char_a_pad_char_vol() {
 
 #[test]
 fn assertion_033_basic_nty_sort() {
-    xfail_upstream(
+    pass_upstream(
         "basic nty sort",
         r####"$main->get_sortdata_for_key('stdmodel')->[0]"####,
         r####"$nty"####,
@@ -934,7 +934,7 @@ fn assertion_033_basic_nty_sort() {
 
 #[test]
 fn assertion_034_basic_sortkey_sort() {
-    xfail_upstream(
+    pass_upstream(
         "basic sortkey sort",
         r####"$main->get_sortdata_for_key('angenendtsk')->[0]"####,
         r####"$sk1"####,
@@ -945,7 +945,7 @@ fn assertion_034_basic_sortkey_sort() {
 
 #[test]
 fn assertion_035_basic_nyt_sort() {
-    xfail_upstream(
+    pass_upstream(
         "basic nyt sort",
         r####"$main->get_sortdata_for_key('stdmodel')->[0]"####,
         r####"$nyt"####,
@@ -956,7 +956,7 @@ fn assertion_035_basic_nyt_sort() {
 
 #[test]
 fn assertion_036_basic_nyvt_sort() {
-    xfail_upstream(
+    pass_upstream(
         "basic nyvt sort",
         r####"$main->get_sortdata_for_key('stdmodel')->[0]"####,
         r####"$nyvt"####,
@@ -967,7 +967,7 @@ fn assertion_036_basic_nyvt_sort() {
 
 #[test]
 fn assertion_037_anyt_sort_with_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "anyt sort (with labelalpha)",
         r####"$main->get_sortdata_for_key('stdmodel')->[0]"####,
         r####"$anyt_la"####,
@@ -978,7 +978,7 @@ fn assertion_037_anyt_sort_with_labelalpha() {
 
 #[test]
 fn assertion_038_anyt_sort_without_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "anyt sort (without labelalpha)",
         r####"$main->get_sortdata_for_key('stdmodel')->[0]"####,
         r####"$anyt"####,
@@ -989,7 +989,7 @@ fn assertion_038_anyt_sort_without_labelalpha() {
 
 #[test]
 fn assertion_039_anyvt_sort_with_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "anyvt sort (with labelalpha)",
         r####"$main->get_sortdata_for_key('stdmodel')->[0]"####,
         r####"$anyvt_la"####,
@@ -1000,7 +1000,7 @@ fn assertion_039_anyvt_sort_with_labelalpha() {
 
 #[test]
 fn assertion_040_anyvt_sort_maxbibnames_3_minbibnames_1_with_labelalpha_and_alphaothers() {
-    xfail_upstream(
+    pass_upstream(
         "anyvt sort (> maxbibnames=3 minbibnames=1, with labelalpha and alphaothers)",
         r####"$main->get_sortdata_for_key('murray')->[0]"####,
         r####"$anyvt_la2"####,
@@ -1011,7 +1011,7 @@ fn assertion_040_anyvt_sort_maxbibnames_3_minbibnames_1_with_labelalpha_and_alph
 
 #[test]
 fn assertion_041_anyvt_sort_maxbibnames_2_minbibnames_2_with_labelalpha_and_alphaothers() {
-    xfail_upstream(
+    pass_upstream(
         "anyvt sort (> maxbibnames=2 minbibnames=2, with labelalpha and alphaothers)",
         r####"$main->get_sortdata_for_key('murray')->[0]"####,
         r####"$anyvt_la4"####,
@@ -1022,7 +1022,7 @@ fn assertion_041_anyvt_sort_maxbibnames_2_minbibnames_2_with_labelalpha_and_alph
 
 #[test]
 fn assertion_042_anyvt_sort_maxbibnames_2_minbibnames_2_with_labelalpha_and_without_alphaothers() {
-    xfail_upstream(
+    pass_upstream(
         "anyvt sort (> maxbibnames=2 minbibnames=2,with labelalpha and without alphaothers)",
         r####"$main->get_sortdata_for_key('murray')->[0]"####,
         r####"$anyvt_la3"####,
@@ -1033,7 +1033,7 @@ fn assertion_042_anyvt_sort_maxbibnames_2_minbibnames_2_with_labelalpha_and_with
 
 #[test]
 fn assertion_043_anyvt_sort_without_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "anyvt sort (without labelalpha)",
         r####"$main->get_sortdata_for_key('stdmodel')->[0]"####,
         r####"$anyvt"####,
@@ -1044,7 +1044,7 @@ fn assertion_043_anyvt_sort_without_labelalpha() {
 
 #[test]
 fn assertion_044_basic_ynt_sort() {
-    xfail_upstream(
+    pass_upstream(
         "basic ynt sort",
         r####"$main->get_sortdata_for_key('stdmodel')->[0]"####,
         r####"$ynt"####,
@@ -1055,7 +1055,7 @@ fn assertion_044_basic_ynt_sort() {
 
 #[test]
 fn assertion_045_basic_ydnt_sort() {
-    xfail_upstream(
+    pass_upstream(
         "basic ydnt sort",
         r####"$main->get_sortdata_for_key('stdmodel')->[0]"####,
         r####"$ydnt"####,
@@ -1066,7 +1066,7 @@ fn assertion_045_basic_ydnt_sort() {
 
 #[test]
 fn assertion_046_sort_first_name_inits_only() {
-    xfail_upstream(
+    pass_upstream(
         "sort first name inits only",
         r####"$main->get_sortdata_for_key('stdmodel')->[0]"####,
         r####"$sortinits"####,
@@ -1077,7 +1077,7 @@ fn assertion_046_sort_first_name_inits_only() {
 
 #[test]
 fn assertion_047_basic_debug_sort() {
-    xfail_upstream(
+    pass_upstream(
         "basic debug sort",
         r####"$main->get_sortdata_for_key('stdmodel')->[0]"####,
         r####"$debug"####,
@@ -1088,7 +1088,7 @@ fn assertion_047_basic_debug_sort() {
 
 #[test]
 fn assertion_048_nty_with_use_all_off() {
-    xfail_upstream(
+    pass_upstream(
         "nty with use* all off",
         r####"$main->get_sortdata_for_key('stdmodel')->[0]"####,
         r####"$noname"####,
@@ -1099,7 +1099,7 @@ fn assertion_048_nty_with_use_all_off() {
 
 #[test]
 fn assertion_049_nty_with_modified_presort_and_short_circuit_title() {
-    xfail_upstream(
+    pass_upstream(
         "nty with modified presort and short-circuit title",
         r####"$main->get_sortdata_for_key('stdmodel:ps_sc')->[0]"####,
         r####"$ps_sc"####,
@@ -1110,7 +1110,7 @@ fn assertion_049_nty_with_modified_presort_and_short_circuit_title() {
 
 #[test]
 fn assertion_050_citeorder() {
-    xfail_upstream(
+    pass_upstream(
         "citeorder",
         r####"$main->get_sortdata_for_key('stdmodel')->[0]"####,
         r####"$citeorder"####,
@@ -1121,7 +1121,7 @@ fn assertion_050_citeorder() {
 
 #[test]
 fn assertion_051_date_labels() {
-    xfail_upstream(
+    pass_upstream(
         "date labels",
         r####"$main->get_sortdata_for_key('labelstest')->[0]"####,
         r####"$labels"####,
@@ -1132,7 +1132,7 @@ fn assertion_051_date_labels() {
 
 #[test]
 fn assertion_052_sortname_1() {
-    xfail_upstream(
+    pass_upstream(
         "Sortname - 1",
         r####"$main->get_sortdata_for_key('sn1')->[0]"####,
         r####"$sn1"####,
