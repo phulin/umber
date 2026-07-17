@@ -302,6 +302,25 @@ three, and adopted the 83-page suffix. Enabled still lost by paired means of
 recording/execution cost is therefore a separate bottleneck, not grounds to
 widen this optimization or alter exact-state equality.
 
+The next pass added profiling-only named recording phases. A four-pair AB/BA
+baseline attributed about 205 ms of the large and inverse edits to break
+dependency capture, versus roughly 2.4 ms for trace capture, 7--8 ms for
+front-end provenance, 9 ms for front-end dependencies, and 2--4 ms for retained
+graph work. A further two-pair split measured only 0.3 ms discovering break
+keys and 0.5 ms registering stamps; semantic-value projection consumed
+204--209 ms. The implementation therefore caches at most 4,096 detached break
+observations inside one `ExecutionContext`, reusing an observation only under
+exact changed-at equality and recomputing through `Universe` after any stamp
+change.
+
+The four-pair post-change run reduced break semantic projection to
+18.6--18.8 ms on the 894-paragraph large and inverse edits. Scalar commands and
+source-span delivery remained 40,800/82,999, all revisions stayed
+byte-identical to cold DVI, and the fourth edit again retained 14 pages,
+re-shipped three, and adopted 83. The end-to-end sample remained visibly noisy
+and retained a residual larger than all named recording phases; follow-up
+attribution is `umber2-vfqs.15.4.4`, not part of this measured fix.
+
 The runner requires the same external inputs as Gentle conformance. Populate
 them with `scripts/setup-conformance-tests.sh` if necessary.
 

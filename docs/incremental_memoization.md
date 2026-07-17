@@ -943,6 +943,28 @@ did not. Paragraph memoization therefore remains a measured experiment rather
 than a release-enabled policy; the concrete blocker is the enabled execution
 loss, not parity, import cost, suffix correctness, retention, or pretolerance.
 
+The residual-attribution pass split recording into trace capture, front-end
+dependency and provenance capture, input transition, retained hlist/line
+publication, break dependency capture, and region publication. On both the
+894-paragraph large and inverse edits, break dependency capture dominated at
+about 204--209 ms; its deeper split assigned all but 1 ms to repeatedly
+projecting unchanged semantic values rather than discovering keys or
+registering changed-at stamps. `ExecutionContext` now retains at most 4,096
+detached break-dependency observations for one execution run. A cached value is
+usable only when its exact changed-at stamp still matches, so a parameter,
+font, code-table, hyphenation, restore, or broad invalidation returns to the
+authoritative semantic projection path. This cache is execution-local
+acceleration of necessary dependency recording, not a weakened read set or a
+cross-generation identity.
+
+Four post-change AB/BA pairs reduced break value projection to about
+18.6--18.8 ms on the same large and inverse edits while preserving cold-DVI
+equality on all four revisions, inverse restart, and the final 14 retained / 3
+re-shipped / 83 adopted page split. End-to-end deltas remained noisy and larger
+than the now-named recording totals; that independent residual is tracked by
+`umber2-vfqs.15.4.4` rather than broadening this change or altering optional
+pretolerance.
+
 ### Dependency-recorder baseline
 
 The state-layer recorder has an explicit disabled branch and no lock or atomic.
