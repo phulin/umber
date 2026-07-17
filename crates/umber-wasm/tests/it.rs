@@ -4,7 +4,7 @@ use bib_engine::{
     BibliographyAttempt, ClassicBibJob, ClassicBibOptions, ClassicBibSession, FileKind,
     FileProvisioner, FileRequestKey, ResolvedFile, VfsLimits, VirtualPath,
 };
-use js_sys::{Array, Object, Reflect, Uint8Array};
+use js_sys::{Array, Date, Object, Reflect, Uint8Array};
 use umber_wasm::{
     CompilerSession, JsFileRequestKey, JsProjectSessionOptions, JsSessionOptions, JsSourcePatch,
     ProjectSession, format_schema_version, package_version,
@@ -60,6 +60,8 @@ fn project_binding_accepts_versioned_classic_bibliography_options() {
 
 #[wasm_bindgen_test]
 fn persistent_wasm_classic_caches_evict_maximum_charge_jobs() {
+    const SESSION_BUDGET_MS: f64 = 10_000.0;
+    let started = Date::now();
     let mut provisioner = FileProvisioner::new(VfsLimits::default()).expect("VFS limits");
     for index in 0..16 {
         provisioner
@@ -123,6 +125,10 @@ fn persistent_wasm_classic_caches_evict_maximum_charge_jobs() {
     let usage = session.cache_usage();
     assert!(usage.compiled_styles > 0);
     assert!(usage.prepared_databases > 0);
+    assert!(
+        Date::now() - started <= SESSION_BUDGET_MS,
+        "16 maximum-charge classic WASM jobs exceeded {SESSION_BUDGET_MS}ms"
+    );
 }
 
 #[wasm_bindgen_test]

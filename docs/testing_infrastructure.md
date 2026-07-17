@@ -44,6 +44,18 @@ default cargo-test tier because its workload deliberately materializes large
 input, page, mode, stream, hyphenation, provenance, and Unicode code-table
 state.
 
+Classic BibTeX has its own release-only performance and persistence tier:
+
+```bash
+scripts/check-classic-bibtex-budgets.sh
+```
+
+It checks fixed cold-compilation, cache-hit, native-session, and browser
+WASM-session ceilings against the committed classic corpus. The precise
+workloads, retained-cache caps, pinned compatibility identity, extensions, and
+Phase 9/epic exit audit are recorded
+in [Classic BibTeX Compatibility Inventory](classic_bibtex_inventory.md).
+
 Incremental edit mapping and convergence have a separate deterministic fuzz
 tier:
 

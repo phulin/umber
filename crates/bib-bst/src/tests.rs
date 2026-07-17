@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use crate::{
     ClassicStringPool, CompilationCache, CompileLimits, CompiledCommand, DiagnosticKind,
     Instruction, StringPoolLimit, StringPoolLimits, compile,
@@ -169,6 +171,58 @@ fn byte_weighted_cache_evicts_persistent_maximum_charge_styles() {
         assert!(cache.retained_bytes() <= 900, "job {index}");
     }
     assert!(cache.len() < 16, "byte budget must evict old styles");
+}
+
+#[test]
+#[ignore = "explicit classic BST performance tier"]
+fn classic_compilation_and_cache_performance_budgets() {
+    const COLD_COMPILES: usize = 32;
+    const CACHE_HITS: usize = 1_024;
+    const COLD_BUDGET: Duration = Duration::from_secs(2);
+    const CACHE_BUDGET: Duration = Duration::from_secs(2);
+    const CACHE_BYTES: usize = 512 * 1024;
+
+    let sources = [
+        include_bytes!("../../../tests/corpus/bibtex/styles/plain.bst").as_slice(),
+        include_bytes!("../../../tests/corpus/bibtex/styles/apalike.bst").as_slice(),
+    ];
+    let cold_start = Instant::now();
+    for _ in 0..COLD_COMPILES {
+        for source in sources {
+            assert!(compile(source, CompileLimits::default()).is_success());
+        }
+    }
+    assert!(
+        cold_start.elapsed() <= COLD_BUDGET,
+        "{} cold standard-style compiles exceeded {COLD_BUDGET:?}",
+        COLD_COMPILES * sources.len()
+    );
+
+    let mut cache = CompilationCache::new(8, CACHE_BYTES);
+    for source in sources {
+        assert!(cache.compile(source, CompileLimits::default()).is_success());
+    }
+    let cache_start = Instant::now();
+    for _ in 0..CACHE_HITS {
+        for source in sources {
+            assert!(
+                cache
+                    .compile(source, CompileLimits::default())
+                    .stats()
+                    .cache_hit
+            );
+        }
+    }
+    assert!(
+        cache_start.elapsed() <= CACHE_BUDGET,
+        "{} cached standard-style compiles exceeded {CACHE_BUDGET:?}",
+        CACHE_HITS * sources.len()
+    );
+    assert!(
+        cache.retained_bytes() <= CACHE_BYTES,
+        "compiled-style cache retained {} bytes (budget {CACHE_BYTES})",
+        cache.retained_bytes()
+    );
 }
 
 #[test]

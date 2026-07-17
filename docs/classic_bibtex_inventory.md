@@ -320,3 +320,79 @@ from one backend from being consumed after a switch. The WebAssembly project
 binding accepts the existing biblatex object unchanged and additionally
 accepts a `mode: "biblatex" | "classic" | "auto"` bibliography object; byte
 and AUX/BST/BIB parsing remain inside the Rust session.
+
+## Phase 10 hardening evidence and budgets
+
+The Phase 10 hardening gate is deliberately split between deterministic
+correctness and an explicit release-only performance tier. It never uses a
+host BibTeX installation: reference comparison consumes the committed corpus,
+and only `scripts/regen-fixtures.sh --area bibtex` may run the pinned Web2C
+binary. The completed evidence is:
+
+| Surface                        | Evidence                                                                                                                                          | Gate                                                                            |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Differential                   | 37 fixed-seed legal programs, 47/47 dispatch branches, and 10/10 lifecycle transitions have exact unnormalized status, BBL, and BLG parity.       | `scripts/regen-fixtures.sh --area bibtex`                                       |
+| Standard and real-world corpus | `plain`, `apalike`, `xampl`, four `elsarticle-num` cases, and IEEEtran run through the public command with exact committed artifacts.             | `cargo test -q -p bib-engine --test it classic_`                                |
+| Adversarial input              | Arbitrary-byte styles, compiler limits, VM recovery/limits, and cache-limit revalidation terminate without a production panic.                    | `cargo test -q -p bib-bst` and `cargo test -q -p bib-engine --test it classic_` |
+| Persistent cache pressure      | Compiler and prepared-database caches evict by charged bytes; restrictive later jobs revalidate rather than inheriting permissive earlier limits. | native tests and `persistent_wasm_classic_caches_evict_maximum_charge_jobs`     |
+| Native project sessions        | Explicit and auto modes converge; fatal results roll back; a backend switch removes incompatible generated bibliography artifacts.                | `cargo test -q -p umber classic_projects_ v2_backend_switch_ fatal_classic_`    |
+| WASM project sessions          | Versioned classic project options and the persistent cache boundary run through the browser binding.                                              | `wasm-pack test --headless --firefox crates/umber-wasm`                         |
+
+### Versioned performance tier
+
+`scripts/check-classic-bibtex-budgets.sh` is the required explicit
+performance gate. It runs optimized, ignored timing tests and the
+wasm-bindgen browser suite that owns the WASM session budget; it is
+intentionally outside ordinary `cargo test --tests`.
+Timings measure only an already-built process and use generous ceilings to
+detect algorithmic regressions rather than host scheduling noise.
+
+| Budget                   | Workload and ceiling                                                                                                  | Enforced by                                                |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Compilation              | 32 cold compiles each of committed `plain.bst` and `apalike.bst` complete in 2 s.                                     | `classic_compilation_and_cache_performance_budgets`        |
+| Compiled-style cache     | 1,024 cache hits for each standard style complete in 2 s and retain at most 512 KiB.                                  | `classic_compilation_and_cache_performance_budgets`        |
+| Native execution session | 16 complete cached `plain` public-session jobs complete in 5 s; each immutable cache retains at most 8 MiB.           | `classic_native_session_performance_budget`                |
+| WASM execution session   | 16 distinct maximum-charge jobs complete in 10 s; each immutable cache retains at most 4 KiB in the pressure fixture. | `persistent_wasm_classic_caches_evict_maximum_charge_jobs` |
+
+The 4 KiB WASM cap is intentionally a pressure-test configuration, not the
+normal product default. Product sessions retain at most the caller-selected
+`ClassicBibOptions::cache_bytes` (64 MiB by default) in each of the compiled
+style and prepared database FIFO caches. That is a per-cache cap, so the
+documented default worst-case retained classic-cache charge is 128 MiB plus
+the bounded control-session state and ordinary job-local allocations.
+
+### Supported identity and extension boundary
+
+The compatibility promise remains exactly the TeX Live 2025 classic BibTeX
+0.99d executable identity pinned by `manifest.json`: merged `bibtex.web` plus
+`bibtex.ch`, the recorded WEB2C/kpathsea configuration, `LC_ALL=C`,
+`LANGUAGE=C`, and isolated `BIBINPUTS=.`/`BSTINPUTS=.` lookup. Exact parity is
+claimed only for the committed inputs and the bounded semantic surface they
+exercise; safe Umber limits replace historical fixed-array exhaustion points.
+
+UTF-8 or 8-bit style/data decoding, BibTeX8 CSF files, BibTeXu ICU collation,
+Japanese variants, non-ASCII job names, `is.knj.str$`, ambient `BIBINPUTS` or
+`BSTINPUTS`, and any implementation-specific built-in are extension-only.
+An extension must introduce an explicit compatibility identity, typed option,
+resource contract where applicable, committed differential fixture, and
+separate documented limits. It must not silently alter the default classic
+mode or inherit the pinned-0.99d parity claim.
+
+### Phase 9 and epic exit audit
+
+All semantic Phase 9 and parent-epic criteria are satisfied by the following
+checked boundaries. The broader `scripts/check-wasm.sh` wrapper has one
+non-semantic formatting blocker, Beads issue `umber2-ild0.28`, which is
+limited to three authored WASM manifest files; its Rust/browser functional and
+classic cache-pressure portions pass.
+
+| Criterion                                                                   | Satisfied by                                                                                                                                                |
+| --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Versioned API preserves legacy biblatex                                     | `LatexProjectOptionsV2`/`BibliographyProjectOptions` and legacy facade tests in `crates/umber/src/latex_project/tests.rs`                                   |
+| Explicit and auto selection                                                 | `classic_projects_converge_transactionally_with_explicit_and_auto_modes`                                                                                    |
+| Native/WASM result bindings                                                 | native project tests plus `project_binding_accepts_versioned_classic_bibliography_options`                                                                  |
+| Convergence, resource suspension, rollback, oscillation, and backend switch | project-session suite in `crates/umber/src/latex_project/tests.rs`; its resource loop exercises suspension and accepted-generation rollback/switch behavior |
+| Existing biblatex behavior remains unchanged                                | wrapped legacy-byte identity in `crates/bib-engine/tests/it/foundation.rs` and the pinned Biber suite                                                       |
+| Differential thresholds and real-world exact parity                         | committed differential ledger above and five public-command real-world fixtures                                                                             |
+| Deterministic adversarial termination and byte-weighted persistence         | `crates/bib-bst/src/tests.rs`, `crates/bib-engine` classic tests, and `crates/umber-wasm/tests/it.rs`                                                       |
+| Explicit performance budgets and compatibility documentation                | this section and `scripts/check-classic-bibtex-budgets.sh`                                                                                                  |
