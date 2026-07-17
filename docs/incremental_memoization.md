@@ -1086,6 +1086,31 @@ clippy passed. Because memo-enabled recompilation lost on every paired mean,
 paragraph memoization remains experimental and the parent acceptance issue
 remains open.
 
+The opportunity-driven admission experiment then retained the stable-anchor
+census but armed dependency, provenance, break, and result recording only for
+an accepted-generation start candidate or bounded deterministic seeding. A
+cold generation seeds at most 512 regions. Later generations admit at most 64
+previously untraced regions from one rotating 1-of-64 stable-span bucket; the
+bucket epoch is one scalar and no generation chain is retained. A successful
+reuse imports the result before mutation and republishes its complete trace
+against current-revision provenance and accepted-generation ownership.
+Telemetry reports census-only, fully armed, carried-forward, seeded,
+published, and declined region counts plus owned bytes and measured time.
+
+The required bounded same-process, order-balanced two-pair Gentle comparison
+included the initial accepted generation and all four edits. Full recording
+fell to 27 and 28 of 913 and 912 censused regions on the large and inverse
+edits, well beyond the required 50% reduction. That reduction falsified the
+policy rather than validating it: only one useful region carried forward on
+the large edit and none on the follow-up or inverse, versus the established
+19/3/19 useful hits. The enabled-minus-disabled per-edit paired means were
++37.389, +14.391, +34.575, and +1.678 ms, and the baseline-inclusive total
+lost by 144.899 ms. Every revision remained byte-identical to cold and the
+last edit retained 14 pages, re-shipped three, and adopted 83, but trace
+attrition and the losing total independently trigger the issue's stop rules.
+Paragraph memoization therefore remains default-disabled, and this negative
+release verdict does not create another recording micro-optimization chain.
+
 ### Dependency-recorder baseline
 
 The state-layer recorder has an explicit disabled branch and no lock or atomic.

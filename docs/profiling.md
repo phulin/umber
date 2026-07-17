@@ -309,6 +309,15 @@ hits. The committed edit matrix, all four external corpus cases, explicit
 passed. The release gate remains failed solely because recording paragraphs
 does not beat the disabled control.
 
+The incremental comparison now times the initial accepted-generation compile
+as well as each of its four accepted edits. AB/BA ordering applies to the
+complete same-process sequence, and the report prints both per-edit paired
+deltas and a baseline-inclusive paired total. Paragraph opportunity telemetry
+is emitted for priming and every edit as `regions/bytes/nanos` for census-only,
+fully armed, carried-forward, seeded, published, and declined work. This keeps
+a recording policy from hiding seed cost or trace attrition in an unreported
+baseline.
+
 The paragraph-reexecution follow-up first reproduced the delivery-path shift
 in a direct two-run AB/BA same-process comparison. The large edit moved from
 41,334 scalar commands and 84,395 physical-source span tokens disabled to
