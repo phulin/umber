@@ -10,7 +10,7 @@ use std::fmt;
 use std::ops::{Index, IndexMut};
 use std::sync::Arc;
 #[cfg(feature = "profiling-stats")]
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tex_state::env::banks::TokParam;
 use tex_state::ids::{OriginListId, TokenListId};
@@ -24,6 +24,8 @@ use tex_state::token_store::TokenListBuilder;
 use tex_state::{
     EditorLayout, ExpansionState, FileContent, FragmentStore, InputRecordId, WorldError,
 };
+#[cfg(feature = "profiling-stats")]
+use tex_state::{ProfilingTimer, World};
 
 use tex_state::MacroArguments as MacroArgumentsSummary;
 pub use tex_state::{
@@ -997,7 +999,7 @@ fn duration_nanos_saturating(duration: Duration) -> u64 {
 }
 
 #[cfg(feature = "profiling-stats")]
-fn add_elapsed(total: &mut u64, started: Instant) {
+fn add_elapsed(total: &mut u64, started: ProfilingTimer) {
     let sampled = duration_nanos_saturating(started.elapsed());
     *total = total.saturating_add(sampled.saturating_mul(EXPANSION_TIMER_SAMPLE_MASK + 1));
 }
@@ -2008,7 +2010,7 @@ impl InputStack {
         };
         #[cfg(feature = "profiling-stats")]
         let started = should_sample_timer(&mut self.expansion_stats.builder_append_timer_events)
-            .then(Instant::now);
+            .then(World::start_profiling_timer);
         let stored = stores.tokens(span.token_list);
         tokens_out.extend_from_slice(&stored[span.start..span.end]);
         if span.origin_list == OriginListId::EMPTY {
@@ -2044,7 +2046,7 @@ impl InputStack {
         };
         #[cfg(feature = "profiling-stats")]
         let started = should_sample_timer(&mut self.expansion_stats.builder_append_timer_events)
-            .then(Instant::now);
+            .then(World::start_profiling_timer);
         let stored = stores.tokens(span.token_list);
         let origins = (span.origin_list != OriginListId::EMPTY)
             .then(|| stores.origin_list_if_live(span.origin_list))
@@ -3506,7 +3508,7 @@ fn next_traced_token_from_token_list_frame(
 ) -> Option<TracedTokenReplay> {
     #[cfg(feature = "profiling-stats")]
     let frame_started = stats.as_deref_mut().and_then(|stats| {
-        should_sample_timer(&mut stats.frame_step_timer_events).then(Instant::now)
+        should_sample_timer(&mut stats.frame_step_timer_events).then(World::start_profiling_timer)
     });
     let Some(token) = frame.semantic_token_at(stores, frame.index) else {
         #[cfg(feature = "profiling-stats")]
@@ -3537,7 +3539,7 @@ fn next_traced_token_from_token_list_frame(
     }
     #[cfg(feature = "profiling-stats")]
     let provenance_started = stats.as_deref_mut().and_then(|stats| {
-        should_sample_timer(&mut stats.provenance_timer_events).then(Instant::now)
+        should_sample_timer(&mut stats.provenance_timer_events).then(World::start_profiling_timer)
     });
     let origin = match &frame.payload {
         ReplayPayload::Stored { .. } => replay_origin(frame, stores, token),

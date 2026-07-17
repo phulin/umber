@@ -110,6 +110,8 @@ pub use universe::{
     InputReadState, InteractionMode, MeaningCacheGuard, ParagraphShapeLine, PenaltyArrayKind,
     ShipoutTransaction, Snapshot, TakeUnboxResult, UnboxKind, Universe,
 };
+#[cfg(feature = "profiling-stats")]
+pub use world::ProfilingTimer;
 pub use world::{
     CommittedArtifact, ContentDomain, ContentHash, ContentIdentity, EffectPos, EffectRecord,
     EffectRetrySafety, ExecutionTraceEvent, FileContent, FileModificationDate, InputRecord,

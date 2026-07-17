@@ -31,12 +31,12 @@ pub const STREAM_SLOT_COUNT: usize = 16;
 /// Profiling data is deliberately separate from the snapshot-owned pdfTeX
 /// clock: it is neither semantic state nor replayable engine input.
 #[cfg(feature = "profiling-stats")]
-pub(crate) struct ProfilingTimer(Instant);
+pub struct ProfilingTimer(Instant);
 
 #[cfg(feature = "profiling-stats")]
 impl ProfilingTimer {
     #[must_use]
-    pub(crate) fn elapsed(&self) -> Duration {
+    pub fn elapsed(&self) -> Duration {
         self.0.elapsed()
     }
 }
@@ -1016,7 +1016,7 @@ impl World {
     /// Starts a process-local profiling timer through the `World` clock boundary.
     #[cfg(feature = "profiling-stats")]
     #[must_use]
-    pub(crate) fn start_profiling_timer() -> ProfilingTimer {
+    pub fn start_profiling_timer() -> ProfilingTimer {
         ProfilingTimer(Instant::now())
     }
     pub(crate) fn generation_retained_bytes(&self) -> usize {
