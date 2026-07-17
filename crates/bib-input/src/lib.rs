@@ -4,6 +4,7 @@ mod biblatexml;
 mod bibtex;
 mod config;
 mod control;
+mod extended_names;
 mod names;
 mod xml;
 
@@ -25,6 +26,10 @@ pub use control::{
     ControlOptionValue, ControlSection, DataModel, DataModelField, OptionComponent,
     StructuredValue, Template, TemplateElement, parse_control, parse_control_bytes,
     validate_control_bytes,
+};
+pub use extended_names::{
+    ExtendedNameDiagnostic, ExtendedNameDiagnosticKind, ExtendedNameLimits, ExtendedNameOptions,
+    ExtendedNameParse, parse_extended_name,
 };
 pub use names::{
     ClassicNameDiagnostic, ClassicNameDiagnosticKind, ClassicNameLimits, ClassicNameOptions,

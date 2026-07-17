@@ -28,7 +28,8 @@ pub use source::{BibSourceLocation, DerivedFrom, FieldProvenance, SourceSpan};
 pub use umber_vfs::VirtualPath;
 pub use value::{
     DateValue, Field, FieldMap, FieldValue, FieldValueStage, Literal, LiteralList, Name,
-    NameBuilder, NameList, NamePartValue, Range, RangeEndpoint, RangeList, Uri, UriList, Verbatim,
+    NameAssignment, NameBuilder, NameList, NamePartKind, NamePartValue, Range, RangeEndpoint,
+    RangeList, Uri, UriList, Verbatim,
 };
 
 /// Pinned semantic versions represented by this model revision.

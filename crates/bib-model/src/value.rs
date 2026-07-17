@@ -39,6 +39,40 @@ pub struct NamePartValue {
     outer_braces_stripped: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NamePartKind {
+    Family,
+    Given,
+    Prefix,
+    Suffix,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NameAssignment {
+    key: Arc<str>,
+    value: Arc<str>,
+}
+
+impl NameAssignment {
+    #[must_use]
+    pub fn new(key: impl Into<Arc<str>>, value: impl Into<Arc<str>>) -> Self {
+        Self {
+            key: key.into(),
+            value: value.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    #[must_use]
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+}
+
 impl NamePartValue {
     #[must_use]
     pub fn new(
@@ -75,6 +109,10 @@ pub struct Name {
     prefix: Option<NamePartValue>,
     suffix: Option<NamePartValue>,
     source: Option<Arc<str>>,
+    assignments: Arc<[NameAssignment]>,
+    hash_id: Option<Arc<str>>,
+    use_prefix: Option<bool>,
+    sorting_name_key_template: Option<Arc<str>>,
 }
 
 impl Name {
@@ -97,6 +135,21 @@ impl Name {
     #[must_use]
     pub fn source(&self) -> Option<&str> {
         self.source.as_deref()
+    }
+    pub fn assignments(&self) -> impl ExactSizeIterator<Item = &NameAssignment> {
+        self.assignments.iter()
+    }
+    #[must_use]
+    pub fn hash_id(&self) -> Option<&str> {
+        self.hash_id.as_deref()
+    }
+    #[must_use]
+    pub const fn use_prefix(&self) -> Option<bool> {
+        self.use_prefix
+    }
+    #[must_use]
+    pub fn sorting_name_key_template(&self) -> Option<&str> {
+        self.sorting_name_key_template.as_deref()
     }
 
     #[must_use]
@@ -138,6 +191,10 @@ pub struct NameBuilder {
     prefix: Option<NamePartValue>,
     suffix: Option<NamePartValue>,
     source: Option<Arc<str>>,
+    assignments: Vec<NameAssignment>,
+    hash_id: Option<Arc<str>>,
+    use_prefix: Option<bool>,
+    sorting_name_key_template: Option<Arc<str>>,
 }
 
 impl NameBuilder {
@@ -181,6 +238,22 @@ impl NameBuilder {
         self.source = Some(value.into());
         self
     }
+    pub fn assignment(&mut self, value: NameAssignment) -> &mut Self {
+        self.assignments.push(value);
+        self
+    }
+    pub fn hash_id(&mut self, value: impl Into<Arc<str>>) -> &mut Self {
+        self.hash_id = Some(value.into());
+        self
+    }
+    pub fn use_prefix(&mut self, value: bool) -> &mut Self {
+        self.use_prefix = Some(value);
+        self
+    }
+    pub fn sorting_name_key_template(&mut self, value: impl Into<Arc<str>>) -> &mut Self {
+        self.sorting_name_key_template = Some(value.into());
+        self
+    }
     pub fn freeze(self) -> Result<Name, &'static str> {
         if self.family.is_none()
             && self.given.is_none()
@@ -195,6 +268,10 @@ impl NameBuilder {
             prefix: self.prefix,
             suffix: self.suffix,
             source: self.source,
+            assignments: self.assignments.into(),
+            hash_id: self.hash_id,
+            use_prefix: self.use_prefix,
+            sorting_name_key_template: self.sorting_name_key_template,
         })
     }
 }

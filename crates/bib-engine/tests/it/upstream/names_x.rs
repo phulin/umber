@@ -1,7 +1,7 @@
 // Direct xfail translation of upstream t/names_x.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream;
 
 const UPSTREAM_SOURCE: &str = r####"# -*- cperl -*-
 use strict;
@@ -220,7 +220,7 @@ is_deeply(tparsename_x($section,'family=Doe, family-i={Do}', 'author'), $name20,
 
 #[test]
 fn assertion_001_parsename_x_1() {
-    xfail_upstream(
+    pass_upstream(
         "parsename_x 1",
         r####"tparsename_x($section,'given=John,family=Doe', 'author')"####,
         r####"$name1"####,
@@ -231,7 +231,7 @@ fn assertion_001_parsename_x_1() {
 
 #[test]
 fn assertion_002_parsename_x_2() {
-    xfail_upstream(
+    pass_upstream(
         "parsename_x 2",
         r####"tparsename_x($section,'family=Doe, suffix=Jr, given=John, given-i=J', 'author')"####,
         r####"$name2"####,
@@ -242,7 +242,7 @@ fn assertion_002_parsename_x_2() {
 
 #[test]
 fn assertion_003_parsename_x_3() {
-    xfail_upstream(
+    pass_upstream(
         "parsename_x 3",
         r####"tparsename_x($section,'prefix=von, family=Berlichingen zu Hornberg, given=Johann Gottfried', 'author')"####,
         r####"$name3"####,
@@ -253,7 +253,7 @@ fn assertion_003_parsename_x_3() {
 
 #[test]
 fn assertion_004_parsename_x_4() {
-    xfail_upstream(
+    pass_upstream(
         "parsename_x 4",
         r####"tparsename_x($section,'prefix=von, family=Berlichingen zu Hornberg, given=Johann Gottfried', 'author')"####,
         r####"$name4"####,
@@ -264,7 +264,7 @@ fn assertion_004_parsename_x_4() {
 
 #[test]
 fn assertion_005_parsename_x_5() {
-    xfail_upstream(
+    pass_upstream(
         "parsename_x 5",
         r####"tparsename_x($section,'"family={Robert and Sons, Inc.}"', 'author')"####,
         r####"$name5"####,
@@ -275,7 +275,7 @@ fn assertion_005_parsename_x_5() {
 
 #[test]
 fn assertion_006_parsename_x_6() {
-    xfail_upstream(
+    pass_upstream(
         "parsename_x 6",
         r####"tparsename_x($section,'family=al-Ṣāliḥ, given=ʿAbdallāh', 'author')"####,
         r####"$name6"####,
@@ -286,7 +286,7 @@ fn assertion_006_parsename_x_6() {
 
 #[test]
 fn assertion_007_parsename_x_7() {
-    xfail_upstream(
+    pass_upstream(
         "parsename_x 7",
         r####"tparsename_x($section,'given=Jean Charles Gabriel, prefix=de la, family=Vallée Poussin', 'author')"####,
         r####"$name7"####,
@@ -297,7 +297,7 @@ fn assertion_007_parsename_x_7() {
 
 #[test]
 fn assertion_008_parsename_x_8() {
-    xfail_upstream(
+    pass_upstream(
         "parsename_x 8",
         r####"tparsename_x($section,'given={Jean Charles Gabriel}, prefix=de la, family=Vallée Poussin', 'author')"####,
         r####"$name8"####,
@@ -308,7 +308,7 @@ fn assertion_008_parsename_x_8() {
 
 #[test]
 fn assertion_009_parsename_x_9() {
-    xfail_upstream(
+    pass_upstream(
         "parsename_x 9",
         r####"tparsename_x($section,'given=Jean Charles Gabriel de la Vallée, given-i=JCGdV, family=Poussin', 'author')"####,
         r####"$name9"####,
@@ -319,7 +319,7 @@ fn assertion_009_parsename_x_9() {
 
 #[test]
 fn assertion_010_parsename_x_10() {
-    xfail_upstream(
+    pass_upstream(
         "parsename_x 10",
         r####"tparsename_x($section,'given=Jean Charles Gabriel, prefix=de la, family={Vallée Poussin}', 'author')"####,
         r####"$name10"####,
@@ -330,7 +330,7 @@ fn assertion_010_parsename_x_10() {
 
 #[test]
 fn assertion_011_parsename_x_11() {
-    xfail_upstream(
+    pass_upstream(
         "parsename_x 11",
         r####"tparsename_x($section,'given={Jean Charles Gabriel}, prefix=de la, family={Vallée Poussin}', 'author')"####,
         r####"$name11"####,
@@ -341,7 +341,7 @@ fn assertion_011_parsename_x_11() {
 
 #[test]
 fn assertion_012_parsename_x_12() {
-    xfail_upstream(
+    pass_upstream(
         "parsename_x 12",
         r####"tparsename_x($section,'given=Jean Charles Gabriel, family=Poussin', 'author')"####,
         r####"$name12"####,
@@ -352,7 +352,7 @@ fn assertion_012_parsename_x_12() {
 
 #[test]
 fn assertion_013_parsename_x_13() {
-    xfail_upstream(
+    pass_upstream(
         "parsename_x 13",
         r####"tparsename_x($section,'given=Jean Charles, family={Poussin Lecoq}', 'author')"####,
         r####"$name13"####,
@@ -363,7 +363,7 @@ fn assertion_013_parsename_x_13() {
 
 #[test]
 fn assertion_014_parsename_x_14() {
-    xfail_upstream(
+    pass_upstream(
         "parsename_x 14",
         r####"tparsename_x($section,'given=J. C. G., prefix=de la, family=Vallée Poussin', 'author')"####,
         r####"$name14"####,
@@ -374,7 +374,7 @@ fn assertion_014_parsename_x_14() {
 
 #[test]
 fn assertion_015_parsename_x_15() {
-    xfail_upstream(
+    pass_upstream(
         "parsename_x 15",
         r####"tparsename_x($section,'given=E. S., family=El-Mallah', 'author')"####,
         r####"$name15"####,
@@ -385,7 +385,7 @@ fn assertion_015_parsename_x_15() {
 
 #[test]
 fn assertion_016_parsename_x_16() {
-    xfail_upstream(
+    pass_upstream(
         "parsename_x 16",
         r####"tparsename_x($section,'given=E. S., family=Kent-Boswell', 'author')"####,
         r####"$name16"####,
@@ -396,7 +396,7 @@ fn assertion_016_parsename_x_16() {
 
 #[test]
 fn assertion_017_parsename_x_17() {
-    xfail_upstream(
+    pass_upstream(
         "parsename_x 17",
         r####"tparsename_x($section,'family=Other, given=A.~N.', 'author')"####,
         r####"$name17"####,
@@ -407,7 +407,7 @@ fn assertion_017_parsename_x_17() {
 
 #[test]
 fn assertion_018_parsename_x_18() {
-    xfail_upstream(
+    pass_upstream(
         "parsename_x 18",
         r####"tparsename_x($section,'family={British National Corpus}', 'author')"####,
         r####"$name18"####,
@@ -418,7 +418,7 @@ fn assertion_018_parsename_x_18() {
 
 #[test]
 fn assertion_019_parsename_x_19() {
-    xfail_upstream(
+    pass_upstream(
         "parsename_x 19",
         r####"tparsename_x($section,'sortingnamekeytemplatename=test, family=Smith, given=Bill', 'author')"####,
         r####"$name19"####,
@@ -429,7 +429,7 @@ fn assertion_019_parsename_x_19() {
 
 #[test]
 fn assertion_020_parsename_x_19a() {
-    xfail_upstream(
+    pass_upstream(
         "parsename_x 19a",
         r####"Biber::Input::file::bibtex::parsename_x($section, 'sortingnamekeytemplatename=test, family=Smith, given=Bill', 'author')->{sortingnamekeytemplatename}"####,
         r####"$name19snks"####,
@@ -440,7 +440,7 @@ fn assertion_020_parsename_x_19a() {
 
 #[test]
 fn assertion_021_parsename_x_20() {
-    xfail_upstream(
+    pass_upstream(
         "parsename_x 20",
         r####"tparsename_x($section,'family=Doe, family-i={Do}', 'author')"####,
         r####"$name20"####,

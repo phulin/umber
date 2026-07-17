@@ -95,6 +95,10 @@ pub fn parse_classic_name(
 pub fn classic_name_hash(names: &NameList, scope: NameHashScope) -> String {
     let mut key = String::new();
     for name in names.iter() {
+        if let Some(hash_id) = name.hash_id() {
+            key.push_str(hash_id);
+            continue;
+        }
         for part in [name.family(), name.given(), name.prefix(), name.suffix()]
             .into_iter()
             .flatten()
@@ -330,7 +334,7 @@ fn make_part(value: &str, stripped: bool) -> NamePartValue {
     )
 }
 
-fn initials(value: &str, protected: bool) -> Vec<String> {
+pub(super) fn initials(value: &str, protected: bool) -> Vec<String> {
     let words = if protected {
         vec![value]
     } else {
@@ -385,7 +389,7 @@ fn initial_segment(value: &str) -> Option<String> {
     None
 }
 
-fn join_name_parts(parts: &[&str]) -> String {
+pub(super) fn join_name_parts(parts: &[&str]) -> String {
     match parts {
         [] => String::new(),
         [part] => (*part).to_owned(),
@@ -549,7 +553,7 @@ fn boundary_after(value: &str, offset: usize) -> bool {
             .is_some_and(char::is_whitespace)
 }
 
-fn split_words(value: &str) -> Vec<&str> {
+pub(super) fn split_words(value: &str) -> Vec<&str> {
     let mut result = Vec::new();
     let mut start = None;
     let mut depth = 0usize;

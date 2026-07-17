@@ -1,10 +1,10 @@
 # In-process bibliography backend
 
 Status: foundation contracts, pinned Unicode utilities, bounded XML and
-BibTeX inputs, the deterministic cross-entry graph stage, and classic
-structured names are implemented; extended names, visibility, sorting,
-labeling, serialization, session, and project integration continue in
-dependency order.
+BibTeX inputs, the deterministic cross-entry graph stage, and classic and
+extended structured names are implemented; truncation, final visibility,
+sorting, labeling, serialization, session, and project integration continue
+in dependency order.
 
 This document defines Umber's pure-Rust bibliography subsystem. Every Rust
 package uses the `bib-*` prefix, and modules, types, commands, features, and
@@ -314,7 +314,12 @@ family/given/prefix/suffix parts, stripped-outer-brace flags, and ordered
 initials. Compatibility hashes concatenate parts in pinned data-model order,
 normalize to NFC, and use the pinned MD5 utility. Explicit byte, name-count,
 nesting, diagnostic, and total-work limits bound malformed input. Extended
-name records and name-list visibility/truncation remain later stages.
+name records use bounded quote-aware CSV fields with configurable key/value
+separators and key aliases. They preserve source assignment order while
+resolving explicit parts and initial overrides, custom hash ids, per-name
+`useprefix` visibility, and sorting-name-template attributes into the same
+immutable normalized model. Name-list truncation and computed cross-file
+visibility remain later stages.
 
 ### BibTeX datasource
 
@@ -734,9 +739,11 @@ compatibility tests exercise only the `bib-engine` facade.
 
 The classic-name child executes 31 direct `names.t` assertions normally: the
 21 classic `parsename` checks, eight classic `name_to_bibtex` checks, the
-explicit-`others` count, and the terse Unicode initial. Extended-name,
-serialized-output, visibility, and unique-primary-author assertions retain
-their strict xfail ownership until their respective stages land.
+explicit-`others` count, and the terse Unicode initial. All 21 direct
+`names_x.t` assertions also execute normally against the extended-name
+contract. Remaining serialized-output, truncation/visibility, and
+unique-primary-author assertions retain their strict xfail ownership until
+their respective stages land.
 
 The two upstream files that exercise several stages use assertion-level
 ownership rather than file-level ownership. Their Rust modules enforce the
