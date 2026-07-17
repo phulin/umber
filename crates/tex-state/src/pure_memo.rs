@@ -1233,8 +1233,7 @@ impl PureMemoRuntime {
         self.prior_paragraphs = std::mem::take(&mut self.recorded_paragraphs);
         self.prior_paragraph_starts.clear();
         for (index, region) in self.prior_paragraphs.iter().enumerate() {
-            if region.macro_bearing
-                && region.barriers.is_empty()
+            if region.barriers.is_empty()
                 && let Some(start) = region.starting_span
             {
                 self.prior_paragraph_starts.entry(start).or_insert(index);
