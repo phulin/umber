@@ -58,6 +58,32 @@ fn diagnoses_collisions_and_recovers_at_the_next_entry() {
 }
 
 #[test]
+fn ignores_percent_comment_records_and_recovers_at_line_records() {
+    let source = parse_bibtex_bytes(
+        b"% @book{fake, title={not data}}\n\
+          @broken{x, title={unterminated\n\
+          @misc{after, note={ok}}",
+        BibTexOptions::default(),
+    );
+    assert!(source.entry("fake").is_none());
+    assert_eq!(
+        source
+            .entry("after")
+            .expect("recovered entry")
+            .field("note")
+            .expect("note")
+            .value(),
+        "ok"
+    );
+    assert!(
+        source
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.kind == BibTexDiagnosticKind::Syntax)
+    );
+}
+
+#[test]
 fn enforces_nesting_and_work_limits() {
     let options = BibTexOptions {
         limits: BibTexLimits {

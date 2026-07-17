@@ -332,16 +332,8 @@ impl<'a> Parser<'a> {
 
     fn parse(mut self) -> BibTexSource {
         while self.at < self.input.len() && self.work < self.limits.max_work {
-            self.work += 1;
-            match self.rest().find('@') {
-                Some(relative) => {
-                    self.work = self.work.saturating_add(relative);
-                    self.at += relative + 1;
-                }
-                None => {
-                    self.work = self.work.saturating_add(self.rest().len());
-                    break;
-                }
+            if !self.seek_record() {
+                break;
             }
             let start = self.at - 1;
             self.space();
@@ -585,7 +577,11 @@ impl<'a> Parser<'a> {
         let start = self.at;
         let mut nesting = 1usize;
         let mut escaped = false;
+        let mut recovery = None;
         while let Some(byte) = self.peek() {
+            if byte == b'@' && self.is_line_record_boundary(self.at) {
+                recovery = Some(self.at);
+            }
             self.work += 1;
             if self.work >= self.limits.max_work {
                 return None;
@@ -617,6 +613,9 @@ impl<'a> Parser<'a> {
                 }
             }
         }
+        if let Some(offset) = recovery {
+            self.at = offset;
+        }
         self.error(
             BibTexDiagnosticKind::Syntax,
             start,
@@ -630,7 +629,11 @@ impl<'a> Parser<'a> {
         let start = self.at;
         let mut braces = 0usize;
         let mut escaped = false;
+        let mut recovery = None;
         while let Some(byte) = self.peek() {
+            if byte == b'@' && self.is_line_record_boundary(self.at) {
+                recovery = Some(self.at);
+            }
             self.at += 1;
             self.work += 1;
             if escaped {
@@ -658,6 +661,9 @@ impl<'a> Parser<'a> {
             if byte == b'"' && braces == 0 {
                 return Some(self.input[start..self.at - 1].to_owned());
             }
+        }
+        if let Some(offset) = recovery {
+            self.at = offset;
         }
         self.error(
             BibTexDiagnosticKind::Syntax,
@@ -703,6 +709,7 @@ impl<'a> Parser<'a> {
         let mut quoted = false;
         let mut escaped = false;
         while let Some(byte) = self.peek() {
+            let offset = self.at;
             self.at += 1;
             self.work += 1;
             if escaped {
@@ -726,7 +733,8 @@ impl<'a> Parser<'a> {
             if byte == b'}' && braces > 0 {
                 braces -= 1;
             }
-            if braces == 0 && (byte == close || byte == b'@') {
+            let record_boundary = byte == b'@' && self.is_line_record_boundary(offset);
+            if (braces == 0 && byte == close) || record_boundary {
                 if byte == b'@' {
                     self.at -= 1;
                 }
@@ -736,6 +744,34 @@ impl<'a> Parser<'a> {
                 break;
             }
         }
+    }
+
+    fn seek_record(&mut self) -> bool {
+        while let Some(byte) = self.peek() {
+            self.at += 1;
+            self.work = self.work.saturating_add(1);
+            if byte == b'%' {
+                while let Some(comment_byte) = self.peek() {
+                    self.at += 1;
+                    self.work = self.work.saturating_add(1);
+                    if comment_byte == b'\n' || self.work >= self.limits.max_work {
+                        break;
+                    }
+                }
+            } else if byte == b'@' {
+                return true;
+            }
+            if self.work >= self.limits.max_work {
+                return false;
+            }
+        }
+        false
+    }
+
+    fn is_line_record_boundary(&self, offset: usize) -> bool {
+        self.input[..offset]
+            .rsplit_once('\n')
+            .map_or(offset == 0, |(_, prefix)| prefix.trim().is_empty())
     }
 
     fn skip_balanced(&mut self, open: u8, close: u8) {
@@ -777,9 +813,6 @@ impl<'a> Parser<'a> {
     }
     fn peek(&self) -> Option<u8> {
         self.input.as_bytes().get(self.at).copied()
-    }
-    fn rest(&self) -> &str {
-        &self.input[self.at..]
     }
 }
 
