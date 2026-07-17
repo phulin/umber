@@ -1786,15 +1786,19 @@ impl Stores {
         if !self.survivors.contains(id) {
             return None;
         }
-        let nodes = self
-            .survivors
-            .get(id)
-            .into_iter()
-            .map(|node| node.to_owned())
-            .collect::<Vec<_>>();
-        let mut nodes = nodes;
+        self.clone_retained_paragraph_list(id)
+    }
+
+    /// Copies a retained node graph into the live epoch while preserving its
+    /// already-sealed semantic identity. Glue handles and provenance are not
+    /// semantic inputs, so rebasing those handles does not require rehashing
+    /// the immutable node content.
+    fn clone_retained_paragraph_list(&mut self, id: NodeListId) -> Option<NodeListId> {
+        let semantic_id = self.node_semantic_id(id);
+        let mut nodes = self.nodes(id).to_vec();
         self.restore_paragraph_glues(&mut nodes)?;
-        Some(self.freeze_node_list(&nodes))
+        self.assert_live_handles_in_nodes(&nodes);
+        Some(self.nodes.append_with_semantic_id(&nodes, semantic_id))
     }
 
     fn collect_paragraph_glues(&self, id: NodeListId, glues: &mut Vec<GlueId>) {
@@ -1844,11 +1848,7 @@ impl Stores {
                     .map(|spec| stores.glue.intern(spec))
             })
         };
-        let rebuild = |stores: &mut Self, id: NodeListId| {
-            let mut children = stores.nodes(id).to_vec();
-            stores.restore_paragraph_glues(&mut children)?;
-            Some(stores.freeze_node_list(&children))
-        };
+        let rebuild = |stores: &mut Self, id: NodeListId| stores.clone_retained_paragraph_list(id);
         for node in nodes {
             match node {
                 Node::Glue { spec, leader, .. } => {

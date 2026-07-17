@@ -614,13 +614,8 @@ fn paragraph_origin_ordinals(
     nodes: &[tex_state::node::Node],
     trace_origins: &[tex_state::token::OriginId],
 ) -> Vec<u32> {
-    let ordinal = |origin| {
-        trace_origins
-            .iter()
-            .position(|candidate| *candidate == origin)
-            .and_then(|index| u32::try_from(index).ok())
-            .unwrap_or(u32::MAX)
-    };
+    let origin_ordinals = origin_ordinal_map(trace_origins);
+    let ordinal = |origin| origin_ordinals.get(&origin).copied().unwrap_or(u32::MAX);
     let mut ordinals = Vec::new();
     for node in nodes {
         match node {
@@ -684,19 +679,13 @@ fn paragraph_graph_origin_ordinals(
     fn visit(
         stores: &Universe,
         nodes: &[tex_state::node::Node],
-        trace_origins: &[tex_state::token::OriginId],
+        origin_ordinals: &ahash::AHashMap<tex_state::token::OriginId, u32>,
         out: &mut Vec<u32>,
     ) {
-        let ordinal = |origin| {
-            trace_origins
-                .iter()
-                .position(|candidate| *candidate == origin)
-                .and_then(|index| u32::try_from(index).ok())
-                .unwrap_or(u32::MAX)
-        };
+        let ordinal = |origin| origin_ordinals.get(&origin).copied().unwrap_or(u32::MAX);
         let child = |id, out: &mut Vec<u32>| {
             let nodes = stores.nodes(id).to_vec();
-            visit(stores, &nodes, trace_origins, out);
+            visit(stores, &nodes, origin_ordinals, out);
         };
         for node in nodes {
             match node {
@@ -730,8 +719,22 @@ fn paragraph_graph_origin_ordinals(
         }
     }
     let mut out = Vec::new();
-    visit(stores, nodes, trace_origins, &mut out);
+    let origin_ordinals = origin_ordinal_map(trace_origins);
+    visit(stores, nodes, &origin_ordinals, &mut out);
     out
+}
+
+fn origin_ordinal_map(
+    trace_origins: &[tex_state::token::OriginId],
+) -> ahash::AHashMap<tex_state::token::OriginId, u32> {
+    let mut ordinals = ahash::AHashMap::with_capacity(trace_origins.len());
+    for (index, &origin) in trace_origins.iter().enumerate() {
+        let Ok(index) = u32::try_from(index) else {
+            break;
+        };
+        ordinals.entry(origin).or_insert(index);
+    }
+    ordinals
 }
 
 fn paragraph_break_dependencies(

@@ -316,11 +316,15 @@ read-set or provenance contract.
 4. **Path-separated verification.** Re-run slow pagination-changing,
    cross-generation interaction, and fast height/page-preserving Gentle
    cases. Require cold parity, exact page accounting, and the explicit
-   1,000-edit tier.
+   1,000-edit tier. Final balanced runs replayed 246 paragraphs per slow edit
+   with exact cold parity, but lost 35.800--45.193 ms across the two slow edits
+   and 58.240--70.547 ms including priming.
 5. **Cleanup and release decision.** Collapse the generic memo runtime to the
    facilities still used, remove obsolete opt-in layers only after dependency
    checks, and decide paragraph default enablement from balanced release
-   measurements.
+   measurements. The accepted-history layer remains default-disabled: 628 of
+   889 observed Gentle paragraphs were correctly barriered, chiefly because a
+   complete group transition/redo substrate is not yet available.
 6. **Deferred page work.** Design direct page/shipout artifact patching only
    after paragraph replay reaches its measured slow-path ceiling. It is not a
    blocker for this plan.

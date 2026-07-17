@@ -1455,13 +1455,29 @@ fn generation_charge_covers_source_backing_and_releases_it_with_the_substrate() 
 fn paragraph_generation_roots_survive_rollback_and_supersede_wholesale() {
     let mut universe = Universe::new();
     let before = universe.snapshot();
-    let old_epoch = universe.freeze_node_list(&[crate::node::Node::Penalty(11)]);
+    let glue = universe.intern_glue(GlueSpec {
+        width: Scaled::from_raw(11),
+        ..GlueSpec::ZERO
+    });
+    let old_epoch = universe.freeze_node_list(&[
+        crate::node::Node::Penalty(11),
+        crate::node::Node::Glue {
+            spec: glue,
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+    ]);
     let old = universe.retain_paragraph_result(old_epoch);
+    let old_semantic = universe.stores.node_list_semantic_fragment(old);
 
     universe.rollback(&before);
-    assert!(
-        universe.import_retained_paragraph_result(old).is_some(),
-        "generation-owned paragraph roots must outlive checkpoint rollback"
+    let imported_old = universe
+        .import_retained_paragraph_result(old)
+        .expect("generation-owned paragraph roots must outlive checkpoint rollback");
+    assert_eq!(
+        universe.stores.node_list_semantic_fragment(imported_old),
+        old_semantic,
+        "rebasing expired handles must preserve the sealed semantic identity"
     );
 
     let next_start = universe.paragraph_result_generation_mark();

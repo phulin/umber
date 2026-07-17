@@ -728,3 +728,48 @@ boundary identity remains the fast suffix splice, while the slow path uses an
 ordered accepted-history paragraph cursor with per-record validation. It does
 not add a reverse paragraph-suffix hash. Direct page/shipout artifact patching
 is deferred to later measured work.
+
+The completed accepted-history implementation was measured in an optimized,
+uninstrumented eight-pair AB/BA run after deleting the old lookup/admission
+stack and retaining only replayable records. Each pagination-changing edit
+replayed 246 paragraphs as finished lines, skipped 11,343 commands, imported
+993,960 bytes, and had 15 validation misses with no import failures or hlist
+fallbacks. Every edit kept the memo-disabled and memo-enabled boundary
+schedules equivalent and produced DVI byte-identical to cold.
+
+The result is nevertheless a negative default-enablement decision. The first
+final eight-pair run lost 36.718 ms across the two slow edits and 60.633 ms
+including initial history publication. After the import optimization below, a
+four-pair confirmation lost 35.800/58.240 ms; a second eight-pair run, with a
+large fast-edit outlier, lost 45.193/70.547 ms. Interaction deltas were
++1.473, +3.085, and +2.675 ms respectively. The independent fast suffix-splice
+median remained flat (within about 1 ms) and still retained 14 pages,
+re-shipped 3, and adopted 83. Accepted paragraph metadata was 2,303,932 bytes,
+down from 12,937,867 bytes when barriered records were retained.
+
+A ten-run Samply capture attributed only 0.68% of whole-run samples to
+`try_reuse_aligned_paragraph`; cursor lookup and prepared input transition were
+effectively invisible. Retained-result import dominated that small subtree;
+36% of its samples recomputed SHA-256 node identities. Imported graphs now
+preserve their already-sealed semantic identities while rebasing nonsemantic
+handles, reducing reported import time from roughly 4.4--5.0 ms to 1.26--1.30
+ms per slow edit. There was no hidden repeated rollback, linear suffix scan,
+or replay-side quadratic responsible for the loss. The limiting factor is coverage: only 261
+of 889 observed paragraphs were replayable, while 628 hit barriers. Barrier
+telemetry reported 594 group transitions, 174 input transitions, 210
+unsupported writes, 50 display-math crossings, and 42 output-routine
+crossings, with overlap. Relaxing the group barrier to equal group depth plus
+equal environment identity caused a cold-DVI mismatch on the inverse edit and
+was rejected. Safe expansion therefore requires a complete retained group
+transition/redo design, not a weaker predicate or another result-cache layer.
+
+The adversarial implementation review found no repeated accepted-substrate
+rollback, global candidate search, suffix scan, or quadratic on the measured
+replay hot path. It did find two cleanup issues: barriered records performed
+work and retained memory despite never being candidates, and provenance recipe
+construction searched the token-origin sequence once per output origin. The
+former was removed before the measurements above; the latter now builds one
+linear-time aHash ordinal index. With paragraph replay default-disabled, no P1
+correctness, asymptotic, architectural, or measurement issue remains in the
+released fast suffix path. The unresolved slow-path limitation is explicit
+capability coverage, not a hidden cache layer.

@@ -7,6 +7,7 @@ edition.workspace = true
 profiling-stats = ["tex-expand/profiling-stats", "tex-lex/profiling-stats"]
 
 [dependencies]
+ahash.workspace = true
 tex-expand = { path = "../tex-expand" }
 tex-fonts = { path = "../tex-fonts" }
 tex-lex = { path = "../tex-lex" }
@@ -16,7 +17,6 @@ tex-state = { path = "../tex-state" }
 tex-typeset = { path = "../tex-typeset" }
 
 [dev-dependencies]
-ahash.workspace = true
 tex-state = { path = "../tex-state", features = ["testing"] }
 
 test-support = { path = "../test-support" }
