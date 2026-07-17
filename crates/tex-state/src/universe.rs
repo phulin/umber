@@ -388,8 +388,8 @@ impl<'a> ExpansionContext<'a> {
         self.universe.origin(id)
     }
 
-    /// Tests expansion-control provenance without resolving direct source
-    /// positions, which may belong to the retained editor-fragment timeline.
+    /// Tests inserted-origin classification without resolving direct source
+    /// positions or requiring the origin to remain live after rollback.
     #[must_use]
     pub fn origin_is_inserted_kind(&self, id: OriginId, kind: InsertedOriginKind) -> bool {
         self.universe.origin_is_inserted_kind(id, kind)

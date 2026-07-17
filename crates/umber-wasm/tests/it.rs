@@ -554,6 +554,40 @@ fn committed_plain_format_loads_and_rejects_incompatible_bytes() {
 }
 
 #[wasm_bindgen_test]
+fn formatted_session_survives_multiple_resource_retries() {
+    let mut session = session_with_format("main.tex", include_bytes!("../assets/plain.fmt"));
+    session
+        .add_user_file("main.tex", &bytes(b"\\input first \\end"))
+        .expect("add formatted source");
+
+    let first = session.advance().expect("first resource request");
+    assert_eq!(string_field(first.as_ref(), "kind"), "need-resources");
+    let first_request = Array::from(&field(first.as_ref(), "required")).get(0);
+    session
+        .provide_resolved_file(
+            first_request.unchecked_ref(),
+            "/texlive/first.tex",
+            &bytes(b"\\input second "),
+        )
+        .expect("provide first input");
+
+    let second = session.advance().expect("second resource request");
+    assert_eq!(string_field(second.as_ref(), "kind"), "need-resources");
+    let second_request = Array::from(&field(second.as_ref(), "required")).get(0);
+    session
+        .provide_resolved_file(
+            second_request.unchecked_ref(),
+            "/texlive/second.tex",
+            &bytes(b""),
+        )
+        .expect("provide second input");
+    assert_eq!(
+        string_field(session.advance().expect("complete retry").as_ref(), "kind"),
+        "complete",
+    );
+}
+
+#[wasm_bindgen_test]
 fn explicit_disposal_releases_session_and_rejects_later_calls() {
     let mut session = session("main.tex");
     assert!(!session.disposed());

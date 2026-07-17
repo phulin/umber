@@ -81,6 +81,9 @@ Authored JavaScript forwards resolver batches unchanged and retains no request,
 path, duplicate, progress, or byte-accounting shadow state. Empty and partial
 batches therefore reach the same Rust retry state as native calls; stable Rust
 error categories are serialized through direct and worker browser APIs.
+Manifest dependency closures are resolver-private prefetches: they may warm the
+verified object cache, but `resolve()` returns responses only for keys in the
+current required batch. This preserves the engine's unexpected-response check.
 `FileProvisioner` also owns the session's layered user and resolved-resource
 storage plus its accepted generated layer. Each TeX attempt reads inputs and
 TFM files from one immutable stage snapshot; the resolver passes selected
@@ -236,4 +239,6 @@ For each accepted revision, DVI and other observable outputs must be identical
 to a fresh cold compile with the same root bytes and pinned resources. Tests
 cover initial compilation, multiple patches, resource acquisition introduced
 by a patch, stale revisions, hash/range validation, idempotent output reads,
-and disposal through both the native and WASM boundaries.
+formatted-session retries across multiple resource batches, and disposal
+through both the native and WASM boundaries. Rollback-stale diagnostic origins
+must not make classification-only expansion paths trap.
