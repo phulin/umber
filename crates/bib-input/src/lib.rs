@@ -1,6 +1,7 @@
 //! Control, configuration, and datasource input-stage boundary.
 
 mod biblatexml;
+mod bibtex;
 mod config;
 mod control;
 mod xml;
@@ -9,6 +10,10 @@ pub use biblatexml::{
     BIBLATEX_XML_NAMESPACE, BibLatexXmlData, BibLatexXmlEntry, BibLatexXmlError, NamePart,
     XmlAnnotation, XmlFieldValue, XmlListItem, XmlName, parse_biblatexml, parse_biblatexml_bytes,
     validate_biblatexml_bytes,
+};
+pub use bibtex::{
+    BibTexCache, BibTexDiagnostic, BibTexDiagnosticKind, BibTexEntry, BibTexField, BibTexLimits,
+    BibTexOptions, BibTexPreamble, BibTexSource, RawName, parse_bibtex, parse_bibtex_bytes,
 };
 pub use config::{
     ConfigError, ConfigValue, ConfigurationFile, ConfigurationLayer, ResolvedConfiguration,

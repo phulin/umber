@@ -296,6 +296,17 @@ user, command, and control-file precedence. BibLaTeXML parsing constructs
 typed names, lists, dates, ranges, aliases, annotations, related values, and
 entry-local options from the pinned namespace.
 
+The BibTeX boundary now decodes immutable datasource bytes with an explicit
+legacy encoding and TeX recode set, then produces ordered raw entries, fields,
+unparsed name components, macros, and preambles. It includes the twelve
+standard month macros, concatenation, brace- and quote-aware value scanning,
+case-insensitive lookup with distinct duplicate/case-collision diagnostics,
+and recovery at record boundaries. Entry, field, macro, value, nesting,
+diagnostic, datasource-byte, and total-work budgets are explicit. Parsed
+datasources may be cached by exact VFS content identity plus all semantic
+parser options; canonical path and allocation identity do not affect cache
+reuse or observable results.
+
 ### BibTeX datasource
 
 The parser reproduces the pinned reference grammar and recovery behavior,
