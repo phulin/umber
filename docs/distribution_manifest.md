@@ -72,22 +72,66 @@ canonical uncompressed JSON and the sum of independently compressed roots or
 shards from `gzip -n -c`; the shard totals include package-complete inline
 dependency metadata.
 
-| Shards | Root bytes | Root gzip bytes | All shard bytes | All shard gzip bytes | Cold requests / bytes |
+| Shards | Root bytes | Root gzip bytes | All shard bytes | All shard gzip bytes | 100 independent cold runs: requests / gzip bytes |
 | ---: | ---: | ---: | ---: | ---: | :--- |
-| 64 | 4,878 | 2,840 | 164,926,880 | 30,453,157 | unavailable: no file-access trace corpus was present |
-| 256 | 17,743 | 10,276 | 164,940,668 | 33,415,396 | unavailable: no file-access trace corpus was present |
-| 1,024 | 69,201 | 39,809 | 164,995,988 | 36,025,682 | unavailable: no file-access trace corpus was present |
+| 64 | 4,878 | 2,840 | 164,926,880 | 30,453,157 | 4,970 / 2,318,727,611 |
+| 256 | 17,743 | 10,276 | 164,940,668 | 33,415,396 | 9,464 / 1,223,882,079 |
+| 1,024 | 69,201 | 39,809 | 164,995,988 | 36,025,682 | 12,260 / 434,397,963 |
 
-These whole-index sizes are reproducible layout evidence, not a substitute
-for replaying the cold working set. The checked-in
-`scripts/profile-pdftex-arxiv.sh` records primitive use rather than file
-access, and neither its 100-paper sources nor separate file-access traces were
-available during the production run. Consequently the release retained the
-requested 256-shard production prior; it does not claim an empirical knee
-between the three candidates. Follow-up `umber2-mbwq.6.6` owns deterministic
-file-access capture and replay. Core-pack warming was not added because there
-was no trace evidence to justify expanding the existing dependency-hint
-working set.
+The follow-up measurement on 2026-07-16 acquired all 100 identifiers in the
+committed, SHA-256 `bac78153b3d9fa4455020288511c1766e95dc9da551bd47f38e7e162ff09f11c`
+sample. The pinned pdfTeX 1.40.27 build ran against the preserved TeX Live 2026
+runtime used to build the snapshot. It completed 76 papers and retained the
+deterministic pre-error accesses from 24 papers. Those partial traces make the
+numbers a measurement of reached inputs, not an extrapolation of hypothetical
+successful builds.
+
+The recorder produced 100 raw `.fls` traces and 13,262 per-paper normalized
+input-path occurrences. Replay matched 1,864 unique published lookup keys.
+The only unmatched path was `/texlive/web2c/texmf.cnf`, which is configuration
+rather than a publishable runtime object. Because `.fls` records resolved
+physical paths rather than the original lookup spelling, replay projects each
+path to the publisher's basename-precedence alias; this limitation is explicit
+in the machine report.
+
+The cold column above resets the root and shard cache for every paper, includes
+one root request per paper, and sums the gzip bytes for each root and unique
+shard requested by that paper. Package-complete dependency hints remain inline
+in the owner shard, so their metadata contributes to compressed shard size but
+does not add shard requests. The request/byte tradeoff has no single scalar
+knee: 64 shards minimize requests, while 1,024 shards minimize cold bytes; 256
+is the middle point selected before publication. No R2 object or manifest was
+changed for this measurement.
+
+For a persistent cache shared across the corpus, the corresponding union was
+65 requests / 30,455,997 gzip bytes at 64 shards, 257 / 33,425,672 at 256,
+and 872 / 30,733,086 at 1,024. Thus this broad corpus eventually touches every
+64- and 256-way shard and 871 of 1,024 shards.
+
+`scripts/profile-pdftex-arxiv.sh` now captures both primitive usage and file
+access, while `scripts/measure-sharded-manifest.py` reconstructs candidate
+roots and package-complete shards in memory from a schema-1 staging manifest.
+It is read-only: it neither invokes the publisher's mutating conversion mode
+nor uploads content. A reproduction using a pinned TeX Live runtime and an
+unmodified schema-1 staging bundle is:
+
+```bash
+PATH=/path/to/texlive/bin/universal-darwin:$PATH \
+  PDFTEX_PROFILE_ROOT=/tmp/umber-pdftex-file-trace \
+  scripts/profile-pdftex-arxiv.sh all
+scripts/measure-sharded-manifest.py \
+  /path/to/texlive-2026-r79639/manifest.json \
+  /tmp/umber-pdftex-file-trace/results \
+  --output /tmp/umber-pdftex-file-trace/shard-knee.tsv
+```
+
+For audit, the captured summary SHA-256 was
+`124bd670c24217d4150b5ef86e55bbda7374c9d6bc65617ac897fde6929b3537`
+and the machine report SHA-256 was
+`afe9ca14c36b87a7be1f0c5eb67af8704ecc304e03f4eacd0754aef892dbc077`.
+The replay also regenerated the already-published 256-shard root digest
+`7c2784bca891844d37465083b93466b78429c7282d7ba915f40a08d150651fd0`
+and its 10,276 gzip bytes exactly.
 
 On 2026-07-16 the 256 shard objects were uploaded through the configured R2
 profile with immutable writes after an existing 548-byte object passed both
