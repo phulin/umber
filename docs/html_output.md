@@ -157,6 +157,15 @@ move another glyph, resize the formula box, or reflow the page. A separate
 artifact-order accessibility representation remains geometry-free; it does
 not participate in layout.
 
+Focused parity coverage uses the pinned STIX Two Math program. Native decoded
+TTF and browser WOFF2 inputs must produce the same canonical formula-layout
+projection before output. Browser smoke then checks fixed anchors for scripts,
+fractions, radicals, accents, operators and limits, delimiters, and extensible
+assemblies; it also checks the fraction rule, recorded `ssty`, retained-face
+load, and outline fallback. DOM coordinates and glyph-selection metadata are
+normative. Raster bounds are used only to prove that an outline painted and
+are not compared as font-shaping geometry.
+
 ## Font and asset contract
 
 Artifact schema 23 records the selected layout policy, explicit mapping

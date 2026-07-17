@@ -506,8 +506,8 @@ children are direct stages in this chain.
 
 ### Completed positioned OpenType math
 
-Tracked by `umber2-y2ei.9`; fixed layout, artifact serialization, and HTML/SVG
-painting are complete. Native/WASM/browser parity remains the following gate.
+Tracked by `umber2-y2ei.9`; fixed layout, artifact serialization, HTML/SVG
+painting, and the focused native/WASM/browser parity gate are complete.
 
 The MATH parser, immutable data model, direct `MathMetricsSource`, and
 variant/assembly layout are complete. `tex-typeset` now reads OpenType constants without a lossy
@@ -531,6 +531,23 @@ font, and rules use explicit SVG rectangles. The HTML serializer verifies the
 transport and canonical program identities again, binds events by complete
 instance identity, and rejects cmap/glyph or outline mismatches before
 publication. MathML does not own layout.
+
+The pinned STIX Two Math fixture proves equivalent decoded native TTF and
+retained WOFF2 inputs have one canonical program identity, identical MATH
+tables, and an identical canonical layout projection. The projection covers
+scripts and script-style selection, fractions and rules, radicals, accents,
+operators and limits, vertical delimiter assemblies, and horizontal wide
+accent assemblies. Its digest is asserted natively; the browser-targeted WASM
+suite independently parses the WOFF2 and checks the same construction
+capabilities. A second WOFF2 with no MATH table proves the explicit
+`ClassicTfmExact` capability result.
+
+The Chromium contract renders every construction at a recorded coordinate,
+checks the complete construction census, `ssty`, rule dimensions, exact-font
+loading without a platform-family fallback, and glyph-id-only outline paint.
+These assertions deliberately exclude raster ink and antialiasing. This
+focused gate isolates the direct OpenType MATH capability; mapped
+document-level selection is covered separately by `umber2-y2ei.12`.
 
 ### Completed: OpenType-preferred mappings for TFM-style text
 

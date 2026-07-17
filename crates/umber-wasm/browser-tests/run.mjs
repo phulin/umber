@@ -339,6 +339,26 @@ try {
 				return evaluated.result.value;
 			});
 			assert(mathResult.ok, mathResult.error);
+			assert.deepEqual(mathResult.cases, [
+				"script",
+				"fraction",
+				"radical",
+				"accent",
+				"operator",
+				"limit",
+				"delimiter",
+				"assembly",
+			]);
+			assert.deepEqual(mathResult.coordinates, [
+				[30, 45],
+				[90, 80],
+				[155, 90],
+				[225, 55],
+				[285, 95],
+				[285, 125],
+				[370, 95],
+				[450, 95],
+			]);
 			process.stdout.write(
 				`browser math integration passed ${JSON.stringify(mathResult)}\n`,
 			);

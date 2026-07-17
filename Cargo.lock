@@ -1274,9 +1274,11 @@ name = "tex-typeset"
 version = "0.1.0"
 dependencies = [
  "ahash",
+ "sha2 0.10.9",
  "tex-arith",
  "tex-fonts",
  "tex-state",
+ "woff2-patched",
 ]
 
 [[package]]

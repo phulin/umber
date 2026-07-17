@@ -9,5 +9,9 @@ tex-arith = { path = "../tex-arith" }
 tex-fonts = { path = "../tex-fonts" }
 tex-state = { path = "../tex-state" }
 
+[dev-dependencies]
+sha2.workspace = true
+woff2-patched = "0.4.0"
+
 [lints]
 workspace = true

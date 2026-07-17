@@ -1,4 +1,5 @@
 use super::*;
+use sha2::{Digest, Sha256};
 use tex_fonts::metrics::CharTag;
 use tex_fonts::{
     AcceptedFontContainers, CharMetrics, FontContainer, FontFeaturePolicy, FontLimits, FontMetrics,
@@ -44,6 +45,28 @@ fn style_transitions_follow_tex_style_codes() {
 
 #[test]
 fn pinned_opentype_math_fixture_drives_basic_formula_layout_deterministically() {
+    let woff2 = include_bytes!("../../../tex-fonts/tests/fixtures/stix-two-math.woff2");
+    let web = parse_stix_math(FontContainer::Woff2, woff2.to_vec());
+    let ttf = woff2_patched::convert_woff2_to_ttf(&mut woff2.as_slice())
+        .expect("decode equivalent native fixture");
+    let native = parse_stix_math(FontContainer::TrueType, ttf);
+    assert_eq!(web.identity, native.identity);
+    assert_ne!(web.object_identity, native.object_identity);
+    assert_eq!(web.math, native.math);
+
+    let web_layouts = positioned_math_fixture_layouts(web);
+    let native_layouts = positioned_math_fixture_layouts(native);
+    assert_eq!(
+        math_layout_projection(&web_layouts),
+        math_layout_projection(&native_layouts)
+    );
+    assert_eq!(
+        math_layout_digest(&web_layouts),
+        "2c9bbe287f7c772381051b4fde4a679e885fce3e2a2ebeb0ec5d4b1dcaa2d661"
+    );
+}
+
+fn parse_stix_math(container: FontContainer, bytes: Vec<u8>) -> OpenTypeFont {
     let key = FontRequestKey::new(
         "stix-two-math",
         0,
@@ -53,22 +76,30 @@ fn pinned_opentype_math_fixture_drives_basic_formula_layout_deterministically() 
     .expect("fixture key");
     let request = FontRequest {
         key: key.clone(),
-        accepted_containers: AcceptedFontContainers::WASM,
+        accepted_containers: match container {
+            FontContainer::Woff2 => AcceptedFontContainers::WASM,
+            FontContainer::OpenType | FontContainer::TrueType | FontContainer::Collection => {
+                AcceptedFontContainers::NATIVE
+            }
+        },
         purposes: FontPurposes::LAYOUT_AND_HTML,
     };
-    let font = OpenTypeFont::parse(
+    OpenTypeFont::parse(
         &request,
         ResolvedFont {
             request: key,
-            container: FontContainer::Woff2,
-            bytes: include_bytes!("../../../tex-fonts/tests/fixtures/stix-two-math.woff2").to_vec(),
+            container,
+            bytes,
             declared_object_sha256: None,
             declared_program_identity: None,
             provenance: Some("STIX Two Math under the SIL OFL".to_owned()),
         },
         FontLimits::default(),
     )
-    .expect("STIX fixture");
+    .expect("STIX fixture")
+}
+
+fn positioned_math_fixture_layouts(font: OpenTypeFont) -> Vec<MathLayout> {
     let size = sc(10 * Scaled::UNITY);
     let loaded = LoadedFont::new_opentype(
         "stix-two-math",
@@ -131,23 +162,34 @@ fn pinned_opentype_math_fixture_drives_basic_formula_layout_deterministically() 
         Node::MathNoad(operator),
     ]);
     let params = MathParams::read(&universe);
-    let first = mlist_to_hlist(&universe, input, Style::DISPLAY, false, &params);
-    let second = mlist_to_hlist(&universe, input, Style::DISPLAY, false, &params);
-    assert_eq!(first, second);
+    let formula = mlist_to_hlist(&universe, input, Style::DISPLAY, false, &params);
     assert!(params.text.extension.default_rule_thickness.raw() > 0);
-    assert!(all_math_glyphs(&first).iter().all(Option::is_some));
-    assert!(all_math_glyphs(&first).len() >= 7);
-    assert!(!all_math_glyphs(&first).contains(&Some(base_sum)));
+    assert!(all_math_glyphs(&formula).iter().all(Option::is_some));
+    assert!(all_math_glyphs(&formula).len() >= 7);
+    assert!(!all_math_glyphs(&formula).contains(&Some(base_sum)));
 
     let delimiter = delimiter_code(1, b'(', 1, b'(');
-    let (delimiter_layout, delimiter_box) = test_var_delimiter(
-        &universe,
-        &params,
-        delimiter,
-        MathFontSize::Text,
-        sc(100 * Scaled::UNITY),
-    );
-    assert_eq!(delimiter_box.axis, BoxAxis::Vertical);
+    let tall = universe.freeze_node_list(&[Node::Rule {
+        width: Some(sc(4 * Scaled::UNITY)),
+        height: Some(sc(80 * Scaled::UNITY)),
+        depth: Some(sc(20 * Scaled::UNITY)),
+    }]);
+    let delimiter_input = universe.freeze_node_list(&[
+        Node::MathNoad(MathNoad::new(
+            NoadKind::LeftDelimiter { delimiter },
+            MathField::Empty,
+        )),
+        Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            MathField::SubBox(tall),
+        )),
+        Node::MathNoad(MathNoad::new(
+            NoadKind::RightDelimiter { delimiter },
+            MathField::Empty,
+        )),
+    ]);
+    let delimiter_layout =
+        mlist_to_hlist(&universe, delimiter_input, Style::DISPLAY, false, &params);
     assert!(all_math_glyphs(&delimiter_layout).len() > 1);
 
     let radical_input = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
@@ -170,6 +212,95 @@ fn pinned_opentype_math_fixture_drives_basic_formula_layout_deterministically() 
     ))]);
     let accent = mlist_to_hlist(&universe, wide_accent, Style::DISPLAY, false, &params);
     assert!(all_math_glyphs(&accent).len() > 20);
+    vec![formula, delimiter_layout, radical, accent]
+}
+
+fn math_layout_digest(layouts: &[MathLayout]) -> String {
+    format!("{:x}", Sha256::digest(math_layout_projection(layouts)))
+}
+
+fn math_layout_projection(layouts: &[MathLayout]) -> String {
+    fn span(layout: &MathLayout, list: FrozenHList, out: &mut String) {
+        use std::fmt::Write;
+
+        write!(
+            out,
+            "[{}:{}:{}:{}|",
+            list.width().raw(),
+            list.height().raw(),
+            list.depth().raw(),
+            list.node_count()
+        )
+        .expect("write projection");
+        for node in layout.nodes(list) {
+            match node {
+                MathNode::Char {
+                    ch,
+                    glyph_id,
+                    metrics,
+                    ..
+                } => write!(
+                    out,
+                    "c{:x}/{glyph_id:?}/{}/{}/{}/{};",
+                    *ch as u32,
+                    metrics.width.raw(),
+                    metrics.height.raw(),
+                    metrics.depth.raw(),
+                    metrics.italic_correction.raw()
+                )
+                .expect("write char"),
+                MathNode::Kern { amount, kind } => {
+                    write!(out, "k{}/{kind:?};", amount.raw()).expect("write kern")
+                }
+                MathNode::Glue { spec, kind, .. } => write!(
+                    out,
+                    "g{}/{}/{:?}/{}/{:?}/{kind:?};",
+                    spec.width.raw(),
+                    spec.stretch.raw(),
+                    spec.stretch_order,
+                    spec.shrink.raw(),
+                    spec.shrink_order
+                )
+                .expect("write glue"),
+                MathNode::Penalty(value) => write!(out, "p{value};").expect("write penalty"),
+                MathNode::Rule {
+                    width,
+                    height,
+                    depth,
+                } => write!(
+                    out,
+                    "r{:?}/{:?}/{:?};",
+                    width.map(Scaled::raw),
+                    height.map(Scaled::raw),
+                    depth.map(Scaled::raw)
+                )
+                .expect("write rule"),
+                MathNode::HList(boxed) | MathNode::VList(boxed) => {
+                    write!(
+                        out,
+                        "b{:?}/{}/{}/{}/{}/",
+                        boxed.axis,
+                        boxed.width.raw(),
+                        boxed.height.raw(),
+                        boxed.depth.raw(),
+                        boxed.shift.raw()
+                    )
+                    .expect("write box");
+                    span(layout, boxed.list, out);
+                }
+                MathNode::Sequence(child) => span(layout, *child, out),
+                MathNode::Opaque(node) => write!(out, "o{node:?};").expect("write opaque"),
+            }
+        }
+        out.push(']');
+    }
+
+    let mut out = String::new();
+    for layout in layouts {
+        span(layout, layout.root(), &mut out);
+        out.push('\n');
+    }
+    out
 }
 
 fn all_math_glyphs(layout: &MathLayout) -> Vec<Option<u16>> {

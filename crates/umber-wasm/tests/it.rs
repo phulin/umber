@@ -215,6 +215,102 @@ fn fixed_math_artifact_schema_round_trips_in_wasm() {
 }
 
 #[wasm_bindgen_test]
+fn opentype_math_woff2_projects_authoritative_data_and_explicit_fallback_in_wasm() {
+    use tex_fonts::{
+        AcceptedFontContainers, FontContainer, FontFeaturePolicy, FontLimits, FontPurposes,
+        FontRequest, FontRequestKey, LoadedFont, MathMetricsSource, MathVariantDirection,
+        OpenTypeFont, OpenTypeProgramSelection, ResolvedFont, VariationSelection, WritingDirection,
+    };
+
+    fn parse(name: &str, bytes: &[u8]) -> OpenTypeFont {
+        let key = FontRequestKey::new(
+            name,
+            0,
+            VariationSelection::default(),
+            FontFeaturePolicy::default(),
+        )
+        .expect("fixture key");
+        OpenTypeFont::parse(
+            &FontRequest {
+                key: key.clone(),
+                accepted_containers: AcceptedFontContainers::WASM,
+                purposes: FontPurposes::LAYOUT_AND_HTML,
+            },
+            ResolvedFont {
+                request: key,
+                container: FontContainer::Woff2,
+                bytes: bytes.to_vec(),
+                declared_object_sha256: None,
+                declared_program_identity: None,
+                provenance: Some("pinned browser fixture".to_owned()),
+            },
+            FontLimits::default(),
+        )
+        .expect("valid WOFF2 fixture")
+    }
+
+    let stix = parse(
+        "stix-two-math",
+        include_bytes!("../../tex-fonts/tests/fixtures/stix-two-math.woff2"),
+    );
+    let size = tex_arith::Scaled::from_raw(10 * tex_arith::Scaled::UNITY);
+    let loaded = LoadedFont::new_opentype(
+        "stix-two-math",
+        "stix-two-math.woff2",
+        size,
+        size,
+        OpenTypeProgramSelection {
+            font: stix,
+            variation: VariationSelection::default(),
+            features: FontFeaturePolicy::default(),
+            direction: WritingDirection::LeftToRight,
+        },
+    );
+    let MathMetricsSource::OpenType(math) = loaded.math_metrics_source() else {
+        panic!("STIX must publish direct MATH metrics in WASM")
+    };
+    assert!(
+        math.constant(tex_fonts::MathConstant::FractionRuleThickness)
+            .raw()
+            > 0
+    );
+    assert!(math.glyph('A', 1).is_some(), "script-style glyph");
+    assert!(math.glyph('A', 2).is_some(), "scriptscript-style glyph");
+    for (scalar, direction) in [
+        ('∑', MathVariantDirection::Vertical),
+        ('(', MathVariantDirection::Vertical),
+        ('⏞', MathVariantDirection::Horizontal),
+    ] {
+        let glyph = math.glyph(scalar, 0).expect("construction base glyph");
+        assert!(
+            math.construction(glyph.glyph_id, direction).is_some(),
+            "missing {scalar} construction"
+        );
+    }
+
+    let cmu = parse(
+        "cmu-serif",
+        include_bytes!("../assets/cmu-serif-500-roman.woff2"),
+    );
+    let classic = LoadedFont::new_opentype(
+        "cmu-serif",
+        "cmu-serif.woff2",
+        size,
+        size,
+        OpenTypeProgramSelection {
+            font: cmu,
+            variation: VariationSelection::default(),
+            features: FontFeaturePolicy::default(),
+            direction: WritingDirection::LeftToRight,
+        },
+    );
+    assert!(matches!(
+        classic.math_metrics_source(),
+        MathMetricsSource::ClassicTfmExact
+    ));
+}
+
+#[wasm_bindgen_test]
 fn typed_attempts_preserve_binary_inputs_and_clear_cached_allocations() {
     let mut session = session("/job/main.tex");
     session

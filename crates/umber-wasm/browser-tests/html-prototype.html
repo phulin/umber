@@ -11,7 +11,8 @@
     #rule{position:absolute;left:31.125px;top:88.375px;width:47.625px;height:3.25px;background:black}
     #math-page{position:relative;width:640px;height:300px;contain:strict;overflow:hidden;background:white}
     .umber-math{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;color:#000}
-    .umber-math-text{font-family:'umber-contract-math',serif;font-size:32px;fill:currentColor}
+    /* biome-ignore lint/a11y/useGenericFontNames: parity must fail instead of using a platform fallback */
+    .umber-math-text{font-family:'umber-contract-math';font-size:32px;fill:currentColor}
     .math-probe{fill:transparent}
   </style>
 </head>
@@ -24,15 +25,15 @@
   </main>
   <main id="math-page">
     <svg class="umber-math" aria-hidden="true">
-      <g class="umber-math-glyph" data-case="script" data-x="30" data-y="45"><rect class="math-probe" x="30" y="45" width="1" height="1"></rect><text class="umber-math-text" x="30" y="45" style="font-feature-settings:'ssty' 2">A</text></g>
-      <g class="umber-math-glyph" data-case="fraction" data-x="90" data-y="80"><rect class="math-probe" x="90" y="80" width="1" height="1"></rect><text class="umber-math-text" x="90" y="80">1</text></g>
+      <g class="umber-math-glyph" data-case="script" data-glyph-id="3" data-ssty="2" data-x="30" data-y="45"><rect class="math-probe" x="30" y="45" width="1" height="1"></rect><text class="umber-math-text" x="30" y="45" style="font-feature-settings:'ssty' 2">A</text></g>
+      <g class="umber-math-glyph" data-case="fraction" data-glyph-id="937" data-ssty="0" data-x="90" data-y="80"><rect class="math-probe" x="90" y="80" width="1" height="1"></rect><text class="umber-math-text" x="90" y="80">1</text></g>
       <rect class="umber-math-rule" data-case="fraction-rule" x="82" y="88" width="46" height="3"></rect>
-      <g class="umber-math-glyph" data-case="radical" data-x="155" data-y="90"><rect class="math-probe" x="155" y="90" width="1" height="1"></rect><text class="umber-math-text" x="155" y="90">√</text></g>
-      <g class="umber-math-glyph" data-case="accent" data-x="225" data-y="55"><rect class="math-probe" x="225" y="55" width="1" height="1"></rect><text class="umber-math-text" x="225" y="55">^</text></g>
-      <g class="umber-math-glyph" data-case="operator" data-x="285" data-y="95"><rect class="math-probe" x="285" y="95" width="1" height="1"></rect><text class="umber-math-text" x="285" y="95">∑</text></g>
-      <g class="umber-math-glyph" data-case="limit" data-x="285" data-y="125"><rect class="math-probe" x="285" y="125" width="1" height="1"></rect><text class="umber-math-text" x="285" y="125" style="font-feature-settings:'ssty' 1">n</text></g>
-      <g class="umber-math-glyph" data-case="delimiter" data-x="370" data-y="95"><rect class="math-probe" x="370" y="95" width="1" height="1"></rect><text class="umber-math-text" x="370" y="95">(</text></g>
-      <g class="umber-math-glyph" data-case="assembly" data-x="450" data-y="95"><rect class="math-probe" x="450" y="95" width="1" height="1"></rect><path class="umber-math-outline" d="M0 0L18 0L18 70L0 70Z" transform="translate(450 95) scale(1 -1)"></path></g>
+      <g class="umber-math-glyph" data-case="radical" data-glyph-id="1064" data-ssty="0" data-x="155" data-y="90"><rect class="math-probe" x="155" y="90" width="1" height="1"></rect><text class="umber-math-text" x="155" y="90">√</text></g>
+      <g class="umber-math-glyph" data-case="accent" data-glyph-id="1108" data-ssty="0" data-x="225" data-y="55"><rect class="math-probe" x="225" y="55" width="1" height="1"></rect><text class="umber-math-text" x="225" y="55">^</text></g>
+      <g class="umber-math-glyph" data-case="operator" data-glyph-id="1647" data-ssty="0" data-x="285" data-y="95"><rect class="math-probe" x="285" y="95" width="1" height="1"></rect><text class="umber-math-text" x="285" y="95">∑</text></g>
+      <g class="umber-math-glyph" data-case="limit" data-glyph-id="489" data-ssty="1" data-x="285" data-y="125"><rect class="math-probe" x="285" y="125" width="1" height="1"></rect><text class="umber-math-text" x="285" y="125" style="font-feature-settings:'ssty' 1">n</text></g>
+      <g class="umber-math-glyph" data-case="delimiter" data-glyph-id="4860" data-ssty="0" data-x="370" data-y="95"><rect class="math-probe" x="370" y="95" width="1" height="1"></rect><text class="umber-math-text" x="370" y="95">(</text></g>
+      <g class="umber-math-glyph" data-case="assembly" data-glyph-id="4861" data-ssty="0" data-x="450" data-y="95"><rect class="math-probe" x="450" y="95" width="1" height="1"></rect><path class="umber-math-outline" d="M0 0L18 0L18 70L0 70Z" transform="translate(450 95) scale(1 -1)"></path></g>
     </svg>
   </main>
   <script>
@@ -55,7 +56,14 @@
       try {
         const mathPage = document.querySelector('#math-page').getBoundingClientRect();
         const cases = [...document.querySelectorAll('[data-case]:not(.umber-math-rule)')];
+        const required = ['script', 'fraction', 'radical', 'accent', 'operator', 'limit', 'delimiter', 'assembly'];
+        if (cases.map((item) => item.dataset.case).join(',') !== required.join(',')) {
+          throw new Error('positioned math construction census changed');
+        }
         for (const item of cases) {
+          if (!(Number(item.dataset.glyphId) > 0) || ![0, 1, 2].includes(Number(item.dataset.ssty))) {
+            throw new Error(`${item.dataset.case} lost its authoritative glyph selection`);
+          }
           const probe = item.querySelector('.math-probe').getBoundingClientRect();
           const x = Number(item.dataset.x);
           const y = Number(item.dataset.y);
@@ -76,7 +84,13 @@
         }
         const outline = document.querySelector('.umber-math-outline').getBoundingClientRect();
         if (outline.width <= 0 || outline.height <= 0) throw new Error('outline fallback did not paint');
-        globalThis.__mathContract = { ok: true, cases: cases.map((item) => item.dataset.case), outline: [outline.width, outline.height] };
+        globalThis.__mathContract = {
+          ok: true,
+          cases: required,
+          glyphs: cases.map((item) => Number(item.dataset.glyphId)),
+          coordinates: cases.map((item) => [Number(item.dataset.x), Number(item.dataset.y)]),
+          outline: [outline.width, outline.height],
+        };
       } catch (error) {
         globalThis.__mathContract = { ok: false, error: String(error) };
       }

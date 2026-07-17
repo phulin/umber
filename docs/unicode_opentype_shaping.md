@@ -303,6 +303,14 @@ outside the linear HTML epic and does not block its release.
   text, glyph-id-only outline fallback, and corrupt/cyclic assembly rejection
   across native, WASM, and browser output.
 
+The focused positioned-math gate is implemented with equivalent STIX Two Math
+TTF/WOFF2 resources. Native layout pins one canonical projection digest and
+proves both containers agree; WASM validates the WOFF2 MATH capabilities and
+the explicit `ClassicTfmExact` result for a face without MATH; Chromium checks
+the complete fixed-coordinate construction census, rule geometry, `ssty`,
+exact retained-face loading, and outline paint. Browser antialiasing and
+subpixel ink bounds are intentionally outside parity.
+
 ## Staged rollout
 
 1. **Implemented.** Character-existence and width dispatch fix (font-metrics
