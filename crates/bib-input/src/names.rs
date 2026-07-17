@@ -518,8 +518,9 @@ fn split_list<'a>(value: &'a str, separators: &[&str]) -> Vec<(usize, &'a str)> 
             _ if depth == 0 => {
                 if let Some(separator) = separators.iter().find(|separator| {
                     let end = offset + separator.len();
-                    end <= value.len()
-                        && value[offset..end].eq_ignore_ascii_case(separator)
+                    value[offset..]
+                        .get(..separator.len())
+                        .is_some_and(|candidate| candidate.eq_ignore_ascii_case(separator))
                         && boundary_before(value, offset)
                         && boundary_after(value, end)
                 }) {

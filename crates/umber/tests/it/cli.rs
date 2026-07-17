@@ -84,6 +84,36 @@ fn bib_command_has_exact_native_invocation_outputs_and_statuses() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // Regression exercises the native command with pinned files.
+fn bib_command_processes_pinned_full_bibtex_unicode_names() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/corpus/bib/upstream-2.22/tdata");
+    let temp_dir = tempfile::tempdir().expect("create full BibTeX output directory");
+    let output_path = temp_dir.path().join("full.bib");
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .arg("bib")
+        .arg("--noconf")
+        .arg("--nolog")
+        .arg("--output-format=bibtex")
+        .arg("--output-align")
+        .arg("--output-file")
+        .arg(&output_path)
+        .arg(fixture.join("full-bibtex.bcf"))
+        .output()
+        .expect("run pinned full BibTeX command");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "native bib command failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let generated = fs::read_to_string(output_path).expect("generated full BibTeX output");
+    assert!(generated.contains("H{ü}nenberger, Philippe H."));
+}
+
+#[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn run_publishes_a_dumped_format_from_the_resource_session() {
     let temp_dir = tempfile::tempdir().expect("create format output temp dir");
