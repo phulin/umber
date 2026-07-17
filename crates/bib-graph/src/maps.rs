@@ -47,6 +47,7 @@ pub(crate) fn text(value: &FieldValue) -> Option<&str> {
     match value {
         FieldValue::Literal(value) => Some(value.as_str()),
         FieldValue::Verbatim(value) => Some(value.as_str()),
+        FieldValue::Boolean(_) => None,
         _ => None,
     }
 }

@@ -114,3 +114,33 @@ fn builders_reject_duplicate_and_dangling_members() {
         Err(BuildError::UnknownListEntry(_))
     ));
 }
+
+#[test]
+fn section_preserves_alias_and_undefined_key_order() {
+    let mut section = ProcessedSectionBuilder::new(SectionId::new(0));
+    section.entry(entry("target")).expect("entry is unique");
+    section
+        .alias(
+            EntryId::new("old").expect("valid alias"),
+            EntryId::new("target").expect("valid target"),
+        )
+        .expect("alias is unique and resolved");
+    section
+        .undefined_key(EntryId::new("missing").expect("valid key"))
+        .expect("undefined key is unique");
+    let section = section.freeze();
+    assert_eq!(
+        section
+            .aliases()
+            .map(|(alias, target)| (alias.as_str(), target.as_str()))
+            .collect::<Vec<_>>(),
+        [("old", "target")]
+    );
+    assert_eq!(
+        section
+            .undefined_keys()
+            .map(EntryId::as_str)
+            .collect::<Vec<_>>(),
+        ["missing"]
+    );
+}

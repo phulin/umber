@@ -1,7 +1,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use bib_unicode::CompatibilityVersion;
+use bib_unicode::{CompatibilityVersion, LegacyEncoding};
 use umber_vfs::VirtualPath;
 
 use crate::{
@@ -141,7 +141,32 @@ impl EntryBuilder {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DataList {
     id: DataListId,
-    entries: Arc<[EntryId]>,
+    kind: DataListKind,
+    items: Arc<[DataListItem]>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DataListItem {
+    entry: EntryId,
+    context_fields: Arc<[Field]>,
+}
+
+impl DataListItem {
+    #[must_use]
+    pub const fn entry(&self) -> &EntryId {
+        &self.entry
+    }
+
+    pub fn context_fields(&self) -> impl ExactSizeIterator<Item = &Field> {
+        self.context_fields.iter()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum DataListKind {
+    #[default]
+    Entry,
+    List,
 }
 
 impl DataList {
@@ -157,16 +182,60 @@ impl DataList {
         }
         Ok(Self {
             id,
-            entries: entries.into(),
+            kind: DataListKind::Entry,
+            items: entries
+                .into_iter()
+                .map(|entry| DataListItem {
+                    entry,
+                    context_fields: Arc::from([]),
+                })
+                .collect(),
         })
+    }
+
+    #[must_use]
+    pub const fn with_kind(mut self, kind: DataListKind) -> Self {
+        self.kind = kind;
+        self
+    }
+
+    pub fn with_context_fields(
+        mut self,
+        entry: &EntryId,
+        fields: impl IntoIterator<Item = Field>,
+    ) -> Result<Self, BuildError> {
+        let Some(item) = Arc::make_mut(&mut self.items)
+            .iter_mut()
+            .find(|item| &item.entry == entry)
+        else {
+            return Err(BuildError::UnknownListEntry(entry.clone()));
+        };
+        let fields = fields.into_iter().collect::<Vec<_>>();
+        for (index, field) in fields.iter().enumerate() {
+            if fields[..index]
+                .iter()
+                .any(|existing| existing.id() == field.id())
+            {
+                return Err(BuildError::DuplicateContextField(field.id().clone()));
+            }
+        }
+        item.context_fields = fields.into();
+        Ok(self)
     }
 
     #[must_use]
     pub const fn id(&self) -> &DataListId {
         &self.id
     }
+    #[must_use]
+    pub const fn kind(&self) -> DataListKind {
+        self.kind
+    }
     pub fn entries(&self) -> impl ExactSizeIterator<Item = &EntryId> {
-        self.entries.iter()
+        self.items.iter().map(DataListItem::entry)
+    }
+    pub fn items(&self) -> impl ExactSizeIterator<Item = &DataListItem> {
+        self.items.iter()
     }
 }
 
@@ -175,6 +244,8 @@ pub struct ProcessedSection {
     id: SectionId,
     entries: Arc<[Entry]>,
     lists: Arc<[DataList]>,
+    aliases: Arc<[(EntryId, EntryId)]>,
+    undefined_keys: Arc<[EntryId]>,
 }
 
 impl ProcessedSection {
@@ -188,6 +259,12 @@ impl ProcessedSection {
     pub fn lists(&self) -> impl ExactSizeIterator<Item = &DataList> {
         self.lists.iter()
     }
+    pub fn aliases(&self) -> impl ExactSizeIterator<Item = (&EntryId, &EntryId)> {
+        self.aliases.iter().map(|(alias, target)| (alias, target))
+    }
+    pub fn undefined_keys(&self) -> impl ExactSizeIterator<Item = &EntryId> {
+        self.undefined_keys.iter()
+    }
     #[must_use]
     pub fn entry(&self, id: &EntryId) -> Option<&Entry> {
         self.entries.iter().find(|entry| entry.id() == id)
@@ -199,6 +276,8 @@ pub struct ProcessedSectionBuilder {
     id: SectionId,
     entries: Vec<Entry>,
     lists: Vec<DataList>,
+    aliases: Vec<(EntryId, EntryId)>,
+    undefined_keys: Vec<EntryId>,
 }
 
 impl ProcessedSectionBuilder {
@@ -208,6 +287,8 @@ impl ProcessedSectionBuilder {
             id,
             entries: Vec::new(),
             lists: Vec::new(),
+            aliases: Vec::new(),
+            undefined_keys: Vec::new(),
         }
     }
 
@@ -237,12 +318,33 @@ impl ProcessedSectionBuilder {
         Ok(self)
     }
 
+    pub fn alias(&mut self, alias: EntryId, target: EntryId) -> Result<&mut Self, BuildError> {
+        if self.aliases.iter().any(|(existing, _)| existing == &alias) {
+            return Err(BuildError::DuplicateAlias(alias));
+        }
+        if !self.entries.iter().any(|entry| entry.id() == &target) {
+            return Err(BuildError::UnknownAliasTarget(target));
+        }
+        self.aliases.push((alias, target));
+        Ok(self)
+    }
+
+    pub fn undefined_key(&mut self, key: EntryId) -> Result<&mut Self, BuildError> {
+        if self.undefined_keys.contains(&key) {
+            return Err(BuildError::DuplicateUndefinedKey(key));
+        }
+        self.undefined_keys.push(key);
+        Ok(self)
+    }
+
     #[must_use]
     pub fn freeze(self) -> ProcessedSection {
         ProcessedSection {
             id: self.id,
             entries: self.entries.into(),
             lists: self.lists.into(),
+            aliases: self.aliases.into(),
+            undefined_keys: self.undefined_keys.into(),
         }
     }
 }
@@ -358,12 +460,43 @@ pub enum OutputFormat {
 pub struct OutputRequest {
     path: VirtualPath,
     format: OutputFormat,
+    encoding: LegacyEncoding,
+    newline: OutputNewline,
+    max_bytes: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum OutputNewline {
+    #[default]
+    Lf,
+    CrLf,
 }
 
 impl OutputRequest {
     #[must_use]
     pub const fn new(path: VirtualPath, format: OutputFormat) -> Self {
-        Self { path, format }
+        Self {
+            path,
+            format,
+            encoding: LegacyEncoding::Utf8,
+            newline: OutputNewline::Lf,
+            max_bytes: 64 * 1024 * 1024,
+        }
+    }
+    #[must_use]
+    pub const fn with_encoding(mut self, encoding: LegacyEncoding) -> Self {
+        self.encoding = encoding;
+        self
+    }
+    #[must_use]
+    pub const fn with_newline(mut self, newline: OutputNewline) -> Self {
+        self.newline = newline;
+        self
+    }
+    #[must_use]
+    pub const fn with_max_bytes(mut self, max_bytes: usize) -> Self {
+        self.max_bytes = max_bytes;
+        self
     }
     #[must_use]
     pub const fn path(&self) -> &VirtualPath {
@@ -372,6 +505,18 @@ impl OutputRequest {
     #[must_use]
     pub const fn format(&self) -> OutputFormat {
         self.format
+    }
+    #[must_use]
+    pub const fn encoding(&self) -> LegacyEncoding {
+        self.encoding
+    }
+    #[must_use]
+    pub const fn newline(&self) -> OutputNewline {
+        self.newline
+    }
+    #[must_use]
+    pub const fn max_bytes(&self) -> usize {
+        self.max_bytes
     }
 }
 
@@ -409,6 +554,10 @@ pub enum BuildError {
     UnknownListEntry(EntryId),
     DuplicateList(DataListId),
     DuplicateSection(SectionId),
+    DuplicateAlias(EntryId),
+    UnknownAliasTarget(EntryId),
+    DuplicateUndefinedKey(EntryId),
+    DuplicateContextField(FieldId),
 }
 
 impl fmt::Display for BuildError {

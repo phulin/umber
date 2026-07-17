@@ -354,6 +354,7 @@ fn field_text(value: &FieldValue) -> Option<String> {
         FieldValue::Literal(value) => Some(value.as_str().to_owned()),
         FieldValue::Verbatim(value) => Some(value.as_str().to_owned()),
         FieldValue::Integer(value) => Some(value.to_string()),
+        FieldValue::Boolean(value) => Some(value.to_string()),
         FieldValue::LiteralList(values) => Some(
             values
                 .iter()

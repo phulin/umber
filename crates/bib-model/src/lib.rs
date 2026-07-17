@@ -16,9 +16,9 @@ pub use diagnostic::{
     BibDiagnostic, BibDiagnosticCode, BibSeverity, DiagnosticBuilder, DiagnosticError,
 };
 pub use document::{
-    Annotation, BibConfiguration, BibConfigurationBuilder, BuildError, DataList, Entry,
-    EntryBuilder, GeneratedFile, OutputFormat, OutputRequest, ProcessedBibliography,
-    ProcessedBibliographyBuilder, ProcessedSection, ProcessedSectionBuilder,
+    Annotation, BibConfiguration, BibConfigurationBuilder, BuildError, DataList, DataListItem,
+    DataListKind, Entry, EntryBuilder, GeneratedFile, OutputFormat, OutputNewline, OutputRequest,
+    ProcessedBibliography, ProcessedBibliographyBuilder, ProcessedSection, ProcessedSectionBuilder,
 };
 pub use identifier::{
     DataListId, EntryId, EntryType, FieldId, IdentifierError, OptionId, SectionId, TransformationId,

@@ -426,6 +426,7 @@ pub enum FieldValue {
     Literal(Literal),
     Verbatim(Verbatim),
     Integer(i64),
+    Boolean(bool),
     NameList(NameList),
     LiteralList(LiteralList),
     KeyList(Vec<crate::EntryId>),

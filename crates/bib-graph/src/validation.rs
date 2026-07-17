@@ -80,6 +80,7 @@ fn kind(value: &FieldValue) -> &'static str {
         FieldValue::Literal(_) => "literal",
         FieldValue::Verbatim(_) => "verbatim",
         FieldValue::Integer(_) => "integer",
+        FieldValue::Boolean(_) => "boolean",
         FieldValue::NameList(_) => "name-list",
         FieldValue::LiteralList(_) => "literal-list",
         FieldValue::KeyList(_) => "key-list",
