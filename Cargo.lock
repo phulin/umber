@@ -1230,6 +1230,7 @@ version = "0.1.0"
 dependencies = [
  "flate2",
  "pdf-writer",
+ "rustybuzz",
  "sha2",
  "test-support",
  "tex-arith",

@@ -136,13 +136,20 @@ MathEnd
 `tex-typeset` derives these coordinates from validated MATH constants, italic
 corrections, math kern, top-accent attachments, variants, and assemblies.
 The binary schema, validation, hashing, and native/WASM round trips preserve
-this stream; HTML rendering is the next output stage. HTML serializes a fixed
-zero-layout SVG at the recorded anchor. When the
+this stream. HTML serializes a fixed zero-layout SVG at the recorded anchor. When the
 selected glyph is reproducible through cmap, it emits positioned `<text>`
 using the retained WOFF2. Script-style substitutions use the recorded `ssty`
 feature. When a selected MATH variant or assembly part is addressable only by
 glyph id, the serializer emits its validated outline as a positioned SVG
 `<path>`. Fraction and radical rules are explicit rectangles or paths.
+
+The serializer resolves math resources by the complete OpenType instance
+identity, decodes the retained WOFF2 under the ordinary HTML asset bounds, and
+recomputes its canonical program identity before publishing any markup. A cmap
+event is accepted only when shaping its scalar with the recorded `ssty` value
+reproduces the committed glyph id. Outline events are extracted from that same
+validated decoded face; missing outlines and mismatched, corrupt, or
+unpublished programs fail the whole HTML result.
 
 Engine coordinates and glyph choice are authoritative. Browser font
 rasterization may differ in antialiasing and subpixel ink, but no glyph can
@@ -275,8 +282,10 @@ traversal before serialization. It rejects a one-sp change in page
 origin, run anchor/baseline, rule edge, leader instance, event order, or special
 anchor. It explicitly accepts changed child glyph positions, advances,
 ligature selection, ink bounds, and run width. Browser tests inspect page,
-rule, and baseline-probe rectangles only; they never inspect glyph children or
-use screenshot thresholds.
+rule, baseline-probe, and fixed math-event anchors without screenshot
+thresholds. The math fixture covers scripts, fractions, radicals, accents,
+operators, limits, delimiters, and assemblies, including retained-font text,
+`ssty`, and outline fallback.
 
 The hermetic gate covers all 61 committed `dvi`, `page`, `math`, `align`, and
 `leaders` documents. The Firefox wasm-bindgen gate and optimized Chrome package

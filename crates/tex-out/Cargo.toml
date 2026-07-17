@@ -16,6 +16,7 @@ bench = false
 [dependencies]
 flate2.workspace = true
 pdf-writer.workspace = true
+rustybuzz.workspace = true
 sha2.workspace = true
 tex-arith = { path = "../tex-arith" }
 tex-content = { path = "../tex-content" }

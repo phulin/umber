@@ -5,6 +5,7 @@ mod tests;
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::fmt::Write as _;
 
 use sha2::{Digest, Sha256};
 use tex_arith::Scaled;
@@ -13,7 +14,10 @@ use crate::positioned::{
     BoxKind, PositionedError, PositionedEvent, PositionedLimits, PositionedPage, TextUnit,
     lower_page_with_limits,
 };
-use crate::{ContentHash, FontResource, PageArtifact};
+use crate::{
+    ContentHash, FontResource, MathGlyph, MathGlyphSelection, MathOutputEvent, MathStart,
+    PageArtifact,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct HtmlFontKey {
@@ -22,6 +26,8 @@ pub struct HtmlFontKey {
     pub tfm_checksum: u32,
     pub design_size_raw: i32,
     pub at_size_raw: i32,
+    pub opentype_program_identity: Option<tex_fonts::FontProgramIdentity>,
+    pub opentype_instance_identity: Option<tex_fonts::FontInstanceIdentity>,
 }
 
 impl From<&FontResource> for HtmlFontKey {
@@ -32,6 +38,8 @@ impl From<&FontResource> for HtmlFontKey {
             tfm_checksum: font.tfm_checksum,
             design_size_raw: font.design_size.raw(),
             at_size_raw: font.at_size.raw(),
+            opentype_program_identity: font.opentype.as_ref().map(|font| font.program_identity),
+            opentype_instance_identity: font.opentype.as_ref().map(|font| font.instance_identity),
         }
     }
 }
@@ -179,6 +187,10 @@ pub enum HtmlError {
     InvalidEncodingLength { font: String, count: usize },
     MissingTextMapping { font: String, code: u8 },
     MissingFontGlyph { font: String, code: u8, ch: char },
+    MissingMathFontInstance,
+    MathGlyphMismatch { glyph_id: u16 },
+    MissingMathGlyphOutline { glyph_id: u16 },
+    InvalidMathEventSequence,
     UnsafeTextMapping { font: String, code: u8 },
     EmptyFontAsset { font: String },
     CorruptFontAsset { font: String },
@@ -229,6 +241,19 @@ impl std::fmt::Display for HtmlError {
                     f,
                     "web font {font} has no glyph for code {code} mapping {ch:?}"
                 )
+            }
+            Self::MissingMathFontInstance => {
+                f.write_str("HTML math references an unavailable OpenType font instance")
+            }
+            Self::MathGlyphMismatch { glyph_id } => write!(
+                f,
+                "HTML math cmap and ssty selection does not reproduce glyph {glyph_id}"
+            ),
+            Self::MissingMathGlyphOutline { glyph_id } => {
+                write!(f, "HTML math glyph {glyph_id} has no validated outline")
+            }
+            Self::InvalidMathEventSequence => {
+                f.write_str("HTML math event stream is not properly nested")
             }
             Self::UnsafeTextMapping { font, code } => {
                 write!(f, "web font {font} code {code} maps to unsafe HTML text")
@@ -415,6 +440,9 @@ const BASE_CSS: &str = concat!(
     ".umber-run{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;white-space:pre;unicode-bidi:isolate-override;font-kerning:normal;font-variant-ligatures:common-ligatures;font-synthesis:none;font-optical-sizing:none}\n",
     ".umber-run-text{white-space:pre;fill:currentColor}\n",
     ".umber-baseline{fill:transparent;pointer-events:none}\n",
+    ".umber-math{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;color:currentColor}\n",
+    ".umber-math-text,.umber-math-outline,.umber-math-rule{fill:currentColor}\n",
+    ".umber-math-baseline{fill:transparent;pointer-events:none}\n",
     ".umber-special{position:absolute;width:0;height:0;overflow:hidden;pointer-events:none}\n",
     ".umber-a11y{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}\n",
     "@media print{.umber-document{background:#fff}.umber-page{break-after:page;margin:0}}\n",
@@ -425,6 +453,7 @@ struct ResolvedFont {
     web: WebFont,
     digest_hex: String,
     family: String,
+    sfnt: Vec<u8>,
 }
 
 fn validate_font(
@@ -479,6 +508,37 @@ fn validate_font(
             font: font.name.clone(),
         });
     }
+    if let Some(opentype) = &font.opentype {
+        let key = tex_fonts::FontRequestKey::new(
+            "umber-html-validation",
+            0,
+            tex_fonts::VariationSelection::default(),
+            tex_fonts::FontFeaturePolicy::default(),
+        )
+        .map_err(|_| HtmlError::CorruptFontAsset {
+            font: font.name.clone(),
+        })?;
+        let request = tex_fonts::FontRequest {
+            key: key.clone(),
+            accepted_containers: tex_fonts::AcceptedFontContainers::WASM,
+            purposes: tex_fonts::FontPurposes::LAYOUT_AND_HTML,
+        };
+        tex_fonts::OpenTypeFont::parse(
+            &request,
+            tex_fonts::ResolvedFont {
+                request: key,
+                container: tex_fonts::FontContainer::Woff2,
+                bytes: web.woff2.clone(),
+                declared_object_sha256: Some(opentype.object_identity),
+                declared_program_identity: Some(opentype.program_identity),
+                provenance: None,
+            },
+            tex_fonts::FontLimits::default(),
+        )
+        .map_err(|_| HtmlError::CorruptFontAsset {
+            font: font.name.clone(),
+        })?;
+    }
     let declared_size = web
         .woff2
         .get(16..20)
@@ -524,6 +584,7 @@ fn validate_font(
         web,
         digest_hex,
         family,
+        sfnt,
     })
 }
 
@@ -846,6 +907,7 @@ fn write_page(
             message: "unclosed color or link scope at page end".to_owned(),
         });
     }
+    write_math(out, page, fonts, options)?;
     out.push_str("</div><div class=\"umber-a11y\">");
     escape_text(&accessible, out);
     out.push_str("</div></section>\n");
@@ -892,6 +954,258 @@ fn write_css_tag(out: &mut String, tag: tex_fonts::OpenTypeTag) {
             b'\\' => out.push_str("\\5c "),
             _ => out.push(char::from(byte)),
         }
+    }
+}
+
+fn write_math(
+    out: &mut String,
+    page: &PositionedPage,
+    fonts: &BTreeMap<HtmlFontKey, ResolvedFont>,
+    options: &HtmlOptions,
+) -> Result<(), HtmlError> {
+    let by_instance = page
+        .fonts
+        .iter()
+        .filter_map(|artifact| {
+            let opentype = artifact.opentype.as_ref()?;
+            fonts
+                .get(&HtmlFontKey::from(artifact))
+                .map(|font| (opentype.instance_identity, (font, opentype)))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut active: Option<MathStart> = None;
+    for (ordinal, event) in page.math_events.iter().enumerate() {
+        match event {
+            MathOutputEvent::Start(start) if active.is_none() => {
+                active = Some(*start);
+                out.push_str("<svg class=\"umber-math\" aria-hidden=\"true\" data-umber-math=\"");
+                out.push_str(&start.id.to_string());
+                out.push('"');
+                attr_sp(out, "x", start.x);
+                attr_sp(out, "baseline", start.baseline);
+                attr_sp(out, "width", start.width);
+                attr_sp(out, "height", start.height);
+                attr_sp(out, "depth", start.depth);
+                out.push_str("><rect class=\"umber-math-baseline\" x=\"");
+                css_px(out, start.x, page.mag);
+                out.push_str("\" y=\"");
+                css_px(out, start.baseline, page.mag);
+                out.push_str("\" width=\"1\" height=\"1\"></rect>");
+            }
+            MathOutputEvent::Glyph(glyph) if active.is_some() => {
+                let (font, opentype) = by_instance
+                    .get(&glyph.font_instance)
+                    .copied()
+                    .ok_or(HtmlError::MissingMathFontInstance)?;
+                write_math_glyph(out, glyph, font, opentype, page.mag, ordinal)?;
+            }
+            MathOutputEvent::Rule(rule) if active.is_some() => {
+                out.push_str("<rect class=\"umber-math-rule\" data-umber-math-event=\"");
+                out.push_str(&ordinal.to_string());
+                out.push('"');
+                geometry_attrs(out, rule.x, rule.y, rule.width, rule.height);
+                out.push_str(" x=\"");
+                css_px(out, rule.x, page.mag);
+                out.push_str("\" y=\"");
+                css_px(out, rule.y, page.mag);
+                out.push_str("\" width=\"");
+                css_px(out, rule.width, page.mag);
+                out.push_str("\" height=\"");
+                css_px(out, rule.height, page.mag);
+                out.push_str("\"></rect>");
+            }
+            MathOutputEvent::End if active.take().is_some() => out.push_str("</svg>\n"),
+            _ => return Err(HtmlError::InvalidMathEventSequence),
+        }
+        check_html_size(out, options)?;
+    }
+    if active.is_some() {
+        return Err(HtmlError::InvalidMathEventSequence);
+    }
+    Ok(())
+}
+
+fn write_math_glyph(
+    out: &mut String,
+    glyph: &MathGlyph,
+    font: &ResolvedFont,
+    opentype: &crate::OpenTypeFontResource,
+    mag: i32,
+    ordinal: usize,
+) -> Result<(), HtmlError> {
+    out.push_str("<g class=\"umber-math-glyph\" data-umber-math-event=\"");
+    out.push_str(&ordinal.to_string());
+    out.push_str("\" data-umber-glyph-id=\"");
+    out.push_str(&glyph.glyph_id.to_string());
+    out.push_str("\" data-umber-font-instance=\"");
+    out.push_str(&hex(&glyph.font_instance.bytes()));
+    out.push_str("\" data-umber-ssty=\"");
+    out.push_str(&glyph.ssty.to_string());
+    out.push('"');
+    attr_sp(out, "x", glyph.x);
+    attr_sp(out, "baseline", glyph.baseline);
+    attr_sp(out, "width", glyph.width);
+    attr_sp(out, "height", glyph.height);
+    attr_sp(out, "depth", glyph.depth);
+    out.push('>');
+    match glyph.selection {
+        MathGlyphSelection::Cmap { scalar } => {
+            let ch = char::from_u32(scalar).ok_or(HtmlError::MathGlyphMismatch {
+                glyph_id: glyph.glyph_id,
+            })?;
+            if selected_glyph(font, opentype, ch, glyph.ssty) != Some(glyph.glyph_id) {
+                return Err(HtmlError::MathGlyphMismatch {
+                    glyph_id: glyph.glyph_id,
+                });
+            }
+            out.push_str("<text class=\"umber-math-text\" direction=\"ltr\" x=\"");
+            css_px(out, glyph.x, mag);
+            out.push_str("\" y=\"");
+            css_px(out, glyph.baseline, mag);
+            out.push_str("\" style=\"font-family:'");
+            out.push_str(&font.family);
+            out.push_str("';font-size:");
+            css_px(out, Scaled::from_raw(font.web.key.at_size_raw), mag);
+            out.push_str(";font-feature-settings:'ssty' ");
+            out.push_str(&glyph.ssty.to_string());
+            out.push_str(";font-variation-settings:");
+            write_variation_settings(out, &opentype.variation);
+            out.push_str("\">");
+            escape_text(&ch.to_string(), out);
+            out.push_str("</text>");
+        }
+        MathGlyphSelection::OutlineFallback => {
+            let (path, units_per_em) = outline_path(font, opentype, glyph.glyph_id)?;
+            out.push_str("<path class=\"umber-math-outline\" d=\"");
+            out.push_str(&path);
+            out.push_str("\" transform=\"translate(");
+            css_number(out, glyph.x, mag, 1);
+            out.push(' ');
+            css_number(out, glyph.baseline, mag, 1);
+            out.push_str(") scale(");
+            css_number(
+                out,
+                Scaled::from_raw(font.web.key.at_size_raw),
+                mag,
+                i128::from(units_per_em),
+            );
+            out.push(' ');
+            css_number(
+                out,
+                Scaled::from_raw(-font.web.key.at_size_raw),
+                mag,
+                i128::from(units_per_em),
+            );
+            out.push_str(")\"></path>");
+        }
+    }
+    out.push_str("</g>");
+    Ok(())
+}
+
+fn selected_glyph(
+    font: &ResolvedFont,
+    opentype: &crate::OpenTypeFontResource,
+    ch: char,
+    ssty: u8,
+) -> Option<u16> {
+    if ssty == 0 {
+        return ttf_parser::Face::parse(&font.sfnt, opentype.face_index)
+            .ok()?
+            .glyph_index(ch)
+            .map(|glyph| glyph.0);
+    }
+    let mut face = rustybuzz::Face::from_slice(&font.sfnt, opentype.face_index)?;
+    let variations = opentype
+        .variation
+        .coordinates()
+        .iter()
+        .map(|coordinate| rustybuzz::Variation {
+            tag: rustybuzz::ttf_parser::Tag::from_bytes(&coordinate.tag.bytes()),
+            value: coordinate.value as f32 / 65_536.0,
+        })
+        .collect::<Vec<_>>();
+    face.set_variations(&variations);
+    let mut buffer = rustybuzz::UnicodeBuffer::new();
+    let mut encoded = [0; 4];
+    buffer.push_str(ch.encode_utf8(&mut encoded));
+    let feature = rustybuzz::Feature::new(
+        rustybuzz::ttf_parser::Tag::from_bytes(b"ssty"),
+        u32::from(ssty),
+        ..,
+    );
+    let shaped = rustybuzz::shape(&face, &[feature], buffer);
+    let infos = shaped.glyph_infos();
+    (infos.len() == 1)
+        .then(|| u16::try_from(infos[0].glyph_id).ok())
+        .flatten()
+}
+
+fn outline_path(
+    font: &ResolvedFont,
+    opentype: &crate::OpenTypeFontResource,
+    glyph_id: u16,
+) -> Result<(String, u16), HtmlError> {
+    let mut face = ttf_parser::Face::parse(&font.sfnt, opentype.face_index).map_err(|_| {
+        HtmlError::CorruptFontAsset {
+            font: font.web.key.name.clone(),
+        }
+    })?;
+    for coordinate in opentype.variation.coordinates() {
+        let tag = ttf_parser::Tag::from_bytes(&coordinate.tag.bytes());
+        let value = coordinate.value as f32 / 65_536.0;
+        face.set_variation(tag, value)
+            .ok_or_else(|| HtmlError::CorruptFontAsset {
+                font: font.web.key.name.clone(),
+            })?;
+    }
+    let mut builder = SvgOutline::default();
+    if face
+        .outline_glyph(ttf_parser::GlyphId(glyph_id), &mut builder)
+        .is_none()
+        || builder.invalid
+        || builder.path.is_empty()
+    {
+        return Err(HtmlError::MissingMathGlyphOutline { glyph_id });
+    }
+    Ok((builder.path, face.units_per_em()))
+}
+
+#[derive(Default)]
+struct SvgOutline {
+    path: String,
+    invalid: bool,
+}
+
+impl SvgOutline {
+    fn point(&mut self, command: char, values: &[f32]) {
+        if values.iter().any(|value| !value.is_finite()) {
+            self.invalid = true;
+            return;
+        }
+        self.path.push(command);
+        for value in values {
+            self.path.push(' ');
+            let _ = write!(self.path, "{value}");
+        }
+    }
+}
+
+impl ttf_parser::OutlineBuilder for SvgOutline {
+    fn move_to(&mut self, x: f32, y: f32) {
+        self.point('M', &[x, y]);
+    }
+    fn line_to(&mut self, x: f32, y: f32) {
+        self.point('L', &[x, y]);
+    }
+    fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
+        self.point('Q', &[x1, y1, x, y]);
+    }
+    fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
+        self.point('C', &[x1, y1, x2, y2, x, y]);
+    }
+    fn close(&mut self) {
+        self.path.push('Z');
     }
 }
 
@@ -1163,14 +1477,20 @@ fn geometry_style(out: &mut String, x: Scaled, y: Scaled, width: Scaled, height:
 }
 
 fn css_px(out: &mut String, value: Scaled, mag: i32) {
+    css_number(out, value, mag, 1);
+    out.push_str("px");
+}
+
+fn css_number(out: &mut String, value: Scaled, mag: i32, extra_denominator: i128) {
     const DENOMINATOR: i128 = 65_536 * 5 * 7_227;
     const PLACES: i128 = 100_000_000;
     let numerator = i128::from(value.raw()) * i128::from(mag) * 48;
     let negative = numerator < 0;
     let magnitude = numerator.abs();
-    let mut scaled = magnitude * PLACES / DENOMINATOR;
-    let remainder = magnitude * PLACES % DENOMINATOR;
-    if remainder * 2 >= DENOMINATOR {
+    let denominator = DENOMINATOR * extra_denominator;
+    let mut scaled = magnitude * PLACES / denominator;
+    let remainder = magnitude * PLACES % denominator;
+    if remainder * 2 >= denominator {
         scaled += 1;
     }
     if negative && scaled != 0 {
@@ -1183,7 +1503,6 @@ fn css_px(out: &mut String, value: Scaled, mag: i32) {
         out.push('0');
     }
     out.push_str(&fraction);
-    out.push_str("px");
 }
 
 fn write_codes(out: &mut String, units: &[TextUnit]) {

@@ -178,6 +178,7 @@ async function integration() {
 	const generatedGeometry = await installAndMeasureGeneratedHtml(
 		htmlFirst.html,
 	);
+	const mathGeometry = await verifyPositionedMathPrototype();
 	const clickSource = assertClickToSource(
 		retained,
 		htmlFiles.get("html.tex"),
@@ -321,6 +322,7 @@ async function integration() {
 		htmlBytes: htmlFirst.html.byteLength,
 		clickSource,
 		geometry: generatedGeometry,
+		mathGeometry,
 	};
 }
 
@@ -347,6 +349,27 @@ function serializedPageMargins(bytes) {
 			top -
 			number(root, "data-umber-height-sp"),
 	};
+}
+
+async function verifyPositionedMathPrototype() {
+	const iframe = document.createElement("iframe");
+	iframe.style.cssText = "border:0;width:900px;height:500px";
+	document.body.append(iframe);
+	const loaded = new Promise((resolve) =>
+		iframe.addEventListener("load", resolve, { once: true }),
+	);
+	iframe.src = "/html-prototype.html";
+	await loaded;
+	for (let attempt = 0; attempt < 200; attempt += 1) {
+		if (iframe.contentWindow.__mathContract !== undefined) {
+			const result = iframe.contentWindow.__mathContract;
+			assert(result.ok, result.error ?? "positioned math prototype failed");
+			iframe.remove();
+			return result;
+		}
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+	throw new Error("positioned math prototype timed out");
 }
 
 function assertClickToSource(session, source, encoding) {

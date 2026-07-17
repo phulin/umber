@@ -2,7 +2,8 @@ use sha2::{Digest, Sha256};
 use tex_arith::Scaled;
 
 use crate::{
-    BoxNode, ContentHash, FontResource, GlueOrder, GlueSetRatio, GlueSign, JobInfo, PageEffect,
+    BoxNode, ContentHash, FontResource, GlueOrder, GlueSetRatio, GlueSign, JobInfo, MathGlyph,
+    MathGlyphSelection, MathOutputEvent, MathRule, MathStart, OpenTypeFontResource, PageEffect,
     PageNode, UnvalidatedPageArtifact,
 };
 
@@ -34,8 +35,9 @@ fn rendered_output_identity_has_one_canonical_safe_encoding() {
 fn manifest_reuses_one_retained_object_and_program_derived_family() {
     let mut page = page();
     let bytes = include_bytes!("../../../umber-wasm/assets/cmu-serif-500-roman.woff2");
-    page.testing_mut().fonts[0].opentype = Some(crate::OpenTypeFontResource {
-        program_identity: tex_fonts::FontProgramIdentity::from_bytes([9; 32]),
+    let program = parsed_font("cmu", bytes).identity;
+    page.testing_mut().fonts[0].opentype = Some(OpenTypeFontResource {
+        program_identity: program,
         object_identity: tex_fonts::FontObjectIdentity::for_bytes(bytes),
         instance_identity: tex_fonts::FontInstanceIdentity::from_bytes([8; 32]),
         container: tex_fonts::FontContainer::Woff2,
@@ -68,13 +70,43 @@ fn manifest_reuses_one_retained_object_and_program_derived_family() {
     assert_eq!(output.assets.len(), 1);
     assert!(output.assets[0].path.starts_with("sha256-"));
     let html = String::from_utf8(output.html).expect("UTF-8 HTML");
-    assert!(html.contains("umber-font-090909090909090909090909"));
+    assert!(html.contains(&format!(
+        "umber-font-{}",
+        &super::hex(&program.bytes())[..24]
+    )));
     assert!(html.contains("fonts/sha256-"));
     assert!(html.contains("font-variation-settings:'wght' 700"));
     assert!(html.contains("font-feature-settings:'salt' 2"));
     assert!(html.contains("direction=\"rtl\" lang=\"ar\""));
     assert!(html.contains("data-umber-script=\"arab\""));
     assert_eq!(html.matches("data-umber-revision=\"1\"").count(), 2);
+}
+
+fn parsed_font(name: &str, bytes: &[u8]) -> tex_fonts::OpenTypeFont {
+    let key = tex_fonts::FontRequestKey::new(
+        name,
+        0,
+        tex_fonts::VariationSelection::default(),
+        tex_fonts::FontFeaturePolicy::default(),
+    )
+    .expect("fixture key");
+    tex_fonts::OpenTypeFont::parse(
+        &tex_fonts::FontRequest {
+            key: key.clone(),
+            accepted_containers: tex_fonts::AcceptedFontContainers::WASM,
+            purposes: tex_fonts::FontPurposes::LAYOUT_AND_HTML,
+        },
+        tex_fonts::ResolvedFont {
+            request: key,
+            container: tex_fonts::FontContainer::Woff2,
+            bytes: bytes.to_vec(),
+            declared_object_sha256: None,
+            declared_program_identity: None,
+            provenance: None,
+        },
+        tex_fonts::FontLimits::default(),
+    )
+    .expect("validated fixture font")
 }
 
 struct Resolver {
@@ -125,6 +157,207 @@ impl HtmlFontResolver for SingleScalarResolver {
         web.encoding[usize::from(b'B')] = Some("B".to_owned());
         Ok(web)
     }
+}
+
+struct MathResolver;
+
+impl HtmlFontResolver for MathResolver {
+    fn resolve(&mut self, font: &FontResource) -> Result<WebFont, String> {
+        let bytes =
+            include_bytes!("../../../tex-fonts/tests/fixtures/stix-two-math.woff2").to_vec();
+        Ok(WebFont {
+            key: HtmlFontKey::from(font),
+            sha256: Sha256::digest(&bytes).into(),
+            woff2: bytes,
+            encoding: vec![None; 256],
+            provenance: "STIX Two Math under the SIL OFL".to_owned(),
+            embeddable: true,
+        })
+    }
+}
+
+#[test]
+fn positioned_math_uses_ssty_text_rules_and_validated_outline_paths() {
+    let bytes = include_bytes!("../../../tex-fonts/tests/fixtures/stix-two-math.woff2");
+    let parsed = parsed_font("stix-two-math", bytes);
+    let instance = tex_fonts::FontInstanceIdentity::from_bytes([0x5a; 32]);
+    let mut page = page();
+    let PageNode::HList(root) = &mut page.testing_mut().root else {
+        unreachable!()
+    };
+    root.children.clear();
+    page.testing_mut().fonts[0].name = "stix-two-math".to_owned();
+    page.testing_mut().fonts[0].opentype = Some(OpenTypeFontResource {
+        program_identity: parsed.identity,
+        object_identity: parsed.object_identity,
+        instance_identity: instance,
+        container: tex_fonts::FontContainer::Woff2,
+        face_index: 0,
+        variation: tex_fonts::VariationSelection::default(),
+        features: tex_fonts::FontFeaturePolicy::default(),
+        direction: tex_fonts::WritingDirection::LeftToRight,
+        script: None,
+        language: None,
+        encoding_map_version: None,
+        encoding_map_identity: None,
+        fontdimen_synthesis_version: None,
+    });
+    let scalar = 'A';
+    let text_glyph = selected_fixture_glyph(bytes, scalar, 2);
+    let outline_glyph = parsed
+        .math
+        .as_ref()
+        .and_then(|math| math.variants.as_ref())
+        .and_then(|variants| {
+            variants
+                .vertical
+                .values()
+                .chain(variants.horizontal.values())
+                .find_map(|construction| {
+                    construction
+                        .assembly
+                        .as_ref()
+                        .and_then(|assembly| assembly.parts.first())
+                        .map(|part| part.glyph_id)
+                        .or_else(|| {
+                            construction
+                                .variants
+                                .first()
+                                .map(|variant| variant.glyph_id)
+                        })
+                })
+        })
+        .expect("STIX has a variant or assembly outline");
+    page.testing_mut().math_events = vec![
+        MathOutputEvent::Start(MathStart {
+            id: 91,
+            x: sp(-20),
+            baseline: sp(300),
+            width: sp(800),
+            height: sp(240),
+            depth: sp(60),
+        }),
+        MathOutputEvent::Glyph(MathGlyph {
+            font_instance: instance,
+            glyph_id: text_glyph,
+            selection: MathGlyphSelection::Cmap {
+                scalar: scalar as u32,
+            },
+            ssty: 2,
+            x: sp(10),
+            baseline: sp(200),
+            width: sp(100),
+            height: sp(120),
+            depth: sp(20),
+        }),
+        MathOutputEvent::Rule(MathRule {
+            x: sp(120),
+            y: sp(150),
+            width: sp(300),
+            height: sp(12),
+        }),
+        MathOutputEvent::Glyph(MathGlyph {
+            font_instance: instance,
+            glyph_id: outline_glyph,
+            selection: MathGlyphSelection::OutlineFallback,
+            ssty: 0,
+            x: sp(450),
+            baseline: sp(220),
+            width: sp(140),
+            height: sp(180),
+            depth: sp(30),
+        }),
+        MathOutputEvent::End,
+    ];
+    let output = write_html(&[page], &mut MathResolver, &HtmlOptions::default())
+        .expect("positioned math HTML");
+    let html = String::from_utf8(output.html).expect("UTF-8 HTML");
+    assert!(html.contains("class=\"umber-math\""));
+    assert!(html.contains("data-umber-math=\"91\" data-umber-x-sp=\"-20\""));
+    assert!(html.contains("font-feature-settings:'ssty' 2"));
+    assert!(html.contains(">A</text>"));
+    assert!(html.contains("class=\"umber-math-rule\""));
+    assert!(html.contains("class=\"umber-math-outline\" d=\"M"));
+    assert!(html.contains("transform=\"translate("));
+}
+
+#[test]
+fn positioned_math_rejects_unpublished_programs_and_unreproducible_cmap_glyphs() {
+    let bytes = include_bytes!("../../../tex-fonts/tests/fixtures/stix-two-math.woff2");
+    let parsed = parsed_font("stix-two-math", bytes);
+    let instance = tex_fonts::FontInstanceIdentity::from_bytes([0x33; 32]);
+    let mut page = page();
+    let PageNode::HList(root) = &mut page.testing_mut().root else {
+        unreachable!()
+    };
+    root.children.clear();
+    page.testing_mut().fonts[0].name = "stix-two-math".to_owned();
+    page.testing_mut().fonts[0].opentype = Some(OpenTypeFontResource {
+        program_identity: tex_fonts::FontProgramIdentity::from_bytes([0xff; 32]),
+        object_identity: parsed.object_identity,
+        instance_identity: instance,
+        container: tex_fonts::FontContainer::Woff2,
+        face_index: 0,
+        variation: tex_fonts::VariationSelection::default(),
+        features: tex_fonts::FontFeaturePolicy::default(),
+        direction: tex_fonts::WritingDirection::LeftToRight,
+        script: None,
+        language: None,
+        encoding_map_version: None,
+        encoding_map_identity: None,
+        fontdimen_synthesis_version: None,
+    });
+    assert!(matches!(
+        write_html(&[page.clone()], &mut MathResolver, &HtmlOptions::default()),
+        Err(HtmlError::CorruptFontAsset { .. })
+    ));
+
+    page.testing_mut().fonts[0]
+        .opentype
+        .as_mut()
+        .expect("test font has OpenType identity")
+        .program_identity = parsed.identity;
+    page.testing_mut().math_events = vec![
+        MathOutputEvent::Start(MathStart {
+            id: 1,
+            x: sp(0),
+            baseline: sp(0),
+            width: sp(1),
+            height: sp(1),
+            depth: sp(0),
+        }),
+        MathOutputEvent::Glyph(MathGlyph {
+            font_instance: instance,
+            glyph_id: u16::MAX,
+            selection: MathGlyphSelection::Cmap { scalar: 'A' as u32 },
+            ssty: 0,
+            x: sp(0),
+            baseline: sp(0),
+            width: sp(1),
+            height: sp(1),
+            depth: sp(0),
+        }),
+        MathOutputEvent::End,
+    ];
+    assert!(matches!(
+        write_html(&[page], &mut MathResolver, &HtmlOptions::default()),
+        Err(HtmlError::MathGlyphMismatch { .. })
+    ));
+}
+
+fn selected_fixture_glyph(mut bytes: &[u8], scalar: char, ssty: u8) -> u16 {
+    let sfnt = woff2_patched::convert_woff2_to_ttf(&mut bytes).expect("decode STIX");
+    let face = rustybuzz::Face::from_slice(&sfnt, 0).expect("shape STIX");
+    let mut buffer = rustybuzz::UnicodeBuffer::new();
+    let mut encoded = [0; 4];
+    buffer.push_str(scalar.encode_utf8(&mut encoded));
+    let feature = rustybuzz::Feature::new(
+        rustybuzz::ttf_parser::Tag::from_bytes(b"ssty"),
+        u32::from(ssty),
+        ..,
+    );
+    u16::try_from(rustybuzz::shape(&face, &[feature], buffer).glyph_infos()[0].glyph_id)
+        .expect("fixture glyph id")
 }
 
 #[test]

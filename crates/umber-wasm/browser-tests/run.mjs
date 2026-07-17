@@ -16,11 +16,16 @@ import { fileURLToPath } from "node:url";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const repository = path.resolve(directory, "../../..");
+const arguments_ = process.argv.slice(2);
+const mathOnly = arguments_.includes("--math-only");
+const [packageArgument, nativeBinaryArgument] = arguments_.filter(
+	(argument) => !argument.startsWith("--"),
+);
 const packageDirectory = path.resolve(
-	process.argv[2] ?? path.join(repository, "target/umber-wasm-package"),
+	packageArgument ?? path.join(repository, "target/umber-wasm-package"),
 );
 const nativeBinary = path.resolve(
-	process.argv[3] ?? path.join(repository, "target/debug/umber"),
+	nativeBinaryArgument ?? path.join(repository, "target/debug/umber"),
 );
 const chrome =
 	process.env.CHROME ??
@@ -77,6 +82,9 @@ const cmr10 = await readFile(
 );
 const cmtt10 = await readFile(
 	path.join(repository, "crates/tex-fonts/tests/fixtures/cm/cmtt10.tfm"),
+);
+const mathWoff2 = await readFile(
+	path.join(repository, "crates/tex-fonts/tests/fixtures/stix-two-math.woff2"),
 );
 const corruptExpected = encoder.encode("expected object");
 const corruptActual = encoder.encode("tampered object");
@@ -181,6 +189,9 @@ const server = http.createServer(async (request, response) => {
 		}
 		if (url.pathname === "/fixture-cmr10.tfm") {
 			return send(response, 200, cmr10, "application/octet-stream");
+		}
+		if (url.pathname === "/fixture-stix-two-math.woff2") {
+			return send(response, 200, mathWoff2, "font/woff2");
 		}
 		if (url.pathname.startsWith("/objects/")) {
 			const object = url.pathname.slice("/objects/".length);
@@ -315,33 +326,51 @@ try {
 	const cdp = await protocol(target.webSocketDebuggerUrl);
 	try {
 		await cdp.call("Runtime.enable");
-		const result = await poll(async () => {
-			const evaluated = await cdp.call("Runtime.evaluate", {
-				expression: "globalThis.__umberResult",
-				returnByValue: true,
+		if (mathOnly) {
+			await cdp.call("Page.enable");
+			await cdp.call("Page.navigate", {
+				url: `${origin}/html-prototype.html`,
 			});
-			return evaluated.result.value;
-		});
-		assert(result.ok, result.error);
-		const geometryMatrix = [];
-		for (const deviceScaleFactor of [1, 2]) {
-			await cdp.call("Emulation.setDeviceMetricsOverride", {
-				width: 1280,
-				height: 900,
-				deviceScaleFactor,
-				mobile: false,
-			});
-			for (const zoom of [1, 1.25, 2]) {
-				const measured = await cdp.call("Runtime.evaluate", {
-					expression: `globalThis.__umberGeneratedGeometry(${zoom})`,
+			const mathResult = await poll(async () => {
+				const evaluated = await cdp.call("Runtime.evaluate", {
+					expression: "globalThis.__mathContract",
 					returnByValue: true,
 				});
-				geometryMatrix.push(measured.result.value);
+				return evaluated.result.value;
+			});
+			assert(mathResult.ok, mathResult.error);
+			process.stdout.write(
+				`browser math integration passed ${JSON.stringify(mathResult)}\n`,
+			);
+		} else {
+			const result = await poll(async () => {
+				const evaluated = await cdp.call("Runtime.evaluate", {
+					expression: "globalThis.__umberResult",
+					returnByValue: true,
+				});
+				return evaluated.result.value;
+			});
+			assert(result.ok, result.error);
+			const geometryMatrix = [];
+			for (const deviceScaleFactor of [1, 2]) {
+				await cdp.call("Emulation.setDeviceMetricsOverride", {
+					width: 1280,
+					height: 900,
+					deviceScaleFactor,
+					mobile: false,
+				});
+				for (const zoom of [1, 1.25, 2]) {
+					const measured = await cdp.call("Runtime.evaluate", {
+						expression: `globalThis.__umberGeneratedGeometry(${zoom})`,
+						returnByValue: true,
+					});
+					geometryMatrix.push(measured.result.value);
+				}
 			}
+			process.stdout.write(
+				`browser integration passed ${JSON.stringify({ ...result.value, geometryMatrix })}\n`,
+			);
 		}
-		process.stdout.write(
-			`browser integration passed ${JSON.stringify({ ...result.value, geometryMatrix })}\n`,
-		);
 	} finally {
 		cdp.close();
 	}

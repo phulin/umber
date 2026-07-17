@@ -501,10 +501,13 @@ children are direct stages in this chain.
 11. `umber2-y2ei.9.1`: parse and validate immutable OpenType MATH tables.
 12. `umber2-y2ei.9.2`: expose direct MATH metrics and basic formula layout.
 13. `umber2-y2ei.9.3`: lay out MATH variants and glyph assemblies.
+14. `umber2-y2ei.9.4`: serialize fixed positioned math output events.
+15. `umber2-y2ei.9.5`: render fixed positioned math in validated HTML/SVG.
 
-### Next 1: positioned OpenType math
+### Completed positioned OpenType math
 
-Tracked by `umber2-y2ei.9`; this is the first new implementation stage.
+Tracked by `umber2-y2ei.9`; fixed layout, artifact serialization, and HTML/SVG
+painting are complete. Native/WASM/browser parity remains the following gate.
 
 The MATH parser, immutable data model, direct `MathMetricsSource`, and
 variant/assembly layout are complete. `tex-typeset` now reads OpenType constants without a lossy
@@ -521,10 +524,13 @@ to the largest usable variant. Fonts without MATH data select the explicit
 is retained in the math-layout arena with the content-addressed font identity,
 so basic formula geometry and glyph choice are deterministic.
 
-Next, emit fixed positioned HTML math using
-ordinary WOFF2-backed SVG text where cmap can reproduce the chosen glyph and
-SVG outline fallback for glyph-id-only variants and assembly parts. MathML
-does not own layout.
+Fixed positioned HTML math is now implemented. Ordinary cmap-reproducible
+glyphs use WOFF2-backed SVG text with the committed `ssty` value; glyph-id-only
+variants and assembly parts use SVG paths extracted from the validated retained
+font, and rules use explicit SVG rectangles. The HTML serializer verifies the
+transport and canonical program identities again, binds events by complete
+instance identity, and rejects cmap/glyph or outline mismatches before
+publication. MathML does not own layout.
 
 ### Completed: OpenType-preferred mappings for TFM-style text
 

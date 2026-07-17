@@ -5,9 +5,14 @@
   <title>Umber HTML coordinate prototype</title>
   <style>
     @font-face{font-family:'umber-contract-cm';src:url('../assets/cmu-serif-500-roman.woff2') format('woff2');font-display:block}
+    @font-face{font-family:'umber-contract-math';src:url('/fixture-stix-two-math.woff2') format('woff2');font-display:block}
     #page{position:relative;width:400px;height:240px;contain:strict;overflow:hidden;background:white}
     .run{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;font:32px 'umber-contract-cm',serif;font-kerning:normal;font-variant-ligatures:common-ligatures}
     #rule{position:absolute;left:31.125px;top:88.375px;width:47.625px;height:3.25px;background:black}
+    #math-page{position:relative;width:640px;height:300px;contain:strict;overflow:hidden;background:white}
+    .umber-math{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;color:#000}
+    .umber-math-text{font-family:'umber-contract-math',serif;font-size:32px;fill:currentColor}
+    .math-probe{fill:transparent}
   </style>
 </head>
 <body>
@@ -16,6 +21,19 @@
     <svg class="run" aria-hidden="true" style="font-kerning:none;font-variant-ligatures:none"><rect id="unshaped-baseline" x="17.375px" y="123.625px" width="1" height="1" fill="transparent"></rect><text id="unshaped" x="17.375px" y="123.625px">AV office</text></svg>
     <div id="negative" style="position:absolute;left:-2.375px;top:-1.625px;width:1px;height:1px"></div>
     <div id="rule"></div>
+  </main>
+  <main id="math-page">
+    <svg class="umber-math" aria-hidden="true">
+      <g class="umber-math-glyph" data-case="script" data-x="30" data-y="45"><rect class="math-probe" x="30" y="45" width="1" height="1"></rect><text class="umber-math-text" x="30" y="45" style="font-feature-settings:'ssty' 2">A</text></g>
+      <g class="umber-math-glyph" data-case="fraction" data-x="90" data-y="80"><rect class="math-probe" x="90" y="80" width="1" height="1"></rect><text class="umber-math-text" x="90" y="80">1</text></g>
+      <rect class="umber-math-rule" data-case="fraction-rule" x="82" y="88" width="46" height="3"></rect>
+      <g class="umber-math-glyph" data-case="radical" data-x="155" data-y="90"><rect class="math-probe" x="155" y="90" width="1" height="1"></rect><text class="umber-math-text" x="155" y="90">√</text></g>
+      <g class="umber-math-glyph" data-case="accent" data-x="225" data-y="55"><rect class="math-probe" x="225" y="55" width="1" height="1"></rect><text class="umber-math-text" x="225" y="55">^</text></g>
+      <g class="umber-math-glyph" data-case="operator" data-x="285" data-y="95"><rect class="math-probe" x="285" y="95" width="1" height="1"></rect><text class="umber-math-text" x="285" y="95">∑</text></g>
+      <g class="umber-math-glyph" data-case="limit" data-x="285" data-y="125"><rect class="math-probe" x="285" y="125" width="1" height="1"></rect><text class="umber-math-text" x="285" y="125" style="font-feature-settings:'ssty' 1">n</text></g>
+      <g class="umber-math-glyph" data-case="delimiter" data-x="370" data-y="95"><rect class="math-probe" x="370" y="95" width="1" height="1"></rect><text class="umber-math-text" x="370" y="95">(</text></g>
+      <g class="umber-math-glyph" data-case="assembly" data-x="450" data-y="95"><rect class="math-probe" x="450" y="95" width="1" height="1"></rect><path class="umber-math-outline" d="M0 0L18 0L18 70L0 70Z" transform="translate(450 95) scale(1 -1)"></path></g>
+    </svg>
   </main>
   <script>
     document.fonts.ready.then(() => {
@@ -34,6 +52,34 @@
         rule: [rule.left - page.left, rule.top - page.top, rule.width, rule.height],
         negative: [negative.left - page.left, negative.top - page.top],
       };
+      try {
+        const mathPage = document.querySelector('#math-page').getBoundingClientRect();
+        const cases = [...document.querySelectorAll('[data-case]:not(.umber-math-rule)')];
+        for (const item of cases) {
+          const probe = item.querySelector('.math-probe').getBoundingClientRect();
+          const x = Number(item.dataset.x);
+          const y = Number(item.dataset.y);
+          if (Math.abs(probe.left - mathPage.left - x) > 1 / 30 || Math.abs(probe.top - mathPage.top - y) > 1 / 30) {
+            throw new Error(`${item.dataset.case} moved from its engine coordinate`);
+          }
+        }
+        const fraction = document.querySelector('.umber-math-rule').getBoundingClientRect();
+        if (Math.abs(fraction.width - 46) > 1 / 30 || Math.abs(fraction.height - 3) > 1 / 30) {
+          throw new Error('fraction rule geometry changed');
+        }
+        const script = getComputedStyle(document.querySelector('[data-case="script"] text'));
+        if (!script.fontFeatureSettings.includes('ssty') || !script.fontFeatureSettings.includes('2')) {
+          throw new Error('recorded ssty selection was not applied');
+        }
+        if (!document.fonts.check('32px umber-contract-math', 'A1√^∑n(')) {
+          throw new Error('retained math WOFF2 did not load');
+        }
+        const outline = document.querySelector('.umber-math-outline').getBoundingClientRect();
+        if (outline.width <= 0 || outline.height <= 0) throw new Error('outline fallback did not paint');
+        globalThis.__mathContract = { ok: true, cases: cases.map((item) => item.dataset.case), outline: [outline.width, outline.height] };
+      } catch (error) {
+        globalThis.__mathContract = { ok: false, error: String(error) };
+      }
     });
   </script>
 </body>

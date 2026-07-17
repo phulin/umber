@@ -313,9 +313,10 @@ outside the linear HTML epic and does not block its release.
 3. **Implemented.** OpenType-only `\font` path and fontdimen synthesis.
 4. **Implemented.** Two-pass shape/linebreak/reshape integration into
    `tex-exec` and `tex-typeset` — the largest chunk of this plan.
-5. **In progress.** Positioned OpenType MATH layout and HTML rendering
-   (`umber2-y2ei.9`): formula geometry, variants, and assemblies are
-   implemented; fixed positioned artifact/HTML lowering remains.
+5. **Implemented.** Positioned OpenType MATH layout and HTML rendering
+   (`umber2-y2ei.9`): formula geometry, variants, assemblies, fixed artifact
+   events, retained-WOFF2 SVG text, explicit rules, and validated glyph-outline
+   fallback.
 6. **Implemented.** OpenType-preferred mappings for TFM-style text
    (`umber2-y2ei.12`): exact TFM-identity bundle selection, explicit Unicode
    mapping, cluster-advance layout, synthesized text fontdimens, retained
