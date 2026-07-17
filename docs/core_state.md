@@ -216,9 +216,12 @@ annotations bind canonical identifier-name identities rather than runtime
 handles.
 Loaded fonts retain their immutable durable identity at load, while the small
 rollback-coupled identifier and expansion projection is composed separately.
-The derived collection caches are shared across related generation forks, validate
-allocator ancestry before extending, and fall back to canonical reconstruction
-after divergent rollback allocation. They are not semantic state. Environment
+The derived collection caches are shared across related generation forks. Each
+immutable store kind retains a small bounded set of allocator lineages, so the
+accepted generation and its scratch fork extend independent persistent roots
+instead of evicting one another. Every extension validates allocator ancestry
+and falls back to canonical reconstruction after divergent rollback allocation.
+The caches are not semantic state. Environment
 cells also maintain a persistent deterministic Merkle treap keyed by canonical
 semantic cell identity. At a checkpoint, the existing mutation-journal slice
 identifies the distinct dirty cells; only those Merkle paths are replaced, and
@@ -229,8 +232,12 @@ store or format image is loaded.
 Exact comparison composes that environment root with cached canonical roots
 for code tables, hyphenation, magnification/font selection, page-builder
 collections and persistent node forests, live input, virtual streams and World
-scalars, interaction mode, and the append-only PDF ledger. The page and input
-projections reuse immutable-root cache keys; PDF state uses rolling semantic
+scalars, interaction mode, and the append-only PDF ledger. The fixed-size page,
+input, stream, code-table, hyphenation, and font-selection projection cache is
+retained in each snapshot and restored with rollback, while journal scratch
+remains transient. Root-key comparison is the invalidation barrier: unchanged
+roots compose in O(1), and only changed roots rebuild their projection. PDF
+state uses rolling semantic
 fingerprints and future allocation cursors. One versioned, domain-separated,
 fixed-seed 64-bit aHash checkpoint identity is stored only on compared records. Full mutable-store and
 page DTO serialization is not part of exact comparison, so unchanged roots are

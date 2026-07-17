@@ -612,6 +612,14 @@ fixed seeds preserve deterministic identities across forks and rollback within
 one compatible build/session. Durable content and persistence identities remain
 cryptographic and separate.
 
+Snapshots retain a fixed-size cache of component projections keyed by immutable
+roots. Rollback restores those derived roots but not journal scratch, so exact
+comparison composes unchanged input, page, stream, code-table, hyphenation, and
+font-selection roots without traversing their contents. Append-only immutable
+stores retain a bounded lineage cache per collection; accepted and scratch
+forks therefore extend separate persistent roots, and allocator ancestry turns
+divergence into a cache miss rather than unsafe reuse.
+
 Failure to match merely continues trace validation and replay.
 
 The implemented splice walks the flat ordered named-boundary trace after the

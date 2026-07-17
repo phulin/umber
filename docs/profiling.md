@@ -265,6 +265,19 @@ test/format/clippy gate all passed. The release blocker is solely that
 memo-enabled recompilation did not beat memo-disabled recompilation; no broad
 tuning or optional pretolerance policy is included in this verdict.
 
+The exact-projection follow-up retained fixed-size component roots with
+snapshots and separated the immutable name/token/macro/glue/font collection
+caches by allocator lineage. In the single bounded two-pair AB/BA verification,
+the memo-enabled follow-up edit's 127 exact identities fell from the local
+pre-change 388.011 ms to 8.834 ms. Component projection builders accounted for
+381 calls, 127 visits, and 0.166 ms; immutable collections reported 560 root
+hits, 75 dirty or previously unseen root misses, and 2,194 newly composed
+leaves. Exact identity therefore no longer dominates enabled latency. All four
+outputs remained byte-identical to their cold 100-page DVI, and the fourth edit
+retained 14 pages, re-shipped three, and adopted the 83-page suffix. Host load
+made end-to-end paired deltas directionally unstable; the remaining paragraph
+memo reexecution overhead is tracked independently by `umber2-vfqs.15.4.2`.
+
 The runner requires the same external inputs as Gentle conformance. Populate
 them with `scripts/setup-conformance-tests.sh` if necessary.
 
