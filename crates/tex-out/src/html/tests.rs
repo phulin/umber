@@ -422,6 +422,7 @@ fn page() -> crate::PageArtifact {
             class: "dvi".to_owned(),
             payload: b"<script>alert(1)</script>".to_vec(),
         }],
+        math_events: Vec::new(),
     }
     .validate()
     .expect("valid page")

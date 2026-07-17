@@ -11,8 +11,8 @@
 //! All integers are little-endian. Lengths are `u32`. `Scaled` values are their
 //! raw `i32` scaled-point representation. Strings and byte arrays are encoded
 //! as a `u32` byte length followed by exact bytes. The stream begins with
-//! `b"UMPG"` followed by one version byte; version `10` is the only accepted
-//! version.
+//! `b"UMPG"` followed by one version byte. Readers accept the explicitly
+//! supported append-only schema versions.
 //!
 //! ```text
 //! magic[4] version:u8
@@ -47,9 +47,10 @@ pub use binary::{
 pub use model::{
     ArtifactValidationError, ArtifactValidationLimits, BoxNode, DEFAULT_BANNER, DiscKind,
     EffectSink, FontResource, FontResourceConstruction, GlueKind, GlueOrder, GlueSetRatio,
-    GlueSign, GlueSpec, JobInfo, KernKind, LeaderPayload, OpenTypeFontResource, PageArtifact,
-    PageArtifactBuilder, PageEffect, PageNode, PageToken, PdfAccessibilityEffect,
-    PdfAnnotationEffect, PdfDestinationEffect, PdfDestinationIdentifier, PdfDestinationKind,
-    PdfLiteralMode, PdfThreadEffect, TokenCatcode, UnvalidatedPageArtifact,
+    GlueSign, GlueSpec, JobInfo, KernKind, LeaderPayload, MathGlyph, MathGlyphSelection,
+    MathOutputEvent, MathRule, MathStart, OpenTypeFontResource, PageArtifact, PageArtifactBuilder,
+    PageEffect, PageNode, PageToken, PdfAccessibilityEffect, PdfAnnotationEffect,
+    PdfDestinationEffect, PdfDestinationIdentifier, PdfDestinationKind, PdfLiteralMode,
+    PdfThreadEffect, TokenCatcode, UnvalidatedPageArtifact,
 };
 pub use tex_content::{ContentDomain, ContentHash, ContentIdentity};

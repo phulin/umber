@@ -669,6 +669,7 @@ fn glyph_page(count0: i32) -> PageArtifact {
         counts: [count0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         root: hlist(300, 100, 30, vec![char_node(3, b'A' as u32, 50)]),
         effects: Vec::new(),
+        math_events: Vec::new(),
     }
     .validate()
     .expect("glyph page validates")

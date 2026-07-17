@@ -66,6 +66,16 @@ pub(super) fn lower(
             count: out.pdf_save_positions.len(),
         });
     }
+    if out
+        .events
+        .len()
+        .checked_add(page.math_events.len())
+        .is_none_or(|count| count > limits.max_events)
+    {
+        return Err(PositionedError::TooManyEvents {
+            limit: limits.max_events,
+        });
+    }
     Ok(PositionedPage {
         page_index,
         width: right,
@@ -76,6 +86,7 @@ pub(super) fn lower(
         counts: page.counts,
         fonts: page.fonts.clone(),
         events: out.events,
+        math_events: page.math_events.clone(),
         diagnostics: out.diagnostics,
         last_saved_position: out.last_saved_position,
         snap_reference: out.snap_reference,

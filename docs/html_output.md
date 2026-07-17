@@ -1,6 +1,6 @@
 # Coordinate-Identical HTML Output
 
-Status: implementation contract for artifact schema 22 and HTML schema 1,
+Status: implementation contract for artifact schema 23 and HTML schema 1,
 plus the linear OpenType completion contract below.
 
 HTML is a downstream view of committed `PageArtifact` values. It is not a page
@@ -10,7 +10,7 @@ box, rule, leader, special-anchor, and text-container coordinates described
 below. Rustybuzz owns layout shaping and line breaking; the browser rasterizes
 the identical retained font instance inside fixed positioned runs.
 
-The next schema revision keeps this fixed-page model, makes
+Artifact schema 23 keeps this fixed-page model, makes
 `OpenTypePreferred` the modern font authority, and adds engine-positioned
 OpenType math. It does not delegate formula layout to MathML.
 
@@ -121,20 +121,23 @@ fontdimen-synthesis version are committed in the artifact. `ClassicTfmExact`
 retains schema 1 behavior for parity documents, virtual fonts, and explicit
 legacy output.
 
-OpenType math extends the positioned event stream rather than inserting a
-reflowing subtree. The artifact records a fixed math container and ordered
-glyph/rule events conceptually shaped as:
+OpenType math extends the positioned output as a detached overlay rather than
+inserting a reflowing subtree into the legacy page tree. Artifact schema 20
+records each fixed math container and its ordered glyph/rule events as:
 
 ```text
 MathStart { id, x_sp, baseline_sp, width_sp, height_sp, depth_sp }
-MathGlyph { font_instance, glyph_id, unicode?, x_sp, baseline_sp, feature }
+MathGlyph { font_instance, glyph_id, cmap-or-outline, ssty, x_sp, baseline_sp,
+            width_sp, height_sp, depth_sp }
 MathRule  { x_sp, y_sp, width_sp, height_sp }
 MathEnd
 ```
 
 `tex-typeset` derives these coordinates from validated MATH constants, italic
 corrections, math kern, top-accent attachments, variants, and assemblies.
-HTML serializes a fixed zero-layout SVG at the recorded anchor. When the
+The binary schema, validation, hashing, and native/WASM round trips preserve
+this stream; HTML rendering is the next output stage. HTML serializes a fixed
+zero-layout SVG at the recorded anchor. When the
 selected glyph is reproducible through cmap, it emits positioned `<text>`
 using the retained WOFF2. Script-style substitutions use the recorded `ssty`
 feature. When a selected MATH variant or assembly part is addressable only by
@@ -149,7 +152,7 @@ not participate in layout.
 
 ## Font and asset contract
 
-Artifact schema 22 records the selected layout policy, explicit mapping
+Artifact schema 23 records the selected layout policy, explicit mapping
 fallback result, encoding-map version and identity, fontdimen-synthesis
 version, selected OpenType program, transport-object, collection face,
 default/named/explicit resolved variation, feature policy, direction, script,

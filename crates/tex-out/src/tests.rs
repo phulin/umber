@@ -1,10 +1,10 @@
 use crate::{
     ArtifactCodecLimits, ArtifactValidationError, ArtifactValidationLimits, BoxNode,
     CodecLimitKind, ContentHash, DiscKind, EffectSink, FontResource, GlueKind, GlueOrder,
-    GlueSetRatio, GlueSign, GlueSpec, JobInfo, KernKind, LeaderPayload, OpenTypeFontResource,
-    PageArtifact, PageEffect, PageNode, PageToken, ParseError, PdfAccessibilityEffect,
-    PdfDestinationEffect, PdfDestinationIdentifier, PdfDestinationKind, PdfLiteralMode,
-    SerializeError, TokenCatcode,
+    GlueSetRatio, GlueSign, GlueSpec, JobInfo, KernKind, LeaderPayload, MathGlyph,
+    MathGlyphSelection, MathOutputEvent, MathRule, MathStart, OpenTypeFontResource, PageArtifact,
+    PageEffect, PageNode, PageToken, ParseError, PdfAccessibilityEffect, PdfDestinationEffect,
+    PdfDestinationIdentifier, PdfDestinationKind, PdfLiteralMode, SerializeError, TokenCatcode,
 };
 use tex_arith::Scaled;
 
@@ -23,9 +23,12 @@ fn page_artifact_round_trips() {
 }
 
 #[test]
-fn version_19_artifacts_decode_with_unconfigured_page_geometry() {
+fn version_19_artifacts_decode_without_page_geometry_or_math_overlay() {
     let artifact = sample_artifact();
     let mut bytes = artifact.to_bytes().expect("artifact serializes");
+    assert_eq!(bytes[4], 20);
+    assert_eq!(&bytes[bytes.len() - 4..], &0_u32.to_le_bytes());
+    bytes.truncate(bytes.len() - 4);
     let banner_len = u32::from_le_bytes(bytes[9..13].try_into().expect("banner length")) as usize;
     let page_geometry = 13 + banner_len + 8;
     let font_start = page_geometry + 16 + 4;
@@ -51,6 +54,81 @@ fn version_19_artifacts_decode_with_unconfigured_page_geometry() {
     assert_eq!(parsed.job.page_height, Scaled::from_raw(0));
     assert_eq!(parsed.root, artifact.root);
     assert_eq!(parsed.effects, artifact.effects);
+    assert!(parsed.math_events.is_empty());
+}
+
+#[test]
+fn fixed_math_events_round_trip_and_enter_artifact_identity() {
+    let mut artifact = sample_artifact();
+    artifact.testing_mut().math_events = sample_math_events();
+
+    let bytes = artifact.to_bytes().expect("math artifact serializes");
+    assert_eq!(bytes[4], 20);
+    assert_eq!(
+        PageArtifact::from_bytes(&bytes).expect("math artifact parses"),
+        artifact
+    );
+    assert_eq!(
+        crate::positioned::lower_page(&artifact, 0)
+            .expect("math artifact lowers")
+            .math_events,
+        artifact.math_events
+    );
+
+    assert_math_hash_changes(&artifact, |events| {
+        let MathOutputEvent::Glyph(glyph) = &mut events[1] else {
+            unreachable!("sample event is a glyph")
+        };
+        glyph.ssty = 2;
+    });
+    assert_math_hash_changes(&artifact, |events| {
+        let MathOutputEvent::Glyph(glyph) = &mut events[1] else {
+            unreachable!("sample event is a glyph")
+        };
+        glyph.selection = MathGlyphSelection::OutlineFallback;
+    });
+    let mut changed_instance = (*artifact).clone();
+    let instance = tex_fonts::FontInstanceIdentity::from_bytes([9; 32]);
+    changed_instance.fonts[0]
+        .opentype
+        .as_mut()
+        .expect("sample has OpenType font")
+        .instance_identity = instance;
+    for event in &mut changed_instance.math_events {
+        if let MathOutputEvent::Glyph(glyph) = event {
+            glyph.font_instance = instance;
+        }
+    }
+    let changed_instance = changed_instance
+        .validate()
+        .expect("changed instance validates");
+    assert_ne!(
+        changed_instance
+            .content_hash()
+            .expect("changed instance hashes"),
+        artifact.content_hash().expect("base artifact hashes")
+    );
+    assert_math_hash_changes(&artifact, |events| {
+        let MathOutputEvent::Rule(rule) = &mut events[3] else {
+            unreachable!("sample event is a rule")
+        };
+        rule.width = Scaled::from_raw(57);
+    });
+}
+
+#[test]
+fn rejects_unknown_math_event_tag() {
+    let mut artifact = sample_artifact();
+    artifact.testing_mut().math_events = vec![sample_math_events().remove(0), MathOutputEvent::End];
+    let mut bytes = artifact.to_bytes().expect("math artifact serializes");
+    *bytes.last_mut().expect("end tag") = 99;
+    assert_eq!(
+        PageArtifact::from_bytes(&bytes),
+        Err(ParseError::InvalidTag {
+            kind: "math event",
+            tag: 99,
+        })
+    );
 }
 
 #[test]
@@ -498,6 +576,49 @@ fn validation_allows_unicode_only_for_opentype_fonts() {
 }
 
 #[test]
+fn validation_rejects_unreproducible_math_event_streams() {
+    let mut artifact = (*sample_artifact()).clone();
+    artifact.math_events = vec![MathOutputEvent::End];
+    assert_eq!(
+        artifact.validate(),
+        Err(ArtifactValidationError::InvalidMathEventSequence)
+    );
+
+    let mut artifact = (*sample_artifact()).clone();
+    artifact.math_events = sample_math_events();
+    let MathOutputEvent::Glyph(glyph) = &mut artifact.math_events[1] else {
+        unreachable!("sample event is a glyph")
+    };
+    glyph.ssty = 3;
+    assert_eq!(
+        artifact.validate(),
+        Err(ArtifactValidationError::InvalidMathSsty { level: 3 })
+    );
+
+    let mut artifact = (*sample_artifact()).clone();
+    artifact.math_events = sample_math_events();
+    let MathOutputEvent::Glyph(glyph) = &mut artifact.math_events[1] else {
+        unreachable!("sample event is a glyph")
+    };
+    glyph.selection = MathGlyphSelection::Cmap { scalar: 0xd800 };
+    assert_eq!(
+        artifact.validate(),
+        Err(ArtifactValidationError::InvalidMathCmapScalar { scalar: 0xd800 })
+    );
+
+    let mut artifact = (*sample_artifact()).clone();
+    artifact.math_events = sample_math_events();
+    let MathOutputEvent::Glyph(glyph) = &mut artifact.math_events[2] else {
+        unreachable!("sample event is a glyph")
+    };
+    glyph.font_instance = tex_fonts::FontInstanceIdentity::from_bytes([9; 32]);
+    assert_eq!(
+        artifact.validate(),
+        Err(ArtifactValidationError::MissingMathFontInstance)
+    );
+}
+
+#[test]
 fn validation_rejects_invalid_roots_and_duplicate_resources() {
     let mut invalid_root = (*sample_artifact()).clone();
     invalid_root.root = PageNode::Penalty(0);
@@ -852,9 +973,63 @@ fn sample_artifact() -> PageArtifact {
                 depth: Scaled::from_raw(80),
             },
         ],
+        math_events: Vec::new(),
     }
     .validate()
     .expect("sample artifact validates")
+}
+
+fn sample_math_events() -> Vec<MathOutputEvent> {
+    let font_instance = tex_fonts::FontInstanceIdentity::from_bytes([3; 32]);
+    vec![
+        MathOutputEvent::Start(MathStart {
+            id: 17,
+            x: Scaled::from_raw(-101),
+            baseline: Scaled::from_raw(202),
+            width: Scaled::from_raw(303),
+            height: Scaled::from_raw(404),
+            depth: Scaled::from_raw(50),
+        }),
+        MathOutputEvent::Glyph(MathGlyph {
+            font_instance,
+            glyph_id: 321,
+            selection: MathGlyphSelection::Cmap { scalar: 0x2211 },
+            ssty: 1,
+            x: Scaled::from_raw(-11),
+            baseline: Scaled::from_raw(22),
+            width: Scaled::from_raw(33),
+            height: Scaled::from_raw(44),
+            depth: Scaled::from_raw(5),
+        }),
+        MathOutputEvent::Glyph(MathGlyph {
+            font_instance,
+            glyph_id: 654,
+            selection: MathGlyphSelection::OutlineFallback,
+            ssty: 0,
+            x: Scaled::from_raw(55),
+            baseline: Scaled::from_raw(66),
+            width: Scaled::from_raw(77),
+            height: Scaled::from_raw(88),
+            depth: Scaled::from_raw(9),
+        }),
+        MathOutputEvent::Rule(MathRule {
+            x: Scaled::from_raw(12),
+            y: Scaled::from_raw(34),
+            width: Scaled::from_raw(56),
+            height: Scaled::from_raw(7),
+        }),
+        MathOutputEvent::End,
+    ]
+}
+
+fn assert_math_hash_changes(artifact: &PageArtifact, mutate: impl FnOnce(&mut [MathOutputEvent])) {
+    let expected = artifact.content_hash().expect("base artifact hashes");
+    let mut changed = artifact.clone();
+    mutate(&mut changed.testing_mut().math_events);
+    assert_ne!(
+        changed.content_hash().expect("changed artifact hashes"),
+        expected
+    );
 }
 
 fn replace_unique_ratio(bytes: &mut [u8], old: (i32, i32), new: (i32, i32)) {

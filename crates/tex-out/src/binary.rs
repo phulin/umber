@@ -1,19 +1,21 @@
 use crate::{
     BoxNode, ContentHash, DiscKind, EffectSink, FontResource, FontResourceConstruction, GlueKind,
-    GlueOrder, GlueSetRatio, GlueSign, GlueSpec, KernKind, LeaderPayload, PageArtifact, PageEffect,
-    PageNode, PageToken, PdfAccessibilityEffect, PdfAnnotationEffect, PdfDestinationEffect,
-    PdfDestinationIdentifier, PdfDestinationKind, PdfLiteralMode, PdfThreadEffect, TokenCatcode,
-    UnvalidatedPageArtifact,
+    GlueOrder, GlueSetRatio, GlueSign, GlueSpec, KernKind, LeaderPayload, MathGlyphSelection,
+    MathOutputEvent, PageArtifact, PageEffect, PageNode, PageToken, PdfAccessibilityEffect,
+    PdfAnnotationEffect, PdfDestinationEffect, PdfDestinationIdentifier, PdfDestinationKind,
+    PdfLiteralMode, PdfThreadEffect, TokenCatcode, UnvalidatedPageArtifact,
 };
 use std::fmt;
 use tex_arith::Scaled;
 
 const MAGIC: &[u8; 4] = b"UMPG";
-const VERSION: u8 = 22;
+const VERSION: u8 = 23;
+const MATH_OUTPUT_VERSION: u8 = 23;
 const ADVANCED_FONT_INSTANCE_VERSION: u8 = 22;
 const FONT_LAYOUT_VERSION: u8 = 21;
 const PAGE_SIZE_VERSION: u8 = 20;
 const PRE_PAGE_SIZE_VERSION: u8 = 19;
+const THREAD_VERSION: u8 = 19;
 const IMAGE_VERSION: u8 = 18;
 const ANNOTATION_VERSION: u8 = 17;
 const PRE_ANNOTATION_VERSION: u8 = 16;
@@ -92,6 +94,18 @@ mod wire {
         pub const COPIED: u8 = 1;
         pub const LETTERSPACED: u8 = 2;
         pub const EXPANDED: u8 = 3;
+    }
+
+    pub mod math_event {
+        pub const START: u8 = 0;
+        pub const GLYPH: u8 = 1;
+        pub const RULE: u8 = 2;
+        pub const END: u8 = 3;
+    }
+
+    pub mod math_selection {
+        pub const CMAP: u8 = 0;
+        pub const OUTLINE_FALLBACK: u8 = 1;
     }
 }
 
@@ -280,6 +294,7 @@ pub(crate) fn to_bytes(
     }
     writer.node(&artifact.root);
     writer.effects(&artifact.effects);
+    writer.math_events(&artifact.math_events);
     writer.finish()
 }
 
@@ -304,6 +319,8 @@ pub(crate) fn from_bytes(
     reader.expect_magic()?;
     let version = reader.u8()?;
     if version != VERSION
+        && version != ADVANCED_FONT_INSTANCE_VERSION
+        && version != FONT_LAYOUT_VERSION
         && version != PAGE_SIZE_VERSION
         && version != PRE_PAGE_SIZE_VERSION
         && version != IMAGE_VERSION
@@ -342,6 +359,11 @@ pub(crate) fn from_bytes(
     }
     let root = reader.node()?;
     let effects = reader.effects(version)?;
+    let math_events = if version >= MATH_OUTPUT_VERSION {
+        reader.math_events()?
+    } else {
+        Vec::new()
+    };
     reader.finish()?;
     Ok(UnvalidatedPageArtifact {
         job: crate::JobInfo {
@@ -358,6 +380,7 @@ pub(crate) fn from_bytes(
         counts,
         root,
         effects,
+        math_events,
     })
 }
 
@@ -472,6 +495,16 @@ impl V10ArtifactBuilder {
         fonts: &[FontResource],
         effects: &[PageEffect],
     ) -> Result<Vec<u8>, SerializeError> {
+        self.finish_with_math(fonts, effects, &[])
+    }
+
+    /// Finishes an artifact with its detached fixed-position math overlay.
+    pub fn finish_with_math(
+        self,
+        fonts: &[FontResource],
+        effects: &[PageEffect],
+        math_events: &[MathOutputEvent],
+    ) -> Result<Vec<u8>, SerializeError> {
         let mut this = self;
         let end = this.child_count_offset + 4;
         this.root.bytes[this.child_count_offset..end]
@@ -495,6 +528,7 @@ impl V10ArtifactBuilder {
         }
         writer.raw(&root);
         writer.effects(effects);
+        writer.math_events(math_events);
         writer.finish()
     }
 }
@@ -915,6 +949,11 @@ impl<'a> V10PageDecoder<'a> {
         let root_start = scan.offset;
         scan.skip_node()?;
         let effects = scan.effects(version)?;
+        let math_events = if version >= MATH_OUTPUT_VERSION {
+            scan.math_events()?
+        } else {
+            Vec::new()
+        };
         scan.finish()?;
 
         let mut reader = Reader::new_at(bytes, limits, root_start);
@@ -941,6 +980,7 @@ impl<'a> V10PageDecoder<'a> {
             counts,
             root,
             effects,
+            math_events,
         }
         .validate()?;
         let font_ids = page.fonts.iter().map(|font| font.font_id).collect();
@@ -1753,6 +1793,54 @@ impl Writer {
         }
     }
 
+    fn math_events(&mut self, events: &[MathOutputEvent]) {
+        self.collection_len(events.len());
+        for event in events {
+            if self.error.is_some() {
+                return;
+            }
+            match event {
+                MathOutputEvent::Start(start) => {
+                    self.u8(wire::math_event::START);
+                    self.u32(start.id);
+                    self.scaled(start.x);
+                    self.scaled(start.baseline);
+                    self.scaled(start.width);
+                    self.scaled(start.height);
+                    self.scaled(start.depth);
+                }
+                MathOutputEvent::Glyph(glyph) => {
+                    self.u8(wire::math_event::GLYPH);
+                    self.raw(&glyph.font_instance.bytes());
+                    self.u16(glyph.glyph_id);
+                    match glyph.selection {
+                        MathGlyphSelection::Cmap { scalar } => {
+                            self.u8(wire::math_selection::CMAP);
+                            self.u32(scalar);
+                        }
+                        MathGlyphSelection::OutlineFallback => {
+                            self.u8(wire::math_selection::OUTLINE_FALLBACK);
+                        }
+                    }
+                    self.u8(glyph.ssty);
+                    self.scaled(glyph.x);
+                    self.scaled(glyph.baseline);
+                    self.scaled(glyph.width);
+                    self.scaled(glyph.height);
+                    self.scaled(glyph.depth);
+                }
+                MathOutputEvent::Rule(rule) => {
+                    self.u8(wire::math_event::RULE);
+                    self.scaled(rule.x);
+                    self.scaled(rule.y);
+                    self.scaled(rule.width);
+                    self.scaled(rule.height);
+                }
+                MathOutputEvent::End => self.u8(wire::math_event::END),
+            }
+        }
+    }
+
     fn sink(&mut self, sink: EffectSink) {
         match sink {
             EffectSink::Terminal => self.u8(wire::sink::TERMINAL),
@@ -2026,8 +2114,10 @@ impl Reader<'_> {
         self.expect_magic()?;
         let version = self.u8()?;
         if version != VERSION
-            && version != PRE_PAGE_SIZE_VERSION
+            && version != ADVANCED_FONT_INSTANCE_VERSION
+            && version != FONT_LAYOUT_VERSION
             && version != PAGE_SIZE_VERSION
+            && version != PRE_PAGE_SIZE_VERSION
             && version != IMAGE_VERSION
             && version != ANNOTATION_VERSION
             && version != PRE_ANNOTATION_VERSION
@@ -2651,7 +2741,7 @@ impl Reader<'_> {
                         depth: self.scaled()?,
                     }
                 }
-                wire::effect::PDF_DESTINATION if version >= PRE_PAGE_SIZE_VERSION => {
+                wire::effect::PDF_DESTINATION if version >= THREAD_VERSION => {
                     let object = self.u32()?;
                     let identifier = match self.u8()? {
                         0 => PdfDestinationIdentifier::Name(self.bytes()?),
@@ -2727,7 +2817,7 @@ impl Reader<'_> {
                     })
                 }
                 tag @ (wire::effect::PDF_THREAD | wire::effect::PDF_START_THREAD)
-                    if version >= PRE_PAGE_SIZE_VERSION =>
+                    if version >= THREAD_VERSION =>
                 {
                     let thread_object = self.u32()?;
                     let bead_object = self.u32()?;
@@ -2769,7 +2859,7 @@ impl Reader<'_> {
                         PageEffect::PdfStartThread(marker)
                     }
                 }
-                wire::effect::PDF_END_THREAD if version >= PRE_PAGE_SIZE_VERSION => {
+                wire::effect::PDF_END_THREAD if version >= THREAD_VERSION => {
                     PageEffect::PdfEndThread
                 }
                 tag => {
@@ -2781,6 +2871,67 @@ impl Reader<'_> {
             });
         }
         Ok(effects)
+    }
+
+    fn math_events(&mut self) -> Result<Vec<MathOutputEvent>, ParseError> {
+        let len = self.collection_len(1)?;
+        let mut events = Vec::with_capacity(len);
+        for _ in 0..len {
+            events.push(match self.u8()? {
+                wire::math_event::START => MathOutputEvent::Start(crate::MathStart {
+                    id: self.u32()?,
+                    x: self.scaled()?,
+                    baseline: self.scaled()?,
+                    width: self.scaled()?,
+                    height: self.scaled()?,
+                    depth: self.scaled()?,
+                }),
+                wire::math_event::GLYPH => {
+                    let font_instance =
+                        tex_fonts::FontInstanceIdentity::from_bytes(self.identity()?);
+                    let glyph_id = self.u16()?;
+                    let selection = match self.u8()? {
+                        wire::math_selection::CMAP => MathGlyphSelection::Cmap {
+                            scalar: self.u32()?,
+                        },
+                        wire::math_selection::OUTLINE_FALLBACK => {
+                            MathGlyphSelection::OutlineFallback
+                        }
+                        tag => {
+                            return Err(ParseError::InvalidTag {
+                                kind: "math glyph selection",
+                                tag,
+                            });
+                        }
+                    };
+                    MathOutputEvent::Glyph(crate::MathGlyph {
+                        font_instance,
+                        glyph_id,
+                        selection,
+                        ssty: self.u8()?,
+                        x: self.scaled()?,
+                        baseline: self.scaled()?,
+                        width: self.scaled()?,
+                        height: self.scaled()?,
+                        depth: self.scaled()?,
+                    })
+                }
+                wire::math_event::RULE => MathOutputEvent::Rule(crate::MathRule {
+                    x: self.scaled()?,
+                    y: self.scaled()?,
+                    width: self.scaled()?,
+                    height: self.scaled()?,
+                }),
+                wire::math_event::END => MathOutputEvent::End,
+                tag => {
+                    return Err(ParseError::InvalidTag {
+                        kind: "math event",
+                        tag,
+                    });
+                }
+            });
+        }
+        Ok(events)
     }
 
     fn sink(&mut self) -> Result<EffectSink, ParseError> {

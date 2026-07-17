@@ -6016,6 +6016,7 @@ mod tests {
             counts: [0; 10],
             fonts: Vec::new(),
             events,
+            math_events: Vec::new(),
             diagnostics: Vec::new(),
             last_saved_position: None,
             snap_reference: (Scaled::from_raw(0), Scaled::from_raw(0)),

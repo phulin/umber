@@ -134,6 +134,87 @@ fn persistent_wasm_classic_caches_evict_maximum_charge_jobs() {
 }
 
 #[wasm_bindgen_test]
+fn fixed_math_artifact_schema_round_trips_in_wasm() {
+    use tex_arith::Scaled;
+    use tex_out::{
+        BoxNode, ContentHash, FontResource, FontResourceConstruction, GlueOrder, GlueSetRatio,
+        GlueSign, JobInfo, MathGlyph, MathGlyphSelection, MathOutputEvent, MathRule, MathStart,
+        OpenTypeFontResource, PageNode, UnvalidatedPageArtifact,
+    };
+
+    let sp = Scaled::from_raw;
+    let instance = tex_fonts::FontInstanceIdentity::from_bytes([3; 32]);
+    let artifact = UnvalidatedPageArtifact {
+        job: JobInfo::default(),
+        fonts: vec![FontResource {
+            font_id: 1,
+            name: "math".to_owned(),
+            tfm_content_hash: ContentHash::from_bytes(b"math.tfm"),
+            tfm_checksum: 0,
+            design_size: sp(655_360),
+            at_size: sp(655_360),
+            opentype: Some(OpenTypeFontResource {
+                program_identity: tex_fonts::FontProgramIdentity::from_bytes([1; 32]),
+                object_identity: tex_fonts::FontObjectIdentity::from_bytes([2; 32]),
+                instance_identity: instance,
+                container: tex_fonts::FontContainer::Woff2,
+            }),
+            semantic_identity: tex_fonts::FontSourceIdentity::from_bytes([4; 32]),
+            construction: FontResourceConstruction::Loaded,
+        }],
+        counts: [0; 10],
+        root: PageNode::HList(BoxNode {
+            width: sp(100),
+            height: sp(20),
+            depth: sp(5),
+            shift: sp(0),
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: GlueSign::Normal,
+            glue_order: GlueOrder::Normal,
+            children: Vec::new(),
+        }),
+        effects: Vec::new(),
+        math_events: vec![
+            MathOutputEvent::Start(MathStart {
+                id: 1,
+                x: sp(-5),
+                baseline: sp(20),
+                width: sp(100),
+                height: sp(20),
+                depth: sp(5),
+            }),
+            MathOutputEvent::Glyph(MathGlyph {
+                font_instance: instance,
+                glyph_id: 9,
+                selection: MathGlyphSelection::OutlineFallback,
+                ssty: 2,
+                x: sp(3),
+                baseline: sp(20),
+                width: sp(11),
+                height: sp(12),
+                depth: sp(2),
+            }),
+            MathOutputEvent::Rule(MathRule {
+                x: sp(0),
+                y: sp(8),
+                width: sp(20),
+                height: sp(1),
+            }),
+            MathOutputEvent::End,
+        ],
+    }
+    .validate()
+    .expect("valid math artifact");
+
+    let bytes = artifact.to_bytes().expect("serialize in wasm");
+    assert_eq!(bytes[4], 20);
+    assert_eq!(
+        tex_out::PageArtifact::from_bytes(&bytes).expect("parse in wasm"),
+        artifact
+    );
+}
+
+#[wasm_bindgen_test]
 fn typed_attempts_preserve_binary_inputs_and_clear_cached_allocations() {
     let mut session = session("/job/main.tex");
     session

@@ -46,7 +46,7 @@ detached output only after the relevant transaction commits.
   breaking, and Appendix G math conversion. Packing preserves TeX's distinct
   `\badness` results: 10000 for infinitely bad adjustment and 1000000 for a
   nonempty overfull box whose normal-order glue cannot shrink far enough.
-- `tex-out`: detached artifact schema 13, positioned output, HTML, DVI page
+- `tex-out`: detached artifact schema 20, positioned output, HTML, DVI page
   planning, final DVI assembly, and artifact replay.
 - `tex-incr`: editor revisions, named-boundary checkpoints, convergence,
   pruning, retained output, and rendered-source queries.
@@ -347,7 +347,7 @@ performing a second delivery phase.
 
 ## 10. Output drivers (`tex-out`)
 
-Artifact schema 13 is the durable, content-addressed page representation.
+Artifact schema 20 is the durable, content-addressed page representation.
 `tex-out` owns its validation, encoding, replay, positioned-event projection,
 HTML schema 1, DVI page plans, and final DVI assembly.
 
@@ -356,9 +356,13 @@ one execution-driven traversal. Durable replay validates the requested content
 identity and schema before producing output. `tex-out` never receives
 `Universe`, node handles, or mutable store access.
 
-DVI remains the exact compatibility output. HTML preserves exact TeX page,
-box, rule, baseline, and run-anchor coordinates while browser shaping owns
-glyph placement inside a text run.
+DVI remains the exact compatibility output. Fixed OpenType math is an ordered,
+validated overlay detached from the legacy page tree, so schemas 12 through 19
+still decode with an empty overlay and DVI replay remains unchanged. Each math
+glyph carries its font-instance identity, selected glyph id, cmap or
+outline-fallback route, `ssty` state, and exact scaled-point geometry. HTML
+preserves exact TeX page, box, rule, baseline, and run-anchor coordinates while
+browser shaping owns glyph placement inside an ordinary prose text run.
 
 Generated pdfTeX font instances retain their immutable construction and
 original-source parameter records in format images, keeping downstream

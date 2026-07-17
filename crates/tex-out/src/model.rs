@@ -10,6 +10,8 @@ pub struct UnvalidatedPageArtifact {
     pub counts: [i32; 10],
     pub root: PageNode,
     pub effects: Vec<PageEffect>,
+    /// Fixed engine-positioned OpenType math painted over the legacy page tree.
+    pub math_events: Vec<MathOutputEvent>,
 }
 
 /// A detached page artifact whose references and traversal budgets were validated.
@@ -103,6 +105,7 @@ pub struct ArtifactValidationLimits {
     pub max_depth: usize,
     pub max_fonts: usize,
     pub max_effects: usize,
+    pub max_math_events: usize,
 }
 
 impl Default for ArtifactValidationLimits {
@@ -112,6 +115,7 @@ impl Default for ArtifactValidationLimits {
             max_depth: 4096,
             max_fonts: 65_536,
             max_effects: 1_000_000,
+            max_math_events: 1_000_000,
         }
     }
 }
@@ -121,6 +125,7 @@ pub enum ArtifactValidationError {
     RootNotBox,
     TooManyFonts { count: usize, limit: usize },
     TooManyEffects { count: usize, limit: usize },
+    TooManyMathEvents { count: usize, limit: usize },
     TooManyNodes { count: usize, limit: usize },
     NestingTooDeep { depth: usize, limit: usize },
     DuplicateFont { font_id: u32 },
@@ -135,6 +140,12 @@ pub enum ArtifactValidationError {
     InvalidLigatureSourceLength { count: usize },
     InvalidTokenScalar { ch: u32 },
     InvalidStream { stream: u8 },
+    InvalidMathEventSequence,
+    DuplicateMathId { id: u32 },
+    MissingMathFontInstance,
+    InvalidMathCmapScalar { scalar: u32 },
+    InvalidMathSsty { level: u8 },
+    InvalidMathDimensions,
 }
 
 impl std::fmt::Display for ArtifactValidationError {
@@ -230,6 +241,61 @@ pub struct OpenTypeFontResource {
     pub encoding_map_version: Option<u8>,
     pub encoding_map_identity: Option<[u8; 32]>,
     pub fontdimen_synthesis_version: Option<u8>,
+}
+
+/// Ordered, fixed-position output emitted by the OpenType MATH layout path.
+///
+/// Coordinates are page-relative TeX scaled points. The stream is deliberately
+/// detached from the legacy node tree so DVI replay remains unchanged.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MathOutputEvent {
+    Start(MathStart),
+    Glyph(MathGlyph),
+    Rule(MathRule),
+    End,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MathStart {
+    pub id: u32,
+    pub x: Scaled,
+    pub baseline: Scaled,
+    pub width: Scaled,
+    pub height: Scaled,
+    pub depth: Scaled,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MathGlyph {
+    pub font_instance: tex_fonts::FontInstanceIdentity,
+    pub glyph_id: u16,
+    pub selection: MathGlyphSelection,
+    /// OpenType `ssty` feature value: zero for text style, one or two for scripts.
+    pub ssty: u8,
+    pub x: Scaled,
+    pub baseline: Scaled,
+    pub width: Scaled,
+    pub height: Scaled,
+    pub depth: Scaled,
+}
+
+/// How a selected glyph can be reproduced by the HTML renderer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MathGlyphSelection {
+    /// The selected glyph is reproducible by shaping this Unicode scalar with
+    /// the recorded `ssty` value in the retained font instance.
+    Cmap { scalar: u32 },
+    /// The selected glyph has no reproducible cmap route and requires its
+    /// validated glyph-id outline from the retained font resource.
+    OutlineFallback,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MathRule {
+    pub x: Scaled,
+    pub y: Scaled,
+    pub width: Scaled,
+    pub height: Scaled,
 }
 
 /// A driver-facing shipped node.
@@ -558,6 +624,12 @@ fn validate_artifact(
             limit: limits.max_effects,
         });
     }
+    if artifact.math_events.len() > limits.max_math_events {
+        return Err(ArtifactValidationError::TooManyMathEvents {
+            count: artifact.math_events.len(),
+            limit: limits.max_math_events,
+        });
+    }
 
     let mut font_ids = std::collections::BTreeMap::new();
     let mut font_identities = std::collections::BTreeMap::new();
@@ -605,6 +677,7 @@ fn validate_artifact(
         }
         font_identities.insert(font.font_id, font.semantic_identity);
     }
+    validate_math_events(artifact)?;
     for font in &artifact.fonts {
         let source = match font.construction {
             FontResourceConstruction::Loaded => None,
@@ -761,6 +834,75 @@ fn validate_artifact(
             | PageNode::MathOn(_)
             | PageNode::MathOff(_) => {}
         }
+    }
+    Ok(())
+}
+
+fn validate_math_events(artifact: &UnvalidatedPageArtifact) -> Result<(), ArtifactValidationError> {
+    let instances = artifact
+        .fonts
+        .iter()
+        .filter_map(|font| font.opentype.as_ref().map(|font| font.instance_identity))
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut ids = std::collections::BTreeSet::new();
+    let mut active = false;
+    for event in &artifact.math_events {
+        match event {
+            MathOutputEvent::Start(start) => {
+                if active {
+                    return Err(ArtifactValidationError::InvalidMathEventSequence);
+                }
+                if !ids.insert(start.id) {
+                    return Err(ArtifactValidationError::DuplicateMathId { id: start.id });
+                }
+                if [start.width, start.height, start.depth]
+                    .into_iter()
+                    .any(|value| value.raw() < 0)
+                {
+                    return Err(ArtifactValidationError::InvalidMathDimensions);
+                }
+                active = true;
+            }
+            MathOutputEvent::Glyph(glyph) => {
+                if !active {
+                    return Err(ArtifactValidationError::InvalidMathEventSequence);
+                }
+                if !instances.contains(&glyph.font_instance) {
+                    return Err(ArtifactValidationError::MissingMathFontInstance);
+                }
+                if glyph.ssty > 2 {
+                    return Err(ArtifactValidationError::InvalidMathSsty { level: glyph.ssty });
+                }
+                if let MathGlyphSelection::Cmap { scalar } = glyph.selection
+                    && char::from_u32(scalar).is_none()
+                {
+                    return Err(ArtifactValidationError::InvalidMathCmapScalar { scalar });
+                }
+                if [glyph.width, glyph.height, glyph.depth]
+                    .into_iter()
+                    .any(|value| value.raw() < 0)
+                {
+                    return Err(ArtifactValidationError::InvalidMathDimensions);
+                }
+            }
+            MathOutputEvent::Rule(rule) => {
+                if !active {
+                    return Err(ArtifactValidationError::InvalidMathEventSequence);
+                }
+                if rule.width.raw() <= 0 || rule.height.raw() <= 0 {
+                    return Err(ArtifactValidationError::InvalidMathDimensions);
+                }
+            }
+            MathOutputEvent::End => {
+                if !active {
+                    return Err(ArtifactValidationError::InvalidMathEventSequence);
+                }
+                active = false;
+            }
+        }
+    }
+    if active {
+        return Err(ArtifactValidationError::InvalidMathEventSequence);
     }
     Ok(())
 }

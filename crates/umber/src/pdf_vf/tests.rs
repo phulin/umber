@@ -84,6 +84,7 @@ fn page(stores: &mut Universe, root: FontId) -> PositionedPage {
             physical_codes: vec![Some(b'A')],
             sources: vec![None],
         })],
+        math_events: Vec::new(),
         diagnostics: Vec::new(),
         last_saved_position: None,
         snap_reference: (Scaled::from_raw(0), Scaled::from_raw(0)),

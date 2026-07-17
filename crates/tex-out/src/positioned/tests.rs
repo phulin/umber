@@ -502,6 +502,7 @@ fn page(root: PageNode) -> crate::PageArtifact {
         counts: [0; 10],
         root,
         effects: Vec::new(),
+        math_events: Vec::new(),
     }
     .validate()
     .expect("valid page")

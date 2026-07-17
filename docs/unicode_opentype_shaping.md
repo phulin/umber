@@ -26,8 +26,10 @@ constants and glyph records (including `ssty`, italic correction, four-corner
 math kern, and top-accent attachment) without synthesizing TeX's 22 math
 fontdimens. Exact selected glyph ids remain in the backend-neutral math layout
 arena. Variant selection and deterministic horizontal/vertical assembly are
-now part of that layout; positioned HTML lowering is the remaining stage of
-`umber2-y2ei.9`.
+now part of that layout. Artifact schema 20 serializes a detached
+fixed-position math overlay with font-instance identity, exact glyph/cmap or
+outline-fallback selection, `ssty`, coordinates, and dimensions; SVG/HTML
+painting remains the next stage of `umber2-y2ei.9`.
 
 That document states its model explicitly: _"browser owns glyph selection,
 advances, kerning, ligatures... inside a run"_ — it deliberately avoids an

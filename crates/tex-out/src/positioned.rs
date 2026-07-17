@@ -10,7 +10,7 @@ mod tests;
 
 use tex_arith::Scaled;
 
-use crate::{FontResource, PageArtifact, PageEffect};
+use crate::{FontResource, MathOutputEvent, PageArtifact, PageEffect};
 
 /// Limits applied while lowering one committed page.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -42,6 +42,7 @@ pub struct PositionedPage {
     pub counts: [i32; 10],
     pub fonts: Vec<FontResource>,
     pub events: Vec<PositionedEvent>,
+    pub math_events: Vec<MathOutputEvent>,
     pub diagnostics: Vec<String>,
     pub last_saved_position: Option<(Scaled, Scaled)>,
     pub snap_reference: (Scaled, Scaled),
