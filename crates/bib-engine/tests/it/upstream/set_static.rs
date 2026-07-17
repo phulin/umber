@@ -1,7 +1,7 @@
-// Direct xfail translation of upstream t/set-static.t at commit 74252e6.
+// Direct passing translation of upstream t/set-static.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream;
 
 const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
 use strict;
@@ -190,7 +190,7 @@ is_deeply($biber->datalists->get_lists_by_attrs(section                    => 0,
 
 #[test]
 fn assertion_001_static_set_test_1() {
-    xfail_upstream(
+    pass_upstream(
         "Static set test 1",
         r"$out->get_output_entry('Static1', $main)",
         r"$string1",
@@ -201,7 +201,7 @@ fn assertion_001_static_set_test_1() {
 
 #[test]
 fn assertion_002_static_set_test_2() {
-    xfail_upstream(
+    pass_upstream(
         "Static set test 2",
         r"$out->get_output_entry('Static2', $main)",
         r"$string2",
@@ -212,7 +212,7 @@ fn assertion_002_static_set_test_2() {
 
 #[test]
 fn assertion_003_static_set_test_3() {
-    xfail_upstream(
+    pass_upstream(
         "Static set test 3",
         r"$out->get_output_entry('Static3', $main)",
         r"$string3",
@@ -223,7 +223,7 @@ fn assertion_003_static_set_test_3() {
 
 #[test]
 fn assertion_004_static_set_test_4() {
-    xfail_upstream(
+    pass_upstream(
         "Static set test 4",
         r"$out->get_output_entry('Static4', $main)",
         r"$string4",
@@ -234,7 +234,7 @@ fn assertion_004_static_set_test_4() {
 
 #[test]
 fn assertion_005_static_set_test_5() {
-    xfail_upstream(
+    pass_upstream(
         "Static set test 5",
         r"$out->get_output_entry('Static2', $main1, 1)",
         r"$string5",
@@ -245,7 +245,7 @@ fn assertion_005_static_set_test_5() {
 
 #[test]
 fn assertion_006_shorthand_sets() {
-    xfail_upstream(
+    pass_upstream(
         "Shorthand - sets",
         r"$biber->datalists->get_lists_by_attrs(section                    => 0,
                                                 name                       => 'shorthand:shorthand/global//global/global/global',

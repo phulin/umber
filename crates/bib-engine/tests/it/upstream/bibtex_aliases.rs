@@ -1,11 +1,11 @@
-// Direct xfail translation of upstream t/bibtex-aliases.t at commit 74252e6.
+// Direct mixed-stage translation of upstream t/bibtex-aliases.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::{SemanticOwner, xfail_owned_upstream};
+use super::{SemanticOwner, compare_owned_upstream};
 
 // Alias processing belongs to the graph stage; the structured-name assertion
 // additionally needs the name stage and is therefore owned by that later issue.
-fn xfail_upstream(
+fn compare_upstream(
     assertion: &str,
     actual_expression: &str,
     expected_expression: &str,
@@ -21,7 +21,7 @@ fn xfail_upstream(
         | "Alias - 24" | "Alias - 25" => SemanticOwner::Graph,
         _ => panic!("mixed-stage assertion `{assertion}` has no semantic owner"),
     };
-    xfail_owned_upstream(
+    compare_owned_upstream(
         owner,
         assertion,
         actual_expression,
@@ -129,7 +129,7 @@ ok(is_undef($bibentries->entry('alias8')->get_field('verbc')), 'Alias - 25' );
 
 #[test]
 fn assertion_001_alias_1() {
-    xfail_upstream(
+    compare_upstream(
         "Alias - 1",
         r"$bibentries->entry('alias1')->get_field('entrytype')",
         r"'thesis'",
@@ -140,7 +140,7 @@ fn assertion_001_alias_1() {
 
 #[test]
 fn assertion_002_alias_2() {
-    xfail_upstream(
+    compare_upstream(
         "Alias - 2",
         r"$bibentries->entry('alias1')->get_field('type')",
         r"'phdthesis'",
@@ -151,7 +151,7 @@ fn assertion_002_alias_2() {
 
 #[test]
 fn assertion_003_alias_3() {
-    xfail_upstream(
+    compare_upstream(
         "Alias - 3",
         r"$bibentries->entry('alias1')->get_field('location')",
         r"['Ivory Towers']",
@@ -162,7 +162,7 @@ fn assertion_003_alias_3() {
 
 #[test]
 fn assertion_004_alias_4() {
-    xfail_upstream(
+    compare_upstream(
         "Alias - 4",
         r"$bibentries->entry('alias1')->get_field('address')",
         r"undef",
@@ -173,7 +173,7 @@ fn assertion_004_alias_4() {
 
 #[test]
 fn assertion_005_alias_5() {
-    xfail_upstream(
+    compare_upstream(
         "Alias - 5",
         r"$bibentries->entry('alias2')->get_field('entrytype')",
         r"'misc'",
@@ -184,7 +184,7 @@ fn assertion_005_alias_5() {
 
 #[test]
 fn assertion_006_alias_6() {
-    xfail_upstream(
+    compare_upstream(
         "Alias - 6",
         r"$bibentries->entry('alias2')->get_field('warnings')",
         r"$w1",
@@ -195,7 +195,7 @@ fn assertion_006_alias_6() {
 
 #[test]
 fn assertion_007_alias_7() {
-    xfail_upstream(
+    compare_upstream(
         "Alias - 7",
         r"$bibentries->entry('alias2')->get_field('school')",
         r"undef",
@@ -206,7 +206,7 @@ fn assertion_007_alias_7() {
 
 #[test]
 fn assertion_008_alias_8() {
-    xfail_upstream(
+    compare_upstream(
         "Alias - 8",
         r"$bibentries->entry('alias3')->get_field('entrytype')",
         r"'customb'",
@@ -217,7 +217,7 @@ fn assertion_008_alias_8() {
 
 #[test]
 fn assertion_009_alias_9() {
-    xfail_upstream(
+    compare_upstream(
         "Alias - 9",
         r"$bibentries->entry('alias4')->get_field('entrytype')",
         r"'customa'",
@@ -228,7 +228,7 @@ fn assertion_009_alias_9() {
 
 #[test]
 fn assertion_010_alias_10() {
-    xfail_upstream(
+    compare_upstream(
         "Alias - 10",
         r"$bibentries->entry('alias4')->get_field('verba')",
         r"'conversation'",
@@ -239,7 +239,7 @@ fn assertion_010_alias_10() {
 
 #[test]
 fn assertion_011_alias_11() {
-    xfail_upstream(
+    compare_upstream(
         "Alias - 11",
         r"$bibentries->entry('alias4')->get_field('verbb')",
         r"'somevalue'",
@@ -250,7 +250,7 @@ fn assertion_011_alias_11() {
 
 #[test]
 fn assertion_012_alias_12() {
-    xfail_upstream(
+    compare_upstream(
         "Alias - 12",
         r"$bibentries->entry('alias4')->get_field('eprint')",
         r"'anid'",
@@ -261,7 +261,7 @@ fn assertion_012_alias_12() {
 
 #[test]
 fn assertion_013_alias_13() {
-    xfail_upstream(
+    compare_upstream(
         "Alias - 13",
         r"$bibentries->entry('alias4')->get_field('eprinttype')",
         r"'pubmedid'",
@@ -272,7 +272,7 @@ fn assertion_013_alias_13() {
 
 #[test]
 fn assertion_014_alias_14() {
-    xfail_upstream(
+    compare_upstream(
         "Alias - 14",
         r"$bibentries->entry('alias4')->get_field('userd')",
         r"'Some string of things'",
@@ -283,7 +283,7 @@ fn assertion_014_alias_14() {
 
 #[test]
 fn assertion_015_alias_15() {
-    xfail_upstream(
+    compare_upstream(
         "Alias - 15",
         r"$bibentries->entry('alias4')->get_field('pubmedid')",
         r"undef",
@@ -294,7 +294,7 @@ fn assertion_015_alias_15() {
 
 #[test]
 fn assertion_016_alias_16() {
-    xfail_upstream(
+    compare_upstream(
         "Alias - 16",
         r"$bibentries->entry('alias4')->get_field('namea')->nth_name(1)->get_namepart('given')",
         r"'Sam'",
@@ -305,7 +305,7 @@ fn assertion_016_alias_16() {
 
 #[test]
 fn assertion_017_alias_17() {
-    xfail_upstream(
+    compare_upstream(
         "Alias - 17",
         r"$bibentries->entry('alias4')->get_field('warnings')",
         r"$w2",
@@ -316,7 +316,7 @@ fn assertion_017_alias_17() {
 
 #[test]
 fn assertion_018_alias_18() {
-    xfail_upstream(
+    compare_upstream(
         "Alias - 18",
         r"is_undef($bibentries->entry('alias5')->get_field('abstract'))",
         r"true",
@@ -327,7 +327,7 @@ fn assertion_018_alias_18() {
 
 #[test]
 fn assertion_019_alias_19() {
-    xfail_upstream(
+    compare_upstream(
         "Alias - 19",
         r"$biber->_liststring('alias5', 'listb')",
         r"'REPlaCEDte!early'",
@@ -338,7 +338,7 @@ fn assertion_019_alias_19() {
 
 #[test]
 fn assertion_020_alias_20() {
-    xfail_upstream(
+    compare_upstream(
         "Alias - 20",
         r"$biber->_liststring('alias5', 'institution')",
         r"'REPlaCEDte!early'",
@@ -349,7 +349,7 @@ fn assertion_020_alias_20() {
 
 #[test]
 fn assertion_021_alias_21() {
-    xfail_upstream(
+    compare_upstream(
         "Alias - 21",
         r"$bibentries->entry('alias6')->get_field('keywords')",
         r"['keyw1', 'keyw2']",
@@ -360,7 +360,7 @@ fn assertion_021_alias_21() {
 
 #[test]
 fn assertion_022_alias_22() {
-    xfail_upstream(
+    compare_upstream(
         "Alias - 22",
         r"$bibentries->entry('alias7')->get_field('lista')",
         r"['listaval']",
@@ -371,7 +371,7 @@ fn assertion_022_alias_22() {
 
 #[test]
 fn assertion_023_alias_23() {
-    xfail_upstream(
+    compare_upstream(
         "Alias - 23",
         r"$bibentries->entry('alias7')->get_field('verbb')",
         r"'val2val1'",
@@ -382,7 +382,7 @@ fn assertion_023_alias_23() {
 
 #[test]
 fn assertion_024_alias_24() {
-    xfail_upstream(
+    compare_upstream(
         "Alias - 24",
         r"$bibentries->entry('alias7')->get_field('verbc')",
         r"'val3val2val1'",
@@ -393,7 +393,7 @@ fn assertion_024_alias_24() {
 
 #[test]
 fn assertion_025_alias_25() {
-    xfail_upstream(
+    compare_upstream(
         "Alias - 25",
         r"is_undef($bibentries->entry('alias8')->get_field('verbc'))",
         r"true",

@@ -1,7 +1,7 @@
-// Direct xfail translation of upstream t/xdata.t at commit 74252e6.
+// Direct passing translation of upstream t/xdata.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream;
 
 const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
 use strict;
@@ -497,7 +497,7 @@ is_deeply($bibentries->entry('bltxgxd1')->get_field('warnings'), $w2, 'Granular 
 
 #[test]
 fn assertion_001_xdata_test_1() {
-    xfail_upstream(
+    pass_upstream(
         "xdata test - 1",
         r"$out->get_output_entry('xd1', $main)",
         r"$xd1",
@@ -508,7 +508,7 @@ fn assertion_001_xdata_test_1() {
 
 #[test]
 fn assertion_002_xdata_test_2() {
-    xfail_upstream(
+    pass_upstream(
         "xdata test - 2",
         r"encode_utf8($out->get_output_entry('xd2', $main))",
         r"encode_utf8($xd2)",
@@ -519,7 +519,7 @@ fn assertion_002_xdata_test_2() {
 
 #[test]
 fn assertion_003_xdata_test_3() {
-    xfail_upstream(
+    pass_upstream(
         "xdata test - 3",
         r"$out->get_output_entry('macmillan', $main)",
         r"undef",
@@ -530,7 +530,7 @@ fn assertion_003_xdata_test_3() {
 
 #[test]
 fn assertion_004_xdata_test_4() {
-    xfail_upstream(
+    pass_upstream(
         "xdata test - 4",
         r"$out->get_output_entry('macmillan:pub', $main)",
         r"undef",
@@ -541,7 +541,7 @@ fn assertion_004_xdata_test_4() {
 
 #[test]
 fn assertion_005_xdata_granular_test_1() {
-    xfail_upstream(
+    pass_upstream(
         "xdata granular test - 1",
         r"$out->get_output_entry('gxd1', $main)",
         r"$gxd1",
@@ -552,7 +552,7 @@ fn assertion_005_xdata_granular_test_1() {
 
 #[test]
 fn assertion_006_xdata_granular_test_2() {
-    xfail_upstream(
+    pass_upstream(
         "xdata granular test - 2",
         r"$out->get_output_entry('gxd1g', $main)",
         r"$gxd1g",
@@ -563,7 +563,7 @@ fn assertion_006_xdata_granular_test_2() {
 
 #[test]
 fn assertion_007_xdata_granular_test_3() {
-    xfail_upstream(
+    pass_upstream(
         "xdata granular test - 3",
         r"$out->get_output_entry('bltxgxd1', $main)",
         r"$bltxgxd1",
@@ -574,7 +574,7 @@ fn assertion_007_xdata_granular_test_3() {
 
 #[test]
 fn assertion_008_xdata_annotation_test_1() {
-    xfail_upstream(
+    pass_upstream(
         "xdata annotation test - 1",
         r"$out->get_output_entry('xdann1', $main)",
         r"$xdann1",
@@ -585,7 +585,7 @@ fn assertion_008_xdata_annotation_test_1() {
 
 #[test]
 fn assertion_009_cyclic_xdata_error_check_1() {
-    xfail_upstream(
+    pass_upstream(
         "Cyclic xdata error check - 1",
         r#"(first {$_ eq "ERROR - Circular XDATA inheritance between 'lxd1:loop'<->'lxd2:loop'"} split("\n",$stderr))"#,
         r"true",
@@ -596,7 +596,7 @@ fn assertion_009_cyclic_xdata_error_check_1() {
 
 #[test]
 fn assertion_010_cyclic_xdata_error_check_2() {
-    xfail_upstream(
+    pass_upstream(
         "Cyclic xdata error check - 2",
         r#"(first {$_ eq "ERROR - Circular XDATA inheritance between 'lxd4:loop'<->'lxd4:loop'"} split("\n",$stderr))"#,
         r"true",
@@ -607,7 +607,7 @@ fn assertion_010_cyclic_xdata_error_check_2() {
 
 #[test]
 fn assertion_011_cyclic_xdata_error_check_3() {
-    xfail_upstream(
+    pass_upstream(
         "Cyclic xdata error check - 3",
         r#"(first {$_ eq "ERROR - Circular XDATA inheritance between 'loop'<->'loop:3'"} split("\n",$stderr))"#,
         r"true",
@@ -618,7 +618,7 @@ fn assertion_011_cyclic_xdata_error_check_3() {
 
 #[test]
 fn assertion_012_granular_xdata_resolution_warnings_bibtex() {
-    xfail_upstream(
+    pass_upstream(
         "Granular XDATA resolution warnings - bibtex",
         r"$bibentries->entry('gxd1')->get_field('warnings')",
         r"$w1",
@@ -629,7 +629,7 @@ fn assertion_012_granular_xdata_resolution_warnings_bibtex() {
 
 #[test]
 fn assertion_013_granular_xdata_resolution_warnings_biblatexml() {
-    xfail_upstream(
+    pass_upstream(
         "Granular XDATA resolution warnings - biblatexml",
         r"$bibentries->entry('bltxgxd1')->get_field('warnings')",
         r"$w2",

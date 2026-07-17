@@ -1,7 +1,7 @@
-// Direct xfail translation of upstream t/set-legacy.t at commit 74252e6.
+// Direct passing translation of upstream t/set-legacy.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream;
 
 const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
 use strict;
@@ -134,7 +134,7 @@ eq_or_diff($out->get_output_entry('Elias1955b', $main), $string3, 'Legacy set te
 
 #[test]
 fn assertion_001_legacy_set_test_1() {
-    xfail_upstream(
+    pass_upstream(
         "Legacy set test 1",
         r"$out->get_output_entry('Elias1955', $main)",
         r"$string1",
@@ -145,7 +145,7 @@ fn assertion_001_legacy_set_test_1() {
 
 #[test]
 fn assertion_002_legacy_set_test_2() {
-    xfail_upstream(
+    pass_upstream(
         "Legacy set test 2",
         r"$out->get_output_entry('Elias1955a', $main)",
         r"$string2",
@@ -156,7 +156,7 @@ fn assertion_002_legacy_set_test_2() {
 
 #[test]
 fn assertion_003_legacy_set_test_3() {
-    xfail_upstream(
+    pass_upstream(
         "Legacy set test 3",
         r"$out->get_output_entry('Elias1955b', $main)",
         r"$string3",

@@ -1,7 +1,7 @@
-// Direct xfail translation of upstream t/maps.t at commit 74252e6.
+// Direct passing translation of upstream t/maps.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream;
 
 const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
 use strict;
@@ -60,7 +60,7 @@ ok(is_undef($bibentries->entry('maps3')->get_field('verbb')), 'Maps test - 8' );
 
 #[test]
 fn assertion_001_maps_test_1() {
-    xfail_upstream(
+    pass_upstream(
         "Maps test - 1",
         r"defined($bibentries->entry('maps1'))",
         r"true",
@@ -71,7 +71,7 @@ fn assertion_001_maps_test_1() {
 
 #[test]
 fn assertion_002_maps_test_2() {
-    xfail_upstream(
+    pass_upstream(
         "Maps test - 2",
         r"is_undef($bibentries->entry('maps2'))",
         r"true",
@@ -82,7 +82,7 @@ fn assertion_002_maps_test_2() {
 
 #[test]
 fn assertion_003_maps_test_3() {
-    xfail_upstream(
+    pass_upstream(
         "Maps test - 3",
         r"defined($bibentries->entry('maps3'))",
         r"true",
@@ -93,7 +93,7 @@ fn assertion_003_maps_test_3() {
 
 #[test]
 fn assertion_004_maps_test_4() {
-    xfail_upstream(
+    pass_upstream(
         "Maps test - 4",
         r"is_undef($bibentries->entry('maps4'))",
         r"true",
@@ -104,7 +104,7 @@ fn assertion_004_maps_test_4() {
 
 #[test]
 fn assertion_005_maps_test_5() {
-    xfail_upstream(
+    pass_upstream(
         "Maps test - 5",
         r"$bibentries->entry('maps1')->get_field('verba')",
         r"'somevalue'",
@@ -115,7 +115,7 @@ fn assertion_005_maps_test_5() {
 
 #[test]
 fn assertion_006_maps_test_6() {
-    xfail_upstream(
+    pass_upstream(
         "Maps test - 6",
         r"is_undef($bibentries->entry('maps3')->get_field('verba'))",
         r"true",
@@ -126,7 +126,7 @@ fn assertion_006_maps_test_6() {
 
 #[test]
 fn assertion_007_maps_test_7() {
-    xfail_upstream(
+    pass_upstream(
         "Maps test - 7",
         r"$bibentries->entry('maps1')->get_field('verbb')",
         r"'somevalue1'",
@@ -137,7 +137,7 @@ fn assertion_007_maps_test_7() {
 
 #[test]
 fn assertion_008_maps_test_8() {
-    xfail_upstream(
+    pass_upstream(
         "Maps test - 8",
         r"is_undef($bibentries->entry('maps3')->get_field('verbb'))",
         r"true",

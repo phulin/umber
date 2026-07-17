@@ -1,7 +1,7 @@
-// Direct xfail translation of upstream t/sections.t at commit 74252e6.
+// Direct passing translation of upstream t/sections.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream;
 
 const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
 use strict;
@@ -124,7 +124,7 @@ eq_or_diff($out->get_output_head, $head, 'Preamble output check with output_safe
 
 #[test]
 fn assertion_001_preamble_for_all_sections() {
-    xfail_upstream(
+    pass_upstream(
         "Preamble for all sections",
         r"$biber->get_preamble",
         r"$preamble",
@@ -135,7 +135,7 @@ fn assertion_001_preamble_for_all_sections() {
 
 #[test]
 fn assertion_002_section_0_macro_test() {
-    xfail_upstream(
+    pass_upstream(
         "Section 0 macro test",
         r"$section0->bibentry('sect1')->get_field('note')",
         r"'value1'",
@@ -146,7 +146,7 @@ fn assertion_002_section_0_macro_test() {
 
 #[test]
 fn assertion_003_section_1_macro_test() {
-    xfail_upstream(
+    pass_upstream(
         "Section 1 macro test",
         r"$section1->bibentry('sect4')->get_field('note')",
         r"'value2'",
@@ -157,7 +157,7 @@ fn assertion_003_section_1_macro_test() {
 
 #[test]
 fn assertion_004_section_0_citekeys() {
-    xfail_upstream(
+    pass_upstream(
         "Section 0 citekeys",
         r"$main0->get_keys",
         r"['sect1', 'sect2', 'sect3', 'sect8']",
@@ -168,7 +168,7 @@ fn assertion_004_section_0_citekeys() {
 
 #[test]
 fn assertion_005_section_0_shorthands() {
-    xfail_upstream(
+    pass_upstream(
         "Section 0 shorthands",
         r"$shs0->get_keys",
         r"['sect1', 'sect2', 'sect8']",
@@ -179,7 +179,7 @@ fn assertion_005_section_0_shorthands() {
 
 #[test]
 fn assertion_006_section_1_citekeys() {
-    xfail_upstream(
+    pass_upstream(
         "Section 1 citekeys",
         r"$main1->get_keys",
         r"['sect4', 'sect5']",
@@ -190,7 +190,7 @@ fn assertion_006_section_1_citekeys() {
 
 #[test]
 fn assertion_007_section_1_shorthands() {
-    xfail_upstream(
+    pass_upstream(
         "Section 1 shorthands",
         r"$shs1->get_keys",
         r"['sect4', 'sect5']",
@@ -201,7 +201,7 @@ fn assertion_007_section_1_shorthands() {
 
 #[test]
 fn assertion_008_section_2_citekeys() {
-    xfail_upstream(
+    pass_upstream(
         "Section 2 citekeys",
         r"$main2->get_keys",
         r"['sect1', 'sect6', 'sect7']",
@@ -212,7 +212,7 @@ fn assertion_008_section_2_citekeys() {
 
 #[test]
 fn assertion_009_section_2_shorthands() {
-    xfail_upstream(
+    pass_upstream(
         "Section 2 shorthands",
         r"$shs2->get_keys",
         r"['sect1', 'sect6', 'sect7']",
@@ -223,7 +223,7 @@ fn assertion_009_section_2_shorthands() {
 
 #[test]
 fn assertion_010_section_3_citekeys() {
-    xfail_upstream(
+    pass_upstream(
         "Section 3 citekeys",
         r"[$section3->get_orig_order_citekeys]",
         r"['sect1', 'sect2', 'sectall1']",
@@ -234,7 +234,7 @@ fn assertion_010_section_3_citekeys() {
 
 #[test]
 fn assertion_011_checking_output_sections_1() {
-    xfail_upstream(
+    pass_upstream(
         "Checking output sections - 1",
         r"$out->get_output_section(0)->number",
         r"'0'",
@@ -245,7 +245,7 @@ fn assertion_011_checking_output_sections_1() {
 
 #[test]
 fn assertion_012_checking_output_sections_2() {
-    xfail_upstream(
+    pass_upstream(
         "Checking output sections - 2",
         r"$out->get_output_section(1)->number",
         r"'1'",
@@ -256,7 +256,7 @@ fn assertion_012_checking_output_sections_2() {
 
 #[test]
 fn assertion_013_checking_output_sections_3() {
-    xfail_upstream(
+    pass_upstream(
         "Checking output sections - 3",
         r"$out->get_output_section(2)->number",
         r"'2'",
@@ -267,7 +267,7 @@ fn assertion_013_checking_output_sections_3() {
 
 #[test]
 fn assertion_014_preamble_output_check_with_output_safechars() {
-    xfail_upstream(
+    pass_upstream(
         "Preamble output check with output_safechars",
         r"$out->get_output_head",
         r"$head",

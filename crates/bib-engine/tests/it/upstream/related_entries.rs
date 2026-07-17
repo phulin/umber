@@ -1,7 +1,7 @@
-// Direct xfail translation of upstream t/related-entries.t at commit 74252e6.
+// Direct passing translation of upstream t/related-entries.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream;
 
 const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
 use strict;
@@ -421,7 +421,7 @@ eq_or_diff($out->get_output_entry('kullback:related', $main), $un2, 'Related uni
 
 #[test]
 fn assertion_001_related_entry_test_1() {
-    xfail_upstream(
+    pass_upstream(
         "Related entry test 1",
         r"$out->get_output_entry('key1', $main)",
         r"$k1",
@@ -432,7 +432,7 @@ fn assertion_001_related_entry_test_1() {
 
 #[test]
 fn assertion_002_related_entry_test_2() {
-    xfail_upstream(
+    pass_upstream(
         "Related entry test 2",
         r"$out->get_output_entry('key2', $main)",
         r"$k2",
@@ -443,7 +443,7 @@ fn assertion_002_related_entry_test_2() {
 
 #[test]
 fn assertion_003_related_entry_test_3() {
-    xfail_upstream(
+    pass_upstream(
         "Related entry test 3",
         r"$out->get_output_entry('key3', $main)",
         r"undef",
@@ -454,7 +454,7 @@ fn assertion_003_related_entry_test_3() {
 
 #[test]
 fn assertion_004_related_entry_test_4() {
-    xfail_upstream(
+    pass_upstream(
         "Related entry test 4",
         r"$out->get_output_entry('c2add694bf942dc77b376592d9c862cd', $main)",
         r"$kck1",
@@ -465,7 +465,7 @@ fn assertion_004_related_entry_test_4() {
 
 #[test]
 fn assertion_005_related_entry_test_5() {
-    xfail_upstream(
+    pass_upstream(
         "Related entry test 5",
         r"$out->get_output_entry('78f825aaa0103319aaa1a30bf4fe3ada', $main)",
         r"$kck2",
@@ -476,7 +476,7 @@ fn assertion_005_related_entry_test_5() {
 
 #[test]
 fn assertion_006_related_entry_test_6() {
-    xfail_upstream(
+    pass_upstream(
         "Related entry test 6",
         r"$out->get_output_entry('3631578538a2d6ba5879b31a9a42f290', $main)",
         r"$kck3",
@@ -487,7 +487,7 @@ fn assertion_006_related_entry_test_6() {
 
 #[test]
 fn assertion_007_related_entry_test_7() {
-    xfail_upstream(
+    pass_upstream(
         "Related entry test 7",
         r"$out->get_output_entry('caf8e34be07426ae7127c1b4829983c1', $main)",
         r"$kck4",
@@ -498,7 +498,7 @@ fn assertion_007_related_entry_test_7() {
 
 #[test]
 fn assertion_008_related_entry_test_8() {
-    xfail_upstream(
+    pass_upstream(
         "Related entry test 8",
         r"$out->get_output_entry('key4', $main)",
         r"undef",
@@ -509,7 +509,7 @@ fn assertion_008_related_entry_test_8() {
 
 #[test]
 fn assertion_009_related_entry_test_9() {
-    xfail_upstream(
+    pass_upstream(
         "Related entry test 9",
         r"$shs->get_keys",
         r#"[
@@ -534,7 +534,7 @@ fn assertion_009_related_entry_test_9() {
 
 #[test]
 fn assertion_010_related_entry_test_10() {
-    xfail_upstream(
+    pass_upstream(
         "Related entry test 10",
         r"$out->get_output_entry('c1', $main)",
         r"$c1",
@@ -545,7 +545,7 @@ fn assertion_010_related_entry_test_10() {
 
 #[test]
 fn assertion_011_related_entry_test_11() {
-    xfail_upstream(
+    pass_upstream(
         "Related entry test 11",
         r"$out->get_output_entry('9ab62b5ef34a985438bfdf7ee0102229', $main)",
         r"$c2k",
@@ -556,7 +556,7 @@ fn assertion_011_related_entry_test_11() {
 
 #[test]
 fn assertion_012_related_entry_test_12() {
-    xfail_upstream(
+    pass_upstream(
         "Related entry test 12",
         r"$out->get_output_entry('0a3d72134fb3d6c024db4c510bc1605b', $main)",
         r"$c3k",
@@ -567,7 +567,7 @@ fn assertion_012_related_entry_test_12() {
 
 #[test]
 fn assertion_013_custom_options_1() {
-    xfail_upstream(
+    pass_upstream(
         "Custom options - 1",
         r"$out->get_output_entry('8ddf878039b70767c4a5bcf4f0c4f65e', $main)",
         r"$s1",
@@ -578,7 +578,7 @@ fn assertion_013_custom_options_1() {
 
 #[test]
 fn assertion_014_related_uniquename_1() {
-    xfail_upstream(
+    pass_upstream(
         "Related uniquename - 1",
         r"$out->get_output_entry('kullback', $main)",
         r"$un1",
@@ -589,7 +589,7 @@ fn assertion_014_related_uniquename_1() {
 
 #[test]
 fn assertion_015_related_uniquename_2() {
-    xfail_upstream(
+    pass_upstream(
         "Related uniquename - 2",
         r"$out->get_output_entry('kullback:related', $main)",
         r"$un2",

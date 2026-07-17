@@ -1,11 +1,11 @@
-// Direct xfail translation of upstream t/basic-misc.t at commit 74252e6.
+// Direct mixed-stage translation of upstream t/basic-misc.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::{SemanticOwner, xfail_owned_upstream};
+use super::{SemanticOwner, compare_owned_upstream};
 
 // This upstream file crosses semantic stages. Keep each assertion attached to
 // the issue that owns the last behavior needed for its exact expected value.
-fn xfail_upstream(
+fn compare_upstream(
     assertion: &str,
     actual_expression: &str,
     expected_expression: &str,
@@ -87,7 +87,7 @@ fn xfail_upstream(
         | "Decoding verbatim fields - 1" => Output,
         _ => panic!("mixed-stage assertion `{assertion}` has no semantic owner"),
     };
-    xfail_owned_upstream(
+    compare_owned_upstream(
         owner,
         assertion,
         actual_expression,
@@ -1038,7 +1038,7 @@ eq_or_diff($bibentries->entry('matches3')->get_field('note'), '2', 'Static match
 
 #[test]
 fn assertion_001_uniquelist_1() {
-    xfail_upstream(
+    compare_upstream(
         "uniquelist 1",
         r"$out->get_output_entry('u1', $main)",
         r"$u1",
@@ -1049,7 +1049,7 @@ fn assertion_001_uniquelist_1() {
 
 #[test]
 fn assertion_002_citekeys_1() {
-    xfail_upstream(
+    compare_upstream(
         "citekeys 1",
         r"\@keys",
         r"\@citedkeys",
@@ -1060,7 +1060,7 @@ fn assertion_002_citekeys_1() {
 
 #[test]
 fn assertion_003_shorthands() {
-    xfail_upstream(
+    compare_upstream(
         "shorthands",
         r"$biber->datalists->get_list('shorthand/global//global/global/global')->get_keys",
         r"[ 'kant:kpv', 'kant:ku' ]",
@@ -1071,7 +1071,7 @@ fn assertion_003_shorthands() {
 
 #[test]
 fn assertion_004_citekeys_2() {
-    xfail_upstream(
+    compare_upstream(
         "citekeys 2",
         r"\@keys",
         r"\@allkeys",
@@ -1082,7 +1082,7 @@ fn assertion_004_citekeys_2() {
 
 #[test]
 fn assertion_005_bbl_entry_with_maths_in_title_1() {
-    xfail_upstream(
+    compare_upstream(
         "bbl entry with maths in title 1",
         r"$out->get_output_entry('t1', $main)",
         r"$t1",
@@ -1093,7 +1093,7 @@ fn assertion_005_bbl_entry_with_maths_in_title_1() {
 
 #[test]
 fn assertion_006_default_bib_month_macros() {
-    xfail_upstream(
+    compare_upstream(
         "default bib month macros",
         r"$bibentries->entry('shore')->get_field('month')",
         r"'3'",
@@ -1104,7 +1104,7 @@ fn assertion_006_default_bib_month_macros() {
 
 #[test]
 fn assertion_007_keywords_test_1() {
-    xfail_upstream(
+    compare_upstream(
         "Keywords test - 1",
         r"$bibentries->entry('t1')->has_keyword('primary')",
         r"true",
@@ -1115,7 +1115,7 @@ fn assertion_007_keywords_test_1() {
 
 #[test]
 fn assertion_008_keywords_test_2() {
-    xfail_upstream(
+    compare_upstream(
         "Keywords test - 2",
         r"$bibentries->entry('t1')->has_keyword('something')",
         r"true",
@@ -1126,7 +1126,7 @@ fn assertion_008_keywords_test_2() {
 
 #[test]
 fn assertion_009_keywords_test_3() {
-    xfail_upstream(
+    compare_upstream(
         "Keywords test - 3",
         r"$bibentries->entry('t1')->has_keyword('somethingelse')",
         r"true",
@@ -1137,7 +1137,7 @@ fn assertion_009_keywords_test_3() {
 
 #[test]
 fn assertion_010_bbl_entry_with_maths_in_title_2() {
-    xfail_upstream(
+    compare_upstream(
         "bbl entry with maths in title 2",
         r"$out->get_output_entry('t2', $main)",
         r"$t2",
@@ -1148,7 +1148,7 @@ fn assertion_010_bbl_entry_with_maths_in_title_2() {
 
 #[test]
 fn assertion_011_uniquename_count_1() {
-    xfail_upstream(
+    compare_upstream(
         "uniquename count 1",
         r"$main->_get_uniquename('WormanN', 'global')",
         r"$Worman_N",
@@ -1159,7 +1159,7 @@ fn assertion_011_uniquename_count_1() {
 
 #[test]
 fn assertion_012_uniquename_count_2() {
-    xfail_upstream(
+    compare_upstream(
         "uniquename count 2",
         r"$main->_get_uniquename('vanGennep', 'global')",
         r"$Gennep",
@@ -1170,7 +1170,7 @@ fn assertion_012_uniquename_count_2() {
 
 #[test]
 fn assertion_013_bbl_with_maxcitenames() {
-    xfail_upstream(
+    compare_upstream(
         "bbl with > maxcitenames",
         r"$out->get_output_entry('murray', $main)",
         r"$murray1",
@@ -1181,7 +1181,7 @@ fn assertion_013_bbl_with_maxcitenames() {
 
 #[test]
 fn assertion_014_missing_citekey_1() {
-    xfail_upstream(
+    compare_upstream(
         "missing citekey 1",
         r"$out->get_output_entry('missing1')",
         r#""  \\missing{missing1}\n""#,
@@ -1192,7 +1192,7 @@ fn assertion_014_missing_citekey_1() {
 
 #[test]
 fn assertion_015_missing_citekey_2() {
-    xfail_upstream(
+    compare_upstream(
         "missing citekey 2",
         r"$out->get_output_entry('missing2')",
         r#""  \\missing{missing2}\n""#,
@@ -1203,7 +1203,7 @@ fn assertion_015_missing_citekey_2() {
 
 #[test]
 fn assertion_016_bbl_with_maxcitenames_empty_alphaothers() {
-    xfail_upstream(
+    compare_upstream(
         "bbl with > maxcitenames, empty alphaothers",
         r"$out->get_output_entry('murray', $main)",
         r"$murray2",
@@ -1214,7 +1214,7 @@ fn assertion_016_bbl_with_maxcitenames_empty_alphaothers() {
 
 #[test]
 fn assertion_017_namehash_fullhash_1() {
-    xfail_upstream(
+    compare_upstream(
         "namehash/fullhash 1",
         r"$out->get_output_entry('anon1', $main)",
         r"$anon1",
@@ -1225,7 +1225,7 @@ fn assertion_017_namehash_fullhash_1() {
 
 #[test]
 fn assertion_018_namehash_fullhash_2() {
-    xfail_upstream(
+    compare_upstream(
         "namehash/fullhash 2",
         r"$out->get_output_entry('anon2', $main)",
         r"$anon2",
@@ -1236,7 +1236,7 @@ fn assertion_018_namehash_fullhash_2() {
 
 #[test]
 fn assertion_019_map_1() {
-    xfail_upstream(
+    compare_upstream(
         "map 1",
         r"is_undef($bibentries->entry('i1')->get_field('abstract'))",
         r"true",
@@ -1247,7 +1247,7 @@ fn assertion_019_map_1() {
 
 #[test]
 fn assertion_020_map_2() {
-    xfail_upstream(
+    compare_upstream(
         "map 2",
         r"$bibentries->entry('i1')->get_field('userd')",
         r"'test'",
@@ -1258,7 +1258,7 @@ fn assertion_020_map_2() {
 
 #[test]
 fn assertion_021_map_3() {
-    xfail_upstream(
+    compare_upstream(
         "map 3",
         r"is_undef($bibentries->entry('i2')->get_field('userb'))",
         r"true",
@@ -1269,7 +1269,7 @@ fn assertion_021_map_3() {
 
 #[test]
 fn assertion_022_map_4() {
-    xfail_upstream(
+    compare_upstream(
         "map 4",
         r"NFC($bibentries->entry('i2')->get_field('usere'))",
         r"'a Štring'",
@@ -1280,7 +1280,7 @@ fn assertion_022_map_4() {
 
 #[test]
 fn assertion_023_map_5() {
-    xfail_upstream(
+    compare_upstream(
         "map 5",
         r"$biber->_liststring('i1', 'listd')",
         r"'abc'",
@@ -1291,7 +1291,7 @@ fn assertion_023_map_5() {
 
 #[test]
 fn assertion_024_map_6() {
-    xfail_upstream(
+    compare_upstream(
         "map 6",
         r"$biber->_liststring('i1', 'listb')",
         r"'REPlacedte!early'",
@@ -1302,7 +1302,7 @@ fn assertion_024_map_6() {
 
 #[test]
 fn assertion_025_map_7() {
-    xfail_upstream(
+    compare_upstream(
         "map 7",
         r"$biber->_liststring('i1', 'institution')",
         r"'REPlaCEDte!early'",
@@ -1313,7 +1313,7 @@ fn assertion_025_map_7() {
 
 #[test]
 fn assertion_026_map_8() {
-    xfail_upstream(
+    compare_upstream(
         "map 8",
         r"$bibentries->entry('i1')->get_field('note')",
         r"'i1'",
@@ -1324,7 +1324,7 @@ fn assertion_026_map_8() {
 
 #[test]
 fn assertion_027_map_9() {
-    xfail_upstream(
+    compare_upstream(
         "map 9",
         r"is_undef($bibentries->entry('i2')->get_field('userf'))",
         r"true",
@@ -1335,7 +1335,7 @@ fn assertion_027_map_9() {
 
 #[test]
 fn assertion_028_map_10() {
-    xfail_upstream(
+    compare_upstream(
         "map 10",
         r"is_undef($bibentries->entry('i2')->get_field('userc'))",
         r"true",
@@ -1346,7 +1346,7 @@ fn assertion_028_map_10() {
 
 #[test]
 fn assertion_029_bib_visibility_1() {
-    xfail_upstream(
+    compare_upstream(
         "bib visibility - 1",
         r"$main->get_visible_bib($bibentries->entry('i2')->get_field($bibentries->entry('i2')->get_labelname_info)->get_id)",
         r"'3'",
@@ -1357,7 +1357,7 @@ fn assertion_029_bib_visibility_1() {
 
 #[test]
 fn assertion_030_per_type_maxcitenames_1() {
-    xfail_upstream(
+    compare_upstream(
         "per_type maxcitenames - 1",
         r"$main->get_visible_cite($bibentries->entry('tmn1')->get_field($bibentries->entry('tmn1')->get_labelname_info)->get_id)",
         r"'1'",
@@ -1368,7 +1368,7 @@ fn assertion_030_per_type_maxcitenames_1() {
 
 #[test]
 fn assertion_031_per_type_maxcitenames_2() {
-    xfail_upstream(
+    compare_upstream(
         "per_type maxcitenames - 2",
         r"$main->get_visible_cite($bibentries->entry('tmn2')->get_field($bibentries->entry('tmn2')->get_labelname_info)->get_id)",
         r"'3'",
@@ -1379,7 +1379,7 @@ fn assertion_031_per_type_maxcitenames_2() {
 
 #[test]
 fn assertion_032_per_type_bibnames_3() {
-    xfail_upstream(
+    compare_upstream(
         "per_type bibnames - 3",
         r"$main->get_visible_bib($bibentries->entry('tmn3')->get_field($bibentries->entry('tmn3')->get_labelname_info)->get_id)",
         r"'2'",
@@ -1390,7 +1390,7 @@ fn assertion_032_per_type_bibnames_3() {
 
 #[test]
 fn assertion_033_per_type_bibnames_4() {
-    xfail_upstream(
+    compare_upstream(
         "per_type bibnames - 4",
         r"$main->get_visible_bib($bibentries->entry('tmn4')->get_field($bibentries->entry('tmn4')->get_labelname_info)->get_id)",
         r"'3'",
@@ -1401,7 +1401,7 @@ fn assertion_033_per_type_bibnames_4() {
 
 #[test]
 fn assertion_034_per_type_entry_alphanames_1() {
-    xfail_upstream(
+    compare_upstream(
         "per_type/entry alphanames - 1",
         r"$main->get_visible_alpha($bibentries->entry('tmn1')->get_field($bibentries->entry('tmn1')->get_labelname_info)->get_id)",
         r"'3'",
@@ -1412,7 +1412,7 @@ fn assertion_034_per_type_entry_alphanames_1() {
 
 #[test]
 fn assertion_035_per_type_entry_alphanames_2() {
-    xfail_upstream(
+    compare_upstream(
         "per_type/entry alphanames - 2",
         r"$main->get_visible_alpha($bibentries->entry('tmn2')->get_field($bibentries->entry('tmn2')->get_labelname_info)->get_id)",
         r"'2'",
@@ -1423,7 +1423,7 @@ fn assertion_035_per_type_entry_alphanames_2() {
 
 #[test]
 fn assertion_036_per_type_entry_items_1() {
-    xfail_upstream(
+    compare_upstream(
         "per_type/entry items - 1",
         r"$biber->_liststring('tmn1', 'institution')",
         r"'A!B!C'",
@@ -1434,7 +1434,7 @@ fn assertion_036_per_type_entry_items_1() {
 
 #[test]
 fn assertion_037_per_type_entry_items_2() {
-    xfail_upstream(
+    compare_upstream(
         "per_type/entry items - 2",
         r"$biber->_liststring('tmn3', 'institution')",
         r#""A!B\x{10FFFD}""#,
@@ -1445,7 +1445,7 @@ fn assertion_037_per_type_entry_items_2() {
 
 #[test]
 fn assertion_038_citekey_aliases_1() {
-    xfail_upstream(
+    compare_upstream(
         "Citekey aliases - 1",
         r"$section->get_citekey_alias('alias3')",
         r"'alias1'",
@@ -1456,7 +1456,7 @@ fn assertion_038_citekey_aliases_1() {
 
 #[test]
 fn assertion_039_citekey_aliases_2() {
-    xfail_upstream(
+    compare_upstream(
         "Citekey aliases - 2",
         r"is_undef($section->get_citekey_alias('alias2'))",
         r"true",
@@ -1467,7 +1467,7 @@ fn assertion_039_citekey_aliases_2() {
 
 #[test]
 fn assertion_040_citekey_aliases_3() {
-    xfail_upstream(
+    compare_upstream(
         "Citekey aliases - 3",
         r"$section->get_citekey_alias('alias4')",
         r"'alias2'",
@@ -1478,7 +1478,7 @@ fn assertion_040_citekey_aliases_3() {
 
 #[test]
 fn assertion_041_citekey_aliases_4() {
-    xfail_upstream(
+    compare_upstream(
         "Citekey aliases - 4",
         r"$section->get_citekey_alias('alias6')",
         r"'alias5'",
@@ -1489,7 +1489,7 @@ fn assertion_041_citekey_aliases_4() {
 
 #[test]
 fn assertion_042_citekey_aliases_5() {
-    xfail_upstream(
+    compare_upstream(
         "Citekey aliases - 5",
         r"$bibentries->entry('alias5')",
         r"true",
@@ -1500,7 +1500,7 @@ fn assertion_042_citekey_aliases_5() {
 
 #[test]
 fn assertion_043_url_encoding_1() {
-    xfail_upstream(
+    compare_upstream(
         "URL encoding - 1",
         r"NFC($bibentries->entry('url1')->get_field('url'))",
         r"'http://www.something.com/q=áŠ'",
@@ -1511,7 +1511,7 @@ fn assertion_043_url_encoding_1() {
 
 #[test]
 fn assertion_044_url_encoding_2() {
-    xfail_upstream(
+    compare_upstream(
         "URL encoding - 2",
         r"$out->get_output_entry('url1', $main)",
         r"$url1",
@@ -1522,7 +1522,7 @@ fn assertion_044_url_encoding_2() {
 
 #[test]
 fn assertion_045_map_final_1() {
-    xfail_upstream(
+    compare_upstream(
         "map_final - 1",
         r"$bibentries->entry('ol1')->get_field('note')",
         r"'A note'",
@@ -1533,7 +1533,7 @@ fn assertion_045_map_final_1() {
 
 #[test]
 fn assertion_046_map_final_2() {
-    xfail_upstream(
+    compare_upstream(
         "map_final - 2",
         r"$bibentries->entry('ol1')->get_field('title')",
         r"'Online1'",
@@ -1544,7 +1544,7 @@ fn assertion_046_map_final_2() {
 
 #[test]
 fn assertion_047_pages_1() {
-    xfail_upstream(
+    compare_upstream(
         "pages - 1",
         r"$bibentries->entry('pages1')->get_field('pages')",
         r"[[23, 24]]",
@@ -1555,7 +1555,7 @@ fn assertion_047_pages_1() {
 
 #[test]
 fn assertion_048_pages_2() {
-    xfail_upstream(
+    compare_upstream(
         "pages - 2",
         r"$bibentries->entry('pages2')->get_field('pages')",
         r"[[23, undef]]",
@@ -1566,7 +1566,7 @@ fn assertion_048_pages_2() {
 
 #[test]
 fn assertion_049_pages_3() {
-    xfail_upstream(
+    compare_upstream(
         "pages - 3",
         r"$bibentries->entry('pages3')->get_field('pages')",
         r"[['I-II', 'III-IV']]",
@@ -1577,7 +1577,7 @@ fn assertion_049_pages_3() {
 
 #[test]
 fn assertion_050_pages_4() {
-    xfail_upstream(
+    compare_upstream(
         "pages - 4",
         r"$bibentries->entry('pages4')->get_field('pages')",
         r"[[3,5]]",
@@ -1588,7 +1588,7 @@ fn assertion_050_pages_4() {
 
 #[test]
 fn assertion_051_pages_5() {
-    xfail_upstream(
+    compare_upstream(
         "pages - 5",
         r"$bibentries->entry('pages5')->get_field('pages')",
         r"[[42, '']]",
@@ -1599,7 +1599,7 @@ fn assertion_051_pages_5() {
 
 #[test]
 fn assertion_052_pages_6() {
-    xfail_upstream(
+    compare_upstream(
         "pages - 6",
         r"$bibentries->entry('pages6')->get_field('pages')",
         r"[['\bibstring{number} 42', undef]]",
@@ -1610,7 +1610,7 @@ fn assertion_052_pages_6() {
 
 #[test]
 fn assertion_053_pages_7() {
-    xfail_upstream(
+    compare_upstream(
         "pages - 7",
         r"$bibentries->entry('pages7')->get_field('pages')",
         r"[['\bibstring{number} 42', undef], [3,6], ['I-II',5 ]]",
@@ -1621,7 +1621,7 @@ fn assertion_053_pages_7() {
 
 #[test]
 fn assertion_054_pages_8() {
-    xfail_upstream(
+    compare_upstream(
         "pages - 8",
         r"$bibentries->entry('pages8')->get_field('pages')",
         r"[[10,15],['ⅥⅠ', 'ⅻ']]",
@@ -1632,7 +1632,7 @@ fn assertion_054_pages_8() {
 
 #[test]
 fn assertion_055_pages_9() {
-    xfail_upstream(
+    compare_upstream(
         "pages - 9",
         r"$bibentries->entry('pages9')->get_field('pages')",
         r"[['M-1','M-4']]",
@@ -1643,7 +1643,7 @@ fn assertion_055_pages_9() {
 
 #[test]
 fn assertion_056_map_levels_1() {
-    xfail_upstream(
+    compare_upstream(
         "Map levels - 1",
         r"$bibentries->entry('us1')->get_field('entrytype')",
         r"'customa'",
@@ -1654,7 +1654,7 @@ fn assertion_056_map_levels_1() {
 
 #[test]
 fn assertion_057_entry_with_others_list() {
-    xfail_upstream(
+    compare_upstream(
         "Entry with others list",
         r"$out->get_output_entry('list1', $main)",
         r"$list1",
@@ -1665,7 +1665,7 @@ fn assertion_057_entry_with_others_list() {
 
 #[test]
 fn assertion_058_overwrite_test_1() {
-    xfail_upstream(
+    compare_upstream(
         "Overwrite test - 1",
         r"$out->get_output_entry('over1', $main)",
         r"$over1",
@@ -1676,7 +1676,7 @@ fn assertion_058_overwrite_test_1() {
 
 #[test]
 fn assertion_059_isbn_options_1() {
-    xfail_upstream(
+    compare_upstream(
         "ISBN options - 1",
         r"$out->get_output_entry('isbn1', $main)",
         r"$isbn1",
@@ -1687,7 +1687,7 @@ fn assertion_059_isbn_options_1() {
 
 #[test]
 fn assertion_060_isbn_options_2() {
-    xfail_upstream(
+    compare_upstream(
         "ISBN options - 2",
         r"$out->get_output_entry('isbn2', $main)",
         r"$isbn2",
@@ -1698,7 +1698,7 @@ fn assertion_060_isbn_options_2() {
 
 #[test]
 fn assertion_061_clone_1() {
-    xfail_upstream(
+    compare_upstream(
         "Clone - 1",
         r"$out->get_output_entry('snk1', $main)",
         r"$clone1",
@@ -1709,7 +1709,7 @@ fn assertion_061_clone_1() {
 
 #[test]
 fn assertion_062_clone_2() {
-    xfail_upstream(
+    compare_upstream(
         "Clone - 2",
         r"$out->get_output_entry('clone-snk1', $main)",
         r"$clone2",
@@ -1720,7 +1720,7 @@ fn assertion_062_clone_2() {
 
 #[test]
 fn assertion_063_new_key_mapping_1() {
-    xfail_upstream(
+    compare_upstream(
         "New key mapping - 1",
         r"$out->get_output_entry('newtestkey', $main)",
         r"$new1",
@@ -1731,7 +1731,7 @@ fn assertion_063_new_key_mapping_1() {
 
 #[test]
 fn assertion_064_new_key_loop_mapping_1() {
-    xfail_upstream(
+    compare_upstream(
         "New key loop mapping - 1",
         r"scalar(grep {$_ =~ m/^loopkey:/} $section->get_citekeys)",
         r"3",
@@ -1742,7 +1742,7 @@ fn assertion_064_new_key_loop_mapping_1() {
 
 #[test]
 fn assertion_065_new_key_loop_mapping_2() {
-    xfail_upstream(
+    compare_upstream(
         "New key loop mapping - 2",
         r"$bibentries->entry([grep {$_ =~ m/^loopkey:/} $section->get_citekeys]->[0])->get_field('note')",
         r"'NOTEreplaced'",
@@ -1753,7 +1753,7 @@ fn assertion_065_new_key_loop_mapping_2() {
 
 #[test]
 fn assertion_066_notfield_1() {
-    xfail_upstream(
+    compare_upstream(
         "notfield - 1",
         r"$bibentries->entry('markey')->get_field('addendum')",
         r"'NF1'",
@@ -1764,7 +1764,7 @@ fn assertion_066_notfield_1() {
 
 #[test]
 fn assertion_067_notfield_2() {
-    xfail_upstream(
+    compare_upstream(
         "notfield - 2",
         r"is_undef($bibentries->entry('markey')->get_field('userb'))",
         r"true",
@@ -1775,7 +1775,7 @@ fn assertion_067_notfield_2() {
 
 #[test]
 fn assertion_068_extended_name_test_1() {
-    xfail_upstream(
+    compare_upstream(
         "Extended name test - 1",
         r"$out->get_output_entry('ent1', $main)",
         r"$ent1",
@@ -1786,7 +1786,7 @@ fn assertion_068_extended_name_test_1() {
 
 #[test]
 fn assertion_069_decoding_verbatim_fields_1() {
-    xfail_upstream(
+    compare_upstream(
         "Decoding verbatim fields - 1",
         r"$out->get_output_entry('verb1', $main)",
         r"$verb1",
@@ -1797,7 +1797,7 @@ fn assertion_069_decoding_verbatim_fields_1() {
 
 #[test]
 fn assertion_070_static_match_list_1() {
-    xfail_upstream(
+    compare_upstream(
         "Static match list - 1",
         r"$bibentries->entry('matches1')->get_field('note')",
         r"'1'",
@@ -1808,7 +1808,7 @@ fn assertion_070_static_match_list_1() {
 
 #[test]
 fn assertion_071_static_match_list_2() {
-    xfail_upstream(
+    compare_upstream(
         "Static match list - 2",
         r"$bibentries->entry('matches2')->get_field('note')",
         r"'3'",
@@ -1819,7 +1819,7 @@ fn assertion_071_static_match_list_2() {
 
 #[test]
 fn assertion_072_static_match_list_3() {
-    xfail_upstream(
+    compare_upstream(
         "Static match list - 3",
         r"$bibentries->entry('matches3')->get_field('note')",
         r"'2'",

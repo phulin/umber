@@ -1,7 +1,7 @@
-// Direct xfail translation of upstream t/crossrefs.t at commit 74252e6.
+// Direct passing translation of upstream t/crossrefs.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream;
 
 const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
 use strict;
@@ -937,7 +937,7 @@ eq_or_diff($section0->has_citekey('al2'), 0, 'mincrossref via alias');
 
 #[test]
 fn assertion_001_crossref_test_1() {
-    xfail_upstream(
+    pass_upstream(
         "crossref test 1",
         r"$out->get_output_entry('cr1', $main)",
         r"$cr1",
@@ -948,7 +948,7 @@ fn assertion_001_crossref_test_1() {
 
 #[test]
 fn assertion_002_crossref_test_2() {
-    xfail_upstream(
+    pass_upstream(
         "crossref test 2",
         r"$out->get_output_entry('cr2', $main)",
         r"$cr2",
@@ -959,7 +959,7 @@ fn assertion_002_crossref_test_2() {
 
 #[test]
 fn assertion_003_crossref_test_3() {
-    xfail_upstream(
+    pass_upstream(
         "crossref test 3",
         r"$out->get_output_entry('cr_m', $main)",
         r"$cr_m",
@@ -970,7 +970,7 @@ fn assertion_003_crossref_test_3() {
 
 #[test]
 fn assertion_004_crossref_test_4() {
-    xfail_upstream(
+    pass_upstream(
         "crossref test 4",
         r"$out->get_output_entry('cr3', $main)",
         r"$cr3",
@@ -981,7 +981,7 @@ fn assertion_004_crossref_test_4() {
 
 #[test]
 fn assertion_005_crossref_test_5() {
-    xfail_upstream(
+    pass_upstream(
         "crossref test 5",
         r"$out->get_output_entry('crt', $main)",
         r"$crt",
@@ -992,7 +992,7 @@ fn assertion_005_crossref_test_5() {
 
 #[test]
 fn assertion_006_crossref_test_6() {
-    xfail_upstream(
+    pass_upstream(
         "crossref test 6",
         r"$out->get_output_entry('cr4', $main)",
         r"$cr4",
@@ -1003,7 +1003,7 @@ fn assertion_006_crossref_test_6() {
 
 #[test]
 fn assertion_007_crossref_test_7() {
-    xfail_upstream(
+    pass_upstream(
         "crossref test 7",
         r"$section0->has_citekey('crn')",
         r"0",
@@ -1014,7 +1014,7 @@ fn assertion_007_crossref_test_7() {
 
 #[test]
 fn assertion_008_crossref_test_inheritance_8() {
-    xfail_upstream(
+    pass_upstream(
         "crossref test (inheritance) 8",
         r"$out->get_output_entry('cr6', $main)",
         r"$cr6",
@@ -1025,7 +1025,7 @@ fn assertion_008_crossref_test_inheritance_8() {
 
 #[test]
 fn assertion_009_crossref_test_inheritance_9() {
-    xfail_upstream(
+    pass_upstream(
         "crossref test (inheritance) 9",
         r"$out->get_output_entry('cr7', $main)",
         r"$cr7",
@@ -1036,7 +1036,7 @@ fn assertion_009_crossref_test_inheritance_9() {
 
 #[test]
 fn assertion_010_crossref_test_inheritance_10() {
-    xfail_upstream(
+    pass_upstream(
         "crossref test (inheritance) 10",
         r"$out->get_output_entry('cr8', $main)",
         r"$cr8",
@@ -1047,7 +1047,7 @@ fn assertion_010_crossref_test_inheritance_10() {
 
 #[test]
 fn assertion_011_xref_test_1() {
-    xfail_upstream(
+    pass_upstream(
         "xref test 1",
         r"$out->get_output_entry('xr1', $main)",
         r"$xr1",
@@ -1058,7 +1058,7 @@ fn assertion_011_xref_test_1() {
 
 #[test]
 fn assertion_012_xref_test_2() {
-    xfail_upstream(
+    pass_upstream(
         "xref test 2",
         r"$out->get_output_entry('xr2', $main)",
         r"$xr2",
@@ -1069,7 +1069,7 @@ fn assertion_012_xref_test_2() {
 
 #[test]
 fn assertion_013_xref_test_3() {
-    xfail_upstream(
+    pass_upstream(
         "xref test 3",
         r"$out->get_output_entry('xrm', $main)",
         r"$xrm",
@@ -1080,7 +1080,7 @@ fn assertion_013_xref_test_3() {
 
 #[test]
 fn assertion_014_xref_test_4() {
-    xfail_upstream(
+    pass_upstream(
         "xref test 4",
         r"$out->get_output_entry('xr3', $main)",
         r"$xr3",
@@ -1091,7 +1091,7 @@ fn assertion_014_xref_test_4() {
 
 #[test]
 fn assertion_015_xref_test_5() {
-    xfail_upstream(
+    pass_upstream(
         "xref test 5",
         r"$out->get_output_entry('xrt', $main)",
         r"$xrt",
@@ -1102,7 +1102,7 @@ fn assertion_015_xref_test_5() {
 
 #[test]
 fn assertion_016_xref_test_6() {
-    xfail_upstream(
+    pass_upstream(
         "xref test 6",
         r"$out->get_output_entry('xr4', $main)",
         r"$xr4",
@@ -1113,7 +1113,7 @@ fn assertion_016_xref_test_6() {
 
 #[test]
 fn assertion_017_xref_test_7() {
-    xfail_upstream(
+    pass_upstream(
         "xref test 7",
         r"$section0->has_citekey('xrn')",
         r"1",
@@ -1124,7 +1124,7 @@ fn assertion_017_xref_test_7() {
 
 #[test]
 fn assertion_018_missing_xref_test() {
-    xfail_upstream(
+    pass_upstream(
         "missing xref test",
         r"$out->get_output_entry('mxr', $main)",
         r"$mxr",
@@ -1135,7 +1135,7 @@ fn assertion_018_missing_xref_test() {
 
 #[test]
 fn assertion_019_missing_crossef_test() {
-    xfail_upstream(
+    pass_upstream(
         "missing crossef test",
         r"$out->get_output_entry('mcr', $main)",
         r"$mcr",
@@ -1146,7 +1146,7 @@ fn assertion_019_missing_crossef_test() {
 
 #[test]
 fn assertion_020_mincrossrefs_reset_between_sections() {
-    xfail_upstream(
+    pass_upstream(
         "mincrossrefs reset between sections",
         r"$section1->has_citekey('crn')",
         r"0",
@@ -1157,7 +1157,7 @@ fn assertion_020_mincrossrefs_reset_between_sections() {
 
 #[test]
 fn assertion_021_cascading_crossref_test_1() {
-    xfail_upstream(
+    pass_upstream(
         "cascading crossref test 1",
         r"$out->get_output_entry('ccr2', $main)",
         r"$ccr1",
@@ -1168,7 +1168,7 @@ fn assertion_021_cascading_crossref_test_1() {
 
 #[test]
 fn assertion_022_cascading_crossref_test_2() {
-    xfail_upstream(
+    pass_upstream(
         "cascading crossref test 2",
         r"$out->get_output_entry('ccr3', $main)",
         r"$ccr2",
@@ -1179,7 +1179,7 @@ fn assertion_022_cascading_crossref_test_2() {
 
 #[test]
 fn assertion_023_cyclic_crossref_error_check() {
-    xfail_upstream(
+    pass_upstream(
         "Cyclic crossref error check",
         r"$stderr",
         r#""ERROR - Circular inheritance between 'circ1'<->'circ2'\nERROR - Circular inheritance between 'circ3'<->'circ1'""#,
@@ -1190,7 +1190,7 @@ fn assertion_023_cyclic_crossref_error_check() {
 
 #[test]
 fn assertion_024_recursive_crossref_test_1() {
-    xfail_upstream(
+    pass_upstream(
         "Recursive crossref test 1",
         r"$section0->has_citekey('r1')",
         r"1",
@@ -1201,7 +1201,7 @@ fn assertion_024_recursive_crossref_test_1() {
 
 #[test]
 fn assertion_025_recursive_crossref_test_2() {
-    xfail_upstream(
+    pass_upstream(
         "Recursive crossref test 2",
         r"defined($section0->bibentry('r1'))",
         r"true",
@@ -1212,7 +1212,7 @@ fn assertion_025_recursive_crossref_test_2() {
 
 #[test]
 fn assertion_026_recursive_crossref_test_3() {
-    xfail_upstream(
+    pass_upstream(
         "Recursive crossref test 3",
         r"$section0->has_citekey('r2')",
         r"0",
@@ -1223,7 +1223,7 @@ fn assertion_026_recursive_crossref_test_3() {
 
 #[test]
 fn assertion_027_recursive_crossref_test_4() {
-    xfail_upstream(
+    pass_upstream(
         "Recursive crossref test 4",
         r"defined($section0->bibentry('r2'))",
         r"true",
@@ -1234,7 +1234,7 @@ fn assertion_027_recursive_crossref_test_4() {
 
 #[test]
 fn assertion_028_recursive_crossref_test_5() {
-    xfail_upstream(
+    pass_upstream(
         "Recursive crossref test 5",
         r"$section0->has_citekey('r3')",
         r"0",
@@ -1245,7 +1245,7 @@ fn assertion_028_recursive_crossref_test_5() {
 
 #[test]
 fn assertion_029_recursive_crossref_test_6() {
-    xfail_upstream(
+    pass_upstream(
         "Recursive crossref test 6",
         r"defined($section0->bibentry('r3'))",
         r"true",
@@ -1256,7 +1256,7 @@ fn assertion_029_recursive_crossref_test_6() {
 
 #[test]
 fn assertion_030_recursive_crossref_test_7() {
-    xfail_upstream(
+    pass_upstream(
         "Recursive crossref test 7",
         r"$section0->has_citekey('r4')",
         r"0",
@@ -1267,7 +1267,7 @@ fn assertion_030_recursive_crossref_test_7() {
 
 #[test]
 fn assertion_031_recursive_crossref_test_8() {
-    xfail_upstream(
+    pass_upstream(
         "Recursive crossref test 8",
         r"defined($section0->bibentry('r4'))",
         r"true",
@@ -1278,7 +1278,7 @@ fn assertion_031_recursive_crossref_test_8() {
 
 #[test]
 fn assertion_032_per_entry_noinherit() {
-    xfail_upstream(
+    pass_upstream(
         "per-entry noinherit",
         r"$out->get_output_entry('s1', $main)",
         r"$s1",
@@ -1289,7 +1289,7 @@ fn assertion_032_per_entry_noinherit() {
 
 #[test]
 fn assertion_033_cascading_xref_crossref() {
-    xfail_upstream(
+    pass_upstream(
         "Cascading xref+crossref",
         r"$out->get_output_entry('xc2', $main)",
         r"$xc2",
@@ -1300,7 +1300,7 @@ fn assertion_033_cascading_xref_crossref() {
 
 #[test]
 fn assertion_034_blocking_bad_date_inheritance() {
-    xfail_upstream(
+    pass_upstream(
         "Blocking bad date inheritance",
         r"$out->get_output_entry('b1', $main)",
         r"$b1",
@@ -1311,7 +1311,7 @@ fn assertion_034_blocking_bad_date_inheritance() {
 
 #[test]
 fn assertion_035_suppressing_singletitle_tracking_1() {
-    xfail_upstream(
+    pass_upstream(
         "Suppressing singletitle tracking - 1",
         r"$out->get_output_entry('sup1', $main)",
         r"$sup1",
@@ -1322,7 +1322,7 @@ fn assertion_035_suppressing_singletitle_tracking_1() {
 
 #[test]
 fn assertion_036_suppressing_singletitle_tracking_2() {
-    xfail_upstream(
+    pass_upstream(
         "Suppressing singletitle tracking - 2",
         r"$out->get_output_entry('sup2', $main)",
         r"$sup2",
@@ -1333,7 +1333,7 @@ fn assertion_036_suppressing_singletitle_tracking_2() {
 
 #[test]
 fn assertion_037_mincrossref_via_alias() {
-    xfail_upstream(
+    pass_upstream(
         "mincrossref via alias",
         r"$section0->has_citekey('al2')",
         r"0",

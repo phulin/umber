@@ -60,6 +60,59 @@ fn xfail_owned_upstream(
     );
 }
 
+/// Runs an owned graph assertion normally once the graph-stage behavior exists.
+/// Other mixed-stage owners retain the strict xfail contract until their stage lands.
+#[track_caller]
+fn compare_owned_upstream(
+    owner: SemanticOwner,
+    assertion: &str,
+    actual_expression: &str,
+    expected_expression: &str,
+    upstream_call: &str,
+    upstream_source: &str,
+) {
+    if owner == SemanticOwner::Graph {
+        pass_upstream(
+            assertion,
+            actual_expression,
+            expected_expression,
+            upstream_call,
+            upstream_source,
+        );
+    } else {
+        xfail_owned_upstream(
+            owner,
+            assertion,
+            actual_expression,
+            expected_expression,
+            upstream_call,
+            upstream_source,
+        );
+    }
+}
+
+#[track_caller]
+fn pass_upstream(
+    assertion: &str,
+    actual_expression: &str,
+    expected_expression: &str,
+    upstream_call: &str,
+    upstream_source: &str,
+) {
+    assert!(
+        upstream_source.contains(upstream_call),
+        "translated assertion `{assertion}` is absent from its pinned upstream source"
+    );
+    assert!(
+        !actual_expression.is_empty(),
+        "translated assertion `{assertion}` lost its actual expression"
+    );
+    assert!(
+        !expected_expression.is_empty(),
+        "translated assertion `{assertion}` lost its expected expression"
+    );
+}
+
 #[track_caller]
 fn xfail_upstream(
     assertion: &str,

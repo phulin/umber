@@ -1,7 +1,7 @@
-// Direct xfail translation of upstream t/set-dynamic.t at commit 74252e6.
+// Direct passing translation of upstream t/set-dynamic.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream;
 
 const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
 use strict;
@@ -194,7 +194,7 @@ eq_or_diff($out->get_output_entry('Dynamic1', $sh0), $string2, 'Dynamic set skip
 
 #[test]
 fn assertion_001_citekeys() {
-    xfail_upstream(
+    pass_upstream(
         "citekeys",
         r"\@keys",
         r"\@allkeys",
@@ -205,7 +205,7 @@ fn assertion_001_citekeys() {
 
 #[test]
 fn assertion_002_dynamic_set_test_1() {
-    xfail_upstream(
+    pass_upstream(
         "Dynamic set test 1",
         r"$out->get_output_entry('DynSet', $main0)",
         r"$string1",
@@ -216,7 +216,7 @@ fn assertion_002_dynamic_set_test_1() {
 
 #[test]
 fn assertion_003_dynamic_set_test_2() {
-    xfail_upstream(
+    pass_upstream(
         "Dynamic set test 2",
         r"$out->get_output_entry('Dynamic1', $main0)",
         r"$string2",
@@ -227,7 +227,7 @@ fn assertion_003_dynamic_set_test_2() {
 
 #[test]
 fn assertion_004_dynamic_set_test_3() {
-    xfail_upstream(
+    pass_upstream(
         "Dynamic set test 3",
         r"$out->get_output_entry('Dynamic2', $main0)",
         r"$string3",
@@ -238,7 +238,7 @@ fn assertion_004_dynamic_set_test_3() {
 
 #[test]
 fn assertion_005_dynamic_set_test_4() {
-    xfail_upstream(
+    pass_upstream(
         "Dynamic set test 4",
         r"$out->get_output_entry('Dynamic3', $main0)",
         r"$string4",
@@ -249,7 +249,7 @@ fn assertion_005_dynamic_set_test_4() {
 
 #[test]
 fn assertion_006_dynamic_set_test_5() {
-    xfail_upstream(
+    pass_upstream(
         "Dynamic set test 5",
         r"$out->get_output_entry('Dynamic3', $main1, 1)",
         r"$string5",
@@ -260,7 +260,7 @@ fn assertion_006_dynamic_set_test_5() {
 
 #[test]
 fn assertion_007_dynamic_set_skipbiblist_1() {
-    xfail_upstream(
+    pass_upstream(
         "Dynamic set skipbiblist 1",
         r"$out->get_output_entry('Dynamic1', $sh0)",
         r"$string2",

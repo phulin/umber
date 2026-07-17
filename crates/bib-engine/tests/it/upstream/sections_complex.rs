@@ -1,7 +1,7 @@
-// Direct xfail translation of upstream t/sections-complex.t at commit 74252e6.
+// Direct passing translation of upstream t/sections-complex.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream;
 
 const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
 use strict;
@@ -206,7 +206,7 @@ eq_or_diff($bibentries1->entry('m1')->get_field('title'), 'Film title 11', 'map 
 
 #[test]
 fn assertion_001_maxalphanames_1_minalphanames_1_entry_l1_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L1 labelalpha",
         r"$main0->get_entryfield('L1', 'sortlabelalpha')",
         r"'Doe95'",
@@ -217,7 +217,7 @@ fn assertion_001_maxalphanames_1_minalphanames_1_entry_l1_labelalpha() {
 
 #[test]
 fn assertion_002_maxalphanames_1_minalphanames_1_entry_l1_extraalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L1 extraalpha",
         r"is_undef($main0->get_extraalphadata_for_key('L1'))",
         r"true",
@@ -228,7 +228,7 @@ fn assertion_002_maxalphanames_1_minalphanames_1_entry_l1_extraalpha() {
 
 #[test]
 fn assertion_003_maxalphanames_1_minalphanames_1_entry_l2_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L2 labelalpha",
         r"$main0->get_entryfield('L2', 'sortlabelalpha')",
         r"'Doe+95'",
@@ -239,7 +239,7 @@ fn assertion_003_maxalphanames_1_minalphanames_1_entry_l2_labelalpha() {
 
 #[test]
 fn assertion_004_maxalphanames_1_minalphanames_1_entry_l2_extraalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L2 extraalpha",
         r"$main0->get_extraalphadata_for_key('L2')",
         r"'1'",
@@ -250,7 +250,7 @@ fn assertion_004_maxalphanames_1_minalphanames_1_entry_l2_extraalpha() {
 
 #[test]
 fn assertion_005_maxalphanames_1_minalphanames_1_entry_l3_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L3 labelalpha",
         r"$main0->get_entryfield('L3', 'sortlabelalpha')",
         r"'Doe+95'",
@@ -261,7 +261,7 @@ fn assertion_005_maxalphanames_1_minalphanames_1_entry_l3_labelalpha() {
 
 #[test]
 fn assertion_006_maxalphanames_1_minalphanames_1_entry_l3_extraalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L3 extraalpha",
         r"$main0->get_extraalphadata_for_key('L3')",
         r"'2'",
@@ -272,7 +272,7 @@ fn assertion_006_maxalphanames_1_minalphanames_1_entry_l3_extraalpha() {
 
 #[test]
 fn assertion_007_maxalphanames_1_minalphanames_1_entry_l4_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L4 labelalpha",
         r"$main0->get_entryfield('L4', 'sortlabelalpha')",
         r"'Doe+95'",
@@ -283,7 +283,7 @@ fn assertion_007_maxalphanames_1_minalphanames_1_entry_l4_labelalpha() {
 
 #[test]
 fn assertion_008_maxalphanames_1_minalphanames_1_entry_l4_extraalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L4 extraalpha",
         r"$main0->get_extraalphadata_for_key('L4')",
         r"'3'",
@@ -294,7 +294,7 @@ fn assertion_008_maxalphanames_1_minalphanames_1_entry_l4_extraalpha() {
 
 #[test]
 fn assertion_009_maxalphanames_1_minalphanames_1_entry_l5_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L5 labelalpha",
         r"$main1->get_entryfield('L5', 'sortlabelalpha')",
         r"'Doe+95'",
@@ -305,7 +305,7 @@ fn assertion_009_maxalphanames_1_minalphanames_1_entry_l5_labelalpha() {
 
 #[test]
 fn assertion_010_maxalphanames_1_minalphanames_1_entry_l5_extraalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L5 extraalpha",
         r"$main1->get_extraalphadata_for_key('L5')",
         r"'1'",
@@ -316,7 +316,7 @@ fn assertion_010_maxalphanames_1_minalphanames_1_entry_l5_extraalpha() {
 
 #[test]
 fn assertion_011_maxalphanames_1_minalphanames_1_entry_l6_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L6 labelalpha",
         r"$main1->get_entryfield('L6', 'sortlabelalpha')",
         r"'Doe+95'",
@@ -327,7 +327,7 @@ fn assertion_011_maxalphanames_1_minalphanames_1_entry_l6_labelalpha() {
 
 #[test]
 fn assertion_012_maxalphanames_1_minalphanames_1_entry_l6_extraalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L6 extraalpha",
         r"$main1->get_extraalphadata_for_key('L6')",
         r"'2'",
@@ -338,7 +338,7 @@ fn assertion_012_maxalphanames_1_minalphanames_1_entry_l6_extraalpha() {
 
 #[test]
 fn assertion_013_maxalphanames_1_minalphanames_1_entry_l7_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L7 labelalpha",
         r"$main1->get_entryfield('L7', 'sortlabelalpha')",
         r"'Doe+95'",
@@ -349,7 +349,7 @@ fn assertion_013_maxalphanames_1_minalphanames_1_entry_l7_labelalpha() {
 
 #[test]
 fn assertion_014_maxalphanames_1_minalphanames_1_entry_l7_extraalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L7 extraalpha",
         r"$main1->get_extraalphadata_for_key('L7')",
         r"'3'",
@@ -360,7 +360,7 @@ fn assertion_014_maxalphanames_1_minalphanames_1_entry_l7_extraalpha() {
 
 #[test]
 fn assertion_015_maxalphanames_1_minalphanames_1_entry_l8_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L8 labelalpha",
         r"$main1->get_entryfield('L8', 'sortlabelalpha')",
         r"'Sha85'",
@@ -371,7 +371,7 @@ fn assertion_015_maxalphanames_1_minalphanames_1_entry_l8_labelalpha() {
 
 #[test]
 fn assertion_016_maxalphanames_1_minalphanames_1_entry_l8_extraalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L8 extraalpha",
         r"is_undef($main1->get_extraalphadata_for_key('L8'))",
         r"true",
@@ -382,7 +382,7 @@ fn assertion_016_maxalphanames_1_minalphanames_1_entry_l8_extraalpha() {
 
 #[test]
 fn assertion_017_maxalphanames_2_minalphanames_1_entry_l1_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L1 labelalpha",
         r"$main0->get_entryfield('L1', 'sortlabelalpha')",
         r"'Doe95'",
@@ -393,7 +393,7 @@ fn assertion_017_maxalphanames_2_minalphanames_1_entry_l1_labelalpha() {
 
 #[test]
 fn assertion_018_maxalphanames_2_minalphanames_1_entry_l1_extraalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L1 extraalpha",
         r"is_undef($main0->get_extraalphadata_for_key('L1'))",
         r"true",
@@ -404,7 +404,7 @@ fn assertion_018_maxalphanames_2_minalphanames_1_entry_l1_extraalpha() {
 
 #[test]
 fn assertion_019_maxalphanames_2_minalphanames_1_entry_l2_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L2 labelalpha",
         r"$main0->get_entryfield('L2', 'sortlabelalpha')",
         r"'DA95'",
@@ -415,7 +415,7 @@ fn assertion_019_maxalphanames_2_minalphanames_1_entry_l2_labelalpha() {
 
 #[test]
 fn assertion_020_maxalphanames_2_minalphanames_1_entry_l2_extraalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L2 extraalpha",
         r"$main0->get_extraalphadata_for_key('L2')",
         r"'1'",
@@ -426,7 +426,7 @@ fn assertion_020_maxalphanames_2_minalphanames_1_entry_l2_extraalpha() {
 
 #[test]
 fn assertion_021_maxalphanames_2_minalphanames_1_entry_l3_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L3 labelalpha",
         r"$main0->get_entryfield('L3', 'sortlabelalpha')",
         r"'DA95'",
@@ -437,7 +437,7 @@ fn assertion_021_maxalphanames_2_minalphanames_1_entry_l3_labelalpha() {
 
 #[test]
 fn assertion_022_maxalphanames_2_minalphanames_1_entry_l3_extraalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L3 extraalpha",
         r"$main0->get_extraalphadata_for_key('L3')",
         r"'2'",
@@ -448,7 +448,7 @@ fn assertion_022_maxalphanames_2_minalphanames_1_entry_l3_extraalpha() {
 
 #[test]
 fn assertion_023_maxalphanames_2_minalphanames_1_entry_l4_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L4 labelalpha",
         r"$main0->get_entryfield('L4', 'sortlabelalpha')",
         r"'Doe+95'",
@@ -459,7 +459,7 @@ fn assertion_023_maxalphanames_2_minalphanames_1_entry_l4_labelalpha() {
 
 #[test]
 fn assertion_024_maxalphanames_2_minalphanames_1_entry_l4_extraalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L4 extraalpha",
         r"is_undef($main0->get_extraalphadata_for_key('L4'))",
         r"true",
@@ -470,7 +470,7 @@ fn assertion_024_maxalphanames_2_minalphanames_1_entry_l4_extraalpha() {
 
 #[test]
 fn assertion_025_maxalphanames_2_minalphanames_1_entry_l5_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L5 labelalpha",
         r"$main1->get_entryfield('L5', 'sortlabelalpha')",
         r"'Doe+95'",
@@ -481,7 +481,7 @@ fn assertion_025_maxalphanames_2_minalphanames_1_entry_l5_labelalpha() {
 
 #[test]
 fn assertion_026_maxalphanames_2_minalphanames_1_entry_l5_extraalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L5 extraalpha",
         r"$main1->get_extraalphadata_for_key('L5')",
         r"'1'",
@@ -492,7 +492,7 @@ fn assertion_026_maxalphanames_2_minalphanames_1_entry_l5_extraalpha() {
 
 #[test]
 fn assertion_027_maxalphanames_2_minalphanames_1_entry_l6_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L6 labelalpha",
         r"$main1->get_entryfield('L6', 'sortlabelalpha')",
         r"'Doe+95'",
@@ -503,7 +503,7 @@ fn assertion_027_maxalphanames_2_minalphanames_1_entry_l6_labelalpha() {
 
 #[test]
 fn assertion_028_maxalphanames_2_minalphanames_1_entry_l6_extraalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L6 extraalpha",
         r"$main1->get_extraalphadata_for_key('L6')",
         r"'2'",
@@ -514,7 +514,7 @@ fn assertion_028_maxalphanames_2_minalphanames_1_entry_l6_extraalpha() {
 
 #[test]
 fn assertion_029_maxalphanames_2_minalphanames_1_entry_l7_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L7 labelalpha",
         r"$main1->get_entryfield('L7', 'sortlabelalpha')",
         r"'Doe+95'",
@@ -525,7 +525,7 @@ fn assertion_029_maxalphanames_2_minalphanames_1_entry_l7_labelalpha() {
 
 #[test]
 fn assertion_030_maxalphanames_2_minalphanames_1_entry_l7_extraalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L7 extraalpha",
         r"$main1->get_extraalphadata_for_key('L7')",
         r"'3'",
@@ -536,7 +536,7 @@ fn assertion_030_maxalphanames_2_minalphanames_1_entry_l7_extraalpha() {
 
 #[test]
 fn assertion_031_maxalphanames_2_minalphanames_1_entry_l8_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L8 labelalpha",
         r"$main1->get_entryfield('L8', 'sortlabelalpha')",
         r"'Sha85'",
@@ -547,7 +547,7 @@ fn assertion_031_maxalphanames_2_minalphanames_1_entry_l8_labelalpha() {
 
 #[test]
 fn assertion_032_maxalphanames_2_minalphanames_1_entry_l8_extraalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L8 extraalpha",
         r"is_undef($main1->get_extraalphadata_for_key('L8'))",
         r"true",
@@ -558,7 +558,7 @@ fn assertion_032_maxalphanames_2_minalphanames_1_entry_l8_extraalpha() {
 
 #[test]
 fn assertion_033_maxalphanames_2_minalphanames_2_entry_l1_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L1 labelalpha",
         r"$main0->get_entryfield('L1', 'sortlabelalpha')",
         r"'Doe95'",
@@ -569,7 +569,7 @@ fn assertion_033_maxalphanames_2_minalphanames_2_entry_l1_labelalpha() {
 
 #[test]
 fn assertion_034_maxalphanames_2_minalphanames_2_entry_l1_extraalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L1 extraalpha",
         r"is_undef($main0->get_extraalphadata_for_key('L1'))",
         r"true",
@@ -580,7 +580,7 @@ fn assertion_034_maxalphanames_2_minalphanames_2_entry_l1_extraalpha() {
 
 #[test]
 fn assertion_035_maxalphanames_2_minalphanames_2_entry_l2_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L2 labelalpha",
         r"$main0->get_entryfield('L2', 'sortlabelalpha')",
         r"'DA95'",
@@ -591,7 +591,7 @@ fn assertion_035_maxalphanames_2_minalphanames_2_entry_l2_labelalpha() {
 
 #[test]
 fn assertion_036_maxalphanames_2_minalphanames_2_entry_l2_extraalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L2 extraalpha",
         r"$main0->get_extraalphadata_for_key('L2')",
         r"'1'",
@@ -602,7 +602,7 @@ fn assertion_036_maxalphanames_2_minalphanames_2_entry_l2_extraalpha() {
 
 #[test]
 fn assertion_037_maxalphanames_2_minalphanames_2_entry_l3_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L3 labelalpha",
         r"$main0->get_entryfield('L3', 'sortlabelalpha')",
         r"'DA95'",
@@ -613,7 +613,7 @@ fn assertion_037_maxalphanames_2_minalphanames_2_entry_l3_labelalpha() {
 
 #[test]
 fn assertion_038_maxalphanames_2_minalphanames_2_entry_l3_extraalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L3 extraalpha",
         r"$main0->get_extraalphadata_for_key('L3')",
         r"'2'",
@@ -624,7 +624,7 @@ fn assertion_038_maxalphanames_2_minalphanames_2_entry_l3_extraalpha() {
 
 #[test]
 fn assertion_039_maxalphanames_2_minalphanames_2_entry_l4_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L4 labelalpha",
         r"$main0->get_entryfield('L4', 'sortlabelalpha')",
         r"'DA+95'",
@@ -635,7 +635,7 @@ fn assertion_039_maxalphanames_2_minalphanames_2_entry_l4_labelalpha() {
 
 #[test]
 fn assertion_040_maxalphanames_2_minalphanames_2_entry_l4_extraalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L4 extraalpha",
         r"is_undef($main0->get_extraalphadata_for_key('L4'))",
         r"true",
@@ -646,7 +646,7 @@ fn assertion_040_maxalphanames_2_minalphanames_2_entry_l4_extraalpha() {
 
 #[test]
 fn assertion_041_maxalphanames_2_minalphanames_2_entry_l5_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L5 labelalpha",
         r"$main1->get_entryfield('L5', 'sortlabelalpha')",
         r"'DA+95'",
@@ -657,7 +657,7 @@ fn assertion_041_maxalphanames_2_minalphanames_2_entry_l5_labelalpha() {
 
 #[test]
 fn assertion_042_maxalphanames_2_minalphanames_2_entry_l5_extraalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L5 extraalpha",
         r"is_undef($main1->get_extraalphadata_for_key('L5'))",
         r"true",
@@ -668,7 +668,7 @@ fn assertion_042_maxalphanames_2_minalphanames_2_entry_l5_extraalpha() {
 
 #[test]
 fn assertion_043_maxalphanames_2_minalphanames_2_entry_l6_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L6 labelalpha",
         r"$main1->get_entryfield('L6', 'sortlabelalpha')",
         r"'DS+95'",
@@ -679,7 +679,7 @@ fn assertion_043_maxalphanames_2_minalphanames_2_entry_l6_labelalpha() {
 
 #[test]
 fn assertion_044_maxalphanames_2_minalphanames_2_entry_l6_extraalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L6 extraalpha",
         r"$main1->get_extraalphadata_for_key('L6')",
         r"'1'",
@@ -690,7 +690,7 @@ fn assertion_044_maxalphanames_2_minalphanames_2_entry_l6_extraalpha() {
 
 #[test]
 fn assertion_045_maxalphanames_2_minalphanames_2_entry_l7_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L7 labelalpha",
         r"$main1->get_entryfield('L7', 'sortlabelalpha')",
         r"'DS+95'",
@@ -701,7 +701,7 @@ fn assertion_045_maxalphanames_2_minalphanames_2_entry_l7_labelalpha() {
 
 #[test]
 fn assertion_046_maxalphanames_2_minalphanames_2_entry_l7_extraalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L7 extraalpha",
         r"$main1->get_extraalphadata_for_key('L7')",
         r"'2'",
@@ -712,7 +712,7 @@ fn assertion_046_maxalphanames_2_minalphanames_2_entry_l7_extraalpha() {
 
 #[test]
 fn assertion_047_maxalphanames_2_minalphanames_2_entry_l8_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L8 labelalpha",
         r"$main1->get_entryfield('L8', 'sortlabelalpha')",
         r"'Sha85'",
@@ -723,7 +723,7 @@ fn assertion_047_maxalphanames_2_minalphanames_2_entry_l8_labelalpha() {
 
 #[test]
 fn assertion_048_maxalphanames_2_minalphanames_2_entry_l8_extraalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L8 extraalpha",
         r"is_undef($main1->get_extraalphadata_for_key('L8'))",
         r"true",
@@ -734,7 +734,7 @@ fn assertion_048_maxalphanames_2_minalphanames_2_entry_l8_extraalpha() {
 
 #[test]
 fn assertion_049_maxalphanames_3_minalphanames_1_entry_l1_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L1 labelalpha",
         r"$main0->get_entryfield('L1', 'sortlabelalpha')",
         r"'Doe95'",
@@ -745,7 +745,7 @@ fn assertion_049_maxalphanames_3_minalphanames_1_entry_l1_labelalpha() {
 
 #[test]
 fn assertion_050_maxalphanames_3_minalphanames_1_entry_l1_extraalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L1 extraalpha",
         r"is_undef($main0->get_extraalphadata_for_key('L1'))",
         r"true",
@@ -756,7 +756,7 @@ fn assertion_050_maxalphanames_3_minalphanames_1_entry_l1_extraalpha() {
 
 #[test]
 fn assertion_051_maxalphanames_3_minalphanames_1_entry_l2_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L2 labelalpha",
         r"$main0->get_entryfield('L2', 'sortlabelalpha')",
         r"'DA95'",
@@ -767,7 +767,7 @@ fn assertion_051_maxalphanames_3_minalphanames_1_entry_l2_labelalpha() {
 
 #[test]
 fn assertion_052_maxalphanames_3_minalphanames_1_entry_l2_extraalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L2 extraalpha",
         r"$main0->get_extraalphadata_for_key('L2')",
         r"'1'",
@@ -778,7 +778,7 @@ fn assertion_052_maxalphanames_3_minalphanames_1_entry_l2_extraalpha() {
 
 #[test]
 fn assertion_053_maxalphanames_3_minalphanames_1_entry_l3_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L3 labelalpha",
         r"$main0->get_entryfield('L3', 'sortlabelalpha')",
         r"'DA95'",
@@ -789,7 +789,7 @@ fn assertion_053_maxalphanames_3_minalphanames_1_entry_l3_labelalpha() {
 
 #[test]
 fn assertion_054_maxalphanames_3_minalphanames_1_entry_l3_extraalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L3 extraalpha",
         r"$main0->get_extraalphadata_for_key('L3')",
         r"'2'",
@@ -800,7 +800,7 @@ fn assertion_054_maxalphanames_3_minalphanames_1_entry_l3_extraalpha() {
 
 #[test]
 fn assertion_055_maxalphanames_3_minalphanames_1_entry_l4_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L4 labelalpha",
         r"$main0->get_entryfield('L4', 'sortlabelalpha')",
         r"'DAE95'",
@@ -811,7 +811,7 @@ fn assertion_055_maxalphanames_3_minalphanames_1_entry_l4_labelalpha() {
 
 #[test]
 fn assertion_056_maxalphanames_3_minalphanames_1_entry_l4_extraalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L4 extraalpha",
         r"is_undef($main0->get_extraalphadata_for_key('L4'))",
         r"true",
@@ -822,7 +822,7 @@ fn assertion_056_maxalphanames_3_minalphanames_1_entry_l4_extraalpha() {
 
 #[test]
 fn assertion_057_maxalphanames_3_minalphanames_1_entry_l5_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L5 labelalpha",
         r"$main1->get_entryfield('L5', 'sortlabelalpha')",
         r"'DAE95'",
@@ -833,7 +833,7 @@ fn assertion_057_maxalphanames_3_minalphanames_1_entry_l5_labelalpha() {
 
 #[test]
 fn assertion_058_maxalphanames_3_minalphanames_1_entry_l5_extraalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L5 extraalpha",
         r"is_undef($main1->get_extraalphadata_for_key('L5'))",
         r"true",
@@ -844,7 +844,7 @@ fn assertion_058_maxalphanames_3_minalphanames_1_entry_l5_extraalpha() {
 
 #[test]
 fn assertion_059_maxalphanames_3_minalphanames_1_entry_l6_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L6 labelalpha",
         r"$main1->get_entryfield('L6', 'sortlabelalpha')",
         r"'DSE95'",
@@ -855,7 +855,7 @@ fn assertion_059_maxalphanames_3_minalphanames_1_entry_l6_labelalpha() {
 
 #[test]
 fn assertion_060_maxalphanames_3_minalphanames_1_entry_l6_extraalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L6 extraalpha",
         r"is_undef($main1->get_extraalphadata_for_key('L6'))",
         r"true",
@@ -866,7 +866,7 @@ fn assertion_060_maxalphanames_3_minalphanames_1_entry_l6_extraalpha() {
 
 #[test]
 fn assertion_061_maxalphanames_3_minalphanames_1_entry_l7_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L7 labelalpha",
         r"$main1->get_entryfield('L7', 'sortlabelalpha')",
         r"'DSJ95'",
@@ -877,7 +877,7 @@ fn assertion_061_maxalphanames_3_minalphanames_1_entry_l7_labelalpha() {
 
 #[test]
 fn assertion_062_maxalphanames_3_minalphanames_1_entry_l7_extraalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L7 extraalpha",
         r"is_undef($main1->get_extraalphadata_for_key('L7'))",
         r"true",
@@ -888,7 +888,7 @@ fn assertion_062_maxalphanames_3_minalphanames_1_entry_l7_extraalpha() {
 
 #[test]
 fn assertion_063_maxalphanames_3_minalphanames_1_entry_l8_labelalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L8 labelalpha",
         r"$main1->get_entryfield('L8', 'sortlabelalpha')",
         r"'Sha85'",
@@ -899,7 +899,7 @@ fn assertion_063_maxalphanames_3_minalphanames_1_entry_l8_labelalpha() {
 
 #[test]
 fn assertion_064_maxalphanames_3_minalphanames_1_entry_l8_extraalpha() {
-    xfail_upstream(
+    pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L8 extraalpha",
         r"is_undef($main1->get_extraalphadata_for_key('L8'))",
         r"true",
@@ -910,7 +910,7 @@ fn assertion_064_maxalphanames_3_minalphanames_1_entry_l8_extraalpha() {
 
 #[test]
 fn assertion_065_map_refsection_1() {
-    xfail_upstream(
+    pass_upstream(
         "map refsection - 1",
         r"is_undef($bibentries0->entry('m1')->get_field('keywords'))",
         r"true",
@@ -921,7 +921,7 @@ fn assertion_065_map_refsection_1() {
 
 #[test]
 fn assertion_066_map_refsection_2() {
-    xfail_upstream(
+    pass_upstream(
         "map refsection - 2",
         r"$bibentries0->entry('m1')->get_field('title')",
         r"'Film title 1'",
@@ -932,7 +932,7 @@ fn assertion_066_map_refsection_2() {
 
 #[test]
 fn assertion_067_map_refsection_3() {
-    xfail_upstream(
+    pass_upstream(
         "map refsection- 3",
         r"$bibentries1->entry('m1')->get_field('keywords')",
         r"['thing']",
@@ -943,7 +943,7 @@ fn assertion_067_map_refsection_3() {
 
 #[test]
 fn assertion_068_map_refsection_4() {
-    xfail_upstream(
+    pass_upstream(
         "map refsection - 4",
         r"$bibentries1->entry('m1')->get_field('title')",
         r"'Film title 11'",

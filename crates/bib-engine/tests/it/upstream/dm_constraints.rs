@@ -1,7 +1,7 @@
-// Direct xfail translation of upstream t/dm-constraints.t at commit 74252e6.
+// Direct passing translation of upstream t/dm-constraints.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream;
 
 const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
 use strict;
@@ -108,7 +108,7 @@ is_deeply($bibentries->entry('c10')->get_field('warnings'), $c10, 'Constraints t
 
 #[test]
 fn assertion_001_constraints_test_1() {
-    xfail_upstream(
+    pass_upstream(
         "Constraints test 1",
         r"$bibentries->entry('c1')->get_field('warnings')",
         r"$c1",
@@ -119,7 +119,7 @@ fn assertion_001_constraints_test_1() {
 
 #[test]
 fn assertion_002_constraints_test_2() {
-    xfail_upstream(
+    pass_upstream(
         "Constraints test 2",
         r"$bibentries->entry('c2')->get_field('warnings')",
         r"$c2",
@@ -130,7 +130,7 @@ fn assertion_002_constraints_test_2() {
 
 #[test]
 fn assertion_003_constraints_test_3a() {
-    xfail_upstream(
+    pass_upstream(
         "Constraints test 3a",
         r"$bibentries->entry('c3')->get_field('warnings')",
         r"$c3",
@@ -141,7 +141,7 @@ fn assertion_003_constraints_test_3a() {
 
 #[test]
 fn assertion_004_constraints_test_3b() {
-    xfail_upstream(
+    pass_upstream(
         "Constraints test 3b",
         r"is_undef($bibentries->entry('c3')->get_field('month'))",
         r"true",
@@ -152,7 +152,7 @@ fn assertion_004_constraints_test_3b() {
 
 #[test]
 fn assertion_005_constraints_test_4a() {
-    xfail_upstream(
+    pass_upstream(
         "Constraints test 4a",
         r"$bibentries->entry('c4')->get_field('warnings')",
         r"$c4",
@@ -163,7 +163,7 @@ fn assertion_005_constraints_test_4a() {
 
 #[test]
 fn assertion_006_constraints_test_4b() {
-    xfail_upstream(
+    pass_upstream(
         "Constraints test 4b",
         r"is_undef($bibentries->entry('c4')->get_field('month'))",
         r"true",
@@ -174,7 +174,7 @@ fn assertion_006_constraints_test_4b() {
 
 #[test]
 fn assertion_007_constraints_test_5a() {
-    xfail_upstream(
+    pass_upstream(
         "Constraints test 5a",
         r"$bibentries->entry('c5')->get_field('warnings')",
         r"$c5",
@@ -185,7 +185,7 @@ fn assertion_007_constraints_test_5a() {
 
 #[test]
 fn assertion_008_constraints_test_5b() {
-    xfail_upstream(
+    pass_upstream(
         "Constraints test 5b",
         r"is_undef($bibentries->entry('c5')->get_field('field5'))",
         r"true",
@@ -196,7 +196,7 @@ fn assertion_008_constraints_test_5b() {
 
 #[test]
 fn assertion_009_constraints_test_5c() {
-    xfail_upstream(
+    pass_upstream(
         "Constraints test 5c",
         r"is_undef($bibentries->entry('c5')->get_field('field6'))",
         r"true",
@@ -207,7 +207,7 @@ fn assertion_009_constraints_test_5c() {
 
 #[test]
 fn assertion_010_constraints_test_6() {
-    xfail_upstream(
+    pass_upstream(
         "Constraints test 6",
         r"$bibentries->entry('c6')->get_field('warnings')",
         r"$c6",
@@ -218,7 +218,7 @@ fn assertion_010_constraints_test_6() {
 
 #[test]
 fn assertion_011_constraints_test_7a() {
-    xfail_upstream(
+    pass_upstream(
         "Constraints test 7a",
         r"$bibentries->entry('c7')->get_field('warnings')",
         r"$c7",
@@ -229,7 +229,7 @@ fn assertion_011_constraints_test_7a() {
 
 #[test]
 fn assertion_012_constraints_test_7b() {
-    xfail_upstream(
+    pass_upstream(
         "Constraints test 7b",
         r"is_undef($bibentries->entry('c7')->get_field('field7'))",
         r"true",
@@ -240,7 +240,7 @@ fn assertion_012_constraints_test_7b() {
 
 #[test]
 fn assertion_013_constraints_test_8a() {
-    xfail_upstream(
+    pass_upstream(
         "Constraints test 8a",
         r"$bibentries->entry('c8')->get_field('warnings')",
         r"$c8",
@@ -251,7 +251,7 @@ fn assertion_013_constraints_test_8a() {
 
 #[test]
 fn assertion_014_constraints_test_8b() {
-    xfail_upstream(
+    pass_upstream(
         "Constraints test 8b",
         r"is_undef($bibentries->entry('c8')->get_field('field4'))",
         r"true",
@@ -262,7 +262,7 @@ fn assertion_014_constraints_test_8b() {
 
 #[test]
 fn assertion_015_constraints_test_9() {
-    xfail_upstream(
+    pass_upstream(
         "Constraints test 9",
         r"is_undef($bibentries->entry('c9')->get_field('warnings'))",
         r"true",
@@ -273,7 +273,7 @@ fn assertion_015_constraints_test_9() {
 
 #[test]
 fn assertion_016_constraints_test_10() {
-    xfail_upstream(
+    pass_upstream(
         "Constraints test 10",
         r"$bibentries->entry('c10')->get_field('warnings')",
         r"$c10",
