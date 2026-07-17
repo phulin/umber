@@ -16,7 +16,7 @@ async function rejected(operation, code) {
 		await operation();
 	} catch (error) {
 		assert(error?.code === code, `expected ${code}, received ${error?.code}`);
-		return;
+		return error;
 	}
 	throw new Error(`expected rejection ${code}`);
 }
@@ -174,14 +174,18 @@ async function integration() {
 		() => direct.resolve([{ kind: "tex", name: "corrupt.tex" }]),
 		"object-digest",
 	);
-	await rejected(
+	const missingInputError = await rejected(
 		() =>
 			compileInWorker(
 				{ mainPath: "main.tex" },
 				new Map([["main.tex", encode("\\input absent \\end")]]),
 				resolver,
 			),
-		"resolve",
+		"compile",
+	);
+	assert(
+		missingInputError.diagnostic?.message.includes("absent"),
+		"missing input did not preserve its compile diagnostic",
 	);
 	await rejected(
 		() =>
