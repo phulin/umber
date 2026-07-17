@@ -8,6 +8,7 @@
 use std::fmt;
 use std::sync::Arc;
 
+mod bibliography;
 mod command;
 mod session;
 mod tool;
@@ -15,11 +16,12 @@ mod tool;
 pub use bib_input::{BibTexLimits, BibTexOptions, XmlLimits};
 pub use bib_model::{
     BibConfigurationBuilder, BibDiagnostic, BibDiagnosticCode, BibSeverity, BibSourceLocation,
-    COMPATIBILITY_VERSION, CompatibilityVersion, DataList, DataListId, DataListKind, Entry,
-    EntryBuilder, EntryId, EntryType, Field, FieldId, FieldProvenance, FieldValue, FieldValueStage,
-    GeneratedFile, Literal, NameBuilder, NameList, NamePartValue, OutputFormat, OutputNewline,
-    OutputRequest, ProcessedBibliography, ProcessedBibliographyBuilder, ProcessedSection,
-    ProcessedSectionBuilder, SectionId, SourceSpan, VirtualPath,
+    COMPATIBILITY_VERSION, CompatibilityVersion, DataList, DataListId, DataListKind,
+    DiagnosticError, Entry, EntryBuilder, EntryId, EntryType, Field, FieldId, FieldProvenance,
+    FieldValue, FieldValueStage, GeneratedFile, Literal, NameBuilder, NameList, NamePartValue,
+    OutputFormat, OutputNewline, OutputRequest, ProcessedBibliography,
+    ProcessedBibliographyBuilder, ProcessedSection, ProcessedSectionBuilder, SectionId, SourceSpan,
+    VirtualPath,
 };
 pub use bib_output::{
     BblOutputFailure, BblOutputFailureKind, BblSerializer, BibtexCase, BibtexMacro, BibtexOptions,
@@ -28,6 +30,13 @@ pub use bib_output::{
     OutputFailureKind, OutputOptions, OutputRouter, Serializer,
 };
 pub use bib_unicode::{LegacyEncoding, RecodeSet, UnicodeData};
+pub use bibliography::{
+    BibliographyAttempt, BibliographyBackend, BibliographyDiagnostic, BibliographyDiagnosticCode,
+    BibliographyDocument, BibliographyFailure, BibliographyHistory, BibliographyJob,
+    BibliographyResult, BibliographyResultError, BibliographySession, BibliographySourceLocation,
+    BibliographyStats, ClassicBibFailure, ClassicBibJob, ClassicBibOptions, ClassicBibSession,
+    ClassicBibliography, ClassicBibliographyStats, ClassicDiagnosticCode, ClassicSourceLocation,
+};
 pub use command::{BibCommand, BibCommandError, BibCommandMode, BibCommandOutput, BibExitStatus};
 pub use session::{BibInitFailure, BibSession, BibSessionOptions};
 pub use tool::{SyntheticTool, ToolFailure, ToolFailureKind, ToolResult};
