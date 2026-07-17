@@ -1,11 +1,11 @@
 # Automatic CTAN Resource Fetch
 
-Status: partially implemented, tracked by the `umber2-mbwq` epic. Builds on the
+Status: complete under the `umber2-mbwq` epic. Builds on the
 completed VFS substrate ([umber_vfs.md](umber_vfs.md)) and resource session
 protocol ([wasm_resource_acquisition.md](wasm_resource_acquisition.md)). The
 shared manifest crate, typed unavailable responses, native cache/fetch layer,
-CLI integration, sharded R2 publication, and native production pin are
-implemented. Browser sharded resolution remains separate rollout work.
+CLI integration, sharded R2 publication, native and browser production pins,
+and the cross-frontend cold/warm/offline parity gate are implemented.
 
 ## Problem
 
@@ -359,15 +359,15 @@ Each phase is a `bd` issue under the `umber2-mbwq` epic (phase N is
    accepted revision; Ctrl-C uses the same path. Tests verify that a resolved
    distribution file is not reopened or refetched on a later revision and
    that cancelled downloads publish neither bytes nor cache objects.
-6. **In progress — publish and adopt the self-hosted snapshot.** The verified
+6. **Complete — publish and adopt the self-hosted snapshot.** The verified
    TeX Live 2026 staging bundle, sharded-root publisher contract, and resumable
    rclone publication tooling are complete. Native and browser shard
-   resolution and pin adoption remain separate work; publication performs
+   resolution and production pin adoption are complete; publication performs
    structural, public digest, object, and CORS verification before adoption.
-7. **Parity gate.** One corpus document requiring distribution packages
-   compiles from a cold cache natively and in the browser fixture to
-   byte-identical DVI, satisfies repeat runs entirely from cache, and
-   passes an offline-mode run after warming.
+7. **Complete — parity gate.** One corpus document requiring distribution
+   packages compiles from a cold cache natively and in the browser fixture to
+   byte-identical DVI, satisfies repeat runs entirely from cache, and passes an
+   offline-mode run after warming.
 
 ## Exit criteria
 
@@ -385,6 +385,26 @@ Each phase is a `bd` issue under the `umber2-mbwq` epic (phase N is
 - Fetch failures, corrupt objects, oversized objects, mismatched manifests,
   and cancellation are typed, tested, and leak no partial state into the
   VFS.
+
+The phase-7 CI gate is `scripts/test-wasm-browser.sh`. Its existing fixture
+protocol now drives both the native CLI and the packaged browser worker against
+one pinned sharded manifest. Each frontend starts with an empty persistent
+cache, fetches the root, canonical shard, TeX input, and two TFM objects, and
+produces exact byte-identical DVI. A fresh warm session and an explicit offline
+session then reproduce those bytes with zero additional server requests. The
+browser cache stores the pinned root as well as shards and payloads, re-verifies
+every cached digest, and rejects an offline cache miss without calling fetch.
+
+The production read-only audit used the default
+`texlive-2026-r79639/manifest-v2.json` pin and a clean cache to compile
+`tests/latex/article.tex` through the native LaTeX-DVI frontend. Cold, warm,
+and offline runs produced the same 1,520-byte DVI (SHA-256
+`db1077f0078cfd787fd9048a8b3e13100f396ea8c2fe031f9026d88975ab9d62`);
+the warm and offline runs acquired no resources. Source and dependency audits
+confirm that this work changes only the host-side JavaScript resolver and test
+harness: no engine, VFS, or distribution crate gained networking or URL
+derivation, `umber-fetch` remains absent from the WASM dependency tree, and
+the authored JavaScript facade remains the browser acquisition owner.
 
 ## Open questions
 

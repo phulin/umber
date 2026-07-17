@@ -25,6 +25,7 @@ export interface HttpManifestResolverOptions {
 	manifestUrl: string;
 	manifestSha256: string;
 	persistentCache?: "http" | "indexeddb" | "none";
+	offline?: boolean;
 	concurrency?: number;
 	maxFiles?: number;
 	maxBytes?: number;

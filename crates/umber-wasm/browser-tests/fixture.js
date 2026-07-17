@@ -11,6 +11,13 @@ function assert(condition, message) {
 	if (!condition) throw new Error(message);
 }
 
+async function sha256Hex(bytes) {
+	const digest = await crypto.subtle.digest("SHA-256", bytes);
+	return [...new Uint8Array(digest)]
+		.map((byte) => byte.toString(16).padStart(2, "0"))
+		.join("");
+}
+
 async function rejected(operation, code) {
 	try {
 		await operation();
@@ -49,11 +56,11 @@ async function integration() {
 			"\\shipout\\hbox{\\a A\\b B}\\end",
 	);
 	const files = new Map([["main.tex", source]]);
-	const first = await compileInWorker(
-		{ mainPath: "main.tex" },
-		files,
-		resolver,
-	);
+	const sessionOptions = {
+		mainPath: "main.tex",
+		clock: { year: 1970, month: 1, day: 1, minutes: 0 },
+	};
+	const first = await compileInWorker(sessionOptions, files, resolver);
 	assert(first.dvi.byteLength > 0, "cold compilation returned no DVI");
 	assert(first.log instanceof Uint8Array, "log is not binary");
 	assert(first.terminal.includes("remote-loaded"), "remote input did not run");
@@ -61,24 +68,49 @@ async function integration() {
 		file.path.endsWith("result.aux"),
 	);
 	assert(auxiliary?.bytes instanceof Uint8Array, "auxiliary output is absent");
+	const expectedNativeDvi = await fetch("/native-dvi.sha256").then((response) =>
+		response.text(),
+	);
+	assert(
+		(await sha256Hex(first.dvi)) === expectedNativeDvi,
+		"native and browser cold DVI differ",
+	);
 
 	const cold = await fetch("/stats").then((response) => response.json());
 	assert(
 		cold.objectRequests === 4,
 		`expected one shard and 3 cold DVI objects, got ${cold.objectRequests}`,
 	);
-	assert(cold.maximumActive >= 2, "TFM/object downloads were not concurrent");
-	const second = await compileInWorker(
-		{ mainPath: "main.tex" },
-		files,
-		resolver,
-	);
 	assert(
-		second.dvi.byteLength === first.dvi.byteLength,
-		"warm DVI length changed",
+		cold.networkRequests === 5,
+		`expected one root, one shard, and 3 cold objects, got ${cold.networkRequests} requests`,
+	);
+	assert(cold.maximumActive >= 2, "TFM/object downloads were not concurrent");
+	const second = await compileInWorker(sessionOptions, files, resolver);
+	assert(
+		second.dvi.byteLength === first.dvi.byteLength &&
+			second.dvi.every((byte, index) => byte === first.dvi[index]),
+		"warm DVI changed",
 	);
 	const warm = await fetch("/stats").then((response) => response.json());
-	assert(warm.objectRequests === 4, "warm IndexedDB run fetched an object");
+	assert(
+		warm.networkRequests === cold.networkRequests,
+		"warm IndexedDB run performed a network request",
+	);
+	const offlineOutput = await compileInWorker(sessionOptions, files, {
+		...resolver,
+		offline: true,
+	});
+	assert(
+		offlineOutput.dvi.byteLength === first.dvi.byteLength &&
+			offlineOutput.dvi.every((byte, index) => byte === first.dvi[index]),
+		"offline DVI changed",
+	);
+	const offline = await fetch("/stats").then((response) => response.json());
+	assert(
+		offline.networkRequests === cold.networkRequests,
+		"offline IndexedDB run performed a network request",
+	);
 
 	await initWasm();
 	const cmr10 = new Uint8Array(

@@ -285,6 +285,7 @@ function prepareMessage(options, userFiles, resolver, wasmUrl) {
 				manifestUrl: resolver.manifestUrl,
 				manifestSha256: resolver.manifestSha256,
 				persistentCache: resolver.persistentCache,
+				offline: resolver.offline,
 				concurrency: resolver.concurrency,
 				format: resolver.format,
 			},
