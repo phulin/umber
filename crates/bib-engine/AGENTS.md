@@ -8,6 +8,7 @@ in native and WASM builds without subprocesses or native-filesystem access.
 
 - `Cargo.toml`: crate graph and test-only manifest verification dependencies.
 - `src/lib.rs`: detached public job, option, result, failure, and attempt contracts.
+- `src/tool.rs`: synthetic-section tool mode and in-process alternate-output routing.
 - `tests/it.rs`: the crate's sole Cargo integration-test binary.
 - `tests/it/foundation.rs`: public foundation-boundary tests.
 - `tests/it/support.rs`: strict assertion-level xfail comparisons.

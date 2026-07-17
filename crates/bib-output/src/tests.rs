@@ -9,8 +9,9 @@ use bib_unicode::{LegacyEncoding, UnicodeData};
 
 use crate::{
     BblOutputFailureKind, BblSerializer, BblXmlSerializer, BibLatexXmlSerializer, BibtexMacro,
-    BibtexOptions, BibtexOutputFailureKind, BibtexSerializer, OutputContext, Serializer,
-    XmlOutputFailureKind, XmlSchemaKind, generate_xml_schema,
+    BibtexOptions, BibtexOutputFailureKind, BibtexSerializer, DotInclude, DotOptions,
+    DotOutputFailureKind, DotSerializer, OutputContext, OutputFailureKind, OutputOptions,
+    OutputRouter, Serializer, XmlOutputFailureKind, XmlSchemaKind, generate_xml_schema,
 };
 
 fn source() -> BibSourceLocation {
@@ -81,6 +82,132 @@ fn bibtex_request() -> OutputRequest {
         VirtualPath::user("main.bib").expect("valid output path"),
         OutputFormat::Bibtex,
     )
+}
+
+fn dot_request() -> OutputRequest {
+    OutputRequest::new(
+        VirtualPath::user("main.dot").expect("valid output path"),
+        OutputFormat::Dot,
+    )
+}
+
+#[test]
+fn dot_is_exact_deterministic_and_bounded() {
+    let mut parent = EntryBuilder::new(
+        EntryId::new("parent").expect("valid entry"),
+        EntryType::new("xdata").expect("valid type"),
+        source(),
+    );
+    add_literal(&mut parent, "title", "Parent");
+    let mut child = EntryBuilder::new(
+        EntryId::new("child").expect("valid entry"),
+        EntryType::new("book").expect("valid type"),
+        source(),
+    );
+    add_field(
+        &mut child,
+        "xdata",
+        FieldValue::KeyList(vec![EntryId::new("parent").expect("valid key")]),
+    );
+    add_literal(&mut child, "title", "Child");
+    let entries = [parent.freeze(), child.freeze()];
+    let ids = entries
+        .iter()
+        .map(|entry| entry.id().clone())
+        .collect::<Vec<_>>();
+    let mut section = ProcessedSectionBuilder::new(SectionId::new(0));
+    for entry in entries {
+        section.entry(entry).expect("unique entry");
+    }
+    section
+        .list(DataList::new(DataListId::new("main").expect("valid list"), ids).expect("valid list"))
+        .expect("known entries");
+    let mut document = ProcessedBibliographyBuilder::new(
+        BibConfigurationBuilder::new(COMPATIBILITY_VERSION).freeze(),
+    );
+    document.section(section.freeze()).expect("unique section");
+    let document = document.freeze();
+    let serializer = DotSerializer::new(DotOptions::default());
+    let first = serializer
+        .serialize(
+            OutputContext::new(&document, &UnicodeData::pinned()),
+            &dot_request(),
+        )
+        .expect("serializes");
+    let second = serializer
+        .serialize(
+            OutputContext::new(&document, &UnicodeData::pinned()),
+            &dot_request(),
+        )
+        .expect("serializes deterministically");
+    assert_eq!(first, second);
+    let text = std::str::from_utf8(first.bytes()).expect("UTF-8");
+    assert!(text.starts_with("digraph Biberdata {\n"));
+    assert!(text.contains("label=\"parent (XDATA)\";"));
+    assert!(text.contains("\"section0/child/xdata\" -> \"section0/parent/title\""));
+    assert!(text.ends_with("}\n"));
+
+    let error = serializer
+        .serialize(
+            OutputContext::new(&document, &UnicodeData::pinned()),
+            &dot_request().with_max_bytes(16),
+        )
+        .expect_err("limit fails");
+    assert_eq!(error.kind(), DotOutputFailureKind::Limit);
+
+    let no_fields = DotSerializer::new(DotOptions::default().with_include(DotInclude {
+        fields: false,
+        xdata: false,
+        ..DotInclude::default()
+    }))
+    .serialize(
+        OutputContext::new(&document, &UnicodeData::pinned()),
+        &dot_request(),
+    )
+    .expect("filtered graph serializes");
+    assert!(
+        !std::str::from_utf8(no_fields.bytes())
+            .expect("UTF-8")
+            .contains("section0/child/xdata")
+    );
+}
+
+#[test]
+fn output_router_dispatches_every_alternate_format() {
+    let mut entry = EntryBuilder::new(
+        EntryId::new("route").expect("valid entry"),
+        EntryType::new("misc").expect("valid type"),
+        source(),
+    );
+    add_literal(&mut entry, "title", "Routed");
+    let document = document_with_entry(entry.freeze());
+    let unicode = UnicodeData::pinned();
+    let context = OutputContext::new(&document, &unicode);
+    let router = OutputRouter::new(OutputOptions::default());
+    for (path, format) in [
+        ("route.bbl", OutputFormat::Bbl),
+        ("route.bib", OutputFormat::Bibtex),
+        ("route.bltxml", OutputFormat::BibLatexXml),
+        ("route.bblxml", OutputFormat::BblXml),
+        ("route.dot", OutputFormat::Dot),
+    ] {
+        let request = OutputRequest::new(VirtualPath::user(path).expect("path"), format);
+        assert!(
+            !router
+                .serialize(context, &request)
+                .expect("routed")
+                .bytes()
+                .is_empty()
+        );
+    }
+    let tiny = dot_request().with_max_bytes(1);
+    assert_eq!(
+        router
+            .serialize(context, &tiny)
+            .expect_err("typed route failure")
+            .kind(),
+        OutputFailureKind::Dot
+    );
 }
 
 fn person(family: &str, given: &str) -> bib_model::Name {

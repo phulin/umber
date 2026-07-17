@@ -8,6 +8,8 @@
 use std::fmt;
 use std::sync::Arc;
 
+mod tool;
+
 pub use bib_model::{
     BibConfigurationBuilder, BibDiagnostic, BibDiagnosticCode, BibSeverity, BibSourceLocation,
     COMPATIBILITY_VERSION, CompatibilityVersion, DataList, DataListId, DataListKind, Entry,
@@ -18,9 +20,12 @@ pub use bib_model::{
 };
 pub use bib_output::{
     BblOutputFailure, BblOutputFailureKind, BblSerializer, BibtexCase, BibtexMacro, BibtexOptions,
-    BibtexOutputFailure, BibtexOutputFailureKind, BibtexSerializer, OutputContext, Serializer,
+    BibtexOutputFailure, BibtexOutputFailureKind, BibtexSerializer, DotInclude, DotOptions,
+    DotOutputFailure, DotOutputFailureKind, DotSerializer, OutputContext, OutputFailure,
+    OutputFailureKind, OutputOptions, OutputRouter, Serializer,
 };
 pub use bib_unicode::{LegacyEncoding, RecodeSet, UnicodeData};
+pub use tool::{SyntheticTool, ToolFailure, ToolFailureKind, ToolResult};
 use umber_vfs::FileRequestBatch;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

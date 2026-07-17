@@ -3,8 +3,9 @@
 Status: foundation contracts, pinned Unicode utilities, bounded XML and
 BibTeX inputs, deterministic cross-entry graphs, structured names,
 data-list/sorting, labeling/uniqueness, exact BBL 3.3, BibTeX, BibLaTeXML, and
-BBLXML serialization are implemented; the remaining DOT serializer, session,
-and project integration continue in dependency order.
+BBLXML serialization, bounded DOT output, synthetic-section tool mode, and
+alternate-output routing are implemented; the remaining resource session and
+project integration continue in dependency order.
 
 This document defines Umber's pure-Rust bibliography subsystem. Every Rust
 package uses the `bib-*` prefix, and modules, types, commands, features, and
@@ -146,9 +147,9 @@ The workspace now contains these packages and dependency boundaries:
   presort, sort initials, and stable ordering;
 - `bib-label`: static and context-dependent entry processing, name visibility,
   hashes, label fields, extradate/title values, and uniqueness;
-- `bib-output`: detached deterministic BBL 3.3, BibTeX, BibLaTeXML, and BBLXML
-  serialization plus deterministic Relax NG companion generation, followed by
-  the separately tracked DOT output format; and
+- `bib-output`: detached deterministic BBL 3.3, BibTeX, BibLaTeXML, BBLXML,
+  and DOT serialization, deterministic Relax NG companion generation, and a
+  single typed router across every alternate output format; and
 - `bib-engine`: the only ordinary dependency of `umber`, composing the stages
   and exposing resource-session and one-shot APIs.
 
@@ -408,6 +409,15 @@ Tool mode uses a synthetic section and its documented setup, data source,
 transformation, resolution, validation, list, and serialization behavior. It
 is a first-class mode, not a separate executable implementation.
 
+The implemented `SyntheticTool` boundary accepts already transformed frozen
+entries, validates an optional explicit order as an exact permutation, places
+them in section 99999 and the canonical tool data list, and routes every
+requested artifact through `bib-output` in process. Duplicate entry ids,
+incomplete orders, duplicate destination paths, and serializer failures are
+typed. Macro, comment, case, recoding, and DOT inclusion policy enter through
+immutable `OutputOptions`; no tool-mode step reads the host filesystem or
+spawns a process.
+
 Each stage accepts an explicit context and mutable private builder, then
 returns a validated next-stage value or ordered diagnostics. No stage reads a
 global configuration object, current directory, process locale, or argument
@@ -637,6 +647,15 @@ exact `FIELD+an:name` assignments. Structural identifiers, balanced values,
 comments, encoding failures, compatibility mismatches, and checked work/output
 limits return typed ordered diagnostics without consulting input sources or
 mutable configuration.
+
+The DOT writer emits stable section and entry clusters, optional field nodes,
+relationship edges for xdata, crossref, xref, and related keys, and derived
+edges from frozen field provenance. `DotInclude` makes each graph family
+explicit. Identifiers and tooltips are escaped before emission; checked work
+growth, final bytes, encoding, newline policy, compatibility identity, and
+wrong-format requests produce the same style of typed bounded failures as the
+other serializers. `OutputRouter` is the sole final dispatch point for BBL,
+BibTeX, BibLaTeXML, BBLXML, and DOT requests.
 
 Diagnostics have stable codes and structured data:
 

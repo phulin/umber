@@ -2,6 +2,8 @@
 
 mod bbl;
 mod bibtex;
+mod dot;
+mod router;
 mod xml;
 
 use bib_model::{GeneratedFile, OutputRequest, ProcessedBibliography};
@@ -12,6 +14,8 @@ pub use bibtex::{
     BibtexCase, BibtexMacro, BibtexOptions, BibtexOutputFailure, BibtexOutputFailureKind,
     BibtexSerializer,
 };
+pub use dot::{DotInclude, DotOptions, DotOutputFailure, DotOutputFailureKind, DotSerializer};
+pub use router::{OutputFailure, OutputFailureKind, OutputOptions, OutputRouter};
 pub use xml::{
     BBL_XML_NAMESPACE, BIBLATEX_XML_NAMESPACE, BblXmlSerializer, BibLatexXmlSerializer,
     XmlOutputFailure, XmlOutputFailureKind, XmlSchemaKind, generate_xml_schema,

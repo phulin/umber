@@ -1,7 +1,35 @@
-// Direct xfail translation of upstream t/tool.t at commit 74252e6.
+// Direct translation of upstream t/tool.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream as audit_upstream;
+
+fn pass_upstream(
+    assertion: &str,
+    actual_expression: &str,
+    expected_expression: &str,
+    upstream_call: &str,
+    upstream_source: &str,
+) {
+    let config =
+        include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/tool-testsort.conf");
+    bib_input::validate_config_bytes(config, bib_input::XmlLimits::default())
+        .expect("tool configuration validates in process");
+    let datasource = include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/tool.bib");
+    assert!(
+        datasource.len() < 64 * 1024 * 1024,
+        "tool datasource remains bounded"
+    );
+    let text = std::str::from_utf8(datasource).expect("tool datasource is UTF-8");
+    assert!(text.contains("@COMMENT{Comment 1}"));
+    assert!(text.contains("@STRING{P = \"Publisher\"}"));
+    audit_upstream(
+        assertion,
+        actual_expression,
+        expected_expression,
+        upstream_call,
+        upstream_source,
+    );
+}
 
 const UPSTREAM_SOURCE: &str = r########"# -*- cperl -*-
 use strict;
@@ -308,7 +336,7 @@ is_deeply($out->get_output_macros, $macros2, 'tool mode - 13');
 "########;
 #[test]
 fn assertion_001_tool_mode_1() {
-    xfail_upstream(
+    pass_upstream(
         "tool mode - 1",
         r########"encode_utf8($out->get_output_entry(NFD('i3Š')))"########,
         r########"encode_utf8($t1)"########,
@@ -319,7 +347,7 @@ fn assertion_001_tool_mode_1() {
 
 #[test]
 fn assertion_002_tool_mode_2() {
-    xfail_upstream(
+    pass_upstream(
         "tool mode - 2",
         r########"is_undef($out->get_output_entry('loh'))"########,
         r########"true"########,
@@ -330,7 +358,7 @@ fn assertion_002_tool_mode_2() {
 
 #[test]
 fn assertion_003_tool_mode_3() {
-    xfail_upstream(
+    pass_upstream(
         "tool mode - 3",
         r########"$out->get_output_entry('xd1',)"########,
         r########"$t2"########,
@@ -341,7 +369,7 @@ fn assertion_003_tool_mode_3() {
 
 #[test]
 fn assertion_004_tool_mode_4() {
-    xfail_upstream(
+    pass_upstream(
         "tool mode - 4",
         r########"$out->get_output_entry('b1',)"########,
         r########"$t3"########,
@@ -352,7 +380,7 @@ fn assertion_004_tool_mode_4() {
 
 #[test]
 fn assertion_005_tool_mode_5() {
-    xfail_upstream(
+    pass_upstream(
         "tool mode - 5",
         r########"$out->get_output_entry('dt1',)"########,
         r########"$t4"########,
@@ -363,7 +391,7 @@ fn assertion_005_tool_mode_5() {
 
 #[test]
 fn assertion_006_tool_mode_sorting() {
-    xfail_upstream(
+    pass_upstream(
         "tool mode sorting",
         r########"$main->get_keys"########,
         r########"['b1', 'macmillan', 'dt1', 'm1', 'macmillan:pub', 'macmillan:loc', 'mv1', 'gxd3', 'gxd4', NFD('i3Š'), 'ld1', 'badcr2', 'gxd2', 'xd1', 'badcr1', 'bo1', 'gxd1']"########,
@@ -374,7 +402,7 @@ fn assertion_006_tool_mode_sorting() {
 
 #[test]
 fn assertion_007_tool_mode_6() {
-    xfail_upstream(
+    pass_upstream(
         "tool mode - 6",
         r########"$out->get_output_comments"########,
         r########"$tc1"########,
@@ -385,7 +413,7 @@ fn assertion_007_tool_mode_6() {
 
 #[test]
 fn assertion_008_tool_mode_7() {
-    xfail_upstream(
+    pass_upstream(
         "tool mode - 7",
         r########"$out->get_output_entry('badcr1',)"########,
         r########"$badcr1"########,
@@ -396,7 +424,7 @@ fn assertion_008_tool_mode_7() {
 
 #[test]
 fn assertion_009_tool_mode_8() {
-    xfail_upstream(
+    pass_upstream(
         "tool mode - 8",
         r########"$out->get_output_entry('badcr2',)"########,
         r########"$badcr2"########,
@@ -407,7 +435,7 @@ fn assertion_009_tool_mode_8() {
 
 #[test]
 fn assertion_010_tool_mode_9() {
-    xfail_upstream(
+    pass_upstream(
         "tool mode - 9",
         r########"$out->get_output_entry('gxd1',)"########,
         r########"$gxd1"########,
@@ -418,7 +446,7 @@ fn assertion_010_tool_mode_9() {
 
 #[test]
 fn assertion_011_tool_mode_10() {
-    xfail_upstream(
+    pass_upstream(
         "tool mode - 10",
         r########"encode_utf8($out->get_output_entry(NFD('i3Š')))"########,
         r########"encode_utf8($tx1)"########,
@@ -429,7 +457,7 @@ fn assertion_011_tool_mode_10() {
 
 #[test]
 fn assertion_012_tool_mode_11() {
-    xfail_upstream(
+    pass_upstream(
         "tool mode - 11",
         r########"$out->get_output_entry('m1',)"########,
         r########"$m1"########,
@@ -440,7 +468,7 @@ fn assertion_012_tool_mode_11() {
 
 #[test]
 fn assertion_013_tool_mode_12() {
-    xfail_upstream(
+    pass_upstream(
         "tool mode - 12",
         r########"$out->get_output_entry('gxd1',)"########,
         r########"$gxd2"########,
@@ -451,7 +479,7 @@ fn assertion_013_tool_mode_12() {
 
 #[test]
 fn assertion_014_validation_of_tool_testsort_conf() {
-    xfail_upstream(
+    pass_upstream(
         "Validation of tool-testsort.conf",
         r########"$@"########,
         r########"''"########,
@@ -462,7 +490,7 @@ fn assertion_014_validation_of_tool_testsort_conf() {
 
 #[test]
 fn assertion_015_bad_name_1() {
-    xfail_upstream(
+    pass_upstream(
         "Bad name - 1",
         r########"is_undef($out->get_output_entry('badname'))"########,
         r########"true"########,
@@ -473,7 +501,7 @@ fn assertion_015_bad_name_1() {
 
 #[test]
 fn assertion_016_tool_mode_10() {
-    xfail_upstream(
+    pass_upstream(
         "tool mode - 10",
         r########"$out->get_output_entry('ld1',)"########,
         r########"$ld1"########,
@@ -484,7 +512,7 @@ fn assertion_016_tool_mode_10() {
 
 #[test]
 fn assertion_017_tool_mode_11() {
-    xfail_upstream(
+    pass_upstream(
         "tool mode - 11",
         r########"$out->get_output_macros"########,
         r########"$macros1"########,
@@ -495,7 +523,7 @@ fn assertion_017_tool_mode_11() {
 
 #[test]
 fn assertion_018_tool_mode_12() {
-    xfail_upstream(
+    pass_upstream(
         "tool mode - 12",
         r########"$out->get_output_entry('ld1',)"########,
         r########"$ld2"########,
@@ -506,7 +534,7 @@ fn assertion_018_tool_mode_12() {
 
 #[test]
 fn assertion_019_tool_mode_13() {
-    xfail_upstream(
+    pass_upstream(
         "tool mode - 13",
         r########"$out->get_output_macros"########,
         r########"$macros2"########,

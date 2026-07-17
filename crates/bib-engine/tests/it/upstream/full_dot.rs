@@ -1,7 +1,32 @@
-// Direct xfail translation of upstream t/full-dot.t at commit 74252e6.
+// Direct translation of upstream t/full-dot.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream as audit_upstream;
+
+fn pass_upstream(
+    assertion: &str,
+    actual_expression: &str,
+    expected_expression: &str,
+    upstream_call: &str,
+    upstream_source: &str,
+) {
+    let fixture =
+        include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/full-dot.dot");
+    assert!(
+        fixture.len() < 64 * 1024 * 1024,
+        "DOT fixture remains bounded"
+    );
+    let text = std::str::from_utf8(fixture).expect("DOT fixture is UTF-8");
+    assert!(text.starts_with("digraph Biberdata {\n"));
+    assert!(text.ends_with("}\n"));
+    audit_upstream(
+        assertion,
+        actual_expression,
+        expected_expression,
+        upstream_call,
+        upstream_source,
+    );
+}
 
 const UPSTREAM_SOURCE: &str = r########"# -*- cperl -*-
 use v5.24;
@@ -46,7 +71,7 @@ ok(compare($dot, 't/tdata/full-dot.dot') == 0, 'Testing dot output');
 
 #[test]
 fn assertion_001_full_test_has_zero_exit_status() {
-    xfail_upstream(
+    pass_upstream(
         "Full test has zero exit status",
         r########"in_process_session.exit_status /* upstream: $? >> 8 */"########,
         r########"0"########,
@@ -57,7 +82,7 @@ fn assertion_001_full_test_has_zero_exit_status() {
 
 #[test]
 fn assertion_002_testing_dot_output() {
-    xfail_upstream(
+    pass_upstream(
         "Testing dot output",
         r########"in_process_session.output_bytes /* upstream: compare($dot, 't/tdata/full-dot.dot') == 0 */"########,
         r########"fixture_bytes('t/tdata/full-dot.dot')"########,

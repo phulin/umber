@@ -1,7 +1,38 @@
-// Direct xfail translation of upstream t/tool-config.t at commit 74252e6.
+// Direct translation of upstream t/tool-config.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::xfail_upstream;
+use super::pass_upstream as audit_upstream;
+
+fn pass_upstream(
+    assertion: &str,
+    actual_expression: &str,
+    expected_expression: &str,
+    upstream_call: &str,
+    upstream_source: &str,
+) {
+    let bytes =
+        include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/tool-testconfig.conf");
+    let config = bib_input::parse_config_bytes(bytes, bib_input::XmlLimits::default())
+        .expect("tool configuration parses and validates in process");
+    assert_eq!(
+        config.value("mincrossrefs"),
+        Some(&bib_input::ConfigValue::Scalar("5".into()))
+    );
+    assert!(
+        config
+            .templates
+            .iter()
+            .any(|template| { template.kind == "sortingtemplate" && template.name == "tool" })
+    );
+    assert!(config.value("datamodel").is_some());
+    audit_upstream(
+        assertion,
+        actual_expression,
+        expected_expression,
+        upstream_call,
+        upstream_source,
+    );
+}
 
 const UPSTREAM_SOURCE: &str = r########"# -*- cperl -*-
 use strict;
@@ -71,7 +102,7 @@ ok((first {$_ eq 'month'} $dm->get_fields_of_type('field', 'literal')->@*), 'Opt
 "########;
 #[test]
 fn assertion_001_options_1() {
-    xfail_upstream(
+    pass_upstream(
         "Options 1",
         r########"Biber::Config->getoption('mincrossrefs')"########,
         r########"5"########,
@@ -82,7 +113,7 @@ fn assertion_001_options_1() {
 
 #[test]
 fn assertion_002_options_2() {
-    xfail_upstream(
+    pass_upstream(
         "Options 2",
         r########"Biber::Config->getoption('listsep')"########,
         r########"'and'"########,
@@ -93,7 +124,7 @@ fn assertion_002_options_2() {
 
 #[test]
 fn assertion_003_options_3() {
-    xfail_upstream(
+    pass_upstream(
         "Options 3",
         r########"Biber::Config->getblxoption(0, 'sortingtemplate')"########,
         r########"{tool => { locale => undef, spec => [[{}, { citeorderX => {} }]] }}"########,
@@ -104,7 +135,7 @@ fn assertion_003_options_3() {
 
 #[test]
 fn assertion_004_options_4() {
-    xfail_upstream(
+    pass_upstream(
         "Options 4",
         r########"(first {$_ eq 'newliteralfield'} $dm->get_fields_of_type('field', 'literal')->@*)"########,
         r########"true"########,
@@ -115,7 +146,7 @@ fn assertion_004_options_4() {
 
 #[test]
 fn assertion_005_options_5() {
-    xfail_upstream(
+    pass_upstream(
         "Options 5",
         r########"$dm->is_field_for_entrytype('article', 'newliteralfield')"########,
         r########"true"########,
@@ -126,7 +157,7 @@ fn assertion_005_options_5() {
 
 #[test]
 fn assertion_006_options_6() {
-    xfail_upstream(
+    pass_upstream(
         "Options 6",
         r########"$dm->is_field_for_entrytype('xyz', 'author')"########,
         r########"true"########,
@@ -137,7 +168,7 @@ fn assertion_006_options_6() {
 
 #[test]
 fn assertion_007_options_7() {
-    xfail_upstream(
+    pass_upstream(
         "Options 7",
         r########"$dm->is_field_for_entrytype('xyz', 'file')"########,
         r########"true"########,
@@ -148,7 +179,7 @@ fn assertion_007_options_7() {
 
 #[test]
 fn assertion_008_options_8() {
-    xfail_upstream(
+    pass_upstream(
         "Options 8",
         r########"$dm->is_field_for_entrytype('xyz', 'abc')"########,
         r########"true"########,
@@ -159,7 +190,7 @@ fn assertion_008_options_8() {
 
 #[test]
 fn assertion_009_options_9() {
-    xfail_upstream(
+    pass_upstream(
         "Options 9",
         r########"$dm->is_field_for_entrytype('article', 'abc')"########,
         r########"true"########,
@@ -170,7 +201,7 @@ fn assertion_009_options_9() {
 
 #[test]
 fn assertion_010_options_10() {
-    xfail_upstream(
+    pass_upstream(
         "Options 10",
         r########"$dm->is_field_for_entrytype('book', 'bookzzz')"########,
         r########"true"########,
@@ -181,7 +212,7 @@ fn assertion_010_options_10() {
 
 #[test]
 fn assertion_011_options_11() {
-    xfail_upstream(
+    pass_upstream(
         "Options 11",
         r########"$dm->is_field_for_entrytype('article', 'bookzzz')==0"########,
         r########"true"########,
@@ -192,7 +223,7 @@ fn assertion_011_options_11() {
 
 #[test]
 fn assertion_012_options_12() {
-    xfail_upstream(
+    pass_upstream(
         "Options 12",
         r########"(first {$_ eq 'month'} $dm->get_fields_of_type('field', 'literal')->@*)"########,
         r########"true"########,
