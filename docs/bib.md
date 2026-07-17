@@ -42,6 +42,14 @@ comparisons for exact strings, bytes, deep values, and structured diagnostics
 plus rendered diagnostic text. An xfailed comparison must differ; equality is
 an XPASS and panics so that the test becomes red.
 
+The foundation, input, and graph translation cohort contributes 539 isolated
+Rust xfails across 23 upstream-file modules. Each assertion is a distinct
+Cargo test, and each module retains its complete pinned upstream source plus
+the exact actual and expected expressions. This keeps assertion order,
+fixture references, expected bytes, and Unicode directly auditable while the
+semantic engine facade is still pending; no file-wide xfail can mask a later
+XPASS.
+
 For the pinned target, exact compatibility includes:
 
 - control and configuration semantics;

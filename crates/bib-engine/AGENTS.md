@@ -11,10 +11,14 @@ in native and WASM builds without subprocesses or native-filesystem access.
 - `tests/it.rs`: the crate's sole Cargo integration-test binary.
 - `tests/it/support.rs`: strict assertion-level xfail comparisons.
 - `tests/it/scaffold.rs`: fixture-manifest and xfail harness self-tests.
+- `tests/it/upstream/`: direct, assertion-isolated translations of the pinned
+  upstream compatibility suite. Each module retains the complete upstream
+  source beside its Rust xfails so names, order, expressions, and Unicode stay
+  auditable.
 
-Future translated upstream cohorts belong below `tests/it/upstream/` and
-should be modules of `tests/it.rs`, not additional top-level integration
-binaries. Public compatibility tests exercise only `bib-engine` APIs.
+Translated upstream cohorts belong below `tests/it/upstream/` and are modules
+of `tests/it.rs`, not additional top-level integration binaries. Public
+compatibility tests exercise only `bib-engine` APIs.
 
 ## Fixtures and Validation
 
