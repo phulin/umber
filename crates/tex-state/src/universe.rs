@@ -1247,7 +1247,7 @@ impl Universe {
             visits: 0,
         };
         #[cfg(feature = "profiling-stats")]
-        let started = std::time::Instant::now();
+        let started = World::start_profiling_timer();
         build(&mut projection);
         let fingerprint = projection.hasher.finish();
         #[cfg(feature = "profiling-stats")]

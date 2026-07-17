@@ -18,11 +18,28 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(feature = "profiling-stats")]
+use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
 pub use tex_content::{ContentDomain, ContentHash, ContentIdentity};
 
 /// TeX's 16 read/write stream slots.
 pub const STREAM_SLOT_COUNT: usize = 16;
+
+/// A process-local elapsed-time sample obtained through the host-effect boundary.
+///
+/// Profiling data is deliberately separate from the snapshot-owned pdfTeX
+/// clock: it is neither semantic state nor replayable engine input.
+#[cfg(feature = "profiling-stats")]
+pub(crate) struct ProfilingTimer(Instant);
+
+#[cfg(feature = "profiling-stats")]
+impl ProfilingTimer {
+    #[must_use]
+    pub(crate) fn elapsed(&self) -> Duration {
+        self.0.elapsed()
+    }
+}
 
 /// Host-materialization policy for one engine timeline.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -996,6 +1013,12 @@ impl PartialEq for World {
 impl Eq for World {}
 
 impl World {
+    /// Starts a process-local profiling timer through the `World` clock boundary.
+    #[cfg(feature = "profiling-stats")]
+    #[must_use]
+    pub(crate) fn start_profiling_timer() -> ProfilingTimer {
+        ProfilingTimer(Instant::now())
+    }
     pub(crate) fn generation_retained_bytes(&self) -> usize {
         let backend = match &self.backend {
             WorldBackend::Real { artifact_dir } => artifact_dir.as_os_str().len(),

@@ -241,7 +241,6 @@ pub fn state_hash_measurement() -> StateHashMeasurement {
 }
 
 impl StateHashMeasurement {
-    #[must_use]
     pub fn named_components(
         &self,
     ) -> impl Iterator<Item = (&'static str, StateHashComponentMeasurement)> + '_ {

@@ -133,7 +133,7 @@ impl StateHashFragment {
         build: impl FnOnce(&mut StateHasher) -> usize,
     ) -> Self {
         #[cfg(feature = "profiling-stats")]
-        let started = std::time::Instant::now();
+        let started = crate::world::World::start_profiling_timer();
         let mut hasher = StateHasher::new(domain);
         let visits = build(&mut hasher);
         let fragment = Self {
