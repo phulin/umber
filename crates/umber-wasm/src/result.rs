@@ -1,6 +1,7 @@
 use js_sys::{Array, Object, Reflect, Uint8Array};
 use umber::{
-    CompileAttemptResult, CompileDiagnostic, CompileError, MemoryRunOutput, ResourceRequest,
+    CompileAttemptResult, CompileDiagnostic, CompileError, LatexProjectAttempt, LatexProjectError,
+    LatexProjectOutput, MemoryRunOutput, ResourceRequest,
 };
 use wasm_bindgen::{JsCast, JsValue};
 
@@ -24,6 +25,30 @@ pub(crate) fn attempt_result(result: CompileAttemptResult) -> Result<JsAttemptRe
         CompileAttemptResult::Error(error) => {
             set(&object, "kind", &JsValue::from_str("error"))?;
             set(&object, "diagnostic", &diagnostic(error)?)?;
+        }
+    }
+    Ok(object.unchecked_into())
+}
+
+pub(crate) fn project_attempt_result(
+    result: LatexProjectAttempt,
+) -> Result<JsAttemptResult, JsValue> {
+    let object = Object::new();
+    match result {
+        LatexProjectAttempt::NeedResources(resources) => {
+            set(&object, "kind", &JsValue::from_str("need-resources"))?;
+            let required = resource_requests(resources.required)?;
+            set(&object, "required", &required)?;
+            let hints = resource_requests(resources.prefetch_hints)?;
+            set(&object, "prefetchHints", &hints)?;
+        }
+        LatexProjectAttempt::Complete(output) => {
+            set(&object, "kind", &JsValue::from_str("complete"))?;
+            set(&object, "output", &project_output(output)?)?;
+        }
+        LatexProjectAttempt::Error(error) => {
+            set(&object, "kind", &JsValue::from_str("error"))?;
+            set(&object, "diagnostic", &project_diagnostic(error)?)?;
         }
     }
     Ok(object.unchecked_into())
@@ -141,6 +166,145 @@ fn compile_output(output: MemoryRunOutput) -> Result<JsValue, JsValue> {
     }
     set(&object, "files", &files)?;
     Ok(object.into())
+}
+
+fn project_output(output: LatexProjectOutput) -> Result<JsValue, JsValue> {
+    let object = Object::new();
+    set(
+        &object,
+        "revision",
+        &JsValue::from_f64(output.revision.raw() as f64),
+    )?;
+    set(
+        &object,
+        "contentHash",
+        &JsValue::from_str(&output.content_hash.hex()),
+    )?;
+    set(
+        &object,
+        "passes",
+        &JsValue::from_f64(f64::from(output.passes)),
+    )?;
+    set(&object, "tex", &compile_output(output.tex)?)?;
+    if let Some(bibliography) = output.bibliography {
+        let bib = Object::new();
+        let files = Array::new();
+        for output_file in bibliography.files() {
+            files.push(&output_file_value(
+                output_file.path().as_str(),
+                output_file.bytes(),
+            )?);
+        }
+        set(&bib, "files", &files)?;
+        let diagnostics = Array::new();
+        for diagnostic in bibliography.diagnostics() {
+            let value = Object::new();
+            set(
+                &value,
+                "severity",
+                &JsValue::from_str(match diagnostic.severity() {
+                    bib_engine::BibSeverity::Info => "info",
+                    bib_engine::BibSeverity::Warning => "warning",
+                    bib_engine::BibSeverity::Error => "error",
+                }),
+            )?;
+            set(
+                &value,
+                "code",
+                &JsValue::from_str(diagnostic.code().as_str()),
+            )?;
+            set(&value, "message", &JsValue::from_str(diagnostic.message()))?;
+            if let Some(source) = diagnostic.source() {
+                set(&value, "path", &JsValue::from_str(source.path().as_str()))?;
+                set(
+                    &value,
+                    "line",
+                    &JsValue::from_f64(f64::from(source.span().line)),
+                )?;
+                set(
+                    &value,
+                    "column",
+                    &JsValue::from_f64(f64::from(source.span().column)),
+                )?;
+            }
+            diagnostics.push(&value);
+        }
+        set(&bib, "diagnostics", &diagnostics)?;
+        let stats = bibliography.stats();
+        let stats_value = Object::new();
+        set(&stats_value, "sections", &usize_value(stats.sections()))?;
+        set(&stats_value, "entries", &usize_value(stats.entries()))?;
+        set(
+            &stats_value,
+            "generatedFiles",
+            &usize_value(stats.generated_files()),
+        )?;
+        set(
+            &stats_value,
+            "generatedBytes",
+            &usize_value(stats.generated_bytes()),
+        )?;
+        set(&bib, "stats", &stats_value)?;
+        set(&object, "bibliography", &bib)?;
+    }
+    let generated = Array::new();
+    for file in output.generated_files {
+        generated.push(&output_file_value(
+            &file.path.to_string_lossy(),
+            &file.bytes,
+        )?);
+    }
+    set(&object, "generatedFiles", &generated)?;
+    Ok(object.into())
+}
+
+fn output_file_value(path: &str, bytes: &[u8]) -> Result<JsValue, JsValue> {
+    let file = Object::new();
+    set(&file, "path", &JsValue::from_str(path))?;
+    set(&file, "bytes", &typed_array(bytes))?;
+    Ok(file.into())
+}
+
+fn project_diagnostic(error: LatexProjectError) -> Result<JsValue, JsValue> {
+    let code = project_error_code(&error);
+    let message = error.to_string();
+    let object = Object::new();
+    set(&object, "code", &JsValue::from_str(code))?;
+    set(&object, "message", &JsValue::from_str(&message))?;
+    if let LatexProjectError::Bibliography(failure) = error {
+        let diagnostics = Array::new();
+        for diagnostic in failure.diagnostics() {
+            let value = Object::new();
+            set(
+                &value,
+                "code",
+                &JsValue::from_str(diagnostic.code().as_str()),
+            )?;
+            set(&value, "message", &JsValue::from_str(diagnostic.message()))?;
+            diagnostics.push(&value);
+        }
+        set(&object, "bibliographyDiagnostics", &diagnostics)?;
+    }
+    Ok(object.into())
+}
+
+pub(crate) const fn project_error_code(error: &LatexProjectError) -> &'static str {
+    match error {
+        LatexProjectError::Compile(error) => compile_error_code(error),
+        LatexProjectError::Bibliography(failure) => match failure.kind() {
+            bib_engine::BibFailureKind::NoProgress => "no-progress",
+            bib_engine::BibFailureKind::Limit => "limit",
+            bib_engine::BibFailureKind::ResourceConflict => "conflicting-resource",
+            _ => "bibliography",
+        },
+        LatexProjectError::InvalidLimit { .. } => "invalid-options",
+        LatexProjectError::PassLimit { .. } => "pass-limit",
+        LatexProjectError::Oscillation { .. } => "oscillation",
+        LatexProjectError::UnexpectedResource(_) => "unexpected-resource",
+        LatexProjectError::ConflictingResource(_) => "conflicting-resource",
+        LatexProjectError::Transaction(_) => "transaction",
+        LatexProjectError::InvalidPatch(_) => "invalid-patch",
+    }
 }
 
 fn diagnostic(error: CompileError) -> Result<JsValue, JsValue> {

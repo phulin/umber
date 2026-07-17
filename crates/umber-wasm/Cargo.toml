@@ -10,6 +10,7 @@ description = "Browser WebAssembly build of the Umber TeX engine"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+bib-engine = { path = "../bib-engine" }
 js-sys = "0.3"
 tex-state = { path = "../tex-state" }
 umber = { path = "../umber" }

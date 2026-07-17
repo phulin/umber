@@ -31,9 +31,12 @@ export async function compile(options, userFiles, resolver, signal, bindings) {
 	validateResolver(resolver);
 	const limits = validateSessionLimits(options?.limits);
 	throwIfAborted(signal);
-	const CompilerSession = await compilerClass(bindings);
+	const Session = await sessionClass(
+		bindings,
+		options?.bibliography !== undefined,
+	);
 	throwIfAborted(signal);
-	const session = new CompilerSession(options);
+	const session = new Session(options);
 	try {
 		addUserFiles(session, userFiles, limits);
 		addHtmlFonts(session, options?.html?.fonts);
@@ -118,16 +121,17 @@ function addHtmlFonts(session, fonts) {
 	for (const font of fonts) session.addHtmlFont(font);
 }
 
-async function compilerClass(bindings) {
+async function sessionClass(bindings, project) {
 	const module = bindings ?? (await import("./umber_wasm.js"));
 	if (bindings === undefined) await module.default();
-	if (typeof module?.CompilerSession !== "function") {
+	const Session = project ? module?.ProjectSession : module?.CompilerSession;
+	if (typeof Session !== "function") {
 		throw new CompileFacadeError(
 			"invalid-binding",
-			"CompilerSession binding is unavailable",
+			`${project ? "ProjectSession" : "CompilerSession"} binding is unavailable`,
 		);
 	}
-	return module.CompilerSession;
+	return Session;
 }
 
 function addUserFiles(session, userFiles, limits) {

@@ -1,9 +1,11 @@
+use bib_engine::{BibJob, BibOptionsBuilder, BibSessionOptions, OutputFormat, OutputRequest};
 use js_sys::{Array, Reflect, Uint8Array};
 use umber::{
     EngineMode, FeatureSetting, FileContentId, FileKind, FileRequestKey, FontContainer,
-    FontFeaturePolicy, FontObjectIdentity, FontProgramIdentity, FontRequestKey, OpenTypeTag,
-    ResolvedFile, ResolvedFont, ResourceDomain, ResourceResponse, SessionLimits, SessionOptions,
-    SessionWebFont, SourcePatch, VariationCoordinate, VariationSelection,
+    FontFeaturePolicy, FontObjectIdentity, FontProgramIdentity, FontRequestKey, LatexProjectLimits,
+    LatexProjectOptions, OpenTypeTag, ResolvedFile, ResolvedFont, ResourceDomain, ResourceResponse,
+    SessionLimits, SessionOptions, SessionWebFont, SourcePatch, VariationCoordinate,
+    VariationSelection,
 };
 use wasm_bindgen::{JsCast, JsValue};
 
@@ -42,6 +44,64 @@ pub(crate) fn parse_options(value: &JsValue) -> Result<SessionOptions, JsValue> 
         options.limits = parse_limits(&limits)?;
     }
     Ok(options)
+}
+
+pub(crate) fn parse_project_options(value: &JsValue) -> Result<LatexProjectOptions, JsValue> {
+    let tex = parse_options(value)?;
+    let bibliography = optional_object(value, "bibliography")?
+        .ok_or_else(|| js_error("project options require bibliography"))?;
+    let control_path = parse_virtual_path(&required_string(&bibliography, "controlPath")?)?;
+    let mut builder = BibOptionsBuilder::new();
+    for output in parse_array(&bibliography, "outputs")? {
+        let path = parse_virtual_path(&required_string(&output, "path")?)?;
+        let format = match required_string(&output, "format")?.as_str() {
+            "bbl" => OutputFormat::Bbl,
+            "bibtex" => OutputFormat::Bibtex,
+            "biblatex-xml" => OutputFormat::BibLatexXml,
+            "bbl-xml" => OutputFormat::BblXml,
+            "dot" => OutputFormat::Dot,
+            _ => return Err(js_error("bibliography output format is not recognized")),
+        };
+        builder
+            .output(OutputRequest::new(path, format))
+            .map_err(crate::boundary_error)?;
+    }
+    if let Some(path) = optional_string(&bibliography, "configurationPath")? {
+        builder.configuration(parse_virtual_path(&path)?);
+    }
+    let schemas = field(&bibliography, "schemaPaths")?;
+    if !absent(&schemas) {
+        if !Array::is_array(&schemas) {
+            return Err(js_error("bibliography schemaPaths must be an array"));
+        }
+        for path in Array::from(&schemas).iter() {
+            let path = path
+                .as_string()
+                .ok_or_else(|| js_error("bibliography schema paths must be strings"))?;
+            builder
+                .schema(parse_virtual_path(&path)?)
+                .map_err(crate::boundary_error)?;
+        }
+    }
+    let mut limits = LatexProjectLimits::default();
+    if let Some(value) = optional_object(value, "projectLimits")? {
+        if has_value(&value, "attempts")? {
+            limits.attempts = integer::<u32>(&value, "attempts")?;
+        }
+        if has_value(&value, "passes")? {
+            limits.passes = integer::<u32>(&value, "passes")?;
+        }
+    }
+    Ok(LatexProjectOptions {
+        tex,
+        bibliography: BibJob::new(control_path, builder.freeze()),
+        bib_session: BibSessionOptions::default(),
+        limits,
+    })
+}
+
+fn parse_virtual_path(value: &str) -> Result<bib_engine::VirtualPath, JsValue> {
+    bib_engine::VirtualPath::user(value).map_err(crate::boundary_error)
 }
 
 pub(crate) fn parse_html_font(value: &JsValue) -> Result<SessionWebFont, JsValue> {

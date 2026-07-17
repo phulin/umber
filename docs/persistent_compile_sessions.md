@@ -161,6 +161,13 @@ revision, complete generated VFS generation, bibliography diagnostics, final
 TeX output, and retained rendered-source session together. A resource miss or
 terminal failure therefore cannot replace any part of the prior accepted
 project. Existing `VirtualCompileSession` behavior and latency are unchanged.
+`umber-wasm::ProjectSession` is the binary-safe representation adapter for this
+state machine. Its project options name the BCF and requested bibliography
+outputs, its attempt values reuse the shared resource wire protocol, and its
+completed value contains the converged TeX output, bibliography diagnostics
+and statistics, and complete generated generation. The authored JavaScript
+facade chooses this binding when `bibliography` is present and implements no
+bibliography parsing or pass policy.
 
 ## Rendered-source queries
 

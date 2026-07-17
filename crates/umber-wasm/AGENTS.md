@@ -23,6 +23,7 @@ the manifest's validated content-addressed object name.
 - `assets/cmu-serif-500-roman.woff2` / `assets/CMU-OFL.txt`: pinned browser-shapeable Computer Modern Unicode face and embedding license.
 - `js/`: authored ES modules and Node acceptance tests, including the unified resource facade and optional application-manifest file/font resolver.
 - `browser-tests/`: dependency-free local HTTP and headless-Chrome package integration fixture.
+- `browser-tests/node-project.mjs`: packaged Node TeX-bibliography-TeX acceptance test.
 - `browser-tests/html-prototype.html`: two-engine line-baseline, shaping, negative-coordinate, and rule projection prototype.
 - `examples/`: minimal Plain and LaTeX-DVI module-worker browser examples
   shipped in the package.

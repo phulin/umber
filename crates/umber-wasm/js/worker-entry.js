@@ -39,6 +39,15 @@ export async function runCompileMessage(message, dependencies = {}) {
 }
 
 export function outputTransfers(output) {
+	if (output.tex) {
+		return [
+			...new Set([
+				...outputTransfers(output.tex),
+				...(output.bibliography?.files ?? []).map((file) => file.bytes.buffer),
+				...output.generatedFiles.map((file) => file.bytes.buffer),
+			]),
+		];
+	}
 	const transfers = [output.log.buffer, output.dvi.buffer];
 	if (output.html) transfers.push(output.html.buffer);
 	for (const file of output.htmlAssets ?? []) transfers.push(file.bytes.buffer);

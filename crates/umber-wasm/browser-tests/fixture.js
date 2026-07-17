@@ -212,6 +212,26 @@ async function integration() {
 		directOutput.dvi.byteLength > 0,
 		"default facade did not initialize WASM",
 	);
+	const projectSource = encode(
+		'\\immediate\\openout1=main.bcf\\immediate\\write1{<bcf:controlfile version="3.11" bltxversion="3.21" xmlns:bcf="https://sourceforge.net/projects/biblatex"><bcf:section number="0"></bcf:section></bcf:controlfile>}\\immediate\\closeout1\\shipout\\hbox{P}\\end',
+	);
+	const projectOutput = await compile(
+		{
+			mainPath: "/job/main.tex",
+			bibliography: {
+				controlPath: "/job/main.bcf",
+				outputs: [{ path: "/job/main.bbl", format: "bbl" }],
+			},
+		},
+		new Map([["/job/main.tex", projectSource]]),
+		direct,
+	);
+	assert(projectOutput.passes >= 2, "project did not perform TeX-bib-TeX");
+	assert(projectOutput.tex.dvi.byteLength > 0, "project returned no DVI");
+	assert(
+		projectOutput.generatedFiles.some((file) => file.path === "/job/main.bbl"),
+		"project returned no BBL",
+	);
 	await rejected(
 		() => direct.resolve([{ kind: "tex", name: "corrupt.tex" }]),
 		"object-digest",

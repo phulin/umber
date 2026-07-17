@@ -286,6 +286,10 @@ markup or executable URLs derived from document input.
    disposal, worker transfer, bounded partial responses, and shared Rust
    no-progress detection. JavaScript now owns acquisition only and forwards
    response batches without duplicating path, identity, or lookup semantics.
+   The same facade selects `ProjectSession` for bibliography project options;
+   TeX, bibliography, convergence, diagnostics, and generated-file publication
+   remain inside Rust while browser, Node, and worker callers retain the same
+   acquisition-only resolver contract.
 8. Add long-lived retain/release accounting and client-cache integration hooks
    for incremental render sessions.
 9. Remove superseded preload and post-finalization font-delivery APIs after the

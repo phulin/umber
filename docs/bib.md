@@ -984,7 +984,8 @@ Each lane owns its direct test cohort and commits in logical passing slices.
 1. **Complete.** `BibSession`, resource retries, caches, and public queries.
 2. **Complete.** Native command/API compatibility and output collection.
 3. **Complete.** `LatexProjectSession` and transactional multipass convergence.
-4. `umber-wasm` bindings and browser resource-loop parity.
+4. **Complete.** `umber-wasm` project bindings and browser/Node resource-loop
+   parity.
 
 The coordinator owns shared workspace dependency changes, fixture manifest
 merges, root documentation, and `AGENTS.md` maps. Agent branches own complete

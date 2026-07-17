@@ -4,9 +4,9 @@ mod options;
 mod result;
 
 use js_sys::{Array, Uint8Array};
-use options::{parse_options, parse_request_key, parse_resource_responses};
+use options::{parse_options, parse_project_options, parse_request_key, parse_resource_responses};
 use result::attempt_result;
-use umber::VirtualCompileSession;
+use umber::{LatexProjectSession, VirtualCompileSession};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(typescript_custom_section)]
@@ -71,6 +71,18 @@ export interface SessionOptions {
   html?: { fonts: HtmlFontInput[] };
 }
 
+export type BibliographyOutputFormat = "bbl" | "bibtex" | "biblatex-xml" | "bbl-xml" | "dot";
+
+export interface ProjectSessionOptions extends SessionOptions {
+  bibliography: {
+    controlPath: string;
+    outputs: Array<{ path: string; format: BibliographyOutputFormat }>;
+    configurationPath?: string;
+    schemaPaths?: string[];
+  };
+  projectLimits?: { attempts?: number; passes?: number };
+}
+
 export interface SourcePatch {
   nextRevision: number;
   baseRevision: number;
@@ -128,6 +140,30 @@ export interface Diagnostic {
   column?: number;
 }
 
+export interface BibliographyDiagnostic {
+  severity: "info" | "warning" | "error";
+  code: string;
+  message: string;
+  path?: string;
+  line?: number;
+  column?: number;
+}
+
+export interface BibliographyResult {
+  files: CompileOutputFile[];
+  diagnostics: BibliographyDiagnostic[];
+  stats: { sections: number; entries: number; generatedFiles: number; generatedBytes: number };
+}
+
+export interface ProjectCompileOutput {
+  revision: number;
+  contentHash: string;
+  passes: number;
+  tex: CompileOutput;
+  bibliography?: BibliographyResult;
+  generatedFiles: CompileOutputFile[];
+}
+
 export type RenderedSourceResult =
   | { kind: "current"; path: string; start: number; end: number; line: number; column: number }
   | { kind: "deleted"; mintedRevision: number }
@@ -136,14 +172,17 @@ export type RenderedSourceResult =
 
 export type AttemptResult =
   | { kind: "need-resources"; required: ResourceRequest[]; prefetchHints: ResourceRequest[] }
-  | { kind: "complete"; output: CompileOutput }
-  | { kind: "error"; diagnostic: Diagnostic };
+  | { kind: "complete"; output: CompileOutput | ProjectCompileOutput }
+  | { kind: "error"; diagnostic: Diagnostic & { bibliographyDiagnostics?: Array<{ code: string; message: string }> } };
 "#;
 
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(typescript_type = "SessionOptions")]
     pub type JsSessionOptions;
+
+    #[wasm_bindgen(typescript_type = "ProjectSessionOptions")]
+    pub type JsProjectSessionOptions;
 
     #[wasm_bindgen(typescript_type = "FileRequestKey")]
     pub type JsFileRequestKey;
@@ -167,6 +206,11 @@ extern "C" {
 #[wasm_bindgen]
 pub struct CompilerSession {
     session: Option<VirtualCompileSession>,
+}
+
+#[wasm_bindgen]
+pub struct ProjectSession {
+    session: Option<LatexProjectSession>,
 }
 
 #[wasm_bindgen(js_name = packageVersion)]
@@ -339,6 +383,90 @@ impl CompilerSession {
     }
 }
 
+#[wasm_bindgen]
+impl ProjectSession {
+    #[wasm_bindgen(constructor)]
+    pub fn new(options: &JsProjectSessionOptions) -> Result<ProjectSession, JsValue> {
+        let options = parse_project_options(options.as_ref())?;
+        let session = LatexProjectSession::new(options).map_err(project_boundary_error)?;
+        Ok(Self {
+            session: Some(session),
+        })
+    }
+
+    #[wasm_bindgen(js_name = addUserFile)]
+    pub fn add_user_file(&mut self, path: &str, bytes: &Uint8Array) -> Result<(), JsValue> {
+        self.session_mut()?
+            .add_user_file(path, bytes.to_vec())
+            .map_err(project_boundary_error)
+    }
+
+    #[wasm_bindgen(js_name = provideResources)]
+    pub fn provide_resources(&mut self, responses: &Array) -> Result<(), JsValue> {
+        let responses = parse_resource_responses(responses.as_ref())
+            .map_err(|error| tag_js_error(error, "invalid-resource"))?;
+        self.session_mut()?
+            .provide_resources(responses)
+            .map_err(project_boundary_error)
+    }
+
+    pub fn advance(&mut self) -> Result<JsAttemptResult, JsValue> {
+        result::project_attempt_result(self.session_mut()?.compile_attempt())
+    }
+
+    #[wasm_bindgen(js_name = compileAttempt)]
+    pub fn compile_attempt(&mut self) -> Result<JsAttemptResult, JsValue> {
+        self.advance()
+    }
+
+    #[wasm_bindgen(js_name = applyPatch)]
+    pub fn apply_patch(&mut self, patch: &JsSourcePatch) -> Result<(), JsValue> {
+        let patch = options::parse_source_patch(patch.as_ref())?;
+        self.session_mut()?
+            .apply_patch(patch)
+            .map_err(project_boundary_error)
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn revision(&self) -> Result<Option<u32>, JsValue> {
+        self.session_ref()?
+            .revision()
+            .map(|revision| {
+                u32::try_from(revision.raw())
+                    .map_err(|_| js_error("accepted revision exceeds the WASM revision range"))
+            })
+            .transpose()
+    }
+
+    #[wasm_bindgen(getter, js_name = contentHash)]
+    pub fn accepted_content_hash(&self) -> Result<Option<String>, JsValue> {
+        Ok(self.session_ref()?.content_hash().map(|hash| hash.hex()))
+    }
+
+    pub fn dispose(&mut self) {
+        self.session = None;
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn disposed(&self) -> bool {
+        self.session.is_none()
+    }
+}
+
+impl ProjectSession {
+    fn session_ref(&self) -> Result<&LatexProjectSession, JsValue> {
+        self.session
+            .as_ref()
+            .ok_or_else(|| js_error("ProjectSession has been disposed"))
+    }
+
+    fn session_mut(&mut self) -> Result<&mut LatexProjectSession, JsValue> {
+        self.session
+            .as_mut()
+            .ok_or_else(|| js_error("ProjectSession has been disposed"))
+    }
+}
+
 impl CompilerSession {
     fn session_ref(&self) -> Result<&VirtualCompileSession, JsValue> {
         self.session
@@ -360,6 +488,11 @@ fn boundary_error(error: impl std::fmt::Display) -> JsValue {
 fn compile_boundary_error(error: umber::CompileError) -> JsValue {
     let value = js_sys::Error::new(&error.to_string());
     tag_js_error(value.into(), result::compile_error_code(&error))
+}
+
+fn project_boundary_error(error: umber::LatexProjectError) -> JsValue {
+    let value = js_sys::Error::new(&error.to_string());
+    tag_js_error(value.into(), result::project_error_code(&error))
 }
 
 fn tag_js_error(value: JsValue, code: &str) -> JsValue {

@@ -36,7 +36,7 @@ function bindings(results, hooks = {}) {
 			this.disposed = true;
 		}
 	}
-	return { CompilerSession: FakeSession };
+	return { CompilerSession: FakeSession, ProjectSession: FakeSession };
 }
 
 function need(kind, name) {
@@ -174,6 +174,47 @@ test("forwards shared Rust resource wire values without a JavaScript kind table"
 		wasm,
 	);
 	assert.deepEqual(forwarded, [response]);
+});
+
+test("selects the in-WASM project session while keeping acquisition generic", async () => {
+	const request = {
+		type: "file",
+		domain: "bibliography",
+		kind: "bib-data",
+		name: "references.bib",
+		originalName: "references.bib",
+	};
+	const compiled = { revision: 1, passes: 3, generatedFiles: [] };
+	const wasm = bindings([
+		{ kind: "need-resources", required: [request], prefetchHints: [] },
+		{ kind: "complete", output: compiled },
+	]);
+	let acquired;
+	const result = await compile(
+		{
+			mainPath: "/job/main.tex",
+			bibliography: {
+				controlPath: "/job/main.bcf",
+				outputs: [{ path: "/job/main.bbl", format: "bbl" }],
+			},
+		},
+		new Map(),
+		{
+			async resolve(requests) {
+				acquired = requests;
+				return requests.map((item) => ({
+					...item,
+					virtualPath: "/texlive/bib/references.bib",
+					bytes: encoder.encode("@book{x,title={X}}"),
+				}));
+			},
+		},
+		undefined,
+		wasm,
+	);
+	assert.equal(result, compiled);
+	assert.deepEqual(acquired, [request]);
+	assert.equal(wasm.ProjectSession.instances[0].disposed, true);
 });
 
 test("rejects no progress, unresolved keys, and engine diagnostics actionably", async (t) => {

@@ -418,4 +418,12 @@ test("worker runtime uses injected bindings and returns unique output transfers"
 			.length,
 		1,
 	);
+	assert.equal(
+		outputTransfers({
+			tex: { terminal: "", log: shared, dvi: shared, files: [] },
+			bibliography: { files: [{ bytes: shared }] },
+			generatedFiles: [{ bytes: new Uint8Array([2]) }],
+		}).length,
+		2,
+	);
 });

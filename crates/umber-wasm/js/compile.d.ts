@@ -1,5 +1,7 @@
 import type {
 	CompileOutput,
+	ProjectCompileOutput,
+	ProjectSessionOptions,
 	ResourceRequest,
 	ResourceResponse,
 	SessionLimits,
@@ -34,6 +36,15 @@ export interface CompilerBindings {
 		compileAttempt(): import("./umber_wasm.js").AttemptResult;
 		dispose(): void;
 	};
+	ProjectSession?: new (
+		options: ProjectSessionOptions,
+	) => {
+		addUserFile(path: string, bytes: Uint8Array): void;
+		provideResources(responses: ResourceResponse[]): void;
+		advance?(): import("./umber_wasm.js").AttemptResult;
+		compileAttempt(): import("./umber_wasm.js").AttemptResult;
+		dispose(): void;
+	};
 }
 
 export class CompileFacadeError extends Error {
@@ -47,9 +58,9 @@ export function validateSessionLimits(
 ): SessionLimits;
 
 export function compile(
-	options: SessionOptions,
+	options: SessionOptions | ProjectSessionOptions,
 	userFiles: ReadonlyMap<string, Uint8Array>,
 	resolver: ResourceResolver,
 	signal?: AbortSignal,
 	bindings?: CompilerBindings,
-): Promise<CompileOutput>;
+): Promise<CompileOutput | ProjectCompileOutput>;

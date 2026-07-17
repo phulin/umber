@@ -2,14 +2,39 @@
 
 use js_sys::{Array, Object, Reflect, Uint8Array};
 use umber_wasm::{
-    CompilerSession, JsFileRequestKey, JsSessionOptions, JsSourcePatch, format_schema_version,
-    package_version,
+    CompilerSession, JsFileRequestKey, JsProjectSessionOptions, JsSessionOptions, JsSourcePatch,
+    ProjectSession, format_schema_version, package_version,
 };
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use wasm_bindgen_test::*;
 
 wasm_bindgen_test_configure!(run_in_browser);
+
+#[wasm_bindgen_test]
+fn project_binding_validates_options_and_disposes() {
+    let project_options = options("/job/main.tex");
+    let bibliography = Object::new();
+    set(
+        &bibliography,
+        "controlPath",
+        &JsValue::from_str("/job/main.bcf"),
+    );
+    let output = Object::new();
+    set(&output, "path", &JsValue::from_str("/job/main.bbl"));
+    set(&output, "format", &JsValue::from_str("bbl"));
+    set(&bibliography, "outputs", Array::of1(&output).as_ref());
+    set(&project_options, "bibliography", bibliography.as_ref());
+    let mut session =
+        ProjectSession::new(project_options.unchecked_ref::<JsProjectSessionOptions>())
+            .expect("project session");
+    session
+        .add_user_file("/job/main.tex", &bytes(b"\\end"))
+        .expect("project source");
+    session.dispose();
+    assert!(session.disposed());
+    assert!(session.advance().is_err());
+}
 
 #[wasm_bindgen_test]
 fn typed_attempts_preserve_binary_inputs_and_clear_cached_allocations() {
