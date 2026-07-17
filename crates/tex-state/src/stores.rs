@@ -1220,6 +1220,11 @@ impl Stores {
     pub fn glue(&self, id: GlueId) -> GlueSpec {
         self.glue
             .resolve_get(id)
+            .or_else(|| {
+                self.paragraph_generation_glues
+                    .get(&id)
+                    .map(|(spec, _)| *spec)
+            })
             .expect("stored glue slot is not live")
     }
 
@@ -1789,6 +1794,141 @@ impl Stores {
         self.clone_retained_paragraph_list(id)
     }
 
+    #[must_use]
+    pub fn retained_paragraph_result_is_live(&self, id: NodeListId) -> bool {
+        self.survivors.contains(id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn testing_survivor_payload_strong_count(&self, id: NodeListId) -> usize {
+        self.survivors.testing_payload_strong_count(id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn testing_has_paragraph_glue(&self, id: GlueId) -> bool {
+        self.paragraph_generation_glues.contains_key(&id)
+    }
+
+    /// Installs the immutable glue closure associated with one retained graph
+    /// into the active interner without decoding or copying semantic nodes.
+    /// The mounted graph keeps its accepted-history handles; the local entries
+    /// preserve the ordinary allocation timeline for subsequent execution.
+    pub fn mount_retained_paragraph_resources(&mut self, id: NodeListId) -> bool {
+        let Some(index) = self
+            .paragraph_generation_pins
+            .iter()
+            .rposition(|candidate| *candidate == id)
+        else {
+            return false;
+        };
+        let glues = self.paragraph_generation_pin_glues[index].clone();
+        for retained in glues {
+            if self.glue.resolve_stored(retained).is_none() {
+                let Some((spec, _)) = self.paragraph_generation_glues.get(&retained).copied()
+                else {
+                    return false;
+                };
+                self.glue.intern(spec);
+            }
+        }
+        true
+    }
+
+    /// Proves that an accepted-history survivor graph and its resource closure
+    /// can be read directly by this Universe. Unsupported handle-bearing forms
+    /// conservatively miss before replay mutates live state.
+    pub fn can_mount_retained_paragraph_result(&self, id: NodeListId) -> bool {
+        if !self.survivors.contains(id) {
+            return false;
+        }
+        let root = id.arena();
+        let mut pending = vec![id];
+        let mut seen = std::collections::HashSet::new();
+        while let Some(list) = pending.pop() {
+            if list.arena() != root || !self.survivors.contains(list) {
+                return false;
+            }
+            if !seen.insert(list) {
+                continue;
+            }
+            for node in self.nodes(list) {
+                match node {
+                    crate::node_arena::NodeRef::Char { font, .. }
+                    | crate::node_arena::NodeRef::Lig { font, .. } => {
+                        if self.fonts.resolve_stored(font).is_none() {
+                            return false;
+                        }
+                    }
+                    crate::node_arena::NodeRef::Glue {
+                        spec, leader: None, ..
+                    } => {
+                        if self.glue.resolve_stored(spec).is_none()
+                            && !self.paragraph_generation_glues.contains_key(&spec)
+                        {
+                            return false;
+                        }
+                    }
+                    crate::node_arena::NodeRef::HList(node)
+                    | crate::node_arena::NodeRef::VList(node) => pending.push(node.children),
+                    crate::node_arena::NodeRef::Disc {
+                        pre, post, replace, ..
+                    } => pending.extend([pre, post, replace]),
+                    crate::node_arena::NodeRef::Ins {
+                        split_top_skip,
+                        content,
+                        ..
+                    } => {
+                        if self.glue.resolve_stored(split_top_skip).is_none()
+                            && !self
+                                .paragraph_generation_glues
+                                .contains_key(&split_top_skip)
+                        {
+                            return false;
+                        }
+                        pending.push(content);
+                    }
+                    crate::node_arena::NodeRef::Adjust(content) => pending.push(content),
+                    crate::node_arena::NodeRef::Kern { .. }
+                    | crate::node_arena::NodeRef::Penalty(_)
+                    | crate::node_arena::NodeRef::Rule { .. }
+                    | crate::node_arena::NodeRef::MathOn(_)
+                    | crate::node_arena::NodeRef::MathOff(_)
+                    | crate::node_arena::NodeRef::Direction(_)
+                    | crate::node_arena::NodeRef::Nonscript => {}
+                    crate::node_arena::NodeRef::Glue {
+                        leader: Some(_), ..
+                    }
+                    | crate::node_arena::NodeRef::Unset(_)
+                    | crate::node_arena::NodeRef::Mark { .. }
+                    | crate::node_arena::NodeRef::Whatsit(_)
+                    | crate::node_arena::NodeRef::MathNoad(_)
+                    | crate::node_arena::NodeRef::FractionNoad(_)
+                    | crate::node_arena::NodeRef::MathStyle(_)
+                    | crate::node_arena::NodeRef::MathChoice(_)
+                    | crate::node_arena::NodeRef::MathList(_) => return false,
+                }
+            }
+        }
+        true
+    }
+
+    /// Mounts current-revision provenance over an already validated immutable
+    /// paragraph graph and returns the same ordinary node-list handle.
+    pub fn mount_retained_paragraph_result(
+        &mut self,
+        id: NodeListId,
+        trace_origins: &[OriginId],
+        ordinals: &[u32],
+    ) -> Option<NodeListId> {
+        self.can_mount_retained_paragraph_result(id)
+            .then(|| {
+                self.survivors
+                    .mount_paragraph_origins(id, trace_origins, ordinals)
+            })
+            .filter(|mounted| *mounted)
+            .map(|_| id)
+    }
+
     /// Copies a retained node graph into the live epoch while preserving its
     /// already-sealed semantic identity. Glue handles and provenance are not
     /// semantic inputs, so rebasing those handles does not require rehashing
@@ -1802,10 +1942,9 @@ impl Stores {
     }
 
     fn collect_paragraph_glues(&self, id: NodeListId, glues: &mut Vec<GlueId>) {
-        let nodes = self.nodes(id).to_vec();
-        for node in nodes {
+        for node in self.nodes(id) {
             match node {
-                Node::Glue { spec, leader, .. } => {
+                crate::node_arena::NodeRef::Glue { spec, leader, .. } => {
                     glues.push(spec);
                     if let Some(LeaderPayload::HList(box_node) | LeaderPayload::VList(box_node)) =
                         leader
@@ -1813,18 +1952,21 @@ impl Stores {
                         self.collect_paragraph_glues(box_node.children, glues);
                     }
                 }
-                Node::HList(box_node) | Node::VList(box_node) => {
+                crate::node_arena::NodeRef::HList(box_node)
+                | crate::node_arena::NodeRef::VList(box_node) => {
                     self.collect_paragraph_glues(box_node.children, glues);
                 }
-                Node::Unset(unset) => self.collect_paragraph_glues(unset.children, glues),
-                Node::Disc {
+                crate::node_arena::NodeRef::Unset(unset) => {
+                    self.collect_paragraph_glues(unset.children, glues);
+                }
+                crate::node_arena::NodeRef::Disc {
                     pre, post, replace, ..
                 } => {
                     self.collect_paragraph_glues(pre, glues);
                     self.collect_paragraph_glues(post, glues);
                     self.collect_paragraph_glues(replace, glues);
                 }
-                Node::Ins {
+                crate::node_arena::NodeRef::Ins {
                     split_top_skip,
                     content,
                     ..
@@ -1832,7 +1974,9 @@ impl Stores {
                     glues.push(split_top_skip);
                     self.collect_paragraph_glues(content, glues);
                 }
-                Node::Adjust(content) => self.collect_paragraph_glues(content, glues),
+                crate::node_arena::NodeRef::Adjust(content) => {
+                    self.collect_paragraph_glues(content, glues);
+                }
                 _ => {}
             }
         }

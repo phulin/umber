@@ -243,7 +243,8 @@ impl Stores {
 
     pub(super) fn assert_live_glue(&self, id: GlueId) {
         assert!(
-            self.glue.resolve_stored(id).is_some(),
+            self.glue.resolve_stored(id).is_some()
+                || self.paragraph_generation_glues.contains_key(&id),
             "glue id is not live in this Universe timeline"
         );
     }

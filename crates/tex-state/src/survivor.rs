@@ -6,8 +6,11 @@
 use crate::ids::{ArenaRef, NodeListId, SurvivorRootId};
 #[cfg(debug_assertions)]
 use crate::node::Node;
-use crate::node_arena::{ChildPatch, NodeArena, NodeList, NodeSemanticId, NodeStorage};
+use crate::node_arena::{
+    ChildPatch, NodeArena, NodeList, NodeOriginOverlay, NodeSemanticId, NodeStorage,
+};
 use ahash::AHashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
 #[cfg(feature = "profiling-stats")]
@@ -19,8 +22,9 @@ const SURVIVOR_ROOT_MAX: u32 = (1 << 20) - 2;
 static NEXT_SURVIVOR_ROOT: AtomicU32 = AtomicU32::new(0);
 
 /// Process-local survivor-operation measurements. Times include the complete
-/// promotion/release operation; scratch bytes are allocator payload bytes and
-/// exclude allocator metadata and `HashMap` control bytes.
+/// promotion, recycling release, or shared-payload drop operation; scratch
+/// bytes are allocator payload bytes and exclude allocator metadata and
+/// `HashMap` control bytes.
 #[cfg(feature = "profiling-stats")]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct SurvivorMeasurement {
@@ -30,6 +34,8 @@ pub struct SurvivorMeasurement {
     pub recycled_promotion_nanos: u64,
     pub releases_to_recycling: u64,
     pub release_nanos: u64,
+    pub shared_payload_drops: u64,
+    pub shared_payload_drop_nanos: u64,
     pub peak_promotion_scratch_logical_bytes: u64,
     pub peak_promotion_scratch_retained_bytes: u64,
     pub source_words: u64,
@@ -50,6 +56,8 @@ mod measurement {
     pub static RECYCLED_NANOS: AtomicU64 = AtomicU64::new(0);
     pub static RELEASE_CALLS: AtomicU64 = AtomicU64::new(0);
     pub static RELEASE_NANOS: AtomicU64 = AtomicU64::new(0);
+    pub static SHARED_DROP_CALLS: AtomicU64 = AtomicU64::new(0);
+    pub static SHARED_DROP_NANOS: AtomicU64 = AtomicU64::new(0);
     pub static PEAK_SCRATCH_LOGICAL: AtomicU64 = AtomicU64::new(0);
     pub static PEAK_SCRATCH_RETAINED: AtomicU64 = AtomicU64::new(0);
     pub static SOURCE_WORDS: AtomicU64 = AtomicU64::new(0);
@@ -75,6 +83,8 @@ mod measurement {
             recycled_promotion_nanos: RECYCLED_NANOS.load(Ordering::Relaxed),
             releases_to_recycling: RELEASE_CALLS.load(Ordering::Relaxed),
             release_nanos: RELEASE_NANOS.load(Ordering::Relaxed),
+            shared_payload_drops: SHARED_DROP_CALLS.load(Ordering::Relaxed),
+            shared_payload_drop_nanos: SHARED_DROP_NANOS.load(Ordering::Relaxed),
             peak_promotion_scratch_logical_bytes: PEAK_SCRATCH_LOGICAL.load(Ordering::Relaxed),
             peak_promotion_scratch_retained_bytes: PEAK_SCRATCH_RETAINED.load(Ordering::Relaxed),
             source_words: SOURCE_WORDS.load(Ordering::Relaxed),
@@ -96,8 +106,9 @@ pub fn survivor_measurement() -> SurvivorMeasurement {
 /// Arena for promoted node-list roots.
 #[derive(Clone, Debug)]
 pub struct SurvivorArena {
-    // Storage slots are local and may be cloned, while packed root keys are
-    // process-unique so sibling forks cannot alias one another's new roots.
+    // Root slots are local while immutable semantic payloads may be shared.
+    // Packed root keys are process-unique so sibling forks cannot alias one
+    // another's new roots.
     slots: Vec<Option<SurvivorRoot>>,
     root_slots: AHashMap<SurvivorRootId, usize>,
     // Node storage is independent of identity and can safely be recycled.
@@ -109,9 +120,15 @@ pub struct SurvivorArena {
 
 #[derive(Clone, Debug)]
 struct SurvivorRoot {
+    payload: Arc<SurvivorPayload>,
+    origin_overlay: Option<NodeOriginOverlay>,
+    refcount: u32,
+}
+
+#[derive(Debug)]
+struct SurvivorPayload {
     storage: NodeStorage,
     semantic_spans: Vec<SurvivorSemanticSpan>,
-    refcount: u32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -155,11 +172,15 @@ impl SurvivorArena {
             .iter()
             .flatten()
             .map(|root| {
-                root.storage.retained_payload_bytes().saturating_add(
-                    root.semantic_spans
-                        .capacity()
-                        .saturating_mul(core::mem::size_of::<SurvivorSemanticSpan>()),
-                )
+                root.payload
+                    .storage
+                    .retained_payload_bytes()
+                    .saturating_add(
+                        root.payload
+                            .semantic_spans
+                            .capacity()
+                            .saturating_mul(core::mem::size_of::<SurvivorSemanticSpan>()),
+                    )
             })
             .sum::<usize>();
         let recycled = self
@@ -246,10 +267,12 @@ impl SurvivorArena {
         let start = id.start() as usize;
         let end = start + id.len() as usize;
         assert!(
-            end <= root.storage.len(),
+            end <= root.payload.storage.len(),
             "survivor node-list id is not live"
         );
-        root.storage.view(id.start(), id.len())
+        root.payload
+            .storage
+            .view_with_origins(id.start(), id.len(), root.origin_overlay.as_ref())
     }
 
     #[must_use]
@@ -262,10 +285,11 @@ impl SurvivorArena {
         }
         let root = self.root(root);
         let index = root
+            .payload
             .semantic_spans
             .binary_search_by_key(&id.start(), |span| span.start)
             .expect("survivor node-list semantic id is not live");
-        let span = root.semantic_spans[index];
+        let span = root.payload.semantic_spans[index];
         assert_eq!(span.len, id.len(), "survivor semantic span length mismatch");
         span.semantic_id
     }
@@ -316,15 +340,26 @@ impl SurvivorArena {
                 .root_slots
                 .remove(&root)
                 .expect("survivor root is not live");
-            let mut root = self.slots[index].take().expect("survivor root is not live");
-            root.storage.clear();
-            self.recycled.push(root.storage);
+            let root = self.slots[index].take().expect("survivor root is not live");
+            let recycled = if let Ok(mut payload) = Arc::try_unwrap(root.payload) {
+                payload.storage.clear();
+                self.recycled.push(payload.storage);
+                true
+            } else {
+                false
+            };
             #[cfg(feature = "profiling-stats")]
-            {
+            if recycled {
                 measurement::RELEASE_CALLS.fetch_add(1, Ordering::Relaxed);
                 let nanos = started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
                 measurement::RELEASE_NANOS.fetch_add(nanos, Ordering::Relaxed);
+            } else {
+                measurement::SHARED_DROP_CALLS.fetch_add(1, Ordering::Relaxed);
+                let nanos = started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
+                measurement::SHARED_DROP_NANOS.fetch_add(nanos, Ordering::Relaxed);
             }
+            #[cfg(not(feature = "profiling-stats"))]
+            let _ = recycled;
         }
     }
 
@@ -342,7 +377,47 @@ impl SurvivorArena {
         };
         (id.start() as usize)
             .checked_add(id.len() as usize)
-            .is_some_and(|end| end <= slot.storage.len())
+            .is_some_and(|end| end <= slot.payload.storage.len())
+    }
+
+    /// Mounts current-revision diagnostic provenance over one immutable
+    /// survivor payload. The semantic graph remains shared across arena clones.
+    pub(crate) fn mount_paragraph_origins(
+        &mut self,
+        id: NodeListId,
+        trace_origins: &[crate::token::OriginId],
+        ordinals: &[u32],
+    ) -> bool {
+        let ArenaRef::Survivor(root_id) = id.arena() else {
+            return false;
+        };
+        let Some(index) = self.root_slots.get(&root_id).copied() else {
+            return false;
+        };
+        let Some(Some(root)) = self.slots.get(index) else {
+            return false;
+        };
+        let Some(overlay) =
+            root.payload
+                .storage
+                .paragraph_origin_overlay(id, trace_origins, ordinals)
+        else {
+            return false;
+        };
+        self.slots[index]
+            .as_mut()
+            .expect("survivor root is live")
+            .origin_overlay = Some(overlay);
+        true
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn testing_payload_strong_count(&self, id: NodeListId) -> usize {
+        let ArenaRef::Survivor(root) = id.arena() else {
+            panic!("expected survivor id");
+        };
+        Arc::strong_count(&self.root(root).payload)
     }
 
     #[cfg(any(test, feature = "testing"))]
@@ -415,7 +490,7 @@ impl SurvivorArena {
 
         let mut totals = BTreeMap::new();
         for root in self.slots.iter().flatten() {
-            add_storage(&mut totals, "survivor.live", &root.storage);
+            add_storage(&mut totals, "survivor.live", &root.payload.storage);
         }
         for storage in &self.recycled {
             add_storage(&mut totals, "survivor.recycled", storage);
@@ -434,7 +509,12 @@ impl SurvivorArena {
             .slots
             .iter()
             .flatten()
-            .map(|root| (root.semantic_spans.len(), root.semantic_spans.capacity()))
+            .map(|root| {
+                (
+                    root.payload.semantic_spans.len(),
+                    root.payload.semantic_spans.capacity(),
+                )
+            })
             .fold((0, 0), |(len, capacity), current| {
                 (len + current.0, capacity + current.1)
             });
@@ -457,8 +537,11 @@ impl SurvivorArena {
         semantic_spans: Vec<SurvivorSemanticSpan>,
     ) {
         let slot = SurvivorRoot {
-            storage,
-            semantic_spans,
+            payload: Arc::new(SurvivorPayload {
+                storage,
+                semantic_spans,
+            }),
+            origin_overlay: None,
             refcount: 1,
         };
         let index = self.slots.len();

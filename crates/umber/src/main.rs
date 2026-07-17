@@ -190,13 +190,15 @@ fn finalize_run(
         }
         let survivor = tex_state::survivor::survivor_measurement();
         eprintln!(
-            "NODE_SURVIVOR fresh_calls={} fresh_nanos={} recycled_calls={} recycled_nanos={} release_calls={} release_nanos={} peak_scratch_logical_bytes={} peak_scratch_retained_bytes={} source_words={} child_bearing_nodes={} remap_entries={} pending_entries={} peak_remap_entries={} peak_pending_entries={}",
+            "NODE_SURVIVOR fresh_calls={} fresh_nanos={} recycled_calls={} recycled_nanos={} release_calls={} release_nanos={} shared_payload_drops={} shared_payload_drop_nanos={} peak_scratch_logical_bytes={} peak_scratch_retained_bytes={} source_words={} child_bearing_nodes={} remap_entries={} pending_entries={} peak_remap_entries={} peak_pending_entries={}",
             survivor.fresh_promotions,
             survivor.fresh_promotion_nanos,
             survivor.recycled_promotions,
             survivor.recycled_promotion_nanos,
             survivor.releases_to_recycling,
             survivor.release_nanos,
+            survivor.shared_payload_drops,
+            survivor.shared_payload_drop_nanos,
             survivor.peak_promotion_scratch_logical_bytes,
             survivor.peak_promotion_scratch_retained_bytes,
             survivor.source_words,

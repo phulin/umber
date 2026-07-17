@@ -98,27 +98,15 @@ pub(crate) fn try_reuse_aligned_paragraph(
         stores.record_pure_paragraph_validation_failure(ParagraphValidationFailure::RetainedResult);
         return Ok(false);
     };
+    if !stores.retained_paragraph_result_is_live(retained) {
+        stores.record_pure_paragraph_validation_failure(ParagraphValidationFailure::RetainedResult);
+        return Ok(false);
+    }
     #[allow(clippy::disallowed_methods)]
     let import_started = std::time::Instant::now();
-    let list = match stores.import_retained_paragraph_result(retained) {
-        Some(list) => list,
-        None => {
-            stores.record_pure_memo_timing(
-                PureMemoLayer::Paragraph,
-                MemoTimingPhase::Import,
-                import_started.elapsed(),
-            );
-            stores.record_pure_paragraph_import_failure();
-            return Ok(false);
-        }
-    };
-    let imported_bytes = stores
-        .nodes(list)
-        .len()
-        .saturating_mul(std::mem::size_of::<tex_state::node::Node>());
-    let imported_lines = entry
+    let mountable_lines = entry
         .lines
-        .and_then(|lines| stores.import_retained_paragraph_result(lines));
+        .filter(|&lines| stores.can_mount_retained_paragraph_result(lines));
     stores.record_pure_memo_timing(
         PureMemoLayer::Paragraph,
         MemoTimingPhase::Import,
@@ -151,19 +139,13 @@ pub(crate) fn try_reuse_aligned_paragraph(
         );
     }
     replay_effects(stores, &entry.effects);
-    let mut nodes: Vec<_> = stores
-        .nodes(list)
-        .into_iter()
-        .map(|node| node.to_owned())
-        .collect();
-    rebind_literal_origins(&mut nodes, &current_trace_origins, &entry.origin_ordinals);
     #[allow(clippy::disallowed_methods)]
     let line_validation_started = std::time::Instant::now();
     let line_dependency_failure = stores
         .validate_dependencies_with_failure(&mut entry.break_dependencies, |key| {
             paragraph_validation_value(stores, execution, key)
         });
-    let lines_valid = imported_lines.is_some() && line_dependency_failure.is_none();
+    let lines_valid = mountable_lines.is_some() && line_dependency_failure.is_none();
     stores.record_pure_memo_timing(
         PureMemoLayer::Paragraph,
         MemoTimingPhase::Validation,
@@ -173,30 +155,39 @@ pub(crate) fn try_reuse_aligned_paragraph(
         stores
             .record_pure_paragraph_validation_failure(ParagraphValidationFailure::BreakDependency);
     }
-    let mut lines = imported_lines.map(|list| {
+    let mounted_lines = lines_valid.then(|| {
         stores
-            .nodes(list)
-            .into_iter()
-            .map(|node| node.to_owned())
-            .collect::<Vec<_>>()
+            .mount_retained_paragraph_result(
+                mountable_lines.expect("validated mounted lines"),
+                &current_trace_origins,
+                &entry.line_origin_ordinals,
+            )
+            .expect("prevalidated paragraph mount must remain valid")
     });
-    if lines_valid {
-        rebind_graph_origins(
-            stores,
-            lines.as_mut().expect("validated imported lines"),
-            &current_trace_origins,
-            &entry.line_origin_ordinals,
+    let (nodes, imported_bytes, retained_hlist) = if lines_valid {
+        assert!(
+            stores.mount_retained_paragraph_resources(retained),
+            "live generation-owned paragraph hlist must mount its resources"
         );
-    }
+        (Vec::new(), 0, stores.retain_paragraph_result(retained))
+    } else {
+        let list = stores
+            .import_retained_paragraph_result(retained)
+            .expect("live generation-owned paragraph hlist must import");
+        let imported_bytes = stores
+            .nodes(list)
+            .len()
+            .saturating_mul(std::mem::size_of::<tex_state::node::Node>());
+        let mut nodes = stores.nodes(list).to_vec();
+        rebind_literal_origins(&mut nodes, &current_trace_origins, &entry.origin_ordinals);
+        let retained_hlist = stores.retain_paragraph_result(list);
+        (nodes, imported_bytes, retained_hlist)
+    };
+    let lines = mounted_lines.map(|list| stores.nodes(list).to_vec());
     execution.abandon_cold_paragraph_recording();
     entry.ending_input = current_input;
-    entry.hlist = Some(stores.retain_paragraph_result(list));
-    entry.lines = if lines_valid {
-        let current_lines = stores.freeze_node_list(lines.as_deref().unwrap_or_default());
-        Some(stores.retain_paragraph_result(current_lines))
-    } else {
-        None
-    };
+    entry.hlist = Some(retained_hlist);
+    entry.lines = mounted_lines.map(|list| stores.retain_paragraph_result(list));
     let line_count = entry.line_count;
     let mutation_count = entry.mutations.len();
     let trace_len = entry.trace_spans.len();
@@ -212,7 +203,7 @@ pub(crate) fn try_reuse_aligned_paragraph(
         stores,
         execution,
         nodes,
-        lines_valid.then_some((lines.expect("validated imported lines"), line_count)),
+        lines.map(|lines| (lines, line_count)),
     )?;
     stores.record_pure_paragraph_hit(trace_len, mutation_count, imported_bytes, relaxed_state);
     stores.record_pure_paragraph_line_hit(!lines_valid);
@@ -314,79 +305,6 @@ fn rebind_literal_origins(
                 node_origins.extend(
                     (0..orig.len()).map(|_| origin_at(ordinals.next().unwrap_or(u32::MAX))),
                 );
-            }
-            _ => {}
-        }
-    }
-}
-
-fn rebind_graph_origins(
-    stores: &mut Universe,
-    nodes: &mut [tex_state::node::Node],
-    trace_origins: &[tex_state::token::OriginId],
-    ordinals: &[u32],
-) {
-    let mut ordinals = ordinals.iter().copied();
-    rebind_graph_origins_inner(stores, nodes, trace_origins, &mut ordinals);
-}
-
-fn rebind_graph_origins_inner(
-    stores: &mut Universe,
-    nodes: &mut [tex_state::node::Node],
-    trace_origins: &[tex_state::token::OriginId],
-    ordinals: &mut impl Iterator<Item = u32>,
-) {
-    let origin_at = |ordinal: u32| {
-        usize::try_from(ordinal)
-            .ok()
-            .and_then(|ordinal| trace_origins.get(ordinal))
-            .copied()
-            .unwrap_or(tex_state::token::OriginId::UNKNOWN)
-    };
-    let rebuild = |stores: &mut Universe,
-                   id: tex_state::ids::NodeListId,
-                   trace_origins: &[tex_state::token::OriginId],
-                   ordinals: &mut _| {
-        let mut children = stores.nodes(id).to_vec();
-        rebind_graph_origins_inner(stores, &mut children, trace_origins, ordinals);
-        stores.freeze_node_list(&children)
-    };
-    for node in nodes {
-        match node {
-            tex_state::node::Node::Char { origin, .. } => {
-                *origin = origin_at(ordinals.next().unwrap_or(u32::MAX));
-            }
-            tex_state::node::Node::Lig { orig, origins, .. } => {
-                origins.clear();
-                origins.extend(
-                    (0..orig.len()).map(|_| origin_at(ordinals.next().unwrap_or(u32::MAX))),
-                );
-            }
-            tex_state::node::Node::HList(box_node) | tex_state::node::Node::VList(box_node) => {
-                box_node.children = rebuild(stores, box_node.children, trace_origins, ordinals);
-            }
-            tex_state::node::Node::Glue {
-                leader:
-                    Some(
-                        tex_state::node::LeaderPayload::HList(box_node)
-                        | tex_state::node::LeaderPayload::VList(box_node),
-                    ),
-                ..
-            } => {
-                box_node.children = rebuild(stores, box_node.children, trace_origins, ordinals);
-            }
-            tex_state::node::Node::Unset(unset) => {
-                unset.children = rebuild(stores, unset.children, trace_origins, ordinals);
-            }
-            tex_state::node::Node::Disc {
-                pre, post, replace, ..
-            } => {
-                *pre = rebuild(stores, *pre, trace_origins, ordinals);
-                *post = rebuild(stores, *post, trace_origins, ordinals);
-                *replace = rebuild(stores, *replace, trace_origins, ordinals);
-            }
-            tex_state::node::Node::Ins { content, .. } | tex_state::node::Node::Adjust(content) => {
-                *content = rebuild(stores, *content, trace_origins, ordinals);
             }
             _ => {}
         }

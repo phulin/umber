@@ -1496,6 +1496,93 @@ fn paragraph_generation_roots_survive_rollback_and_supersede_wholesale() {
 }
 
 #[test]
+fn restarted_universe_mounts_shared_paragraph_graph_with_local_provenance() {
+    let mut universe = Universe::new();
+    let before = universe.snapshot();
+    let old_origin = universe.synthetic_origin(SyntheticOriginKind::Test);
+    let glue = universe.intern_glue(GlueSpec {
+        width: Scaled::from_raw(17),
+        ..GlueSpec::ZERO
+    });
+    let children = universe.freeze_node_list(&[
+        Node::Char {
+            font: NULL_FONT,
+            ch: 'x',
+            origin: old_origin,
+        },
+        Node::Glue {
+            spec: glue,
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+    ]);
+    let Some(crate::node_arena::NodeRef::Glue {
+        spec: stored_glue, ..
+    }) = universe.nodes(children).get(1)
+    else {
+        panic!("child glue must be stored");
+    };
+    let lines = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+        width: Scaled::from_raw(17),
+        height: Scaled::from_raw(7),
+        depth: Scaled::from_raw(2),
+        shift: Scaled::from_raw(0),
+        display: false,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children,
+    }))]);
+    let retained = universe.retain_paragraph_result(lines);
+    assert!(universe.stores.testing_has_paragraph_glue(stored_glue));
+    universe.rollback(&before);
+    assert!(universe.stores.testing_has_paragraph_glue(stored_glue));
+    let mut restarted = universe.clone();
+    assert!(restarted.stores.testing_has_paragraph_glue(stored_glue));
+
+    assert_eq!(
+        universe
+            .stores
+            .testing_survivor_payload_strong_count(retained),
+        2,
+        "Universe restart must share immutable survivor storage"
+    );
+    assert!(restarted.can_mount_retained_paragraph_result(retained));
+    assert!(restarted.mount_retained_paragraph_resources(retained));
+    let current_origin = restarted.synthetic_origin(SyntheticOriginKind::Engine);
+    assert_eq!(
+        restarted.mount_retained_paragraph_result(retained, &[current_origin], &[0]),
+        Some(retained),
+        "mounting preserves the ordinary node-list handle"
+    );
+    let Some(crate::node_arena::NodeRef::HList(line)) = restarted.nodes(retained).first() else {
+        panic!("mounted root must remain a line box");
+    };
+    let mounted = restarted.nodes(line.children).to_vec();
+    assert!(matches!(
+        mounted.first(),
+        Some(Node::Char { origin, .. }) if *origin == current_origin
+    ));
+    assert_eq!(restarted.glue(stored_glue).width, Scaled::from_raw(17));
+    assert_eq!(
+        restarted.stores.node_list_semantic_fragment(retained),
+        universe.stores.node_list_semantic_fragment(retained),
+        "mount-local provenance must not change semantic identity"
+    );
+}
+
+#[test]
+fn paragraph_mount_rejects_unsupported_handle_bearing_nodes() {
+    let mut universe = Universe::new();
+    let graph = universe.freeze_node_list(&[Node::Mark {
+        class: 0,
+        tokens: crate::ids::TokenListId::EMPTY,
+    }]);
+    let retained = universe.retain_paragraph_result(graph);
+    assert!(!universe.can_mount_retained_paragraph_result(retained));
+}
+
+#[test]
 fn generation_fork_detaches_the_accepted_effect_prefix() {
     let mut universe = Universe::new();
     universe.begin_retained_session().expect("retained session");

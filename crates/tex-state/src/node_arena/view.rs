@@ -1,11 +1,20 @@
 use super::storage::{NodeStorage, NodeWord, decode_glue, decode_kern, decode_style};
-use crate::ids::{GlueId, NodeListId};
+use crate::ids::{ArenaRef, GlueId, NodeListId};
 use crate::math::MathStyle;
 use crate::node::{
     BoxNode, Direction, DiscKind, GlueKind, KernKind, Node, UnsetNode, UnsetNodeFields,
 };
 use crate::scaled::Scaled;
 use crate::token::OriginId;
+
+/// Per-mount diagnostic provenance for one immutable node-storage payload.
+/// Semantic words and sidecars remain shared; only the nonsemantic origin
+/// columns vary between restarted Universes.
+#[derive(Clone, Debug)]
+pub(crate) struct NodeOriginOverlay {
+    word_origins: Vec<OriginId>,
+    ligature_origins: Vec<Option<Vec<OriginId>>>,
+}
 
 /// A zero-allocation logical view of one compact arena node.
 #[derive(Clone, Debug)]
@@ -196,6 +205,7 @@ impl NodeRef<'_> {
 #[derive(Clone, Copy)]
 pub struct NodeList<'a> {
     pub(super) storage: &'a NodeStorage,
+    pub(super) origins: Option<&'a NodeOriginOverlay>,
     pub(super) start: usize,
     pub(super) end: usize,
 }
@@ -232,7 +242,8 @@ impl<'a> NodeList<'a> {
     }
     #[must_use]
     pub fn get(self, index: usize) -> Option<NodeRef<'a>> {
-        (self.start + index < self.end).then(|| self.storage.decode(self.start + index))
+        (self.start + index < self.end)
+            .then(|| self.storage.decode(self.start + index, self.origins))
     }
     #[must_use]
     pub fn first(self) -> Option<NodeRef<'a>> {
@@ -240,11 +251,12 @@ impl<'a> NodeList<'a> {
     }
     #[must_use]
     pub fn last(self) -> Option<NodeRef<'a>> {
-        (!self.is_empty()).then(|| self.storage.decode(self.end - 1))
+        (!self.is_empty()).then(|| self.storage.decode(self.end - 1, self.origins))
     }
     pub fn iter(self) -> NodeIter<'a> {
         NodeIter {
             storage: self.storage,
+            origins: self.origins,
             next: self.start,
             end: self.end,
         }
@@ -289,7 +301,10 @@ impl<'a> NodeList<'a> {
         }
         Some(CharRun {
             words: &self.storage.words[self.start + index..end],
-            origins: &self.storage.origins[self.start + index..end],
+            origins: self.origins.map_or_else(
+                || &self.storage.origins[self.start + index..end],
+                |origins| &origins.word_origins[self.start + index..end],
+            ),
             font,
         })
     }
@@ -395,6 +410,7 @@ impl<'a> IntoIterator for NodeList<'a> {
 
 pub struct NodeIter<'a> {
     storage: &'a NodeStorage,
+    origins: Option<&'a NodeOriginOverlay>,
     next: usize,
     end: usize,
 }
@@ -404,7 +420,7 @@ impl<'a> Iterator for NodeIter<'a> {
         if self.next == self.end {
             None
         } else {
-            let node = self.storage.decode(self.next);
+            let node = self.storage.decode(self.next, self.origins);
             self.next += 1;
             Some(node)
         }
@@ -420,14 +436,14 @@ impl<'a> DoubleEndedIterator for NodeIter<'a> {
             None
         } else {
             self.end -= 1;
-            Some(self.storage.decode(self.end))
+            Some(self.storage.decode(self.end, self.origins))
         }
     }
 }
 impl ExactSizeIterator for NodeIter<'_> {}
 
 impl NodeStorage {
-    fn decode(&self, index: usize) -> NodeRef<'_> {
+    fn decode<'a>(&'a self, index: usize, origins: Option<&'a NodeOriginOverlay>) -> NodeRef<'a> {
         let word = self.words[index];
         let payload = word.payload();
         let side = payload as usize;
@@ -435,13 +451,15 @@ impl NodeStorage {
             0 => NodeRef::Char {
                 font: crate::ids::FontId::new((payload >> 21) as u32),
                 ch: char::from_u32((payload & 0x1f_ffff) as u32).expect("invalid stored scalar"),
-                origin: self.origins[index],
+                origin: origins.map_or(self.origins[index], |origins| origins.word_origins[index]),
             },
             1 => NodeRef::Lig {
                 font: self.ligatures[side].0,
                 ch: self.ligatures[side].1,
                 orig: &self.ligatures[side].2,
-                origins: &self.ligatures[side].3,
+                origins: origins
+                    .and_then(|origins| origins.ligature_origins[side].as_deref())
+                    .unwrap_or(&self.ligatures[side].3),
             },
             2 => NodeRef::Kern {
                 amount: Scaled::from_raw(payload as u32 as i32),
@@ -534,5 +552,87 @@ impl NodeStorage {
             22 => NodeRef::Adjust(self.adjusts[side]),
             _ => panic!("reserved node-word tag"),
         }
+    }
+
+    /// Builds a diagnostic-only provenance overlay for a survivor graph.
+    /// Traversal follows the retained paragraph recipe's depth-first order;
+    /// semantic words and sidecars remain untouched.
+    pub(crate) fn paragraph_origin_overlay(
+        &self,
+        root: NodeListId,
+        trace_origins: &[OriginId],
+        ordinals: &[u32],
+    ) -> Option<NodeOriginOverlay> {
+        let ArenaRef::Survivor(root_id) = root.arena() else {
+            return None;
+        };
+        let end = root.start().checked_add(root.len())? as usize;
+        if end > self.words.len() {
+            return None;
+        }
+        let mut overlay = NodeOriginOverlay {
+            word_origins: self.origins.clone(),
+            ligature_origins: vec![None; self.ligatures.len()],
+        };
+        let mut ordinals = ordinals.iter().copied();
+        let origin_at = |ordinal: u32| {
+            usize::try_from(ordinal)
+                .ok()
+                .and_then(|ordinal| trace_origins.get(ordinal))
+                .copied()
+                .unwrap_or(OriginId::UNKNOWN)
+        };
+        let mut frames = vec![(root.start() as usize, end)];
+        while let Some((next, frame_end)) = frames.last_mut() {
+            if *next == *frame_end {
+                frames.pop();
+                continue;
+            }
+            let index = *next;
+            *next += 1;
+            let node = self.decode(index, None);
+            let mut children = Vec::new();
+            match node {
+                NodeRef::Char { .. } => {
+                    overlay.word_origins[index] = origin_at(ordinals.next().unwrap_or(u32::MAX));
+                }
+                NodeRef::Lig { orig, .. } => {
+                    let side = self.words[index].payload() as usize;
+                    overlay.ligature_origins[side] = Some(
+                        (0..orig.len())
+                            .map(|_| origin_at(ordinals.next().unwrap_or(u32::MAX)))
+                            .collect(),
+                    );
+                }
+                NodeRef::HList(node) | NodeRef::VList(node) => children.push(node.children),
+                NodeRef::Glue {
+                    leader: Some(crate::node::LeaderPayload::HList(node)),
+                    ..
+                }
+                | NodeRef::Glue {
+                    leader: Some(crate::node::LeaderPayload::VList(node)),
+                    ..
+                } => children.push(node.children),
+                NodeRef::Unset(node) => children.push(node.children),
+                NodeRef::Disc {
+                    pre, post, replace, ..
+                } => children.extend([pre, post, replace]),
+                NodeRef::Ins { content, .. } | NodeRef::Adjust(content) => {
+                    children.push(content);
+                }
+                _ => {}
+            }
+            for child in children.into_iter().rev() {
+                if child.arena() != ArenaRef::Survivor(root_id) {
+                    return None;
+                }
+                let child_end = child.start().checked_add(child.len())? as usize;
+                if child_end > self.words.len() {
+                    return None;
+                }
+                frames.push((child.start() as usize, child_end));
+            }
+        }
+        ordinals.next().is_none().then_some(overlay)
     }
 }

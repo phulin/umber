@@ -4561,6 +4561,32 @@ impl Universe {
         self.stores.import_retained_paragraph_result(id)
     }
 
+    #[must_use]
+    pub fn retained_paragraph_result_is_live(&self, id: NodeListId) -> bool {
+        self.stores.retained_paragraph_result_is_live(id)
+    }
+
+    pub fn mount_retained_paragraph_resources(&mut self, id: NodeListId) -> bool {
+        self.stores.mount_retained_paragraph_resources(id)
+    }
+
+    #[must_use]
+    pub fn can_mount_retained_paragraph_result(&self, id: NodeListId) -> bool {
+        self.stores.can_mount_retained_paragraph_result(id)
+    }
+
+    /// Mounts one immutable accepted-history graph with current-revision
+    /// diagnostic provenance and returns its unchanged ordinary list handle.
+    pub fn mount_retained_paragraph_result(
+        &mut self,
+        id: NodeListId,
+        trace_origins: &[crate::token::OriginId],
+        ordinals: &[u32],
+    ) -> Option<NodeListId> {
+        self.stores
+            .mount_retained_paragraph_result(id, trace_origins, ordinals)
+    }
+
     #[doc(hidden)]
     #[must_use]
     pub fn paragraph_result_generation_mark(&self) -> usize {

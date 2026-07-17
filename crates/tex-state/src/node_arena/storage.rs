@@ -408,10 +408,20 @@ impl NodeStorage {
     }
 
     pub(crate) fn view(&self, start: u32, len: u32) -> NodeList<'_> {
+        self.view_with_origins(start, len, None)
+    }
+
+    pub(crate) fn view_with_origins<'a>(
+        &'a self,
+        start: u32,
+        len: u32,
+        origins: Option<&'a super::NodeOriginOverlay>,
+    ) -> NodeList<'a> {
         let end = start as usize + len as usize;
         assert!(end <= self.words.len(), "node-list id is not live");
         NodeList {
             storage: self,
+            origins,
             start: start as usize,
             end,
         }

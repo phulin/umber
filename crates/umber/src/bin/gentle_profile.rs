@@ -14,6 +14,8 @@ use tex_lex::ExpansionStats;
 use tex_lex::{InputStack, WorldInput};
 #[cfg(feature = "profiling-stats")]
 use tex_state::measurement::{ExactIdentityMeasurement, exact_identity_measurement};
+#[cfg(feature = "profiling-stats")]
+use tex_state::survivor::{SurvivorMeasurement, survivor_measurement};
 use tex_state::{
     ContentHash, JobClock, PureMemoConfig, PureMemoRecordingPolicy, PureMemoStats, Universe, World,
 };
@@ -225,6 +227,8 @@ struct IncrementalStep {
     previous_memo: PureMemoStats,
     #[cfg(feature = "profiling-stats")]
     exact_identity: ExactIdentityMeasurement,
+    #[cfg(feature = "profiling-stats")]
+    survivor: SurvivorMeasurement,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -389,9 +393,22 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
             (candidate_name, &enabled_sample),
         ] {
             if sample.steps[index].dvi != expected {
+                let first = sample.steps[index]
+                    .dvi
+                    .iter()
+                    .zip(expected.iter())
+                    .position(|(left, right)| left != right);
+                let page = first.map(|first| {
+                    expected[..first]
+                        .iter()
+                        .filter(|&&byte| byte == 139)
+                        .count()
+                });
                 return Err(format!(
-                    "{name} incremental edit {} DVI differs from its cold DVI",
-                    index + 1
+                    "{name} incremental edit {} DVI differs from its cold DVI at {first:?}, approximate page {page:?} (incremental_len={}, cold_len={})",
+                    index + 1,
+                    sample.steps[index].dvi.len(),
+                    expected.len(),
                 ));
             }
         }
@@ -826,6 +843,22 @@ fn print_incremental_work(
         sample.exact_identity.root_cache_misses,
         sample.exact_identity.dirty_leaves,
     );
+    #[cfg(feature = "profiling-stats")]
+    println!(
+        "gentle-profile survivor work: {name}: edit={edit} fresh_promotions={} recycled_promotions={} releases={} shared_payload_drops={} promotion_nanos={} release_nanos={} shared_payload_drop_nanos={} source_words={} child_bearing_nodes={}",
+        sample.survivor.fresh_promotions,
+        sample.survivor.recycled_promotions,
+        sample.survivor.releases_to_recycling,
+        sample.survivor.shared_payload_drops,
+        sample
+            .survivor
+            .fresh_promotion_nanos
+            .saturating_add(sample.survivor.recycled_promotion_nanos),
+        sample.survivor.release_nanos,
+        sample.survivor.shared_payload_drop_nanos,
+        sample.survivor.source_words,
+        sample.survivor.child_bearing_nodes,
+    );
     for (layer_name, layer) in [
         ("pretolerance", PureMemoLayer::Pretolerance),
         ("paragraph", PureMemoLayer::Paragraph),
@@ -1096,6 +1129,8 @@ fn execute_incremental_sample(
         let previous_memo = session.pure_memo_stats();
         #[cfg(feature = "profiling-stats")]
         let exact_before = exact_identity_measurement();
+        #[cfg(feature = "profiling-stats")]
+        let survivor_before = survivor_measurement();
         let mut resolvers = FileSessionResolvers::new(&path, Vec::new(), Vec::new());
         let started = Instant::now();
         let (input, font) = resolvers.resolvers();
@@ -1106,6 +1141,8 @@ fn execute_incremental_sample(
         let memo = session.pure_memo_stats();
         #[cfg(feature = "profiling-stats")]
         let exact_after = exact_identity_measurement();
+        #[cfg(feature = "profiling-stats")]
+        let survivor_after = survivor_measurement();
         let dvi_started = Instant::now();
         let dvi = accepted.dvi_bytes().map_err(|error| error.to_string())?;
         let dvi_latency = dvi_started.elapsed();
@@ -1152,6 +1189,8 @@ fn execute_incremental_sample(
                     .dirty_leaves
                     .saturating_sub(exact_before.dirty_leaves),
             },
+            #[cfg(feature = "profiling-stats")]
+            survivor: survivor_delta(survivor_after, survivor_before),
         });
     }
     Ok(IncrementalSample {
@@ -1159,6 +1198,44 @@ fn execute_incremental_sample(
         priming_memo,
         steps,
     })
+}
+
+#[cfg(feature = "profiling-stats")]
+fn survivor_delta(after: SurvivorMeasurement, before: SurvivorMeasurement) -> SurvivorMeasurement {
+    SurvivorMeasurement {
+        fresh_promotions: after
+            .fresh_promotions
+            .saturating_sub(before.fresh_promotions),
+        fresh_promotion_nanos: after
+            .fresh_promotion_nanos
+            .saturating_sub(before.fresh_promotion_nanos),
+        recycled_promotions: after
+            .recycled_promotions
+            .saturating_sub(before.recycled_promotions),
+        recycled_promotion_nanos: after
+            .recycled_promotion_nanos
+            .saturating_sub(before.recycled_promotion_nanos),
+        releases_to_recycling: after
+            .releases_to_recycling
+            .saturating_sub(before.releases_to_recycling),
+        release_nanos: after.release_nanos.saturating_sub(before.release_nanos),
+        shared_payload_drops: after
+            .shared_payload_drops
+            .saturating_sub(before.shared_payload_drops),
+        shared_payload_drop_nanos: after
+            .shared_payload_drop_nanos
+            .saturating_sub(before.shared_payload_drop_nanos),
+        source_words: after.source_words.saturating_sub(before.source_words),
+        child_bearing_nodes: after
+            .child_bearing_nodes
+            .saturating_sub(before.child_bearing_nodes),
+        remap_entries: after.remap_entries.saturating_sub(before.remap_entries),
+        pending_entries: after.pending_entries.saturating_sub(before.pending_entries),
+        peak_promotion_scratch_logical_bytes: after.peak_promotion_scratch_logical_bytes,
+        peak_promotion_scratch_retained_bytes: after.peak_promotion_scratch_retained_bytes,
+        peak_remap_entries: after.peak_remap_entries,
+        peak_pending_entries: after.peak_pending_entries,
+    }
 }
 
 #[allow(clippy::disallowed_methods)] // Host-side benchmark timer; no engine fact observes it.
