@@ -1,0 +1,13 @@
+[package]
+name = "bib-input"
+version.workspace = true
+edition.workspace = true
+description = "Input-stage contracts for Umber bibliography processing"
+
+[dependencies]
+bib-model = { path = "../bib-model" }
+bib-unicode = { path = "../bib-unicode" }
+umber-vfs = { path = "../umber-vfs" }
+
+[lints]
+workspace = true

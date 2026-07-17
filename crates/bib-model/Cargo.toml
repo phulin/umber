@@ -1,0 +1,12 @@
+[package]
+name = "bib-model"
+version.workspace = true
+edition.workspace = true
+description = "Typed immutable domain model for Umber bibliography processing"
+
+[dependencies]
+bib-unicode = { path = "../bib-unicode" }
+umber-vfs = { path = "../umber-vfs" }
+
+[lints]
+workspace = true

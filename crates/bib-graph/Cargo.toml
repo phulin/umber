@@ -1,0 +1,12 @@
+[package]
+name = "bib-graph"
+version.workspace = true
+edition.workspace = true
+description = "Relationship-stage contracts for Umber bibliography processing"
+
+[dependencies]
+bib-model = { path = "../bib-model" }
+bib-unicode = { path = "../bib-unicode" }
+
+[lints]
+workspace = true

@@ -1,0 +1,12 @@
+[package]
+name = "bib-sort"
+version.workspace = true
+edition.workspace = true
+description = "List and sorting-stage contracts for Umber bibliography processing"
+
+[dependencies]
+bib-model = { path = "../bib-model" }
+bib-unicode = { path = "../bib-unicode" }
+
+[lints]
+workspace = true

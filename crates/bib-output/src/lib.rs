@@ -1,0 +1,36 @@
+//! Detached deterministic bibliography serializer boundary.
+
+use bib_model::{GeneratedFile, OutputRequest, ProcessedBibliography};
+use bib_unicode::UnicodeData;
+
+#[derive(Clone, Copy, Debug)]
+pub struct OutputContext<'a> {
+    document: &'a ProcessedBibliography,
+    unicode: &'a UnicodeData,
+}
+
+impl<'a> OutputContext<'a> {
+    #[must_use]
+    pub const fn new(document: &'a ProcessedBibliography, unicode: &'a UnicodeData) -> Self {
+        Self { document, unicode }
+    }
+    #[must_use]
+    pub const fn document(self) -> &'a ProcessedBibliography {
+        self.document
+    }
+    #[must_use]
+    pub const fn unicode(self) -> &'a UnicodeData {
+        self.unicode
+    }
+}
+
+/// Implemented serializers are pure functions over a frozen document.
+pub trait Serializer {
+    type Error;
+
+    fn serialize(
+        &self,
+        context: OutputContext<'_>,
+        request: &OutputRequest,
+    ) -> Result<GeneratedFile, Self::Error>;
+}

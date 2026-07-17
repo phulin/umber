@@ -95,10 +95,71 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 name = "bib-engine"
 version = "0.1.0"
 dependencies = [
+ "bib-graph",
+ "bib-input",
+ "bib-label",
+ "bib-model",
+ "bib-output",
+ "bib-sort",
+ "bib-unicode",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "umber-vfs",
 ]
+
+[[package]]
+name = "bib-graph"
+version = "0.1.0"
+dependencies = [
+ "bib-model",
+ "bib-unicode",
+]
+
+[[package]]
+name = "bib-input"
+version = "0.1.0"
+dependencies = [
+ "bib-model",
+ "bib-unicode",
+ "umber-vfs",
+]
+
+[[package]]
+name = "bib-label"
+version = "0.1.0"
+dependencies = [
+ "bib-model",
+ "bib-unicode",
+]
+
+[[package]]
+name = "bib-model"
+version = "0.1.0"
+dependencies = [
+ "bib-unicode",
+ "umber-vfs",
+]
+
+[[package]]
+name = "bib-output"
+version = "0.1.0"
+dependencies = [
+ "bib-model",
+ "bib-unicode",
+]
+
+[[package]]
+name = "bib-sort"
+version = "0.1.0"
+dependencies = [
+ "bib-model",
+ "bib-unicode",
+]
+
+[[package]]
+name = "bib-unicode"
+version = "0.1.0"
 
 [[package]]
 name = "bincode"

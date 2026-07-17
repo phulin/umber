@@ -1,0 +1,12 @@
+[package]
+name = "bib-label"
+version.workspace = true
+edition.workspace = true
+description = "Label and uniqueness-stage contracts for Umber bibliography processing"
+
+[dependencies]
+bib-model = { path = "../bib-model" }
+bib-unicode = { path = "../bib-unicode" }
+
+[lints]
+workspace = true

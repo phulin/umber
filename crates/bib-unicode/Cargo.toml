@@ -1,0 +1,8 @@
+[package]
+name = "bib-unicode"
+version.workspace = true
+edition.workspace = true
+description = "Pinned Unicode compatibility resources for Umber bibliography processing"
+
+[lints]
+workspace = true

@@ -2,6 +2,17 @@
 name = "bib-engine"
 version.workspace = true
 edition.workspace = true
+description = "Public facade for Umber's in-process bibliography engine"
+
+[dependencies]
+bib-graph = { path = "../bib-graph" }
+bib-input = { path = "../bib-input" }
+bib-label = { path = "../bib-label" }
+bib-model = { path = "../bib-model" }
+bib-output = { path = "../bib-output" }
+bib-sort = { path = "../bib-sort" }
+bib-unicode = { path = "../bib-unicode" }
+umber-vfs = { path = "../umber-vfs" }
 
 [dev-dependencies]
 serde.workspace = true
