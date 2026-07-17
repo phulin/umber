@@ -1,3 +1,5 @@
+#[path = "it/foundation.rs"]
+mod foundation;
 #[path = "it/scaffold.rs"]
 mod scaffold;
 #[path = "it/support.rs"]

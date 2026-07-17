@@ -1,6 +1,8 @@
 # In-process bibliography backend
 
-Status: proposed design contract.
+Status: foundation crate graph and frozen domain contracts implemented;
+semantic processing, serializers, sessions, and project integration remain in
+the dependency-ordered bibliography issues.
 
 This document defines Umber's pure-Rust bibliography subsystem. Every Rust
 package uses the `bib-*` prefix, and modules, types, commands, features, and
@@ -127,7 +129,7 @@ bib-input   bib-graph   bib-sort   bib-label  bib-output
                             bib-unicode
 ```
 
-The intended packages are:
+The workspace now contains these packages and dependency boundaries:
 
 - `bib-model`: versioned domain values, identifiers, scoped options,
   diagnostics, source locations, sections, entries, lists, and processed
@@ -150,6 +152,12 @@ The intended packages are:
 All dependencies point toward `bib-model` and `bib-unicode`; semantic worker
 crates do not depend on `bib-engine` or `umber`. `bib-output` consumes a frozen
 processed document and cannot mutate processing state.
+
+The implemented foundation gives each worker crate an immutable stage context.
+`bib-input` additionally receives an `umber-vfs::VfsSnapshot`; the other
+semantic workers receive only frozen configuration/model values and pinned
+Unicode resources. Actual stage algorithms land in their owning issues without
+changing the dependency direction fixed here.
 
 ## Domain model
 
@@ -182,6 +190,14 @@ pub struct Entry {
     source: SourceLocation,
 }
 ```
+
+These fields are private in the implemented Rust API. `EntryBuilder`,
+`ProcessedSectionBuilder`, `ProcessedBibliographyBuilder`, option, diagnostic,
+name, configuration, and facade builders validate each mutation before
+freezing their result. Frozen entries, sections, documents, options,
+diagnostics, names, dates, ranges, output requests, and results expose only
+read-only queries. `EntryId`, `SectionId`, `DataListId`, field/option/type ids,
+and transformation ids are distinct types.
 
 Dynamic field names permitted by the control file remain validated interned
 identifiers, not one Rust enum variant per possible field. `FieldValue` is
@@ -305,8 +321,12 @@ vector.
 
 ## Public API
 
-`bib-engine` exposes both a resumable session for virtual-resource acquisition
-and a convenient one-shot operation for callers that already have every file:
+The implemented `bib-engine` foundation exposes detached `BibJob`,
+`BibOptions`, `BibAttempt`, `BibResult`, typed failure classes, statistics, and
+validated result/option builders. The resumable session that executes these
+contracts over virtual-resource acquisition, plus the convenient one-shot
+operation for callers that already have every file, is owned by
+`umber2-rti9.12`:
 
 ```rust
 pub struct BibSession {
@@ -342,7 +362,7 @@ impl BibSession {
 }
 ```
 
-The facade does not own host acquisition. `NeedResources` contains typed
+The facade will not own host acquisition. `NeedResources` contains typed
 logical requests that the project session merges with TeX requests. After the
 host registers responses in `umber-vfs`, the caller invokes `process` again.
 An attempt either returns a complete detached result, returns needs without
@@ -689,12 +709,13 @@ identical results from the same VFS inputs and options.
 ## Parallel implementation plan
 
 The work is organized as a Beads epic with dependency-aware child features.
-After the facade contracts and model skeleton land, four-agent waves can work
-without editing the same crate subtree.
+With the facade contracts and model skeleton now landed, later implementation
+waves can work without editing the same crate subtree.
 
 ### Foundation wave
 
-1. `bib-model`, option scopes, diagnostics, and frozen document contracts.
+1. **Complete.** `bib-model`, option scopes, diagnostics, and frozen document
+   contracts, together with the acyclic worker-crate boundaries.
 2. Unicode, dates, names, recoding, encodings, and collation feasibility.
 3. BibTeX parsing and datasource-local entry construction.
 4. XML control/config/schema and BibLaTeXML parsing.

@@ -6,9 +6,10 @@ in native and WASM builds without subprocesses or native-filesystem access.
 
 ## File Map
 
-- `Cargo.toml`: crate metadata and test-only manifest verification dependencies.
-- `src/lib.rs`: public facade root; semantic APIs arrive in later bibliography issues.
+- `Cargo.toml`: crate graph and test-only manifest verification dependencies.
+- `src/lib.rs`: detached public job, option, result, failure, and attempt contracts.
 - `tests/it.rs`: the crate's sole Cargo integration-test binary.
+- `tests/it/foundation.rs`: public foundation-boundary tests.
 - `tests/it/support.rs`: strict assertion-level xfail comparisons.
 - `tests/it/scaffold.rs`: fixture-manifest and xfail harness self-tests.
 - `tests/it/upstream/`: direct, assertion-isolated translations of the pinned
