@@ -143,12 +143,13 @@ both artifacts, status files, and a seed-bearing reproduction script under
 `target/bst-differential/failures/<case>/`; the generator stops at the first
 failure so that the case remains stable while it is minimized or investigated.
 
-As of the initial gate run, the declared coverage thresholds are measured, but
-exact BLG parity is blocked by `umber2-ild0.13.5`: legal generated case
-`bst-diff-00` has matching BBL and successful status while its reference string
-summary is `103` strings / `598` characters and Umber reports `106` / `625`.
-The runner intentionally treats this as a parity failure rather than
-normalizing it away.
+The completed `umber2-ild0.13.5` hardening run passes all 37 generated cases
+with exact, unnormalized status, BBL, and BLG bytes. The original
+`bst-diff-00` mismatch (`103` strings / `598` characters in the reference
+versus `106` / `625` in Umber) is resolved by the shared Web2C string-pool
+model and AUX/READ trace replay below. The same run exposed and fixed the
+recoverable `stack$` and ordered `top$` log-event mismatches before reaching
+full 47/47 dispatch-branch and 10/10 lifecycle-transition coverage.
 
 ### Web2C string-pool accounting
 
